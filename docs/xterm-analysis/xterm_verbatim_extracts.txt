@@ -1,0 +1,39 @@
+# VERBATIM EXTRACTS FROM xterm.js (Minified)
+
+## Extract 1: attachCustomWheelEventHandler Method
+Line ~195 (after semicolon split):
+
+paste(e){(0,s.paste)(e,this.textarea,this.coreService,this.optionsService)}attachCustomKeyEventHandler(e){this._customKeyEventHandler=e}attachCustomWheelEventHandler(e){this._customWheelEventHandler=e}registerLinkProvider(e){return this._linkProviderService.registerLinkProvider(e)}
+
+## Extract 2: Wheel Event in Mouse Protocol Handler (function i)
+Lines ~180-195:
+
+case"wheel":if(e._customWheelEventHandler&&!1===e._customWheelEventHandler(t))return!1
+if(0===e.viewport.getLinesScrolled(t))return!1
+r=t.deltaY<0?0:1,s=4
+break
+default:return!1}return!(void 0===r||void 0===s||s>4)&&e.coreMouseService.triggerMouseEvent({col:i.col,row:i.row,x:i.x,y:i.y,button:s,action:r,ctrl:t.ctrlKey,alt:t.altKey,shift:t.shiftKey})
+
+## Extract 3: Built-in Wheel Handler (Non-Mouse-Tracking)
+Lines ~190-195:
+
+this.register((0,r.addDisposableDomListener)(t,"wheel",(e=>{if(!s.wheel){if(this._customWheelEventHandler&&!1===this._customWheelEventHandler(e))return!1
+if(!this.buffer.hasScrollback){const t=this.viewport.getLinesScrolled(e)
+if(0===t)return
+const i=D.C0.ESC+(this.coreService.decPrivateModes.applicationCursorKeys?"O":"[")+(e.deltaY<0?"A":"B")
+let s=""
+for(let e=0
+e<Math.abs(t)
+e++)s+=i
+return this.coreService.triggerDataEvent(s,!0),this.cancel(e,!0)}return this.viewport.handleWheel(e)?this.cancel(e):void 0}}),{passive:!1}))
+
+## Extract 4: Mouse Protocol Change Handler
+Lines ~185-190:
+
+16&e?s.wheel||(t.addEventListener("wheel",n.wheel,{passive:!1}),s.wheel=n.wheel):(t.removeEventListener("wheel",s.wheel),s.wheel=null)
+
+## Extract 5: Buffer hasScrollback Property Definition
+From Buffer class:
+
+get hasScrollback(){return this._hasScrollback&&this.lines.maxLength>this._rows}
+

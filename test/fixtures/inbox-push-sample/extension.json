@@ -1,0 +1,21 @@
+{
+  "id": "inbox-push-sample",
+  "version": "1.0.0",
+  "title": "Inbox Push Sample",
+  "icon": "Bell",
+  "titleLabel": "Inbox Push Sample",
+  "entry": {
+    "main": "main.mjs",
+    "renderer": "renderer.js"
+  },
+  "engines": {
+    "zccApi": "^1.0.0"
+  },
+  "permissions": ["inbox:push"],
+  "projectTab": {
+    "label": "Inbox Push Sample",
+    "icon": "Bell",
+    "order": 100,
+    "global": true
+  }
+}

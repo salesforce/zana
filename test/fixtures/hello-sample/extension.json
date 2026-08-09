@@ -1,0 +1,23 @@
+{
+  "id": "hello-sample",
+  "version": "1.0.0",
+  "title": "Hello Sample",
+  "icon": "Sparkles",
+  "titleLabel": "Hello Sample",
+  "entry": {
+    "main": "main.mjs",
+    "renderer": "renderer.js"
+  },
+  "engines": {
+    "zccApi": "^1.0.0"
+  },
+  "permissions": [
+    "storage"
+  ],
+  "projectTab": {
+    "label": "Hello",
+    "icon": "Sparkles",
+    "order": 100,
+    "global": true
+  }
+}

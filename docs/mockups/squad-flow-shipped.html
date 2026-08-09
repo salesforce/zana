@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  /* Mirrors the shipped tokens + squad-flow-* CSS (global.css) and the
+     SquadFlowView layout constants (NODE_W 228, NODE_H 86, ROW_GAP 96). */
+  :root{
+    --bg-base:#0b0f15; --bg-panel:#10151c; --bg-elevated:#161c25; --bg-hover:#1a212c;
+    --border:#1f2731; --border-strong:#2a3340;
+    --text-bright:#e6edf3; --text-muted:#8b949e; --text-dim:#6e7681;
+    --accent-gold:#d4a017; --accent-blue:#2f81f7; --danger:#f85149; --success:#3fb950;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--bg-base)}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--text-bright);width:1180px;font-size:13px;-webkit-font-smoothing:antialiased}
+
+  /* board header + toggle */
+  .agents-board-header{display:flex;align-items:center;gap:10px;padding:13px 20px;border-bottom:1px solid var(--border);background:var(--bg-panel)}
+  .agents-board-header h3{font-size:14px;font-weight:600}
+  .agents-board-count{color:var(--text-dim);font-size:12px}
+  .grow{flex:1}
+  .agents-view-toggle{display:inline-flex;background:var(--bg-elevated);border:1px solid var(--border);border-radius:7px;padding:2px;gap:2px}
+  .agents-view-toggle-btn{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border:none;border-radius:5px;background:transparent;color:var(--text-muted);font:inherit;font-size:12px;font-weight:500;cursor:pointer}
+  .agents-view-toggle-btn.active{background:var(--bg-hover);color:var(--text-bright);box-shadow:0 0 0 1px var(--border-strong)}
+  .agents-view-toggle-btn svg{width:14px;height:14px}
+
+  .squad-flow-head{display:flex;align-items:center;gap:10px;padding:14px 24px 8px}
+  .squad-flow-icon{font-size:18px}
+  .squad-flow-name{font-size:14px;font-weight:600}
+  .squad-flow-rollup{display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap}
+  .squad-flow-stat{font-style:normal;font-size:11.5px;font-weight:500;color:var(--text-muted);background:var(--bg-elevated);border:1px solid var(--border);border-radius:999px;padding:3px 10px}
+  .squad-flow-stat.agent-working{color:var(--accent-gold);border-color:color-mix(in srgb,var(--accent-gold) 40%,transparent)}
+  .squad-flow-stat.agent-blocked{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,transparent)}
+  .squad-flow-stat.agent-idle{color:var(--success);border-color:color-mix(in srgb,var(--success) 40%,transparent)}
+  .squad-flow-stat--total{color:var(--text-bright)}
+
+  .squad-flow-canvas{position:relative;margin:0 24px 22px;height:360px;
+    background-image:radial-gradient(circle at 1px 1px, color-mix(in srgb,var(--text-dim) 22%,transparent) 1px, transparent 0);
+    background-size:22px 22px;border:1px solid var(--border);border-radius:12px;overflow:hidden}
+  .squad-flow-edges{position:absolute;inset:0;pointer-events:none}
+  .squad-flow-edge{fill:none;stroke:var(--text-dim);opacity:.6}
+  .squad-flow-edge--hot{stroke:var(--accent-gold);opacity:1}
+  .squad-flow-edge--pending{stroke-dasharray:7 5}
+
+  .squad-flow-node{position:absolute;display:flex;flex-direction:column;gap:5px;text-align:left;
+    background:var(--bg-elevated);border:1px solid var(--border-strong);border-radius:10px;padding:11px 13px;
+    box-shadow:0 4px 16px rgba(0,0,0,.3);width:228px}
+  .squad-flow-node--orch{border-color:color-mix(in srgb,var(--accent-gold) 55%,var(--border-strong));
+    box-shadow:0 0 0 1px color-mix(in srgb,var(--accent-gold) 28%,transparent),0 6px 20px rgba(0,0,0,.4)}
+  .squad-flow-node--exited{opacity:.5}
+  .squad-flow-node-top{display:flex;align-items:center;gap:8px}
+  .tab-agent-dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+  .tab-agent-dot.agent-working{background:var(--accent-gold);box-shadow:0 0 8px var(--accent-gold)}
+  .tab-agent-dot.agent-blocked{background:var(--danger);box-shadow:0 0 7px var(--danger)}
+  .tab-agent-dot.agent-done{background:var(--accent-blue);box-shadow:0 0 7px rgba(47,129,247,.6)}
+  .tab-agent-dot.agent-idle{background:var(--success)}
+  .squad-flow-node-label{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .squad-flow-orch-tag{margin-left:auto;font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--accent-gold);background:color-mix(in srgb,var(--accent-gold) 14%,transparent);padding:2px 7px;border-radius:5px}
+  .squad-flow-node-role{font-size:11px;color:var(--text-dim)}
+  .squad-flow-node-state{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11.5px}
+  .squad-flow-state-text.agent-working{color:var(--accent-gold)}
+  .squad-flow-state-text.agent-blocked{color:var(--danger)}
+  .squad-flow-state-text.agent-done{color:var(--accent-blue)}
+  .squad-flow-state-text.agent-idle{color:var(--success)}
+  .squad-flow-subagents{display:inline-flex;align-items:center;font-size:10.5px;color:var(--text-muted);background:var(--bg-hover);border:1px solid var(--border);padding:2px 7px;border-radius:5px}
+</style>
+</head>
+<body>
+  <div class="agents-board-header">
+    <h3>Agents</h3>
+    <span class="agents-board-count">4 live · 1 project</span>
+    <span class="grow"></span>
+    <div class="agents-view-toggle">
+      <button class="agents-view-toggle-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg></button>
+      <button class="agents-view-toggle-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></button>
+      <button class="agents-view-toggle-btn active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="15" y="15" width="6" height="6" rx="1"/><path d="M9 6h6a2 2 0 0 1 2 2v7"/><path d="M3 9v6"/></svg></button>
+    </div>
+  </div>
+
+  <div class="squad-flow-head">
+    <span class="squad-flow-icon">🤖</span>
+    <span class="squad-flow-name">Squad</span>
+    <span class="squad-flow-rollup">
+      <em class="squad-flow-stat agent-working">1 working</em>
+      <em class="squad-flow-stat agent-blocked">1 blocked</em>
+      <em class="squad-flow-stat agent-idle">1 idle</em>
+      <em class="squad-flow-stat squad-flow-stat--total">4 total</em>
+    </span>
+  </div>
+
+  <div class="squad-flow-canvas">
+    <svg class="squad-flow-edges" viewBox="0 0 1132 360" preserveAspectRatio="none">
+      <defs>
+        <marker id="sf-arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#6e7681"/></marker>
+        <marker id="sf-arrow-hot" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#d4a017"/></marker>
+      </defs>
+      <!-- orchestrator(566,102) -> three workers on the row below (y=198). Cubic, leaves bottom enters top. -->
+      <path class="squad-flow-edge" d="M566,102 C566,150 263,150 263,198" stroke-width="1.5" marker-end="url(#sf-arrow)"/>
+      <path class="squad-flow-edge" d="M566,102 C566,150 566,150 566,198" stroke-width="1.5" marker-end="url(#sf-arrow)"/>
+      <path class="squad-flow-edge squad-flow-edge--hot squad-flow-edge--pending" d="M566,102 C566,150 869,150 869,198" stroke-width="2.1" marker-end="url(#sf-arrow-hot)"/>
+    </svg>
+
+    <!-- orchestrator centered: x=(1132-228)/2=452, y=16 -->
+    <div class="squad-flow-node squad-flow-node--orch" style="left:452px;top:16px">
+      <div class="squad-flow-node-top">
+        <span class="tab-agent-dot agent-done"></span>
+        <span class="squad-flow-node-label">architect</span>
+        <span class="squad-flow-orch-tag">orchestrator</span>
+      </div>
+      <div class="squad-flow-node-role">architect</div>
+      <div class="squad-flow-node-state"><span class="squad-flow-state-text agent-done">done · 3m</span></div>
+    </div>
+
+    <!-- worker row: 3 nodes, centered. rowWidth=3*228+2*26=736; startX=(1132-736)/2=198; y=16+86+96=198 -->
+    <div class="squad-flow-node" style="left:198px;top:198px">
+      <div class="squad-flow-node-top">
+        <span class="tab-agent-dot agent-working"></span>
+        <span class="squad-flow-node-label">ux-designer</span>
+      </div>
+      <div class="squad-flow-node-role">ux-designer</div>
+      <div class="squad-flow-node-state">
+        <span class="squad-flow-state-text agent-working">working · 1m</span>
+        <span class="squad-flow-subagents">2 sub-agents</span>
+      </div>
+    </div>
+
+    <div class="squad-flow-node" style="left:452px;top:198px">
+      <div class="squad-flow-node-top">
+        <span class="tab-agent-dot agent-idle"></span>
+        <span class="squad-flow-node-label">frontend-dev</span>
+      </div>
+      <div class="squad-flow-node-role">frontend-dev</div>
+      <div class="squad-flow-node-state"><span class="squad-flow-state-text agent-idle">idle · 2m</span></div>
+    </div>
+
+    <div class="squad-flow-node" style="left:706px;top:198px">
+      <div class="squad-flow-node-top">
+        <span class="tab-agent-dot agent-blocked"></span>
+        <span class="squad-flow-node-label">frontend-dev-2</span>
+      </div>
+      <div class="squad-flow-node-role">frontend-dev</div>
+      <div class="squad-flow-node-state"><span class="squad-flow-state-text agent-blocked">needs you · 30s</span></div>
+    </div>
+  </div>
+</body>
+</html>

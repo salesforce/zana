@@ -1,0 +1,23 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+:root{--bg-base:#f6f8fa;--bg-elevated:#f0f3f6;--border-strong:#b8c0c8;--border:#d8dee4;--text-bright:#1f2328;--text-dim:#8c959f;--text-muted:#57606a;--accent-gold:#b88512;--accent-blue:#0969da;--success:#1a7f37;--danger:#cf222e;--bg-hover:#e6ebf1;}
+*{box-sizing:border-box;margin:0;padding:0}body{background:var(--bg-base);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text-bright);padding:40px;-webkit-font-smoothing:antialiased}
+.squad-flow-node{position:relative;display:flex;flex-direction:column;gap:5px;text-align:left;background:var(--bg-elevated);border:1px solid var(--border-strong);border-radius:10px;padding:11px 13px;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,.12);width:228px}
+.squad-flow-node--orch{border-color:color-mix(in srgb,var(--accent-gold) 55%,var(--border-strong))}
+.squad-flow-node-top{display:flex;align-items:center;gap:8px;min-width:0}
+.tab-agent-dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto;background:var(--accent-gold)}
+.squad-flow-node-label{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1 1 auto;min-width:0}
+.squad-flow-orch-tag{flex:0 0 auto;font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;white-space:nowrap;color:var(--accent-gold);background:color-mix(in srgb,var(--accent-gold) 14%,transparent);padding:2px 7px;border-radius:5px}
+.squad-flow-node-state{display:flex;align-items:center;gap:8px;font-size:11.5px;margin-top:2px}
+.squad-flow-state-text{color:var(--accent-gold)}
+</style></head><body>
+<div style="display:flex;gap:24px;align-items:flex-start">
+<div class="squad-flow-node squad-flow-node--orch">
+  <div class="squad-flow-node-top"><span class="tab-agent-dot"></span><span class="squad-flow-node-label">Code Review Squad</span><span class="squad-flow-orch-tag">orchestrator</span></div>
+  <div class="squad-flow-node-state"><span class="squad-flow-state-text">working · 13s</span></div>
+</div>
+<div class="squad-flow-node squad-flow-node--orch">
+  <div class="squad-flow-node-top"><span class="tab-agent-dot"></span><span class="squad-flow-node-label">A Very Long Squad Name That Definitely Overflows</span><span class="squad-flow-orch-tag">orchestrator</span></div>
+  <div class="squad-flow-node-state"><span class="squad-flow-state-text">working · 13s</span></div>
+</div>
+</div>
+</body></html>

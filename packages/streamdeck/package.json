@@ -1,0 +1,30 @@
+{
+  "name": "@zcc/streamdeck",
+  "version": "0.1.0",
+  "description": "Physical Elgato Stream Deck driver for Zana Command Center — live agent kanban on the keys, press to interact via the control plane",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "zcc-deck": "./dist/bin/zcc-deck.js",
+    "zcc-deck-sim": "./dist/bin/zcc-deck-sim.js",
+    "zcc-deck-demo": "./dist/bin/zcc-deck-demo.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "sim": "node dist/bin/zcc-deck-sim.js",
+    "demo": "node dist/bin/zcc-deck-demo.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {},
+  "optionalDependencies": {
+    "@elgato-stream-deck/node": "^7.1.2",
+    "@napi-rs/canvas": "^0.1.65"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.8"
+  }
+}

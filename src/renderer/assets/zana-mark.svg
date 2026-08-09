@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1a2333"/>
+      <stop offset="100%" stop-color="#0b0f15"/>
+    </linearGradient>
+    <linearGradient id="wing" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f6dfa3"/>
+      <stop offset="100%" stop-color="#d9b25c"/>
+    </linearGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fdf6e3"/>
+      <stop offset="100%" stop-color="#f0dfb4"/>
+    </linearGradient>
+    <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="18" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- rounded square background -->
+  <rect x="32" y="32" width="960" height="960" rx="200" ry="200" fill="url(#bg)"/>
+  <rect x="32" y="32" width="960" height="960" rx="200" ry="200"
+        fill="none" stroke="#2a3a55" stroke-width="4"/>
+
+  <!-- lower wings (larger, behind) -->
+  <g fill="url(#wing)" opacity="0.95">
+    <ellipse cx="330" cy="660" rx="230" ry="150" transform="rotate(-18 330 660)"/>
+    <ellipse cx="694" cy="660" rx="230" ry="150" transform="rotate(18 694 660)"/>
+  </g>
+
+  <!-- upper wings (smaller, in front) -->
+  <g fill="url(#wing)">
+    <ellipse cx="368" cy="470" rx="150" ry="105" transform="rotate(-24 368 470)"/>
+    <ellipse cx="656" cy="470" rx="150" ry="105" transform="rotate(24 656 470)"/>
+  </g>
+
+  <!-- wing vein accents -->
+  <g stroke="#a5773a" stroke-width="4" fill="none" opacity="0.55" stroke-linecap="round">
+    <path d="M330 540 Q 250 610 200 690"/>
+    <path d="M330 540 Q 300 630 260 720"/>
+    <path d="M694 540 Q 774 610 824 690"/>
+    <path d="M694 540 Q 724 630 764 720"/>
+  </g>
+
+  <!-- body / robe -->
+  <path d="M512 470
+           C 566 470 596 512 592 566
+           L 618 830
+           C 620 856 600 876 574 876
+           L 450 876
+           C 424 876 404 856 406 830
+           L 432 566
+           C 428 512 458 470 512 470 Z"
+        fill="url(#body)" stroke="#3f5a45" stroke-width="10"/>
+
+  <!-- head -->
+  <circle cx="512" cy="392" r="90" fill="url(#body)" stroke="#3f5a45" stroke-width="10"/>
+
+  <!-- face -->
+  <g stroke="#2f4436" stroke-width="8" stroke-linecap="round" fill="none">
+    <path d="M474 384 Q 484 372 496 384"/>
+    <path d="M528 384 Q 540 372 550 384"/>
+    <path d="M486 414 Q 512 430 538 414"/>
+  </g>
+
+  <!-- crown -->
+  <path d="M456 320 L 476 288 L 496 316 L 512 280 L 528 316 L 548 288 L 568 320"
+        fill="none" stroke="#d9b25c" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="512" cy="282" r="9" fill="#d9b25c"/>
+
+  <!-- wand + spark -->
+  <path d="M598 500 L 726 388" stroke="#3f5a45" stroke-width="10" stroke-linecap="round"/>
+  <g filter="url(#glow)">
+    <circle cx="748" cy="366" r="34" fill="#2f81f7"/>
+  </g>
+  <circle cx="748" cy="366" r="34" fill="#2f81f7"/>
+  <circle cx="738" cy="354" r="10" fill="#bcdcff" opacity="0.85"/>
+</svg>

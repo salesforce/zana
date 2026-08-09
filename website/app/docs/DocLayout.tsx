@@ -1,0 +1,81 @@
+import Link from 'next/link';
+import { DocsSidebar } from './DocsSidebar';
+import { DocsEnhancer } from './DocsEnhancer';
+import { DocsSearch } from './DocsSearch';
+import { getDocSiblings, type DocMeta, type TocItem } from '@/lib/docs';
+import { buildSearchIndex } from '@/lib/search-index';
+
+/** Right-hand "On this page" table of contents (scroll-spied client-side). */
+function DocsToc({ toc }: { toc: TocItem[] }) {
+  if (toc.length < 2) return <div className="docs-toc" aria-hidden="true" />;
+  return (
+    <nav className="docs-toc" aria-label="On this page">
+      <div className="toc-label">On this page</div>
+      {toc.map((t) => (
+        <a key={t.id} href={`#${t.id}`} className={t.level === 3 ? 'h3' : ''} title={t.text}>
+          {t.text}
+        </a>
+      ))}
+    </nav>
+  );
+}
+
+/** Prev / next pager in manifest order. */
+function DocsPager({ slug }: { slug: string }) {
+  const { prev, next } = getDocSiblings(slug);
+  if (!prev && !next) return null;
+  return (
+    <nav className="docs-pager" aria-label="Pagination">
+      {prev ? (
+        <Link href={`/docs/${prev.slug}/`} className="prev">
+          <span className="dir">← Previous</span>
+          <span className="ttl">{prev.title}</span>
+        </Link>
+      ) : (
+        <span />
+      )}
+      {next ? (
+        <Link href={`/docs/${next.slug}/`} className="next">
+          <span className="dir">Next →</span>
+          <span className="ttl">{next.title}</span>
+        </Link>
+      ) : (
+        <span />
+      )}
+    </nav>
+  );
+}
+
+export async function DocLayout({ meta, html, toc }: { meta: DocMeta; html: string; toc: TocItem[] }) {
+  const searchIndex = await buildSearchIndex();
+  return (
+    <div className="wrap">
+      {/* ⌘K search palette — index built at build time, hydrated client-side */}
+      <DocsSearch index={searchIndex} />
+      <div className="docs-shell">
+        <div className="docs-nav-wrap">
+          <DocsSidebar active={meta.slug} />
+        </div>
+
+        <div>
+          <div className="docs-breadcrumb">
+            <Link href="/docs/">Docs</Link>
+            <span className="sep">/</span>
+            <span>{meta.group}</span>
+            <span className="sep">/</span>
+            <span style={{ color: 'var(--muted)' }}>{meta.title}</span>
+          </div>
+
+          {/* mobile: sidebar collapses to a select */}
+          <DocsSidebar active={meta.slug} mobile />
+
+          <article className="prose" dangerouslySetInnerHTML={{ __html: html }} />
+          <DocsPager slug={meta.slug} />
+          <DocsEnhancer slug={meta.slug} />
+        </div>
+
+        <DocsToc toc={toc} />
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,32 @@
+version: 2
+updates:
+  # npm dependencies. Group the noisy, low-risk ecosystems into single PRs so we
+  # aren't drowning in one-line bumps; everything else opens individually.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      monaco-vscode:
+        patterns:
+          - "@codingame/monaco-vscode-*"
+          - "monaco-editor"
+          - "@monaco-editor/react"
+      xterm:
+        patterns:
+          - "@xterm/*"
+      types:
+        patterns:
+          - "@types/*"
+      dev-minor-patch:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+
+  # Keep the Actions in CI/release pinned-but-current.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly

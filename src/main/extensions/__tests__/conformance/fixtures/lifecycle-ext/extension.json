@@ -1,0 +1,9 @@
+{
+  "id": "conformance.lifecycle",
+  "title": "Lifecycle Conformance Fixture",
+  "icon": "Box",
+  "version": "1.0.0",
+  "engines": { "zccApi": "^1.0.0" },
+  "entry": { "main": "main.mjs", "renderer": "renderer.js" },
+  "permissions": ["storage"]
+}
