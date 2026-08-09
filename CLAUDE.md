@@ -422,7 +422,7 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   integration points. An environment-specific integration belongs in a separately
   distributed extension, never in the app source tree.
 
-- **Release artifacts are published to the PUBLIC repo github.com/grebmann1/zcc-releases.**
+- **Release artifacts are published to the PUBLIC repo github.com/salesforce/zana.**
   The auto-updater reads that public feed anonymously (no token, no VPN). When
   cutting a release, publish the new build there (`npm run release:mac` builds,
   notarizes, and publishes) so the auto-updater can offer it. See

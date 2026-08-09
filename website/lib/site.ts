@@ -4,10 +4,8 @@ export const site = {
   tagline: 'Run and orchestrate many Claude Code sessions across all your projects from one window.',
   repo: 'https://github.com/salesforce/zana',
   /** PUBLIC release feed (github.com) — where the notarized artifacts +
-   *  latest-mac.yml live and the auto-updater reads anonymously. Separate from
-   *  `repo` (the SOURCE) so the download button points at the public
-   *  releases while `git clone` still targets the source repo. */
-  releasesRepo: 'https://github.com/grebmann1/zcc-releases',
+   *  latest-mac.yml live and the auto-updater reads anonymously. */
+  releasesRepo: 'https://github.com/salesforce/zana',
   /** Canonical README on the repo host — the docs "Getting started" links here
    *  rather than re-rendering a copy that drifts from the source. */
   readmeUrl: 'https://github.com/salesforce/zana/blob/main/README.md',
