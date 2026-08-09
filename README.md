@@ -7,7 +7,7 @@ Zana Command Center is a desktop app (Electron) that turns Claude Code from a si
 ![Zana Command Center — orchestrating Claude Code sessions across projects](docs/assets/zana-command-center-demo.gif)
 
 <p align="center">
-  <a href="https://github.com/grebmann1/zcc-releases/releases/latest">
+  <a href="https://github.com/salesforce/zana/releases/latest">
     <img alt="Download the latest release" src="https://img.shields.io/badge/⬇_Download-Latest_Release-2ea44f?style=for-the-badge">
   </a>
 </p>
@@ -17,7 +17,7 @@ Zana Command Center is a desktop app (Electron) that turns Claude Code from a si
 ## Install
 
 > 💡 **Easiest path:** grab the installer from the
-> **[latest GitHub Release](https://github.com/grebmann1/zcc-releases/releases/latest)**
+> **[latest GitHub Release](https://github.com/salesforce/zana/releases/latest)**
 > (button above) and open the `.dmg`. No build step.
 
 **Recommended:** download and install the app from the **latest GitHub Release**
