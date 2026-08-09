@@ -1,0 +1,23 @@
+{
+  "name": "consensus",
+  "version": "0.1.1",
+  "private": true,
+  "type": "module",
+  "description": "A Zana Command Center extension.",
+  "scripts": {
+    "build:renderer": "BUILD_TARGET=renderer vite build",
+    "build:main": "BUILD_TARGET=main vite build",
+    "build": "npm run build:renderer && npm run build:main",
+    "package": "node scripts/package.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "react": "^18"
+  },
+  "devDependencies": {
+    "@zana-ai/zcc-extension-sdk": "^1.0.0",
+    "react": "^18.3.1",
+    "typescript": "^5.6.3",
+    "vite": "^6.4.3"
+  }
+}

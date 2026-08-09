@@ -1,0 +1,28 @@
+{
+  // Build config for publishing @zcc/harness-sdk (external consumers, someday).
+  // In-repo, core/tests resolve this package to src/* via path aliases (root
+  // tsconfig.json, electron.vite.config.ts, vitest.config.ts) and never touch
+  // this file. `npm run build` compiles src -> dist with declarations.
+  //
+  // NodeNext (not Bundler): src files write explicit `.js` import specifiers so
+  // plain `node` + external bundlers resolve emitted JS + d.ts with no rewrite.
+  // Mirrors packages/extension-sdk/tsconfig.build.json.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "noEmit": false
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/__tests__/**", "src/**/*.test.ts"]
+}

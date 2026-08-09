@@ -1,0 +1,268 @@
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState
+} from 'react';
+import { useFileDrop } from '../util/useFileDrop';
+import { useData } from '../store';
+import { fuzzyScore } from '../util/fuzzy';
+import { detectMention, applyMention, type MentionMatch } from '../util/mention';
+import { highlightMatches } from './palette/highlight';
+import { ImprovePromptButton } from './ImprovePromptButton';
+import { VoiceInputButton } from './VoiceInputButton';
+import type { WalkedFile } from '@shared/types';
+
+/**
+ * The agent-instruction box, shared by every launcher that takes a typed prompt
+ * (the project launcher, the quick-agent launcher). Owns the behaviour that was
+ * previously copy-pasted across those surfaces:
+ *   - ⌘/Ctrl+Enter submits (Enter alone keeps a multi-line instruction),
+ *   - drop a file (or absolute path) to splice its shell-quoted path at the
+ *     caret, padded so it doesn't fuse onto adjacent words, with a `drop-over`
+ *     highlight while dragging,
+ *   - type `@` to fuzzy-search files in the target project and insert one at the
+ *     caret (see {@link useMention}) — only when a `mentionProjectPath` is given.
+ *
+ * State stays lifted in the parent (controlled `value`/`onChange`) because each
+ * launcher seeds and reads the prompt for its own argv assembly. The parent
+ * grabs a {@link PromptComposerHandle} ref to autofocus.
+ */
+export interface PromptComposerHandle {
+  focus: () => void;
+}
+
+interface Props {
+  value: string;
+  onChange: (value: string) => void;
+  /** Invoked on ⌘/Ctrl+Enter. */
+  onSubmit: () => void;
+  placeholder?: string;
+  rows?: number;
+  /** Absolute path of the project whose files back the `@`-mention picker. When
+   *  absent (e.g. scratch mode with no resolved project) `@` does nothing. */
+  mentionProjectPath?: string;
+}
+
+/** Most files to rank/show in the `@`-mention popover at once. */
+const MENTION_MAX_RESULTS = 8;
+
+interface Ranked {
+  file: WalkedFile;
+  matchIdx: number[];
+}
+
+/**
+ * The `@`-mention picker state machine for one textarea. Watches the caret,
+ * lazily walks the project's files once per path, ranks them with the shared
+ * `fuzzyScore`, and returns the render props for a popover plus a keydown
+ * handler that steals ↑/↓/Enter/Tab/Esc while the popover is open. Selecting a
+ * row splices the file's posix `rel` path at the mention token.
+ */
+function useMention(
+  value: string,
+  onChange: (v: string) => void,
+  textareaRef: React.RefObject<HTMLTextAreaElement>,
+  projectPath: string | undefined
+) {
+  const [mention, setMention] = useState<MentionMatch | null>(null);
+  const [active, setActive] = useState(0);
+  // Files cached per project path — a walk can be large, so do it once.
+  const filesRef = useRef<{ path: string; files: WalkedFile[] } | null>(null);
+  const [files, setFiles] = useState<WalkedFile[] | null>(null);
+
+  // Recompute the mention token from the live caret position.
+  const refresh = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el || !projectPath) {
+      setMention(null);
+      return;
+    }
+    const m = detectMention(el.value, el.selectionStart ?? el.value.length);
+    setMention(m);
+    if (m) setActive(0);
+  }, [projectPath, textareaRef]);
+
+  // Load the project's file list the first time a mention opens for this path.
+  useEffect(() => {
+    if (!mention || !projectPath) return;
+    if (filesRef.current?.path === projectPath) {
+      setFiles(filesRef.current.files);
+      return;
+    }
+    let cancelled = false;
+    void window.cc.fs.walkFiles(projectPath).then((list) => {
+      if (cancelled) return;
+      filesRef.current = { path: projectPath, files: list };
+      setFiles(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [mention, projectPath]);
+
+  // Rank the walked files against the current query (empty query → first N).
+  let ranked: Ranked[] = [];
+  if (mention && files) {
+    const q = mention.query;
+    if (!q) {
+      ranked = files.slice(0, MENTION_MAX_RESULTS).map((file) => ({ file, matchIdx: [] }));
+    } else {
+      ranked = files
+        .map((file) => {
+          const s = fuzzyScore(file.rel, q);
+          return s ? { file, score: s.score, matchIdx: s.matchIdx } : null;
+        })
+        .filter((r): r is Ranked & { score: number } => r !== null)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, MENTION_MAX_RESULTS)
+        .map(({ file, matchIdx }) => ({ file, matchIdx }));
+    }
+  }
+
+  const open = mention !== null && ranked.length > 0;
+
+  const choose = useCallback(
+    (file: WalkedFile) => {
+      const el = textareaRef.current;
+      if (!el || !mention) return;
+      const caret = el.selectionStart ?? el.value.length;
+      const out = applyMention(value, mention, caret, file.rel);
+      onChange(out.value);
+      setMention(null);
+      requestAnimationFrame(() => {
+        el.focus();
+        el.setSelectionRange(out.caret, out.caret);
+      });
+    },
+    [mention, onChange, textareaRef, value]
+  );
+
+  // Steal navigation keys only while the popover is open; returns true if handled.
+  const onKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>): boolean => {
+      if (!open) return false;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setActive((i) => (i + 1) % ranked.length);
+        return true;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setActive((i) => (i - 1 + ranked.length) % ranked.length);
+        return true;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        choose(ranked[Math.min(active, ranked.length - 1)].file);
+        return true;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setMention(null);
+        return true;
+      }
+      return false;
+    },
+    [open, ranked, active, choose]
+  );
+
+  const close = useCallback(() => setMention(null), []);
+
+  return { open, ranked, active, setActive, choose, refresh, close, onKeyDown };
+}
+
+export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function PromptComposer(
+  { value, onChange, onSubmit, placeholder, rows = 3, mentionProjectPath },
+  ref
+) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const voiceInputEnabled = useData((s) => s.voiceInputEnabled);
+  useImperativeHandle(ref, () => ({ focus: () => textareaRef.current?.focus() }), []);
+
+  const mention = useMention(value, onChange, textareaRef, mentionProjectPath);
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mention.onKeyDown(e)) return; // popover consumed the key
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      onSubmit();
+    }
+  };
+
+  // Splice the dropped path(s) in at the caret, padding with a single space so
+  // they don't fuse onto adjacent words; restore the caret just past the insert.
+  const { dropOver, dropHandlers } = useFileDrop((insert) => {
+    const el = textareaRef.current;
+    const start = el?.selectionStart ?? value.length;
+    const end = el?.selectionEnd ?? value.length;
+    const before = value.slice(0, start);
+    const after = value.slice(end);
+    const lead = before && !/\s$/.test(before) ? ' ' : '';
+    const trail = after && !/^\s/.test(after) ? ' ' : '';
+    const caret = (before + lead + insert).length;
+    onChange(before + lead + insert + trail + after);
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(caret, caret);
+    });
+  });
+
+  return (
+    <div className="prompt-composer">
+      <textarea
+        ref={textareaRef}
+        data-testid="launch-instruction"
+        className={`launch-instruction ${dropOver ? 'drop-over' : ''}`}
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          mention.refresh();
+        }}
+        onKeyUp={mention.refresh}
+        onClick={mention.refresh}
+        onBlur={() => {
+          // Close on blur — but a row's mousedown (which preventDefaults, so the
+          // textarea keeps focus) fires its choose() first, so a genuine click
+          // still lands. A short delay guards against focus-shuffle races.
+          window.setTimeout(mention.close, 120);
+        }}
+        onKeyDown={onKeyDown}
+        {...dropHandlers}
+        rows={rows}
+      />
+      {mention.open && (
+        <div className="mention-popover" role="listbox" aria-label="Insert file">
+          {mention.ranked.map((r, i) => (
+            <button
+              type="button"
+              key={r.file.rel}
+              role="option"
+              aria-selected={i === mention.active}
+              className={`palette-item mention-item ${i === mention.active ? 'active' : ''}`}
+              // mousedown (not click) so it fires before the textarea's blur.
+              onMouseDown={(e) => {
+                e.preventDefault();
+                mention.choose(r.file);
+              }}
+              onMouseEnter={() => mention.setActive(i)}
+            >
+              {highlightMatches(r.file.rel, r.matchIdx)}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="prompt-composer-actions">
+        {voiceInputEnabled ? (
+          <VoiceInputButton value={value} onChange={onChange} textareaRef={textareaRef} />
+        ) : (
+          <span />
+        )}
+        <ImprovePromptButton value={value} onChange={onChange} />
+      </div>
+    </div>
+  );
+});

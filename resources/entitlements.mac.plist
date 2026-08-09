@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Electron's V8 JIT compiler requires this entitlement. Modern Electron/V8
+       uses the MAP_JIT path (allow-jit), so the legacy allow-unsigned-executable-memory
+       flag is unnecessary. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+
+  <!-- Allows the app to spawn child processes (node, bash, zsh) with modified
+       environment variables. Required for node-pty's pseudoterminal spawning
+       and shell command execution. -->
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+
+  <!-- Allow the app to access the microphone (required for voice-to-text
+       transcription under hardened runtime). The companion Info.plist key
+       NSMicrophoneUsageDescription (injected via electron-builder extendInfo)
+       provides the user-facing permission dialog string. -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+
+  <!-- REMOVED entitlements (can be restored if packaged build fails):
+       - com.apple.security.cs.disable-library-validation: bundled native modules
+         (node-pty, better-sqlite3) are re-signed during electron-builder's deep
+         sign, so library validation does not reject them. Over-broad weakening.
+       - com.apple.security.cs.allow-unsigned-executable-memory: legacy flag
+         superseded by allow-jit for modern V8. -->
+</dict>
+</plist>

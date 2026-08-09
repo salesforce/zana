@@ -1,0 +1,26 @@
+{
+  "name": "@zcc/harness-sdk",
+  "version": "0.1.0",
+  "description": "Dependency-free harness abstraction contracts for Zana Command Center — how to DESCRIBE a coding-agent harness (capabilities, action protocol), never the proprietary argv assembly.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/salesforce/zana"
+  },
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build"
+  }
+}

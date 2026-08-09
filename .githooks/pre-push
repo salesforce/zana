@@ -1,0 +1,23 @@
+#!/bin/sh
+# Pre-push gate: typecheck + unit tests must pass before any push.
+#
+# Wired up automatically by the `prepare` npm script (sets core.hooksPath to
+# .githooks on install). git.soma has no CI runners, so this local hook is the
+# real "tests before you share code" enforcement.
+#
+# Bypass for a genuine emergency (WIP branch, docs-only push):  git push --no-verify
+
+set -e
+
+# Skip when there's nothing to push (e.g. deleting a remote branch).
+if [ -z "$(git rev-parse --verify HEAD 2>/dev/null)" ]; then
+  exit 0
+fi
+
+echo "pre-push: typecheck…"
+npm run --silent typecheck
+
+echo "pre-push: tests…"
+npm test --silent
+
+echo "pre-push: ok"

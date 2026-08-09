@@ -1,0 +1,16 @@
+{
+  "id": "__EXT_ID__",
+  "version": "0.1.0",
+  "title": "__EXT_TITLE__",
+  "icon": "Puzzle",
+  "description": "__EXT_DESCRIPTION__",
+  "author": "You",
+  "entry": { "renderer": "dist/renderer.js" },
+  "engines": { "zccApi": "^__EXT_API_MAJOR__.0.0" },
+  "permissions": [],
+  "projectTab": {
+    "label": "__EXT_TITLE__",
+    "icon": "Puzzle",
+    "order": 200
+  }
+}

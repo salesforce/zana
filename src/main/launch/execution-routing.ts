@@ -1,0 +1,201 @@
+import type { AppConfig, HarnessModelRoutingV1, LaunchProfileId, Persona, ProjectSettings } from '../../shared/types.js';
+import type { HarnessPersonaFacet } from '../../shared/harness-adapter.js';
+import { harnessFamilyOf } from '../../shared/launch-provider.js';
+import { executionEvidenceFor, executionTargetFor } from '../harness/evidence-registry.js';
+import type { ExecutionConsentService } from '../harness/execution-consent.js';
+import type { ExecutionConsentScope, createExecutionConsentStore } from '../harness/execution-consent-store.js';
+import type { LaunchProvider } from '../harness/launch-provider.js';
+import { providerFor } from '../harness/registry.js';
+import { resolveExecutionState } from '../harness/target-resolution.js';
+import { resolveModelTarget, resolveRoleTarget } from '../harness/target-resolution.js';
+import { evaluateFacetEvidence, evaluateTargetEvidence } from '../harness/routing-evidence.js';
+import type { ExecutionAuthorizationInput, ExecutionPreflightDecision } from './preflight.js';
+import { preflightExecutionAuthorization } from './preflight.js';
+
+type ExecutionConsentStore = ReturnType<typeof createExecutionConsentStore>;
+
+export interface TerminalExecutionPreflightInput {
+  config: AppConfig;
+  profile: LaunchProfileId;
+  persona?: Persona;
+  projectSettings?: ProjectSettings;
+  harnessRouting?: HarnessModelRoutingV1;
+  extraArgs?: string[];
+  projectId: string;
+  projectPath?: string;
+  scope: 'local' | 'remote';
+  mode: ExecutionAuthorizationInput['mode'];
+  idempotencyKey: string;
+  /**
+   * Existing Team definitions predate structured persona-facet routing. Keep
+   * their established CLI persona args while still enforcing any explicit
+   * role/model/execution selection through the normal evidence gate.
+   */
+  legacyPersonaFacetCompatibility?: boolean;
+}
+
+export async function preflightTerminalExecution(
+  input: TerminalExecutionPreflightInput,
+  deps: {
+    consentStore: Pick<ExecutionConsentStore, 'reserve'>;
+    consentService?: Pick<ExecutionConsentService, 'request'>;
+    installedVersion: (adapterId: string) => Promise<string | undefined>;
+    provider?: LaunchProvider;
+  }
+): Promise<ExecutionPreflightDecision> {
+  const effectiveProfile = input.persona?.baseProfile ?? input.profile;
+  const provider = deps.provider ?? providerFor(effectiveProfile);
+  const adapterId = harnessFamilyOf(effectiveProfile) || provider.adapter.descriptor.id;
+  const resolved = resolveExecutionState(provider, {
+    config: input.config,
+    persona: input.persona,
+    projectSettings: input.projectSettings,
+    perTabRouting: input.harnessRouting,
+    profile: effectiveProfile,
+    extraArgs: input.extraArgs ?? [],
+    scope: input.scope
+  });
+  let installedVersion: string | undefined;
+  const preflight = resolveStructuredRouting(provider, input);
+  const combinationError = provider.validateRoutingCombination?.({
+    roleTargetId: preflight.role.targetId,
+    executionOrigin: preflight.execution.origin
+  });
+  if (combinationError) return { decision: 'blocked', reason: combinationError };
+  if (preflight.requested) {
+    installedVersion = await deps.installedVersion(adapterId);
+    const unavailable = await preflightStructuredRouting(provider, input, installedVersion, preflight);
+    if (unavailable) return { decision: 'blocked', reason: unavailable };
+  }
+  if (resolved.origin === 'inherited-native-default' || (resolved.origin === 'explicit-native' && !resolved.targetId)) {
+    // An unrestricted profile (e.g. claude-yolo) with no per-tab override resolves
+    // to 'explicit-native' but carries no target to validate — treat it the same
+    // as the native-default fallback rather than falling through to the
+    // target-required authorization path below.
+    return { decision: 'allowed', scope: input.scope };
+  }
+  if (resolved.origin === 'legacy-compatibility') {
+    const reason = auditLegacyCompatibility(adapterId, resolved);
+    return reason ? { decision: 'blocked', reason } : { decision: 'allowed', scope: input.scope };
+  }
+  const target = resolved.targetId ? executionTargetFor(provider, resolved.targetId) : undefined;
+  const consentScopes: readonly ExecutionConsentScope[] = input.mode === 'interactive'
+    ? ['one-launch', 'project']
+    : ['project'];
+  return preflightExecutionAuthorization({
+    adapterId,
+    provenance: resolved.origin,
+    target,
+    evidence: target ? executionEvidenceFor(target.id) : undefined,
+    installedVersion: installedVersion ?? await deps.installedVersion(adapterId),
+    scope: input.scope,
+    profilePosture: provider.adapter.descriptor.profiles.find(({ id }) => id === effectiveProfile)?.posture ?? 'other',
+    projectId: input.projectId,
+    mode: input.mode,
+    consentScopes,
+    idempotencyKey: input.idempotencyKey
+  }, {
+    reserve: deps.consentStore.reserve,
+    request: deps.consentService?.request.bind(deps.consentService)
+  });
+}
+
+function auditLegacyCompatibility(
+  adapterId: string,
+  resolved: ReturnType<typeof resolveExecutionState>
+): string | undefined {
+  if (adapterId !== 'codex' || !resolved.targetId?.startsWith('codex.native.') || !resolved.nativePolicy) {
+    return 'unaudited legacy compatibility target';
+  }
+  const { codexSandbox, codexApproval } = resolved.nativePolicy;
+  if (codexSandbox && !['read-only', 'workspace-write', 'danger-full-access'].includes(codexSandbox)) {
+    return 'invalid legacy sandbox policy';
+  }
+  if (codexApproval && !['untrusted', 'on-request', 'never'].includes(codexApproval)) {
+    return 'invalid legacy approval policy';
+  }
+  return undefined;
+}
+
+async function preflightStructuredRouting(
+  provider: LaunchProvider,
+  input: TerminalExecutionPreflightInput,
+  installedVersion: string | undefined,
+  resolved: ReturnType<typeof resolveStructuredRouting>
+): Promise<string | undefined> {
+  if (!installedVersion) return 'selected harness is unavailable or has no verifiable version';
+  const enabledFlag = ({
+    claude: true,
+    cursor: input.config.harnessCursorEnabled,
+    codex: input.config.harnessCodexEnabled,
+    pi: input.config.harnessPiEnabled,
+    opencode: input.config.harnessOpenCodeEnabled,
+    shell: false
+  } as const)[provider.adapter.descriptor.id];
+  if (enabledFlag === false) return 'selected harness is disabled';
+  for (const facet of resolved.facets) {
+    const evaluated = evaluateFacetEvidence(provider, facet, input.scope, installedVersion);
+    if (evaluated.classification === 'unavailable') return `${facet}: ${evaluated.reason}`;
+  }
+  const { role, model } = resolved;
+  if (role.targetId) {
+    const dynamicRoles = provider.discoverRoleTargets && input.projectPath
+      ? await provider.discoverRoleTargets({ cwd: input.projectPath, config: input.config })
+      : [];
+    const target = [...(provider.adapter.descriptor.targets?.roles ?? []), ...dynamicRoles]
+      .find(({ id }) => id === role.targetId);
+    if (!target) return 'role target unavailable';
+    const dynamic = provider.acceptsDynamicRoleTargets
+      && !provider.adapter.descriptor.targets?.roles.some(({ id }) => id === target.id);
+    const evidenceTarget = dynamic
+      ? provider.dynamicRoleEvidenceTarget?.(target, installedVersion)
+      : target;
+    if (!evidenceTarget) return 'role target: adapter has no evidence for discovered roles';
+    const evaluated = evaluateTargetEvidence(provider, evidenceTarget, input.scope, installedVersion);
+    if (evaluated.classification === 'unavailable') return `role target: ${evaluated.reason}`;
+  }
+  if (model.targetId && model.structuredSelected) {
+    const target = provider.adapter.descriptor.targets?.models.find(({ id }) => id === model.targetId);
+    if (!target) return 'model target unavailable';
+    const evaluated = evaluateTargetEvidence(provider, target, input.scope, installedVersion);
+    if (evaluated.classification === 'unavailable') return `model target: ${evaluated.reason}`;
+  }
+  return undefined;
+}
+
+function resolveStructuredRouting(provider: LaunchProvider, input: TerminalExecutionPreflightInput) {
+  const effectiveProfile = input.persona?.baseProfile ?? input.profile;
+  const resolutionInput = {
+    config: input.config,
+    persona: input.persona,
+    projectSettings: input.projectSettings,
+    perTabRouting: input.harnessRouting,
+    profile: effectiveProfile,
+    extraArgs: input.extraArgs ?? [],
+    scope: input.scope
+  };
+  const facets = input.legacyPersonaFacetCompatibility ? [] : personaFacets(input.persona);
+  const role = resolveRoleTarget(provider, resolutionInput);
+  const model = resolveModelTarget(provider, resolutionInput);
+  const execution = resolveExecutionState(provider, resolutionInput);
+  return {
+    facets,
+    role,
+    model,
+    execution,
+    requested: facets.length > 0 || !!role.targetId || model.structuredSelected
+      || (execution.origin === 'explicit-native' && !!execution.targetId) || execution.origin === 'portable-mapped'
+  };
+}
+
+function personaFacets(persona: Persona | undefined): HarnessPersonaFacet[] {
+  if (!persona) return [];
+  return [
+    persona.appendSystemPrompt ? 'system-instructions' : undefined,
+    persona.initialPrompt ? 'opening-prompt' : undefined,
+    persona.allowedTools?.length ? 'tool-allowlist' : undefined,
+    persona.deniedTools?.length ? 'tool-denylist' : undefined,
+    persona.addDirs?.length ? 'context-directories' : undefined,
+    persona.mcpServers?.length ? 'mcp-references' : undefined
+  ].filter((facet): facet is HarnessPersonaFacet => !!facet);
+}

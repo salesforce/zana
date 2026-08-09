@@ -1,0 +1,18 @@
+# Optional Heroku Container Registry deployment for the Zana website.
+# Set your application's name and public feed URLs before deploying.
+#
+# Deploy with the Container Registry (recommended — builds locally) OR with
+# `heroku stack:set container` + git push (Heroku builds from this file).
+# The `web` process runs the image's CMD (node server.js — Next's standalone
+# server), binding to $PORT.
+build:
+  docker:
+    web: Dockerfile
+  # NEXT_PUBLIC_* are inlined at BUILD time. When Heroku builds from heroku.yml,
+  # supply them here as build args so the pre-rendered pages embed the live feeds.
+  config:
+    NEXT_PUBLIC_APP_VERSION: "1.0.9"
+    # NEXT_PUBLIC_REGISTRY_URL: "https://<cdn>/extensions/index.json"
+    # NEXT_PUBLIC_UPDATE_FEED_URL: "https://<cdn>/app-updates/"
+run:
+  web: node server.js

@@ -1,0 +1,25 @@
+{
+  "id": "zana",
+  "version": "0.1.0",
+  "title": "Zana",
+  "icon": "Ticket",
+  "titleLabel": "Zana",
+  "entry": {
+    "main": "main.mjs",
+    "renderer": "renderer.js"
+  },
+  "engines": {
+    "zccApi": "^1.0.0"
+  },
+  "permissions": ["mcp", "exec", "net", "session:launch", "external:open"],
+  "permissionScopes": {
+    "mcpAllowlist": ["zana"],
+    "execAllowlist": ["npm"],
+    "egressAllowlist": ["registry.npmjs.org"]
+  },
+  "projectTab": {
+    "label": "Zana",
+    "icon": "Ticket",
+    "global": false
+  }
+}
