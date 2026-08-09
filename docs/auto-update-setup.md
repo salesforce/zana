@@ -7,7 +7,7 @@ GitHub Releases, signed with an Apple Developer ID certificate and notarized.
 ## How it works
 
 - electron-builder publishes `latest-mac.yml` + a `.zip` + `.dmg` to the public
-  GitHub Release repo **github.com/grebmann1/zcc-releases** for each `v*` tag
+  GitHub Release repo **github.com/salesforce/zana** for each `v*` tag
   (`publish:` block in `electron-builder.yml`).
 - On launch (and from **Settings → About → Check for updates**), the packaged
   app fetches `latest-mac.yml` from that public repo **anonymously** (no token,
@@ -72,10 +72,8 @@ base64 -i ZCC-DeveloperID.p12 | pbcopy
 
 ## One-time: add GitHub repo secrets
 
-You must configure these secrets in the **grebmann1/zcc-releases** GitHub repo
-(or your own fork if building locally) for CI publishing. The app SOURCE CODE
-repo does NOT need these secrets since the RELEASE ARTIFACTS are published to
-the separate public releases repo.
+You must configure these secrets in the **salesforce/zana** GitHub repository
+(or your own fork if building locally) for CI publishing.
 
 ### Finding your secrets
 
@@ -111,7 +109,7 @@ The password you set when exporting the .p12.
 
 ### Adding secrets to GitHub
 
-In the **grebmann1/zcc-releases** repo (on `github.com`):
+In the **salesforce/zana** repo (on `github.com`):
 
 1. Settings → Secrets and variables → Actions
 2. Click "New repository secret" for each:

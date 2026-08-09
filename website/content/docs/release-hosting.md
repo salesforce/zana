@@ -1,13 +1,9 @@
 # Release hosting — auto-updater feed + extension marketplace
 
-**Status:** As of 2026-07, release artifacts are published to the PUBLIC repo
-**github.com/grebmann1/zcc-releases** via electron-builder's github publish
-provider. The auto-updater reads `latest-mac.yml` + artifacts from that repo's
-GitHub Releases anonymously — no token or VPN required.
-
-The app SOURCE CODE lives on a separate public GitHub repo — only the RELEASE
-ARTIFACTS (the installable binaries, not the source) are published to the
-dedicated releases repo above.
+**Status:** Release artifacts are published to the public
+**github.com/salesforce/zana** repository via electron-builder's GitHub publish
+provider. The auto-updater reads `latest-mac.yml` and artifacts from that
+repository's GitHub Releases anonymously — no token or VPN required.
 
 ## Public release architecture
 
@@ -57,7 +53,7 @@ invariant):
 
 - **Updater** (`src/main/updater.ts`): if `ZCC_UPDATE_FEED_URL` (HTTPS) is set,
   the updater calls `autoUpdater.setFeedURL({ provider: 'generic', url })`,
-  overriding the GHE `publish` block. Unset → unchanged GHE behavior. Non-HTTPS →
+  overriding the GitHub `publish` block. Unset → unchanged GitHub behavior. Non-HTTPS →
   ignored (logged), never silently insecure.
 - **Marketplace** (`src/main/extension-registry.ts`): `ZCC_EXTENSION_REGISTRY_URL`
   supplies `registryUrl` when `~/.zcc/extension-registry.json` opts in
@@ -69,7 +65,7 @@ app's config seam) once the base URL exists.
 
 ## Publishing a release (runbook)
 
-Releases are built **locally** and published to **github.com/grebmann1/zcc-releases**
+Releases are built **locally** and published to **github.com/salesforce/zana**
 via electron-builder's `github` publish provider. No CI secrets required — you
 authenticate with your personal GitHub token (set as `GH_TOKEN` env var).
 
@@ -99,7 +95,7 @@ current version's file is shown in the auto-modal; the About screen can show the
 full history.)
 
 ```sh
-# Build, sign, notarize, and publish to github.com/grebmann1/zcc-releases
+# Build, sign, notarize, and publish to github.com/salesforce/zana
 # (release:mac runs the notes guard first, so a missing notes file stops here).
 export GH_TOKEN=<your-github-personal-access-token>
 npm run release:mac
@@ -108,7 +104,7 @@ npm run release:mac
 This produces `dist/latest-mac.yml` + `dist/*.zip` + `dist/*.dmg` (signed +
 notarized) and uploads them to the GitHub Release for the current version tag.
 **IMPORTANT:** After the release workflow completes, go to
-github.com/grebmann1/zcc-releases/releases and **mark the Release as published**
+github.com/salesforce/zana/releases and **mark the Release as published**
 (not draft) so the auto-updater can see it. The updater reads that repo
 anonymously, so a draft Release is invisible to it.
 
