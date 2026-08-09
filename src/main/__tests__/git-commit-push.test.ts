@@ -34,6 +34,11 @@ describe('Git workflow primitives', () => {
     repo = realpathSync(await mkdtemp(join(tmpdir(), 'zcc-git-')));
     remote = realpathSync(await mkdtemp(join(tmpdir(), 'zcc-git-remote-')));
     await git(repo, 'init', '-b', 'main');
+    // The implementation invokes git without test-only environment overrides.
+    // Keep the fixture self-contained instead of depending on a developer's
+    // global Git identity.
+    await git(repo, 'config', 'user.name', 'Test');
+    await git(repo, 'config', 'user.email', 'test@example.com');
     await writeFile(join(repo, 'file.txt'), 'one\n');
     await git(repo, 'add', '.');
     await git(repo, 'commit', '-m', 'initial');
