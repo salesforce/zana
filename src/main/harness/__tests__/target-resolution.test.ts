@@ -1,0 +1,343 @@
+import { describe, expect, it } from 'vitest';
+import type { AppConfig } from '../../../shared/types.js';
+import { providerFor } from '../registry.js';
+import { resolveModelTarget, resolveRoleTarget } from '../target-resolution.js';
+
+const config = (): AppConfig => ({
+  version: 1,
+  theme: 'dark',
+  shell: '/bin/zsh',
+  claudeBinary: 'claude',
+  fontSize: 13,
+  lastProjectId: null,
+});
+
+describe('target-resolution main authorization', () => {
+  const opencode = providerFor('opencode');
+
+  it('resolves model routing through Agent > Persona > Project > Global precedence', () => {
+    const global = {
+      schemaVersion: 1 as const,
+      byAdapter: { opencode: { modelTargetId: 'aisuite/gpt-5.6-luna' } }
+    };
+    const project = {
+      schemaVersion: 1 as const,
+      byAdapter: { opencode: { modelTargetId: 'aisuite/gpt-5.6-terra' } }
+    };
+    const persona = { id: 'p', name: 'P', modelLevel: 'high' as const };
+    const agent = {
+      schemaVersion: 1 as const,
+      byAdapter: { opencode: { modelTargetId: 'aisuite/gemini-3.5-flash' } }
+    };
+    const resolve = (overrides: Record<string, unknown> = {}) => resolveModelTarget(opencode, {
+      config: { ...config(), harnessRouting: global },
+      profile: 'opencode',
+      extraArgs: [],
+      scope: 'local',
+      ...overrides
+    });
+
+    expect(resolve()).toMatchObject({ source: 'global', targetId: 'aisuite/gpt-5.6-luna' });
+    expect(resolve({ projectSettings: { harnessRouting: project } })).toMatchObject({
+      source: 'project', targetId: 'aisuite/gpt-5.6-terra'
+    });
+    expect(resolve({ projectSettings: { harnessRouting: project }, persona })).toMatchObject({
+      source: 'persona', targetId: 'aisuite/gpt-5.6-sol'
+    });
+    expect(resolve({ projectSettings: { harnessRouting: project }, persona, perTabRouting: agent })).toMatchObject({
+      source: 'per-tab', targetId: 'aisuite/gemini-3.5-flash'
+    });
+  });
+
+  it('uses a concrete persona harness model target before portable intent', () => {
+    const resolved = resolveModelTarget(opencode, {
+      config: config(),
+      profile: 'opencode',
+      extraArgs: [],
+      scope: 'local',
+      persona: {
+        id: 'p',
+        name: 'P',
+        baseProfile: 'opencode',
+        modelLevel: 'low',
+        harnessRouting: {
+          schemaVersion: 1,
+          byAdapter: { opencode: { modelTargetId: 'aisuite/gpt-5.6-sol' } }
+        }
+      }
+    });
+
+    expect(resolved).toMatchObject({
+      source: 'persona',
+      targetId: 'aisuite/gpt-5.6-sol',
+      structuredSelected: true
+    });
+  });
+
+  it('rejects malformed renderer routing before resolving a target', () => {
+    expect(() => resolveModelTarget(opencode, {
+      config: config(),
+      profile: 'opencode',
+      extraArgs: [],
+      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: '' } } },
+      scope: 'local'
+    })).toThrow('Invalid structured model routing request.');
+  });
+
+  it('rejects remote model targets when adapter metadata does not support them', () => {
+    expect(() => resolveModelTarget(opencode, {
+      config: config(),
+      profile: 'opencode',
+      extraArgs: [],
+      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'aisuite/gpt-5.6-terra' } } },
+      scope: 'remote'
+    })).toThrow('model target is unavailable for remote launches');
+  });
+
+  it('only emits native arguments from a trusted catalog target', () => {
+    const resolved = resolveModelTarget(opencode, {
+      config: config(),
+      profile: 'opencode',
+      extraArgs: [],
+      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'aisuite/gpt-5.6-terra' } } },
+      scope: 'local'
+    });
+    expect(resolved.contribution.args).toEqual(['--model', 'aisuite/gpt-5.6-terra']);
+  });
+
+  it('validates provider target as a filter over the effective combined model target', () => {
+    expect(() => resolveModelTarget(opencode, {
+      config: config(), profile: 'opencode', extraArgs: [], scope: 'local',
+      perTabRouting: {
+        schemaVersion: 1,
+        byAdapter: {
+          opencode: { providerTargetId: 'anthropic', modelTargetId: 'aisuite/gpt-5.6-sol' }
+        }
+      }
+    })).toThrow('model target does not belong to selected provider');
+  });
+
+  it('resolves provider routing through Agent > Persona > Project > Global precedence', () => {
+    const resolved = resolveModelTarget(opencode, {
+      config: {
+        ...config(),
+        harnessRouting: {
+          schemaVersion: 1,
+          byAdapter: { opencode: { providerTargetId: 'google', modelTargetId: 'aisuite/gemini-3.5-flash' } }
+        }
+      },
+      profile: 'opencode',
+      extraArgs: [],
+      scope: 'local',
+      projectSettings: {
+        harnessRouting: {
+          schemaVersion: 1,
+          byAdapter: { opencode: { providerTargetId: 'anthropic', modelTargetId: 'aisuite/us.anthropic.claude-sonnet-5' } }
+        }
+      },
+      persona: {
+        id: 'p',
+        name: 'P',
+        baseProfile: 'opencode',
+        harnessRouting: {
+          schemaVersion: 1,
+          byAdapter: { opencode: { providerTargetId: 'openai', modelTargetId: 'aisuite/gpt-5.6-sol' } }
+        }
+      }
+    });
+
+    expect(resolved).toMatchObject({
+      source: 'persona',
+      providerTargetId: 'openai',
+      targetId: 'aisuite/gpt-5.6-sol'
+    });
+  });
+
+  it('requires a concrete compatible model for combined provider/model selection', () => {
+    expect(() => resolveModelTarget(opencode, {
+      config: config(),
+      profile: 'opencode',
+      extraArgs: [],
+      scope: 'local',
+      perTabRouting: {
+        schemaVersion: 1,
+        byAdapter: { opencode: { providerTargetId: 'anthropic' } }
+      }
+    })).toThrow('requires a concrete compatible model target');
+  });
+
+  it('uses persona model level instead of an obsolete exact persona target', () => {
+    const resolved = resolveModelTarget(opencode, {
+      config: config(),
+      profile: 'opencode',
+      extraArgs: [],
+      persona: {
+        id: 'test',
+        name: 'Test',
+        modelLevel: 'high',
+        harnessRouting: {
+          schemaVersion: 1,
+          byAdapter: { opencode: { modelTargetId: 'aisuite/gemini-3.1-pro-preview' } }
+        }
+      },
+      scope: 'local'
+    });
+    expect(resolved.targetId).toBe('aisuite/gpt-5.6-sol');
+    expect(resolved.contribution.args).toEqual(['--model', 'aisuite/gpt-5.6-sol']);
+  });
+
+  it('maps one portable project model level through the selected harness', () => {
+    const resolved = resolveModelTarget(opencode, {
+      config: config(),
+      profile: 'opencode',
+      extraArgs: [],
+      projectSettings: { modelLevel: 'high' },
+      scope: 'local'
+    });
+    expect(resolved.source).toBe('project');
+    expect(resolved.targetId).toBe('aisuite/gpt-5.6-sol');
+  });
+
+  it.each([
+    ['cursor', 'low'],
+    ['cursor', 'extra-high'],
+    ['opencode', 'extra-high'],
+    ['pi', 'low'],
+    ['pi', 'medium'],
+    ['pi', 'high'],
+    ['pi', 'extra-high']
+  ] as const)('fails closed when %s has no explicit %s model-level mapping', (profile, modelLevel) => {
+    expect(() => resolveModelTarget(providerFor(profile), {
+      config: config(),
+      profile,
+      extraArgs: [],
+      perTabRouting: {
+        schemaVersion: 1,
+        byAdapter: { [profile]: { modelLevel } }
+      },
+      scope: 'local'
+    })).toThrow(`does not support ${modelLevel} model level`);
+  });
+
+  it('prefers harness-specific project model over interim generic project level', () => {
+    const resolved = resolveModelTarget(opencode, {
+      config: config(),
+      profile: 'opencode',
+      extraArgs: [],
+      projectSettings: {
+        modelLevel: 'low',
+        harnessRouting: {
+          schemaVersion: 1,
+          byAdapter: { opencode: { modelTargetId: 'aisuite/gpt-5.6-sol' } }
+        }
+      },
+      scope: 'local'
+    });
+    expect(resolved.targetId).toBe('aisuite/gpt-5.6-sol');
+  });
+
+  it('prefers portable persona model over project model', () => {
+    const resolved = resolveModelTarget(opencode, {
+      config: config(), profile: 'opencode', extraArgs: [], scope: 'local',
+      projectSettings: { modelLevel: 'low' },
+      persona: { id: 'p', name: 'P', modelLevel: 'high' }
+    });
+    expect(resolved.source).toBe('persona');
+    expect(resolved.targetId).toBe('aisuite/gpt-5.6-sol');
+  });
+
+  it('keeps neutral legacy concrete Persona and Project models on Claude/Codex adapters', () => {
+    for (const profile of ['opencode', 'cursor', 'pi'] as const) {
+      expect(resolveModelTarget(providerFor(profile), {
+        config: config(), profile, extraArgs: [], scope: 'local',
+        persona: { id: 'p', name: 'P', model: 'legacy-persona-model' },
+        projectSettings: { model: 'legacy-project-model' }
+      }).targetId).toBeUndefined();
+    }
+    expect(resolveModelTarget(providerFor('claude'), {
+      config: config(), profile: 'claude', extraArgs: [], scope: 'local',
+      persona: { id: 'p', name: 'P', model: 'opus' }
+    }).targetId).toBe('opus');
+    expect(resolveModelTarget(providerFor('codex'), {
+      config: config(), profile: 'codex', extraArgs: [], scope: 'local',
+      projectSettings: { model: 'gpt-4o' }
+    }).targetId).toBe('gpt-4o');
+  });
+
+  it('rejects persona role targets outside adapter-owned scope', () => {
+    expect(() => resolveRoleTarget(opencode, {
+      config: config(),
+      profile: 'opencode',
+      extraArgs: [],
+      persona: {
+        id: 'test',
+        name: 'Test',
+        baseProfile: 'opencode',
+        harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { roleTargetId: 'custom-agent' } } }
+      },
+      scope: 'remote'
+    })).toThrow('role target is unavailable for remote launches');
+  });
+
+  it('applies adapter-scoped role target from a neutral Persona after harness selection', () => {
+    expect(resolveRoleTarget(opencode, {
+      config: config(), profile: 'opencode', extraArgs: [], scope: 'local',
+      persona: {
+        id: 'neutral', name: 'Neutral',
+        harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { roleTargetId: 'custom-agent' } } }
+      }
+    })).toMatchObject({ source: 'Persona', targetId: 'custom-agent', contribution: { args: ['--agent', 'custom-agent'] } });
+  });
+
+  it('uses neutral persona role targets only after owning adapter is selected', () => {
+    expect(resolveRoleTarget(opencode, {
+      config: config(),
+      profile: 'opencode',
+      extraArgs: [],
+      persona: {
+        id: 'test',
+        name: 'Test',
+        harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { roleTargetId: 'custom-agent' } } }
+      },
+      scope: 'local'
+    })).toMatchObject({ source: 'Persona', targetId: 'custom-agent', contribution: { args: ['--agent', 'custom-agent'] } });
+  });
+
+  it('rejects structured Codex model selection combined with raw short model flag', () => {
+    expect(() => resolveModelTarget(providerFor('codex'), {
+      config: config(),
+      profile: 'codex',
+      extraArgs: ['-m', 'gpt-5'],
+      perTabRouting: { schemaVersion: 1, byAdapter: { codex: { modelTargetId: 'gpt-4o' } } },
+      scope: 'local'
+    })).toThrow('conflicts with raw --model arguments');
+  });
+
+  it('rejects structured role selection combined with split or attached native role flags', () => {
+    const persona = {
+      id: 'p',
+      name: 'P',
+      baseProfile: 'opencode' as const,
+      harnessRouting: { schemaVersion: 1 as const, byAdapter: { opencode: { roleTargetId: 'custom-agent' } } }
+    };
+    for (const extraArgs of [['--agent', 'build'], ['--agent=build']]) {
+      expect(() => resolveRoleTarget(opencode, {
+        config: config(), profile: 'opencode', extraArgs, persona, scope: 'local'
+      })).toThrow('Structured role selection conflicts with raw role arguments.');
+    }
+  });
+
+  it('does not treat native role flags after -- as structured collisions', () => {
+    expect(resolveRoleTarget(opencode, {
+      config: config(),
+      profile: 'opencode',
+      extraArgs: ['--', '--agent=build'],
+      persona: {
+        id: 'p', name: 'P',
+        baseProfile: 'opencode',
+        harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { roleTargetId: 'custom-agent' } } }
+      },
+      scope: 'local'
+    }).contribution.args).toEqual(['--agent', 'custom-agent']);
+  });
+});

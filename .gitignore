@@ -1,0 +1,47 @@
+node_modules
+out
+dist
+# Embedded opencode binaries, downloaded at build time by
+# scripts/fetch-opencode-binaries.mjs (npm run fetch:opencode) — not source.
+vendor/opencode
+# Stray root main-bundle artifact (electron-vite emits the real bundle to
+# out/main/index.js — package.json `main` points there, never at ./index.js).
+/index.js
+# ...but the local-extension starter SHIPS its dist/renderer.js as the panel the
+# app copies into every new extension (electron-builder packs templates/ as
+# extension-template). Without this negation the `dist` rule above silently drops
+# it, so a clean checkout / CI build ships the template with no panel.
+!templates/extension-starter/dist/
+!templates/extension-starter/dist/**
+!templates/extension-starter/**/dist/
+!templates/extension-starter/**/dist/**
+.DS_Store
+*.orig
+*.rej
+.fastcontext/trajectory_*.jsonl
+.idea/
+
+# Playwright E2E artifacts (reports, traces, screenshots) — regenerated per run.
+playwright-report
+test-results
+e2e/.artifacts
+e2e-artifacts/
+*.log
+.env
+.env.local
+*.pre-vscode-bak
+.claude/settings.local.json
+# Agent git worktrees created under .claude/ (embedded repos, large)
+.claude/worktrees/
+.zana/
+
+# Local tool cache (understand-anything knowledge-graph indexer)
+.understand-anything/
+
+# App runtime data (schedules, inbox, MCP config, personas, teams, and
+# project-library content) is written by the app and must not be committed.
+.zcc/
+
+
+# menubar-popover dev preview screenshots
+.mbp-live.png

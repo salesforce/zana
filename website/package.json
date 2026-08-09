@@ -1,0 +1,40 @@
+{
+  "name": "zana-command-center-website",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Marketing, marketplace, docs, and download site for Zana Command Center",
+  "scripts": {
+    "sync-docs": "node scripts/sync-docs.mjs",
+    "predev": "node scripts/sync-docs.mjs",
+    "dev": "next dev -p 4321",
+    "prebuild": "node scripts/sync-docs.mjs",
+    "build": "next build",
+    "start": "next start -p 4321",
+    "lint": "next lint",
+    "db:generate": "npm run db:generate:sqlite && npm run db:generate:pg",
+    "db:generate:sqlite": "drizzle-kit generate",
+    "db:generate:pg": "DRIZZLE_DIALECT=pg drizzle-kit generate",
+    "db:migrate": "node -e \"const p='./lib/db/migrate.mjs'; import(p).catch(e=>{ if(e.code==='ERR_MODULE_NOT_FOUND'){console.log('db:migrate: lib/db/migrate.mjs not present yet (Phase 1) — skipping.'); process.exit(0);} throw e; })\"",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.36.4",
+    "marked": "^12.0.2",
+    "next": "^16.0.0",
+    "pg": "^8.13.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "shiki": "^1.29.2",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^20.14.0",
+    "@types/pg": "^8.11.10",
+    "@types/react": "^18.3.3",
+    "better-sqlite3": "^12.11.1",
+    "drizzle-kit": "^0.28.1",
+    "typescript": "^5.5.4",
+    "vitest": "^4.1.8"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  // Build config for publishing @zana-ai/zcc-extension-sdk to npm (external consumers).
+  // In-repo, core/plugins/tests resolve this package to src/* via path aliases
+  // (root tsconfig.json, electron.vite.config.ts, vitest.config.ts) and never
+  // touch this file. `npm run build` (and prepublishOnly) compiles src -> dist
+  // with declarations so external extensions get runtime JS + .d.ts.
+  //
+  // NodeNext is chosen over Bundler: the src files already write explicit `.js`
+  // import specifiers (e.g. `./renderer.js`), and NodeNext emits them verbatim
+  // so plain `node` and external bundlers resolve the subpath JS + d.ts without
+  // an extension-rewriting build step. (`tsc` never rewrites specifiers.)
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "noEmit": false
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/__tests__/**", "src/**/*.test.ts"]
+}

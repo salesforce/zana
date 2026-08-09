@@ -1,0 +1,42 @@
+[
+  {
+    "slug": "getting-started",
+    "title": "Getting started",
+    "group": "Start"
+  },
+  {
+    "slug": "using-zana",
+    "title": "Using Zana Command Center",
+    "group": "Start"
+  },
+  {
+    "slug": "cli",
+    "title": "The zcc CLI",
+    "group": "Start"
+  },
+  {
+    "slug": "extensions-quickstart",
+    "title": "Build your first extension",
+    "group": "Extensions"
+  },
+  {
+    "slug": "extensions",
+    "title": "Extensions overview",
+    "group": "Extensions"
+  },
+  {
+    "slug": "extensions-authoring",
+    "title": "Authoring extensions",
+    "group": "Extensions"
+  },
+  {
+    "slug": "extensions-sdk-reference",
+    "title": "Extension SDK reference",
+    "group": "Extensions"
+  },
+  {
+    "slug": "release-hosting",
+    "title": "Release & marketplace hosting",
+    "group": "Operate"
+  }
+]

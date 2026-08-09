@@ -1,0 +1,18 @@
+{
+  "name": "@zcc-ext/zana",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Zana per-project tickets board + data provider — a full disk extension (main+renderer) reaching ticket/sprint/artifact/profile data through the host MCP pool over the brokered `mcp` capability.",
+  "scripts": {
+    "build:renderer": "BUILD_TARGET=renderer vite build",
+    "build:main": "BUILD_TARGET=main vite build",
+    "build": "npm run build:renderer && npm run build:main",
+    "package": "node scripts/package.mjs",
+    "dev": "node scripts/dev.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "react": "^18"
+  }
+}

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Inherit entitlements for child processes spawned by the app. This file
+       is applied to all executables and frameworks bundled within the app
+       (Electron Helper processes, node binaries, etc.). Must match the parent
+       entitlements to avoid signature validation failures. -->
+
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+
+  <!-- REMOVED entitlements (can be restored if packaged build fails):
+       - com.apple.security.cs.disable-library-validation: bundled native modules
+         are re-signed during electron-builder's deep sign.
+       - com.apple.security.cs.allow-unsigned-executable-memory: superseded by
+         allow-jit for modern V8. -->
+</dict>
+</plist>

@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "releases": [
+    {
+      "id": "consensus",
+      "version": "0.2.0",
+      "zccApi": "^1.0.0",
+      "url": "https://extensions.example.com/consensus-0.2.0.json",
+      "sha256": "a9ae4a53a545ba36024286d785650ea88731834f1fa1b7bbe764ba3dbcc9bb68",
+      "permissions": [
+        "storage",
+        "projects:read",
+        "session:launch",
+        "mcp"
+      ],
+      "title": "Consensus",
+      "icon": "Scale"
+    }
+  ]
+}

@@ -1,0 +1,98 @@
+name: CI
+
+# Gate every change that targets main: typecheck + unit tests must pass before
+# a PR can merge. release.yml re-runs the same gate on tag pushes, but this is
+# the one wired into branch protection (a required status check on main).
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+# A new push to a PR cancels the previous run for that PR — no point burning
+# minutes on a commit that's already superseded. main pushes use the ref so they
+# don't cancel each other.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # node-pty / better-sqlite3 are native; `npm ci` runs their install
+      # scripts. distutils was dropped from Python 3.12 stdlib, so pin 3.11
+      # where node-gyp can still import it (matches release.yml).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+  # E2E (Playwright + real Electron) is informational, NOT a required check —
+  # it launches the whole app under a headless X server (xvfb) and exercises the
+  # marketplace install path against a signed local HTTPS registry. Kept off the
+  # branch-protection gate (which is `verify` only) so an E2E flake never blocks
+  # a merge; promote it to required once it has proven stable over many runs.
+  e2e:
+    name: E2E (Playwright + Electron)
+    runs-on: ubuntu-latest
+    # Don't fail the overall workflow on an E2E flake while it bakes.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Electron needs a display + the usual Chromium shared libs. xvfb-run
+      # supplies a virtual X server; playwright's dep installer pulls the libs.
+      - name: Install system deps for headless Electron
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          npx playwright install-deps chromium
+
+      - name: Build app
+        run: npm run build
+
+      - name: E2E tests
+        run: xvfb-run -a npm run test:e2e:only
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results
+          retention-days: 7
+          if-no-files-found: ignore
