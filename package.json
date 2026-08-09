@@ -56,7 +56,7 @@
     "electron-updater": "^6.8.9",
     "lucide-react": "^0.453.0",
     "mermaid": "^11.15.0",
-    "monaco-editor": "^0.55.1",
+    "monaco-editor": "^0.56.0",
     "node-pty": "^1.0.0",
     "react": "^18.3.1",
     "react-diff-viewer-continued": "^4.3.0",
