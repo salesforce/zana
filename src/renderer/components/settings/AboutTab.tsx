@@ -76,7 +76,7 @@ function updateStatusView(
 }
 
 /** Public release feed — the About tab links here for full release notes. */
-const RELEASE_NOTES_URL = 'https://github.com/grebmann1/zcc-releases/releases';
+const RELEASE_NOTES_URL = 'https://github.com/salesforce/zana/releases';
 
 /**
  * The update-status "card": a status-first surface (icon + title + detail on the

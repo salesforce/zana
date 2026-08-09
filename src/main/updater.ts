@@ -306,7 +306,7 @@ export function createUpdater(deps: UpdaterDeps): Updater {
   }
 
   // Feed host is config, not code: the `publish` block in electron-builder.yml
-  // defaults to the public github.com release repo (grebmann1/zcc-releases), so
+  // defaults to the public github.com release repo (salesforce/zana), so
   // electron-updater's built-in `GitHubProvider` works anonymously with no token
   // or VPN. When `ZCC_UPDATE_FEED_URL` is set, point the updater at that static
   // HTTPS base via electron-updater's `generic` provider instead — it reads

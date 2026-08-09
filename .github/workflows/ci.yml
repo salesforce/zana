@@ -82,6 +82,10 @@ jobs:
 
       - name: Build app
         run: npm run build
+        env:
+          # The renderer bundle includes Monaco and exceeds Node's default heap
+          # on GitHub-hosted runners.
+          NODE_OPTIONS: --max-old-space-size=6144
 
       - name: E2E tests
         run: xvfb-run -a npm run test:e2e:only
