@@ -54,7 +54,7 @@
     "better-sqlite3": "^11.10.0",
     "croner": "^10.0.1",
     "electron-updater": "^6.8.9",
-    "lucide-react": "^0.453.0",
+    "lucide-react": "^1.29.0",
     "mermaid": "^11.15.0",
     "monaco-editor": "^0.55.1",
     "node-pty": "^1.0.0",
