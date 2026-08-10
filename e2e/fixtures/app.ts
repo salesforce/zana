@@ -41,6 +41,7 @@ import { EventRecorder } from '../sdk/events';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const MAIN_ENTRY = join(REPO_ROOT, 'out/main/index.js');
+const PACKAGE_VERSION = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')).version as string;
 
 export interface RegistryConfig {
   enabled: boolean;
@@ -54,6 +55,16 @@ export function writeRegistryConfig(home: string, cfg: RegistryConfig): void {
   const dir = join(home, '.zcc');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'extension-registry.json'), JSON.stringify(cfg, null, 2));
+}
+
+/** Seed first-run state that is not part of the UI behavior under test. */
+function writeAppConfig(home: string): void {
+  const dir = join(home, '.zcc');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, 'config.json'),
+    JSON.stringify({ walkthroughCompleted: true, setupDismissed: true }, null, 2)
+  );
 }
 
 /**
@@ -165,10 +176,14 @@ export interface LaunchOptions {
  * path without duplicating it.
  */
 export async function launchApp(home: string, opts: LaunchOptions = {}): Promise<AppHandle> {
+  writeAppConfig(home);
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
     HOME: home,
     ZCC_EXTENSIONS_DIR: join(home, '.zcc', 'extensions'),
+    // Electron's unpackaged default is "0.0". The main process uses this only
+    // in E2E so the smoke test observes the same version as package.json.
+    ZCC_E2E_APP_VERSION: PACKAGE_VERSION,
     ...(opts.e2e ? { ZCC_E2E: '1' } : {}),
     ...opts.env,
   };
