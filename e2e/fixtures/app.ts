@@ -61,7 +61,10 @@ export function writeRegistryConfig(home: string, cfg: RegistryConfig): void {
 function writeAppConfig(home: string): void {
   const dir = join(home, '.zcc');
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'config.json'), JSON.stringify({ walkthroughCompleted: true }, null, 2));
+  writeFileSync(
+    join(dir, 'config.json'),
+    JSON.stringify({ walkthroughCompleted: true, setupDismissed: true }, null, 2)
+  );
 }
 
 /**
@@ -173,6 +176,7 @@ export interface LaunchOptions {
  * path without duplicating it.
  */
 export async function launchApp(home: string, opts: LaunchOptions = {}): Promise<AppHandle> {
+  writeAppConfig(home);
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
     HOME: home,
@@ -273,7 +277,6 @@ export const test = base.extend<Fixtures>({
   },
 
   app: async ({ home, registry, requireSignature, e2e, launchEnv, seedClaudeAuth }, use) => {
-    writeAppConfig(home);
     if (registry) {
       writeRegistryConfig(home, {
         enabled: true,
