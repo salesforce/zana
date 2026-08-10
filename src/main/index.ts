@@ -113,6 +113,7 @@ import type { LlmPromptEntry, LlmRunResult } from '../shared/types.js';
 import type { QuickPrompt } from '../shared/types.js';
 import type { InboxOrigin } from '../shared/types.js';
 import { LibraryStore, type ILibraryStore } from './library-store.js';
+import { createBoundsStateController, restoreWindowState } from './bounds-state.js';
 import type { LibraryDoc, LibraryAddInput, LibraryScope } from '../shared/types.js';
 import { startMcpServer, type McpServerHandle } from './mcp-server.js';
 import { readMcpPort, writeMcpPort } from './mcp-port-store.js';
@@ -673,6 +674,7 @@ function setActiveProjectSkillsWatcher(
  * target window's `projectId` for the project-bearing channels.
  */
 const windows = new Map<number, { win: BrowserWindow; projectId?: string }>();
+const boundsControllers = new Map<number, ReturnType<typeof createBoundsStateController>>();
 /**
  * The unscoped "main" window, kept as a hint for the dock-reactivate and
  * tray "show window" paths (which want *a* window, preferring the full shell).
@@ -2458,6 +2460,23 @@ function safeHandle<TArgs extends unknown[], TResult>(
   });
 }
 
+function safeHandleFromWindow<TArgs extends unknown[], TResult>(
+  channel: string,
+  handler: (win: BrowserWindow, ...args: TArgs) => TResult | Promise<TResult>,
+  onError: (err: unknown, ...args: TArgs) => TResult
+) {
+  ipcMain.handle(channel, async (event, ...args: TArgs) => {
+    try {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (!win || !windows.has(win.id)) throw new Error('calling window is unavailable');
+      return await handler(win, ...args);
+    } catch (err) {
+      logMainError(`ipc ${channel}`, err);
+      return onError(err, ...args);
+    }
+  });
+}
+
 /**
  * Resolve a framework-preset launch (Advanced Quick Agent) into ONE synthetic,
  * host-stamped {@link Persona}. Each id in `frameworkIds` names an installed
@@ -4100,33 +4119,24 @@ function createWindow(projectId?: string, repairOnly = false) {
   // Only the unscoped main window restores/persists saved bounds. Scoped
   // windows open at the default size, cascaded so stacked ones don't perfectly
   // overlap — per-project bounds persistence is a deliberate later step.
-  const saved = projectId || repairOnly ? undefined : store.getConfig().windowBounds;
-  // Only honor a saved position when it still lies on a connected display —
-  // otherwise the window can open offscreen if a monitor was unplugged.
-  const validBounds = (() => {
-    if (!saved || saved.x === undefined || saved.y === undefined) return null;
-    const displays = screen.getAllDisplays();
-    const onScreen = displays.some((d) => {
-      const { x, y, width, height } = d.workArea;
-      return (
-        saved.x! >= x &&
-        saved.y! >= y &&
-        saved.x! + saved.width <= x + width + 1 &&
-        saved.y! + saved.height <= y + height + 1
-      );
-    });
-    return onScreen ? saved : null;
-  })();
+  const config = store.getConfig();
+  const saved = projectId || repairOnly ? undefined : config.windowBounds;
+  const restored = restoreWindowState(
+    saved,
+    projectId || repairOnly ? undefined : config.windowMaximized,
+    screen.getAllDisplays(),
+    screen.getPrimaryDisplay()
+  );
 
   const iconPath = resolveIconPath();
   const win = new BrowserWindow({
-    width: saved?.width ?? 1400,
-    height: saved?.height ?? 900,
-    x: validBounds?.x,
-    y: validBounds?.y,
-    minWidth: 900,
-    minHeight: 600,
-    title: 'Zana Command Center',
+    width: projectId || repairOnly ? 1400 : restored.bounds.width,
+    height: projectId || repairOnly ? 900 : restored.bounds.height,
+    x: projectId || repairOnly ? undefined : restored.bounds.x,
+    y: projectId || repairOnly ? undefined : restored.bounds.y,
+    minWidth: projectId || repairOnly ? 900 : restored.minWidth,
+    minHeight: projectId || repairOnly ? 600 : restored.minHeight,
+    title: 'Zana',
     icon: iconPath ?? undefined,
     backgroundColor: '#0b0f15',
     titleBarStyle: 'hiddenInset',
@@ -4150,6 +4160,7 @@ function createWindow(projectId?: string, repairOnly = false) {
   windows.set(win.id, { win, projectId });
   win.on('closed', () => {
     windows.delete(win.id);
+    boundsControllers.delete(win.id);
   });
 
   // A scoped window opens slightly offset from its opener so a freshly-opened
@@ -4180,19 +4191,21 @@ function createWindow(projectId?: string, repairOnly = false) {
   // Persist bounds on resize/move (debounced) so a relaunch restores them.
   // Only the unscoped main window owns the saved bounds.
   if (!projectId && !repairOnly) {
-    let saveTimer: NodeJS.Timeout | null = null;
-    const persistBounds = () => {
-      if (win.isDestroyed()) return;
-      if (win.isMinimized() || win.isMaximized() || win.isFullScreen()) return;
-      if (saveTimer) clearTimeout(saveTimer);
-      saveTimer = setTimeout(() => {
-        saveTimer = null;
-        if (win.isDestroyed()) return;
-        store.setConfig({ windowBounds: win.getBounds() });
-      }, 400);
-    };
-    win.on('resize', persistBounds);
-    win.on('move', persistBounds);
+    const controller = createBoundsStateController({
+      win,
+      initialBounds: restored.bounds,
+      initialMaximized: config.windowMaximized,
+      write: (state) => store.setConfig(state)
+    });
+    boundsControllers.set(win.id, controller);
+    win.on('resize', controller.scheduleBounds);
+    win.on('move', controller.scheduleBounds);
+    win.on('maximize', () => controller.setMaximized(true));
+    win.on('unmaximize', () => controller.setMaximized(false));
+    // `close` can be cancelled; retain controller until `closed` so a later close still flushes.
+    win.on('close', () => {
+      controller.flushForClose();
+    });
   }
 
   // Push OS-level fullscreen transitions to the renderer that's actually IN
@@ -4200,9 +4213,14 @@ function createWindow(projectId?: string, repairOnly = false) {
   // fullscreen toggle initiated by the OS (e.g. the green traffic-light button)
   // or another IPC caller keeps the renderer's own UI in sync.
   win.on('enter-full-screen', () => {
+    const controller = boundsControllers.get(win.id);
+    controller?.beginFullscreenTransition();
+    controller?.endFullscreenTransition();
     if (!win.isDestroyed()) win.webContents.send(IPC.app.onFullScreenChanged, true);
   });
   win.on('leave-full-screen', () => {
+    const controller = boundsControllers.get(win.id);
+    controller?.endFullscreenTransition();
     if (!win.isDestroyed()) win.webContents.send(IPC.app.onFullScreenChanged, false);
   });
 
@@ -4214,6 +4232,18 @@ function createWindow(projectId?: string, repairOnly = false) {
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'), {
       search: query ? query.slice(1) : undefined
+    });
+  }
+
+  if (!projectId && !repairOnly) {
+    // macOS can reapply native zoom state after BrowserWindow construction on a
+    // process relaunch, overriding explicit constructor bounds. Reassert normal
+    // state once native window restoration has finished.
+    win.once('ready-to-show', () => {
+      if (win.isDestroyed() || win.isFullScreen()) return;
+      win.unmaximize();
+      win.setBounds(restored.bounds);
+      if (restored.maximized) win.maximize();
     });
   }
 
@@ -5184,7 +5214,10 @@ function registerIpc() {
   safeHandle<[Partial<AppConfig>], AppConfig>(
     IPC.config.set,
     (patch) => {
-      const next = store.setConfig(patch);
+      // Window state is main-owned. Renderer config writes cannot alter shared
+      // unscoped-window geometry or fullscreen monitor selection.
+      const { windowBounds: _windowBounds, windowMaximized: _windowMaximized, ...safePatch } = patch;
+      const next = store.setConfig(safePatch);
       if (
         patch.harnessCursorEnabled !== undefined ||
         patch.harnessCodexEnabled !== undefined ||
@@ -6767,20 +6800,22 @@ function registerIpc() {
     () => ''
   );
   safeHandle(IPC.app.microVmSupported, () => microVmPlatformSupported(), () => false);
-  // Renderer-driven OS fullscreen (e.g. the terminal modal's fullscreen
-  // button). Targets the FOCUSED window — the one the renderer call actually
-  // came from — falling back to the unscoped main window if focus is unclear.
-  safeHandle(
+  // Renderer-driven fullscreen targets its sender window, never whichever window
+  // happened to gain focus before main handles the request.
+  safeHandleFromWindow<[boolean], void>(
     IPC.app.setFullScreen,
-    (flag: boolean) => {
-      const win = BrowserWindow.getFocusedWindow() ?? mainWindow();
-      win?.setFullScreen(flag);
+    (win, flag: boolean) => {
+      if (typeof flag !== 'boolean') throw new TypeError('fullscreen flag must be boolean');
+      if (win.isFullScreen() === flag) return;
+      const controller = boundsControllers.get(win.id);
+      if (flag) controller?.beginFullscreenTransition();
+      win.setFullScreen(flag);
     },
     () => {}
   );
-  safeHandle(
+  safeHandleFromWindow(
     IPC.app.isFullScreen,
-    () => (BrowserWindow.getFocusedWindow() ?? mainWindow())?.isFullScreen() ?? false,
+    (win) => win.isFullScreen(),
     () => false
   );
 
@@ -7623,7 +7658,7 @@ function registerIpc() {
 
 function buildAppMenu() {
   const isMac = process.platform === 'darwin';
-  const appName = 'Zana Command Center';
+  const appName = 'Zana';
   const template: Electron.MenuItemConstructorOptions[] = [
     ...(isMac
       ? ([
@@ -7903,7 +7938,7 @@ async function bootstrapNormal() {
     logMainError('ensureScratchRoot', err);
   }
   // Apply branding before any window opens so the dock + About panel pick it up.
-  app.setName('Zana Command Center');
+  app.setName('Zana');
   // Explicitly claim the Dock (a "regular" foreground app) at boot; re-asserted
   // on every window surface via `showMainWindow` so it also recovers if the
   // policy drifts to accessory mid-session (see `claimDock`).
@@ -7917,7 +7952,7 @@ async function bootstrapNormal() {
     }
   }
   app.setAboutPanelOptions({
-    applicationName: 'Zana Command Center',
+    applicationName: 'Zana',
     applicationVersion: app.getVersion(),
     version: app.getVersion(),
     copyright: '© 2026 grebmann',
@@ -8989,6 +9024,9 @@ app.on('before-quit', (event) => {
     }
     quitConfirmed = true;
   }
+  // Quit can bypass a usable per-window close transition. Clear native maximize
+  // state here too, so macOS cannot restore a maximized window on next launch.
+  for (const controller of boundsControllers.values()) controller.flushForClose();
   scheduler.stopWatching();
   scheduler.stopAll();
   goals.stopWatching();

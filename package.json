@@ -1,6 +1,6 @@
 {
   "name": "zana-command-center",
-  "productName": "Zana Command Center",
+  "productName": "Zana",
   "version": "1.0.9",
   "private": true,
   "description": "Zana Command Center — multi-project terminal hub for Claude Code sessions",
