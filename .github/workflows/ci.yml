@@ -24,7 +24,7 @@ jobs:
     name: Typecheck and test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v7
         with:
@@ -58,7 +58,7 @@ jobs:
     # Don't fail the overall workflow on an E2E flake while it bakes.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v7
         with:
