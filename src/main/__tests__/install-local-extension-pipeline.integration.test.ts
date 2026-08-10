@@ -9,7 +9,7 @@ import { join } from 'node:path';
  * with no mocks: scaffold a local extension on disk, then reproduce exactly
  * what index.ts's `installOwnExtension` closure does —
  *   findLocalRecordByCwd(cwd) -> readWorkingDirId -> packLocalExtension ->
- *   installFromDir -> (staging cleanup)
+ *   verify packed id -> installFromDir -> (staging cleanup)
  * — against real temp directories standing in for `~/zcc-workspace/extensions`
  * (the working dir) and `~/.zcc/extensions` (the install root), both pointed
  * at via env overrides the way the app already does in tests.
@@ -49,6 +49,10 @@ async function installOwnExtension(cwd: string) {
   const packed = await localExtension.packLocalExtension(record.workingDir);
   if (!packed.ok) return packed;
   try {
+    const packedId = await localExtension.readWorkingDirId(packed.value.stagingDir);
+    if (packedId !== id) {
+      return { ok: false as const, code: 'ID_MISMATCH', message: 'packed manifest id changed' };
+    }
     const installed = await installer.installFromDir(packed.value.stagingDir, {
       reservedIds: new Set<string>(['slack']),
       log: () => {}

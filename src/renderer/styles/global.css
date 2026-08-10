@@ -4996,6 +4996,98 @@ body.resizing-col {
 .ext-hub-tabs-spacer {
   flex: 1;
 }
+.ext-hub-more-wrap {
+  position: relative;
+}
+.ext-hub-more-menu {
+  position: absolute;
+  z-index: 4;
+  top: calc(100% + 6px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 230px;
+  padding: 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 0.3);
+}
+.ext-hub-more-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.ext-hub-more-menu button:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+.ext-hub-more-menu button:disabled {
+  color: var(--text-muted);
+  cursor: wait;
+}
+
+/* The authoring path is deliberately separate from marketplace maintenance.
+   It gives an existing-folder workflow a visible explanation before a user
+   encounters lower-level install and reload controls. */
+.ext-dev-guide {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 12px 24px;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 34%, var(--border));
+  border-radius: 10px;
+  background: linear-gradient(112deg, color-mix(in srgb, var(--accent-blue) 10%, var(--bg-panel)), var(--bg-panel) 58%);
+}
+.ext-dev-guide-copy h3 {
+  margin: 2px 0 5px;
+  font-size: 16px;
+}
+.ext-dev-guide-copy p {
+  max-width: 650px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.ext-dev-guide-eyebrow {
+  color: var(--accent-blue);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.ext-dev-guide-actions {
+  display: flex;
+  align-items: center;
+  align-self: center;
+  gap: 8px;
+}
+.ext-dev-guide-steps {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 11px 0 0;
+  border-top: 1px solid color-mix(in srgb, var(--accent-blue) 19%, var(--border));
+  list-style-position: inside;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.ext-dev-guide-steps code {
+  color: var(--text-primary);
+}
 /* Transient outcome line under the hub toolbar (e.g. "Reload skills & MCP"). */
 .ext-hub-note {
   flex: 0 0 auto;
@@ -5201,6 +5293,36 @@ body.resizing-col .ext-hub-resizer::before {
 .ext-actions-group-hint {
   font-size: 12px;
   color: var(--text-muted);
+}
+.ext-local-watch-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 11px;
+  padding: 8px 9px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent-blue) 9%, transparent);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.ext-local-watch-status svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--accent-blue);
+}
+
+@media (max-width: 760px) {
+  .ext-dev-guide {
+    grid-template-columns: 1fr;
+  }
+  .ext-dev-guide-actions {
+    align-self: auto;
+    flex-wrap: wrap;
+  }
+  .ext-dev-guide-steps {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* A plain action cluster (wraps, 8px gap) — used inside the group + footer. */

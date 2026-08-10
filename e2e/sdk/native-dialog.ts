@@ -38,3 +38,24 @@ export async function nativeDialogCalls(electron: ElectronApplication): Promise<
     return root.__zccE2eDialogs?.calls ?? [];
   });
 }
+
+/**
+ * Supply deterministic responses for native folder/file choosers. Electron's
+ * picker is main-process UI, so E2E uses this narrowly-scoped stub while still
+ * exercising the real renderer click, IPC handler, install, and reload paths.
+ */
+export async function stubOpenDialog(
+  electron: ElectronApplication,
+  paths: string[][]
+): Promise<void> {
+  await electron.evaluate(({ dialog }, queued) => {
+    const root = globalThis as typeof globalThis & {
+      __zccE2eOpenDialogs?: string[][];
+    };
+    root.__zccE2eOpenDialogs = queued.map((paths) => [...paths]);
+    dialog.showOpenDialog = (async () => {
+      const filePaths = root.__zccE2eOpenDialogs!.shift() ?? [];
+      return { canceled: filePaths.length === 0, filePaths };
+    }) as typeof dialog.showOpenDialog;
+  }, paths);
+}
