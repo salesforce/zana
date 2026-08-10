@@ -1,8 +1,7 @@
 /**
- * First-run dependency doctor — the in-app equivalent of `install.sh`.
+ * First-run dependency doctor for companion dependencies.
  *
- * When the app is installed from the .dmg (rather than via the installer
- * script), the companion pieces the script normally sets up may be absent. On
+ * When the app is installed from the .dmg, companion pieces may be absent. On
  * launch we DETECT them and AUTO-INSTALL the ones we can do non-interactively,
  * guiding the user through the rest:
  *
@@ -14,10 +13,10 @@
  *                               extension-installer.ts. Reported here for completeness,
  *                               discovered generically (Rule 6 — never names a concrete id).
  *
- * This is a SETUP/REGISTRATION seam, not module-bus logic: like install.sh it
- * legitimately names the external CLIs / npm package / MCP-server id it wires
- * up. The disk-extension section stays extension-agnostic (scans the install
- * root) because those genuinely are registry extensions.
+ * This is a SETUP/REGISTRATION seam, not module-bus logic. It legitimately names
+ * the external CLIs / npm package / MCP-server id it wires up. The disk-extension
+ * section stays extension-agnostic (scans the install root) because those
+ * genuinely are registry extensions.
  *
  * Posture mirrors updater.ts: a factory returning a small interface, pushing
  * status via the injected `safeSend`, owning no long-lived timers. Best-effort
