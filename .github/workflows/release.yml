@@ -91,7 +91,7 @@ jobs:
 
       - name: Upload Playwright report on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: smoke-playwright-report
           path: |
@@ -196,7 +196,7 @@ jobs:
           APPLE_TEAM_ID_SECRET: ${{ secrets.APPLE_TEAM_ID }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.arch }}
           # dmg = first install; zip + latest-mac.yml = the auto-update feed
