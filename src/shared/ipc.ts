@@ -364,6 +364,12 @@ export const IPC = {
     // local.json. Returns the minted id + working dir so the renderer can launch
     // the Creator agent against it. Subject to the SAME consent — no fast-path.
     createLocal: 'extensions:createLocal',
+    // Adopt a user-picked existing extension source directory as a local editable
+    // extension. Main owns the picker and records the canonical source path.
+    adoptLocal: 'extensions:adoptLocal',
+    // Clone an extension repository into the local extension workspace and
+    // register its manifest directory as editable source.
+    adoptLocalGit: 'extensions:adoptLocalGit',
     // Re-pack + reinstall a local extension from its recorded source working dir
     // ("Reload from source"). Renderer passes only an id; main RE-DERIVES the
     // working dir from local.json (never renderer/agent free-text — Rule 1).
