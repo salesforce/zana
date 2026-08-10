@@ -4,7 +4,6 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebglAddon } from '@xterm/addon-webgl';
-import { CanvasAddon } from '@xterm/addon-canvas';
 import type { TerminalSession } from '@shared/types';
 import { useFileDrop } from '../util/useFileDrop';
 import { posixQuote } from '../util/quote';
@@ -17,35 +16,15 @@ import { useData, useUi } from '../store';
 
 type Area = 'a' | 'b' | 'c' | 'd';
 
-// Attach the fastest available renderer to a freshly-opened terminal.
-//
-// xterm 5.x with NO renderer addon falls back to its DOM renderer — the slowest
-// path, which repaints via the DOM on every frame. Under a full-screen agent TUI
-// (claude / codex) repainting whole frames across up to 4 live panes that is the
-// app's most continuous hot path. WebGL moves glyph rasterization onto the GPU;
-// canvas is the middle fallback; bare DOM is the floor.
-//
-// Every step is defensive: WebGL context creation throws in headless/CI and on
-// GPU-blocklisted machines, and a live context can be LOST at runtime (GPU reset,
-// tab backgrounded) — `onContextLoss` fires, and the only safe recovery is to
-// dispose the dead addon and drop to canvas (recreating WebGL against a lost
-// context just loses it again). Returns a disposer the caller folds into teardown.
+// Attach WebGL to a freshly-opened terminal when the platform supports it.
+// xterm 6 has no compatible canvas renderer addon, so its DOM renderer is the
+// fallback for headless, blocklisted, or lost GPU contexts.
 function attachRenderer(term: Terminal): () => void {
   let webgl: WebglAddon | null = null;
-  let canvas: CanvasAddon | null = null;
-
-  const useCanvas = () => {
-    try {
-      canvas = new CanvasAddon();
-      term.loadAddon(canvas);
-    } catch {
-      canvas = null; // bare DOM renderer — always works, nothing to load
-    }
-  };
 
   try {
     webgl = new WebglAddon();
-    // A lost GPU context can't host a renderer; dispose WebGL and fall to canvas.
+    // A lost GPU context cannot host a renderer; xterm falls back to DOM.
     webgl.onContextLoss(() => {
       try {
         webgl?.dispose();
@@ -53,22 +32,15 @@ function attachRenderer(term: Terminal): () => void {
         /* already gone */
       }
       webgl = null;
-      if (!canvas) useCanvas();
     });
     term.loadAddon(webgl);
   } catch {
     webgl = null;
-    useCanvas();
   }
 
   return () => {
     try {
       webgl?.dispose();
-    } catch {
-      /* ignore */
-    }
-    try {
-      canvas?.dispose();
     } catch {
       /* ignore */
     }
@@ -137,9 +109,8 @@ function TerminalViewImpl({ session, area }: Props) {
     term.loadAddon(new WebLinksAddon((_event, uri) => window.open(uri, '_blank', 'noopener')));
     term.loadAddon(search);
     term.open(ref.current);
-    // Upgrade off the DOM renderer to GPU (WebGL) / canvas now that the terminal
-    // has a DOM element to attach the rendering surface to. MUST come after
-    // open(); the addons create their canvas against term.element.
+    // Upgrade off the DOM renderer to WebGL now that the terminal has a DOM
+    // element to attach the rendering surface to. MUST come after open().
     const disposeRenderer = attachRenderer(term);
 
     termRef.current = term;

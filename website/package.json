@@ -18,23 +18,26 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "drizzle-orm": "^0.36.4",
+    "drizzle-orm": "^0.45.2",
     "marked": "^12.0.2",
-    "next": "^16.0.0",
+    "nanoid": "^3.3.18",
+    "next": "^16.3.0",
     "pg": "^8.13.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "shiki": "^1.29.2",
     "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^20.14.0",
-    "@types/pg": "^8.11.10",
+    "@types/pg": "^8.21.0",
     "@types/react": "^18.3.3",
     "better-sqlite3": "^12.11.1",
-    "drizzle-kit": "^0.28.1",
-    "typescript": "^5.5.4",
-    "vitest": "^4.1.8"
+    "drizzle-kit": "^0.31.10",
+    "postcss": "^8.5.26",
+    "sharp": "^0.34.5",
+    "shiki": "^4.4.3",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   }
 }
