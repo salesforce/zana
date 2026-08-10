@@ -15,11 +15,12 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { GitBranch, Download } from 'lucide-react';
+import { GitBranch, Download, FolderOpen } from 'lucide-react';
 import { useDialogFocusTrap } from '../util/useDialogFocusTrap';
 
 interface Props {
   onClose: () => void;
+  mode?: 'install' | 'open';
 }
 
 /** Map a typed install failure code to a one-line, human explanation. */
@@ -44,7 +45,7 @@ function friendly(code: string | undefined, message: string): string {
   }
 }
 
-export function InstallFromGitDialog({ onClose }: Props) {
+export function InstallFromGitDialog({ onClose, mode = 'install' }: Props) {
   const [url, setUrl] = useState('');
   const [ref, setRef] = useState('');
   const [subdir, setSubdir] = useState('');
@@ -76,12 +77,19 @@ export function InstallFromGitDialog({ onClose }: Props) {
     setError(null);
     setProgress(null);
     try {
-      const res = await window.cc.extensions.install({
-        kind: 'git',
-        url: trimmedUrl,
-        ref: ref.trim() || undefined,
-        subdir: subdir.trim() || undefined
-      });
+      const res =
+        mode === 'open'
+          ? await window.cc.extensions.adoptLocalGit({
+              url: trimmedUrl,
+              ref: ref.trim() || undefined,
+              subdir: subdir.trim() || undefined
+            })
+          : await window.cc.extensions.install({
+              kind: 'git',
+              url: trimmedUrl,
+              ref: ref.trim() || undefined,
+              subdir: subdir.trim() || undefined
+            });
       if (!res.ok) {
         setError(friendly(res.code, res.message));
         setBusy(false);
@@ -97,6 +105,26 @@ export function InstallFromGitDialog({ onClose }: Props) {
     }
   };
 
+  const chooseFolder = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await window.cc.extensions.adoptLocal();
+      if (!res.ok) {
+        if (res.code !== 'CANCELED') setError(res.message ?? 'Could not open folder');
+        return;
+      }
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const isOpen = mode === 'open';
+
   return createPortal(
     <div className="palette-backdrop" onMouseDown={() => !busy && onClose()}>
       <div
@@ -105,17 +133,18 @@ export function InstallFromGitDialog({ onClose }: Props) {
         onMouseDown={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label="Install an extension from a repository"
+          aria-label={isOpen ? 'Open an existing extension' : 'Install an extension from a repository'}
       >
         <div className="launch-panel">
           <div className="launch-header">
             <h3>
               <GitBranch size={16} style={{ verticalAlign: '-2px', marginRight: 6 }} />
-              Install from repo
+              {isOpen ? 'Open existing extension' : 'Install from repo'}
             </h3>
             <p>
-              Install a shared extension straight from a git repository. The code is not reviewed
-              by Zana — you’ll be asked to approve what it can do before it runs.
+              {isOpen
+                ? 'Clone a Git repository into your extension workspace, then keep working in that checkout. You can also choose an existing local folder.'
+                : 'Install a shared extension straight from a git repository. The code is not reviewed by Zana — you’ll be asked to approve what it can do before it runs.'}
             </p>
           </div>
 
@@ -177,12 +206,18 @@ export function InstallFromGitDialog({ onClose }: Props) {
           {error && <div className="launch-error" role="alert">{error}</div>}
 
           <div className="launch-actions">
+            {isOpen && (
+              <button className="btn" onClick={chooseFolder} disabled={busy}>
+                <FolderOpen size={14} />
+                Choose folder…
+              </button>
+            )}
             <button className="btn" onClick={onClose} disabled={busy}>
               Cancel
             </button>
             <button className="btn primary" onClick={submit} disabled={!canSubmit}>
               <Download size={14} />
-              {busy ? 'Installing…' : 'Install'}
+              {busy ? (isOpen ? 'Cloning…' : 'Installing…') : isOpen ? 'Clone and open' : 'Install'}
             </button>
           </div>
         </div>

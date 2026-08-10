@@ -711,9 +711,16 @@ both builds (selected by a `BUILD_TARGET` env var).
 
 You can install an extension three ways, none of which need an app rebuild:
 
-1. **In-app (recommended).** Settings → Extensions → **Marketplace** →
-   **Install from folder…** (pick a built artifact dir) or **Install from
-   archive…** (a published `<id>-<version>.json` bundle). Main validates the
+1. **In-app (recommended).** Settings → Extensions → **Open existing
+   extension** to choose a local source folder or clone a Git repository. The
+   source must contain `extension.json` and its current `dist/` build. Zana
+   records it as local authoring source, installs its current build through the
+   normal validation path, and gives it **Continue building** and **Reload now**
+   actions. With a Creator or shell session open in that source folder, changes
+   in `dist/` reload automatically; no app restart is needed. For a one-off
+   install with no editable source connection, use **Marketplace** → **Install
+   from folder…** (pick a built artifact dir) or **Install from archive…** (a
+   published `<id>-<version>.json` bundle). Main validates the
    manifest/id/containment/API and installs atomically; the consent overlay
    gates the first run if the extension declares permissions.
 2. **From a marketplace registry.** When `~/.zcc/extension-registry.json` is
@@ -729,10 +736,12 @@ You can install an extension three ways, none of which need an app rebuild:
    cp dist/main.js ~/.zcc/extensions/$ID/   # only if you ship a main module
    ```
 
-Dev loop: edit `src/` → `npm run build` → re-copy into the extensions dir. A
-file-watcher on `~/.zcc/extensions` reconciles the change **live** (a changed
-main-bearing extension is respawned out-of-process — no app restart); the
-**Reload** button in Settings → Extensions does the same on demand.
+Dev loop: edit `src/` → `npm run build`. An imported editable folder retains
+its local source connection, so while a Creator or shell session is rooted in
+the source folder, Zana re-packs only `extension.json` + `dist/` and reconciles
+the running extension **live**. Use **Reload now** as a manual fallback. A
+changed main-bearing extension is respawned out-of-process; no app restart is
+needed.
 
 ## Enable / disable — when changes take effect
 
