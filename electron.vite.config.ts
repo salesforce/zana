@@ -46,7 +46,8 @@ export default defineConfig({
         // runtime. It's a Node/utilityProcess context — same externalize-node/
         // electron treatment as the main entry (externalizeDepsPlugin above).
         input: {
-          index: resolve(__dirname, 'src/main/index.ts'),
+          index: resolve(__dirname, 'src/main/bootstrap.ts'),
+          main: resolve(__dirname, 'src/main/index.ts'),
           'host-child': resolve(__dirname, 'src/main/extensions/host-child.ts')
         }
       }
