@@ -12,7 +12,8 @@ describe('startup repair IPC', () => {
   });
 
   it('opens a repair-only window without reading persisted window bounds', () => {
-    expect(source).toContain('const saved = projectId || repairOnly ? undefined : store.getConfig().windowBounds;');
+    expect(source).toContain('const saved = projectId || repairOnly ? undefined : config.windowBounds;');
+    expect(source).toContain('projectId || repairOnly ? undefined : config.windowMaximized');
     expect(source).toContain('createWindow(undefined, true)');
     expect(source).toContain("createWindow(undefined, startupState.mode === 'repair-required')");
   });
