@@ -30,11 +30,13 @@ import { shellQuote } from './harness/shell-quote.js';
 import { cleanExtraArgs, mergeAllowedTools, mergeDisallowedTools } from './harness/argv-utils.js';
 import { buildWorktreeGuidance } from './harness/spawn-plan.js';
 
-const require = createRequire(import.meta.url);
+// Electron-Vite emits an ESM `require` shim for the main bundle. Keep this
+// module-local resolver distinct so the bundled declarations cannot collide.
+const nodeRequire = createRequire(import.meta.url);
 
 function ensureNodePtySpawnHelperExecutable(): void {
   if (process.platform === 'win32') return;
-  const packageRoot = dirname(require.resolve('node-pty/package.json'));
+  const packageRoot = dirname(nodeRequire.resolve('node-pty/package.json'));
   const helper = join(packageRoot, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper');
   if (existsSync(helper)) chmodSync(helper, 0o755);
 }

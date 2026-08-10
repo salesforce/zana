@@ -1047,7 +1047,12 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
         : trimmed;
     if (expanded === '' || isAbsolute(expanded)) normalized.pdfExportDir = expanded;
   }
-  normalized.windowBounds = normalizeBounds(input.windowBounds);
+  if (Object.prototype.hasOwnProperty.call(input, 'windowBounds')) {
+    normalized.windowBounds = normalizeBounds(input.windowBounds);
+  }
+  if (typeof input.windowMaximized === 'boolean') {
+    normalized.windowMaximized = input.windowMaximized;
+  }
 
   // Autonomous team run backstops: support 0-means-disabled for both timeout and
   // maxRounds (supervisor already treats <=0 as "no backstop"), and clamp positives
