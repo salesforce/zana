@@ -1,9 +1,11 @@
 import * as pty from 'node-pty';
 import { randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { controlCredentialForSession } from './control-credential.js';
 import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { realpathSync } from 'node:fs';
+import { chmodSync, existsSync, realpathSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { isWithin } from './extensions/path-util.js';
 import type { LaunchProfileId, TerminalSession, AppConfig, ProjectSettings, ProjectRemote, InboxNotifyLevel, Persona, SessionCohort, SessionWorktree } from '../shared/types.js';
 import { SESSION_MEMORY_DEFAULTS } from '../shared/types.js';
@@ -27,6 +29,15 @@ import { personaArgs_build } from './harness/claude-code-provider.js';
 import { shellQuote } from './harness/shell-quote.js';
 import { cleanExtraArgs, mergeAllowedTools, mergeDisallowedTools } from './harness/argv-utils.js';
 import { buildWorktreeGuidance } from './harness/spawn-plan.js';
+
+const require = createRequire(import.meta.url);
+
+function ensureNodePtySpawnHelperExecutable(): void {
+  if (process.platform === 'win32') return;
+  const packageRoot = dirname(require.resolve('node-pty/package.json'));
+  const helper = join(packageRoot, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper');
+  if (existsSync(helper)) chmodSync(helper, 0o755);
+}
 
 interface Live {
   session: TerminalSession;
@@ -1671,6 +1682,7 @@ export class PtyManager extends EventEmitter {
     const spawnCmd = useTmux
       ? buildLocalTmuxCommand(sessionId, inner.command, inner.args, sessionEnv)
       : inner;
+    ensureNodePtySpawnHelperExecutable();
     const proc = pty.spawn(spawnCmd.command, spawnCmd.args, {
       name: 'xterm-256color',
       cols: opts.cols,
@@ -2149,6 +2161,7 @@ export class PtyManager extends EventEmitter {
       TERM: 'xterm-256color'
     };
 
+    ensureNodePtySpawnHelperExecutable();
     const proc = pty.spawn('ssh', sshArgs, {
       name: 'xterm-256color',
       cols: opts.cols,
@@ -2303,6 +2316,7 @@ export class PtyManager extends EventEmitter {
         }
         let proc: pty.IPty;
         try {
+          ensureNodePtySpawnHelperExecutable();
           proc = pty.spawn('ssh', live2.reattach.sshArgs, {
             name: 'xterm-256color',
             cols: live2.reattach.cols,

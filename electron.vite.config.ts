@@ -77,6 +77,12 @@ export default defineConfig({
     resolve: {
       alias: [
         ...sdkAlias,
+        // Monaco 0.56 restricts its public exports, while its Vite worker
+        // entrypoints remain under `esm/vs`. Resolve that subtree directly.
+        {
+          find: 'monaco-editor/esm/vs',
+          replacement: resolve(__dirname, 'node_modules/monaco-editor/esm/vs')
+        },
         { find: '@shared', replacement: resolve(__dirname, 'src/shared') }
       ],
       dedupe: ['monaco-editor']
