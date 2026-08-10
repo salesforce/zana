@@ -22,7 +22,9 @@ import {
   Wand2,
   RefreshCw,
   Share2,
-  ShieldCheck
+  ShieldCheck,
+  MoreHorizontal,
+  TerminalSquare
 } from 'lucide-react';
 import { EXTENSION_PERMISSIONS } from '@zana-ai/zcc-extension-sdk';
 import type { AppModule } from '@shared/module-api';
@@ -34,34 +36,22 @@ import { ErrorBoundary } from '../ErrorBoundary';
 import { PERMISSION_LABELS } from '../ExtensionConsent';
 import { ConsentBody, consentDelta } from '../ConsentBody';
 import { CreateExtensionDialog } from '../CreateExtensionDialog';
+import { InstallFromGitDialog } from '../InstallFromGitDialog';
 import { Marketplace } from './Marketplace';
-import { useData, useUi } from '../../store';
+import { useUi } from '../../store';
 
 /**
- * Re-open the Extension Creator agent against a local extension's source dir.
- * Resolves the working dir + scratch project from main (Rule 1 — never a
- * renderer path), launches a Claude terminal with the `builtin:ext-creator`
- * persona confined to that cwd, and redirects into it. Returns a failure Result
- * to surface, or null on success.
+ * Open a local extension's registered project and its project-scoped agent
+ * launcher. Main resolves the project id from the local-extension record, so
+ * the renderer never treats a source path as an authority (Rule 1).
  */
-async function launchExtensionCreator(
-  id: string,
-  title: string
-): Promise<{ ok: false; message: string } | null> {
+async function openExtensionLauncher(id: string): Promise<{ ok: false; message: string } | null> {
   const info = await window.cc.extensions.localInfo(id);
   if (!info.ok) return { ok: false, message: info.message ?? 'Could not resolve source' };
-  const { workingDir, projectId } = info.value;
-  const session = await useData.getState().createTerminal(projectId, 'claude', 80, 24, {
-    cwd: workingDir,
-    personaId: 'builtin:ext-creator',
-    title: `Build: ${title}`
-  });
-  if (session) {
-    const ui = useUi.getState();
-    ui.setNav('projects');
-    ui.selectProject(projectId);
-    ui.selectTab(projectId, session.id);
-  }
+  const ui = useUi.getState();
+  ui.setNav('projects');
+  ui.selectProject(info.value.projectId);
+  ui.setLauncherOpen(true);
   return null;
 }
 
@@ -133,6 +123,8 @@ export function ExtensionsHub({ initialTab = 'installed' }: { initialTab?: HubTa
   const [redeploying, setRedeploying] = useState(false);
   const [redeployNote, setRedeployNote] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [openExisting, setOpenExisting] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   // Explicit "Reload" fallback for the auto file-watcher: re-runs the disk
   // reconcile in main (spawn new / tear down removed / respawn changed).
@@ -167,6 +159,11 @@ export function ExtensionsHub({ initialTab = 'installed' }: { initialTab?: HubTa
       .finally(() => setRedeploying(false));
   };
 
+  const openCreate = () => {
+    setMoreOpen(false);
+    setCreating(true);
+  };
+
   return (
     <div className="ext-hub-shell">
       <div className="ext-hub-tabs" role="tablist" aria-label="Extensions">
@@ -189,33 +186,55 @@ export function ExtensionsHub({ initialTab = 'installed' }: { initialTab?: HubTa
           Marketplace
         </button>
         <span className="ext-hub-tabs-spacer" />
-        <button type="button" className="settings-btn primary" onClick={() => setCreating(true)}>
-          <Wand2 size={14} />
-          Create extension
-        </button>
-        <div className="settings-btn-group" role="group" aria-label="Reload">
+        <div className="ext-hub-more-wrap">
           <button
             type="button"
             className="settings-btn"
-            disabled={redeploying}
-            onClick={redeploy}
-            title="Re-deploy bundled skills into ~/.claude/skills and re-sync each project's MCP config"
+            aria-haspopup="menu"
+            aria-expanded={moreOpen}
+            onClick={() => setMoreOpen((open) => !open)}
           >
-            <RefreshCw size={14} className={redeploying ? 'ext-spin' : undefined} />
-            {redeploying ? 'Reloading…' : 'Skills & MCP'}
+            <MoreHorizontal size={16} />
+            More
           </button>
-          <button
-            type="button"
-            className="settings-btn"
-            disabled={reloading}
-            onClick={reload}
-            title="Rescan disk extensions — spawn new, tear down removed, respawn changed"
-          >
-            <RotateCw size={14} />
-            {reloading ? 'Reloading…' : 'Extensions'}
-          </button>
+          {moreOpen && (
+            <div className="ext-hub-more-menu" role="menu" aria-label="Extension maintenance">
+              <button type="button" role="menuitem" onClick={redeploy} disabled={redeploying}>
+                <RefreshCw size={14} className={redeploying ? 'ext-spin' : undefined} />
+                {redeploying ? 'Reloading skills and MCP…' : 'Reload skills and MCP'}
+              </button>
+              <button type="button" role="menuitem" onClick={reload} disabled={reloading}>
+                <RotateCw size={14} className={reloading ? 'ext-spin' : undefined} />
+                {reloading ? 'Rescanning extensions…' : 'Rescan installed extensions'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
+      {tab === 'installed' && (
+        <section className="ext-dev-guide" aria-labelledby="ext-dev-guide-title">
+          <div className="ext-dev-guide-copy">
+            <span className="ext-dev-guide-eyebrow">Extension development</span>
+            <h3 id="ext-dev-guide-title">Build or continue an extension</h3>
+            <p>Use a template for something new, or connect an existing folder or Git clone to keep editing it here.</p>
+          </div>
+          <div className="ext-dev-guide-actions">
+            <button type="button" className="settings-btn primary" onClick={() => setOpenExisting(true)}>
+              <FolderOpen size={14} />
+              Open existing extension
+            </button>
+            <button type="button" className="settings-btn" onClick={openCreate}>
+              <Wand2 size={14} />
+              Create extension
+            </button>
+          </div>
+          <ol className="ext-dev-guide-steps">
+            <li>Open or create an extension.</li>
+            <li>Edit its source and run its build command.</li>
+            <li>With its Creator or shell session open, changes in <code>dist/</code> reload automatically.</li>
+          </ol>
+        </section>
+      )}
       {redeployNote && (
         <div className="ext-hub-note" role="status">
           {redeployNote}
@@ -223,6 +242,7 @@ export function ExtensionsHub({ initialTab = 'installed' }: { initialTab?: HubTa
       )}
       {tab === 'installed' ? <InstalledView /> : <Marketplace />}
       {creating && <CreateExtensionDialog onClose={() => setCreating(false)} />}
+      {openExisting && <InstallFromGitDialog mode="open" onClose={() => setOpenExisting(false)} />}
     </div>
   );
 }
@@ -744,15 +764,12 @@ function AboutCard({ row }: { row: HubRow }) {
       setReloading(false);
     }
   };
-  // Re-open the Extension Creator agent against the local extension's source dir.
+  // Open the registered extension project and its normal New agent launcher.
   const continueBuilding = async () => {
     if (!entry) return;
     setLocalError(null);
     try {
-      // Re-derive the working dir + scratch project in main (Rule 1): createLocal
-      // is create-only, so we reuse reinstallLocal's record via a fresh launch —
-      // the launch chain lives in the store's createExtensionAgent helper.
-      const res = await launchExtensionCreator(entry.id, module.title);
+      const res = await openExtensionLauncher(entry.id);
       if (res && !res.ok) setLocalError(res.message);
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : String(err));
@@ -841,7 +858,13 @@ function AboutCard({ row }: { row: HubRow }) {
           <div className="ext-actions-group-head">
             <span className="ext-actions-group-title">Develop</span>
             <span className="ext-actions-group-hint">
-              Edit the source with the Creator agent, then reload it into the app.
+              This extension is connected to an editable source folder.
+            </span>
+          </div>
+          <div className="ext-local-watch-status">
+            <TerminalSquare size={15} />
+            <span>
+              Auto-reload is active while a Creator or shell session is open in this extension’s source folder.
             </span>
           </div>
           <div className="ext-actions">
@@ -856,7 +879,7 @@ function AboutCard({ row }: { row: HubRow }) {
               disabled={reloading}
             >
               <RefreshCw size={14} className={reloading ? 'ext-spin' : undefined} />
-              {reloading ? 'Reloading…' : 'Reload from source'}
+              {reloading ? 'Reloading…' : 'Reload now'}
             </button>
             <button
               type="button"

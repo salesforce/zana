@@ -4571,6 +4571,13 @@ export interface CreateLocalExtensionResult {
   projectId: string;
 }
 
+/** Repository input for opening an existing extension as editable local source. */
+export interface AdoptLocalExtensionGitRequest {
+  url: string;
+  ref?: string;
+  subdir?: string;
+}
+
 /**
  * Renderer-facing mirror of the main-side `UpdateOutcome` (extension-registry.ts).
  * Re-declared here so the renderer never imports the main-only registry module.
@@ -5601,6 +5608,14 @@ export interface CcApi {
      * minted id + working dir so the renderer can launch the Creator agent.
      */
     createLocal(req: CreateLocalExtensionRequest): Promise<Result<CreateLocalExtensionResult>>;
+    /**
+     * Pick an existing extension source directory, install its current build, and
+     * register it as a local editable source. Main owns the picker and records
+     * the canonical selected path; the renderer supplies no filesystem path.
+     */
+    adoptLocal(): Promise<Result<CreateLocalExtensionResult>>;
+    /** Clone an extension repository and register its manifest directory as editable source. */
+    adoptLocalGit(req: AdoptLocalExtensionGitRequest): Promise<Result<CreateLocalExtensionResult>>;
     /**
      * Re-pack + reinstall a local extension from its recorded source working dir
      * ("Reload from source"). Renderer passes only an id; main re-derives the

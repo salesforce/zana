@@ -255,6 +255,7 @@ import {
   installFromArchiveFile,
   installFromBundled,
   installFromGit,
+  locateManifestDir,
   listBundledCatalog,
   uninstallExtension
 } from './extension-installer.js';
@@ -281,7 +282,8 @@ import type {
   ExtensionUpdateOutcome,
   MarketplaceEntry,
   CreateLocalExtensionRequest,
-  CreateLocalExtensionResult
+  CreateLocalExtensionResult,
+  AdoptLocalExtensionGitRequest
 } from '../shared/types.js';
 import { MAIN_MODULES } from './modules/index.js';
 import { homedir } from 'node:os';
@@ -2183,6 +2185,16 @@ const packAndInstallLocal = async (
   const packed = await packLocalExtension(workingDir);
   if (!packed.ok) return packed;
   try {
+    // Verify the packed snapshot, rather than the mutable source directory, so
+    // an edit racing this operation cannot install bytes under another id.
+    const packedId = await readWorkingDirId(packed.value.stagingDir);
+    if (packedId !== id) {
+      return {
+        ok: false,
+        code: 'ID_MISMATCH',
+        message: `Packed manifest id "${packedId ?? '(none)'}" does not match "${id}"`
+      };
+    }
     const installed = await installFromDir(packed.value.stagingDir, {
       reservedIds: builtinIds,
       log: logMainError
@@ -2247,6 +2259,34 @@ const createLocalExtension = async (
     `Extension created: ${name}`,
     `extension-installed:${id}`
   );
+  return { ok: true, value: { id, workingDir, projectId: project.id } };
+};
+// Register an already-existing source directory as local authoring source. Both
+// the native-folder and repository-clone entry points terminate here so their
+// validation, rollback, install, and project-registration behavior stays equal.
+const adoptLocalSource = async (workingDir: string): Promise<Result<CreateLocalExtensionResult>> => {
+  const id = await readWorkingDirId(workingDir);
+  if (!id) {
+    return { ok: false, code: 'NO_MANIFEST', message: 'Selected folder has no valid extension.json id' };
+  }
+  if (builtinIds.has(id)) {
+    return { ok: false, code: 'RESERVED_ID', message: `"${id}" is a built-in and cannot be imported` };
+  }
+
+  // Preserve an existing source pointer if a failed import attempts to adopt a
+  // replacement directory for the same installed extension.
+  const previous = await getLocalRecord(id);
+  const marked = await markLocal(id, workingDir);
+  if (!marked.ok) return marked;
+  const installed = await packAndInstallLocal(id, workingDir);
+  if (!installed.ok) {
+    if (previous) await markLocal(id, previous.workingDir).catch(() => {});
+    else await clearLocal(id).catch(() => {});
+    return installed;
+  }
+
+  const name = extensionEntries.find((entry) => entry.id === id)?.manifest?.title ?? id;
+  const project = registerExtensionProject(workingDir, name);
   return { ok: true, value: { id, workingDir, projectId: project.id } };
 };
 // Hot-reload for a local extension being actively developed: while a live
@@ -6522,6 +6562,70 @@ function registerIpc() {
     (err): Result<CreateLocalExtensionResult> => ({
       ok: false,
       code: 'CREATE_LOCAL_FAILED',
+      message: err instanceof Error ? err.message : String(err)
+    })
+  );
+  // Adopt an EXISTING source directory into the local authoring workflow. Unlike
+  // createLocal, the directory comes only from the OS picker, never renderer
+  // text. Its current built artifact still crosses the normal pack/install seam;
+  // local.json merely records where future reloads and Creator sessions operate.
+  safeHandle(
+    IPC.extensions.adoptLocal,
+    async (): Promise<Result<CreateLocalExtensionResult>> => {
+      const win = BrowserWindow.getFocusedWindow() ?? mainWindow();
+      if (!win) return { ok: false, code: 'NO_WINDOW', message: 'No window to host the picker' };
+      const pick = await dialog.showOpenDialog(win, {
+        title: 'Import editable extension folder',
+        properties: ['openDirectory']
+      });
+      if (pick.canceled || !pick.filePaths[0]) {
+        return { ok: false, code: 'CANCELED', message: 'Import canceled' };
+      }
+
+      let workingDir: string;
+      try {
+        // Canonicalize the picker result before persisting it. Future reloads use
+        // this main-owned path, and the dedicated project is rooted here.
+        workingDir = realpathSync(pick.filePaths[0]);
+      } catch {
+        return { ok: false, code: 'BAD_SOURCE', message: 'Could not access the selected folder' };
+      }
+      return adoptLocalSource(workingDir);
+    },
+    (err): Result<CreateLocalExtensionResult> => ({
+      ok: false,
+      code: 'ADOPT_LOCAL_FAILED',
+      message: err instanceof Error ? err.message : String(err)
+    })
+  );
+  // Repository variant of "Open existing extension". The clone destination is
+  // main-owned beneath the extension workspace; only a validated manifest dir
+  // becomes editable local source. The source tree is intentionally retained on
+  // success so the user can work directly in their Git checkout.
+  safeHandle(
+    IPC.extensions.adoptLocalGit,
+    async (req: AdoptLocalExtensionGitRequest): Promise<Result<CreateLocalExtensionResult>> => {
+      const cloned = await cloneProject({
+        url: req?.url ?? '',
+        ref: req?.ref,
+        shallow: false,
+        destBase: join(scratchWorkspaceRoot(), 'extensions'),
+        onProgress: (line) => safeSend(IPC.extensions.installProgress, line)
+      });
+      if (!cloned.ok || !cloned.path) {
+        return { ok: false, code: cloned.code ?? 'CLONE_FAILED', message: cloned.message ?? 'Could not clone repository' };
+      }
+      const located = await locateManifestDir(cloned.path, req?.subdir);
+      if (!located.ok) return located;
+      const adopted = await adoptLocalSource(located.value);
+      if (!adopted.ok && !cloned.reused) {
+        await rm(cloned.path, { recursive: true, force: true }).catch(() => {});
+      }
+      return adopted;
+    },
+    (err): Result<CreateLocalExtensionResult> => ({
+      ok: false,
+      code: 'ADOPT_LOCAL_GIT_FAILED',
       message: err instanceof Error ? err.message : String(err)
     })
   );
