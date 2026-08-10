@@ -52,6 +52,16 @@ describe('buildLaunchArgs', () => {
   });
 });
 
+describe('Fix with AI recovery launch', () => {
+  it('uses the managed scratch workspace root instead of retrying a failed project cwd', () => {
+    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
+    const fixWithAi = source.slice(source.indexOf('const fixWithAi = async'));
+    expect(fixWithAi).toContain('window.cc.projects.ensureQuickAgent()');
+    expect(fixWithAi).toContain("createTerminal(anchor.id, 'claude-yolo'");
+    expect(fixWithAi).not.toContain('isolateScratch:');
+  });
+});
+
 /**
  * `frameworkOptionsFrom` is the decoupling seam for Advanced view: it derives
  * selectable framework presets from installed extension entries generically —

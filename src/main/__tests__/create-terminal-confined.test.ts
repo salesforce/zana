@@ -33,17 +33,19 @@ const CONFIG: AppConfig = {
 };
 
 const PROJECT_SETTINGS: ProjectSettings = {} as ProjectSettings;
+let projects: Project[] = [PROJECT];
 
 // Capture every ptys.create() call so we can assert what reaches the pty layer.
-const createCalls: Array<{ extraArgs?: string[]; profile: string; persona: unknown }> = [];
+const createCalls: Array<{ cwd: string; extraArgs?: string[]; profile: string; persona: unknown }> = [];
 
 vi.mock('../pty.js', () => {
   class PtyManager {
     setMcpBaseUrl() {}
     setProjectRoots() {}
     setRulesResolver() {}
-    create(opts: { extraArgs?: string[]; profile: string; persona: unknown }) {
+    create(opts: { cwd: string; extraArgs?: string[]; profile: string; persona: unknown }) {
       createCalls.push({
+        cwd: opts.cwd,
         extraArgs: opts.extraArgs,
         profile: opts.profile,
         persona: opts.persona
@@ -65,7 +67,7 @@ vi.mock('../pty.js', () => {
 
 vi.mock('../store.js', () => ({
   store: {
-    listProjects: () => [PROJECT],
+    listProjects: () => projects,
     getConfig: () => CONFIG,
     getProjectSettings: () => PROJECT_SETTINGS,
     createScratchSubfolder: () => '/tmp/proj/scratch'
@@ -166,6 +168,7 @@ function lastCreate() {
 describe('createTerminalConfined — main-side denylist enforcement', () => {
   beforeEach(() => {
     createCalls.length = 0;
+    projects = [PROJECT];
   });
 
   it('strips a denied flag while preserving benign flags (--flag value form)', () => {
@@ -221,6 +224,19 @@ describe('createTerminalConfined — main-side denylist enforcement', () => {
     });
     expect(res.ok).toBe(true);
     expect(lastCreate().extraArgs ?? []).toEqual([]);
+  });
+
+  it('uses the Quick Agent workspace root when scratch isolation is not requested', () => {
+    const quickAgentProject = { ...PROJECT, path: '/tmp/zcc-workspace', quickAgent: true };
+    projects = [quickAgentProject];
+    const res = createTerminalConfined({
+      projectId: quickAgentProject.id,
+      profile: 'claude-yolo',
+      cols: 80,
+      rows: 24
+    });
+    expect(res.ok).toBe(true);
+    expect(lastCreate().cwd).toBe('/tmp/zcc-workspace');
   });
 
   it('resolves a seeded launch through the configured global harness', () => {
