@@ -81,14 +81,14 @@ export function DownloadClient() {
         </div>
 
         <div className="card" style={{ marginTop: 28 }}>
-          <h3>Install from the command line</h3>
-          <p>Prefer a script? The installer builds, installs into /Applications, and clears Gatekeeper:</p>
+          <h3>Build from source</h3>
+          <p>Clone the repository, install dependencies, and run the development app:</p>
           <pre style={{ background: 'var(--bg-soft)', padding: 16, borderRadius: 10, overflowX: 'auto' }}>
-            <code>git clone {site.repo}.git{'\n'}cd zana{'\n'}./install.sh</code>
+            <code>git clone {site.repo}.git{'\n'}cd zana{'\n'}npm install{'\n'}npm run dev</code>
           </pre>
           <p style={{ marginTop: 8 }}>
             Prerequisites: Node 20+ and <code>git</code>. See the{' '}
-            <a href="/docs/">docs</a> for source builds and flags.
+            <a href="/docs/">docs</a> for source-build guidance.
           </p>
         </div>
       </div>
