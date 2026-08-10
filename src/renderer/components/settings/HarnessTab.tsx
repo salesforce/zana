@@ -4,7 +4,7 @@ import type { AppConfig, HarnessFamily, HarnessVerifyResult, LaunchProfileId } f
 import type { HarnessAdapterDescriptor } from '@shared/harness-adapter';
 import { useData } from '../../store';
 import { profileIcon } from '../../util/profileIcon';
-import { Section, Field, ToggleSwitch, ChipField } from './FormFields';
+import { Section, Field, ToggleSwitch, ChipField, TextArgsField } from './FormFields';
 import { HarnessOptionSelect } from '../HarnessOptionSelect';
 import { providerUiSchema } from '@shared/launch-provider';
 
@@ -368,11 +368,11 @@ export function HarnessTab({
           placeholder="Optional"
         />
       </Field>
-      <ChipField
+      <TextArgsField
         label="Extra args"
         help="Applied first. If a later Project, Persona, or Agent setting uses the same option, the later setting takes priority."
         values={config.claudeExtraArgs ?? []}
-        placeholder="--verbose"
+        placeholder="--plugin-dir /path/to/plugin"
         onChange={(values) => void onUpdate({ claudeExtraArgs: values.length ? values : undefined })}
       />
       <ChipField

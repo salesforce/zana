@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 
 export function Section({
@@ -178,6 +178,93 @@ export function ChipField({
           aria-label={`Add ${label}`}
         />
       </div>
+      {help && <p className="settings-help">{help}</p>}
+    </div>
+  );
+}
+
+/**
+ * Tokenize a single argv-style line into tokens: split on whitespace, with
+ * quoted segments (`"..."` / `'...'`) kept as one token so a path containing
+ * a space can still be entered without being torn in two. Pure — exported for
+ * direct unit testing.
+ */
+export function tokenizeArgsLine(raw: string): string[] {
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+  const tokens: string[] = [];
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(trimmed))) {
+    const token = match[1] ?? match[2] ?? match[3];
+    if (token) tokens.push(token);
+  }
+  return tokens;
+}
+
+/**
+ * Plain-text alternative to `ChipField` for argv-shaped settings ("Extra
+ * args") — one text box, space-separated, exactly like typing flags on a
+ * command line. Avoids the chip UI's parsing ambiguity: a chip is one
+ * visually discrete unit, so users naturally typed a whole `--flag value`
+ * pair into one chip, which then got spliced into argv as a single
+ * malformed token (`unknown option '--plugin-dir /some/path'`). A plain text
+ * field carries no such expectation — `tokenizeArgsLine` splits it on
+ * whitespace on blur/commit, same as a shell would.
+ *
+ * `values` (the stored `string[]`) is joined with spaces for display; typing
+ * re-tokenizes on blur so the stored array stays the single source of truth
+ * every launch path already consumes.
+ */
+export function TextArgsField({
+  label,
+  help,
+  values,
+  placeholder,
+  onChange
+}: {
+  label: string;
+  help?: React.ReactNode;
+  values: string[];
+  placeholder?: string;
+  onChange: (vals: string[]) => void;
+}) {
+  const [input, setInput] = useState(values.join(' '));
+  const focused = useRef(false);
+
+  // The callers of this field (project/global settings) don't remount when
+  // their underlying record swaps (e.g. switching the selected project) —
+  // resync the draft from the live `values` whenever it changes, UNLESS the
+  // user is actively typing, so an in-flight edit is never clobbered.
+  useEffect(() => {
+    if (!focused.current) setInput(values.join(' '));
+  }, [values]);
+
+  const commit = (raw: string) => {
+    const tokens = tokenizeArgsLine(raw);
+    onChange(tokens);
+    setInput(tokens.join(' '));
+  };
+
+  return (
+    <div className="settings-field settings-field--mono">
+      <span className="settings-label">{label}</span>
+      <input
+        type="text"
+        className="settings-input-full"
+        value={input}
+        placeholder={placeholder}
+        onFocus={() => { focused.current = true; }}
+        onChange={(e) => setInput(e.target.value)}
+        onBlur={(e) => { focused.current = false; commit(e.target.value); }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            commit(input);
+          }
+        }}
+        spellCheck={false}
+      />
       {help && <p className="settings-help">{help}</p>}
     </div>
   );
