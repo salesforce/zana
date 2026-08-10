@@ -1466,20 +1466,30 @@ export const AgentLauncher = memo(function AgentLauncher({
   // "Fix with AI" — spawns a narrowly-scoped repair agent seeded with the raw
   // launch-failure text (mirrors Settings → Doctor's spawn path: claude-yolo so
   // it can inspect/repair local tooling without a permission prompt per step).
-  // Runs in the same target project as the failed launch when one is resolved,
-  // otherwise falls back to the scratch anchor — either way it redirects into
-  // the new agent's terminal so the user can follow along.
+  // Always runs at the managed ~/zcc-workspace root rather than the failed
+  // project: a missing or stale project cwd is itself a common launch failure,
+  // and would prevent the repair agent from starting if reused here.
   const fixWithAi = async () => {
-    if (!launchError || fixingWithAi || !target) return;
+    if (!launchError || fixingWithAi) return;
     setFixingWithAi(true);
     try {
-      const session = await createTerminal(target.id, 'claude-yolo', 80, 24, {
-        ...buildLaunchArgs(buildFixWithAiPrompt(launchError), 'Fix with AI'),
-        isolateScratch: scratchIsTarget ? 'Fix with AI' : undefined
+      const anchorRes = await window.cc.projects.ensureQuickAgent();
+      if (!anchorRes.ok) {
+        setLaunchError(anchorRes.message);
+        return;
+      }
+      const anchor = anchorRes.value;
+      const session = await createTerminal(anchor.id, 'claude-yolo', 80, 24, {
+        ...buildLaunchArgs(buildFixWithAiPrompt(launchError), 'Fix with AI')
       });
       if (session) {
         setLaunchError(null);
-        afterLaunch(session);
+        clearDraft();
+        const ui = useUi.getState();
+        ui.setNav('projects');
+        ui.selectProject(anchor.id);
+        ui.selectTab(anchor.id, session.id);
+        onClose();
       }
     } finally {
       setFixingWithAi(false);
