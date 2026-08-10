@@ -3744,6 +3744,13 @@ body.resizing-col {
   resize: vertical;
   line-height: 1.5;
 }
+
+/* Opt-in full-width text input — for fields whose values can run long
+   (argv-style "Extra args" lines, paths), where the default browser input
+   width (~20ch) truncates the view. */
+.settings-input-full {
+  width: 100%;
+}
 .settings-field textarea::placeholder,
 .settings-field input::placeholder {
   color: var(--text-dim);
@@ -19102,7 +19109,8 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
   color: var(--text-muted);
 }
 
-.launch-extra-args .settings-chip-input {
+.launch-extra-args .settings-chip-input,
+.launch-extra-args .settings-input-full {
   grid-column: 2;
 }
 
@@ -19121,6 +19129,7 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
 
   .launch-extra-args .settings-label,
   .launch-extra-args .settings-chip-input,
+  .launch-extra-args .settings-input-full,
   .launch-extra-args .settings-help {
     grid-column: 1;
   }

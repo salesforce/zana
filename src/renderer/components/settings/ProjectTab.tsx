@@ -13,7 +13,7 @@ import type {
 import type { HarnessAdapterDescriptor } from '@shared/harness-adapter';
 import { providerUiSchema } from '@shared/launch-provider';
 import { useData, useUi } from '../../store';
-import { Section, Field, ChipField } from './FormFields';
+import { Section, Field, ChipField, TextArgsField } from './FormFields';
 import { HarnessOptionSelect } from '../HarnessOptionSelect';
 import { profileIcon } from '../../util/profileIcon';
 
@@ -759,11 +759,11 @@ function ClaudeProjectLaunchFields({
       </Field>
 
 
-      <ChipField
+      <TextArgsField
         label="Extra args"
         help="Applied after Global args and before Persona and Agent args. Later settings take priority when the same option appears more than once."
         values={settings.extraArgs ?? []}
-        placeholder="--verbose"
+        placeholder="--plugin-dir /path/to/plugin"
         onChange={(vals) => save({ extraArgs: vals.length ? vals : undefined })}
       />
 
