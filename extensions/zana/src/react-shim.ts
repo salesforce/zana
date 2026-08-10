@@ -27,8 +27,12 @@ export const useMemo: typeof import('react').useMemo = (...a: unknown[]) =>
   (getHostReact().useMemo as (...x: unknown[]) => unknown)(...a) as never;
 export const useRef: typeof import('react').useRef = (...a: unknown[]) =>
   (getHostReact().useRef as (...x: unknown[]) => unknown)(...a) as never;
+export const useContext: typeof import('react').useContext = (...a: unknown[]) =>
+  (getHostReact().useContext as (...x: unknown[]) => unknown)(...a) as never;
 export const createElement: typeof import('react').createElement = (...a: unknown[]) =>
   (getHostReact().createElement as (...x: unknown[]) => unknown)(...a) as never;
+export const createContext: typeof import('react').createContext = (...a: unknown[]) =>
+  (getHostReact().createContext as (...x: unknown[]) => unknown)(...a) as never;
 /**
  * forwardRef is used by lucide-react's Icon factory — and CRUCIALLY it's called
  * at lucide's MODULE-EVAL time (when this bundle is imported), which is BEFORE

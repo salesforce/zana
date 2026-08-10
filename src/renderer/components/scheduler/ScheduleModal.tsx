@@ -104,7 +104,6 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
     task?.group
       ?? seededTask?.group
       ?? (task === null && !seededTask && schedulerTab === 'group' ? selectedGroupId ?? '' : '')
-      ?? ''
   );
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);

@@ -13,13 +13,12 @@
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
-    "baseUrl": ".",
     "paths": {
-      "@shared/*": ["src/shared/*"],
-      "@zana-ai/zcc-extension-sdk": ["packages/extension-sdk/src/index.ts"],
-      "@zana-ai/zcc-extension-sdk/*": ["packages/extension-sdk/src/*"],
-      "@zcc/harness-sdk": ["packages/harness-sdk/src/index.ts"],
-      "@zcc/harness-sdk/*": ["packages/harness-sdk/src/*"]
+      "@shared/*": ["./src/shared/*"],
+      "@zana-ai/zcc-extension-sdk": ["./packages/extension-sdk/src/index.ts"],
+      "@zana-ai/zcc-extension-sdk/*": ["./packages/extension-sdk/src/*"],
+      "@zcc/harness-sdk": ["./packages/harness-sdk/src/index.ts"],
+      "@zcc/harness-sdk/*": ["./packages/harness-sdk/src/*"]
     }
   },
   "include": [

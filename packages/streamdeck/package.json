@@ -11,7 +11,9 @@
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "sim": "node dist/bin/zcc-deck-sim.js",
@@ -19,12 +21,12 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
-  "dependencies": {},
   "optionalDependencies": {
     "@elgato-stream-deck/node": "^7.1.2",
     "@napi-rs/canvas": "^0.1.65"
   },
   "devDependencies": {
-    "vitest": "^4.1.8"
+    "@types/node": "^22.20.1",
+    "vitest": "^4.1.10"
   }
 }
