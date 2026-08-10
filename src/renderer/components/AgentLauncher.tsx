@@ -60,7 +60,7 @@ import { useData, useUi, usePersonas, useTeams, sortProjectsAlphabetically } fro
 import { profileIcon, personaIcon } from '../util/profileIcon';
 import { resolveIcon } from '../util/resolveIcon';
 import { PromptComposer, type PromptComposerHandle } from './PromptComposer';
-import { ChipField } from './settings/FormFields';
+import { TextArgsField } from './settings/FormFields';
 import { ClaudeSessionsList } from './ClaudeSessionsList';
 import { titleFromPrompt } from '../util/promptTitle';
 import { useDialogFocusTrap } from '../util/useDialogFocusTrap';
@@ -2042,11 +2042,11 @@ export const AgentLauncher = memo(function AgentLauncher({
 
               {family && (
                 <div className="launch-extra-args" id="agent-launcher-extra-args">
-                  <ChipField
+                  <TextArgsField
                     key={family.id}
                     label="Extra args"
                     values={extraArgsFor(family.id)}
-                    placeholder="--plugin-dir"
+                    placeholder="--plugin-dir /path/to/plugin"
                     onChange={(vals) => setExtraArgsForFamily(family.id, vals)}
                   />
                 </div>
