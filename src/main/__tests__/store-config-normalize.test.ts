@@ -50,6 +50,26 @@ describe('normalizeConfig — global Claude launch settings', () => {
   });
 });
 
+describe('normalizeConfig — window state', () => {
+  it('does not change omitted window state', () => {
+    expect(normalizeConfig({})).not.toHaveProperty('windowBounds');
+  });
+
+  it('normalizes zoom/maximize state', () => {
+    expect(normalizeConfig({ windowMaximized: true })).toMatchObject({ windowMaximized: true });
+  });
+
+  it('retains saved window state through unrelated config writes', () => {
+    store.setConfig({
+      windowBounds: { x: 10, y: 20, width: 1000, height: 700 }
+    });
+    store.setConfig({ theme: 'light' });
+    expect(store.getConfig()).toMatchObject({
+      windowBounds: { x: 10, y: 20, width: 1000, height: 700 }
+    });
+  });
+});
+
 describe('normalizeProjectSettings — harness routing reset', () => {
   it('removes routing when a project clears its last provider override', () => {
     expect(normalizeProjectSettings({ harnessRouting: undefined }).harnessRouting).toBeUndefined();
