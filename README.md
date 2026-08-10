@@ -64,7 +64,7 @@ Key surfaces:
 
 ## Extensions
 
-ZCC is extensible via `@zana-ai/zcc-extension-sdk` — add sidebar entries, project tabs, command-palette commands, main-process capabilities, and personas/teams without editing core. Extensions load from `~/.zcc/extensions/`, run in isolated `utilityProcess`es, and are permission-gated.
+Zana is extensible via `@zana-ai/zcc-extension-sdk` — add sidebar entries, project tabs, command-palette commands, main-process capabilities, and personas/teams without editing core. Extensions load from `~/.zcc/extensions/`, run in isolated `utilityProcess`es, and are permission-gated.
 
 - **Docs:** [`docs/extensions.md`](docs/extensions.md) | [`docs/extensions-authoring.md`](docs/extensions-authoring.md)
 - **Scaffold:** [`tools/create-zcc-extension`](tools/create-zcc-extension)
