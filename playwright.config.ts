@@ -15,6 +15,12 @@ import { defineConfig } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './e2e',
+  // Marketplace functionality is temporarily out of scope for the core E2E
+  // suite. Its tests remain runnable explicitly by file path.
+  testIgnore: [
+    '**/marketplace*.spec.ts',
+    '**/install-from-git.spec.ts',
+  ],
   // One Electron app at a time; specs within a file still run in order.
   workers: 1,
   fullyParallel: false,

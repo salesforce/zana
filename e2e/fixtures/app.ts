@@ -180,6 +180,7 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
     HOME: home,
+    ZCC_E2E_HOME: home,
     ZCC_EXTENSIONS_DIR: join(home, '.zcc', 'extensions'),
     // Electron's unpackaged default is "0.0". The main process uses this only
     // in E2E so the smoke test observes the same version as package.json.
