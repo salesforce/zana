@@ -6755,7 +6755,17 @@ function registerIpc() {
     safeSend(IPC.skills.bundles.onChanged, bundles);
   });
   safeHandle(IPC.app.homedir, () => homedir(), () => '');
-  safeHandle(IPC.app.version, () => app.getVersion(), () => '');
+  safeHandle(
+    IPC.app.version,
+    () => {
+      const version = app.getVersion();
+      const e2eVersion = process.env.ZCC_E2E_APP_VERSION;
+      return version === '0.0' && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(e2eVersion ?? '')
+        ? e2eVersion!
+        : version;
+    },
+    () => ''
+  );
   safeHandle(IPC.app.microVmSupported, () => microVmPlatformSupported(), () => false);
   // Renderer-driven OS fullscreen (e.g. the terminal modal's fullscreen
   // button). Targets the FOCUSED window — the one the renderer call actually
