@@ -11590,6 +11590,150 @@ body.resizing-col .explorer-resizer::after {
   background: var(--bg-elevated);
 }
 
+.inbox-mermaid-expand {
+  padding: 4px;
+}
+
+/* A deliberately spacious diagram workspace: the report stays readable while
+   dense graphs gain an inspectable, scrollable canvas on demand. */
+.modal.mermaid-expanded-modal {
+  width: min(96vw, 1600px);
+  height: min(92vh, 1100px);
+  max-height: min(92vh, 1100px);
+  display: flex;
+  flex-direction: column;
+}
+
+.mermaid-expanded-body {
+  min-height: 0;
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.mermaid-expanded-header {
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mermaid-expanded-header h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mermaid-expanded-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  justify-content: flex-end;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.mermaid-expanded-btn {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.mermaid-expanded-btn:hover:not(:disabled),
+.mermaid-expanded-btn.is-active {
+  color: var(--text-primary);
+  background: var(--bg-base);
+}
+
+.mermaid-expanded-btn:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.mermaid-expanded-toolbar-separator {
+  width: 1px;
+  height: 18px;
+  margin: 0 5px;
+  background: var(--border);
+}
+
+.mermaid-expanded-zoom {
+  min-width: 46px;
+  color: var(--text-dim);
+  font-size: 12px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.mermaid-expanded-canvas {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 56px;
+  background: var(--bg-base);
+  cursor: grab;
+  touch-action: none;
+}
+
+.mermaid-expanded-canvas:active {
+  cursor: grabbing;
+}
+
+.mermaid-expanded-scale-box {
+  width: max-content;
+  min-width: 100%;
+}
+
+.mermaid-expanded-diagram {
+  width: max-content;
+  min-width: 100%;
+  transform-origin: top left;
+  transition: transform 0.12s ease;
+}
+
+.mermaid-expanded-diagram svg {
+  display: block;
+  max-width: none;
+  height: auto;
+  margin: 0 auto;
+}
+
+.mermaid-expanded-canvas .inbox-mermaid-source {
+  min-width: max-content;
+}
+
+.mermaid-expanded-footer {
+  padding: 7px 12px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  background: var(--bg-elevated);
+  font-size: 11px;
+}
+
+@media (max-width: 640px) {
+  .mermaid-expanded-modal {
+    width: 100vw;
+    height: 100vh;
+    max-height: 100vh;
+    border-radius: 0;
+  }
+
+  .mermaid-expanded-canvas {
+    padding: 24px;
+  }
+}
+
 .inbox-mermaid-loading {
   margin: 12px 0;
   padding: 12px;
