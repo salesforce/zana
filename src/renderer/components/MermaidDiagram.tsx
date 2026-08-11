@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, Code2, Download, FileImage } from 'lucide-react';
+import { ChevronDown, Code2, Download, Expand, FileImage, Minus, Plus, RotateCcw, X } from 'lucide-react';
 import { rasterizeSvgString, downloadBlob } from '../util/mermaidExport';
+import { Modal } from './Modal';
 
 /**
  * Render a single mermaid code block to inline SVG.
@@ -108,6 +109,7 @@ export function MermaidDiagram({
   // Toolbar "Source" toggle: swap the rendered diagram for its raw mermaid
   // code block in place. Only reachable via the exportable toolbar.
   const [showSource, setShowSource] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -157,6 +159,7 @@ export function MermaidDiagram({
           theme={theme ?? currentTheme()}
           showSource={showSource}
           onToggleSource={() => setShowSource((s) => !s)}
+          onExpand={() => setExpanded(true)}
         />
       )}
       {showSource ? (
@@ -166,6 +169,14 @@ export function MermaidDiagram({
         // mermaid output is its own trusted SVG (securityLevel 'strict'
         // sanitizes the diagram source); inject it as markup.
         <div dangerouslySetInnerHTML={{ __html: svg }} />
+      )}
+      {expanded && (
+        <MermaidExpandedView
+          code={code}
+          svg={svg}
+          theme={theme ?? currentTheme()}
+          onClose={() => setExpanded(false)}
+        />
       )}
     </div>
   );
@@ -193,14 +204,15 @@ function MermaidToolbar({
   code,
   theme,
   showSource,
-  onToggleSource
+  onToggleSource,
+  onExpand
 }: {
   code: string;
   theme: MermaidTheme;
   showSource: boolean;
   onToggleSource: () => void;
+  onExpand: () => void;
 }) {
-  const [copiedSvg, setCopiedSvg] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const exportSvgCache = useRef<string | null>(null);
   const downloadRef = useRef<HTMLDivElement>(null);
@@ -212,13 +224,12 @@ function MermaidToolbar({
     return exportSvgCache.current;
   };
 
-  const copySvg = async () => {
+  const downloadSvg = async () => {
+    setMenuOpen(false);
     try {
-      await navigator.clipboard.writeText(await exportSvg());
-      setCopiedSvg(true);
-      setTimeout(() => setCopiedSvg(false), 1500);
+      downloadBlob(new Blob([await exportSvg()], { type: 'image/svg+xml;charset=utf-8' }), 'diagram.svg');
     } catch {
-      /* clipboard blocked or render failed — no-op */
+      /* render failed — no-op */
     }
   };
 
@@ -259,6 +270,15 @@ function MermaidToolbar({
     <div className="inbox-mermaid-toolbar" role="toolbar" aria-label="Diagram actions">
       <button
         type="button"
+        className="inbox-mermaid-btn inbox-mermaid-expand"
+        onClick={onExpand}
+        title="Open diagram in full screen"
+        aria-label="Open diagram in full screen"
+      >
+        <Expand size={13} />
+      </button>
+      <button
+        type="button"
         className={`inbox-mermaid-btn${showSource ? ' is-active' : ''}`}
         onClick={onToggleSource}
         aria-pressed={showSource}
@@ -266,15 +286,6 @@ function MermaidToolbar({
       >
         <Code2 size={12} />
         {showSource ? 'Diagram' : 'Source'}
-      </button>
-      <button
-        type="button"
-        className="inbox-mermaid-btn"
-        onClick={() => void copySvg()}
-        title="Copy SVG markup"
-      >
-        {copiedSvg ? <Check size={12} /> : <FileImage size={12} />}
-        {copiedSvg ? 'Copied' : 'SVG'}
       </button>
       <div className="inbox-mermaid-download" ref={downloadRef}>
         <button
@@ -295,6 +306,17 @@ function MermaidToolbar({
               type="button"
               className="inbox-mermaid-menu-item"
               role="menuitem"
+              onClick={() => {
+                void downloadSvg();
+              }}
+            >
+              <FileImage size={12} />
+              SVG
+            </button>
+            <button
+              type="button"
+              className="inbox-mermaid-menu-item"
+              role="menuitem"
               onClick={() => void download('image/png')}
             >
               PNG
@@ -311,5 +333,143 @@ function MermaidToolbar({
         )}
       </div>
     </div>
+  );
+}
+
+/** A focused workspace for inspecting large diagrams without changing the report. */
+function MermaidExpandedView({
+  code,
+  svg,
+  theme,
+  onClose
+}: {
+  code: string;
+  svg: string;
+  theme: MermaidTheme;
+  onClose: () => void;
+}) {
+  const [scale, setScale] = useState(1);
+  const [showSource, setShowSource] = useState(false);
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const diagramRef = useRef<HTMLDivElement>(null);
+  const panRef = useRef<{ id: number; x: number; y: number; left: number; top: number } | null>(null);
+  const zoom = (delta: number) =>
+    setScale((current) => Math.max(0.25, Math.min(3, Math.round((current + delta) * 100) / 100)));
+
+  const fit = () => {
+    const canvas = canvasRef.current;
+    const diagram = diagramRef.current?.querySelector('svg');
+    if (!canvas || !diagram) return;
+    const viewBox = diagram.viewBox.baseVal;
+    const width = viewBox.width || diagram.getBoundingClientRect().width;
+    const height = viewBox.height || diagram.getBoundingClientRect().height;
+    if (!width || !height) return;
+    const next = Math.max(0.25, Math.min(1, Math.min((canvas.clientWidth - 96) / width, (canvas.clientHeight - 96) / height)));
+    setScale(Math.round(next * 100) / 100);
+    requestAnimationFrame(() => {
+      canvas.scrollLeft = Math.max(0, (canvas.scrollWidth - canvas.clientWidth) / 2);
+      canvas.scrollTop = Math.max(0, (canvas.scrollHeight - canvas.clientHeight) / 2);
+    });
+  };
+
+  useEffect(() => {
+    if (!showSource) fit();
+  }, [showSource]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && (event.key === '+' || event.key === '=')) {
+        event.preventDefault();
+        zoom(0.25);
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key === '-') {
+        event.preventDefault();
+        zoom(-0.25);
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key === '0') {
+        event.preventDefault();
+        setScale(1);
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
+  return (
+    <Modal
+      title="Diagram"
+      onClose={onClose}
+      className="mermaid-expanded-modal"
+      bodyClassName="mermaid-expanded-body"
+      header={<div className="mermaid-expanded-header"><h3>Diagram</h3></div>}
+      hideClose
+    >
+      <div className="mermaid-expanded-toolbar" role="toolbar" aria-label="Diagram zoom controls">
+        <button type="button" className="mermaid-expanded-btn" onClick={() => zoom(-0.25)} disabled={scale <= 0.25} title="Zoom out" aria-label="Zoom out">
+          <Minus size={14} />
+        </button>
+        <button type="button" className="mermaid-expanded-btn" onClick={() => zoom(0.25)} disabled={scale >= 3} title="Zoom in" aria-label="Zoom in">
+          <Plus size={14} />
+        </button>
+        <button type="button" className="mermaid-expanded-btn" onClick={() => setScale(1)} disabled={scale === 1} title="Reset zoom" aria-label="Reset zoom">
+          <RotateCcw size={14} />
+        </button>
+        <button
+          type="button"
+          className={`mermaid-expanded-btn${showSource ? ' is-active' : ''}`}
+          onClick={() => setShowSource((value) => !value)}
+          aria-pressed={showSource}
+          title={showSource ? 'Show diagram' : 'Show source'}
+          aria-label={showSource ? 'Show diagram' : 'Show source'}
+        >
+          <Code2 size={14} />
+        </button>
+        <span className="mermaid-expanded-toolbar-separator" aria-hidden="true" />
+        <button type="button" className="mermaid-expanded-btn" onClick={onClose} title="Close diagram" aria-label="Close diagram">
+          <X size={16} />
+        </button>
+      </div>
+      <div
+        ref={canvasRef}
+        className="mermaid-expanded-canvas"
+        aria-label="Expanded diagram. Use the zoom controls or Command or Control plus and minus. Drag to pan."
+        onWheel={(event) => {
+          if (!event.ctrlKey && !event.metaKey) return;
+          event.preventDefault();
+          zoom(event.deltaY < 0 ? 0.1 : -0.1);
+        }}
+        onPointerDown={(event) => {
+          if (showSource || event.button !== 0) return;
+          panRef.current = { id: event.pointerId, x: event.clientX, y: event.clientY, left: event.currentTarget.scrollLeft, top: event.currentTarget.scrollTop };
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={(event) => {
+          const pan = panRef.current;
+          if (!pan || pan.id !== event.pointerId) return;
+          event.currentTarget.scrollLeft = pan.left - (event.clientX - pan.x);
+          event.currentTarget.scrollTop = pan.top - (event.clientY - pan.y);
+        }}
+        onPointerUp={(event) => {
+          if (panRef.current?.id === event.pointerId) panRef.current = null;
+        }}
+      >
+        {showSource ? (
+          <pre className="inbox-md-code inbox-mermaid-source">{code}</pre>
+        ) : (
+          <div
+            className="mermaid-expanded-scale-box"
+            style={{ width: `${scale * 100}%`, height: `${scale * 100}%` }}
+          >
+            <div
+              ref={diagramRef}
+              className="mermaid-expanded-diagram"
+              style={{ transform: `scale(${scale})` }}
+              dangerouslySetInnerHTML={{ __html: svg }}
+            />
+          </div>
+        )}
+      </div>
+      <div className="mermaid-expanded-footer">{theme === 'default' ? 'Light' : 'Dark'} theme. Drag to pan; Command or Control +/− or pinch zooms.</div>
+    </Modal>
   );
 }
