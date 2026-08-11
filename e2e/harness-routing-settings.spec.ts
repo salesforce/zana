@@ -1,10 +1,12 @@
 import { test, expect } from './fixtures/app';
+import { makeFakeAgentBinary } from './sdk/harness';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 test('Global and Project harness settings persist provider, model, execution, and reset flows', async ({ app }) => {
   const { window } = app;
+  const openCode = makeFakeAgentBinary({ profile: 'generic', sequence: 'plain-exit' });
   const projectDir = mkdtempSync(join(tmpdir(), 'zcc-routing-settings-'));
   const project = await window.evaluate((path) => window.cc.projects.add(path), projectDir);
   expect(project.ok).toBe(true);
@@ -14,11 +16,19 @@ test('Global and Project harness settings persist provider, model, execution, an
   try {
     await window.evaluate(() => window.cc.config.set({
       harnessOpenCodeEnabled: true,
-      defaultHarness: 'opencode'
+      defaultHarness: 'opencode',
+      opencodeBinary: undefined
     }));
+    await window.evaluate((bin) => window.cc.config.set({ opencodeBinary: bin }), openCode.path);
     await window.locator('[data-testid="nav-settings"]').click();
     await window.locator('.settings-section-item').filter({ hasText: 'Code Harness' }).click();
     await expect(window.locator('.settings-header')).toContainText('Code Harness');
+
+    // Updating binary config does not retroactively change boot-time availability.
+    // Re-open tab after its mount-time probe sees our deterministic fake binary.
+    await window.locator('[data-testid="nav-agents"]').click();
+    await window.locator('[data-testid="nav-settings"]').click();
+    await window.locator('.settings-section-item').filter({ hasText: 'Code Harness' }).click();
 
     const globalOpenCode = window.locator('.opener-row').filter({ hasText: 'OpenCode' });
     await globalOpenCode.locator('.opener-row-expand').click();
@@ -69,8 +79,9 @@ test('Global and Project harness settings persist provider, model, execution, an
   } finally {
     await window.evaluate(async (id) => {
       await window.cc.projects.remove(id);
-      await window.cc.config.set({ defaultHarness: undefined, harnessRouting: undefined });
+      await window.cc.config.set({ defaultHarness: undefined, harnessRouting: undefined, opencodeBinary: undefined });
     }, projectId);
+    openCode.cleanup();
     rmSync(projectDir, { recursive: true, force: true });
   }
 });

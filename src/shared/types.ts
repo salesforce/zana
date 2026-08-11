@@ -5763,6 +5763,8 @@ export interface CcApi {
      * shadow. Returns the stored persona on success.
      */
     save(input: PersonaInput): Promise<Result<Persona>>;
+    /** Copy a resolved persona into a fresh user-owned persona. */
+    duplicate(id: string): Promise<Result<Persona>>;
     /**
      * Remove the user file for an id. For a shadowed built-in this resets it to
      * the shipped default; for a user persona it deletes it. Project personas
@@ -5783,6 +5785,8 @@ export interface CcApi {
     revealDir(): Promise<{ ok: boolean; path: string; message?: string }>;
     /** Create or overwrite a user team (`~/.zcc/teams/<id>.json`). */
     save(input: TeamInput): Promise<Result<Team>>;
+    /** Copy a resolved team into a fresh user-owned team. */
+    duplicate(id: string): Promise<Result<Team>>;
     /** Remove the user file for an id (resets a shadowed builtin / deletes a user team). */
     delete(id: string): Promise<Result<true>>;
     /**

@@ -603,6 +603,7 @@ export const IPC = {
     onChanged: 'personas:onChanged',
     revealDir: 'personas:revealDir',
     save: 'personas:save',
+    duplicate: 'personas:duplicate',
     delete: 'personas:delete'
   },
   teams: {
@@ -610,6 +611,7 @@ export const IPC = {
     onChanged: 'teams:onChanged',
     revealDir: 'teams:revealDir',
     save: 'teams:save',
+    duplicate: 'teams:duplicate',
     delete: 'teams:delete',
     launch: 'teams:launch',
     cancel: 'teams:cancel',

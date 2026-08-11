@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Users, Search, FolderOpen, Play, ChevronDown, ChevronRight, Plus, Download, Upload } from 'lucide-react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
+import { Users, Search, FolderOpen, Play, ChevronDown, ChevronRight, Plus, Download, Upload, Copy, Pencil, Trash2 } from 'lucide-react';
 import type { CancelTeamLaunchResult, LaunchTeamResult, Project, Result, Team, Persona } from '@shared/types';
 import { useTeams, useData, useUi, usePersonas } from '../store';
 import { resolveIcon } from '../util/resolveIcon';
@@ -124,6 +124,7 @@ export function SquadsPanel() {
   const [query, setQuery] = useState('');
   const [expandedTeamId, setExpandedTeamId] = useState<string | null>(null);
   const [editor, setEditor] = useState<EditorState>(null);
+  const [rowMenu, setRowMenu] = useState<{ team: Team; x: number; y: number; trigger: HTMLElement } | null>(null);
 
   // In a per-project window, hide other projects' project-teams (mirrors the
   // PersonasPanel filter). Main window: all teams.
@@ -193,6 +194,24 @@ export function SquadsPanel() {
     }
     if (res.value.canceled) return;
     pushToast(`Exported "${team.name}" to ${res.value.path}.`, 'info');
+  };
+
+  const duplicateTeam = async (team: Team) => {
+    const result = await window.cc.teams.duplicate(team.id);
+    if (!result.ok) {
+      pushToast(`Duplicate failed: ${result.message}`, 'error');
+      return;
+    }
+    pushToast(`Created squad “${result.value.name}”`, 'info');
+  };
+
+  const deleteTeam = async (team: Team) => {
+    const result = await window.cc.teams.delete(team.id);
+    if (!result.ok) {
+      pushToast(`Delete failed: ${result.message}`, 'error');
+      return;
+    }
+    pushToast(`Deleted squad “${team.name}”`, 'info');
   };
 
   const importBundle = async () => {
@@ -297,6 +316,16 @@ export function SquadsPanel() {
                       setExpandedTeamId((cur) => (cur === t.id ? null : t.id))
                     }
                     onExport={() => exportTeam(t)}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      setRowMenu({ team: t, x: event.clientX, y: event.clientY, trigger: event.target as HTMLElement });
+                    }}
+                    onContextMenuKey={(event) => {
+                      if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+                      event.preventDefault();
+                      const rect = event.currentTarget.getBoundingClientRect();
+                      setRowMenu({ team: t, x: rect.left, y: rect.bottom, trigger: event.currentTarget });
+                    }}
                   />
                 ))}
               </ul>
@@ -318,6 +347,20 @@ export function SquadsPanel() {
           onClose={() => setEditor(null)}
         />
       )}
+      {rowMenu && (
+        <TeamRowMenu
+          team={rowMenu.team}
+          anchor={{ x: rowMenu.x, y: rowMenu.y }}
+          onClose={() => {
+            setRowMenu(null);
+            rowMenu.trigger.focus();
+          }}
+          onOpen={() => setEditor({ kind: 'open', team: rowMenu.team })}
+          onReveal={() => void reveal()}
+          onDuplicate={() => void duplicateTeam(rowMenu.team)}
+          onDelete={() => void deleteTeam(rowMenu.team)}
+        />
+      )}
     </main>
   );
 }
@@ -330,7 +373,9 @@ function TeamRow({
   onOpen,
   isExpanded,
   onToggleExpand,
-  onExport
+  onExport,
+  onContextMenu,
+  onContextMenuKey
 }: {
   team: Team;
   projects: Project[];
@@ -341,6 +386,8 @@ function TeamRow({
   isExpanded: boolean;
   onToggleExpand: () => void;
   onExport: () => void;
+  onContextMenu: (event: ReactMouseEvent) => void;
+  onContextMenuKey: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
 }) {
   const Icon = resolveIcon(team.icon ?? 'Users');
   const tabs = tabCount(team);
@@ -472,7 +519,7 @@ function TeamRow({
   const ChevronIcon = isExpanded ? ChevronDown : ChevronRight;
 
   return (
-    <li className="skills-row skills-row--clickable team-row">
+    <li className="skills-row skills-row--clickable team-row" onContextMenu={onContextMenu}>
       <div className="team-row-header">
         <button
           type="button"
@@ -487,6 +534,7 @@ function TeamRow({
           type="button"
           className="skills-row-open"
           onClick={onOpen}
+          onKeyDown={onContextMenuKey}
           aria-label={`Open ${team.name}`}
         >
           <span className="tab-profile-icon" aria-hidden="true">
@@ -631,6 +679,101 @@ function TeamRow({
         </div>
       )}
     </li>
+  );
+}
+
+function TeamRowMenu({
+  team,
+  anchor,
+  onClose,
+  onOpen,
+  onReveal,
+  onDuplicate,
+  onDelete
+}: {
+  team: Team;
+  anchor: { x: number; y: number };
+  onClose: () => void;
+  onOpen: () => void;
+  onReveal: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const canDelete = team.source === 'user';
+
+  useEffect(() => {
+    const onDown = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) onClose();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', onClose, true);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', onClose, true);
+    };
+  }, [onClose]);
+
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    if (!menu) return;
+    const padding = 8;
+    const rect = menu.getBoundingClientRect();
+    const left = anchor.x + rect.width > window.innerWidth - padding
+      ? Math.max(padding, window.innerWidth - rect.width - padding)
+      : anchor.x;
+    const top = anchor.y + rect.height > window.innerHeight - padding
+      ? Math.max(padding, window.innerHeight - rect.height - padding)
+      : anchor.y;
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+  }, [anchor]);
+
+  useEffect(() => {
+    itemRefs.current[0]?.focus();
+  }, []);
+
+  return (
+    <div
+      ref={menuRef}
+      className="tab-context-menu"
+      role="menu"
+      aria-label={`Actions for ${team.name}`}
+      style={{ top: anchor.y, left: anchor.x }}
+      onMouseDown={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        const items = itemRefs.current.filter((item): item is HTMLButtonElement => !!item);
+        const current = items.indexOf(document.activeElement as HTMLButtonElement);
+        const next = menuIndexForKey(event.key, Math.max(0, current), items.length);
+        if (next === undefined) return;
+        event.preventDefault();
+        items[next]?.focus();
+      }}
+    >
+      <button ref={(item) => { itemRefs.current[0] = item; }} role="menuitem" onClick={() => { onClose(); onOpen(); }}>
+        <Pencil size={13} /> {team.source === 'user' ? 'Edit' : 'View'}
+      </button>
+      <button ref={(item) => { itemRefs.current[1] = item; }} role="menuitem" onClick={() => { onClose(); onReveal(); }}>
+        <FolderOpen size={13} /> Reveal folder
+      </button>
+      <button ref={(item) => { itemRefs.current[2] = item; }} role="menuitem" onClick={() => { onClose(); onDuplicate(); }}>
+        <Copy size={13} /> Duplicate
+      </button>
+      {canDelete && (
+        <>
+          <div className="tab-context-sep" />
+          <button ref={(item) => { itemRefs.current[3] = item; }} role="menuitem" className="tab-context-danger" onClick={() => { onClose(); onDelete(); }}>
+            <Trash2 size={13} /> Delete
+          </button>
+        </>
+      )}
+    </div>
   );
 }
 
