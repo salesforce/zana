@@ -31,8 +31,9 @@ test('terminal: custom wheel handler is wired and wheel events do not crash', as
   }, projectDir);
   expect(projectId).toBeTruthy();
 
+  let sessionId: string | null = null;
   try {
-    const sessionId = await window.evaluate(async (pid) => {
+    sessionId = await window.evaluate(async (pid) => {
       const res = await window.cc.terminals.create({ projectId: pid, profile: 'shell' } as any);
       const s = (res && 'ok' in (res as any) ? (res as any).value : res) as { id: string };
       return s.id;
@@ -59,12 +60,18 @@ test('terminal: custom wheel handler is wired and wheel events do not crash', as
     );
     expect(stillAlive).toBeGreaterThan(0);
   } finally {
-    await window.evaluate(async (pid) => {
+    await window.evaluate(async (args) => {
+      const { pid, sid } = args as { pid: string; sid: string | null };
+      try {
+        if (sid) await window.cc.terminals.close(sid);
+      } catch {
+        /* best-effort */
+      }
       try {
         await window.cc.projects.remove(pid);
       } catch {
         /* best-effort cleanup */
       }
-    }, projectId);
+    }, { pid: projectId, sid: sessionId });
   }
 });

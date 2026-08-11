@@ -1,5 +1,7 @@
 import { test, expect } from './fixtures/app';
 
+const isMacOS = process.platform === 'darwin';
+
 async function mainWindowState(app: import('./fixtures/app').AppHandle) {
   return app.electron.evaluate(({ BrowserWindow }) => {
     const win = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes('index.html'));
@@ -41,7 +43,10 @@ async function zoomToWorkArea(app: import('./fixtures/app').AppHandle) {
   return normal;
 }
 
-test('Option-green maximize is restored after quit', async ({ app }) => {
+test.describe('macOS native-window behavior', () => {
+  test.skip(!isMacOS, 'macOS native-window behavior');
+
+  test('Option-green maximize is restored after quit', async ({ app }) => {
   await zoomToWorkArea(app);
 
   const appClosed = app.electron.waitForEvent('close');
@@ -100,4 +105,6 @@ test('native fullscreen relaunches as a regular window', async ({ app }) => {
   } finally {
     await relaunched.electron.close();
   }
+});
+
 });

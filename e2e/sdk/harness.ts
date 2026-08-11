@@ -71,7 +71,7 @@ function oscTitle(title: string): string {
   return `printf '\\033]2;${title}\\007'`;
 }
 
-const HOLD = 'while true; do sleep 3600; done';
+const HOLD = 'cat';
 
 function presetBody(opts: FakeAgentOptions): string {
   const profile = opts.profile ?? 'claude';
@@ -80,24 +80,27 @@ function presetBody(opts: FakeAgentOptions): string {
   const idle = opts.idleTitle ?? 'ready';
   const code = opts.exitCode ?? 0;
 
+  const versionIntercept = 'if [ "$1" = "--version" ]; then echo "fake-agent-1.0.0"; exit 0; fi\n';
+
   switch (seq) {
     case 'working-hold':
-      return `${oscTitle(`${BRAILLE_WORKING} ${working}`)}\n${HOLD}`;
+      return `${versionIntercept}${oscTitle(`${BRAILLE_WORKING} ${working}`)}\n${HOLD}`;
     case 'work-then-idle':
       return [
+        versionIntercept,
         oscTitle(`${BRAILLE_WORKING} ${working}`),
         'sleep 1',
         oscTitle(`${IDLE_MARK} ${idle}`),
         HOLD
       ].join('\n');
     case 'work-then-exit':
-      return [oscTitle(`${BRAILLE_WORKING} ${working}`), 'sleep 1', `exit ${code}`].join('\n');
+      return [versionIntercept, oscTitle(`${BRAILLE_WORKING} ${working}`), 'sleep 1', `exit ${code}`].join('\n');
     case 'plain-hold':
-      return `echo "generic agent running"\n${HOLD}`;
+      return `${versionIntercept}echo "generic agent running"\n${HOLD}`;
     case 'plain-exit':
-      return `echo "generic agent running"\nsleep 1\nexit ${code}`;
+      return `${versionIntercept}echo "generic agent running"\nsleep 1\nexit ${code}`;
     default:
-      return HOLD;
+      return `${versionIntercept}${HOLD}`;
   }
 }
 

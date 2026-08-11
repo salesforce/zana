@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -14,9 +15,18 @@ import {
 import { join } from 'node:path';
 import type { Project, Team, TeamSlot } from '../shared/types.js';
 import type { PersonaTeamRegistry } from './extensions/persona-team-registry.js';
+import { uniqueCopyName } from './unique-copy-name.js';
 
 const userTeamsDir = () => join(app.getPath('home'), '.zcc', 'teams');
 const projectTeamsDir = (project: Project) => join(project.path, '.zcc', 'teams');
+
+function canonicalDir(dir: string): string {
+  try {
+    return realpathSync(dir);
+  } catch {
+    return dir;
+  }
+}
 
 /** Rule 5: per-slot tab clamp. Mirrors `TEAM_SLOT_MAX` in the registry; kept
  *  here too so the disk loader / UI save path clamp without importing the
@@ -262,13 +272,17 @@ export class TeamStore extends EventEmitter {
       for (const t of this.registry.allTeams()) merged.set(t.id, t);
     }
     for (const t of BUILTIN) merged.set(t.id, { ...t, source: 'builtin' });
-    for (const t of listInDir(userTeamsDir(), 'user')) merged.set(t.id, t);
+    const userDir = userTeamsDir();
+    for (const t of listInDir(userDir, 'user')) merged.set(t.id, t);
+    const canonicalUserDir = canonicalDir(userDir);
     for (const project of this.projectsRef()) {
+      const projectDir = projectTeamsDir(project);
+      if (canonicalDir(projectDir) === canonicalUserDir) continue;
       const projectSource: Team['source'] = {
         projectId: project.id,
         projectName: project.name
       };
-      for (const t of listInDir(projectTeamsDir(project), projectSource)) {
+      for (const t of listInDir(projectDir, projectSource)) {
         merged.set(t.id, t);
       }
     }
@@ -313,6 +327,17 @@ export class TeamStore extends EventEmitter {
     writeJsonAtomic(join(dir, fileNameForId(team.id)), team);
     this.refresh();
     return { ...team, source: 'user' };
+  }
+
+  /** Copy a currently resolved team into the user-owned store. */
+  duplicateUser(id: string): Team {
+    const source = this.cache.find((team) => team.id === id);
+    if (!source) throw new Error(`team not found: ${id}`);
+    const { id: _id, source: _source, name, ...configuration } = structuredClone(source);
+    return this.saveUser({
+      ...configuration,
+      name: uniqueCopyName(name, this.cache.map((team) => team.name))
+    });
   }
 
   /**

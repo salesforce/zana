@@ -16,6 +16,7 @@ import type { Project, Persona, CreateTerminalRequest, PersonaHarnessIntentV1, P
 import { VALID_PROFILES, seedPromptArgs, harnessFamilyOf } from '../shared/launch-provider.js';
 import type { PersonaTeamRegistry } from './extensions/persona-team-registry.js';
 import { atomicDurableWrite } from './harness-routing-migration/storage.js';
+import { uniqueCopyName } from './unique-copy-name.js';
 
 const userPersonasDir = () => join(app.getPath('home'), '.zcc', 'personas');
 const projectPersonasDir = (project: Project) =>
@@ -792,6 +793,17 @@ export class PersonaStore extends EventEmitter {
     this.refresh();
     const projected = projectPersonaFields(migrated);
     return { ...projected, source: 'user' };
+  }
+
+  /** Copy a currently resolved persona into the user-owned store. */
+  duplicateUser(id: string): Persona {
+    const source = this.cache.find((persona) => persona.id === id);
+    if (!source) throw new Error(`persona not found: ${id}`);
+    const { id: _id, source: _source, name, ...configuration } = structuredClone(source);
+    return this.saveUser({
+      ...configuration,
+      name: uniqueCopyName(name, this.cache.map((persona) => persona.name))
+    });
   }
 
   /**

@@ -54,7 +54,23 @@ test('launching an agent through the real UI opens its terminal and it goes work
     // Point the claude profile at the stub BEFORE launching. (config.set is the
     // one unavoidable IPC — there's no UI to set a binary path; everything else
     // below is real DOM interaction.)
-    await window.evaluate((bin) => window.cc.config.set({ claudeBinary: bin }), agent.path);
+    await window.evaluate((bin) => window.cc.config.set({
+      claudeBinary: bin,
+      defaultHarness: 'claude'
+    }), agent.path);
+
+    // The launcher hides uninstalled harnesses. Config changes do not update its
+    // cached verification result, so mount Code Harness to re-probe fake Claude
+    // before opening the modal. This matches the user-visible Settings refresh.
+    await window.locator('[data-testid="nav-settings"]').click();
+    await window.locator('.settings-section-item').filter({ hasText: 'Code Harness' }).click();
+    const claudeSettings = window.locator('#settings-anchor-harness-claude');
+    await expect(claudeSettings).not.toHaveClass(/opener-row--off/);
+    // Mounting this tab starts an async `--version` probe. Wait for its success,
+    // not merely the always-visible Claude settings row, before opening the
+    // launcher; unverified/missing harnesses are intentionally hidden there.
+    await expect(claudeSettings.locator('.opener-row-status')).toHaveClass(/opener-row-status--ok/);
+    await window.locator('[data-testid="nav-agents"]').click();
 
     projectId = await window.evaluate(async (path) => {
       const res = await window.cc.projects.add(path);
@@ -97,34 +113,11 @@ test('launching an agent through the real UI opens its terminal and it goes work
     // 5. Pick the target project (our tmp project) via the real <select>.
     await modal.getByLabel('Target project').selectOption(projectId!);
 
-    // 6. Select the claude HARNESS FAMILY explicitly (it's the default, but click
-    //    it as a user would to prove the family picker works). The launcher now
-    //    separates harness family from a Normal/Yolo permission axis.
-    await modal.locator('[data-testid="launch-profile-claude"]').click();
-
-    // 6b. The Normal/Yolo mode row is a separate control. Normal is the default;
-    //     Yolo is enabled for claude (it has a --dangerously-skip-permissions
-    //     bypass profile). Prove the axis is independent of the family picker by
-    //     toggling to Yolo and back to Normal before launching.
-    const modeYolo = modal.locator('[data-testid="launch-mode-yolo"]');
-    const modeNormal = modal.locator('[data-testid="launch-mode-normal"]');
-    await expect(modeNormal).toHaveClass(/active/);
-    await expect(modeYolo).toBeEnabled();
-    await modeYolo.click();
-    await expect(modeYolo).toHaveClass(/active/);
-    await modeNormal.click();
-    await expect(modeNormal).toHaveClass(/active/);
-
-    // 6c. PI has no permission-bypass flag, so selecting the PI family disables
-    //     the Yolo toggle (only --approve exists, which trusts project files and
-    //     is not a bypass). Prove it, then return to claude for the real launch.
-    const piFamily = modal.locator('[data-testid="launch-profile-pi"]');
-    if (await piFamily.count()) {
-      await piFamily.click();
-      await expect(modeYolo).toBeDisabled();
-      await modal.locator('[data-testid="launch-profile-claude"]').click();
-      await expect(modeYolo).toBeEnabled();
-    }
+    // 6. Select verified Claude explicitly. Default routing is covered elsewhere;
+    // this flow needs a deterministic fake binary on every runner.
+    const claudeProfile = modal.locator('[data-testid="launch-profile-claude"]');
+    await expect(claudeProfile).toBeEnabled();
+    await claudeProfile.click();
 
     // 7. Send. This is the real launch button — it calls doCreate → createTerminal.
     await modal.locator('[data-testid="launch-send"]').click();

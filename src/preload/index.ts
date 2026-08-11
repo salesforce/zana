@@ -352,6 +352,7 @@ const api: CcApi = {
     list: () => ipcRenderer.invoke(IPC.personas.list),
     revealDir: () => ipcRenderer.invoke(IPC.personas.revealDir),
     save: (input) => ipcRenderer.invoke(IPC.personas.save, input),
+    duplicate: (id) => ipcRenderer.invoke(IPC.personas.duplicate, id),
     delete: (id) => ipcRenderer.invoke(IPC.personas.delete, id),
     onChanged: (cb) => {
       const handler = (_e: unknown, personas: Persona[]) => cb(personas);
@@ -363,6 +364,7 @@ const api: CcApi = {
     list: () => ipcRenderer.invoke(IPC.teams.list),
     revealDir: () => ipcRenderer.invoke(IPC.teams.revealDir),
     save: (input) => ipcRenderer.invoke(IPC.teams.save, input),
+    duplicate: (id) => ipcRenderer.invoke(IPC.teams.duplicate, id),
     delete: (id) => ipcRenderer.invoke(IPC.teams.delete, id),
     launch: (teamId, projectId) => ipcRenderer.invoke(IPC.teams.launch, teamId, projectId),
     cancel: (launchRequestId) => ipcRenderer.invoke(IPC.teams.cancel, launchRequestId),

@@ -61,10 +61,13 @@ export function writeRegistryConfig(home: string, cfg: RegistryConfig): void {
 function writeAppConfig(home: string): void {
   const dir = join(home, '.zcc');
   mkdirSync(dir, { recursive: true });
-  writeFileSync(
-    join(dir, 'config.json'),
-    JSON.stringify({ walkthroughCompleted: true, setupDismissed: true }, null, 2)
-  );
+  const configPath = join(dir, 'config.json');
+  if (!existsSync(configPath)) {
+    writeFileSync(
+      configPath,
+      JSON.stringify({ walkthroughCompleted: true, setupDismissed: true }, null, 2)
+    );
+  }
 }
 
 /**
@@ -311,14 +314,17 @@ export const test = base.extend<Fixtures>({
       // Race the graceful close against a deadline and force-kill the process if
       // it overruns, so a stuck agent can never eat the whole test timeout in
       // teardown. Deterministic specs close well within the deadline.
+      let closed = false;
       await Promise.race([
-        handle.electron.close().catch(() => {}),
+        handle.electron.close().then(() => { closed = true; }).catch(() => { closed = true; }),
         new Promise<void>((resolve) => setTimeout(resolve, 15_000)),
       ]);
-      try {
-        handle.electron.process()?.kill('SIGKILL');
-      } catch {
-        /* already exited */
+      if (!closed) {
+        try {
+          handle.electron.process()?.kill('SIGKILL');
+        } catch {
+          /* already exited */
+        }
       }
       // Restore the developer's real config exactly as it was (or remove a file
       // the suite created where none existed).
