@@ -13,6 +13,36 @@ npx playwright test smoke # a single spec
 npx playwright show-trace test-results/<…>/trace.zip   # post-mortem a failure
 ```
 
+## Optional Linux CI reproduction
+
+Use Docker to run the same Node 22, Ubuntu 24.04, Linux x64, build, Xvfb, and
+Playwright sequence used by `.github/workflows/ci.yml`. GitHub pins Python 3.11;
+the Ubuntu 24.04 image uses Python 3.12, which is sufficient when native package
+prebuilds resolve and is the one known userspace difference:
+
+```sh
+npm run test:e2e:docker
+npm run test:e2e:docker -- e2e/agent-launch-ui.spec.ts
+```
+
+Prerequisite: Docker Desktop running with at least 8 GB available memory. On
+Apple Silicon this intentionally emulates `linux/amd64`, matching GitHub's
+standard `ubuntu-latest` runner rather than testing different ARM native modules.
+First build and dependency install are slow.
+
+The wrapper builds `e2e/docker/Dockerfile`, copies a filtered checkout into a
+temporary container, runs `npm ci`, installs Playwright's Chromium system
+dependencies, builds, and executes the suite under `xvfb-run`. It excludes VCS
+data, local credentials, host `node_modules`, `out`, and native binaries;
+container-generated files do not change ownership in the host checkout. The
+container is removed on exit. Set
+`ZCC_E2E_DOCKER_IMAGE` to override the local image tag or
+`ZCC_E2E_DOCKER_PLATFORM` for diagnostic runs on another architecture.
+
+This reproduces CI's Linux userspace and commands, not GitHub's Azure VM kernel.
+If a failure remains hosted-runner-only, download `playwright-report` and
+`test-results` from the failed Actions run before changing test lifecycle code.
+
 ## Why these exist (and what they cover)
 
 The marketplace's pure engine (`src/main/extension-registry.ts`) is already
