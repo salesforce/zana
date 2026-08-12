@@ -87,7 +87,7 @@ export function LauncherModelPicker({
         aria-haspopup="listbox"
         aria-expanded={open}
       >
-        <span>{selected?.label ?? 'Use project/global default'}</span>
+        <span>{selected?.label ?? 'Default Model'}</span>
         <ChevronDown size={15} aria-hidden="true" />
       </button>
       {open && createPortal(
@@ -115,7 +115,7 @@ export function LauncherModelPicker({
             aria-selected={!value}
             onClick={() => { onChange(''); setOpen(false); }}
           >
-            <span>Use project/global default</span>
+            <span>Default Model</span>
             {!value && <Check size={14} aria-hidden="true" />}
           </button>
           {visibleModels.map((model) => (
