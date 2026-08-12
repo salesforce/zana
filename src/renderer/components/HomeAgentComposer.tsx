@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowUp, Check, ChevronDown, FileText, FolderGit2, Paperclip, Search, Server, X } from 'lucide-react';
+import { ArrowUp, Check, ChevronDown, FolderGit2, Paperclip, Search, Server } from 'lucide-react';
 import type { HarnessAdapterDescriptor, HarnessModelTarget } from '@shared/harness-adapter';
 import type { EffectiveHarnessDefaultResult, HarnessFamily, HarnessModelRoutingV1, LaunchProfileId, Project } from '@shared/types';
 import { buildLaunchArgs } from './AgentLauncher';
@@ -11,10 +11,12 @@ import {
   ComposerIconButton,
   ComposerToolbar
 } from './ui/CommandComposer';
+import { AttachmentPills } from './ui/AttachmentPills';
 import { VoiceInputButton } from './VoiceInputButton';
 import { useData, usePersonas, useUi } from '../store';
 import { useShallow } from 'zustand/react/shallow';
 import { useFileDrop } from '../util/useFileDrop';
+import { posixQuote } from '../util/quote';
 
 const PROFILE_BY_FAMILY: Record<HarnessFamily, LaunchProfileId> = {
   claude: 'claude',
@@ -84,6 +86,7 @@ export function HomeAgentComposer() {
   const setNav = useUi((s) => s.setNav);
   const selectProject = useUi((s) => s.selectProject);
   const selectTab = useUi((s) => s.selectTab);
+  const pushToast = useUi((s) => s.pushToast);
   const [preferences, setPreferences] = useState(readHomeLauncherPreferences);
   const [prompt, setPrompt] = useState('');
   const [projectId, setProjectId] = useState(preferences.projectId ?? '');
@@ -197,8 +200,24 @@ export function HomeAgentComposer() {
       ? automaticProfile
       : selectedHarness?.defaultProfileId ?? PROFILE_BY_FAMILY[familyId];
     if (!profile) return;
-    const attachmentContext = attachments.length
-      ? `\n\nAttached files:\n${attachments.map((path) => `- ${path}`).join('\n')}`
+    let attachmentPaths = attachments;
+    if (project.remote && attachments.length > 0) {
+      const uploaded: string[] = [];
+      setLaunching(true);
+      for (const localPath of attachments) {
+        const result = await window.cc.fs.uploadToRemote(project.id, localPath, '.');
+        if (!result.ok || !result.path) {
+          pushToast(result.message ?? `Failed to upload ${attachmentName(localPath)}`, 'error');
+          setLaunching(false);
+          return;
+        }
+        uploaded.push(result.path);
+        pushToast(`Uploaded ${attachmentName(localPath)} to ${project.remote.host}`);
+      }
+      attachmentPaths = uploaded.map(posixQuote);
+    }
+    const attachmentContext = attachmentPaths.length
+      ? `\n\nAttached files:\n${attachmentPaths.map((path) => `- ${path}`).join('\n')}`
       : '';
     const args = buildLaunchArgs(`${prompt}${attachmentContext}`, selectedHarness?.label ?? familyId);
     const validModelId = models.some((model) => model.id === modelId) ? modelId : '';
@@ -232,23 +251,10 @@ export function HomeAgentComposer() {
       </div>
 
       <CommandComposer className={`home-agent-command${dropOver ? ' is-drop-over' : ''}`} labelledBy="home-agent-composer-title" {...dropHandlers}>
-        {attachments.length > 0 && (
-          <div className="home-agent-attachments" aria-label="Attached files">
-            {attachments.map((path) => (
-              <span key={path} className="home-agent-attachment" title={path}>
-                <FileText size={14} aria-hidden="true" />
-                <span>{attachmentName(path)}</span>
-                <button
-                  type="button"
-                  onClick={() => setAttachments((current) => current.filter((item) => item !== path))}
-                  aria-label={`Remove ${attachmentName(path)}`}
-                >
-                  <X size={13} aria-hidden="true" />
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
+        <AttachmentPills
+          paths={attachments}
+          onRemove={(path) => setAttachments((current) => current.filter((item) => item !== path))}
+        />
         <AutoGrowTextarea
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}

@@ -91,18 +91,3 @@ export function ComposerIconButton({
     </button>
   );
 }
-
-export function ComposerAttachmentChip({
-  name,
-  onRemove
-}: {
-  name: string;
-  onRemove: () => void;
-}) {
-  return (
-    <span className="ui-command-attachment-chip">
-      <span className="ui-command-attachment-name">{name}</span>
-      <button type="button" onClick={onRemove} aria-label={`Remove ${name}`}>x</button>
-    </span>
-  );
-}
