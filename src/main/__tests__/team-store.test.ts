@@ -139,12 +139,44 @@ describe('TeamStore', () => {
     expect(matches[0].source).toEqual({ projectId: 'proj-1', projectName: 'Proj' });
   });
 
+  it('does not re-stamp user teams when a project shares the user teams directory', () => {
+    projects.push({
+      id: 'home',
+      name: 'Home',
+      path: testHome,
+      createdAt: Date.now(),
+      lastActiveAt: Date.now()
+    });
+    const saved = store.saveUser({ name: 'User Team', slots: [] });
+    expect(store.list().find((team) => team.id === saved.id)?.source).toBe('user');
+  });
+
   it('saveUser writes atomically and refresh picks it up', () => {
     const saved = store.saveUser({ name: 'My Team', slots: [{ personaId: 'builtin:reviewer' }] });
     expect(saved.id).toBe('my-team');
     expect(saved.source).toBe('user');
     expect(existsSync(join(userDir, 'my-team.json'))).toBe(true);
     expect(store.list().find((t) => t.id === 'my-team')?.name).toBe('My Team');
+  });
+
+  it('duplicates the resolved team into an independent user copy', () => {
+    const source = store.saveUser({
+      name: 'Source',
+      description: 'Copied',
+      slots: [{ personaId: 'builtin:reviewer', label: 'Reviewer' }]
+    });
+    const copy = store.duplicateUser(source.id);
+
+    expect(copy).toMatchObject({ name: 'Source 1', source: 'user', description: 'Copied' });
+    expect(copy.id).not.toBe(source.id);
+    copy.slots[0].label = 'Changed';
+    expect(store.list().find((team) => team.id === source.id)?.slots[0].label).toBe('Reviewer');
+  });
+
+  it('duplicates builtins using current names and rejects unknown ids', () => {
+    store.saveUser({ name: 'Review Squad 1', slots: [] });
+    expect(store.duplicateUser('builtin:review-squad').name).toBe('Review Squad 2');
+    expect(() => store.duplicateUser('missing')).toThrow('team not found: missing');
   });
 
   it('deleteUser of a shadowed builtin resets it; of a user team removes it', () => {

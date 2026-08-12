@@ -24,9 +24,9 @@ import { join } from 'node:path';
 // pty stays alive (the session must remain non-exited to hold a live lane).
 const STUB = `#!/bin/sh
 printf '\\033]2;\\342\\240\\211 Cooking\\007'
-# Keep the pty open and non-idle. sleep in a loop so the process never exits
-# during the test window.
-while true; do sleep 3600; done
+# Keep the pty open and non-idle. cat blocks until stdin closes (when the
+# app shuts down the PTY), leaving no orphan sleep process behind.
+cat
 `;
 
 test('agent status survives a window reload (snapshot re-hydration)', async ({ app }) => {

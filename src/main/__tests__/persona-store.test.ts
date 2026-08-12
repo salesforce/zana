@@ -452,6 +452,27 @@ describe('PersonaStore', () => {
     expect(second.id).toBe('dup-2');
   });
 
+  it('duplicates the resolved persona into an independent user copy', () => {
+    const source = store.saveUser({
+      name: 'Source',
+      allowedTools: ['Read'],
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'model' } } }
+    });
+    const copy = store.duplicateUser(source.id);
+
+    expect(copy).toMatchObject({ name: 'Source 1', source: 'user', allowedTools: ['Read'] });
+    expect(copy.id).not.toBe(source.id);
+    copy.allowedTools?.push('Write');
+    expect(store.list().find((persona) => persona.id === source.id)?.allowedTools).toEqual(['Read']);
+  });
+
+  it('duplicates builtins using current names and rejects unknown ids', () => {
+    store.saveUser({ name: 'Code Reviewer 1' });
+    store.saveUser({ name: ' code reviewer 2 ' });
+    expect(store.duplicateUser('builtin:reviewer').name).toBe('Code Reviewer 3');
+    expect(() => store.duplicateUser('missing')).toThrow('persona not found: missing');
+  });
+
   it('saveUser with an explicit id edits in place (same file)', () => {
     store.saveUser({ id: 'fixed', name: 'First' });
     store.saveUser({ id: 'fixed', name: 'Second' });
