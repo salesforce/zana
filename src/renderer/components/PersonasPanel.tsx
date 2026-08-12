@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import { Bot, ChevronRight, FolderOpen, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
+import { Bot, ChevronRight, Copy, FolderOpen, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import type { Persona } from '@shared/types';
 import { usePersonas, useUi } from '../store';
 import { personaIcon } from '../util/profileIcon';
@@ -64,12 +64,16 @@ export function PersonasPanel() {
   // Right-click lifecycle menu — mirrors the row's click (Open) plus the
   // editor's Reveal / Delete actions, at the cursor, matching the Agents,
   // Inbox & Scheduler lists.
-  const [rowMenu, setRowMenu] = useState<{ persona: Persona; x: number; y: number } | null>(null);
+  const [rowMenu, setRowMenu] = useState<{ persona: Persona; x: number; y: number; trigger: HTMLElement } | null>(null);
   const pushToast = useUi((s) => s.pushToast);
 
   const openRowMenu = (e: ReactMouseEvent, persona: Persona) => {
     e.preventDefault();
-    setRowMenu({ persona, x: e.clientX, y: e.clientY });
+    setRowMenu({ persona, x: e.clientX, y: e.clientY, trigger: e.target as HTMLElement });
+  };
+  const openRowMenuFromKeyboard = (element: HTMLElement, persona: Persona) => {
+    const rect = element.getBoundingClientRect();
+    setRowMenu({ persona, x: rect.left, y: rect.bottom, trigger: element });
   };
 
   const deletePersona = async (persona: Persona) => {
@@ -195,6 +199,11 @@ export function PersonasPanel() {
                     persona={p}
                     onOpen={() => setEditor({ kind: 'open', persona: p })}
                     onContextMenu={(e) => openRowMenu(e, p)}
+                    onContextMenuKey={(event) => {
+                      if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+                      event.preventDefault();
+                      openRowMenuFromKeyboard(event.currentTarget, p);
+                    }}
                   />
                 ))}
               </ul>
@@ -222,14 +231,27 @@ export function PersonasPanel() {
         <PersonaRowMenu
           persona={rowMenu.persona}
           anchor={{ x: rowMenu.x, y: rowMenu.y }}
-          onClose={() => setRowMenu(null)}
+          onClose={() => {
+            setRowMenu(null);
+            rowMenu.trigger.focus();
+          }}
           onOpen={() => setEditor({ kind: 'open', persona: rowMenu.persona })}
           onReveal={() => void window.cc.personas.revealDir().catch(() => {})}
+          onDuplicate={() => void duplicatePersona(rowMenu.persona)}
           onDelete={() => void deletePersona(rowMenu.persona)}
         />
       )}
     </main>
   );
+
+  async function duplicatePersona(persona: Persona) {
+    const result = await window.cc.personas.duplicate(persona.id);
+    if (!result.ok) {
+      pushToast(`Duplicate failed: ${result.message}`, 'error');
+      return;
+    }
+    pushToast(`Created persona “${result.value.name}”`, 'info');
+  }
 }
 
 /**
@@ -246,6 +268,7 @@ function PersonaRowMenu({
   onClose,
   onOpen,
   onReveal,
+  onDuplicate,
   onDelete
 }: {
   persona: Persona;
@@ -253,9 +276,11 @@ function PersonaRowMenu({
   onClose: () => void;
   onOpen: () => void;
   onReveal: () => void;
+  onDuplicate: () => void;
   onDelete: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   // Only a file-backed user persona can be deleted from here; builtins reset via
   // the editor and extension personas aren't file-backed.
   const canDelete = persona.source === 'user';
@@ -296,6 +321,10 @@ function PersonaRowMenu({
     el.style.top = `${top}px`;
   }, [anchor]);
 
+  useEffect(() => {
+    itemRefs.current[0]?.focus();
+  }, []);
+
   return (
     <div
       ref={menuRef}
@@ -304,17 +333,36 @@ function PersonaRowMenu({
       aria-label={`Actions for ${persona.name}`}
       style={{ top: anchor.y, left: anchor.x }}
       onMouseDown={(e) => e.stopPropagation()}
+      onKeyDown={(event) => {
+        const items = itemRefs.current.filter((item): item is HTMLButtonElement => !!item);
+        const current = items.indexOf(document.activeElement as HTMLButtonElement);
+        const next = event.key === 'ArrowDown'
+          ? (current + 1) % items.length
+          : event.key === 'ArrowUp'
+            ? (current - 1 + items.length) % items.length
+            : event.key === 'Home'
+              ? 0
+              : event.key === 'End'
+                ? items.length - 1
+                : undefined;
+        if (next === undefined) return;
+        event.preventDefault();
+        items[next]?.focus();
+      }}
     >
-      <button role="menuitem" onClick={() => { onClose(); onOpen(); }}>
+      <button ref={(item) => { itemRefs.current[0] = item; }} role="menuitem" onClick={() => { onClose(); onOpen(); }}>
         <Pencil size={13} /> {persona.source === 'user' ? 'Edit' : 'View'}
       </button>
-      <button role="menuitem" onClick={() => { onClose(); onReveal(); }}>
+      <button ref={(item) => { itemRefs.current[1] = item; }} role="menuitem" onClick={() => { onClose(); onReveal(); }}>
         <FolderOpen size={13} /> Reveal folder
+      </button>
+      <button ref={(item) => { itemRefs.current[2] = item; }} role="menuitem" onClick={() => { onClose(); onDuplicate(); }}>
+        <Copy size={13} /> Duplicate
       </button>
       {canDelete && (
         <>
           <div className="tab-context-sep" />
-          <button role="menuitem" className="tab-context-danger" onClick={() => { onClose(); onDelete(); }}>
+          <button ref={(item) => { itemRefs.current[3] = item; }} role="menuitem" className="tab-context-danger" onClick={() => { onClose(); onDelete(); }}>
             <Trash2 size={13} /> Delete
           </button>
         </>
@@ -326,11 +374,13 @@ function PersonaRowMenu({
 function PersonaRow({
   persona,
   onOpen,
-  onContextMenu
+  onContextMenu,
+  onContextMenuKey
 }: {
   persona: Persona;
   onOpen: () => void;
   onContextMenu: (e: ReactMouseEvent) => void;
+  onContextMenuKey: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
 }) {
   const meta = personaRoutingSummary(persona);
 
@@ -340,6 +390,7 @@ function PersonaRow({
         type="button"
         className="skills-row-open"
         onClick={onOpen}
+        onKeyDown={onContextMenuKey}
         aria-label={`Open ${persona.name}`}
       >
         <span className="tab-profile-icon" aria-hidden="true">

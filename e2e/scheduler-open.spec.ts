@@ -64,9 +64,9 @@ test('scheduler: clicking "open" on a running scheduled session promotes it to a
       profile: 'shell',
       // Keep the fired shell ALIVE for the duration of the test: a bare login
       // shell in a headless pty exits immediately (no tty stdin to read), which
-      // would tear the session down before we click "open". `sleep` holds the
-      // pty open so there's a running session to promote to a tab.
-      extraArgs: ['-c', 'sleep 600'],
+      // would tear the session down before we click "open". `cat` holds the
+      // pty open and exits cleanly when the pty is destroyed, leaving no orphans.
+      extraArgs: ['-c', 'cat'],
       every: '1h',
       enabled: false,
       inboxLevel: 'silent',

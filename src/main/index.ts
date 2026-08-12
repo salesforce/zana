@@ -7322,6 +7322,19 @@ function registerIpc() {
       }
     }
   );
+  ipcMain.handle(
+    IPC.personas.duplicate,
+    async (_e, id: string): Promise<Result<Persona>> => {
+      try {
+        if (typeof id !== 'string' || !id.trim()) {
+          return { ok: false, code: 'INVALID', message: 'id is required' };
+        }
+        return { ok: true, value: personas.duplicateUser(id) };
+      } catch (err) {
+        return { ok: false, code: 'PERSONA_DUPLICATE_FAILED', message: String(err) };
+      }
+    }
+  );
   // Delete a user persona file. For a shadowed built-in this resets it to the
   // shipped default; for a user persona it removes it. Project personas are
   // read-only here (their files live under the repo, not the user dir).
@@ -7364,6 +7377,19 @@ function registerIpc() {
         return { ok: true, value: teams.saveUser(input) };
       } catch (err) {
         return { ok: false, code: 'TEAM_SAVE_FAILED', message: String(err) };
+      }
+    }
+  );
+  ipcMain.handle(
+    IPC.teams.duplicate,
+    async (_e, id: string): Promise<Result<Team>> => {
+      try {
+        if (typeof id !== 'string' || !id.trim()) {
+          return { ok: false, code: 'INVALID', message: 'id is required' };
+        }
+        return { ok: true, value: teams.duplicateUser(id) };
+      } catch (err) {
+        return { ok: false, code: 'TEAM_DUPLICATE_FAILED', message: String(err) };
       }
     }
   );
