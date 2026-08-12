@@ -1,10 +1,10 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { ArrowUp, Check, ChevronDown, FolderGit2, Paperclip, Search, Server } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowUp, FolderGit2, Paperclip, Server } from 'lucide-react';
 import type { HarnessAdapterDescriptor, HarnessModelTarget } from '@shared/harness-adapter';
 import type { EffectiveHarnessDefaultResult, HarnessFamily, HarnessModelRoutingV1, LaunchProfileId, Project } from '@shared/types';
 import { buildLaunchArgs } from './AgentLauncher';
 import { LauncherModelPicker } from './LauncherModelPicker';
+import { PopoverPicklist } from './ui/PopoverPicklist';
 import {
   AutoGrowTextarea,
   CommandComposer,
@@ -278,9 +278,33 @@ export function HomeAgentComposer() {
           </ComposerIconButton>
           <div className="home-agent-select home-agent-project-picker">
             <FolderGit2 size={15} aria-hidden="true" />
-            <HomeProjectPicker
-              projects={launchProjects}
+            <PopoverPicklist
+              ariaLabel="Project"
               value={projectId}
+              placeholder="Choose project"
+              searchPlaceholder="Search projects"
+              emptyHint="No matching projects"
+              triggerClassName="home-agent-project-picker-trigger"
+              minWidth={360}
+              anchorToParent
+              options={launchProjects.map((candidate) => ({
+                value: candidate.id,
+                label: projectLabel(candidate),
+                className: 'home-agent-project-option',
+                content: (
+                  <span className="home-agent-project-option-details">
+                    {candidate.remote ? <Server size={15} aria-hidden="true" /> : <FolderGit2 size={15} aria-hidden="true" />}
+                    <span>
+                      <span className="home-agent-project-option-name">{projectLabel(candidate)}</span>
+                      {candidate.remote && (
+                        <span className="home-agent-project-option-meta">
+                          remote · {candidate.remote.user ? `${candidate.remote.user}@` : ''}{candidate.remote.host}
+                        </span>
+                      )}
+                    </span>
+                  </span>
+                )
+              }))}
               onChange={(nextProjectId) => {
                 selectionGeneration.current += 1;
                 setResolvedProjectId(null);
@@ -293,34 +317,30 @@ export function HomeAgentComposer() {
             />
           </div>
 
-          <label className="home-agent-select">
-            <select
-              aria-label="Agent harness"
-              value={familyId}
-              onChange={(event) => {
-                selectionGeneration.current += 1;
-                setFamilyId(event.target.value as HarnessFamily);
-                setAutomaticProfile(null);
-                setModelId('');
-                setSelectionProvenance('explicit');
-                setSelectionState('resolved');
-                setResolvedProjectId(projectId);
-                setSelectionMessage(null);
-              }}
-              disabled={harnesses.length === 0}
-            >
-              {!familyId && (
-                <option value="" disabled>
-                  {selectionState === 'unavailable' ? 'Choose an available harness' : 'Resolving default harness'}
-                </option>
-              )}
-              {harnesses.length === 0 && <option value="">No agent harness available</option>}
-              {harnesses.map((descriptor) => (
-                <option key={descriptor.id} value={descriptor.id}>{descriptor.label}</option>
-              ))}
-            </select>
-            <ChevronDown size={14} aria-hidden="true" />
-          </label>
+          <PopoverPicklist
+            ariaLabel="Agent harness"
+            value={familyId}
+            disabled={harnesses.length === 0}
+            searchable={false}
+            placeholder={
+              harnesses.length === 0
+                ? 'No agent harness available'
+                : selectionState === 'unavailable'
+                  ? 'Choose an available harness'
+                  : 'Resolving default harness'
+            }
+            options={harnesses.map((descriptor) => ({ value: descriptor.id, label: descriptor.label }))}
+            onChange={(nextFamilyId) => {
+              selectionGeneration.current += 1;
+              setFamilyId(nextFamilyId as HarnessFamily);
+              setAutomaticProfile(null);
+              setModelId('');
+              setSelectionProvenance('explicit');
+              setSelectionState('resolved');
+              setResolvedProjectId(projectId);
+              setSelectionMessage(null);
+            }}
+          />
 
           {selectionState === 'unavailable' && (
             <span className="home-agent-launch-status" role="status">{selectionMessage}</span>
@@ -357,114 +377,4 @@ const EMPTY_MODELS: readonly HarnessModelTarget[] = [];
 
 function projectLabel(project: Project): string {
   return project.quickAgent ? 'Quick workspace (scratch)' : project.name;
-}
-
-function HomeProjectPicker({
-  projects,
-  value,
-  onChange
-}: {
-  projects: readonly Project[];
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const [position, setPosition] = useState<{ left: number; top: number; width: number } | null>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
-  const selected = projects.find((project) => project.id === value);
-  const visibleProjects = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    return normalizedQuery
-      ? projects.filter((project) => projectLabel(project).toLowerCase().includes(normalizedQuery))
-      : projects;
-  }, [projects, query]);
-
-  useLayoutEffect(() => {
-    if (!open || !triggerRef.current) return;
-    // Anchor to the whole project control, including its folder icon, rather
-    // than the text-only button so the popover's left edge aligns with the field.
-    const rect = triggerRef.current.parentElement?.getBoundingClientRect() ?? triggerRef.current.getBoundingClientRect();
-    setPosition({ left: rect.left, top: rect.bottom + 4, width: Math.max(rect.width, 360) });
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
-  }, [open]);
-
-  useEffect(() => {
-    if (open) searchRef.current?.focus();
-    else setQuery('');
-  }, [open]);
-
-  return (
-    <>
-      <button
-        ref={triggerRef}
-        type="button"
-        className="home-agent-project-picker-trigger"
-        onClick={() => setOpen((current) => !current)}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label="Project"
-      >
-        <span>{selected ? projectLabel(selected) : 'Choose project'}</span>
-        <ChevronDown size={14} aria-hidden="true" />
-      </button>
-      {open && createPortal(
-        <div
-          ref={menuRef}
-          className="launch-model-picker-menu"
-          role="listbox"
-          aria-label="Project"
-          style={position ? { left: position.left, top: position.top, width: position.width } : { visibility: 'hidden' }}
-        >
-          <div className="launch-model-picker-search">
-            <Search size={13} aria-hidden="true" />
-            <input
-              ref={searchRef}
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search projects"
-              aria-label="Search projects"
-            />
-          </div>
-          {visibleProjects.map((project) => (
-            <button
-              key={project.id}
-              type="button"
-              className={`launch-model-picker-option home-agent-project-option${value === project.id ? ' is-selected' : ''}`}
-              role="option"
-              aria-selected={value === project.id}
-              onClick={() => { onChange(project.id); setOpen(false); }}
-            >
-              <span className="home-agent-project-option-details">
-                {project.remote ? <Server size={15} aria-hidden="true" /> : <FolderGit2 size={15} aria-hidden="true" />}
-                <span>
-                  <span className="home-agent-project-option-name">{projectLabel(project)}</span>
-                  {project.remote && (
-                    <span className="home-agent-project-option-meta">
-                      remote · {project.remote.user ? `${project.remote.user}@` : ''}{project.remote.host}
-                    </span>
-                  )}
-                </span>
-              </span>
-              {value === project.id && <Check size={14} aria-hidden="true" />}
-            </button>
-          ))}
-          {visibleProjects.length === 0 && <div className="launch-model-picker-hint">No matching projects</div>}
-        </div>,
-        document.body
-      )}
-    </>
-  );
 }

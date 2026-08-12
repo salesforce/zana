@@ -18782,6 +18782,14 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
   text-align: center;
 }
 
+.launch-model-picker-group-label {
+  padding: 7px 9px 3px;
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .launch-extra-args .settings-field {
   display: grid;
   grid-template-columns: 84px minmax(0, 1fr);
