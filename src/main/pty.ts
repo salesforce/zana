@@ -1160,6 +1160,13 @@ export class PtyManager extends EventEmitter {
     // the parent. Wanted for every claude tab with a callback — a fanned-out
     // scheduled run is exactly where this visibility matters most.
     const wantsSubagentHook = claudeWithCallback;
+    // Tool-activity (idle-veto) hook: a match-all PreToolUse/PostToolUse pair
+    // that lets the status tracker know a tool is genuinely running even when
+    // the OSC title's `✳` glyph reads idle mid-call (see
+    // `docs/live-agent-status-plan.md` §"Hooks — done truth + idle-veto").
+    // Rides the same gate as notify/subagents — every claude tab with a
+    // callback, since this is a correctness fix, not an opt-in feature.
+    const wantsToolActivityHook = claudeWithCallback;
     // Overseer auto-approval hook (experimental, off by default). A synchronous
     // PreToolUse hook that lets the local server auto-approve provably-safe tool
     // calls (see {@link Overseer}). Installed ONLY when the feature is armed
@@ -1213,6 +1220,7 @@ export class PtyManager extends EventEmitter {
       wantsNotifyHook ||
       wantsFirstPromptHook ||
       wantsSubagentHook ||
+      wantsToolActivityHook ||
       wantsOverseerHook ||
       wantsContentScreenHook;
     const hookArgs =
@@ -1224,6 +1232,7 @@ export class PtyManager extends EventEmitter {
               notify: wantsNotifyHook,
               firstPrompt: wantsFirstPromptHook,
               subagents: wantsSubagentHook,
+              toolActivity: wantsToolActivityHook,
               overseer: wantsOverseerHook,
               // When the deep "think harder" tier is on, an escalated call blocks
               // the agent while a stronger model reasons — widen the curl ceiling
@@ -1533,6 +1542,12 @@ export class PtyManager extends EventEmitter {
       // (`start` vs `stop`) so one base URL serves both.
       env.ZCC_SUBAGENT_URL = `${this.mcpBaseUrl}/hook/subagent/${opts.projectId}/${sessionId}`;
     }
+    if (wantsToolActivityHook) {
+      // The match-all PreToolUse/PostToolUse/Stop-clear hooks POST here. Same
+      // identity-in-URL pattern as the notify/subagent hooks; the trailing path
+      // segment selects the event (`start`/`stop`/`clear`).
+      env.ZCC_TOOLACTIVITY_URL = `${this.mcpBaseUrl}/hook/toolactivity/${opts.projectId}/${sessionId}`;
+    }
     if (wantsOverseerHook) {
       // The synchronous PreToolUse Overseer hook POSTs the tool-call event here
       // and prints our decision. Identity baked into the URL like the others —
@@ -1578,6 +1593,7 @@ export class PtyManager extends EventEmitter {
       ZCC_NOTIFY_URL: env.ZCC_NOTIFY_URL,
       ZCC_FIRSTPROMPT_URL: env.ZCC_FIRSTPROMPT_URL,
       ZCC_SUBAGENT_URL: env.ZCC_SUBAGENT_URL,
+      ZCC_TOOLACTIVITY_URL: env.ZCC_TOOLACTIVITY_URL,
       ZCC_OVERSEER_URL: env.ZCC_OVERSEER_URL,
       ZCC_CONTENTSCREEN_URL: env.ZCC_CONTENTSCREEN_URL,
       // OpenCode's inline MCP config carries the per-session zcc-inbox URL, so it's
@@ -2785,6 +2801,13 @@ export function detectRemoteForwardFailure(chunk: string): number | null {
  *  - `subagents` (opt-in): a PreToolUse matched to `Task` → POST `/start` and a
  *    SubagentStop → POST `/stop`, so the UI can badge the live count of
  *    sub-agents (Task tool spawns) running under the parent session.
+ *  - `toolActivity` (opt-in): a match-all PreToolUse → POST `/start` and a
+ *    match-all PostToolUse → POST `/stop`, bracketing EVERY tool call (not
+ *    just Task/AskUserQuestion) so `AgentStatusTracker` can veto a false `idle`
+ *    OSC reading while a quiet tool (Bash, WebSearch, …) is still running. Also
+ *    appends a Stop → POST `/clear` drift guard, since a turn can't end
+ *    mid-tool. See `docs/live-agent-status-plan.md` §"Hooks — done truth and
+ *    idle-veto".
  *  - `overseer` (experimental, opt-in): a SYNCHRONOUS match-all PreToolUse that
  *    POSTs the tool-call event and ECHOES the server's permission decision —
  *    the one hook here that blocks the agent and prints output. Fail-open: any
@@ -2800,6 +2823,10 @@ function buildHookSettings(opts: {
   notify: boolean;
   firstPrompt?: boolean;
   subagents?: boolean;
+  /**
+   * Generic tool-in-flight idle-veto (opt-in). See the doc comment above.
+   */
+  toolActivity?: boolean;
   overseer?: boolean;
   /**
    * curl `-m` (max seconds) for the synchronous Overseer hook. Must sit just
@@ -2952,6 +2979,50 @@ function buildHookSettings(opts: {
     // SubagentStop has no tool matcher (it's a lifecycle event, not a tool
     // boundary) — match-all is correct here.
     hooks.SubagentStop = [{ matcher: '', hooks: [{ type: 'command', command: postStop }] }];
+  }
+
+  if (opts.toolActivity) {
+    // Generic idle-veto: bracket EVERY tool call, not just Task/AskUserQuestion,
+    // so a quiet Bash/WebSearch/etc. call doesn't get misread as idle. Discards
+    // stdin (only the boundary matters, never the tool identity) — same
+    // discard-then-ping idiom as the notify/subagent commands.
+    const postToolStart =
+      'cat >/dev/null 2>&1; ' +
+      '[ -n "$ZCC_TOOLACTIVITY_URL" ] && ' +
+      'curl -s -m 5 -X POST "$ZCC_TOOLACTIVITY_URL/start" >/dev/null 2>&1 || true; exit 0';
+    const postToolStop =
+      'cat >/dev/null 2>&1; ' +
+      '[ -n "$ZCC_TOOLACTIVITY_URL" ] && ' +
+      'curl -s -m 5 -X POST "$ZCC_TOOLACTIVITY_URL/stop" >/dev/null 2>&1 || true; exit 0';
+    const toolStartHook = { matcher: '', hooks: [{ type: 'command', command: postToolStart }] };
+    const toolStopHook = { matcher: '', hooks: [{ type: 'command', command: postToolStop }] };
+    // Append rather than clobber — PreToolUse/PostToolUse may already carry the
+    // notify AskUserQuestion / subagents Task / overseer entries. Each entry is
+    // independent and gets its own stdin copy, so they don't interfere.
+    if (Array.isArray(hooks.PreToolUse)) {
+      hooks.PreToolUse.push(toolStartHook);
+    } else {
+      hooks.PreToolUse = [toolStartHook];
+    }
+    if (Array.isArray(hooks.PostToolUse)) {
+      hooks.PostToolUse.push(toolStopHook);
+    } else {
+      hooks.PostToolUse = [toolStopHook];
+    }
+    // Drift guard: a turn can't end mid-tool-call, so reset the in-flight
+    // counter on Stop in case a PostToolUse never fired (e.g. a killed tool).
+    const postToolClear = {
+      type: 'command',
+      command:
+        'cat >/dev/null 2>&1; ' +
+        '[ -n "$ZCC_TOOLACTIVITY_URL" ] && ' +
+        'curl -s -m 5 -X POST "$ZCC_TOOLACTIVITY_URL/clear" >/dev/null 2>&1 || true; exit 0'
+    };
+    if (Array.isArray(hooks.Stop)) {
+      (hooks.Stop[0] as { hooks: unknown[] }).hooks.push(postToolClear);
+    } else {
+      hooks.Stop = [{ matcher: '', hooks: [postToolClear] }];
+    }
   }
 
   if (opts.overseer) {
