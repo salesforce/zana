@@ -187,9 +187,10 @@ interface Entry {
  *    any stale blocked overlay is moot (and `clearBlocked` will have dropped it).
  *  - otherwise a `blocked` overlay wins over the OSC reading, because Claude
  *    keeps emitting the `idle` glyph while it waits on the user.
- *  - otherwise a live tool (idle-veto) overrides an `idle` OSC reading with
- *    `working` — a quiet tool call reads identically to idle on screen, so the
- *    hook-derived ground truth wins. It does NOT override `blocked` (a
+ *  - otherwise a live tool (idle-veto) overrides an `idle` or `unknown` OSC
+ *    reading with `working` — a quiet tool call reads identically to idle on
+ *    screen, and a tool may start before Claude publishes its first OSC title.
+ *    The hook-derived ground truth wins. It does NOT override `blocked` (a
  *    permission prompt for that same tool is a stronger, more specific signal)
  *    and is moot once `osc` is `working` (already handled above).
  *  - else fall through to whatever the OSC stream last said.
@@ -197,7 +198,7 @@ interface Entry {
 function resolve(entry: Entry): AgentState {
   if (entry.osc === 'working') return 'working';
   if (entry.blocked) return 'blocked';
-  if (entry.toolsInFlight > 0 && entry.osc === 'idle') return 'working';
+  if (entry.toolsInFlight > 0) return 'working';
   return entry.osc;
 }
 

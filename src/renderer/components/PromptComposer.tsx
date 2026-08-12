@@ -6,13 +6,16 @@ import {
   useRef,
   useState
 } from 'react';
-import { useFileDrop, type DropPathResolver } from '../util/useFileDrop';
+import { Paperclip } from 'lucide-react';
+import { useFileDrop } from '../util/useFileDrop';
 import { useData } from '../store';
 import { fuzzyScore } from '../util/fuzzy';
 import { detectMention, applyMention, type MentionMatch } from '../util/mention';
 import { highlightMatches } from './palette/highlight';
 import { ImprovePromptButton } from './ImprovePromptButton';
 import { VoiceInputButton } from './VoiceInputButton';
+import { AttachmentPills } from './ui/AttachmentPills';
+import { ComposerIconButton } from './ui/CommandComposer';
 import type { WalkedFile } from '@shared/types';
 import type { AutoGrowTextareaHandle } from './ui/CommandComposer';
 
@@ -21,9 +24,8 @@ import type { AutoGrowTextareaHandle } from './ui/CommandComposer';
  * (the project launcher, the quick-agent launcher). Owns the behaviour that was
  * previously copy-pasted across those surfaces:
  *   - ⌘/Ctrl+Enter submits (Enter alone keeps a multi-line instruction),
- *   - drop a file (or absolute path) to splice its shell-quoted path at the
- *     caret, padded so it doesn't fuse onto adjacent words, with a `drop-over`
- *     highlight while dragging,
+ *   - attach or drop files as removable pills, with a `drop-over` highlight
+ *     while dragging,
  *   - type `@` to fuzzy-search files in the target project and insert one at the
  *     caret (see {@link useMention}) — only when a `mentionProjectPath` is given.
  *
@@ -45,10 +47,9 @@ interface Props {
   /** Absolute path of the project whose files back the `@`-mention picker. When
    *  absent (e.g. scratch mode with no resolved project) `@` does nothing. */
   mentionProjectPath?: string;
-  /** Transforms local dropped paths before inserting them into the prompt. */
-  dropResolver?: DropPathResolver;
-  /** Reports whether an asynchronous dropped-path transform is in flight. */
-  onDropResolvingChange?: (resolving: boolean) => void;
+  attachments: readonly string[];
+  onAddAttachments: (paths: string[]) => void;
+  onRemoveAttachment: (path: string) => void;
 }
 
 /** Most files to rank/show in the `@`-mention popover at once. */
@@ -180,7 +181,17 @@ function useMention(
 }
 
 export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function PromptComposer(
-  { value, onChange, onSubmit, placeholder, rows = 3, mentionProjectPath, dropResolver, onDropResolvingChange },
+  {
+    value,
+    onChange,
+    onSubmit,
+    placeholder,
+    rows = 3,
+    mentionProjectPath,
+    attachments,
+    onAddAttachments,
+    onRemoveAttachment
+  },
   ref
 ) {
   const nativeTextareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -199,35 +210,21 @@ export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function P
     }
   };
 
-  // Splice the dropped path(s) in at the caret, padding with a single space so
-  // they don't fuse onto adjacent words; restore the caret just past the insert.
-  const { dropOver, resolving, dropHandlers } = useFileDrop((insert) => {
-    const el = textElement();
-    const start = el?.selectionStart ?? value.length;
-    const end = el?.selectionEnd ?? value.length;
-    const before = value.slice(0, start);
-    const after = value.slice(end);
-    const lead = before && !/\s$/.test(before) ? ' ' : '';
-    const trail = after && !/^\s/.test(after) ? ' ' : '';
-    const caret = (before + lead + insert).length;
-    onChange(before + lead + insert + trail + after);
-    requestAnimationFrame(() => {
-      el?.focus();
-      el?.setSelectionRange(caret, caret);
-    });
-  }, dropResolver);
-
-  useEffect(() => onDropResolvingChange?.(resolving), [onDropResolvingChange, resolving]);
+  const { dropOver, dropHandlers } = useFileDrop(
+    (paths) => onAddAttachments(paths.split('\n')),
+    (paths) => paths.join('\n')
+  );
 
   return (
-    <div className="prompt-composer">
+    <div className={`prompt-composer ${dropOver ? 'drop-over' : ''}`} {...dropHandlers}>
+      <AttachmentPills paths={attachments} onRemove={onRemoveAttachment} />
       <textarea
         ref={(node) => {
           nativeTextareaRef.current = node;
           textareaRef.current = node ? { focus: () => node.focus(), element: () => node } : null;
         }}
         data-testid="launch-instruction"
-        className={`launch-instruction ${dropOver ? 'drop-over' : ''}`}
+        className="launch-instruction"
         placeholder={placeholder}
         value={value}
         onChange={(e) => {
@@ -243,7 +240,6 @@ export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function P
           window.setTimeout(mention.close, 120);
         }}
         onKeyDown={onKeyDown}
-        {...dropHandlers}
         rows={rows}
       />
       {mention.open && (
@@ -268,11 +264,18 @@ export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function P
         </div>
       )}
       <div className="prompt-composer-actions">
-        {voiceInputEnabled ? (
-          <VoiceInputButton value={value} onChange={onChange} textareaRef={textareaRef} />
-        ) : (
-          <span />
-        )}
+        <div className="prompt-composer-input-actions">
+          <ComposerIconButton
+            onClick={() => { void window.cc.fs.pickFiles().then(onAddAttachments); }}
+            title="Attach files"
+            aria-label="Attach files"
+          >
+            <Paperclip size={16} aria-hidden="true" />
+          </ComposerIconButton>
+          {voiceInputEnabled && (
+            <VoiceInputButton value={value} onChange={onChange} textareaRef={textareaRef} />
+          )}
+        </div>
         <ImprovePromptButton value={value} onChange={onChange} />
       </div>
     </div>

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import type { ExtensionEntry } from '@shared/types';
+import { appendAttachmentContext, mergeAttachmentPaths } from '../../util/attachments.js';
 import {
   agentRoutingForSubmission,
   buildLaunchArgs,
@@ -52,12 +53,23 @@ describe('buildLaunchArgs', () => {
   });
 });
 
-describe('remote launch drops', () => {
-  it('uploads dropped files before inserting their remote paths into the prompt', () => {
+describe('launcher attachments', () => {
+  it('deduplicates file selections and appends them as launch context', () => {
+    expect(mergeAttachmentPaths(['/tmp/one.md'], ['/tmp/one.md', ' /tmp/two.md '])).toEqual([
+      '/tmp/one.md',
+      '/tmp/two.md'
+    ]);
+    expect(appendAttachmentContext('Review these', ['/tmp/one.md', '/tmp/two.md'])).toBe(
+      'Review these\n\nAttached files:\n- /tmp/one.md\n- /tmp/two.md'
+    );
+  });
+
+  it('renders removable pills and uploads remote attachments at launch', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
     expect(source).toContain('window.cc.fs.uploadToRemote(remoteTarget.id, localPath, \'.\')');
-    expect(source).toContain('dropResolver={remoteDropResolver}');
-    expect(source).toContain('dropResolving');
+    expect(source).toContain('attachments={attachments}');
+    expect(source).toContain('onAddAttachments={addAttachments}');
+    expect(source).toContain('appendAttachmentContext(prompt, attachmentPaths)');
   });
 });
 
