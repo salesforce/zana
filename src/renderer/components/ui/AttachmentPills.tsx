@@ -1,8 +1,5 @@
 import { FileText, X } from 'lucide-react';
-
-function fileName(path: string): string {
-  return path.split(/[\\/]/).pop() || path;
-}
+import { attachmentName } from '../../util/attachments';
 
 /** Shared attachment display for composer-style inputs. Upload and launch policy
  * remain with the caller; this component only renders removable file pills. */
@@ -17,7 +14,7 @@ export function AttachmentPills({
   return (
     <div className="ui-command-attachments" aria-label="Attached files">
       {paths.map((path) => {
-        const name = fileName(path);
+        const name = attachmentName(path);
         return (
           <span key={path} className="ui-command-attachment-chip" title={path}>
             <FileText size={14} aria-hidden="true" />

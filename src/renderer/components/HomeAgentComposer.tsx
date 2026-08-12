@@ -17,6 +17,7 @@ import { useData, usePersonas, useUi } from '../store';
 import { useShallow } from 'zustand/react/shallow';
 import { useFileDrop } from '../util/useFileDrop';
 import { posixQuote } from '../util/quote';
+import { appendAttachmentContext, attachmentName, mergeAttachmentPaths } from '../util/attachments';
 
 const PROFILE_BY_FAMILY: Record<HarnessFamily, LaunchProfileId> = {
   claude: 'claude',
@@ -54,10 +55,6 @@ function writeHomeLauncherPreferences(preferences: HomeLauncherPreferences) {
   } catch {
     // Preferences are a convenience; an unavailable storage area must not block launching.
   }
-}
-
-function attachmentName(path: string): string {
-  return path.split(/[\\/]/).pop() || path;
 }
 
 function availableAgentHarnesses(descriptors: HarnessAdapterDescriptor[]) {
@@ -113,7 +110,7 @@ export function HomeAgentComposer() {
   const selectedHarness = harnesses.find((descriptor) => descriptor.id === familyId);
   const models: readonly HarnessModelTarget[] = selectedHarness?.targets?.models ?? EMPTY_MODELS;
   const addAttachments = (paths: string[]) => {
-    setAttachments((current) => [...new Set([...current, ...paths.map((path) => path.trim()).filter(Boolean)])]);
+    setAttachments((current) => mergeAttachmentPaths(current, paths));
   };
   const { dropOver, dropHandlers } = useFileDrop(
     (paths) => addAttachments(paths.split('\n')),
@@ -200,45 +197,48 @@ export function HomeAgentComposer() {
       ? automaticProfile
       : selectedHarness?.defaultProfileId ?? PROFILE_BY_FAMILY[familyId];
     if (!profile) return;
-    let attachmentPaths = attachments;
-    if (project.remote && attachments.length > 0) {
-      const uploaded: string[] = [];
-      setLaunching(true);
-      for (const localPath of attachments) {
-        const result = await window.cc.fs.uploadToRemote(project.id, localPath, '.');
-        if (!result.ok || !result.path) {
-          pushToast(result.message ?? `Failed to upload ${attachmentName(localPath)}`, 'error');
-          setLaunching(false);
-          return;
-        }
-        uploaded.push(result.path);
-        pushToast(`Uploaded ${attachmentName(localPath)} to ${project.remote.host}`);
-      }
-      attachmentPaths = uploaded.map(posixQuote);
-    }
-    const attachmentContext = attachmentPaths.length
-      ? `\n\nAttached files:\n${attachmentPaths.map((path) => `- ${path}`).join('\n')}`
-      : '';
-    const args = buildLaunchArgs(`${prompt}${attachmentContext}`, selectedHarness?.label ?? familyId);
-    const validModelId = models.some((model) => model.id === modelId) ? modelId : '';
-    const harnessRouting: HarnessModelRoutingV1 | undefined = validModelId
-      ? { schemaVersion: 1, byAdapter: { [familyId]: { modelTargetId: modelId } } }
-      : undefined;
-
     setLaunching(true);
-    const session = await createTerminal(project.id, profile, 80, 24, {
-      ...args,
-      harnessRouting,
-      profileSource: selectionProvenance === 'automatic' ? 'seeded-default' : 'explicit'
-    });
-    setLaunching(false);
-    if (!session) return;
-    setPrompt('');
-    setAttachments([]);
-    setNav('projects');
-    selectProject(project.id);
-    selectTab(project.id, session.id);
-    useUi.getState().openAgentModal(session.id, project.id);
+    try {
+      let attachmentPaths = attachments;
+      if (project.remote && attachments.length > 0) {
+        const uploaded: string[] = [];
+        for (const localPath of attachments) {
+          const result = await window.cc.fs.uploadToRemote(project.id, localPath, '.');
+          if (!result.ok || !result.path) {
+            pushToast(result.message ?? `Failed to upload ${attachmentName(localPath)}`, 'error');
+            return;
+          }
+          uploaded.push(result.path);
+          pushToast(`Uploaded ${attachmentName(localPath)} to ${project.remote.host}`);
+        }
+        attachmentPaths = uploaded.map(posixQuote);
+      }
+      const args = buildLaunchArgs(
+        appendAttachmentContext(prompt, attachmentPaths),
+        selectedHarness?.label ?? familyId
+      );
+      const validModelId = models.some((model) => model.id === modelId) ? modelId : '';
+      const harnessRouting: HarnessModelRoutingV1 | undefined = validModelId
+        ? { schemaVersion: 1, byAdapter: { [familyId]: { modelTargetId: modelId } } }
+        : undefined;
+
+      const session = await createTerminal(project.id, profile, 80, 24, {
+        ...args,
+        harnessRouting,
+        profileSource: selectionProvenance === 'automatic' ? 'seeded-default' : 'explicit'
+      });
+      if (!session) return;
+      setPrompt('');
+      setAttachments([]);
+      setNav('projects');
+      selectProject(project.id);
+      selectTab(project.id, session.id);
+      useUi.getState().openAgentModal(session.id, project.id);
+    } catch (err) {
+      pushToast(`Agent launch failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+    } finally {
+      setLaunching(false);
+    }
   };
 
   return (

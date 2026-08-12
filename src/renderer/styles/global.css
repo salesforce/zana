@@ -18826,6 +18826,10 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
   position: relative;
 }
 
+.prompt-composer .ui-command-attachments {
+  margin-bottom: 8px;
+}
+
 .launch-command {
   margin-bottom: 14px;
 }
@@ -18916,9 +18920,14 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
   gap: 8px;
   margin-top: 4px;
 }
+.prompt-composer-input-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
 /* The mic already carries its own left margin for inline use; inside the row it
    sits flush-left, and the wrapper owns the top spacing. */
-.prompt-composer-actions .voice-input-btn {
+.prompt-composer-input-actions .voice-input-btn {
   margin-left: 0;
 }
 .prompt-composer-actions .improve-prompt {
@@ -19023,7 +19032,7 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
   transition: transform 0.06s linear;
 }
 
-.launch-instruction.drop-over {
+.prompt-composer.drop-over .launch-instruction {
   border-color: var(--accent-blue);
   outline: 2px dashed var(--accent-blue);
   outline-offset: -4px;

@@ -645,6 +645,18 @@ describe('AgentStatusTracker (tool-in-flight idle-veto)', () => {
     expect(tracker.get('s1')).toBe('working');
   });
 
+  it('reports working when a tool starts before Claude publishes an OSC title', () => {
+    const tracker = new AgentStatusTracker();
+    const seen: string[] = [];
+    tracker.on('status', (_id, state) => seen.push(state));
+
+    tracker.toolStarted('s1');
+    vi.advanceTimersByTime(250);
+
+    expect(seen).toEqual(['working']);
+    expect(tracker.get('s1')).toBe('working');
+  });
+
   it('lets idle surface once the in-flight tool finishes', () => {
     const tracker = new AgentStatusTracker();
     const seen: string[] = [];
