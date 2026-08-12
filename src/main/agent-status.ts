@@ -14,7 +14,13 @@
  *    "idle at the prompt" apart from "waiting on the user" (a permission
  *    prompt or an interactive question). The OSC title shows the same `✳`
  *    glyph in both cases, so without the hook a blocked agent reads as idle.
- *  - a small resolver that fuses the two sources, and debounce/coalescing so a
+ *  - the tool-in-flight idle-veto (the plan's `docs/live-agent-status-plan.md`
+ *    §"Hooks — done truth + idle-veto"): a PreToolUse with no matching
+ *    PostToolUse yet means a tool is genuinely running, even if Claude's OSC
+ *    title happens to read `✳` in that quiet moment (a long silent Bash/
+ *    WebSearch/etc. call looks exactly like idle on screen). See
+ *    {@link AgentStatusTracker.toolStarted}.
+ *  - a small resolver that fuses the sources, and debounce/coalescing so a
  *    burst of detections collapses to at most one emit per session per window.
  *
  * It deliberately does NOT touch `TerminalSession`: status streams over its own
@@ -155,6 +161,16 @@ interface Entry {
    */
   subagentSeq: number;
   /**
+   * Live count of tools currently in flight (PreToolUse fired, matching
+   * PostToolUse hasn't yet) — the idle-veto signal. Incremented by
+   * {@link toolStarted}, decremented by {@link toolFinished}, clamped to 0.
+   * Unlike {@link subagents} this DOES feed {@link resolve}: while > 0, an
+   * `idle` OSC reading is overridden to `working` (see {@link resolve}).
+   * Reset to 0 on the Stop hook (a turn can't end mid-tool) as a drift guard
+   * against a PostToolUse that never fires.
+   */
+  toolsInFlight: number;
+  /**
    * The last structured exit state captured for this session (see
    * {@link AgentExitState}). Set by {@link AgentStatusTracker.recordExit} when
    * the agent/subagent finishes a turn, and surfaced on its own `exit` event +
@@ -171,11 +187,17 @@ interface Entry {
  *    any stale blocked overlay is moot (and `clearBlocked` will have dropped it).
  *  - otherwise a `blocked` overlay wins over the OSC reading, because Claude
  *    keeps emitting the `idle` glyph while it waits on the user.
+ *  - otherwise a live tool (idle-veto) overrides an `idle` OSC reading with
+ *    `working` — a quiet tool call reads identically to idle on screen, so the
+ *    hook-derived ground truth wins. It does NOT override `blocked` (a
+ *    permission prompt for that same tool is a stronger, more specific signal)
+ *    and is moot once `osc` is `working` (already handled above).
  *  - else fall through to whatever the OSC stream last said.
  */
 function resolve(entry: Entry): AgentState {
   if (entry.osc === 'working') return 'working';
   if (entry.blocked) return 'blocked';
+  if (entry.toolsInFlight > 0 && entry.osc === 'idle') return 'working';
   return entry.osc;
 }
 
@@ -300,7 +322,8 @@ export class AgentStatusTracker extends EventEmitter {
         timer: null,
         subagents: 0,
         subagentChildren: [],
-        subagentSeq: 0
+        subagentSeq: 0,
+        toolsInFlight: 0
       };
       this.entries.set(sessionId, entry);
     }
@@ -366,6 +389,43 @@ export class AgentStatusTracker extends EventEmitter {
     const entry = this.entries.get(sessionId);
     if (!entry || !entry.blocked) return;
     entry.blocked = false;
+    this.schedule(sessionId, entry);
+  }
+
+  /**
+   * A generic PreToolUse hook fired (match-all — every tool, not just
+   * Task/AskUserQuestion). Bumps the in-flight counter; while it's > 0 an
+   * `idle` OSC reading is vetoed to `working` by {@link resolve}. Unlike
+   * {@link subagentStarted} this DOES affect the resolved state.
+   */
+  toolStarted(sessionId: string): void {
+    const entry = this.entry(sessionId);
+    entry.toolsInFlight += 1;
+    this.schedule(sessionId, entry);
+  }
+
+  /**
+   * The matching PostToolUse hook fired. Decrements the in-flight counter,
+   * clamped at 0 so an unmatched stop (e.g. a tool call that started just
+   * before this session was reattached) can't drive it negative.
+   */
+  toolFinished(sessionId: string): void {
+    const entry = this.entries.get(sessionId);
+    if (!entry || entry.toolsInFlight === 0) return;
+    entry.toolsInFlight -= 1;
+    this.schedule(sessionId, entry);
+  }
+
+  /**
+   * Drift guard: reset the in-flight counter to 0. Called on the Stop hook (a
+   * turn can't end mid-tool-call, so any uncleared count is a PostToolUse that
+   * never fired) so a lost decrement can never permanently veto idle for the
+   * rest of the session. No-op (and no emit) when already 0.
+   */
+  clearToolsInFlight(sessionId: string): void {
+    const entry = this.entries.get(sessionId);
+    if (!entry || entry.toolsInFlight === 0) return;
+    entry.toolsInFlight = 0;
     this.schedule(sessionId, entry);
   }
 

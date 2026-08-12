@@ -8349,6 +8349,10 @@ async function bootstrapNormal() {
       // SubagentStop hook that never fired (e.g. a killed sub-agent) can't leave
       // a phantom badge on the parent.
       agentStatus.clearSubagents(sessionId);
+      // A finished turn can't have a tool still in flight — reset the idle-veto
+      // counter so a PostToolUse that never fired (e.g. a killed tool call)
+      // can't permanently pin the session's status away from idle.
+      agentStatus.clearToolsInFlight(sessionId);
     },
     // Notification/UserPromptSubmit callback → live "blocked — needs you"
     // status. The agent is waiting on the user on `blocked`, and resumed (or
@@ -8463,6 +8467,16 @@ async function bootstrapNormal() {
       if (action === 'start') agentStatus.subagentStarted(sessionId, identity);
       else agentStatus.subagentStopped(sessionId);
       console.log(`[subagent-hook] session=${sessionId.slice(0, 8)} action=${action}`);
+    },
+    // Generic tool-activity callback → the idle-veto. `start`/`stop` bracket
+    // every tool call (match-all PreToolUse/PostToolUse), so a quiet Bash/
+    // WebSearch/etc. call keeps the session reading `working` even while
+    // Claude's OSC title shows the idle glyph mid-call. `clear` is the Stop
+    // hook's drift guard.
+    onToolActivityHook: (_projectId: string, sessionId: string, action) => {
+      if (action === 'start') agentStatus.toolStarted(sessionId);
+      else if (action === 'stop') agentStatus.toolFinished(sessionId);
+      else agentStatus.clearToolsInFlight(sessionId);
     },
     // Question callback (EXPERIMENTAL, opt-in). A session's `AskUserQuestion`
     // PreToolUse hook forwarded the tool-call JSON; render it in the app's own

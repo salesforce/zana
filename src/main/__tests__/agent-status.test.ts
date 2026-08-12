@@ -625,3 +625,93 @@ describe('AgentStatusTracker (cursor-replay ring buffer)', () => {
     expect(flushed.headSeq).toBeGreaterThan(after.headSeq);
   });
 });
+
+describe('AgentStatusTracker (tool-in-flight idle-veto)', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('vetoes an idle OSC reading to working while a tool is in flight', () => {
+    const tracker = new AgentStatusTracker();
+    const seen: string[] = [];
+    tracker.on('status', (_id, state) => seen.push(state));
+
+    tracker.report('s1', 'working');
+    vi.advanceTimersByTime(250);
+    tracker.toolStarted('s1');
+    tracker.report('s1', 'idle'); // spinner went quiet mid-tool-call
+    vi.advanceTimersByTime(250);
+
+    expect(seen).toEqual(['working']); // idle never surfaces — vetoed
+    expect(tracker.get('s1')).toBe('working');
+  });
+
+  it('lets idle surface once the in-flight tool finishes', () => {
+    const tracker = new AgentStatusTracker();
+    const seen: string[] = [];
+    tracker.on('status', (_id, state) => seen.push(state));
+
+    tracker.toolStarted('s1');
+    tracker.report('s1', 'idle');
+    vi.advanceTimersByTime(250);
+    expect(seen).toEqual(['working']); // vetoed to working, not idle
+
+    tracker.toolFinished('s1');
+    vi.advanceTimersByTime(250);
+
+    expect(seen).toEqual(['working', 'idle']);
+    expect(tracker.get('s1')).toBe('idle');
+  });
+
+  it('does not veto a blocked overlay', () => {
+    const tracker = new AgentStatusTracker();
+    const seen: string[] = [];
+    tracker.on('status', (_id, state) => seen.push(state));
+
+    tracker.toolStarted('s1');
+    tracker.markBlocked('s1');
+    vi.advanceTimersByTime(250);
+
+    expect(seen).toEqual(['blocked']);
+  });
+
+  it('toolFinished clamps at zero on an unmatched stop', () => {
+    const tracker = new AgentStatusTracker();
+    const seen: string[] = [];
+    tracker.on('status', (_id, state) => seen.push(state));
+
+    tracker.toolFinished('s1'); // no matching start — no-op
+    tracker.report('s1', 'idle');
+    vi.advanceTimersByTime(250);
+
+    expect(seen).toEqual(['idle']);
+  });
+
+  it('clearToolsInFlight is a drift guard that un-vetoes a stuck counter', () => {
+    const tracker = new AgentStatusTracker();
+    const seen: string[] = [];
+    tracker.on('status', (_id, state) => seen.push(state));
+
+    tracker.toolStarted('s1'); // PostToolUse never fires (lost/dropped)
+    tracker.report('s1', 'idle');
+    vi.advanceTimersByTime(250);
+    expect(seen).toEqual(['working']); // vetoed, stuck at toolsInFlight=1
+
+    tracker.clearToolsInFlight('s1'); // Stop-hook drift guard resets it
+    vi.advanceTimersByTime(250);
+
+    expect(seen).toEqual(['working', 'idle']);
+  });
+
+  it('clearToolsInFlight is a no-op (no emit) when already zero', () => {
+    const tracker = new AgentStatusTracker();
+    const seen: string[] = [];
+    tracker.on('status', (_id, state) => seen.push(state));
+
+    tracker.report('s1', 'idle');
+    vi.advanceTimersByTime(250);
+    tracker.clearToolsInFlight('s1');
+    vi.advanceTimersByTime(250);
+
+    expect(seen).toEqual(['idle']);
+  });
+});
