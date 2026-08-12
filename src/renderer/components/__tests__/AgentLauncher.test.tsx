@@ -52,6 +52,15 @@ describe('buildLaunchArgs', () => {
   });
 });
 
+describe('remote launch drops', () => {
+  it('uploads dropped files before inserting their remote paths into the prompt', () => {
+    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('window.cc.fs.uploadToRemote(remoteTarget.id, localPath, \'.\')');
+    expect(source).toContain('dropResolver={remoteDropResolver}');
+    expect(source).toContain('dropResolving');
+  });
+});
+
 describe('Fix with AI recovery launch', () => {
   it('uses the managed scratch workspace root instead of retrying a failed project cwd', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
