@@ -275,7 +275,7 @@ describe('pty tmux wrapping (remote)', () => {
   });
 
   it('per-project remotePath overrides the global remoteDefaultPath', () => {
-    ptys.create({
+    const session = ptys.create({
       projectId: 'p1',
       profile: 'shell',
       config: cfg({ remoteDefaultPath: '/opt/workspace/core-public' }),
@@ -285,6 +285,8 @@ describe('pty tmux wrapping (remote)', () => {
     const remoteCmd = spawned[0].args.at(-1) as string;
     expect(remoteCmd).toContain("cd '/work/p1' &&");
     expect(remoteCmd).not.toContain('/opt/workspace/core-public');
+    // TerminalView uses session.cwd as the remote upload destination.
+    expect(session.cwd).toBe('/work/p1');
   });
 
   it('no cd prefix when neither remotePath nor remoteDefaultPath is set', () => {
