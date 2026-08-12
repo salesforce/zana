@@ -1,78 +1,55 @@
-//#region src/renderer/panel.tsx
-var e = { activate({ React: e, host: t }) {
-	let { useState: n, useEffect: r, useCallback: i, useRef: a, useMemo: o } = e, s = e.createElement;
-	function c(e) {
-		let t = (e || "").toLowerCase();
-		return /\breject|\bblock|contre|against/.test(t) ? "reject" : t.startsWith("changes") || t.includes("condition") || t.includes("escalat") ? "conditions" : "approve";
-	}
-	function l(e) {
-		let t = (e || "").toLowerCase();
-		return /reject|block|contre|against|veto/.test(t) ? "reject" : /change|revise|rework|condition|abstain|escalat|defer|neutral/.test(t) ? "conditions" : "approve";
-	}
-	function u(e) {
-		return (e || "").split(/[-_ ]+/).filter(Boolean).slice(0, 2).map((e) => e[0].toUpperCase()).join("");
-	}
-	let d = {
-		approve: "#3fb950",
-		reject: "#f85149",
-		conditions: "#d29922"
-	}, f = [
-		"approve",
-		"conditions",
-		"reject"
-	], p = {
-		approve: "FOR",
-		conditions: "CHANGES",
-		reject: "AGAINST"
-	}, m = {
-		approve: "APPROVED",
-		reject: "REJECTED",
-		conditions: "CONDITIONS"
-	};
-	function h(e, t) {
-		let n = (e || "").trim(), r = n.match(/^(.{2,32}?)\s*[—–:-]\s+(.+)$/s);
-		return r ? {
-			badge: r[1].trim().toUpperCase(),
-			detail: r[2].trim()
-		} : n.length <= 28 ? {
-			badge: n.toUpperCase(),
-			detail: ""
-		} : {
-			badge: m[t],
-			detail: n
-		};
-	}
-	let g = typeof matchMedia == "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-	function _(e, t, n, r, i) {
-		let a = e <= 6 ? 1 : e <= 14 ? 2 : e <= 30 ? 3 : e <= 60 ? 5 : 8, o = [];
-		for (let e = 0; e < a; e++) o.push(t + (a === 1 ? (n - t) * .5 : (n - t) * (e / (a - 1))));
-		let s = o.reduce((e, t) => e + t, 0), c = o.map((t) => Math.max(1, Math.round(t / s * e))), l = e - c.reduce((e, t) => e + t, 0);
-		for (let e = c.length - 1; l !== 0 && e >= 0; e--) {
-			let t = l > 0 ? 1 : -1;
-			c[e] + t >= 1 && (c[e] += t, l -= t);
-		}
-		let u = [];
-		for (let e = 0; e < a; e++) {
-			let t = c[e], n = o[e];
-			for (let e = 0; e < t; e++) {
-				let a = t === 1 ? .5 : e / (t - 1), o = Math.PI * .95 - a * Math.PI * .9;
-				u.push({
-					ang: o,
-					x: r + n * Math.cos(o),
-					y: i - n * Math.sin(o)
-				});
-			}
-		}
-		return u.sort((e, t) => t.ang - e.ang), u.slice(0, e);
-	}
-	function v(e, t, n, r) {
-		return [e + n * Math.cos(r), t - n * Math.sin(r)];
-	}
-	function y(e, t, n, r, i) {
-		let [a, o] = v(e, t, n, r), [s, c] = v(e, t, n, i);
-		return `M ${a} ${o} A ${n} ${n} 0 ${+(Math.abs(i - r) > Math.PI)} 1 ${s} ${c}`;
-	}
-	let b = `
+const he = {
+  activate({ React: K, host: R }) {
+    const { useState: I, useEffect: H, useCallback: W, useRef: V, useMemo: q } = K, t = K.createElement;
+    function J(n) {
+      const e = (n || "").toLowerCase();
+      return /\breject|\bblock|contre|against/.test(e) ? "reject" : e.startsWith("changes") || e.includes("condition") || e.includes("escalat") ? "conditions" : "approve";
+    }
+    function _(n) {
+      const e = (n || "").toLowerCase();
+      return /reject|block|contre|against|veto/.test(e) ? "reject" : /change|revise|rework|condition|abstain|escalat|defer|neutral/.test(e) ? "conditions" : "approve";
+    }
+    function G(n) {
+      return (n || "").split(/[-_ ]+/).filter(Boolean).slice(0, 2).map((e) => e[0].toUpperCase()).join("");
+    }
+    const v = {
+      approve: "#3fb950",
+      reject: "#f85149",
+      conditions: "#d29922"
+    }, O = ["approve", "conditions", "reject"], X = { approve: "FOR", conditions: "CHANGES", reject: "AGAINST" }, Z = { approve: "APPROVED", reject: "REJECTED", conditions: "CONDITIONS" };
+    function ee(n, e) {
+      const o = (n || "").trim(), i = o.match(/^(.{2,32}?)\s*[—–:-]\s+(.+)$/s);
+      return i ? { badge: i[1].trim().toUpperCase(), detail: i[2].trim() } : o.length <= 28 ? { badge: o.toUpperCase(), detail: "" } : { badge: Z[e], detail: o };
+    }
+    const te = typeof matchMedia == "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    function ne(n, e, o, i, g) {
+      const f = n <= 6 ? 1 : n <= 14 ? 2 : n <= 30 ? 3 : n <= 60 ? 5 : 8, h = [];
+      for (let r = 0; r < f; r++)
+        h.push(e + (f === 1 ? (o - e) * 0.5 : (o - e) * (r / (f - 1))));
+      const b = h.reduce((r, u) => r + u, 0), d = h.map((r) => Math.max(1, Math.round(r / b * n)));
+      let p = n - d.reduce((r, u) => r + u, 0);
+      for (let r = d.length - 1; p !== 0 && r >= 0; r--) {
+        const u = p > 0 ? 1 : -1;
+        d[r] + u >= 1 && (d[r] += u, p -= u);
+      }
+      const C = [];
+      for (let r = 0; r < f; r++) {
+        const u = d[r], E = h[r];
+        for (let y = 0; y < u; y++) {
+          const w = u === 1 ? 0.5 : y / (u - 1), $ = 0.05, s = Math.PI * (1 - $) - w * Math.PI * (1 - 2 * $);
+          C.push({ ang: s, x: i + E * Math.cos(s), y: g - E * Math.sin(s) });
+        }
+      }
+      return C.sort((r, u) => u.ang - r.ang), C.slice(0, n);
+    }
+    function M(n, e, o, i) {
+      return [n + o * Math.cos(i), e - o * Math.sin(i)];
+    }
+    function oe(n, e, o, i, g) {
+      const [f, h] = M(n, e, o, i), [b, d] = M(n, e, o, g), p = Math.abs(g - i) > Math.PI ? 1 : 0;
+      return `M ${f} ${h} A ${o} ${o} 0 ${p} 1 ${b} ${d}`;
+    }
+    const ie = `
       .cx-seat { transition: fill .5s ease, transform .18s cubic-bezier(.2,1.5,.4,1); transform-box: fill-box; transform-origin: center; cursor: pointer; }
       .cx-seat:hover, .cx-seat:focus { transform: scale(1.5); outline: none; }
       .cx-seat.on { filter: drop-shadow(0 0 4px var(--cx-seat-color)); }
@@ -82,7 +59,7 @@ var e = { activate({ React: e, host: t }) {
       .cx-card { transition: transform .12s ease, border-color .15s ease; }
       .cx-card:hover { transform: translateY(-1px); }
       .cx-card.flash { animation: cxflash 1.2s ease; }
-      @keyframes cxflash { 0% { box-shadow: 0 0 0 0 ${d.conditions}; } 25% { box-shadow: 0 0 0 3px ${d.conditions}; } 100% { box-shadow: 0 0 0 0 transparent; } }
+      @keyframes cxflash { 0% { box-shadow: 0 0 0 0 ${v.conditions}; } 25% { box-shadow: 0 0 0 3px ${v.conditions}; } 100% { box-shadow: 0 0 0 0 transparent; } }
       .cx-verdict.landed { animation: cxslam .5s cubic-bezier(.2,1.4,.4,1) both; }
       .cx-gavel.landed { animation: cxgavel .6s ease both; transform-origin: 80% 80%; display: inline-block; }
       @keyframes cxslam { 0% { opacity: 0; transform: scale(1.5) translateY(-6px); } 100% { opacity: 1; transform: none; } }
@@ -97,678 +74,548 @@ var e = { activate({ React: e, host: t }) {
         background: none; border: none; color: var(--fg-dim, #8b949e); cursor: pointer; border-radius: 6px;
         width: 24px; height: 24px; display: grid; place-items: center; font-size: 13px; line-height: 1; }
       .cx-row:hover .cx-row-del, .cx-row:focus-within .cx-row-del { opacity: .7; }
-      .cx-row-del:hover, .cx-row-del:focus { opacity: 1 !important; background: color-mix(in srgb, ${d.reject} 22%, transparent);
-        color: ${d.reject}; outline: none; }
+      .cx-row-del:hover, .cx-row-del:focus { opacity: 1 !important; background: color-mix(in srgb, ${v.reject} 22%, transparent);
+        color: ${v.reject}; outline: none; }
     `;
-	function x(e, t) {
-		let [o, s] = n(0), [c, l] = n(!1), u = a([]), d = i(() => {
-			if (u.current.forEach((e) => clearTimeout(e)), u.current = [], s(0), l(!1), g || e === 0) {
-				s(e), l(!0);
-				return;
-			}
-			let t = e > 20 ? 45 : 85;
-			for (let n = 1; n <= e; n++) u.current.push(window.setTimeout(() => s(n), 160 + (n - 1) * t));
-			u.current.push(window.setTimeout(() => l(!0), 160 + e * t + 200));
-		}, [e]);
-		return r(() => (d(), () => {
-			u.current.forEach((e) => clearTimeout(e));
-		}), [t]), {
-			revealed: o,
-			landed: c,
-			run: d
-		};
-	}
-	function S(e) {
-		let { votes: t, revealed: n, winBloc: r, focusedIdx: i, onSelect: a } = e, c = t.length, p = c <= 6 ? 16 : c <= 14 ? 11 : c <= 30 ? 8 : 6, m = o(() => t.map((e, t) => ({
-			v: e,
-			bloc: l(e.stance),
-			oi: t
-		})).sort((e, t) => f.indexOf(e.bloc) - f.indexOf(t.bloc)), [t]), h = o(() => _(c, 120, 300, 380, 330), [c]), g = {
-			approve: 0,
-			conditions: 0,
-			reject: 0
-		};
-		m.forEach((e) => g[e.bloc]++);
-		let b = m.slice(0, n).filter((e) => e.bloc === r).length, x = [], S = Math.PI * .95, C = S - Math.PI * .05, w = S;
-		f.forEach((e) => {
-			let t = g[e] / (c || 1);
-			if (t <= 0) return;
-			let n = w - t * C;
-			x.push(s("path", {
-				key: `band-${e}`,
-				d: y(380, 330, 326, w, n),
-				fill: "none",
-				stroke: d[e],
-				strokeWidth: 14,
-				opacity: .85
-			})), w = n;
-		});
-		let T = S - .5 * C, [E, D] = v(380, 330, 314, T), [O, k] = v(380, 330, 338, T);
-		x.push(s("line", {
-			key: "tick",
-			x1: E,
-			y1: D,
-			x2: O,
-			y2: k,
-			stroke: "var(--fg, #e6edf3)",
-			strokeWidth: 1.5,
-			strokeDasharray: "3 3",
-			opacity: .5
-		}));
-		let [A, j] = v(380, 330, 350, T);
-		return x.push(s("text", {
-			key: "ticklabel",
-			x: A,
-			y: j - 2,
-			fill: "var(--fg-dim, #8b949e)",
-			fontSize: 9.5,
-			textAnchor: "middle"
-		}, "50%")), x.push(s("rect", {
-			key: "podium",
-			x: 354,
-			y: 342,
-			width: 52,
-			height: 10,
-			rx: 3,
-			fill: "var(--border, #30363d)"
-		})), m.forEach((e, t) => {
-			let r = h[t];
-			if (!r) return;
-			let o = t < n, c = o ? d[e.bloc] : "var(--seat-empty, #2d333b)", l = i === e.oi, f = [s("circle", {
-				key: "c",
-				cx: r.x,
-				cy: r.y,
-				r: p,
-				className: "cx-seat" + (o ? " on" : "") + (l ? " focused" : ""),
-				fill: c,
-				stroke: "rgba(0,0,0,.3)",
-				strokeWidth: .5,
-				tabIndex: 0,
-				role: "button",
-				"aria-label": `${e.v.voter}: ${e.v.stance}`,
-				style: { "--cx-seat-color": d[e.bloc] },
-				onClick: () => a(e.oi),
-				onKeyDown: (t) => {
-					(t.key === "Enter" || t.key === " ") && (t.preventDefault(), a(e.oi));
-				}
-			}, s("title", null, `${e.v.voter} — ${e.v.stance}`))];
-			p >= 11 && f.push(s("text", {
-				key: "t",
-				x: r.x,
-				y: r.y,
-				className: "cx-initial" + (o ? " show" : ""),
-				textAnchor: "middle",
-				dominantBaseline: "central",
-				fontSize: 8,
-				fontWeight: 700,
-				fill: "rgba(0,0,0,.55)"
-			}, u(e.v.voter))), x.push(s("g", { key: `seat-${t}` }, ...f));
-		}), x.push(s("text", {
-			key: "bignum",
-			x: 380,
-			y: 308,
-			textAnchor: "middle",
-			fill: d[r],
-			fontSize: 34,
-			fontWeight: 800
-		}, String(b))), x.push(s("text", {
-			key: "bigof",
-			x: 380,
-			y: 332,
-			textAnchor: "middle",
-			fill: "var(--fg-dim, #8b949e)",
-			fontSize: 11,
-			letterSpacing: 1
-		}, `of ${c} voters`)), s("svg", {
-			viewBox: "0 0 760 400",
-			role: "img",
-			"aria-label": `Hemicycle: ${c} voters. ` + f.map((e) => `${g[e]} ${e}`).join(", "),
-			style: {
-				display: "block",
-				width: "100%",
-				maxWidth: 760,
-				margin: "4px auto 0",
-				overflow: "visible"
-			}
-		}, ...x);
-	}
-	function C(e) {
-		let t = e.votes.map((e) => `  - ${e.voter} [${e.stance}]: ${e.rationale}`).join("\n"), n = [
-			"{",
-			`  "sourceId": ${JSON.stringify(e.id)},`,
-			e.projectId ? `  "projectId": ${JSON.stringify(e.projectId)},` : "",
-			`  "question": ${JSON.stringify(e.question)},`,
-			"  \"verdict\": \"<short head — e.g. APPROVE — followed by the decision detail>\",",
-			"  \"synthesis\": \"<the judge's synthesis / ruling>\",",
-			"  \"roster\": \"<who voted / how chosen>\",",
-			"  \"votes\": [ { \"voter\": \"<id>\", \"stance\": \"APPROVE|CHANGES|CONDITIONS|REJECT\", \"rationale\": \"<verbatim>\" } ],",
-			"  \"dissent\": [\"<verbatim minority points, if any>\"]",
-			"}"
-		].filter((e) => e !== "").join("\n");
-		return [
-			"Re-analyse a prior council decision by convening a FRESH council on the same question, then record the new verdict.",
-			"",
-			"QUESTION:",
-			e.question,
-			"",
-			`PRIOR VERDICT: ${e.verdict}`,
-			e.roster ? `PRIOR ROSTER: ${e.roster}` : "",
-			"PRIOR VOTES:",
-			t,
-			e.synthesis ? `\nPRIOR SYNTHESIS: ${e.synthesis}` : "",
-			"",
-			"STEP 1 — Run the council. Use the /zana:council skill (or the zana_deliberate MCP tool) on the QUESTION above. Let voters reach their own stances; do NOT just echo the prior verdict.",
-			"",
-			"STEP 2 — Record the result as a Zana artifact. Call the zana_artifact_create MCP tool with:",
-			"  - type: \"decision-record\"",
-			"  - tags: [\"consensus-reanalysis\"]   (REQUIRED — the Consensus panel folds in exactly this tag)",
-			"  - title: a short summary of the decision",
-			"  - content: a JSON string matching this shape EXACTLY:",
-			"",
-			n,
-			"",
-			"Create ONLY that one artifact as your final action. The Consensus panel will fold it in (and remove the artifact) automatically once you finish."
-		].filter((e) => e !== "").join("\n");
-	}
-	function w(e) {
-		return s("span", { style: {
-			display: "inline-block",
-			padding: "1px 8px",
-			borderRadius: 999,
-			fontSize: 10.5,
-			fontWeight: 700,
-			letterSpacing: .3,
-			color: e.color,
-			border: `1px solid ${e.color}`,
-			whiteSpace: "nowrap"
-		} }, e.text);
-	}
-	function T(e) {
-		let { vote: t } = e, n = l(t.stance), r = d[n], i = e.flashKey === e.idx;
-		return s("div", {
-			id: `cx-card-${e.recordId}-${e.idx}`,
-			className: "cx-card" + (i ? " flash" : ""),
-			onClick: e.onClick,
-			style: {
-				border: "1px solid var(--border, #30363d)",
-				borderLeft: `3px solid ${r}`,
-				borderRadius: 8,
-				padding: "11px 13px",
-				marginBottom: 0,
-				background: "var(--bg-elevated, rgba(255,255,255,0.02))",
-				scrollMarginTop: 16,
-				cursor: "pointer"
-			}
-		}, s("div", { style: {
-			display: "flex",
-			alignItems: "center",
-			gap: 8,
-			marginBottom: 6
-		} }, s("span", { style: {
-			width: 18,
-			height: 18,
-			borderRadius: 999,
-			display: "inline-grid",
-			placeItems: "center",
-			fontSize: 9,
-			fontWeight: 700,
-			color: "#0d1117",
-			background: r
-		} }, u(t.voter)), s("strong", { style: { fontSize: 13 } }, t.voter), s("span", { style: { marginLeft: "auto" } }, s(w, {
-			text: t.stance.toUpperCase(),
-			color: r
-		}))), s("div", { style: {
-			fontSize: 12.5,
-			lineHeight: 1.55,
-			opacity: .92
-		} }, t.rationale));
-	}
-	function E(e) {
-		let { record: t, host: u, onReanalysed: m } = e, g = c(t.verdict), _ = d[g], v = t.votes.length, { revealed: y, landed: b, run: w } = x(v, t.id), [E, D] = n(null), [O, k] = n(null), [A, j] = n("idle"), M = a(null), N = a(null), P = i(async () => {
-			if (A === "idle") {
-				j("launching");
-				try {
-					let e = (u.getScopedProjectId() ? u.listProjects().find((e) => e.id === u.getScopedProjectId()) : void 0) ?? u.getActiveProject() ?? void 0, n = u.getScopedProjectId() ?? t.projectId ?? e?.id;
-					if (!n) {
-						u.toast("Re-analyse needs a project — open this decision under its project tab", "error"), j("idle");
-						return;
-					}
-					N.current = e?.path ?? null;
-					let r = C(t), i = await u.launchSession({
-						projectId: n,
-						title: `Re-analyse: ${t.question.slice(0, 40)}`,
-						extraArgs: [r]
-					});
-					if (!i) {
-						u.toast("Could not launch the re-analysis session", "error"), j("idle");
-						return;
-					}
-					M.current = i.id, j("running"), u.toast("Council re-analysis launched — its verdict will appear here when it settles", "info");
-				} catch (e) {
-					u.toast(`Re-analyse failed: ${e instanceof Error ? e.message : String(e)}`, "error"), j("idle");
-				}
-			}
-		}, [
-			A,
-			t,
-			u
-		]);
-		r(() => {
-			if (A === "running") return u.on("session:agentStatus", ({ sessionId: e, state: t }) => {
-				if (e === M.current && (t === "idle" || t === "done")) {
-					j("ingesting");
-					let e = N.current ?? void 0;
-					u.call("ingest", { projectPath: e }).then((e) => {
-						e.ingested > 0 && u.toast(`Folded in ${e.ingested} re-analysis verdict${e.ingested > 1 ? "s" : ""}`, "info"), m();
-					}).catch(() => {}).finally(() => {
-						j("idle"), M.current = null, N.current = null;
-					});
-				}
-			});
-		}, [
-			A,
-			u,
-			m
-		]);
-		let F = i((e) => {
-			D(e), k(null), window.setTimeout(() => k(e), 0);
-			let n = document.getElementById(`cx-card-${t.id}-${e}`);
-			n && n.scrollIntoView({
-				behavior: "smooth",
-				block: "nearest"
-			});
-		}, [t.id]), I = o(() => t.votes.map((e) => l(e.stance)).sort((e, t) => f.indexOf(e) - f.indexOf(t)), [t.votes]), L = {
-			approve: 0,
-			conditions: 0,
-			reject: 0
-		};
-		I.slice(0, y).forEach((e) => L[e]++);
-		let R = [];
-		R.push(s("h2", {
-			key: "q",
-			style: {
-				fontSize: 18,
-				margin: "0 0 14px",
-				lineHeight: 1.4,
-				maxWidth: 820
-			}
-		}, t.question));
-		let { badge: z, detail: B } = h(t.verdict, g), V = f.map((e) => s("span", {
-			key: e,
-			style: {
-				display: "inline-flex",
-				alignItems: "center",
-				gap: 6
-			}
-		}, s("span", { style: {
-			width: 10,
-			height: 10,
-			borderRadius: 3,
-			background: d[e],
-			boxShadow: `0 0 6px ${d[e]}`
-		} }), s("span", { style: { fontVariantNumeric: "tabular-nums" } }, String(L[e])), s("span", { style: { opacity: .85 } }, " " + p[e])));
-		R.push(s("div", {
-			key: "banner",
-			style: {
-				padding: "16px 20px",
-				borderRadius: 12,
-				marginBottom: 6,
-				border: "1px solid var(--border, #30363d)",
-				borderLeft: `5px solid ${_}`,
-				background: "var(--bg-elevated, rgba(255,255,255,0.03))"
-			}
-		}, s("div", { style: {
-			display: "flex",
-			alignItems: "center",
-			gap: 18,
-			flexWrap: "wrap"
-		} }, s("div", {
-			className: "cx-verdict" + (b ? " landed" : ""),
-			style: {
-				display: "inline-flex",
-				alignItems: "center",
-				gap: 8,
-				padding: "8px 16px",
-				borderRadius: 999,
-				fontSize: 17,
-				fontWeight: 800,
-				letterSpacing: .6,
-				lineHeight: 1,
-				color: _,
-				background: `color-mix(in srgb, ${_} 16%, transparent)`,
-				border: `1.5px solid ${_}`,
-				whiteSpace: "nowrap"
-			}
-		}, s("span", {
-			className: "cx-gavel" + (b ? " landed" : ""),
-			style: { fontSize: 18 }
-		}, "⚖️"), z), s("div", {
-			title: "Voter stances. The verdict is the judge's reasoned synthesis of the rationales — not a majority count, so \"CHANGES\" votes (qualified support) can still settle as APPROVE.",
-			style: {
-				display: "flex",
-				gap: 16,
-				fontSize: 13,
-				fontWeight: 600,
-				cursor: "help"
-			}
-		}, ...V), s("div", { style: {
-			marginLeft: "auto",
-			fontSize: 11,
-			opacity: .6,
-			textAlign: "right",
-			lineHeight: 1.5,
-			whiteSpace: "pre-line"
-		} }, (t.roster ? t.roster + "\n" : "") + (t.settledAt ? "settled " + t.settledAt.slice(0, 10) : ""))), B ? s("div", { style: {
-			marginTop: 13,
-			paddingTop: 13,
-			borderTop: "1px solid var(--border, #30363d)",
-			fontSize: 15,
-			fontWeight: 600,
-			lineHeight: 1.45,
-			color: "var(--fg, #e6edf3)",
-			maxWidth: 820
-		} }, B) : null));
-		let H = A !== "idle", U = A === "launching" ? "Launching…" : A === "running" ? "● Council in session…" : A === "ingesting" ? "Folding in…" : "↻ Re-analyse";
-		return R.push(s("div", {
-			key: "controls",
-			style: {
-				display: "flex",
-				gap: 10,
-				alignItems: "center",
-				margin: "16px 0 0",
-				flexWrap: "wrap"
-			}
-		}, s("button", {
-			onClick: () => w(),
-			style: {
-				font: "inherit",
-				fontSize: 12,
-				cursor: "pointer",
-				background: "var(--bg-elevated, rgba(255,255,255,0.04))",
-				color: "inherit",
-				border: "1px solid var(--border, #30363d)",
-				borderRadius: 8,
-				padding: "7px 13px"
-			}
-		}, "▸ Replay roll-call"), s("button", {
-			onClick: () => void P(),
-			disabled: H,
-			title: "Convene a fresh council on this question and record the new verdict here",
-			style: {
-				font: "inherit",
-				fontSize: 12,
-				cursor: H ? "default" : "pointer",
-				background: H ? "var(--bg-elevated, rgba(255,255,255,0.04))" : `color-mix(in srgb, ${_} 14%, transparent)`,
-				color: H ? "inherit" : _,
-				opacity: H ? .75 : 1,
-				border: `1px solid ${H ? "var(--border, #30363d)" : _}`,
-				borderRadius: 8,
-				padding: "7px 13px",
-				fontWeight: 600
-			}
-		}, U), s("span", { style: {
-			fontSize: 11,
-			opacity: .55
-		} }, A === "running" ? "watching the session — its verdict lands here when it settles" : "click a seat to read its rationale"))), R.push(s("div", { key: "chamber" }, s(S, {
-			votes: t.votes,
-			revealed: y,
-			winBloc: g,
-			focusedIdx: E,
-			onSelect: F
-		}))), t.synthesis && R.push(s("div", { key: "synth" }, s("div", { style: {
-			fontSize: 11,
-			textTransform: "uppercase",
-			letterSpacing: .6,
-			opacity: .55,
-			margin: "26px 0 10px",
-			fontWeight: 600
-		} }, "Synthesis — the ruling"), s("div", { style: {
-			fontSize: 13.5,
-			lineHeight: 1.65,
-			maxWidth: 760,
-			padding: "12px 16px",
-			borderRadius: 10,
-			background: "var(--bg-elevated, rgba(255,255,255,0.03))",
-			border: "1px solid var(--border, #30363d)"
-		} }, t.synthesis))), R.push(s("div", {
-			key: "votes-h",
-			style: {
-				fontSize: 11,
-				textTransform: "uppercase",
-				letterSpacing: .6,
-				opacity: .55,
-				margin: "26px 0 10px",
-				fontWeight: 600
-			}
-		}, `Voters (${v}) — click a seat above`)), R.push(s("div", {
-			key: "votes",
-			style: {
-				display: "grid",
-				gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))",
-				gap: 10
-			}
-		}, ...t.votes.map((e, n) => s(T, {
-			key: n,
-			vote: e,
-			idx: n,
-			recordId: t.id,
-			flashKey: O,
-			onClick: () => F(n)
-		})))), t.dissent && t.dissent.length && R.push(s("div", {
-			key: "dissent",
-			style: {
-				marginTop: 24,
-				maxWidth: 760
-			}
-		}, s("div", { style: {
-			fontSize: 11,
-			textTransform: "uppercase",
-			letterSpacing: .6,
-			color: d.conditions,
-			marginBottom: 10,
-			fontWeight: 600
-		} }, "Minority report — dissent (verbatim)"), ...t.dissent.map((e, t) => s("div", {
-			key: t,
-			style: {
-				fontSize: 12.5,
-				lineHeight: 1.55,
-				opacity: .92,
-				borderLeft: `2px solid ${d.conditions}`,
-				padding: "6px 0 6px 14px",
-				marginBottom: 8
-			}
-		}, e)))), s("div", { style: {
-			padding: "22px 30px 56px",
-			overflowY: "auto",
-			flex: 1,
-			minWidth: 0
-		} }, ...R);
-	}
-	function D(e) {
-		let [a, o] = n([]), [l, u] = n(null), [f, p] = n(null), [m, h] = n(null), [g, _] = n(!0), v = i(async () => {
-			_(!0), h(null);
-			try {
-				let e = t.getScopedProjectId() ?? void 0, n = await t.call("list", e);
-				o(n), u((e) => e ?? n[0]?.id ?? null);
-			} catch (e) {
-				h(e instanceof Error ? e.message : String(e));
-			} finally {
-				_(!1);
-			}
-		}, []);
-		r(() => {
-			v();
-		}, [v]);
-		let y = i(async (e, n) => {
-			if (await t.confirm({
-				title: "Delete this decision?",
-				body: `"${n}"\n\nThis can't be undone.`,
-				confirmLabel: "Delete",
-				danger: !0
-			})) try {
-				await t.call("remove", e), u((t) => t === e ? a.filter((t) => t.id !== e)[0]?.id ?? null : t), await v();
-			} catch (e) {
-				t.toast(`Delete failed: ${e instanceof Error ? e.message : String(e)}`, "error");
-			}
-		}, [a, v]), x = i(async () => {
-			if (a.length && await t.confirm({
-				title: `Delete ALL ${a.length} decision${a.length > 1 ? "s" : ""}?`,
-				body: "This clears the Consensus tab and can't be undone.",
-				confirmLabel: "Delete all",
-				danger: !0
-			})) try {
-				let { cleared: e } = await t.call("clearAll");
-				u(null), p(null), await v(), t.toast(`Cleared ${e} decision${e === 1 ? "" : "s"}`, "info");
-			} catch (e) {
-				t.toast(`Clear failed: ${e instanceof Error ? e.message : String(e)}`, "error");
-			}
-		}, [a, v]);
-		r(() => {
-			if (!l) {
-				p(null);
-				return;
-			}
-			let e = !1;
-			return t.call("get", l).then((t) => {
-				e || p(t);
-			}).catch((t) => {
-				e || h(t instanceof Error ? t.message : String(t));
-			}), () => {
-				e = !0;
-			};
-		}, [l]);
-		let S = a.length === 0 && !g ? [s("div", {
-			key: "empty",
-			style: {
-				padding: "8px 16px",
-				fontSize: 12,
-				opacity: .5
-			}
-		}, "No recorded decisions yet.")] : a.map((e) => {
-			let t = e.id === l, n = d[c(e.verdict)];
-			return s("div", {
-				key: e.id,
-				className: "cx-row"
-			}, s("button", {
-				onClick: () => u(e.id),
-				style: {
-					textAlign: "left",
-					background: t ? "var(--bg-active, rgba(255,255,255,0.06))" : "none",
-					border: "none",
-					borderLeft: `3px solid ${t ? n : "transparent"}`,
-					color: "inherit",
-					cursor: "pointer",
-					padding: "11px 34px 11px 16px",
-					display: "block",
-					width: "100%"
-				}
-			}, s("div", { style: {
-				fontSize: 12.5,
-				lineHeight: 1.4,
-				marginBottom: 8,
-				display: "-webkit-box",
-				WebkitLineClamp: 2,
-				WebkitBoxOrient: "vertical",
-				overflow: "hidden"
-			} }, e.question), s("div", { style: {
-				display: "flex",
-				gap: 8,
-				alignItems: "center"
-			} }, s("span", { style: {
-				width: 8,
-				height: 8,
-				borderRadius: 999,
-				background: n,
-				display: "inline-block",
-				boxShadow: `0 0 6px ${n}`
-			} }), s("span", { style: {
-				fontSize: 11,
-				opacity: .6
-			} }, `${e.voters} voters · ${(e.settledAt || "").slice(0, 10)}`))), s("button", {
-				className: "cx-row-del",
-				title: "Delete this decision",
-				"aria-label": `Delete decision: ${e.question}`,
-				onClick: (t) => {
-					t.stopPropagation(), y(e.id, e.question);
-				}
-			}, "🗑"));
-		}), C = s("div", { style: {
-			width: 280,
-			minWidth: 280,
-			borderRight: "1px solid var(--border, #30363d)",
-			overflowY: "auto",
-			display: "flex",
-			flexDirection: "column"
-		} }, s("div", { style: {
-			padding: "14px 16px 8px",
-			display: "flex",
-			alignItems: "center",
-			justifyContent: "space-between"
-		} }, s("span", { style: {
-			fontSize: 12,
-			textTransform: "uppercase",
-			letterSpacing: .6,
-			opacity: .55,
-			fontWeight: 600
-		} }, "Decisions"), s("div", { style: {
-			display: "flex",
-			gap: 4,
-			alignItems: "center"
-		} }, s("button", {
-			onClick: () => void v(),
-			title: "Refresh",
-			style: {
-				background: "none",
-				border: "none",
-				color: "inherit",
-				cursor: "pointer",
-				opacity: .6,
-				fontSize: 12
-			}
-		}, "⟳"), a.length > 0 ? s("button", {
-			onClick: () => void x(),
-			title: "Delete all decisions",
-			style: {
-				background: "none",
-				border: "none",
-				color: "inherit",
-				cursor: "pointer",
-				opacity: .6,
-				fontSize: 12
-			}
-		}, "🗑") : null)), ...S), w = m ? s("div", { style: {
-			padding: 24,
-			color: d.reject,
-			fontSize: 13
-		} }, `Error: ${m}`) : f ? s(E, {
-			key: f.id,
-			record: f,
-			host: t,
-			onReanalysed: () => void v()
-		}) : s("div", { style: {
-			padding: 24,
-			opacity: .5,
-			fontSize: 13
-		} }, g ? "Loading…" : "Select a decision.");
-		return s("div", { style: {
-			gridColumn: "2 / -1",
-			minWidth: 0,
-			display: "flex",
-			height: "100%",
-			width: "100%",
-			fontFamily: "inherit"
-		} }, s("style", null, b), C, w);
-	}
-	return {
-		panel: D,
-		commands: (e) => [{
-			id: "refresh",
-			label: "Consensus: view decisions",
-			icon: "Scale",
-			run: () => e.toast("Open the Consensus tab to view council decisions")
-		}],
-		navBadge: () => null
-	};
-} };
-//#endregion
-export { e as default };
+    function re(n, e) {
+      const [o, i] = I(0), [g, f] = I(!1), h = V([]), b = W(() => {
+        if (h.current.forEach((p) => clearTimeout(p)), h.current = [], i(0), f(!1), te || n === 0) {
+          i(n), f(!0);
+          return;
+        }
+        const d = n > 20 ? 45 : 85;
+        for (let p = 1; p <= n; p++)
+          h.current.push(
+            window.setTimeout(() => i(p), 160 + (p - 1) * d)
+          );
+        h.current.push(window.setTimeout(() => f(!0), 160 + n * d + 200));
+      }, [n]);
+      return H(() => (b(), () => {
+        h.current.forEach((d) => clearTimeout(d));
+      }), [e]), { revealed: o, landed: g, run: b };
+    }
+    function se(n) {
+      const { votes: e, revealed: o, winBloc: i, focusedIdx: g, onSelect: f } = n, h = 760, b = 400, d = h / 2, p = 330, C = 120, r = 300, u = e.length, E = u <= 6 ? 16 : u <= 14 ? 11 : u <= 30 ? 8 : 6, y = q(
+        () => e.map((c, j) => ({ v: c, bloc: _(c.stance), oi: j })).sort((c, j) => O.indexOf(c.bloc) - O.indexOf(j.bloc)),
+        [e]
+      ), w = q(() => ne(u, C, r, d, p), [u]), $ = { approve: 0, conditions: 0, reject: 0 };
+      y.forEach((c) => $[c.bloc]++);
+      const s = y.slice(0, o).filter((c) => c.bloc === i).length, l = [], S = r + 26, m = 0.05, P = Math.PI * (1 - m), k = Math.PI * m, N = P - k;
+      let A = P;
+      O.forEach((c) => {
+        const j = $[c] / (u || 1);
+        if (j <= 0) return;
+        const T = A - j * N;
+        l.push(
+          t("path", {
+            key: `band-${c}`,
+            d: oe(d, p, S, A, T),
+            fill: "none",
+            stroke: v[c],
+            strokeWidth: 14,
+            opacity: 0.85
+          })
+        ), A = T;
+      });
+      const B = P - 0.5 * N, [z, U] = M(d, p, S - 12, B), [a, x] = M(d, p, S + 12, B);
+      l.push(
+        t("line", { key: "tick", x1: z, y1: U, x2: a, y2: x, stroke: "var(--fg, #e6edf3)", strokeWidth: 1.5, strokeDasharray: "3 3", opacity: 0.5 })
+      );
+      const [L, D] = M(d, p, S + 24, B);
+      return l.push(t("text", { key: "ticklabel", x: L, y: D - 2, fill: "var(--fg-dim, #8b949e)", fontSize: 9.5, textAnchor: "middle" }, "50%")), l.push(t("rect", { key: "podium", x: d - 26, y: p + 12, width: 52, height: 10, rx: 3, fill: "var(--border, #30363d)" })), y.forEach((c, j) => {
+        const T = w[j];
+        if (!T) return;
+        const Y = j < o, ue = Y ? v[c.bloc] : "var(--seat-empty, #2d333b)", fe = g === c.oi, Q = [
+          t("circle", {
+            key: "c",
+            cx: T.x,
+            cy: T.y,
+            r: E,
+            className: "cx-seat" + (Y ? " on" : "") + (fe ? " focused" : ""),
+            fill: ue,
+            stroke: "rgba(0,0,0,.3)",
+            strokeWidth: 0.5,
+            tabIndex: 0,
+            role: "button",
+            "aria-label": `${c.v.voter}: ${c.v.stance}`,
+            style: { "--cx-seat-color": v[c.bloc] },
+            onClick: () => f(c.oi),
+            onKeyDown: (F) => {
+              (F.key === "Enter" || F.key === " ") && (F.preventDefault(), f(c.oi));
+            }
+          }, t("title", null, `${c.v.voter} — ${c.v.stance}`))
+        ];
+        E >= 11 && Q.push(
+          t("text", {
+            key: "t",
+            x: T.x,
+            y: T.y,
+            className: "cx-initial" + (Y ? " show" : ""),
+            textAnchor: "middle",
+            dominantBaseline: "central",
+            fontSize: 8,
+            fontWeight: 700,
+            fill: "rgba(0,0,0,.55)"
+          }, G(c.v.voter))
+        ), l.push(t("g", { key: `seat-${j}` }, ...Q));
+      }), l.push(
+        t("text", { key: "bignum", x: d, y: p - 22, textAnchor: "middle", fill: v[i], fontSize: 34, fontWeight: 800 }, String(s))
+      ), l.push(
+        t("text", { key: "bigof", x: d, y: p + 2, textAnchor: "middle", fill: "var(--fg-dim, #8b949e)", fontSize: 11, letterSpacing: 1 }, `of ${u} voters`)
+      ), t(
+        "svg",
+        {
+          viewBox: `0 0 ${h} ${b}`,
+          role: "img",
+          "aria-label": `Hemicycle: ${u} voters. ` + O.map((c) => `${$[c]} ${c}`).join(", "),
+          style: { display: "block", width: "100%", maxWidth: 760, margin: "4px auto 0", overflow: "visible" }
+        },
+        ...l
+      );
+    }
+    function ae(n) {
+      const e = n.votes.map((i) => `  - ${i.voter} [${i.stance}]: ${i.rationale}`).join(`
+`), o = [
+        "{",
+        `  "sourceId": ${JSON.stringify(n.id)},`,
+        n.projectId ? `  "projectId": ${JSON.stringify(n.projectId)},` : "",
+        `  "question": ${JSON.stringify(n.question)},`,
+        '  "verdict": "<short head — e.g. APPROVE — followed by the decision detail>",',
+        `  "synthesis": "<the judge's synthesis / ruling>",`,
+        '  "roster": "<who voted / how chosen>",',
+        '  "votes": [ { "voter": "<id>", "stance": "APPROVE|CHANGES|CONDITIONS|REJECT", "rationale": "<verbatim>" } ],',
+        '  "dissent": ["<verbatim minority points, if any>"]',
+        "}"
+      ].filter((i) => i !== "").join(`
+`);
+      return [
+        "Re-analyse a prior council decision by convening a FRESH council on the same question, then record the new verdict.",
+        "",
+        "QUESTION:",
+        n.question,
+        "",
+        `PRIOR VERDICT: ${n.verdict}`,
+        n.roster ? `PRIOR ROSTER: ${n.roster}` : "",
+        "PRIOR VOTES:",
+        e,
+        n.synthesis ? `
+PRIOR SYNTHESIS: ${n.synthesis}` : "",
+        "",
+        "STEP 1 — Run the council. Use the /zana:council skill (or the zana_deliberate MCP tool) on the QUESTION above. Let voters reach their own stances; do NOT just echo the prior verdict.",
+        "",
+        "STEP 2 — Record the result as a Zana artifact. Call the zana_artifact_create MCP tool with:",
+        '  - type: "decision-record"',
+        '  - tags: ["consensus-reanalysis"]   (REQUIRED — the Consensus panel folds in exactly this tag)',
+        "  - title: a short summary of the decision",
+        "  - content: a JSON string matching this shape EXACTLY:",
+        "",
+        o,
+        "",
+        "Create ONLY that one artifact as your final action. The Consensus panel will fold it in (and remove the artifact) automatically once you finish."
+      ].filter((i) => i !== "").join(`
+`);
+    }
+    function ce(n) {
+      return t("span", {
+        style: {
+          display: "inline-block",
+          padding: "1px 8px",
+          borderRadius: 999,
+          fontSize: 10.5,
+          fontWeight: 700,
+          letterSpacing: 0.3,
+          color: n.color,
+          border: `1px solid ${n.color}`,
+          whiteSpace: "nowrap"
+        }
+      }, n.text);
+    }
+    function le(n) {
+      const { vote: e } = n, o = _(e.stance), i = v[o], g = n.flashKey === n.idx;
+      return t(
+        "div",
+        {
+          id: `cx-card-${n.recordId}-${n.idx}`,
+          className: "cx-card" + (g ? " flash" : ""),
+          onClick: n.onClick,
+          style: {
+            border: "1px solid var(--border, #30363d)",
+            borderLeft: `3px solid ${i}`,
+            borderRadius: 8,
+            padding: "11px 13px",
+            marginBottom: 0,
+            background: "var(--bg-elevated, rgba(255,255,255,0.02))",
+            scrollMarginTop: 16,
+            cursor: "pointer"
+          }
+        },
+        t(
+          "div",
+          { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 } },
+          t("span", {
+            style: {
+              width: 18,
+              height: 18,
+              borderRadius: 999,
+              display: "inline-grid",
+              placeItems: "center",
+              fontSize: 9,
+              fontWeight: 700,
+              color: "#0d1117",
+              background: i
+            }
+          }, G(e.voter)),
+          t("strong", { style: { fontSize: 13 } }, e.voter),
+          t("span", { style: { marginLeft: "auto" } }, t(ce, { text: e.stance.toUpperCase(), color: i }))
+        ),
+        t("div", { style: { fontSize: 12.5, lineHeight: 1.55, opacity: 0.92 } }, e.rationale)
+      );
+    }
+    function de(n) {
+      const { record: e, host: o, onReanalysed: i } = n, g = J(e.verdict), f = v[g], h = e.votes.length, { revealed: b, landed: d, run: p } = re(h, e.id), [C, r] = I(null), [u, E] = I(null), [y, w] = I("idle"), $ = V(null), s = V(null), l = W(async () => {
+        if (y === "idle") {
+          w("launching");
+          try {
+            const a = (o.getScopedProjectId() ? o.listProjects().find((c) => c.id === o.getScopedProjectId()) : void 0) ?? o.getActiveProject() ?? void 0, x = o.getScopedProjectId() ?? e.projectId ?? (a == null ? void 0 : a.id);
+            if (!x) {
+              o.toast("Re-analyse needs a project — open this decision under its project tab", "error"), w("idle");
+              return;
+            }
+            s.current = (a == null ? void 0 : a.path) ?? null;
+            const L = ae(e), D = await o.launchSession({
+              projectId: x,
+              title: `Re-analyse: ${e.question.slice(0, 40)}`,
+              extraArgs: [L]
+            });
+            if (!D) {
+              o.toast("Could not launch the re-analysis session", "error"), w("idle");
+              return;
+            }
+            $.current = D.id, w("running"), o.toast("Council re-analysis launched — its verdict will appear here when it settles", "info");
+          } catch (a) {
+            o.toast(`Re-analyse failed: ${a instanceof Error ? a.message : String(a)}`, "error"), w("idle");
+          }
+        }
+      }, [y, e, o]);
+      H(() => y !== "running" ? void 0 : o.on("session:agentStatus", ({ sessionId: x, state: L }) => {
+        if (x === $.current && (L === "idle" || L === "done")) {
+          w("ingesting");
+          const D = s.current ?? void 0;
+          o.call("ingest", { projectPath: D }).then((c) => {
+            c.ingested > 0 && o.toast(`Folded in ${c.ingested} re-analysis verdict${c.ingested > 1 ? "s" : ""}`, "info"), i();
+          }).catch(() => {
+          }).finally(() => {
+            w("idle"), $.current = null, s.current = null;
+          });
+        }
+      }), [y, o, i]);
+      const S = W((a) => {
+        r(a), E(null), window.setTimeout(() => E(a), 0);
+        const x = document.getElementById(`cx-card-${e.id}-${a}`);
+        x && x.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }, [e.id]), m = q(
+        () => e.votes.map((a) => _(a.stance)).sort((a, x) => O.indexOf(a) - O.indexOf(x)),
+        [e.votes]
+      ), P = { approve: 0, conditions: 0, reject: 0 };
+      m.slice(0, b).forEach((a) => P[a]++);
+      const k = [];
+      k.push(t("h2", { key: "q", style: { fontSize: 18, margin: "0 0 14px", lineHeight: 1.4, maxWidth: 820 } }, e.question));
+      const { badge: N, detail: A } = ee(e.verdict, g), B = O.map(
+        (a) => t(
+          "span",
+          { key: a, style: { display: "inline-flex", alignItems: "center", gap: 6 } },
+          t("span", { style: { width: 10, height: 10, borderRadius: 3, background: v[a], boxShadow: `0 0 6px ${v[a]}` } }),
+          t("span", { style: { fontVariantNumeric: "tabular-nums" } }, String(P[a])),
+          t("span", { style: { opacity: 0.85 } }, " " + X[a])
+        )
+      );
+      k.push(
+        t(
+          "div",
+          {
+            key: "banner",
+            style: {
+              padding: "16px 20px",
+              borderRadius: 12,
+              marginBottom: 6,
+              border: "1px solid var(--border, #30363d)",
+              borderLeft: `5px solid ${f}`,
+              background: "var(--bg-elevated, rgba(255,255,255,0.03))"
+            }
+          },
+          // top row: BIG BADGE + tally + meta
+          t(
+            "div",
+            { style: { display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" } },
+            t(
+              "div",
+              {
+                className: "cx-verdict" + (d ? " landed" : ""),
+                style: {
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "8px 16px",
+                  borderRadius: 999,
+                  fontSize: 17,
+                  fontWeight: 800,
+                  letterSpacing: 0.6,
+                  lineHeight: 1,
+                  color: f,
+                  background: `color-mix(in srgb, ${f} 16%, transparent)`,
+                  border: `1.5px solid ${f}`,
+                  whiteSpace: "nowrap"
+                }
+              },
+              t("span", { className: "cx-gavel" + (d ? " landed" : ""), style: { fontSize: 18 } }, "⚖️"),
+              N
+            ),
+            t("div", {
+              title: `Voter stances. The verdict is the judge's reasoned synthesis of the rationales — not a majority count, so "CHANGES" votes (qualified support) can still settle as APPROVE.`,
+              style: { display: "flex", gap: 16, fontSize: 13, fontWeight: 600, cursor: "help" }
+            }, ...B),
+            t(
+              "div",
+              { style: { marginLeft: "auto", fontSize: 11, opacity: 0.6, textAlign: "right", lineHeight: 1.5, whiteSpace: "pre-line" } },
+              (e.roster ? e.roster + `
+` : "") + (e.settledAt ? "settled " + e.settledAt.slice(0, 10) : "")
+            )
+          ),
+          // decision detail — the actual "what", given room to breathe
+          A ? t("div", {
+            style: {
+              marginTop: 13,
+              paddingTop: 13,
+              borderTop: "1px solid var(--border, #30363d)",
+              fontSize: 15,
+              fontWeight: 600,
+              lineHeight: 1.45,
+              color: "var(--fg, #e6edf3)",
+              maxWidth: 820
+            }
+          }, A) : null
+        )
+      );
+      const z = y !== "idle", U = y === "launching" ? "Launching…" : y === "running" ? "● Council in session…" : y === "ingesting" ? "Folding in…" : "↻ Re-analyse";
+      return k.push(
+        t(
+          "div",
+          { key: "controls", style: { display: "flex", gap: 10, alignItems: "center", margin: "16px 0 0", flexWrap: "wrap" } },
+          t("button", {
+            onClick: () => p(),
+            style: {
+              font: "inherit",
+              fontSize: 12,
+              cursor: "pointer",
+              background: "var(--bg-elevated, rgba(255,255,255,0.04))",
+              color: "inherit",
+              border: "1px solid var(--border, #30363d)",
+              borderRadius: 8,
+              padding: "7px 13px"
+            }
+          }, "▸ Replay roll-call"),
+          t("button", {
+            onClick: () => void l(),
+            disabled: z,
+            title: "Convene a fresh council on this question and record the new verdict here",
+            style: {
+              font: "inherit",
+              fontSize: 12,
+              cursor: z ? "default" : "pointer",
+              background: z ? "var(--bg-elevated, rgba(255,255,255,0.04))" : `color-mix(in srgb, ${f} 14%, transparent)`,
+              color: z ? "inherit" : f,
+              opacity: z ? 0.75 : 1,
+              border: `1px solid ${z ? "var(--border, #30363d)" : f}`,
+              borderRadius: 8,
+              padding: "7px 13px",
+              fontWeight: 600
+            }
+          }, U),
+          t(
+            "span",
+            { style: { fontSize: 11, opacity: 0.55 } },
+            y === "running" ? "watching the session — its verdict lands here when it settles" : "click a seat to read its rationale"
+          )
+        )
+      ), k.push(
+        t(
+          "div",
+          { key: "chamber" },
+          t(se, { votes: e.votes, revealed: b, winBloc: g, focusedIdx: C, onSelect: S })
+        )
+      ), e.synthesis && k.push(
+        t(
+          "div",
+          { key: "synth" },
+          t("div", { style: { fontSize: 11, textTransform: "uppercase", letterSpacing: 0.6, opacity: 0.55, margin: "26px 0 10px", fontWeight: 600 } }, "Synthesis — the ruling"),
+          t("div", { style: { fontSize: 13.5, lineHeight: 1.65, maxWidth: 760, padding: "12px 16px", borderRadius: 10, background: "var(--bg-elevated, rgba(255,255,255,0.03))", border: "1px solid var(--border, #30363d)" } }, e.synthesis)
+        )
+      ), k.push(
+        t("div", { key: "votes-h", style: { fontSize: 11, textTransform: "uppercase", letterSpacing: 0.6, opacity: 0.55, margin: "26px 0 10px", fontWeight: 600 } }, `Voters (${h}) — click a seat above`)
+      ), k.push(
+        t(
+          "div",
+          { key: "votes", style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))", gap: 10 } },
+          ...e.votes.map((a, x) => t(le, { key: x, vote: a, idx: x, recordId: e.id, flashKey: u, onClick: () => S(x) }))
+        )
+      ), e.dissent && e.dissent.length && k.push(
+        t(
+          "div",
+          { key: "dissent", style: { marginTop: 24, maxWidth: 760 } },
+          t("div", { style: { fontSize: 11, textTransform: "uppercase", letterSpacing: 0.6, color: v.conditions, marginBottom: 10, fontWeight: 600 } }, "Minority report — dissent (verbatim)"),
+          ...e.dissent.map(
+            (a, x) => t("div", { key: x, style: { fontSize: 12.5, lineHeight: 1.55, opacity: 0.92, borderLeft: `2px solid ${v.conditions}`, padding: "6px 0 6px 14px", marginBottom: 8 } }, a)
+          )
+        )
+      ), t("div", { style: { padding: "22px 30px 56px", overflowY: "auto", flex: 1, minWidth: 0 } }, ...k);
+    }
+    function pe(n) {
+      const [e, o] = I([]), [i, g] = I(null), [f, h] = I(null), [b, d] = I(null), [p, C] = I(!0), r = W(async () => {
+        C(!0), d(null);
+        try {
+          const s = R.getScopedProjectId() ?? void 0, l = await R.call("list", s);
+          o(l), g((S) => {
+            var m;
+            return S ?? ((m = l[0]) == null ? void 0 : m.id) ?? null;
+          });
+        } catch (s) {
+          d(s instanceof Error ? s.message : String(s));
+        } finally {
+          C(!1);
+        }
+      }, []);
+      H(() => {
+        r();
+      }, [r]);
+      const u = W(async (s, l) => {
+        if (await R.confirm({
+          title: "Delete this decision?",
+          body: `"${l}"
+
+This can't be undone.`,
+          confirmLabel: "Delete",
+          danger: !0
+        }))
+          try {
+            await R.call("remove", s), g((m) => {
+              var k;
+              return m !== s ? m : ((k = e.filter((N) => N.id !== s)[0]) == null ? void 0 : k.id) ?? null;
+            }), await r();
+          } catch (m) {
+            R.toast(`Delete failed: ${m instanceof Error ? m.message : String(m)}`, "error");
+          }
+      }, [e, r]), E = W(async () => {
+        if (!(!e.length || !await R.confirm({
+          title: `Delete ALL ${e.length} decision${e.length > 1 ? "s" : ""}?`,
+          body: "This clears the Consensus tab and can't be undone.",
+          confirmLabel: "Delete all",
+          danger: !0
+        })))
+          try {
+            const { cleared: l } = await R.call("clearAll");
+            g(null), h(null), await r(), R.toast(`Cleared ${l} decision${l === 1 ? "" : "s"}`, "info");
+          } catch (l) {
+            R.toast(`Clear failed: ${l instanceof Error ? l.message : String(l)}`, "error");
+          }
+      }, [e, r]);
+      H(() => {
+        if (!i) {
+          h(null);
+          return;
+        }
+        let s = !1;
+        return R.call("get", i).then((l) => {
+          s || h(l);
+        }).catch((l) => {
+          s || d(l instanceof Error ? l.message : String(l));
+        }), () => {
+          s = !0;
+        };
+      }, [i]);
+      const y = e.length === 0 && !p ? [t("div", { key: "empty", style: { padding: "8px 16px", fontSize: 12, opacity: 0.5 } }, "No recorded decisions yet.")] : e.map((s) => {
+        const l = s.id === i, S = v[J(s.verdict)];
+        return t(
+          "div",
+          { key: s.id, className: "cx-row" },
+          t(
+            "button",
+            {
+              onClick: () => g(s.id),
+              style: {
+                textAlign: "left",
+                background: l ? "var(--bg-active, rgba(255,255,255,0.06))" : "none",
+                border: "none",
+                borderLeft: `3px solid ${l ? S : "transparent"}`,
+                color: "inherit",
+                cursor: "pointer",
+                padding: "11px 34px 11px 16px",
+                display: "block",
+                width: "100%"
+              }
+            },
+            t("div", { style: { fontSize: 12.5, lineHeight: 1.4, marginBottom: 8, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" } }, s.question),
+            t(
+              "div",
+              { style: { display: "flex", gap: 8, alignItems: "center" } },
+              t("span", { style: { width: 8, height: 8, borderRadius: 999, background: S, display: "inline-block", boxShadow: `0 0 6px ${S}` } }),
+              t("span", { style: { fontSize: 11, opacity: 0.6 } }, `${s.voters} voters · ${(s.settledAt || "").slice(0, 10)}`)
+            )
+          ),
+          t("button", {
+            className: "cx-row-del",
+            title: "Delete this decision",
+            "aria-label": `Delete decision: ${s.question}`,
+            onClick: (m) => {
+              m.stopPropagation(), u(s.id, s.question);
+            }
+          }, "🗑")
+        );
+      }), w = t(
+        "div",
+        {
+          style: { width: 280, minWidth: 280, borderRight: "1px solid var(--border, #30363d)", overflowY: "auto", display: "flex", flexDirection: "column" }
+        },
+        t(
+          "div",
+          { style: { padding: "14px 16px 8px", display: "flex", alignItems: "center", justifyContent: "space-between" } },
+          t("span", { style: { fontSize: 12, textTransform: "uppercase", letterSpacing: 0.6, opacity: 0.55, fontWeight: 600 } }, "Decisions"),
+          t(
+            "div",
+            { style: { display: "flex", gap: 4, alignItems: "center" } },
+            t("button", { onClick: () => void r(), title: "Refresh", style: { background: "none", border: "none", color: "inherit", cursor: "pointer", opacity: 0.6, fontSize: 12 } }, "⟳"),
+            e.length > 0 ? t("button", {
+              onClick: () => void E(),
+              title: "Delete all decisions",
+              style: { background: "none", border: "none", color: "inherit", cursor: "pointer", opacity: 0.6, fontSize: 12 }
+            }, "🗑") : null
+          )
+        ),
+        ...y
+      ), $ = b ? t("div", { style: { padding: 24, color: v.reject, fontSize: 13 } }, `Error: ${b}`) : f ? t(de, { key: f.id, record: f, host: R, onReanalysed: () => void r() }) : t("div", { style: { padding: 24, opacity: 0.5, fontSize: 13 } }, p ? "Loading…" : "Select a decision.");
+      return t(
+        "div",
+        {
+          style: { gridColumn: "2 / -1", minWidth: 0, display: "flex", height: "100%", width: "100%", fontFamily: "inherit" }
+        },
+        t("style", null, ie),
+        w,
+        $
+      );
+    }
+    return {
+      panel: pe,
+      commands: (n) => [
+        {
+          id: "refresh",
+          label: "Consensus: view decisions",
+          icon: "Scale",
+          run: () => n.toast("Open the Consensus tab to view council decisions")
+        }
+      ],
+      navBadge: () => null
+    };
+  }
+};
+export {
+  he as default
+};

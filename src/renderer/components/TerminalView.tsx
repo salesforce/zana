@@ -628,7 +628,11 @@ function TerminalViewImpl({ session, area }: Props) {
     },
     remote
       ? async (localPaths) => {
-          const destDir = session.cwd || '.';
+          // The terminal may preserve a configured remote path which is a
+          // symlink, whereas main authorizes transfers against `pwd -P`'s
+          // canonical project root. Use the root-relative destination; main
+          // resolves it after authorizing the remote project.
+          const destDir = '.';
           const uploaded: string[] = [];
           for (const local of localPaths) {
             const r = await window.cc.fs.uploadToRemote(session.projectId, local, destDir);
