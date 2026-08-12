@@ -5,7 +5,7 @@ import { controlCredentialForSession } from './control-credential.js';
 import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { chmodSync, existsSync, realpathSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { isWithin } from './extensions/path-util.js';
 import type { LaunchProfileId, TerminalSession, AppConfig, ProjectSettings, ProjectRemote, InboxNotifyLevel, Persona, SessionCohort, SessionWorktree } from '../shared/types.js';
 import { SESSION_MEMORY_DEFAULTS } from '../shared/types.js';
@@ -37,6 +37,10 @@ const nodeRequire = createRequire(import.meta.url);
 function ensureNodePtySpawnHelperExecutable(): void {
   if (process.platform === 'win32') return;
   const packageRoot = dirname(nodeRequire.resolve('node-pty/package.json'));
+  // Packaged native modules execute from app.asar.unpacked, where electron-builder
+  // has already preserved the helper's executable bit. The resolved app.asar path
+  // is virtual and cannot be passed to chmod (it fails with ENOTDIR).
+  if (packageRoot.includes(`${sep}app.asar${sep}`)) return;
   const helper = join(packageRoot, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper');
   if (existsSync(helper)) chmodSync(helper, 0o755);
 }

@@ -54,6 +54,28 @@ describe('remote-transfer over a fake ssh', () => {
     expect(existsSync(`${res.path}.zcc-tmp.$$`)).toBe(false);
   });
 
+  it('uploads into the remote root when the terminal provides a relative cwd', async () => {
+    const local = join(localDir, 'relative.txt');
+    await writeFile(local, 'relative root');
+
+    const res = await uploadToRemote(remote, root, local, '.');
+
+    expect(res).toMatchObject({ ok: true, path: join(root, '.zcc-uploads', 'relative.txt') });
+    expect(await readFile(res.path!, 'utf8')).toBe('relative root');
+  });
+
+  it('accepts an absolute project subdirectory as an upload destination', async () => {
+    const local = join(localDir, 'nested.txt');
+    const dest = join(root, 'nested');
+    await mkdir(dest);
+    await writeFile(local, 'nested destination');
+
+    const res = await uploadToRemote(remote, root, local, dest);
+
+    expect(res).toMatchObject({ ok: true, path: join(dest, '.zcc-uploads', 'nested.txt') });
+    expect(await readFile(res.path!, 'utf8')).toBe('nested destination');
+  });
+
   it('uploads binary content byte-for-byte', async () => {
     const local = join(localDir, 'blob.bin');
     const bytes = Buffer.from([0x00, 0xff, 0x10, 0x00, 0x42]);

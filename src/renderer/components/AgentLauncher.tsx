@@ -68,8 +68,8 @@ import { effectivePersonaRouting } from '../util/personaRouting';
 import { HarnessOptionSelect } from './HarnessOptionSelect';
 import { LauncherModelPicker } from './LauncherModelPicker';
 import { buildFixWithAiPrompt } from '../util/fixWithAiPrompt';
-import type { DropPathResolver } from '../util/useFileDrop';
 import { posixQuote } from '../util/quote';
+import { appendAttachmentContext, attachmentName, mergeAttachmentPaths } from '../util/attachments';
 
 /**
  * A framework preset offered in Advanced view: an installed extension that
@@ -1023,7 +1023,7 @@ export const AgentLauncher = memo(function AgentLauncher({
   const [agentRoutingDirty, setAgentRoutingDirty] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [launching, setLaunching] = useState(false);
-  const [dropResolving, setDropResolving] = useState(false);
+  const [attachments, setAttachments] = useState<string[]>([]);
   const [fixingWithAi, setFixingWithAi] = useState(false);
   const teams = useTeams(useShallow((s) => s.teams));
   const pushToast = useUi((s) => s.pushToast);
@@ -1079,19 +1079,22 @@ export const AgentLauncher = memo(function AgentLauncher({
     ? project!
     : (targetProjectId ? projects.find((p) => p.id === targetProjectId) : null) ?? anchor;
   const remoteTarget = target?.remote ? { id: target.id, remote: target.remote } : undefined;
-  const remoteDropResolver: DropPathResolver = async (localPaths) => {
-    if (!remoteTarget) return localPaths.map(posixQuote).join(' ');
+  const addAttachments = (paths: string[]) => {
+    setAttachments((current) => mergeAttachmentPaths(current, paths));
+  };
+  const resolveAttachmentPaths = async (): Promise<string[] | null> => {
+    if (!remoteTarget) return attachments;
     const uploaded: string[] = [];
-    for (const localPath of localPaths) {
+    for (const localPath of attachments) {
       const result = await window.cc.fs.uploadToRemote(remoteTarget.id, localPath, '.');
       if (!result.ok || !result.path) {
-        pushToast(result.message ?? `Failed to upload ${localPath.split('/').pop()}`, 'error');
-        continue;
+        pushToast(result.message ?? `Failed to upload ${attachmentName(localPath)}`, 'error');
+        return null;
       }
       uploaded.push(result.path);
-      pushToast(`Uploaded ${localPath.split('/').pop()} to ${remoteTarget.remote.host}`);
+      pushToast(`Uploaded ${attachmentName(localPath)} to ${remoteTarget.remote.host}`);
     }
-    return uploaded.map(posixQuote).join(' ');
+    return uploaded.map(posixQuote);
   };
   // Renderer eligibility is advisory. Main still verifies Git state and confines
   // the worktree before changing cwd.
@@ -1362,6 +1365,7 @@ export const AgentLauncher = memo(function AgentLauncher({
   const afterLaunch = (session: TerminalSession | null) => {
     if (!session) return;
     clearDraft();
+    setAttachments([]);
     setLaunchError(null);
     if (target) {
       if (onLaunched) {
@@ -1402,42 +1406,46 @@ export const AgentLauncher = memo(function AgentLauncher({
       applyAdvanced && currentExtraArgs.length > 0
         ? [...currentExtraArgs, ...(opts.extraArgs ?? [])]
         : opts.extraArgs;
-    const session = await createTerminal(target.id, profile, 80, 24, {
-      extraArgs: chosenExtraArgs,
-      prompt: opts.prompt,
-      harnessRouting: family
-        ? agentRoutingForSubmission(profileChosen, family.id, portableRouting, nativeRouting, agentRoutingDirty)
-        : undefined,
-      // Let main/provider name a pinned-persona launch from its effective profile.
-      // Otherwise a seeded OpenCode default briefly labels a Claude process as
-      // OpenCode until terminal auto-rename catches up.
-      title: chosenPersonaId ? undefined : opts.title,
-      resumeSessionId: opts.resumeSessionId,
-      personaId: chosenPersonaId,
-      frameworkIds: chosenFrameworkIds,
-      profileSource: profileChosen ? 'explicit' : 'seeded-default',
-      // For the scratch workspace, ask main to mint a fresh isolated subfolder
-      // (seeded by the prompt-derived title) instead of dumping every scratch
-      // session into the flat workspace root. Only applies to the scratch
-      // workspace — a real project always launches at its own root.
-      isolateScratch: scratchIsTarget ? opts.title || true : undefined,
-      worktree: worktreeForSubmission(applyAdvanced, worktree, worktreeEligible, worktreeName),
-      // Execution environment (Advanced opt-in). Only sent when a non-default
-      // choice is active, so a normal launch stays byte-identical. Main
-      // re-resolves + re-authorizes the environment (Rule 1). 'microvm' is only
-      // reachable here when it was selectable (enabled + supported).
-      environment:
-        applyAdvanced && advanced && envChoice === 'microvm' && microVmSelectable
-          ? 'microvm'
+    let session: TerminalSession | null = null;
+    try {
+      session = await createTerminal(target.id, profile, 80, 24, {
+        extraArgs: chosenExtraArgs,
+        prompt: opts.prompt,
+        harnessRouting: family
+          ? agentRoutingForSubmission(profileChosen, family.id, portableRouting, nativeRouting, agentRoutingDirty)
           : undefined,
-      onError: setLaunchError
-    });
-    setLaunching(false);
+        // Let main/provider name a pinned-persona launch from its effective profile.
+        // Otherwise a seeded OpenCode default briefly labels a Claude process as
+        // OpenCode until terminal auto-rename catches up.
+        title: chosenPersonaId ? undefined : opts.title,
+        resumeSessionId: opts.resumeSessionId,
+        personaId: chosenPersonaId,
+        frameworkIds: chosenFrameworkIds,
+        profileSource: profileChosen ? 'explicit' : 'seeded-default',
+        // For the scratch workspace, ask main to mint a fresh isolated subfolder
+        // (seeded by the prompt-derived title) instead of dumping every scratch
+        // session into the flat workspace root. Only applies to the scratch
+        // workspace — a real project always launches at its own root.
+        isolateScratch: scratchIsTarget ? opts.title || true : undefined,
+        worktree: worktreeForSubmission(applyAdvanced, worktree, worktreeEligible, worktreeName),
+        // Execution environment (Advanced opt-in). Only sent when a non-default
+        // choice is active, so a normal launch stays byte-identical. Main
+        // re-resolves + re-authorizes the environment (Rule 1). 'microvm' is only
+        // reachable here when it was selectable (enabled + supported).
+        environment:
+          applyAdvanced && advanced && envChoice === 'microvm' && microVmSelectable
+            ? 'microvm'
+            : undefined,
+        onError: setLaunchError
+      });
+    } finally {
+      setLaunching(false);
+    }
     afterLaunch(session);
   };
 
-  const launch = () => {
-    if (!descriptor || dropResolving) return; // wait until remote uploads have inserted their paths
+  const launch = async () => {
+    if (!descriptor || !target || launching) return;
     const normalizedWorktreeName = normalizeWorktreeName(worktreeName);
     if (worktree && worktreeEligible && !normalizedWorktreeName) {
       setAdvanced(true);
@@ -1449,7 +1457,22 @@ export const AgentLauncher = memo(function AgentLauncher({
       return;
     }
     if (worktreeName !== normalizedWorktreeName) setWorktreeName(normalizedWorktreeName);
-    void doCreate(descriptor.profile, buildLaunchArgs(prompt, descriptor.label), true);
+    setLaunching(true);
+    try {
+      const attachmentPaths = await resolveAttachmentPaths();
+      if (attachmentPaths === null) return;
+      await doCreate(
+        descriptor.profile,
+        buildLaunchArgs(appendAttachmentContext(prompt, attachmentPaths), descriptor.label),
+        true
+      );
+    } catch (err) {
+      const message = `Agent launch failed: ${err instanceof Error ? err.message : String(err)}`;
+      setLaunchError(message);
+      pushToast(message, 'error');
+    } finally {
+      setLaunching(false);
+    }
   };
 
   // Autonomous team launch: hand the goal + team to main, which spawns the
@@ -1462,7 +1485,13 @@ export const AgentLauncher = memo(function AgentLauncher({
     if (!teamId || !goal || !target) return;
     setLaunching(true);
     try {
-      const res = await window.cc.teams.launchAutonomous(teamId, target.id, goal);
+      const attachmentPaths = await resolveAttachmentPaths();
+      if (attachmentPaths === null) return;
+      const res = await window.cc.teams.launchAutonomous(
+        teamId,
+        target.id,
+        appendAttachmentContext(goal, attachmentPaths)
+      );
       if (!res.ok) {
         const message = `Autonomous launch failed: ${res.message ?? res.code}`;
         setLaunchError(message);
@@ -1470,6 +1499,7 @@ export const AgentLauncher = memo(function AgentLauncher({
         return; // keep the modal open so the user can retry / pick another team
       }
       clearDraft();
+      setAttachments([]);
       setLaunchError(null);
       onClose();
     } catch (err) {
@@ -1709,13 +1739,16 @@ export const AgentLauncher = memo(function AgentLauncher({
             value={prompt}
             onChange={setPrompt}
             mentionProjectPath={project?.path}
-            dropResolver={remoteDropResolver}
-            onDropResolvingChange={setDropResolving}
+            attachments={attachments}
+            onAddAttachments={addAttachments}
+            onRemoveAttachment={(path) => {
+              setAttachments((current) => current.filter((item) => item !== path));
+            }}
             onSubmit={mode === 'autonomous' ? launchAutonomous : launch}
             placeholder={
               mode === 'autonomous'
-                ? 'Describe the GOAL for the team to reach (⌘↵ to launch).'
-                : 'Describe the task… (⌘↵ to launch). Drop a file to add its path. Leave empty to open an interactive session.'
+                ? 'Describe the GOAL for the team to reach (⌘↵ to launch). Attach or drop supporting files.'
+                : 'Describe the task… (⌘↵ to launch). Attach or drop files. Leave empty to open an interactive session.'
             }
           />
 
@@ -2332,7 +2365,7 @@ export const AgentLauncher = memo(function AgentLauncher({
               <button
                 className="btn primary"
                 onClick={launchAutonomous}
-                disabled={!teamId || !prompt.trim() || !target || launching || dropResolving}
+                disabled={!teamId || !prompt.trim() || !target || launching}
                 aria-describedby={launchStatusA11y.describedBy}
                 title="Launch autonomous team (⌘↵)"
               >
@@ -2344,7 +2377,7 @@ export const AgentLauncher = memo(function AgentLauncher({
                 data-testid="launch-send"
                 className="btn primary"
                 onClick={launch}
-                disabled={!target || !descriptor || !configLoaded || !worktreeDefaultLoaded || personaProfileConflict || launching || dropResolving}
+                disabled={!target || !descriptor || !configLoaded || !worktreeDefaultLoaded || personaProfileConflict || launching}
                 aria-describedby={launchStatusA11y.describedBy}
                 title="Send (⌘↵)"
               >
