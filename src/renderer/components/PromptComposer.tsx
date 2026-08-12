@@ -6,7 +6,7 @@ import {
   useRef,
   useState
 } from 'react';
-import { useFileDrop } from '../util/useFileDrop';
+import { useFileDrop, type DropPathResolver } from '../util/useFileDrop';
 import { useData } from '../store';
 import { fuzzyScore } from '../util/fuzzy';
 import { detectMention, applyMention, type MentionMatch } from '../util/mention';
@@ -14,6 +14,15 @@ import { highlightMatches } from './palette/highlight';
 import { ImprovePromptButton } from './ImprovePromptButton';
 import { VoiceInputButton } from './VoiceInputButton';
 import type { WalkedFile } from '@shared/types';
+import { AttachmentPills } from './ui/AttachmentPills';
+import {
+  AutoGrowTextarea,
+  type AutoGrowTextareaHandle,
+  CommandComposer,
+  ComposerIconButton,
+  ComposerToolbar
+} from './ui/CommandComposer';
+import { ArrowUp, Paperclip } from 'lucide-react';
 
 /**
  * The agent-instruction box, shared by every launcher that takes a typed prompt
@@ -44,6 +53,16 @@ interface Props {
   /** Absolute path of the project whose files back the `@`-mention picker. When
    *  absent (e.g. scratch mode with no resolved project) `@` does nothing. */
   mentionProjectPath?: string;
+  /** Transforms local dropped paths before inserting them into the prompt. */
+  dropResolver?: DropPathResolver;
+  /** Reports whether an asynchronous dropped-path transform is in flight. */
+  onDropResolvingChange?: (resolving: boolean) => void;
+  attachments?: readonly string[];
+  onRemoveAttachment?: (path: string) => void;
+  onAddAttachments?: (paths: string[]) => void;
+  submitDisabled?: boolean;
+  toolbarControls?: React.ReactNode;
+  belowControls?: React.ReactNode;
 }
 
 /** Most files to rank/show in the `@`-mention popover at once. */
@@ -64,7 +83,7 @@ interface Ranked {
 function useMention(
   value: string,
   onChange: (v: string) => void,
-  textareaRef: React.RefObject<HTMLTextAreaElement>,
+  textareaRef: React.RefObject<AutoGrowTextareaHandle>,
   projectPath: string | undefined
 ) {
   const [mention, setMention] = useState<MentionMatch | null>(null);
@@ -75,7 +94,7 @@ function useMention(
 
   // Recompute the mention token from the live caret position.
   const refresh = useCallback(() => {
-    const el = textareaRef.current;
+    const el = textareaRef.current?.element();
     if (!el || !projectPath) {
       setMention(null);
       return;
@@ -126,7 +145,7 @@ function useMention(
 
   const choose = useCallback(
     (file: WalkedFile) => {
-      const el = textareaRef.current;
+      const el = textareaRef.current?.element();
       if (!el || !mention) return;
       const caret = el.selectionStart ?? el.value.length;
       const out = applyMention(value, mention, caret, file.rel);
@@ -175,10 +194,14 @@ function useMention(
 }
 
 export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function PromptComposer(
-  { value, onChange, onSubmit, placeholder, rows = 3, mentionProjectPath },
+  {
+    value, onChange, onSubmit, placeholder, rows = 3, mentionProjectPath, dropResolver,
+    onDropResolvingChange, attachments = [], onRemoveAttachment, onAddAttachments, submitDisabled = false,
+    toolbarControls, belowControls
+  },
   ref
 ) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const textareaRef = useRef<AutoGrowTextareaHandle>(null);
   const voiceInputEnabled = useData((s) => s.voiceInputEnabled);
   useImperativeHandle(ref, () => ({ focus: () => textareaRef.current?.focus() }), []);
 
@@ -194,8 +217,8 @@ export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function P
 
   // Splice the dropped path(s) in at the caret, padding with a single space so
   // they don't fuse onto adjacent words; restore the caret just past the insert.
-  const { dropOver, dropHandlers } = useFileDrop((insert) => {
-    const el = textareaRef.current;
+  const { dropOver, resolving, dropHandlers } = useFileDrop((insert) => {
+    const el = textareaRef.current?.element();
     const start = el?.selectionStart ?? value.length;
     const end = el?.selectionEnd ?? value.length;
     const before = value.slice(0, start);
@@ -208,61 +231,80 @@ export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function P
       el?.focus();
       el?.setSelectionRange(caret, caret);
     });
-  });
+  }, dropResolver);
+
+  useEffect(() => onDropResolvingChange?.(resolving), [onDropResolvingChange, resolving]);
 
   return (
-    <div className="prompt-composer">
-      <textarea
-        ref={textareaRef}
-        data-testid="launch-instruction"
-        className={`launch-instruction ${dropOver ? 'drop-over' : ''}`}
-        placeholder={placeholder}
-        value={value}
-        onChange={(e) => {
-          onChange(e.target.value);
-          mention.refresh();
-        }}
-        onKeyUp={mention.refresh}
-        onClick={mention.refresh}
-        onBlur={() => {
-          // Close on blur — but a row's mousedown (which preventDefaults, so the
-          // textarea keeps focus) fires its choose() first, so a genuine click
-          // still lands. A short delay guards against focus-shuffle races.
-          window.setTimeout(mention.close, 120);
-        }}
-        onKeyDown={onKeyDown}
+    <>
+      <CommandComposer
+        className={`launch-command${dropOver ? ' is-drop-over' : ''}`}
+        labelledBy="agent-launcher-title"
         {...dropHandlers}
-        rows={rows}
-      />
-      {mention.open && (
-        <div className="mention-popover" role="listbox" aria-label="Insert file">
-          {mention.ranked.map((r, i) => (
-            <button
-              type="button"
-              key={r.file.rel}
-              role="option"
-              aria-selected={i === mention.active}
-              className={`palette-item mention-item ${i === mention.active ? 'active' : ''}`}
-              // mousedown (not click) so it fires before the textarea's blur.
-              onMouseDown={(e) => {
-                e.preventDefault();
-                mention.choose(r.file);
-              }}
-              onMouseEnter={() => mention.setActive(i)}
-            >
-              {highlightMatches(r.file.rel, r.matchIdx)}
-            </button>
-          ))}
-        </div>
-      )}
-      <div className="prompt-composer-actions">
-        {voiceInputEnabled ? (
-          <VoiceInputButton value={value} onChange={onChange} textareaRef={textareaRef} />
-        ) : (
-          <span />
+      >
+        <AttachmentPills paths={attachments} onRemove={(path) => onRemoveAttachment?.(path)} />
+        <AutoGrowTextarea
+          ref={textareaRef}
+          data-testid="launch-instruction"
+          className="launch-instruction"
+          placeholder={placeholder}
+          value={value}
+          onChange={(e) => {
+            onChange(e.target.value);
+            mention.refresh();
+          }}
+          onKeyUp={mention.refresh}
+          onClick={mention.refresh}
+          onBlur={() => window.setTimeout(mention.close, 120)}
+          onKeyDown={onKeyDown}
+          rows={rows}
+        />
+        {mention.open && (
+          <div className="mention-popover" role="listbox" aria-label="Insert file">
+            {mention.ranked.map((r, i) => (
+              <button
+                type="button"
+                key={r.file.rel}
+                role="option"
+                aria-selected={i === mention.active}
+                className={`palette-item mention-item ${i === mention.active ? 'active' : ''}`}
+                onMouseDown={(e) => { e.preventDefault(); mention.choose(r.file); }}
+                onMouseEnter={() => mention.setActive(i)}
+              >
+                {highlightMatches(r.file.rel, r.matchIdx)}
+              </button>
+            ))}
+          </div>
         )}
+        <ComposerToolbar>
+          {onAddAttachments && (
+            <ComposerIconButton
+              onClick={() => { void window.cc.fs.pickFiles().then(onAddAttachments); }}
+              title="Attach files"
+              aria-label="Attach files"
+            >
+              <Paperclip size={16} aria-hidden="true" />
+            </ComposerIconButton>
+          )}
+          {toolbarControls}
+          {voiceInputEnabled ? (
+            <VoiceInputButton value={value} onChange={onChange} textareaRef={textareaRef} iconOnly />
+          ) : <span />}
+          <ComposerIconButton
+            className="home-agent-launch"
+            onClick={onSubmit}
+            disabled={submitDisabled}
+            aria-label="Launch agent"
+            title="Launch agent (⌘↵)"
+          >
+            <ArrowUp size={17} aria-hidden="true" />
+          </ComposerIconButton>
+        </ComposerToolbar>
+      </CommandComposer>
+      <div className="prompt-composer-actions">
+        <span>{belowControls}</span>
         <ImprovePromptButton value={value} onChange={onChange} />
       </div>
-    </div>
+    </>
   );
 });

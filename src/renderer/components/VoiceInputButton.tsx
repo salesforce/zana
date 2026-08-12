@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
 import { Mic, Loader2 } from 'lucide-react';
 import { useUi } from '../store';
+import type { AutoGrowTextareaHandle } from './ui/CommandComposer';
 
 interface Props {
   value: string;
   onChange: (next: string) => void;
   className?: string;
-  textareaRef?: React.RefObject<HTMLTextAreaElement>;
+  textareaRef?: React.RefObject<AutoGrowTextareaHandle>;
   /** Render just the mic glyph (no text label) — for tight composer toolbars. */
   iconOnly?: boolean;
 }
@@ -185,7 +186,7 @@ export function VoiceInputButton({ value, onChange, className, textareaRef, icon
             return;
           }
 
-          const el = textareaRef?.current;
+      const el = textareaRef?.current?.element();
           const start = el?.selectionStart ?? value.length;
           const end = el?.selectionEnd ?? value.length;
           const before = value.slice(0, start);

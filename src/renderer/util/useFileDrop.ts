@@ -40,6 +40,14 @@ const defaultResolver: DropPathResolver = (localPaths) =>
  */
 export function useFileDrop(onPaths: (paths: string) => void, resolver: DropPathResolver = defaultResolver) {
   const [dropOver, setDropOver] = useState(false);
+  const [resolving, setResolving] = useState(false);
+
+  const resolvePaths = (localPaths: string[]) => {
+    setResolving(true);
+    void Promise.resolve(resolver(localPaths)).then((paths) => {
+      if (paths) onPaths(paths);
+    }).finally(() => setResolving(false));
+  };
 
   const onDragOver = (e: React.DragEvent) => {
     const types = Array.from(e.dataTransfer.types);
@@ -62,18 +70,14 @@ export function useFileDrop(onPaths: (paths: string) => void, resolver: DropPath
         .map((f) => window.cc.files.pathForFile(f))
         .filter(Boolean);
       if (localPaths.length === 0) return;
-      void Promise.resolve(resolver(localPaths)).then((paths) => {
-        if (paths) onPaths(paths);
-      });
+      resolvePaths(localPaths);
       return;
     }
     const text = e.dataTransfer.getData('text/plain');
     if (text && text.startsWith('/')) {
-      void Promise.resolve(resolver([text])).then((paths) => {
-        if (paths) onPaths(paths);
-      });
+      resolvePaths([text]);
     }
   };
 
-  return { dropOver, dropHandlers: { onDragOver, onDragLeave, onDrop } };
+  return { dropOver, resolving, dropHandlers: { onDragOver, onDragLeave, onDrop } };
 }

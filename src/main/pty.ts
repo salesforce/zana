@@ -1958,6 +1958,10 @@ export class PtyManager extends EventEmitter {
     resume?: boolean;
   }): TerminalSession {
     const { remote } = opts;
+    // The session record is consumed by the renderer for remote file drops. It
+    // must name the remote login directory, not the local placeholder project
+    // directory that createTerminalConfined passes through as opts.cwd.
+    const remoteCwd = remote.remotePath || opts.config.remoteDefaultPath || '.';
     // Same live-session cap as the local path — a remote ssh pty is still a
     // local subprocess + fd held in this.live, so it counts identically.
     this.assertCapacity(opts.config);
@@ -2177,7 +2181,7 @@ export class PtyManager extends EventEmitter {
       projectId: opts.projectId,
       title: opts.title ?? `${remoteProvider.title(opts.profile)} · ${remote.host}`,
       profile: opts.profile,
-      cwd: opts.cwd,
+      cwd: remoteCwd,
       pid: proc.pid,
       status: 'running',
       createdAt: Date.now(),
