@@ -24,6 +24,9 @@ and issue reports are welcome.
    npm test
    ```
 
+   Electron E2E changes can also use the optional Linux CI reproduction described
+   in [`e2e/README.md`](e2e/README.md#optional-linux-ci-reproduction).
+
 5. Open a pull request against `main`. Explain the problem, the solution, and
    how you tested it. Link any related issue.
 

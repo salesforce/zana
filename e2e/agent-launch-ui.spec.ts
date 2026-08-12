@@ -10,8 +10,8 @@
  *     → launcher modal (data-testid="launch-modal")
  *         → instruction textarea (data-testid="launch-instruction")
  *         → target project select (aria-label="Target project")
- *         → profile button (data-testid="launch-profile-claude")
- *         → Send (data-testid="launch-send")
+ *         → harness select (aria-label="Launch harness")
+ *         → Launch agent (aria-label="Launch agent")
  *     → agent-inspector modal (data-testid="agent-terminal-modal")
  *         → live state chip (data-testid="agent-modal-state", data-state=…)
  *
@@ -115,12 +115,12 @@ test('launching an agent through the real UI opens its terminal and it goes work
 
     // 6. Select verified Claude explicitly. Default routing is covered elsewhere;
     // this flow needs a deterministic fake binary on every runner.
-    const claudeProfile = modal.locator('[data-testid="launch-profile-claude"]');
-    await expect(claudeProfile).toBeEnabled();
-    await claudeProfile.click();
+    const harnessSelect = modal.getByLabel('Launch harness');
+    await expect(harnessSelect).toBeEnabled();
+    await harnessSelect.selectOption('claude');
 
     // 7. Send. This is the real launch button — it calls doCreate → createTerminal.
-    await modal.locator('[data-testid="launch-send"]').click();
+    await modal.getByLabel('Launch agent').click();
 
     // 8. The launcher closes and the agent-inspector modal opens on the new
     //    session (AgentsView.onLauncherLaunched → openAgentModal).
