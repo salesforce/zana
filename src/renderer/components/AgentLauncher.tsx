@@ -22,7 +22,6 @@ import {
   Trash2,
   ShieldCheck,
   Boxes,
-  FolderGit2,
   type LucideIcon
 } from 'lucide-react';
 import type {
@@ -70,6 +69,7 @@ import { HarnessOptionSelect } from './HarnessOptionSelect';
 import { LauncherModelPicker } from './LauncherModelPicker';
 import { buildFixWithAiPrompt } from '../util/fixWithAiPrompt';
 import type { DropPathResolver } from '../util/useFileDrop';
+import { posixQuote } from '../util/quote';
 
 /**
  * A framework preset offered in Advanced view: an installed extension that
@@ -1024,7 +1024,6 @@ export const AgentLauncher = memo(function AgentLauncher({
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [launching, setLaunching] = useState(false);
   const [dropResolving, setDropResolving] = useState(false);
-  const [attachments, setAttachments] = useState<string[]>([]);
   const [fixingWithAi, setFixingWithAi] = useState(false);
   const teams = useTeams(useShallow((s) => s.teams));
   const pushToast = useUi((s) => s.pushToast);
@@ -1080,14 +1079,8 @@ export const AgentLauncher = memo(function AgentLauncher({
     ? project!
     : (targetProjectId ? projects.find((p) => p.id === targetProjectId) : null) ?? anchor;
   const remoteTarget = target?.remote ? { id: target.id, remote: target.remote } : undefined;
-  const addAttachments = (paths: string[]) => {
-    setAttachments((current) => [...new Set([...current, ...paths])]);
-  };
   const remoteDropResolver: DropPathResolver = async (localPaths) => {
-    if (!remoteTarget) {
-      addAttachments(localPaths);
-      return '';
-    }
+    if (!remoteTarget) return localPaths.map(posixQuote).join(' ');
     const uploaded: string[] = [];
     for (const localPath of localPaths) {
       const result = await window.cc.fs.uploadToRemote(remoteTarget.id, localPath, '.');
@@ -1098,8 +1091,7 @@ export const AgentLauncher = memo(function AgentLauncher({
       uploaded.push(result.path);
       pushToast(`Uploaded ${localPath.split('/').pop()} to ${remoteTarget.remote.host}`);
     }
-    addAttachments(uploaded);
-    return '';
+    return uploaded.map(posixQuote).join(' ');
   };
   // Renderer eligibility is advisory. Main still verifies Git state and confines
   // the worktree before changing cwd.
@@ -1394,9 +1386,6 @@ export const AgentLauncher = memo(function AgentLauncher({
     applyAdvanced: boolean
   ) => {
     if (!target) return;
-    const attachmentContext = attachments.length
-      ? `\n\nAttached files:\n${attachments.map((path) => `- ${path}`).join('\n')}`
-      : '';
     const chosenPersonaId = applyAdvanced && advanced ? personaId ?? undefined : undefined;
     const chosenFrameworkIds =
       applyAdvanced && advanced && !chosenPersonaId && frameworkIds.length > 0
@@ -1415,7 +1404,7 @@ export const AgentLauncher = memo(function AgentLauncher({
         : opts.extraArgs;
     const session = await createTerminal(target.id, profile, 80, 24, {
       extraArgs: chosenExtraArgs,
-      prompt: opts.prompt ? `${opts.prompt}${attachmentContext}` : attachmentContext || undefined,
+      prompt: opts.prompt,
       harnessRouting: family
         ? agentRoutingForSubmission(profileChosen, family.id, portableRouting, nativeRouting, agentRoutingDirty)
         : undefined,
@@ -1669,7 +1658,7 @@ export const AgentLauncher = memo(function AgentLauncher({
       >
         <div className="launch-panel">
           <div className="launch-header">
-            <h3 id="agent-launcher-title">{projectMode ? project!.name : scratchIsTarget ? 'Quick agent' : target?.name ?? 'New agent'}</h3>
+            <h3>{projectMode ? project!.name : scratchIsTarget ? 'Quick agent' : target?.name ?? 'New agent'}</h3>
             <p>
               {projectMode
                 ? 'Start a session'
@@ -1722,99 +1711,6 @@ export const AgentLauncher = memo(function AgentLauncher({
             mentionProjectPath={project?.path}
             dropResolver={remoteDropResolver}
             onDropResolvingChange={setDropResolving}
-            attachments={attachments}
-            onRemoveAttachment={(path) => setAttachments((current) => current.filter((item) => item !== path))}
-            onAddAttachments={addAttachments}
-            submitDisabled={!target || !descriptor || !configLoaded || !worktreeDefaultLoaded || personaProfileConflict || launching || dropResolving}
-            toolbarControls={
-              <>
-                {!projectMode && (
-                  <label className="home-agent-select launch-toolbar-project">
-                    <FolderGit2 size={15} aria-hidden="true" />
-                    <select
-                      value={targetProjectId ?? ''}
-                      onChange={(e) => setTargetProjectId(e.target.value || null)}
-                      aria-label="Target project"
-                    >
-                      <option value="">Quick workspace (scratch)</option>
-                      {projectGroups.favorites.length > 0 && (
-                        <optgroup label="Favorites">
-                          {projectGroups.favorites.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                        </optgroup>
-                      )}
-                      {projectGroups.remote.length > 0 && (
-                        <optgroup label="Remote">
-                          {projectGroups.remote.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                        </optgroup>
-                      )}
-                      {projectGroups.local.length > 0 && (
-                        <optgroup label="Local">
-                          {projectGroups.local.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                        </optgroup>
-                      )}
-                    </select>
-                    <ChevronDown size={14} aria-hidden="true" />
-                  </label>
-                )}
-                {mode === 'agent' && (
-                  <label className="home-agent-select">
-                    <select
-                      value={profileChosen ? family?.id ?? '' : ''}
-                      onChange={(e) => {
-                        const next = e.target.value as HarnessFamily;
-                        setFamilyId(next);
-                        setProfileChosen(Boolean(next));
-                      }}
-                      aria-label="Launch harness"
-                      disabled={!configLoaded}
-                    >
-                      <option value="">Use project/global default</option>
-                      {availableFamilies.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
-                    </select>
-                    <ChevronDown size={14} aria-hidden="true" />
-                  </label>
-                )}
-                {mode === 'agent' && (
-                  <LauncherModelPicker
-                    id="launch-toolbar-model"
-                    models={selectedHarnessDescriptor?.targets?.models ?? []}
-                    value={(profileChosen ? selectedNativeRouting : portableRouting).modelTargetId ?? ''}
-                    disabled={!selectedHarnessDescriptor?.targets?.models.length}
-                    onChange={(modelTargetId) => {
-                      if (profileChosen && family) updateNativeRouting(family.id, { modelTargetId: modelTargetId || undefined });
-                      else {
-                        setAgentRoutingDirty(true);
-                        setPortableRouting((current) => ({ ...current, modelTargetId: modelTargetId || undefined }));
-                      }
-                    }}
-                  />
-                )}
-              </>
-            }
-            belowControls={mode === 'agent' ? (
-              <div className="launch-segmented" role="group" aria-label="Permission mode">
-                <button
-                  type="button"
-                  data-testid="launch-mode-normal"
-                  className={!yoloActive ? 'active' : ''}
-                  onClick={() => { setYolo(false); setProfileChosen(true); }}
-                  aria-pressed={!yoloActive}
-                >
-                  Normal
-                </button>
-                <button
-                  type="button"
-                  data-testid="launch-mode-yolo"
-                  className={yoloActive ? 'active' : ''}
-                  onClick={() => { setYolo(true); setProfileChosen(true); }}
-                  aria-pressed={yoloActive}
-                  disabled={!family?.yolo}
-                  title={family?.yolo ? 'Launch with permissions bypassed (auto-approve every action)' : `${family?.label ?? 'This harness'} has no permission-bypass mode`}
-                >
-                  <Zap size={13} /> Yolo
-                </button>
-              </div>
-            ) : undefined}
             onSubmit={mode === 'autonomous' ? launchAutonomous : launch}
             placeholder={
               mode === 'autonomous'
@@ -1891,8 +1787,8 @@ export const AgentLauncher = memo(function AgentLauncher({
             />
           )}
 
-          {false && !projectMode && (
-            <div className="launch-row launch-toolbar-duplicate" aria-hidden="true">
+          {!projectMode && (
+            <div className="launch-row">
               <span className="launch-row-label">Project</span>
               <div className="launch-folder">
                 <Folder size={13} aria-hidden="true" />
@@ -1964,8 +1860,8 @@ export const AgentLauncher = memo(function AgentLauncher({
             </div>
           )}
 
-          {false && mode === 'agent' && (
-            <div className="launch-row launch-toolbar-duplicate" aria-hidden="true">
+          {mode === 'agent' && (
+            <div className="launch-row">
               <span className="launch-row-label">Harness</span>
               {!configLoaded ? (
                 <span className="launch-squad-hint" role="status">Loading harness default…</span>
@@ -2053,8 +1949,8 @@ export const AgentLauncher = memo(function AgentLauncher({
             )
           )}
 
-          {false && mode === 'agent' && (
-            <div className="launch-row launch-toolbar-duplicate">
+          {mode === 'agent' && (
+            <div className="launch-row">
               <span className="launch-row-label">Mode</span>
               <div className="launch-segmented" role="group" aria-label="Permission mode">
                 <button
@@ -2436,14 +2332,26 @@ export const AgentLauncher = memo(function AgentLauncher({
               <button
                 className="btn primary"
                 onClick={launchAutonomous}
-                  disabled={!teamId || !prompt.trim() || !target || launching || dropResolving}
+                disabled={!teamId || !prompt.trim() || !target || launching || dropResolving}
                 aria-describedby={launchStatusA11y.describedBy}
                 title="Launch autonomous team (⌘↵)"
               >
                 <Zap size={14} />
                 Launch autonomous team
               </button>
-            ) : null}
+            ) : (
+              <button
+                data-testid="launch-send"
+                className="btn primary"
+                onClick={launch}
+                disabled={!target || !descriptor || !configLoaded || !worktreeDefaultLoaded || personaProfileConflict || launching || dropResolving}
+                aria-describedby={launchStatusA11y.describedBy}
+                title="Send (⌘↵)"
+              >
+                <TerminalIcon size={14} />
+                Send
+              </button>
+            )}
           </div>
         </div>
       </div>
