@@ -5714,7 +5714,11 @@ function registerIpc() {
       const remote = remoteFor(projectId);
       const root = remote ? await resolveRemoteRoot(projectId) : null;
       if (!remote || !root) return { ok: false, message: 'Not a remote project' };
-      return fsUploadToRemote(remote, root, localPath, destDir);
+      // The renderer's session cwd may retain the configured remote start path,
+      // while `root` is its physical (`pwd -P`) path. Always stage relative
+      // drops at the canonical root so no renderer-provided path can broaden
+      // the transfer's trust boundary.
+      return fsUploadToRemote(remote, root, localPath, destDir === '.' ? root : destDir);
     },
     () => ({ ok: false, message: 'Upload failed' })
   );

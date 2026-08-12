@@ -72,7 +72,14 @@ export async function uploadToRemote(
     return { ok: false, message: `File too large to upload (${size} > ${MAX_TRANSFER_BYTES})` };
   }
 
-  const stageDir = confineRemote(root, posix.join(destDir, UPLOAD_SUBDIR));
+  // `destDir` originates in a terminal session and can be the project's
+  // configured start path (which may be a symlink) or a relative path. Resolve
+  // it against the canonical root before confinement so both spellings land in
+  // the authorized project tree.
+  const resolvedDestDir = destDir.startsWith('/')
+    ? destDir
+    : posix.join(root, destDir);
+  const stageDir = confineRemote(root, posix.join(resolvedDestDir, UPLOAD_SUBDIR));
   if (!stageDir) return { ok: false, message: 'Destination is outside the project' };
   const name = safeBasename(localPath);
   // Split name/ext so the collision suffix lands before the extension.

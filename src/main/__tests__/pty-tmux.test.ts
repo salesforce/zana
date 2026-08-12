@@ -285,7 +285,8 @@ describe('pty tmux wrapping (remote)', () => {
     const remoteCmd = spawned[0].args.at(-1) as string;
     expect(remoteCmd).toContain("cd '/work/p1' &&");
     expect(remoteCmd).not.toContain('/opt/workspace/core-public');
-    // TerminalView uses session.cwd as the remote upload destination.
+    // The session still records the configured start path for display/restore;
+    // TerminalView uploads relative to the canonical remote root.
     expect(session.cwd).toBe('/work/p1');
   });
 
