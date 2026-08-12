@@ -5,6 +5,7 @@ import {
   matchFirstPromptHookRoute,
   matchQuestionHookRoute,
   matchSubagentHookRoute,
+  matchToolActivityHookRoute,
   matchOverseerHookRoute,
   extractPromptFromHookBody,
   extractSubagentIdentity
@@ -83,6 +84,10 @@ describe('route matchers reject malformed percent-encoding (no throw)', () => {
   it('matchSubagentHookRoute', () => {
     expect(() => matchSubagentHookRoute('/hook/subagent/%FF/s/start')).not.toThrow();
     expect(matchSubagentHookRoute('/hook/subagent/%FF/s/start')).toBeNull();
+  });
+  it('matchToolActivityHookRoute', () => {
+    expect(() => matchToolActivityHookRoute('/hook/toolactivity/%FF/s/start')).not.toThrow();
+    expect(matchToolActivityHookRoute('/hook/toolactivity/%FF/s/start')).toBeNull();
   });
   it('matchFirstPromptHookRoute', () => {
     expect(() => matchFirstPromptHookRoute('/hook/firstprompt/p/%FF')).not.toThrow();
@@ -231,6 +236,48 @@ describe('matchSubagentHookRoute', () => {
     expect(matchSubagentHookRoute('/hook/subagent/proj-1/sess-A/start/extra')).toBeNull();
     expect(matchSubagentHookRoute('/hook/notify/proj-1/sess-A/blocked')).toBeNull();
     expect(matchSubagentHookRoute(undefined)).toBeNull();
+  });
+});
+
+describe('matchToolActivityHookRoute', () => {
+  it('matches the start action', () => {
+    expect(matchToolActivityHookRoute('/hook/toolactivity/proj-1/sess-A/start')).toEqual({
+      projectId: 'proj-1',
+      sessionId: 'sess-A',
+      action: 'start'
+    });
+  });
+
+  it('matches the stop action', () => {
+    expect(matchToolActivityHookRoute('/hook/toolactivity/proj-1/sess-A/stop')).toEqual({
+      projectId: 'proj-1',
+      sessionId: 'sess-A',
+      action: 'stop'
+    });
+  });
+
+  it('matches the clear action', () => {
+    expect(matchToolActivityHookRoute('/hook/toolactivity/proj-1/sess-A/clear')).toEqual({
+      projectId: 'proj-1',
+      sessionId: 'sess-A',
+      action: 'clear'
+    });
+  });
+
+  it('url-decodes captured ids and ignores query strings', () => {
+    expect(matchToolActivityHookRoute('/hook/toolactivity/proj%2F1/sess%20A/start?x=1')).toEqual({
+      projectId: 'proj/1',
+      sessionId: 'sess A',
+      action: 'start'
+    });
+  });
+
+  it('rejects unknown actions and malformed paths', () => {
+    expect(matchToolActivityHookRoute('/hook/toolactivity/proj-1/sess-A/pause')).toBeNull();
+    expect(matchToolActivityHookRoute('/hook/toolactivity/proj-1/sess-A')).toBeNull();
+    expect(matchToolActivityHookRoute('/hook/toolactivity/proj-1/sess-A/start/extra')).toBeNull();
+    expect(matchToolActivityHookRoute('/hook/subagent/proj-1/sess-A/start')).toBeNull();
+    expect(matchToolActivityHookRoute(undefined)).toBeNull();
   });
 });
 

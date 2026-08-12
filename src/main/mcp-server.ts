@@ -195,6 +195,20 @@ export interface McpServerOptions {
     identity?: { description?: string; subagentType?: string }
   ) => void;
   /**
+   * Called when a session's generic tool-activity hook pings back — the
+   * idle-veto signal. `action` is `start` (any tool's PreToolUse), `stop` (its
+   * PostToolUse), or `clear` (the Stop hook's drift-guard reset). Unlike
+   * {@link onSubagentHook} this is match-all (every tool, not just Task), and
+   * DOES affect the resolved working/idle status (see `AgentStatusTracker`).
+   * The url path carries identity: `/hook/toolactivity/:projectId/:sessionId/:action`.
+   * Best-effort; always 200s, like the other hook routes.
+   */
+  onToolActivityHook?: (
+    projectId: string,
+    sessionId: string,
+    action: 'start' | 'stop' | 'clear'
+  ) => void;
+  /**
    * Called when a scheduled agent files a run report via the `schedule_report`
    * tool. The url path carries identity (`/mcp/:projectId/:sessionId`), so the
    * summary is attributable to an exact session — the scheduler attaches it to
@@ -900,10 +914,39 @@ export function matchSubagentHookRoute(
 }
 
 /**
+ * Match `/hook/toolactivity/:projectId/:sessionId/:action` where action is
+ * `start` (PreToolUse, match-all), `stop` (PostToolUse, match-all), or `clear`
+ * (Stop — drift-guard reset) — the generic tool-in-flight idle-veto callback
+ * (see `AgentStatusTracker.toolStarted`). Exported for unit tests.
+ */
+export function matchToolActivityHookRoute(
+  rawUrl: string | undefined
+): { projectId: string; sessionId: string; action: 'start' | 'stop' | 'clear' } | null {
+  if (!rawUrl) return null;
+  let pathname: string;
+  try {
+    pathname = new URL(rawUrl, 'http://127.0.0.1').pathname;
+  } catch {
+    return null;
+  }
+  const m = /^\/hook\/toolactivity\/([^/]+)\/([^/]+)\/(start|stop|clear)$/.exec(pathname);
+  if (!m) return null;
+  const projectId = safeDecode(m[1]);
+  const sessionId = safeDecode(m[2]);
+  if (projectId === null || sessionId === null) return null;
+  return {
+    projectId,
+    sessionId,
+    action: m[3] as 'start' | 'stop' | 'clear'
+  };
+}
+
+/**
  * Match `/hook/firstprompt/:projectId/:sessionId` — the UserPromptSubmit
  * callback that forwards the prompt text (for auto-naming the tab). Both ids
  * required. Exported for unit tests.
  */
+
 export function matchFirstPromptHookRoute(
   rawUrl: string | undefined
 ): { projectId: string; sessionId: string } | null {
@@ -1073,6 +1116,30 @@ async function handleRequest(
       opts.onNotifyHook?.(notifyRoute.projectId, notifyRoute.sessionId, notifyRoute.action);
     } catch (err) {
       log(`[mcp] notify-hook handler failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    res.statusCode = 200;
+    res.setHeader('content-type', 'text/plain; charset=utf-8');
+    res.end('ok');
+    return;
+  }
+
+  // Generic tool-activity (idle-veto) callback. Fire-and-forget, same contract
+  // as the notify-hook route: drain the body (start/stop/clear all discard the
+  // event JSON — only the boundary matters, not the tool identity), invoke the
+  // handler, always 200.
+  const toolActivityRoute = matchToolActivityHookRoute(req.url);
+  if (toolActivityRoute) {
+    req.resume();
+    try {
+      opts.onToolActivityHook?.(
+        toolActivityRoute.projectId,
+        toolActivityRoute.sessionId,
+        toolActivityRoute.action
+      );
+    } catch (err) {
+      log(
+        `[mcp] toolactivity-hook handler failed: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
     res.statusCode = 200;
     res.setHeader('content-type', 'text/plain; charset=utf-8');
