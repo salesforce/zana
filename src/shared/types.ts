@@ -4430,6 +4430,7 @@ export interface ExtensionManifestView {
     egressAllowlist?: string[];
     mcpAllowlist?: string[];
     streamAllowlist?: string[];
+    extensionInstallAllowlist?: string[];
   };
   /**
    * Present when the extension opts its renderer panel into a PER-PROJECT TAB

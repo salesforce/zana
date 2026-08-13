@@ -177,6 +177,48 @@ describe('broker-caps — gated fs', () => {
   });
 });
 
+describe('broker-caps — remote defaults', () => {
+  it('requires remote:defaults and delegates only the global path field', async () => {
+    const get = vi.fn(() => ({ remoteDefaultPath: '/home/sfwork/core' }));
+    const set = vi.fn((input: { remoteDefaultPath?: string }) => input.remoteDefaultPath ? input : {});
+    const caps = createBrokerCapabilities(
+      new PermissionBroker({
+        builtinIds: new Set(),
+        grants: (id) => id === 'salesforce'
+          ? grantFromManifest(['remote:defaults'], undefined, '/tmp/salesforce')
+          : null
+      }),
+      { remoteDefaults: { get, set } }
+    );
+
+    await expect(caps.getRemoteDefaults!('salesforce')).resolves.toEqual({ remoteDefaultPath: '/home/sfwork/core' });
+    await expect(caps.setRemoteDefaults!('salesforce', { remoteDefaultPath: '/workspace/core' })).resolves.toEqual({ remoteDefaultPath: '/workspace/core' });
+    await expect(caps.getRemoteDefaults!('other')).rejects.toThrow(/PermissionDenied/);
+    expect(set).toHaveBeenCalledWith({ remoteDefaultPath: '/workspace/core' });
+  });
+});
+
+describe('broker-caps — extension installation', () => {
+  it('requires an allowlisted git repository before delegating installation', async () => {
+    const install = vi.fn(async () => ({ id: 'gus' }));
+    const caps = createBrokerCapabilities(
+      new PermissionBroker({
+        builtinIds: new Set(),
+        grants: () => grantFromManifest(
+          ['extensions:install'],
+          { extensionInstallAllowlist: ['https://git.soma.salesforce.com/chatbots/zcc-extension-gus'] },
+          '/tmp/salesforce'
+        )
+      }),
+      { installExtensionFromGit: install }
+    );
+
+    await expect(caps.installExtensionFromGit!('salesforce', { url: 'https://git.soma.salesforce.com/chatbots/zcc-extension-gus' })).resolves.toEqual({ id: 'gus' });
+    await expect(caps.installExtensionFromGit!('salesforce', { url: 'https://example.invalid/unapproved' })).rejects.toThrow(/PermissionDenied/);
+    expect(install).toHaveBeenCalledWith({ url: 'https://git.soma.salesforce.com/chatbots/zcc-extension-gus' });
+  });
+});
+
 describe('broker-caps — gated process spawn', () => {
   beforeEach(async () => {
     extDir = await mkdtemp(join(tmpdir(), 'cc-brokercaps-'));

@@ -37,6 +37,7 @@ function isScopeEligible(scope?: PermissionScope): boolean {
     case 'net': return true;
     case 'mcp': return false;                              // mcp is not in ELIGIBLE anyway
     case 'stream': return false;                           // stream is reviewer-ineligible
+    case 'extensions:install': return false;               // installing code is reviewer-ineligible
   }
 }
 
@@ -48,6 +49,7 @@ function scopeKey(scope?: PermissionScope): string {
     case 'net': return `net:${scope.host}`;
     case 'mcp': return `mcp:${scope.serverId}`;
     case 'stream': return `stream:${scope.endpoint}`;
+    case 'extensions:install': return `extensions:install:${scope.url}`;
   }
 }
 function summarize(permission: string, scope?: PermissionScope): string {

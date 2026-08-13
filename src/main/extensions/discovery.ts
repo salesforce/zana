@@ -597,9 +597,10 @@ function parsePermissionScopes(raw: unknown): ExtensionManifest['permissionScope
   const egressAllowlist = strArray(s.egressAllowlist);
   const mcpAllowlist = strArray(s.mcpAllowlist);
   const streamAllowlist = strArray(s.streamAllowlist);
-  if (!execAllowlist && !fsRoots && !egressAllowlist && !mcpAllowlist && !streamAllowlist)
+  const extensionInstallAllowlist = strArray(s.extensionInstallAllowlist);
+  if (!execAllowlist && !fsRoots && !egressAllowlist && !mcpAllowlist && !streamAllowlist && !extensionInstallAllowlist)
     return undefined;
-  return { execAllowlist, fsRoots, egressAllowlist, mcpAllowlist, streamAllowlist };
+  return { execAllowlist, fsRoots, egressAllowlist, mcpAllowlist, streamAllowlist, extensionInstallAllowlist };
 }
 
 /** Project an SDK manifest down to the renderer-safe view in shared/types. */
@@ -628,6 +629,9 @@ function toManifestView(m: ExtensionManifest): ExtensionManifestView {
             : undefined,
           streamAllowlist: m.permissionScopes.streamAllowlist
             ? [...m.permissionScopes.streamAllowlist]
+            : undefined,
+          extensionInstallAllowlist: m.permissionScopes.extensionInstallAllowlist
+            ? [...m.permissionScopes.extensionInstallAllowlist]
             : undefined
         }
       : undefined,

@@ -230,6 +230,26 @@ export interface MainModuleContext {
   };
 
   /**
+   * Read or update the global fallback start path for remote SSH projects. This
+   * is intentionally narrower than general app configuration access: it only
+   * affects `AppConfig.remoteDefaultPath`, whose precedence is per-project path
+   * → this value → remote `$HOME`.
+   */
+  remoteDefaults?: {
+    get(): Promise<{ remoteDefaultPath?: string }>;
+    set(input: { remoteDefaultPath?: string }): Promise<{ remoteDefaultPath?: string }>;
+  };
+
+  /**
+   * Request installation of an allowlisted git-hosted extension. The host owns
+   * cloning, provenance, consent, and process startup; the caller can only name
+   * a repository granted in `extensionInstallAllowlist`.
+   */
+  extensions?: {
+    installFromGit(input: { url: string }): Promise<{ id: string }>;
+  };
+
+  /**
    * Summarize a live session's latest turn into a short, human-readable note.
    * Generic and capability-shaped like {@link resolveProjectRoot}: the HOST
    * resolves the supplied `sessionId` to a live session it owns and confines it

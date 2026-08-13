@@ -378,6 +378,11 @@ export interface BrokerCapDeps {
    * bridge → the cap degrades to a "bridge unavailable" reply, never a crash.
    */
   inbox?: InboxBrokerDeps;
+  remoteDefaults?: {
+    get(): { remoteDefaultPath?: string };
+    set(input: { remoteDefaultPath?: string }): { remoteDefaultPath?: string };
+  };
+  installExtensionFromGit?: (input: { url: string }) => Promise<{ id: string }>;
 }
 
 export function createBrokerCapabilities(
@@ -405,6 +410,24 @@ export function createBrokerCapabilities(
     async sshHosts(moduleId) {
       broker.assert(moduleId, 'ssh:hosts');
       return parseSshConfig();
+    },
+    async getRemoteDefaults(moduleId) {
+      broker.assert(moduleId, 'remote:defaults');
+      if (!deps.remoteDefaults) throw new Error('remote defaults unavailable');
+      return deps.remoteDefaults.get();
+    },
+    async setRemoteDefaults(moduleId, input) {
+      broker.assert(moduleId, 'remote:defaults');
+      if (!deps.remoteDefaults) throw new Error('remote defaults unavailable');
+      return deps.remoteDefaults.set(input ?? {});
+    },
+    async installExtensionFromGit(moduleId, input) {
+      if (!input || typeof input.url !== 'string' || !input.url) {
+        throw new Error('extensions.installFromGit: url is required');
+      }
+      broker.assert(moduleId, 'extensions:install', { kind: 'extensions:install', url: input.url });
+      if (!deps.installExtensionFromGit) throw new Error('extension installation unavailable');
+      return deps.installExtensionFromGit({ url: input.url });
     },
     async exec(moduleId, req: ExecRequest): Promise<ExecResult> {
       if (!req || typeof req.bin !== 'string' || !req.bin) {

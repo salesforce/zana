@@ -2111,7 +2111,9 @@ const hostCommandRelay = new HostCommandRelay({
 // substitutes the authenticated id (`process-host.ts` handleBroker). P3-B: the
 // brokered exec/fs/fetch caps are gated against `permissionBroker` keyed by that
 // same authenticated id.
-const extProcessHost = new ExtensionProcessHost({
+let extProcessHost: ExtensionProcessHost;
+let moduleRouter: ModuleRouter;
+extProcessHost = new ExtensionProcessHost({
   spawn: spawnUtilityChild,
   storage: {
     get: (id, key) => moduleHost.storageGet(id, key),
@@ -2136,6 +2138,36 @@ const extProcessHost = new ExtensionProcessHost({
     // W1-4 trust inversion `ctx.host.*`: the caps layer gates (session:launch /
     // projects:select) and delegates the renderer-only action to this relay.
     hostCommands: hostCommandRelay,
+    remoteDefaults: {
+      get: () => {
+        const remoteDefaultPath = store.getConfig().remoteDefaultPath;
+        return remoteDefaultPath ? { remoteDefaultPath } : {};
+      },
+      set: (input) => {
+        store.setConfig({ remoteDefaultPath: input.remoteDefaultPath });
+        const remoteDefaultPath = store.getConfig().remoteDefaultPath;
+        return remoteDefaultPath ? { remoteDefaultPath } : {};
+      }
+    },
+    installExtensionFromGit: async ({ url }) => {
+      const gitRes = await installFromGit(
+        url,
+        { onProgress: (line) => safeSend(IPC.extensions.installProgress, line) },
+        { reservedIds: builtinIds, log: logMainError }
+      );
+      if (!gitRes.ok) throw new Error(gitRes.message);
+      const rec = await markGit(gitRes.value.id, {
+        ...gitRes.value.provenance,
+        installedAt: new Date().toISOString()
+      });
+      if (!rec.ok) {
+        await uninstallExtension(gitRes.value.id, { reservedIds: builtinIds, log: logMainError }).catch(() => {});
+        throw new Error('Could not record extension provenance');
+      }
+      extProcessHost.markPendingInstall(gitRes.value.id);
+      await runDiskSync();
+      return { id: gitRes.value.id };
+    },
     // Phase B: brokered `ctx.inbox.push`. Gated by the same `inbox:push` token
     // as the renderer-panel path; `projectExists` re-authorizes the target
     // (Rule 1/2) so a grant to push isn't a grant to target any projectId.
@@ -2148,7 +2180,7 @@ const extProcessHost = new ExtensionProcessHost({
 });
 // The single dispatch entry the `modules:call` IPC handler routes through:
 // built-in id → in-process moduleHost; disk-ext id → out-of-process child.
-const moduleRouter = new ModuleRouter(moduleHost, extProcessHost);
+moduleRouter = new ModuleRouter(moduleHost, extProcessHost);
 // Register (or heal) the dedicated Extensions-category project for a local
 // extension and fire the SAME side effects a normal `projects.add` does — the
 // cross-store rebinds AND the `projects:onChanged` push so the sidebar shows
