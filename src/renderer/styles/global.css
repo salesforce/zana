@@ -22361,6 +22361,39 @@ body.resizing-col .library-split-resizer::after {
   padding-top: 12px;
   border-top: 1px solid var(--border);
 }
+.agent-metadata {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.agent-metadata-section {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.agent-metadata-values {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 8px;
+}
+.agent-metadata-values div {
+  min-width: 0;
+}
+.agent-metadata-values dt {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.agent-metadata-values dd {
+  margin: 1px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-primary);
+}
 /* Actions pinned to the panel foot, stacked full-width. */
 .agent-detail-actions {
   margin-top: auto;
@@ -22388,7 +22421,7 @@ body.resizing-col .library-split-resizer::after {
   color: var(--text-primary);
 }
 
-/* Context: a slim fill bar + the token/cost figures under it. */
+/* Context: a slim fill bar + the authoritative current token figure under it. */
 .agent-context-bar {
   height: 5px;
   border-radius: 3px;
@@ -22406,6 +22439,30 @@ body.resizing-col .library-split-resizer::after {
 .agent-context-figures {
   font-size: 12px;
   color: var(--text-primary);
+}
+
+.agent-usage-details {
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.agent-usage-details summary {
+  cursor: pointer;
+}
+.agent-usage-breakdown {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px 8px;
+  margin: 5px 0 0;
+  color: var(--text-dim);
+}
+.agent-usage-breakdown div {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+}
+.agent-usage-breakdown dt,
+.agent-usage-breakdown dd {
+  margin: 0;
 }
 
 /* Files: op badge (R/C/W) + basename, one per row. */

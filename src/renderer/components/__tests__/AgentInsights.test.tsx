@@ -48,3 +48,77 @@ describe('AgentInsights — context render', () => {
     expect(html).toContain('sonnet-4-5');
   });
 });
+
+describe('AgentInsights — lifetime usage', () => {
+  it('renders lifetime Usage after Context and before Files without rendering cost', () => {
+    const html = renderToStaticMarkup(
+      h(AgentInsights, {
+        stats: {
+          ...base,
+          contextTokens: 44_900,
+          costUsd: 12.3,
+          tokens: { input: 1_200, output: 300, cacheRead: 400, cacheWrite: 100 },
+          files: [{ path: '/src/example.ts', op: 'W' }]
+        }
+      })
+    );
+
+    expect(html).toContain('Usage');
+    expect(html).toContain('session total');
+    expect(html).toContain('2.0k');
+    expect(html.indexOf('Context')).toBeLessThan(html.indexOf('Usage'));
+    expect(html.indexOf('Usage')).toBeLessThan(html.indexOf('Files'));
+    expect(html).not.toContain('$12.30');
+    expect(html).not.toContain('Cost');
+  });
+
+  it('omits Usage when lifetime token totals are absent', () => {
+    const html = renderToStaticMarkup(
+      h(AgentInsights, { stats: { ...base, model: 'opencode/large' } })
+    );
+
+    expect(html).not.toContain('Usage');
+    expect(html).not.toContain('session total');
+  });
+
+  it('does not infer Context from lifetime token totals', () => {
+    const html = renderToStaticMarkup(
+      h(AgentInsights, {
+        stats: {
+          ...base,
+          model: 'opencode/large',
+          tokens: { input: 1_200, output: 300, cacheRead: 400, cacheWrite: 100 }
+        }
+      })
+    );
+
+    expect(html).toContain('Usage');
+    expect(html).not.toContain('agent-context-bar');
+    expect(html).not.toContain('Context');
+  });
+
+  it('renders the OpenCode-supported subset without Context or cost', () => {
+    const html = renderToStaticMarkup(
+      h(AgentInsights, {
+        stats: {
+          ...base,
+          model: 'gpt-5.6-terra',
+          harnessVersion: '1.18.10',
+          agent: 'build',
+          costUsd: 3.2,
+          tokens: { input: 59_389, output: 95, cacheRead: 59_366, cacheWrite: 0 },
+          files: [{ path: '/repo/src/example.ts', op: 'W' }]
+        }
+      })
+    );
+
+    expect(html).toContain('gpt-5.6-terra');
+    expect(html).toContain('1.18.10');
+    expect(html).toContain('build');
+    expect(html).toContain('session total');
+    expect(html).toContain('Files');
+    expect(html).not.toContain('Context');
+    expect(html).not.toContain('Cost');
+    expect(html).not.toContain('$3.20');
+  });
+});

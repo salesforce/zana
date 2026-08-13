@@ -30,12 +30,14 @@ import type {
   LaunchProfileId,
   Persona,
   ProjectRemote,
-  ProjectSettings
+  ProjectSettings,
+  SessionMetadataSnapshot
 } from '../../shared/types.js';
 import type { HarnessOption, ProviderCapabilities } from '../../shared/launch-provider.js';
 import type { ModelLevel } from '../../shared/harness-adapter.js';
 import type { HarnessAuthCredential, HarnessAuthKey } from '../harness-auth.js';
 import type { TrustedHarnessAdapter } from './adapter-contract.js';
+import type { ExecutionResolution, ModelResolution, RoleResolution } from './target-resolution.js';
 
 /** A resolved base launch: the executable and its base argv (pre-layers). */
 export interface ResolvedLaunch {
@@ -210,6 +212,14 @@ export interface LaunchProvider {
 
   /** Trusted capability/contribution metadata. It never changes emitted argv by itself. */
   readonly adapter: TrustedHarnessAdapter;
+
+  /** Build safe provider-declared metadata from trusted launch resolution. */
+  launchMetadata(input: {
+    model: ModelResolution;
+    role: RoleResolution;
+    execution: ExecutionResolution;
+    observedAt: number;
+  }): SessionMetadataSnapshot;
 
   /** Emit the opaque native contribution for a resolved model target. */
   modelContribution?(targetId: string, level?: ModelLevel): import('./adapter-contract.js').HarnessNativeContribution;

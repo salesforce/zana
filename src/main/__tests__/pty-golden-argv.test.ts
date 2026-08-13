@@ -227,6 +227,23 @@ describe('preallocated launch identity', () => {
   });
 });
 
+describe('restored harness identity', () => {
+  it('retains an OpenCode resume id on the replacement PTY session', () => {
+    const mgr = new PtyManager();
+    const session = mgr.create({
+      projectId: 'proj1',
+      profile: 'opencode-resume',
+      cwd: '/tmp/work',
+      cols: 80,
+      rows: 24,
+      config: BASE_CONFIG,
+      resumeSessionId: 'ses_abc123'
+    });
+
+    expect(session.openCodeSessionId).toBe('ses_abc123');
+  });
+});
+
 describe('golden argv — auto-mode + overseer variants', () => {
   beforeEach(() => {
     spawns.length = 0;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agentDirectoryFacts } from '../AgentDetailPanel.js';
+import { agentDirectoryFacts, shouldShowTranscriptInsights } from '../AgentDetailPanel.js';
 
 describe('agentDirectoryFacts', () => {
   it('shows original project and checkout paths for a worktree session', () => {
@@ -16,5 +16,25 @@ describe('agentDirectoryFacts', () => {
     expect(agentDirectoryFacts({ cwd: '/src/proj' }, '/src/proj')).toEqual([
       { label: 'Directory', path: '/src/proj' }
     ]);
+  });
+});
+
+describe('shouldShowTranscriptInsights', () => {
+  it.each(['claude', 'opencode', 'codex'] as const)(
+    'shows insights for %s transcript capability',
+    (profile) => {
+      expect(shouldShowTranscriptInsights(profile, null)).toBe(true);
+    }
+  );
+
+  it.each(['cursor', 'pi', 'shell'] as const)(
+    'does not show a blank transcript scaffold for %s without stats',
+    (profile) => {
+      expect(shouldShowTranscriptInsights(profile, null)).toBe(false);
+    }
+  );
+
+  it('shows supplied normalized stats even when capability is unavailable', () => {
+    expect(shouldShowTranscriptInsights('shell', { files: [], queue: [], model: 'host-provided' })).toBe(true);
   });
 });
