@@ -50,7 +50,7 @@ Deliberately **out of scope** (not reachable from the sandbox):
 ```sh
 npm install
 npm run build      # build:renderer + build:main → dist/{renderer.js,main.mjs}
-npm run package    # copy into examples/extensions/zana-hub + seed ~/.zcc/extensions/zana-hub
+npm run package    # copy into bundled-extensions/zana-hub + seed ~/.zcc/extensions/zana-hub
 ```
 
 `npm run dev` at the repo root runs `seed-extensions.mjs`, which builds +

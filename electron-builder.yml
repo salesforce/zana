@@ -57,8 +57,8 @@ extraResources:
     to: opencode
   # Bundled first-party disk extensions, auto-reseeded into ~/.zcc/extensions/<id>
   # on boot when the shipped version is newer (see src/main/extension-installer.ts).
-  # The committed examples/extensions/<id> dirs are the canonical packaged form.
-  - from: examples/extensions
+  # The committed bundled-extensions/<id> dirs are the canonical packaged form.
+  - from: bundled-extensions
     to: extensions
   # Bundled agent-detection manifests (herdr TOML format), read by
   # src/main/manifest-detector.ts via process.resourcesPath/manifests in packaged

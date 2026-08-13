@@ -1,10 +1,10 @@
 /**
  * Source for the `hello` sample extension. This is the MAINTAINABLE source; the
- * runnable artifact (the built ESM) is committed at examples/extensions/hello/
+ * runnable artifact (the built ESM) is committed at bundled-extensions/hello/
  * so QA can copy it straight into ~/.zcc/extensions/hello/ with no build.
  *
  * If you change this file, hand-port the change into
- * examples/extensions/hello/renderer.js (it's intentionally tiny and authored
+ * bundled-extensions/hello/renderer.js (it's intentionally tiny and authored
  * directly as valid ESM — see the note there).
  *
  * Contract reminders:
@@ -14,13 +14,13 @@
  *
  * Phase 2 dogfood: exercises host.on('project:changed') (live re-render on
  * project switch) and host.cache (in-memory/sync scratch that survives unmount —
- * a mount counter + the last-seen project list). See examples/extensions/hello/
+ * a mount counter + the last-seen project list). See bundled-extensions/hello/
  * renderer.js for the matching runnable artifact.
  *
  * SDK-2 dogfood: activate() returns the richer { panel, commands, navBadge }
  * ActivateResult — so this runtime-loaded bundle contributes a palette command
  * and a sidebar nav badge, not just a panel. Keep this in sync with the runnable
- * artifact at examples/extensions/hello/renderer.js.
+ * artifact at bundled-extensions/hello/renderer.js.
  */
 import type { RendererEntry, ModuleHost } from '@zana-ai/zcc-extension-sdk/renderer';
 
