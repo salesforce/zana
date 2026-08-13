@@ -73,8 +73,10 @@ There is no signal that *says* "idle". We infer it. Three detectors, cheapest fi
    the enhancement that makes our `idle` strictly more accurate than herdr's
    screen-only debounce, which can only delay a false idle, not know it's false.
 
-**"idle" = the `❯` prompt box is showing, no question on screen, OSC title is not a
-spinner, AND no tool is in flight — held stable for one debounce window (~300 ms).**
+**"idle" = a lifecycle-capable harness has confirmed the turn stopped, no
+question is pending, and no tool is in flight.** Visual prompt/title evidence is
+used as a fallback only for harnesses without lifecycle coverage, and as a
+responsive observation that cannot override an active lifecycle turn.
 
 ### Where we beat herdr (we launch Claude; herdr only watches the screen)
 
