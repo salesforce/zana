@@ -7,11 +7,11 @@ import { EventEmitter } from 'node:events';
 import { chmodSync, existsSync, realpathSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { isWithin } from './extensions/path-util.js';
-import type { LaunchProfileId, TerminalSession, AppConfig, ProjectSettings, ProjectRemote, InboxNotifyLevel, Persona, SessionCohort, SessionWorktree } from '../shared/types.js';
+import type { LaunchProfileId, TerminalSession, AppConfig, ProjectSettings, ProjectRemote, InboxNotifyLevel, Persona, SessionCohort, SessionWorktree, HarnessModelRoutingV1 } from '../shared/types.js';
 import { SESSION_MEMORY_DEFAULTS } from '../shared/types.js';
 import { computeMaxLiveSessions, resolveMaxLiveSessions } from './launch/capacity.js';
 export { computeMaxLiveSessions, resolveMaxLiveSessions } from './launch/capacity.js';
-import { isClaudeProfile } from '../shared/launch-provider.js';
+import { isClaudeProfile, isOpenCodeProfile } from '../shared/launch-provider.js';
 import { ensureMcpConfigForProjectSync } from './mcp-config.js';
 import { stripInheritedClaudeSession } from './env.js';
 import { isTmuxAvailable, buildLocalTmuxCommand, wrapRemoteTmux, tmuxSessionName } from './tmux.js';
@@ -930,6 +930,12 @@ export class PtyManager extends EventEmitter {
       extraArgs: preCleanedExtra,
       scope: 'local'
     });
+    const metadata = provider.launchMetadata({
+      model: modelTarget,
+      role: roleTarget,
+      execution,
+      observedAt: Date.now()
+    });
     const combinationError = provider.validateRoutingCombination?.({
       roleTargetId: roleTarget.targetId,
       executionOrigin: execution.origin
@@ -1669,7 +1675,12 @@ export class PtyManager extends EventEmitter {
       status: execEnv.createSession ? 'starting' : 'running',
       createdAt: Date.now(),
       extraArgs: opts.extraArgs,
+      metadata,
       claudeSessionId,
+      // A restored OpenCode tab already has an authoritative session id. Keep
+      // it on the replacement PTY record so transcript reads target the resumed
+      // row instead of looking for a newly-created row after this app launch.
+      openCodeSessionId: isOpenCodeProfile(opts.profile) ? opts.resumeSessionId : undefined,
       headless: opts.headless || undefined,
       scheduled: opts.scheduled || undefined,
       inboxLevel: opts.scheduled ? opts.inboxLevel : undefined,
@@ -1948,6 +1959,7 @@ export class PtyManager extends EventEmitter {
     rows: number;
     config: AppConfig;
     projectSettings?: ProjectSettings;
+    harnessRouting?: HarnessModelRoutingV1;
     extraArgs?: string[];
     title?: string;
     remote: ProjectRemote;
@@ -2016,6 +2028,54 @@ export class PtyManager extends EventEmitter {
     // from persona.baseProfile internally — preserving that exact behaviour.
     const remoteProvider = providerFor(opts.profile);
     const remoteEffectiveProfile = opts.persona?.baseProfile ?? opts.profile;
+    const remoteMetadataProvider = remoteProvider;
+    const remoteExtra = cleanExtraArgs(opts.extraArgs);
+    const remoteModelTarget = resolveModelTarget(remoteMetadataProvider, {
+      config: opts.config,
+      persona: opts.persona,
+      projectSettings: opts.projectSettings,
+      perTabRouting: opts.harnessRouting,
+      profile: remoteEffectiveProfile,
+      extraArgs: remoteExtra,
+      scope: 'remote'
+    });
+    const remoteRoleTarget = resolveRoleTarget(remoteMetadataProvider, {
+      config: opts.config,
+      persona: opts.persona,
+      projectSettings: opts.projectSettings,
+      perTabRouting: opts.harnessRouting,
+      profile: remoteEffectiveProfile,
+      extraArgs: remoteExtra,
+      scope: 'remote'
+    });
+    const remoteExecution = resolveExecutionState(remoteMetadataProvider, {
+      config: opts.config,
+      persona: opts.persona,
+      projectSettings: opts.projectSettings,
+      perTabRouting: opts.harnessRouting,
+      profile: remoteEffectiveProfile,
+      extraArgs: remoteExtra,
+      scope: 'remote'
+    });
+    const resolvedMetadata = remoteMetadataProvider.launchMetadata({
+      model: remoteModelTarget,
+      role: remoteRoleTarget,
+      execution: remoteExecution,
+      observedAt: Date.now()
+    });
+    // A tmux reattach may connect to an older process. Do not describe its
+    // posture from current mutable settings until a collector proves it.
+    const metadata = opts.reconnectTmuxId
+      ? {
+          ...resolvedMetadata,
+          sections: resolvedMetadata.sections.map((section) => ({
+            ...section,
+            values: section.values.map((field) =>
+              field.label === 'Harness' ? field : { label: field.label }
+            )
+          }))
+        }
+      : resolvedMetadata;
     // Per-harness auth (Settings → Harness) is DELIBERATELY local-only: the
     // credential lives in this machine's encrypted `~/.zcc/harness-auth.enc`, and
     // pushing a decrypted token over the ssh command line / env would leak it to
@@ -2206,6 +2266,7 @@ export class PtyManager extends EventEmitter {
       status: 'running',
       createdAt: Date.now(),
       extraArgs: opts.extraArgs,
+      metadata,
       claudeSessionId: remoteClaudeSessionId,
       headless: opts.headless || undefined,
       scheduled: opts.scheduled || undefined,

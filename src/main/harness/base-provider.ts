@@ -44,12 +44,28 @@ import type { TrustedHarnessAdapter } from './adapter-contract.js';
 import { cleanExtraArgs } from './argv-utils.js';
 import { remoteCdPrefix, shellQuoteArgv } from './shell-quote.js';
 import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from "./target-resolution.js";
+import { launchMetadataSnapshot, type LaunchMetadataAxis } from './session-metadata.js';
 
 
 export abstract class BaseLaunchProvider implements LaunchProvider {
   /** Stable provider id — set by the concrete subclass (Rule 6). */
   abstract readonly id: string;
   abstract readonly adapter: TrustedHarnessAdapter;
+
+  launchMetadata(input: {
+    model: import('./target-resolution.js').ModelResolution;
+    role: import('./target-resolution.js').RoleResolution;
+    execution: import('./target-resolution.js').ExecutionResolution;
+    observedAt: number;
+  }): import('../../shared/types.js').SessionMetadataSnapshot {
+    const targets = this.adapter.descriptor.targets;
+    const axes: LaunchMetadataAxis[] = [];
+    if (input.model.providerTargetId || targets?.providerModelRelationship === 'fixed-provider') axes.push('provider');
+    if (!input.model.rawOverride && input.model.targetId) axes.push('model');
+    if (input.role.targetId) axes.push('role');
+    if (input.execution.targetId || input.execution.state) axes.push('execution');
+    return launchMetadataSnapshot({ provider: this, ...input, axes });
+  }
 
   /** The base command + argv — the one thing every provider must define. */
   abstract resolveLaunch(

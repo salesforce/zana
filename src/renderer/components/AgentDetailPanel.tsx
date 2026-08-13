@@ -1,11 +1,12 @@
 import type { ReactNode } from 'react';
 import { PanelRightClose, PanelRightOpen, GitBranch, Server } from 'lucide-react';
-import type { AgentState, TerminalSession } from '@shared/types';
+import type { AgentState, LaunchProfileId, SessionStats, TerminalSession } from '@shared/types';
 import { usePersonas, useData } from '../store';
 import { profileIcon, personaIcon } from '../util/profileIcon';
-import { isClaudeProfile } from '../util/launchProfile';
+import { providerCapabilities } from '@shared/launch-provider';
 import { useSessionGit } from '../util/gitInfo';
 import { AgentInsights, useSessionStats } from './AgentInsights';
+import { AgentMetadata } from './AgentMetadata';
 import { FavoriteStar } from './FavoriteStar';
 import { OpenerButtons } from './OpenerButtons';
 import { formatDuration } from './AgentBoard';
@@ -73,6 +74,7 @@ interface Props {
   showIdentity?: boolean;
   maxFiles?: number;
   maxQueue?: number;
+  stats?: SessionStats | null;
 }
 
 export function agentDirectoryFacts(
@@ -86,6 +88,15 @@ export function agentDirectoryFacts(
     ];
   }
   return [{ label: 'Directory', path: session.cwd }];
+}
+
+/** Transcript capability controls presentation; received stats remain displayable
+ * during capability changes or a persisted-session restore. */
+export function shouldShowTranscriptInsights(
+  profile: LaunchProfileId,
+  stats: SessionStats | null
+): boolean {
+  return providerCapabilities(profile).hasTranscript || stats !== null;
 }
 
 export function AgentDetailPanel({
@@ -104,7 +115,8 @@ export function AgentDetailPanel({
   variant,
   showIdentity = true,
   maxFiles,
-  maxQueue
+  maxQueue,
+  stats: providedStats
 }: Props) {
   const personas = usePersonas((s) => s.personas);
   // The owning project's remote (SSH) descriptor, resolved by id so the callers
@@ -120,10 +132,11 @@ export function AgentDetailPanel({
   // "detached" for a detached HEAD. Null for a non-repo cwd (nothing to show).
   const branchLabel = git && !git.notRepo ? (git.detached ? 'detached' : git.branch) : null;
   const exited = t.status === 'exited';
-  // Transcript-derived live stats (claude-family only — a shell has no
-  // transcript). Polls while mounted; frozen (read once) for an exited agent.
-  const stats = useSessionStats(t.id, projectId, exited);
-  const showInsights = isClaudeProfile(t.profile);
+  // Transcript-derived live stats. Polls while mounted; frozen (read once) for
+  // an exited agent.
+  const loadedStats = useSessionStats(t.id, projectId, exited, providedStats === undefined);
+  const stats = providedStats ?? loadedStats;
+  const showInsights = shouldShowTranscriptInsights(t.profile, stats);
   const persona = t.personaId ? personas.find((p) => p.id === t.personaId) : undefined;
   const subtitle = persona?.name ?? t.profile;
   const bad = exited && (t.exitCode ?? 0) !== 0;
@@ -303,6 +316,8 @@ export function AgentDetailPanel({
           <AgentInsights stats={stats} maxFiles={maxFiles} maxQueue={maxQueue} />
         </div>
       )}
+
+      <AgentMetadata metadata={t.metadata} />
 
       {actions && <div className="agent-detail-actions">{actions}</div>}
     </aside>
