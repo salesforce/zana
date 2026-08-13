@@ -28,8 +28,7 @@
  * It uploads ONLY the feed-relevant files (latest-mac.yml + every artifact the
  * yml references), so a stray dist/ file can't leak. The marketplace registry
  * (index.json + signed archives) is published separately via
- * `npm run publish-extension` and synced to the SAME base under /extensions —
- * see docs/release-hosting.md.
+  * `npm run publish-extension` and synced to the SAME base under /extensions.
  *
  * No third-party deps (node builtins + the platform CLI only), matching
  * scripts/publish-extension.mjs.

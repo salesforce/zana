@@ -156,7 +156,6 @@ export function Footer() {
             <Link href="/docs/">Documentation</Link>
             <Link href="/docs/cli/">The zcc CLI</Link>
             <Link href="/docs/extensions-authoring/">Build an extension</Link>
-            <Link href="/docs/release-hosting/">Release hosting</Link>
           </div>
           <div className="foot-col">
             <h4>Resources</h4>

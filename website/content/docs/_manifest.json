@@ -33,10 +33,5 @@
     "slug": "extensions-sdk-reference",
     "title": "Extension SDK reference",
     "group": "Extensions"
-  },
-  {
-    "slug": "release-hosting",
-    "title": "Release & marketplace hosting",
-    "group": "Operate"
   }
 ]

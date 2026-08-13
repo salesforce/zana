@@ -915,12 +915,12 @@ command-injection surface.
   `signal`. But a **spawn failure** (bin not found) or a **host watchdog kill**
   (your `timeoutMs`, capped at 60s, or the 8 MiB output cap exceeded) **REJECTS**
   — so a hung child surfaces as an error, not a misleading `{code:null}` success.
-- **exec PATH residual (S2).** `execAllowlist` gates the **basename** (`sf`), not
+- **exec PATH residual (S2).** `execAllowlist` gates the **basename** (`git`), not
   the on-disk binary; the bin is resolved against the **host's PATH** at spawn
   time, so whatever is *first* on PATH for that name runs. The host's PATH is the
   user's own trusted environment — an attacker who can prepend a hostile dir to
   it already has local code-execution — so we do not pin a separate PATH. Do not
-  treat the allowlist as a guarantee of *which* `sf` runs, only of *which names*
+  treat the allowlist as a guarantee of *which* `git` runs, only of *which names*
   may run.
 - **fs is symlink-safe.** `ctx.fs` paths are checked after `realpath()` (the
   resolved real location, with the parent dir resolved for writes to new files),
@@ -961,5 +961,3 @@ curated-trust for *panels* until that lands.
 - Worked sample (maintainable source): [`tools/create-zcc-extension/sample-hello`](../tools/create-zcc-extension/sample-hello).
 - Sample source: [`tools/create-zcc-extension/sample-hello`](../tools/create-zcc-extension/sample-hello).
 - A real disk extension: [`extensions/zana`](../extensions/zana).
-- Architecture & phasing: [`extensions-sdk-findings.md`](./extensions-sdk-findings.md);
-  trust boundary [`extensions-phase3-design.md`](./extensions-phase3-design.md).

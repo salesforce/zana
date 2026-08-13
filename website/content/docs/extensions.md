@@ -79,7 +79,7 @@ trusts them. **Almost everything ships as a disk extension** — a feature stays
   ships as an isolated disk extension. zana's data-heavy Tickets board is the
   proof point: rather than embedding native SQLite in core, it reaches a
   host-managed MCP server pool through the brokered **MCP** capability, so it
-  stays fully isolated. See [`zana-core-merge.md`](./zana-core-merge.md).
+  stays fully isolated.
 
 ---
 
@@ -107,10 +107,8 @@ so an unconsented extension can do nothing and doesn't even load. A later update
 that **widens** permissions re-prompts.
 
 Vocabulary, scoping (`execAllowlist` / `fsRoots` / `egressAllowlist`), and the
-**honest residuals** (what is and isn't sealed — this is the curated-trust phase,
-"MIN") are documented in
-[`extensions-authoring.md` → Permissions](./extensions-authoring.md#permissions-are-enforced-for-disk-extensions-p3-b)
-and [`extensions-phase3-design.md`](./extensions-phase3-design.md).
+remaining trust boundaries are documented in
+[`extensions-authoring.md` → Permissions](./extensions-authoring.md#permissions-are-enforced-for-disk-extensions-p3-b).
 
 ---
 
@@ -123,15 +121,6 @@ and [`extensions-phase3-design.md`](./extensions-phase3-design.md).
 - [`packages/extension-sdk/src`](../packages/extension-sdk/src) — the SDK source: `index.ts` (manifest types, `checkApiCompat`), `renderer.ts` (`AppModule`, `ModuleHost`, `RendererEntry`), `main.ts` (`MainModule`, `MainModuleContext`).
 - [`tools/create-zcc-extension/sample-hello`](../tools/create-zcc-extension/sample-hello) — minimal worked sample source for scaffolding.
 - [`bundled-extensions`](../bundled-extensions) — packaged first-party extension artifacts you can inspect.
-
-**Architecture & history (how it was designed and built, in order):**
-- [`extensions-sdk-findings.md`](./extensions-sdk-findings.md) — the original team analysis + the curated-first decision + phasing.
-- [`extensions-phase0-plan.md`](./extensions-phase0-plan.md) — Phase 0: the SDK package boundary.
-- [`extensions-phase1-summary.md`](./extensions-phase1-summary.md) — Phase 1: runtime disk loading.
-- [`extensions-phase2-summary.md`](./extensions-phase2-summary.md) — Phase 2: events, cache, contributions.
-- [`extensions-phase3-design.md`](./extensions-phase3-design.md) — Phase 3: the trust boundary (isolation, broker, consent) — design + the MIN-vs-FULL scope decision.
-
----
 
 ## Status & what's deferred
 

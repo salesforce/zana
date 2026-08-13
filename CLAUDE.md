@@ -422,11 +422,9 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   integration points. An environment-specific integration belongs in a separately
   distributed extension, never in the app source tree.
 
-- **Release artifacts are published to the PUBLIC repo github.com/salesforce/zana.**
-  The auto-updater reads that public feed anonymously (no token, no VPN). When
-  cutting a release, publish the new build there (`npm run release:mac` builds,
-  notarizes, and publishes) so the auto-updater can offer it. See
-  `docs/release-hosting.md` for the full release-hosting runbook.
+- **Release artifacts are published to the configured public GitHub release feed.**
+  The auto-updater reads that feed anonymously. When cutting a release, publish
+  the new build with `npm run release:mac` so the auto-updater can offer it.
 
 - **The local-spawn argv/env assembly lives in `PtyManager.create()` and
   dispatches through the per-profile `LaunchProvider`; `spawn-plan.ts` is now the
@@ -491,8 +489,5 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   `isClaudeProfile` triplet — so keep the two `-suffix` claude profile literals on
   SEPARATE lines in provider code (a one-line pair trips the dedup guard).
 
-See [`docs/zana-core-merge.md`](docs/zana-core-merge.md) for the zana→core merge
-migration + rollback notes **and the later re-extraction into the full
-`extensions/zana/` disk extension (data over the host MCP pool)**, and
-[`docs/releases/1.0.0.md`](docs/releases/1.0.0.md) for the current release's
-change inventory (earlier: [`docs/releases/0.8.7.md`](docs/releases/0.8.7.md)).
+Zana is a full disk extension under `extensions/zana/`; its data flows through
+the host MCP pool rather than native SQLite.

@@ -231,6 +231,5 @@ Deliberately deferred until a consumer needs them — listed so the next person 
 
 ## Related
 
-- `docs/architecture-review.md` — review notes.
 - Memory: `tab-auto-rename-osc` (the first consumer), `llm-micro-call-service` (this layer), `security-hook-exec-false-positive`.
 - Sibling pattern: `src/main/quick-prompt-store.ts` (the clone source for `PromptRegistry`).
