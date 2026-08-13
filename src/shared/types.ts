@@ -1296,6 +1296,36 @@ export interface TerminalSession {
    * local sessions and on remote sessions spawned without tmux persistence.
    */
   remoteTmuxId?: string;
+  /**
+   * Safe, main-resolved metadata captured when this agent was launched. Values
+   * come from trusted target resolution, never raw argv or mutable settings.
+   */
+  metadata?: SessionMetadataSnapshot;
+}
+
+/** A safe value discovered or resolved for an agent session. */
+export interface SessionMetadataValue {
+  label: string;
+  value?: string;
+}
+
+/**
+ * One harness metadata section. A declared section may have no value while its
+ * source is still unavailable; unsupported sections are omitted altogether.
+ */
+export interface SessionMetadataSection {
+  id: string;
+  label: string;
+  values: SessionMetadataValue[];
+}
+
+/**
+ * Main-owned, renderer-safe metadata for one agent. It records resolved launch
+ * metadata until a provider collector explicitly supplies a later snapshot.
+ */
+export interface SessionMetadataSnapshot {
+  observedAt: number;
+  sections: SessionMetadataSection[];
 }
 
 /** One file the agent touched this session, with the last op it performed.
@@ -1331,8 +1361,8 @@ export interface SessionTokenBreakdown {
 }
 
 /**
- * A live, display-only snapshot of a session distilled from its Claude
- * transcript — surfaced in the Agent Monitor's status pane (model, context
+ * A live, display-only snapshot of a session distilled from its supported
+ * transcript source — surfaced in the Agent Monitor's status pane (model, context
  * occupancy, rough cost, files touched, todo queue). Every field degrades
  * gracefully: a value is omitted (or an empty list) when the transcript doesn't
  * carry it, so the UI shows nothing rather than a fabricated zero.
@@ -1340,6 +1370,10 @@ export interface SessionTokenBreakdown {
 export interface SessionStats {
   /** The model of the most recent assistant turn (e.g. `claude-sonnet-4-5-…`). */
   model?: string;
+  /** Harness version recorded by its own session store, when available. */
+  harnessVersion?: string;
+  /** Active harness-native agent profile, when the session store reports one. */
+  agent?: string;
   /** Context window occupancy: the LATEST turn's total input footprint (input +
    *  cache_read + cache_creation) — how full the window is now, not a sum. */
   contextTokens?: number;

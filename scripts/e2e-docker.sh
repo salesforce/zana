@@ -56,4 +56,14 @@ tar \
   --exclude='.zcc' \
   --exclude='.claude' \
   -C "$ROOT" -cf - . | docker exec -i "$CONTAINER" tar -C /workspace -xf -
-docker exec "$CONTAINER" bash -lc 'npm ci && npx playwright install-deps chromium && npm run build && xvfb-run -a npm run test:e2e:only -- "$@"' bash "$@"
+docker exec "$CONTAINER" bash -lc '
+  for attempt in 1 2 3; do
+    npm ci && break
+    if [ "$attempt" -eq 3 ]; then exit 1; fi
+    rm -rf node_modules
+    sleep "$((attempt * 5))"
+  done
+  npx playwright install-deps chromium
+  npm run build
+  xvfb-run -a npm run test:e2e:only -- "$@"
+' bash "$@"

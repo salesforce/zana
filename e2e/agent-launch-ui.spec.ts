@@ -58,7 +58,6 @@ test('launching an agent through the real UI opens its terminal and it goes work
       claudeBinary: bin,
       defaultHarness: 'claude'
     }), agent.path);
-
     // The launcher hides uninstalled harnesses. Config changes do not update its
     // cached verification result, so mount Code Harness to re-probe fake Claude
     // before opening the modal. This matches the user-visible Settings refresh.
@@ -115,12 +114,14 @@ test('launching an agent through the real UI opens its terminal and it goes work
 
     // 6. Select verified Claude explicitly. Default routing is covered elsewhere;
     // this flow needs a deterministic fake binary on every runner.
-    const harnessSelect = modal.getByLabel('Launch harness');
-    await expect(harnessSelect).toBeEnabled();
-    await harnessSelect.selectOption('claude');
+    const harnessPicker = modal.getByLabel('Launch harness');
+    const claudeHarness = harnessPicker.locator('[data-testid="launch-profile-claude"]');
+    await expect(claudeHarness).toBeEnabled();
+    await claudeHarness.click();
+    await expect(claudeHarness).toHaveAttribute('aria-pressed', 'true');
 
     // 7. Send. This is the real launch button — it calls doCreate → createTerminal.
-    await modal.getByLabel('Launch agent').click();
+    await modal.locator('[data-testid="launch-send"]').click();
 
     // 8. The launcher closes and the agent-inspector modal opens on the new
     //    session (AgentsView.onLauncherLaunched → openAgentModal).

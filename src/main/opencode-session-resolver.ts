@@ -38,8 +38,8 @@ interface OpenCodeSessionListRow {
 }
 
 interface ResolverDeps {
-  /** The `opencode` binary; defaults to the bare name on PATH. */
-  binary?: string;
+  /** The `opencode` binary; getter permits live config updates. */
+  binary?: string | (() => string);
   /**
    * Runs `opencode session list --format json -n <limit>` with the given cwd
    * and returns parsed rows, or null on any failure. Injectable for tests so
@@ -87,23 +87,28 @@ async function defaultRunList(
  * message, a beat after spawn), so a later call retries.
  */
 export class OpenCodeSessionResolver {
-  private readonly binary: string;
+  private readonly binary: () => string;
   private readonly runList: (cwd: string, limit: number) => Promise<OpenCodeSessionListRow[] | null>;
   private readonly cache = new Map<string, OpenCodeSessionMatch>();
   private readonly claimedSessionIds = new Map<string, string>();
+  private readonly pending = new Map<string, Promise<OpenCodeSessionMatch | null>>();
+  private readonly generations = new Map<string, number>();
 
   constructor(deps: ResolverDeps = {}) {
-    this.binary = deps.binary ?? 'opencode';
-    this.runList = deps.runList ?? ((cwd, limit) => defaultRunList(this.binary, cwd, limit));
+    const binary = deps.binary;
+    this.binary = typeof binary === 'function' ? binary : () => binary ?? 'opencode';
+    this.runList = deps.runList ?? ((cwd, limit) => defaultRunList(this.binary(), cwd, limit));
   }
 
   /** Drop a cached match (call on session close to free memory — Rule 5). */
   forget(key: string): void {
+    this.generations.set(key, (this.generations.get(key) ?? 0) + 1);
     const match = this.cache.get(key);
     if (match && this.claimedSessionIds.get(match.sessionId) === key) {
       this.claimedSessionIds.delete(match.sessionId);
     }
     this.cache.delete(key);
+    this.pending.delete(key);
   }
 
   /** Number of cached matches (test/introspection helper). */
@@ -123,30 +128,42 @@ export class OpenCodeSessionResolver {
     const cached = this.cache.get(key);
     if (cached) return cached;
 
-    const rows = await this.runList(cwd, LIST_LIMIT);
-    if (!rows) return null;
+    const inFlight = this.pending.get(key);
+    if (inFlight) return inFlight;
 
-    // Allow a small negative slack: the session row's created time can lag
-    // the PTY spawn by a fraction of a second, and clocks aren't perfectly
-    // aligned.
-    const floor = spawnedAtMs - 5_000;
-    let best: { match: OpenCodeSessionMatch; createdMs: number } | null = null;
-    for (const row of rows) {
-      if (row.directory !== cwd) continue;
-      if (typeof row.created !== 'number' || row.created < floor) continue;
-      if (!row.id) continue;
-      const claimant = this.claimedSessionIds.get(row.id);
-      if (claimant && claimant !== key) continue;
-      if (!best || row.created < best.createdMs) {
-        best = { match: { sessionId: row.id }, createdMs: row.created };
+    const generation = this.generations.get(key) ?? 0;
+    const resolveMatch = async (): Promise<OpenCodeSessionMatch | null> => {
+      const rows = await this.runList(cwd, LIST_LIMIT);
+      if (!rows) return null;
+
+      // Allow a small negative slack: the session row's created time can lag
+      // the PTY spawn by a fraction of a second, and clocks aren't perfectly
+      // aligned.
+      const floor = spawnedAtMs - 5_000;
+      let best: { match: OpenCodeSessionMatch; createdMs: number } | null = null;
+      for (const row of rows) {
+        if (row.directory !== cwd) continue;
+        if (typeof row.created !== 'number' || row.created < floor) continue;
+        if (!row.id) continue;
+        const claimant = this.claimedSessionIds.get(row.id);
+        if (claimant && claimant !== key) continue;
+        if (!best || row.created < best.createdMs) {
+          best = { match: { sessionId: row.id }, createdMs: row.created };
+        }
       }
-    }
 
-    if (best) {
-      this.cache.set(key, best.match);
-      this.claimedSessionIds.set(best.match.sessionId, key);
-      return best.match;
-    }
-    return null;
+      if (best) {
+        if ((this.generations.get(key) ?? 0) !== generation) return null;
+        this.cache.set(key, best.match);
+        this.claimedSessionIds.set(best.match.sessionId, key);
+        return best.match;
+      }
+      return null;
+    };
+    const pending = resolveMatch().finally(() => {
+      if (this.pending.get(key) === pending) this.pending.delete(key);
+    });
+    this.pending.set(key, pending);
+    return pending;
   }
 }

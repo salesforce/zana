@@ -89,6 +89,25 @@ describe('OpenCodeSessionResolver', () => {
     expect(resolver.size).toBe(0);
   });
 
+  it('shares an in-flight lookup for the same PTY', async () => {
+    const cwd = '/Users/me/project-a';
+    let calls = 0;
+    let release!: (rows: Array<{ id: string; created: number; directory: string }>) => void;
+    const resolver = new OpenCodeSessionResolver({
+      runList: () => new Promise((resolve) => {
+        calls++;
+        release = resolve;
+      })
+    });
+
+    const first = resolver.resolve('sess-1', cwd, 999_000);
+    const second = resolver.resolve('sess-1', cwd, 999_000);
+    expect(calls).toBe(1);
+    release([{ id: 'ses_abc123', created: 1_000_000, directory: cwd }]);
+    await expect(first).resolves.toEqual({ sessionId: 'ses_abc123' });
+    await expect(second).resolves.toEqual({ sessionId: 'ses_abc123' });
+  });
+
   it('returns null (uncached) when no row exists yet, then matches once it appears', async () => {
     const cwd = '/Users/me/project-a';
     let rows: Array<{ id: string; created: number; directory: string }> = [];

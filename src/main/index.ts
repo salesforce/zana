@@ -450,7 +450,15 @@ async function emitExtensionsChanged() {
  * rescan IPC carries no payload. Bounded (rule #5): only the small main-bearing
  * spec set is respawned; we never hash whole dirs on the main loop.
  */
-async function runDiskSync(): Promise<void> {
+let diskSyncChain: Promise<void> = Promise.resolve();
+
+function runDiskSync(): Promise<void> {
+  const run = diskSyncChain.then(runDiskSyncOnce, runDiskSyncOnce);
+  diskSyncChain = run.catch(() => {});
+  return run;
+}
+
+async function runDiskSyncOnce(): Promise<void> {
   try {
     // Refresh consent first so only CONSENTED exts yield a spawn spec (P3-D) and
     // the GrantProvider reflects any just-granted consent (mirrors the light path).
@@ -785,7 +793,7 @@ async function terminateSession(sessionId: string, expected = true): Promise<boo
   const session = ptys.getSession(sessionId);
   if (!session) {
     restoreCapabilities.removeSession(sessionId);
-    return false;
+    return true;
   }
   const project = store.listProjects().find((candidate) => candidate.id === session.projectId);
   if (project?.remote && session.remoteTmuxId && !await ptys.killRemoteTmux(sessionId)) return false;
@@ -1008,7 +1016,74 @@ const transcriptSource = new TranscriptSource(undefined, (ptyId, codexSessionId)
   // `codex resume <id>` its OWN conversation (the codex twin of claudeSessionId).
   // Main-authoritative (the id came from main's own rollout scan — Rule 1).
   ptys.setCodexSessionId(ptyId, codexSessionId);
-});
+}, () => store.getConfig().opencodeBinary || 'opencode');
+const EXITED_SESSION_STATS_MAX = 200;
+const exitedSessionStats = new Map<string, { projectId: string; stats: SessionStats | null; pending?: Promise<SessionStats | null> }>();
+const LIVE_SESSION_STATS_TTL_MS = 4_000;
+const LIVE_SESSION_STATS_NEGATIVE_TTL_MS = 1_000;
+const LIVE_SESSION_STATS_MAX = 200;
+const liveSessionStats = new Map<string, { value?: SessionStats | null; expiresAt?: number; pending?: Promise<SessionStats | null> }>();
+
+function transcriptRefForSession(session: TerminalSession) {
+  return {
+    id: session.id,
+    profile: session.profile,
+    cwd: session.cwd,
+    claudeSessionId: session.claudeSessionId,
+    openCodeSessionId: session.openCodeSessionId,
+    createdAt: session.createdAt
+  };
+}
+
+function retainExitedSessionStats(session: TerminalSession, pending?: Promise<SessionStats | null>): void {
+  const entry: { projectId: string; stats: SessionStats | null; pending?: Promise<SessionStats | null> } = {
+    projectId: session.projectId,
+    stats: null
+  };
+  entry.pending = (pending ?? transcriptSource.readStats(transcriptRefForSession(session))).then((stats) => {
+    entry.stats = stats;
+    return stats;
+  }).catch(() => null);
+  exitedSessionStats.set(session.id, entry);
+  while (exitedSessionStats.size > EXITED_SESSION_STATS_MAX) {
+    exitedSessionStats.delete(exitedSessionStats.keys().next().value!);
+  }
+}
+
+async function readLiveSessionStats(session: TerminalSession): Promise<SessionStats | null> {
+  const cached = liveSessionStats.get(session.id);
+  if (cached?.pending) return cached.pending;
+  if (cached?.value !== undefined && cached.expiresAt && cached.expiresAt > Date.now()) return cached.value;
+
+  const entry = cached ?? {};
+  const read = async (): Promise<SessionStats | null> => {
+    let ref = transcriptRefForSession(session);
+    if (isOpenCodeProfile(session.profile) && !session.openCodeSessionId) {
+      const match = await opencodeSessionResolver.resolve(session.id, session.cwd, session.createdAt);
+      if (match) {
+        ref = { ...ref, openCodeSessionId: match.sessionId };
+        if (ptys.getSession(session.id)) ptys.setOpenCodeSessionId(session.id, match.sessionId);
+      }
+    }
+    return transcriptSource.readStats(ref);
+  };
+  entry.pending = read().then((stats) => {
+    entry.pending = undefined;
+    entry.value = stats;
+    entry.expiresAt = Date.now() + (stats ? LIVE_SESSION_STATS_TTL_MS : LIVE_SESSION_STATS_NEGATIVE_TTL_MS);
+    return stats;
+  }, () => {
+    entry.pending = undefined;
+    entry.value = null;
+    entry.expiresAt = Date.now() + LIVE_SESSION_STATS_NEGATIVE_TTL_MS;
+    return null;
+  });
+  liveSessionStats.set(session.id, entry);
+  while (liveSessionStats.size > LIVE_SESSION_STATS_MAX) {
+    liveSessionStats.delete(liveSessionStats.keys().next().value!);
+  }
+  return entry.pending;
+}
 /**
  * OpenCode session-id detection ("resume only" scope — no transcript reader).
  * OpenCode mints its own `ses_<hex>` id server-side; there's no transcript
@@ -1019,7 +1094,9 @@ const transcriptSource = new TranscriptSource(undefined, (ptyId, codexSessionId)
  * One resolver instance so its cache is shared; released per session on pty
  * exit via `opencodeSessionResolver.forget(id)` (Rule 5).
  */
-const opencodeSessionResolver = new OpenCodeSessionResolver();
+const opencodeSessionResolver = new OpenCodeSessionResolver({
+  binary: () => store.getConfig().opencodeBinary || 'opencode'
+});
 const opencodeSessionSync = {
   observe(sessionId: string): void {
     const session = ptys.getSession(sessionId);
@@ -4350,7 +4427,13 @@ function wireBridgeListeners() {
       );
     }
     const exitedSession = ptys.getSession(sessionId);
-    if (exitedSession) refreshRestoreCapability(exitedSession);
+    if (exitedSession) {
+      const finalRead = readLiveSessionStats(exitedSession);
+      const liveStats = liveSessionStats.get(sessionId);
+      liveSessionStats.delete(sessionId);
+      retainExitedSessionStats(exitedSession, liveStats?.pending ?? finalRead);
+      refreshRestoreCapability(exitedSession);
+    }
     agentStatus.remove(sessionId);
     outputActivity.remove(sessionId);
     screenScanBlocked.remove(sessionId);
@@ -5006,17 +5089,13 @@ function registerIpc() {
       // Rule 1: authorize from main's OWN session record, never renderer input.
       // A stale/foreign id (session died, or projectId doesn't own it) → null.
       const session = ptys.getSession(sessionId);
-      if (!session || session.projectId !== projectId) return null;
-      // Provider-agnostic: the seam checks hasTranscript and routes to the right
-      // per-provider reader (Claude derived path, or resolved Codex rollout).
-      return transcriptSource.readStats({
-        id: sessionId,
-        profile: session.profile,
-        cwd: session.cwd,
-        claudeSessionId: session.claudeSessionId,
-        openCodeSessionId: session.openCodeSessionId,
-        createdAt: session.createdAt
-      });
+      if (!session) {
+        const exited = exitedSessionStats.get(sessionId);
+        if (!exited || exited.projectId !== projectId) return null;
+        return exited.pending ? exited.pending : exited.stats;
+      }
+      if (session.projectId !== projectId) return null;
+      return readLiveSessionStats(session);
     },
     () => null
   );

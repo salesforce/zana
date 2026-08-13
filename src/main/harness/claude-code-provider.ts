@@ -253,6 +253,18 @@ export class ClaudeCodeProvider extends BaseLaunchProvider {
   readonly id = 'claude-code';
   readonly adapter = CLAUDE_ADAPTER;
 
+  launchMetadata(_input: {
+    model: import('./target-resolution.js').ModelResolution;
+    role: import('./target-resolution.js').RoleResolution;
+    execution: import('./target-resolution.js').ExecutionResolution;
+    observedAt: number;
+  }): import('../../shared/types.js').SessionMetadataSnapshot {
+    // Claude's card subtitle already identifies its harness, its provider is
+    // fixed, and transcript stats report its actual model. Its permission mode
+    // is launch intent, not a trustworthy runtime observation.
+    return { observedAt: _input.observedAt, sections: [] };
+  }
+
   modelContribution(targetId: string, level?: ModelLevel) {
     return { args: ['--model', resolveModelAlias(targetId)] };
   }

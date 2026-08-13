@@ -5055,6 +5055,139 @@ function factoryDestination(effects, ok2, nok, type, literalType, literalMarkerT
     return raw(code2);
   }
 }
+//#endregion
+//#region ../../node_modules/micromark-factory-label/index.js
+/**
+* @import {
+*   Effects,
+*   State,
+*   TokenizeContext,
+*   TokenType
+* } from 'micromark-util-types'
+*/
+/**
+* Parse labels.
+*
+* > 👉 **Note**: labels in markdown are capped at 999 characters in the string.
+*
+* ###### Examples
+*
+* ```markdown
+* [a]
+* [a
+* b]
+* [a\]b]
+* ```
+*
+* @this {TokenizeContext}
+*   Tokenize context.
+* @param {Effects} effects
+*   Context.
+* @param {State} ok
+*   State switched to when successful.
+* @param {State} nok
+*   State switched to when unsuccessful.
+* @param {TokenType} type
+*   Type of the whole label (`[a]`).
+* @param {TokenType} markerType
+*   Type for the markers (`[` and `]`).
+* @param {TokenType} stringType
+*   Type for the identifier (`a`).
+* @returns {State}
+*   Start state.
+*/
+function factoryLabelLegacy(effects, ok, nok, type, markerType, stringType) {
+	const self = this;
+	let size = 0;
+	/** @type {boolean} */
+	let seen;
+	return start;
+	/**
+	* Start of label.
+	*
+	* ```markdown
+	* > | [a]
+	*     ^
+	* ```
+	*
+	* @type {State}
+	*/
+	function start(code) {
+		effects.enter(type);
+		effects.enter(markerType);
+		effects.consume(code);
+		effects.exit(markerType);
+		effects.enter(stringType);
+		return atBreak;
+	}
+	/**
+	* In label, at something, before something else.
+	*
+	* ```markdown
+	* > | [a]
+	*      ^
+	* ```
+	*
+	* @type {State}
+	*/
+	function atBreak(code) {
+		if (size > 999 || code === null || code === 91 || code === 93 && !seen ||
+		/* c8 ignore next 3 */
+		code === 94 && !size && "_hiddenFootnoteSupport" in self.parser.constructs) return nok(code);
+		if (code === 93) {
+			effects.exit(stringType);
+			effects.enter(markerType);
+			effects.consume(code);
+			effects.exit(markerType);
+			effects.exit(type);
+			return ok;
+		}
+		if (markdownLineEnding(code)) {
+			effects.enter("lineEnding");
+			effects.consume(code);
+			effects.exit("lineEnding");
+			return atBreak;
+		}
+		effects.enter("chunkString", { contentType: "string" });
+		return labelInside(code);
+	}
+	/**
+	* In label, in text.
+	*
+	* ```markdown
+	* > | [a]
+	*      ^
+	* ```
+	*
+	* @type {State}
+	*/
+	function labelInside(code) {
+		if (code === null || code === 91 || code === 93 || markdownLineEnding(code) || size++ > 999) {
+			effects.exit("chunkString");
+			return atBreak(code);
+		}
+		effects.consume(code);
+		if (!seen) seen = !markdownSpace(code);
+		return code === 92 ? labelEscape : labelInside;
+	}
+	/**
+	* After `\`, at a special character.
+	*
+	* ```markdown
+	* > | [a\*a]
+	*        ^
+	* ```
+	*
+	* @type {State}
+	*/
+	function labelEscape(code) {
+		if (code === 91 || code === 92 || code === 93) {
+			effects.consume(code);
+			size++;
+			return labelInside;
+		}
+		return labelInside(code);
+	}
 function factoryLabel(effects, ok2, nok, type, markerType, stringType) {
   const self2 = this;
   let size = 0;
@@ -8773,6 +8906,97 @@ const serialize$1 = (value, { json, lossy } = {}) => {
   const _ = [];
   return serializer(!(json || lossy), !!json, /* @__PURE__ */ new Map(), _)(value), _;
 };
+//#endregion
+//#region ../../node_modules/@ungap/structured-clone/esm/index.js
+/**
+* @typedef {Array<string,any>} Record a type representation
+*/
+/**
+* Returns an array of serialized Records.
+* @param {any} any a serializable value.
+* @param {{transfer?: any[], json?: boolean, lossy?: boolean}?} options an object with
+* a transfer option (ignored when polyfilled) and/or non standard fields that
+* fallback to the polyfill if present.
+* @returns {Record[]}
+*/
+var esm_default = typeof structuredClone === "function" ?
+/* c8 ignore start */
+(any, options) => options && ("json" in options || "lossy" in options) ? deserialize(serialize$1(any, options)) : structuredClone(any) : (any, options) => deserialize(serialize$1(any, options));
+//#endregion
+//#region ../../node_modules/mdast-util-to-hast/lib/footer.js
+/**
+* @import {ElementContent, Element} from 'hast'
+* @import {State} from './state.js'
+*/
+/**
+* @callback FootnoteBackContentTemplate
+*   Generate content for the backreference dynamically.
+*
+*   For the following markdown:
+*
+*   ```markdown
+*   Alpha[^micromark], bravo[^micromark], and charlie[^remark].
+*
+*   [^remark]: things about remark
+*   [^micromark]: things about micromark
+*   ```
+*
+*   This function will be called with:
+*
+*   *  `0` and `0` for the backreference from `things about micromark` to
+*      `alpha`, as it is the first used definition, and the first call to it
+*   *  `0` and `1` for the backreference from `things about micromark` to
+*      `bravo`, as it is the first used definition, and the second call to it
+*   *  `1` and `0` for the backreference from `things about remark` to
+*      `charlie`, as it is the second used definition
+* @param {number} referenceIndex
+*   Index of the definition in the order that they are first referenced,
+*   0-indexed.
+* @param {number} rereferenceIndex
+*   Index of calls to the same definition, 0-indexed.
+* @returns {Array<ElementContent> | ElementContent | string}
+*   Content for the backreference when linking back from definitions to their
+*   reference.
+*
+* @callback FootnoteBackLabelTemplate
+*   Generate a back label dynamically.
+*
+*   For the following markdown:
+*
+*   ```markdown
+*   Alpha[^micromark], bravo[^micromark], and charlie[^remark].
+*
+*   [^remark]: things about remark
+*   [^micromark]: things about micromark
+*   ```
+*
+*   This function will be called with:
+*
+*   *  `0` and `0` for the backreference from `things about micromark` to
+*      `alpha`, as it is the first used definition, and the first call to it
+*   *  `0` and `1` for the backreference from `things about micromark` to
+*      `bravo`, as it is the first used definition, and the second call to it
+*   *  `1` and `0` for the backreference from `things about remark` to
+*      `charlie`, as it is the second used definition
+* @param {number} referenceIndex
+*   Index of the definition in the order that they are first referenced,
+*   0-indexed.
+* @param {number} rereferenceIndex
+*   Index of calls to the same definition, 0-indexed.
+* @returns {string}
+*   Back label to use when linking back from definitions to their reference.
+*/
+/**
+* Generate the default content that GitHub uses on backreferences.
+*
+* @param {number} _
+*   Index of the definition in the order that they are first referenced,
+*   0-indexed.
+* @param {number} rereferenceIndex
+*   Index of calls to the same definition, 0-indexed.
+* @returns {Array<ElementContent>}
+*   Content.
+*/
 const structuredClone$1 = typeof structuredClone === "function" ? (
   /* c8 ignore start */
   (any, options) => options && ("json" in options || "lossy" in options) ? deserialize(serialize$1(any, options)) : structuredClone(any)
