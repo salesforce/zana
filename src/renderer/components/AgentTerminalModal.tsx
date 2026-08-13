@@ -447,6 +447,7 @@ export function AgentTerminalModal({
             onToggleCollapse={() => togglePanel('modal')}
             maxFiles={6}
             maxQueue={5}
+            stats={stats}
           />
         </div>
       </div>

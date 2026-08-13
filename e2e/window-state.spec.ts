@@ -66,6 +66,7 @@ test.describe('macOS native-window behavior', () => {
 });
 
 test('Option-green maximize is restored after close and reactivate', async ({ app }) => {
+  test.skip(!isMacOS, 'macOS native-window behavior');
   await zoomToWorkArea(app);
   const reopenedPromise = app.electron.waitForEvent('window');
   const windowClosed = app.window.waitForEvent('close');
@@ -84,6 +85,7 @@ test('Option-green maximize is restored after close and reactivate', async ({ ap
 });
 
 test('native fullscreen relaunches as a regular window', async ({ app }) => {
+  test.skip(!isMacOS, 'macOS native-window behavior');
   await app.electron.evaluate(({ BrowserWindow }) => {
     const win = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes('index.html'));
     if (!win) throw new Error('main window not found');

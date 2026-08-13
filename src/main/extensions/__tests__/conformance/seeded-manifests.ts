@@ -2,7 +2,7 @@
  * Shared fixture loader for the Wave-1 conformance net.
  *
  * ONE place the seeded-extension roster lives (surface #2 — the BUILT ARTIFACT
- * under `examples/extensions/<id>`, the dir electron-builder packs into the app
+ * under `bundled-extensions/<id>`, the dir electron-builder packs into the app
  * as `extensions/` and that `discoverExtensions` reseeds from). The W1-2 lesson:
  * a capability/manifest change is only real once it lands on THIS artifact, not
  * the source `extensions/<id>/extension.json` that never runs. So the net drives
@@ -31,7 +31,7 @@ const CONFORMANCE_DIR = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(CONFORMANCE_DIR, '../../../../../');
 
 /** The built-artifact surface the net snapshots against (surface #2). */
-export const ARTIFACT_ROOT = join(REPO_ROOT, 'examples', 'extensions');
+export const ARTIFACT_ROOT = join(REPO_ROOT, 'bundled-extensions');
 
 /**
  * Seed a temp `ZCC_EXTENSIONS_DIR` from the built artifacts, run the REAL
