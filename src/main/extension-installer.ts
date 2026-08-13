@@ -6,7 +6,7 @@
  *
  * The app ships each canonical extension artifact under `resources/extensions/<id>/`
  * (electron-builder `extraResources`, sourced from the committed
- * `examples/extensions/<id>/`). On boot — BEFORE discovery — we compare the
+ * `bundled-extensions/<id>/`). On boot — BEFORE discovery — we compare the
  * bundled `version` to the installed copy and reseed when the bundled one is
  * newer (or nothing is installed). We NEVER downgrade: a user/dev who hand-
  * installed a newer build (e.g. via the dev watcher) keeps it.
@@ -47,19 +47,19 @@ function installRoot(): string {
 /**
  * Resolve the bundled-extensions root. Test override (`ZCC_BUNDLED_EXTENSIONS_DIR`)
  * wins; packaged: `process.resourcesPath/extensions` (electron-builder
- * `extraResources`); dev: the committed `examples/extensions` (electron-vite runs
- * with `__dirname = out/main`, so source is `../../examples/...`). Returns the
- * first that exists, or null.
+ * `extraResources`); dev: the committed `bundled-extensions` (electron-vite runs
+ * with `__dirname = out/main`, so source is `../../bundled-extensions`). Returns
+ * the first that exists, or null.
  */
 function bundledRoot(): string | null {
   // An explicit override is AUTHORITATIVE — if set, never fall back to the
   // packaged/dev defaults (a test pointing it at a missing dir must resolve to
-  // "no bundled extensions", not the repo's real examples/extensions).
+  // "no bundled extensions", not the repo's real bundled-extensions).
   const override = process.env.ZCC_BUNDLED_EXTENSIONS_DIR;
   if (override) return existsSync(override) ? override : null;
   const candidates = [
     process.resourcesPath ? join(process.resourcesPath, 'extensions') : null,
-    join(__dirname, '../../examples/extensions')
+    join(__dirname, '../../bundled-extensions')
   ].filter((p): p is string => !!p);
   for (const p of candidates) {
     if (existsSync(p)) return p;
