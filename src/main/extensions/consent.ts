@@ -36,6 +36,7 @@ export interface ConsentPermissionScopes {
   egressAllowlist?: string[];
   mcpAllowlist?: string[];
   streamAllowlist?: string[];
+  extensionInstallAllowlist?: string[];
 }
 
 /** The allowlist keys we diff for scope-widening. */
@@ -44,7 +45,8 @@ const SCOPE_KEYS = [
   'fsRoots',
   'egressAllowlist',
   'mcpAllowlist',
-  'streamAllowlist'
+  'streamAllowlist',
+  'extensionInstallAllowlist'
 ] as const;
 
 /** Keep only the known scope keys, each a deduped string[]; drop empties. */

@@ -67,6 +67,10 @@ export interface HostStorage {
 export interface BrokerCapabilities {
   /** Gate and return the generic, sanitized SSH host catalogue. */
   sshHosts?(moduleId: string): Promise<SshHostEntry[]>;
+  /** Read or update the single global remote start-path default. */
+  getRemoteDefaults?(moduleId: string): Promise<{ remoteDefaultPath?: string }>;
+  setRemoteDefaults?(moduleId: string, input: { remoteDefaultPath?: string }): Promise<{ remoteDefaultPath?: string }>;
+  installExtensionFromGit?(moduleId: string, input: { url: string }): Promise<{ id: string }>;
   exec(moduleId: string, req: ExecRequest): Promise<ExecResult>;
   readFile(moduleId: string, path: string, encoding?: 'utf-8'): Promise<string>;
   writeFile(moduleId: string, path: string, data: string): Promise<void>;
@@ -799,6 +803,30 @@ export class ExtensionProcessHost {
             break;
           }
           brokered(() => caps.sshHosts!(id));
+          break;
+        }
+        case 'remoteDefaults.get': {
+          if (!caps?.getRemoteDefaults) {
+            reply(false, undefined, `PermissionDenied: ${id} — remote defaults unavailable`);
+            break;
+          }
+          brokered(() => caps.getRemoteDefaults!(id));
+          break;
+        }
+        case 'remoteDefaults.set': {
+          if (!caps?.setRemoteDefaults) {
+            reply(false, undefined, `PermissionDenied: ${id} — remote defaults unavailable`);
+            break;
+          }
+          brokered(() => caps.setRemoteDefaults!(id, (args[0] as { remoteDefaultPath?: string }) ?? {}));
+          break;
+        }
+        case 'extensions.installFromGit': {
+          if (!caps?.installExtensionFromGit) {
+            reply(false, undefined, `PermissionDenied: ${id} — extension installation unavailable`);
+            break;
+          }
+          brokered(() => caps.installExtensionFromGit!(id, (args[0] as { url: string }) ?? { url: '' }));
           break;
         }
         default:

@@ -114,6 +114,9 @@ export type BrokerMethod =
   | 'sshHosts.register'
   | 'sshHosts.clear'
   | 'sshHosts.list'
+  | 'remoteDefaults.get'
+  | 'remoteDefaults.set'
+  | 'extensions.installFromGit'
   // Phase B: push a durable Inbox entry on behalf of a MAIN module, gated by
   // the `inbox:push` permission. The host stamps `extensionSource` from the
   // AUTHENTICATED moduleId bound to this port — never a payload value.

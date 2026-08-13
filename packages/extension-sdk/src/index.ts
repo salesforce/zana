@@ -56,6 +56,12 @@ export type ExtensionPermission =
   | 'session:reply'
   | 'external:open'
   | 'inbox:push'
+  // Lets an extension request installation from a declared, allowlisted git
+  // repository. The host still owns cloning, validation, consent, and loading.
+  | 'extensions:install'
+  // Lets an extension read and update the global fallback path used for remote
+  // projects that do not set an explicit start path.
+  | 'remote:defaults'
   // Lets an extension participate in the host-owned remote-project SSH picker.
   // The extension receives structured SSH entries only through `ctx.sshHosts`;
   // it never receives raw filesystem access to `~/.ssh`.
@@ -116,6 +122,8 @@ export const EXTENSION_PERMISSIONS = [
   'session:reply',
   'external:open',
   'inbox:push',
+  'extensions:install',
+  'remote:defaults',
   'ssh:hosts',
   'exec',
   'fs:read',
@@ -186,6 +194,11 @@ export interface ExtensionPermissionScopes {
    * when the bare `stream` permission is granted.
    */
   streamAllowlist?: string[];
+  /**
+   * Git repository URLs an extension may request to install. Every requested URL
+   * must exactly match this list; the host owns all clone and consent checks.
+   */
+  extensionInstallAllowlist?: string[];
 }
 
 /**
