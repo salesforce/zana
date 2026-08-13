@@ -312,6 +312,15 @@ function runWithPort(port: PortLike): void {
       register: () => broker('sshHosts.register', []) as Promise<void>,
       clear: () => broker('sshHosts.clear', []) as Promise<void>,
       list: () => broker('sshHosts.list', []) as Promise<Array<{ alias: string; hostname?: string; user?: string; proxyJump?: string }>>
+    },
+    remoteDefaults: {
+      get: () => broker('remoteDefaults.get', []) as Promise<{ remoteDefaultPath?: string }>,
+      set: (input: { remoteDefaultPath?: string }) =>
+        broker('remoteDefaults.set', [input]) as Promise<{ remoteDefaultPath?: string }>
+    },
+    extensions: {
+      installFromGit: (input: { url: string }) =>
+        broker('extensions.installFromGit', [input]) as Promise<{ id: string }>
     }
   };
 

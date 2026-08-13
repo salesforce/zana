@@ -50,7 +50,8 @@ export type PermissionScope =
   | { kind: 'fs'; path: string }
   | { kind: 'net'; host: string }
   | { kind: 'mcp'; serverId: string }
-  | { kind: 'stream'; endpoint: string };
+  | { kind: 'stream'; endpoint: string }
+  | { kind: 'extensions:install'; url: string };
 
 /** What the broker needs to know about ONE disk extension. */
 export interface ExtensionGrant {
@@ -66,6 +67,8 @@ export interface ExtensionGrant {
   mcpAllowlist: ReadonlySet<string>;
   /** Allowed host-managed stream endpoint handles for `ctx.stream` (`'*'` = any). */
   streamAllowlist: ReadonlySet<string>;
+  /** Git repository URLs an extension may request to install. */
+  extensionInstallAllowlist: ReadonlySet<string>;
 }
 
 /**
@@ -220,6 +223,8 @@ export class PermissionBroker {
         // the handle is resolved + confined host-side by the stream relay — this
         // gate only decides WHICH endpoint handle the ext may subscribe to.
         return grant.streamAllowlist.has('*') || grant.streamAllowlist.has(scope.endpoint);
+      case 'extensions:install':
+        return grant.extensionInstallAllowlist.has(scope.url);
       default:
         return false;
     }
@@ -238,6 +243,8 @@ function scopeToString(scope: PermissionScope): string {
       return `server=${scope.serverId}`;
     case 'stream':
       return `endpoint=${scope.endpoint}`;
+    case 'extensions:install':
+      return `url=${scope.url}`;
   }
 }
 
@@ -257,6 +264,7 @@ export function grantFromManifest(
         egressAllowlist?: string[];
         mcpAllowlist?: string[];
         streamAllowlist?: string[];
+        extensionInstallAllowlist?: string[];
       }
     | undefined,
   extDir: string
@@ -273,7 +281,8 @@ export function grantFromManifest(
     fsRoots,
     egressAllowlist: new Set((scopes?.egressAllowlist ?? []).map((h) => h.toLowerCase())),
     mcpAllowlist: new Set(scopes?.mcpAllowlist ?? []),
-    streamAllowlist: new Set(scopes?.streamAllowlist ?? [])
+    streamAllowlist: new Set(scopes?.streamAllowlist ?? []),
+    extensionInstallAllowlist: new Set(scopes?.extensionInstallAllowlist ?? [])
   };
 }
 
