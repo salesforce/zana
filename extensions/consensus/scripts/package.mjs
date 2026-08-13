@@ -7,7 +7,7 @@
  *
  * Sources:  extensions/consensus/extension.json + dist/{main.mjs,renderer.js}
  * Targets:
- *   1. examples/extensions/consensus/  — COMMITTED runnable artifact (the
+ *   1. bundled-extensions/consensus/  — COMMITTED runnable artifact (the
  *      canonical shipped form, seeded on boot by seedBundledExtensions).
  *   2. ~/.zcc/extensions/consensus/    — the dev/runtime install dir the
  *      discovery scanner reads (unless ZCC_EXTENSIONS_DIR overrides it).
@@ -70,9 +70,9 @@ async function main() {
   const build = { sha: gitSha(), at: new Date().toISOString() };
 
   // 1. Committed artifact.
-  const examplesDir = join(repoRoot, 'examples', 'extensions', 'consensus');
-  await copyInto(examplesDir, build);
-  console.log(`packaged → ${examplesDir}`);
+  const bundledDir = join(repoRoot, 'bundled-extensions', 'consensus');
+  await copyInto(bundledDir, build);
+  console.log(`packaged → ${bundledDir}`);
 
   // 2. Dev install dir (best-effort).
   const installRoot = process.env.ZCC_EXTENSIONS_DIR ?? join(homedir(), '.zcc', 'extensions');

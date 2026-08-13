@@ -3,12 +3,11 @@ import { FileText, FileCode, FileJson, FilePlus } from 'lucide-react';
 import type { SessionStats } from '@shared/types';
 
 /**
- * Transcript-derived, display-only agent insights — Model · Context · Files ·
+ * Transcript-derived, display-only agent insights — Model · Context · Usage · Files ·
  * Queue — shared by the Agent Monitor status pane and the agent-inspector modal.
- * All data comes from `terminals.sessionStats` (main reads the claude session's
- * JSONL transcript; see transcript-reader.ts). Nothing here is fabricated: each
- * section renders only when its data is present, so a fresh / shell / headless
- * agent shows nothing rather than empty scaffolding or zeros.
+ * All data comes from `terminals.sessionStats`. Nothing here is fabricated: each
+ * section renders only when its data is present, so a fresh / unsupported / headless
+ * agent shows nothing rather than empty scaffolding or inferred values.
  */
 
 /** Compact a token count as "44.9k" / "1.2M" for the context readout. */
@@ -16,6 +15,10 @@ function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
   return String(n);
+}
+
+function totalTokens(tokens: NonNullable<SessionStats['tokens']>): number {
+  return tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite;
 }
 
 /** Strip the vendor prefix/date off a model id → "sonnet-4-5" from
@@ -42,11 +45,13 @@ function contextBudget(model: string | undefined): number {
 export function useSessionStats(
   sessionId: string,
   projectId: string,
-  exited: boolean
+  exited: boolean,
+  enabled = true
 ): SessionStats | null {
   const [stats, setStats] = useState<SessionStats | null>(null);
   useEffect(() => {
     setStats(null);
+    if (!enabled) return;
     let alive = true;
     const pull = () => {
       void window.cc.terminals
@@ -63,7 +68,7 @@ export function useSessionStats(
       alive = false;
       clearInterval(timer);
     };
-  }, [sessionId, projectId, exited]);
+  }, [sessionId, projectId, exited, enabled]);
   return stats;
 }
 
@@ -101,7 +106,7 @@ export function AgentInsights({
   maxQueue?: number;
 }) {
   if (!stats) return null;
-  const { model, contextTokens, files, queue } = stats;
+  const { model, harnessVersion, agent, contextTokens, tokens, files, queue } = stats;
   const completedCount = queue.filter((q) => q.status === 'completed').length;
   const totalCount = queue.length;
   const allTodosCompleted = totalCount > 0 && completedCount === totalCount;
@@ -109,7 +114,10 @@ export function AgentInsights({
   const pct = contextTokens ? Math.min(100, Math.round((contextTokens / budget) * 100)) : 0;
   const hasAny =
     !!model ||
+    !!harnessVersion ||
+    !!agent ||
     typeof contextTokens === 'number' ||
+    !!tokens ||
     files.length > 0 ||
     queue.length > 0;
   if (!hasAny) return null;
@@ -123,6 +131,20 @@ export function AgentInsights({
         </div>
       )}
 
+      {harnessVersion && (
+        <div className="agent-insight">
+          <div className="agent-insight-label">Version</div>
+          <div className="agent-insight-model">{harnessVersion}</div>
+        </div>
+      )}
+
+      {agent && (
+        <div className="agent-insight">
+          <div className="agent-insight-label">Agent</div>
+          <div className="agent-insight-model">{agent}</div>
+        </div>
+      )}
+
       {typeof contextTokens === 'number' && (
         <div className="agent-insight">
           <div className="agent-insight-label">Context</div>
@@ -130,6 +152,21 @@ export function AgentInsights({
             <span className="agent-context-fill" style={{ width: `${pct}%` }} />
           </div>
           <div className="agent-context-figures">{formatTokens(contextTokens)}</div>
+        </div>
+      )}
+
+      {tokens && (
+        <div className="agent-insight">
+          <div className="agent-insight-label">Usage</div>
+          <details className="agent-usage-details">
+            <summary>{formatTokens(totalTokens(tokens))} session total</summary>
+            <dl className="agent-usage-breakdown">
+              <div><dt>Input</dt><dd>{formatTokens(tokens.input)}</dd></div>
+              <div><dt>Output</dt><dd>{formatTokens(tokens.output)}</dd></div>
+              <div><dt>Cache read</dt><dd>{formatTokens(tokens.cacheRead)}</dd></div>
+              <div><dt>Cache write</dt><dd>{formatTokens(tokens.cacheWrite)}</dd></div>
+            </dl>
+          </details>
         </div>
       )}
 

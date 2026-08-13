@@ -7,7 +7,7 @@ import { loadSeededEntries, requireEntry } from './seeded-manifests.js';
  * The direct W1-2 payoff, kept as its own file so it can't be buried in a wider
  * snapshot. W1-2's lesson: a capability change (here, the `mcp` permission +
  * `mcpAllowlist`) is only real once it lands on the REGISTERED BUILD ARTIFACT
- * (`examples/extensions/<id>`), NOT the source manifest that never runs. This
+ * (`bundled-extensions/<id>`), NOT the source manifest that never runs. This
  * guard asserts the `mcp` capability is present ON THE ARTIFACT for the
  * extensions that must carry it — so a future edit that touches only the source
  * manifest (leaving the artifact stale, the exact W1-2 bug) reds here.

@@ -128,19 +128,19 @@ test.describe('notifications — extension inbox push + bell drawer', () => {
       }, projectId);
       expect(deniedResult.threw).toBe(true);
 
-      // Unknown projectId path: the granted extension still can't target a
-      // project that doesn't exist.
-      const unknownProjectResult = await win.evaluate(async () => {
+      // Consent dismissal starts the extension child asynchronously. Wait until
+      // its broker reaches the expected authorization error, not merely until the
+      // overlay disappears (Linux utility-process startup is slower than macOS).
+      await expect.poll(async () => win.evaluate(async () => {
         try {
           await window.cc.modules.call('inbox-push-sample', 'push', [
             { projectId: 'proj-does-not-exist', comments: 'ghost' }
           ]);
-          return { threw: false };
+          return 'accepted';
         } catch (err) {
-          return { threw: true, message: String((err as Error)?.message ?? err) };
+          return String((err as Error)?.message ?? err);
         }
-      });
-      expect(unknownProjectResult.threw).toBe(true);
+      }), { timeout: 15_000 }).toContain('unknown projectId');
 
       // The real push: granted extension + real projectId.
       const marker = `E2E_INBOX_PUSH_${Date.now()}`;

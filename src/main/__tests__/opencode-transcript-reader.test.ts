@@ -4,10 +4,13 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import {
   extractLastAssistantTextOpenCode,
   buildSessionDigestOpenCode,
   buildSessionStatsOpenCode,
+  buildSessionStatsOpenCodeExport,
   readLastAssistantTextOpenCode,
   readSessionDigestOpenCode,
   readSessionStatsOpenCode,
@@ -199,6 +202,26 @@ describe('buildSessionStatsOpenCode', () => {
   });
 });
 
+describe('buildSessionStatsOpenCodeExport', () => {
+  it('projects model, version, agent, and lifetime usage from CLI export JSON', () => {
+    expect(buildSessionStatsOpenCodeExport({
+      info: {
+        model: { id: 'gpt-5.6-terra' },
+        version: '1.18.10',
+        agent: 'build',
+        cost: 0,
+        tokens: { input: 100, output: 20, reasoning: 5, cache: { read: 300, write: 0 } }
+      },
+      messages: []
+    })).toMatchObject({
+      model: 'gpt-5.6-terra',
+      harnessVersion: '1.18.10',
+      agent: 'build',
+      tokens: { input: 100, output: 25, cacheRead: 300, cacheWrite: 0 }
+    });
+  });
+});
+
 describe('openCodeDbPath', () => {
   it('honors XDG_DATA_HOME when set', () => {
     const prev = process.env.XDG_DATA_HOME;
@@ -215,7 +238,7 @@ describe('openCodeDbPath', () => {
     const prev = process.env.XDG_DATA_HOME;
     delete process.env.XDG_DATA_HOME;
     try {
-      expect(openCodeDbPath()).toContain('.local/share/opencode/opencode.db');
+      expect(openCodeDbPath(homedir())).toBe(join(homedir(), '.local', 'share', 'opencode', 'opencode.db'));
     } finally {
       if (prev !== undefined) process.env.XDG_DATA_HOME = prev;
     }
