@@ -1070,10 +1070,10 @@ export class PtyManager extends EventEmitter {
     // the claude path bakes into its `ZCC_*_URL` env, so codex's signals land on
     // the same provider-AGNOSTIC handlers (onStopHook / onNotifyHook /
     // onFirstPromptHook / onSubagentHook). Per-hook wanted-ness mirrors the claude
-    // gates (below) but is expressed provider-neutrally from `opts` (the claude
-    // `wantsStopHook`/… are defined later and gated on `claudeWithCallback`, which
-    // is false for codex): stop rides auto-close/scheduled, first-prompt is
-    // interactive-only, notify + subagent ride every callback-bearing tab.
+    // gates (below) but is expressed provider-neutrally from `opts`: turn-end,
+    // notify, and subagent hooks ride every callback-bearing tab. A Stop hook is
+    // also the generic lifecycle source for interactive status, not just scheduler
+    // completion for scheduled runs.
     // claude returns [] here (its hooks ride the launcher-owned `--settings` JSON
     // gated on `injectsClaudeMcpConfig`); cursor/shell return []. Rule 6: the
     // concrete `-c hooks.…` strings + bypass flag live ONLY in the codex provider.
@@ -1083,10 +1083,7 @@ export class PtyManager extends EventEmitter {
         : null;
     const providerHookUrls: ProviderHookUrls = providerHookBase
       ? {
-          stop:
-            opts.autoCloseOnFinish || opts.scheduled
-              ? `${providerHookBase}/stop/${opts.projectId}/${sessionId}`
-              : undefined,
+          stop: `${providerHookBase}/stop/${opts.projectId}/${sessionId}`,
           notify: `${providerHookBase}/notify/${opts.projectId}/${sessionId}`,
           firstPrompt: opts.scheduled
             ? undefined
@@ -1127,14 +1124,9 @@ export class PtyManager extends EventEmitter {
 
 
     // Stop hook: inject a `--settings` hook (additive — merges with, never
-    // replaces, the user's own settings files) that pings our local callback
-    // server when the agent finishes its turn. We want this for EVERY scheduled
-    // run, not only auto-close ones: a non-auto-close scheduled session stays
-    // open at the prompt after finishing, and the hook is how the scheduler
-    // learns the turn ended (so the UI can show "done" instead of "running"
-    // forever). `autoClose` only decides whether the callback *kills* the pty
-    // (handled in index.ts via the task's autoCloseOnFinish flag). Claude
-    // profiles only, and only when we know the callback URL.
+    // replaces, the user's own settings files) for EVERY callback-bearing tab.
+    // It is the lifecycle authority for an interactive turn ending; scheduler
+    // and auto-close consumers remain separate listeners on the same callback.
     //
     // Gated on `injectsClaudeMcpConfig` (the claude-family flag that also gates
     // the `--mcp-config` file), NOT `supportsHooks`: codex ALSO supports hooks
@@ -1146,7 +1138,7 @@ export class PtyManager extends EventEmitter {
     // won't inherit these Claude-only injections.)
     const claudeWithCallback = caps.injectsClaudeMcpConfig && !!this.mcpBaseUrl;
     const autoClose = !!opts.autoCloseOnFinish && claudeWithCallback;
-    const wantsStopHook = claudeWithCallback && (autoClose || !!opts.scheduled);
+    const wantsStopHook = claudeWithCallback;
     // Notification hook: light a "blocked — needs you" status when the agent
     // is waiting on the user (permission prompt / interactive question). This
     // is the ONLY reliable signal for that — the OSC title shows the same `✳`
@@ -2069,29 +2061,25 @@ export class PtyManager extends EventEmitter {
         //  - a `-c`-hooks provider (codex) consumes `remoteHookUrls` in
         //    `buildRemoteCommand` → `hookArgs`.
         // So codex remote reaches the identical `/hook/*` routes as claude remote.
-        // Stop/first-prompt only where they earn their keep (mirror local): a
-        // scheduled run wants the turn-END stop hook but no first-prompt (its
-        // opening prompt rides argv, never firing UserPromptSubmit); interactive
-        // is the reverse.
+        // Every hook-capable session reports turn completion; interactive sessions
+        // additionally report UserPromptSubmit for prompt-start/first-prompt.
         remoteHookUrls = {
           notify: `${base}/hook/notify/${opts.projectId}/${sessionId}`,
           subagent: `${base}/hook/subagent/${opts.projectId}/${sessionId}`,
-          ...(opts.scheduled
-            ? { stop: `${base}/hook/stop/${opts.projectId}/${sessionId}` }
-            : { firstPrompt: `${base}/hook/firstprompt/${opts.projectId}/${sessionId}` })
+          stop: `${base}/hook/stop/${opts.projectId}/${sessionId}`,
+          ...(opts.scheduled ? {} : { firstPrompt: `${base}/hook/firstprompt/${opts.projectId}/${sessionId}` })
         };
         // Claude's env-based twin of the same URLs (keys are the claude contract).
         hookEnv = {
           ZCC_NOTIFY_URL: remoteHookUrls.notify!,
-          ZCC_SUBAGENT_URL: remoteHookUrls.subagent!
+          ZCC_SUBAGENT_URL: remoteHookUrls.subagent!,
+          ZCC_HOOK_URL: remoteHookUrls.stop!
         };
-        if (opts.scheduled) {
-          hookEnv.ZCC_HOOK_URL = remoteHookUrls.stop!;
-        } else {
+        if (!opts.scheduled) {
           hookEnv.ZCC_FIRSTPROMPT_URL = remoteHookUrls.firstPrompt!;
         }
         hookSettingsJson = buildHookSettings({
-          stop: !!opts.scheduled,
+          stop: true,
           notify: true,
           firstPrompt: !opts.scheduled,
           subagents: true
@@ -2909,17 +2897,13 @@ function buildHookSettings(opts: {
     hooks.PostToolUse = [
       { matcher: 'AskUserQuestion', hooks: [{ type: 'command', command: postUnblocked }] }
     ];
-    // Submitting a prompt, and the turn ending, both mean we're no longer
-    // waiting on the user.
+    // A submitted prompt means the previous wait ended and a new lifecycle turn
+    // began. Stop deliberately does NOT send this callback: turn completion has
+    // its own route, and treating it as "unblocked" would reopen a completed
+    // turn immediately after it becomes idle.
     hooks.UserPromptSubmit = [
       { matcher: '', hooks: [{ type: 'command', command: postUnblocked }] }
     ];
-    const stopUnblock = { type: 'command', command: postUnblocked };
-    if (Array.isArray(hooks.Stop)) {
-      (hooks.Stop[0] as { hooks: unknown[] }).hooks.push(stopUnblock);
-    } else {
-      hooks.Stop = [{ matcher: '', hooks: [stopUnblock] }];
-    }
   }
 
   if (opts.firstPrompt) {

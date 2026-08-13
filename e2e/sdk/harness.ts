@@ -9,7 +9,8 @@
  *
  * How agent state is driven: main's `AgentStatusTracker.classifyOscTitle`
  * (src/main/agent-status.ts) classifies ANY profile's OSC-2 title — a leading
- * braille glyph (U+2800–U+28FF) → `working`, a leading `✳` (U+2733) → `idle`,
+ * braille glyph (U+2800–U+28FF) or `✻` (U+273B) → `working`, a leading `✳`
+ * (U+2733) → `idle`,
  * anything else → no change. So:
  *   - profile 'claude'  emits those OSC titles (drives working/idle lanes),
  *   - profile 'generic' emits plain stdout (codex/pi/cursor shape — the tracker
@@ -32,6 +33,8 @@ export type HarnessSequence =
   | 'work-then-idle'
   /** Work briefly, then clean exit(code) — drives the onExit lifecycle. */
   | 'work-then-exit'
+  /** Exercise live notify + Stop lifecycle callbacks, then hold at the prompt. */
+  | 'lifecycle-flow'
   /** Generic agent: plain stdout, no OSC title, hold forever. */
   | 'plain-hold'
   /** Generic agent: plain stdout, then exit(code). */
@@ -95,6 +98,21 @@ function presetBody(opts: FakeAgentOptions): string {
       ].join('\n');
     case 'work-then-exit':
       return [versionIntercept, oscTitle(`${BRAILLE_WORKING} ${working}`), 'sleep 1', `exit ${code}`].join('\n');
+    case 'lifecycle-flow':
+      return [
+        versionIntercept,
+        // Fail loudly if the launcher's callback wiring regresses. The test then
+        // calls the same local HTTP routes Claude's configured hooks use.
+        '[ -n "$ZCC_HOOK_URL" ] && [ -n "$ZCC_NOTIFY_URL" ] || exit 90',
+        oscTitle(`✻ ${working}`),
+        'sleep 1',
+        'curl -s -m 5 -X POST "$ZCC_NOTIFY_URL/blocked" >/dev/null',
+        'sleep 1',
+        'curl -s -m 5 -X POST "$ZCC_NOTIFY_URL/unblocked" >/dev/null',
+        'sleep 1',
+        'curl -s -m 5 -X POST "$ZCC_HOOK_URL" >/dev/null',
+        HOLD
+      ].join('\n');
     case 'plain-hold':
       return `${versionIntercept}echo "generic agent running"\n${HOLD}`;
     case 'plain-exit':

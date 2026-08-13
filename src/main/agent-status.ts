@@ -28,11 +28,10 @@
  * tick never rebuilds the `terminals` map (the render-storm guard the arch
  * council made binding — BC 7/10).
  *
- * Source fusion (see {@link resolve}): an active spinner (`working`) always
- * wins — it means the agent is producing output again, so any stale "blocked"
- * overlay is dropped. Otherwise the Notification overlay (`blocked`) wins over
- * the OSC `idle`/`unknown`, because while blocked Claude keeps emitting the
- * idle glyph. Screen-scan (LAS-07) is a later, additive OSC-like input.
+ * Source fusion (see {@link resolve}): lifecycle events are authoritative after
+ * a provider starts sending them; visual observations remain a responsive,
+ * provider-owned fallback for harnesses without lifecycle coverage. The blocked
+ * overlay always wins because a session awaiting the user cannot be idle.
  */
 
 import { EventEmitter } from 'node:events';
@@ -59,18 +58,19 @@ const RING_CAP = 500;
  * Classify an OSC title string into an agent state, or `null` when the title
  * carries no agent signal (so we leave the current state untouched).
  *
- * Mirrors the high-priority rules in herdr's `claude.toml`:
- *  - a leading braille glyph (U+2800–U+28FF) is Claude's "working" spinner,
- *  - a leading `✳` (U+2733) is Claude's idle/done marker.
+ * Mirrors the high-priority rules in the currently supported OSC-status
+ * provider's manifest:
+ *  - a leading braille glyph (U+2800–U+28FF) or `✻` is a working spinner,
+ *  - a leading `✳` (U+2733) is an idle/done marker.
  *
  * Anything else (a cwd-style title, a plain shell title) returns `null`.
  */
 export function classifyOscTitle(title: string): AgentState | null {
-  // The spinner/marker is the FIRST non-space glyph of the title. Claude emits
-  // e.g. "⠹ Cooking…" while working and "✳ project" when idle.
+  // The spinner/marker is the FIRST non-space glyph of the title.
   const ch = title.trimStart().codePointAt(0);
   if (ch === undefined) return null;
   if (ch >= 0x2800 && ch <= 0x28ff) return 'working'; // braille spinner
+  if (ch === 0x273b) return 'working'; // ✻ text-spinner marker
   if (ch === 0x2733) return 'idle'; // ✳ heavy asterisk
   return null;
 }
@@ -127,6 +127,16 @@ interface Entry {
    * Claude shows that same glyph the whole time it's blocked.
    */
   blocked: boolean;
+  /**
+   * A lifecycle source has reported for this session. Until then, visual/output
+   * observations remain the fallback authority. Once present, a completed turn
+   * is more trustworthy than a stale terminal-title frame.
+   */
+  lifecycleObserved: boolean;
+  /** Whether the current lifecycle turn is active. */
+  turnActive: boolean;
+  /** The lifecycle source confirmed the current turn ended. */
+  turnFinished: boolean;
   timer: NodeJS.Timeout | null;
   /**
    * The last task-summary title we emitted on the `title` event for this
@@ -183,21 +193,20 @@ interface Entry {
 
 /**
  * Fuse the per-session inputs into the single state we surface.
- *  - `working` always wins: the spinner means the agent is producing output, so
- *    any stale blocked overlay is moot (and `clearBlocked` will have dropped it).
- *  - otherwise a `blocked` overlay wins over the OSC reading, because Claude
- *    keeps emitting the `idle` glyph while it waits on the user.
- *  - otherwise a live tool (idle-veto) overrides an `idle` or `unknown` OSC
- *    reading with `working` — a quiet tool call reads identically to idle on
- *    screen, and a tool may start before Claude publishes its first OSC title.
- *    The hook-derived ground truth wins. It does NOT override `blocked` (a
- *    permission prompt for that same tool is a stronger, more specific signal)
- *    and is moot once `osc` is `working` (already handled above).
- *  - else fall through to whatever the OSC stream last said.
+ *  - a blocked overlay wins: a session cannot be idle while it needs a person.
+ *  - for a lifecycle-backed session, a completed turn is authoritative over a
+ *    stale visual spinner and an active turn/tool is authoritative over a stale
+ *    idle marker.
+ *  - sessions with no lifecycle event yet retain the historical OSC/output
+ *    fallback, so harnesses that cannot inject hooks do not regress.
  */
 function resolve(entry: Entry): AgentState {
-  if (entry.osc === 'working') return 'working';
   if (entry.blocked) return 'blocked';
+  if (entry.lifecycleObserved) {
+    if (entry.turnFinished) return 'idle';
+    if (entry.turnActive || entry.toolsInFlight > 0) return 'working';
+  }
+  if (entry.osc === 'working') return 'working';
   if (entry.toolsInFlight > 0) return 'working';
   return entry.osc;
 }
@@ -320,6 +329,9 @@ export class AgentStatusTracker extends EventEmitter {
         emitted: 'unknown',
         osc: 'unknown',
         blocked: false,
+        lifecycleObserved: false,
+        turnActive: false,
+        turnFinished: false,
         timer: null,
         subagents: 0,
         subagentChildren: [],
@@ -372,6 +384,35 @@ export class AgentStatusTracker extends EventEmitter {
   }
 
   /**
+   * A provider lifecycle hook accepted a new user turn. This is deliberately
+   * provider-neutral: a harness-specific launcher maps its own event dialect to
+   * this transition. It makes lifecycle state authoritative from this point on.
+   */
+  turnStarted(sessionId: string): void {
+    const entry = this.entry(sessionId);
+    entry.lifecycleObserved = true;
+    entry.turnActive = true;
+    entry.turnFinished = false;
+    entry.blocked = false;
+    this.schedule(sessionId, entry);
+  }
+
+  /**
+   * A provider lifecycle hook confirmed the turn ended. Hooks can be duplicated
+   * or arrive after a dropped post-tool event, so completion also clears the
+   * in-flight counter. A blocked overlay is intentionally retained: if the
+   * harness still says it needs a person, that remains more specific than end.
+   */
+  turnFinished(sessionId: string): void {
+    const entry = this.entry(sessionId);
+    entry.lifecycleObserved = true;
+    entry.turnActive = false;
+    entry.turnFinished = true;
+    entry.toolsInFlight = 0;
+    this.schedule(sessionId, entry);
+  }
+
+  /**
    * The Notification hook fired — the agent is waiting on the user (permission
    * prompt or an interactive question). Sets the sticky blocked overlay.
    */
@@ -401,6 +442,9 @@ export class AgentStatusTracker extends EventEmitter {
    */
   toolStarted(sessionId: string): void {
     const entry = this.entry(sessionId);
+    entry.lifecycleObserved = true;
+    entry.turnActive = true;
+    entry.turnFinished = false;
     entry.toolsInFlight += 1;
     this.schedule(sessionId, entry);
   }

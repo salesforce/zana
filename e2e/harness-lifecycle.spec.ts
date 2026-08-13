@@ -125,6 +125,77 @@ test('claude agent lands working→idle on the live onAgentStatus timeline', asy
   }
 });
 
+test('Claude lifecycle callbacks drive working→blocked→working→idle in the live app', async ({
+  app,
+  events
+}) => {
+  const { window } = app;
+  const agent = makeFakeAgentBinary({ profile: 'claude', sequence: 'lifecycle-flow', workingTitle: 'Tempering...' });
+  const projectDir = mkdtempSync(join(tmpdir(), 'zcc-harness-lifecycle-proj-'));
+
+  const projectId = await window.evaluate(async (path) => {
+    const res = await window.cc.projects.add(path);
+    const proj = (res && 'ok' in res ? (res as { value: { id: string } }).value : res) as {
+      id: string;
+    };
+    return proj.id;
+  }, projectDir);
+  expect(projectId).toBeTruthy();
+
+  let sessionId: string | null = null;
+  try {
+    sessionId = await spawnClaude(window, projectId, agent.path, 'Lifecycle Callback Probe');
+
+    const isForSession = (e: { channel: string; args: unknown[] }, state: string) =>
+      e.channel === 'terminals:onAgentStatus' &&
+      JSON.stringify(e.args).includes(sessionId as string) &&
+      JSON.stringify(e.args).includes(state);
+
+    await events.waitForEvent((e) => isForSession(e, 'working'), 15_000);
+    await events.waitForEvent((e) => isForSession(e, 'blocked'), 15_000);
+    await events.waitForEvent((e) => isForSession(e, 'idle'), 15_000);
+
+    // `unblocked` begins the next turn and Stop ends it. Verify the second
+    // working edge lands after blocked and Stop overrides the stale ✻ title.
+    const states = events
+      .collect()
+      .filter(
+        (e) =>
+          e.channel === 'terminals:onAgentStatus' &&
+          JSON.stringify(e.args).includes(sessionId as string)
+      )
+      .map((e) => JSON.stringify(e.args));
+    const firstWorking = states.findIndex((state) => state.includes('working'));
+    const blocked = states.findIndex((state) => state.includes('blocked'));
+    const resumedWorking = states.findIndex((state, index) => index > blocked && state.includes('working'));
+    const idle = states.findIndex((state, index) => index > resumedWorking && state.includes('idle'));
+    expect(firstWorking).toBeGreaterThanOrEqual(0);
+    expect(blocked).toBeGreaterThan(firstWorking);
+    expect(resumedWorking).toBeGreaterThan(blocked);
+    expect(idle).toBeGreaterThan(resumedWorking);
+  } finally {
+    await window.evaluate(async (args) => {
+      const { pid, sid } = args as { pid: string; sid: string | null };
+      try {
+        if (sid) await window.cc.terminals.close(sid);
+      } catch {
+        /* best-effort */
+      }
+      try {
+        await window.cc.projects.remove(pid);
+      } catch {
+        /* best-effort */
+      }
+    }, { pid: projectId, sid: sessionId });
+    agent.cleanup();
+    try {
+      rmSync(projectDir, { recursive: true, force: true });
+    } catch {
+      /* best-effort */
+    }
+  }
+});
+
 test('agent exit surfaces on the live onExit timeline', async ({ app, events }) => {
   const { window } = app;
   const agent = makeFakeAgentBinary({ profile: 'claude', sequence: 'work-then-exit', exitCode: 0 });

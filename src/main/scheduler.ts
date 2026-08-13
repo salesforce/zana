@@ -972,9 +972,9 @@ export class SchedulerManager extends EventEmitter {
    * than a kill-signal error. The merge-style `recordRun` keeps the two updates
    * commutative (see `attachReport`'s note).
    *
-   * If no scheduled run matches this session (a non-scheduled session that
-   * somehow carries the hook), fall back to a plain expected close so behavior
-   * never regresses.
+    * A Stop hook now also powers interactive lifecycle status. If no scheduled
+    * run matches, leave that session open at its prompt; the lifecycle caller has
+    * already recorded the completed turn.
    */
   onAgentFinished(sessionId: string) {
     for (const live of this.live.values()) {
@@ -1004,9 +1004,8 @@ export class SchedulerManager extends EventEmitter {
       }
       return;
     }
-    // Unmatched: preserve the legacy auto-close behavior for any session that
-    // carried the hook but isn't a tracked scheduled run.
-    this.deps?.ptys.closeExpected(sessionId);
+    // A non-scheduled interactive session is finished for now, not exited. Its
+    // next UserPromptSubmit begins another lifecycle turn in the same PTY.
   }
 }
 

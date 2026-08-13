@@ -14,6 +14,10 @@ describe('classifyOscTitle', () => {
     expect(classifyOscTitle('⣿ tail of range')).toBe('working');
   });
 
+  it('maps Claude Code’s ✻ text-spinner marker to working', () => {
+    expect(classifyOscTitle('✻ Tempering…')).toBe('working');
+  });
+
   it('maps a leading ✳ (U+2733) to idle', () => {
     expect(classifyOscTitle('✳ my-project')).toBe('idle');
   });
@@ -657,7 +661,7 @@ describe('AgentStatusTracker (tool-in-flight idle-veto)', () => {
     expect(tracker.get('s1')).toBe('working');
   });
 
-  it('lets idle surface once the in-flight tool finishes', () => {
+  it('keeps the turn working after a tool finishes until its lifecycle Stop arrives', () => {
     const tracker = new AgentStatusTracker();
     const seen: string[] = [];
     tracker.on('status', (_id, state) => seen.push(state));
@@ -668,6 +672,10 @@ describe('AgentStatusTracker (tool-in-flight idle-veto)', () => {
     expect(seen).toEqual(['working']); // vetoed to working, not idle
 
     tracker.toolFinished('s1');
+    vi.advanceTimersByTime(250);
+
+    expect(seen).toEqual(['working']);
+    tracker.turnFinished('s1');
     vi.advanceTimersByTime(250);
 
     expect(seen).toEqual(['working', 'idle']);
@@ -698,7 +706,7 @@ describe('AgentStatusTracker (tool-in-flight idle-veto)', () => {
     expect(seen).toEqual(['idle']);
   });
 
-  it('clearToolsInFlight is a drift guard that un-vetoes a stuck counter', () => {
+  it('clearToolsInFlight resets a stuck counter but waits for lifecycle completion', () => {
     const tracker = new AgentStatusTracker();
     const seen: string[] = [];
     tracker.on('status', (_id, state) => seen.push(state));
@@ -709,6 +717,10 @@ describe('AgentStatusTracker (tool-in-flight idle-veto)', () => {
     expect(seen).toEqual(['working']); // vetoed, stuck at toolsInFlight=1
 
     tracker.clearToolsInFlight('s1'); // Stop-hook drift guard resets it
+    vi.advanceTimersByTime(250);
+
+    expect(seen).toEqual(['working']);
+    tracker.turnFinished('s1');
     vi.advanceTimersByTime(250);
 
     expect(seen).toEqual(['working', 'idle']);
@@ -725,5 +737,58 @@ describe('AgentStatusTracker (tool-in-flight idle-veto)', () => {
     vi.advanceTimersByTime(250);
 
     expect(seen).toEqual(['idle']);
+  });
+});
+
+describe('AgentStatusTracker (lifecycle-first state)', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('keeps a lifecycle-backed turn working when a stale visual idle marker arrives', () => {
+    const tracker = new AgentStatusTracker();
+    tracker.turnStarted('s1');
+    tracker.report('s1', 'idle');
+    vi.advanceTimersByTime(250);
+
+    expect(tracker.get('s1')).toBe('working');
+  });
+
+  it('marks a completed lifecycle turn idle despite a stale visual working marker', () => {
+    const tracker = new AgentStatusTracker();
+    tracker.turnStarted('s1');
+    vi.advanceTimersByTime(250);
+    tracker.report('s1', 'working');
+    tracker.turnFinished('s1');
+    vi.advanceTimersByTime(250);
+
+    expect(tracker.get('s1')).toBe('idle');
+  });
+
+  it('keeps a completed turn blocked while the harness still needs user input', () => {
+    const tracker = new AgentStatusTracker();
+    tracker.turnStarted('s1');
+    tracker.markBlocked('s1');
+    tracker.turnFinished('s1');
+    vi.advanceTimersByTime(250);
+
+    expect(tracker.get('s1')).toBe('blocked');
+  });
+
+  it('starts a new turn after completion and clears the prior idle state', () => {
+    const tracker = new AgentStatusTracker();
+    tracker.turnFinished('s1');
+    vi.advanceTimersByTime(250);
+    tracker.turnStarted('s1');
+    vi.advanceTimersByTime(250);
+
+    expect(tracker.get('s1')).toBe('working');
+  });
+
+  it('keeps the visual idle fallback for a session without lifecycle events', () => {
+    const tracker = new AgentStatusTracker();
+    tracker.report('s1', 'idle');
+    vi.advanceTimersByTime(250);
+
+    expect(tracker.get('s1')).toBe('idle');
   });
 });
