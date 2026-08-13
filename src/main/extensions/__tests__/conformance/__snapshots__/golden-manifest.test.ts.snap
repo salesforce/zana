@@ -31,6 +31,7 @@ Working style: reach for a council whenever a decision is genuinely contestable 
   "permissionScopes": {
     "egressAllowlist": undefined,
     "execAllowlist": undefined,
+    "extensionInstallAllowlist": undefined,
     "fsRoots": undefined,
     "mcpAllowlist": [
       "zana",
@@ -72,6 +73,7 @@ exports[`W1-8 golden-manifest — seeded built artifacts > capability contract i
     "execAllowlist": [
       "npm",
     ],
+    "extensionInstallAllowlist": undefined,
     "fsRoots": undefined,
     "mcpAllowlist": [
       "zana",
