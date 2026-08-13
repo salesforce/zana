@@ -8342,13 +8342,16 @@ async function bootstrapNormal() {
     // scheduled sessions (or any we can't match) fall back to a plain expected
     // close so nothing regresses.
     onStopHook: (_projectId: string, sessionId: string) => {
+       // A lifecycle Stop is the authoritative end of an interactive turn. The
+       // tracker keeps fallback behaviour for harnesses that never send one.
+       agentStatus.turnFinished(sessionId);
        scheduler.onAgentFinished(sessionId);
       // A goal worker finishing its turn is the trigger to evaluate + branch
       // (achieved / re-spawn / escalate). No-op for non-goal sessions.
       void goals.onAgentFinished(sessionId);
-      // A finished turn is no longer waiting on the user — drop any blocked
-      // overlay so the dot doesn't stick red after the agent moves on.
-      agentStatus.clearBlocked(sessionId);
+       // A blocked overlay wins over turn completion. The next UserPromptSubmit
+       // callback begins a new turn and clears it; clearing here would turn an
+       // unanswered permission/question into an incorrect idle state.
       // A finished turn can have no in-flight sub-agents — reset the count so a
       // SubagentStop hook that never fired (e.g. a killed sub-agent) can't leave
       // a phantom badge on the parent.
@@ -8363,7 +8366,7 @@ async function bootstrapNormal() {
     // the user answered) on `unblocked`.
     onNotifyHook: (_projectId: string, sessionId: string, action) => {
       if (action === 'blocked') agentStatus.markBlocked(sessionId);
-      else agentStatus.clearBlocked(sessionId);
+      else agentStatus.turnStarted(sessionId);
       // Diagnostic: confirms the hook reached the main process. The emit to the
       // renderer is debounced (~250ms), so the red/grey dot is the real proof
       // the state landed — this line just proves the curl callback arrived.
