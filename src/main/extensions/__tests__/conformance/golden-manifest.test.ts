@@ -7,7 +7,7 @@ import { loadSeededEntries, requireEntry, SEEDED_IDS } from './seeded-manifests.
  * GOLDEN-MANIFEST net (W1-8) — LIVE (W1-1/2/3 landed).
  *
  * Snapshots the CAPABILITY CONTRACT of each seeded extension as it exists on the
- * BUILT ARTIFACT (`examples/extensions/<id>`, surface #2), driven through the
+ * BUILT ARTIFACT (`bundled-extensions/<id>`, surface #2), driven through the
  * real discovery pipeline. This is the regression contract for the whole
  * source→artifact→installed flow: a permission/scope drift, an id/version/entry
  * change, or a projectTab flip shows up as a snapshot diff. Regenerate ONLY when

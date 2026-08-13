@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 /**
  * Guard: the first-party framework extensions must SHIP an `agentPreset` in
- * their committed, packaged manifest (`examples/extensions/<id>/extension.json`
+ * their committed, packaged manifest (`bundled-extensions/<id>/extension.json`
  * — the canonical bundled form seeded on boot). This is the block the Advanced
  * Quick-Agent launcher renders as a Framework preset; without it the launcher
  * shows "No framework presets installed" (the empty state we shipped by
@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 const repoRoot = join(fileURLToPath(import.meta.url), '..', '..', '..', '..', '..');
 
 function bundledManifest(id: string): Record<string, unknown> {
-  const path = join(repoRoot, 'examples', 'extensions', id, 'extension.json');
+  const path = join(repoRoot, 'bundled-extensions', id, 'extension.json');
   return JSON.parse(readFileSync(path, 'utf-8')) as Record<string, unknown>;
 }
 

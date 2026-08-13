@@ -8,7 +8,7 @@ import core internals.
 
 > **Start here, then go to the right doc:**
 > - **Building one?** → [`extensions-authoring.md`](./extensions-authoring.md) (the how-to).
-> - **Scaffolding?** → [`tools/create-zcc-extension`](../tools/create-zcc-extension) (template + sample source), or copy a shipped first-party extension under [`examples/extensions`](../examples/extensions).
+> - **Scaffolding?** → [`tools/create-zcc-extension`](../tools/create-zcc-extension) (template + sample source), or copy a shipped first-party extension under [`bundled-extensions`](../bundled-extensions).
 > - **Understanding the design?** → the architecture docs linked at the bottom.
 
 ---
@@ -122,7 +122,7 @@ and [`extensions-phase3-design.md`](./extensions-phase3-design.md).
 **Reference (the contract):**
 - [`packages/extension-sdk/src`](../packages/extension-sdk/src) — the SDK source: `index.ts` (manifest types, `checkApiCompat`), `renderer.ts` (`AppModule`, `ModuleHost`, `RendererEntry`), `main.ts` (`MainModule`, `MainModuleContext`).
 - [`tools/create-zcc-extension/sample-hello`](../tools/create-zcc-extension/sample-hello) — minimal worked sample source for scaffolding.
-- [`examples/extensions`](../examples/extensions) — packaged first-party extension artifacts you can inspect.
+- [`bundled-extensions`](../bundled-extensions) — packaged first-party extension artifacts you can inspect.
 
 **Architecture & history (how it was designed and built, in order):**
 - [`extensions-sdk-findings.md`](./extensions-sdk-findings.md) — the original team analysis + the curated-first decision + phasing.
