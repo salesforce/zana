@@ -475,9 +475,10 @@ describe('remote hooks over ssh -R reverse tunnel', () => {
     const remoteCmd = args.at(-1) as string;
     expect(remoteCmd).toContain(`ZCC_NOTIFY_URL='http://127.0.0.1:${remotePort}/hook/notify/proj-remote/${session.id}'`);
     expect(remoteCmd).toContain(`ZCC_SUBAGENT_URL='http://127.0.0.1:${remotePort}/hook/subagent/proj-remote/${session.id}'`);
-    // Interactive (non-scheduled) → first-prompt hook, not the stop hook.
+    // Interactive sessions carry both lifecycle boundaries: UserPromptSubmit
+    // begins a new turn and Stop marks the completed turn idle.
     expect(remoteCmd).toContain('ZCC_FIRSTPROMPT_URL=');
-    expect(remoteCmd).not.toContain('ZCC_HOOK_URL=');
+    expect(remoteCmd).toContain(`ZCC_HOOK_URL='http://127.0.0.1:${remotePort}/hook/stop/proj-remote/${session.id}'`);
     // The hook `--settings` JSON is spliced into claude's argv.
     expect(remoteCmd).toContain('--settings');
     expect(remoteCmd).toContain('Notification');

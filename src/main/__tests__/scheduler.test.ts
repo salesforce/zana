@@ -641,13 +641,13 @@ describe('SchedulerManager.onAgentFinished', () => {
     expect(run.finishedAt).toBeTruthy(); // not clobbered by the exit merge
   });
 
-  it('falls back to an expected close when no scheduled run matches', () => {
+  it('leaves an unmatched interactive session open', () => {
     const { manager, ptys, task } = makeManager({ prompt: 'work' });
     autoFire(manager, task.id);
 
     manager.onAgentFinished('no-such-session');
 
-    expect(ptys.closeExpectedCalls).toEqual(['no-such-session']);
+    expect(ptys.closeExpectedCalls).toEqual([]);
   });
 });
 
