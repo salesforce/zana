@@ -39,8 +39,11 @@ import {
 import {
   readLastAssistantTextOpenCode,
   readSessionDigestOpenCode,
-  readSessionStatsOpenCode
+  readSessionStatsOpenCode,
+  readSessionStatsOpenCodeExport
 } from './opencode-transcript-reader.js';
+import { app } from 'electron';
+import { join } from 'node:path';
 import { CodexSessionResolver } from './codex-session-resolver.js';
 import type { SessionStats } from '@shared/types';
 
@@ -71,8 +74,16 @@ export interface TranscriptSessionRef {
 export class TranscriptSource {
   private readonly codexResolver: CodexSessionResolver;
   private readonly onCodexResolved?: (id: string, sessionId: string) => void;
+  private readonly openCodeBinary: () => string;
   /** Ids we've already reported a Codex match for — fire `onCodexResolved` once. */
   private readonly reported = new Set<string>();
+
+  /** OpenCode resolves its data home from Electron's configured home. This
+   * differs from node:os homedir() in sandboxed/test launches where bootstrap
+   * calls app.setPath('home', ...). */
+  private openCodeDbPath(): string {
+    return join(process.env.XDG_DATA_HOME || join(app.getPath('home'), '.local', 'share'), 'opencode', 'opencode.db');
+  }
 
   /**
    * @param onCodexResolved Fired ONCE per PTY session the first time its Codex
@@ -82,10 +93,12 @@ export class TranscriptSource {
    */
   constructor(
     codexResolver: CodexSessionResolver = new CodexSessionResolver(),
-    onCodexResolved?: (id: string, sessionId: string) => void
+    onCodexResolved?: (id: string, sessionId: string) => void,
+    openCodeBinary: () => string = () => 'opencode'
   ) {
     this.codexResolver = codexResolver;
     this.onCodexResolved = onCodexResolved;
+    this.openCodeBinary = openCodeBinary;
   }
 
   /** Release per-session state on close. */
@@ -152,7 +165,15 @@ export class TranscriptSource {
       return path ? readSessionStatsCodex(path) : null;
     }
     if (isOpenCodeProfile(ref.profile as LaunchProfileId)) {
-      return ref.openCodeSessionId ? readSessionStatsOpenCode(ref.openCodeSessionId) : null;
+      if (ref.openCodeSessionId) {
+        const stats = await readSessionStatsOpenCode(ref.openCodeSessionId, { dbPath: this.openCodeDbPath() });
+        if (stats) return stats;
+        const exported = await readSessionStatsOpenCodeExport(ref.openCodeSessionId, {
+          binary: this.openCodeBinary()
+        });
+        if (exported) return exported;
+      }
+      return null;
     }
     const path = transcriptPath(ref.cwd, ref.claudeSessionId);
     return path ? readSessionStats(path) : null;

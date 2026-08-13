@@ -32,6 +32,7 @@
 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { execFile } from 'node:child_process';
 import Database from 'better-sqlite3';
 import type {
   SessionStats,
@@ -41,14 +42,16 @@ import type {
 } from '@shared/types';
 
 /** Absolute path to OpenCode's session database, honoring its own XDG override. */
-export function openCodeDbPath(): string {
-  const dataHome = process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share');
+export function openCodeDbPath(home = homedir()): string {
+  const dataHome = process.env.XDG_DATA_HOME || join(home, '.local', 'share');
   return join(dataHome, 'opencode', 'opencode.db');
 }
 
 /** The `session` row fields this reader reads. */
 interface OpenCodeSessionRow {
   model: string | null;
+  version?: string | null;
+  agent?: string | null;
   cost: number;
   tokens_input: number;
   tokens_output: number;
@@ -305,7 +308,16 @@ export function buildSessionStatsOpenCode(
 
   const fileList: SessionFileTouch[] = [...files.entries()].reverse().map(([path, op]) => ({ path, op }));
 
-  return { model, contextTokens: undefined, costUsd, tokens, files: fileList, queue };
+  return {
+    model,
+    ...(typeof session?.version === 'string' && session.version ? { harnessVersion: session.version } : {}),
+    ...(typeof session?.agent === 'string' && session.agent ? { agent: session.agent } : {}),
+    contextTokens: undefined,
+    costUsd,
+    tokens,
+    files: fileList,
+    queue
+  };
 }
 
 /** Open OpenCode's DB read-only, or null if it's missing/unreadable. Never throws. */
@@ -321,21 +333,23 @@ function openReadonly(dbPath: string): InstanceType<typeof Database> | null {
 function fetchSessionRow(db: InstanceType<typeof Database>, sessionId: string): OpenCodeSessionRow | undefined {
   return db
     .prepare(
-      `SELECT model, cost, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write
+      `SELECT model, version, agent, cost, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write
        FROM session WHERE id = ?`
     )
     .get(sessionId) as OpenCodeSessionRow | undefined;
 }
 
-/** Fetch a session's message⋈part rows, oldest first, capped at `limit` rows. */
+/** Fetch a session's newest message⋈part rows in chronological order. */
 function fetchPartRows(db: InstanceType<typeof Database>, sessionId: string, limit: number): OpenCodePartRow[] {
   return db
     .prepare(
-      `SELECT m.data as mdata, p.data as pdata
-       FROM part p JOIN message m ON p.message_id = m.id
-       WHERE p.session_id = ?
-       ORDER BY p.time_created ASC
-       LIMIT ?`
+      `SELECT mdata, pdata FROM (
+         SELECT p.time_created, p.id, m.data as mdata, p.data as pdata
+         FROM part p JOIN message m ON p.message_id = m.id
+         WHERE p.session_id = ?
+         ORDER BY p.time_created DESC, p.id DESC
+         LIMIT ?
+       ) ORDER BY time_created ASC, id ASC`
     )
     .all(sessionId, limit) as OpenCodePartRow[];
 }
@@ -401,6 +415,9 @@ export async function readSessionStatsOpenCode(
   if (!db) return null;
   try {
     const session = fetchSessionRow(db, sessionId);
+    // A stale resolver match must not become an empty successful snapshot. Let
+    // TranscriptSource retry its bounded directory+spawn-time fallback instead.
+    if (!session) return null;
     const rows = fetchPartRows(db, sessionId, MAX_PART_ROWS);
     return buildSessionStatsOpenCode(session, rows);
   } catch {
@@ -408,4 +425,89 @@ export async function readSessionStatsOpenCode(
   } finally {
     db.close();
   }
+}
+
+interface OpenCodeExport {
+  info?: {
+    model?: { id?: unknown };
+    version?: unknown;
+    agent?: unknown;
+    cost?: unknown;
+    tokens?: {
+      input?: unknown;
+      output?: unknown;
+      reasoning?: unknown;
+      cache?: { read?: unknown; write?: unknown };
+    };
+  };
+  messages?: Array<{
+    info?: { role?: unknown };
+    parts?: unknown[];
+  }>;
+}
+
+function numeric(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+/** Parse `opencode export <id>` into the same stats projection as the SQLite
+ * reader. Export is the compatibility fallback when Electron cannot load the
+ * native better-sqlite3 binary (for example after an Electron ABI upgrade). */
+export function buildSessionStatsOpenCodeExport(value: unknown): SessionStats | null {
+  if (!value || typeof value !== 'object') return null;
+  const exported = value as OpenCodeExport;
+  const info = exported.info;
+  if (!info) return null;
+  const tokens = info.tokens;
+  const row: OpenCodeSessionRow = {
+    model: typeof info.model?.id === 'string'
+      ? JSON.stringify({ id: info.model.id })
+      : null,
+    version: typeof info.version === 'string' ? info.version : null,
+    agent: typeof info.agent === 'string' ? info.agent : null,
+    cost: numeric(info.cost),
+    tokens_input: numeric(tokens?.input),
+    tokens_output: numeric(tokens?.output),
+    tokens_reasoning: numeric(tokens?.reasoning),
+    tokens_cache_read: numeric(tokens?.cache?.read),
+    tokens_cache_write: numeric(tokens?.cache?.write)
+  };
+  const rows: OpenCodePartRow[] = [];
+  const messages = Array.isArray(exported.messages) ? exported.messages : [];
+  for (let messageIndex = messages.length - 1; messageIndex >= 0 && rows.length < MAX_PART_ROWS; messageIndex -= 1) {
+    const message = messages[messageIndex];
+    const role = typeof message.info?.role === 'string' ? message.info.role : '';
+    const parts = Array.isArray(message.parts) ? message.parts : [];
+    for (let partIndex = parts.length - 1; partIndex >= 0 && rows.length < MAX_PART_ROWS; partIndex -= 1) {
+      const part = parts[partIndex];
+      rows.push({ mdata: JSON.stringify({ role }), pdata: JSON.stringify(part) });
+    }
+  }
+  return buildSessionStatsOpenCode(row, rows.reverse());
+}
+
+const EXPORT_TIMEOUT_MS = 8_000;
+const EXPORT_MAX_BUFFER = 16 * 1024 * 1024;
+
+/** Read stats through OpenCode's own CLI. Slower than direct SQLite, so callers
+ * use this only after the native reader fails. Never throws. */
+export async function readSessionStatsOpenCodeExport(
+  sessionId: string,
+  opts: { binary?: string } = {}
+): Promise<SessionStats | null> {
+  return new Promise((resolve) => {
+    execFile(
+      opts.binary ?? 'opencode',
+      ['export', sessionId],
+      { timeout: EXPORT_TIMEOUT_MS, maxBuffer: EXPORT_MAX_BUFFER },
+      (error, stdout) => {
+        if (error) return resolve(null);
+        try {
+          resolve(buildSessionStatsOpenCodeExport(JSON.parse(stdout)));
+        } catch {
+          resolve(null);
+        }
+      }
+    );
+  });
 }

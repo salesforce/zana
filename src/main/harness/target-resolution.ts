@@ -23,6 +23,8 @@ export interface ModelResolution {
   level?: ModelLevel;
   source: 'per-tab' | 'project' | 'persona' | 'global' | 'native-default';
   structuredSelected: boolean;
+  /** A trailing raw model flag may override config-derived launch selection. */
+  rawOverride?: boolean;
   contribution: HarnessNativeContribution;
 }
 
@@ -239,7 +241,7 @@ export function resolveModelTarget(provider: LaunchProvider, input: TargetResolu
     throw new Error('Structured model selection conflicts with raw --model arguments. Remove raw model arguments or clear structured selection.');
   }
 
-  return { providerTargetId, targetId, level, source, structuredSelected, contribution };
+  return { providerTargetId, targetId, level, source, structuredSelected, rawOverride: hasRawModel, contribution };
 }
 
 export function resolveRoleTarget(provider: LaunchProvider, input: TargetResolutionInput): RoleResolution {
