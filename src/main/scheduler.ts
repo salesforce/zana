@@ -785,20 +785,47 @@ export class SchedulerManager extends EventEmitter {
         this.nonHookWatchdogs.delete(session.id);
       }
       const exitMs = Date.now();
+
+      // Exit code 0 alone doesn't mean the run actually completed: a severed
+      // stream (e.g. the known Zscaler SSE idle-drop) can still leave the CLI
+      // exiting 0 after the agent never reached its work. `schedule_report` is
+      // the run's own signal that it got to the end, so for a report-capable
+      // profile (only `claude` currently wires the `schedule_report` MCP tool —
+      // `injectsClaudeMcpConfig`) on a non-`silent` schedule, an exit-0 run that
+      // never filed one is stamped `incomplete` rather than `success` — silence
+      // must never look like success. `silent` schedules are exempt: nothing
+      // reads their report either way.
+      const expectsReport =
+        (live.task.inboxLevel ?? 'quiet') !== 'silent' &&
+        providerCapabilities(effectiveProfile).injectsClaudeMcpConfig;
+      const existingRun = live.task.status.runs.find(
+        (r) => r.id === runId || r.sessionId === session.id
+      );
+      const hasReport = !!existingRun?.report || !!existingRun?.reportStatus;
+      const result: ScheduleRun['result'] =
+        exitCode !== 0 ? 'error' : expectsReport && !hasReport ? 'incomplete' : 'success';
+
       const finalRun: ScheduleRun = {
         id: runId,
         at: runStartedAt,
-        result: exitCode === 0 ? 'success' : 'error',
+        result,
         sessionId: session.id,
         durationMs: exitMs - runStartMs,
-        message: exitCode === 0 ? undefined : `exit ${exitCode}`
+        message:
+          exitCode !== 0
+            ? `exit ${exitCode}`
+            : result === 'incomplete'
+            ? 'exited without filing a schedule_report — possible silent failure'
+            : undefined
       };
       this.recordRun(id, finalRun);
       // `silent` schedules never write a completion summary; `quiet`/`loud`
       // both write one, stamped with the level so the renderer can decide
-      // badge counting and inline-vs-grouped placement.
+      // badge counting and inline-vs-grouped placement. An `incomplete` run
+      // always escalates the notice to `loud` regardless of the schedule's
+      // configured level, so a quiet schedule's silent failure still surfaces.
       if ((live.task.inboxLevel ?? 'quiet') !== 'silent') {
-        void this.notifyInboxOnExit(live.task, finalRun, project);
+        void this.notifyInboxOnExit(live.task, finalRun, project, result === 'incomplete');
       }
     };
     this.deps?.ptys.on('exit', onExit);
@@ -824,13 +851,15 @@ export class SchedulerManager extends EventEmitter {
   private async notifyInboxOnExit(
     task: ScheduledTask,
     run: ScheduleRun,
-    project: Project
+    project: Project,
+    forceLoud = false
   ) {
     if (!this.deps?.inbox) return;
     try {
       const durationStr =
         run.durationMs !== undefined ? ` in ${formatDuration(run.durationMs)}` : '';
-      const body = `**${task.name}** — ${run.result}${durationStr}`;
+      const resultLabel = run.result === 'incomplete' ? '⚠️ incomplete' : run.result;
+      const body = `**${task.name}** — ${resultLabel}${durationStr}`;
       await this.deps.inbox.append({
         projectId: project.id,
         projectLabel: project.name,
@@ -848,8 +877,10 @@ export class SchedulerManager extends EventEmitter {
         scheduled: true,
         // `loud` schedules count toward the unread badge and render inline;
         // `quiet` (the default) stay collapsed and badge-free. `silent` never
-        // reaches here (gated by the caller).
-        notify: task.inboxLevel ?? 'quiet'
+        // reaches here (gated by the caller). `forceLoud` (an `incomplete`
+        // run) overrides the schedule's own level — a silent failure must
+        // surface even on a `quiet` schedule.
+        notify: forceLoud ? 'loud' : task.inboxLevel ?? 'quiet'
       });
     } catch (err) {
       this.log(`notifyInbox ${task.id}`, err);
@@ -927,7 +958,11 @@ export class SchedulerManager extends EventEmitter {
    * `recordRun` — so the report and the exit-time result are commutative:
    *   - report before exit: merges onto the optimistic run; later onExit spread
    *     (`{...existing, ...finalRun}`) carries no `report`, so it's preserved.
-   *   - report after exit: merges onto the finalized run.
+   *   - report after exit: merges onto the finalized run. If the exit handler
+   *     had already stamped it `incomplete` (no report seen yet), a report
+   *     arriving late is proof the run DID reach its end — just filed a beat
+   *     after the process closed — so it's promoted back to `success` here
+   *     rather than left permanently flagged as a silent failure.
    *
    * Best-effort: if the run was evicted from the ring buffer (extremely
    * unlikely within one run's lifetime), we log and return — the tool still
@@ -946,12 +981,17 @@ export class SchedulerManager extends EventEmitter {
           ? idxFromMap
           : runs.findIndex((r) => r.sessionId === sessionId);
       if (idx < 0) continue;
+      const wasIncomplete = runs[idx].result === 'incomplete';
       runs[idx] = {
         ...runs[idx],
         report: summary,
         reportedAt: new Date().toISOString(),
-        reportStatus: status
+        reportStatus: status,
+        ...(wasIncomplete ? { result: 'success' as const } : {})
       };
+      if (wasIncomplete && live.task.status.lastRunSessionId === sessionId) {
+        live.task.status.lastRunResult = 'success';
+      }
       this.persist(live.task);
       this.emit('changed');
       return;

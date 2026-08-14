@@ -548,6 +548,74 @@ describe('SchedulerManager.attachReport', () => {
   });
 });
 
+describe('SchedulerManager — incomplete (exit-0 with no schedule_report)', () => {
+  // Regression for the reported bug: a severed stream (Zscaler SSE idle-drop,
+  // etc.) can still leave the CLI exiting 0 after the agent never reached its
+  // work — indistinguishable from a real success by exit code alone. A
+  // report-capable, non-silent schedule that exits 0 without ever filing a
+  // `schedule_report` must be stamped `incomplete`, not `success`.
+  const runsOf = (manager: SchedulerManager, id: string) =>
+    manager.list().find((t) => t.id === id)!.status.runs;
+
+  it('stamps a claude run "incomplete" when exit-0 arrives with no report filed', () => {
+    const { manager, ptys, task } = makeManager({ prompt: 'work' }); // profile: claude, inboxLevel default 'quiet'
+    autoFire(manager, task.id);
+    const sid = ptys.sessions[0].id;
+
+    ptys.simulateExit(sid, 0); // no schedule_report ever called
+
+    const run = runsOf(manager, task.id).find((r) => r.sessionId === sid)!;
+    expect(run.result).toBe('incomplete');
+    expect(run.message).toMatch(/schedule_report/);
+    expect(manager.list().find((t) => t.id === task.id)!.status.lastRunResult).toBe('incomplete');
+  });
+
+  it('still reports "success" when the report was filed before exit', () => {
+    const { manager, ptys, task } = makeManager({ prompt: 'work' });
+    autoFire(manager, task.id);
+    const sid = ptys.sessions[0].id;
+
+    manager.attachReport(sid, 'all good', 'success');
+    ptys.simulateExit(sid, 0);
+
+    const run = runsOf(manager, task.id).find((r) => r.sessionId === sid)!;
+    expect(run.result).toBe('success');
+  });
+
+  it('does not flag "incomplete" on a `silent` schedule (nothing reads its report)', () => {
+    const { manager, ptys, task } = makeManager({ prompt: 'work', inboxLevel: 'silent' });
+    autoFire(manager, task.id);
+    const sid = ptys.sessions[0].id;
+
+    ptys.simulateExit(sid, 0);
+
+    const run = runsOf(manager, task.id).find((r) => r.sessionId === sid)!;
+    expect(run.result).toBe('success');
+  });
+
+  it('does not flag "incomplete" on a profile that can\'t file a report (e.g. cursor)', () => {
+    const { manager, ptys, task } = makeManager({ profile: 'cursor', prompt: 'work' });
+    autoFire(manager, task.id);
+    const sid = ptys.sessions[0].id;
+
+    ptys.simulateExit(sid, 0);
+
+    const run = runsOf(manager, task.id).find((r) => r.sessionId === sid)!;
+    expect(run.result).toBe('success');
+  });
+
+  it('a non-zero exit still records "error", never "incomplete"', () => {
+    const { manager, ptys, task } = makeManager({ prompt: 'work' });
+    autoFire(manager, task.id);
+    const sid = ptys.sessions[0].id;
+
+    ptys.simulateExit(sid, 1);
+
+    const run = runsOf(manager, task.id).find((r) => r.sessionId === sid)!;
+    expect(run.result).toBe('error');
+  });
+});
+
 describe('SchedulerManager.recordRun — eviction of a long-lived run', () => {
   const statusOf = (manager: SchedulerManager, id: string) =>
     manager.list().find((t) => t.id === id)!.status;
@@ -634,6 +702,7 @@ describe('SchedulerManager.onAgentFinished', () => {
     const sid = ptys.sessions[0].id;
 
     manager.onAgentFinished(sid); // turn ends, pty still alive
+    manager.attachReport(sid, 'done'); // filed its report, as expected
     ptys.simulateExit(sid, 0); // later the pty actually exits
 
     const run = runsOf(manager, task.id).find((r) => r.sessionId === sid)!;
