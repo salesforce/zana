@@ -269,7 +269,8 @@ describe('OpenCode project agent discovery', () => {
     })).toEqual([
       { id: 'plan', native: 'plan', states: ['plan'] },
       { id: 'interactive', native: 'default', states: ['interactive'] },
-      { id: 'accept-edits', native: 'force', states: ['accept-edits', 'autonomous'] }
+      { id: 'accept-edits', native: 'force', states: ['accept-edits', 'autonomous'] },
+      { id: 'autonomous', native: 'force', states: ['accept-edits', 'autonomous'] }
     ]);
   });
 

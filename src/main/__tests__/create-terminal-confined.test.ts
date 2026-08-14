@@ -26,6 +26,10 @@ const PROJECT: Project = {
   path: '/tmp/proj'
 } as Project;
 
+// Main launch code canonicalizes registered project paths. Keep this shared
+// fixture real rather than depending on a developer's leftover /tmp state.
+mkdirSync(PROJECT.path, { recursive: true });
+
 const CONFIG: AppConfig = {
   version: 1,
   theme: 'dark',

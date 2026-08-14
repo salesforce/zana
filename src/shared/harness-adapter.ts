@@ -69,13 +69,18 @@ export function executionMappingOptions(mapping: Readonly<Partial<Record<Executi
   native: string;
   states: ExecutionState[];
 }> {
-  const byNative = new Map<string, { id: ExecutionState; native: string; states: ExecutionState[] }>();
+  const statesByNative = new Map<string, ExecutionState[]>();
   for (const [state, native] of Object.entries(mapping) as Array<[ExecutionState, string]>) {
-    const option = byNative.get(native);
-    if (option) option.states.push(state);
-    else byNative.set(native, { id: state, native, states: [state] });
+    const states = statesByNative.get(native);
+    if (states) states.push(state);
+    else statesByNative.set(native, [state]);
   }
-  return [...byNative.values()];
+  // Keep every portable state selectable even where the native harness applies
+  // one policy to several states. The shared label explains equivalence without
+  // silently rewriting a saved or user-selected state.
+  return [...statesByNative.entries()].flatMap(([native, states]) =>
+    states.map((id) => ({ id, native, states }))
+  );
 }
 
 export interface HarnessModelTarget {

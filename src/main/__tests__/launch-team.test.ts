@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import type { Project, AppConfig, ProjectSettings, Persona, Team } from '../../shared/types.js';
 
 /**
@@ -15,6 +15,10 @@ import type { Project, AppConfig, ProjectSettings, Persona, Team } from '../../s
  */
 
 const PROJECT: Project = { id: 'p1', name: 'Proj', path: '/tmp/proj' } as Project;
+
+// Main launch code canonicalizes registered project paths. Keep this shared
+// fixture real rather than depending on a developer's leftover /tmp state.
+mkdirSync(PROJECT.path, { recursive: true });
 
 const CONFIG: AppConfig = {
   version: 1,
