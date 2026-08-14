@@ -62,6 +62,15 @@ export interface MainModuleContext {
   register(disposable: () => void): void;
 
   /**
+   * Read-only view of disk extensions currently installed in ZCC. The host
+   * exposes only stable ids and recorded Git origins, never filesystem paths or
+   * manifests, so a catalogue can identify already-installed entries safely.
+   */
+  extensions?: {
+    listInstalled(): Promise<Array<{ id: string; repository?: string }>>;
+  };
+
+  /**
    * Brokered capabilities (P3-B). Each is performed HOST-SIDE and gated
    * deny-by-default against the extension's granted permissions + scopes
    * (see `ExtensionManifest.permissions` / `permissionScopes`). For a DISK

@@ -183,6 +183,10 @@ function runWithPort(port: PortLike): void {
         void broker('storage.set', [key, value]);
       }
     },
+    extensions: {
+      listInstalled: () =>
+        broker('extensions.listInstalled', []) as Promise<Array<{ id: string; repository?: string }>>
+    },
     log: (message: string, err?: unknown) => {
       void broker('log', [message, err === undefined ? undefined : errToString(err)]);
     },

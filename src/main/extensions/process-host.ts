@@ -241,10 +241,12 @@ export interface ProcessHostOptions {
    * Shared persona/team registry (design §2d). Optional: when absent, a
    * `personas.*`/`teams.*` broker request is rejected. The host stamps
    * provenance from `state.moduleId`, never a payload value.
-   */
+  */
   registry?: PersonaTeamRegistryLike;
   sshHosts?: SshHostProviderRegistryLike;
   listSshHosts?: (moduleId: string) => Promise<SshHostEntry[]>;
+  /** Read-only installed-extension catalogue, scoped by the host rather than the child. */
+  listInstalledExtensions?: () => Array<{ id: string; repository?: string }>;
   /** Per-dispatch timeout (ms). A child that doesn't answer is rejected. Default 30s. */
   callTimeoutMs?: number;
   /** Teardown-RPC deadline (ms) before the child is killed regardless. Default 2s. */
@@ -609,6 +611,9 @@ export class ExtensionProcessHost {
         case 'storage.set':
           this.opts.storage.set(id, String(args[0]), args[1]);
           reply(true);
+          break;
+        case 'extensions.listInstalled':
+          reply(true, this.opts.listInstalledExtensions?.() ?? []);
           break;
         case 'log':
           this.opts.log(`[ext:${id}] ${String(args[0])}`, args[1]);

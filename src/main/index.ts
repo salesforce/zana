@@ -2267,6 +2267,10 @@ extProcessHost = new ExtensionProcessHost({
   // Disk-ext persona/team contribution routes here; the host stamps provenance
   // from the authenticated `state.moduleId` bound to the child's port.
   registry: personaTeamRegistry,
+  listInstalledExtensions: () =>
+    extensionEntries
+      .filter((entry) => entry.manifest)
+      .map((entry) => ({ id: entry.id })),
   log: logMainError
 });
 // The single dispatch entry the `modules:call` IPC handler routes through:
