@@ -38,7 +38,12 @@ import type {
   TerminalSession,
   WorkflowArgument
 } from '@shared/types';
-import type { HarnessAdapterDescriptor } from '@shared/harness-adapter';
+import { executionMappingOptions } from '@shared/harness-adapter';
+import type {
+  HarnessAdapterDescriptor,
+  HarnessRoleTarget,
+  OpenCodeAgentDiscoveryResult
+} from '@shared/harness-adapter';
 import {
   buildInterviewPrompt,
   hasArguments,
@@ -220,6 +225,52 @@ const PORTABLE_EXECUTION_STATES = [
   { id: 'autonomous', label: 'Autonomous (fully auto)' }
 ] as const;
 
+type OpenCodeAgentDiscoveryState = OpenCodeAgentDiscoveryResult | { status: 'loading' };
+type OpenCodeAgentDiscoverySnapshot = {
+  projectId: string;
+  discovery: OpenCodeAgentDiscoveryState;
+};
+
+export function discoveryForOpenCodePicker(
+  projectId: string | undefined,
+  snapshot: OpenCodeAgentDiscoverySnapshot | null
+): OpenCodeAgentDiscoveryState {
+  if (!projectId) return { status: 'failure' };
+  return snapshot?.projectId === projectId ? snapshot.discovery : { status: 'loading' };
+}
+
+export function resolveOpenCodeRoleOptions(
+  staticRoles: readonly HarnessRoleTarget[],
+  discovery: OpenCodeAgentDiscoveryResult
+): readonly HarnessRoleTarget[] {
+  if (discovery.status === 'failure') return [];
+  const knownRoles = new Map(staticRoles.map((role) => [role.id, role]));
+  return discovery.descriptors
+    .filter(({ directLaunchAllowed }) => directLaunchAllowed)
+    .map(({ id, label }) => {
+      const known = knownRoles.get(id);
+      const stateLabel = known?.executionStates?.map(portableLabel).join(', ');
+      return { id, label: stateLabel ? `${label} [${stateLabel}]` : label, scope: ['local'] };
+    });
+}
+
+export function reconcileOpenCodeRole(
+  selectedRole: string | undefined,
+  discovery: OpenCodeAgentDiscoveryResult
+): string | undefined {
+  if (!selectedRole || discovery.status === 'failure') return selectedRole;
+  return discovery.descriptors.some(({ id, directLaunchAllowed }) => id === selectedRole && directLaunchAllowed)
+    ? selectedRole
+    : undefined;
+}
+
+export function roleTargetValueForPicker(
+  selectedRole: string | undefined,
+  roles: readonly HarnessRoleTarget[]
+): string {
+  return selectedRole && roles.some(({ id }) => id === selectedRole) ? selectedRole : '';
+}
+
 function portableLabel(value: string): string {
   return value.split('-').map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
 }
@@ -248,10 +299,14 @@ export function launcherRoutingFromPersona(persona: Persona): Partial<Record<Har
 function NativeAgentRoutingFields({
   descriptor,
   routing,
+  agentDiscovery,
+  onRefreshAgentDescriptors,
   onChange
 }: {
   descriptor: HarnessAdapterDescriptor;
   routing: LauncherRouting;
+  agentDiscovery: OpenCodeAgentDiscoveryState;
+  onRefreshAgentDescriptors: () => void;
   onChange: (patch: Partial<LauncherRouting>) => void;
 }) {
   const targets = descriptor.targets;
@@ -267,24 +322,65 @@ function NativeAgentRoutingFields({
     : targets?.models ?? [];
   const unavailable = !descriptor.availability.enabled || !descriptor.availability.installed;
   const codexUi = providerUiSchema('codex');
+  const dynamicAgentsActive = descriptor.id === 'opencode';
+  const agentDescriptorsLoading = agentDiscovery.status === 'loading';
+  const agentDescriptorsFailed = agentDiscovery.status === 'failure';
+  const roleOptions = agentDiscovery.status === 'loading'
+    ? []
+    : resolveOpenCodeRoleOptions(targets?.roles ?? [], agentDiscovery);
+  const visibleRoleTargetId = roleTargetValueForPicker(
+    routing.roleTargetId,
+    dynamicAgentsActive ? roleOptions : targets?.roles ?? []
+  );
 
   return (
     <>
       {!!targets?.roles.length && (
         <div className="launch-row launch-native-field--role">
-          <label className="launch-row-label" htmlFor="launch-role-target">Native role</label>
-          <input
-            id="launch-role-target"
-            className="launch-folder-select"
-            list={`launch-role-targets-${descriptor.id}`}
-            value={routing.roleTargetId ?? ''}
-            disabled={unavailable}
-            onChange={(event) => onChange({ roleTargetId: event.target.value || undefined })}
-            placeholder="Use harness default"
-          />
-          <datalist id={`launch-role-targets-${descriptor.id}`}>
-            {targets.roles.map((target) => <option key={target.id} value={target.id}>{target.label}</option>)}
-          </datalist>
+          <label className="launch-row-label" htmlFor="launch-role-target">
+            {dynamicAgentsActive ? 'Effective OpenCode agent' : 'Native role'}
+          </label>
+          {dynamicAgentsActive ? (
+            <div className="launch-opencode-role-control">
+              <select
+                id="launch-role-target"
+                className="launch-folder-select"
+                value={visibleRoleTargetId}
+                disabled={unavailable || agentDescriptorsLoading || agentDescriptorsFailed}
+                onChange={(event) => onChange({ roleTargetId: event.target.value || undefined })}
+              >
+                <option value="">
+                  {agentDescriptorsLoading ? 'Loading agents…' : 'Use harness default'}
+                </option>
+                {roleOptions.map((target) => <option key={target.id} value={target.id}>{target.label}</option>)}
+              </select>
+              <button
+                type="button"
+                className="launch-advanced-toggle"
+                onClick={onRefreshAgentDescriptors}
+                disabled={unavailable || agentDescriptorsLoading}
+                aria-label="Refresh agents"
+                title="Refresh agents"
+              >
+                {agentDescriptorsLoading ? '…' : '↻'}
+              </button>
+            </div>
+          ) : (
+            <>
+              <input
+                id="launch-role-target"
+                className="launch-folder-select"
+                list={`launch-role-targets-${descriptor.id}`}
+                value={visibleRoleTargetId}
+                disabled={unavailable}
+                onChange={(event) => onChange({ roleTargetId: event.target.value || undefined })}
+                placeholder="Use harness default"
+              />
+              <datalist id={`launch-role-targets-${descriptor.id}`}>
+                {targets.roles.map((target) => <option key={target.id} value={target.id}>{target.label}</option>)}
+              </datalist>
+            </>
+          )}
         </div>
       )}
       {!!targets?.models.length && (
@@ -299,7 +395,7 @@ function NativeAgentRoutingFields({
           />
         </div>
       )}
-      {targets?.executionStateMapping && descriptor.id !== 'codex' && (
+      {targets?.executionStateMapping && descriptor.id !== 'codex' && descriptor.id !== 'opencode' && (
         <div className="launch-row launch-native-field--execution">
           <label className="launch-row-label" htmlFor="launch-native-execution">Execution State</label>
           <select
@@ -312,8 +408,8 @@ function NativeAgentRoutingFields({
             })}
           >
             <option value="">Use project/global default</option>
-            {Object.entries(targets.executionStateMapping).map(([state, native]) => (
-              <option key={state} value={state}>{native} [{portableLabel(state)}]</option>
+              {executionMappingOptions(targets.executionStateMapping).map(({ id, native, states }) => (
+                <option key={id} value={id}>{native} [{states.map(portableLabel).join(', ')}]</option>
             ))}
           </select>
         </div>
@@ -1018,6 +1114,8 @@ export const AgentLauncher = memo(function AgentLauncher({
   const [mode, setMode] = useState<'agent' | 'autonomous'>('agent');
   const [teamId, setTeamId] = useState<string | null>(null);
   const [harnessDescriptors, setHarnessDescriptors] = useState<HarnessAdapterDescriptor[]>([]);
+  const [openCodeAgentDiscoverySnapshot, setOpenCodeAgentDiscoverySnapshot] = useState<OpenCodeAgentDiscoverySnapshot | null>(null);
+  const [agentDescriptorsRefresh, setAgentDescriptorsRefresh] = useState(0);
   const [portableRouting, setPortableRouting] = useState<LauncherRouting>({});
   const [nativeRouting, setNativeRouting] = useState<Partial<Record<HarnessFamily, LauncherRouting>>>({});
   const [agentRoutingDirty, setAgentRoutingDirty] = useState(false);
@@ -1151,6 +1249,18 @@ export const AgentLauncher = memo(function AgentLauncher({
   const selectedHarnessDescriptor = family
     ? harnessDescriptors.find((entry) => entry.id === family.id)
     : undefined;
+  const openCodeAgentDiscoveryProjectId =
+    selectedHarnessDescriptor?.id === 'opencode' &&
+    selectedHarnessDescriptor.availability.enabled &&
+    selectedHarnessDescriptor.availability.installed &&
+    target &&
+    !target.remote
+      ? target.id
+      : undefined;
+  const openCodeAgentDiscovery = discoveryForOpenCodePicker(
+    openCodeAgentDiscoveryProjectId,
+    openCodeAgentDiscoverySnapshot
+  );
   const selectedNativeRouting = family ? nativeRouting[family.id] ?? {} : {};
   const customizationCount =
     (agentRoutingDirty ? 1 : 0) +
@@ -1347,6 +1457,47 @@ export const AgentLauncher = memo(function AgentLauncher({
   useEffect(() => {
     void window.cc.harness.descriptors().then(setHarnessDescriptors).catch(() => setHarnessDescriptors([]));
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!openCodeAgentDiscoveryProjectId) {
+      return () => {
+        cancelled = true;
+      };
+    }
+    setOpenCodeAgentDiscoverySnapshot({
+      projectId: openCodeAgentDiscoveryProjectId,
+      discovery: { status: 'loading' }
+    });
+    void window.cc.harness.agentDescriptors(openCodeAgentDiscoveryProjectId, agentDescriptorsRefresh > 0)
+      .then((discovery) => {
+        if (cancelled) return;
+        setOpenCodeAgentDiscoverySnapshot({ projectId: openCodeAgentDiscoveryProjectId, discovery });
+        setNativeRouting((current) => {
+          const selectedRole = current.opencode?.roleTargetId;
+          const reconciledRole = reconcileOpenCodeRole(selectedRole, discovery);
+          if (reconciledRole === selectedRole) return current;
+          setAgentRoutingDirty(true);
+          const next = { ...current };
+          const nextOpenCode = { ...(current.opencode ?? {}) };
+          delete nextOpenCode.roleTargetId;
+          if (Object.keys(nextOpenCode).length) next.opencode = nextOpenCode;
+          else delete next.opencode;
+          return next;
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setOpenCodeAgentDiscoverySnapshot({
+            projectId: openCodeAgentDiscoveryProjectId,
+            discovery: { status: 'failure' }
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [openCodeAgentDiscoveryProjectId, agentDescriptorsRefresh]);
 
   useEffect(() => {
     composerRef.current?.focus();
@@ -2046,7 +2197,7 @@ export const AgentLauncher = memo(function AgentLauncher({
 
           {mode === 'agent' && advanced && (
             <div id="agent-launcher-advanced" className="launch-advanced">
-              {!profileChosen && (
+              {!profileChosen && selectedHarnessDescriptor?.id !== 'opencode' && (
                 <div className="launch-routing-defaults" data-testid="launch-portable-routing">
                   <span className="launch-routing-defaults-label">Launch defaults</span>
                   <div className="launch-routing-defaults-fields">
@@ -2097,6 +2248,16 @@ export const AgentLauncher = memo(function AgentLauncher({
                     <NativeAgentRoutingFields
                       descriptor={selectedHarnessDescriptor}
                       routing={selectedNativeRouting}
+                      agentDiscovery={openCodeAgentDiscovery}
+                      onRefreshAgentDescriptors={() => {
+                        if (openCodeAgentDiscoveryProjectId) {
+                          setOpenCodeAgentDiscoverySnapshot({
+                            projectId: openCodeAgentDiscoveryProjectId,
+                            discovery: { status: 'loading' }
+                          });
+                        }
+                        setAgentDescriptorsRefresh((value) => value + 1);
+                      }}
                       onChange={(patch) => updateNativeRouting(family!.id, patch)}
                     />
                   </div>

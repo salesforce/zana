@@ -58,14 +58,14 @@ export function writeRegistryConfig(home: string, cfg: RegistryConfig): void {
 }
 
 /** Seed first-run state that is not part of the UI behavior under test. */
-function writeAppConfig(home: string): void {
+function writeAppConfig(home: string, initialConfig: Record<string, unknown> = {}): void {
   const dir = join(home, '.zcc');
   mkdirSync(dir, { recursive: true });
   const configPath = join(dir, 'config.json');
   if (!existsSync(configPath)) {
     writeFileSync(
       configPath,
-      JSON.stringify({ walkthroughCompleted: true, setupDismissed: true }, null, 2)
+      JSON.stringify({ walkthroughCompleted: true, setupDismissed: true, ...initialConfig }, null, 2)
     );
   }
 }
@@ -168,6 +168,8 @@ export interface LaunchOptions {
   env?: Record<string, string>;
   /** Arm the gated test-observability tap (ZCC_E2E=1 → window.__zccTest). */
   e2e?: boolean;
+  /** Config fields written before app boot for startup-path coverage. */
+  initialConfig?: Record<string, unknown>;
 }
 
 /**
@@ -179,10 +181,11 @@ export interface LaunchOptions {
  * path without duplicating it.
  */
 export async function launchApp(home: string, opts: LaunchOptions = {}): Promise<AppHandle> {
-  writeAppConfig(home);
+  writeAppConfig(home, opts.initialConfig);
+  const preserveHome = opts.env?.ZCC_E2E_PRESERVE_HOME === '1';
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
-    HOME: home,
+    HOME: preserveHome ? homedir() : home,
     ZCC_E2E_HOME: home,
     ZCC_EXTENSIONS_DIR: join(home, '.zcc', 'extensions'),
     // Electron's unpackaged default is "0.0". The main process uses this only
@@ -235,6 +238,8 @@ type Fixtures = {
   e2e: boolean;
   /** Additional process env for focused boot-path specs. */
   launchEnv: Record<string, string>;
+  /** Config fields written before Electron starts. */
+  initialConfig: Record<string, unknown>;
   /**
    * Seed the sandbox HOME with the developer's real `claude` auth/onboarding
    * state so a launched real agent can run a turn. Opt-in — only the AI specs
@@ -255,6 +260,7 @@ export const test = base.extend<Fixtures>({
   dummySpec: [{}, { option: true }],
   e2e: [false, { option: true }],
   launchEnv: [{}, { option: true }],
+  initialConfig: [{}, { option: true }],
   seedClaudeAuth: [false, { option: true }],
 
   home: async ({}, use) => {
@@ -280,7 +286,7 @@ export const test = base.extend<Fixtures>({
     }
   },
 
-  app: async ({ home, registry, requireSignature, e2e, launchEnv, seedClaudeAuth }, use) => {
+  app: async ({ home, registry, requireSignature, e2e, launchEnv, initialConfig, seedClaudeAuth }, use) => {
     if (registry) {
       writeRegistryConfig(home, {
         enabled: true,
@@ -305,7 +311,20 @@ export const test = base.extend<Fixtures>({
       ? readFileSync(realConfigPath, 'utf8')
       : null;
 
-    const handle = await launchApp(home, { caCertPath: registry?.caCertPath, e2e, env: launchEnv });
+    // Electron on macOS resolves config through app.getPath('home'), not the
+    // sandbox HOME. Seed its real path before boot, then restore it in teardown.
+    if (process.platform === 'darwin' && Object.keys(initialConfig).length > 0) {
+      const current = realConfigBefore === null ? {} : JSON.parse(realConfigBefore) as Record<string, unknown>;
+      mkdirSync(join(homedir(), '.zcc'), { recursive: true });
+      writeFileSync(realConfigPath, JSON.stringify({ ...current, ...initialConfig }, null, 2));
+    }
+
+    const handle = await launchApp(home, {
+      caCertPath: registry?.caCertPath,
+      e2e,
+      env: launchEnv,
+      initialConfig
+    });
     try {
       await use(handle);
     } finally {

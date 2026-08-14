@@ -26,6 +26,29 @@ export type HarnessExecutionRisk = 'low' | 'medium' | 'high' | 'critical';
 export type HarnessConsentRequirement = 'none' | 'required';
 export type ProviderModelRelationship = 'fixed-provider' | 'provider-then-model' | 'combined-provider-model' | 'model-only';
 
+/** Renderer-safe effective OpenCode agent metadata. */
+export interface OpenCodeAgentDescriptor {
+  id: string;
+  label: string;
+  mode: 'primary' | 'subagent' | 'all';
+  hidden: boolean;
+  directLaunchAllowed: boolean;
+}
+
+export type OpenCodeAgentDiscoveryFailureReason =
+  | 'list-failed'
+  | 'debug-failed'
+  | 'invalid-debug-metadata';
+
+export type OpenCodeAgentDiscoveryResult =
+  | { status: 'success'; descriptors: OpenCodeAgentDescriptor[] }
+  | {
+      status: 'failure';
+      reason?: OpenCodeAgentDiscoveryFailureReason;
+      /** Safe parsed agent id only; never command output or configuration. */
+      agentId?: string;
+    };
+
 export interface HarnessProviderTarget {
   id: string;
   label: string;
@@ -34,8 +57,25 @@ export interface HarnessProviderTarget {
 export interface HarnessRoleTarget {
   id: string;
   label: string;
+  /** Portable states represented by this native agent role, when known. */
+  executionStates?: readonly ExecutionState[];
   scope: HarnessScope[];
   evidenceVersion?: string;
+}
+
+/** One native policy can implement several portable execution states. */
+export function executionMappingOptions(mapping: Readonly<Partial<Record<ExecutionState, string>>>): Array<{
+  id: ExecutionState;
+  native: string;
+  states: ExecutionState[];
+}> {
+  const byNative = new Map<string, { id: ExecutionState; native: string; states: ExecutionState[] }>();
+  for (const [state, native] of Object.entries(mapping) as Array<[ExecutionState, string]>) {
+    const option = byNative.get(native);
+    if (option) option.states.push(state);
+    else byNative.set(native, { id: state, native, states: [state] });
+  }
+  return [...byNative.values()];
 }
 
 export interface HarnessModelTarget {

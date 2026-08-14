@@ -166,6 +166,7 @@ export const IPC = {
   harness: {
     verify: 'harness:verify',
     descriptors: 'harness:descriptors',
+    agentDescriptors: 'harness:agentDescriptors',
     effectiveDefault: 'harness:effectiveDefault'
   },
   /**

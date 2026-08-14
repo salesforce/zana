@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { X, Trash2, Copy, Pencil, FolderOpen, ChevronRight } from 'lucide-react';
-import type { HarnessAdapterDescriptor } from '@shared/harness-adapter';
+import { executionMappingOptions, type HarnessAdapterDescriptor } from '@shared/harness-adapter';
 import type { HarnessFamily, LaunchProfileId, Persona, PersonaInput } from '@shared/types';
 import {
   harnessFamilyOf,
@@ -258,8 +258,8 @@ function PersonaHarnessRoutingFields({
             })}
           >
             <option value="">Use project/global default</option>
-            {Object.entries(targets.executionStateMapping).map(([state, native]) => (
-              <option key={state} value={state}>{native} [{portableLabel(state)}]</option>
+            {executionMappingOptions(targets.executionStateMapping).map(({ id, native, states }) => (
+              <option key={id} value={id}>{native} [{states.map(portableLabel).join(', ')}]</option>
             ))}
           </select>
         </div>

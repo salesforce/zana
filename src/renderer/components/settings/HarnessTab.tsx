@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle2, XCircle, RefreshCw, ChevronRight } from 'lucide-react';
 import type { AppConfig, HarnessFamily, HarnessVerifyResult, LaunchProfileId } from '@shared/types';
-import type { HarnessAdapterDescriptor } from '@shared/harness-adapter';
+import { executionMappingOptions, type HarnessAdapterDescriptor } from '@shared/harness-adapter';
 import { useData } from '../../store';
 import { profileIcon } from '../../util/profileIcon';
 import { Section, Field, ToggleSwitch, ChipField, TextArgsField } from './FormFields';
@@ -244,8 +244,8 @@ function HarnessRow({
         disabled={!descriptor?.availability.enabled || !descriptor?.availability.installed}
       >
         <option value="">Use harness default</option>
-        {Object.entries(executionMapping).map(([state, native]) => (
-          <option key={state} value={state}>{native} [{portableLabel(state)}]</option>
+        {executionMappingOptions(executionMapping).map(({ id, native, states }) => (
+          <option key={id} value={id}>{native} [{states.map(portableLabel).join(', ')}]</option>
         ))}
       </select>
     </Field>
