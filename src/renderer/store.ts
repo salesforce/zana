@@ -2537,7 +2537,7 @@ export const useData = create<DataState>((set, get) => ({
     const project = get().projects.find((p) => p.id === projectId);
     if (!project) return;
     try {
-      const sessions = await window.cc.claude.listSessions(project.path);
+      const sessions = await window.cc.claude.listSessions(projectId);
       set((s) => ({ claudeSessions: { ...s.claudeSessions, [projectId]: sessions } }));
     } catch (err) {
       pushErrorToast(errorMessage(err, 'Failed to load Claude sessions'));

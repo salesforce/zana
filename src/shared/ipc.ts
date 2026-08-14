@@ -183,6 +183,13 @@ export const IPC = {
   opencode: {
     listSessions: 'opencode:listSessions'
   },
+  history: {
+    start: 'history:start',
+    refresh: 'history:refresh',
+    page: 'history:page',
+    release: 'history:release',
+    resume: 'history:resume'
+  },
   fs: {
     /** Opens the native OS file chooser in main; the renderer never supplies a path. */
     pickFiles: 'fs:pickFiles',

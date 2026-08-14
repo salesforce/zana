@@ -332,6 +332,14 @@ describe('additive launch status', () => {
   });
 });
 
+describe('project-scoped conversation history', () => {
+  it('uses generic main-owned history for every project launcher', () => {
+    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('<AgentConversationHistory projectId={project!.id} unavailableProviders={unavailableHistoryProviders} onResumed={onClose} />');
+    expect(source).not.toContain('conversationHistoryEnabled');
+  });
+});
+
 describe('worktree launch intent', () => {
   const localProject = {
     id: 'local',

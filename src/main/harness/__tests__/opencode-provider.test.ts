@@ -381,6 +381,12 @@ describe('registry.providerFor — opencode family', () => {
 
 describe('OpenCodeProvider', () => {
   const p = new OpenCodeProvider();
+
+  it('builds only a provider-owned exact native resume plan', () => {
+    expect(p.nativeConversationResume('ses_exact')).toEqual({
+      profile: 'opencode-resume', resumeSessionId: 'ses_exact'
+    });
+  });
   const remote: ProjectRemote = { host: 'devbox', user: 'sfwork', remotePath: '/home/sfwork/core' };
 
   it('resolveLaunch: bare opencode, no args', () => {

@@ -33,6 +33,9 @@ e2e-artifacts/
 .claude/settings.local.json
 # Agent git worktrees created under .claude/ (embedded repos, large)
 .claude/worktrees/
+
+# Local worktrees used for isolated feature branches.
+.worktrees/
 .zana/
 
 # Local tool cache (understand-anything knowledge-graph indexer)

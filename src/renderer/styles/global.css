@@ -6602,6 +6602,52 @@ body.resizing-col .ext-hub-resizer::before {
   gap: 2px;
 }
 
+.conversation-history {
+  margin-top: 32px;
+  text-align: left;
+}
+
+.conversation-history-header,
+.conversation-history-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.conversation-history-header {
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.conversation-history-status,
+.conversation-history-coverage,
+.conversation-history-unavailable {
+  margin: 2px 0 0;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.conversation-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.conversation-history-row {
+  min-height: 48px;
+  padding: 5px 6px;
+  border-radius: 8px;
+}
+
+.conversation-history-row .settings-btn {
+  margin-left: auto;
+}
+
+.conversation-history-coverage {
+  min-height: 14px;
+}
+
+
 /* Resumable agents rendered with the global Agents-row look. The prompt title
    can be long, so let it clamp to two lines rather than the single-line ellipsis
    the live-agent rows use. The icon stays top-aligned against the taller text. */

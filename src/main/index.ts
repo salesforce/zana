@@ -55,6 +55,7 @@ import { resolveEffectiveHarnessDefault } from './harness/effective-default.js';
 import { resolveExecutionState } from './harness/target-resolution.js';
 import { listClaudeSessions } from './claude.js';
 import { listOpenCodeSessions } from './opencode-sessions.js';
+import { ConversationHistoryService } from './conversation-history.js';
 import { listDir, readFile as fsReadFile, writeFile as fsWriteFile, walkFiles, searchFiles, readDataUrl, createFile as fsCreateFile, createDir as fsCreateDir, renamePath as fsRename, deletePath as fsDelete, resolveDoc as fsResolveDoc, confine } from './fs.js';
 import {
   remoteRoot as fsRemoteRoot,
@@ -107,6 +108,7 @@ import { killLocalTmuxSession, listLocalTmuxSessionIds, reapOrphanTmuxSessions, 
 import { exportInboxPdf } from './inbox-pdf.js';
 import { createSavedStore, type ISavedStore } from './saved-store.js';
 import type { SavedRecord, SavedRecordInput } from '../shared/types.js';
+import type { ConversationHistorySnapshot } from '../shared/types.js';
 import type { CancelTeamLaunchResult, LaunchTeamResult, TeamLaunchAuthorizationInputSlot, TeamLaunchAuthorizationResult, TeamLaunchRequestInput, TeamFailedWorkerSlot, TeamLaunchedWorker } from '../shared/types.js';
 import type { SubagentChild } from '../shared/types.js';
 import type { FeedEvent, FeedEventInput, FeedDigestResult } from '../shared/types.js';
@@ -710,6 +712,11 @@ function anyWindow(): BrowserWindow | null {
   return null;
 }
 const ptys = new PtyManager();
+const conversationHistory = new ConversationHistoryService({
+  projects: () => store.listProjects(),
+  claude: (project, limit) => listClaudeSessions(project.path, limit),
+  opencode: (project, limit) => listOpenCodeSessions(project.path, { binary: store.getConfig().opencodeBinary, limit })
+});
 // One serialized durable ledger for every coordinator-owned terminal launch.
 const launchLedger = createLaunchLedgerStore({
   filePath: join(app.getPath('userData'), 'launch-ledger.json')
@@ -805,7 +812,12 @@ async function terminateSession(sessionId: string, expected = true): Promise<boo
 }
 
 export function sanitizeRendererTerminalRequest(req: CreateTerminalRequest): CreateTerminalRequest {
-  const { cohort: _cohort, headless: _headless, worktreeInfo: _worktreeInfo, ...safe } = req;
+  const {
+    cohort: _cohort,
+    headless: _headless,
+    worktreeInfo: _worktreeInfo,
+    ...safe
+  } = req;
   return safe;
 }
 const teamLifecycleIntegration = createTeamLifecycleIntegration({
@@ -933,6 +945,7 @@ let agentMessagePruneTimer: NodeJS.Timeout | null = null;
  */
 const PTY_REAP_INTERVAL_MS = 5 * 60 * 1000; // every 5 min
 let ptyReapTimer: NodeJS.Timeout | null = null;
+let conversationHistoryEvictTimer: NodeJS.Timeout | null = null;
 /**
  * Delay before the boot-time tmux orphan reap, giving the renderer's
  * session-restore time to re-spawn (and thus re-attach) its tabs first — a
@@ -4384,6 +4397,7 @@ function createWindow(projectId?: string, repairOnly = false) {
 
   windows.set(win.id, { win, projectId });
   win.on('closed', () => {
+    conversationHistory.releaseWindow(win.id);
     windows.delete(win.id);
     boundsControllers.delete(win.id);
   });
@@ -5592,7 +5606,13 @@ function registerIpc() {
 
   safeHandle(
     IPC.claude.listSessions,
-    (projectPath: string) => listClaudeSessions(projectPath),
+    (projectId: unknown) => {
+      if (typeof projectId !== 'string') return [];
+      const project = store.listProjects().find((entry) => entry.id === projectId);
+      // Native local history has no trustworthy remote-project contract. Resolve
+      // the path from main's registered project record, never renderer input.
+      return project && !project.remote ? listClaudeSessions(project.path) : [];
+    },
     () => []
   );
   safeHandle(
@@ -5604,6 +5624,68 @@ function registerIpc() {
         : Promise.resolve([]);
     },
     () => []
+  );
+  safeHandleFromWindow<[{ projectId?: unknown; filter?: unknown }], ConversationHistorySnapshot>(
+    IPC.history.start,
+    (win, input: { projectId?: unknown; filter?: unknown }) => {
+      // History resumes in the selected project's canonical cwd. Cross-project
+      // aggregation would replay a native conversation with another project's
+      // config/files/MCP assumptions, so `all` is intentionally unsupported.
+      if (!input || input.filter !== 'project') {
+        return conversationHistory.get(win.id, '');
+      }
+      const projectId = typeof input.projectId === 'string' ? input.projectId : undefined;
+      if (!projectId) return conversationHistory.get(win.id, '');
+      if (projectId && !store.listProjects().some((project) => project.id === projectId && !project.remote)) {
+        return conversationHistory.get(win.id, '');
+      }
+      return conversationHistory.start(win.id, projectId);
+    },
+    () => conversationHistory.get(-1, '')
+  );
+  safeHandleFromWindow<[unknown], ConversationHistorySnapshot>(
+    IPC.history.refresh,
+    (win, snapshotId: unknown) => {
+      const current = conversationHistory.get(win.id, snapshotId);
+      if (current.status === 'expired') return current;
+      const projectId = conversationHistory.scope(win.id, snapshotId);
+      conversationHistory.release(win.id, snapshotId);
+      return conversationHistory.refresh(win.id, projectId);
+    },
+    () => conversationHistory.get(-1, '')
+  );
+  safeHandleFromWindow<[unknown, unknown], ConversationHistorySnapshot>(
+    IPC.history.page,
+    (win, snapshotId: unknown, opaquePageCursor: unknown) => {
+      if (opaquePageCursor !== undefined) return conversationHistory.get(win.id, '');
+      return conversationHistory.get(win.id, snapshotId);
+    },
+    () => conversationHistory.get(-1, '')
+  );
+  safeHandleFromWindow<[unknown], void>(
+    IPC.history.release,
+    (win, snapshotId: unknown) => conversationHistory.release(win.id, snapshotId),
+    () => undefined
+  );
+  safeHandleFromWindow<[unknown, unknown], Result<TerminalSession>>(
+    IPC.history.resume,
+    async (win, snapshotId: unknown, historyId: unknown): Promise<Result<TerminalSession>> => {
+      const row = conversationHistory.find(win.id, snapshotId, historyId);
+      if (!row) return { ok: false, code: 'DENIED', message: 'Conversation history row unavailable' };
+      const project = store.listProjects().find((entry) => entry.id === row.projectId && !entry.remote);
+      if (!project) return { ok: false, code: 'NOT_FOUND', message: 'Conversation project is unavailable' };
+      const provider = providerFor(row.source === 'claude' ? 'claude' : 'opencode');
+      const resume = provider.nativeConversationResume?.(row.nativeConversationId);
+      if (!resume) return { ok: false, code: 'DENIED', message: 'Exact native resume is unavailable' };
+      return createInteractiveTerminal({
+        projectId: project.id,
+        cols: 80,
+        rows: 24,
+        title: row.title,
+        ...resume
+      });
+    },
+    () => ({ ok: false, code: 'DENIED', message: 'Conversation history unavailable' })
   );
 
   // `fs.writeFile` is confined below alongside the other read/write ops, once
@@ -9056,6 +9138,9 @@ async function bootstrapNormal() {
   ptyReapTimer = setInterval(() => {
     ptys.reapDeadSessions();
   }, PTY_REAP_INTERVAL_MS);
+  // One process-lifetime sweep bounds abandoned history snapshots even when no
+  // renderer polls again. Window close/reload releases eagerly; this is fallback.
+  conversationHistoryEvictTimer = setInterval(() => conversationHistory.evict(), 60_000);
   // Allow media (microphone) access for voice-to-text; deny all other
   // permission requests. Installed once at init (not in createWindow).
   // getUserMedia consults BOTH the request handler (interactive grant) and the
@@ -9454,6 +9539,10 @@ app.on('before-quit', (event) => {
     clearInterval(ptyReapTimer);
     ptyReapTimer = null;
   }
+  if (conversationHistoryEvictTimer) {
+    clearInterval(conversationHistoryEvictTimer);
+    conversationHistoryEvictTimer = null;
+  }
   // Release any held power-save block + pending grace timer (Rule 3).
   keepAwake.shutdown();
   // Release the loud-tier inbox subscription (Rule 3).
@@ -9485,6 +9574,8 @@ process.on('unhandledRejection', (reason) => {
 // Disable navigation to external URLs in the renderer; open in browser instead
 app.on('web-contents-created', (_e, contents) => {
   contents.on('render-process-gone', (_event, details) => {
+    const win = BrowserWindow.fromWebContents(contents);
+    if (win) conversationHistory.releaseWindow(win.id);
     logMainError('render-process-gone', details.reason);
   });
   contents.on('did-fail-load', (_event, code, description, url) => {

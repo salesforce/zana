@@ -26,6 +26,7 @@
 
 import type {
   AppConfig,
+  CreateTerminalRequest,
   HarnessModelRoutingV1,
   LaunchProfileId,
   Persona,
@@ -44,6 +45,12 @@ export interface ResolvedLaunch {
   command: string;
   args: string[];
 }
+
+/** Trusted provider-native exact-resume plan. Never projected to renderer. */
+export type NativeConversationResume = Pick<
+  CreateTerminalRequest,
+  'profile' | 'extraArgs' | 'resumeSessionId'
+>;
 
 /**
  * The result of {@link LaunchProvider.authInjection}: how a per-harness base URL +
@@ -244,6 +251,9 @@ export interface LaunchProvider {
 
   /** Capabilities for a specific profile this provider serves. */
   capabilities(profile: LaunchProfileId): ProviderCapabilities;
+
+  /** Return an exact native-resume plan, or undefined when this adapter cannot prove one. */
+  nativeConversationResume?(nativeConversationId: string): NativeConversationResume | undefined;
 
   /**
    * The data-driven picker options this profile offers — a flat, role-tagged

@@ -25,6 +25,12 @@ const CONFIG: AppConfig = {
 };
 
 describe('registry.providerFor', () => {
+  it('builds only a provider-owned Claude exact native resume plan', () => {
+    expect(providerFor('claude').nativeConversationResume?.('native-id')).toEqual({
+      profile: 'claude', extraArgs: ['--resume', 'native-id']
+    });
+  });
+
   it('routes claude-family profiles to the ClaudeCodeProvider', () => {
     expect(providerFor('claude')).toBeInstanceOf(ClaudeCodeProvider);
     expect(providerFor('claude-resume')).toBeInstanceOf(ClaudeCodeProvider);

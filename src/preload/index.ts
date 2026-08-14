@@ -208,10 +208,17 @@ const api: CcApi = {
     recent: (limit) => ipcRenderer.invoke(IPC.overseer.recent, limit)
   },
   claude: {
-    listSessions: (projectPath) => ipcRenderer.invoke(IPC.claude.listSessions, projectPath)
+    listSessions: (projectId) => ipcRenderer.invoke(IPC.claude.listSessions, projectId)
   },
   opencode: {
     listSessions: (projectId) => ipcRenderer.invoke(IPC.opencode.listSessions, projectId)
+  },
+  history: {
+    start: (input) => ipcRenderer.invoke(IPC.history.start, input),
+    refresh: (snapshotId) => ipcRenderer.invoke(IPC.history.refresh, snapshotId),
+    page: (snapshotId, opaquePageCursor) => ipcRenderer.invoke(IPC.history.page, snapshotId, opaquePageCursor),
+    release: (snapshotId) => ipcRenderer.invoke(IPC.history.release, snapshotId),
+    resume: (snapshotId, historyId) => ipcRenderer.invoke(IPC.history.resume, snapshotId, historyId)
   },
   fs: {
     pickFiles: () => ipcRenderer.invoke(IPC.fs.pickFiles),

@@ -50,6 +50,7 @@
 
 import type { AppConfig, LaunchProfileId } from '../../shared/types.js';
 import type {
+  NativeConversationResume,
   RemoteCommandInput,
   RemoteCommandResult,
   ResolvedLaunch
@@ -435,6 +436,9 @@ function discoverOpenCodeAgents(context: { cwd: string; config: AppConfig }, opt
 }
 
 export class OpenCodeProvider extends BaseLaunchProvider {
+  nativeConversationResume(nativeConversationId: string): NativeConversationResume | undefined {
+    return nativeConversationId ? { profile: 'opencode-resume', resumeSessionId: nativeConversationId } : undefined;
+  }
   readonly id = 'opencode';
   readonly adapter = OPENCODE_ADAPTER;
   readonly acceptsDynamicRoleTargets = true;

@@ -2780,6 +2780,49 @@ export interface OpenCodeSessionSummary {
   lastActiveAt: number;
 }
 
+export type ConversationHistorySource = 'claude' | 'opencode';
+export type ConversationHistoryProviderState =
+  | 'loading'
+  | 'fresh'
+  | 'empty'
+  | 'unsupported'
+  | 'timed-out'
+  | 'failed'
+  | 'pagination-limited';
+
+/** Renderer-safe native-conversation projection. Native ids and paths stay in main. */
+export interface ConversationHistoryRow {
+  historyId: string;
+  source: ConversationHistorySource;
+  title: string;
+  lastActiveAt: number | null;
+  projectName: string;
+  fidelity: 'exact-native-id';
+  availability: 'available' | 'unavailable';
+  unavailableReason?: string;
+}
+
+export interface ConversationHistoryCoverage {
+  source: ConversationHistorySource;
+  description: string;
+  state: ConversationHistoryProviderState;
+}
+
+export interface ConversationHistorySnapshot {
+  snapshotId: string;
+  status: 'pending' | 'provisional' | 'ready' | 'expired';
+  rows: ConversationHistoryRow[];
+  coverage: ConversationHistoryCoverage[];
+  snapshotAt?: number;
+  hasNextPage: false;
+}
+
+export interface ConversationHistoryStartInput {
+  /** Native conversations retain cwd-specific assumptions, so only project scope is supported. */
+  projectId?: string;
+  filter: 'project';
+}
+
 export interface GitDiscardResult {
   ok: boolean;
   message?: string;
@@ -5178,10 +5221,19 @@ export interface CcApi {
     recent(limit?: number): Promise<OverseerAuditEntry[]>;
   };
   claude: {
-    listSessions(projectPath: string): Promise<ClaudeSessionSummary[]>;
+    /** Main resolves this registered local project id to its canonical history scope. */
+    listSessions(projectId: string): Promise<ClaudeSessionSummary[]>;
   };
   opencode: {
     listSessions(projectId: string): Promise<OpenCodeSessionSummary[]>;
+  };
+  history: {
+    start(input: ConversationHistoryStartInput): Promise<ConversationHistorySnapshot>;
+    refresh(snapshotId: string): Promise<ConversationHistorySnapshot>;
+    page(snapshotId: string, opaquePageCursor?: string): Promise<ConversationHistorySnapshot>;
+    release(snapshotId: string): Promise<void>;
+    /** Main resolves this opaque row and launches provider-native exact resume. */
+    resume(snapshotId: string, historyId: string): Promise<Result<TerminalSession>>;
   };
   fs: {
     /** Opens the native file chooser and returns only user-selected local paths. */

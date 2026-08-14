@@ -23,4 +23,16 @@ describe('listOpenCodeSessions', () => {
       })
     ).toEqual([]);
   });
+
+  it('caps provider-native list requests to caller demand', async () => {
+    let requestedLimit = 0;
+    await listOpenCodeSessions(cwd, {
+      limit: 8,
+      run: async (_cwd, limit) => {
+        requestedLimit = limit;
+        return [];
+      }
+    });
+    expect(requestedLimit).toBe(8);
+  });
 });
