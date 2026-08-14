@@ -12322,6 +12322,7 @@ body.resizing-col .explorer-resizer::after {
 .scheduler-status-value--success { color: var(--success); }
 .scheduler-status-value--error { color: var(--danger); }
 .scheduler-status-value--skipped { color: var(--accent-gold); }
+.scheduler-status-value--incomplete { color: var(--accent-orange, #db6d28); }
 .scheduler-status-value--none { color: var(--text-dim); }
 
 .scheduler-card-actions {
@@ -12780,9 +12781,10 @@ body.resizing-col .explorer-resizer::after {
   justify-self: center;
 }
 
-.scheduler-run-dot--success { background: var(--success); }
-.scheduler-run-dot--error   { background: var(--danger); }
-.scheduler-run-dot--skipped { background: var(--accent-gold); }
+.scheduler-run-dot--success    { background: var(--success); }
+.scheduler-run-dot--error      { background: var(--danger); }
+.scheduler-run-dot--skipped    { background: var(--accent-gold); }
+.scheduler-run-dot--incomplete { background: var(--accent-orange, #db6d28); }
 
 .scheduler-run-when {
   color: var(--text-primary);
@@ -12797,9 +12799,10 @@ body.resizing-col .explorer-resizer::after {
   color: var(--text-dim);
 }
 
-.scheduler-run-row--success .scheduler-run-result { color: var(--success); }
-.scheduler-run-row--error   .scheduler-run-result { color: var(--danger); }
-.scheduler-run-row--skipped .scheduler-run-result { color: var(--accent-gold); }
+.scheduler-run-row--success    .scheduler-run-result { color: var(--success); }
+.scheduler-run-row--error      .scheduler-run-result { color: var(--danger); }
+.scheduler-run-row--skipped    .scheduler-run-result { color: var(--accent-gold); }
+.scheduler-run-row--incomplete .scheduler-run-result { color: var(--accent-orange, #db6d28); }
 
 .scheduler-run-duration {
   font-variant-numeric: tabular-nums;
@@ -14113,6 +14116,11 @@ body.resizing-col .explorer-resizer::after {
 .overview-result--skipped {
   color: var(--text-dim);
   background: rgba(139, 148, 158, 0.12);
+}
+
+.overview-result--incomplete {
+  color: rgb(219, 109, 40);
+  background: rgba(219, 109, 40, 0.12);
 }
 
 .overview-projects {

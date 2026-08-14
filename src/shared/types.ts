@@ -2895,7 +2895,15 @@ export interface ScheduleRun {
   id?: string;
   /** ISO-8601 timestamp of when the fire began. */
   at: string;
-  result: 'success' | 'error' | 'skipped';
+  /**
+   * `incomplete` = the process exited 0 (so it isn't `error`) but the run never
+   * filed a `schedule_report` before exiting, for a schedule that expects one
+   * (`inboxLevel !== 'silent'` on a report-capable profile). Exit code alone
+   * can't distinguish a clean finish from a stream that died mid-run (e.g. an
+   * idle-dropped SSE connection) — a dead run can still exit 0 — so `incomplete`
+   * is the loud, honest label for "we don't actually know this succeeded."
+   */
+  result: 'success' | 'error' | 'skipped' | 'incomplete';
   /** PtyManager session id, if a terminal was actually spawned. */
   sessionId?: string;
   /** Time from spawn to pty exit (only set once the session ends). */
@@ -2923,7 +2931,7 @@ export interface ScheduleRun {
 
 export interface ScheduleStatus {
   lastRunAt?: string;
-  lastRunResult?: 'success' | 'error' | 'skipped';
+  lastRunResult?: 'success' | 'error' | 'skipped' | 'incomplete';
   lastRunSessionId?: string;
   /** ISO-8601 timestamp of the next planned fire (informational; recomputed on load). */
   nextRunAt?: string;
