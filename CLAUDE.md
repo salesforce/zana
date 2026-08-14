@@ -2,6 +2,12 @@
 
 Guidance for working in this repo (Zana Command Center — an Electron + React + TS multi-project terminal hub).
 
+## Worktrees
+
+Create all git worktrees under `.worktrees/<branch-name>` inside this repository.
+This keeps repository-local instructions and tooling configuration in each worktree's
+ancestor path.
+
 ## Engineering Rules
 
 The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)

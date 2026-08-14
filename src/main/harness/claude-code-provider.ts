@@ -24,6 +24,7 @@ import { isClaudeProfile } from '../../shared/launch-provider.js';
 import type {
   AutoModeInput,
   HarnessAuthInjection,
+  NativeConversationResume,
   RemoteCommandInput,
   RemoteCommandResult,
   ResolvedLaunch
@@ -250,6 +251,9 @@ function buildProjectSettingsArgs(s: ProjectSettings, profile: LaunchProfileId):
 }
 
 export class ClaudeCodeProvider extends BaseLaunchProvider {
+  nativeConversationResume(nativeConversationId: string): NativeConversationResume | undefined {
+    return nativeConversationId ? { profile: 'claude', extraArgs: ['--resume', nativeConversationId] } : undefined;
+  }
   readonly id = 'claude-code';
   readonly adapter = CLAUDE_ADAPTER;
 

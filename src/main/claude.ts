@@ -88,6 +88,21 @@ function truncate(s: string, n = 120): string {
  * needs beyond the visible head. This is the Rule-5 "bound unbounded reads" fix.
  */
 const SESSION_READ_CAP = 12;
+const SESSION_DIRECTORY_ENTRY_CAP = 64;
+const SESSION_STAT_CONCURRENCY = 4;
+
+async function boundedMap<T, R>(items: readonly T[], worker: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const out: R[] = [];
+  let next = 0;
+  const run = async () => {
+    while (next < items.length) {
+      const index = next++;
+      out[index] = await worker(items[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(SESSION_STAT_CONCURRENCY, items.length) }, run));
+  return out;
+}
 
 /**
  * Summaries for a project's Claude transcripts, newest first. Async + bounded:
@@ -96,35 +111,32 @@ const SESSION_READ_CAP = 12;
  * ones get a lightweight summary (no body read) so the list stays complete
  * without the multi-MB read storm that blocked the main process.
  */
-export async function listClaudeSessions(projectPath: string): Promise<ClaudeSessionSummary[]> {
+export async function listClaudeSessions(projectPath: string, maxSessions?: number): Promise<ClaudeSessionSummary[]> {
   const dir = join(projectsDir(), encodeProjectCwd(projectPath));
   if (!existsSync(dir)) return [];
 
   let files: string[];
   try {
-    files = (await readdir(dir)).filter((f) => f.endsWith('.jsonl'));
+    files = (await readdir(dir)).filter((f) => f.endsWith('.jsonl')).slice(0, SESSION_DIRECTORY_ENTRY_CAP);
   } catch {
     return [];
   }
 
   // Stat every file first (cheap) so we can sort by recency and only fully read
   // the newest few. A failed stat drops the entry.
-  const statted = await Promise.all(
-    files.map(async (file) => {
+  const statted = await boundedMap(files, async (file) => {
       try {
         const st = await stat(join(dir, file));
         return { file, mtimeMs: st.mtimeMs, birthtimeMs: st.birthtimeMs || st.mtimeMs };
       } catch {
         return null;
       }
-    })
-  );
+  });
   const ordered = statted
     .filter((e): e is NonNullable<typeof e> => e !== null)
     .sort((a, b) => b.mtimeMs - a.mtimeMs);
 
-  const summaries = await Promise.all(
-    ordered.map(async (e, i) => {
+  const summaries = await boundedMap(ordered, async (e, i) => {
       const base: ClaudeSessionSummary = {
         id: e.file.replace(/\.jsonl$/, ''),
         projectPath,
@@ -149,9 +161,8 @@ export async function listClaudeSessions(projectPath: string): Promise<ClaudeSes
         firstUserPrompt: extractFirstUserPrompt(lines),
         title: extractTitle(lines)
       };
-    })
-  );
+  });
 
   // Already ordered by mtime desc via `ordered`.
-  return summaries;
+  return maxSessions === undefined ? summaries : summaries.slice(0, maxSessions);
 }

@@ -14,6 +14,7 @@ interface OpenCodeSessionListRow {
 
 interface ListDeps {
   binary?: string;
+  limit?: number;
   run?: (cwd: string, limit: number) => Promise<OpenCodeSessionListRow[] | null>;
 }
 
@@ -46,7 +47,8 @@ export async function listOpenCodeSessions(
   deps: ListDeps = {}
 ): Promise<OpenCodeSessionSummary[]> {
   const run = deps.run ?? ((cwd, limit) => defaultRun(deps.binary ?? 'opencode', cwd, limit));
-  const rows = await run(projectPath, LIST_LIMIT);
+  const limit = Math.max(1, Math.min(LIST_LIMIT, deps.limit ?? LIST_LIMIT));
+  const rows = await run(projectPath, limit);
   if (!rows) return [];
 
   return rows.flatMap((row) => {

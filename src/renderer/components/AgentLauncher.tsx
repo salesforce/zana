@@ -26,12 +26,10 @@ import {
 } from 'lucide-react';
 import type {
   AgentPresetView,
-  ClaudeSessionSummary,
   ExtensionEntry,
   HarnessFamily,
   HarnessModelRoutingV1,
   LaunchProfileId,
-  OpenCodeSessionSummary,
   Persona,
   Project,
   QuickPrompt,
@@ -51,7 +49,6 @@ import {
   resolveArguments,
   substituteArguments
 } from '@shared/workflow-args';
-import { OpenCodeSessionsList } from './OpenCodeSessionsList';
 import {
   profileLabel,
   VALID_PROFILES,
@@ -66,7 +63,7 @@ import { profileIcon, personaIcon } from '../util/profileIcon';
 import { resolveIcon } from '../util/resolveIcon';
 import { PromptComposer, type PromptComposerHandle } from './PromptComposer';
 import { TextArgsField } from './settings/FormFields';
-import { ClaudeSessionsList } from './ClaudeSessionsList';
+import { AgentConversationHistory } from './AgentConversationHistory';
 import { titleFromPrompt } from '../util/promptTitle';
 import { useDialogFocusTrap } from '../util/useDialogFocusTrap';
 import { effectivePersonaRouting } from '../util/personaRouting';
@@ -1171,6 +1168,11 @@ export const AgentLauncher = memo(function AgentLauncher({
     [harnessCursorEnabled, harnessCodexEnabled, harnessPiEnabled, harnessOpenCodeEnabled, installedFamilies]
   );
   const selectedPersona = personaId ? allPersonas.find((p) => p.id === personaId) : undefined;
+  const unavailableHistoryProviders = [
+    harnessCursorEnabled ? 'Cursor' : null,
+    harnessCodexEnabled ? 'Codex' : null,
+    harnessPiEnabled ? 'PI' : null
+  ].filter((provider): provider is string => provider !== null);
   // Resolve scratch-mode project selection before deriving Default harness so a
   // picked project uses its own Project → Global hierarchy, not scratch defaults.
   const target = projectMode
@@ -1693,25 +1695,6 @@ export const AgentLauncher = memo(function AgentLauncher({
     } finally {
       setFixingWithAi(false);
     }
-  };
-
-  // Resume a prior Claude conversation from the list: `--resume <id>` continues
-  // that exact transcript (same mechanism as the standalone ResumePicker). No
-  // persona/framework layer — the transcript already carries its own context.
-  const resume = (s: ClaudeSessionSummary) => {
-    void doCreate(
-      'claude',
-      { extraArgs: ['--resume', s.id], title: `claude --resume · ${s.id.slice(0, 7)}` },
-      false
-    );
-  };
-
-  const resumeOpenCode = (s: OpenCodeSessionSummary) => {
-    void doCreate(
-      'opencode-resume',
-      { resumeSessionId: s.id, title: `opencode --session · ${s.id.slice(0, 7)}` },
-      false
-    );
   };
 
   // Resume a detached (background) session back into the tab strip, then close
@@ -2517,8 +2500,7 @@ export const AgentLauncher = memo(function AgentLauncher({
             </div>
           )}
 
-          {projectMode && <ClaudeSessionsList projectId={project!.id} onResume={resume} />}
-          {projectMode && <OpenCodeSessionsList projectId={project!.id} onResume={resumeOpenCode} />}
+          {projectMode && <AgentConversationHistory projectId={project!.id} unavailableProviders={unavailableHistoryProviders} onResumed={onClose} />}
           </div>
 
           <div className="launch-actions">
