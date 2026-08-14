@@ -1547,7 +1547,7 @@ export const AgentLauncher = memo(function AgentLauncher({
         ? frameworkIds
         : undefined;
     setLaunching(true);
-    // User-typed extra args (per-harness) go BEFORE the seed-prompt args: the
+    // User-typed extra args (per-harness) go BEFORE opening-task args: the
     // prompt rides a trailing positional (or OpenCode's `--prompt <text>`),
     // which must stay last in argv so it isn't swallowed as a value for a
     // preceding flag. Gated on `applyAdvanced` like persona/framework — a resume
