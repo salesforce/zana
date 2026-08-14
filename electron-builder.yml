@@ -81,13 +81,13 @@ extraResources:
 # host/owner/repo are explicit (not derived from package.json) so a stale
 # `homepage` can't point the updater at the wrong repo.
 #
-# The release feed is the public github.com repo salesforce/zana.
+# The release feed is the public github.com repo grebmann1/zcc-releases.
 # electron-updater's `GitHubProvider` reads latest-mac.yml and artifacts
 # anonymously (no token, no VPN). Omitting `host:` defaults to public github.com.
 publish:
   provider: github
-  owner: salesforce
-  repo: zana
+  owner: grebmann1
+  repo: zcc-releases
 
 asar: true
 asarUnpack:
