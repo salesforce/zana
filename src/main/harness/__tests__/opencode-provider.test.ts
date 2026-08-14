@@ -1,6 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { providerFor } from '../registry.js';
-import { OpenCodeProvider } from '../opencode-provider.js';
+import {
+  OpenCodeAgentDiscoveryCache,
+  OpenCodeAgentDiscoveryError,
+  OpenCodeProvider,
+  enrichOpenCodeAgentDescriptors,
+  parseOpenCodeAgentDescriptors,
+  parseOpenCodeAgentDebugOutput,
+  parseOpenCodeAgentDiscoveryOutput
+} from '../opencode-provider.js';
 import type { AppConfig, ProjectRemote } from '../../../shared/types.js';
 import { shellQuote, shellQuoteArgv } from '../shell-quote.js';
 
@@ -12,6 +20,349 @@ const CONFIG: AppConfig = {
   fontSize: 13,
   lastProjectId: null
 };
+
+describe('parseOpenCodeAgentDescriptors', () => {
+  it('returns renderer-safe mode-aware descriptors and dedupes by id', () => {
+    expect(parseOpenCodeAgentDescriptors([
+      '  build (primary)  ',
+      'general (all)',
+      'research (subagent)',
+      'build (primary)'
+    ].join('\n'))).toEqual([
+      { id: 'build', label: 'build', mode: 'primary', hidden: false, directLaunchAllowed: true },
+      { id: 'general', label: 'general', mode: 'all', hidden: false, directLaunchAllowed: true },
+      { id: 'research', label: 'research', mode: 'subagent', hidden: false, directLaunchAllowed: false }
+    ]);
+  });
+
+  it('skips unknown modes and unsafe ids', () => {
+    const tooLong = 'x'.repeat(257);
+    expect(parseOpenCodeAgentDescriptors([
+      'ok (primary)',
+      'also-ok (subagent)',
+      'unknown (mystery)',
+      'two words (primary)',
+      '-flag (primary)',
+      'bad\u0007id (primary)',
+      'bad\u0080id (primary)',
+      `${tooLong} (primary)`,
+      ' (primary)'
+    ].join('\n'))).toEqual([
+      { id: 'ok', label: 'ok', mode: 'primary', hidden: false, directLaunchAllowed: true },
+      { id: 'also-ok', label: 'also-ok', mode: 'subagent', hidden: false, directLaunchAllowed: false }
+    ]);
+  });
+
+  it('accepts whitespace-only output as an established empty catalog but rejects non-empty output without headings', () => {
+    expect(parseOpenCodeAgentDiscoveryOutput(' \n\t\r\n')).toEqual([]);
+    expect(() => parseOpenCodeAgentDiscoveryOutput('build\tprimary\nplan\tprimary'))
+      .toThrow('OpenCode agent discovery returned non-empty unrecognized output');
+  });
+
+  it('ignores non-heading lines and invalid candidate headings while preserving safe headings', () => {
+    expect(parseOpenCodeAgentDiscoveryOutput([
+      'OpenCode agents',
+      'build (primary)',
+      'warning: config changed',
+      'build (primary)',
+      '-unsafe (all)',
+      'two words (subagent)',
+      'researcher (subagent)'
+    ].join('\n'))).toEqual([
+      { id: 'build', label: 'build', mode: 'primary', hidden: false, directLaunchAllowed: true },
+      { id: 'researcher', label: 'researcher', mode: 'subagent', hidden: false, directLaunchAllowed: false }
+    ]);
+  });
+
+  it('accepts complete expected OpenCode output including blank lines and all recognized modes', () => {
+    expect(parseOpenCodeAgentDiscoveryOutput('\nbuild (primary)\nplan (subagent)\ngeneral (all)\n')).toEqual([
+      { id: 'build', label: 'build', mode: 'primary', hidden: false, directLaunchAllowed: true },
+      { id: 'plan', label: 'plan', mode: 'subagent', hidden: false, directLaunchAllowed: false },
+      { id: 'general', label: 'general', mode: 'all', hidden: false, directLaunchAllowed: true }
+    ]);
+  });
+
+  it('accepts real-shaped OpenCode output without parsing or validating permission details', () => {
+    expect(parseOpenCodeAgentDiscoveryOutput([
+      'build (primary)',
+      '  [',
+      '  {',
+      '    "permission": "*",',
+      '    "action": "allow",',
+      '    "pattern": "*"',
+      '  },',
+      '  {',
+      '    "permission": "external_directory",',
+      '    "pattern": "/Users/example/.local/share/opencode/tool-output/*",',
+      '    "action": "allow",',
+      '    "futureShape": { "nested": [true, false] }',
+      '  }',
+      ']',
+      'human log text may appear here',
+      'researcher (subagent)',
+      '  [',
+      '  this block is intentionally not valid JSON',
+      '  ]'
+    ].join('\n'))).toEqual([
+      { id: 'build', label: 'build', mode: 'primary', hidden: false, directLaunchAllowed: true },
+      { id: 'researcher', label: 'researcher', mode: 'subagent', hidden: false, directLaunchAllowed: false }
+    ]);
+  });
+
+  it('parses only renderer-safe hidden metadata from debug JSON', () => {
+    expect(parseOpenCodeAgentDebugOutput('{"hidden":true,"description":"secret","permission":{"*":"allow"}}'))
+      .toEqual({ hidden: true });
+    expect(parseOpenCodeAgentDebugOutput('{"name":"visible"}')).toEqual({ hidden: false });
+    expect(parseOpenCodeAgentDebugOutput('{"name":"visible","hidden":null}')).toEqual({ hidden: false });
+    expect(parseOpenCodeAgentDebugOutput('{"name":"visible","hidden":"unexpected"}')).toEqual({ hidden: false });
+    expect(parseOpenCodeAgentDebugOutput('{\n  "name": "hidden",\n  "hidden": true,\n  "permission": ['))
+      .toEqual({ hidden: true });
+    expect(parseOpenCodeAgentDebugOutput('{\n  "name": "visible",\n  "description": "\\\"hidden\\\": true",\n  "permission": ['))
+      .toEqual({ hidden: false });
+    for (const output of ['[]', 'null', 'not json', 'warning: stale config\n{"hidden":null}']) {
+      expect(() => parseOpenCodeAgentDebugOutput(output)).toThrow('OpenCode agent debug returned invalid metadata');
+    }
+  });
+
+  it('enriches primary agents with bounded debug metadata and excludes hidden direct launch', async () => {
+    let active = 0;
+    let peak = 0;
+    const release: Array<() => void> = [];
+    const loadDebug = vi.fn((id: string) => new Promise<string>((resolve) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      release.push(() => {
+        active -= 1;
+        resolve(JSON.stringify({ hidden: id === 'hidden-primary', description: 'must not escape' }));
+      });
+    }));
+    const enriched = enrichOpenCodeAgentDescriptors([
+      { id: 'hidden-primary', label: 'hidden-primary', mode: 'primary', hidden: false, directLaunchAllowed: true },
+      { id: 'visible-primary', label: 'visible-primary', mode: 'primary', hidden: false, directLaunchAllowed: true },
+      { id: 'visible-all', label: 'visible-all', mode: 'all', hidden: false, directLaunchAllowed: true },
+      { id: 'worker', label: 'worker', mode: 'subagent', hidden: false, directLaunchAllowed: false }
+    ], loadDebug);
+    await vi.waitFor(() => expect(loadDebug).toHaveBeenCalledTimes(2));
+    expect(peak).toBe(2);
+    release.splice(0).forEach((done) => done());
+    await vi.waitFor(() => expect(loadDebug).toHaveBeenCalledTimes(3));
+    release.splice(0).forEach((done) => done());
+
+    await expect(enriched).resolves.toEqual([
+      { id: 'hidden-primary', label: 'hidden-primary', mode: 'primary', hidden: true, directLaunchAllowed: false },
+      { id: 'visible-primary', label: 'visible-primary', mode: 'primary', hidden: false, directLaunchAllowed: true },
+      { id: 'visible-all', label: 'visible-all', mode: 'all', hidden: false, directLaunchAllowed: true },
+      { id: 'worker', label: 'worker', mode: 'subagent', hidden: false, directLaunchAllowed: false }
+    ]);
+    expect(loadDebug).not.toHaveBeenCalledWith('worker');
+  });
+
+  it('fails enrichment closed when any primary debug command fails', async () => {
+    await expect(enrichOpenCodeAgentDescriptors([
+      { id: 'visible', label: 'visible', mode: 'primary', hidden: false, directLaunchAllowed: true },
+      { id: 'worker', label: 'worker', mode: 'subagent', hidden: false, directLaunchAllowed: false }
+    ], async () => { throw new Error('sensitive debug failure'); })).rejects.toMatchObject({
+      code: 'debug-failed',
+      agentId: 'visible'
+    });
+  });
+
+  it('classifies invalid debug metadata with only the safe candidate id', async () => {
+    await expect(enrichOpenCodeAgentDescriptors([
+      { id: 'visible', label: 'visible', mode: 'primary', hidden: false, directLaunchAllowed: true }
+    ], async () => 'not json')).rejects.toMatchObject({
+      code: 'invalid-debug-metadata',
+      agentId: 'visible'
+    });
+  });
+
+  it('projects internal discovery errors to renderer-safe typed failures', async () => {
+    expect(OpenCodeProvider.failureResult(new OpenCodeAgentDiscoveryError('list-failed'))).toEqual({
+      status: 'failure',
+      reason: 'list-failed'
+    });
+    expect(OpenCodeProvider.failureResult(
+      new OpenCodeAgentDiscoveryError('debug-failed', 'build', { cause: new Error('/secret/path permission denied') })
+    )).toEqual({ status: 'failure', reason: 'debug-failed', agentId: 'build' });
+    expect(OpenCodeProvider.failureResult(new Error('raw stdout and prompt'))).toEqual({
+      status: 'failure',
+      reason: 'list-failed'
+    });
+  });
+
+  it('rejects non-empty permission or log output when no safe heading exists', () => {
+    expect(() => parseOpenCodeAgentDiscoveryOutput('  [\nwarning\n  ]'))
+      .toThrow('OpenCode agent discovery returned non-empty unrecognized output');
+  });
+
+  it('filters role targets authoritatively before launch mapping', () => {
+    expect(OpenCodeProvider.roleTargetsFromDiscovery({ status: 'success', descriptors: [
+      { id: 'build', label: 'build', mode: 'subagent', hidden: false, directLaunchAllowed: false },
+      { id: 'hidden', label: 'hidden', mode: 'primary', hidden: true, directLaunchAllowed: false },
+      { id: 'general', label: 'general', mode: 'all', hidden: false, directLaunchAllowed: true }
+    ] }, [
+      { id: 'build', label: 'Build', scope: ['local'] },
+      { id: 'plan', label: 'Plan', scope: ['local'] }
+    ])).toEqual([
+      { id: 'general', label: 'general', scope: ['local'] }
+    ]);
+  });
+
+  it('keeps static fallback available to UI mapping after discovery failure', () => {
+    const staticRoles = [{ id: 'build', label: 'Build', scope: ['local'] as ['local'] }];
+    expect(OpenCodeProvider.roleTargetsFromDiscovery({ status: 'failure' }, staticRoles)).toBe(staticRoles);
+  });
+
+  it('contains unexpected discovery exceptions at launch preflight', async () => {
+    class ThrowingOpenCodeProvider extends OpenCodeProvider {
+      override async discoverAgentDescriptors(): ReturnType<OpenCodeProvider['discoverAgentDescriptors']> {
+        throw new Error('parser escaped');
+      }
+    }
+    await expect(new ThrowingOpenCodeProvider().discoverRoleTargets({ cwd: '/repo', config: CONFIG }))
+      .resolves.toEqual([]);
+  });
+});
+
+describe('OpenCodeAgentDiscoveryCache', () => {
+  it('dedupes in-flight work, caches success by binary and cwd, and bypasses only explicit refresh', async () => {
+    let now = 1_000;
+    const cache = new OpenCodeAgentDiscoveryCache(5_000, 2, () => now);
+    let resolveFirst!: (value: readonly never[]) => void;
+    const firstLoader = vi.fn(() => firstLoader.mock.calls.length === 1
+      ? new Promise<readonly never[]>((resolve) => { resolveFirst = resolve; })
+      : Promise.resolve([]));
+    const first = cache.discover('/bin/opencode', '/one', firstLoader);
+    const duplicate = cache.discover('/bin/opencode', '/one', firstLoader);
+    expect(firstLoader).toHaveBeenCalledTimes(1);
+    resolveFirst([]);
+    await expect(Promise.all([first, duplicate])).resolves.toEqual([[], []]);
+
+    await cache.discover('/bin/opencode', '/one', firstLoader);
+    expect(firstLoader).toHaveBeenCalledTimes(1);
+    await cache.discover('/other/opencode', '/one', vi.fn(async () => []));
+    await cache.discover('/bin/opencode', '/two', vi.fn(async () => []));
+    await cache.discover('/bin/opencode', '/one', firstLoader, { bypassCache: true });
+    expect(firstLoader).toHaveBeenCalledTimes(2);
+
+    now += 5_001;
+    await cache.discover('/bin/opencode', '/one', firstLoader);
+    expect(firstLoader).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps default discovery results for the app lifetime until explicit refresh', async () => {
+    let now = 1_000;
+    const cache = new OpenCodeAgentDiscoveryCache(undefined, 8, () => now);
+    const load = vi.fn(async () => [] as const);
+    await cache.discover('opencode', '/project', load);
+    now += 86_400_000;
+    await cache.discover('opencode', '/project', load);
+    expect(load).toHaveBeenCalledTimes(1);
+    await cache.discover('opencode', '/project', load, { bypassCache: true });
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retain failed discovery', async () => {
+    const cache = new OpenCodeAgentDiscoveryCache();
+    const loader = vi.fn()
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce([]);
+    await expect(cache.discover('opencode', '/one', loader)).rejects.toThrow('boom');
+    await expect(cache.discover('opencode', '/one', loader)).resolves.toEqual([]);
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not let an older automatic completion replace a newer force-refresh cache entry', async () => {
+    const cache = new OpenCodeAgentDiscoveryCache();
+    const oldResult = [{ id: 'old', label: 'old', mode: 'primary', hidden: false, directLaunchAllowed: true }] as const;
+    const refreshedResult = [{ id: 'new', label: 'new', mode: 'primary', hidden: false, directLaunchAllowed: true }] as const;
+    let resolveOld!: (value: typeof oldResult) => void;
+    let resolveRefresh!: (value: typeof refreshedResult) => void;
+    const oldLoad = cache.discover('opencode', '/one', () => new Promise((resolve) => { resolveOld = resolve; }));
+    const refreshLoad = cache.discover(
+      'opencode',
+      '/one',
+      () => new Promise((resolve) => { resolveRefresh = resolve; }),
+      { bypassCache: true }
+    );
+
+    resolveRefresh(refreshedResult);
+    await expect(refreshLoad).resolves.toEqual(refreshedResult);
+    resolveOld(oldResult);
+    await expect(oldLoad).resolves.toEqual(oldResult);
+
+    const cachedLoad = vi.fn(async () => oldResult);
+    await expect(cache.discover('opencode', '/one', cachedLoad)).resolves.toEqual(refreshedResult);
+    expect(cachedLoad).not.toHaveBeenCalled();
+  });
+
+  it('globally bounds concurrent discovery across keys and cache-bypass calls', async () => {
+    const cache = new OpenCodeAgentDiscoveryCache(5_000, 8, Date.now, 2);
+    const releases: Array<() => void> = [];
+    let active = 0;
+    let peak = 0;
+    const loader = vi.fn(() => new Promise<readonly never[]>((resolve) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      releases.push(() => {
+        active -= 1;
+        resolve([]);
+      });
+    }));
+
+    const discoveries = [
+      cache.discover('opencode', '/one', loader, { bypassCache: true }),
+      cache.discover('opencode', '/two', loader, { bypassCache: true }),
+      cache.discover('opencode', '/three', loader, { bypassCache: true })
+    ];
+    await vi.waitFor(() => expect(loader).toHaveBeenCalledTimes(2));
+    expect(peak).toBe(2);
+    releases.shift()?.();
+    await vi.waitFor(() => expect(loader).toHaveBeenCalledTimes(3));
+    expect(peak).toBe(2);
+    releases.splice(0).forEach((release) => release());
+    await expect(Promise.all(discoveries)).resolves.toEqual([[], [], []]);
+  });
+
+  it('coalesces force refreshes for the same key while preserving automatic bypass', async () => {
+    const cache = new OpenCodeAgentDiscoveryCache();
+    let resolveAutomatic!: (value: readonly never[]) => void;
+    let resolveRefresh!: (value: readonly never[]) => void;
+    const automaticLoader = vi.fn(() => new Promise<readonly never[]>((resolve) => { resolveAutomatic = resolve; }));
+    const refreshLoader = vi.fn(() => new Promise<readonly never[]>((resolve) => { resolveRefresh = resolve; }));
+
+    const automatic = cache.discover('opencode', '/one', automaticLoader);
+    const refresh = cache.discover('opencode', '/one', refreshLoader, { bypassCache: true });
+    const duplicateRefresh = cache.discover('opencode', '/one', refreshLoader, { bypassCache: true });
+
+    expect(automaticLoader).toHaveBeenCalledTimes(1);
+    expect(refreshLoader).toHaveBeenCalledTimes(1);
+    expect(duplicateRefresh).toBe(refresh);
+    resolveRefresh([]);
+    resolveAutomatic([]);
+    await expect(Promise.all([automatic, refresh, duplicateRefresh])).resolves.toEqual([[], [], []]);
+  });
+
+  it('rejects cleanly when the global pending queue is full', async () => {
+    const cache = new OpenCodeAgentDiscoveryCache(5_000, 8, Date.now, 1, 2);
+    const releases: Array<() => void> = [];
+    const loader = vi.fn(() => new Promise<readonly never[]>((resolve) => releases.push(() => resolve([]))));
+
+    const active = cache.discover('opencode', '/active', loader, { bypassCache: true });
+    const pendingOne = cache.discover('opencode', '/pending-one', loader, { bypassCache: true });
+    const pendingTwo = cache.discover('opencode', '/pending-two', loader, { bypassCache: true });
+    await expect(cache.discover('opencode', '/overflow', loader, { bypassCache: true }))
+      .rejects.toThrow('OpenCode agent discovery queue is full');
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    releases.shift()?.();
+    await vi.waitFor(() => expect(loader).toHaveBeenCalledTimes(2));
+    releases.shift()?.();
+    await vi.waitFor(() => expect(loader).toHaveBeenCalledTimes(3));
+    releases.shift()?.();
+    await expect(Promise.all([active, pendingOne, pendingTwo])).resolves.toEqual([[], [], []]);
+  });
+});
 
 describe('registry.providerFor — opencode family', () => {
   it('routes opencode profiles to the OpenCodeProvider', () => {
@@ -78,6 +429,21 @@ describe('OpenCodeProvider', () => {
     expect(models.every((model) => model.scope.length === 1 && model.scope[0] === 'local')).toBe(true);
     expect(models.every((model) => model.evidenceVersion === '1.18.0')).toBe(true);
     expect(p.adapter.evidence.map(({ id }) => id)).toEqual(expect.arrayContaining(models.map(({ id }) => id)));
+  });
+
+  it('describes 1.18.0 as a minimum supported and reviewed floor', () => {
+    expect(p.adapter.evidence.every(({ observed }) =>
+      observed?.startsWith('Minimum supported/reviewed CLI floor: 1.18.0.')
+    )).toBe(true);
+  });
+
+  it('maps dynamic roles to explicit reviewed discovery evidence', () => {
+    expect(p.dynamicRoleEvidenceTarget(
+      { id: 'doc-vault', label: 'doc-vault', scope: ['local'] },
+      '1.18.10'
+    )).toEqual({
+      id: 'opencode.role.discovery', label: 'doc-vault', scope: ['local'], evidenceVersion: '1.18.0'
+    });
   });
 
   it('declares approved global execution-state mappings', () => {
@@ -309,4 +675,20 @@ describe('OpenCodeProvider', () => {
       ).toBe(false);
     });
   });
+});
+
+describe.runIf(process.env.ZCC_LIVE_OPENCODE === '1')('OpenCodeProvider live discovery', () => {
+  it('discovers this project through the real CLI', async () => {
+    const result = await new OpenCodeProvider().discoverAgentDescriptors({
+      cwd: process.cwd(),
+      config: CONFIG
+    }, { bypassCache: true });
+    expect(result).toMatchObject({ status: 'success' });
+    if (result.status === 'success') {
+      expect(result.descriptors.filter(({ directLaunchAllowed }) => directLaunchAllowed).map(({ id }) => id))
+        .toEqual(expect.arrayContaining(['build', 'plan', 'doc-vault', 'test-primary']));
+      expect(result.descriptors.filter(({ hidden }) => hidden).map(({ id }) => id))
+        .toEqual(expect.arrayContaining(['compaction', 'summary', 'title']));
+    }
+  }, 30_000);
 });

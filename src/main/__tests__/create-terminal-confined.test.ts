@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { Project, AppConfig, ProjectSettings } from '../../shared/types.js';
 
 /**
@@ -23,6 +26,10 @@ const PROJECT: Project = {
   path: '/tmp/proj'
 } as Project;
 
+// Main launch code canonicalizes registered project paths. Keep this shared
+// fixture real rather than depending on a developer's leftover /tmp state.
+mkdirSync(PROJECT.path, { recursive: true });
+
 const CONFIG: AppConfig = {
   version: 1,
   theme: 'dark',
@@ -34,6 +41,7 @@ const CONFIG: AppConfig = {
 
 const PROJECT_SETTINGS: ProjectSettings = {} as ProjectSettings;
 let projects: Project[] = [PROJECT];
+const createScratchSubfolder = vi.fn(() => '/tmp/proj/scratch');
 
 // Capture every ptys.create() call so we can assert what reaches the pty layer.
 const createCalls: Array<{ cwd: string; extraArgs?: string[]; profile: string; persona: unknown }> = [];
@@ -70,7 +78,7 @@ vi.mock('../store.js', () => ({
     listProjects: () => projects,
     getConfig: () => CONFIG,
     getProjectSettings: () => PROJECT_SETTINGS,
-    createScratchSubfolder: () => '/tmp/proj/scratch'
+    createScratchSubfolder
   },
   scratchWorkspaceRoot: () => '/tmp/scratch-root',
   worktreeRoot: () => '/tmp/zcc-worktrees',
@@ -120,7 +128,13 @@ vi.mock('../mcp-config.js', () => ({
   ensureMcpConfigForProjectSync: () => '/tmp/p1/.mcp.json'
 }));
 
-const { createTerminalConfined, resolveWorktreeForRequest, sanitizeRendererTerminalRequest } = await import('../index.js');
+const {
+  createTerminalConfined,
+  revalidateEffectiveLaunch,
+  resolveEffectiveLaunch,
+  resolveWorktreeForRequest,
+  sanitizeRendererTerminalRequest
+} = await import('../index.js');
 
 describe('sanitizeRendererTerminalRequest', () => {
   it('strips renderer-forgeable team, background, and resolved-worktree authority', () => {
@@ -158,6 +172,98 @@ describe('resolveWorktreeForRequest', () => {
       code: 'WORKTREE_UNAVAILABLE',
       message: 'Worktree isolation requires a Git repository.'
     });
+  });
+});
+
+describe('resolveEffectiveLaunch', () => {
+  it('does not materialize an isolated scratch cwd during pre-authorization resolution', () => {
+    createScratchSubfolder.mockClear();
+    expect(resolveEffectiveLaunch({
+      isolateScratch: 'review auth ordering',
+      title: 'Quick Agent'
+    }, { ...PROJECT, quickAgent: true })).toMatchObject({
+      projectRoot: realpathSync('/tmp/proj'),
+      cwd: realpathSync('/tmp/proj'),
+      trustedPath: '/tmp/proj'
+    });
+    expect(createScratchSubfolder).not.toHaveBeenCalled();
+  });
+
+  it('selects a confined request cwd instead of the registered project root', () => {
+    mkdirSync('/tmp/proj/packages/app', { recursive: true });
+    expect(resolveEffectiveLaunch({
+      cwd: '/tmp/proj/packages/app'
+    }, PROJECT)).toEqual({
+      projectRoot: realpathSync('/tmp/proj'),
+      cwd: realpathSync('/tmp/proj/packages/app'),
+      trustedPath: '/tmp/proj/packages/app'
+    });
+  });
+
+  it('selects a main-minted worktree outside the registered project root', () => {
+    mkdirSync('/tmp/zcc-worktrees/task', { recursive: true });
+    expect(resolveEffectiveLaunch({
+      worktreeInfo: { path: '/tmp/zcc-worktrees/task', branch: 'zcc/task' }
+    }, PROJECT)).toEqual({
+      projectRoot: realpathSync('/tmp/proj'),
+      cwd: realpathSync('/tmp/zcc-worktrees/task'),
+      trustedPath: '/tmp/zcc-worktrees/task',
+      worktree: { path: realpathSync('/tmp/zcc-worktrees/task'), branch: 'zcc/task' }
+    });
+  });
+
+  it('snapshots canonical project root and effective cwd', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'zcc-effective-launch-'));
+    try {
+      const root = join(fixture, 'root');
+      const child = join(root, 'child');
+      const rootLink = join(fixture, 'root-link');
+      const childLink = join(root, 'child-link');
+      mkdirSync(child, { recursive: true });
+      symlinkSync(root, rootLink, 'dir');
+      symlinkSync(child, childLink, 'dir');
+
+      expect(resolveEffectiveLaunch({ cwd: childLink }, { ...PROJECT, path: rootLink })).toMatchObject({
+        projectRoot: realpathSync(root),
+        cwd: realpathSync(child)
+      });
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('fails commit revalidation when project-root or cwd symlink retargets', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'zcc-effective-launch-'));
+    try {
+      const firstRoot = join(fixture, 'first');
+      const secondRoot = join(fixture, 'second');
+      const firstChild = join(firstRoot, 'child');
+      const secondChild = join(secondRoot, 'child');
+      const rootLink = join(fixture, 'root-link');
+      const cwdLink = join(firstRoot, 'cwd-link');
+      mkdirSync(firstChild, { recursive: true });
+      mkdirSync(secondChild, { recursive: true });
+      symlinkSync(firstRoot, rootLink, 'dir');
+      symlinkSync(firstChild, cwdLink, 'dir');
+      const project = { ...PROJECT, path: rootLink };
+      const effective = resolveEffectiveLaunch({ cwd: cwdLink }, project);
+
+      unlinkSync(cwdLink);
+      symlinkSync(secondChild, cwdLink, 'dir');
+      expect(revalidateEffectiveLaunch(effective, project)).toEqual({
+        ok: false,
+        reason: 'effective launch path changed after preflight'
+      });
+
+      unlinkSync(rootLink);
+      symlinkSync(secondRoot, rootLink, 'dir');
+      expect(revalidateEffectiveLaunch(effective, project)).toEqual({
+        ok: false,
+        reason: 'project canonical root changed after preflight'
+      });
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
   });
 });
 
@@ -228,6 +334,7 @@ describe('createTerminalConfined — main-side denylist enforcement', () => {
 
   it('uses the Quick Agent workspace root when scratch isolation is not requested', () => {
     const quickAgentProject = { ...PROJECT, path: '/tmp/zcc-workspace', quickAgent: true };
+    mkdirSync(quickAgentProject.path, { recursive: true });
     projects = [quickAgentProject];
     const res = createTerminalConfined({
       projectId: quickAgentProject.id,
@@ -236,7 +343,31 @@ describe('createTerminalConfined — main-side denylist enforcement', () => {
       rows: 24
     });
     expect(res.ok).toBe(true);
-    expect(lastCreate().cwd).toBe('/tmp/zcc-workspace');
+    expect(lastCreate().cwd).toBe(realpathSync('/tmp/zcc-workspace'));
+  });
+
+  it('materializes and canonically confines an isolated scratch cwd only at spawn', () => {
+    const quickAgentProject = { ...PROJECT, quickAgent: true };
+    const scratch = '/tmp/proj/authorized-scratch';
+    projects = [quickAgentProject];
+    rmSync(scratch, { recursive: true, force: true });
+    createScratchSubfolder.mockImplementationOnce(() => {
+      mkdirSync(scratch, { recursive: true });
+      return scratch;
+    });
+
+    const res = createTerminalConfined({
+      projectId: quickAgentProject.id,
+      profile: 'claude-yolo',
+      cols: 80,
+      rows: 24,
+      isolateScratch: 'authorized scratch'
+    });
+
+    expect(res.ok).toBe(true);
+    expect(createScratchSubfolder).toHaveBeenCalledWith('authorized scratch');
+    expect(lastCreate().cwd).toBe(realpathSync(scratch));
+    rmSync(scratch, { recursive: true, force: true });
   });
 
   it('resolves a seeded launch through the configured global harness', () => {

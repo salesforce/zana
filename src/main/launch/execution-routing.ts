@@ -139,14 +139,18 @@ async function preflightStructuredRouting(
   }
   const { role, model } = resolved;
   if (role.targetId) {
+    const authoritativeDynamicRoles = !!(provider.acceptsDynamicRoleTargets && provider.discoverRoleTargets && input.projectPath);
     const dynamicRoles = provider.discoverRoleTargets && input.projectPath
       ? await provider.discoverRoleTargets({ cwd: input.projectPath, config: input.config })
       : [];
-    const target = [...(provider.adapter.descriptor.targets?.roles ?? []), ...dynamicRoles]
+    const roleTargets = authoritativeDynamicRoles
+      ? dynamicRoles
+      : [...(provider.adapter.descriptor.targets?.roles ?? []), ...dynamicRoles];
+    const target = roleTargets
       .find(({ id }) => id === role.targetId);
     if (!target) return 'role target unavailable';
-    const dynamic = provider.acceptsDynamicRoleTargets
-      && !provider.adapter.descriptor.targets?.roles.some(({ id }) => id === target.id);
+    const dynamic = authoritativeDynamicRoles || (provider.acceptsDynamicRoleTargets
+      && !provider.adapter.descriptor.targets?.roles.some(({ id }) => id === target.id));
     const evidenceTarget = dynamic
       ? provider.dynamicRoleEvidenceTarget?.(target, installedVersion)
       : target;

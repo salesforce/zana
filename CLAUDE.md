@@ -13,8 +13,32 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
 5. **Keep heavy, unbounded work off the main event loop** — bound/`LIMIT`/paginate growing reads; an unbounded accumulating store needs a retention cap.
 6. **Core never names a specific extension in logic** — concrete ids appear only in the `MAIN_MODULES` / `APP_MODULES` registration. In the RENDERER the invariant is now absolute: the `'zana'` module-id literal must appear NOWHERE in `src/renderer/**` code (the whole Zana feature — main + renderer — is now a disk extension, see the zana note below, so there is no longer any core quarantine seam). The source-text guard (`src/renderer/__tests__/rule6-zana-literal.guard.test.ts`) scans comment-stripped renderer code and fails on ANY bare `'zana'`/`"zana"` token. NOTE: `MAIN_MODULES` now registers ONLY `slack` (the sole compiled-in built-in) — `zana` is no longer a built-in main module (it left core when its data moved off native better-sqlite3 onto the host MCP pool over the brokered `mcp` cap); the registration site is guarded by `src/main/__tests__/core-extension-separation.guard.test.ts`.
 7. **Promotion to a built-in is deliberate and bounded** — only when the broker can't grant the capability even scoped, and the trusted version (`builtinExec`/`builtinFetch`) is no weaker than its broker-gated twin (redirects, body cap, timeout).
+8. **New or modified code needs at least 80% test coverage.** Cover meaningful branches and failure paths, not only line count. For Electron main/renderer seams, unit coverage alone is insufficient: add or update the relevant built-Electron E2E test. Before completion, run the focused tests and the production-boundary E2E required by any affected coupling note.
+9. **PR monitoring means diagnose and repair, not only report.** After pushing a PR, watch its checks until complete. On failure, fetch job logs with `gh run view <run-id> --job <job-id> --log-failed`; for external checks, query `gh api repos/<owner>/<repo>/commits/<sha>/check-runs` then `gh api repos/<owner>/<repo>/check-runs/<id>/annotations` to get file, line, rule, and remediation. Fix actionable failures, run focused local verification, push, and repeat until every required check passes. Do not stop at an external failure summary when annotations are available.
 
 ## Coupling notes (don't regress these)
+
+- **Child-process integrations must be verified at the real Electron production
+  boundary, not only through mocks, shell commands, or Node/Vitest.** Electron's
+  process runtime can behave differently from equivalent Node and shell execution.
+  In one observed failure, piped child stdout truncated at exactly 8192 bytes in
+  Electron main while shell and Vitest returned the complete 17-26 KiB payload;
+  fake-CLI E2E fixtures also passed because their output was too small. For every
+  main-process CLI integration, test realistic output size, environment/HOME,
+  cwd, executable resolution, timeout, exit/error behavior, and full IPC-to-UI
+  flow in the built Electron app. Captures must be bounded and cleaned up; when
+  pipes cannot be proven complete, use uniquely named `0600` temp files with an
+  explicit size cap, timeout, concurrency bound, and cleanup on every path. Never
+  replace a proven capture mechanism with `execFile` or piped `spawn` based only
+  on unit tests or shell reproduction. Mock tests remain useful for malformed
+  output and failure paths, but they do not establish production-boundary behavior.
+  OpenCode agent discovery is the current regression example:
+  `src/main/harness/opencode-provider.ts` uses bounded temp-file capture, and any
+  change to its discovery, filtering, IPC, or launcher selection MUST run
+  `npm run build && ZCC_LIVE_OPENCODE=1 npx playwright test
+  e2e/opencode-agent-picker.spec.ts -g 'actual project agents'` against this actual
+  project and HOME config. That test proves the picker enables, visible primary
+  agents are selectable, and hidden agents/subagents remain absent.
 
 - **Feed category registry — every inbox event type declares its feed impact
   in ONE place, and reports/ideas are pinned SIGNAL.** The Inbox feed splits

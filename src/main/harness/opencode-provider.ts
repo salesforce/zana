@@ -55,21 +55,31 @@ import type {
   ResolvedLaunch
 } from './launch-provider.js';
 import { BaseLaunchProvider } from './base-provider.js';
-import type { ModelLevel } from "../../shared/harness-adapter.js";
+import type {
+  HarnessRoleTarget,
+  ModelLevel,
+  OpenCodeAgentDescriptor,
+  OpenCodeAgentDiscoveryFailureReason,
+  OpenCodeAgentDiscoveryResult
+} from '../../shared/harness-adapter.js';
 import { facetSupport, type TrustedHarnessAdapter } from './adapter-contract.js';
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { closeSync, openSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { remoteCdPrefix, shellQuote, shellQuoteArgv } from './shell-quote.js';
 import { cleanExtraArgs } from './argv-utils.js';
 import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from './target-resolution.js';
 
-const OPENCODE_EVIDENCE_VERSION = '1.18.0';
+const OPENCODE_MIN_VERSION = '1.18.0';
 const OPENCODE_REVIEWED_AT = '2026-08-04';
 const openCodeEvidence = (id: string, observed: string, scope: 'local' | 'remote' = 'local') => ({
   id,
-  versionRange: OPENCODE_EVIDENCE_VERSION,
+  versionRange: OPENCODE_MIN_VERSION,
   scope,
   probe: 'opencode --version; opencode --help; opencode run --help; opencode models aisuite',
-  observed,
+  observed: `Minimum supported/reviewed CLI floor: ${OPENCODE_MIN_VERSION}. ${observed}`,
   reviewedAt: OPENCODE_REVIEWED_AT
 });
 
@@ -94,8 +104,8 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
     settingsContributionIds: [],
     targets: {
       roles: [
-        { id: 'build', label: 'Build', scope: ['local'], evidenceVersion: OPENCODE_EVIDENCE_VERSION },
-        { id: 'plan', label: 'Plan', scope: ['local'], evidenceVersion: OPENCODE_EVIDENCE_VERSION }
+        { id: 'build', label: 'Build', executionStates: ['accept-edits', 'autonomous'], scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'plan', label: 'Plan', executionStates: ['plan'], scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION }
       ],
       providers: [
         { id: 'openai', label: 'OpenAI' },
@@ -104,13 +114,13 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
       ],
       providerModelRelationship: 'combined-provider-model',
       models: [
-        { id: 'aisuite/gpt-5.6-luna', label: 'Luna', provider: 'openai', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_EVIDENCE_VERSION },
-        { id: 'aisuite/gpt-5.6-terra', label: 'Terra', provider: 'openai', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_EVIDENCE_VERSION },
-        { id: 'aisuite/gpt-5.6-sol', label: 'Sol', provider: 'openai', level: 'high', scope: ['local'], evidenceVersion: OPENCODE_EVIDENCE_VERSION },
-        { id: 'aisuite/us.anthropic.claude-haiku-4-5-20251001-v1:0', label: 'Haiku', provider: 'anthropic', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_EVIDENCE_VERSION },
-        { id: 'aisuite/us.anthropic.claude-sonnet-5', label: 'Sonnet', provider: 'anthropic', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_EVIDENCE_VERSION },
-        { id: 'aisuite/gemini-3.1-pro-preview', label: 'Gemini Pro', provider: 'google', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_EVIDENCE_VERSION },
-        { id: 'aisuite/gemini-3.5-flash', label: 'Gemini Flash', provider: 'google', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_EVIDENCE_VERSION }
+        { id: 'aisuite/gpt-5.6-luna', label: 'Luna', provider: 'openai', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'aisuite/gpt-5.6-terra', label: 'Terra', provider: 'openai', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'aisuite/gpt-5.6-sol', label: 'Sol', provider: 'openai', level: 'high', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'aisuite/us.anthropic.claude-haiku-4-5-20251001-v1:0', label: 'Haiku', provider: 'anthropic', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'aisuite/us.anthropic.claude-sonnet-5', label: 'Sonnet', provider: 'anthropic', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'aisuite/gemini-3.1-pro-preview', label: 'Gemini Pro', provider: 'google', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'aisuite/gemini-3.5-flash', label: 'Gemini Flash', provider: 'google', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION }
       ],
       modelLevelMapping: {
         low: 'aisuite/gpt-5.6-luna',
@@ -161,13 +171,276 @@ function opencodeBinary(config: AppConfig): string {
   return config.opencodeBinary || 'opencode';
 }
 
+const OPENCODE_AGENT_HEADING = /^([A-Za-z0-9][A-Za-z0-9._:/-]{0,255})\s+\((primary|subagent|all)\)$/;
+const OPENCODE_DEBUG_CONCURRENCY = 2;
+const OPENCODE_DISCOVERY_OUTPUT_LIMIT = 2 * 1024 * 1024;
+
+export class OpenCodeAgentDiscoveryError extends Error {
+  constructor(
+    readonly code: OpenCodeAgentDiscoveryFailureReason,
+    readonly agentId?: string,
+    options?: { cause?: unknown }
+  ) {
+    super(code, options);
+    this.name = 'OpenCodeAgentDiscoveryError';
+  }
+}
+
+export function parseOpenCodeAgentDescriptors(output: string): readonly OpenCodeAgentDescriptor[] {
+  const seen = new Set<string>();
+  return output.split(/\r?\n/).flatMap((line) => {
+    const match = line.trim().match(OPENCODE_AGENT_HEADING);
+    const id = match?.[1];
+    const mode = match?.[2] as OpenCodeAgentDescriptor['mode'] | undefined;
+    if (!id || !mode || seen.has(id)) return [];
+    seen.add(id);
+    return [{ id, label: id, mode, hidden: false, directLaunchAllowed: mode !== 'subagent' }];
+  });
+}
+
+/** Empty stdout is a valid empty catalog; non-empty stdout must yield at least one descriptor. */
+export function parseOpenCodeAgentDiscoveryOutput(output: string): readonly OpenCodeAgentDescriptor[] {
+  const descriptors = parseOpenCodeAgentDescriptors(output);
+  if (output.trim() && descriptors.length === 0) {
+    throw new Error('OpenCode agent discovery returned non-empty unrecognized output');
+  }
+  return descriptors;
+}
+
+type OpenCodeAgentDebugMetadata = Pick<OpenCodeAgentDescriptor, 'hidden'>;
+
+export class OpenCodeAgentDebugParseError extends Error {
+  constructor() {
+    super('OpenCode agent debug returned invalid metadata');
+    this.name = 'OpenCodeAgentDebugParseError';
+  }
+}
+
+export function parseOpenCodeAgentDebugOutput(output: string): OpenCodeAgentDebugMetadata {
+  const trimmed = output.trimStart();
+  if (!trimmed.startsWith('{')) throw new OpenCodeAgentDebugParseError();
+
+  // Electron receives only the first 8 KiB of OpenCode's 17-26 KiB debug JSON.
+  // `hidden` is a top-level header field before the large permission payload, so
+  // inspect only that bounded header instead of requiring the truncated document
+  // to parse. String values are removed first so prompt text cannot spoof a key.
+  const permissionAt = trimmed.indexOf('\n  "permission"');
+  const header = trimmed.slice(0, permissionAt >= 0 ? permissionAt : Math.min(trimmed.length, 4_096));
+  return { hidden: /"hidden"\s*:\s*true\s*(?:,|\r?\n|})/.test(header) };
+}
+
+export async function enrichOpenCodeAgentDescriptors(
+  descriptors: readonly OpenCodeAgentDescriptor[],
+  loadDebug: (id: string) => Promise<string>
+): Promise<readonly OpenCodeAgentDescriptor[]> {
+  const enriched = [...descriptors];
+  const candidateIndexes = enriched.flatMap((descriptor, index) => descriptor.mode === 'subagent' ? [] : [index]);
+  let next = 0;
+  const worker = async () => {
+    while (next < candidateIndexes.length) {
+      const index = candidateIndexes[next++];
+      const descriptor = enriched[index];
+      let output: string;
+      try {
+        output = await loadDebug(descriptor.id);
+      } catch (cause) {
+        throw new OpenCodeAgentDiscoveryError('debug-failed', descriptor.id, { cause });
+      }
+      let hidden: boolean;
+      try {
+        ({ hidden } = parseOpenCodeAgentDebugOutput(output));
+      } catch (cause) {
+        throw new OpenCodeAgentDiscoveryError(
+          'invalid-debug-metadata',
+          descriptor.id,
+          { cause }
+        );
+      }
+      enriched[index] = { ...descriptor, hidden, directLaunchAllowed: !hidden };
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(OPENCODE_DEBUG_CONCURRENCY, candidateIndexes.length) }, worker));
+  return enriched;
+}
+
+type DiscoveryOptions = { bypassCache?: boolean };
+type DiscoveryLoader = () => Promise<readonly OpenCodeAgentDescriptor[]>;
+
+export class OpenCodeAgentDiscoveryCache {
+  private readonly entries = new Map<string, {
+    value?: readonly OpenCodeAgentDescriptor[];
+    expiresAt?: number;
+    inFlight?: Promise<readonly OpenCodeAgentDescriptor[]>;
+  }>();
+  private readonly generations = new Map<string, {
+    next: number;
+    latestSuccessful: number;
+    active: number;
+  }>();
+  private activeLoads = 0;
+  private readonly loadQueue: Array<() => void> = [];
+  private readonly forcedInFlight = new Map<string, Promise<readonly OpenCodeAgentDescriptor[]>>();
+
+  constructor(
+    private readonly successTtlMs = Infinity,
+    private readonly maxEntries = 8,
+    private readonly now = Date.now,
+    private readonly maxConcurrentLoads = 2,
+    private readonly maxPendingLoads = 16
+  ) {}
+
+  discover(command: string, cwd: string, load: DiscoveryLoader, options: DiscoveryOptions = {}) {
+    const key = JSON.stringify([command, cwd]);
+    if (!options.bypassCache) {
+      const existing = this.entries.get(key);
+      if (existing?.value && (existing.expiresAt ?? 0) > this.now()) return Promise.resolve(existing.value);
+      if (existing?.inFlight) return existing.inFlight;
+    } else {
+      const forced = this.forcedInFlight.get(key);
+      if (forced) return forced;
+    }
+    const generationState = this.generations.get(key) ?? { next: 0, latestSuccessful: 0, active: 0 };
+    const generation = ++generationState.next;
+    generationState.active += 1;
+    this.generations.set(key, generationState);
+    const inFlight = this.runBounded(load).then((value) => {
+      if (generation >= generationState.latestSuccessful) {
+        generationState.latestSuccessful = generation;
+        this.entries.delete(key);
+        this.entries.set(key, { value, expiresAt: this.now() + this.successTtlMs });
+        while (this.entries.size > this.maxEntries) this.entries.delete(this.entries.keys().next().value!);
+      }
+      return value;
+    }).catch((error) => {
+      if (this.entries.get(key)?.inFlight === inFlight) this.entries.delete(key);
+      throw error;
+    }).finally(() => {
+      generationState.active -= 1;
+      if (generationState.active === 0) this.generations.delete(key);
+    });
+    if (!options.bypassCache) this.entries.set(key, { inFlight });
+    else {
+      this.forcedInFlight.set(key, inFlight);
+      void inFlight.finally(() => {
+        if (this.forcedInFlight.get(key) === inFlight) this.forcedInFlight.delete(key);
+      }).catch(() => {});
+    }
+    return inFlight;
+  }
+
+  private async runBounded(load: DiscoveryLoader) {
+    if (this.activeLoads >= this.maxConcurrentLoads) {
+      if (this.loadQueue.length >= this.maxPendingLoads) {
+        throw new Error('OpenCode agent discovery queue is full');
+      }
+      await new Promise<void>((resolve) => this.loadQueue.push(resolve));
+    } else {
+      this.activeLoads += 1;
+    }
+    try {
+      return await load();
+    } finally {
+      const next = this.loadQueue.shift();
+      if (next) next();
+      else this.activeLoads -= 1;
+    }
+  }
+}
+
+const agentDiscoveryCache = new OpenCodeAgentDiscoveryCache();
+
+class OpenCodeDebugCommandGate {
+  private active = 0;
+  private readonly queue: Array<() => void> = [];
+
+  async run<T>(load: () => Promise<T>): Promise<T> {
+    if (this.active >= OPENCODE_DEBUG_CONCURRENCY) await new Promise<void>((resolve) => this.queue.push(resolve));
+    else this.active += 1;
+    try {
+      return await load();
+    } finally {
+      const next = this.queue.shift();
+      if (next) next();
+      else this.active -= 1;
+    }
+  }
+}
+
+const debugCommandGate = new OpenCodeDebugCommandGate();
+
+function runOpenCodeCaptured(command: string, args: string[], cwd: string) {
+  return new Promise<string>((resolve, reject) => {
+    const outputPath = join(tmpdir(), `zcc-opencode-${randomUUID()}.json`);
+    const outputFd = openSync(outputPath, 'wx', 0o600);
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { closeSync(outputFd); } catch { /* already closed */ }
+      try {
+        if (error) reject(error);
+        else {
+          const output = readFileSync(outputPath);
+          if (output.length > OPENCODE_DISCOVERY_OUTPUT_LIMIT) {
+            reject(new Error('OpenCode discovery output exceeded limit'));
+          } else {
+            resolve(output.toString('utf8'));
+          }
+        }
+      } finally {
+        rmSync(outputPath, { force: true });
+      }
+    };
+    const child = spawn(command, args, { cwd, stdio: ['ignore', outputFd, 'ignore'] });
+    const timer = setTimeout(() => {
+      child.kill();
+      finish(new Error('OpenCode discovery timed out'));
+    }, 8_000);
+    child.once('error', finish);
+    child.once('close', (code) => {
+      if (code !== 0) finish(new Error('OpenCode discovery command failed'));
+      else finish();
+    });
+  });
+}
+
+function runOpenCodeAgentDebug(command: string, cwd: string, id: string) {
+  return debugCommandGate.run(() => runOpenCodeCaptured(command, ['debug', 'agent', id], cwd));
+}
+
+function runOpenCodeAgentDiscovery(command: string, cwd: string) {
+  return runOpenCodeCaptured(command, ['agent', 'list'], cwd).then(async (stdout) => {
+    try {
+      const descriptors = parseOpenCodeAgentDiscoveryOutput(stdout);
+      return await enrichOpenCodeAgentDescriptors(
+        descriptors,
+        (id) => runOpenCodeAgentDebug(command, cwd, id)
+      );
+    } catch (cause) {
+      if (cause instanceof OpenCodeAgentDiscoveryError) throw cause;
+      throw new OpenCodeAgentDiscoveryError('list-failed', undefined, { cause });
+    }
+  });
+}
+
+function discoverOpenCodeAgents(context: { cwd: string; config: AppConfig }, options?: DiscoveryOptions) {
+  const command = opencodeBinary(context.config);
+  return agentDiscoveryCache.discover(
+    command,
+    context.cwd,
+    () => runOpenCodeAgentDiscovery(command, context.cwd),
+    options
+  );
+}
+
 export class OpenCodeProvider extends BaseLaunchProvider {
   readonly id = 'opencode';
   readonly adapter = OPENCODE_ADAPTER;
   readonly acceptsDynamicRoleTargets = true;
 
-  dynamicRoleEvidenceTarget(target: { id: string; label: string; scope: readonly ('local' | 'remote')[] }, installedVersion: string) {
-    return { ...target, id: 'opencode.role.discovery', scope: [...target.scope], evidenceVersion: installedVersion };
+  dynamicRoleEvidenceTarget(target: { id: string; label: string; scope: readonly ('local' | 'remote')[] }, _installedVersion: string) {
+    return { ...target, id: 'opencode.role.discovery', scope: [...target.scope], evidenceVersion: OPENCODE_MIN_VERSION };
   }
 
   validateRoutingCombination(input: { roleTargetId?: string; executionOrigin: string }) {
@@ -176,26 +449,46 @@ export class OpenCodeProvider extends BaseLaunchProvider {
       : undefined;
   }
 
-  discoverRoleTargets(context: { cwd: string; config: AppConfig }) {
-    const command = opencodeBinary(context.config);
-    return new Promise<readonly { id: string; label: string; scope: ['local'] }[]>((resolve) => {
-      execFile(command, ['agent', 'list'], {
-        cwd: context.cwd,
-        timeout: 8_000,
-        maxBuffer: 2 * 1024 * 1024
-      }, (error, stdout) => {
-        if (error) return resolve([]);
-        const seen = new Set<string>();
-        const roles = String(stdout).split(/\r?\n/).flatMap((line) => {
-          const match = line.match(/^([^\s].*?)\s+\((?:primary|subagent)\)\s*$/);
-          const id = match?.[1]?.trim();
-          if (!id || id.length > 256 || /[\u0000-\u001f\u007f]/.test(id) || seen.has(id)) return [];
-          seen.add(id);
-          return [{ id, label: id, scope: ['local'] as ['local'] }];
-        });
-        resolve(roles);
-      });
-    });
+  static roleTargetsFromDiscovery(
+    result: OpenCodeAgentDiscoveryResult,
+    staticRoles: readonly HarnessRoleTarget[]
+  ): readonly HarnessRoleTarget[] {
+    if (result.status === 'failure') return staticRoles;
+    return result.descriptors.filter(({ directLaunchAllowed }) => directLaunchAllowed).map(({ id, label }) => ({
+      id, label, scope: ['local']
+    }));
+  }
+
+  static failureResult(error: unknown): OpenCodeAgentDiscoveryResult {
+    if (error instanceof OpenCodeAgentDiscoveryError) {
+      return {
+        status: 'failure',
+        reason: error.code,
+        ...(error.agentId ? { agentId: error.agentId } : {})
+      };
+    }
+    return { status: 'failure', reason: 'list-failed' };
+  }
+
+  async discoverRoleTargets(context: { cwd: string; config: AppConfig }) {
+    try {
+      const result = await this.discoverAgentDescriptors(context);
+      if (result.status === 'failure') return [];
+      return OpenCodeProvider.roleTargetsFromDiscovery(result, this.adapter.descriptor.targets?.roles ?? []);
+    } catch {
+      return [];
+    }
+  }
+
+  async discoverAgentDescriptors(
+    context: { cwd: string; config: AppConfig },
+    options: DiscoveryOptions = {}
+  ): Promise<OpenCodeAgentDiscoveryResult> {
+    try {
+      return { status: 'success', descriptors: [...await discoverOpenCodeAgents(context, options)] };
+    } catch (error) {
+      return OpenCodeProvider.failureResult(error);
+    }
   }
 
   modelContribution(targetId: string, level?: ModelLevel) {

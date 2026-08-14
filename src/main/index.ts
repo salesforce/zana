@@ -42,6 +42,7 @@ import { AgentStatusTracker } from './agent-status.js';
 import { OutputActivityMonitor } from './output-activity.js';
 import { ScreenScanBlockedDetector } from './screen-scan-blocked-detector.js';
 import { providerFor, harnessAdapterDescriptorsFromVerify, refreshDynamicHarnessCatalogs } from './harness/registry.js';
+import { OpenCodeProvider } from './harness/opencode-provider.js';
 import { createExecutionConsentStore } from './harness/execution-consent-store.js';
 import { createExecutionConsentManagement } from './harness/execution-consent-management.js';
 import { ExecutionConsentService } from './harness/execution-consent.js';
@@ -2838,6 +2839,100 @@ export async function maybePruneWorktreeOnExit(sessionId: string): Promise<void>
   }
 }
 
+interface EffectiveLaunch {
+  projectRoot: string;
+  cwd: string;
+  /** Path whose canonical target selected cwd. Re-resolved at commit to detect retargeting. */
+  trustedPath: string;
+  /** Main-owned scratch intent. Materialized only after authorization reaches spawn. */
+  scratch?: { label?: string };
+  worktree?: SessionWorktree;
+}
+
+/** Resolve launch cwd once from main-owned project state and confined request intent. */
+export function resolveEffectiveLaunch(
+  req: Pick<CreateTerminalRequest, 'cwd' | 'isolateScratch' | 'title' | 'worktreeInfo'>,
+  project: Project
+): EffectiveLaunch {
+  const projectRoot = project.remote ? project.path : realpathSync(project.path);
+  let cwd = projectRoot;
+  let trustedPath = project.path;
+  const scratch = req.isolateScratch && !req.cwd && project.quickAgent && !project.remote
+    ? { label: typeof req.isolateScratch === 'string' ? req.isolateScratch : req.title }
+    : undefined;
+  const requestedCwd = scratch ? undefined : req.cwd;
+  if (!project.remote && requestedCwd) {
+    try {
+      const realCwd = realpathSync(requestedCwd);
+      if (isWithin(realCwd, projectRoot)) {
+        cwd = realCwd;
+        trustedPath = requestedCwd;
+      }
+    } catch {
+      /* missing or escaping cwd falls back to the registered project root */
+    }
+  }
+  if (
+    req.worktreeInfo?.path &&
+    !project.remote &&
+    !req.isolateScratch &&
+    !req.cwd &&
+    !project.quickAgent
+  ) {
+    try {
+      const realWt = realpathSync(req.worktreeInfo.path);
+      if (isWithin(realWt, realpathSync(worktreeRoot()))) {
+        return {
+          projectRoot,
+          cwd: realWt,
+          trustedPath: req.worktreeInfo.path,
+          worktree: { path: realWt, branch: req.worktreeInfo.branch }
+        };
+      }
+    } catch {
+      /* missing or escaping worktree falls back to the registered project root */
+    }
+  }
+  return { projectRoot, cwd, trustedPath, ...(scratch ? { scratch } : {}) };
+}
+
+/** Materialize authorized scratch intent and canonical-confine its resulting cwd. */
+function materializeEffectiveLaunch(effective: EffectiveLaunch): EffectiveLaunch {
+  if (!effective.scratch) return effective;
+  const trustedPath = store.createScratchSubfolder(effective.scratch.label);
+  const cwd = realpathSync(trustedPath);
+  if (!isWithin(cwd, effective.projectRoot)) {
+    throw new Error('minted scratch cwd escaped registered project root');
+  }
+  return { ...effective, cwd, trustedPath };
+}
+
+/** Re-resolve launch trust anchors at commit; any symlink retarget fails closed. */
+export function revalidateEffectiveLaunch(
+  effective: EffectiveLaunch,
+  project: Project
+): { ok: true } | { ok: false; reason: string } {
+  if (project.remote) {
+    return project.path === effective.projectRoot && effective.cwd === effective.projectRoot
+      ? { ok: true }
+      : { ok: false, reason: 'project canonical root changed after preflight' };
+  }
+  try {
+    if (realpathSync(project.path) !== effective.projectRoot) {
+      return { ok: false, reason: 'project canonical root changed after preflight' };
+    }
+    if (realpathSync(effective.trustedPath) !== effective.cwd) {
+      return { ok: false, reason: 'effective launch path changed after preflight' };
+    }
+  } catch {
+    return { ok: false, reason: 'effective launch path changed after preflight' };
+  }
+  const trustedRoot = effective.worktree ? realpathSync(worktreeRoot()) : effective.projectRoot;
+  return isWithin(effective.cwd, trustedRoot)
+    ? { ok: true }
+    : { ok: false, reason: 'effective launch path changed after preflight' };
+}
+
 /**
  * Spawn a terminal with the cwd confined to its project (CLAUDE.md #2). Shared
  * by the `terminals:create` IPC handler AND the CLI control plane so there is
@@ -2869,6 +2964,8 @@ export function createTerminalConfined(
       personas: Persona[];
       frameworkPersona?: Persona;
     };
+    /** Main-resolved cwd shared by discovery authorization and spawn. */
+    effectiveLaunch?: EffectiveLaunch;
   }
 ): Result<TerminalSession> {
   const project = opts?.launchSnapshot?.project
@@ -2883,27 +2980,10 @@ export function createTerminalConfined(
     // a symlink inside the project that points out (e.g. `<project>/link → /`)
     // can't smuggle the cwd outside the tree — a lexical isWithin alone would be
     // fooled. Any resolution failure or escape falls back to the project root.
-    let cwd = project.path;
-    // Quick Agent isolation: when asked (and no explicit cwd), mint a fresh
-    // subfolder under the scratch workspace so parallel scratch sessions don't
-    // share one flat dir. Only honored for the built-in scratch project — a
-    // normal project's tree is the user's, not ours to spawn dirs in. The minted
-    // path still flows through the realpath confinement below, never trusted raw.
-    const effectiveCwd =
-      req.isolateScratch && !req.cwd && project.quickAgent && !project.remote
-        ? store.createScratchSubfolder(
-            typeof req.isolateScratch === 'string' ? req.isolateScratch : req.title
-          )
-        : req.cwd;
-    if (!project.remote && effectiveCwd) {
-      try {
-        const realCwd = realpathSync(effectiveCwd);
-        const realRoot = realpathSync(project.path);
-        if (isWithin(realCwd, realRoot)) cwd = realCwd;
-      } catch {
-        /* cwd doesn't exist or can't be resolved → keep project root */
-      }
-    }
+    const effectiveLaunch = materializeEffectiveLaunch(
+      opts?.effectiveLaunch ?? resolveEffectiveLaunch(req, project)
+    );
+    const { cwd } = effectiveLaunch;
     // Isolated worktree: the `terminals:create` handler already minted/adopted
     // the checkout (async git) and handed us the RESOLVED path in `worktreeInfo`.
     // Honor it as the cwd directly — a worktree lives OUTSIDE the project root by
@@ -2913,24 +2993,7 @@ export function createTerminalConfined(
     // symlink escaping it still realpath-fails the gate). We re-realpath here and
     // require it to resolve under that managed root before accepting — never
     // trusting the field raw (Rule 1/2). Skipped for remote/scratch/explicit-cwd.
-    let worktreeInfo: SessionWorktree | undefined;
-    if (
-      req.worktreeInfo?.path &&
-      !project.remote &&
-      !req.isolateScratch &&
-      !req.cwd &&
-      !project.quickAgent
-    ) {
-      try {
-        const realWt = realpathSync(req.worktreeInfo.path);
-        if (isWithin(realWt, realpathSync(worktreeRoot()))) {
-          cwd = realWt;
-          worktreeInfo = { path: realWt, branch: req.worktreeInfo.branch };
-        }
-      } catch {
-        /* worktree dir gone / unresolvable → fall back to the project root */
-      }
-    }
+    const worktreeInfo = effectiveLaunch.worktree;
     // Resolve the persona (if any) + opening-prompt wiring via the shared seam
     // (resolvePersonaLaunch) so this path, the control plane, and any future MCP
     // spawn tool agree on persona resolution and the prompt-as-argv convention.
@@ -3094,6 +3157,7 @@ async function launchAuthorizedTerminal(
   const config = store.getConfig();
   const personaSnapshot = personas.list();
   const projectSettings = store.getProjectSettings(req.projectId);
+  const effectiveLaunch = resolveEffectiveLaunch(req, project);
   const userGaveTask = !!(req.prompt?.trim() || req.extraArgs?.length);
   const frameworkPersona = !req.personaId && req.frameworkIds?.length
     ? resolveFrameworkPersona(req.frameworkIds, !userGaveTask)
@@ -3128,6 +3192,7 @@ async function launchAuthorizedTerminal(
       projectSettings,
       personas: resolvedPersonas,
       frameworkPersona,
+      effectiveLaunch,
       storeRevision: launchDigest({ projects, config, projectSettings, personas: resolvedPersonas })
     })
   });
@@ -3151,7 +3216,7 @@ async function launchAuthorizedTerminal(
     harnessRouting: req.harnessRouting,
     extraArgs: req.extraArgs,
     projectId: project.id,
-    projectPath: project.path,
+    projectPath: effectiveLaunch.cwd,
     scope: project.remote ? 'remote' : 'local',
     mode: principal.kind === 'interactive-user' ? 'interactive' : 'unattended',
     idempotencyKey: plan.idempotencyKey,
@@ -3246,7 +3311,8 @@ async function launchAuthorizedTerminal(
           projectSettings: authorizedPlan.resolved.projectSettings,
           personas: authorizedPlan.resolved.personas,
           frameworkPersona: authorizedPlan.resolved.frameworkPersona
-        }
+        },
+        effectiveLaunch: authorizedPlan.resolved.effectiveLaunch
       });
       if (!result.ok) throw new LaunchSpawnError(result.code, result.message);
        const ready = ptys.waitForReady(result.value.id);
@@ -3325,6 +3391,8 @@ async function launchAuthorizedTerminal(
       capacity: resolveMaxLiveSessions(currentConfig)
     });
     if (!common.ok) return common;
+    const currentEffectiveLaunch = revalidateEffectiveLaunch(authorizedPlan.resolved.effectiveLaunch, currentProject);
+    if (!currentEffectiveLaunch.ok) return currentEffectiveLaunch;
     const currentExecution = await preflightTerminalExecution({
       config: currentConfig,
       profile,
@@ -3333,7 +3401,7 @@ async function launchAuthorizedTerminal(
         : undefined),
       projectSettings: currentSettings,
       harnessRouting: authorizedPlan.request.harnessRouting, extraArgs: authorizedPlan.request.extraArgs,
-      projectId: project.id, scope: currentProject.remote ? 'remote' : 'local',
+      projectId: project.id, projectPath: authorizedPlan.resolved.effectiveLaunch.cwd, scope: currentProject.remote ? 'remote' : 'local',
       mode: principal.kind === 'interactive-user' ? 'interactive' : 'unattended',
       idempotencyKey: authorizedPlan.idempotencyKey,
       legacyPersonaFacetCompatibility
@@ -3377,6 +3445,7 @@ async function launchBackgroundTerminal(
   const projects = store.listProjects();
   const project = projects.find((candidate) => candidate.id === opts.projectId);
   if (!project) throw new LaunchSpawnError('NOT_FOUND', 'project not found');
+  const effectiveLaunch = resolveEffectiveLaunch(opts, project);
   const plan = preflightLaunch(opts, {
     principal: () => principal,
     binding: () => ({
@@ -3391,6 +3460,7 @@ async function launchBackgroundTerminal(
       requestedPersonaId: opts.persona?.id,
       config: opts.config,
       projectSettings: opts.projectSettings,
+      effectiveLaunch,
       storeRevision: launchDigest({
         projects,
         config: opts.config,
@@ -3407,6 +3477,7 @@ async function launchBackgroundTerminal(
     harnessRouting: opts.harnessRouting,
     extraArgs: opts.extraArgs,
     projectId: project.id,
+    projectPath: effectiveLaunch.cwd,
     scope: project.remote ? 'remote' : 'local',
     mode: opts.scheduled || opts.autonomous ? 'unattended' : 'headless',
     idempotencyKey: plan.idempotencyKey
@@ -3452,6 +3523,8 @@ async function launchBackgroundTerminal(
         capacity: resolveMaxLiveSessions(currentConfig)
       });
       if (!common.ok) return common;
+      const currentEffectiveLaunch = revalidateEffectiveLaunch(authorizedPlan.resolved.effectiveLaunch, currentProject);
+      if (!currentEffectiveLaunch.ok) return currentEffectiveLaunch;
       const currentExecution = await preflightTerminalExecution({
         config: currentConfig,
         profile: authorizedPlan.request.profile,
@@ -3460,6 +3533,7 @@ async function launchBackgroundTerminal(
         harnessRouting: authorizedPlan.request.harnessRouting,
         extraArgs: authorizedPlan.request.extraArgs,
         projectId: currentProject.id,
+        projectPath: authorizedPlan.resolved.effectiveLaunch.cwd,
         scope: currentProject.remote ? 'remote' : 'local',
         mode: authorizedPlan.request.scheduled || authorizedPlan.request.autonomous ? 'unattended' : 'headless',
         idempotencyKey: authorizedPlan.idempotencyKey
@@ -3482,8 +3556,10 @@ async function launchBackgroundTerminal(
         : { ok: false as const, reason: 'execution evidence or consent changed after preflight' };
     },
     spawn: async (authorizedPlan) => {
+      const spawnLaunch = materializeEffectiveLaunch(authorizedPlan.resolved.effectiveLaunch);
       const session = createTerminalFromAuthorizedPlan({
         ...authorizedPlan.request,
+        cwd: spawnLaunch.cwd,
         preallocatedSessionId: authorizedPlan.sessionId
       });
       return ptys.waitForReady(session.id);
@@ -5481,6 +5557,22 @@ function registerIpc() {
       return harnessAdapterDescriptorsFromVerify(results);
     },
     () => []
+  );
+  safeHandle(
+    IPC.harness.agentDescriptors,
+    async (projectId: unknown, refresh: unknown) => {
+      if (typeof projectId !== 'string') return { status: 'failure' };
+      const project = store.listProjects().find((entry) => entry.id === projectId);
+      if (!project || project.remote) return { status: 'failure' };
+      const provider = providerFor('opencode');
+      if (!(provider instanceof OpenCodeProvider)) return { status: 'failure' };
+      const discovery = await provider.discoverAgentDescriptors({
+        cwd: project.path,
+        config: store.getConfig()
+      }, { bypassCache: refresh === true });
+      return discovery;
+    },
+    () => ({ status: 'failure' as const })
   );
   safeHandle(
     IPC.harness.effectiveDefault,
@@ -8206,6 +8298,28 @@ async function bootstrapNormal() {
   });
   buildAppMenu();
   registerIpc();
+  // Register the launcher scratch project before warmup. Otherwise Quick Agent
+  // creates it only when its dialog opens, which leaves its first picker load
+  // uncached despite the startup prefetch.
+  try {
+    store.ensureQuickAgentProject();
+  } catch (err) {
+    logMainError('ensureQuickAgentProject', err);
+  }
+  // Warm every registered local project's effective OpenCode agents in the
+  // background. The launcher reads this app-lifetime cache, so opening it never
+  // starts the expensive list + debug sweep; explicit Refresh remains the only
+  // cache-bypass path.
+  const openCodeProvider = providerFor('opencode');
+  if (openCodeProvider instanceof OpenCodeProvider) {
+    for (const project of store.listProjects()) {
+      if (project.remote) continue;
+      void openCodeProvider.discoverAgentDescriptors({
+        cwd: project.path,
+        config: store.getConfig()
+      });
+    }
+  }
   scheduler.setDeps({
     ptys,
     launchTerminal: launchBackgroundTerminal,

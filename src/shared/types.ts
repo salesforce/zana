@@ -4853,6 +4853,7 @@ export interface CcApi {
   harness: {
     verify(): Promise<HarnessVerifyResult[]>;
     descriptors(): Promise<import('./harness-adapter.js').HarnessAdapterDescriptor[]>;
+    agentDescriptors(projectId: string, refresh?: boolean): Promise<import('./harness-adapter.js').OpenCodeAgentDiscoveryResult>;
     effectiveDefault(projectId: string): Promise<EffectiveHarnessDefaultResult>;
   };
   /**

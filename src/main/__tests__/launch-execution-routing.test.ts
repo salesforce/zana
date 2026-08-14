@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AppConfig } from '../../shared/types.js';
 import { preflightTerminalExecution } from '../launch/execution-routing.js';
+import { OpenCodeProvider } from '../harness/opencode-provider.js';
 
 const config = (executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous'): AppConfig => ({
   version: 1,
@@ -92,6 +93,46 @@ describe('production execution routing preflight', () => {
       decision: 'blocked',
       reason: 'OpenCode native role and execution state require one compatible role policy; clear one selection'
     });
+  });
+
+  it('uses fresh authoritative direct-role discovery and rejects a subagent sharing a static id', async () => {
+    const services = deps();
+    const provider = new OpenCodeProvider();
+    provider.discoverAgentDescriptors = vi.fn(async () => ({ status: 'success' as const, descriptors: [
+      { id: 'build', label: 'build', mode: 'subagent' as const, hidden: false, directLaunchAllowed: false }
+    ] }));
+    await expect(preflightTerminalExecution({
+      config: config(), profile: 'opencode', projectId: 'p1', projectPath: '/tmp/p1', scope: 'local',
+      mode: 'interactive', idempotencyKey: 'subagent-static-collision',
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { roleTargetId: 'build' } } }
+    }, { ...services, provider })).resolves.toEqual({ decision: 'blocked', reason: 'role target unavailable' });
+    expect(provider.discoverAgentDescriptors).toHaveBeenCalledWith(
+      { cwd: '/tmp/p1', config: expect.any(Object) }
+    );
+  });
+
+  it('allows a freshly discovered direct OpenCode agent above the reviewed evidence floor', async () => {
+    const services = deps();
+    const provider = new OpenCodeProvider();
+    provider.discoverAgentDescriptors = vi.fn(async () => ({ status: 'success' as const, descriptors: [
+      { id: 'doc-vault', label: 'doc-vault', mode: 'primary' as const, hidden: false, directLaunchAllowed: true }
+    ] }));
+    await expect(preflightTerminalExecution({
+      config: config(), profile: 'opencode', projectId: 'p1', projectPath: '/tmp/p1', scope: 'local',
+      mode: 'interactive', idempotencyKey: 'dynamic-direct-agent',
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { roleTargetId: 'doc-vault' } } }
+    }, { ...services, provider })).resolves.toEqual({ decision: 'allowed', scope: 'local' });
+  });
+
+  it.each(['build', 'custom-reviewer'])('fails closed for %s when authoritative OpenCode role discovery fails', async (roleTargetId) => {
+    const services = deps();
+    const provider = new OpenCodeProvider();
+    provider.discoverAgentDescriptors = vi.fn(async () => ({ status: 'failure' as const }));
+    await expect(preflightTerminalExecution({
+      config: config(), profile: 'opencode', projectId: 'p1', projectPath: '/tmp/p1', scope: 'local',
+      mode: 'interactive', idempotencyKey: `failed-discovery-${roleTargetId}`,
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { roleTargetId } } }
+    }, { ...services, provider })).resolves.toEqual({ decision: 'blocked', reason: 'role target unavailable' });
   });
 
   it('allows launching an unrestricted (yolo) profile without a per-tab execution target', async () => {

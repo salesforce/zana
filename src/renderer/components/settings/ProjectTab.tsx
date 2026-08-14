@@ -10,7 +10,7 @@ import type {
   LaunchProfileId,
   ProjectExecutionConsentGrant
 } from '@shared/types';
-import type { HarnessAdapterDescriptor } from '@shared/harness-adapter';
+import { executionMappingOptions, type HarnessAdapterDescriptor } from '@shared/harness-adapter';
 import { providerUiSchema } from '@shared/launch-provider';
 import { useData, useUi } from '../../store';
 import { Section, Field, ChipField, TextArgsField } from './FormFields';
@@ -515,8 +515,8 @@ export function ProjectHarnessSettings({ project, onSaved }: { project: Project;
                         title={unavailable ? descriptor.availability.reason ?? 'Harness unavailable' : undefined}
                       >
                         <option value="">Use global default</option>
-                        {Object.entries(executionMapping).map(([state, native]) => (
-                          <option key={state} value={state}>{native} [{portableLabel(state)}]</option>
+                        {executionMappingOptions(executionMapping).map(({ id, native, states }) => (
+                          <option key={id} value={id}>{native} [{states.map(portableLabel).join(', ')}]</option>
                         ))}
                       </select>
                     </Field>

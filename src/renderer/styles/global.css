@@ -18688,6 +18688,24 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
   width: 100%;
 }
 
+.launch-opencode-role-control {
+  display: flex;
+  align-items: stretch;
+  gap: 5px;
+  width: 100%;
+  min-width: 0;
+}
+
+.launch-opencode-role-control .launch-folder-select {
+  min-width: 0;
+}
+
+.launch-opencode-role-control .launch-advanced-toggle {
+  flex: none;
+  width: 30px;
+  padding: 0;
+}
+
 .launch-model-picker-trigger {
   display: flex;
   align-items: center;

@@ -64,6 +64,66 @@ export interface FakeAgentBinary {
   cleanup(): void;
 }
 
+/**
+ * Deterministic OpenCode catalog for Electron tests. Exercises `agent list` and
+ * `debug agent` without reading a developer's OpenCode configuration.
+ */
+export function makeFakeOpenCodeBinary(): FakeAgentBinary {
+  return makeFakeAgentBinary({
+    profile: 'generic',
+    script: [
+      'if [ "$1" = "--version" ]; then echo "1.18.10"; exit 0; fi',
+      'if [ "$1" = "agent" ] && [ "$2" = "list" ]; then',
+      '  echo "build (primary)"',
+      '  echo "plan (primary)"',
+      '  echo "hidden-system (primary)"',
+      '  echo "worker (subagent)"',
+      '  exit 0',
+      'fi',
+      'if [ "$1" = "debug" ] && [ "$2" = "agent" ]; then',
+      '  if [ "$3" = "hidden-system" ]; then',
+      '    echo "{\\"name\\":\\"hidden-system\\",\\"hidden\\":true,\\"permission\\":{\\"read\\":true}}"',
+      '  else',
+      '    echo "{\\"name\\":\\"$3\\",\\"permission\\":{\\"read\\":true},\\"tools\\":{\\"bash\\":true}}"',
+      '  fi',
+      '  exit 0',
+      'fi',
+      'echo "unexpected fake OpenCode invocation: $*" >&2',
+      'exit 64'
+    ].join('\n')
+  });
+}
+
+/** OpenCode fixture whose catalog changes only after its marker file appears. */
+export function makeRefreshableFakeOpenCodeBinary(): FakeAgentBinary & {
+  refreshMarker: string;
+  catalogCalls: string;
+} {
+  const binary = makeFakeAgentBinary({
+    profile: 'generic',
+    script: [
+      'ROOT=$(dirname "$0")',
+      'if [ "$1" = "--version" ]; then echo "1.18.10"; exit 0; fi',
+      'if [ "$1" = "agent" ] && [ "$2" = "list" ]; then',
+      '  printf "%s\\n" "$*" >> "$ROOT/catalog-calls"',
+      '  echo "build (primary)"',
+      '  if [ -f "$ROOT/refresh-marker" ]; then echo "review (primary)"; else echo "plan (primary)"; fi',
+      '  exit 0',
+      'fi',
+      'if [ "$1" = "debug" ] && [ "$2" = "agent" ]; then',
+      '  echo "{\\"name\\":\\"$3\\",\\"permission\\":{\\"read\\":true}}"',
+      '  exit 0',
+      'fi',
+      'exit 64'
+    ].join('\n')
+  });
+  return {
+    ...binary,
+    refreshMarker: join(binary.dir, 'refresh-marker'),
+    catalogCalls: join(binary.dir, 'catalog-calls')
+  };
+}
+
 // U+2809 ⠉ braille "working" spinner glyph, as shell printf octal bytes.
 const BRAILLE_WORKING = '\\342\\240\\211';
 // U+2733 ✳ idle/done marker, as shell printf octal bytes.

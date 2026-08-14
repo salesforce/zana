@@ -1,17 +1,22 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import type { ExtensionEntry } from '@shared/types';
+import { executionMappingOptions } from '@shared/harness-adapter';
 import { appendAttachmentContext, mergeAttachmentPaths } from '../../util/attachments.js';
 import {
   agentRoutingForSubmission,
   buildLaunchArgs,
+  discoveryForOpenCodePicker,
   frameworkOptionsFrom,
   isWorktreeEligible,
   launchStatusAccessibility,
   launcherRoutingFromPersona,
   normalizeWorktreeName,
   normalizeWorktreeNameInput,
+  roleTargetValueForPicker,
   resolveWorktreeDefault,
+  resolveOpenCodeRoleOptions,
+  reconcileOpenCodeRole,
   selectedAvailableFamily,
   worktreeForSubmission
 } from '../AgentLauncher.js';
@@ -200,6 +205,109 @@ describe('structured routing submission', () => {
     expect(agentRoutingForSubmission(true, 'opencode', {}, {
       opencode: { modelTargetId: 'aisuite/gpt-5.6-sol' }
     }, false)).toBeUndefined();
+  });
+});
+
+describe('OpenCode project agent discovery', () => {
+  it('shows loading instead of another project or harness discovery snapshot', () => {
+    expect(discoveryForOpenCodePicker('project-b', {
+      projectId: 'project-a',
+      discovery: { status: 'success', descriptors: [
+        { id: 'prior-role', label: 'prior-role', mode: 'primary', hidden: false, directLaunchAllowed: true }
+      ] }
+    })).toEqual({ status: 'loading' });
+    expect(discoveryForOpenCodePicker('project-b', {
+      projectId: 'project-b',
+      discovery: { status: 'failure' }
+    })).toEqual({ status: 'failure' });
+  });
+
+  it('renders only role values valid for the current picker catalog', () => {
+    const roles = [{ id: 'review', label: 'Review', scope: ['local'] as ['local'] }];
+    expect(roleTargetValueForPicker('build', roles)).toBe('');
+    expect(roleTargetValueForPicker('review', roles)).toBe('review');
+    expect(roleTargetValueForPicker('review', [])).toBe('');
+  });
+
+  it('loads through project-id IPC once, refreshes explicitly, and prevents stale updates', () => {
+    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('window.cc.harness.agentDescriptors(openCodeAgentDiscoveryProjectId, agentDescriptorsRefresh > 0)');
+    expect(source).toContain('setAgentDescriptorsRefresh((value) => value + 1);');
+    expect(source).toContain('Effective OpenCode agent');
+    expect(source).toContain('Refresh agents');
+    expect(source).toMatch(/return \(\) => \{\s*cancelled = true;\s*\};/);
+  });
+
+  it('offers only directly launchable dynamic agents as role targets', () => {
+    const staticRoles = [
+      { id: 'build', label: 'Build', scope: ['local'] as ['local'] },
+      { id: 'plan', label: 'Plan', scope: ['local'] as ['local'] }
+    ];
+    const mappedRoles = [
+      ...staticRoles,
+      { id: 'build', label: 'Build', executionStates: ['accept-edits', 'autonomous'] as const, scope: ['local'] as ['local'] }
+    ];
+    expect(resolveOpenCodeRoleOptions(mappedRoles, { status: 'success', descriptors: [
+      { id: 'build', label: 'build', mode: 'subagent', hidden: false, directLaunchAllowed: false },
+      { id: 'hidden-system', label: 'hidden-system', mode: 'primary', hidden: true, directLaunchAllowed: false },
+      { id: 'build', label: 'build', mode: 'primary', hidden: false, directLaunchAllowed: true },
+      { id: 'custom', label: 'custom', mode: 'primary', hidden: false, directLaunchAllowed: true }
+    ] })).toEqual([
+      { id: 'build', label: 'build [Accept Edits, Autonomous]', scope: ['local'] },
+      { id: 'custom', label: 'custom', scope: ['local'] }
+    ]);
+    expect(resolveOpenCodeRoleOptions(staticRoles, { status: 'success', descriptors: [] })).toEqual([]);
+    expect(resolveOpenCodeRoleOptions(staticRoles, { status: 'failure' })).toEqual([]);
+  });
+
+  it('combines portable states that share one native execution policy', () => {
+    expect(executionMappingOptions({
+      plan: 'plan',
+      interactive: 'default',
+      'accept-edits': 'force',
+      autonomous: 'force'
+    })).toEqual([
+      { id: 'plan', native: 'plan', states: ['plan'] },
+      { id: 'interactive', native: 'default', states: ['interactive'] },
+      { id: 'accept-edits', native: 'force', states: ['accept-edits', 'autonomous'] },
+      { id: 'autonomous', native: 'force', states: ['accept-edits', 'autonomous'] }
+    ]);
+  });
+
+  it('reconciles selected role against authoritative current discovery state', () => {
+    const success = { status: 'success' as const, descriptors: [
+      { id: 'custom', label: 'custom', mode: 'all' as const, hidden: false, directLaunchAllowed: true }
+    ] };
+    expect(reconcileOpenCodeRole('build', success)).toBeUndefined();
+    expect(reconcileOpenCodeRole('custom', success)).toBe('custom');
+    expect(reconcileOpenCodeRole('build', { status: 'failure' })).toBe('build');
+  });
+
+  it('disables failed discovery roles without inline prose and leaves refresh enabled', () => {
+    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
+    expect(source).toContain("const agentDescriptorsFailed = agentDiscovery.status === 'failure';");
+    expect(source).toContain('disabled={unavailable || agentDescriptorsLoading || agentDescriptorsFailed}');
+    expect(source).not.toContain('Could not discover agents. Retry.');
+    expect(source).toContain('disabled={unavailable}');
+  });
+
+  it('keeps compact refresh inline with role select and renders no visible status/help line', () => {
+    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('className="launch-opencode-role-control"');
+    expect(source).toContain('title="Refresh agents"');
+    expect(source).not.toContain('From project root. Rechecked at launch.');
+    expect(source).not.toContain('launch-opencode-role-meta');
+  });
+
+  it('hides OpenCode Execution State without changing stored routing semantics', () => {
+    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
+    expect(source).toContain("descriptor.id !== 'opencode'");
+    expect(source).toContain("!profileChosen && selectedHarnessDescriptor?.id !== 'opencode'");
+    expect(source).toContain('value={routing.executionState ?? \'\'}');
+    expect(source).not.toContain("descriptor.id === 'opencode' && onChange({ executionState: undefined })");
+    expect(source).toContain('Effective OpenCode agent');
+    expect(source).toContain('<LauncherModelPicker');
+    expect(source).toContain('launch-native-field--provider');
   });
 });
 
