@@ -54,6 +54,7 @@ function makeHost(opts?: {
   storage?: HostStorage;
   caps?: BrokerCapabilities;
   registry?: PersonaTeamRegistryLike;
+  listInstalledExtensions?: () => Array<{ id: string; repository?: string }>;
   callTimeoutMs?: number;
   teardownTimeoutMs?: number;
   setupTimeoutMs?: number;
@@ -78,6 +79,7 @@ function makeHost(opts?: {
     storage,
     caps: opts?.caps,
     registry: opts?.registry,
+    listInstalledExtensions: opts?.listInstalledExtensions,
     log: () => {},
     callTimeoutMs: opts?.callTimeoutMs ?? 1000,
     teardownTimeoutMs: opts?.teardownTimeoutMs ?? 50,
@@ -281,6 +283,22 @@ describe('ExtensionProcessHost', () => {
     expect(getReply).toMatchObject({ ok: true, result: 'v' });
     // Nothing was ever written to a sibling namespace.
     expect(data.has('beta:k')).toBe(false);
+  });
+
+  it('returns only the host-provided installed extension catalogue', async () => {
+    const listInstalledExtensions = vi.fn(() => [{ id: 'gus' }]);
+    const { host, endpoints } = makeHost({ listInstalledExtensions });
+    const ep = await spawnReady(host, endpoints, 'alpha');
+
+    ep.emit({ type: 'broker', reqId: 1, method: 'extensions.listInstalled', args: [] });
+
+    expect(listInstalledExtensions).toHaveBeenCalledOnce();
+    expect(ep.sent.at(-1)).toMatchObject({
+      type: 'broker-result',
+      reqId: 1,
+      ok: true,
+      result: [{ id: 'gus' }]
+    });
   });
 });
 

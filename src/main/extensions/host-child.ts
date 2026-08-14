@@ -183,6 +183,12 @@ function runWithPort(port: PortLike): void {
         void broker('storage.set', [key, value]);
       }
     },
+    extensions: {
+      listInstalled: () =>
+        broker('extensions.listInstalled', []) as Promise<Array<{ id: string; repository?: string }>>,
+      installFromGit: (input: { url: string }) =>
+        broker('extensions.installFromGit', [input]) as Promise<{ id: string }>
+    },
     log: (message: string, err?: unknown) => {
       void broker('log', [message, err === undefined ? undefined : errToString(err)]);
     },
@@ -318,10 +324,6 @@ function runWithPort(port: PortLike): void {
       set: (input: { remoteDefaultPath?: string }) =>
         broker('remoteDefaults.set', [input]) as Promise<{ remoteDefaultPath?: string }>
     },
-    extensions: {
-      installFromGit: (input: { url: string }) =>
-        broker('extensions.installFromGit', [input]) as Promise<{ id: string }>
-    }
   };
 
   async function handleInit(entryPath: string, moduleId: string): Promise<void> {
