@@ -71,7 +71,7 @@
     "microsandbox": "0.6.6"
   },
   "devDependencies": {
-    "@electron/rebuild": "^3.6.0",
+    "@electron/rebuild": "^4.2.0",
     "@playwright/test": "^1.62.1",
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^22.7.0",
