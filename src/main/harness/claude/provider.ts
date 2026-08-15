@@ -19,25 +19,25 @@ import type {
   LaunchProfileId,
   Persona,
   ProjectSettings
-} from '../../shared/types.js';
-import { isClaudeProfile } from '../../shared/launch-provider.js';
+} from '../../../shared/types.js';
+import { isClaudeProfile } from '../../../shared/launch-provider.js';
 import type {
   AutoModeInput,
   HarnessAuthInjection,
-  NativeConversationResume,
   RemoteCommandInput,
   RemoteCommandResult,
   ResolvedLaunch
-} from './launch-provider.js';
-import type { HarnessAuthCredential, HarnessAuthKey } from '../harness-auth.js';
-import { BaseLaunchProvider } from './base-provider.js';
-import { cleanExtraArgs, mergeAllowedTools, mergeDisallowedTools } from './argv-utils.js';
-import { remoteCdPrefix, shellQuote, shellQuoteArgv } from './shell-quote.js';
-import { extractPinnedSessionId, buildSystemPromptGuidance, inboxAllowedTools } from './spawn-plan.js';
-import { resolveModelAlias } from '../model-resolve.js';
-import type { ModelLevel } from '../../shared/harness-adapter.js';
-import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from './target-resolution.js';
-import { facetSupport, type TrustedHarnessAdapter } from './adapter-contract.js';
+} from '../launch-provider.js';
+import type { HarnessAuthCredential, HarnessAuthKey } from '../../harness-auth.js';
+import { BaseLaunchProvider } from '../base-provider.js';
+import { cleanExtraArgs, mergeAllowedTools, mergeDisallowedTools } from '../argv-utils.js';
+import { remoteCdPrefix, shellQuote, shellQuoteArgv } from '../shell-quote.js';
+import { extractPinnedSessionId, buildSystemPromptGuidance, inboxAllowedTools } from '../spawn-plan.js';
+import { resolveModelAlias } from '../../model-resolve.js';
+import type { ModelLevel } from '../../../shared/harness-adapter.js';
+import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from '../target-resolution.js';
+import { facetSupport, type TrustedHarnessAdapter } from '../adapter-contract.js';
+import { claudeLegacyRouting } from './legacy-routing.js';
 
 const CLAUDE_EVIDENCE_VERSION = '2.1.220';
 const claudeEvidence = (id: string, scope: 'local' | 'remote', observed: string) => ({
@@ -105,6 +105,8 @@ const CLAUDE_ADAPTER: TrustedHarnessAdapter = {
     ],
     terminatesAtDoubleDash: true
   },
+  status: { mode: 'osc' },
+  legacyRouting: claudeLegacyRouting,
   evidence: [
     ...['haiku', 'sonnet', 'opus', 'fable'].flatMap((id) => [
       claudeEvidence(id, 'local', 'Native Claude --model alias accepted by golden argv contract.'),
@@ -251,19 +253,29 @@ function buildProjectSettingsArgs(s: ProjectSettings, profile: LaunchProfileId):
   return args;
 }
 
+/** Preserve the remote CLI's legacy model placement within each settings layer. */
+function withLayerModel(args: string[], model: string | undefined, trailingArgs = 0): string[] {
+  if (!model) return args;
+  const permissionIndex = args.indexOf('--permission-mode');
+  const insertionIndex = permissionIndex >= 0 ? permissionIndex : args.length - trailingArgs;
+  return [
+    ...args.slice(0, insertionIndex),
+    '--model',
+    resolveModelAlias(model),
+    ...args.slice(insertionIndex)
+  ];
+}
+
 export class ClaudeCodeProvider extends BaseLaunchProvider {
-  nativeConversationResume(nativeConversationId: string): NativeConversationResume | undefined {
-    return nativeConversationId ? { profile: 'claude', extraArgs: ['--resume', nativeConversationId] } : undefined;
-  }
   readonly id = 'claude-code';
   readonly adapter = CLAUDE_ADAPTER;
 
   launchMetadata(_input: {
-    model: import('./target-resolution.js').ModelResolution;
-    role: import('./target-resolution.js').RoleResolution;
-    execution: import('./target-resolution.js').ExecutionResolution;
+    model: import('../target-resolution.js').ModelResolution;
+    role: import('../target-resolution.js').RoleResolution;
+    execution: import('../target-resolution.js').ExecutionResolution;
     observedAt: number;
-  }): import('../../shared/types.js').SessionMetadataSnapshot {
+  }): import('../../../shared/types.js').SessionMetadataSnapshot {
     // Claude's card subtitle already identifies its harness, its provider is
     // fixed, and transcript stats report its actual model. Its permission mode
     // is launch intent, not a trustworthy runtime observation.
@@ -425,49 +437,25 @@ export class ClaudeCodeProvider extends BaseLaunchProvider {
       extraArgs: remoteExtra
     });
     
-    const modelTarget = resolveModelTarget(this, {
-      config: input.config,
-      persona: input.persona,
-      projectSettings: input.projectSettings,
-      perTabRouting: input.harnessRouting,
-      profile: effectiveProfile,
-      extraArgs: remoteExtra,
-      scope: 'remote'
-    });
-    const roleTarget = resolveRoleTarget(this, {
-      config: input.config,
-      persona: input.persona,
-      projectSettings: input.projectSettings,
-      perTabRouting: input.harnessRouting,
-      profile: effectiveProfile,
-      extraArgs: remoteExtra,
-      scope: 'remote'
-    });
-    const execution = resolveExecutionState(this, {
-      config: input.config,
-      persona: input.persona,
-      projectSettings: input.projectSettings,
-      perTabRouting: input.harnessRouting,
-      profile: effectiveProfile,
-      extraArgs: remoteExtra,
-      scope: 'remote'
-    });
-
     const { args: baseArgs } = this.resolveLaunch(effectiveProfile, input.config, autoModeActive);
-    const personaArgs =
+    const personaArgs = withLayerModel(
       input.persona && isClaudeProfile(effectiveProfile)
         ? personaArgs_build(input.persona, effectiveProfile)
-        : [];
+        : [],
+      input.persona?.model
+    );
     const psArgs = input.projectSettings
-      ? buildProjectSettingsArgs(input.projectSettings, effectiveProfile)
+      ? withLayerModel(
+          buildProjectSettingsArgs(input.projectSettings, effectiveProfile),
+          input.projectSettings.model,
+          input.projectSettings.extraArgs?.length ?? 0
+        )
       : [];
 
 
-    // Hook `--settings` (merges with the remote's own settings files, never
-    // replaces them — same additive contract as the local path). Only spliced
-    // when the caller wired the reverse tunnel + hook env; a plain remote spawn
-    // (no callback URL) keeps the historical no-hooks behaviour.
-    const hookArgs = input.hookSettingsJson ? ['--settings', input.hookSettingsJson] : [];
+    // Lifecycle settings/env are rendered by the owning registration from
+    // host-minted reverse-tunnel callbacks.
+    const lifecycleArgs = input.lifecycle?.args ?? [];
     // Remote MCP forwarding (opt-in, `remoteMcpEnabled`): when `createRemote`
     // wired the reverse tunnel AND handed us the loopback MCP URL, register the
     // zcc-inbox server INLINE — the URL is baked into the `--mcp-config` JSON so
@@ -543,16 +531,12 @@ export class ClaudeCodeProvider extends BaseLaunchProvider {
         [
           'claude',
           ...baseArgs,
-          ...(!modelTarget.structuredSelected ? (modelTarget.contribution.args || []) : []),
           ...mcpArgs,
           ...sessionIdArgs,
-          ...psArgs,
           ...personaArgs,
-          ...(modelTarget.structuredSelected ? (modelTarget.contribution.args || []) : []),
-          ...(roleTarget.contribution.args || []),
-          ...(execution.contribution.args || []),
+          ...psArgs,
           ...guidanceArgs,
-          ...hookArgs,
+          ...lifecycleArgs,
           ...resumeArgs,
           ...remoteExtra
         ],
@@ -563,18 +547,28 @@ export class ClaudeCodeProvider extends BaseLaunchProvider {
     // Prepend the enable var so auto mode also lights up on a remote Bedrock/Vertex
     // /Foundry host (harmless no-op on the Anthropic API). The remote claude reads
     // its own settings files for classifier trust; we only carry the flag + env.
-    const autoModeEnv = autoModeActive ? 'CLAUDE_CODE_ENABLE_AUTO_MODE=1 ' : '';
+    // Preserve the standalone provider contract for focused tests and callers
+    // that do not have host-minted lifecycle endpoints. PtyManager always passes
+    // the registration contribution for a real remote spawn.
+    const lifecycleEnv = input.lifecycle?.env ??
+      (autoModeActive ? { CLAUDE_CODE_ENABLE_AUTO_MODE: '1' } : {});
     // Per-session hook-callback URLs, exported as a `KEY='val' …` prefix on the
     // exec so the remote claude's hook commands (`curl "$ZCC_NOTIFY_URL/blocked"`
     // …) resolve them. Values are the reverse-tunnel loopback endpoint. Quoted
     // with shellQuote so a URL can't break out of the command string.
-    const hookEnvPrefix = input.hookEnv
-      ? Object.entries(input.hookEnv)
+    const autoModeEnv = lifecycleEnv.CLAUDE_CODE_ENABLE_AUTO_MODE === '1'
+      ? 'CLAUDE_CODE_ENABLE_AUTO_MODE=1 '
+      : '';
+    const hookEnvPrefix = Object.fromEntries(
+      Object.entries(lifecycleEnv).filter(([key]) => key !== 'CLAUDE_CODE_ENABLE_AUTO_MODE')
+    );
+    const hookEnvPrefixText = Object.keys(hookEnvPrefix).length > 0
+      ? Object.entries(hookEnvPrefix)
           .map(([k, v]) => `${k}=${shellQuote(v)} `)
           .join('')
       : '';
     return {
-      cmd: `${cdPrefix}${autoModeEnv}${hookEnvPrefix}exec ${shellQuoteArgv(argv)}`,
+      cmd: `${cdPrefix}${autoModeEnv}${hookEnvPrefixText}exec ${shellQuoteArgv(argv)}`,
       claudeSessionId
     };
   }

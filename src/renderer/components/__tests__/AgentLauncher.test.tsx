@@ -220,15 +220,22 @@ describe('structured routing submission', () => {
 });
 
 describe('OpenCode project agent discovery', () => {
-  it('shows loading instead of another project or harness discovery snapshot', () => {
-    expect(discoveryForOpenCodePicker('project-b', {
+  it('shows loading instead of another project or profile discovery snapshot', () => {
+    expect(discoveryForOpenCodePicker('project-b', 'opencode', {
       projectId: 'project-a',
+      profile: 'opencode',
       discovery: { status: 'success', descriptors: [
         { id: 'prior-role', label: 'prior-role', mode: 'primary', hidden: false, directLaunchAllowed: true }
       ] }
     })).toEqual({ status: 'loading' });
-    expect(discoveryForOpenCodePicker('project-b', {
+    expect(discoveryForOpenCodePicker('project-b', 'opencode', {
       projectId: 'project-b',
+      profile: 'opencode-resume',
+      discovery: { status: 'failure' }
+    })).toEqual({ status: 'loading' });
+    expect(discoveryForOpenCodePicker('project-b', 'opencode', {
+      projectId: 'project-b',
+      profile: 'opencode',
       discovery: { status: 'failure' }
     })).toEqual({ status: 'failure' });
   });
@@ -242,7 +249,7 @@ describe('OpenCode project agent discovery', () => {
 
   it('loads through project-id IPC once, refreshes explicitly, and prevents stale updates', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('window.cc.harness.agentDescriptors(openCodeAgentDiscoveryProjectId, agentDescriptorsRefresh > 0)');
+    expect(source).toContain('window.cc.harness.agentDescriptors(\n      openCodeAgentDiscoveryProjectId,\n      openCodeAgentDiscoveryProfile,\n      agentDescriptorsRefresh > 0\n    )');
     expect(source).toContain('setAgentDescriptorsRefresh((value) => value + 1);');
     expect(source).toContain('Effective OpenCode agent');
     expect(source).toContain('Refresh agents');

@@ -42,7 +42,8 @@ vi.mock('../mcp-config.js', () => ({
   ensureMcpConfigForProjectSync: (id: string) => `/tmp/${id}/.mcp.json`
 }));
 
-import { PtyManager, buildAutoModeSettings } from '../pty.js';
+import { PtyManager } from '../pty.js';
+import { buildClaudeAutoModeSettings } from '../harness/claude/hooks.js';
 import type { AppConfig } from '../../shared/types.js';
 
 const BASE: AppConfig = {
@@ -196,13 +197,13 @@ describe('auto mode — launch wiring', () => {
   });
 });
 
-describe('buildAutoModeSettings', () => {
+describe('buildClaudeAutoModeSettings', () => {
   it('returns undefined when nothing is configured', () => {
-    expect(buildAutoModeSettings(BASE)).toBeUndefined();
+    expect(buildClaudeAutoModeSettings(BASE)).toBeUndefined();
   });
 
   it('splices $defaults in front of every non-empty list', () => {
-    const block = buildAutoModeSettings({
+    const block = buildClaudeAutoModeSettings({
       ...BASE,
       autoModeEnvironment: ['a'],
       autoModeAllow: ['b'],
@@ -218,8 +219,8 @@ describe('buildAutoModeSettings', () => {
   });
 
   it('emits classifyAllShell only when true', () => {
-    expect(buildAutoModeSettings({ ...BASE, autoModeClassifyAllShell: false })).toBeUndefined();
-    expect(buildAutoModeSettings({ ...BASE, autoModeClassifyAllShell: true })).toEqual({
+    expect(buildClaudeAutoModeSettings({ ...BASE, autoModeClassifyAllShell: false })).toBeUndefined();
+    expect(buildClaudeAutoModeSettings({ ...BASE, autoModeClassifyAllShell: true })).toEqual({
       classifyAllShell: true
     });
   });

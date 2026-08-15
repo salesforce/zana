@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CursorProvider } from '../cursor-provider.js';
+import { CursorProvider } from '../cursor/provider.js';
 
 describe('CursorProvider model routing', () => {
   const provider = new CursorProvider();

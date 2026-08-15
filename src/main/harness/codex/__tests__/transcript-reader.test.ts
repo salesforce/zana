@@ -18,7 +18,7 @@ import {
   readLastAssistantTextCodex,
   readSessionStatsCodex,
   readSessionDigestCodex
-} from '../codex-transcript-reader.js';
+} from '../transcript-reader.js';
 
 const FIXTURE = join(__dirname, 'fixtures', 'codex-rollout-sample.jsonl');
 const raw = readFileSync(FIXTURE, 'utf8');

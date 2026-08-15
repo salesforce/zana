@@ -122,7 +122,7 @@ describe('AutoReportLinkerService — real transcript + real inbox store', () =>
   it('reads a REAL transcript file with buildSessionStats and extracts the Write tool_use', async () => {
     // Prove the low-level parser really sees our file, independent of homedir
     // plumbing: import buildSessionStats/readSessionStats directly.
-    const { readSessionStats } = await import('../transcript-reader.js');
+    const { readSessionStats } = await import('../harness/claude/transcript-reader.js');
     const reportPath = join(projectRoot, 'weather_forecast_europe_report.md');
     writeTranscript('sess-parse-check', reportPath);
     const stats = await readSessionStats(join(claudeProjectsDir, 'sess-parse-check.jsonl'));
@@ -134,7 +134,7 @@ describe('AutoReportLinkerService — real transcript + real inbox store', () =>
     const reportPath = join(projectRoot, 'weather_forecast_europe_report.md');
     writeTranscript('sess-live-1', reportPath);
 
-    const { readSessionStats } = await import('../transcript-reader.js');
+    const { readSessionStats } = await import('../harness/claude/transcript-reader.js');
     const { deps } = buildDeps({
       // readStats normally resolves via TranscriptSource -> transcriptPath(homedir…)
       // which we can't redirect without mocking os.homedir; substitute the direct
@@ -166,7 +166,7 @@ describe('AutoReportLinkerService — real transcript + real inbox store', () =>
   it('end-to-end: does not duplicate the entry on a second idle edge (real store-backed dedup)', async () => {
     const reportPath = join(projectRoot, 'weather_forecast_europe_report.md');
     writeTranscript('sess-live-1', reportPath);
-    const { readSessionStats } = await import('../transcript-reader.js');
+    const { readSessionStats } = await import('../harness/claude/transcript-reader.js');
     const { deps } = buildDeps({
       readStats: async () => readSessionStats(join(claudeProjectsDir, 'sess-live-1.jsonl'))
     });
@@ -194,7 +194,7 @@ describe('AutoReportLinkerService — real transcript + real inbox store', () =>
       comments: 'Manual push from the agent.'
     });
 
-    const { readSessionStats } = await import('../transcript-reader.js');
+    const { readSessionStats } = await import('../harness/claude/transcript-reader.js');
     const { deps } = buildDeps({
       readStats: async () => readSessionStats(join(claudeProjectsDir, 'sess-live-1.jsonl'))
     });
@@ -225,7 +225,7 @@ describe('AutoReportLinkerService — real transcript + real inbox store', () =>
     ];
     writeFileSync(join(claudeProjectsDir, 'sess-live-1.jsonl'), lines.join('\n') + '\n', 'utf-8');
 
-    const { readSessionStats } = await import('../transcript-reader.js');
+    const { readSessionStats } = await import('../harness/claude/transcript-reader.js');
     const { deps } = buildDeps({
       readStats: async () => readSessionStats(join(claudeProjectsDir, 'sess-live-1.jsonl'))
     });

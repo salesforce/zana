@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AppConfig } from '../../shared/types.js';
 import { preflightTerminalExecution } from '../launch/execution-routing.js';
-import { OpenCodeProvider } from '../harness/opencode-provider.js';
+import { OpenCodeProvider } from '../harness/opencode/provider.js';
 
 const config = (executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous'): AppConfig => ({
   version: 1,

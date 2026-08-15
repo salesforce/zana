@@ -26,17 +26,17 @@
  * dispatches through the interface.
  */
 
-import type { AppConfig, LaunchProfileId } from '../../shared/types.js';
+import type { AppConfig, LaunchProfileId } from '../../../shared/types.js';
 import type {
   HarnessAuthInjection,
   RemoteCommandInput,
   RemoteCommandResult,
   ResolvedLaunch
-} from './launch-provider.js';
-import type { HarnessAuthCredential, HarnessAuthKey } from '../harness-auth.js';
-import { BaseLaunchProvider } from './base-provider.js';
-import type { ModelLevel } from "../../shared/harness-adapter.js";
-import { facetSupport, type TrustedHarnessAdapter } from './adapter-contract.js';
+} from '../launch-provider.js';
+import type { HarnessAuthCredential, HarnessAuthKey } from '../../harness-auth.js';
+import { BaseLaunchProvider } from '../base-provider.js';
+import type { ModelLevel } from "../../../shared/harness-adapter.js";
+import { facetSupport, type TrustedHarnessAdapter } from '../adapter-contract.js';
 
 const CURSOR_EVIDENCE_VERSION = '2026.01.23';
 const cursorEvidence = (id: string, observed: string) => ({
@@ -104,6 +104,7 @@ const CURSOR_ADAPTER: TrustedHarnessAdapter = {
     ],
     terminatesAtDoubleDash: true
   },
+  status: { mode: 'output-activity' },
   evidence: [
     cursorEvidence('cursor.facet.opening-prompt', 'CLI accepts opening prompt as spawn argument.'),
     ...['cursor-grok-4.5-high', 'claude-opus-5-high', 'gpt-5.6-sol-medium', 'claude-sonnet-5-high',

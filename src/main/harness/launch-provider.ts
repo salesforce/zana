@@ -26,7 +26,6 @@
 
 import type {
   AppConfig,
-  CreateTerminalRequest,
   HarnessModelRoutingV1,
   LaunchProfileId,
   Persona,
@@ -38,6 +37,7 @@ import type { HarnessOption, ProviderCapabilities } from '../../shared/launch-pr
 import type { ModelLevel } from '../../shared/harness-adapter.js';
 import type { HarnessAuthCredential, HarnessAuthKey } from '../harness-auth.js';
 import type { TrustedHarnessAdapter } from './adapter-contract.js';
+import type { HarnessIntegrationAdapter } from '@zcc/harness-sdk';
 import type { ExecutionResolution, ModelResolution, RoleResolution } from './target-resolution.js';
 
 /** A resolved base launch: the executable and its base argv (pre-layers). */
@@ -45,12 +45,6 @@ export interface ResolvedLaunch {
   command: string;
   args: string[];
 }
-
-/** Trusted provider-native exact-resume plan. Never projected to renderer. */
-export type NativeConversationResume = Pick<
-  CreateTerminalRequest,
-  'profile' | 'extraArgs' | 'resumeSessionId'
->;
 
 /**
  * The result of {@link LaunchProvider.authInjection}: how a per-harness base URL +
@@ -92,27 +86,17 @@ export interface RemoteCommandInput {
   harnessRouting?: HarnessModelRoutingV1;
   remote: ProjectRemote;
   persona?: Persona;
-  /**
-   * Per-session `ZCC_*` hook-callback URLs to export into the remote agent's
-   * environment (pointed at the reverse-tunnel loopback endpoint — see
-   * `PtyManager.createRemote`). Baked into the command string as a `KEY=val …`
-   * prefix on the `exec`, exactly like the auto-mode env, so each session's
-   * command literal carries its OWN session-unique URLs (no tmux `-e` threading
-   * needed — the value never rides tmux's server-global env snapshot). Undefined
-   * ⇒ no hooks wired (the historical remote behaviour).
-   */
-  hookEnv?: Record<string, string>;
-  /**
-   * The inline `--settings` JSON registering the remote hooks (from
-   * `buildHookSettings`). Spliced into argv only when `hookEnv` is set.
-   */
-  hookSettingsJson?: string;
+  /** Registration-rendered native lifecycle contribution for remote argv/env. */
+  lifecycle?: {
+    readonly args: readonly string[];
+    readonly env: Readonly<Record<string, string>>;
+  };
   /**
    * Provider-neutral remote hook-callback URLs — the reverse-tunnel-loopback twin
    * of {@link ProviderHookUrls}, pointed at `http://127.0.0.1:<remotePort>/hook/*`
    * (the `ssh -R` forward back to our local hook server). This is the same
-   * per-event set `createRemote` derives its claude `hookEnv` from; a provider
-   * whose CLI carries hooks as ARGS (codex) turns it into `-c hooks.*` overrides
+   * per-event set a registration renders into its native lifecycle dialect. A
+   * provider whose CLI carries hooks as ARGS (codex) turns it into `-c hooks.*` overrides
    * via {@link LaunchProvider.hookArgs}, so codex remote reaches the SAME `/hook/*`
    * routes as claude remote. Undefined ⇒ no hooks wired (a shell/cursor remote, a
    * scheduled/headless run, or a boot before the MCP server binds).
@@ -220,6 +204,12 @@ export interface LaunchProvider {
   /** Trusted capability/contribution metadata. It never changes emitted argv by itself. */
   readonly adapter: TrustedHarnessAdapter;
 
+  /**
+   * Provider-native rendering of host-minted MCP, guidance, hooks, and auth.
+   * The host owns endpoint construction, credentials, and final merge order.
+   */
+  readonly integration: HarnessIntegrationAdapter;
+
   /** Build safe provider-declared metadata from trusted launch resolution. */
   launchMetadata(input: {
     model: ModelResolution;
@@ -251,9 +241,6 @@ export interface LaunchProvider {
 
   /** Capabilities for a specific profile this provider serves. */
   capabilities(profile: LaunchProfileId): ProviderCapabilities;
-
-  /** Return an exact native-resume plan, or undefined when this adapter cannot prove one. */
-  nativeConversationResume?(nativeConversationId: string): NativeConversationResume | undefined;
 
   /**
    * The data-driven picker options this profile offers — a flat, role-tagged

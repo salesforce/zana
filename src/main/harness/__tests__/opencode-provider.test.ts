@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { providerFor } from '../registry.js';
+import { providerFor, registrationFor } from '../registry.js';
 import {
   OpenCodeAgentDiscoveryCache,
   OpenCodeAgentDiscoveryError,
@@ -8,7 +8,7 @@ import {
   parseOpenCodeAgentDescriptors,
   parseOpenCodeAgentDebugOutput,
   parseOpenCodeAgentDiscoveryOutput
-} from '../opencode-provider.js';
+} from '../opencode/provider.js';
 import type { AppConfig, ProjectRemote } from '../../../shared/types.js';
 import { shellQuote, shellQuoteArgv } from '../shell-quote.js';
 
@@ -382,8 +382,8 @@ describe('registry.providerFor — opencode family', () => {
 describe('OpenCodeProvider', () => {
   const p = new OpenCodeProvider();
 
-  it('builds only a provider-owned exact native resume plan', () => {
-    expect(p.nativeConversationResume('ses_exact')).toEqual({
+  it('builds only a registration-owned exact native resume plan', () => {
+    expect(registrationFor('opencode')?.nativeConversationResume?.('ses_exact')).toEqual({
       profile: 'opencode-resume', resumeSessionId: 'ses_exact'
     });
   });

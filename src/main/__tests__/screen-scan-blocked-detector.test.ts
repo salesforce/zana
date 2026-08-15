@@ -20,7 +20,7 @@ import {
 } from '../screen-scan-blocked-detector.js';
 import { AgentStatusTracker } from '../agent-status.js';
 import { OutputActivityMonitor, DEFAULT_IDLE_AFTER_MS } from '../output-activity.js';
-import { OpenCodeProvider } from '../harness/opencode-provider.js';
+import { OpenCodeProvider } from '../harness/opencode/provider.js';
 
 /** A minimal fake timer wheel: schedule handles, advance the clock manually. */
 function makeClock() {

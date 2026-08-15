@@ -81,22 +81,23 @@ describe('Rule-6 guard — launch layer dispatches through the provider seam', (
 
   it("the 'claude-code' provider-id LITERAL appears ONLY in the provider + registry, never in pty.ts", () => {
     // The exact quoted provider-id token — not the substring, which also occurs
-    // in the legitimate `./harness/claude-code-provider.js` import path.
+    // in the legitimate `./harness/claude/provider.js` import path.
     const code = stripCommentsAndStrings(readFileSync(join(mainRoot, 'pty.ts'), 'utf8'));
     expect(/['"]claude-code['"]/.test(code)).toBe(false);
   });
 
-  it('the harness seam files exist (interface + registry + both providers)', () => {
+  it('the harness seam files exist (interface + registry + harness-local providers)', () => {
     for (const f of [
       'harness/launch-provider.ts',
       'harness/base-provider.ts',
       'harness/registry.ts',
       'harness/argv-utils.ts',
-      'harness/claude-code-provider.ts',
-      'harness/cursor-provider.ts',
-      'harness/codex-provider.ts',
-      'harness/pi-provider.ts',
-      'harness/shell-provider.ts',
+      'harness/claude/provider.ts',
+      'harness/cursor/provider.ts',
+      'harness/codex/provider.ts',
+      'harness/pi/provider.ts',
+      'harness/opencode/provider.ts',
+      'harness/shell/provider.ts',
       'harness/shell-quote.ts'
     ]) {
       expect(() => readFileSync(join(mainRoot, f), 'utf8')).not.toThrow();

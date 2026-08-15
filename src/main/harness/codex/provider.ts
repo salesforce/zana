@@ -46,18 +46,19 @@
  * provider id (`'codex'`) appear ONLY here + the registry.
  */
 
-import type { AppConfig, LaunchProfileId, Persona, ProjectSettings } from '../../shared/types.js';
+import type { AppConfig, LaunchProfileId, Persona, ProjectSettings } from '../../../shared/types.js';
 import type {
   HarnessAuthInjection,
   ProviderHookUrls,
   RemoteCommandInput,
   RemoteCommandResult,
   ResolvedLaunch
-} from './launch-provider.js';
-import type { HarnessAuthCredential, HarnessAuthKey } from '../harness-auth.js';
-import { BaseLaunchProvider } from './base-provider.js';
-import type { HarnessModelTarget, ModelLevel } from '../../shared/harness-adapter.js';
-import { facetSupport, type TrustedHarnessAdapter } from './adapter-contract.js';
+} from '../launch-provider.js';
+import type { HarnessAuthCredential, HarnessAuthKey } from '../../harness-auth.js';
+import { BaseLaunchProvider } from '../base-provider.js';
+import type { HarnessModelTarget, ModelLevel } from '../../../shared/harness-adapter.js';
+import { facetSupport, type TrustedHarnessAdapter } from '../adapter-contract.js';
+import { codexLegacyRouting } from './legacy-routing.js';
 
 const CODEX_EVIDENCE_VERSION = '0.140.0';
 const codexEvidence = (id: string, scope: 'local' | 'remote', observed: string) => ({
@@ -114,6 +115,8 @@ const CODEX_ADAPTER: TrustedHarnessAdapter = {
     ],
     terminatesAtDoubleDash: true
   },
+  status: { mode: 'output-activity' },
+  legacyRouting: codexLegacyRouting,
   evidence: [
     codexEvidence('codex.facet.opening-prompt', 'local', 'CLI binds opening prompt at spawn.'),
     codexEvidence('codex.facet.opening-prompt', 'remote', 'Remote command binds opening prompt at spawn.'),

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { providerFor } from '../registry.js';
-import { PiProvider } from '../pi-provider.js';
+import { PiProvider } from '../pi/provider.js';
 import type { AppConfig, ProjectRemote } from '../../../shared/types.js';
 
 const CONFIG: AppConfig = {

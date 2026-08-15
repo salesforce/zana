@@ -1,81 +1,84 @@
 /**
- * The launch-provider registry — the ONE place a concrete profile literal is
- * mapped to its provider (the Rule 6 "registration seam" for the launch layer,
- * mirroring `MAIN_MODULES`). `PtyManager` resolves a provider via
- * {@link providerFor} and never names a profile in its launch logic.
+ * The trusted static registration seam for first-party harnesses.
  *
- * The map is a module-level constant, built ONCE at module load, not inside any
- * per-window / per-launch path (Rule 3): the providers are stateless, so a
- * single frozen instance each is shared across every launch.
- *
- * Adding a provider (Cursor, Codex, PI …) is a two-line change here plus the
- * new profile ids in `VALID_PROFILES` — no edit to `PtyManager`.
+ * A harness is implemented in its own folder and added once below. The main
+ * process retains ownership of loading, validation, and every sensitive host
+ * service; registrations are not dynamically discovered or renderer-supplied.
  */
 
-import type { LaunchProfileId } from '../../shared/types.js';
+import { validateHarnessRegistrations } from '@zcc/harness-sdk';
+import type { LaunchProfileId, HarnessVerifyResult } from '../../shared/types.js';
+import type { HarnessFamily } from '../../shared/types.js';
 import type { HarnessAdapterDescriptor, HarnessAdapterId, HarnessAvailability } from '../../shared/harness-adapter.js';
 import { availabilityFromVerify } from '../../shared/harness-adapter.js';
-import type { HarnessVerifyResult } from '../../shared/types.js';
-import type { LaunchProvider } from './launch-provider.js';
-import { ClaudeCodeProvider } from './claude-code-provider.js';
-import { CursorProvider } from './cursor-provider.js';
-import { CodexProvider } from './codex-provider.js';
-import { PiProvider } from './pi-provider.js';
-import { OpenCodeProvider } from './opencode-provider.js';
-import { ShellProvider } from './shell-provider.js';
-import { LeastCapableProvider } from './least-capable-provider.js';
 import { executionTargetsFor } from './evidence-registry.js';
-import { discoverCodexModels } from './codex-model-catalog.js';
 import { validateConfigFiles } from './adapter-contract.js';
+import { LeastCapableProvider } from './least-capable-provider.js';
+import type { RemoteCommandInput, RemoteCommandResult } from './launch-provider.js';
+import type { LaunchProvider } from './launch-provider.js';
+import type { HarnessRegistration } from './registration.js';
+import { claudeHarness } from './claude/registration.js';
+import { cursorHarness } from './cursor/registration.js';
+import { codexHarness } from './codex/registration.js';
+import { piHarness } from './pi/registration.js';
+import { openCodeHarness } from './opencode/registration.js';
+import { shellHarness } from './shell/registration.js';
 
-const claudeCode = new ClaudeCodeProvider();
-const cursor = new CursorProvider();
-const codex = new CodexProvider();
-const pi = new PiProvider();
-const opencode = new OpenCodeProvider();
-const shell = new ShellProvider();
-/** The forward-compat floor for an unregistered id (T2.1) — see {@link providerFor}. */
-const leastCapable = new LeastCapableProvider();
+export const HARNESS_REGISTRATIONS: readonly HarnessRegistration[] = Object.freeze([
+  claudeHarness,
+  cursorHarness,
+  codexHarness,
+  piHarness,
+  openCodeHarness,
+  shellHarness
+]);
 
-/** Profile → provider. The only site that pairs a concrete profile id with a
- *  provider instance (Rule 6). */
-const LAUNCH_PROVIDERS: Readonly<Record<LaunchProfileId, LaunchProvider>> = Object.freeze({
-  claude: claudeCode,
-  'claude-resume': claudeCode,
-  'claude-yolo': claudeCode,
-  cursor,
-  'cursor-resume': cursor,
-  'cursor-yolo': cursor,
-  codex,
-  'codex-resume': codex,
-  'codex-yolo': codex,
-  pi,
-  'pi-resume': pi,
-  opencode,
-  'opencode-resume': opencode,
-  shell
-});
-
-/**
- * Resolve the provider for a profile. Every profile in `VALID_PROFILES` has an
- * entry; an id with no registered provider — impossible through the typed union
- * today, but reachable when a persisted/config string drifts ahead of the app —
- * falls back to the {@link LeastCapableProvider} (T2.1). That stub answers all-off
- * {@link LEAST_CAPABLE} capabilities (so NO feature service — resume, auto-close,
- * scheduler hooks, heap ceiling, MCP/hook injection — activates on a harness we
- * can't describe) while still degrading the literal SPAWN to a plain shell rather
- * than throwing. This replaces the old `?? shell` alias, whose flaw was that
- * feature QUERIES on an unknown id saw shell's identity as if it were a real,
- * runnable answer; now only the spawn borrows shell's command, never the
- * capability set.
- */
-export function providerFor(profile: LaunchProfileId): LaunchProvider {
-  return LAUNCH_PROVIDERS[profile] ?? leastCapable;
+const registrationIssues = validateHarnessRegistrations(HARNESS_REGISTRATIONS);
+if (registrationIssues.length > 0) {
+  throw new Error(`Invalid harness registrations: ${registrationIssues.map((issue) => issue.message).join(' ')}`);
 }
 
-/** Every trusted adapter once, in profile registry order. No renderer/config registration path exists. */
+const providersByProfile = new Map<LaunchProfileId, LaunchProvider>(
+  HARNESS_REGISTRATIONS.flatMap((registration) =>
+    registration.profiles.map((profile) => [profile.id, registration.implementation] as const)
+  )
+);
+const leastCapable = new LeastCapableProvider();
+const unsupportedRemote = (input: RemoteCommandInput): RemoteCommandResult =>
+  leastCapable.buildRemoteCommand(input);
+
+/** Resolve the owning registration for a profile, if one is registered. */
+export function registrationFor(profile: LaunchProfileId): HarnessRegistration | undefined {
+  return HARNESS_REGISTRATIONS.find((registration) => registration.profiles.some((candidate) => candidate.id === profile));
+}
+
+/**
+ * Render remote argv through the owning registration. Unknown persisted profiles
+ * keep the same least-capable shell floor used by `providerFor`.
+ */
+export function renderRemoteCommand(profile: LaunchProfileId, input: RemoteCommandInput): RemoteCommandResult {
+  return registrationFor(profile)?.renderRemoteCommand(input) ?? unsupportedRemote(input);
+}
+
+/** Resolve a provider by harness family for validation of multi-adapter intent. */
+export function providerForFamily(family: HarnessFamily): LaunchProvider | undefined {
+  return HARNESS_REGISTRATIONS.find((registration) => registration.id === family)?.implementation;
+}
+
+export function registeredHarnessFamilies(): readonly HarnessFamily[] {
+  return HARNESS_REGISTRATIONS
+    .filter((registration): registration is HarnessRegistration & { id: HarnessFamily } => registration.id !== 'shell')
+    .map((registration) => registration.id);
+}
+
+/** Unknown persisted ids deliberately degrade to the non-featureful shell floor. */
+export function providerFor(profile: LaunchProfileId): LaunchProvider {
+  return providersByProfile.get(profile) ?? leastCapable;
+}
+
+/** One trusted implementation per registered harness, in display order. */
 export function registeredAdapters(): readonly LaunchProvider[] {
-  const providers = [claudeCode, cursor, codex, pi, opencode, shell];
+  const providers = HARNESS_REGISTRATIONS.map((registration) => registration.implementation);
   providers.forEach((provider) => validateConfigFiles(provider.adapter.descriptor));
   return providers;
 }
@@ -113,9 +116,14 @@ export function harnessAdapterDescriptorsFromVerify(
   );
 }
 
-/** Refresh Codex's account-visible model catalog before projecting descriptors. */
-export async function refreshDynamicHarnessCatalogs(results: readonly HarnessVerifyResult[]): Promise<void> {
-  const codexResult = results.find((result) => result.family === 'codex');
-  if (!codexResult?.enabled || !codexResult.installed) return;
-  codex.setDiscoveredModels(await discoverCodexModels(codexResult.binary, `${codexResult.binary}:${codexResult.normalizedVersion ?? ''}`));
+/** Refresh only the registrations that declare dynamic catalogs after a successful probe. */
+export async function refreshDynamicHarnessCatalogs(
+  results: readonly HarnessVerifyResult[]
+): Promise<void> {
+  await Promise.all(HARNESS_REGISTRATIONS.flatMap((registration) => {
+    if (!registration.refreshCatalog || registration.id === 'shell') return [];
+    const result = results.find((candidate) => candidate.family === registration.id);
+    if (!result?.enabled || !result.installed) return [];
+    return [registration.refreshCatalog({ binary: result.binary, normalizedVersion: result.normalizedVersion })];
+  }));
 }

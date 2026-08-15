@@ -11,11 +11,11 @@ import type { LaunchProfileId, TerminalSession, AppConfig, ProjectSettings, Proj
 import { SESSION_MEMORY_DEFAULTS } from '../shared/types.js';
 import { computeMaxLiveSessions, resolveMaxLiveSessions } from './launch/capacity.js';
 export { computeMaxLiveSessions, resolveMaxLiveSessions } from './launch/capacity.js';
-import { isClaudeProfile, isOpenCodeProfile } from '../shared/launch-provider.js';
+import { isClaudeProfile } from '../shared/launch-provider.js';
 import { ensureMcpConfigForProjectSync } from './mcp-config.js';
 import { stripInheritedClaudeSession } from './env.js';
 import { isTmuxAvailable, buildLocalTmuxCommand, wrapRemoteTmux, tmuxSessionName } from './tmux.js';
-import { providerFor } from './harness/registry.js';
+import { providerFor, registrationFor, renderRemoteCommand } from './harness/registry.js';
 import type { HarnessAuthInjection, ProviderHookUrls } from './harness/launch-provider.js';
 import { getHarnessAuth } from './harness-auth.js';
 import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from './harness/target-resolution.js';
@@ -25,10 +25,11 @@ import {
   type ExecEnvContext,
   type ExecutionSession
 } from './harness/execution-environment.js';
-import { personaArgs_build } from './harness/claude-code-provider.js';
+import { personaArgs_build } from './harness/claude/provider.js';
 import { shellQuote } from './harness/shell-quote.js';
 import { cleanExtraArgs, mergeAllowedTools, mergeDisallowedTools } from './harness/argv-utils.js';
 import { buildWorktreeGuidance } from './harness/spawn-plan.js';
+import { nativeSessionFields } from './harness/session-adapter.js';
 
 // Electron-Vite emits an ESM `require` shim for the main bundle. Keep this
 // module-local resolver distinct so the bundled declarations cannot collide.
@@ -240,9 +241,8 @@ interface DataBuffer {
 // Re-export isClaudeProfile for backward compatibility with existing imports.
 // New code should import directly from ../shared/launch-provider.js.
 export { isClaudeProfile };
-// personaArgs_build moved to the ClaudeCodeProvider during the LaunchProvider
-// seam extraction; re-export it for existing tests. New code should import from
-// ./harness/claude-code-provider.js.
+// personaArgs_build is Claude-specific; re-export it for existing tests.
+// New code should import from ./harness/claude/provider.js.
 export { personaArgs_build };
 
 /**
@@ -1032,9 +1032,6 @@ export class PtyManager extends EventEmitter {
     // here — claude uses the file+env path above, cursor can't be bridged (its CLI
     // reads MCP only from off-limits project/global config), shell has no MCP.
     // Gated on a live server URL, same as the claude file path.
-    const providerMcpArgs = mcpServerUrl
-      ? provider.mcpArgs(effectiveProfile, mcpServerUrl)
-      : [];
     // MCP wiring for providers whose CLI carries MCP config as an ENV VAR rather
     // than a file (claude) or `-c` arg (codex): OpenCode reads
     // `OPENCODE_CONFIG_CONTENT` (inline config JSON, deep-merged last over its own
@@ -1045,9 +1042,6 @@ export class PtyManager extends EventEmitter {
     // file+env, `-c`-arg, or no MCP surface). Gated on a live server URL, same as
     // the claude file path + providerMcpArgs. Rule 6: the concrete
     // `OPENCODE_CONFIG_CONTENT` string lives only in the OpenCode provider.
-    const providerMcpEnv = mcpServerUrl
-      ? provider.mcpEnv(effectiveProfile, mcpServerUrl)
-      : {};
     // GUIDANCE wiring for providers whose CLI carries system-prompt guidance as
     // ARGS (codex takes `-c developer_instructions=…`). The counterpart to
     // providerMcpArgs for the *instructions* channel: only meaningful when we
@@ -1068,9 +1062,6 @@ export class PtyManager extends EventEmitter {
       ...(opts.worktree ? [buildWorktreeGuidance(opts.worktree)] : []),
       ...(rulesText ? [rulesText] : [])
     ].join('\n\n');
-    const providerGuidanceArgs = mcpServerUrl
-      ? provider.guidanceArgs(effectiveProfile, composedGuidanceText)
-      : [];
     // HOOK wiring for providers whose CLI carries lifecycle hooks as ARGS (codex
     // takes `-c hooks.<Event>=[…]` + the global `--dangerously-bypass-hook-trust`
     // flag). The lifecycle counterpart to providerMcpArgs/providerGuidanceArgs: it
@@ -1099,9 +1090,6 @@ export class PtyManager extends EventEmitter {
           subagent: `${providerHookBase}/subagent/${opts.projectId}/${sessionId}`
         }
       : {};
-    const providerHookArgs = providerHookBase
-      ? provider.hookArgs(effectiveProfile, providerHookUrls)
-      : [];
     // Per-harness AUTH override (Settings → Harness): a stored base URL + token
     // for this profile's credential family, letting the operator point the CLI at
     // a gateway/proxy or supply a key WITHOUT running the CLI's own `login`. The
@@ -1113,10 +1101,21 @@ export class PtyManager extends EventEmitter {
     // byte-identical (guarded by the golden-argv net). `env` is merged into the
     // child env below; `args` splice into fullArgs alongside the other `-c` args.
     const authFamily = provider.authKey(effectiveProfile);
-    const providerAuth: HarnessAuthInjection = authFamily
-      ? provider.authInjection(effectiveProfile, getHarnessAuth(authFamily))
-      : {};
-    const providerAuthArgs = providerAuth.args ?? [];
+    const providerIntegration = provider.integration.configure({
+      profile: effectiveProfile,
+      ...(mcpServerUrl ? { mcp: { url: mcpServerUrl }, guidance: composedGuidanceText } : {}),
+      ...(providerHookBase ? {
+        lifecycle: {
+          stop: providerHookUrls.stop,
+          blocked: providerHookUrls.notify ? `${providerHookUrls.notify}/blocked` : undefined,
+          unblocked: providerHookUrls.notify ? `${providerHookUrls.notify}/unblocked` : undefined,
+          firstPrompt: providerHookUrls.firstPrompt,
+          subagentStart: providerHookUrls.subagent ? `${providerHookUrls.subagent}/start` : undefined,
+          subagentStop: providerHookUrls.subagent ? `${providerHookUrls.subagent}/stop` : undefined
+        }
+      } : {}),
+      ...(authFamily ? { auth: getHarnessAuth(authFamily) } : {})
+    });
     // Persona flags: inserted AFTER claudeMcpArgs so the persona's
     // append-system-prompt layers on TOP of the inbox guidance (personas can
     // build on the baseline inbox behavior), and BEFORE projectSettings so
@@ -1130,126 +1129,31 @@ export class PtyManager extends EventEmitter {
       ? provider.projectSettingsArgs(opts.projectSettings, effectiveProfile)
       : [];
 
-
-    // Stop hook: inject a `--settings` hook (additive — merges with, never
-    // replaces, the user's own settings files) for EVERY callback-bearing tab.
-    // It is the lifecycle authority for an interactive turn ending; scheduler
-    // and auto-close consumers remain separate listeners on the same callback.
-    //
-    // Gated on `injectsClaudeMcpConfig` (the claude-family flag that also gates
-    // the `--mcp-config` file), NOT `supportsHooks`: codex ALSO supports hooks
-    // now, but it carries them as `-c hooks.…` ARGS via `providerHookArgs` above —
-    // it must NOT get claude's `--settings` JSON + `ZCC_*_URL` env, which its CLI
-    // doesn't understand. So this whole block stays claude-only. (Byte-identical
-    // for every profile today: `injectsClaudeMcpConfig === hasTranscript`; the
-    // flags were de-conflated so a future transcript-bearing non-Claude provider
-    // won't inherit these Claude-only injections.)
-    const claudeWithCallback = caps.injectsClaudeMcpConfig && !!this.mcpBaseUrl;
-    const autoClose = !!opts.autoCloseOnFinish && claudeWithCallback;
-    const wantsStopHook = claudeWithCallback;
-    // Notification hook: light a "blocked — needs you" status when the agent
-    // is waiting on the user (permission prompt / interactive question). This
-    // is the ONLY reliable signal for that — the OSC title shows the same `✳`
-    // glyph whether idle or blocked. Wanted for EVERY interactive claude tab,
-    // not just scheduled ones, so it rides on claudeWithCallback alone.
-    const wantsNotifyHook = claudeWithCallback;
-    // First-prompt hook: forward the user's first instruction so the main
-    // process can name the tab via an LLM micro-call. Rides on the same
-    // callback gate as notify (interactive claude tabs). Scheduled runs deliver
-    // their prompt as positional argv (no UserPromptSubmit), so this only ever
-    // fires for interactive sessions — exactly the ones with a tab to name.
-    const wantsFirstPromptHook = claudeWithCallback && !opts.scheduled;
-    // Sub-agent (Task tool) live-count hook: a PreToolUse(Task)/SubagentStop
-    // pair that POSTs start/stop so the UI can badge "N sub-agents running" on
-    // the parent. Wanted for every claude tab with a callback — a fanned-out
-    // scheduled run is exactly where this visibility matters most.
-    const wantsSubagentHook = claudeWithCallback;
-    // Tool-activity (idle-veto) hook: a match-all PreToolUse/PostToolUse pair
-    // that lets the status tracker know a tool is genuinely running even when
-    // the OSC title's `✳` glyph reads idle mid-call (see
-    // `docs/live-agent-status-plan.md` §"Hooks — done truth + idle-veto").
-    // Rides the same gate as notify/subagents — every claude tab with a
-    // callback, since this is a correctness fix, not an opt-in feature.
-    const wantsToolActivityHook = claudeWithCallback;
-    // Overseer auto-approval hook (experimental, off by default). A synchronous
-    // PreToolUse hook that lets the local server auto-approve provably-safe tool
-    // calls (see {@link Overseer}). Installed ONLY when the feature is armed
-    // (`overseerMode` is dryRun/on) — when off, no hook is emitted, so the
-    // feature is completely inert and disabling it fully restores stock
-    // behaviour. Interactive claude tabs only: a scheduled/headless run has no
-    // human to spare prompts for, and bypassPermissions runs don't prompt at all
-    // — so we skip both, and skip the `claude-yolo` profile, which already runs
-    // with --dangerously-skip-permissions (no prompts to intercept).
-    // Overseer and auto mode are mutually exclusive per launch: auto mode's
-    // server-side classifier is a strict superset of the Overseer's fail-open
-    // local cascade (it both allows AND blocks, and doesn't burn tokens on the
-    // Overseer's own LLM tier), so installing both would double-gate every tool
-    // call for no gain. When auto mode is active the Overseer hook is suppressed;
-    // the Overseer remains the fallback whenever auto mode is off/unavailable.
-    const overseerMode = opts.config.overseerMode ?? 'off';
-    const wantsOverseerHook =
-      claudeWithCallback &&
-      overseerMode !== 'off' &&
-      !autoModeActive &&
-      !opts.scheduled &&
-      !opts.headless &&
-      // Skip the yolo profile: it runs --dangerously-skip-permissions, so there
-      // are no prompts for the Overseer to intercept. `acceptsPermissionMode` is
-      // false exactly for that profile.
-      caps.acceptsPermissionMode;
-    // Content Screen (experimental, off by default) — inbound prompt-injection
-    // defense, the counterpart to the Overseer above but on the OTHER hook
-    // (PostToolUse, screening a tool's RESULT rather than gating its call — see
-    // {@link ContentScreen}). None of the Overseer's exclusions apply here,
-    // deliberately: this hook never touches a permission prompt, so it's just
-    // as relevant to a scheduled/headless run (no human present to notice a
-    // hijacked follow-up action) and to the yolo profile
-    // (--dangerously-skip-permissions has the LARGEST blast radius from a
-    // hijacked agent, since there's no prompt left to catch the bad follow-up
-    // either), and it screens a different axis than auto mode's outbound
-    // classifier, so it isn't suppressed when auto mode is active either.
-    const contentScreenMode = opts.config.contentScreenMode ?? 'off';
-    const wantsContentScreenHook = claudeWithCallback && contentScreenMode !== 'off';
-    // Auto-mode classifier trust config → the `autoMode` settings block. Only
-    // built when auto mode is active AND the operator configured at least one
-    // rule list / classifyAllShell — the bare `--permission-mode auto` flag is
-    // what enables auto mode; this block only tunes what the classifier trusts.
-    // Each list is spliced after Claude Code's built-in `"$defaults"` so operator
-    // entries are additive and never discard the built-in guardrails.
-    const autoModeSettings = autoModeActive
-      ? buildAutoModeSettings(opts.config)
+    // The host owns callback identity; the selected registration decides whether
+    // and how its CLI encodes the lifecycle contribution. Codex continues through
+    // its integration adapter above, while Claude renders its --settings payload
+    // through its registration without generic launch code naming a hook policy.
+    const lifecycleBase = caps.injectsClaudeMcpConfig && this.mcpBaseUrl
+      ? `${this.mcpBaseUrl}/hook`
       : undefined;
-    const wantsAnyHook =
-      wantsStopHook ||
-      wantsNotifyHook ||
-      wantsFirstPromptHook ||
-      wantsSubagentHook ||
-      wantsToolActivityHook ||
-      wantsOverseerHook ||
-      wantsContentScreenHook;
-    const hookArgs =
-      wantsAnyHook || autoModeSettings
-        ? [
-            '--settings',
-            buildHookSettings({
-              stop: wantsStopHook,
-              notify: wantsNotifyHook,
-              firstPrompt: wantsFirstPromptHook,
-              subagents: wantsSubagentHook,
-              toolActivity: wantsToolActivityHook,
-              overseer: wantsOverseerHook,
-              // When the deep "think harder" tier is on, an escalated call blocks
-              // the agent while a stronger model reasons — widen the curl ceiling
-              // to sit just above the server's deep decision guard (24s). Fast
-              // path keeps the default 10s. Kept in lockstep with
-              // OVERSEER_DEEP_DECISION_TIMEOUT_MS in index.ts.
-              overseerCurlMaxSec:
-                overseerMode !== 'off' && opts.config.overseerDeepTierEnabled === true ? 28 : 10,
-              contentScreen: wantsContentScreenHook,
-              autoMode: autoModeSettings
-            })
-          ]
-        : [];
+    const lifecycleContribution = registrationFor(effectiveProfile)?.renderLifecycle?.({
+      profile: effectiveProfile,
+      caps,
+      config: opts.config,
+      scheduled: !!opts.scheduled,
+      headless: !!opts.headless,
+      autoModeActive,
+      callbacks: lifecycleBase ? {
+        stop: `${lifecycleBase}/stop/${opts.projectId}/${sessionId}`,
+        notify: `${lifecycleBase}/notify/${opts.projectId}/${sessionId}`,
+        firstPrompt: opts.scheduled ? undefined : `${lifecycleBase}/firstprompt/${opts.projectId}/${sessionId}`,
+        subagent: `${lifecycleBase}/subagent/${opts.projectId}/${sessionId}`,
+        toolActivity: `${lifecycleBase}/toolactivity/${opts.projectId}/${sessionId}`,
+        overseer: `${lifecycleBase}/overseer/${opts.projectId}/${sessionId}`,
+        contentScreen: `${lifecycleBase}/contentscreen/${opts.projectId}/${sessionId}`
+      } : {},
+      scope: 'local'
+    }) ?? { args: [], env: {} };
     // Pre-approve the inbox push tool so the agent can use it without
     // prompting. We merge into the allowedTools list (rather than emit a
     // second --allowedTools flag) because some claude-cli versions take
@@ -1417,14 +1321,14 @@ export class PtyManager extends EventEmitter {
     // Precedence order (lowest → highest):
     //   base profile args → AppConfig globals (already in `args`)
     //   → claudeMcpArgs → providerMcpArgs → providerGuidanceArgs → providerHookArgs
-    //   → projectSettings → PERSONA → autonomousArgs → hookArgs → extraArgs
+    //   → projectSettings → PERSONA → autonomousArgs → lifecycle args → extraArgs
     // providerMcpArgs + providerGuidanceArgs + providerHookArgs sit with the MCP/
     // guidance/hook layer (right after claudeMcpArgs); they're non-empty only for a
     // provider whose CLI carries those as args (codex), and empty for claude (which
     // uses the file path + --append-system-prompt + --settings above) — so at most
-    // one delivery path is ever active. `hookArgs` (near the end) is claude's
-    // `--settings` block, distinct from codex's `providerHookArgs`. autonomousArgs
-    // sits right before hookArgs so its `--permission-mode acceptEdits` wins over
+    // one delivery path is ever active. Registration lifecycle args (near the end)
+    // are Claude's `--settings` block, distinct from codex's provider hook args.
+    // autonomousArgs sits right before lifecycle args so its `--permission-mode acceptEdits` wins over
     // any persona/project permissionMode (claude CLI: last occurrence wins).
     // --disallowedTools can come from persona.deniedTools, projectSettings.deniedTools,
     // autonomousArgs' `AskUserQuestion` suppression, AND per-tab extraArgs — fold
@@ -1437,17 +1341,17 @@ export class PtyManager extends EventEmitter {
           ...(!modelTarget.structuredSelected ? (modelTarget.contribution.args ?? []) : []),
           ...sessionIdArgs,
           ...claudeMcpArgs,
-          ...providerMcpArgs,
-          ...providerGuidanceArgs,
-          ...providerHookArgs,
-          ...providerAuthArgs,
+           ...(providerIntegration.mcpArgs ?? []),
+           ...(providerIntegration.guidanceArgs ?? []),
+           ...(providerIntegration.hookArgs ?? []),
+           ...(providerIntegration.authArgs ?? []),
           ...psArgs,
           ...personaArgs,
           ...(modelTarget.structuredSelected ? (modelTarget.contribution.args ?? []) : []),
           ...(roleTarget.contribution.args ?? []),
           ...(execution.contribution.args ?? []),
           ...autonomousArgs,
-          ...hookArgs,
+           ...lifecycleContribution.args,
           ...cleanedExtra
         ],
         inboxAllow
@@ -1478,8 +1382,8 @@ export class PtyManager extends EventEmitter {
     // ambient `...process.env` copy, so a stored gateway/token deliberately WINS
     // over any ambient value for that family (the operator asked for this
     // endpoint). Empty when nothing is stored, so the ambient env is untouched.
-    if (providerAuth.env) {
-      Object.assign(env, providerAuth.env);
+    if (providerIntegration.authEnv) {
+      Object.assign(env, providerIntegration.authEnv);
     }
     // Per-harness MCP-via-env override (OpenCode's `OPENCODE_CONFIG_CONTENT`):
     // merge AFTER the ambient env copy so the launcher-owned zcc-inbox config wins,
@@ -1488,7 +1392,7 @@ export class PtyManager extends EventEmitter {
     // env-var twin of the claude `ZCC_MCP_URL` set below (which claude
     // env-substitutes into its `--mcp-config` file) — OpenCode instead reads the
     // whole zcc-inbox server block from this var, deep-merged over its own config.
-    Object.assign(env, providerMcpEnv);
+    Object.assign(env, providerIntegration.mcpEnv);
     // Per-session V8 heap ceiling: bound a runaway claude (and its subagent
     // node subtree, which inherits NODE_OPTIONS) so it aborts its own turn at
     // the ceiling instead of growing until the OS memory-pressure killer takes
@@ -1507,62 +1411,12 @@ export class PtyManager extends EventEmitter {
       // Claude-family only — a plain shell has no such dialog.
       env.CLAUDE_CODE_TRUST_ALL_WORKSPACES = '1';
     }
-    if (autoModeActive) {
-      // Auto mode is off-by-default on Bedrock / Vertex / Foundry / signed-in
-      // Claude-apps-gateway sessions until this is set; it's a harmless no-op on
-      // the Anthropic API (where auto mode is available without it). Setting it
-      // here — only when we actually launch in auto mode — keeps the flag and the
-      // env in lockstep regardless of the operator's ambient shell env.
-      env.CLAUDE_CODE_ENABLE_AUTO_MODE = '1';
-    }
+    Object.assign(env, lifecycleContribution.env);
     if (mcpConfigPath && mcpServerUrl) {
       // Claude env-substitutes `${ZCC_MCP_URL}` into its `--mcp-config` file at
       // spawn. (codex bakes the same URL directly into `providerMcpArgs` instead,
       // so it needs no env var here.)
       env.ZCC_MCP_URL = mcpServerUrl;
-    }
-    if (wantsStopHook) {
-      // The Stop hook command reads this — full URL with identity baked in,
-      // so the agent never sees (or could forge) the session id in a schema.
-      env.ZCC_HOOK_URL = `${this.mcpBaseUrl}/hook/stop/${opts.projectId}/${sessionId}`;
-    }
-    if (wantsNotifyHook) {
-      // The Notification/UserPromptSubmit hooks POST here. Same identity-in-URL
-      // pattern as the stop hook; the path's trailing segment selects the
-      // event (`blocked` vs `unblocked`) so one base URL serves both.
-      env.ZCC_NOTIFY_URL = `${this.mcpBaseUrl}/hook/notify/${opts.projectId}/${sessionId}`;
-    }
-    if (wantsFirstPromptHook) {
-      // The first-prompt UserPromptSubmit hook POSTs the prompt JSON here so the
-      // main process can name the tab. Identity baked into the URL, same as the
-      // others — the agent never sees (or could forge) the session id.
-      env.ZCC_FIRSTPROMPT_URL = `${this.mcpBaseUrl}/hook/firstprompt/${opts.projectId}/${sessionId}`;
-    }
-    if (wantsSubagentHook) {
-      // The PreToolUse(Task)/SubagentStop hooks POST here. Same identity-in-URL
-      // pattern as the notify hook; the trailing path segment selects the event
-      // (`start` vs `stop`) so one base URL serves both.
-      env.ZCC_SUBAGENT_URL = `${this.mcpBaseUrl}/hook/subagent/${opts.projectId}/${sessionId}`;
-    }
-    if (wantsToolActivityHook) {
-      // The match-all PreToolUse/PostToolUse/Stop-clear hooks POST here. Same
-      // identity-in-URL pattern as the notify/subagent hooks; the trailing path
-      // segment selects the event (`start`/`stop`/`clear`).
-      env.ZCC_TOOLACTIVITY_URL = `${this.mcpBaseUrl}/hook/toolactivity/${opts.projectId}/${sessionId}`;
-    }
-    if (wantsOverseerHook) {
-      // The synchronous PreToolUse Overseer hook POSTs the tool-call event here
-      // and prints our decision. Identity baked into the URL like the others —
-      // the server resolves the session's cwd from this id, never trusting the
-      // agent-supplied event body for it.
-      env.ZCC_OVERSEER_URL = `${this.mcpBaseUrl}/hook/overseer/${opts.projectId}/${sessionId}`;
-    }
-    if (wantsContentScreenHook) {
-      // The synchronous PostToolUse Content Screen hook POSTs the tool-result
-      // event here and prints our decision. Identity baked into the URL like
-      // the others — the server resolves the session's cwd from this id, never
-      // trusting the agent-supplied event body for it.
-      env.ZCC_CONTENTSCREEN_URL = `${this.mcpBaseUrl}/hook/contentscreen/${opts.projectId}/${sessionId}`;
     }
     // tmux persistence (opt-in, Phase 2): back the session with a tmux session
     // so it survives an app restart and can be re-attached. We only WRAP the
@@ -1669,10 +1523,11 @@ export class PtyManager extends EventEmitter {
       extraArgs: opts.extraArgs,
       metadata,
       claudeSessionId,
-      // A restored OpenCode tab already has an authoritative session id. Keep
-      // it on the replacement PTY record so transcript reads target the resumed
-      // row instead of looking for a newly-created row after this app launch.
-      openCodeSessionId: isOpenCodeProfile(opts.profile) ? opts.resumeSessionId : undefined,
+      ...nativeSessionFields(
+        opts.resumeSessionId
+          ? registrationFor(opts.profile)?.nativeSessionPatch?.(opts.resumeSessionId)
+          : undefined
+      ),
       headless: opts.headless || undefined,
       scheduled: opts.scheduled || undefined,
       inboxLevel: opts.scheduled ? opts.inboxLevel : undefined,
@@ -2018,7 +1873,11 @@ export class PtyManager extends EventEmitter {
     // baseProfile): the old buildRemoteCmd branched shell-vs-claude on
     // `opts.profile`, and the claude provider re-derives the effective profile
     // from persona.baseProfile internally — preserving that exact behaviour.
-    const remoteProvider = providerFor(opts.profile);
+    const remoteRegistration = registrationFor(opts.profile);
+    if (!remoteRegistration || !remoteRegistration.supportedScopes.includes('remote')) {
+      throw new Error(`Harness profile ${opts.profile} does not support remote execution`);
+    }
+    const remoteProvider = remoteRegistration.implementation;
     const remoteEffectiveProfile = opts.persona?.baseProfile ?? opts.profile;
     const remoteMetadataProvider = remoteProvider;
     const remoteExtra = cleanExtraArgs(opts.extraArgs);
@@ -2091,8 +1950,6 @@ export class PtyManager extends EventEmitter {
       !!this.mcpBaseUrl &&
       !opts.headless;
     let remoteForward: { remotePort: number; reverse: string } | null = null;
-    let hookEnv: Record<string, string> | undefined;
-    let hookSettingsJson: string | undefined;
     let remoteHookUrls: ProviderHookUrls | undefined;
     // Opt-in MCP forwarding (`remoteMcpEnabled`): the reverse tunnel already
     // reaches our local MCP/hook http server, so once it's wired we can also
@@ -2116,8 +1973,8 @@ export class PtyManager extends EventEmitter {
         // baked into the URL so the server resolves it, and the agent can never
         // forge it. Only the async hooks (no MCP, no Overseer).
         //
-        // ONE per-event URL set drives BOTH remote wirings from the same gates:
-        //  - claude consumes `hookEnv` + the `--settings` JSON (below), and
+        // ONE per-event URL set drives both remote wirings from the same gates:
+        //  - Claude's registration renders its env + `--settings` payload, and
         //  - a `-c`-hooks provider (codex) consumes `remoteHookUrls` in
         //    `buildRemoteCommand` → `hookArgs`.
         // So codex remote reaches the identical `/hook/*` routes as claude remote.
@@ -2129,21 +1986,6 @@ export class PtyManager extends EventEmitter {
           stop: `${base}/hook/stop/${opts.projectId}/${sessionId}`,
           ...(opts.scheduled ? {} : { firstPrompt: `${base}/hook/firstprompt/${opts.projectId}/${sessionId}` })
         };
-        // Claude's env-based twin of the same URLs (keys are the claude contract).
-        hookEnv = {
-          ZCC_NOTIFY_URL: remoteHookUrls.notify!,
-          ZCC_SUBAGENT_URL: remoteHookUrls.subagent!,
-          ZCC_HOOK_URL: remoteHookUrls.stop!
-        };
-        if (!opts.scheduled) {
-          hookEnv.ZCC_FIRSTPROMPT_URL = remoteHookUrls.firstPrompt!;
-        }
-        hookSettingsJson = buildHookSettings({
-          stop: true,
-          notify: true,
-          firstPrompt: !opts.scheduled,
-          subagents: true
-        });
         // MCP over the same reverse tunnel (opt-in). Same identity-in-URL
         // contract as the local `mcpServerUrl` and the hook URLs above: the
         // project + session ids are baked into the path so the server resolves
@@ -2161,10 +2003,31 @@ export class PtyManager extends EventEmitter {
     // the id (interactive claude family, no caller-pinned resume). The recovered
     // id is stamped onto the session below, closing the parity gap that left
     // remote `claudeSessionId` permanently undefined.
-    const { cmd: builtCmd, claudeSessionId: remoteClaudeSessionId } = remoteProvider.buildRemoteCommand({
+    const remoteLifecycle = registrationFor(remoteEffectiveProfile)?.renderLifecycle?.({
+      profile: remoteEffectiveProfile,
+      caps: remoteProvider.capabilities(remoteEffectiveProfile),
+      config: opts.config,
+      scheduled: !!opts.scheduled,
+      headless: !!opts.headless,
+      autoModeActive: remoteProvider.computeAutoModeActive({
+        profile: remoteEffectiveProfile,
+        config: opts.config,
+        persona: opts.persona,
+        projectSettings: opts.projectSettings,
+        harnessRouting: opts.harnessRouting,
+        extraArgs: cleanExtraArgs(opts.extraArgs)
+      }),
+      callbacks: remoteHookUrls ? {
+        stop: remoteHookUrls.stop,
+        notify: remoteHookUrls.notify,
+        firstPrompt: remoteHookUrls.firstPrompt,
+        subagent: remoteHookUrls.subagent
+      } : {},
+      scope: 'remote'
+    });
+    const { cmd: builtCmd, claudeSessionId: remoteClaudeSessionId } = renderRemoteCommand(opts.profile, {
       ...opts,
-      hookEnv,
-      hookSettingsJson,
+      lifecycle: remoteLifecycle,
       remoteHookUrls,
       remoteMcpUrl,
       scheduled: opts.scheduled,
@@ -2708,6 +2571,26 @@ export class PtyManager extends EventEmitter {
     return live.session;
   }
 
+  /** Apply validated, harness-owned native session identity detected by main. */
+  setNativeSessionFields(
+    id: string,
+    patch: import('./harness/session-adapter.js').NativeSessionPatch
+  ): TerminalSession | null {
+    const live = this.live.get(id);
+    if (!live) return null;
+    let changed = false;
+    if ('codexSessionId' in patch && live.session.codexSessionId !== patch.codexSessionId) {
+      live.session.codexSessionId = patch.codexSessionId;
+      changed = true;
+    }
+    if ('openCodeSessionId' in patch && live.session.openCodeSessionId !== patch.openCodeSessionId) {
+      live.session.openCodeSessionId = patch.openCodeSessionId;
+      changed = true;
+    }
+    if (changed) this.emit('sessionUpdated', live.session);
+    return live.session;
+  }
+
   /** Stamp opaque main-owned restore authority onto a live session. */
   setRestoreCapabilityId(id: string, restoreCapabilityId: string): TerminalSession | null {
     const live = this.live.get(id);
@@ -2871,6 +2754,7 @@ export function detectRemoteForwardFailure(chunk: string): number | null {
  *    outbound call, so there's no permission decision, only an optional
  *    warning. Fail-open, same posture as `overseer`. See {@link ContentScreen}.
  */
+/** @deprecated Claude hook encoding belongs to `harness/claude/hooks`. */
 function buildHookSettings(opts: {
   stop: boolean;
   notify: boolean;
@@ -3156,6 +3040,7 @@ function buildHookSettings(opts: {
  * docs: an array without `"$defaults"` discards every built-in rule for that
  * section). Called only when the launch is actually in auto mode.
  */
+/** @deprecated Claude auto-mode settings belong to `harness/claude/hooks`. */
 export function buildAutoModeSettings(config: AppConfig): Record<string, unknown> | undefined {
   const block: Record<string, unknown> = {};
   const withDefaults = (arr?: string[]) =>

@@ -39,8 +39,8 @@ import type {
 import { executionMappingOptions } from '@shared/harness-adapter';
 import type {
   HarnessAdapterDescriptor,
+  HarnessAgentDiscoveryResult,
   HarnessRoleTarget,
-  OpenCodeAgentDiscoveryResult
 } from '@shared/harness-adapter';
 import {
   buildInterviewPrompt,
@@ -223,23 +223,27 @@ const PORTABLE_EXECUTION_STATES = [
   { id: 'autonomous', label: 'Autonomous (fully auto)' }
 ] as const;
 
-type OpenCodeAgentDiscoveryState = OpenCodeAgentDiscoveryResult | { status: 'loading' };
+type OpenCodeAgentDiscoveryState = HarnessAgentDiscoveryResult | { status: 'loading' };
 type OpenCodeAgentDiscoverySnapshot = {
   projectId: string;
+  profile: LaunchProfileId;
   discovery: OpenCodeAgentDiscoveryState;
 };
 
 export function discoveryForOpenCodePicker(
   projectId: string | undefined,
+  profile: LaunchProfileId | undefined,
   snapshot: OpenCodeAgentDiscoverySnapshot | null
 ): OpenCodeAgentDiscoveryState {
-  if (!projectId) return { status: 'failure' };
-  return snapshot?.projectId === projectId ? snapshot.discovery : { status: 'loading' };
+  if (!projectId || !profile) return { status: 'failure' };
+  return snapshot?.projectId === projectId && snapshot.profile === profile
+    ? snapshot.discovery
+    : { status: 'loading' };
 }
 
 export function resolveOpenCodeRoleOptions(
   staticRoles: readonly HarnessRoleTarget[],
-  discovery: OpenCodeAgentDiscoveryResult
+  discovery: HarnessAgentDiscoveryResult
 ): readonly HarnessRoleTarget[] {
   if (discovery.status === 'failure') return [];
   const knownRoles = new Map(staticRoles.map((role) => [role.id, role]));
@@ -254,7 +258,7 @@ export function resolveOpenCodeRoleOptions(
 
 export function reconcileOpenCodeRole(
   selectedRole: string | undefined,
-  discovery: OpenCodeAgentDiscoveryResult
+  discovery: HarnessAgentDiscoveryResult
 ): string | undefined {
   if (!selectedRole || discovery.status === 'failure') return selectedRole;
   return discovery.descriptors.some(({ id, directLaunchAllowed }) => id === selectedRole && directLaunchAllowed)
@@ -1264,8 +1268,10 @@ export const AgentLauncher = memo(function AgentLauncher({
     !target.remote
       ? target.id
       : undefined;
+  const openCodeAgentDiscoveryProfile = openCodeAgentDiscoveryProjectId ? descriptor?.profile : undefined;
   const openCodeAgentDiscovery = discoveryForOpenCodePicker(
     openCodeAgentDiscoveryProjectId,
+    openCodeAgentDiscoveryProfile,
     openCodeAgentDiscoverySnapshot
   );
   const selectedNativeRouting = family ? nativeRouting[family.id] ?? {} : {};
@@ -1467,19 +1473,28 @@ export const AgentLauncher = memo(function AgentLauncher({
 
   useEffect(() => {
     let cancelled = false;
-    if (!openCodeAgentDiscoveryProjectId) {
+    if (!openCodeAgentDiscoveryProjectId || !openCodeAgentDiscoveryProfile) {
       return () => {
         cancelled = true;
       };
     }
     setOpenCodeAgentDiscoverySnapshot({
       projectId: openCodeAgentDiscoveryProjectId,
+      profile: openCodeAgentDiscoveryProfile,
       discovery: { status: 'loading' }
     });
-    void window.cc.harness.agentDescriptors(openCodeAgentDiscoveryProjectId, agentDescriptorsRefresh > 0)
+    void window.cc.harness.agentDescriptors(
+      openCodeAgentDiscoveryProjectId,
+      openCodeAgentDiscoveryProfile,
+      agentDescriptorsRefresh > 0
+    )
       .then((discovery) => {
         if (cancelled) return;
-        setOpenCodeAgentDiscoverySnapshot({ projectId: openCodeAgentDiscoveryProjectId, discovery });
+        setOpenCodeAgentDiscoverySnapshot({
+          projectId: openCodeAgentDiscoveryProjectId,
+          profile: openCodeAgentDiscoveryProfile,
+          discovery
+        });
         setNativeRouting((current) => {
           const selectedRole = current.opencode?.roleTargetId;
           const reconciledRole = reconcileOpenCodeRole(selectedRole, discovery);
@@ -1497,6 +1512,7 @@ export const AgentLauncher = memo(function AgentLauncher({
         if (!cancelled) {
           setOpenCodeAgentDiscoverySnapshot({
             projectId: openCodeAgentDiscoveryProjectId,
+            profile: openCodeAgentDiscoveryProfile,
             discovery: { status: 'failure' }
           });
         }
@@ -1504,7 +1520,7 @@ export const AgentLauncher = memo(function AgentLauncher({
     return () => {
       cancelled = true;
     };
-  }, [openCodeAgentDiscoveryProjectId, agentDescriptorsRefresh]);
+  }, [openCodeAgentDiscoveryProjectId, openCodeAgentDiscoveryProfile, agentDescriptorsRefresh]);
 
   useEffect(() => {
     composerRef.current?.focus();
@@ -2231,9 +2247,10 @@ export const AgentLauncher = memo(function AgentLauncher({
                       routing={selectedNativeRouting}
                       agentDiscovery={openCodeAgentDiscovery}
                       onRefreshAgentDescriptors={() => {
-                        if (openCodeAgentDiscoveryProjectId) {
+                        if (openCodeAgentDiscoveryProjectId && openCodeAgentDiscoveryProfile) {
                           setOpenCodeAgentDiscoverySnapshot({
                             projectId: openCodeAgentDiscoveryProjectId,
+                            profile: openCodeAgentDiscoveryProfile,
                             discovery: { status: 'loading' }
                           });
                         }

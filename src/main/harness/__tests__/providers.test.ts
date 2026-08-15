@@ -8,9 +8,9 @@ vi.mock('../../model-resolve.js', () => ({
   resolveModelAlias: (model: string) => model
 }));
 
-import { providerFor } from '../registry.js';
-import { ClaudeCodeProvider } from '../claude-code-provider.js';
-import { ShellProvider } from '../shell-provider.js';
+import { providerFor, registrationFor } from '../registry.js';
+import { ClaudeCodeProvider } from '../claude/provider.js';
+import { ShellProvider } from '../shell/provider.js';
 import { LeastCapableProvider } from '../least-capable-provider.js';
 import { LEAST_CAPABLE } from '../../../shared/launch-provider.js';
 import type { AppConfig, LaunchProfileId, Persona, ProjectSettings, ProjectRemote } from '../../../shared/types.js';
@@ -25,8 +25,8 @@ const CONFIG: AppConfig = {
 };
 
 describe('registry.providerFor', () => {
-  it('builds only a provider-owned Claude exact native resume plan', () => {
-    expect(providerFor('claude').nativeConversationResume?.('native-id')).toEqual({
+  it('builds only a registration-owned Claude exact native resume plan', () => {
+    expect(registrationFor('claude')?.nativeConversationResume?.('native-id')).toEqual({
       profile: 'claude', extraArgs: ['--resume', 'native-id']
     });
   });
@@ -252,12 +252,13 @@ describe('ClaudeCodeProvider.buildRemoteCommand', () => {
     const persona: Persona = { id: 'p', name: 'P', allowedTools: ['Read', 'Grep'] };
     const ps: ProjectSettings = { allowedTools: ['Write', 'Grep'] };
     const { cmd } = p.buildRemoteCommand({ profile: 'claude', config: CONFIG, remote, persona, projectSettings: ps });
-    // Exactly one --allowedTools, carrying the union in first-seen order (Grep deduped).
+    // Exactly one --allowedTools, carrying the argv order after layering: persona
+    // first, then project settings, with Grep deduped.
     expect(cmd.match(/--allowedTools/g)).toHaveLength(1);
-    expect(cmd).toContain(`'--allowedTools' 'Write,Grep,Read'`);
+    expect(cmd).toContain(`'--allowedTools' 'Read,Grep,Write'`);
   });
 
-  it('applies global, project, persona, then agent prompt layers remotely', () => {
+  it('applies global, persona, project, then agent prompt layers remotely', () => {
     const { cmd } = p.buildRemoteCommand({
       profile: 'claude',
       config: { ...CONFIG, claudeAppendSystemPrompt: 'global' },
@@ -267,8 +268,9 @@ describe('ClaudeCodeProvider.buildRemoteCommand', () => {
       extraArgs: ['--append-system-prompt', 'agent']
     });
     expect(cmd.indexOf("'global'")).toBeLessThan(cmd.indexOf("'project'"));
-    expect(cmd.indexOf("'project'")).toBeLessThan(cmd.indexOf("'persona'"));
-    expect(cmd.indexOf("'persona'")).toBeLessThan(cmd.indexOf("'agent'"));
+    expect(cmd.indexOf("'global'")).toBeLessThan(cmd.indexOf("'persona'"));
+    expect(cmd.indexOf("'persona'")).toBeLessThan(cmd.indexOf("'project'"));
+    expect(cmd.indexOf("'project'")).toBeLessThan(cmd.indexOf("'agent'"));
   });
 
   it('combines denied tools across global, project, and persona layers remotely', () => {
@@ -280,7 +282,7 @@ describe('ClaudeCodeProvider.buildRemoteCommand', () => {
       persona: { id: 'p', name: 'P', deniedTools: ['Edit'] }
     });
     expect(cmd.match(/--disallowedTools/g)).toHaveLength(1);
-    expect(cmd).toContain("'--disallowedTools' 'Bash(rm:*),Write,Edit'");
+    expect(cmd).toContain("'--disallowedTools' 'Bash(rm:*),Edit,Write'");
   });
 
   it('emits no --allowedTools when neither persona nor project sets one', () => {

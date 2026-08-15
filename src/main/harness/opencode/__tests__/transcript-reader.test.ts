@@ -15,7 +15,7 @@ import {
   readSessionDigestOpenCode,
   readSessionStatsOpenCode,
   openCodeDbPath
-} from '../opencode-transcript-reader.js';
+} from '../transcript-reader.js';
 
 const representativeRows = [
   {

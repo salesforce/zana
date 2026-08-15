@@ -1,26 +1,28 @@
 # Harness — the interactive-launch seam
 
-This directory is the **launch layer**: everything provider-SPECIFIC about turning
-a launch *profile* (`claude`, `cursor`, `codex`, `shell`, …) into a spawned
-process. `PtyManager` (`../pty.ts`) owns the provider-AGNOSTIC orchestration
-(session-id minting, the launcher-owned MCP config file, lifecycle hooks, session
-env, backlog/batching/capacity) and dispatches every provider-*identity* decision
-through this seam.
+This directory is the **harness launch layer**: each static registration owns the
+native CLI dialect for its profiles. `PtyManager` (`../pty.ts`) retains the
+provider-agnostic authority: session identity, path validation, launcher-owned
+MCP files, callback endpoint minting, PTY lifecycle, and capacity. It delegates
+native argv, lifecycle encoding, resume, transcript, and remote rendering through
+the selected registration.
 
 ## The pieces
 
 | File | Role |
 |------|------|
-| `launch-provider.ts` | The `LaunchProvider` interface + its input types (`ResolvedLaunch`, `AutoModeInput`, `RemoteCommandInput`). |
+| `registration.ts` | Main-only extensions to the SDK registration: verification, transcript/session identity, restore, lifecycle rendering, discovery, and remote command contracts. |
+| `registry.ts` | `HARNESS_REGISTRATIONS`, `registrationFor(profile)`, and compatibility provider lookup. This is the only static roster. |
+| `<harness>/registration.ts` | A harness-owned static registration with its provider, session bridge, lifecycle encoder, and verification metadata. |
+| `launch-provider.ts` | The native `LaunchProvider` CLI-dialect interface and its input types (`ResolvedLaunch`, `AutoModeInput`, `RemoteCommandInput`). |
 | `base-provider.ts` | `BaseLaunchProvider` — the abstract base with the no-op defaults every provider inherits (capabilities delegation, empty `-c`-channel/persona/project builders, "no auto mode", "no pinned session", the `simpleRemoteExec` template). Extend this. |
-| `registry.ts` | `providerFor(profile)` — the ONE place a concrete profile id is paired with a provider instance (the Rule-6 registration seam, mirroring `MAIN_MODULES`). |
 | `argv-utils.ts` | `cleanExtraArgs` + `mergeAllowedTools` — pure argv helpers shared by BOTH the local (`pty.ts`) and remote (`buildRemoteCommand`) paths so they can't drift. |
 | `shell-quote.ts` | `shellQuote` / `shellQuoteArgv` / `remoteCdPrefix` for remote-command assembly. |
-| `claude-code-provider.ts` | The full-featured reference — persona/project flag stacks, auto-mode, `--allowedTools` folding. Do NOT copy this for a new simple CLI (it's dense with claude-only concepts). |
-| `cursor-provider.ts` | The **"simple CLI" reference**: base command + resume flag, inherits every no-op default. Copy this for a flag-based CLI. |
-| `pi-provider.ts` | A **"simple CLI + global defaults"** provider (the `pi` coding-agent CLI): base command + `--continue` resume flag, plus the launcher-wide multi-provider defaults `--provider`/`--model`/`--thinking` (from `AppConfig.piProvider`/`piModel`/`piThinking`, set in Settings → Harness → "PI defaults"), folded into the base argv in `resolveLaunch` (byte-clean when unset). Still MCP-less and wires hooks via extensions, so the `-c`-channel/persona/hook builders stay the base no-ops. |
-| `codex-provider.ts` | The **"config-injection CLI" reference**: overrides the three `-c`-channel builders (`mcpArgs`/`guidanceArgs`/`hookArgs`) to inject MCP + guidance + a Stop hook. Copy this if your CLI takes `-c`-style config overrides. |
-| `shell-provider.ts` | The degenerate Null-Object provider (plain interactive shell). |
+| `claude/provider.ts` | The full-featured reference — persona/project flag stacks, auto-mode, `--allowedTools` folding, and remote command assembly. |
+| `cursor/provider.ts` | The **"simple CLI" reference**: base command + resume flag, inheriting the base no-op integrations. |
+| `pi/provider.ts` | A **"simple CLI + global defaults"** provider: `--continue` resume plus global provider/model/thinking defaults. |
+| `codex/provider.ts` | The **"config-injection CLI" reference**: `-c`-channel MCP, guidance, and hook configuration. |
+| `shell/provider.ts` | The degenerate Null-Object provider (plain interactive shell). |
 
 `../../shared/launch-provider.ts` is the **renderer-safe** half: `VALID_PROFILES`,
 the `isXProfile` family predicates, and `providerCapabilities(profile)`. It has NO
@@ -60,18 +62,16 @@ fails until they all agree, so follow this in order and let the guards catch you
 **Tier 1 — the seam (the real work):**
 
 1. `src/shared/types.ts` — add `'gemini' | 'gemini-resume'` to the
-   `LaunchProfileId` union.
+    `LaunchProfileId` union.
 2. `src/shared/launch-provider.ts` — add both to `VALID_PROFILES`, write an
-   `isGeminiProfile()` predicate, add it to `isAgentProfile()`, and add a
-   `providerCapabilities` branch returning your capability set.
-3. `src/main/harness/gemini-provider.ts` — `extends BaseLaunchProvider`,
-   override the three abstract members (`id`, `resolveLaunch`, `title`,
-   `buildRemoteCommand`) + only what actually differs. Copy `cursor-provider.ts`
-   for a flag CLI or `codex-provider.ts` for a `-c`-config CLI.
-4. `src/main/harness/registry.ts` — import + instantiate + two map entries.
-   Also add the two cases to the legacy exhaustive `resolveLaunch` switch in
-   `src/main/harness/spawn-plan.ts` (a `switch` over `LaunchProfileId` that
-   won't compile until every profile is handled).
+    `isGeminiProfile()` predicate, add it to `isAgentProfile()`, and add a
+    `providerCapabilities` branch returning your capability set.
+3. `src/main/harness/gemini/` — add a provider, a static `registration.ts`, and
+    only the integration/session/lifecycle code that the native CLI needs. Copy
+    `cursor/` for a flag CLI or `codex/` for a `-c`-config CLI.
+4. `src/main/harness/registry.ts` — import the registration and add it once to
+    `HARNESS_REGISTRATIONS`. The SDK validator and profile-completeness guard
+    enforce unique, complete profile ownership.
 
 **Tier 2 — the standalone type mirrors (drift = a red completeness guard):**
 
@@ -97,9 +97,9 @@ fails until they all agree, so follow this in order and let the guards catch you
 - `rule6-launch-provider.guard.test.ts` — `pty.ts` must not compare a profile
   literal. If you find yourself writing `profile === 'gemini'` in core, add a
   capability field instead.
-- `pty-golden-argv.test.ts` — snapshots the claude launch matrix; only tracks
-  the four profiles it lists, so a new provider doesn't perturb it. Add your own
-  provider unit test under `__tests__/`.
+- `pty-golden-argv.test.ts` — snapshots local and remote command emission for
+  every registered profile. Add focused harness tests under `<harness>/__tests__/`
+  for CLI behavior beyond that matrix.
 
 **Live parse-verify (opt-in, real binary):** the string-level provider tests
 snapshot the argv we *emit*; they can't prove the installed CLI *accepts* it.

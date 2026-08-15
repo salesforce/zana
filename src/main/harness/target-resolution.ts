@@ -2,7 +2,6 @@ import type { AppConfig, Persona, ProjectSettings, LaunchProfileId, HarnessModel
 import type { HarnessFamily } from '../../shared/types.js';
 import type { HarnessScope, ModelLevel } from '../../shared/harness-adapter.js';
 import { harnessFamilyOf } from '../../shared/launch-provider.js';
-import { providerFor } from './registry.js';
 import { hasNativeOption, type HarnessNativeContribution } from './adapter-contract.js';
 import { executionTargetFor } from './evidence-registry.js';
 
@@ -43,14 +42,13 @@ export interface ExecutionResolution {
   consentRequired: boolean;
   contribution: HarnessNativeContribution;
   /** Existing native policy selected by precedence; later preflight can audit it without re-parsing argv. */
-  nativePolicy?: Readonly<{ codexSandbox?: string; codexApproval?: string }>;
+  nativePolicy?: Readonly<Record<string, string>>;
 }
 
 import type { LaunchProvider } from './launch-provider.js';
 
 const MODEL_LEVELS: readonly ModelLevel[] = ['low', 'medium', 'high', 'extra-high'];
 const EXECUTION_STATES = ['plan', 'interactive', 'accept-edits', 'autonomous'] as const;
-const HARNESS_FAMILIES: readonly HarnessFamily[] = ['claude', 'cursor', 'codex', 'pi', 'opencode'];
 
 /**
  * Renderer-provided per-tab routing is intent, never authority. Validate its full
@@ -62,7 +60,7 @@ function validatePerTabRouting(routing: HarnessModelRoutingV1 | undefined): void
     throw new Error('Invalid structured model routing request.');
   }
   for (const [family, value] of Object.entries(routing.byAdapter)) {
-    if (!HARNESS_FAMILIES.includes(family as HarnessFamily) || !value || typeof value !== 'object') {
+    if (!['claude', 'cursor', 'codex', 'pi', 'opencode'].includes(family) || !value || typeof value !== 'object') {
       throw new Error('Invalid structured model routing request.');
     }
     const intent = value as {
@@ -74,7 +72,7 @@ function validatePerTabRouting(routing: HarnessModelRoutingV1 | undefined): void
       executionTargetId?: unknown;
       compatibility?: unknown;
     };
-    const compatibility = intent.compatibility as { codexSandbox?: unknown; codexApproval?: unknown } | undefined;
+    const compatibility = intent.compatibility;
     if (
       Object.keys(intent).some((key) => !['providerTargetId', 'roleTargetId', 'modelTargetId', 'modelLevel', 'executionState', 'executionTargetId', 'compatibility'].includes(key)) ||
       (intent.roleTargetId !== undefined &&
@@ -87,15 +85,11 @@ function validatePerTabRouting(routing: HarnessModelRoutingV1 | undefined): void
       (intent.executionState !== undefined && !EXECUTION_STATES.includes(intent.executionState as typeof EXECUTION_STATES[number])) ||
       (intent.executionTargetId !== undefined &&
         (typeof intent.executionTargetId !== 'string' || !intent.executionTargetId.trim() || intent.executionTargetId.length > 256)) ||
-      (intent.compatibility !== undefined &&
-        (family !== 'codex' ||
-          !compatibility ||
-          typeof compatibility !== 'object' ||
-          Object.keys(compatibility).some((key) => key !== 'codexSandbox' && key !== 'codexApproval') ||
-          (compatibility.codexSandbox !== undefined &&
-            (typeof compatibility.codexSandbox !== 'string' || !compatibility.codexSandbox || compatibility.codexSandbox.length > 64)) ||
-          (compatibility.codexApproval !== undefined &&
-            (typeof compatibility.codexApproval !== 'string' || !compatibility.codexApproval || compatibility.codexApproval.length > 64))))
+      (compatibility !== undefined &&
+        (!compatibility || typeof compatibility !== 'object' || Array.isArray(compatibility) ||
+          Object.keys(compatibility as object).length > 8 ||
+          Object.values(compatibility as Record<string, unknown>).some((entry) =>
+            typeof entry !== 'string' || !entry.trim() || entry.length > 256)))
     ) {
       throw new Error('Invalid structured model routing request.');
     }
@@ -148,12 +142,12 @@ export function resolveModelTarget(provider: LaunchProvider, input: TargetResolu
       level = input.persona.modelLevel;
       source = 'persona';
       structuredSelected = true;
-    } else if ((adapterId === 'claude' || adapterId === 'codex') && personaRouting?.compatibility?.model) {
-      targetId = personaRouting.compatibility.model as string;
-      source = 'persona';
-    } else if ((adapterId === 'claude' || adapterId === 'codex') && input.persona.model) {
-      targetId = input.persona.model;
-      source = 'persona';
+    } else {
+      const legacy = provider.adapter.legacyRouting?.resolveModel?.(legacyContext(input), 'persona');
+      if (legacy?.targetId) {
+        targetId = legacy.targetId;
+        source = 'persona';
+      }
     }
   }
 
@@ -173,9 +167,12 @@ export function resolveModelTarget(provider: LaunchProvider, input: TargetResolu
       source = 'project';
       structuredSelected = true;
     }
-    if (!targetId && (adapterId === 'claude' || adapterId === 'codex') && input.projectSettings.model) {
-      targetId = input.projectSettings.model;
-      source = 'project';
+    if (!targetId && !level) {
+      const legacy = provider.adapter.legacyRouting?.resolveModel?.(legacyContext(input), 'project');
+      if (legacy?.targetId) {
+        targetId = legacy.targetId;
+        source = 'project';
+      }
     }
   }
 
@@ -196,8 +193,9 @@ export function resolveModelTarget(provider: LaunchProvider, input: TargetResolu
   }
 
   if (!targetId && !level) {
-    if (adapterId === 'claude' && input.config.defaultModel && input.config.defaultModel !== 'default') {
-      targetId = input.config.defaultModel;
+    const legacy = provider.adapter.legacyRouting?.resolveModel?.(legacyContext(input), 'global');
+    if (legacy?.targetId) {
+      targetId = legacy.targetId;
       source = 'global';
     }
   }
@@ -314,33 +312,6 @@ export function resolveExecutionState(provider: LaunchProvider, input: TargetRes
   const personaState = (personaPinsAdapter
     ? input.persona?.harnessRouting?.byAdapter?.[adapterId as HarnessFamily]?.executionState
     : undefined) ?? input.persona?.executionState;
-  const personaNativePolicy = adapterId === 'codex' && input.persona
-    ? {
-        codexSandbox: input.persona.codexSandbox
-          ?? input.persona.harnessRouting?.byAdapter?.codex?.compatibility?.codexSandbox,
-        codexApproval: input.persona.codexApproval
-          ?? input.persona.harnessRouting?.byAdapter?.codex?.compatibility?.codexApproval
-      }
-    : undefined;
-  const hasPersonaNativePolicy = !!(personaNativePolicy?.codexSandbox || personaNativePolicy?.codexApproval);
-  const projectNativePolicy = adapterId === 'codex' && input.projectSettings
-    ? {
-        codexSandbox: input.projectSettings.codexSandbox,
-        codexApproval: input.projectSettings.codexApproval
-      }
-    : undefined;
-  const hasProjectNativePolicy = !!(projectNativePolicy?.codexSandbox || projectNativePolicy?.codexApproval);
-  const validateCodexNativePolicy = (policy: typeof personaNativePolicy) => {
-    const sandboxes = new Set(['read-only', 'workspace-write', 'danger-full-access']);
-    const approvals = new Set(['untrusted', 'on-request', 'never']);
-    if ((policy?.codexSandbox && !sandboxes.has(policy.codexSandbox))
-      || (policy?.codexApproval && !approvals.has(policy.codexApproval))) {
-      throw new Error('Invalid Codex compatibility execution policy.');
-    }
-    if (hasNativeOption(input.extraArgs, provider.adapter.collision.execution, provider.adapter.collision.terminatesAtDoubleDash)) {
-      throw new Error('Compatibility execution policy conflicts with raw execution arguments.');
-    }
-  };
   if (unrestrictedProfile && (perTabState || perTabTargetId || perTabCompatibility)) {
     throw new Error('Structured execution state conflicts with unrestricted profile.');
   }
@@ -356,43 +327,31 @@ export function resolveExecutionState(provider: LaunchProvider, input: TargetRes
       contribution: provider.executionContribution?.(target.id) ?? {}
     };
   }
-  if (adapterId === 'codex' && perTabCompatibility && !perTabState) {
-    const sandboxes = new Set(['read-only', 'workspace-write', 'danger-full-access']);
-    const approvals = new Set(['untrusted', 'on-request', 'never']);
-    const sandbox = perTabCompatibility.codexSandbox;
-    const approval = perTabCompatibility.codexApproval;
-    if ((sandbox && !sandboxes.has(sandbox)) || (approval && !approvals.has(approval))) {
-      throw new Error('Invalid structured model routing request.');
-    }
-    if (hasNativeOption(input.extraArgs, provider.adapter.collision.execution, provider.adapter.collision.terminatesAtDoubleDash)) {
-      throw new Error('Compatibility execution policy conflicts with raw execution arguments.');
-    }
+  if (perTabCompatibility && !perTabState) {
+    const legacy = provider.adapter.legacyRouting?.resolveCompatibilityExecution?.(perTabCompatibility);
+    if (!legacy) throw new Error('Invalid structured model routing request.');
+    assertNoRawExecutionCollision(provider, input.extraArgs);
     return {
       origin: 'explicit-native', source: 'Agent', consentRequired: false,
-      targetId: `codex.native.${sandbox ?? 'default'}+${approval ?? 'default'}`, equivalence: 'exact',
-      contribution: { args: [...(sandbox ? ['-s', sandbox] : []), ...(approval ? ['-a', approval] : [])] }
+      targetId: legacy.targetId, equivalence: 'exact', contribution: legacy.contribution, nativePolicy: legacy.nativePolicy
     };
   }
-  if (!perTabState && hasPersonaNativePolicy) {
-    validateCodexNativePolicy(personaNativePolicy);
-    const sandbox = personaNativePolicy?.codexSandbox;
-    const approval = personaNativePolicy?.codexApproval;
+  const personaLegacy = provider.adapter.legacyRouting?.resolveExecution?.(legacyContext(input), 'persona');
+  if (!perTabState && personaLegacy) {
+    assertNoRawExecutionCollision(provider, input.extraArgs);
     return {
       origin: 'legacy-compatibility', source: 'Persona', consentRequired: false,
-      targetId: `codex.native.${sandbox ?? 'default'}+${approval ?? 'default'}`, equivalence: 'exact',
-      contribution: { args: [...(sandbox ? ['-s', sandbox] : []), ...(approval ? ['-a', approval] : [])] },
-      nativePolicy: personaNativePolicy
+      targetId: personaLegacy.targetId, equivalence: 'exact', contribution: personaLegacy.contribution,
+      nativePolicy: personaLegacy.nativePolicy
     };
   }
-  if (!perTabState && !personaState && !hasPersonaNativePolicy && hasProjectNativePolicy) {
-    validateCodexNativePolicy(projectNativePolicy);
-    const sandbox = projectNativePolicy?.codexSandbox;
-    const approval = projectNativePolicy?.codexApproval;
+  const projectLegacy = provider.adapter.legacyRouting?.resolveExecution?.(legacyContext(input), 'project');
+  if (!perTabState && !personaState && !personaLegacy && projectLegacy) {
+    assertNoRawExecutionCollision(provider, input.extraArgs);
     return {
       origin: 'legacy-compatibility', source: 'Project', consentRequired: false,
-      targetId: `codex.native.${sandbox ?? 'default'}+${approval ?? 'default'}`, equivalence: 'exact',
-      contribution: { args: [...(sandbox ? ['-s', sandbox] : []), ...(approval ? ['-a', approval] : [])] },
-      nativePolicy: projectNativePolicy
+      targetId: projectLegacy.targetId, equivalence: 'exact', contribution: projectLegacy.contribution,
+      nativePolicy: projectLegacy.nativePolicy
     };
   }
   const state = perTabState ?? personaState ?? projectState ?? globalState ?? input.config.defaultExecutionState;
@@ -419,4 +378,20 @@ export function resolveExecutionState(provider: LaunchProvider, input: TargetRes
     equivalence: target.equivalence, consentRequired: target.consent === 'required',
     contribution: provider.executionContribution(target.id)
   };
+}
+
+function legacyContext(input: TargetResolutionInput) {
+  return {
+    config: input.config,
+    persona: input.persona,
+    projectSettings: input.projectSettings,
+    perTabRouting: input.perTabRouting,
+    scope: input.scope ?? 'local'
+  } as const;
+}
+
+function assertNoRawExecutionCollision(provider: LaunchProvider, extraArgs: readonly string[]): void {
+  if (hasNativeOption(extraArgs, provider.adapter.collision.execution, provider.adapter.collision.terminatesAtDoubleDash)) {
+    throw new Error('Compatibility execution policy conflicts with raw execution arguments.');
+  }
 }

@@ -136,6 +136,9 @@ export class CodexSessionResolver {
   private readonly now: () => number;
   private readonly maxFilesPerScan: number;
   private readonly cache = new Map<string, CodexSessionMatch>();
+  private readonly claimedSessionIds = new Map<string, string>();
+  private readonly pending = new Map<string, Promise<CodexSessionMatch | null>>();
+  private readonly generations = new Map<string, number>();
 
   constructor(deps: ResolverDeps = {}) {
     this.root = deps.root ?? codexSessionsRoot();
@@ -145,7 +148,13 @@ export class CodexSessionResolver {
 
   /** Drop a cached match (call on session close to free memory — Rule 5). */
   forget(key: string): void {
+    this.generations.set(key, (this.generations.get(key) ?? 0) + 1);
+    const match = this.cache.get(key);
+    if (match && this.claimedSessionIds.get(match.sessionId) === key) {
+      this.claimedSessionIds.delete(match.sessionId);
+    }
     this.cache.delete(key);
+    this.pending.delete(key);
   }
 
   /** Number of cached matches (test/introspection helper). */
@@ -155,20 +164,30 @@ export class CodexSessionResolver {
 
   /**
    * Resolve the rollout for a Codex session identified by `key`, spawned at
-   * `spawnedAtMs` with the given `cwd`. Returns the cached match if known, else
-   * scans for a rollout whose `session_meta.cwd` matches and whose file was
-   * created at/after the spawn (minus a small clock-skew slack). Picks the
-   * EARLIEST-created match so a later sibling in the same cwd isn't mistaken for
-   * this session. Returns null (uncached) until the file appears. Never throws.
+   * `spawnedAtMs` with the given `cwd`. A restored tab may supply its already
+   * trusted native id; then only that exact rollout is accepted, regardless of
+   * the replacement PTY's later spawn time. Fresh sessions scan for a rollout
+   * created at/after spawn (minus clock-skew slack) and pick the EARLIEST match
+   * so a later sibling in the same cwd isn't mistaken for this session. Returns
+   * null (uncached) until a matching rollout appears. Never throws.
    */
-  async resolve(key: string, cwd: string, spawnedAtMs: number): Promise<CodexSessionMatch | null> {
+  async resolve(
+    key: string,
+    cwd: string,
+    spawnedAtMs: number,
+    knownSessionId?: string
+  ): Promise<CodexSessionMatch | null> {
     const cached = this.cache.get(key);
     if (cached) return cached;
+    const inFlight = this.pending.get(key);
+    if (inFlight) return inFlight;
 
+    const generation = this.generations.get(key) ?? 0;
+    const resolveMatch = async (): Promise<CodexSessionMatch | null> => {
     // Allow a small negative slack: the rollout's birthtime can lag the PTY
     // spawn by a fraction of a second, and clocks aren't perfectly aligned.
     const floor = spawnedAtMs - 5_000;
-    const sinceDateKey = dateKeyOf(floor);
+    const sinceDateKey = knownSessionId ? '0000/00/00' : dateKeyOf(floor);
     const files = await listRolloutFiles(this.root, sinceDateKey, this.maxFilesPerScan);
 
     let best: { match: CodexSessionMatch; birthMs: number } | null = null;
@@ -182,10 +201,13 @@ export class CodexSessionResolver {
       } catch {
         continue;
       }
-      if (birthMs < floor) continue;
+      if (!knownSessionId && birthMs < floor) continue;
 
       const head = await readRolloutHead(path);
       if (!head || head.cwd !== cwd || !head.id) continue;
+      if (knownSessionId && head.id !== knownSessionId) continue;
+      const claimant = this.claimedSessionIds.get(head.id);
+      if (claimant && claimant !== key) continue;
 
       if (!best || birthMs < best.birthMs) {
         best = { match: { sessionId: head.id, rolloutPath: path }, birthMs };
@@ -193,9 +215,17 @@ export class CodexSessionResolver {
     }
 
     if (best) {
+      if ((this.generations.get(key) ?? 0) !== generation) return null;
       this.cache.set(key, best.match);
+      this.claimedSessionIds.set(best.match.sessionId, key);
       return best.match;
     }
     return null;
+    };
+    const pending = resolveMatch().finally(() => {
+      if (this.pending.get(key) === pending) this.pending.delete(key);
+    });
+    this.pending.set(key, pending);
+    return pending;
   }
 }

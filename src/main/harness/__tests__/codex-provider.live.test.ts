@@ -57,7 +57,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { spawn } from 'node:child_process';
-import { CodexProvider } from '../codex-provider.js';
+import { CodexProvider } from '../codex/provider.js';
 import type { AppConfig } from '../../../shared/types.js';
 import type { HarnessAuthCredential } from '../../harness-auth.js';
 

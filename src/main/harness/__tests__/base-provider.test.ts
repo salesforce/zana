@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { BaseLaunchProvider } from '../base-provider.js';
-import { ClaudeCodeProvider } from '../claude-code-provider.js';
-import { CursorProvider } from '../cursor-provider.js';
-import { CodexProvider } from '../codex-provider.js';
-import { ShellProvider } from '../shell-provider.js';
+import { ClaudeCodeProvider } from '../claude/provider.js';
+import { CursorProvider } from '../cursor/provider.js';
+import { CodexProvider } from '../codex/provider.js';
+import { ShellProvider } from '../shell/provider.js';
 import type { AppConfig, LaunchProfileId, ProjectRemote } from '../../../shared/types.js';
 import type { ResolvedLaunch, RemoteCommandInput, RemoteCommandResult } from '../launch-provider.js';
 import { facetSupport, type TrustedHarnessAdapter } from '../adapter-contract.js';
