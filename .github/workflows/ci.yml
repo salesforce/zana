@@ -34,7 +34,7 @@ jobs:
       # node-pty / better-sqlite3 are native; `npm ci` runs their install
       # scripts. distutils was dropped from Python 3.12 stdlib, so pin 3.11
       # where node-gyp can still import it (matches release.yml).
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
@@ -65,7 +65,7 @@ jobs:
           node-version: 22
           cache: npm
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
