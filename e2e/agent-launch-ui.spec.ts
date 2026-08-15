@@ -143,6 +143,14 @@ test('launching an agent through the real UI opens its terminal and it goes work
         JSON.stringify(e.args).includes('working'),
       15_000
     );
+
+    // 11. The global List monitor owns the agent list. Its list must expand into
+    // column 2 instead of leaving the compact quick-agent list beside a duplicate.
+    await agentModal.getByLabel('Close').click();
+    await window.getByLabel('List view').click();
+    await expect(window.locator('.app-shell')).toHaveClass(/scoped-no-list/);
+    await expect(window.locator('.agents-list-pane')).toHaveCount(0);
+    await expect(window.locator('.agent-monitor-list')).toBeVisible();
   } finally {
     // Best-effort: close the agent (frees the held PTY), then remove the project.
     if (projectId) {

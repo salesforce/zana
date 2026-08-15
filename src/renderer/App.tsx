@@ -60,6 +60,7 @@ import { useFavoriteCount } from './util/useAgentCards';
 import { focusInboxEntry } from './util/inboxNavigation';
 import { projectDefaultLaunch } from './util/launchProfile';
 import { getScopedProjectId } from './util/windowScope';
+import { shouldHideListPane } from './util/agentsLayout';
 import { installShortcuts } from './shortcuts';
 
 // Lazy-load: LibraryPanel's doc preview pulls in monaco-editor, which registers
@@ -73,6 +74,7 @@ const LibraryPanel = lazy(() =>
 export function App() {
   const init = useData((s) => s.init);
   const nav = useUi((s) => s.nav);
+  const agentsBoardView = useUi((s) => s.agentsBoardView);
   const focusedProjectId = useUi((s) => s.focusedProjectId);
   const selectedProjectId = useUi((s) => s.selectedProjectId);
   const selectedTabId = useUi((s) => s.selectedTabId);
@@ -534,10 +536,15 @@ export function App() {
   // drop it and reclaim its column. This applies both to a per-project WINDOW
   // (scopedProject) and to the MAIN WINDOW drilled into a project (focusedProject)
   // — the project rail + tab bar already cover navigation, so the middle session
-  // list is just noise. The Inbox view still needs column 2 (its entry list lives
-  // there), so keep it when nav==='inbox'.
-  const hideListPane =
-    (!!scopedProject || !!focusedProject) && nav === 'projects';
+  // list is just noise. The global Agents List view also owns its agent list, so
+  // its monitor expands into column 2 instead of repeating the quick-agent list.
+  // The Inbox view still needs column 2 (its entry list lives there), so keep it
+  // when nav==='inbox'.
+  const hideListPane = shouldHideListPane(
+    nav,
+    agentsBoardView,
+    !!scopedProject || !!focusedProject
+  );
 
   return (
     <div
