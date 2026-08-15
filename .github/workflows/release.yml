@@ -64,7 +64,7 @@ jobs:
 
       # node-pty / better-sqlite3 are native; npm ci runs their install scripts.
       # distutils was dropped from Python 3.12 stdlib, so pin 3.11 (matches ci.yml).
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
@@ -127,7 +127,7 @@ jobs:
       # electron-builder rebuilds node-pty via node-gyp, which still imports
       # Python's distutils. The runner default (Python 3.12+) removed distutils
       # from the stdlib, so pin 3.11 where it still ships.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
