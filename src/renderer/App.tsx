@@ -14,6 +14,7 @@ import { ExtensionsPanel } from './components/ExtensionsPanel';
 import { UsagePanel } from './components/UsagePanel';
 import { InboxView } from './components/InboxView';
 import { HomePanel } from './components/HomePanel';
+import { ProjectCanvas } from './components/ProjectCanvas';
 import { FollowUpsPanel } from './components/FollowUpsPanel';
 import { SuggestionsView } from './components/SuggestionsView';
 import { CommandPalette } from './components/CommandPalette';
@@ -537,7 +538,7 @@ export function App() {
   // list is just noise. The Inbox view still needs column 2 (its entry list lives
   // there), so keep it when nav==='inbox'.
   const hideListPane =
-    (!!scopedProject || !!focusedProject) && nav === 'projects';
+    ((!!scopedProject || !!focusedProject) && nav === 'projects') || nav === 'canvas';
 
   return (
     <div
@@ -632,7 +633,8 @@ export function App() {
           its own per-project ProjectAgentsBoard — this global board stays for the
           main window only. */}
       {((nav === 'projects' && !focusedProjectId) || nav === 'agents') && <GlobalAgentsBoard />}
-      {nav === 'home' && <HomePanel />}
+       {nav === 'home' && <HomePanel />}
+       {nav === 'canvas' && <ProjectCanvas />}
       {nav === 'followups' && <FollowUpsPanel />}
       {nav === 'inbox' && <InboxView />}
       {nav === 'suggestions' && suggestionsEnabled && <SuggestionsView />}

@@ -27,36 +27,15 @@
 import { useEffect, useMemo } from 'react';
 import type { Project } from '@shared/types';
 import type { ModuleHost } from '@shared/module-api';
-import type { ProjectInfo } from '@zana-ai/zcc-extension-sdk/renderer';
 import { useMergedModule } from '../modules';
 import { getHost } from '../modules/ModulePanelHost';
-import { createMountScopedHost } from '../modules/host';
+import { createMountScopedHost, createProjectScopedHost } from '../modules/host';
 import { ErrorBoundary } from './ErrorBoundary';
 
-/** Project → the SDK's small {@link ProjectInfo} projection (mirrors host.ts). */
-function toProjectInfo(p: Project): ProjectInfo {
-  return {
-    id: p.id,
-    name: p.name,
-    path: p.path,
-    ...(p.remote ? { remote: { host: p.remote.host, user: p.remote.user } } : {})
-  };
-}
-
 /**
- * A host bound to one project: delegates everything to the module's cached base
- * host, overriding only the two project-scope accessors. Prototype-delegates via
- * `Object.create` so any host method not explicitly overridden (incl. ones added
- * later) keeps working, and `this`-bound base methods still see the base.
+ * A host bound to one project: filters project/session capabilities and events
+ * before the mount cleanup scope takes ownership of subscriptions.
  */
-function scopedHost(base: ModuleHost, project: Project): ModuleHost {
-  const info = toProjectInfo(project);
-  return Object.assign(Object.create(base) as ModuleHost, {
-    getScopedProjectId: () => project.id,
-    getActiveProject: () => info
-  });
-}
-
 export function ProjectExtensionTab({
   moduleId,
   project
@@ -70,7 +49,7 @@ export function ProjectExtensionTab({
   // wrap it in a per-MOUNT cleanup scope so this tab's `on`/`subscribe`/`register`
   // subscriptions auto-dispose when the tab unmounts (project switch / tab close).
   const mount = useMemo(
-    () => (mod ? createMountScopedHost(scopedHost(getHost(mod.id), project)) : null),
+    () => (mod ? createMountScopedHost(createProjectScopedHost(getHost(mod.id), project)) : null),
     [mod, project]
   );
   const host: ModuleHost | null = mount?.host ?? null;

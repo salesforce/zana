@@ -1607,6 +1607,21 @@ export interface AppConfig {
    * default view).
    */
   workspaceModes?: Record<string, string>;
+  /**
+   * Optional two-block workspace composition per project. The values deliberately
+   * remain opaque strings so extension-contributed project tabs can participate
+   * without core knowing their ids.
+   */
+  workspaceLayouts?: Record<string, {
+    secondaryView: string;
+    direction: 'horizontal' | 'vertical';
+    ratio: number;
+  }>;
+  /** Main-window-only, bounded project canvas. Each block owns its project and view. */
+  projectCanvas?: {
+    template: 'single' | 'columns-2' | 'rows-2' | 'grid-2x2';
+    blocks: Array<{ id: string; projectId: string; view: string }>;
+  } | null;
   /** Global Agents-board layout preference: kanban lanes, grouped list, or the
    *  squad-flow graph. */
   agentsBoardView?: 'board' | 'list' | 'flow';

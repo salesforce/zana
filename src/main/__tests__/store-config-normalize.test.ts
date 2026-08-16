@@ -70,6 +70,39 @@ describe('normalizeConfig — window state', () => {
   });
 });
 
+describe('normalizeConfig — workspace composition', () => {
+  it('bounds project view preferences and allows the canvas to be cleared', () => {
+    const result = normalizeConfig({
+      workspaceModes: {
+        'project-a': ' agents ',
+        '': 'explorer',
+        'project-b': 'x'.repeat(257)
+      },
+      workspaceLayouts: {
+        'project-a': { secondaryView: ' library ', direction: 'horizontal', ratio: 2 }
+      },
+      projectCanvas: null
+    });
+
+    expect(result.workspaceModes).toEqual({ 'project-a': 'agents' });
+    expect(result.workspaceLayouts).toEqual({
+      'project-a': { secondaryView: 'library', direction: 'horizontal', ratio: 0.75 }
+    });
+    expect(result.projectCanvas).toBeNull();
+  });
+
+  it('removes a persisted canvas when explicitly reset', () => {
+    store.setConfig({
+      projectCanvas: {
+        template: 'single',
+        blocks: [{ id: 'block-a', projectId: 'project-a', view: 'agents' }]
+      }
+    });
+    store.setConfig({ projectCanvas: undefined });
+    expect(store.getConfig().projectCanvas).toBeUndefined();
+  });
+});
+
 describe('normalizeProjectSettings — harness routing reset', () => {
   it('removes routing when a project clears its last provider override', () => {
     expect(normalizeProjectSettings({ harnessRouting: undefined }).harnessRouting).toBeUndefined();

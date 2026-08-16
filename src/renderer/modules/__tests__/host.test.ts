@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Project } from '@shared/types';
 
 // host.ts imports the real zustand stores and the sessionInfo mapper. We only
 // need the slices launchSession touches, so mock the store module wholesale and
@@ -16,7 +17,7 @@ const h = vi.hoisted(() => ({
   selectProject: vi.fn(),
   selectTab: vi.fn(),
   setWorkspaceMode: vi.fn(),
-  projects: [] as Array<{ id: string; name: string; path: string }>,
+  projects: [] as Project[],
   personas: [] as Array<{ id: string; name: string; baseProfile?: string }>
 }));
 
@@ -51,15 +52,17 @@ vi.mock('../sessionInfo', () => ({ toSessionInfo: (s: unknown) => s }));
 import {
   createModuleHost,
   createMountScopedHost,
+  createProjectScopedHost,
   clearModuleCache,
   setExtensionGrants
 } from '../host';
 
-const PROJECT = { id: 'proj-1', name: 'Repo', path: '/repo' };
+const PROJECT: Project = { id: 'proj-1', name: 'Repo', path: '/repo', createdAt: 1, lastActiveAt: 1 };
+const OTHER_PROJECT: Project = { id: 'proj-2', name: 'Other Repo', path: '/other-repo', createdAt: 2, lastActiveAt: 2 };
 
 beforeEach(() => {
   vi.clearAllMocks();
-  h.projects = [PROJECT];
+  h.projects = [PROJECT, OTHER_PROJECT];
   h.personas = [];
   // No disk-ext grants registered → every moduleId under test is a "built-in".
   setExtensionGrants([]);
@@ -210,6 +213,52 @@ describe('createModuleHost().ensureQuickAgent', () => {
 
     expect(await host.ensureQuickAgent()).toBeNull();
     expect(h.pushToast).toHaveBeenCalledWith(expect.stringContaining('ipc down'), 'error');
+  });
+});
+
+describe('createProjectScopedHost', () => {
+  it('exposes only the mounted project and rejects cross-project actions', async () => {
+    const base = createModuleHost('scoped-module');
+    const host = createProjectScopedHost(base, PROJECT);
+
+    expect(host.getScopedProjectId()).toBe(PROJECT.id);
+    const projectInfo = { id: PROJECT.id, name: PROJECT.name, path: PROJECT.path };
+    expect(host.getActiveProject()).toEqual(projectInfo);
+    expect(host.listProjects()).toEqual([projectInfo]);
+    expect(await host.ensureQuickAgent()).toEqual(projectInfo);
+
+    host.selectProject(OTHER_PROJECT.id);
+    expect(h.selectProject).not.toHaveBeenCalled();
+    expect(await host.launchSession({ projectId: OTHER_PROJECT.id })).toBeNull();
+    expect(h.create).not.toHaveBeenCalled();
+  });
+
+  it('filters session events and input to the mounted project', () => {
+    const updated = vi.fn();
+    const onUpdated = vi.fn();
+    const reply = vi.fn();
+    vi.stubGlobal('window', {
+      cc: {
+        terminals: {
+          create: h.create,
+          onUpdated,
+          reply,
+          write: vi.fn()
+        }
+      }
+    });
+    const base = createModuleHost('scoped-events');
+    const host = createProjectScopedHost(base, PROJECT);
+
+    host.on('session:updated', updated);
+    const listener = onUpdated.mock.calls[0][0];
+    listener({ id: 'other-session', projectId: OTHER_PROJECT.id, title: 'Other', status: 'running' });
+    listener({ id: 'project-session', projectId: PROJECT.id, title: 'Mine', status: 'running' });
+
+    expect(updated).toHaveBeenCalledTimes(1);
+    expect(updated).toHaveBeenCalledWith({ session: expect.objectContaining({ id: 'project-session' }) });
+    void host.replyToSession('other-session', 'nope');
+    expect(reply).not.toHaveBeenCalled();
   });
 });
 

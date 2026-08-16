@@ -72,6 +72,7 @@ function sidebarCollapsedKey(): string {
 export type CoreNavId =
   | 'home'
   | 'projects'
+  | 'canvas'
   | 'agents'
   | 'inbox'
   | 'suggestions'
@@ -96,6 +97,7 @@ export type CoreNavId =
 export const CORE_NAV_IDS = new Set<CoreNavId>([
   'home',
   'projects',
+  'canvas',
   'agents',
   'inbox',
   'suggestions',
@@ -262,7 +264,7 @@ export type WorkspaceMode =
 export type ProjectView = WorkspaceMode | (string & {});
 
 /** Core workspace modes that round-trip to AppConfig. An extension-id project
- *  view also persists — see {@link persistWorkspaceModes}. */
+ *  view also persists — see {@link persistWorkspacePreferences}. */
 export const PERSISTED_CORE_MODES: readonly WorkspaceMode[] = [
   'agents',
   'terminals',
@@ -278,6 +280,22 @@ export const PERSISTED_CORE_MODES: readonly WorkspaceMode[] = [
 export type AgentsBoardView = 'board' | 'list' | 'flow';
 
 export type SplitLayout = 'single' | 'vertical' | 'horizontal' | 'grid';
+
+export interface ModularWorkspaceLayout {
+  secondaryView: ProjectView;
+  direction: 'horizontal' | 'vertical';
+  ratio: number;
+}
+
+export interface ProjectCanvasBlock {
+  id: string;
+  projectId: string;
+  view: ProjectView;
+}
+export interface ProjectCanvas {
+  template: 'single' | 'columns-2' | 'rows-2' | 'grid-2x2';
+  blocks: ProjectCanvasBlock[];
+}
 
 /** Max extra panes beside the primary, indexed by layout. */
 const SPLIT_CAPACITY: Record<SplitLayout, number> = {
@@ -381,6 +399,12 @@ interface UiState {
   // WorkspaceMode or an extension module id (an extension-contributed project
   // tab) — see ProjectView.
   workspaceMode: Record<string, ProjectView>;
+  /** Optional second project view, displayed alongside the selected primary view. */
+  workspaceLayout: Record<string, ModularWorkspaceLayout | undefined>;
+  setWorkspaceLayout: (projectId: string, layout: ModularWorkspaceLayout) => void;
+  clearWorkspaceLayout: (projectId: string) => void;
+  projectCanvas: ProjectCanvas | null;
+  setProjectCanvas: (canvas: ProjectCanvas | null) => void;
   // Agents board layout — kanban lanes vs. a grouped vertical list. One global
   // preference shared by the cross-project and per-project boards (persisted to
   // AppConfig.agentsBoardView). Default 'board'.
@@ -703,23 +727,72 @@ function readCollapsedSections(): Record<string, boolean> {
   }
 }
 
-// Debounced write of workspaceMode -> AppConfig.workspaceModes.
+type WorkspacePreferenceKey = 'workspaceModes' | 'workspaceLayouts' | 'projectCanvas';
+
+// Debounced, field-level writes keep unrelated config broadcasts from replacing
+// a local workspace edit before it reaches main.
 let persistTimer: number | null = null;
-function persistWorkspaceModes() {
+const dirtyWorkspacePreferenceKeys = new Set<WorkspacePreferenceKey>();
+
+function workspacePreferenceSnapshot(key: WorkspacePreferenceKey) {
+  const state = useUi.getState();
+  switch (key) {
+    case 'workspaceModes': {
+      const workspaceModes: Record<string, string> = {};
+      for (const [projectId, view] of Object.entries(state.workspaceMode)) {
+        if (view) workspaceModes[projectId] = view;
+      }
+      return workspaceModes;
+    }
+    case 'workspaceLayouts': {
+      const workspaceLayouts: NonNullable<import('@shared/types').AppConfig['workspaceLayouts']> = {};
+      for (const [projectId, layout] of Object.entries(state.workspaceLayout)) {
+        if (!layout) continue;
+        workspaceLayouts[projectId] = {
+          secondaryView: layout.secondaryView,
+          direction: layout.direction,
+          ratio: layout.ratio
+        };
+      }
+      return workspaceLayouts;
+    }
+    case 'projectCanvas':
+      return state.projectCanvas;
+  }
+}
+
+function workspacePreferenceSignature(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+function persistWorkspacePreferences(...keys: WorkspacePreferenceKey[]) {
+  keys.forEach((key) => dirtyWorkspacePreferenceKeys.add(key));
   if (persistTimer !== null) window.clearTimeout(persistTimer);
   persistTimer = window.setTimeout(() => {
     persistTimer = null;
-    const map = useUi.getState().workspaceMode;
-    // Every mode round-trips, INCLUDING an extension-id project view (an
-    // extension-contributed project tab): the value is an opaque string, and an
-    // id whose extension is gone on next launch is tolerated at render time
-    // (falls back to the default view). See ProjectView.
-    const persisted: Record<string, string> = {};
-    for (const [k, v] of Object.entries(map)) {
-      if (v) persisted[k] = v;
-    }
-    window.cc.config.set({ workspaceModes: persisted }).catch(() => {});
+    const fields = [...dirtyWorkspacePreferenceKeys];
+    const snapshots = Object.fromEntries(fields.map((key) => [key, workspacePreferenceSnapshot(key)])) as Partial<Pick<import('@shared/types').AppConfig, WorkspacePreferenceKey>>;
+    window.cc.config.set(snapshots).then((next) => {
+      const update: Partial<Pick<UiState, 'workspaceMode' | 'workspaceLayout' | 'projectCanvas'>> = {};
+      for (const key of fields) {
+        if (workspacePreferenceSignature(workspacePreferenceSnapshot(key)) !== workspacePreferenceSignature(snapshots[key])) continue;
+        dirtyWorkspacePreferenceKeys.delete(key);
+        if (key === 'workspaceModes') update.workspaceMode = next.workspaceModes ?? {};
+        if (key === 'workspaceLayouts') update.workspaceLayout = next.workspaceLayouts ?? {};
+        if (key === 'projectCanvas') update.projectCanvas = next.projectCanvas ?? null;
+      }
+      if (Object.keys(update).length > 0) useUi.setState(update);
+      if (dirtyWorkspacePreferenceKeys.size > 0) persistWorkspacePreferences();
+    }).catch(() => {});
   }, 200);
+}
+
+function syncWorkspacePreferences(config: import('@shared/types').AppConfig) {
+  const update: Partial<Pick<UiState, 'workspaceMode' | 'workspaceLayout' | 'projectCanvas'>> = {};
+  if (!dirtyWorkspacePreferenceKeys.has('workspaceModes')) update.workspaceMode = config.workspaceModes ?? {};
+  if (!dirtyWorkspacePreferenceKeys.has('workspaceLayouts')) update.workspaceLayout = config.workspaceLayouts ?? {};
+  if (!dirtyWorkspacePreferenceKeys.has('projectCanvas')) update.projectCanvas = config.projectCanvas ?? null;
+  if (Object.keys(update).length > 0) useUi.setState(update);
 }
 
 // Fire-and-forget write of the global agents-board view preference. No debounce
@@ -784,6 +857,8 @@ export const useUi = create<UiState>((set, get) => ({
   hostDialogs: [],
   unread: {},
   workspaceMode: {},
+  workspaceLayout: {},
+  projectCanvas: null,
   agentsBoardView: 'board',
   explorerFile: {},
   explorerGoto: {},
@@ -1102,7 +1177,23 @@ export const useUi = create<UiState>((set, get) => ({
     }),
   setWorkspaceMode: (projectId, mode) => {
     set((s) => ({ workspaceMode: { ...s.workspaceMode, [projectId]: mode } }));
-    persistWorkspaceModes();
+    persistWorkspacePreferences('workspaceModes');
+  },
+  setWorkspaceLayout: (projectId, layout) => {
+    set((s) => ({ workspaceLayout: { ...s.workspaceLayout, [projectId]: layout } }));
+    persistWorkspacePreferences('workspaceLayouts');
+  },
+  clearWorkspaceLayout: (projectId) => {
+    set((s) => {
+      const workspaceLayout = { ...s.workspaceLayout };
+      delete workspaceLayout[projectId];
+      return { workspaceLayout };
+    });
+    persistWorkspacePreferences('workspaceLayouts');
+  },
+  setProjectCanvas: (projectCanvas) => {
+    set({ projectCanvas });
+    persistWorkspacePreferences('projectCanvas');
   },
   setAgentsBoardView: (view) => {
     set({ agentsBoardView: view });
@@ -1118,7 +1209,7 @@ export const useUi = create<UiState>((set, get) => ({
         }
       };
     });
-    persistWorkspaceModes();
+    persistWorkspacePreferences('workspaceModes');
   },
   setExplorerFile: (projectId, path) =>
     set((s) => {
@@ -1882,10 +1973,9 @@ export const useData = create<DataState>((set, get) => ({
       window.cc.config.onChanged((next) => {
         set(mirroredConfigFlags(next));
         applyTheme(next.theme);
+        syncWorkspacePreferences(next);
       });
-      if (config.workspaceModes) {
-        useUi.setState({ workspaceMode: config.workspaceModes });
-      }
+      syncWorkspacePreferences(config);
       if (
         config.agentsBoardView === 'board' ||
         config.agentsBoardView === 'list' ||
@@ -2696,6 +2786,7 @@ export const useData = create<DataState>((set, get) => ({
         }
       };
       drop('workspaceMode');
+      drop('workspaceLayout');
       drop('splitLayout');
       drop('splitTabIds');
       drop('selectedTabId');
@@ -2705,9 +2796,13 @@ export const useData = create<DataState>((set, get) => ({
       drop('explorerGoto');
       drop('explorerDiff');
       drop('explorerTreeMode');
+      if (s.projectCanvas?.blocks.some((block) => block.projectId === id)) {
+        const blocks = s.projectCanvas.blocks.filter((block) => block.projectId !== id);
+        patch.projectCanvas = blocks.length > 0 ? { ...s.projectCanvas, blocks } : null;
+      }
       return patch;
     });
-    persistWorkspaceModes();
+    persistWorkspacePreferences('workspaceModes', 'workspaceLayouts', 'projectCanvas');
   },
 
   async createTerminal(projectId, profile, cols, rows, opts) {

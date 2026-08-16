@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect } from 'react';
-import { TerminalSquare, FolderTree, GitBranch, Columns2, Rows2, LayoutGrid, Square, Library, Clock, Bot, Target, MessageCircleQuestion, Activity } from 'lucide-react';
+import { lazy, Suspense, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { TerminalSquare, FolderTree, GitBranch, Columns2, Rows2, LayoutGrid, Square, Library, Clock, Bot, Target, MessageCircleQuestion, Activity, PanelRightOpen, PanelBottomOpen, ArrowLeftRight, X, ChevronDown } from 'lucide-react';
 import type { SplitLayout, ProjectView } from '../store';
 import { useData, useUi, visibleTerminals, backgroundTerminals } from '../store';
 import { TabBar } from './TabBar';
@@ -37,6 +37,11 @@ const SchedulerPanel = lazy(() =>
 import type { LaunchProfileId } from '@shared/types';
 
 export function Workspace() {
+  const [resizingLayout, setResizingLayout] = useState(false);
+  const [narrowViewport, setNarrowViewport] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 780px)').matches
+  );
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
   const projects = useData((s) => s.projects);
   const terminals = useData((s) => s.terminals);
   const selectedProjectId = useUi((s) => s.selectedProjectId);
@@ -47,7 +52,10 @@ export function Workspace() {
   const launcherOpen = useUi((s) => s.launcherOpen);
   const setLauncherOpen = useUi((s) => s.setLauncherOpen);
   const workspaceModeMap = useUi((s) => s.workspaceMode);
+  const workspaceLayoutMap = useUi((s) => s.workspaceLayout);
   const setWorkspaceMode = useUi((s) => s.setWorkspaceMode);
+  const setWorkspaceLayout = useUi((s) => s.setWorkspaceLayout);
+  const clearWorkspaceLayout = useUi((s) => s.clearWorkspaceLayout);
   const splitLayoutMap = useUi((s) => s.splitLayout);
   const splitTabIdsMap = useUi((s) => s.splitTabIds);
   const setSplitLayout = useUi((s) => s.setSplitLayout);
@@ -120,6 +128,17 @@ export function Workspace() {
     !isGoals &&
     !isFollowups &&
     !isExtTab;
+  const persistedLayout = project ? workspaceLayoutMap[project.id] : undefined;
+  const layout = persistedLayout && narrowViewport
+    ? { ...persistedLayout, direction: 'vertical' as const }
+    : persistedLayout;
+  // One terminal outlet is deliberately shared by the primary and secondary
+  // blocks. TerminalSurface remains the only xterm owner and moves its stable
+  // portal node into this anchor; a second outlet would duplicate that surface.
+  const secondaryView = layout?.secondaryView;
+  const secondaryModule = project ? projectTabModules.find((m) => m.id === secondaryView) : undefined;
+  const secondaryIs = (view: ProjectView) => secondaryView === view;
+  const terminalVisible = isTerminals;
   // Skills is no longer a project view. If a persisted project mode still points
   // there from an older build, bounce it to terminals so the user never lands on
   // a hidden/unreachable view.
@@ -127,6 +146,15 @@ export function Workspace() {
     if (!project) return;
     if (mode === 'skills') setWorkspaceMode(project.id, 'terminals');
   }, [project, mode, setWorkspaceMode]);
+
+  useEffect(() => {
+    const media = window.matchMedia?.('(max-width: 780px)');
+    if (!media) return;
+    const update = () => setNarrowViewport(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
 
   const splitLayout: SplitLayout = (project && splitLayoutMap[project.id]) || 'single';
   const splitTabIds = (project && splitTabIdsMap[project.id]) || [];
@@ -184,6 +212,58 @@ export function Workspace() {
   // practice. Flip this to re-enable. Right-click "Open in split" entries on
   // the TabBar are also gated below.
   const SPLIT_UI_ENABLED = false;
+
+  const openSecondary = (direction: 'horizontal' | 'vertical', view: ProjectView) => {
+    if (!project) return;
+    setWorkspaceLayout(project.id, { secondaryView: view, direction, ratio: 0.5 });
+  };
+
+  const swapBlocks = () => {
+    if (!project || !layout || !secondaryView || secondaryView === 'terminals') return;
+    setWorkspaceMode(project.id, secondaryView);
+    setWorkspaceLayout(project.id, { ...layout, secondaryView: mode });
+  };
+
+  const resizeBlocks = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (!project || !layout) return;
+    const bounds = event.currentTarget.parentElement?.getBoundingClientRect();
+    if (!bounds) return;
+    setResizingLayout(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const update = (clientX: number, clientY: number) => {
+      const raw = layout.direction === 'horizontal'
+        ? (clientX - bounds.left) / bounds.width
+        : (clientY - bounds.top) / bounds.height;
+      setWorkspaceLayout(project.id, { ...persistedLayout!, ratio: Math.max(0.25, Math.min(0.75, raw)) });
+    };
+    const onMove = (move: PointerEvent) => update(move.clientX, move.clientY);
+    const finish = () => {
+      setResizingLayout(false);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', finish);
+      resizeCleanupRef.current = null;
+    };
+    const onUp = () => finish();
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', finish);
+    resizeCleanupRef.current = finish;
+  };
+
+  useEffect(() => () => resizeCleanupRef.current?.(), []);
+
+  const nudgeBlocks = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (!project || !layout) return;
+    const smaller = layout.direction === 'horizontal' ? event.key === 'ArrowLeft' : event.key === 'ArrowUp';
+    const larger = layout.direction === 'horizontal' ? event.key === 'ArrowRight' : event.key === 'ArrowDown';
+    if (!smaller && !larger) return;
+    event.preventDefault();
+    setWorkspaceLayout(project.id, {
+      ...persistedLayout!,
+      ratio: Math.max(0.25, Math.min(0.75, layout.ratio + (larger ? 0.05 : -0.05)))
+    });
+  };
 
   // Layout picker: only meaningful when terminals are visible (not explorer
   // mode) and the project has at least one tab. Hidden otherwise.
@@ -426,12 +506,74 @@ export function Workspace() {
           </div>
         )}
         </div>
+        {project && (
+          <div className="workspace-layout-toolbar" role="group" aria-label="Workspace layout">
+            {!layout ? (
+              <>
+                <span className="workspace-layout-kicker">Split workspace</span>
+                <button type="button" title="Show the current view beside a terminal" onClick={() => {
+                  const current = mode;
+                  setWorkspaceMode(project.id, 'terminals');
+                  openSecondary('horizontal', current === 'terminals' ? 'agents' : current);
+                }}>
+                  <PanelRightOpen size={13} /> With terminal
+                </button>
+                <button type="button" title="Show agents below this view" onClick={() => openSecondary('vertical', 'agents')}>
+                  <PanelBottomOpen size={13} /> With agents
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="workspace-layout-kicker">{layout.direction === 'horizontal' ? 'Side by side' : 'Stacked'}</span>
+                <button type="button" title="Change to side-by-side blocks" onClick={() => setWorkspaceLayout(project.id, { ...layout, direction: 'horizontal' })}>
+                  <PanelRightOpen size={13} />
+                </button>
+                <button type="button" title="Change to stacked blocks" onClick={() => setWorkspaceLayout(project.id, { ...layout, direction: 'vertical' })}>
+                  <PanelBottomOpen size={13} />
+                </button>
+                {secondaryView !== 'terminals' && (
+                  <button type="button" title="Swap primary and secondary blocks" onClick={swapBlocks}>
+                    <ArrowLeftRight size={13} /> Swap
+                  </button>
+                )}
+                <label className="workspace-layout-view-picker">
+                  <span className="sr-only">Secondary block view</span>
+                  <select
+                    aria-label="Secondary block view"
+                    value={secondaryView ?? ''}
+                    onChange={(event) => setWorkspaceLayout(project.id, { ...layout, secondaryView: event.target.value })}
+                  >
+                    <option value="agents">Agents</option>
+                    <option value="explorer">Explorer</option>
+                    <option value="library">Library</option>
+                    <option value="scheduler">Scheduler</option>
+                    <option value="feed">Feed</option>
+                    {goalsEnabled && <option value="goals">Goals</option>}
+                    {followUpsEnabled && <option value="followups">Follow-ups</option>}
+                    {projectTabModules.map((module) => (
+                      <option key={module.id} value={module.id}>
+                        {module.projectTab?.label ?? module.title}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown size={12} aria-hidden="true" />
+                </label>
+                <button type="button" className="workspace-layout-close" title="Return to one block" onClick={() => clearWorkspaceLayout(project.id)}>
+                  <X size={13} /> One block
+                </button>
+              </>
+            )}
+          </div>
+        )}
       </div>
-      <div className="workspace-body">
+      <div className={`workspace-body ${layout ? `workspace-body-split split-${layout.direction}` : ''} ${resizingLayout ? 'workspace-body-resizing' : ''}`} style={layout ? (layout.direction === 'horizontal'
+        ? { gridTemplateColumns: `${layout.ratio}fr 8px ${1 - layout.ratio}fr` }
+        : { gridTemplateRows: `${layout.ratio}fr 8px ${1 - layout.ratio}fr` }) as CSSProperties : undefined}>
+        <section className="workspace-block workspace-block-primary" aria-label="Primary workspace block">
           <div
             id={PROJECTS_TERMINAL_ANCHOR_ID}
             className="terminal-host"
-            style={{ display: isTerminals ? undefined : 'none' }}
+            style={{ display: terminalVisible ? undefined : 'none' }}
           >
             {/* The single app-level TerminalSurface portals its grid in here when
                nav === 'projects'. FindBar / overlays sit above it via z-index,
@@ -506,8 +648,37 @@ export function Workspace() {
           {isAgents && project && (
             // Agents mode: a Kanban-style status board. Cards auto-flow across
             // lanes by live agent state; "New agent" opens the launcher modal.
-            <ProjectAgentsBoard project={project} onNewAgent={() => setLauncherOpen(true)} />
+            <ProjectAgentsBoard project={project} onNewAgent={() => setLauncherOpen(true)} embedded={!!layout} />
           )}
+        </section>
+        {layout && project && (
+          <button
+            type="button"
+            className={`workspace-block-divider divider-${layout.direction}`}
+            aria-label={`Resize ${layout.direction === 'horizontal' ? 'side-by-side' : 'stacked'} blocks`}
+            onPointerDown={resizeBlocks}
+            onKeyDown={nudgeBlocks}
+          />
+        )}
+        {layout && project && (
+          <section className="workspace-block workspace-block-secondary" aria-label="Secondary workspace block">
+            <div className="workspace-block-heading">
+              {secondaryIs('agents') ? 'Agents' : secondaryIs('terminals') ? 'Terminals' : secondaryIs('explorer') ? 'Explorer' : secondaryIs('library') ? 'Library' : secondaryIs('scheduler') ? 'Scheduler' : secondaryIs('feed') ? 'Feed' : secondaryModule?.projectTab?.label ?? secondaryModule?.title ?? 'Unavailable view'}
+            </div>
+            <div className="workspace-block-content">
+              {secondaryIs('terminals') && <div className="workspace-terminal-secondary-note">Terminals are shown in the shared terminal block.</div>}
+              {secondaryIs('agents') && <ProjectAgentsBoard project={project} onNewAgent={() => setLauncherOpen(true)} embedded />}
+              {secondaryIs('explorer') && <div className="workspace-terminal-secondary-note">Explorer is available in the primary workspace block.</div>}
+              {secondaryIs('library') && <Suspense fallback={<div className="workbench-status">Loading library...</div>}><LibraryView project={project} /></Suspense>}
+              {secondaryIs('scheduler') && <Suspense fallback={<div className="workbench-status">Loading scheduler...</div>}><SchedulerPanel projectId={project.id} /></Suspense>}
+              {secondaryIs('goals') && goalsEnabled && <Suspense fallback={<div className="workbench-status">Loading goals...</div>}><ProjectGoalsView project={project} /></Suspense>}
+              {secondaryIs('followups') && followUpsEnabled && <Suspense fallback={<div className="workbench-status">Loading follow-ups...</div>}><ProjectFollowUpsView project={project} /></Suspense>}
+              {secondaryIs('feed') && <Suspense fallback={<div className="workbench-status">Loading feed...</div>}><ProjectFeedView project={project} /></Suspense>}
+              {secondaryModule && <div className="project-ext-tab"><ProjectExtensionTab moduleId={secondaryModule.id} project={project} /></div>}
+              {!secondaryIs('terminals') && !secondaryIs('agents') && !secondaryIs('explorer') && !secondaryIs('library') && !secondaryIs('scheduler') && !secondaryIs('goals') && !secondaryIs('followups') && !secondaryIs('feed') && !secondaryModule && <div className="workspace-terminal-secondary-note">This view is no longer available. Choose another project view, or return to one block.</div>}
+            </div>
+          </section>
+        )}
       </div>
       <div className="statusbar">
         <span>{project?.path ?? '—'}</span>

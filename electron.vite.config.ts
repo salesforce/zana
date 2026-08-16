@@ -88,6 +88,11 @@ export default defineConfig({
       ],
       dedupe: ['monaco-editor']
     },
+    // Monaco's deep `?worker` imports are virtual modules. Pre-bundling them
+    // produces stale optimized-dependency URLs when a lazy editor surface loads.
+    optimizeDeps: {
+      exclude: ['monaco-editor']
+    },
     plugins: [react()],
     build: {
       rollupOptions: {

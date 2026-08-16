@@ -23,9 +23,11 @@ import { CohortBar, type LiveCohort } from './CohortBar';
 interface Props {
   project: Project;
   onNewAgent: () => void;
+  /** Canvas/split blocks must not mount the global terminal-owning list view. */
+  embedded?: boolean;
 }
 
-export function ProjectAgentsBoard({ project, onNewAgent }: Props) {
+export function ProjectAgentsBoard({ project, onNewAgent, embedded = false }: Props) {
   const sessions = useData((s) => s.terminals[project.id]);
   const byId = useAgentStatus((s) => s.byId);
   const sinceById = useAgentStatus((s) => s.since);
@@ -110,7 +112,7 @@ export function ProjectAgentsBoard({ project, onNewAgent }: Props) {
         <span className="grow" />
         {/* Keep the toggle when in list view even with no agents, so closing the
             last agent can't trap the user in list view with no way back. */}
-        {(cards.length > 0 || boardView === 'list' || boardView === 'flow') && <AgentViewToggle />}
+        {!embedded && (cards.length > 0 || boardView === 'list' || boardView === 'flow') && <AgentViewToggle />}
         {reclaimableAgents.length > 0 && (
           <button
             type="button"
@@ -142,7 +144,7 @@ export function ProjectAgentsBoard({ project, onNewAgent }: Props) {
           board buttons: skips question-parked, background, and starred members).
           Only on the board view — Flow/List are full custom views with no cohort
           bar. */}
-      {boardView === 'board' && (
+      {(embedded || boardView === 'board') && (
         <CohortBar
           cards={cards}
           onCloseIdle={(co: LiveCohort) =>
@@ -155,9 +157,9 @@ export function ProjectAgentsBoard({ project, onNewAgent }: Props) {
         />
       )}
 
-      {boardView === 'flow' ? (
+      {!embedded && boardView === 'flow' ? (
         <SquadFlowView projectId={project.id} />
-      ) : boardView === 'list' ? (
+      ) : !embedded && boardView === 'list' ? (
         <AgentMonitor cards={cards} />
       ) : cards.length === 0 ? (
         <div className="agents-board-empty">

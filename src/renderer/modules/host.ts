@@ -710,3 +710,63 @@ export function createMountScopedHost(base: ModuleHost): { host: ModuleHost; dis
   });
   return { host, dispose: () => scope.dispose() };
 }
+
+/**
+ * Bind a panel host to one project-tab mount. The renderer remains advisory
+ * (extensions share a process), but cooperative extensions must not learn about
+ * sibling projects through the documented host surface.
+ */
+export function createProjectScopedHost(base: ModuleHost, project: Project): ModuleHost {
+  const info = toProjectInfo(project);
+  const sessionIds = new Set(
+    (useData.getState().terminals[project.id] ?? []).map((session) => session.id)
+  );
+  const ownsSession = (sessionId: string) =>
+    sessionIds.has(sessionId) || (useData.getState().terminals[project.id] ?? []).some((session) => session.id === sessionId);
+
+  const on = <E extends keyof HostEvents>(event: E, cb: (payload: HostEvents[E]) => void) => {
+    // The selected-project notification has no meaning inside a stable tab and
+    // would otherwise disclose switches to sibling projects.
+    if (event === 'project:changed') return () => {};
+
+    if (event === 'session:updated') {
+      return base.on(event, ((payload: HostEvents['session:updated']) => {
+        if (payload.session.projectId !== project.id) return;
+        sessionIds.add(payload.session.id);
+        cb(payload as HostEvents[E]);
+      }) as (payload: HostEvents[E]) => void);
+    }
+
+    if (event === 'session:agentStatus' || event === 'session:exit') {
+      return base.on(event, ((payload: HostEvents['session:agentStatus'] | HostEvents['session:exit']) => {
+        if (!ownsSession(payload.sessionId)) return;
+        cb(payload as HostEvents[E]);
+        if (event === 'session:exit') sessionIds.delete(payload.sessionId);
+      }) as (payload: HostEvents[E]) => void);
+    }
+
+    return base.on(event, cb);
+  };
+
+  return Object.assign(Object.create(base) as ModuleHost, {
+    getScopedProjectId: () => project.id,
+    getActiveProject: () => info,
+    listProjects: () => [info],
+    // A tab cannot redirect the shell to another project's workspace.
+    selectProject: (projectId: string | null) => {
+      if (projectId === project.id) base.selectProject(projectId);
+    },
+    // A project tab always has a valid launch anchor; never create or expose a
+    // separate scratch project from this restricted surface.
+    ensureQuickAgent: async () => info,
+    pushInbox: (message: Parameters<ModuleHost['pushInbox']>[0]) =>
+      base.pushInbox({ ...message, projectId: project.id }),
+    launchSession: (opts: Parameters<ModuleHost['launchSession']>[0]) =>
+      opts.projectId === project.id ? base.launchSession({ ...opts, projectId: project.id }) : Promise.resolve(null),
+    replyToSession: (sessionId: string, text: string) =>
+      ownsSession(sessionId) ? base.replyToSession(sessionId, text) : Promise.resolve(false),
+    writeToSession: (sessionId: string, data: string) =>
+      ownsSession(sessionId) ? base.writeToSession(sessionId, data) : Promise.resolve(false),
+    on
+  });
+}

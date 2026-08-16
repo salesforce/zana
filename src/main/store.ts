@@ -723,7 +723,7 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.lastProjectId === 'string' || input.lastProjectId === null) {
     normalized.lastProjectId = input.lastProjectId;
   }
-  if (input.workspaceModes && typeof input.workspaceModes === 'object') {
+  if (input.workspaceModes && typeof input.workspaceModes === 'object' && !Array.isArray(input.workspaceModes)) {
     // A project view is either a core WorkspaceMode literal OR an opaque
     // extension module id (an extension-contributed project tab, e.g. the
     // `zana-tickets` extension). Core never enumerates extension ids, so we
@@ -732,11 +732,54 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
     // whose extension is gone on next launch is tolerated at render time
     // (falls back to the default view). See ProjectView / AppConfig.workspaceModes.
     normalized.workspaceModes = Object.fromEntries(
-      Object.entries(input.workspaceModes).filter(
-        (_entry): _entry is [string, string] =>
-          typeof _entry[1] === 'string' && _entry[1].length > 0
-      )
+      Object.entries(input.workspaceModes)
+        .slice(0, 500)
+        .flatMap(([projectId, view]) => {
+          const trimmedProjectId = projectId.trim();
+          const trimmedView = typeof view === 'string' ? view.trim() : '';
+          return trimmedProjectId && trimmedProjectId.length <= 256 && trimmedView && trimmedView.length <= 256
+            ? [[trimmedProjectId, trimmedView]]
+            : [];
+        })
     );
+  }
+  if (input.workspaceLayouts && typeof input.workspaceLayouts === 'object' && !Array.isArray(input.workspaceLayouts)) {
+    const layouts: NonNullable<AppConfig['workspaceLayouts']> = {};
+    for (const [projectId, value] of Object.entries(input.workspaceLayouts).slice(0, 500)) {
+      if (!projectId || projectId.length > 256 || !value || typeof value !== 'object' || Array.isArray(value)) continue;
+      const candidate = value as Record<string, unknown>;
+      const secondaryView = typeof candidate.secondaryView === 'string' ? candidate.secondaryView.trim() : '';
+      if (!secondaryView || secondaryView.length > 256) continue;
+      const direction = candidate.direction === 'vertical' ? 'vertical' : candidate.direction === 'horizontal' ? 'horizontal' : null;
+      const ratio = typeof candidate.ratio === 'number' && Number.isFinite(candidate.ratio)
+        ? Math.max(0.25, Math.min(0.75, candidate.ratio))
+        : null;
+      if (!direction || ratio === null) continue;
+      layouts[projectId] = { secondaryView, direction, ratio };
+    }
+    normalized.workspaceLayouts = layouts;
+  }
+  if (input.projectCanvas === null) {
+    normalized.projectCanvas = null;
+  } else if (input.projectCanvas && typeof input.projectCanvas === 'object' && !Array.isArray(input.projectCanvas)) {
+    const canvas = input.projectCanvas as Record<string, unknown>;
+    const template = ['single', 'columns-2', 'rows-2', 'grid-2x2'].includes(String(canvas.template))
+      ? canvas.template as NonNullable<AppConfig['projectCanvas']>['template']
+      : null;
+    const rawBlocks = Array.isArray(canvas.blocks) ? canvas.blocks.slice(0, 4) : [];
+    const ids = new Set<string>();
+    const blocks: NonNullable<AppConfig['projectCanvas']>['blocks'] = [];
+    for (const candidate of rawBlocks) {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
+      const block = candidate as Record<string, unknown>;
+      const id = typeof block.id === 'string' ? block.id.trim() : '';
+      const projectId = typeof block.projectId === 'string' ? block.projectId.trim() : '';
+      const view = typeof block.view === 'string' ? block.view.trim() : '';
+      if (!id || ids.has(id) || id.length > 80 || !projectId || projectId.length > 256 || !view || view.length > 256) continue;
+      ids.add(id);
+      blocks.push({ id, projectId, view });
+    }
+    normalized.projectCanvas = template && blocks.length > 0 ? { template, blocks } : null;
   }
   if (
     input.agentsBoardView === 'board' ||
@@ -1478,6 +1521,7 @@ export const store = {
       fontSize: 13,
       lastProjectId: null,
       workspaceModes: {},
+      workspaceLayouts: {},
       agentsBoardView: 'board',
       inboxGrouping: 'project',
       // Auto mode is ON by default (a claude session launches with the native
@@ -1533,7 +1577,8 @@ export const store = {
       'defaultExecutionState',
       'piProvider',
       'piModel',
-      'piThinking'
+      'piThinking',
+      'projectCanvas'
     ] as const;
     for (const key of optionalHarnessKeys) {
       if (Object.prototype.hasOwnProperty.call(patch, key) && patch[key] === undefined) {

@@ -5,6 +5,7 @@ import {
   Bot,
   Clock,
   Compass,
+  LayoutDashboard,
   Drama,
   FolderGit2,
   House,
@@ -98,6 +99,7 @@ const coreNavItems: NavEntry[] = [
   { id: 'inbox', label: 'Inbox', icon: Inbox },
   { id: 'agents', label: 'Agents', icon: Bot },
   { id: 'projects', label: 'Projects', icon: FolderGit2 },
+  { id: 'canvas', label: 'Canvas', icon: LayoutDashboard },
   { id: 'scheduler', label: 'Scheduler', icon: Clock },
   { id: 'personas', label: 'Personas', icon: Drama },
   { id: 'squads', label: 'Squads', icon: Users }
