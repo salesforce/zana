@@ -190,7 +190,7 @@ export class CodexSessionResolver {
     const sinceDateKey = knownSessionId ? '0000/00/00' : dateKeyOf(floor);
     const files = await listRolloutFiles(this.root, sinceDateKey, this.maxFilesPerScan);
 
-    let best: { match: CodexSessionMatch; birthMs: number } | null = null;
+    const candidates: Array<{ match: CodexSessionMatch; birthMs: number }> = [];
     for (const path of files) {
       let birthMs: number;
       try {
@@ -206,14 +206,17 @@ export class CodexSessionResolver {
       const head = await readRolloutHead(path);
       if (!head || head.cwd !== cwd || !head.id) continue;
       if (knownSessionId && head.id !== knownSessionId) continue;
-      const claimant = this.claimedSessionIds.get(head.id);
-      if (claimant && claimant !== key) continue;
-
-      if (!best || birthMs < best.birthMs) {
-        best = { match: { sessionId: head.id, rolloutPath: path }, birthMs };
-      }
+      candidates.push({ match: { sessionId: head.id, rolloutPath: path }, birthMs });
     }
 
+    // The scans above await filesystem work, so two concurrent calls can both
+    // observe an unclaimed rollout. Select and claim synchronously here instead.
+    const best = candidates
+      .sort((a, b) => a.birthMs - b.birthMs)
+      .find(({ match }) => {
+        const claimant = this.claimedSessionIds.get(match.sessionId);
+        return !claimant || claimant === key;
+      });
     if (best) {
       if ((this.generations.get(key) ?? 0) !== generation) return null;
       this.cache.set(key, best.match);
