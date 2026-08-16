@@ -30,7 +30,8 @@ const DOCS = [
   { slug: 'extensions-quickstart', title: 'Build your first extension', source: 'docs/extensions-quickstart.md', group: 'Extensions' },
   { slug: 'extensions', title: 'Extensions overview', source: 'docs/extensions.md', group: 'Extensions' },
   { slug: 'extensions-authoring', title: 'Authoring extensions', source: 'docs/extensions-authoring.md', group: 'Extensions' },
-  { slug: 'extensions-sdk-reference', title: 'Extension SDK reference', source: 'docs/extensions-sdk-reference.md', group: 'Extensions' }
+  { slug: 'extensions-sdk-reference', title: 'Extension SDK reference', source: 'docs/extensions-sdk-reference.md', group: 'Extensions' },
+  { slug: 'harness-authoring', title: 'Author a harness', source: 'docs/harness-authoring.md', group: 'Harnesses' }
 ];
 
 // If the parent repo's docs aren't reachable (e.g. inside the Docker build

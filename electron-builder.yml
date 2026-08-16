@@ -33,6 +33,8 @@ extraResources:
     to: zcc-cli-skill.md
   - from: resources/extension-creator-skill.md
     to: extension-creator-skill.md
+  - from: resources/harness-authoring-skill.md
+    to: harness-authoring-skill.md
   # Editable starter template the "create local extension" scaffolder copies +
   # token-substitutes (see src/main/local-extension.ts `templateRoot`). Resolved
   # via process.resourcesPath/extension-template in packaged builds.
