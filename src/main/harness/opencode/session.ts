@@ -38,8 +38,8 @@ export class OpenCodeTranscriptAdapter implements HarnessTranscriptAdapter {
     const nativeId = reference?.nativeId ?? (await this.resolve(session))?.nativeId;
     if (!nativeId) return null;
     const dbPath = join(process.env.XDG_DATA_HOME || join(app.getPath('home'), '.local', 'share'), 'opencode', 'opencode.db');
-    return (await readSessionStatsOpenCode(nativeId, { dbPath }))
-      ?? readSessionStatsOpenCodeExport(nativeId, { binary: this.binary() });
+    return (await readSessionStatsOpenCode(nativeId, { dbPath, cwd: session.cwd }))
+      ?? readSessionStatsOpenCodeExport(nativeId, { binary: this.binary(), cwd: session.cwd });
   }
 
   forget(sessionId: string): void {

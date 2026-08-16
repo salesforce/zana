@@ -31,7 +31,7 @@
  */
 
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import Database from 'better-sqlite3';
 import type {
@@ -215,7 +215,8 @@ function modelIdFrom(raw: string | null): string | undefined {
  */
 export function buildSessionStatsOpenCode(
   session: OpenCodeSessionRow | undefined,
-  rows: OpenCodePartRow[]
+  rows: OpenCodePartRow[],
+  cwd?: string
 ): SessionStats {
   const model = modelIdFrom(session?.model ?? null);
 
@@ -256,7 +257,7 @@ export function buildSessionStatsOpenCode(
       const patchFiles = part.state?.metadata?.files;
       if (Array.isArray(patchFiles)) {
         for (const f of patchFiles) {
-          const path = f.relativePath || f.filePath;
+          const path = sessionFilePath(f.relativePath || f.filePath, cwd);
           if (typeof path === 'string' && path) {
             files.delete(path);
             files.set(path, patchFileOp(f.type));
@@ -267,7 +268,7 @@ export function buildSessionStatsOpenCode(
     }
 
     if (part.tool === 'read') {
-      const path = part.state?.input?.filePath;
+      const path = sessionFilePath(part.state?.input?.filePath, cwd);
       if (typeof path === 'string' && path) {
         files.delete(path);
         files.set(path, 'R');
@@ -276,7 +277,7 @@ export function buildSessionStatsOpenCode(
     }
 
     if (part.tool === 'write') {
-      const path = part.state?.input?.filePath;
+      const path = sessionFilePath(part.state?.input?.filePath, cwd);
       if (typeof path === 'string' && path) {
         files.delete(path);
         files.set(path, 'C');
@@ -285,7 +286,7 @@ export function buildSessionStatsOpenCode(
     }
 
     if (part.tool === 'edit') {
-      const path = part.state?.input?.filePath;
+      const path = sessionFilePath(part.state?.input?.filePath, cwd);
       if (typeof path === 'string' && path) {
         files.delete(path);
         files.set(path, 'W');
@@ -318,6 +319,16 @@ export function buildSessionStatsOpenCode(
     files: fileList,
     queue
   };
+}
+
+/**
+ * OpenCode records apply_patch targets relative to the session directory, while
+ * its read/write/edit tools emit absolute file paths. Convert the former at the
+ * trusted transcript boundary so every SessionStats consumer sees one path form.
+ */
+function sessionFilePath(path: string | undefined, cwd: string | undefined): string | undefined {
+  if (typeof path !== 'string' || !path) return undefined;
+  return cwd && !isAbsolute(path) ? resolve(cwd, path) : path;
 }
 
 /** Open OpenCode's DB read-only, or null if it's missing/unreadable. Never throws. */
@@ -409,7 +420,7 @@ export async function readSessionDigestOpenCode(
  */
 export async function readSessionStatsOpenCode(
   sessionId: string,
-  opts: { dbPath?: string } = {}
+  opts: { dbPath?: string; cwd?: string } = {}
 ): Promise<SessionStats | null> {
   const db = openReadonly(opts.dbPath ?? openCodeDbPath());
   if (!db) return null;
@@ -419,7 +430,7 @@ export async function readSessionStatsOpenCode(
     // TranscriptSource retry its bounded directory+spawn-time fallback instead.
     if (!session) return null;
     const rows = fetchPartRows(db, sessionId, MAX_PART_ROWS);
-    return buildSessionStatsOpenCode(session, rows);
+    return buildSessionStatsOpenCode(session, rows, opts.cwd);
   } catch {
     return null;
   } finally {
@@ -453,7 +464,7 @@ function numeric(value: unknown): number {
 /** Parse `opencode export <id>` into the same stats projection as the SQLite
  * reader. Export is the compatibility fallback when Electron cannot load the
  * native better-sqlite3 binary (for example after an Electron ABI upgrade). */
-export function buildSessionStatsOpenCodeExport(value: unknown): SessionStats | null {
+export function buildSessionStatsOpenCodeExport(value: unknown, cwd?: string): SessionStats | null {
   if (!value || typeof value !== 'object') return null;
   const exported = value as OpenCodeExport;
   const info = exported.info;
@@ -483,7 +494,7 @@ export function buildSessionStatsOpenCodeExport(value: unknown): SessionStats | 
       rows.push({ mdata: JSON.stringify({ role }), pdata: JSON.stringify(part) });
     }
   }
-  return buildSessionStatsOpenCode(row, rows.reverse());
+  return buildSessionStatsOpenCode(row, rows.reverse(), cwd);
 }
 
 const EXPORT_TIMEOUT_MS = 8_000;
@@ -493,7 +504,7 @@ const EXPORT_MAX_BUFFER = 16 * 1024 * 1024;
  * use this only after the native reader fails. Never throws. */
 export async function readSessionStatsOpenCodeExport(
   sessionId: string,
-  opts: { binary?: string } = {}
+  opts: { binary?: string; cwd?: string } = {}
 ): Promise<SessionStats | null> {
   return new Promise((resolve) => {
     execFile(
@@ -503,7 +514,7 @@ export async function readSessionStatsOpenCodeExport(
       (error, stdout) => {
         if (error) return resolve(null);
         try {
-          resolve(buildSessionStatsOpenCodeExport(JSON.parse(stdout)));
+          resolve(buildSessionStatsOpenCodeExport(JSON.parse(stdout), opts.cwd));
         } catch {
           resolve(null);
         }
