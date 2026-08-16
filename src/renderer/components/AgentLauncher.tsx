@@ -1203,6 +1203,7 @@ export const AgentLauncher = memo(function AgentLauncher({
   // Renderer eligibility is advisory. Main still verifies Git state and confines
   // the worktree before changing cwd.
   const scratchIsTarget = !projectMode && targetProjectId === null;
+  const useQuickAgentHomeComposer = scratchIsTarget;
   const worktreeStructurallyEligible = isWorktreeEligible(target, scratchIsTarget);
   const worktreeEligible = worktreeStructurallyEligible && targetIsGitRepo;
   const personaProfileSelection = selectedPersona?.baseProfile
@@ -1883,6 +1884,11 @@ export const AgentLauncher = memo(function AgentLauncher({
               setAttachments((current) => current.filter((item) => item !== path));
             }}
             onSubmit={mode === 'autonomous' ? launchAutonomous : launch}
+            variant={useQuickAgentHomeComposer ? 'home' : 'default'}
+            submitLabel={mode === 'autonomous' ? 'Launch autonomous team' : 'Launch agent'}
+            submitDisabled={mode === 'autonomous'
+              ? !teamId || !prompt.trim() || !target || launching
+              : !target || !descriptor || !configLoaded || !worktreeDefaultLoaded || personaProfileConflict || launching}
             placeholder={
               mode === 'autonomous'
                 ? 'Describe the GOAL for the team to reach (⌘↵ to launch). Attach or drop supporting files.'
@@ -2495,32 +2501,34 @@ export const AgentLauncher = memo(function AgentLauncher({
           {projectMode && <AgentConversationHistory projectId={project!.id} unavailableProviders={unavailableHistoryProviders} onResumed={onClose} />}
           </div>
 
-          <div className="launch-actions">
-            {mode === 'autonomous' ? (
-              <button
-                className="btn primary"
-                onClick={launchAutonomous}
-                disabled={!teamId || !prompt.trim() || !target || launching}
-                aria-describedby={launchStatusA11y.describedBy}
-                title="Launch autonomous team (⌘↵)"
-              >
-                <Zap size={14} />
-                Launch autonomous team
-              </button>
-            ) : (
-              <button
-                data-testid="launch-send"
-                className="btn primary"
-                onClick={launch}
-                disabled={!target || !descriptor || !configLoaded || !worktreeDefaultLoaded || personaProfileConflict || launching}
-                aria-describedby={launchStatusA11y.describedBy}
-                title="Send (⌘↵)"
-              >
-                <TerminalIcon size={14} />
-                Send
-              </button>
-            )}
-          </div>
+          {!useQuickAgentHomeComposer && (
+            <div className="launch-actions">
+              {mode === 'autonomous' ? (
+                <button
+                  className="btn primary"
+                  onClick={launchAutonomous}
+                  disabled={!teamId || !prompt.trim() || !target || launching}
+                  aria-describedby={launchStatusA11y.describedBy}
+                  title="Launch autonomous team (⌘↵)"
+                >
+                  <Zap size={14} />
+                  Launch autonomous team
+                </button>
+              ) : (
+                <button
+                  data-testid="launch-send"
+                  className="btn primary"
+                  onClick={launch}
+                  disabled={!target || !descriptor || !configLoaded || !worktreeDefaultLoaded || personaProfileConflict || launching}
+                  aria-describedby={launchStatusA11y.describedBy}
+                  title="Send (⌘↵)"
+                >
+                  <TerminalIcon size={14} />
+                  Send
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>,

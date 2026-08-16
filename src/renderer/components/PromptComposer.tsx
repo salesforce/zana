@@ -6,7 +6,7 @@ import {
   useRef,
   useState
 } from 'react';
-import { Paperclip } from 'lucide-react';
+import { ArrowUp, Paperclip } from 'lucide-react';
 import { useFileDrop } from '../util/useFileDrop';
 import { useData } from '../store';
 import { fuzzyScore } from '../util/fuzzy';
@@ -42,6 +42,12 @@ interface Props {
   onChange: (value: string) => void;
   /** Invoked on ⌘/Ctrl+Enter. */
   onSubmit: () => void;
+  /** Use the calmer Home command surface for a quick-agent launch. */
+  variant?: 'default' | 'home';
+  /** Prevent the inline Home-style launch button from submitting. */
+  submitDisabled?: boolean;
+  /** Accessible action name for the inline Home-style launch button. */
+  submitLabel?: string;
   placeholder?: string;
   rows?: number;
   /** Absolute path of the project whose files back the `@`-mention picker. When
@@ -185,6 +191,9 @@ export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function P
     value,
     onChange,
     onSubmit,
+    variant = 'default',
+    submitDisabled = false,
+    submitLabel = 'Launch agent',
     placeholder,
     rows = 3,
     mentionProjectPath,
@@ -206,7 +215,7 @@ export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function P
     if (mention.onKeyDown(e)) return; // popover consumed the key
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault();
-      onSubmit();
+      if (!submitDisabled) onSubmit();
     }
   };
 
@@ -215,8 +224,14 @@ export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function P
     (paths) => paths.join('\n')
   );
 
+  const homeVariant = variant === 'home';
+
   return (
-    <div className={`prompt-composer ${dropOver ? 'drop-over' : ''}`} {...dropHandlers}>
+    <div
+      className={`${homeVariant ? 'ui-command-composer prompt-composer--home' : 'prompt-composer'} ${dropOver ? (homeVariant ? 'is-drop-over' : 'drop-over') : ''}`}
+      {...dropHandlers}
+      {...(homeVariant ? { role: 'group', 'aria-label': 'Agent instruction' } : {})}
+    >
       <AttachmentPills paths={attachments} onRemove={onRemoveAttachment} />
       <textarea
         ref={(node) => {
@@ -224,8 +239,9 @@ export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function P
           textareaRef.current = node ? { focus: () => node.focus(), element: () => node } : null;
         }}
         data-testid="launch-instruction"
-        className="launch-instruction"
+        className={homeVariant ? 'ui-command-composer-input' : 'launch-instruction'}
         placeholder={placeholder}
+        aria-label={homeVariant ? 'Instruction for the new agent' : undefined}
         value={value}
         onChange={(e) => {
           onChange(e.target.value);
@@ -263,8 +279,8 @@ export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function P
           ))}
         </div>
       )}
-      <div className="prompt-composer-actions">
-        <div className="prompt-composer-input-actions">
+      {homeVariant ? (
+        <div className="ui-command-composer-toolbar prompt-composer-home-toolbar">
           <ComposerIconButton
             onClick={() => { void window.cc.fs.pickFiles().then(onAddAttachments); }}
             title="Attach files"
@@ -272,12 +288,38 @@ export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function P
           >
             <Paperclip size={16} aria-hidden="true" />
           </ComposerIconButton>
-          {voiceInputEnabled && (
-            <VoiceInputButton value={value} onChange={onChange} textareaRef={textareaRef} />
-          )}
+          <div className="prompt-composer-home-actions">
+            {voiceInputEnabled && (
+              <VoiceInputButton value={value} onChange={onChange} textareaRef={textareaRef} iconOnly />
+            )}
+            <ComposerIconButton
+              className="prompt-composer-home-launch"
+              onClick={onSubmit}
+              disabled={submitDisabled}
+              aria-label={submitLabel}
+              title={`${submitLabel} (⌘↵)`}
+            >
+              <ArrowUp size={17} aria-hidden="true" />
+            </ComposerIconButton>
+          </div>
         </div>
-        <ImprovePromptButton value={value} onChange={onChange} />
-      </div>
+      ) : (
+        <div className="prompt-composer-actions">
+          <div className="prompt-composer-input-actions">
+            <ComposerIconButton
+              onClick={() => { void window.cc.fs.pickFiles().then(onAddAttachments); }}
+              title="Attach files"
+              aria-label="Attach files"
+            >
+              <Paperclip size={16} aria-hidden="true" />
+            </ComposerIconButton>
+            {voiceInputEnabled && (
+              <VoiceInputButton value={value} onChange={onChange} textareaRef={textareaRef} />
+            )}
+          </div>
+          <ImprovePromptButton value={value} onChange={onChange} />
+        </div>
+      )}
     </div>
   );
 });
