@@ -7,6 +7,7 @@ import {
   type TerminalThemeId
 } from '@shared/terminalThemes';
 import { Section, Field, CheckboxField } from './FormFields';
+import { PopoverPicklist } from '../ui/PopoverPicklist';
 
 /**
  * Terminal settings — everything scoped to the embedded terminal itself
@@ -58,16 +59,13 @@ export function TerminalTab({
           label="Terminal theme"
           help="Color palette for the terminal, independent of the app theme. ‘Auto’ follows the app’s light/dark mode. Applies live to open terminals."
         >
-          <select
+          <PopoverPicklist
             value={config.terminalTheme ?? DEFAULT_TERMINAL_THEME}
-            onChange={(e) => onUpdate({ terminalTheme: e.target.value as TerminalThemeId })}
-          >
-            {TERMINAL_THEME_OPTIONS.map((opt) => (
-              <option key={opt.id} value={opt.id}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+            ariaLabel="Terminal theme"
+            searchable={false}
+            onChange={(terminalTheme) => onUpdate({ terminalTheme: terminalTheme as TerminalThemeId })}
+            options={TERMINAL_THEME_OPTIONS.map((option) => ({ value: option.id, label: option.label }))}
+          />
         </Field>
         <Field label="Terminal font size" help="Range 10–20. Affects new tabs.">
           <input
@@ -115,14 +113,17 @@ export function TerminalTab({
           label="tmux session persistence"
           help="Back sessions with tmux so they survive an app restart or a dropped SSH connection. A durability feature, not a speed-up — it does not make terminals faster. Needs tmux installed; ignored on Windows or when tmux is absent. Off: never wrap. Remote only: wrap SSH sessions only — the strongest use case (surviving a dropped link) — and skip the extra tmux server for local runs that don't need it. All sessions: wrap local and remote (the default)."
         >
-          <select
+          <PopoverPicklist
             value={config.tmuxScope ?? 'all'}
-            onChange={(e) => onUpdate({ tmuxScope: e.target.value as AppConfig['tmuxScope'] })}
-          >
-            <option value="off">Off</option>
-            <option value="remote">Remote only</option>
-            <option value="all">All sessions</option>
-          </select>
+            ariaLabel="tmux session persistence"
+            searchable={false}
+            onChange={(tmuxScope) => onUpdate({ tmuxScope: tmuxScope as AppConfig['tmuxScope'] })}
+            options={[
+              { value: 'off', label: 'Off' },
+              { value: 'remote', label: 'Remote only' },
+              { value: 'all', label: 'All sessions' }
+            ]}
+          />
         </Field>
         <div className="settings-field">
           <span className="settings-label">Runtime status</span>

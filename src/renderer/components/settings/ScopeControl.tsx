@@ -1,5 +1,6 @@
 import type { Project } from '@shared/types';
 import { sortProjectsForDisplay, useUi } from '../../store';
+import { PopoverPicklist } from '../ui/PopoverPicklist';
 
 /**
  * Scope control in the Settings content header: a `Global | Project-Specific`
@@ -57,19 +58,18 @@ export function ScopeControl({
         </div>
       )}
       {(isProjectScope || !allowGlobal) && (
-        <select
+        <PopoverPicklist
           className="settings-scope-select"
           value={selectedProjectId ?? ''}
-          onChange={(e) => selectProject(e.target.value || null)}
-          aria-label="Project"
-        >
-          {!allowGlobal && <option value="">Select a project…</option>}
-          {sorted.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
+          ariaLabel="Project"
+          onChange={(projectId) => selectProject(projectId || null)}
+          placeholder="Select a project…"
+          searchPlaceholder="Search projects"
+          options={[
+            ...(!allowGlobal ? [{ value: '', label: 'Select a project…' }] : []),
+            ...sorted.map((project) => ({ value: project.id, label: project.name }))
+          ]}
+        />
       )}
     </div>
   );

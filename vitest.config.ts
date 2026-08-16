@@ -36,7 +36,8 @@ export default defineConfig({
         find: /^@zcc\/harness-sdk\/(.*)$/,
         replacement: resolve(__dirname, 'packages/harness-sdk/src/$1.ts')
       },
-      { find: '@shared', replacement: resolve(__dirname, 'src/shared') }
+      { find: '@shared', replacement: resolve(__dirname, 'src/shared') },
+      { find: '@renderer', replacement: resolve(__dirname, 'src/renderer') }
     ]
   }
 });

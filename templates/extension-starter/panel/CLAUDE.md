@@ -49,6 +49,19 @@ This starter is renderer-only and needs **no build step** — edit
 `dist/renderer.js` directly. If you introduce a bundler later, make sure the
 manifest's `entry.renderer` still points at the built file under `dist/`.
 
+## Controls — match the host UI
+
+- Do **not** render native `select` menus. For projects, people, teams, or any
+  changing/long list, use a semantic button that awaits `host.quickPick(items,
+  { title, placeholder })`. It is searchable, theme-aware, and returns `null`
+  on cancel; an empty string can still be a valid choice.
+- For two to four fixed modes, render an explicit button group with
+  `aria-pressed`; for a boolean, prefer a labelled native checkbox. Keep inputs
+  and textareas visibly and programmatically labelled.
+- Do not import core renderer components or copy their CSS. They are host
+  internals; build your own layout with documented theme variables and use
+  `host.quickPick` / `host.confirm` / `host.prompt` for host-owned interactions.
+
 ## Cleanup & reaching host outside React
 
 - **Subscriptions auto-dispose.** `host.on(event, cb)` and `host.subscribe(...)`

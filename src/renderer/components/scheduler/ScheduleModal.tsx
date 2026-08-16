@@ -13,6 +13,7 @@ import { isValidCron, nextCronRuns } from '@shared/parse-cron';
 import { useData, useUi, useScheduleGroups } from '../../store';
 import { Modal } from '../Modal';
 import { ImprovePromptButton } from '../ImprovePromptButton';
+import { PopoverPicklist } from '../ui/PopoverPicklist';
 import { PROFILE_LABEL, INBOX_LEVELS, scopeLabel, sourceLabel } from './schedulerUtils';
 
 /** Seed values handed to ScheduleModal. May come from a template ("Use this")
@@ -270,27 +271,26 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
       <div className="scheduler-form-row">
         <div className="scheduler-form-field">
           <label htmlFor="sched-project">Project</label>
-          <select
+          <PopoverPicklist
             id="sched-project"
+            ariaLabel="Project"
             value={projectId}
-            onChange={(e) => setProjectId(e.target.value)}
-          >
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
+            onChange={setProjectId}
+            placeholder="Choose project"
+            searchPlaceholder="Search projects"
+            options={projects.map((project) => ({ value: project.id, label: project.name }))}
+          />
         </div>
         <div className="scheduler-form-field">
           <label htmlFor="sched-profile">Launch profile</label>
-          <select
+          <PopoverPicklist
             id="sched-profile"
+            ariaLabel="Launch profile"
             value={profile}
-            onChange={(e) => setProfile(e.target.value as LaunchProfileId)}
-          >
-            {PROFILES.map((p) => (
-              <option key={p} value={p}>{PROFILE_LABEL[p]}</option>
-            ))}
-          </select>
+            searchable={false}
+            onChange={(nextProfile) => setProfile(nextProfile as LaunchProfileId)}
+            options={PROFILES.map((profile) => ({ value: profile, label: PROFILE_LABEL[profile] }))}
+          />
         </div>
       </div>
       {isNew ? (
@@ -343,21 +343,19 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
           <label htmlFor="sched-group">
             Group <span className="scheduler-form-optional">(optional)</span>
           </label>
-          <select
+          <PopoverPicklist
             id="sched-group"
+            ariaLabel="Group"
             value={group}
-            onChange={(e) => setGroup(e.target.value)}
-          >
-            <option value="">Ungrouped</option>
-            {groups.map((g) => (
-              <option key={g.id} value={g.id}>{g.name}</option>
-            ))}
-            {/* A stale group id (its group was deleted) still shows so the
-                user sees what's set; picking another value reassigns it. */}
-            {group && !groups.some((g) => g.id === group) && (
-              <option value={group}>{group} (deleted)</option>
-            )}
-          </select>
+            onChange={setGroup}
+            options={[
+              { value: '', label: 'Ungrouped' },
+              ...groups.map((item) => ({ value: item.id, label: item.name })),
+              ...(group && !groups.some((item) => item.id === group)
+                ? [{ value: group, label: `${group} (deleted)` }]
+                : [])
+            ]}
+          />
           <p className="modal-hint">
             Sort this schedule into a Personal / Work bucket. Manage groups
             from the scheduler sidebar.

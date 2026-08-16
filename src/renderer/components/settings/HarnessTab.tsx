@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle2, XCircle, RefreshCw, ChevronRight } from 'lucide-react';
 import type { AppConfig, HarnessFamily, HarnessVerifyResult, LaunchProfileId } from '@shared/types';
-import { executionMappingOptions, type HarnessAdapterDescriptor } from '@shared/harness-adapter';
+import type { HarnessAdapterDescriptor } from '@shared/harness-adapter';
 import { useData } from '../../store';
 import { profileIcon } from '../../util/profileIcon';
 import { Section, Field, ToggleSwitch, ChipField, TextArgsField } from './FormFields';
 import { HarnessOptionSelect } from '../HarnessOptionSelect';
+import { PopoverPicklist } from '../ui/PopoverPicklist';
 import { providerUiSchema } from '@shared/launch-provider';
 
 const USE_HARNESS_DEFAULT = { id: '', label: 'Use harness default' } as const;
@@ -165,15 +166,17 @@ function HarnessRow({
     <Field label="Default Provider" help={providerRelationship === 'fixed-provider'
       ? `${h.label} uses this fixed provider.`
       : 'Selects which provider’s models appear below. Combined provider/model harnesses encode this choice in the model id.'}>
-      <select
+      <PopoverPicklist
         value={selectedProvider}
+        ariaLabel="Default provider"
+        searchable={false}
         disabled={providerRelationship === 'fixed-provider'}
-        onChange={(event) => {
+        onChange={(nextProvider) => {
           const byAdapter = { ...(config.harnessRouting?.byAdapter ?? {}) };
           const current = byAdapter[h.family] ?? {};
           const modelStillMatches = modelTargets.some((target) =>
-            target.id === current.modelTargetId && (!target.provider || target.provider === event.target.value));
-          const providerTargetId = event.target.value || undefined;
+            target.id === current.modelTargetId && (!target.provider || target.provider === nextProvider));
+          const providerTargetId = nextProvider || undefined;
           const next = {
             ...current,
             providerTargetId,
@@ -186,23 +189,25 @@ function HarnessRow({
           }
           void onUpdate({ harnessRouting: Object.keys(byAdapter).length ? { schemaVersion: 1, byAdapter } : undefined });
         }}
-      >
-        {providerRelationship !== 'fixed-provider' && <option value="">Use harness default</option>}
-        {providerTargets.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}
-      </select>
+        options={[
+          ...(providerRelationship !== 'fixed-provider' ? [{ value: '', label: 'Use harness default' }] : []),
+          ...providerTargets.map((provider) => ({ value: provider.id, label: provider.label }))
+        ]}
+      />
     </Field>
   ) : null;
   const modelLevelField = modelTargets.length ? (
     <Field label="Default Model Level" help={`Native ${h.label} models with their portable model-level mapping.`}>
-      <select
+      <PopoverPicklist
         value={selectedModelTarget}
-        onChange={(event) => {
+        ariaLabel="Default model level"
+        onChange={(modelTargetId) => {
           const byAdapter = { ...(config.harnessRouting?.byAdapter ?? {}) };
           const current = byAdapter[h.family] ?? {};
-          if (event.target.value) {
+          if (modelTargetId) {
             byAdapter[h.family] = {
               ...current,
-              modelTargetId: event.target.value,
+              modelTargetId,
               modelLevel: undefined
             };
           } else {
@@ -214,26 +219,28 @@ function HarnessRow({
         }}
         disabled={!descriptor?.availability.enabled || !descriptor?.availability.installed}
         title={!descriptor?.availability.enabled || !descriptor?.availability.installed ? descriptor?.availability.reason ?? 'Harness unavailable' : undefined}
-      >
-        <option value="">Use harness default</option>
-        {visibleModels.map((target) => (
-          <option key={target.id} value={target.id}>
-            {target.label}{target.level ? ` [${portableLabel(target.level)}]` : ''}
-          </option>
-        ))}
-      </select>
+        options={[
+          { value: '', label: 'Use harness default' },
+          ...visibleModels.map((target) => ({
+            value: target.id,
+            label: `${target.label}${target.level ? ` [${portableLabel(target.level)}]` : ''}`
+          }))
+        ]}
+      />
     </Field>
   ) : null;
   const executionMapping = descriptor?.targets?.executionStateMapping;
   const executionStateField = executionMapping && h.family !== 'codex' ? (
     <Field label="Default Execution State" help={`Native ${h.label} execution policies with their portable execution-state mapping.`}>
-      <select
+      <PopoverPicklist
         value={config.harnessRouting?.byAdapter?.[h.family]?.executionState ?? ''}
-        onChange={(event) => {
+        ariaLabel="Default execution state"
+        searchable={false}
+        onChange={(executionState) => {
           const byAdapter = { ...(config.harnessRouting?.byAdapter ?? {}) };
           const current = byAdapter[h.family] ?? {};
-          if (event.target.value) {
-            byAdapter[h.family] = { ...current, executionState: event.target.value as 'plan' | 'interactive' | 'accept-edits' | 'autonomous' };
+          if (executionState) {
+            byAdapter[h.family] = { ...current, executionState: executionState as 'plan' | 'interactive' | 'accept-edits' | 'autonomous' };
           } else {
             const { executionState: _state, ...rest } = current;
             if (Object.keys(rest).length) byAdapter[h.family] = rest;
@@ -242,12 +249,14 @@ function HarnessRow({
           void onUpdate({ harnessRouting: Object.keys(byAdapter).length ? { schemaVersion: 1, byAdapter } : undefined });
         }}
         disabled={!descriptor?.availability.enabled || !descriptor?.availability.installed}
-      >
-        <option value="">Use harness default</option>
-        {executionMappingOptions(executionMapping).map(({ id, native, states }) => (
-          <option key={id} value={id}>{native} [{states.map(portableLabel).join(', ')}]</option>
-        ))}
-      </select>
+        options={[
+          { value: '', label: 'Use harness default' },
+          ...Object.entries(executionMapping).map(([state, native]) => ({
+            value: state,
+            label: `${native} [${portableLabel(state)}]`
+          }))
+        ]}
+      />
     </Field>
   ) : null;
 
@@ -435,19 +444,22 @@ export function HarnessTab({
         label="Default thinking level"
         help="Passed as ‘pi --thinking <level>’ — PI’s extended-reasoning budget. ‘Default’ ⇒ emit no flag (PI decides)."
       >
-        <select
+        <PopoverPicklist
           value={config.piThinking ?? 'default'}
-          onChange={(e) => onUpdate({ piThinking: e.target.value as AppConfig['piThinking'] })}
-        >
-          <option value="default">Default</option>
-          <option value="off">Off</option>
-          <option value="minimal">Minimal</option>
-          <option value="low">Low</option>
-          <option value="medium">Medium</option>
-          <option value="high">High</option>
-          <option value="xhigh">XHigh</option>
-          <option value="max">Max</option>
-        </select>
+          ariaLabel="Default thinking level"
+          searchable={false}
+          onChange={(piThinking) => onUpdate({ piThinking: piThinking as AppConfig['piThinking'] })}
+          options={[
+            { value: 'default', label: 'Default' },
+            { value: 'off', label: 'Off' },
+            { value: 'minimal', label: 'Minimal' },
+            { value: 'low', label: 'Low' },
+            { value: 'medium', label: 'Medium' },
+            { value: 'high', label: 'High' },
+            { value: 'xhigh', label: 'XHigh' },
+            { value: 'max', label: 'Max' }
+          ]}
+        />
       </Field>
     </>
   );
@@ -518,27 +530,21 @@ export function HarnessTab({
         {descriptors === null ? (
           <span className="settings-help" role="status">Loading harness default…</span>
         ) : (
-          <select
+          <PopoverPicklist
             value={config.defaultHarness ?? 'claude'}
-            onChange={(event) => {
-              const defaultHarness = event.target.value as AppConfig['defaultHarness'];
+            ariaLabel="Default harness"
+            onChange={(nextHarness) => {
+              const defaultHarness = nextHarness as AppConfig['defaultHarness'];
               onConfigDraft({ ...config, defaultHarness });
               void onUpdate({ defaultHarness });
             }}
-          >
-            {defaultHarnessOptions.map((descriptor) => (
-              <option
-                key={descriptor.id}
-                value={descriptor.id}
-                disabled={
-                  (descriptor.id !== 'shell' && optionAvailability.get(descriptor.id)?.installed === false) ||
-                   (descriptor.id !== 'shell' && !!ENABLE_KEY[descriptor.id] && config[ENABLE_KEY[descriptor.id]!] !== true)
-                }
-              >
-                {descriptor.label}{descriptor.availability.installed ? '' : ' (not installed)'}
-              </option>
-            ))}
-          </select>
+            options={defaultHarnessOptions.map((descriptor) => ({
+              value: descriptor.id,
+              label: `${descriptor.label}${descriptor.availability.installed ? '' : ' (not installed)'}`,
+              disabled: (descriptor.id !== 'shell' && optionAvailability.get(descriptor.id)?.installed === false) ||
+                (descriptor.id !== 'shell' && !!ENABLE_KEY[descriptor.id] && config[ENABLE_KEY[descriptor.id]!] !== true)
+            }))}
+          />
         )}
       </Field>
       {defaultUnavailable && (

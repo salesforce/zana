@@ -8,6 +8,7 @@ import {
   type AuthorizationApplyResult
 } from '@shared/authorizations';
 import { Section, Field } from './FormFields';
+import { PopoverPicklist } from '../ui/PopoverPicklist';
 
 /**
  * "Auto-configure authorizations" — one click writes a curated permission preset
@@ -61,13 +62,13 @@ export function AuthorizationsSection() {
       help="One-click apply a curated permission preset to your agent CLIs (user-global). Instead of approving tools one prompt at a time, pick a trust tier and let the app write the allow-rules into the CLI's own settings."
     >
       <Field label="Preset" help={activePreset?.description}>
-        <select value={tier} onChange={(e) => setTier(e.target.value as AuthorizationTier)}>
-          {AUTHORIZATION_PRESETS.map((p) => (
-            <option key={p.tier} value={p.tier}>
-              {p.label}
-            </option>
-          ))}
-        </select>
+        <PopoverPicklist
+          ariaLabel="Authorization preset"
+          value={tier}
+          searchable={false}
+          onChange={(nextTier) => setTier(nextTier as AuthorizationTier)}
+          options={AUTHORIZATION_PRESETS.map((preset) => ({ value: preset.tier, label: preset.label }))}
+        />
       </Field>
 
       <div className="settings-field">
