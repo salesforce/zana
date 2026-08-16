@@ -42,10 +42,8 @@ describe('ProjectHarnessSettings', () => {
       <ProjectWorktreeIsolationField value={false} onChange={vi.fn()} />
     );
     expect(html).toContain('Worktree isolation');
-    expect(html).toContain('Use global default');
-    expect(html).toContain('Always use worktrees');
     expect(html).toContain('Never use worktrees');
-    expect(html).toContain('<option value="off" selected="">Never use worktrees</option>');
+    expect(html).toContain('aria-label="Worktree isolation"');
   });
 
   it('renders one default harness control and per-harness accordion rows', () => {

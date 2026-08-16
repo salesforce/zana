@@ -24,6 +24,14 @@ user what this agent is FOR — its role, voice, and boundaries — and write a 
 `systemPrompt`. Tune `label`, `description`, `icon`, `model`, and
 `initialPrompt` (the opening message injected once the session is live) to match.
 
+## Optional panel controls
+
+If you keep the optional companion panel, do **not** render native `select`
+menus. Use a semantic button plus `host.quickPick(items, { title, placeholder })`
+for changing or long lists, button groups with `aria-pressed` for two to four
+fixed modes, and labelled native checkboxes for booleans. Use documented theme
+variables rather than importing core renderer components or copying their CSS.
+
 ## The trust boundary
 
 Your edits are **INERT** until packed + installed — either you call the

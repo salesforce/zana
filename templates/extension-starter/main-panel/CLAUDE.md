@@ -52,6 +52,17 @@ Your panel's root element must fill it — `height: '100%'` (or `flex: 1`) + its
 own `overflow: 'auto'`. The starter already does this; keep it. Put an inner
 `max-width` only where reading width matters, never on the root.
 
+## Controls — match the host UI
+
+Do **not** render native `select` menus. For projects, people, teams, or any
+changing/long list, use a semantic button that awaits `host.quickPick(items,
+{ title, placeholder })`; it is searchable, theme-aware, and returns `null` on
+cancel. For two to four fixed modes, use a button group with `aria-pressed`; for
+a boolean, use a labelled native checkbox. Keep every input and textarea
+programmatically labelled. Do not import core renderer components or copy their
+CSS — use documented theme variables plus `host.quickPick`, `host.confirm`, and
+`host.prompt` for host-owned interactions.
+
 ## Build / iterate loop
 
 1. Edit `dist/main.mjs` (capabilities) and/or `dist/renderer.js` (UI) and

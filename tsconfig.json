@@ -15,6 +15,7 @@
     "noEmit": true,
     "paths": {
       "@shared/*": ["./src/shared/*"],
+      "@renderer/*": ["./src/renderer/*"],
       "@zana-ai/zcc-extension-sdk": ["./packages/extension-sdk/src/index.ts"],
       "@zana-ai/zcc-extension-sdk/*": ["./packages/extension-sdk/src/*"],
       "@zcc/harness-sdk": ["./packages/harness-sdk/src/index.ts"],

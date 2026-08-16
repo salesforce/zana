@@ -78,6 +78,10 @@ export default defineConfig({
     resolve: {
       alias: [
         ...sdkAlias,
+        // Built-in plugins share core renderer controls but live outside
+        // `src/renderer`, so use this explicit source alias instead of a brittle
+        // relative path back into the host UI.
+        { find: '@renderer', replacement: resolve(__dirname, 'src/renderer') },
         // Monaco 0.56 restricts its public exports, while its Vite worker
         // entrypoints remain under `esm/vs`. Resolve that subtree directly.
         {

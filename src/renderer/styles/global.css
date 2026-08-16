@@ -18787,6 +18787,24 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
   opacity: 0.55;
 }
 
+.settings-field .launch-model-picker-trigger,
+.scheduler-form-field .launch-model-picker-trigger {
+  background: var(--bg-base);
+  padding: 7px 10px;
+}
+
+.settings-field .launch-model-picker-trigger {
+  font-size: 13px;
+}
+
+.scheduler-form-field .launch-model-picker-trigger {
+  font-size: 12px;
+}
+
+.scheduler-form-field .launch-model-picker-trigger:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-blue) 20%, transparent);
+}
+
 .launch-model-picker-menu {
   position: fixed;
   z-index: 400;
@@ -18839,6 +18857,7 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
 }
 
 .launch-model-picker-option:hover,
+.launch-model-picker-option.is-active,
 .launch-model-picker-option.is-selected {
   background: var(--bg-hover);
 }
@@ -19982,6 +20001,10 @@ button.launch-persona {
 .launch-folder-select:focus-visible {
   outline: none;
   border-color: var(--accent-blue);
+}
+
+.launch-folder .launch-model-picker-trigger {
+  width: auto;
 }
 
 /* "+" in the Agents list header. agents-count owns margin-left:auto, so when

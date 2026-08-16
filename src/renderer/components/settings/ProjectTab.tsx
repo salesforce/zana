@@ -10,11 +10,12 @@ import type {
   LaunchProfileId,
   ProjectExecutionConsentGrant
 } from '@shared/types';
-import { executionMappingOptions, type HarnessAdapterDescriptor } from '@shared/harness-adapter';
+import type { HarnessAdapterDescriptor } from '@shared/harness-adapter';
 import { providerUiSchema } from '@shared/launch-provider';
 import { useData, useUi } from '../../store';
 import { Section, Field, ChipField, TextArgsField } from './FormFields';
 import { HarnessOptionSelect } from '../HarnessOptionSelect';
+import { PopoverPicklist } from '../ui/PopoverPicklist';
 import { profileIcon } from '../../util/profileIcon';
 
 const USE_DEFAULT = { id: '', label: 'Use default' } as const;
@@ -409,18 +410,19 @@ export function ProjectHarnessSettings({ project, onSaved }: { project: Project;
         {descriptors === null || !settingsReady ? (
           <span className="settings-help" role="status">Loading project harness settings...</span>
         ) : (
-          <select value={current} onChange={(event) => save(event.target.value)}>
-            <option value="">Use global default</option>
-            {options.map((entry) => (
-              <option
-                key={entry.id}
-                value={entry.id}
-                disabled={!entry.availability.enabled || !entry.availability.installed}
-              >
-                {entry.label}
-              </option>
-            ))}
-          </select>
+          <PopoverPicklist
+            ariaLabel="Default harness"
+            value={current}
+            onChange={save}
+            options={[
+              { value: '', label: 'Use global default' },
+              ...options.map((entry) => ({
+                value: entry.id,
+                label: entry.label,
+                disabled: !entry.availability.enabled || !entry.availability.installed
+              }))
+            ]}
+          />
         )}
       </Field>
       {settingsError && <ProjectSettingsError message={settingsError} />}
@@ -459,13 +461,15 @@ export function ProjectHarnessSettings({ project, onSaved }: { project: Project;
                     <Field label="Default Provider" help={descriptor.targets.providerModelRelationship === 'fixed-provider'
                       ? `${descriptor.label} uses this fixed provider.`
                       : 'Selects which provider’s models appear below. Combined provider/model harnesses encode this choice in the model id.'}>
-                      <select
+                      <PopoverPicklist
                         value={routing?.providerTargetId
                           ?? descriptor.targets.models.find((target) => target.id === routing?.modelTargetId)?.provider
                           ?? (descriptor.targets.providerModelRelationship === 'fixed-provider' ? descriptor.targets.providers[0]?.id : '')}
+                        ariaLabel="Default provider"
+                        searchable={false}
                         disabled={descriptor.targets.providerModelRelationship === 'fixed-provider'}
-                        onChange={(event) => {
-                          const providerTargetId = event.target.value || undefined;
+                        onChange={(providerId) => {
+                          const providerTargetId = providerId || undefined;
                           const currentModel = descriptor.targets?.models.find((target) => target.id === routing?.modelTargetId);
                           saveRouting(id, {
                             providerTargetId,
@@ -474,37 +478,41 @@ export function ProjectHarnessSettings({ project, onSaved }: { project: Project;
                               : {})
                           });
                         }}
-                      >
-                        {descriptor.targets.providerModelRelationship !== 'fixed-provider' && <option value="">Use global default</option>}
-                        {descriptor.targets.providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}
-                      </select>
+                        options={[
+                          ...(descriptor.targets.providerModelRelationship !== 'fixed-provider' ? [{ value: '', label: 'Use global default' }] : []),
+                          ...descriptor.targets.providers.map((provider) => ({ value: provider.id, label: provider.label }))
+                        ]}
+                      />
                     </Field>
                   )}
                   {!!descriptor.targets?.models.length && (
                     <Field label="Default Model Level" help={`Native ${descriptor.label} models with portable mappings.`}>
-                      <select
+                      <PopoverPicklist
                         value={routing?.modelTargetId ?? ''}
-                        onChange={(event) => saveRouting(id, { modelTargetId: event.target.value || undefined })}
+                        ariaLabel="Default model level"
+                        onChange={(modelTargetId) => saveRouting(id, { modelTargetId: modelTargetId || undefined })}
                         disabled={unavailable}
                         title={unavailable ? descriptor.availability.reason ?? 'Harness unavailable' : undefined}
-                      >
-                        <option value="">Use global default</option>
-                        {descriptor.targets.models
+                        options={[
+                          { value: '', label: 'Use global default' },
+                          ...descriptor.targets.models
                           .filter((target) => !routing?.providerTargetId || !target.provider || target.provider === routing.providerTargetId)
-                          .map((target) => (
-                          <option key={target.id} value={target.id}>
-                            {target.label}{target.level ? ` [${portableLabel(target.level)}]` : ''}
-                          </option>
-                        ))}
-                      </select>
+                          .map((target) => ({
+                            value: target.id,
+                            label: `${target.label}${target.level ? ` [${portableLabel(target.level)}]` : ''}`
+                          }))
+                        ]}
+                      />
                     </Field>
                   )}
                   {executionMapping && id !== 'codex' && (
                     <Field label="Default Execution State" help={`Native ${descriptor.label} policies with portable mappings.`}>
-                      <select
+                      <PopoverPicklist
                         value={routing?.executionState ?? ''}
-                        onChange={(event) => saveRouting(id, {
-                          executionState: (event.target.value || undefined) as
+                        ariaLabel="Default execution state"
+                        searchable={false}
+                        onChange={(executionState) => saveRouting(id, {
+                          executionState: (executionState || undefined) as
                             | 'plan'
                             | 'interactive'
                             | 'accept-edits'
@@ -513,12 +521,14 @@ export function ProjectHarnessSettings({ project, onSaved }: { project: Project;
                         })}
                         disabled={unavailable}
                         title={unavailable ? descriptor.availability.reason ?? 'Harness unavailable' : undefined}
-                      >
-                        <option value="">Use global default</option>
-                        {executionMappingOptions(executionMapping).map(({ id, native, states }) => (
-                          <option key={id} value={id}>{native} [{states.map(portableLabel).join(', ')}]</option>
-                        ))}
-                      </select>
+                        options={[
+                          { value: '', label: 'Use global default' },
+                          ...Object.entries(executionMapping).map(([state, native]) => ({
+                            value: state,
+                            label: `${native} [${portableLabel(state)}]`
+                          }))
+                        ]}
+                      />
                     </Field>
                   )}
                   {id === 'claude' && (
@@ -559,18 +569,20 @@ export function ProjectWorktreeIsolationField({
       label="Worktree isolation"
       help="Controls the initial Worktree choice for new agents in this project. Main still verifies the folder is a Git repository before creating a worktree."
     >
-      <select
+      <PopoverPicklist
         value={selected}
         disabled={disabled}
-        onChange={(event) => {
-          const next = event.target.value;
+        ariaLabel="Worktree isolation"
+        searchable={false}
+        onChange={(next) => {
           onChange(next === 'on' ? true : next === 'off' ? false : undefined);
         }}
-      >
-        <option value="inherit">Use global default</option>
-        <option value="on">Always use worktrees</option>
-        <option value="off">Never use worktrees</option>
-      </select>
+        options={[
+          { value: 'inherit', label: 'Use global default' },
+          { value: 'on', label: 'Always use worktrees' },
+          { value: 'off', label: 'Never use worktrees' }
+        ]}
+      />
     </Field>
   );
 }
@@ -657,19 +669,22 @@ function PiProjectLaunchFields({
         />
       </Field>
       <Field label="Default Thinking Level" help="Passed to PI as --thinking. Leave Default selected to inherit PI's native behavior.">
-        <select
+        <PopoverPicklist
           value={settings.piThinking ?? 'default'}
-          onChange={(event) => save({ piThinking: event.target.value as ProjectSettings['piThinking'] })}
-        >
-          <option value="default">Default</option>
-          <option value="off">Off</option>
-          <option value="minimal">Minimal</option>
-          <option value="low">Low</option>
-          <option value="medium">Medium</option>
-          <option value="high">High</option>
-          <option value="xhigh">XHigh</option>
-          <option value="max">Max</option>
-        </select>
+          ariaLabel="Default thinking level"
+          searchable={false}
+          onChange={(piThinking) => save({ piThinking: piThinking as ProjectSettings['piThinking'] })}
+          options={[
+            { value: 'default', label: 'Default' },
+            { value: 'off', label: 'Off' },
+            { value: 'minimal', label: 'Minimal' },
+            { value: 'low', label: 'Low' },
+            { value: 'medium', label: 'Medium' },
+            { value: 'high', label: 'High' },
+            { value: 'xhigh', label: 'XHigh' },
+            { value: 'max', label: 'Max' }
+          ]}
+        />
       </Field>
     </>
   );
@@ -994,13 +1009,15 @@ function ClaudeScopeCardInner({
       </header>
 
       <Field label="Default permission mode">
-        <select
+        <PopoverPicklist
           value={perm.defaultMode ?? ''}
-          onChange={(e) =>
+          ariaLabel="Default permission mode"
+          searchable={false}
+          onChange={(defaultMode) =>
             onSave({
               permissions: {
                 ...perm,
-                defaultMode: (e.target.value || undefined) as
+                defaultMode: (defaultMode || undefined) as
                   | 'default'
                   | 'acceptEdits'
                   | 'plan'
@@ -1009,13 +1026,14 @@ function ClaudeScopeCardInner({
               }
             })
           }
-        >
-          <option value="">Unset</option>
-          <option value="default">Default</option>
-          <option value="acceptEdits">Accept Edits</option>
-          <option value="plan">Plan</option>
-          <option value="bypassPermissions">Bypass Permissions</option>
-        </select>
+          options={[
+            { value: '', label: 'Unset' },
+            { value: 'default', label: 'Default' },
+            { value: 'acceptEdits', label: 'Accept Edits' },
+            { value: 'plan', label: 'Plan' },
+            { value: 'bypassPermissions', label: 'Bypass Permissions' }
+          ]}
+        />
       </Field>
 
       <Field label="Model" help="Top-level `model` override (e.g. opus, sonnet, haiku).">

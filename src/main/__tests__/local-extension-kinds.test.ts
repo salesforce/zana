@@ -19,12 +19,20 @@ import { fileURLToPath } from 'node:url';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 // The committed editable templates live at repo-root templates/extension-starter.
 const TEMPLATE_ROOT = join(__dirname, '../../../templates/extension-starter');
+const EXTENSION_CREATOR_SKILL = join(__dirname, '../../../resources/extension-creator-skill.md');
 
 async function importLocalExt() {
   return await import('../local-extension.js');
 }
 
 describe('local-extension template kinds', () => {
+  it('documents the host-owned picker contract in the bundled Creator skill', async () => {
+    const skill = await readFile(EXTENSION_CREATOR_SKILL, 'utf-8');
+    expect(skill).toContain('Controls — use host picklists, not native selects');
+    expect(skill).toContain('host.quickPick');
+    expect(skill).toContain('Never import core renderer internals');
+  });
+
   it('clampLocalKind allowlists the four kinds and defaults unknown → panel', async () => {
     const { clampLocalKind } = await importLocalExt();
     expect(clampLocalKind('panel')).toBe('panel');
@@ -102,6 +110,15 @@ describe('local-extension template kinds', () => {
           }
         }
       }
+    }
+  });
+
+  it('teaches every starter to use host picklists instead of native selects', async () => {
+    const { VALID_LOCAL_KINDS } = await importLocalExt();
+    for (const kind of VALID_LOCAL_KINDS) {
+      const brief = await readFile(join(TEMPLATE_ROOT, kind, 'CLAUDE.md'), 'utf-8');
+      expect(brief, `${kind}/CLAUDE.md`).toContain('host.quickPick');
+      expect(brief, `${kind}/CLAUDE.md`).toContain('native `select`');
     }
   });
 });
