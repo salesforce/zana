@@ -1,6 +1,8 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import { FEATURES } from '@/lib/features';
+import { ProductShot } from '../components/ProductShot';
+import type { ProductShotId } from '@/lib/product-shots';
 
 export const metadata: Metadata = {
   title: 'Features',
@@ -15,6 +17,16 @@ export const metadata: Metadata = {
   }
 };
 
+const FEATURE_SHOTS: Partial<Record<string, ProductShotId>> = {
+  cockpit: 'cockpit-overview',
+  'agents-board': 'agents-board',
+  inbox: 'inbox-decision',
+  orchestration: 'team-launch',
+  projects: 'project-setup',
+  scheduler: 'goal-or-ticket',
+  extensions: 'extension-panel-result'
+};
+
 export default function Features() {
   return (
     <>
@@ -27,8 +39,8 @@ export default function Features() {
             Everything the <span className="grad">cockpit</span> gives you.
           </h1>
           <p className="lede">
-            Zana Command Center turns Claude Code from a single terminal into a multi-project hub. Here is what
-            you actually get — grounded in the real app.
+            Zana Command Center turns supported coding harnesses into a multi-project fleet. Here is what you
+            actually get, grounded in the real app.
           </p>
         </div>
       </section>
@@ -42,7 +54,7 @@ export default function Features() {
             className="btn btn-sm btn-ghost"
             style={{ borderColor: 'var(--border)' }}
           >
-            <span aria-hidden="true">{f.ico}</span> {f.title}
+            {f.title}
           </a>
         ))}
       </div>
@@ -50,12 +62,9 @@ export default function Features() {
       {FEATURES.map((f, i) => (
         <section key={f.slug} id={f.slug} style={{ paddingTop: 40, paddingBottom: 40 }}>
           <div className="wrap">
-            <div className={`split ${i % 2 === 1 ? 'rev' : ''}`} data-reveal>
-              <div>
-                <span className="ico" style={{ display: 'inline-grid' }}>
-                  {f.ico}
-                </span>
-                <h2 style={{ marginTop: 14 }}>{f.title}</h2>
+              <div className={`product-proof ${i % 2 === 1 ? 'reverse' : ''}`} data-reveal>
+                <div>
+                <h2>{f.title}</h2>
                 <p style={{ color: 'var(--accent)', fontWeight: 600, marginBottom: 12 }}>{f.tagline}</p>
                 <p>{f.body}</p>
                 {f.docs && (
@@ -66,38 +75,11 @@ export default function Features() {
                   </p>
                 )}
               </div>
-              <div className="visual">
-                <div
-                  style={{
-                    fontSize: 11,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.08em',
-                    color: 'var(--muted-2)',
-                    fontWeight: 700,
-                    marginBottom: 8
-                  }}
-                >
-                  What you get
-                </div>
-                <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
-                  {f.points.map((p) => (
-                    <li
-                      key={p}
-                      style={{
-                        color: 'var(--text-2)',
-                        padding: '10px 0 10px 28px',
-                        position: 'relative',
-                        fontSize: 14.5,
-                        borderBottom: '1px solid var(--border-soft)'
-                      }}
-                    >
-                      <span style={{ position: 'absolute', left: 0, top: 10, color: 'var(--accent-3)', fontWeight: 700 }}>✓</span>
-                      {p}
-                    </li>
-                  ))}
-                </ul>
+                {(() => {
+                  const shotId = FEATURE_SHOTS[f.slug];
+                  return shotId ? <ProductShot id={shotId} /> : null;
+                })()}
               </div>
-            </div>
           </div>
         </section>
       ))}

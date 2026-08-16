@@ -5,9 +5,17 @@
  * do not invent capabilities the app doesn't ship.
  */
 
+export type FeatureSlug =
+  | 'cockpit'
+  | 'agents-board'
+  | 'inbox'
+  | 'orchestration'
+  | 'projects'
+  | 'scheduler'
+  | 'extensions';
+
 export interface FeatureDetail {
-  slug: string;
-  ico: string;
+  slug: FeatureSlug;
   title: string;
   tagline: string;
   body: string;
@@ -20,11 +28,10 @@ export interface FeatureDetail {
 export const FEATURES: FeatureDetail[] = [
   {
     slug: 'cockpit',
-    ico: '🪟',
     title: 'Multi-project cockpit',
     tagline: 'One window for every project and every session.',
     body:
-      'A workspace of tabbed terminals where every tab is a real Claude Code session, not a wrapper. Switch projects without losing anything that is running.',
+      'A workspace of real Claude Code, OpenCode, Codex, and Pi terminals, not a generic chat wrapper. Switch projects or harnesses without losing anything that is running.',
     points: [
       'Real terminals — full shell, not a chat box',
       'Tabbed workspace with a command palette',
@@ -33,7 +40,6 @@ export const FEATURES: FeatureDetail[] = [
   },
   {
     slug: 'agents-board',
-    ico: '🧭',
     title: 'Agents board',
     tagline: 'See who needs you vs. who is still working.',
     body:
@@ -46,7 +52,6 @@ export const FEATURES: FeatureDetail[] = [
   },
   {
     slug: 'inbox',
-    ico: '🔔',
     title: 'Inbox',
     tagline: "Agents come to you — you don't watch every terminal.",
     body:
@@ -59,7 +64,6 @@ export const FEATURES: FeatureDetail[] = [
   },
   {
     slug: 'orchestration',
-    ico: '🤝',
     title: 'Multi-agent orchestration',
     tagline: 'Run a fleet — teams, sprints, and autopilot.',
     body:
@@ -72,7 +76,6 @@ export const FEATURES: FeatureDetail[] = [
   },
   {
     slug: 'projects',
-    ico: '🌐',
     title: 'Local & remote projects',
     tagline: 'Local folders or remote SSH — one explorer for both.',
     body:
@@ -85,7 +88,6 @@ export const FEATURES: FeatureDetail[] = [
   },
   {
     slug: 'scheduler',
-    ico: '⏱️',
     title: 'Scheduler, personas & teams',
     tagline: 'Automate recurring work with reusable crews.',
     body:
@@ -98,7 +100,6 @@ export const FEATURES: FeatureDetail[] = [
   },
   {
     slug: 'extensions',
-    ico: '🧩',
     title: 'Extensions & marketplace',
     tagline: 'Extend the app, or install from the marketplace.',
     body:

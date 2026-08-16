@@ -46,6 +46,49 @@ function DocsPager({ slug }: { slug: string }) {
   );
 }
 
+function DocsNextStep({ slug }: { slug: string }) {
+  const nextSteps: Partial<Record<string, { title: string; body: string; href: string; action: string }>> = {
+    'getting-started': {
+      title: 'See the operating model',
+      body: 'Follow the visual walkthrough for the project, session, Agents board, and Inbox loop.',
+      href: '/how-it-works/',
+      action: 'Take the product tour'
+    },
+    'using-zana': {
+      title: 'Explore every product surface',
+      body: 'Use the visual feature catalog to find the right workflow for your next task.',
+      href: '/features/',
+      action: 'Explore features'
+    },
+    'extensions-quickstart': {
+      title: 'Use the visual extension workflow',
+      body: 'See the scaffold-to-reload loop, then return here for the exact code and commands.',
+      href: '/extensions/getting-started/',
+      action: 'Open extension quickstart'
+    },
+    'extensions-authoring': {
+      title: 'Choose an extension task',
+      body: 'The extension hub separates installation, first-panel authoring, and the SDK boundary.',
+      href: '/extensions/',
+      action: 'Open extension hub'
+    },
+    'extensions-sdk-reference': {
+      title: 'Review the SDK as a workflow',
+      body: 'See how the manifest, renderer, optional main module, and permissions fit together.',
+      href: '/extensions/sdk/',
+      action: 'Open SDK overview'
+    }
+  };
+  const step = nextSteps[slug];
+  if (!step) return null;
+  return (
+    <aside className="docs-next-step" aria-label="Suggested next step">
+      <div><span>Suggested next step</span><h2>{step.title}</h2><p>{step.body}</p></div>
+      <Link className="btn btn-ghost" href={step.href}>{step.action} <span aria-hidden="true">→</span></Link>
+    </aside>
+  );
+}
+
 export async function DocLayout({ meta, html, toc }: { meta: DocMeta; html: string; toc: TocItem[] }) {
   const searchIndex = await buildSearchIndex();
   return (
@@ -69,8 +112,9 @@ export async function DocLayout({ meta, html, toc }: { meta: DocMeta; html: stri
           {/* mobile: sidebar collapses to a select */}
           <DocsSidebar active={meta.slug} mobile />
 
-          <article className="prose" dangerouslySetInnerHTML={{ __html: html }} />
-          <DocsPager slug={meta.slug} />
+           <article className="prose" dangerouslySetInnerHTML={{ __html: html }} />
+           <DocsNextStep slug={meta.slug} />
+           <DocsPager slug={meta.slug} />
           <DocsEnhancer slug={meta.slug} />
         </div>
 

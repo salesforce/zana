@@ -3,6 +3,8 @@ import type { Metadata } from 'next';
 import { site } from '@/lib/site';
 import { FEATURES as ALL_FEATURES, LANDING_FEATURE_SLUGS } from '@/lib/features';
 import { Fairy } from './components/Fairy';
+import { ProductShot } from './components/ProductShot';
+import { HarnessStrip } from './components/HarnessStrip';
 
 export const metadata: Metadata = {
   alternates: { canonical: '/' },
@@ -11,7 +13,7 @@ export const metadata: Metadata = {
 
 const FEATURES = LANDING_FEATURE_SLUGS.map((slug) => {
   const f = ALL_FEATURES.find((x) => x.slug === slug)!;
-  return { slug: f.slug, ico: f.ico, title: f.title, body: f.tagline };
+  return { slug: f.slug, title: f.title, body: f.tagline };
 });
 
 const STATS = [
@@ -44,18 +46,18 @@ export default entry;`;
 const STEPS = [
   {
     n: '1',
-    title: 'Add your projects',
-    body: 'Point the cockpit at local folders or remote SSH boxes. Each becomes a lane with its own terminals, agents, and file explorer.'
+    title: 'Connect the work',
+    body: 'Add local folders or remote SSH projects. Each keeps its own workspace, terminals, agents, and files while staying visible in one cockpit.'
   },
   {
     n: '2',
-    title: 'Spawn & orchestrate',
-    body: 'Launch Claude Code sessions, curated teams, sprints, or goal-driven autopilot — as many as you need, running in parallel.'
+    title: 'Delegate with context',
+    body: 'Launch the coding harness you already use, then give each session a focused outcome. Bring in teams or goals when the work needs parallelism.'
   },
   {
     n: '3',
-    title: 'Stay the executive',
-    body: 'The inbox surfaces what needs a decision. Reply once and the answer routes straight back to the waiting agent.'
+    title: 'Decide, don’t babysit',
+    body: 'The Agents board and Inbox separate active work from decisions that need you. Reply once and your answer routes back to the right session.'
   }
 ];
 
@@ -85,26 +87,26 @@ export default function Home() {
       <section className="hero hero-fairy">
         <div className="wrap">
           <div className="hero-copy">
-            <span className="ornament">
-              <span className="glyph" aria-hidden="true">✧</span>&nbsp;&nbsp;A desktop cockpit for Claude&nbsp;Code&nbsp;&nbsp;<span className="glyph" aria-hidden="true">✧</span>
-            </span>
-            <h1>
-              Make the wishes.
-              <br />
-              <span className="grad">The work gets done.</span>
-            </h1>
-            <p className="lede">
-              Run and orchestrate <strong>many Claude&nbsp;Code sessions</strong> across all your projects — from
-              one window. Spawn agents, hand off work, and reply from a single inbox.
-            </p>
-            <div className="cta">
-              <Link className="btn btn-primary btn-lg" href="/download/">
-                ⬇ Download for free
-              </Link>
-              <Link className="btn btn-ghost btn-lg" href="/marketplace/">
-                Explore the marketplace →
-              </Link>
-            </div>
+              <span className="ornament">
+                <span className="glyph" aria-hidden="true">✧</span>&nbsp;&nbsp;A control plane for AI coding harnesses&nbsp;&nbsp;<span className="glyph" aria-hidden="true">✧</span>
+              </span>
+              <h1>
+                Make the work visible.
+                <br />
+                <span className="grad">Keep the momentum.</span>
+              </h1>
+              <p className="lede">
+                Zana turns sessions from <strong>Claude Code, OpenCode, Codex, and Pi into a managed fleet</strong>.
+                Launch work across projects, see what is moving, and step in only when a decision needs you.
+              </p>
+              <div className="cta">
+                <Link className="btn btn-primary btn-lg" href="/download/">
+                  ⬇ Download for free
+                </Link>
+                <Link className="btn btn-ghost btn-lg" href="/how-it-works/">
+                  See how it works →
+                </Link>
+              </div>
             <p className="sub">
               <span>macOS today · Windows &amp; Linux soon</span>
               <span className="dot" />
@@ -112,6 +114,7 @@ export default function Home() {
               <span className="dot" />
               <span>Auto-updating</span>
             </p>
+            <HarnessStrip />
           </div>
 
           <div className="fairy-stage">
@@ -125,27 +128,51 @@ export default function Home() {
         </div>
       </section>
 
-      {/* PRODUCT DEMO */}
-      <section style={{ paddingTop: 0 }}>
+      <section className="workflow-intro" aria-labelledby="workflow-intro-heading">
         <div className="wrap">
-          <div className="mock" data-reveal>
-            <div className="mock-bar">
-              <span className="tl r" />
-              <span className="tl y" />
-              <span className="tl g" />
-              <span className="title">Zana Command Center</span>
+          <div className="workflow-intro-grid" data-reveal>
+            <div className="workflow-intro-copy">
+              <span className="eyebrow">The operating model</span>
+              <h2 id="workflow-intro-heading">Your terminals keep working. Zana makes the work legible.</h2>
+              <p>
+                Zana does not replace your coding harness or turn engineering into a chat dashboard. It gives every
+                session a home, a status, and a route back to you when judgment is required.
+              </p>
+              <Link className="text-link" href="/how-it-works/">
+                Take the five-minute product tour <span aria-hidden="true">→</span>
+              </Link>
             </div>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              className="demo"
-              src="/demo.gif"
-              alt="Zana Command Center orchestrating multiple Claude Code sessions across projects"
-              width={1400}
-              height={900}
-              loading="lazy"
-              decoding="async"
-            />
+            <ol className="workflow-preview" aria-label="Zana workflow">
+              <li>
+                <span className="workflow-preview-num">01</span>
+                <div>
+                  <strong>Project context</strong>
+                  <span>Local folders and remote workspaces stay organized.</span>
+                </div>
+              </li>
+              <li>
+                <span className="workflow-preview-num">02</span>
+                <div>
+                  <strong>Focused execution</strong>
+                  <span>Independent sessions run at the same time.</span>
+                </div>
+              </li>
+              <li>
+                <span className="workflow-preview-num">03</span>
+                <div>
+                  <strong>Human judgment</strong>
+                  <span>The inbox brings only the right decisions forward.</span>
+                </div>
+              </li>
+            </ol>
           </div>
+        </div>
+      </section>
+
+      {/* PRODUCT DEMO */}
+      <section className="product-hero-shot" style={{ paddingTop: 0 }}>
+        <div className="wrap">
+          <ProductShot id="cockpit-overview" priority />
         </div>
       </section>
 
@@ -170,14 +197,13 @@ export default function Home() {
             <span className="eyebrow">Why Zana</span>
             <h2>From a single terminal to a cockpit</h2>
             <p className="section-lede">
-              Spawn, watch, reply, and drive multi-agent workflows — all from one place, built for people who
-              run Claude Code at scale.
+              Spawn, watch, reply, and drive multi-agent workflows from one place, even when your agents run in
+              different supported harnesses.
             </p>
           </div>
           <div className="grid grid-3" data-reveal-stagger>
             {FEATURES.map((f) => (
               <Link className="card" key={f.title} href={`/features#${f.slug}`}>
-                <span className="ico">{f.ico}</span>
                 <h3>{f.title}</h3>
                 <p>{f.body}</p>
               </Link>
@@ -196,8 +222,8 @@ export default function Home() {
         <div className="wrap">
           <div className="section-head center">
             <span className="eyebrow">How it works</span>
-            <h2>Three steps to a fleet</h2>
-            <p className="section-lede">No new mental model — it&apos;s the Claude Code you know, multiplied.</p>
+            <h2>From first project to a calmer workday</h2>
+            <p className="section-lede">A deliberately small loop: organize context, delegate work, and act on what needs your judgment.</p>
           </div>
           <div className="steps" data-reveal-stagger>
             {STEPS.map((s) => (
@@ -207,6 +233,56 @@ export default function Home() {
                 <p>{s.body}</p>
               </div>
             ))}
+          </div>
+          <div className="how-it-works-cta">
+            <Link className="btn btn-ghost" href="/how-it-works/">
+              Walk through the complete workflow →
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div className="wrap">
+          <div className="product-proof" data-reveal>
+            <div className="product-proof-copy">
+              <span className="eyebrow">Operate with context</span>
+              <h2>Know what needs you before you open a terminal.</h2>
+              <p>
+                The Agents board makes parallel work legible. It groups sessions by status across projects, so the
+                next useful action is always easier to find than another tab.
+              </p>
+              <ul>
+                <li>See working, idle, done, and needs-you sessions together</li>
+                <li>Jump into the exact terminal that needs a decision</li>
+                <li>Keep long-running projects visible without interrupting them</li>
+              </ul>
+              <p style={{ marginTop: 20 }}>
+                <Link className="text-link" href="/how-it-works/#first-session">See the operating loop <span aria-hidden="true">→</span></Link>
+              </p>
+            </div>
+            <ProductShot id="agents-board" />
+          </div>
+        </div>
+      </section>
+
+      <section style={{ paddingTop: 0 }}>
+        <div className="wrap">
+          <div className="product-proof reverse" data-reveal>
+            <div className="product-proof-copy">
+              <span className="eyebrow">Keep judgment human</span>
+              <h2>Let the Inbox carry the decisions, not the noise.</h2>
+              <p>
+                Agents can finish analyses, share reports, or pause on a question. The Inbox gives those moments a
+                shared home and routes your answer back to the waiting session.
+              </p>
+              <ul>
+                <li>Read the context without hunting through scrollback</li>
+                <li>Reply inline to unblock the right agent</li>
+                <li>Keep routine automation folded away from high-signal work</li>
+              </ul>
+            </div>
+            <ProductShot id="inbox-decision" />
           </div>
         </div>
       </section>
@@ -266,11 +342,11 @@ export default function Home() {
                 <li>Install from the marketplace, or publish your own via GitHub</li>
               </ul>
               <div style={{ display: 'flex', gap: 12, marginTop: 20, flexWrap: 'wrap' }}>
-                <Link className="btn btn-primary" href="/docs/extensions-quickstart/">Build your first extension →</Link>
+                <Link className="btn btn-primary" href="/extensions/">Build your first extension →</Link>
                 <Link className="btn btn-ghost" href="/marketplace/">Browse extensions</Link>
               </div>
             </div>
-            <div className="visual" style={{ padding: 0, border: 'none', background: 'none', boxShadow: 'none' }}>
+            <div className="visual code-visual">
               <div className="code-showcase">
                 <div className="cs-bar">
                   <span className="tl r" />
@@ -294,7 +370,7 @@ export default function Home() {
             <span className="eyebrow">Get started</span>
             <h2>Bring every project into one window.</h2>
             <p className="section-lede" style={{ maxWidth: 520, margin: '0 auto 28px' }}>
-              Free, open, and signed. Install in minutes and reopen your Claude Code sessions to light it up.
+              Free, open, and signed. Install in minutes, choose your harness, and put your active projects in motion.
             </p>
             <div className="cta" style={{ display: 'flex', gap: 14, justifyContent: 'center' }}>
               <Link className="btn btn-primary btn-lg" href="/download/">⬇ Download Zana Command Center</Link>
