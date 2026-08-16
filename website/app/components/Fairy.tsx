@@ -1,8 +1,7 @@
 /**
  * The fairy — an Art-Nouveau figure in gold linework, floating with a wish-orb
  * that releases dandelion seeds. Ported from the Zana framework website's
- * `Fairy.astro`; adapted to JSX and to the ZCC theme (its gold/forest palette
- * reads on both the cream light theme and the warm dark theme).
+ * `Fairy.astro`; adapted to JSX and the app's blue/gold visual system.
  *
  * Animations (flutter / glow / drift + the hover on the wrapper) live in
  * globals.css and are fully disabled under `prefers-reduced-motion: reduce`.

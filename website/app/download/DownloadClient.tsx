@@ -80,7 +80,7 @@ export function DownloadClient() {
           ))}
         </div>
 
-        <div className="card" style={{ marginTop: 28 }}>
+        <div className="card build-source-card" style={{ marginTop: 28 }}>
           <h3>Build from source</h3>
           <p>Clone the repository, install dependencies, and run the development app:</p>
           <pre style={{ background: 'var(--bg-soft)', padding: 16, borderRadius: 10, overflowX: 'auto' }}>

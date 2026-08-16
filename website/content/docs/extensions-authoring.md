@@ -44,7 +44,7 @@ The host discovers extensions under `~/.zcc/extensions/<id>/`:
 | `permissions` | Capabilities the extension intends to use. **Enforced deny-by-default for disk extensions** (P3-B) — see below. |
 | `permissionScopes` | Scopes for `exec`/`fs:*`/`net`/`mcp`/`stream` (`execAllowlist`, `fsRoots`, `egressAllowlist`, `mcpAllowlist`, `streamAllowlist`) — see below. |
 | `projectTab` | Optional. Opt the renderer panel into a **per-project tab** (alongside Terminals / Explorer / Tickets). `{ label?, icon?, order? }`. See [Per-project tabs](#per-project-tabs-projecttab). |
-| `agentPreset` | Optional. Contribute a **framework preset** to the Advanced Quick-Agent launcher — a primer that boots a Claude session already understanding your framework. `{ systemPrompt, label?, description?, icon?, initialPrompt?, model?, baseProfile? }`. See [Framework presets](#framework-presets-agentpreset). |
+| `agentPreset` | Optional. Contribute a **framework preset** to the Advanced Quick-Agent launcher — a primer that boots a supported harness session already understanding your framework. `{ systemPrompt, label?, description?, icon?, initialPrompt?, model?, baseProfile? }`. See [Framework presets](#framework-presets-agentpreset). |
 | `skills` | Optional `SKILL.md` contributions, deployed only with `agent:contribute`. See [Contributing Skills & MCP servers](#contributing-skills--mcp-servers-agentcontribute). |
 | `mcpServers` | Optional MCP server definitions owned by this extension, deployed only with `agent:contribute`. See [Contributing Skills & MCP servers](#contributing-skills--mcp-servers-agentcontribute). |
 
@@ -529,7 +529,7 @@ view).
 Some extensions wrap a whole *way of working* — an orchestration surface, a CLI,
 a decision ritual. Declaring `agentPreset` lets your extension contribute a
 **framework preset** to the Advanced view of the Quick-Agent launcher (Agents →
-"+" → **Advanced** → **Framework**). Picking it spawns a Claude session with your
+"+" → **Advanced** → **Framework**). Picking it spawns a harness session with your
 `systemPrompt` injected via `--append-system-prompt`, so the agent boots already
 fluent in your framework's concepts, tools, and conventions — no per-launch
 copy-paste of a primer.
@@ -632,7 +632,7 @@ Key facts:
 ## Contributing Skills & MCP servers (`agent:contribute`)
 
 Unlike Personas/Teams (pure in-memory data ZCC owns end-to-end), a **skill** is
-a `SKILL.md` file every Claude Code session on the machine can load, and an
+a `SKILL.md` file compatible agent sessions on the machine can load, and an
 **MCP server** contribution is a server *definition* your extension owns (an
 arbitrary `command`/`args`/`url`) — both are artifacts that outlive your
 process and are consumed by `claude` CLI processes ZCC doesn't control. So
@@ -823,7 +823,7 @@ rejected (`PermissionDenied`) and audited.
 | `projects:read` | reading the open-project list / active project |
 | `projects:select` | changing the shell's selected project |
 | `session:reply` | `host.replyToSession(...)` / `host.writeToSession(...)` — writing to an existing terminal |
-| `session:launch` | `host.launchSession(...)` — launching a Claude tab |
+| `session:launch` | `host.launchSession(...)` — launching an agent tab |
 | `external:open` | `host.openExternal(url)` — opening an http(s) URL |
 | `inbox:push` | `host.pushInbox(...)` / `ctx.inbox.push(...)` — pushing a durable inbox entry |
 | `ssh:hosts` | `ctx.sshHosts` — contributing structured SSH hosts to the remote-project picker |
