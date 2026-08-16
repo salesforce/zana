@@ -78,6 +78,17 @@ describe('launcher attachments', () => {
   });
 });
 
+describe('Quick Agent composer', () => {
+  it('uses the Home-style command surface without duplicating launcher pickers', () => {
+    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('const useQuickAgentHomeComposer = scratchIsTarget;');
+    expect(source).toContain("variant={useQuickAgentHomeComposer ? 'home' : 'default'}");
+    expect(source).toContain("submitLabel={mode === 'autonomous' ? 'Launch autonomous team' : 'Launch agent'}");
+    expect(source).toContain('{!useQuickAgentHomeComposer && (');
+    expect(source).toContain("mode === 'autonomous'");
+  });
+});
+
 describe('Fix with AI recovery launch', () => {
   it('uses the managed scratch workspace root instead of retrying a failed project cwd', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');

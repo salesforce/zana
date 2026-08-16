@@ -18921,6 +18921,59 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
   margin-bottom: 8px;
 }
 
+/* Quick Agent borrows Home's focused command surface. Its project, harness, and
+   model controls stay in the launcher below, so the composer has one uncluttered
+   action row rather than duplicating that picker strip. */
+.prompt-composer--home .ui-command-attachments {
+  margin-bottom: 0;
+}
+
+.prompt-composer-home-toolbar {
+  justify-content: space-between;
+}
+
+.prompt-composer-home-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.prompt-composer-home-actions .voice-input-btn {
+  width: 28px;
+  height: 28px;
+  margin-left: 0;
+  padding: 0;
+  justify-content: center;
+}
+
+.ui-command-icon-button.prompt-composer-home-launch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent-blue);
+  color: #fff;
+  cursor: pointer;
+}
+
+.ui-command-icon-button.prompt-composer-home-launch:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.ui-command-icon-button.prompt-composer-home-launch:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.ui-command-icon-button.prompt-composer-home-launch:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+
 .launch-command {
   margin-bottom: 14px;
 }
