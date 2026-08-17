@@ -1,13 +1,28 @@
 import { test, expect } from './fixtures/app';
+import type { Locator, Page } from '@playwright/test';
 import { makeFakeAgentBinary } from './sdk/harness';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+
+async function selectPicklistOption(
+  trigger: Locator,
+  window: Page,
+  ariaLabel: string,
+  optionName: string,
+  search?: string
+) {
+  await trigger.click();
+  const listbox = window.getByRole('listbox', { name: ariaLabel });
+  if (search) await listbox.getByRole('textbox', { name: 'Search…' }).fill(search);
+  await listbox.getByRole('option', { name: optionName, exact: true }).click();
+}
 
 test('Global and Project harness settings persist provider, model, execution, and reset flows', async ({ app }) => {
   const { window } = app;
   const openCode = makeFakeAgentBinary({ profile: 'generic', sequence: 'plain-exit' });
   const projectDir = mkdtempSync(join(tmpdir(), 'zcc-routing-settings-'));
+  const projectName = basename(projectDir);
   const project = await window.evaluate((path) => window.cc.projects.add(path), projectDir);
   expect(project.ok).toBe(true);
   if (!project.ok) return;
@@ -32,11 +47,15 @@ test('Global and Project harness settings persist provider, model, execution, an
 
     const globalOpenCode = window.locator('.opener-row').filter({ hasText: 'OpenCode' });
     await globalOpenCode.locator('.opener-row-expand').click();
-    const globalSelects = globalOpenCode.locator('.settings-field select');
-    await expect(globalSelects).toHaveCount(3);
-    await globalSelects.nth(0).selectOption('anthropic');
-    await globalSelects.nth(1).selectOption('aisuite/us.anthropic.claude-sonnet-5');
-    await globalSelects.nth(2).selectOption('plan');
+    const globalProvider = globalOpenCode.getByRole('button', { name: 'Default provider' });
+    const globalModel = globalOpenCode.getByRole('button', { name: 'Default model level' });
+    const globalExecution = globalOpenCode.getByRole('button', { name: 'Default execution state' });
+    await selectPicklistOption(globalProvider, window, 'Default provider', 'Anthropic');
+    await selectPicklistOption(globalModel, window, 'Default model level', 'Sonnet [Medium]', 'Sonnet');
+    await selectPicklistOption(globalExecution, window, 'Default execution state', 'plan [Plan]');
+    await expect(globalProvider).toContainText('Anthropic');
+    await expect(globalModel).toContainText('Sonnet [Medium]');
+    await expect(globalExecution).toContainText('plan [Plan]');
     await expect.poll(() => window.evaluate(() => window.cc.config.get())).toMatchObject({
       harnessRouting: {
         byAdapter: {
@@ -48,21 +67,29 @@ test('Global and Project harness settings persist provider, model, execution, an
         }
       }
     });
-    await globalSelects.nth(0).selectOption('');
-    await expect(globalSelects.nth(1)).toHaveValue('');
+    await selectPicklistOption(globalProvider, window, 'Default provider', 'Use harness default');
+    await expect(globalProvider).toContainText('Use harness default');
+    await expect(globalModel).toContainText('Use harness default');
 
     await window.locator('[data-testid="nav-projects"]').click();
     await window.locator('button[aria-label="Reload project list"]').click();
     await window.locator('[data-testid="nav-settings"]').click();
     await window.locator('.settings-section-item').filter({ hasText: 'Project settings' }).click();
-    const scope = window.locator('.settings-scope-select');
-    if (await scope.count()) await scope.selectOption(projectId);
+    const scope = window.getByRole('button', { name: 'Project', exact: true });
+    await scope.click();
+    await window.getByRole('listbox', { name: 'Project' }).getByRole('option', { name: projectName, exact: true }).click();
+    await expect(scope).toContainText(projectName);
     const projectOpenCode = window.locator('.opener-row').filter({ hasText: 'OpenCode' });
     await projectOpenCode.locator('.opener-row-expand').click();
-    const projectSelects = projectOpenCode.locator('.settings-field select');
-    await projectSelects.nth(0).selectOption('google');
-    await projectSelects.nth(1).selectOption('aisuite/gemini-3.5-flash');
-    await projectSelects.nth(2).selectOption('autonomous');
+    const projectProvider = projectOpenCode.getByRole('button', { name: 'Default provider' });
+    const projectModel = projectOpenCode.getByRole('button', { name: 'Default model level' });
+    const projectExecution = projectOpenCode.getByRole('button', { name: 'Default execution state' });
+    await selectPicklistOption(projectProvider, window, 'Default provider', 'Google');
+    await selectPicklistOption(projectModel, window, 'Default model level', 'Gemini Flash [Low]', 'Gemini Flash');
+    await selectPicklistOption(projectExecution, window, 'Default execution state', 'build + auto-approve [Autonomous]');
+    await expect(projectProvider).toContainText('Google');
+    await expect(projectModel).toContainText('Gemini Flash [Low]');
+    await expect(projectExecution).toContainText('build + auto-approve [Autonomous]');
     await expect.poll(() => window.evaluate((id) => window.cc.projectSettings.get(id), projectId)).toMatchObject({
       harnessRouting: {
         byAdapter: {
@@ -74,8 +101,9 @@ test('Global and Project harness settings persist provider, model, execution, an
         }
       }
     });
-    await projectSelects.nth(0).selectOption('');
-    await expect(projectSelects.nth(1)).toHaveValue('');
+    await selectPicklistOption(projectProvider, window, 'Default provider', 'Use global default');
+    await expect(projectProvider).toContainText('Use global default');
+    await expect(projectModel).toContainText('Use global default');
   } finally {
     await window.evaluate(async (id) => {
       await window.cc.projects.remove(id);

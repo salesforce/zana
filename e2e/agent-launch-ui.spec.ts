@@ -31,7 +31,7 @@ import { test, expect } from './fixtures/app';
 import { makeFakeAgentBinary } from './sdk/harness';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 test.use({ e2e: true });
 
@@ -48,6 +48,7 @@ test('launching an agent through the real UI opens its terminal and it goes work
   // A real, registered project to launch into (so we don't depend on the scratch
   // workspace being creatable in the sandbox). Removed in `finally`.
   const projectDir = mkdtempSync(join(tmpdir(), 'zcc-launch-ui-proj-'));
+  const projectName = basename(projectDir);
   let projectId: string | null = null;
 
   try {
@@ -109,8 +110,14 @@ test('launching an agent through the real UI opens its terminal and it goes work
     await instruction.fill('run the smoke check and report');
     await expect(instruction).toHaveValue('run the smoke check and report');
 
-    // 5. Pick the target project (our tmp project) via the real <select>.
-    await modal.getByLabel('Target project').selectOption(projectId!);
+    // 5. Pick the target project through the portal-rendered project list.
+    const targetProject = modal.getByRole('button', { name: 'Target project' });
+    await targetProject.click();
+    await window
+      .getByRole('listbox', { name: 'Target project' })
+      .getByRole('option', { name: projectName, exact: true })
+      .click();
+    await expect(targetProject).toContainText(projectName);
 
     // 6. Select verified Claude explicitly. Default routing is covered elsewhere;
     // this flow needs a deterministic fake binary on every runner.

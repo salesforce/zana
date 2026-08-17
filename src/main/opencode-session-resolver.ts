@@ -24,6 +24,7 @@
  */
 
 import { execFile } from 'node:child_process';
+import { realpath } from 'node:fs/promises';
 
 /** A resolved OpenCode session: the id OpenCode minted server-side. */
 export interface OpenCodeSessionMatch {
@@ -46,6 +47,8 @@ interface ResolverDeps {
    * unit tests never spawn a real subprocess.
    */
   runList?: (cwd: string, limit: number) => Promise<OpenCodeSessionListRow[] | null>;
+  /** Resolves symlink aliases before matching CLI-reported session directories. */
+  realpath?: (path: string) => Promise<string>;
 }
 
 /** How many most-recent sessions to ask the CLI for per resolve — small and bounded (Rule 5). */
@@ -89,6 +92,7 @@ async function defaultRunList(
 export class OpenCodeSessionResolver {
   private readonly binary: () => string;
   private readonly runList: (cwd: string, limit: number) => Promise<OpenCodeSessionListRow[] | null>;
+  private readonly realpath: (path: string) => Promise<string>;
   private readonly cache = new Map<string, OpenCodeSessionMatch>();
   private readonly claimedSessionIds = new Map<string, string>();
   private readonly pending = new Map<string, Promise<OpenCodeSessionMatch | null>>();
@@ -98,6 +102,7 @@ export class OpenCodeSessionResolver {
     const binary = deps.binary;
     this.binary = typeof binary === 'function' ? binary : () => binary ?? 'opencode';
     this.runList = deps.runList ?? ((cwd, limit) => defaultRunList(this.binary(), cwd, limit));
+    this.realpath = deps.realpath ?? realpath;
   }
 
   /** Drop a cached match (call on session close to free memory — Rule 5). */
@@ -133,16 +138,32 @@ export class OpenCodeSessionResolver {
 
     const generation = this.generations.get(key) ?? 0;
     const resolveMatch = async (): Promise<OpenCodeSessionMatch | null> => {
-      const rows = await this.runList(cwd, LIST_LIMIT);
+      let canonicalCwd: string;
+      try {
+        canonicalCwd = await this.realpath(cwd);
+      } catch {
+        return null;
+      }
+
+      const rows = await this.runList(canonicalCwd, LIST_LIMIT);
       if (!rows) return null;
 
       // Allow a small negative slack: the session row's created time can lag
       // the PTY spawn by a fraction of a second, and clocks aren't perfectly
       // aligned.
       const floor = spawnedAtMs - 5_000;
+      const candidates = await Promise.all(rows.map(async (row) => {
+        if (typeof row.created !== 'number' || row.created < floor || !row.id) return null;
+        try {
+          return (await this.realpath(row.directory)) === canonicalCwd ? row : null;
+        } catch {
+          return null;
+        }
+      }));
+
       let best: { match: OpenCodeSessionMatch; createdMs: number } | null = null;
-      for (const row of rows) {
-        if (row.directory !== cwd) continue;
+      for (const row of candidates) {
+        if (!row) continue;
         if (typeof row.created !== 'number' || row.created < floor) continue;
         if (!row.id) continue;
         const claimant = this.claimedSessionIds.get(row.id);

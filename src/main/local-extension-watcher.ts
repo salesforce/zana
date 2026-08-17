@@ -24,6 +24,8 @@ import { watch as fsWatchDefault, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
 import type { Result } from '../shared/types.js';
 
+type TimerHandle = NodeJS.Timeout;
+
 export interface LocalExtensionWatcherDeps {
   /** Master switch. Read live so a config toggle takes effect immediately. */
   isEnabled: () => boolean;
@@ -42,9 +44,9 @@ export interface LocalExtensionWatcherDeps {
   /** Debounce window, ms. Defaults to 400 (matches syncExtensionsDebounced). */
   debounceMs?: number;
   /** Arm a timer; returns a handle. Injected so tests can use fake timers. */
-  setTimer?: (fn: () => void, ms: number) => NodeJS.Timeout;
+  setTimer?: (fn: () => void, ms: number) => TimerHandle;
   /** Clear a timer handle. Injected to pair with {@link setTimer}. */
-  clearTimer?: (handle: NodeJS.Timeout) => void;
+  clearTimer?: (handle: TimerHandle) => void;
 }
 
 function defaultWatch(path: string, cb: () => void): FSWatcher | null {
@@ -59,11 +61,19 @@ function defaultWatch(path: string, cb: () => void): FSWatcher | null {
   }
 }
 
+function defaultSetTimer(fn: () => void, ms: number): TimerHandle {
+  return setTimeout(fn, ms);
+}
+
+function defaultClearTimer(handle: TimerHandle): void {
+  clearTimeout(handle);
+}
+
 interface Entry {
   id: string;
   workingDir: string;
   watcher: FSWatcher | null;
-  debounce: NodeJS.Timeout | null;
+  debounce: TimerHandle | null;
   /** Sessions currently cwd'd into this working dir. */
   sessionIds: Set<string>;
 }
@@ -156,7 +166,7 @@ export class LocalExtensionWatcher {
       }
       entry.watcher = null;
     }
-    const clearTimer = this.deps.clearTimer ?? clearTimeout;
+    const clearTimer = this.deps.clearTimer ?? defaultClearTimer;
     if (entry.debounce) {
       clearTimer(entry.debounce);
       entry.debounce = null;
@@ -164,8 +174,8 @@ export class LocalExtensionWatcher {
   }
 
   private onChange(entry: Entry): void {
-    const clearTimer = this.deps.clearTimer ?? clearTimeout;
-    const setTimer = this.deps.setTimer ?? setTimeout;
+    const clearTimer = this.deps.clearTimer ?? defaultClearTimer;
+    const setTimer = this.deps.setTimer ?? defaultSetTimer;
     if (entry.debounce) clearTimer(entry.debounce);
     entry.debounce = setTimer(() => {
       entry.debounce = null;
