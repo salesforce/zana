@@ -1,8 +1,22 @@
 import { test, expect } from './fixtures/app';
+import type { Locator, Page } from '@playwright/test';
 import { makeFakeAgentBinary } from './sdk/harness';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
+
+async function selectPicklistOption(
+  trigger: Locator,
+  window: Page,
+  ariaLabel: string,
+  optionName: string,
+  search?: string
+) {
+  await trigger.click();
+  const listbox = window.getByRole('listbox', { name: ariaLabel });
+  if (search) await listbox.getByRole('textbox', { name: 'Search…' }).fill(search);
+  await listbox.getByRole('option', { name: optionName, exact: true }).click();
+}
 
 test('Global and Project harness settings persist provider, model, execution, and reset flows', async ({ app }) => {
   const { window } = app;
@@ -36,12 +50,9 @@ test('Global and Project harness settings persist provider, model, execution, an
     const globalProvider = globalOpenCode.getByRole('button', { name: 'Default provider' });
     const globalModel = globalOpenCode.getByRole('button', { name: 'Default model level' });
     const globalExecution = globalOpenCode.getByRole('button', { name: 'Default execution state' });
-    await globalProvider.click();
-    await window.getByRole('listbox', { name: 'Default provider' }).getByRole('option', { name: 'Anthropic', exact: true }).click();
-    await globalModel.click();
-    await window.getByRole('listbox', { name: 'Default model level' }).getByRole('option', { name: 'Sonnet [Medium]', exact: true }).click();
-    await globalExecution.click();
-    await window.getByRole('listbox', { name: 'Default execution state' }).getByRole('option', { name: 'plan [Plan]', exact: true }).click();
+    await selectPicklistOption(globalProvider, window, 'Default provider', 'Anthropic');
+    await selectPicklistOption(globalModel, window, 'Default model level', 'Sonnet [Medium]', 'Sonnet');
+    await selectPicklistOption(globalExecution, window, 'Default execution state', 'plan [Plan]');
     await expect(globalProvider).toContainText('Anthropic');
     await expect(globalModel).toContainText('Sonnet [Medium]');
     await expect(globalExecution).toContainText('plan [Plan]');
@@ -56,8 +67,7 @@ test('Global and Project harness settings persist provider, model, execution, an
         }
       }
     });
-    await globalProvider.click();
-    await window.getByRole('listbox', { name: 'Default provider' }).getByRole('option', { name: 'Use harness default', exact: true }).click();
+    await selectPicklistOption(globalProvider, window, 'Default provider', 'Use harness default');
     await expect(globalProvider).toContainText('Use harness default');
     await expect(globalModel).toContainText('Use harness default');
 
@@ -74,12 +84,9 @@ test('Global and Project harness settings persist provider, model, execution, an
     const projectProvider = projectOpenCode.getByRole('button', { name: 'Default provider' });
     const projectModel = projectOpenCode.getByRole('button', { name: 'Default model level' });
     const projectExecution = projectOpenCode.getByRole('button', { name: 'Default execution state' });
-    await projectProvider.click();
-    await window.getByRole('listbox', { name: 'Default provider' }).getByRole('option', { name: 'Google', exact: true }).click();
-    await projectModel.click();
-    await window.getByRole('listbox', { name: 'Default model level' }).getByRole('option', { name: 'Gemini Flash [Low]', exact: true }).click();
-    await projectExecution.click();
-    await window.getByRole('listbox', { name: 'Default execution state' }).getByRole('option', { name: 'build + auto-approve [Autonomous]', exact: true }).click();
+    await selectPicklistOption(projectProvider, window, 'Default provider', 'Google');
+    await selectPicklistOption(projectModel, window, 'Default model level', 'Gemini Flash [Low]', 'Gemini Flash');
+    await selectPicklistOption(projectExecution, window, 'Default execution state', 'build + auto-approve [Autonomous]');
     await expect(projectProvider).toContainText('Google');
     await expect(projectModel).toContainText('Gemini Flash [Low]');
     await expect(projectExecution).toContainText('build + auto-approve [Autonomous]');
@@ -94,8 +101,7 @@ test('Global and Project harness settings persist provider, model, execution, an
         }
       }
     });
-    await projectProvider.click();
-    await window.getByRole('listbox', { name: 'Default provider' }).getByRole('option', { name: 'Use global default', exact: true }).click();
+    await selectPicklistOption(projectProvider, window, 'Default provider', 'Use global default');
     await expect(projectProvider).toContainText('Use global default');
     await expect(projectModel).toContainText('Use global default');
   } finally {
