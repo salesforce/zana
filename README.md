@@ -42,6 +42,10 @@ npm run dev
 - **Review artifacts in context.** Browse files, terminal output, Markdown, Mermaid diagrams, diffs, attachments, and reports without leaving the application.
 - **Control the app from a terminal.** The `zcc` CLI can inspect projects, personas, teams, schedules, and Inbox entries offline; with the app running, it can inspect and control live agents, terminals, and schedules.
 
+## Architecture at a Glance
+
+![Zana Command Center stakeholder overview](docs/assets/zana-command-center-stakeholder-one-pager.png)
+
 ## Core Surfaces
 
 | Surface | Purpose |
