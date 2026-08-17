@@ -532,8 +532,8 @@ export async function locateManifestDir(
  *   - excludes `.git/`
  * Returns the staging dir on success; the caller removes it in a `finally`.
  */
-export async function stageInstallable(srcDir: string): Promise<Result<string>> {
-  const staging = join(tmpdir(), `zcc-ext-stage-${process.pid}-${randomBytes(4).toString('hex')}`);
+export async function stageInstallable(srcDir: string, tempBase = tmpdir()): Promise<Result<string>> {
+  const staging = join(tempBase, `zcc-ext-stage-${process.pid}-${randomBytes(4).toString('hex')}`);
   let unsafe = false;
   try {
     await cp(srcDir, staging, {
@@ -577,17 +577,19 @@ export async function stageInstallable(srcDir: string): Promise<Result<string>> 
  * cannot choose its install location (installFromDir derives it from the
  * manifest id). The temp clone + staging dir are ALWAYS removed.
  *
- * `clone` is a DI seam for tests: `normalizeRepoUrl` rejects `file://`/local
- * paths, so offline tests inject a fake clone (or a real `git clone -- <bare>`).
+ * `clone` and `tempBase` are DI seams for tests: `normalizeRepoUrl` rejects
+ * `file://`/local paths, so offline tests inject a fake clone (or a real
+ * `git clone -- <bare>`) and isolate their temporary artifacts.
  */
 export async function installFromGit(
   url: string,
   gitOpts: InstallFromGitOpts,
   opts: InstallOpts,
-  deps?: { clone?: (o: CloneOptions) => Promise<CloneResult> }
+  deps?: { clone?: (o: CloneOptions) => Promise<CloneResult>; tempBase?: string }
 ): Promise<Result<GitInstallResult>> {
   const clone = deps?.clone ?? cloneProject;
-  const tmp = join(tmpdir(), `zcc-ext-git-${process.pid}-${randomBytes(4).toString('hex')}`);
+  const tempBase = deps?.tempBase ?? tmpdir();
+  const tmp = join(tempBase, `zcc-ext-git-${process.pid}-${randomBytes(4).toString('hex')}`);
   let staged: string | undefined;
   try {
     const cloned = await clone({
@@ -606,7 +608,7 @@ export async function installFromGit(
     const located = await locateManifestDir(cloned.path, gitOpts.subdir);
     if (!located.ok) return located;
 
-    const stagedRes = await stageInstallable(located.value);
+    const stagedRes = await stageInstallable(located.value, tempBase);
     if (!stagedRes.ok) return stagedRes;
     staged = stagedRes.value;
 
