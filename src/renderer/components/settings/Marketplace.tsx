@@ -362,7 +362,7 @@ function MarketRow({
 function rowAction(
   entry: MarketplaceEntry,
   busy?: string
-): { label: string; disabled: boolean; primary: boolean; icon: JSX.Element | null } {
+): { label: string; disabled: boolean; primary: boolean; icon: React.ReactElement | null } {
   if (busy) return { label: busy, disabled: true, primary: false, icon: null };
   if (!entry.compatible) {
     return {
