@@ -4,6 +4,7 @@ import { useUi } from '../../store';
 import { Section, Field, CheckboxField } from './FormFields';
 import { DoctorSection } from './DoctorSection';
 import { AuthorizationsSection } from './AuthorizationsSection';
+import { PopoverPicklist } from '../ui/PopoverPicklist';
 
 interface GlobalTabProps {
   config: AppConfig;
@@ -24,14 +25,17 @@ export function GlobalTab({
     <>
       <Section anchorId="appearance" title="Appearance">
         <Field label="Theme">
-          <select
+          <PopoverPicklist
             value={config.theme}
-            onChange={(e) => onUpdate({ theme: e.target.value as AppConfig['theme'] })}
-          >
-            <option value="system">System</option>
-            <option value="dark">Dark</option>
-            <option value="light">Light</option>
-          </select>
+            ariaLabel="Theme"
+            searchable={false}
+            onChange={(theme) => onUpdate({ theme: theme as AppConfig['theme'] })}
+            options={[
+              { value: 'system', label: 'System' },
+              { value: 'dark', label: 'Dark' },
+              { value: 'light', label: 'Light' }
+            ]}
+          />
         </Field>
       </Section>
 

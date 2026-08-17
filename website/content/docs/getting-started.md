@@ -1,14 +1,13 @@
 # Getting started
 
-Zana Command Center (ZCC) turns Claude Code from a single terminal into a
-**multi-project cockpit**: run many `claude` sessions at once, see which ones
+Zana Command Center (ZCC) turns supported coding harnesses into a
+**multi-project cockpit**: run many agent sessions at once, see which ones
 need you versus which are still working, reply to them, and drive multi-agent
 workflows — all from one window.
 
 This guide takes you from a fresh install to your first orchestrated agent in
-about five minutes. It assumes you already use [Claude
-Code](https://claude.com/claude-code); ZCC runs real `claude` sessions, not a
-wrapper around them.
+about five minutes. ZCC launches the native CLI for Claude Code, OpenCode,
+Codex, or Pi rather than wrapping the harness in a generic chat UI.
 
 ```mermaid
 flowchart LR
@@ -26,10 +25,9 @@ flowchart LR
 Download the app from the [**Download**](/download/) page and open it. macOS is
 available today; Windows and Linux are on the way.
 
-**Prerequisites:** [Node](https://nodejs.org) 20 or newer, `git`, and the
-[`claude`](https://claude.com/claude-code) CLI on your `PATH`. ZCC launches
-`claude` for every session, so if `claude` works in your terminal, it works in
-ZCC.
+**Prerequisites:** [Node](https://nodejs.org) 20 or newer, `git`, and at least
+one supported harness CLI on your `PATH`: Claude Code, OpenCode, Codex, or Pi.
+If the harness works in your terminal, ZCC can launch its native session.
 
 On first launch the app opens to an empty cockpit — no projects yet. That's the
 next step.
@@ -52,14 +50,13 @@ navigable.
 
 ## 3. Spawn your first agent
 
-Open a project and start a session. Every tab is a **real PTY running
-`claude`** — a genuine Claude Code session, with the same behavior, tools, and
-permissions you already know.
+Open a project and start a session. Every tab is a **real PTY running the
+selected harness** with its native behavior, tools, and permissions.
 
 - Hit **New agent** (or the `+` in the workspace) to open a session in the
   current project.
-- The session starts in the project's directory, so `claude` sees the right
-  files immediately.
+- The session starts in the project's directory, so the selected harness sees
+  the right files immediately.
 - Type your task and let it work — exactly as you would in a standalone
   terminal.
 

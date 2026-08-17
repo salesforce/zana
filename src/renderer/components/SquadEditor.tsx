@@ -7,6 +7,7 @@ import { resolveIcon } from '../util/resolveIcon';
 import { personaIcon } from '../util/profileIcon';
 import { PERSONA_ICON_NAMES, personaIconByName } from '../util/profileIcon';
 import { getScopedProjectId } from '../util/windowScope';
+import { PopoverPicklist } from './ui/PopoverPicklist';
 
 /**
  * Team detail + editor modal — the Teams counterpart of {@link PersonaEditor}.
@@ -442,23 +443,20 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
                         ▼
                       </button>
                     </div>
-                    <select
+                    <PopoverPicklist
                       className="team-slot-persona"
                       value={slot.personaId}
-                      onChange={(e) => updateSlot(idx, { personaId: e.target.value })}
-                      aria-label="Slot persona"
-                    >
-                      {/* Keep an unknown id selectable so editing a team that
-                       *  references a not-yet-loaded persona doesn't silently drop it. */}
-                      {!known && slot.personaId && (
-                        <option value={slot.personaId}>{slot.personaId} (unknown)</option>
-                      )}
-                      {personas.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
+                      ariaLabel="Slot persona"
+                      onChange={(personaId) => updateSlot(idx, { personaId })}
+                      placeholder="Choose persona"
+                      searchPlaceholder="Search personas"
+                      options={[
+                        // Keep an unknown id selectable so editing a team that references a
+                        // not-yet-loaded persona does not silently drop it.
+                        ...(!known && slot.personaId ? [{ value: slot.personaId, label: `${slot.personaId} (unknown)` }] : []),
+                        ...personas.map((persona) => ({ value: persona.id, label: persona.name }))
+                      ]}
+                    />
                     <input
                       className="team-slot-label-input"
                       type="text"
@@ -528,18 +526,18 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
 
         <div className="scheduler-form-field">
           <label htmlFor="team-project">Default project</label>
-          <select
+          <PopoverPicklist
             id="team-project"
+            ariaLabel="Default project"
             value={defaultProjectId}
-            onChange={(e) => setDefaultProjectId(e.target.value)}
-          >
-            <option value="">None — choose at launch</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
+            onChange={setDefaultProjectId}
+            placeholder="None — choose at launch"
+            searchPlaceholder="Search projects"
+            options={[
+              { value: '', label: 'None — choose at launch' },
+              ...projects.map((project) => ({ value: project.id, label: project.name }))
+            ]}
+          />
         </div>
 
         <p className="settings-help persona-form-hint">

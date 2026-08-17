@@ -1,7 +1,7 @@
 /** Central site config — copy + env-driven endpoints, all in one place. */
 export const site = {
   name: 'Zana Command Center',
-  tagline: 'Run and orchestrate many Claude Code sessions across all your projects from one window.',
+  tagline: 'Run and orchestrate Claude Code, OpenCode, Codex, and Pi sessions across every project from one window.',
   repo: 'https://github.com/salesforce/zana',
   /** PUBLIC release feed (github.com) — where the notarized artifacts +
    *  latest-mac.yml live and the auto-updater reads anonymously. */

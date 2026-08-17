@@ -1,9 +1,10 @@
 import type { ProviderUiOption } from '@shared/launch-provider';
+import { PopoverPicklist } from './ui/PopoverPicklist';
 
 /**
  * The generic picker for a data-driven harness option axis.
  *
- * It renders a single `<select>` from a `ProviderUiOption[]` — the flat,
+ * It renders a single popover picker from a `ProviderUiOption[]` — the flat,
  * role-tagged catalog produced by `harnessOptions(profile)` in
  * `@shared/launch-provider`. Every model / permission-mode / sandbox / approval
  * selector in the app funnels through THIS, so the option list + sentinel +
@@ -38,7 +39,7 @@ export interface HarnessOptionSelectProps {
    */
   dropDefaultId?: boolean;
   disabled?: boolean;
-  /** Native `title` (hover copy explaining a disabled axis). */
+  /** Hover copy explaining a disabled axis. */
   title?: string;
   /** Optional class for the caller's surrounding form layout. */
   className?: string;
@@ -49,7 +50,7 @@ export interface HarnessOptionSelectProps {
 const DEFAULT_EMPTY: ProviderUiOption = { id: 'default', label: 'Default' };
 
 /**
- * Pure assembly of the rendered `<option>` list — extracted so the sentinel /
+ * Pure assembly of the rendered option list — extracted so the sentinel /
  * dropDefault / empty-fallback behaviour is unit-testable without a DOM. Order:
  * [sentinel?] + catalog (minus the built-in `default` when dropped, minus any
  * catalog entry duplicating the sentinel), falling back to `emptyOption` when
@@ -84,19 +85,15 @@ export function HarnessOptionSelect({
   const list = buildOptionList({ options, sentinel, dropDefaultId, emptyOption });
 
   return (
-    <select
+    <PopoverPicklist
       id={id}
       value={value}
-      onChange={(e) => onChange(e.target.value)}
+      ariaLabel={title ?? id}
+      onChange={onChange}
       disabled={disabled}
-      title={title}
+      searchable={false}
       className={className}
-    >
-      {list.map((o) => (
-        <option key={o.id} value={o.id}>
-          {o.label}
-        </option>
-      ))}
-    </select>
+      options={list.map((option) => ({ value: option.id, label: option.label }))}
+    />
   );
 }

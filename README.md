@@ -32,7 +32,7 @@ npm run dev
 
 ## What You Can Do
 
-- **Run coding agents in parallel.** Launch real PTY sessions for Claude Code, Cursor, Codex, Pi, OpenCode, or a plain shell. Choose the CLI, model, and execution mode per persona or launch.
+- **Run coding agents in parallel.** Launch real PTY sessions for Claude Code, Codex, Pi, OpenCode, or a plain shell. Choose the CLI, model, and execution mode per persona or launch.
 - **Work across local and remote projects.** Keep local folders and SSH projects in one workspace, each with its own terminals, agents, explorer, settings, and project-scoped views.
 - **Monitor the agent fleet.** Use Home, the Agents board, activity feeds, and notifications to find working, idle, blocked, and completed sessions without hunting through terminal tabs.
 - **Coordinate human decisions.** Agents can publish reports, questions, and other results to the Inbox. Reply from an Inbox question to route an answer back to the waiting session. Follow-ups preserve decisions that need human input.

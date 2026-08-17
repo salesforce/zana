@@ -9,7 +9,18 @@ import { site } from '@/lib/site';
  */
 export default function sitemap(): MetadataRoute.Sitemap {
   const base = site.publicBaseUrl.replace(/\/$/, '');
-  const staticPaths = ['/', '/features/', '/marketplace/', '/download/', '/docs/'];
+  const staticPaths = [
+    '/',
+    '/how-it-works/',
+    '/features/',
+    '/extensions/',
+    '/extensions/getting-started/',
+    '/extensions/install/',
+    '/extensions/sdk/',
+    '/marketplace/',
+    '/download/',
+    '/docs/'
+  ];
   const docPaths = DOCS.map((d) => `/docs/${d.slug}/`);
   return [...staticPaths, ...docPaths].map((path) => ({
     url: `${base}${path}`,

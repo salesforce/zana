@@ -35,6 +35,7 @@ import { seedPromptArgs } from '@shared/launch-provider';
 import { answerFollowUp, useData, useFollowUps, useUi } from '../store';
 import { isClaudeProfile, knownProfile, projectDefaultProfile } from '../util/launchProfile';
 import { buildFollowUpPrompt, followUpAgentTitle } from '../util/followUpPrompt';
+import { PopoverPicklist } from './ui/PopoverPicklist';
 
 /** Status → pill label / class suffix. Reuses the scheduler pill palette. */
 const STATUS_META: Record<FollowUpStatus, { label: string; cls: string }> = {
@@ -987,30 +988,31 @@ function FollowUpModal({
           <div className="scheduler-form-row">
             <div className="scheduler-form-field">
               <label htmlFor="fu-kind">Kind</label>
-              <select
+              <PopoverPicklist
                 id="fu-kind"
+                ariaLabel="Kind"
                 value={kind}
-                onChange={(e) => setKind(e.target.value as FollowUpKind)}
-              >
-                <option value="question">Question</option>
-                <option value="decision">Decision</option>
-                <option value="note">Note</option>
-              </select>
+                searchable={false}
+                onChange={(nextKind) => setKind(nextKind as FollowUpKind)}
+                options={[
+                  { value: 'question', label: 'Question' },
+                  { value: 'decision', label: 'Decision' },
+                  { value: 'note', label: 'Note' }
+                ]}
+              />
             </div>
             <div className="scheduler-form-field">
               <label htmlFor="fu-project">Project</label>
-              <select
+              <PopoverPicklist
                 id="fu-project"
+                ariaLabel="Project"
                 value={projectId}
-                onChange={(e) => setProjectId(e.target.value)}
                 disabled={!isNew || Boolean(lockedProjectId)}
-              >
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
+                onChange={setProjectId}
+                placeholder="Choose project"
+                searchPlaceholder="Search projects"
+                options={projects.map((project) => ({ value: project.id, label: project.name }))}
+              />
             </div>
           </div>
           {isNew && !lockedProjectId && (

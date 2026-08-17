@@ -29,6 +29,7 @@ import type {
 } from '@shared/types';
 import { useData, useGoals, useUi } from '../store';
 import { ImprovePromptButton } from './ImprovePromptButton';
+import { PopoverPicklist } from './ui/PopoverPicklist';
 import { VALID_PROFILES } from '@shared/launch-provider';
 
 const PROFILES = VALID_PROFILES;
@@ -653,32 +654,27 @@ function GoalModal({
           <div className="scheduler-form-row">
             <div className="scheduler-form-field">
               <label htmlFor="goal-project">Project</label>
-              <select
+              <PopoverPicklist
                 id="goal-project"
+                ariaLabel="Project"
                 value={projectId}
-                onChange={(e) => setProjectId(e.target.value)}
                 disabled={!isNew || Boolean(lockedProjectId)}
-              >
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
+                onChange={setProjectId}
+                placeholder="Choose project"
+                searchPlaceholder="Search projects"
+                options={projects.map((project) => ({ value: project.id, label: project.name }))}
+              />
             </div>
             <div className="scheduler-form-field">
               <label htmlFor="goal-profile">Launch profile</label>
-              <select
+              <PopoverPicklist
                 id="goal-profile"
+                ariaLabel="Launch profile"
                 value={profile}
-                onChange={(e) => setProfile(e.target.value as LaunchProfileId)}
-              >
-                {PROFILES.map((p) => (
-                  <option key={p} value={p}>
-                    {PROFILE_LABEL[p]}
-                  </option>
-                ))}
-              </select>
+                searchable={false}
+                onChange={(nextProfile) => setProfile(nextProfile as LaunchProfileId)}
+                options={PROFILES.map((profile) => ({ value: profile, label: PROFILE_LABEL[profile] }))}
+              />
             </div>
           </div>
           <div className="scheduler-form-row">

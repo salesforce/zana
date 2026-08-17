@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { FolderOpen, Play, RotateCcw, Loader2 } from 'lucide-react';
 import type { LlmPromptEntry, LlmProviderId, LlmRunResult } from '@shared/types';
+import { PopoverPicklist } from '../ui/PopoverPicklist';
 
 /**
  * Providers offered in the editor, in display order. `base` is the human label;
@@ -224,18 +225,18 @@ export function PromptsTab() {
 
                 <div className="prompts-row">
                   <PField label="Provider">
-                    <select
+                    <PopoverPicklist
                       value={draft.provider ?? 'claude-cli'}
-                      onChange={(e) =>
-                        setDraft({ ...draft, provider: e.target.value as LlmProviderId })
+                      ariaLabel="Provider"
+                      onChange={(provider) =>
+                        setDraft({ ...draft, provider: provider as LlmProviderId })
                       }
-                    >
-                      {providerOptions.map((p) => (
-                        <option key={p.id} value={p.id} disabled={!p.enabled}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
+                      options={providerOptions.map((provider) => ({
+                        value: provider.id,
+                        label: provider.label,
+                        disabled: !provider.enabled
+                      }))}
+                    />
                   </PField>
                   <PField label="Model" help="Alias (haiku/sonnet/opus) or full id. Blank = default.">
                     <input

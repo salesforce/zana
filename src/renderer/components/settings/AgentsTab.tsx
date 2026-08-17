@@ -2,6 +2,7 @@ import type { AppConfig } from '@shared/types';
 import { AUTO_CLOSE_IDLE_DEFAULTS, HEARTBEAT_DEFAULTS } from '@shared/types';
 import { Section, Field, CheckboxField } from './FormFields';
 import { OverseerRecentPane } from './OverseerRecentPane';
+import { PopoverPicklist } from '../ui/PopoverPicklist';
 
 export function AgentsTab({
   config,
@@ -199,19 +200,21 @@ export function AgentsTab({
               label="Need Attention sensitivity"
               help="How aggressively a triaged idle agent jumps to the “Needs you” lane. High surfaces almost any non-done idle agent; Medium only genuine questions; Low only high-confidence questions."
             >
-              <select
+              <PopoverPicklist
                 value={config.idleAttentionSensitivity ?? 'medium'}
-                onChange={(e) =>
+                ariaLabel="Need Attention sensitivity"
+                searchable={false}
+                onChange={(idleAttentionSensitivity) =>
                   onUpdate({
-                    idleAttentionSensitivity: e.target
-                      .value as AppConfig['idleAttentionSensitivity']
+                    idleAttentionSensitivity: idleAttentionSensitivity as AppConfig['idleAttentionSensitivity']
                   })
                 }
-              >
-                <option value="high">High</option>
-                <option value="medium">Medium</option>
-                <option value="low">Low</option>
-              </select>
+                options={[
+                  { value: 'high', label: 'High' },
+                  { value: 'medium', label: 'Medium' },
+                  { value: 'low', label: 'Low' }
+                ]}
+              />
             </Field>
             <CheckboxField
               label="Promote triaged agents to “Needs you” in the side list"
@@ -477,16 +480,19 @@ export function AgentsTab({
           label="Mode"
           help="Off: no hook installed, fully inert. Dry-run: logs what it WOULD auto-approve (in the terminal) but still prompts you — try this first. On: auto-approvals take effect."
         >
-          <select
+          <PopoverPicklist
             value={config.overseerMode ?? 'off'}
-            onChange={(e) =>
-              onUpdate({ overseerMode: e.target.value as AppConfig['overseerMode'] })
+            ariaLabel="Overseer mode"
+            searchable={false}
+            onChange={(overseerMode) =>
+              onUpdate({ overseerMode: overseerMode as AppConfig['overseerMode'] })
             }
-          >
-            <option value="off">Off</option>
-            <option value="dryRun">Dry-run (observe only)</option>
-            <option value="on">On</option>
-          </select>
+            options={[
+              { value: 'off', label: 'Off' },
+              { value: 'dryRun', label: 'Dry-run (observe only)' },
+              { value: 'on', label: 'On' }
+            ]}
+          />
         </Field>
         {config.overseerMode && config.overseerMode !== 'off' && (
           <>
