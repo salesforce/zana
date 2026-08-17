@@ -88,6 +88,7 @@ const CLAUDE_ADAPTER: TrustedHarnessAdapter = {
       }
     },
     settingsContributionIds: ['claude-global-defaults', 'claude-project-overrides'],
+    configFiles: [{ id: 'project-settings', label: 'Project settings', scopes: ['shared', 'local'], effect: 'native-file', rawEdit: true }],
     initialTaskDelivery: { local: 'spawn-arg', remote: 'spawn-arg', readinessSignal: 'process-spawned', acceptanceSignal: 'argv-bound' }
   },
   executionTargetMetadata: {

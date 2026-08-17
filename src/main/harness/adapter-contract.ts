@@ -48,6 +48,24 @@ export const HARNESS_SETTINGS_CONTRIBUTIONS = [
   { id: 'codex-project-overrides', adapterId: 'codex' }
 ] as const;
 
+/** Reject accidental duplicate file IDs and inconsistent unsupported claims. */
+export function validateConfigFiles(descriptor: TrustedHarnessAdapter['descriptor']): void {
+  const ids = new Set<string>();
+  for (const file of descriptor.configFiles) {
+    if (!file.id || ids.has(file.id)) throw new Error(`Duplicate harness config file: ${file.id}`);
+    ids.add(file.id);
+    if (file.effect !== 'native-file' && file.rawEdit) {
+      throw new Error(`Non-native harness config file cannot be raw-editable: ${file.id}`);
+    }
+    if (file.effect === 'native-file' && !file.scopes.length) {
+      throw new Error(`Native harness config file must declare scopes: ${file.id}`);
+    }
+    if (file.effect !== 'native-file' && file.scopes.length) {
+      throw new Error(`Non-native harness config file cannot declare scopes: ${file.id}`);
+    }
+  }
+}
+
 const FACETS: readonly HarnessPersonaFacet[] = [
   'system-instructions',
   'opening-prompt',

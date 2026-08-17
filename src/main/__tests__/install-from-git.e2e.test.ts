@@ -112,9 +112,10 @@ describe('installFromGit e2e (real bare repo, offline)', () => {
 
   it('clones, stages, and installs into ZCC_EXTENSIONS_DIR with matching bytes', async () => {
     const { installFromGit } = await importInstaller();
-    const before = await readdir(tmpdir());
-
-    const res = await installFromGit(bareRepo, {}, installOpts, { clone: realBareClone(bareRepo) });
+    const res = await installFromGit(bareRepo, {}, installOpts, {
+      clone: realBareClone(bareRepo),
+      tempBase: workspace
+    });
 
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.value.id).toBe('e2e-tool');
@@ -126,9 +127,12 @@ describe('installFromGit e2e (real bare repo, offline)', () => {
     expect(existsSync(join(installed, '.git'))).toBe(false);
 
     // Temp clone dir cleaned up.
-    const after = await readdir(tmpdir());
+    const after = await readdir(workspace);
+    const ownPrefix = `-${process.pid}-`;
     const leaked = after.filter(
-      (n) => (n.startsWith('zcc-ext-git-') || n.startsWith('zcc-ext-stage-')) && !before.includes(n)
+      (n) =>
+        (n.startsWith('zcc-ext-git-') || n.startsWith('zcc-ext-stage-')) &&
+        n.includes(ownPrefix)
     );
     expect(leaked).toEqual([]);
   });

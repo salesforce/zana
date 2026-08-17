@@ -33,6 +33,7 @@ const LEAST_CAPABLE_ADAPTER: TrustedHarnessAdapter = {
   descriptor: {
     id: 'shell', label: 'Unavailable harness', agentDefaultEligible: false, terminalEligible: false,
     profiles: [], capabilities: facetSupport({}), settingsContributionIds: [],
+    configFiles: [],
     initialTaskDelivery: { local: 'unsupported', remote: 'unsupported', readinessSignal: 'none', acceptanceSignal: 'delivery-attempted' }
   },
   collision: { terminatesAtDoubleDash: true }, evidence: []

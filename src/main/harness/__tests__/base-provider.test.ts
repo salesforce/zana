@@ -42,6 +42,7 @@ class MinimalProvider extends BaseLaunchProvider {
       profiles: [],
       capabilities: facetSupport({}),
       settingsContributionIds: [],
+      configFiles: [],
       initialTaskDelivery: {
         local: 'unsupported',
         remote: 'unsupported',

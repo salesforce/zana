@@ -27,6 +27,7 @@ const SHELL_ADAPTER: TrustedHarnessAdapter = {
   descriptor: {
     id: 'shell', label: 'Shell', agentDefaultEligible: false, terminalEligible: true,
     profiles: [{ id: 'shell', posture: 'other' }], capabilities: facetSupport({}), settingsContributionIds: [],
+    configFiles: [{ id: 'native-settings', label: 'Native settings', scopes: [], effect: 'unsupported', rawEdit: false, reason: 'Shell has no native settings file.' }],
     targets: {
       roles: [],
       models: [],

@@ -78,6 +78,7 @@ const CODEX_ADAPTER: TrustedHarnessAdapter = {
       } }
     ),
     settingsContributionIds: ['codex-global-defaults'],
+    configFiles: [{ id: 'native-settings', label: 'Native settings', scopes: [], effect: 'argv-app-store', rawEdit: false, reason: 'Zana uses verified argv and app settings; native file mapping is not verified.' }],
     targets: {
       roles: [],
       providers: [{ id: 'openai', label: 'OpenAI' }],

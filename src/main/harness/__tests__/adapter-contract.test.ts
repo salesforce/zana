@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { availabilityFromVerify } from '../../../shared/harness-adapter.js';
-import { HARNESS_SETTINGS_CONTRIBUTIONS, hasNativeOption } from '../adapter-contract.js';
+import { HARNESS_SETTINGS_CONTRIBUTIONS, hasNativeOption, validateConfigFiles } from '../adapter-contract.js';
 import { harnessAdapterDescriptors, registeredAdapters } from '../registry.js';
 
 describe('trusted harness adapter contract', () => {
@@ -56,5 +56,12 @@ describe('trusted harness adapter contract', () => {
     expect(hasNativeOption(['--model=x'], grammar, true)).toBe(true);
     expect(hasNativeOption(['-mx'], grammar, true)).toBe(true);
     expect(hasNativeOption(['--', '--model', 'x'], grammar, true)).toBe(false);
+  });
+
+  it('declares deliberate config-file behavior for every trusted adapter', () => {
+    for (const provider of registeredAdapters()) {
+      expect(provider.adapter.descriptor.configFiles.length).toBeGreaterThan(0);
+      expect(() => validateConfigFiles(provider.adapter.descriptor)).not.toThrow();
+    }
   });
 });

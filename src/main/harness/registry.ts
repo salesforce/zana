@@ -26,6 +26,7 @@ import { ShellProvider } from './shell-provider.js';
 import { LeastCapableProvider } from './least-capable-provider.js';
 import { executionTargetsFor } from './evidence-registry.js';
 import { discoverCodexModels } from './codex-model-catalog.js';
+import { validateConfigFiles } from './adapter-contract.js';
 
 const claudeCode = new ClaudeCodeProvider();
 const cursor = new CursorProvider();
@@ -74,7 +75,9 @@ export function providerFor(profile: LaunchProfileId): LaunchProvider {
 
 /** Every trusted adapter once, in profile registry order. No renderer/config registration path exists. */
 export function registeredAdapters(): readonly LaunchProvider[] {
-  return [claudeCode, cursor, codex, pi, opencode, shell];
+  const providers = [claudeCode, cursor, codex, pi, opencode, shell];
+  providers.forEach((provider) => validateConfigFiles(provider.adapter.descriptor));
+  return providers;
 }
 
 /** Build renderer-safe descriptors from trusted provider metadata plus verified availability. */

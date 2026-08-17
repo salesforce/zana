@@ -6,6 +6,10 @@ import type {
   ClaudeProjectSettings,
   ClaudeSettingsScope,
   ClaudeSettingsResult,
+  CodexProjectSettings,
+  CodexSettingsResult,
+  OpenCodeProjectSettings,
+  OpenCodeSettingsResult,
   HarnessFamily,
   LaunchProfileId,
   ProjectExecutionConsentGrant
@@ -52,7 +56,7 @@ export function ProjectTab({
     <>
       {project.remote && <ProjectRemoteSettings project={project} onSaved={onSaved} />}
 
-      <ProjectHarnessSettings project={project} onSaved={onSaved} />
+      <ProjectHarnessSettings project={project} onOpen={onOpen} onSaved={onSaved} />
 
       {!project.remote && !project.quickAgent && (
         <ProjectWorktreeSettings project={project} onSaved={onSaved} />
@@ -60,26 +64,6 @@ export function ProjectTab({
 
       <ProjectExecutionConsentSettings project={project} onSaved={onSaved} />
 
-      {!project.remote && (
-        <ProjectClaudeSettings projectPath={project.path} onSaved={onSaved} onOpen={onOpen} />
-      )}
-
-      <Section title="Quick open" help="Opens project config files in Cursor.">
-        <div className="settings-btn-row">
-          <button className="settings-btn" onClick={() => onOpen(`${project.path}/CLAUDE.md`)}>
-            {project.name}/CLAUDE.md
-          </button>
-          <button className="settings-btn" onClick={() => onOpen(`${project.path}/.mcp.json`)}>
-            {project.name}/.mcp.json
-          </button>
-          <button
-            className="settings-btn"
-            onClick={() => onOpen(`${project.path}/.claude/settings.local.json`)}
-          >
-            {project.name}/.claude/settings.local.json
-          </button>
-        </div>
-      </Section>
     </>
   );
 }
@@ -278,13 +262,22 @@ export function ProjectExecutionConsentList({
   );
 }
 
-export function ProjectHarnessSettings({ project, onSaved }: { project: Project; onSaved: () => void }) {
+export function ProjectHarnessSettings({
+  project,
+  onOpen,
+  onSaved
+}: {
+  project: Project;
+  onOpen: (path: string) => void;
+  onSaved: () => void;
+}) {
   const updateProject = useData((s) => s.updateProject);
   const pushToast = useUi((s) => s.pushToast);
   const [descriptors, setDescriptors] = useState<HarnessAdapterDescriptor[] | null>(null);
   const [settingsState, setSettingsState] = useState<{ projectId: string; value: ProjectSettings } | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [openHarnesses, setOpenHarnesses] = useState<Set<string>>(() => new Set());
+  const [activeHarnessTabs, setActiveHarnessTabs] = useState<Record<string, 'launch' | 'harness' | 'files'>>({});
   const writeSequence = useRef(0);
   const currentProjectId = useRef(project.id);
 
@@ -425,9 +418,10 @@ export function ProjectHarnessSettings({ project, onSaved }: { project: Project;
       </Field>
       {settingsError && <ProjectSettingsError message={settingsError} />}
       <div className="opener-list">
-        {settings && options.map((descriptor) => {
+      {settings && options.map((descriptor) => {
           const id = descriptor.id as HarnessFamily;
           const open = openHarnesses.has(id);
+          const activeTab = activeHarnessTabs[id] ?? 'launch';
           const routing = settings.harnessRouting?.byAdapter?.[id];
           const executionMapping = descriptor.targets?.executionStateMapping;
           const unavailable = !descriptor.availability.enabled || !descriptor.availability.installed;
@@ -454,6 +448,26 @@ export function ProjectHarnessSettings({ project, onSaved }: { project: Project;
               </div>
               {open ? (
                 <div className="opener-row-advanced">
+                  <div className="harness-settings-tabs" role="tablist" aria-label={`${descriptor.label} settings`}>
+                    {([
+                      ['launch', 'Zana Settings'],
+                      ['harness', 'Harness Settings'],
+                      ['files', 'Harness Files']
+                    ] as const).map(([tab, label]) => (
+                      <button
+                        key={tab}
+                        type="button"
+                        role="tab"
+                        aria-selected={activeTab === tab}
+                        className={activeTab === tab ? 'active' : ''}
+                        onClick={() => setActiveHarnessTabs((current) => ({ ...current, [id]: tab }))}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {activeTab === 'launch' && <section className="harness-settings-group">
+                  <p className="settings-help">Launch and routing settings affect Zana-created sessions only.</p>
                   <fieldset disabled={unavailable} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
                   {!!descriptor.targets?.providers?.length && (
                     <Field label="Default Provider" help={descriptor.targets.providerModelRelationship === 'fixed-provider'
@@ -534,6 +548,38 @@ export function ProjectHarnessSettings({ project, onSaved }: { project: Project;
                     <p className="settings-help">No project-specific settings are available for this harness.</p>
                   )}
                   </fieldset>
+                  </section>}
+                  {activeTab === 'harness' && <section className="harness-settings-group">
+                  {descriptor.id === 'claude' && !project.remote ? (
+                    <ProjectClaudeSettings projectId={project.id} onSaved={onSaved} compact />
+                  ) : descriptor.id === 'codex' && !project.remote ? (
+                    <ProjectCodexSettings projectId={project.id} descriptor={descriptor} onSaved={onSaved} />
+                  ) : descriptor.id === 'opencode' && !project.remote ? (
+                    <ProjectOpenCodeSettings projectId={project.id} descriptor={descriptor} onSaved={onSaved} />
+                  ) : <p className="settings-help">{descriptor.configFiles[0]?.reason ?? 'No native harness settings are available.'}</p>}
+                  </section>}
+                  {activeTab === 'files' && <section className="harness-settings-group">
+                  {descriptor.id === 'claude' ? (
+                    <ClaudeHarnessFiles projectPath={project.path} onOpen={onOpen} />
+                  ) : descriptor.id === 'cursor' ? (
+                    <CursorHarnessFiles projectPath={project.path} onOpen={onOpen} />
+                  ) : descriptor.id === 'opencode' ? (
+                    <OpenCodeHarnessFiles projectPath={project.path} onOpen={onOpen} />
+                  ) : descriptor.id === 'codex' ? (
+                    <CodexHarnessFiles projectPath={project.path} onOpen={onOpen} />
+                  ) : descriptor.configFiles.map((file) => (
+                    <div className="settings-field" key={file.id}>
+                      <span className="settings-label">{file.label}</span>
+                      <span className="settings-help harness-file-status">
+                        {file.effect === 'native-file' ? 'Native file' : file.effect === 'argv-app-store' ? 'Zana app/argv' : 'Unsupported'} —
+                        {' '}
+                        {file.effect === 'native-file'
+                          ? `${file.scopes.join(' + ')}; structured edit available; raw edit ${file.rawEdit ? 'available' : 'unavailable'}.`
+                          : file.reason ?? 'Unsupported'}
+                      </span>
+                    </div>
+                  ))}
+                  </section>}
                 </div>
               ) : null}
             </div>
@@ -541,6 +587,82 @@ export function ProjectHarnessSettings({ project, onSaved }: { project: Project;
         })}
       </div>
     </Section>
+  );
+}
+
+export function ClaudeHarnessFiles({
+  projectPath,
+  onOpen
+}: {
+  projectPath: string;
+  onOpen: (path: string) => void;
+}) {
+  const files = ['CLAUDE.md', '.mcp.json', '.claude/settings.json', '.claude/settings.local.json'];
+  return (
+    <div className="settings-btn-row">
+      {files.map((path) => (
+        <button className="settings-btn" key={path} onClick={() => onOpen(`${projectPath}/${path}`)}>
+          {path}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function CursorHarnessFiles({
+  projectPath,
+  onOpen
+}: {
+  projectPath: string;
+  onOpen: (path: string) => void;
+}) {
+  const files = ['.cursor/mcp.json', '.cursor/rules'];
+  return (
+    <div className="settings-btn-row">
+      {files.map((path) => (
+        <button className="settings-btn" key={path} onClick={() => onOpen(`${projectPath}/${path}`)}>
+          {path}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function OpenCodeHarnessFiles({
+  projectPath,
+  onOpen
+}: {
+  projectPath: string;
+  onOpen: (path: string) => void;
+}) {
+  const files = ['opencode.json', 'opencode.jsonc', 'tui.json', '.opencode'];
+  return (
+    <div className="settings-btn-row">
+      {files.map((path) => (
+        <button className="settings-btn" key={path} onClick={() => onOpen(`${projectPath}/${path}`)}>
+          {path}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function CodexHarnessFiles({
+  projectPath,
+  onOpen
+}: {
+  projectPath: string;
+  onOpen: (path: string) => void;
+}) {
+  const files = ['.codex/config.toml', 'AGENTS.md', 'AGENTS.override.md'];
+  return (
+    <div className="settings-btn-row">
+      {files.map((path) => (
+        <button className="settings-btn" key={path} onClick={() => onOpen(`${projectPath}/${path}`)}>
+          {path}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -801,77 +923,87 @@ function ClaudeProjectLaunchFields({
  * top-level `model`. Anything else round-trips untouched via _unknown.
  */
 function ProjectClaudeSettings({
-  projectPath,
+  projectId,
   onSaved,
-  onOpen
+  compact = false
 }: {
-  projectPath: string;
+  projectId: string;
   onSaved: () => void;
-  onOpen: (path: string) => void;
+  compact?: boolean;
 }) {
   const [shared, setShared] = useState<ClaudeSettingsResult | null>(null);
   const [local, setLocal] = useState<ClaudeSettingsResult | null>(null);
   const [bindingError, setBindingError] = useState<string | null>(null);
   const [activeScope, setActiveScope] = useState<ClaudeSettingsScope>('shared');
+  const saveQueue = useRef(Promise.resolve());
+  const settingsRef = useRef<{ shared: ClaudeSettingsResult | null; local: ClaudeSettingsResult | null }>({
+    shared: null,
+    local: null
+  });
+  const requestRef = useRef(0);
+  const setScopeResult = (scope: ClaudeSettingsScope, result: ClaudeSettingsResult) => {
+    settingsRef.current[scope] = result;
+    if (scope === 'shared') setShared(result);
+    else setLocal(result);
+  };
 
   const load = useCallback(async () => {
+    const request = ++requestRef.current;
+    settingsRef.current = { shared: null, local: null };
+    setShared(null);
+    setLocal(null);
     // Guard against a stale preload (electron-vite HMRs the renderer but
     // not the preload — devs hitting save before a full app restart see
     // window.cc.claudeSettings undefined). Surfacing a clear hint beats
     // a hanging spinner.
     if (!window.cc?.claudeSettings?.read) {
       setBindingError('claudeSettings binding not loaded — quit (⌘Q) and relaunch the app.');
-      // Mark both scopes as "not present" so the cards render and the
-      // user can still see the path / open in Cursor.
-      const placeholder = (scope: 'shared' | 'local'): ClaudeSettingsResult => ({
-        exists: false,
-        path: `${projectPath}/.claude/${scope === 'shared' ? 'settings.json' : 'settings.local.json'}`,
-        settings: {}
-      });
-      setShared(placeholder('shared'));
-      setLocal(placeholder('local'));
       return;
     }
     setBindingError(null);
     try {
       const [s, l] = await Promise.all([
-        window.cc.claudeSettings.read(projectPath, 'shared'),
-        window.cc.claudeSettings.read(projectPath, 'local')
+        window.cc.claudeSettings.read(projectId, 'shared'),
+        window.cc.claudeSettings.read(projectId, 'local')
       ]);
+      if (request !== requestRef.current) return;
+      settingsRef.current = { shared: s, local: l };
       setShared(s);
       setLocal(l);
     } catch (err) {
+      if (request !== requestRef.current) return;
       setBindingError(err instanceof Error ? err.message : 'Failed to load .claude/ settings');
     }
-  }, [projectPath]);
+  }, [projectId]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   const save = async (scope: ClaudeSettingsScope, patch: ClaudeProjectSettings) => {
-    try {
-      const next = await window.cc.claudeSettings.write(projectPath, scope, patch);
-      if (scope === 'shared') setShared(next);
-      else setLocal(next);
-      onSaved();
-    } catch {
-      /* ignore */
-    }
+    saveQueue.current = saveQueue.current.then(async () => {
+      const current = settingsRef.current[scope];
+      if (!current || (current.state !== 'missing' && current.state !== 'valid')) return;
+      try {
+        const next = await window.cc.claudeSettings.write(projectId, scope, patch, current.hash);
+        if (next.state === 'valid') {
+          setScopeResult(scope, next);
+          onSaved();
+        } else if (next.state === 'invalid' || next.state === 'io-error') {
+          setBindingError(next.message);
+        }
+      } catch (err) {
+        setBindingError(err instanceof Error ? err.message : 'Failed to save Claude settings');
+      }
+    });
+    await saveQueue.current;
   };
 
-  return (
-    <Section
-      title="Project .claude/ settings"
-      help={
-        <>
-          Reads <code>.claude/settings.json</code> (shared, committed) and{' '}
-          <code>.claude/settings.local.json</code> (personal, gitignored).
-          Edits preserve unknown keys (env, hooks, outputStyle, …) verbatim.
-        </>
-      }
-    >
+  const content = <>
       {bindingError && <p className="modal-error">{bindingError}</p>}
+      <div className="settings-btn-row">
+        <button className="settings-btn" onClick={() => void load()}>Reload</button>
+      </div>
       <div className="claude-scope-toggle" role="tablist">
         <button
           type="button"
@@ -881,7 +1013,7 @@ function ProjectClaudeSettings({
           onClick={() => setActiveScope('shared')}
         >
           Shared
-          {shared?.exists && <span className="claude-scope-dot" aria-hidden />}
+          {shared?.state === 'valid' && <span className="claude-scope-dot" aria-hidden />}
         </button>
         <button
           type="button"
@@ -891,7 +1023,7 @@ function ProjectClaudeSettings({
           onClick={() => setActiveScope('local')}
         >
           Local
-          {local?.exists && <span className="claude-scope-dot" aria-hidden />}
+          {local?.state === 'valid' && <span className="claude-scope-dot" aria-hidden />}
         </button>
       </div>
       {activeScope === 'shared' ? (
@@ -900,7 +1032,6 @@ function ProjectClaudeSettings({
           subtitle="Committed — for everyone on the project"
           result={shared}
           onSave={(patch) => save('shared', patch)}
-          onOpen={onOpen}
         />
       ) : (
         <ClaudeScopeCard
@@ -908,25 +1039,125 @@ function ProjectClaudeSettings({
           subtitle="Personal — gitignored by claude-code"
           result={local}
           onSave={(patch) => save('local', patch)}
-          onOpen={onOpen}
         />
       )}
+    </>;
+  if (compact) return <div className="claude-harness-settings">{content}</div>;
+  return (
+    <Section title="Project .claude/ settings" help={<>Reads <code>.claude/settings.json</code> (shared, committed) and <code>.claude/settings.local.json</code> (personal, gitignored).</>}>
+      {content}
     </Section>
   );
+}
+
+export function ProjectCodexSettings({
+  projectId,
+  descriptor,
+  onSaved
+}: {
+  projectId: string;
+  descriptor: HarnessAdapterDescriptor;
+  onSaved: () => void;
+}) {
+  const [result, setResult] = useState<CodexSettingsResult | null>(null);
+  const load = useCallback(() => window.cc.codexSettings.read(projectId).then(setResult), [projectId]);
+  useEffect(() => { void load(); }, [load]);
+  const save = async (patch: CodexProjectSettings) => {
+    if (!result || (result.state !== 'missing' && result.state !== 'valid')) return;
+    const next = await window.cc.codexSettings.write(projectId, patch, result.hash);
+    setResult(next);
+    if (next.state === 'valid') onSaved();
+  };
+  if (!result) return <p className="settings-help">Loading Codex settings...</p>;
+  if (result.state === 'invalid' || result.state === 'io-error') return <p className="modal-error">{result.message}</p>;
+  const settings = result.settings;
+  return <>
+    <div className="settings-btn-row"><button className="settings-btn" onClick={() => void load()}>Reload</button></div>
+    <Field label="Model" help="Project `.codex/config.toml` model override. Models come from Codex's account-visible catalog.">
+      <select value={settings.model ?? ''} onChange={(e) => void save({ model: e.target.value || undefined })}>
+        <option value="">Unset</option>
+        {modelOptions(descriptor, settings.model).map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
+      </select>
+    </Field>
+    <Field label="Approval policy">
+      <select value={settings.approvalPolicy ?? ''} onChange={(e) => void save({ approvalPolicy: (e.target.value || undefined) as CodexProjectSettings['approvalPolicy'] })}>
+        <option value="">Unset</option><option value="untrusted">Untrusted</option><option value="on-request">On request</option><option value="never">Never</option>
+      </select>
+    </Field>
+    <Field label="Sandbox mode">
+      <select value={settings.sandboxMode ?? ''} onChange={(e) => void save({ sandboxMode: (e.target.value || undefined) as CodexProjectSettings['sandboxMode'] })}>
+        <option value="">Unset</option><option value="read-only">Read-only</option><option value="workspace-write">Workspace write</option><option value="danger-full-access">Danger full access</option>
+      </select>
+    </Field>
+    {settings._unknown?.length ? <p className="settings-help">Other keys (read-only): {settings._unknown.join(', ')}</p> : null}
+  </>;
+}
+
+export function ProjectOpenCodeSettings({
+  projectId,
+  descriptor,
+  onSaved
+}: {
+  projectId: string;
+  descriptor: HarnessAdapterDescriptor;
+  onSaved: () => void;
+}) {
+  const [result, setResult] = useState<OpenCodeSettingsResult | null>(null);
+  const load = useCallback(() => window.cc.openCodeSettings.read(projectId).then(setResult), [projectId]);
+  useEffect(() => { void load(); }, [load]);
+  const save = async (patch: OpenCodeProjectSettings) => {
+    if (!result || (result.state !== 'missing' && result.state !== 'valid')) return;
+    const next = await window.cc.openCodeSettings.write(projectId, patch, result.hash);
+    setResult(next);
+    if (next.state === 'valid') onSaved();
+  };
+  if (!result) return <p className="settings-help">Loading OpenCode settings...</p>;
+  if (result.state === 'invalid' || result.state === 'io-error') return <p className="modal-error">{result.message}</p>;
+  const settings = result.settings;
+  const modelField = (label: string, key: 'model' | 'smallModel', help: string) => (
+    <Field label={label} help={help}>
+      <select value={settings[key] ?? ''} onChange={(e) => void save({ [key]: e.target.value || undefined })}>
+        <option value="">Unset</option>
+        {modelOptions(descriptor, settings[key]).map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
+      </select>
+    </Field>
+  );
+  return <>
+    <div className="settings-btn-row"><button className="settings-btn" onClick={() => void load()}>Reload</button></div>
+    {modelField('Model', 'model', 'Project `opencode.json` model override.')}
+    {modelField('Small model', 'smallModel', 'Model for lightweight OpenCode tasks.')}
+    <Field label="Default agent" help="Primary agent used when no `--agent` is selected.">
+      <select value={settings.defaultAgent ?? ''} onChange={(e) => void save({ defaultAgent: e.target.value || undefined })}>
+        <option value="">Unset</option>
+        {roleOptions(descriptor, settings.defaultAgent).map((role) => <option key={role.id} value={role.id}>{role.label}</option>)}
+      </select>
+    </Field>
+    {settings._unknown?.length ? <p className="settings-help">Other keys (read-only): {settings._unknown.join(', ')}</p> : null}
+  </>;
+}
+
+export function modelOptions(descriptor: HarnessAdapterDescriptor, selected?: string) {
+  const models = [...(descriptor.targets?.models ?? [])];
+  if (selected && !models.some((model) => model.id === selected)) models.unshift({ id: selected, label: `${selected} (configured)`, scope: [] });
+  return models;
+}
+
+export function roleOptions(descriptor: HarnessAdapterDescriptor, selected?: string) {
+  const roles = [...(descriptor.targets?.roles ?? [])];
+  if (selected && !roles.some((role) => role.id === selected)) roles.unshift({ id: selected, label: `${selected} (configured)`, scope: [] });
+  return roles;
 }
 
 function ClaudeScopeCard({
   title,
   subtitle,
   result,
-  onSave,
-  onOpen
+  onSave
 }: {
   title: string;
   subtitle: string;
   result: ClaudeSettingsResult | null;
   onSave: (patch: ClaudeProjectSettings) => Promise<void>;
-  onOpen: (path: string) => void;
 }) {
   if (!result) {
     return (
@@ -936,6 +1167,19 @@ function ClaudeScopeCard({
           <p className="settings-help">{subtitle}</p>
         </header>
         <p className="settings-help">Loading…</p>
+      </div>
+    );
+  }
+
+  if (result.state === 'invalid' || result.state === 'io-error') {
+    return (
+      <div className="claude-scope-card">
+        <header>
+          <h4>{title}</h4>
+          <p className="settings-help">{subtitle}</p>
+        </header>
+        <p className="modal-error">{result.message}</p>
+        <p className="settings-help">Structured editing is disabled. Reload after fixing raw JSON.</p>
       </div>
     );
   }
@@ -950,7 +1194,6 @@ function ClaudeScopeCard({
       view={s}
       perm={perm}
       onSave={onSave}
-      onOpen={onOpen}
     />
   );
 }
@@ -961,8 +1204,7 @@ function ClaudeScopeCardInner({
   result,
   view: s,
   perm,
-  onSave,
-  onOpen
+  onSave
 }: {
   title: string;
   subtitle: string;
@@ -970,7 +1212,6 @@ function ClaudeScopeCardInner({
   view: ClaudeProjectSettings;
   perm: NonNullable<ClaudeProjectSettings['permissions']>;
   onSave: (patch: ClaudeProjectSettings) => Promise<void>;
-  onOpen: (path: string) => void;
 }) {
   const [modelDraft, setModelDraft] = useState(s.model ?? '');
   // Re-sync the draft when the persisted value changes (e.g. another save lands).
@@ -980,15 +1221,15 @@ function ClaudeScopeCardInner({
   // Show "Other keys" when the user has hand-edited fields we don't surface
   // (env, hooks, outputStyle, etc.). Read-only — they edit raw.
   const hasUnknown =
-    (s._unknown && Object.keys(s._unknown).length > 0) ||
-    (s._unknownPermissions && Object.keys(s._unknownPermissions).length > 0);
+    (s._unknown && s._unknown.length > 0) ||
+    (s._unknownPermissions && s._unknownPermissions.length > 0);
 
   return (
     <div className="claude-scope-card">
       <header>
         <h4>
           {title}
-          {!result.exists && <span className="claude-scope-badge">not present</span>}
+          {result.state === 'missing' && <span className="claude-scope-badge">not present</span>}
         </h4>
         <p className="settings-help">{subtitle}</p>
       </header>
@@ -1082,23 +1323,11 @@ function ClaudeScopeCardInner({
         <div className="settings-field">
           <span className="settings-label">Other keys (read-only)</span>
           <pre className="settings-code-block">
-            {JSON.stringify(
-              {
-                ...(s._unknown ?? {}),
-                ...(s._unknownPermissions ? { permissions: s._unknownPermissions } : {})
-              },
-              null,
-              2
-            )}
+            {JSON.stringify({ keys: s._unknown ?? [], permissionKeys: s._unknownPermissions ?? [] }, null, 2)}
           </pre>
         </div>
       )}
 
-      <div className="settings-btn-row">
-        <button className="settings-btn" onClick={() => onOpen(result.path)}>
-          Edit raw JSON in Cursor
-        </button>
-      </div>
     </div>
   );
 }

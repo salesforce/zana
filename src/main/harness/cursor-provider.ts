@@ -55,6 +55,7 @@ const CURSOR_ADAPTER: TrustedHarnessAdapter = {
       'opening-prompt': cursorEvidence('cursor.facet.opening-prompt', 'CLI accepts opening prompt as spawn argument.')
     }),
     settingsContributionIds: [],
+    configFiles: [{ id: 'native-settings', label: 'Native settings', scopes: [], effect: 'unsupported', rawEdit: false, reason: 'Native project settings file is not verified.' }],
     targets: {
       roles: [],
       providers: [

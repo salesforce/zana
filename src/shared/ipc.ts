@@ -409,7 +409,16 @@ export const IPC = {
   },
   claudeSettings: {
     read: 'claudeSettings:read',
-    write: 'claudeSettings:write'
+    write: 'claudeSettings:write',
+    openFile: 'claudeSettings:openFile'
+  },
+  codexSettings: {
+    read: 'codexSettings:read',
+    write: 'codexSettings:write'
+  },
+  openCodeSettings: {
+    read: 'openCodeSettings:read',
+    write: 'openCodeSettings:write'
   },
   authorizations: {
     apply: 'authorizations:apply'

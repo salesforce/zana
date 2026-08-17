@@ -57,8 +57,18 @@ test('Global and Project harness settings persist provider, model, execution, an
     await window.locator('.settings-section-item').filter({ hasText: 'Project settings' }).click();
     const scope = window.locator('.settings-scope-select');
     if (await scope.count()) await scope.selectOption(projectId);
+    const projectClaude = window.locator('.opener-row').filter({ hasText: 'Claude Code' });
+    await projectClaude.locator('.opener-row-expand').click();
+    await expect(projectClaude.locator('.harness-settings-group')).toHaveCount(1);
+    await expect(projectClaude).toContainText('Zana Settings');
+    await expect(projectClaude).toContainText('Harness Settings');
+    await expect(projectClaude).toContainText('Harness Files');
+    await projectClaude.getByRole('tab', { name: 'Harness Settings' }).click();
+    await expect(projectClaude).toContainText('Shared');
+    await expect(projectClaude).toContainText('Local');
     const projectOpenCode = window.locator('.opener-row').filter({ hasText: 'OpenCode' });
     await projectOpenCode.locator('.opener-row-expand').click();
+    await expect(projectOpenCode).toContainText('Harness Settings');
     const projectSelects = projectOpenCode.locator('.settings-field select');
     await projectSelects.nth(0).selectOption('google');
     await projectSelects.nth(1).selectOption('aisuite/gemini-3.5-flash');
