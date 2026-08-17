@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { isAbsolute, join, relative } from 'node:path';
 
 /**
  * Import-from-Git: parse a repo URL, `git clone` it into the clone root, and
@@ -30,6 +30,7 @@ export interface NormalizedRepo {
 const CONTROL_CLASS = '[\\u0000-\\u001f\\u007f]';
 const CONTROL_CHARS = new RegExp(CONTROL_CLASS);
 const CONTROL_CHARS_G = new RegExp(CONTROL_CLASS, 'g');
+const activeCloneDestinations = new Set<string>();
 
 /**
  * Strip a derived repo name down to a safe single path segment: no separators,
@@ -191,6 +192,11 @@ function isNonEmptyDir(dir: string): boolean {
   }
 }
 
+function isWithin(child: string, parent: string): boolean {
+  const rel = relative(parent, child);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
 /**
  * Normalize a git remote/clone URL for comparison: lowercase host, drop a
  * trailing `.git`, strip credentials and a trailing slash, and fold scp-style
@@ -271,29 +277,13 @@ export async function cloneProject(opts: CloneOptions): Promise<CloneResult> {
     }
   }
 
-  const dest = join(destBase, folderName);
-  if (isNonEmptyDir(dest)) {
-    // A folder is already sitting where we'd clone. If it's the *same* repo
-    // (its origin matches the URL we were asked to clone), there's nothing to
-    // clone — just reuse it and let the caller register the project. Only a
-    // folder whose origin differs (or isn't a git repo at all) is a real
-    // collision worth refusing, so we don't clobber unrelated work.
-    const origin = await readOriginRemote(dest);
-    if (origin && canonicalRemote(origin) === canonicalRemote(repo.cloneUrl)) {
-      return { ok: true, path: dest, repoName: folderName, reused: true, cloneUrl: repo.cloneUrl };
-    }
-    return {
-      ok: false,
-      code: 'DEST_EXISTS',
-      path: dest,
-      repoName: folderName,
-      message: `A folder already exists at ${dest}`
-    };
-  }
-
-  // Create the base dir if needed; the clone itself creates `dest`.
+  // Canonicalize the configured root before examining an existing destination.
+  // This prevents an intermediate symlink from moving host-owned Git operations
+  // somewhere other than the configured clone root.
+  let cloneRoot: string;
   try {
     mkdirSync(destBase, { recursive: true });
+    cloneRoot = realpathSync(destBase);
   } catch (err) {
     return {
       ok: false,
@@ -302,92 +292,140 @@ export async function cloneProject(opts: CloneOptions): Promise<CloneResult> {
     };
   }
 
-  // A single `git clone` attempt. `--` terminates option parsing so a hostile
-  // spec can't inject flags, even though normalizeRepoUrl already rejects
-  // leading-dash inputs. Progress (git writes it to stderr) is streamed to the
-  // caller line-by-line.
-  const runClone = (extraArgs: string[]): Promise<CloneResult> =>
-    new Promise<CloneResult>((resolve) => {
-      const child = execFile(
-        'git',
-        ['clone', '--progress', ...extraArgs, '--', repo.cloneUrl, dest],
-        { timeout: CLONE_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 },
-        (err, _stdout, stderr) => {
-          if (err) {
-            const msg = String(stderr || (err as Error).message)
-              .split('\n')
-              .map((l) => l.trim())
-              .filter(Boolean)
-              .pop();
-            resolve({ ok: false, code: 'CLONE_FAILED', message: msg || 'git clone failed' });
-            return;
-          }
-          resolve({ ok: true, path: dest, repoName: folderName, cloneUrl: repo.cloneUrl });
-        }
-      );
-      if (opts.onProgress && child.stderr) {
-        let buf = '';
-        child.stderr.on('data', (chunk: Buffer) => {
-          buf += chunk.toString('utf8');
-          // git uses \r to redraw the same progress line; split on both.
-          const lines = buf.split(/[\r\n]/);
-          buf = lines.pop() ?? '';
-          for (const line of lines) {
-            const t = line.trim();
-            if (t) opts.onProgress?.(t);
-          }
-        });
+  const dest = join(cloneRoot, folderName);
+  if (!isWithin(dest, cloneRoot)) {
+    return { ok: false, code: 'BAD_INPUT', message: 'Clone destination escapes the clone root' };
+  }
+  // A one-process destination lock stops two agents from racing through the
+  // destination check and one failed clone cleaning up the other's worktree.
+  if (activeCloneDestinations.has(dest)) {
+    return { ok: false, code: 'CLONE_FAILED', message: `A clone is already in progress at ${dest}` };
+  }
+  activeCloneDestinations.add(dest);
+  try {
+    // A pre-existing destination must never redirect a host-owned clone outside
+    // the configured root. Git follows symlinks, so reject the leaf outright.
+    try {
+      if (lstatSync(dest).isSymbolicLink()) {
+        return { ok: false, code: 'BAD_INPUT', message: 'Clone destination cannot be a symbolic link' };
       }
-    });
-
-  // Remove a partial clone (only inside our own destBase) so a retry / fallback
-  // starts from a clean slate.
-  const cleanupPartial = (): void => {
-    if (existsSync(dest) && dest.startsWith(destBase + '/')) {
-      try {
-        rmSync(dest, { recursive: true, force: true });
-      } catch {
-        /* best-effort */
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        return {
+          ok: false,
+          code: 'BAD_INPUT',
+          message: `Couldn't inspect clone destination: ${err instanceof Error ? err.message : String(err)}`
+        };
       }
     }
-  };
+    if (isNonEmptyDir(dest)) {
+      // A folder is already sitting where we'd clone. If it's the *same* repo
+      // (its origin matches the URL we were asked to clone), there's nothing to
+      // clone — just reuse it and let the caller register the project. Only a
+      // folder whose origin differs (or isn't a git repo at all) is a real
+      // collision worth refusing, so we don't clobber unrelated work.
+      const origin = await readOriginRemote(dest);
+      if (origin && canonicalRemote(origin) === canonicalRemote(repo.cloneUrl)) {
+        return { ok: true, path: dest, repoName: folderName, reused: true, cloneUrl: repo.cloneUrl };
+      }
+      return {
+        ok: false,
+        code: 'DEST_EXISTS',
+        path: dest,
+        repoName: folderName,
+        message: `A folder already exists at ${dest}`
+      };
+    }
 
-  let result: CloneResult;
-  if (ref && opts.shallow) {
-    // Shallow can only fetch a *named* ref (branch/tag), not an arbitrary SHA.
-    // Try the fast path; if `--branch <ref>` fails (ref is a SHA, or the shallow
-    // fetch is rejected), fall back to a full clone + detached checkout below.
-    result = await runClone(['--depth', '1', '--branch', ref]);
+    // A single `git clone` attempt. `--` terminates option parsing so a hostile
+    // spec can't inject flags, even though normalizeRepoUrl already rejects
+    // leading-dash inputs. Progress (git writes it to stderr) is streamed to the
+    // caller line-by-line.
+    const runClone = (extraArgs: string[]): Promise<CloneResult> =>
+      new Promise<CloneResult>((resolve) => {
+        const child = execFile(
+          'git',
+          ['clone', '--progress', ...extraArgs, '--', repo.cloneUrl, dest],
+          { timeout: CLONE_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 },
+          (err, _stdout, stderr) => {
+            if (err) {
+              const msg = String(stderr || (err as Error).message)
+                .split('\n')
+                .map((l) => l.trim())
+                .filter(Boolean)
+                .pop();
+              resolve({ ok: false, code: 'CLONE_FAILED', message: msg || 'git clone failed' });
+              return;
+            }
+            resolve({ ok: true, path: dest, repoName: folderName, cloneUrl: repo.cloneUrl });
+          }
+        );
+        if (opts.onProgress && child.stderr) {
+          let buf = '';
+          child.stderr.on('data', (chunk: Buffer) => {
+            buf += chunk.toString('utf8');
+            // git uses \r to redraw the same progress line; split on both.
+            const lines = buf.split(/[\r\n]/);
+            buf = lines.pop() ?? '';
+            for (const line of lines) {
+              const t = line.trim();
+              if (t) opts.onProgress?.(t);
+            }
+          });
+        }
+      });
+
+    // Remove a partial clone (only inside our own clone root) so a retry / fallback
+    // starts from a clean slate.
+    const cleanupPartial = (): void => {
+      if (existsSync(dest) && isWithin(dest, cloneRoot)) {
+        try {
+          rmSync(dest, { recursive: true, force: true });
+        } catch {
+          /* best-effort */
+        }
+      }
+    };
+
+    let result: CloneResult;
+    if (ref && opts.shallow) {
+      // Shallow can only fetch a *named* ref (branch/tag), not an arbitrary SHA.
+      // Try the fast path; if `--branch <ref>` fails (ref is a SHA, or the shallow
+      // fetch is rejected), fall back to a full clone + detached checkout below.
+      result = await runClone(['--depth', '1', '--branch', ref]);
+      if (!result.ok) {
+        cleanupPartial();
+        result = await runClone([]); // full clone, then checkout the ref
+      }
+    } else if (opts.shallow && !ref) {
+      result = await runClone(['--depth', '1']);
+    } else {
+      // Full clone: no ref (default branch) or a ref that needs an arbitrary rev.
+      result = await runClone([]);
+    }
+
     if (!result.ok) {
       cleanupPartial();
-      result = await runClone([]); // full clone, then checkout the ref
+      return result;
     }
-  } else if (opts.shallow && !ref) {
-    result = await runClone(['--depth', '1']);
-  } else {
-    // Full clone: no ref (default branch) or a ref that needs an arbitrary rev.
-    result = await runClone([]);
-  }
 
-  if (!result.ok) {
-    cleanupPartial();
+    // Post-clone checkout for a requested ref. When we took the shallow
+    // `--branch` fast path the tree is already at `ref`, but a detached checkout
+    // is idempotent and also resolves the SHA, so we run it uniformly whenever a
+    // ref was requested. NO `--`: that would treat `ref` as a pathspec (see
+    // safeRef) — `ref` is already validated.
+    if (ref) {
+      const co = await gitCapture(dest, ['-c', 'advice.detachedHead=false', 'checkout', '--detach', ref]);
+      if (!co.ok) {
+        cleanupPartial();
+        return { ok: false, code: 'CLONE_FAILED', message: co.err || `could not check out ${ref}` };
+      }
+      const head = await gitCapture(dest, ['rev-parse', 'HEAD']);
+      if (head.ok && head.out) result.resolvedSha = head.out;
+    }
+
     return result;
+  } finally {
+    activeCloneDestinations.delete(dest);
   }
-
-  // Post-clone checkout for a requested ref. When we took the shallow
-  // `--branch` fast path the tree is already at `ref`, but a detached checkout
-  // is idempotent and also resolves the SHA, so we run it uniformly whenever a
-  // ref was requested. NO `--`: that would treat `ref` as a pathspec (see
-  // safeRef) — `ref` is already validated.
-  if (ref) {
-    const co = await gitCapture(dest, ['-c', 'advice.detachedHead=false', 'checkout', '--detach', ref]);
-    if (!co.ok) {
-      cleanupPartial();
-      return { ok: false, code: 'CLONE_FAILED', message: co.err || `could not check out ${ref}` };
-    }
-    const head = await gitCapture(dest, ['rev-parse', 'HEAD']);
-    if (head.ok && head.out) result.resolvedSha = head.out;
-  }
-
-  return result;
 }

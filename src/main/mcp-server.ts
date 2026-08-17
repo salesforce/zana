@@ -35,7 +35,8 @@ import type {
   PersonaSummary,
   ProjectSummary,
   TeamSummary,
-  Result
+  Result,
+  CloneProjectResult
 } from '../shared/types.js';
 import { resolveDoc } from './fs.js';
 import { registerInboxPushTool } from './inbox-mcp-tool.js';
@@ -47,6 +48,7 @@ import { registerSuggestActionTool } from './suggest-action-mcp-tool.js';
 import type { ISuggestionsStore } from './suggestions-store.js';
 import { registerScheduleReportTool } from './schedule-report-mcp-tool.js';
 import { registerRegisterProjectTool } from './register-project-mcp-tool.js';
+import { registerCloneProjectTool } from './clone-project-mcp-tool.js';
 import { registerCloseSessionTools } from './close-session-mcp-tool.js';
 import { registerInstallLocalExtensionTool } from './install-local-extension-mcp-tool.js';
 import { registerCreateLocalExtensionTool } from './create-local-extension-mcp-tool.js';
@@ -244,6 +246,12 @@ export interface McpServerOptions {
    * process also handles the side-effects (mcp config, live sidebar refresh).
    */
   registerProject?: (absPath: string) => { project: Project; alreadyExisted: boolean };
+  /**
+   * Clone and register a repository in the configured clone root. The main
+   * process owns destination selection so a temporary session cwd never leaks
+   * into the persisted project path.
+   */
+  cloneProject?: (input: { url: string; name?: string }) => Promise<CloneProjectResult>;
   /**
    * Scaffold + pack + install a brand-new local (in-app-authored) extension on
    * the agent's behalf (the `create_local_extension` tool). Mints a fresh id,
@@ -453,6 +461,7 @@ function buildProjectMcpServer(opts: {
   resolveScheduledLevel?: McpServerOptions['resolveScheduledLevel'];
   resolveOrigin?: McpServerOptions['resolveOrigin'];
   registerProject?: McpServerOptions['registerProject'];
+  cloneProject?: McpServerOptions['cloneProject'];
   createLocalExtension?: McpServerOptions['createLocalExtension'];
   agentRegistry?: McpServerOptions['agentRegistry'];
   getSessionCwd?: McpServerOptions['getSessionCwd'];
@@ -643,6 +652,12 @@ function buildProjectMcpServer(opts: {
       projectRoot: opts.projectRoot,
       registerProject: opts.registerProject
     });
+  }
+  const cloneRouteAuthenticated = !!opts.sessionId
+    && !!opts.sessionCredential
+    && verifySessionControlCredential(opts.sessionId, opts.sessionCredential);
+  if (cloneRouteAuthenticated && opts.cloneProject) {
+    registerCloneProjectTool(mcp, { cloneProject: opts.cloneProject });
   }
   // create_local_extension: lets an agent scaffold a brand-new local extension
   // project (mints a fresh id — no identity ambiguity, so identity-free like
@@ -1558,6 +1573,7 @@ async function handleRequest(
     resolveScheduledLevel: opts.resolveScheduledLevel,
     resolveOrigin: opts.resolveOrigin,
     registerProject: opts.registerProject,
+    cloneProject: opts.cloneProject,
     createLocalExtension: opts.createLocalExtension,
     agentRegistry: opts.agentRegistry,
     getSessionCwd: opts.getSessionCwd,

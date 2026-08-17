@@ -2922,7 +2922,7 @@ export type Result<T> =
  * UI can offer to open it instead.
  */
 export type CloneProjectResult =
-  | { ok: true; project: Project }
+  | { ok: true; project: Project; reused?: boolean }
   | {
       ok: false;
       code: 'DEST_EXISTS' | 'CLONE_FAILED' | 'BAD_INPUT' | 'ADD_FAILED';

@@ -4793,6 +4793,44 @@ function wireBridgeListeners() {
   });
 }
 
+async function cloneAndRegisterProject(
+  input: { url: string; name?: string },
+  onProgress?: (line: string) => void
+): Promise<CloneProjectResult> {
+  const configured = store.getConfig().cloneRoot?.trim();
+  const destBase = configured && isAbsolute(configured) ? configured : store.ensureScratchRoot();
+  try {
+    const res = await cloneProject({ url: input.url, name: input.name, destBase, onProgress });
+    if (!res.ok) {
+      return {
+        ok: false,
+        code: res.code ?? 'CLONE_FAILED',
+        message: res.message ?? 'Clone failed',
+        path: res.path
+      };
+    }
+    try {
+      const project = store.addProject(res.path!);
+      ensureMcpConfigForProject(project.id).catch((err) =>
+        logMainError(`ensureMcpConfigForProject(${project.id})`, err)
+      );
+      templates.rebindProjects();
+      personas.rebindProjects();
+      teams.rebindProjects();
+      libraryStore.rebindProjects?.();
+      scheduler.rebindWatchers();
+      goals.rebindWatchers();
+      followups.rebindWatchers();
+      safeSend(IPC.projects.onChanged, store.listProjects());
+      return { ok: true, project, reused: res.reused };
+    } catch (err) {
+      return { ok: false, code: 'ADD_FAILED', message: String(err), path: res.path };
+    }
+  } catch (err) {
+    return { ok: false, code: 'CLONE_FAILED', message: String(err) };
+  }
+}
+
 function registerIpc() {
   let harnessVerificationCache: { expiresAt: number; result: Promise<Awaited<ReturnType<typeof verifyHarnesses>>> } | undefined;
   const verifiedHarnesses = () => {
@@ -4858,34 +4896,7 @@ function registerIpc() {
     IPC.projects.clone,
     async (_e, input: { url: string; name?: string }): Promise<CloneProjectResult> => {
       try {
-        const res = await cloneProject({
-          url: input.url,
-          name: input.name,
-          destBase: cloneRoot(),
-          onProgress: (line) => safeSend(IPC.projects.cloneProgress, line)
-        });
-        if (!res.ok) {
-          return {
-            ok: false,
-            code: res.code ?? 'CLONE_FAILED',
-            message: res.message ?? 'Clone failed',
-            path: res.path
-          };
-        }
-        // Clone succeeded → register the working tree as a project through the
-        // normal path so .mcp.json + tag-picking + store rebinds all happen.
-        const project = store.addProject(res.path!);
-        ensureMcpConfigForProject(project.id).catch((err) =>
-          logMainError(`ensureMcpConfigForProject(${project.id})`, err)
-        );
-        templates.rebindProjects();
-        personas.rebindProjects();
-        teams.rebindProjects();
-        libraryStore.rebindProjects?.();
-        scheduler.rebindWatchers();
-        goals.rebindWatchers();
-        followups.rebindWatchers();
-        return { ok: true, project };
+        return await cloneAndRegisterProject(input, (line) => safeSend(IPC.projects.cloneProgress, line));
       } catch (err) {
         return { ok: false, code: 'CLONE_FAILED', message: String(err) };
       }
@@ -8910,6 +8921,7 @@ async function bootstrapNormal() {
       safeSend(IPC.projects.onChanged, store.listProjects());
       return { project, alreadyExisted: existed };
     },
+    cloneProject: cloneAndRegisterProject,
     // create_local_extension tool: scaffold a brand-new local extension on the
     // agent's behalf. Identity-free like register_project above — reuses the
     // exact same flow the "Create extension" dialog runs (createLocalExtension,

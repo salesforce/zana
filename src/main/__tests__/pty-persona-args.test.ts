@@ -285,10 +285,10 @@ describe('PtyManager.create — persona layer integration', () => {
     expect(merged).toContain('mcp__zcc-inbox__library_list');
     expect(merged).toContain('mcp__zcc-inbox__goal_create');
     expect(merged).toContain('mcp__zcc-inbox__goal_list');
-    // register_project must be pre-approved too — without it, a Quick Agent
-    // clone/scaffold flow stalls on a permission prompt in an unattended tab
-    // and the new project silently never lands in the sidebar.
+    // register_project must be pre-approved too — otherwise a Quick Agent
+    // scaffold flow stalls and never lands in the sidebar.
     expect(merged).toContain('mcp__zcc-inbox__register_project');
+    expect(merged).not.toContain('mcp__zcc-inbox__clone_project');
     // library_remove (a delete) is deliberately NOT pre-approved.
     expect(merged).not.toContain('mcp__zcc-inbox__library_remove');
     expect(merged).toContain('Read');

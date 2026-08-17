@@ -144,11 +144,13 @@ const PROJECT_AWARENESS_GUIDANCE = [
   'and local path. When the user refers to another project by name ("check',
   'project B", "look at zana"), resolve it with `list_projects` and use its',
   'path directly instead of asking the user where it lives. If your task is to',
-  'clone or scaffold a new project (rather than work inside this one), you MUST',
-  'call `register_project` with the resulting directory once it exists — that is',
-  'the ONLY way it appears in the user’s sidebar; leaving it unregistered means',
-  'the work is effectively invisible to them. Do this immediately after the',
-  'clone/scaffold succeeds, not at the end of a longer task. Local projects you',
+   'clone a new Git project (rather than work inside this one), use `clone_project`',
+   'instead of raw `git clone`: it places the repo under the configured clone root',
+   'using its repository name and registers it immediately. For a scaffolded',
+   'project, call `register_project` with the resulting directory once it exists —',
+   'that is the ONLY way it appears in the user’s sidebar; leaving it unregistered',
+   'means the work is effectively invisible to them. Do this immediately after the',
+   'clone/scaffold succeeds, not at the end of a longer task. Local projects you',
   'can read directly with your file/shell tools; remote (SSH) projects are',
   'reached through the app, not plain shell, so treat their path as a handle.',
   '',
@@ -265,10 +267,8 @@ export function inboxAllowedTools(scheduled: boolean): string[] {
     'mcp__zcc-inbox__library_list',
     'mcp__zcc-inbox__goal_create',
     'mcp__zcc-inbox__goal_list',
-    // register_project is the guidance's documented way to land a cloned/
-    // created dir in the sidebar (PROJECT_AWARENESS_GUIDANCE below). Without
-    // pre-approval it stalls on a permission prompt in an unattended Quick
-    // Agent tab, and the clone is silently orphaned outside the project list.
+    // register_project is project-confined by main and is the documented way
+    // to land a completed scaffold in the sidebar without a prompt.
     'mcp__zcc-inbox__register_project'
   ];
   const core = [

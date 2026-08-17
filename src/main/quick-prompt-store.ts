@@ -70,9 +70,8 @@ const userDir = () => join(app.getPath('home'), '.zcc', 'quick-prompts');
  * with the same id in their own quick-prompts dir.
  *
  * The Quick Agent runs in the `~/zcc-workspace` scratch project, so prompts are
- * phrased for an agent that has a shell + the zcc-center MCP, but is honest about
- * what it can and can't do automatically (e.g. it clones a repo and tells the
- * user how to register it; it does not silently mutate the project list).
+ * phrased for an agent that has a shell + the zcc-center MCP. The clone prompt
+ * delegates placement and project registration to the host-owned clone tool.
  */
 const BUILTIN: QuickPrompt[] = [
   {
@@ -82,12 +81,11 @@ const BUILTIN: QuickPrompt[] = [
     profile: 'claude',
     prompt: [
       'I want to bring a GitHub repository into my workspace.',
-      'Ask me for the repo URL if I have not given it, then `git clone` it into the',
-      'current working directory. Once the clone succeeds, register it as a project',
-      'by calling the `register_project` MCP tool (mcp__zcc-inbox__register_project)',
-      'with the cloned folder name as `path` — this adds it to my project list and',
-      'it will appear in the sidebar immediately. Then confirm the project name and',
-      'path back to me. Do not modify anything outside the clone.'
+       'Ask me for the repo URL if I have not given it, then call the `clone_project`',
+       'MCP tool (mcp__zcc-inbox__clone_project) with that URL. It clones into the',
+       'configured clone root using the repository name and registers the result in',
+       'my project list. Then confirm the project name and path back to me. Do not',
+       'modify anything outside the clone.'
     ].join(' ')
   },
   {
