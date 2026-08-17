@@ -1,13 +1,29 @@
 import { test, expect } from './fixtures/app';
+import type { Locator, Page } from '@playwright/test';
 import { makeFakeOpenCodeBinary, makeRefreshableFakeOpenCodeBinary } from './sdk/harness';
 import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+
+async function selectTargetProject(
+  window: Page,
+  modal: Locator,
+  projectName: string
+) {
+  const trigger = modal.getByRole('button', { name: 'Target project' });
+  await trigger.click();
+  await window
+    .getByRole('listbox', { name: 'Target project' })
+    .getByRole('option', { name: projectName, exact: true })
+    .click();
+  await expect(trigger).toContainText(projectName);
+}
 
 test('OpenCode agent picker loads effective visible primary agents through real IPC', async ({ app }) => {
   const { window } = app;
   const openCode = makeFakeOpenCodeBinary();
   const projectDir = mkdtempSync(join(tmpdir(), 'zcc-opencode-picker-'));
+  const projectName = basename(projectDir);
   let projectId: string | null = null;
 
   try {
@@ -33,7 +49,7 @@ test('OpenCode agent picker loads effective visible primary agents through real 
     else await window.locator('[data-testid="agents-new-empty"]').click();
 
     const modal = window.locator('[data-testid="launch-modal"]');
-    await modal.getByLabel('Target project').selectOption(projectId);
+    await selectTargetProject(window, modal, projectName);
     const harness = modal.getByLabel('Launch harness').locator('[data-testid="launch-profile-opencode"]');
     await expect(harness).toBeEnabled();
     await harness.click();
@@ -62,6 +78,7 @@ test('OpenCode picker holds cached agents until explicit Refresh', async ({ app 
   const { window } = app;
   const openCode = makeRefreshableFakeOpenCodeBinary();
   const projectDir = mkdtempSync(join(tmpdir(), 'zcc-opencode-refresh-'));
+  const projectName = basename(projectDir);
   let projectId: string | null = null;
 
   try {
@@ -84,7 +101,7 @@ test('OpenCode picker holds cached agents until explicit Refresh', async ({ app 
     if (await newButton.count()) await newButton.click();
     else await window.locator('[data-testid="agents-new-empty"]').click();
     const modal = window.locator('[data-testid="launch-modal"]');
-    await modal.getByLabel('Target project').selectOption(projectId);
+    await selectTargetProject(window, modal, projectName);
     await modal.getByLabel('Launch harness').locator('[data-testid="launch-profile-opencode"]').click();
     await modal.getByRole('button', { name: 'Customize launch' }).click();
 
@@ -143,6 +160,7 @@ test('real OpenCode CLI agents become selectable through Electron UI', async ({ 
   test.skip(process.env.ZCC_LIVE_OPENCODE !== '1', 'requires installed OpenCode CLI');
   const { window } = app;
   const projectDir = mkdtempSync(join(tmpdir(), 'zcc-opencode-live-picker-'));
+  const projectName = basename(projectDir);
   copyFileSync(join(process.cwd(), 'opencode.json'), join(projectDir, 'opencode.json'));
   let projectId: string | null = null;
 
@@ -170,7 +188,7 @@ test('real OpenCode CLI agents become selectable through Electron UI', async ({ 
     else await window.locator('[data-testid="agents-new-empty"]').click();
 
     const modal = window.locator('[data-testid="launch-modal"]');
-    await modal.getByLabel('Target project').selectOption(projectId);
+    await selectTargetProject(window, modal, projectName);
     const harness = modal.getByLabel('Launch harness').locator('[data-testid="launch-profile-opencode"]');
     await expect(harness).toBeEnabled();
     await harness.click();
@@ -195,6 +213,7 @@ test.describe('real OpenCode home integration', () => {
     test.skip(process.env.ZCC_LIVE_OPENCODE !== '1', 'requires installed OpenCode CLI');
     const { window } = app;
     const projectPath = process.cwd();
+    const projectName = basename(projectPath);
     let projectId: string | null = null;
 
     try {
@@ -221,7 +240,7 @@ test.describe('real OpenCode home integration', () => {
       else await window.locator('[data-testid="agents-new-empty"]').click();
 
       const modal = window.locator('[data-testid="launch-modal"]');
-      await modal.getByLabel('Target project').selectOption(projectId);
+      await selectTargetProject(window, modal, projectName);
       const harness = modal.getByLabel('Launch harness').locator('[data-testid="launch-profile-opencode"]');
       await expect(harness).toBeEnabled();
       await harness.click();
