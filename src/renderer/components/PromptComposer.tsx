@@ -76,7 +76,7 @@ interface Ranked {
 function useMention(
   value: string,
   onChange: (v: string) => void,
-  textareaRef: React.RefObject<HTMLTextAreaElement>,
+  textareaRef: React.RefObject<HTMLTextAreaElement | null>,
   projectPath: string | undefined
 ) {
   const [mention, setMention] = useState<MentionMatch | null>(null);

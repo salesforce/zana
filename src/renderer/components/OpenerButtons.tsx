@@ -25,7 +25,7 @@ const EDITOR_TARGETS = new Set<OpenTarget>(['cursor', 'code', 'intellij']);
 const TARGETS: Array<{
   key: OpenTarget;
   label: string;
-  render: (size: number) => JSX.Element;
+  render: (size: number) => React.ReactElement;
 }> = [
   { key: 'cursor', label: 'Open in Cursor', render: (s) => <CursorIcon size={s} /> },
   { key: 'code', label: 'Open in VS Code', render: (s) => <Code2 size={s} /> },

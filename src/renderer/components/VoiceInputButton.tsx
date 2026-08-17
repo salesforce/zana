@@ -7,7 +7,7 @@ interface Props {
   value: string;
   onChange: (next: string) => void;
   className?: string;
-  textareaRef?: React.RefObject<AutoGrowTextareaHandle>;
+  textareaRef?: React.RefObject<AutoGrowTextareaHandle | null>;
   /** Render just the mic glyph (no text label) — for tight composer toolbars. */
   iconOnly?: boolean;
 }
