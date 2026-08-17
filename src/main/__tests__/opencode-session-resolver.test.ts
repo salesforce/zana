@@ -5,26 +5,50 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { OpenCodeSessionResolver } from '../opencode-session-resolver.js';
 
 function fakeRunList(rows: Array<{ id: string; created: number; directory: string }>) {
   return async (_cwd: string, _limit: number) => rows;
 }
 
+const identityRealpath = async (path: string) => path;
+
 describe('OpenCodeSessionResolver', () => {
   it('matches a session row by directory and returns its minted id', async () => {
     const cwd = '/Users/me/project-a';
     const resolver = new OpenCodeSessionResolver({
-      runList: fakeRunList([{ id: 'ses_abc123', created: 1_000_000, directory: cwd }])
+      runList: fakeRunList([{ id: 'ses_abc123', created: 1_000_000, directory: cwd }]),
+      realpath: identityRealpath
     });
 
     const match = await resolver.resolve('sess-1', cwd, 999_000);
     expect(match).toEqual({ sessionId: 'ses_abc123' });
   });
 
+  it('matches a session row whose directory is the realpath of the spawned cwd', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'zcc-opencode-resolver-'));
+    const alias = `${root}-alias`;
+    try {
+      await symlink(root, alias, 'dir');
+      const canonical = await realpath(root);
+      const resolver = new OpenCodeSessionResolver({
+        runList: fakeRunList([{ id: 'ses_abc123', created: 1_000_000, directory: canonical }])
+      });
+
+      await expect(resolver.resolve('sess-1', alias, 999_000)).resolves.toEqual({ sessionId: 'ses_abc123' });
+    } finally {
+      await rm(alias, { force: true });
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('does not match a row in a different directory', async () => {
     const resolver = new OpenCodeSessionResolver({
-      runList: fakeRunList([{ id: 'ses_abc123', created: 1_000_000, directory: '/Users/me/project-a' }])
+      runList: fakeRunList([{ id: 'ses_abc123', created: 1_000_000, directory: '/Users/me/project-a' }]),
+      realpath: identityRealpath
     });
 
     const match = await resolver.resolve('sess-1', '/Users/me/OTHER', 999_000);
@@ -35,7 +59,8 @@ describe('OpenCodeSessionResolver', () => {
     const cwd = '/Users/me/project-a';
     const resolver = new OpenCodeSessionResolver({
       // Created well before spawn (beyond the 5s clock-skew slack).
-      runList: fakeRunList([{ id: 'ses_old', created: 900_000, directory: cwd }])
+      runList: fakeRunList([{ id: 'ses_old', created: 900_000, directory: cwd }]),
+      realpath: identityRealpath
     });
 
     const match = await resolver.resolve('sess-1', cwd, 1_000_000);
@@ -48,7 +73,8 @@ describe('OpenCodeSessionResolver', () => {
       runList: fakeRunList([
         { id: 'ses_later', created: 1_010_000, directory: cwd },
         { id: 'ses_earliest', created: 1_000_000, directory: cwd }
-      ])
+      ]),
+      realpath: identityRealpath
     });
 
     const match = await resolver.resolve('sess-1', cwd, 999_000);
@@ -61,7 +87,8 @@ describe('OpenCodeSessionResolver', () => {
       runList: fakeRunList([
         { id: 'ses_second', created: 1_001_000, directory: cwd },
         { id: 'ses_first', created: 1_000_000, directory: cwd }
-      ])
+      ]),
+      realpath: identityRealpath
     });
 
     expect(await resolver.resolve('pty-first', cwd, 999_000)).toEqual({ sessionId: 'ses_first' });
@@ -77,7 +104,8 @@ describe('OpenCodeSessionResolver', () => {
       runList: async () => {
         calls++;
         return [{ id: 'ses_abc123', created: 1_000_000, directory: cwd }];
-      }
+      },
+      realpath: identityRealpath
     });
 
     await resolver.resolve('sess-1', cwd, 999_000);
@@ -97,11 +125,13 @@ describe('OpenCodeSessionResolver', () => {
       runList: () => new Promise((resolve) => {
         calls++;
         release = resolve;
-      })
+      }),
+      realpath: identityRealpath
     });
 
     const first = resolver.resolve('sess-1', cwd, 999_000);
     const second = resolver.resolve('sess-1', cwd, 999_000);
+    await Promise.resolve();
     expect(calls).toBe(1);
     release([{ id: 'ses_abc123', created: 1_000_000, directory: cwd }]);
     await expect(first).resolves.toEqual({ sessionId: 'ses_abc123' });
@@ -112,7 +142,8 @@ describe('OpenCodeSessionResolver', () => {
     const cwd = '/Users/me/project-a';
     let rows: Array<{ id: string; created: number; directory: string }> = [];
     const resolver = new OpenCodeSessionResolver({
-      runList: async () => rows
+      runList: async () => rows,
+      realpath: identityRealpath
     });
 
     expect(await resolver.resolve('sess-1', cwd, 999_000)).toBeNull();
@@ -125,7 +156,8 @@ describe('OpenCodeSessionResolver', () => {
 
   it('never throws when the subprocess call fails', async () => {
     const resolver = new OpenCodeSessionResolver({
-      runList: async () => null
+      runList: async () => null,
+      realpath: identityRealpath
     });
     expect(await resolver.resolve('sess-1', '/x', 0)).toBeNull();
   });
