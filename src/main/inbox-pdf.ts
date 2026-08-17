@@ -68,7 +68,7 @@ export async function exportInboxPdf(
 
     const pdf = await offscreen.webContents.printToPDF({
       printBackground: true,
-      margins: { marginType: 'custom', top: 0.5, bottom: 0.5, left: 0.5, right: 0.5 },
+      margins: { top: 0.5, bottom: 0.5, left: 0.5, right: 0.5 },
       pageSize: 'A4'
     });
 
