@@ -224,10 +224,9 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          # Keep the published feed aligned with electron-builder.yml. This
-          # cross-repository release needs a token with contents:write there.
-          repository: grebmann1/zcc-releases
-          token: ${{ secrets.ZCC_RELEASES_TOKEN }}
+          # Keep the published feed aligned with electron-builder.yml
+          # (owner: salesforce, repo: zana). Publish into this repository
+          # with the workflow GITHUB_TOKEN — no cross-repo release token.
           # dmg + zip + blockmap + latest-mac.yml must all be attached:
           # electron-updater reads latest-mac.yml to detect a new version and
           # downloads the zip (the dmg is for first-install only).
