@@ -11,6 +11,8 @@ describe('PopoverPicklist', () => {
     expect(source).toContain("event.key === 'ArrowDown'");
     expect(source).toContain("event.key === 'ArrowUp'");
     expect(source).toContain("event.key === 'Enter'");
+    expect(source).toContain('const spaceBelow = window.innerHeight - rect.bottom - 8');
+    expect(source).toContain('const openAbove = spaceBelow < 160 && spaceAbove > spaceBelow');
     expect(source).not.toContain('<select');
   });
 });

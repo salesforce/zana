@@ -70,7 +70,7 @@ export function PopoverPicklist<T extends string>({
 }: PopoverPicklistProps<T>) {
   const [open, setOpen] = useExclusivePopover();
   const [query, setQuery] = useState('');
-  const [position, setPosition] = useState<{ left: number; top: number; width: number } | null>(null);
+  const [position, setPosition] = useState<{ left: number; top: number; width: number; maxHeight?: number } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -132,7 +132,15 @@ export function PopoverPicklist<T extends string>({
     const rect = anchorToParent
       ? triggerRef.current.parentElement?.getBoundingClientRect() ?? triggerRef.current.getBoundingClientRect()
       : triggerRef.current.getBoundingClientRect();
-    setPosition({ left: rect.left, top: rect.bottom + 4, width: Math.max(rect.width, minWidth) });
+    const spaceBelow = window.innerHeight - rect.bottom - 8;
+    const spaceAbove = rect.top - 8;
+    const openAbove = spaceBelow < 160 && spaceAbove > spaceBelow;
+    setPosition({
+      left: rect.left,
+      top: openAbove ? 8 : rect.bottom + 4,
+      width: Math.max(rect.width, minWidth),
+      maxHeight: Math.max(120, openAbove ? spaceAbove : spaceBelow)
+    });
   }, [open, anchorToParent, minWidth]);
 
   useEffect(() => {
@@ -211,7 +219,7 @@ export function PopoverPicklist<T extends string>({
           aria-label={ariaLabel}
           aria-activedescendant={activeOption ? optionId(activeOption) : undefined}
           onKeyDown={handleMenuKeyDown}
-          style={position ? { left: position.left, top: position.top, width: position.width } : { visibility: 'hidden' }}
+          style={position ? { left: position.left, top: position.top, width: position.width, maxHeight: position.maxHeight } : { visibility: 'hidden' }}
         >
           {searchable && (
             <div className="launch-model-picker-search">
