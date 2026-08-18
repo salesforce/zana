@@ -160,7 +160,7 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
       return (
         (t.includes('permission required') &&
           (t.includes('reject') || t.includes('allow once') || t.includes('allow always'))) ||
-        (t.includes('enter submit') && t.includes('esc dismiss'))
+        ((t.includes('enter submit') || t.includes('enter confirm')) && t.includes('esc dismiss'))
       );
     }
   },
@@ -592,12 +592,11 @@ export class OpenCodeProvider extends BaseLaunchProvider {
    * and read as "done" while actually awaiting the user. The permission text above
    * never appears on this surface, so it needs its own signal. The distinctive,
    * blocking-only tell is the key-hint FOOTER the select/question component renders:
-   * `↑↓ select  enter submit  esc dismiss`. In the binary that bar is composed by
-   * span concatenation — `r("enter ")` + `"submit"` and `r("esc ")` + `"dismiss"`
-   * — so the two phrases `"enter submit"` and `"esc dismiss"` appear contiguously in
-   * the rendered screen text. We require BOTH together: a submit/dismiss key hint
-   * pair is emitted only by an open interactive prompt, never by streamed prose, so
-   * it can't false-positive on ordinary output.
+   * `↑↓ select  enter submit  esc dismiss`. The active question UI can instead
+   * render `enter confirm` (as shown in the terminal's question card), so we
+   * accept either action verb while still requiring the `esc dismiss` companion.
+   * The two phrases appear contiguously in the rendered screen text. Requiring the
+   * action hint AND dismissal hint prevents ordinary streamed prose from matching.
    *
    * LOCALE LIMITATION (v1): the permission `title` AND the footer key-hint labels
    * (`submit`/`dismiss`) are all localized in the binary
@@ -617,8 +616,9 @@ export class OpenCodeProvider extends BaseLaunchProvider {
       return true;
     }
     // Surface 2 — interactive question (ask/QuestionV2): the select-footer key-hint
-    // pair, emitted only while a prompt is open (both phrases required).
-    return t.includes('enter submit') && t.includes('esc dismiss');
+    // pair, emitted only while a prompt is open. OpenCode uses either "submit" or
+    // "confirm" for the Enter action depending on the question component.
+    return (t.includes('enter submit') || t.includes('enter confirm')) && t.includes('esc dismiss');
   }
 
   // guidanceArgs / hookArgs / personaArgs / projectSettingsArgs / authInjection /
