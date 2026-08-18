@@ -132,15 +132,13 @@ node packages/cli/dist/bin/zcc.js run my-project "review the current diff" --per
 
 See the complete [`zcc` CLI reference](docs/cli.md).
 
-## Stack
+## Fork It. Make It Yours.
 
-Electron 33, electron-vite, React 18, Zustand, xterm.js, node-pty, SQLite, cron scheduling, an extension SDK, and optional tmux-backed session persistence.
-
-## Data and Security
-
-Zana stores its user-managed state under `~/.zcc/`, including the project registry, configuration, personas, teams, schedules, Inbox entries, Library documents, and extensions.
-
-The desktop app is the authorization boundary: project paths, remote operations, extension capabilities, and live CLI actions are validated in the main process. Extensions are deny-by-default and receive only consented, scoped capabilities.
+Zana is MIT-licensed end to end. Fork the repository, tailor the agent harnesses,
+personas, extensions, tools, and interface to your engineering practice, then
+build and distribute your own version. Zana remains desktop-first: your team can
+operate its own build with the coding-agent CLI subscriptions and local or SSH
+environments it already uses.
 
 ## Further Reading
 
