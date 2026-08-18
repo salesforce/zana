@@ -19,7 +19,7 @@ function ThemeToggle() {
   const [theme, setTheme] = useState<'light' | 'dark' | null>(null);
 
   useEffect(() => {
-    const current = (document.documentElement.getAttribute('data-theme') as 'light' | 'dark') || 'dark';
+    const current = (document.documentElement.getAttribute('data-theme') as 'light' | 'dark') || 'light';
     setTheme(current);
   }, []);
 

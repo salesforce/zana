@@ -43,12 +43,12 @@ export function DownloadClient() {
   }, []);
 
   return (
-    <section style={{ paddingTop: 56 }}>
+    <section className="clean-download-page">
       <div className="wrap">
-        <div className="section-head">
-          <span className="eyebrow">Download</span>
+        <div className="clean-page-hero clean-download-hero">
+          <span className="clean-page-kicker">Download</span>
           <h1>Get Zana Command Center</h1>
-          <p className="section-lede">
+          <p>
             Latest version <strong>v{version}</strong>
             {date ? ` · released ${new Date(date).toLocaleDateString()}` : ''}. macOS builds auto-update in-app
             after the first install.
@@ -58,7 +58,7 @@ export function DownloadClient() {
         <div className="dl-grid" data-reveal-stagger>
           {PLATFORMS.map((p) => (
             <div
-              className={`card dl-card ${p.primary ? 'featured' : ''} ${p.wip ? 'wip' : ''}`}
+              className={`clean-platform-card ${p.primary ? 'clean-platform-card-primary' : ''} ${p.wip ? 'wip' : ''}`}
               key={p.name}
             >
               {p.wip && <span className="wip-badge">Coming soon</span>}
@@ -67,12 +67,12 @@ export function DownloadClient() {
               <p className="ver">{p.note}</p>
               <div style={{ marginTop: 18 }}>
                 {p.wip ? (
-                  <button className="btn" disabled>
-                    🚧 In progress
+                  <button className="clean-button" disabled>
+                    In progress
                   </button>
                 ) : (
-                  <a className={`btn ${p.primary ? 'btn-primary' : ''}`} href={`${site.releasesRepo}/releases/latest`}>
-                    ⬇ Download for {p.name}
+                  <a className={`clean-button ${p.primary ? 'clean-button-dark' : ''}`} href={`${site.releasesRepo}/releases/latest`}>
+                    Download for {p.name} <span aria-hidden="true">→</span>
                   </a>
                 )}
               </div>
@@ -80,16 +80,21 @@ export function DownloadClient() {
           ))}
         </div>
 
-        <div className="card build-source-card" style={{ marginTop: 28 }}>
-          <h3>Build from source</h3>
-          <p>Clone the repository, install dependencies, and run the development app:</p>
-          <pre style={{ background: 'var(--bg-soft)', padding: 16, borderRadius: 10, overflowX: 'auto' }}>
-            <code>git clone {site.repo}.git{'\n'}cd zana{'\n'}npm install{'\n'}npm run dev</code>
-          </pre>
-          <p style={{ marginTop: 8 }}>
-            Prerequisites: Node 20+ and <code>git</code>. See the{' '}
-            <a href="/docs/">docs</a> for source-build guidance.
-          </p>
+        <div className="clean-source-card">
+          <div>
+            <span className="clean-page-kicker">From source</span>
+            <h2>Build Zana locally.</h2>
+            <p>Clone the repository, install dependencies, and run the development app.</p>
+          </div>
+          <div>
+            <pre className="clean-command-block">
+              <code>git clone {site.repo}.git{'\n'}cd zana{'\n'}npm install{'\n'}npm run dev</code>
+            </pre>
+            <p className="clean-source-note">
+              Prerequisites: Node 20+ and <code>git</code>. See the{' '}
+              <a href="/docs/">docs</a> for source-build guidance.
+            </p>
+          </div>
         </div>
       </div>
     </section>

@@ -65,15 +65,15 @@ export const metadata: Metadata = {
 
 /**
  * Set data-theme before first paint to avoid a flash. Honors a saved choice
- * (localStorage "zcc-theme"), falling back to the OS preference. Kept inline +
- * tiny so it runs synchronously in <head>.
+ * (localStorage "zcc-theme"), otherwise using the public site's light default.
+ * Kept inline + tiny so it runs synchronously in <head>.
  */
 const NO_FLASH_THEME = `
 (function(){try{
   var t = localStorage.getItem('zcc-theme');
-  if(!t){ t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'; }
+  if(!t){ t = 'light'; }
   document.documentElement.setAttribute('data-theme', t);
-}catch(e){ document.documentElement.setAttribute('data-theme','dark'); }})();
+}catch(e){ document.documentElement.setAttribute('data-theme','light'); }})();
 `;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

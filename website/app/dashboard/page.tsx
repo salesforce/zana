@@ -35,16 +35,16 @@ export default async function Dashboard() {
 
   if (!user) {
     return (
-      <section className="hero" style={{ padding: '96px 0' }}>
-        <div className="wrap" style={{ textAlign: 'center' }}>
-          <span className="eyebrow">Publisher dashboard</span>
-          <h1 style={{ fontSize: 'clamp(30px,4.6vw,44px)', marginTop: 20 }}>Sign in to publish extensions</h1>
-          <p className="lede" style={{ maxWidth: 520, margin: '0 auto 28px' }}>
+      <section className="clean-dashboard-hero">
+        <div className="wrap">
+          <span className="clean-page-kicker">Publisher dashboard</span>
+          <h1>Sign in to publish extensions</h1>
+          <p>
             Publishing an extension requires a GitHub identity — it&apos;s how the registry attributes releases and
             enforces that only you can update an id you&apos;ve claimed.
           </p>
-          <a className="btn btn-primary" href="/api/auth/github/login">
-            Sign in with GitHub
+          <a className="clean-button clean-button-dark" href="/api/auth/github/login">
+            Sign in with GitHub <span aria-hidden="true">→</span>
           </a>
         </div>
       </section>
@@ -54,9 +54,9 @@ export default async function Dashboard() {
   const tokens = await listPublishTokens(user.id);
 
   return (
-    <section style={{ paddingTop: 56 }}>
+    <section className="clean-dashboard-page">
       <div className="wrap">
-        <div className="section-head" style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 32 }}>
+        <div className="clean-dashboard-heading">
           {user.avatarUrl && (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -68,29 +68,20 @@ export default async function Dashboard() {
             />
           )}
           <div>
-            <span className="eyebrow">Publisher dashboard</span>
-            <h2 style={{ margin: '8px 0 0' }}>{user.githubLogin}</h2>
+            <span className="clean-page-kicker">Publisher dashboard</span>
+            <h2>{user.githubLogin}</h2>
           </div>
-          <form action="/api/auth/logout" method="post" style={{ marginLeft: 'auto' }}>
-            <button type="submit" className="btn">
+          <form action="/api/auth/logout" method="post">
+            <button type="submit" className="clean-button clean-button-small">
               Log out
             </button>
           </form>
         </div>
 
-        <div className="card" style={{ marginBottom: 32 }}>
+        <div className="clean-dashboard-card">
           <h3>How to publish</h3>
           <p>Create a token below, then run:</p>
-          <pre
-            style={{
-              background: 'var(--bg-soft)',
-              border: '1px solid var(--border)',
-              borderRadius: 12,
-              padding: 16,
-              overflowX: 'auto',
-              fontSize: 13
-            }}
-          >
+          <pre className="clean-command-block">
             <code>
               node scripts/publish-extension.mjs &lt;extensionDir&gt; --api {site.publicBaseUrl} --token zpat_…
             </code>
@@ -101,7 +92,7 @@ export default async function Dashboard() {
           </p>
         </div>
 
-        <div className="card">
+        <div className="clean-dashboard-card">
           <h3>Publish tokens</h3>
           <p style={{ marginBottom: 20 }}>
             Tokens authenticate the CLI/app to publish on your behalf. Each is shown once at creation — store it

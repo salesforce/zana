@@ -38,7 +38,8 @@ export const PRODUCT_SHOTS: Record<ProductShotId, ProductShotDefinition> = {
     caption: 'A single workspace for projects, terminals, agents, and the work that needs attention.',
     alt: 'Zana Command Center showing projects, active agent sessions, and a terminal workspace.',
     capture: 'Show the three-column cockpit with several active projects and a focused terminal.',
-    aspectRatio: 'wide'
+    aspectRatio: 'wide',
+    src: '/demo.gif'
   },
   'project-setup': {
     id: 'project-setup',
