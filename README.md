@@ -1,22 +1,45 @@
 # Zana Command Center
 
-**A desktop control center for running, coordinating, and reviewing AI coding agents across your projects.**
-
-Zana Command Center is an Electron app for managing many local and remote coding-agent sessions from one workspace. Launch real CLI sessions in project directories, see what needs attention, coordinate agents and teams, automate repeatable work, and retain the results in an Inbox and Library.
-
-![Zana Command Center workspace](docs/assets/zana-command-center-demo.gif)
-
 <p align="center">
   <a href="https://github.com/salesforce/zana/releases/latest">
-    <img alt="Download the latest release" src="https://img.shields.io/badge/Download-Latest_Release-2ea44f?style=for-the-badge">
+    <img alt="Download the latest Zana release" src="https://img.shields.io/badge/Download-Latest_Release-2ea44f?style=for-the-badge">
+  </a>
+  <a href="https://github.com/salesforce/zana/blob/main/LICENSE.txt">
+    <img alt="MIT License" src="https://img.shields.io/badge/License-MIT-blue.svg">
   </a>
 </p>
 
-<p align="center"><sub>macOS build</sub></p>
+Zana Command Center is a desktop control plane for running, coordinating, and
+reviewing AI coding agents across your projects. It launches the coding CLIs you
+already use in real terminals, then gives you one place to see the fleet, answer
+questions, reuse proven workflows, and retain the outcome.
 
-## Install
+Work is not trapped in terminal scrollback. Agents can publish questions,
+reports, and durable artifacts to an Inbox and Library; you can answer or steer
+them without hunting for the right session. Local repositories, SSH projects,
+the desktop app, and the `zcc` CLI remain first-class ways to operate the same
+workspace.
 
-Download and open the `.dmg` from the [latest GitHub Release](https://github.com/salesforce/zana/releases/latest). Release artifacts include the update feed used by the app's in-app updater.
+> [!NOTE]
+> Zana is macOS-first. Signed and notarized releases are available for Apple
+> Silicon and Intel Macs. You need Node.js 20 or newer, `git`, and at least one
+> supported coding-agent CLI on your `PATH`.
+
+<p align="center">
+  <img alt="Zana Command Center Agents board showing a multi-agent workspace" src="docs/assets/screenshot-agents-board.png" width="100%">
+</p>
+
+## Use Zana
+
+### Download the desktop app
+
+The recommended way to start is the desktop app:
+
+**[Download the latest Zana release](https://github.com/salesforce/zana/releases/latest)**
+
+Open the architecture-matched `.dmg` for your Mac. Zana checks the public GitHub
+release feed for signed updates and installs a downloaded update the next time
+you quit the app.
 
 ### Build from source
 
@@ -28,19 +51,39 @@ npm run rebuild
 npm run dev
 ```
 
-**Prerequisites:** Node.js 20 or newer, `git`, and at least one supported coding-agent CLI for the sessions you intend to run. Zana can verify configured harnesses from the app.
+`npm run dev` launches the Electron development app. The pre-dev step builds the
+`zcc` CLI and seeds the bundled extensions automatically.
 
-## What You Can Do
+## The Operating Loop
 
-- **Run coding agents in parallel.** Launch real PTY sessions for Claude Code, Codex, Pi, OpenCode, or a plain shell. Choose the CLI, model, and execution mode per persona or launch.
-- **Work across local and remote projects.** Keep local folders and SSH projects in one workspace, each with its own terminals, agents, explorer, settings, and project-scoped views.
-- **Monitor the agent fleet.** Use Home, the Agents board, activity feeds, and notifications to find working, idle, blocked, and completed sessions without hunting through terminal tabs.
-- **Coordinate human decisions.** Agents can publish reports, questions, and other results to the Inbox. Reply from an Inbox question to route an answer back to the waiting session. Follow-ups preserve decisions that need human input.
-- **Organize reusable work.** Define personas, squads, and goals; run autonomous goal loops with explicit success criteria; save durable notes, findings, and reports in the cross-project Library.
-- **Automate recurring tasks.** Schedule agent runs, review their run reports, and use configurable automation such as idle-agent cleanup and overseer workflows.
-- **Resume and preserve sessions.** Reopen supported agent transcripts, retain session context, and optionally use tmux-backed persistence for local and remote sessions.
-- **Review artifacts in context.** Browse files, terminal output, Markdown, Mermaid diagrams, diffs, attachments, and reports without leaving the application.
-- **Control the app from a terminal.** The `zcc` CLI can inspect projects, personas, teams, schedules, and Inbox entries offline; with the app running, it can inspect and control live agents, terminals, and schedules.
+1. **Connect real work.** Register a local repository or an SSH-hosted project.
+2. **Launch the right agent.** Start Claude Code, Codex, Pi, OpenCode, or a shell
+   in the project with the relevant persona, model, and execution mode.
+3. **Operate the fleet.** See which sessions need you, are working, idle, or done
+   instead of checking every terminal tab.
+4. **Keep decisions moving.** Agents publish questions, reports, and artifacts to
+   the Inbox; answer an Inbox question to route your response back to the waiting
+   session.
+5. **Turn output into leverage.** Save findings in the Library and turn successful
+   roles and workflows into personas, teams, goals, or schedules.
+
+## What Zana Provides
+
+- **Real coding harnesses, not a replacement chat shell.** Run native PTY sessions
+  for Claude Code, Codex, Pi, OpenCode, and plain-shell workflows.
+- **One workspace for many environments.** Manage local folders and SSH projects
+  with their own terminals, agents, explorer, settings, and scoped views.
+- **An operational agent board.** Use Home, Agents, activity feeds, and
+  notifications to find work that needs attention quickly.
+- **Durable human-agent handoffs.** The Inbox, reports, and Follow-ups keep
+  decisions and deliverables visible after an agent or terminal has ended.
+- **Repeatable multi-agent work.** Define personas and teams, run goals with
+  success criteria, and schedule recurring tasks with per-run reports.
+- **Contextual engineering artifacts.** Browse files, terminal output, Markdown,
+  Mermaid diagrams, diffs, attachments, and reports without leaving the app.
+- **Terminal control when you prefer it.** The `zcc` CLI reads persisted data while
+  offline and can control live agents, terminals, and schedules through the
+  running app's authenticated local control plane.
 
 ## Architecture at a Glance
 
@@ -99,6 +142,12 @@ Zana stores its user-managed state under `~/.zcc/`, including the project regist
 
 The desktop app is the authorization boundary: project paths, remote operations, extension capabilities, and live CLI actions are validated in the main process. Extensions are deny-by-default and receive only consented, scoped capabilities.
 
+## Further Reading
+
+- [Getting started](docs/getting-started.md) for the first project-to-agent loop.
+- [Using Zana](docs/using-zana.md) for the day-to-day Inbox, Agents, Teams, and Scheduler workflows.
+- [Extension authoring](docs/extensions-authoring.md) for building permission-gated panels and capabilities.
+
 ## Development
 
 ```bash
@@ -108,3 +157,9 @@ npm run build
 ```
 
 For end-to-end tests, run `npm run test:e2e`.
+
+## Contributing
+
+Contributions to code, documentation, tests, and issue reports are welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow and
+[SECURITY.md](SECURITY.md) for private vulnerability reporting.
