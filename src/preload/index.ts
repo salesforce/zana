@@ -506,9 +506,18 @@ const api: CcApi = {
     }
   },
   claudeSettings: {
-    read: (projectPath, scope) => ipcRenderer.invoke(IPC.claudeSettings.read, projectPath, scope),
-    write: (projectPath, scope, patch) =>
-      ipcRenderer.invoke(IPC.claudeSettings.write, projectPath, scope, patch)
+    read: (projectId, scope) => ipcRenderer.invoke(IPC.claudeSettings.read, projectId, scope),
+    write: (projectId, scope, patch, expectedHash) =>
+      ipcRenderer.invoke(IPC.claudeSettings.write, projectId, scope, patch, expectedHash),
+    openFile: (projectId, fileId) => ipcRenderer.invoke(IPC.claudeSettings.openFile, projectId, fileId)
+  },
+  codexSettings: {
+    read: (projectId) => ipcRenderer.invoke(IPC.codexSettings.read, projectId),
+    write: (projectId, patch, expectedHash) => ipcRenderer.invoke(IPC.codexSettings.write, projectId, patch, expectedHash)
+  },
+  openCodeSettings: {
+    read: (projectId) => ipcRenderer.invoke(IPC.openCodeSettings.read, projectId),
+    write: (projectId, patch, expectedHash) => ipcRenderer.invoke(IPC.openCodeSettings.write, projectId, patch, expectedHash)
   },
   authorizations: {
     apply: (input) => ipcRenderer.invoke(IPC.authorizations.apply, input)

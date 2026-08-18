@@ -146,6 +146,16 @@ export interface HarnessTargetCatalog {
   executionTargets?: readonly HarnessExecutionTarget[];
 }
 
+/** Renderer-safe native configuration status. Paths and writes remain main-owned. */
+export interface HarnessConfigFileDescriptor {
+  id: string;
+  label: string;
+  scopes: readonly ('shared' | 'local')[];
+  effect: 'native-file' | 'argv-app-store' | 'unsupported';
+  rawEdit: boolean;
+  reason?: string;
+}
+
 /** Renderer-safe adapter metadata. This contains no native argv/env/config. */
 export interface HarnessAdapterDescriptor {
   id: HarnessAdapterId;
@@ -160,6 +170,8 @@ export interface HarnessAdapterDescriptor {
   capabilities: Readonly<Record<HarnessPersonaFacet, Readonly<Record<HarnessScope, HarnessFacetSupport>>>>;
   targets?: HarnessTargetCatalog;
   settingsContributionIds: readonly string[];
+  /** Deliberate config matrix. Launch capabilities do not imply file support. */
+  configFiles: readonly HarnessConfigFileDescriptor[];
   initialTaskDelivery: {
     local: InitialTaskTransport;
     remote: InitialTaskTransport;

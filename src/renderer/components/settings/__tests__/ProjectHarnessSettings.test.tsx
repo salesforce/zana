@@ -4,6 +4,14 @@ import type { HarnessAdapterDescriptor } from '../../../../shared/harness-adapte
 import type { Project } from '../../../../shared/types.js';
 import {
   ProjectHarnessSettings,
+  ClaudeHarnessFiles,
+  CursorHarnessFiles,
+  OpenCodeHarnessFiles,
+  CodexHarnessFiles,
+  ProjectCodexSettings,
+  ProjectOpenCodeSettings,
+  modelOptions,
+  roleOptions,
   ProjectWorktreeIsolationField,
   ProjectSettingsError,
   persistProjectSettings,
@@ -21,6 +29,7 @@ const descriptors: HarnessAdapterDescriptor[] = [
     availability: { enabled: true, installed: true },
     capabilities: {} as HarnessAdapterDescriptor['capabilities'],
     settingsContributionIds: [],
+    configFiles: [{ id: 'project-settings', label: 'Project settings', scopes: ['shared', 'local'], effect: 'native-file', rawEdit: true }],
     targets: {
       roles: [],
       models: [{ id: 'sonnet', label: 'Sonnet', level: 'medium', scope: ['local'] }],
@@ -57,13 +66,76 @@ describe('ProjectHarnessSettings', () => {
       }
     });
     const project = { id: 'p1', name: 'Project', path: '/tmp/project' } as Project;
-    const html = renderToStaticMarkup(<ProjectHarnessSettings project={project} onSaved={() => {}} />);
+    const html = renderToStaticMarkup(<ProjectHarnessSettings project={project} onOpen={() => {}} onSaved={() => {}} />);
     expect(html).toContain('Code harnesses');
     expect(html).toContain('Default harness');
     expect(html).toContain('opener-list');
     expect(html).not.toContain('Worktree isolation');
     expect(html).not.toContain('Harness launch overrides');
     expect(html).not.toContain('Claude CLI settings');
+    expect(html).not.toContain('Native settings are available in this harness.');
+  });
+
+  it('renders one configured-editor button for each Claude project file', () => {
+    const html = renderToStaticMarkup(
+      <ClaudeHarnessFiles projectPath="/tmp/project" onOpen={() => {}} />
+    );
+
+    expect(html).toContain('>CLAUDE.md</button>');
+    expect(html).toContain('>.mcp.json</button>');
+    expect(html).toContain('>.claude/settings.json</button>');
+    expect(html).toContain('>.claude/settings.local.json</button>');
+    expect(html).not.toContain('Edit raw');
+  });
+
+  it('renders configured-editor buttons for Cursor project files', () => {
+    const html = renderToStaticMarkup(
+      <CursorHarnessFiles projectPath="/tmp/project" onOpen={() => {}} />
+    );
+
+    expect(html).toContain('>.cursor/mcp.json</button>');
+    expect(html).toContain('>.cursor/rules</button>');
+  });
+
+  it('renders configured-editor buttons for OpenCode project files', () => {
+    const html = renderToStaticMarkup(
+      <OpenCodeHarnessFiles projectPath="/tmp/project" onOpen={() => {}} />
+    );
+
+    expect(html).toContain('>opencode.json</button>');
+    expect(html).toContain('>opencode.jsonc</button>');
+    expect(html).toContain('>tui.json</button>');
+    expect(html).toContain('>.opencode</button>');
+  });
+
+  it('renders configured-editor buttons for Codex project files', () => {
+    const html = renderToStaticMarkup(
+      <CodexHarnessFiles projectPath="/tmp/project" onOpen={() => {}} />
+    );
+
+    expect(html).toContain('>.codex/config.toml</button>');
+    expect(html).toContain('>AGENTS.md</button>');
+    expect(html).toContain('>AGENTS.override.md</button>');
+  });
+
+  it('keeps configured native values available when absent from live catalogs', () => {
+    const codex = { ...descriptors[0], id: 'codex' as const, label: 'Codex', targets: { ...descriptors[0].targets!, models: [{ id: 'gpt-5', label: 'GPT-5', scope: ['local'] }] } } as HarnessAdapterDescriptor;
+    const opencode = { ...descriptors[0], id: 'opencode' as const, label: 'OpenCode', targets: { ...descriptors[0].targets!, models: [{ id: 'aisuite/gpt-5.6-terra', label: 'Terra', scope: ['local'] }], roles: [{ id: 'build', label: 'Build', scope: ['local'] }] } } as HarnessAdapterDescriptor;
+
+    expect(modelOptions(codex, 'legacy-model').map(({ id }) => id)).toEqual(['legacy-model', 'gpt-5']);
+    expect(modelOptions(opencode).map(({ id }) => id)).toEqual(['aisuite/gpt-5.6-terra']);
+    expect(roleOptions(opencode, 'custom-agent').map(({ id }) => id)).toEqual(['custom-agent', 'build']);
+  });
+
+  it('renders loading, invalid, and catalog-backed native editor states', () => {
+    const descriptor = { ...descriptors[0], id: 'opencode' as const, label: 'OpenCode', targets: { ...descriptors[0].targets!, models: [{ id: 'aisuite/gpt-5.6-terra', label: 'Terra', scope: ['local'] }], roles: [{ id: 'build', label: 'Build', scope: ['local'] }] } } as HarnessAdapterDescriptor;
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { cc: { codexSettings: { read: vi.fn() }, openCodeSettings: { read: vi.fn() } } }
+    });
+
+    expect(renderToStaticMarkup(<ProjectCodexSettings projectId="p1" descriptor={descriptor} onSaved={() => {}} />)).toContain('Loading Codex settings...');
+    expect(renderToStaticMarkup(<ProjectOpenCodeSettings projectId="p1" descriptor={descriptor} onSaved={() => {}} />)).toContain('Loading OpenCode settings...');
   });
 
   it('uses canonical settings returned by the awaited write', async () => {

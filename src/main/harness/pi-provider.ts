@@ -65,6 +65,7 @@ const PI_ADAPTER: TrustedHarnessAdapter = {
       'opening-prompt': PI_OPENING_PROMPT_EVIDENCE
     }),
     settingsContributionIds: ['pi-global-defaults'],
+    configFiles: [{ id: 'native-settings', label: 'Native settings', scopes: [], effect: 'argv-app-store', rawEdit: false, reason: 'Zana uses verified argv and app settings; native file mapping is not verified.' }],
     targets: {
       roles: [],
       providers: [],

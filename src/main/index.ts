@@ -131,7 +131,7 @@ import {
   setMcpServerEnabledById
 } from './mcp-catalogue.js';
 import { listPlugins, revealPlugin, setPluginEnabled } from './plugins.js';
-import { readClaudeProjectSettings, writeClaudeProjectSettings } from './claude-settings.js';
+import { claudeProjectFilePath, readClaudeProjectSettings, writeClaudeProjectSettings } from './claude-settings.js';
 import { applyAuthorizations } from './authorizations.js';
 import {
   listSkills,
@@ -304,13 +304,20 @@ import type {
   Project,
   CloneProjectResult,
   OpenTarget,
+  OpenResult,
   SearchOptions,
   FsMutateResult,
   ProjectRemote,
   AppConfig,
   ProjectSettings,
   ClaudeProjectSettings,
+  ClaudeProjectFileId,
+  ClaudeSettingsResult,
   ClaudeSettingsScope,
+  CodexProjectSettings,
+  CodexSettingsResult,
+  OpenCodeProjectSettings,
+  OpenCodeSettingsResult,
   ApplyAuthorizationInput,
   ScheduleCreateInput,
   ScheduleUpdateInput,
@@ -349,6 +356,12 @@ import type {
   WhatsNewEvent,
   SetupStatus
 } from '../shared/types.js';
+import {
+  readCodexProjectSettings,
+  readOpenCodeProjectSettings,
+  writeCodexProjectSettings,
+  writeOpenCodeProjectSettings
+} from './harness-settings.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -7109,25 +7122,110 @@ function registerIpc() {
     })
   );
 
-  safeHandle(
+  safeHandleFromWindow<[string, ClaudeSettingsScope], ClaudeSettingsResult>(
     IPC.claudeSettings.read,
-    (projectPath: string, scope: ClaudeSettingsScope) =>
-      readClaudeProjectSettings(projectPath, scope),
-    (_err, projectPath: string, scope: ClaudeSettingsScope) => ({
-      exists: false,
-      path: `${projectPath}/.claude/${scope === 'shared' ? 'settings.json' : 'settings.local.json'}`,
-      settings: {}
-    })
+    async (win, projectId: string, scope: ClaudeSettingsScope) => {
+      if (win !== mainWindow()) return { state: 'io-error' as const, message: 'Claude settings are unavailable from this window' };
+      const project = store.listProjects().find((entry) => entry.id === projectId && !entry.remote);
+      if (!project) return { state: 'io-error' as const, message: 'Project is unavailable' };
+      const root = await trustedProjectRoot(project.path);
+      return root
+        ? readClaudeProjectSettings(root, scope)
+        : { state: 'io-error' as const, message: 'Project root is unavailable' };
+    },
+    () => ({ state: 'io-error' as const, message: 'Claude settings read failed' })
   );
-  safeHandle(
+  safeHandleFromWindow<[string, ClaudeSettingsScope, ClaudeProjectSettings, string | null], ClaudeSettingsResult>(
     IPC.claudeSettings.write,
-    (projectPath: string, scope: ClaudeSettingsScope, patch: ClaudeProjectSettings) =>
-      writeClaudeProjectSettings(projectPath, scope, patch),
-    (_err, projectPath: string, scope: ClaudeSettingsScope) => ({
-      exists: false,
-      path: `${projectPath}/.claude/${scope === 'shared' ? 'settings.json' : 'settings.local.json'}`,
-      settings: {}
-    })
+    async (
+      win,
+      projectId: string,
+      scope: ClaudeSettingsScope,
+      patch: ClaudeProjectSettings,
+      expectedHash: string | null
+    ) => {
+      if (win !== mainWindow()) return { state: 'io-error' as const, message: 'Claude settings are unavailable from this window' };
+      const permissions = patch?.permissions;
+      const widensPermissions =
+        permissions?.defaultMode === 'bypassPermissions' ||
+        !!permissions?.allow?.length ||
+        !!permissions?.additionalDirectories?.length;
+      if (widensPermissions) {
+        const confirmation = await dialog.showMessageBox(win, {
+          type: 'warning',
+          buttons: ['Cancel', 'Allow change'],
+          defaultId: 0,
+          cancelId: 0,
+          title: 'Allow Claude permission change?',
+          message: 'This change can expand Claude access or disable permission prompts for this project.',
+          detail: 'Review the project settings before allowing this change.'
+        });
+        if (confirmation.response !== 1) {
+          return { state: 'io-error' as const, message: 'Claude permission change was not allowed' };
+        }
+      }
+      const project = store.listProjects().find((entry) => entry.id === projectId && !entry.remote);
+      if (!project) return { state: 'io-error' as const, message: 'Project is unavailable' };
+      const root = await trustedProjectRoot(project.path);
+      return root
+        ? writeClaudeProjectSettings(root, scope, patch, expectedHash)
+        : { state: 'io-error' as const, message: 'Project root is unavailable' };
+    },
+    () => ({ state: 'io-error' as const, message: 'Claude settings write failed' })
+  );
+  safeHandleFromWindow<[string, ClaudeProjectFileId], OpenResult>(
+    IPC.claudeSettings.openFile,
+    async (win, projectId: string, fileId: ClaudeProjectFileId): Promise<OpenResult> => {
+      if (win !== mainWindow()) return { ok: false, message: 'Claude project files are unavailable from this window' };
+      const project = store.listProjects().find((entry) => entry.id === projectId && !entry.remote);
+      if (!project) return { ok: false, message: 'Project is unavailable' };
+      const root = await trustedProjectRoot(project.path);
+      const path = root ? await claudeProjectFilePath(root, fileId) : null;
+      if (!path) return { ok: false, message: 'Claude project file is unavailable' };
+      const error = await shell.openPath(path);
+      return error ? { ok: false, message: error } : { ok: true };
+    },
+    () => ({ ok: false, message: 'Could not open Claude project file' })
+  );
+  safeHandleFromWindow<[string], CodexSettingsResult>(
+    IPC.codexSettings.read,
+    async (win, projectId) => {
+      if (win !== mainWindow()) return { state: 'io-error' as const, message: 'Codex settings are unavailable from this window' };
+      const project = store.listProjects().find((entry) => entry.id === projectId && !entry.remote);
+      const root = project && await trustedProjectRoot(project.path);
+      return root ? readCodexProjectSettings(root) : { state: 'io-error' as const, message: 'Project root is unavailable' };
+    },
+    () => ({ state: 'io-error' as const, message: 'Codex settings read failed' })
+  );
+  safeHandleFromWindow<[string, CodexProjectSettings, string | null], CodexSettingsResult>(
+    IPC.codexSettings.write,
+    async (win, projectId, patch, expectedHash) => {
+      if (win !== mainWindow()) return { state: 'io-error' as const, message: 'Codex settings are unavailable from this window' };
+      const project = store.listProjects().find((entry) => entry.id === projectId && !entry.remote);
+      const root = project && await trustedProjectRoot(project.path);
+      return root ? writeCodexProjectSettings(root, patch, expectedHash) : { state: 'io-error' as const, message: 'Project root is unavailable' };
+    },
+    () => ({ state: 'io-error' as const, message: 'Codex settings write failed' })
+  );
+  safeHandleFromWindow<[string], OpenCodeSettingsResult>(
+    IPC.openCodeSettings.read,
+    async (win, projectId) => {
+      if (win !== mainWindow()) return { state: 'io-error' as const, message: 'OpenCode settings are unavailable from this window' };
+      const project = store.listProjects().find((entry) => entry.id === projectId && !entry.remote);
+      const root = project && await trustedProjectRoot(project.path);
+      return root ? readOpenCodeProjectSettings(root) : { state: 'io-error' as const, message: 'Project root is unavailable' };
+    },
+    () => ({ state: 'io-error' as const, message: 'OpenCode settings read failed' })
+  );
+  safeHandleFromWindow<[string, OpenCodeProjectSettings, string | null], OpenCodeSettingsResult>(
+    IPC.openCodeSettings.write,
+    async (win, projectId, patch, expectedHash) => {
+      if (win !== mainWindow()) return { state: 'io-error' as const, message: 'OpenCode settings are unavailable from this window' };
+      const project = store.listProjects().find((entry) => entry.id === projectId && !entry.remote);
+      const root = project && await trustedProjectRoot(project.path);
+      return root ? writeOpenCodeProjectSettings(root, patch, expectedHash) : { state: 'io-error' as const, message: 'Project root is unavailable' };
+    },
+    () => ({ state: 'io-error' as const, message: 'OpenCode settings write failed' })
   );
 
   safeHandle(

@@ -79,8 +79,18 @@ test('Global and Project harness settings persist provider, model, execution, an
     await scope.click();
     await window.getByRole('listbox', { name: 'Project' }).getByRole('option', { name: projectName, exact: true }).click();
     await expect(scope).toContainText(projectName);
+    const projectClaude = window.locator('.opener-row').filter({ hasText: 'Claude Code' });
+    await projectClaude.locator('.opener-row-expand').click();
+    await expect(projectClaude.locator('.harness-settings-group')).toHaveCount(1);
+    await expect(projectClaude).toContainText('Zana Settings');
+    await expect(projectClaude).toContainText('Harness Settings');
+    await expect(projectClaude).toContainText('Harness Files');
+    await projectClaude.getByRole('tab', { name: 'Harness Settings' }).click();
+    await expect(projectClaude).toContainText('Shared');
+    await expect(projectClaude).toContainText('Local');
     const projectOpenCode = window.locator('.opener-row').filter({ hasText: 'OpenCode' });
     await projectOpenCode.locator('.opener-row-expand').click();
+    await expect(projectOpenCode).toContainText('Harness Settings');
     const projectProvider = projectOpenCode.getByRole('button', { name: 'Default provider' });
     const projectModel = projectOpenCode.getByRole('button', { name: 'Default model level' });
     const projectExecution = projectOpenCode.getByRole('button', { name: 'Default execution state' });

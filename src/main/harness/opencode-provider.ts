@@ -103,6 +103,7 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
       }
     ),
     settingsContributionIds: [],
+    configFiles: [{ id: 'native-settings', label: 'Native settings', scopes: [], effect: 'unsupported', rawEdit: false, reason: 'Native project settings file is not verified.' }],
     targets: {
       roles: [
         { id: 'build', label: 'Build', executionStates: ['accept-edits', 'autonomous'], scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },

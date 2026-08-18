@@ -2345,11 +2345,12 @@ export const AUTO_CLOSE_IDLE_DEFAULTS = {
 
 /** Which `.claude/settings*.json` file we're reading or writing. */
 export type ClaudeSettingsScope = 'shared' | 'local';
+export type ClaudeProjectFileId = 'instructions' | 'mcp' | 'shared-settings' | 'local-settings';
 
 /**
  * Curated subset of `.claude/settings.json` we surface in the UI. Anything
- * else round-trips through `_unknown` / `_unknownPermissions` so atomic
- * edits don't clobber user-edited keys (env, hooks, outputStyle, etc.).
+ * else remains on disk so atomic edits don't clobber user-edited keys (env,
+ * hooks, outputStyle, etc.).
  */
 export interface ClaudeProjectSettings {
   permissions?: {
@@ -2359,19 +2360,43 @@ export interface ClaudeProjectSettings {
     additionalDirectories?: string[];
   };
   model?: string;
-  /** Top-level keys we don't surface in the UI; preserved on write. */
-  _unknown?: Record<string, unknown>;
-  /** Keys under `permissions` we don't surface in the UI; preserved on write. */
-  _unknownPermissions?: Record<string, unknown>;
+  /** Names of top-level keys we don't surface; values stay main-owned. */
+  _unknown?: string[];
+  /** Names of permission keys we don't surface; values stay main-owned. */
+  _unknownPermissions?: string[];
 }
 
-export interface ClaudeSettingsResult {
-  /** True if the file existed at read time. */
-  exists: boolean;
-  /** Absolute path of the file (whether or not it existed). */
-  path: string;
-  settings: ClaudeProjectSettings;
+export type ClaudeSettingsResult =
+  | { state: 'missing'; settings: ClaudeProjectSettings; hash: string | null }
+  | { state: 'valid'; settings: ClaudeProjectSettings; hash: string }
+  | { state: 'invalid'; message: string }
+  | { state: 'io-error'; message: string };
+
+export interface CodexProjectSettings {
+  model?: string;
+  approvalPolicy?: 'untrusted' | 'on-request' | 'never';
+  sandboxMode?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  _unknown?: string[];
 }
+
+export type CodexSettingsResult =
+  | { state: 'missing'; settings: CodexProjectSettings; hash: null }
+  | { state: 'valid'; settings: CodexProjectSettings; hash: string }
+  | { state: 'invalid'; message: string }
+  | { state: 'io-error'; message: string };
+
+export interface OpenCodeProjectSettings {
+  model?: string;
+  smallModel?: string;
+  defaultAgent?: string;
+  _unknown?: string[];
+}
+
+export type OpenCodeSettingsResult =
+  | { state: 'missing'; settings: OpenCodeProjectSettings; hash: null }
+  | { state: 'valid'; settings: OpenCodeProjectSettings; hash: string }
+  | { state: 'invalid'; message: string }
+  | { state: 'io-error'; message: string };
 
 /** Per-project overrides passed to the claude CLI when launching a session. */
 export interface ProjectSettings {
@@ -5758,12 +5783,22 @@ export interface CcApi {
     onChanged(cb: (entries: ExtensionEntry[]) => void): () => void;
   };
   claudeSettings: {
-    read(projectPath: string, scope: ClaudeSettingsScope): Promise<ClaudeSettingsResult>;
+    read(projectId: string, scope: ClaudeSettingsScope): Promise<ClaudeSettingsResult>;
     write(
-      projectPath: string,
+      projectId: string,
       scope: ClaudeSettingsScope,
-      patch: ClaudeProjectSettings
+      patch: ClaudeProjectSettings,
+      expectedHash: string | null
     ): Promise<ClaudeSettingsResult>;
+    openFile(projectId: string, fileId: ClaudeProjectFileId): Promise<OpenResult>;
+  };
+  codexSettings: {
+    read(projectId: string): Promise<CodexSettingsResult>;
+    write(projectId: string, patch: CodexProjectSettings, expectedHash: string | null): Promise<CodexSettingsResult>;
+  };
+  openCodeSettings: {
+    read(projectId: string): Promise<OpenCodeSettingsResult>;
+    write(projectId: string, patch: OpenCodeProjectSettings, expectedHash: string | null): Promise<OpenCodeSettingsResult>;
   };
   authorizations: {
     /** Apply an authorization preset (tier) to the given agent CLIs. */
