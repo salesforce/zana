@@ -1,15 +1,18 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { site } from '@/lib/site';
 
 const LINKS = [
+  { href: '/how-it-works/', label: 'How it works' },
   { href: '/features/', label: 'Features' },
+  { href: '/extensions/', label: 'Extensions' },
   { href: '/marketplace/', label: 'Marketplace' },
   { href: '/docs/', label: 'Docs' },
-  { href: '/dashboard/', label: 'Publish an extension' }
+  { href: '/dashboard/', label: 'Publish' }
 ];
 
 function ThemeToggle() {
@@ -73,7 +76,8 @@ export function Nav() {
     <nav className="nav">
       <div className="wrap">
         <Link href="/" className="brand">
-          <span className="mark">Z</span> Zana Command Center
+          <Image className="brand-mark" src="/favicon.svg" alt="" width={28} height={28} priority />
+          Zana Command Center
         </Link>
 
         <div className="nav-links desktop">
@@ -82,7 +86,7 @@ export function Nav() {
               {l.label}
             </Link>
           ))}
-          <a href={site.repo} target="_blank" rel="noopener noreferrer">GitHub ↗</a>
+          <a href={site.repo} target="_blank" rel="noopener noreferrer">GitHub <span aria-hidden="true">↗</span></a>
           <div className="nav-cta">
             <ThemeToggle />
             <Link href="/download/" className="btn btn-primary btn-sm">
@@ -116,7 +120,7 @@ export function Nav() {
               {l.label}
             </Link>
           ))}
-          <a href={site.repo} target="_blank" rel="noopener noreferrer">GitHub ↗</a>
+          <a href={site.repo} target="_blank" rel="noopener noreferrer">GitHub <span aria-hidden="true">↗</span></a>
           <Link href="/download/" className="btn btn-primary">
             ⬇ Download
           </Link>
@@ -137,16 +141,18 @@ export function Footer() {
         <div className="foot-top">
           <div>
             <span className="foot-brand">
-              <span className="mark">Z</span> Zana Command Center
+              <Image className="brand-mark" src="/favicon.svg" alt="" width={28} height={28} />
+              Zana Command Center
             </span>
             <p className="foot-blurb">
-              An Electron cockpit for Claude Code — orchestrate many sessions across every project, from one
-              window.
+              A desktop control plane for Claude Code, OpenCode, Codex, and Pi sessions across every project.
             </p>
           </div>
           <div className="foot-col">
             <h4>Product</h4>
+            <Link href="/how-it-works/">How it works</Link>
             <Link href="/features/">Features</Link>
+            <Link href="/extensions/">Extensions</Link>
             <Link href="/marketplace/">Marketplace</Link>
             <Link href="/download/">Download</Link>
             <Link href="/dashboard/">Publish an extension</Link>

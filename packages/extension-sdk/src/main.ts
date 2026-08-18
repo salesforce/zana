@@ -247,6 +247,12 @@ export interface MainModuleContext {
    */
   extensions?: {
     installFromGit(input: { url: string }): Promise<{ id: string }>;
+    /**
+     * Read-only view of disk extensions currently installed in ZCC. The host
+     * exposes only stable ids and recorded Git origins, never filesystem paths or
+     * manifests, so a catalogue can identify already-installed entries safely.
+     */
+    listInstalled(): Promise<Array<{ id: string; repository?: string }>>;
   };
 
   /**

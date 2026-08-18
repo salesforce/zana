@@ -66,6 +66,7 @@ describe('inbox MCP server (end-to-end)', () => {
       status?: 'success' | 'partial' | 'failure'
     ) => void,
     registerProject?: (absPath: string) => { project: Project; alreadyExisted: boolean },
+    cloneProject?: (input: { url: string; name?: string }) => Promise<import('../../shared/types.js').CloneProjectResult>,
     listPersonas?: () => PersonaSummary[],
     listProjects?: () => ProjectSummary[],
     resolveOrigin?: (sessionId: string) => import('../../shared/types.js').InboxOrigin | null,
@@ -82,6 +83,7 @@ describe('inbox MCP server (end-to-end)', () => {
       projects: { get: (id) => map.get(id) ?? null },
       onReport,
       registerProject,
+      cloneProject,
       listPersonas,
       listProjects,
       resolveOrigin,
@@ -215,6 +217,7 @@ describe('inbox MCP server (end-to-end)', () => {
       undefined,
       undefined,
       undefined,
+      undefined,
       (sessionId) => origins[sessionId] ?? null
     );
 
@@ -231,6 +234,7 @@ describe('inbox MCP server (end-to-end)', () => {
     const h = await boot(
       store,
       [makeProject('proj-1', 'My Project')],
+      undefined,
       undefined,
       undefined,
       undefined,
@@ -563,6 +567,26 @@ describe('inbox MCP server (end-to-end)', () => {
     expect(tools.tools.find((t) => t.name === 'register_project')).toBeFalsy();
   });
 
+  it('5e. clone_project requires a credential-authenticated session route', async () => {
+    const store = createMemoryInboxStore();
+    const cloneProject = vi.fn(async () => ({ ok: true as const, project: makeProject('new-3', 'repo') }));
+    const h = await boot(store, [makeProject('proj-1', 'P1')], undefined, undefined, cloneProject);
+
+    const unauthenticated = await connectClient(h.url, 'proj-1/sess-A');
+    clients.push(unauthenticated);
+    expect((await unauthenticated.listTools()).tools.some((t) => t.name === 'clone_project')).toBe(false);
+
+    const credential = controlCredentialForSession('sess-A');
+    const authenticated = await connectClient(h.url, `proj-1/sess-A/${credential}`);
+    clients.push(authenticated);
+    const tool = (await authenticated.listTools()).tools.find((t) => t.name === 'clone_project');
+    expect(tool).toBeTruthy();
+
+    const result = await authenticated.callTool({ name: 'clone_project', arguments: { url: 'salesforce/repo' } });
+    expect((result as { isError?: boolean }).isError).toBeFalsy();
+    expect(cloneProject).toHaveBeenCalledWith({ url: 'salesforce/repo', name: undefined });
+  });
+
   it('6. list_personas: returns metadata-only summaries, takes no args', async () => {
     const store = createMemoryInboxStore();
     const personas: PersonaSummary[] = [
@@ -574,7 +598,7 @@ describe('inbox MCP server (end-to-end)', () => {
         model: 'opus'
       }
     ];
-    const h = await boot(store, [makeProject('proj-1', 'P1')], undefined, undefined, () => personas);
+    const h = await boot(store, [makeProject('proj-1', 'P1')], undefined, undefined, undefined, () => personas);
 
     const client = await connectClient(h.url, 'proj-1/sess-A');
     clients.push(client);
@@ -597,7 +621,7 @@ describe('inbox MCP server (end-to-end)', () => {
 
   it('6b. list_personas is available on the legacy project-scoped route too', async () => {
     const store = createMemoryInboxStore();
-    const h = await boot(store, [makeProject('proj-1', 'P1')], undefined, undefined, () => [
+    const h = await boot(store, [makeProject('proj-1', 'P1')], undefined, undefined, undefined, () => [
       { id: 'builtin:architect', name: 'Architect' }
     ]);
     const client = await connectClient(h.url, 'proj-1'); // no sessionId
@@ -633,6 +657,7 @@ describe('inbox MCP server (end-to-end)', () => {
       undefined,
       undefined,
       undefined,
+      undefined,
       () => summaries
     );
 
@@ -657,7 +682,7 @@ describe('inbox MCP server (end-to-end)', () => {
 
   it('7b. list_projects is available on the legacy project-scoped route too', async () => {
     const store = createMemoryInboxStore();
-    const h = await boot(store, [makeProject('proj-1', 'P1')], undefined, undefined, undefined, () => [
+    const h = await boot(store, [makeProject('proj-1', 'P1')], undefined, undefined, undefined, undefined, () => [
       { id: 'proj-1', name: 'P1', path: '/tmp/proj-1' }
     ]);
     const client = await connectClient(h.url, 'proj-1'); // no sessionId
@@ -687,7 +712,7 @@ describe('inbox MCP server (end-to-end)', () => {
       opts: { cwd?: string; timeoutMs?: number }
     ) => Promise<import('../../shared/types.js').RemoteExecResult>
   ) =>
-    boot(store, [makeProject('proj-1', 'P1')], undefined, undefined, undefined, undefined, undefined, run);
+    boot(store, [makeProject('proj-1', 'P1')], undefined, undefined, undefined, undefined, undefined, undefined, run);
 
   it('8. remote_exec: registered on the session route with an agent-facing schema', async () => {
     const store = createMemoryInboxStore();

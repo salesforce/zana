@@ -106,7 +106,8 @@ export function validateScheduleFile(raw: unknown): ScheduledTask | { error: str
               ? (r.status as { lastRunAt: string }).lastRunAt
               : undefined,
             lastRunResult:
-              (r.status as { lastRunResult?: 'success' | 'error' | 'skipped' }).lastRunResult,
+              (r.status as { lastRunResult?: 'success' | 'error' | 'skipped' | 'incomplete' })
+                .lastRunResult,
             lastRunSessionId:
               typeof (r.status as { lastRunSessionId?: unknown }).lastRunSessionId === 'string'
                 ? (r.status as { lastRunSessionId: string }).lastRunSessionId

@@ -52,14 +52,14 @@ test('scheduler: the Cron cadence UI validates, previews, and saves a cron sched
 
     // Name + project so the form can eventually save.
     await modal.locator('#sched-name').fill('E2E cron schedule');
-    // Project select — pick our project by its visible name.
-    const projSelect = modal.locator('select#sched-project');
-    if (await projSelect.count()) {
-      await projSelect.selectOption({ label: projectName }).catch(async () => {
-        // Fall back to value if the label isn't an exact match.
-        await projSelect.selectOption(projectId);
-      });
-    }
+    // Pick our project through the portal-rendered project list.
+    const projectPicker = modal.getByRole('button', { name: 'Project' });
+    await projectPicker.click();
+    await window
+      .getByRole('listbox', { name: 'Project' })
+      .getByRole('option', { name: projectName, exact: true })
+      .click();
+    await expect(projectPicker).toContainText(projectName);
 
     // The cadence toggle starts on Interval → no cron input yet.
     await expect(modal.locator('#sched-cron')).toHaveCount(0);

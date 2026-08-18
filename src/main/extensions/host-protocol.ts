@@ -41,6 +41,7 @@
 export type BrokerMethod =
   | 'storage.get'
   | 'storage.set'
+  | 'extensions.listInstalled'
   | 'log'
   | 'exec'
   | 'fs.readFile'

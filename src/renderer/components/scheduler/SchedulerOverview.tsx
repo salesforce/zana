@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   XCircle,
   CircleSlash,
+  AlertTriangle,
   ExternalLink,
   Folder,
   FileText,
@@ -54,7 +55,17 @@ export function SchedulerOverview({
 }: SchedulerOverviewProps) {
   const terminalsByProject = useData((s) => s.terminals);
 
-  const { enabled, disabled, working, finishedOpen, runs24, success24, errors24, skipped24 } = useMemo(() => {
+  const {
+    enabled,
+    disabled,
+    working,
+    finishedOpen,
+    runs24,
+    success24,
+    errors24,
+    skipped24,
+    incomplete24
+  } = useMemo(() => {
     const en = tasks.filter((t) => t.enabled);
     const live = new Set<string>();
     for (const [pid, list] of Object.entries(terminalsByProject)) {
@@ -80,7 +91,7 @@ export function SchedulerOverview({
       }
     }
     const dayAgo = Date.now() - 24 * 3600 * 1000;
-    let r24 = 0, ok = 0, err = 0, skip = 0;
+    let r24 = 0, ok = 0, err = 0, skip = 0, incomplete = 0;
     for (const t of tasks) {
       for (const r of t.status?.runs ?? []) {
         const ts = Date.parse(r.at);
@@ -89,6 +100,10 @@ export function SchedulerOverview({
         if (r.result === 'success') ok++;
         else if (r.result === 'error') err++;
         else if (r.result === 'skipped') skip++;
+        // 'incomplete' = exited 0 but never filed a schedule_report — a silent
+        // failure (dead stream mid-run, etc.). Counted separately from 'error'
+        // so the KPI distinguishes "crashed loudly" from "died quietly".
+        else if (r.result === 'incomplete') incomplete++;
       }
     }
     return {
@@ -99,7 +114,8 @@ export function SchedulerOverview({
       runs24: r24,
       success24: ok,
       errors24: err,
-      skipped24: skip
+      skipped24: skip,
+      incomplete24: incomplete
     };
     // dayAgo and live-session liveness depend on real time; tick keeps them fresh.
   }, [tasks, terminalsByProject, tick]);
@@ -217,8 +233,8 @@ export function SchedulerOverview({
         <KpiCard
           label="Last 24h"
           value={runs24}
-          sub={`${success24} ok · ${errors24} err · ${skipped24} skip`}
-          accent={errors24 > 0 ? 'error' : undefined}
+          sub={`${success24} ok · ${errors24} err · ${incomplete24} incomplete · ${skipped24} skip`}
+          accent={errors24 > 0 || incomplete24 > 0 ? 'error' : undefined}
         />
       </section>
 
@@ -360,6 +376,8 @@ export function SchedulerOverview({
                       <CheckCircle2 size={14} />
                     ) : run.result === 'error' ? (
                       <XCircle size={14} />
+                    ) : run.result === 'incomplete' ? (
+                      <AlertTriangle size={14} />
                     ) : (
                       <CircleSlash size={14} />
                     )}

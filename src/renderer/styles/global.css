@@ -12401,6 +12401,7 @@ body.resizing-col .explorer-resizer::after {
 .scheduler-status-value--success { color: var(--success); }
 .scheduler-status-value--error { color: var(--danger); }
 .scheduler-status-value--skipped { color: var(--accent-gold); }
+.scheduler-status-value--incomplete { color: var(--accent-orange, #db6d28); }
 .scheduler-status-value--none { color: var(--text-dim); }
 
 .scheduler-card-actions {
@@ -12859,9 +12860,10 @@ body.resizing-col .explorer-resizer::after {
   justify-self: center;
 }
 
-.scheduler-run-dot--success { background: var(--success); }
-.scheduler-run-dot--error   { background: var(--danger); }
-.scheduler-run-dot--skipped { background: var(--accent-gold); }
+.scheduler-run-dot--success    { background: var(--success); }
+.scheduler-run-dot--error      { background: var(--danger); }
+.scheduler-run-dot--skipped    { background: var(--accent-gold); }
+.scheduler-run-dot--incomplete { background: var(--accent-orange, #db6d28); }
 
 .scheduler-run-when {
   color: var(--text-primary);
@@ -12876,9 +12878,10 @@ body.resizing-col .explorer-resizer::after {
   color: var(--text-dim);
 }
 
-.scheduler-run-row--success .scheduler-run-result { color: var(--success); }
-.scheduler-run-row--error   .scheduler-run-result { color: var(--danger); }
-.scheduler-run-row--skipped .scheduler-run-result { color: var(--accent-gold); }
+.scheduler-run-row--success    .scheduler-run-result { color: var(--success); }
+.scheduler-run-row--error      .scheduler-run-result { color: var(--danger); }
+.scheduler-run-row--skipped    .scheduler-run-result { color: var(--accent-gold); }
+.scheduler-run-row--incomplete .scheduler-run-result { color: var(--accent-orange, #db6d28); }
 
 .scheduler-run-duration {
   font-variant-numeric: tabular-nums;
@@ -14192,6 +14195,11 @@ body.resizing-col .explorer-resizer::after {
 .overview-result--skipped {
   color: var(--text-dim);
   background: rgba(139, 148, 158, 0.12);
+}
+
+.overview-result--incomplete {
+  color: rgb(219, 109, 40);
+  background: rgba(219, 109, 40, 0.12);
 }
 
 .overview-projects {
@@ -18812,6 +18820,24 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
   opacity: 0.55;
 }
 
+.settings-field .launch-model-picker-trigger,
+.scheduler-form-field .launch-model-picker-trigger {
+  background: var(--bg-base);
+  padding: 7px 10px;
+}
+
+.settings-field .launch-model-picker-trigger {
+  font-size: 13px;
+}
+
+.scheduler-form-field .launch-model-picker-trigger {
+  font-size: 12px;
+}
+
+.scheduler-form-field .launch-model-picker-trigger:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-blue) 20%, transparent);
+}
+
 .launch-model-picker-menu {
   position: fixed;
   z-index: 400;
@@ -18864,6 +18890,7 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
 }
 
 .launch-model-picker-option:hover,
+.launch-model-picker-option.is-active,
 .launch-model-picker-option.is-selected {
   background: var(--bg-hover);
 }
@@ -18925,6 +18952,59 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
 
 .prompt-composer .ui-command-attachments {
   margin-bottom: 8px;
+}
+
+/* Quick Agent borrows Home's focused command surface. Its project, harness, and
+   model controls stay in the launcher below, so the composer has one uncluttered
+   action row rather than duplicating that picker strip. */
+.prompt-composer--home .ui-command-attachments {
+  margin-bottom: 0;
+}
+
+.prompt-composer-home-toolbar {
+  justify-content: space-between;
+}
+
+.prompt-composer-home-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.prompt-composer-home-actions .voice-input-btn {
+  width: 28px;
+  height: 28px;
+  margin-left: 0;
+  padding: 0;
+  justify-content: center;
+}
+
+.ui-command-icon-button.prompt-composer-home-launch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent-blue);
+  color: #fff;
+  cursor: pointer;
+}
+
+.ui-command-icon-button.prompt-composer-home-launch:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.ui-command-icon-button.prompt-composer-home-launch:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.ui-command-icon-button.prompt-composer-home-launch:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
 }
 
 .launch-command {
@@ -20007,6 +20087,10 @@ button.launch-persona {
 .launch-folder-select:focus-visible {
   outline: none;
   border-color: var(--accent-blue);
+}
+
+.launch-folder .launch-model-picker-trigger {
+  width: auto;
 }
 
 /* "+" in the Agents list header. agents-count owns margin-left:auto, so when

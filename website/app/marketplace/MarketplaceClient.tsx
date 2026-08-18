@@ -54,6 +54,18 @@ export function MarketplaceClient() {
           </p>
         </div>
 
+        <div className="marketplace-install-guide" data-reveal>
+          <div>
+            <span className="eyebrow">How installation works</span>
+            <h2>Discover here. Install from Zana.</h2>
+            <p>Use this catalog to evaluate extensions. In the desktop app, open <strong>Settings → Extensions → Marketplace</strong> to install a published extension, or choose a local build when you are developing privately.</p>
+          </div>
+          <div className="marketplace-install-actions">
+            <Link className="btn btn-primary" href="/extensions/install/">See all install paths</Link>
+            <Link className="btn btn-ghost" href="/extensions/">Build an extension</Link>
+          </div>
+        </div>
+
         <div className="mk-toolbar">
           <input
             className="search-box"
@@ -93,7 +105,7 @@ export function MarketplaceClient() {
                   </div>
                 )}
                 <p style={{ fontSize: 13, color: 'var(--text-2)', marginTop: 4 }}>
-                  Install from the app: <code>Settings → Extensions → Marketplace → {e.id}</code>
+                  Install in Zana: <code>Settings → Extensions → Marketplace → {e.id}</code>
                 </p>
               </div>
             ))}

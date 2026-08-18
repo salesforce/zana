@@ -19,7 +19,7 @@ import { Section, Field, ToggleSwitch } from './FormFields';
  * Code Harness tab.
  */
 
-const GLYPHS: Record<OpenTarget, (size: number) => JSX.Element> = {
+const GLYPHS: Record<OpenTarget, (size: number) => React.ReactElement> = {
   cursor: (s) => <CursorIcon size={s} />,
   code: (s) => <Code2 size={s} />,
   intellij: (s) => <IntelliJIcon size={s} />,

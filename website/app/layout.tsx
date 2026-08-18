@@ -25,13 +25,17 @@ const fraunces = Fraunces({
 export const metadata: Metadata = {
   metadataBase: new URL(site.publicBaseUrl),
   title: {
-    default: `${site.name} — orchestrate Claude Code across every project`,
+    default: `${site.name} — orchestrate AI coding harnesses across every project`,
     template: `%s — ${site.name}`
   },
   description: site.tagline,
   applicationName: site.name,
   keywords: [
     'Claude Code',
+    'OpenCode',
+    'Codex CLI',
+    'Pi coding agent',
+    'AI coding harnesses',
     'AI agents',
     'multi-agent orchestration',
     'developer cockpit',
@@ -46,7 +50,7 @@ export const metadata: Metadata = {
     // Explicit reference so every route inherits the generated card even when a
     // child segment declares its own openGraph block (which otherwise drops the
     // file-convention image). Resolved against metadataBase.
-    images: [{ url: '/opengraph-image', width: 1200, height: 630, alt: 'Zana Command Center — the cockpit for Claude Code' }]
+    images: [{ url: '/opengraph-image', width: 1200, height: 630, alt: 'Zana Command Center — the control plane for AI coding harnesses' }]
   },
   twitter: {
     card: 'summary_large_image',

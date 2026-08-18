@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { existsSync, mkdirSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { normalizeRepoUrl, canonicalRemote, safeRef, cloneProject } from '../git-clone.js';
 
 describe('normalizeRepoUrl', () => {
@@ -173,5 +174,42 @@ describe('cloneProject (input validation, offline)', () => {
     });
     expect(res.ok).toBe(false);
     expect(res.code).toBe('BAD_INPUT');
+  });
+
+  it('rejects a symlink destination before git can write outside the clone root', async () => {
+    const root = join(tmpdir(), `zcc-clone-root-${Date.now()}`);
+    const external = join(tmpdir(), `zcc-clone-external-${Date.now()}`);
+    mkdirSync(root, { recursive: true });
+    mkdirSync(external, { recursive: true });
+    symlinkSync(external, join(root, 'repo'));
+
+    try {
+      const res = await cloneProject({ url: 'https://github.com/owner/repo', destBase: root });
+      expect(res.ok).toBe(false);
+      expect(res.code).toBe('BAD_INPUT');
+      expect(res.message).toMatch(/symbolic link/);
+      expect(existsSync(join(external, '.git'))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(external, { recursive: true, force: true });
+    }
+  });
+
+  it('uses the canonical clone-root path when the configured root is a symlink', async () => {
+    const root = join(tmpdir(), `zcc-clone-root-${Date.now()}`);
+    const alias = join(tmpdir(), `zcc-clone-alias-${Date.now()}`);
+    mkdirSync(root, { recursive: true });
+    mkdirSync(join(root, 'repo', 'placeholder'), { recursive: true });
+    symlinkSync(root, alias);
+
+    try {
+      const res = await cloneProject({ url: 'https://github.com/owner/repo', destBase: alias });
+      expect(res.ok).toBe(false);
+      expect(res.code).toBe('DEST_EXISTS');
+      expect(res.path).toBe(join(realpathSync(root), 'repo'));
+    } finally {
+      rmSync(alias, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

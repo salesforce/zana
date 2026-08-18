@@ -1,7 +1,7 @@
 {
   "name": "zana-command-center",
   "productName": "Zana",
-  "version": "1.1.0",
+  "version": "1.0.10",
   "private": true,
   "description": "Zana Command Center — multi-project terminal hub for Claude Code sessions",
   "author": "grebmann",
@@ -58,9 +58,9 @@
     "mermaid": "^11.16.1",
     "monaco-editor": "^0.56.0",
     "node-pty": "^1.0.0",
-    "react": "^18.3.1",
+    "react": "^19.2.8",
     "react-diff-viewer-continued": "^4.3.0",
-    "react-dom": "^18.3.1",
+    "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1",
@@ -68,18 +68,18 @@
     "zustand": "^5.0.0"
   },
   "optionalDependencies": {
-    "microsandbox": "0.6.6"
+    "microsandbox": "0.6.8"
   },
   "devDependencies": {
-    "@electron/rebuild": "^3.6.0",
+    "@electron/rebuild": "^4.2.0",
     "@playwright/test": "^1.62.1",
     "@types/better-sqlite3": "^7.6.0",
-    "@types/node": "^22.7.0",
-    "@types/react": "^18.3.11",
-    "@types/react-dom": "^18.3.1",
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.0.5",
     "@vitest/coverage-v8": "^4.1.10",
-    "electron": "^33.0.0",
+    "electron": "^43.4.0",
     "electron-builder": "^26.15.3",
     "electron-vite": "^6.0.0-beta.1",
     "typescript": "^7.0.2",

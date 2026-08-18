@@ -14,6 +14,7 @@ import {
   DEFAULT_SLACK_CONFIG,
   DEFAULT_SLACK_BOT_CONFIG
 } from '../shared/types.js';
+import { PopoverPicklist } from '@renderer/components/ui/PopoverPicklist';
 
 interface SlackPanelProps {
   host: ModuleHost;
@@ -419,17 +420,17 @@ export default function SlackPanel({ host }: SlackPanelProps) {
         <div className="settings-field">
           <label>
             <span className="settings-label">Launch sessions into</span>
-            <select
+            <PopoverPicklist
               value={config.bot.defaultProjectId ?? ''}
-              onChange={(e) => saveBot({ defaultProjectId: e.target.value || undefined })}
-            >
-              <option value="">Active project (whatever's selected)</option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+              ariaLabel="Launch sessions into"
+              onChange={(projectId) => saveBot({ defaultProjectId: projectId || undefined })}
+              placeholder="Active project (whatever's selected)"
+              searchPlaceholder="Search projects"
+              options={[
+                { value: '', label: 'Active project (whatever\'s selected)' },
+                ...projects.map((project) => ({ value: project.id, label: project.name }))
+              ]}
+            />
           </label>
         </div>
 

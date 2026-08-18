@@ -577,8 +577,9 @@ export async function stageInstallable(srcDir: string, tempBase = tmpdir()): Pro
  * cannot choose its install location (installFromDir derives it from the
  * manifest id). The temp clone + staging dir are ALWAYS removed.
  *
- * `clone` is a DI seam for tests: `normalizeRepoUrl` rejects `file://`/local
- * paths, so offline tests inject a fake clone (or a real `git clone -- <bare>`).
+ * `clone` and `tempBase` are DI seams for tests: `normalizeRepoUrl` rejects
+ * `file://`/local paths, so offline tests inject a fake clone (or a real
+ * `git clone -- <bare>`) and isolate their temporary artifacts.
  */
 export async function installFromGit(
   url: string,

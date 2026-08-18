@@ -64,7 +64,7 @@ jobs:
 
       # node-pty / better-sqlite3 are native; npm ci runs their install scripts.
       # distutils was dropped from Python 3.12 stdlib, so pin 3.11 (matches ci.yml).
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
@@ -127,7 +127,7 @@ jobs:
       # electron-builder rebuilds node-pty via node-gyp, which still imports
       # Python's distutils. The runner default (Python 3.12+) removed distutils
       # from the stdlib, so pin 3.11 where it still ships.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
@@ -224,6 +224,10 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          # Keep the published feed aligned with electron-builder.yml. This
+          # cross-repository release needs a token with contents:write there.
+          repository: grebmann1/zcc-releases
+          token: ${{ secrets.ZCC_RELEASES_TOKEN }}
           # dmg + zip + blockmap + latest-mac.yml must all be attached:
           # electron-updater reads latest-mac.yml to detect a new version and
           # downloads the zip (the dmg is for first-install only).

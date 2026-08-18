@@ -1,5 +1,6 @@
 import type { AppConfig } from '@shared/types';
 import { Section, Field, CheckboxField } from './FormFields';
+import { PopoverPicklist } from '../ui/PopoverPicklist';
 
 /**
  * Experimental settings — opt-in features still under evaluation. Each is OFF by
@@ -87,14 +88,17 @@ export function ExperimentalTab({
               dictation. No separate voice key is needed.
             </p>
             <Field label="Transcription model">
-              <select
+              <PopoverPicklist
                 value={config.voiceModel ?? 'whisper-1'}
-                onChange={(e) => onUpdate({ voiceModel: e.target.value })}
-              >
-                <option value="whisper-1">whisper-1</option>
-                <option value="gpt-4o-transcribe">gpt-4o-transcribe</option>
-                <option value="gpt-4o-mini-transcribe">gpt-4o-mini-transcribe</option>
-              </select>
+                ariaLabel="Transcription model"
+                searchable={false}
+                onChange={(voiceModel) => onUpdate({ voiceModel })}
+                options={[
+                  { value: 'whisper-1', label: 'whisper-1' },
+                  { value: 'gpt-4o-transcribe', label: 'gpt-4o-transcribe' },
+                  { value: 'gpt-4o-mini-transcribe', label: 'gpt-4o-mini-transcribe' }
+                ]}
+              />
             </Field>
             <Field label="Language" help="ISO-639-1 code (e.g. 'en', 'fr'). Leave empty for auto-detect.">
               <input

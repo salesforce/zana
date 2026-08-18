@@ -23,10 +23,10 @@
   },
   "optionalDependencies": {
     "@elgato-stream-deck/node": "^7.1.2",
-    "@napi-rs/canvas": "^0.1.65"
+    "@napi-rs/canvas": "^1.0.5"
   },
   "devDependencies": {
-    "@types/node": "^22.20.1",
+    "@types/node": "^26.2.0",
     "vitest": "^4.1.10"
   }
 }

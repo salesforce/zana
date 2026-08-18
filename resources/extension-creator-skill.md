@@ -217,6 +217,80 @@ The defined ones (see `src/renderer/styles/global.css` `:root`):
 `var(--border)`, `var(--bg-panel)`, `var(--accent-blue)`. Always pass a literal
 fallback for anything else, e.g. `var(--surface-2, rgba(127,127,127,0.06))`.
 
+### Controls — use host picklists, not native selects
+
+The desktop app intentionally uses themed, searchable picklists instead of
+platform-native `select` menus. Native selects can open in the operating
+system's light palette, do not scale well to the user's project/persona lists,
+and make an extension feel detached from the rest of the app.
+
+- **For a choice from a changing or potentially long list** (projects, people,
+  teams, saved records, providers), render a semantic button that opens
+  `host.quickPick(...)`. The host renders the searchable picker, owns Escape and
+  focus return, and follows the app theme. Treat `null` as cancel; an empty
+  string may be a valid selected value.
+- **For two to four fixed, mutually exclusive modes**, use a visible button group
+  with `aria-pressed` on the selected button. Do not hide a small decision behind
+  a menu.
+- **For booleans**, prefer a real checkbox inside a label. Do not make a `div`
+  clickable. If a visual switch is essential, use a `button` with
+  `role="switch"` and `aria-checked`.
+- **For free-form values**, use a labelled `input` or `textarea`; do not force a
+  picklist where typing is clearer. Every visible field needs a programmatic
+  label, and disabled/unavailable choices need nearby explanatory text.
+- **Never import core renderer internals** such as `PopoverPicklist` or copy its
+  CSS into a disk extension. Those are host implementation details, not the
+  extension API. Use `host.quickPick` for selection and the documented theme
+  variables for your own layout.
+
+Example: a project choice that matches host interaction instead of rendering a
+native menu. This assumes the extension declared `projects:read`.
+
+```js
+function ProjectPicker({ projectId, onChange }) {
+  const projects = host.listProjects();
+  const selected = projects.find((project) => project.id === projectId);
+
+  const chooseProject = async () => {
+    const next = await host.quickPick(
+      [
+        {
+          label: 'Active project',
+          description: 'Use whichever project is currently selected',
+          value: ''
+        },
+        ...projects.map((project) => ({
+          label: project.name,
+          description: project.remote ? project.remote.host : project.path,
+          value: project.id
+        }))
+      ],
+      { title: 'Project', placeholder: 'Search projects' }
+    );
+    if (next !== null) onChange(next);
+  };
+
+  return h(
+    'button',
+    {
+      type: 'button',
+      onClick: () => { void chooseProject(); },
+      'aria-haspopup': 'dialog'
+    },
+    selected?.name ?? 'Active project'
+  );
+}
+```
+
+Use `host.confirm(...)` before a destructive choice, and use `host.prompt(...)`
+for one short text value. This keeps extension dialogs consistent with the rest
+of the app instead of recreating modal, focus-trap, and theme behavior.
+
+Because disk-extension renderers receive only injected React and `host`, do not
+assume you can import the host's React components. `host.quickPick` is the
+supported public selection primitive; its items accept `{ label, description,
+value }` and resolve to the selected `value` or `null` on cancel.
+
 ## Permissions (deny-by-default)
 
 The starter declares **no permissions**, so it installs consent-free. Add a token

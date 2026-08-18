@@ -40,7 +40,7 @@ export function useExclusivePopover(): readonly [boolean, (next: boolean | ((cur
   const idRef = useRef<symbol | null>(null);
   if (!idRef.current) idRef.current = Symbol('popover');
   const id = idRef.current;
-  const isCurrentlyOpen = useSyncExternalStore(subscribe, () => isOpen(id));
+  const isCurrentlyOpen = useSyncExternalStore(subscribe, () => isOpen(id), () => false);
 
   const setOpen = (next: boolean | ((current: boolean) => boolean)) => {
     const resolved = typeof next === 'function' ? next(isOpen(id)) : next;

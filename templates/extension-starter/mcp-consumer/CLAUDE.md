@@ -50,6 +50,16 @@ user to approve it the first time, like any tool with a real side effect.
   workspace-scoped server child; omit it (or pass `useGlobal: true`) for the
   global (`~`) workspace child.
 
+## Controls — match the host UI
+
+Do **not** render native `select` menus. Use a semantic button plus
+`host.quickPick(items, { title, placeholder })` for projects, MCP-provided
+records, and other changing/long lists; it is searchable, theme-aware, and
+returns `null` on cancel. Use button groups with `aria-pressed` for two to four
+fixed modes and a labelled native checkbox for booleans. Do not import core
+renderer components or copy their CSS — use documented theme variables and the
+host dialog APIs instead.
+
 ## Build / iterate loop
 
 1. Wire the real server id + tool (see FIRST TASK above), then edit `dist/main.mjs`

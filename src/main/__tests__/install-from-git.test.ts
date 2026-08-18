@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import type { CloneOptions, CloneResult } from '../git-clone.js';
 
 let installDir: string;
+let tempDir: string;
 
 async function importInstaller() {
   return await import('../extension-installer.js');
@@ -70,11 +71,13 @@ function fakeClone(
 describe('installFromGit', () => {
   beforeEach(async () => {
     installDir = await mkdtemp(join(tmpdir(), 'cc-git-install-'));
+    tempDir = await mkdtemp(join(tmpdir(), 'cc-git-temp-'));
     process.env.ZCC_EXTENSIONS_DIR = installDir;
   });
   afterEach(async () => {
     delete process.env.ZCC_EXTENSIONS_DIR;
     await rm(installDir, { recursive: true, force: true });
+    await rm(tempDir, { recursive: true, force: true });
   });
 
   it('installs an extension whose manifest is at the repo root', async () => {
@@ -296,22 +299,18 @@ describe('installFromGit', () => {
 
   it('cleans up the temp clone + staging dir on success', async () => {
     const { installFromGit } = await importInstaller();
-    const before = await readdir(tmpdir());
+    const before = await readdir(tempDir);
     const { clone } = fakeClone({
       'extension.json': JSON.stringify(goodManifest('tidy')),
       'dist/renderer.js': '// x'
     });
 
-    await installFromGit('https://github.com/owner/repo', {}, installOpts, { clone });
+    await installFromGit('https://github.com/owner/repo', {}, installOpts, { clone, tempBase: tempDir });
 
-    const after = await readdir(tmpdir());
-    // Vitest runs files in parallel. Temp directories from another worker have a
-    // different PID and are outside this install attempt's cleanup contract.
-    const ownPrefix = `-${process.pid}-`;
+    const after = await readdir(tempDir);
     const leaked = after.filter(
       (n) =>
         (n.startsWith('zcc-ext-git-') || n.startsWith('zcc-ext-stage-')) &&
-        n.includes(ownPrefix) &&
         !before.includes(n)
     );
     expect(leaked).toEqual([]);
@@ -319,15 +318,14 @@ describe('installFromGit', () => {
 
   it('cleans up the temp clone dir on failure too', async () => {
     const { installFromGit } = await importInstaller();
-    const before = await readdir(tmpdir());
+    const before = await readdir(tempDir);
     const { clone } = fakeClone({ 'README.md': 'no manifest' });
 
-    await installFromGit('https://github.com/owner/repo', {}, installOpts, { clone });
+    await installFromGit('https://github.com/owner/repo', {}, installOpts, { clone, tempBase: tempDir });
 
-    const after = await readdir(tmpdir());
-    const ownPrefix = `-${process.pid}-`;
+    const after = await readdir(tempDir);
     const leaked = after.filter(
-      (n) => n.startsWith('zcc-ext-git-') && n.includes(ownPrefix) && !before.includes(n)
+      (n) => n.startsWith('zcc-ext-git-') && !before.includes(n)
     );
     expect(leaked).toEqual([]);
   });

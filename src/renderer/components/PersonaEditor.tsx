@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { X, Trash2, Copy, Pencil, FolderOpen, ChevronRight } from 'lucide-react';
-import { executionMappingOptions, type HarnessAdapterDescriptor } from '@shared/harness-adapter';
+import type { HarnessAdapterDescriptor } from '@shared/harness-adapter';
 import type { HarnessFamily, LaunchProfileId, Persona, PersonaInput } from '@shared/types';
 import {
   harnessFamilyOf,
@@ -12,6 +12,7 @@ import {
 import { useUi, useData } from '../store';
 import { ImprovePromptButton } from './ImprovePromptButton';
 import { HarnessOptionSelect } from './HarnessOptionSelect';
+import { PopoverPicklist } from './ui/PopoverPicklist';
 import { effectivePersonaRouting } from '../util/personaRouting';
 import {
   PERSONA_ICON_NAMES,
@@ -208,12 +209,14 @@ function PersonaHarnessRoutingFields({
       {!!targets?.providers?.length && (
         <div className="scheduler-form-field">
           <label htmlFor="persona-provider-target">Provider</label>
-          <select
+          <PopoverPicklist
             id="persona-provider-target"
-            value={selectedProvider}
-             disabled={relationship === 'fixed-provider'}
-            onChange={(event) => {
-              const providerTargetId = event.target.value || undefined;
+            value={selectedProvider ?? ''}
+            ariaLabel="Provider"
+            searchable={false}
+            disabled={relationship === 'fixed-provider'}
+            onChange={(providerId) => {
+              const providerTargetId = providerId || undefined;
               const currentModel = targets.models.find((target) => target.id === routing.modelTargetId);
               onChange({
                 providerTargetId,
@@ -222,46 +225,50 @@ function PersonaHarnessRoutingFields({
                   : {})
               });
             }}
-          >
-            {relationship !== 'fixed-provider' && <option value="">Use project/global default</option>}
-            {targets.providers.map((provider) => (
-              <option key={provider.id} value={provider.id}>{provider.label}</option>
-            ))}
-          </select>
+            options={[
+              ...(relationship !== 'fixed-provider' ? [{ value: '', label: 'Use project/global default' }] : []),
+              ...targets.providers.map((provider) => ({ value: provider.id, label: provider.label }))
+            ]}
+          />
         </div>
       )}
       {!!targets?.models.length && (
         <div className="scheduler-form-field">
           <label htmlFor="persona-model-target">Model</label>
-          <select
+          <PopoverPicklist
             id="persona-model-target"
             value={routing.modelTargetId ?? ''}
-             onChange={(event) => onChange({ modelTargetId: event.target.value || undefined })}
-          >
-            <option value="">Use project/global default</option>
-            {visibleModels.map((target) => (
-              <option key={target.id} value={target.id}>
-                {target.label}{target.level ? ` [${portableLabel(target.level)}]` : ''}
-              </option>
-            ))}
-          </select>
+            ariaLabel="Model"
+            onChange={(modelTargetId) => onChange({ modelTargetId: modelTargetId || undefined })}
+            options={[
+              { value: '', label: 'Use project/global default' },
+              ...visibleModels.map((target) => ({
+                value: target.id,
+                label: `${target.label}${target.level ? ` [${portableLabel(target.level)}]` : ''}`
+              }))
+            ]}
+          />
         </div>
       )}
       {targets?.executionStateMapping && descriptor.id !== 'codex' && (
         <div className="scheduler-form-field">
           <label htmlFor="persona-execution-target">Execution state</label>
-          <select
+          <PopoverPicklist
             id="persona-execution-target"
             value={routing.executionState ?? ''}
-             onChange={(event) => onChange({
-              executionState: (event.target.value || undefined) as NonNullable<typeof routing.executionState> | undefined
+            ariaLabel="Execution state"
+            searchable={false}
+            onChange={(executionState) => onChange({
+              executionState: (executionState || undefined) as NonNullable<typeof routing.executionState> | undefined
             })}
-          >
-            <option value="">Use project/global default</option>
-            {executionMappingOptions(targets.executionStateMapping).map(({ id, native, states }) => (
-              <option key={id} value={id}>{native} [{states.map(portableLabel).join(', ')}]</option>
-            ))}
-          </select>
+            options={[
+              { value: '', label: 'Use project/global default' },
+              ...Object.entries(targets.executionStateMapping).map(([state, native]) => ({
+                value: state,
+                label: `${native} [${portableLabel(state)}]`
+              }))
+            ]}
+          />
         </div>
       )}
       {descriptor.id === 'codex' && (
@@ -663,49 +670,54 @@ function PersonaForm({ persona, onClose }: { persona: Persona | null; onClose: (
         <div className={`persona-routing-grid persona-routing-grid--${baseProfile ? 'pinned' : 'neutral'}`}>
           <div className="scheduler-form-field">
             <label htmlFor="persona-profile">Harness profile</label>
-            <select
+            <PopoverPicklist
               id="persona-profile"
               value={baseProfile}
-              onChange={(e) => setBaseProfile(e.target.value as LaunchProfileId | '')}
-            >
-              <option value="">Use launch harness (neutral)</option>
-              {PROFILES.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
+              ariaLabel="Harness profile"
+              searchable={false}
+              onChange={(profile) => setBaseProfile(profile as LaunchProfileId | '')}
+              options={[
+                { value: '', label: 'Use launch harness (neutral)' },
+                ...PROFILES.map((item) => ({ value: item.id, label: item.label }))
+              ]}
+            />
           </div>
 
         {!baseProfile ? (
           <div className="persona-portable-routing" data-testid="persona-portable-routing">
               <div className="scheduler-form-field">
                 <label htmlFor="persona-model-level">Model level</label>
-                <select
+                <PopoverPicklist
                   id="persona-model-level"
                   value={modelLevel}
-                  onChange={(e) => setModelLevel(e.target.value)}
-                >
-                  <option value="default">Use harness default (unset)</option>
-                  <option value="low">Low (speed/cost sensitive)</option>
-                  <option value="medium">Medium (balanced normal)</option>
-                  <option value="high">High (frontier reasoning)</option>
-                  <option value="extra-high">Extra-high (deep reasoning)</option>
-                </select>
+                  ariaLabel="Model level"
+                  searchable={false}
+                  onChange={setModelLevel}
+                  options={[
+                    { value: 'default', label: 'Use harness default (unset)' },
+                    { value: 'low', label: 'Low (speed/cost sensitive)' },
+                    { value: 'medium', label: 'Medium (balanced normal)' },
+                    { value: 'high', label: 'High (frontier reasoning)' },
+                    { value: 'extra-high', label: 'Extra-high (deep reasoning)' }
+                  ]}
+                />
               </div>
               <div className="scheduler-form-field">
                 <label htmlFor="persona-execution-state">Execution state</label>
-                <select
+                <PopoverPicklist
                   id="persona-execution-state"
                   value={executionState}
-                  onChange={(e) => setExecutionState(e.target.value)}
-                >
-                  <option value="default">Use harness default (unset)</option>
-                  <option value="plan">Plan (planning only)</option>
-                  <option value="interactive">Interactive (human-in-loop)</option>
-                  <option value="accept-edits">Accept Edits (auto-approve edits)</option>
-                  <option value="autonomous">Autonomous (fully auto)</option>
-                </select>
+                  ariaLabel="Execution state"
+                  searchable={false}
+                  onChange={setExecutionState}
+                  options={[
+                    { value: 'default', label: 'Use harness default (unset)' },
+                    { value: 'plan', label: 'Plan (planning only)' },
+                    { value: 'interactive', label: 'Interactive (human-in-loop)' },
+                    { value: 'accept-edits', label: 'Accept Edits (auto-approve edits)' },
+                    { value: 'autonomous', label: 'Autonomous (fully auto)' }
+                  ]}
+                />
               </div>
           </div>
         ) : selectedDescriptor ? (

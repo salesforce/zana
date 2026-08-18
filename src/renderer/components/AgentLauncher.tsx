@@ -69,6 +69,7 @@ import { useDialogFocusTrap } from '../util/useDialogFocusTrap';
 import { effectivePersonaRouting } from '../util/personaRouting';
 import { HarnessOptionSelect } from './HarnessOptionSelect';
 import { LauncherModelPicker } from './LauncherModelPicker';
+import { PopoverPicklist } from './ui/PopoverPicklist';
 import { buildFixWithAiPrompt } from '../util/fixWithAiPrompt';
 import { posixQuote } from '../util/quote';
 import { appendAttachmentContext, attachmentName, mergeAttachmentPaths } from '../util/attachments';
@@ -395,32 +396,38 @@ function NativeAgentRoutingFields({
       {targets?.executionStateMapping && descriptor.id !== 'codex' && descriptor.id !== 'opencode' && (
         <div className="launch-row launch-native-field--execution">
           <label className="launch-row-label" htmlFor="launch-native-execution">Execution State</label>
-          <select
+          <PopoverPicklist
             id="launch-native-execution"
             className="launch-folder-select"
             value={routing.executionState ?? ''}
             disabled={unavailable}
-            onChange={(event) => onChange({
-              executionState: (event.target.value || undefined) as LauncherRouting['executionState']
+            ariaLabel="Execution state"
+            searchable={false}
+            onChange={(executionState) => onChange({
+              executionState: (executionState || undefined) as LauncherRouting['executionState']
             })}
-          >
-            <option value="">Use project/global default</option>
-              {executionMappingOptions(targets.executionStateMapping).map(({ id, native, states }) => (
-                <option key={id} value={id}>{native} [{states.map(portableLabel).join(', ')}]</option>
-            ))}
-          </select>
+            options={[
+              { value: '', label: 'Use project/global default' },
+              ...executionMappingOptions(targets.executionStateMapping).map(({ id, native, states }) => ({
+                value: id,
+                label: `${native} [${states.map(portableLabel).join(', ')}]`
+              }))
+            ]}
+          />
         </div>
       )}
       {!!targets?.providers?.length && (
         <div className="launch-row launch-native-field--provider">
           <label className="launch-row-label" htmlFor="launch-provider-target">Provider</label>
-          <select
+          <PopoverPicklist
             id="launch-provider-target"
             className="launch-folder-select"
-            value={selectedProvider}
+            value={selectedProvider ?? ''}
             disabled={relationship === 'fixed-provider' || unavailable}
-            onChange={(event) => {
-              const providerTargetId = event.target.value || undefined;
+            ariaLabel="Provider"
+            searchable={false}
+            onChange={(providerId) => {
+              const providerTargetId = providerId || undefined;
               const currentModel = targets.models.find((target) => target.id === routing.modelTargetId);
               onChange({
                 providerTargetId,
@@ -429,10 +436,11 @@ function NativeAgentRoutingFields({
                   : {})
               });
             }}
-          >
-            {relationship !== 'fixed-provider' && <option value="">Use project/global default</option>}
-            {targets.providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}
-          </select>
+            options={[
+              ...(relationship !== 'fixed-provider' ? [{ value: '', label: 'Use project/global default' }] : []),
+              ...targets.providers.map((provider) => ({ value: provider.id, label: provider.label }))
+            ]}
+          />
         </div>
       )}
       {descriptor.id === 'codex' && (
@@ -581,17 +589,14 @@ function WorkflowArgForm({
           <div key={a.name} className="workflow-arg-field">
             <label htmlFor={id}>{a.name}</label>
             {a.type === 'enum' && a.enumValues && a.enumValues.length > 0 ? (
-              <select
+              <PopoverPicklist
                 id={id}
                 value={val}
-                onChange={(e) => onChange(a.name, e.target.value)}
-              >
-                {a.enumValues.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
+                ariaLabel={a.name}
+                searchable={false}
+                onChange={(nextValue) => onChange(a.name, nextValue)}
+                options={a.enumValues.map((enumValue) => ({ value: enumValue, label: enumValue }))}
+              />
             ) : (
               <input
                 id={id}
@@ -799,17 +804,14 @@ function QuickPromptEditor({
 
       <div className="workflow-arg-field">
         <label htmlFor="qpe-profile">Profile</label>
-        <select
+        <PopoverPicklist
           id="qpe-profile"
           value={profile}
-          onChange={(e) => setProfile(e.target.value as LaunchProfileId)}
-        >
-          {promptProfiles.map((p) => (
-            <option key={p} value={p}>
-              {profileLabel(p)}
-            </option>
-          ))}
-        </select>
+          ariaLabel="Profile"
+          searchable={false}
+          onChange={(nextProfile) => setProfile(nextProfile as LaunchProfileId)}
+          options={promptProfiles.map((item) => ({ value: item, label: profileLabel(item) }))}
+        />
       </div>
 
       {slotNames.length > 0 && (
@@ -823,14 +825,16 @@ function QuickPromptEditor({
             return (
               <div key={name} className="quick-prompt-editor-arg">
                 <span className="quick-prompt-editor-arg-name">{name}</span>
-                <select
-                  aria-label={`${name} type`}
+                <PopoverPicklist
                   value={meta.type ?? 'text'}
-                  onChange={(e) => setMeta(name, { type: e.target.value as 'text' | 'enum' })}
-                >
-                  <option value="text">text</option>
-                  <option value="enum">enum</option>
-                </select>
+                  ariaLabel={`${name} type`}
+                  searchable={false}
+                  onChange={(type) => setMeta(name, { type: type as 'text' | 'enum' })}
+                  options={[
+                    { value: 'text', label: 'text' },
+                    { value: 'enum', label: 'enum' }
+                  ]}
+                />
                 <input
                   type="text"
                   aria-label={`${name} description`}
@@ -1199,6 +1203,7 @@ export const AgentLauncher = memo(function AgentLauncher({
   // Renderer eligibility is advisory. Main still verifies Git state and confines
   // the worktree before changing cwd.
   const scratchIsTarget = !projectMode && targetProjectId === null;
+  const useQuickAgentHomeComposer = scratchIsTarget;
   const worktreeStructurallyEligible = isWorktreeEligible(target, scratchIsTarget);
   const worktreeEligible = worktreeStructurallyEligible && targetIsGitRepo;
   const personaProfileSelection = selectedPersona?.baseProfile
@@ -1879,6 +1884,11 @@ export const AgentLauncher = memo(function AgentLauncher({
               setAttachments((current) => current.filter((item) => item !== path));
             }}
             onSubmit={mode === 'autonomous' ? launchAutonomous : launch}
+            variant={useQuickAgentHomeComposer ? 'home' : 'default'}
+            submitLabel={mode === 'autonomous' ? 'Launch autonomous team' : 'Launch agent'}
+            submitDisabled={mode === 'autonomous'
+              ? !teamId || !prompt.trim() || !target || launching
+              : !target || !descriptor || !configLoaded || !worktreeDefaultLoaded || personaProfileConflict || launching}
             placeholder={
               mode === 'autonomous'
                 ? 'Describe the GOAL for the team to reach (⌘↵ to launch). Attach or drop supporting files.'
@@ -1959,41 +1969,23 @@ export const AgentLauncher = memo(function AgentLauncher({
               <span className="launch-row-label">Project</span>
               <div className="launch-folder">
                 <Folder size={13} aria-hidden="true" />
-                <select
+                <PopoverPicklist
+                  id="agent-launcher-project"
                   className="launch-folder-select"
                   value={targetProjectId ?? ''}
-                  onChange={(e) => setTargetProjectId(e.target.value || null)}
-                  aria-label="Target project"
-                >
-                  <option value="">Quick workspace (scratch)</option>
-                  {projectGroups.favorites.length > 0 && (
-                    <optgroup label="Favorites">
-                      {projectGroups.favorites.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {projectGroups.remote.length > 0 && (
-                    <optgroup label="Remote">
-                      {projectGroups.remote.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {projectGroups.local.length > 0 && (
-                    <optgroup label="Local">
-                      {projectGroups.local.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
+                  ariaLabel="Target project"
+                  onChange={(nextProjectId) => setTargetProjectId(nextProjectId || null)}
+                  placeholder="Quick workspace (scratch)"
+                  searchPlaceholder="Search projects"
+                  emptyHint="No matching projects"
+                  minWidth={320}
+                  options={[
+                    { value: '', label: 'Quick workspace (scratch)' },
+                    ...projectGroups.favorites.map((project) => ({ value: project.id, label: project.name, group: 'Favorites' })),
+                    ...projectGroups.remote.map((project) => ({ value: project.id, label: project.name, group: 'Remote' })),
+                    ...projectGroups.local.map((project) => ({ value: project.id, label: project.name, group: 'Local' }))
+                  ]}
+                />
               </div>
             </div>
           )}
@@ -2186,39 +2178,45 @@ export const AgentLauncher = memo(function AgentLauncher({
                   <div className="launch-routing-defaults-fields">
                     <label className="launch-routing-defaults-field" htmlFor="launch-model-level">
                       <span>Model level</span>
-                      <select
+                      <PopoverPicklist
                         id="launch-model-level"
                         className="launch-folder-select"
                         value={portableRouting.modelLevel ?? ''}
-                        onChange={(event) => {
+                        ariaLabel="Model level"
+                        searchable={false}
+                        onChange={(modelLevel) => {
                           setAgentRoutingDirty(true);
                           setPortableRouting((current) => ({
                             ...current,
-                            modelLevel: (event.target.value || undefined) as LauncherRouting['modelLevel']
+                            modelLevel: (modelLevel || undefined) as LauncherRouting['modelLevel']
                           }));
                         }}
-                      >
-                        <option value="">Use configured default</option>
-                        {PORTABLE_MODEL_LEVELS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-                      </select>
+                        options={[
+                          { value: '', label: 'Use configured default' },
+                          ...PORTABLE_MODEL_LEVELS.map((option) => ({ value: option.id, label: option.label }))
+                        ]}
+                      />
                     </label>
                     <label className="launch-routing-defaults-field" htmlFor="launch-execution-state">
                       <span>Execution state</span>
-                      <select
+                      <PopoverPicklist
                         id="launch-execution-state"
                         className="launch-folder-select"
                         value={portableRouting.executionState ?? ''}
-                        onChange={(event) => {
+                        ariaLabel="Execution state"
+                        searchable={false}
+                        onChange={(executionState) => {
                           setAgentRoutingDirty(true);
                           setPortableRouting((current) => ({
                             ...current,
-                            executionState: (event.target.value || undefined) as LauncherRouting['executionState']
+                            executionState: (executionState || undefined) as LauncherRouting['executionState']
                           }));
                         }}
-                      >
-                        <option value="">Use configured default</option>
-                        {PORTABLE_EXECUTION_STATES.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-                      </select>
+                        options={[
+                          { value: '', label: 'Use configured default' },
+                          ...PORTABLE_EXECUTION_STATES.map((option) => ({ value: option.id, label: option.label }))
+                        ]}
+                      />
                     </label>
                   </div>
                 </div>
@@ -2503,32 +2501,34 @@ export const AgentLauncher = memo(function AgentLauncher({
           {projectMode && <AgentConversationHistory projectId={project!.id} unavailableProviders={unavailableHistoryProviders} onResumed={onClose} />}
           </div>
 
-          <div className="launch-actions">
-            {mode === 'autonomous' ? (
-              <button
-                className="btn primary"
-                onClick={launchAutonomous}
-                disabled={!teamId || !prompt.trim() || !target || launching}
-                aria-describedby={launchStatusA11y.describedBy}
-                title="Launch autonomous team (⌘↵)"
-              >
-                <Zap size={14} />
-                Launch autonomous team
-              </button>
-            ) : (
-              <button
-                data-testid="launch-send"
-                className="btn primary"
-                onClick={launch}
-                disabled={!target || !descriptor || !configLoaded || !worktreeDefaultLoaded || personaProfileConflict || launching}
-                aria-describedby={launchStatusA11y.describedBy}
-                title="Send (⌘↵)"
-              >
-                <TerminalIcon size={14} />
-                Send
-              </button>
-            )}
-          </div>
+          {!useQuickAgentHomeComposer && (
+            <div className="launch-actions">
+              {mode === 'autonomous' ? (
+                <button
+                  className="btn primary"
+                  onClick={launchAutonomous}
+                  disabled={!teamId || !prompt.trim() || !target || launching}
+                  aria-describedby={launchStatusA11y.describedBy}
+                  title="Launch autonomous team (⌘↵)"
+                >
+                  <Zap size={14} />
+                  Launch autonomous team
+                </button>
+              ) : (
+                <button
+                  data-testid="launch-send"
+                  className="btn primary"
+                  onClick={launch}
+                  disabled={!target || !descriptor || !configLoaded || !worktreeDefaultLoaded || personaProfileConflict || launching}
+                  aria-describedby={launchStatusA11y.describedBy}
+                  title="Send (⌘↵)"
+                >
+                  <TerminalIcon size={14} />
+                  Send
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>,

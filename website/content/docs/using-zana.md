@@ -25,8 +25,8 @@ From the board you can:
   auto-close-idle.
 - **Close** a session when its work is done.
 
-Each tab is a real `claude` PTY, so anything you'd do in a standalone Claude
-Code session works here too.
+Each tab is a real harness PTY, so the native Claude Code, OpenCode, Codex, or
+Pi workflow remains available inside Zana.
 
 ### Keeping the fleet tidy
 
