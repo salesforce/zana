@@ -65,6 +65,9 @@ import {
   registerLaunchTeamTool,
   type RegisterLaunchTeamToolOpts
 } from './launch-team-mcp-tool.js';
+import { registerExecutionTools } from './execution-mcp-tool.js';
+import type { SquadExecutionService } from './execution/service.js';
+import type { createExecutionHandoffStore } from './execution/handoff-store.js';
 import { registerListProjectsTool } from './list-projects-mcp-tool.js';
 import { registerLibraryTools, type LibraryAgentApi } from './library-mcp-tools.js';
 import { registerGoalTools, type GoalAgentApi } from './goal-mcp-tools.js';
@@ -374,6 +377,10 @@ export interface McpServerOptions {
   getTeamLaunch?: RegisterLaunchTeamToolOpts['getTeamLaunch'];
   reportTeamTask?: RegisterLaunchTeamToolOpts['reportTeamTask'];
   validateTeamRouteIdentity?: RegisterLaunchTeamToolOpts['validateRouteIdentity'];
+  executionService?: SquadExecutionService;
+  executionHandoffs?: ReturnType<typeof createExecutionHandoffStore>;
+  validateExecutionHandoffTarget?: (sourceSessionId: string, targetSessionId: string, projectId: string) => boolean;
+  approveExecutionHandoff?: (sourceSessionId: string, targetSessionId: string, projectId: string, executionId: string, operation: 'execution.control' | 'execution.resume-monitor') => Promise<boolean>;
   /**
    * Resolve the project list as non-sensitive {@link ProjectSummary} metadata
    * (the `list_projects` tool — agents discover the projects they can scope work
@@ -482,6 +489,10 @@ function buildProjectMcpServer(opts: {
   getTeamLaunch?: McpServerOptions['getTeamLaunch'];
   reportTeamTask?: McpServerOptions['reportTeamTask'];
   validateTeamRouteIdentity?: McpServerOptions['validateTeamRouteIdentity'];
+  executionService?: McpServerOptions['executionService'];
+  executionHandoffs?: McpServerOptions['executionHandoffs'];
+  validateExecutionHandoffTarget?: McpServerOptions['validateExecutionHandoffTarget'];
+  approveExecutionHandoff?: McpServerOptions['approveExecutionHandoff'];
   listProjects?: McpServerOptions['listProjects'];
   runRemoteCommand?: McpServerOptions['runRemoteCommand'];
   runMicrovmCommand?: McpServerOptions['runMicrovmCommand'];
@@ -693,6 +704,20 @@ function buildProjectMcpServer(opts: {
       cancelTeamLaunch: opts.cancelTeamLaunch,
       getTeamLaunch: opts.getTeamLaunch,
       reportTeamTask: opts.reportTeamTask,
+      validateRouteIdentity: (sessionId, projectId) => routeAuthenticated
+        && (opts.validateTeamRouteIdentity?.(sessionId, projectId) ?? false)
+    });
+  }
+  if (opts.sessionId && opts.executionService) {
+    const routeAuthenticated = !!opts.sessionCredential
+      && verifySessionControlCredential(opts.sessionId, opts.sessionCredential);
+    registerExecutionTools(mcp, {
+      sessionId: opts.sessionId,
+      projectId: opts.projectId,
+      service: opts.executionService,
+      handoffs: opts.executionHandoffs,
+      validateHandoffTarget: opts.validateExecutionHandoffTarget,
+      approveHandoff: opts.approveExecutionHandoff,
       validateRouteIdentity: (sessionId, projectId) => routeAuthenticated
         && (opts.validateTeamRouteIdentity?.(sessionId, projectId) ?? false)
     });
@@ -1594,6 +1619,10 @@ async function handleRequest(
     getTeamLaunch: opts.getTeamLaunch,
     reportTeamTask: opts.reportTeamTask,
     validateTeamRouteIdentity: opts.validateTeamRouteIdentity,
+    executionService: opts.executionService,
+    executionHandoffs: opts.executionHandoffs,
+    validateExecutionHandoffTarget: opts.validateExecutionHandoffTarget,
+    approveExecutionHandoff: opts.approveExecutionHandoff,
     listProjects: opts.listProjects,
     runRemoteCommand: opts.runRemoteCommand,
     runMicrovmCommand: opts.runMicrovmCommand,

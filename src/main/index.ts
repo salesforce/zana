@@ -13,7 +13,8 @@ import {
   nativeTheme,
   systemPreferences,
   Notification,
-  clipboard
+  clipboard,
+  type MessageBoxOptions
 } from 'electron';
 import { join, isAbsolute, resolve, sep, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -35,6 +36,11 @@ import { launchDigest } from './launch/digest.js';
 import { preflightTerminalExecution } from './launch/execution-routing.js';
 import { createRestoreCapabilityStore } from './launch/restore-capability-store.js';
 import { createTeamLifecycleIntegration, createTeamLifecycleStore } from './launch/team-lifecycle-store.js';
+import { createExecutionStore } from './execution/store.js';
+import { SquadExecutionService } from './execution/service.js';
+import { createExecutionArtifactStore } from './execution/artifact-store.js';
+import { createExecutionHandoffStore } from './execution/handoff-store.js';
+import { preflightWorkflowProfile } from './squad-bundle.js';
 import { bindLaunchPrincipal, type LaunchAuthorizationBinding, type LaunchPrincipal, type LaunchPrincipalRef } from './launch/types.js';
 import type { TerminalLaunchOptions } from './launch/terminal-launcher.js';
 import * as testTap from './test-tap.js';
@@ -120,7 +126,7 @@ import type { LibraryDoc, LibraryAddInput, LibraryScope } from '../shared/types.
 import { startMcpServer, type McpServerHandle } from './mcp-server.js';
 import { readMcpPort, writeMcpPort } from './mcp-port-store.js';
 import { startControlPlane, type ControlPlaneHandle } from './control-plane.js';
-import { verifySessionControlCredential } from './control-credential.js';
+import { controlCredentialForSession, verifySessionControlCredential } from './control-credential.js';
 import { ensureMcpConfigForProject, rebuildExtensionServers } from './mcp-config.js';
 import { redeployBundledSkills, syncExtensionSkills, removeSkillsForExtension } from './skill-installer.js';
 import { listMcpServers, setMcpServerEnabled } from './mcp.js';
@@ -735,6 +741,15 @@ const launchLedger = createLaunchLedgerStore({
 const launchLedgerEntriesBySession = new Map<string, string>();
 const teamLifecycle = createTeamLifecycleStore({
   filePath: join(app.getPath('userData'), 'team-lifecycle.json')
+});
+const executionStore = createExecutionStore({
+  filePath: join(app.getPath('userData'), 'squad-executions.json')
+});
+const executionArtifacts = createExecutionArtifactStore({
+  filePath: join(app.getPath('userData'), 'squad-execution-artifacts.json')
+});
+const executionHandoffs = createExecutionHandoffStore({
+  filePath: join(app.getPath('userData'), 'squad-execution-handoffs.json')
 });
 const restoreCapabilities = createRestoreCapabilityStore({
   filePath: join(app.getPath('userData'), 'restore-capabilities.json')
@@ -3748,7 +3763,21 @@ export function authorizeTeamLaunch(
     }
     authorized.push({ ...slots[index], ...expected, authorizationId: decision.authorization.id });
   }
-  return { ok: true, value: { teamId: team.id, projectId: project.id, slots: authorized } };
+  return {
+    ok: true,
+    value: {
+      teamId: team.id,
+      projectId: project.id,
+      slots: authorized,
+      context: {
+        version: 1,
+        principalId: principalRef.id,
+        authorizedAt,
+        expiresAt,
+        slots: authorized.map(({ slotId, personaId, authorizationId }) => ({ slotId, personaId, authorizationIdDigest: launchDigest(authorizationId) }))
+      }
+    }
+  };
 }
 
 /**
@@ -3801,7 +3830,14 @@ export async function launchTeam(
   // separately on the board. The orchestrator's `role` (stamped below) is the
   // sole source of truth for the control-plane orchestrator gate — no side Set.
   const cohortId = randomUUID();
-  const cohortBase = { cohortId, teamId: team.id, teamName: team.name };
+  const structured = opts && 'launchRequestId' in opts ? opts : undefined;
+  const cohortBase = {
+    cohortId,
+    teamId: team.id,
+    teamName: team.name,
+    ...(structured?.executionId ? { executionId: structured.executionId } : {}),
+    ...(structured?.executionJobTitle ? { executionJobTitle: structured.executionJobTitle } : {})
+  };
 
   // Workers open FIRST so the orchestrator (opened last) can be handed a roster
   // of their live session ids in its opening prompt — turning the team into a
@@ -3822,7 +3858,6 @@ export async function launchTeam(
   const roster: Array<{ sessionId: string; label: string }> = [];
   const workers: TeamLaunchedWorker[] = [];
   const failedSlots: TeamFailedWorkerSlot[] = [];
-  const structured = opts && 'launchRequestId' in opts ? opts : undefined;
   const launchRequestId = structured?.launchRequestId ?? randomUUID();
   const callerPrincipalId = structured?.callerPrincipalId ?? opts?.callerPrincipalId ?? `legacy:${launchRequestId}`;
   const teamPrincipalRef = {
@@ -4218,14 +4253,38 @@ export async function getTeamLaunch(callerPrincipalId: string, launchRequestId: 
   return result.ok ? { ok: true, value: result.record } : { ok: false, code: result.code, message: 'team launch request not found for caller' };
 }
 
+const squadExecutionService = new SquadExecutionService({
+  store: executionStore,
+  artifacts: executionArtifacts,
+  authorizeTeamLaunch,
+  launchTeam,
+  getTeamLaunch: async (callerPrincipalId, launchRequestId) => {
+    const result = await getTeamLaunch(callerPrincipalId, launchRequestId);
+    return result.ok ? result.value : undefined;
+  },
+  cancelTeamLaunch: async (callerPrincipalId, launchRequestId) => cancelTeamLaunch(callerPrincipalId, launchRequestId),
+  replyToSession: (sessionId, text) => ptys.reply(sessionId, text),
+  preflightWorkflow: (teamId, workflow) => {
+    const team = teams.list().find((candidate) => candidate.id === teamId);
+    return team ? preflightWorkflowProfile(workflow, team, personas.list()) : { ok: false, code: 'INVALID_WORKFLOW_PROFILE', message: 'workflow profile Team is unavailable' };
+  }
+});
+
 export async function reportTeamTask(
   callerPrincipalId: string,
   launchRequestId: string,
   slotId: string,
   outcome: 'complete' | 'failed'
 ): Promise<Result<unknown>> {
-  const result = await teamLifecycleIntegration.reportTeamTask(callerPrincipalId, launchRequestId, slotId, outcome);
-  return result.ok ? { ok: true, value: result.record } : { ok: false, code: result.code, message: 'team launch slot not found for caller' };
+  // Worker routes have no owner principal. Authorize against main's durable
+  // session-to-slot binding, never the launch owner's session identity.
+  const record = (await teamLifecycle.list()).find((candidate) => candidate.launchRequestId === launchRequestId
+    && candidate.workers.some((worker) => worker.sessionId === callerPrincipalId && worker.slotId === slotId));
+  if (!record) return { ok: false, code: 'NOT_FOUND', message: 'team launch slot not found for caller' };
+  const updated = await teamLifecycle.updateWorker(record.id, slotId, {
+    task: outcome === 'complete' ? 'caller-reported-complete' : 'caller-reported-failed'
+  });
+  return { ok: true, value: updated.record };
 }
 
 /**
@@ -8118,6 +8177,12 @@ function registerIpc() {
     ipcMain.handle(IPC.test.reset, () => {
       testTap.reset();
     });
+    ipcMain.handle(IPC.test.mcpRoute, (_e, sessionId: unknown) => {
+      if (typeof sessionId !== 'string' || !mcpServer) return null;
+      const session = ptys.getSession(sessionId);
+      if (!session || session.status === 'exited') return null;
+      return `${mcpServer.url}/mcp/${encodeURIComponent(session.projectId)}/${encodeURIComponent(session.id)}/${controlCredentialForSession(session.id)}`;
+    });
   }
 }
 
@@ -9079,6 +9144,40 @@ async function bootstrapNormal() {
     cancelTeamLaunch: store.getConfig().teamLaunchEnabled ? cancelTeamLaunch : undefined,
     getTeamLaunch: store.getConfig().teamLaunchEnabled ? getTeamLaunch : undefined,
     reportTeamTask: store.getConfig().teamLaunchEnabled ? reportTeamTask : undefined,
+    executionService: store.getConfig().teamLaunchEnabled ? squadExecutionService : undefined,
+    executionHandoffs: store.getConfig().teamLaunchEnabled ? executionHandoffs : undefined,
+    validateExecutionHandoffTarget: store.getConfig().teamLaunchEnabled
+      ? (sourceSessionId, targetSessionId, projectId) => {
+          const source = ptys.getSession(sourceSessionId);
+          const target = ptys.getSession(targetSessionId);
+          return !!source && source.status !== 'exited' && source.projectId === projectId
+            && !!target && target.status !== 'exited' && target.projectId === projectId;
+        }
+      : undefined,
+    approveExecutionHandoff: store.getConfig().teamLaunchEnabled
+      ? async (sourceSessionId, targetSessionId, projectId, executionId, operation) => {
+          const source = ptys.getSession(sourceSessionId);
+          const target = ptys.getSession(targetSessionId);
+          if (!source || source.status === 'exited' || source.projectId !== projectId
+            || !target || target.status === 'exited' || target.projectId !== projectId) return false;
+          const options: MessageBoxOptions = {
+            type: 'warning',
+            buttons: ['Approve once', 'Deny'],
+            defaultId: 1,
+            cancelId: 1,
+            title: operation === 'execution.resume-monitor' ? 'Approve execution resume monitoring' : 'Approve execution handoff',
+            message: operation === 'execution.resume-monitor'
+              ? `Allow ${target.title} to resume execution ${executionId} for ${source.title}, then monitor status and events?`
+              : `Allow ${source.title} to hand off one control action for execution ${executionId} to ${target.title}?`,
+            detail: operation === 'execution.resume-monitor'
+              ? 'Approval grants one resume action and read-only status/event monitoring for 10 minutes. A new 10-minute window needs new human approval.'
+              : 'Approval grants one short-lived action only. The target agent must still be live in this project.'
+          };
+          const window = anyWindow();
+          const result = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
+          return result.response === 0;
+        }
+      : undefined,
     validateTeamRouteIdentity: store.getConfig().teamLaunchEnabled
       ? (sessionId, projectId) => {
           const session = ptys.getSession(sessionId);

@@ -294,6 +294,34 @@ export function partitionSquads(cards: AgentCard[]): SquadPartition {
 }
 
 /**
+ * Execution-managed Team sessions carry a main-stamped execution id. When a
+ * retry/recovery leaves more than one cohort, retain one visible host and nest
+ * all other members under it. Ordinary Teams keep their existing cohort rules.
+ */
+export function partitionExecutionMembers<T extends { session: TerminalSession }>(
+  items: T[]
+): { top: T[]; workersByHost: Map<string, T[]> } {
+  const hostByExecution = new Map<string, T>();
+  for (const item of items) {
+    const cohort = item.session.cohort;
+    if (!cohort?.executionId || cohort.role !== 'orchestrator' || item.session.status === 'exited') continue;
+    if (!hostByExecution.has(cohort.executionId)) hostByExecution.set(cohort.executionId, item);
+  }
+  const top: T[] = [];
+  const workersByHost = new Map<string, T[]>();
+  for (const item of items) {
+    const executionId = item.session.cohort?.executionId;
+    const host = executionId ? hostByExecution.get(executionId) : undefined;
+    if (host && item.session.id !== host.session.id) {
+      const members = workersByHost.get(host.session.id) ?? [];
+      members.push(item);
+      workersByHost.set(host.session.id, members);
+    } else top.push(item);
+  }
+  return { top, workersByHost };
+}
+
+/**
  * The generic core of {@link partitionSquads}, over anything carrying a
  * `.session` — so the sidebar Agents list (which works with `AgentRow`, not
  * `AgentCard`) can collapse squads the exact same way the board does. For each
@@ -602,7 +630,15 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
   // across every lane. Solo agents + driverless worker fleets are untouched.
   // Memoized on `cards` alone; the nested rows re-render with the parent.
   const { laneCards: boardCards, workersByOrchestrator } = useMemo(
-    () => partitionSquads(cards),
+    () => {
+      const executions = partitionExecutionMembers(cards);
+      const squads = partitionSquads(executions.top);
+      const nested = new Map(squads.workersByOrchestrator);
+      for (const [hostId, members] of executions.workersByHost) {
+        nested.set(hostId, [...(nested.get(hostId) ?? []), ...members]);
+      }
+      return { laneCards: squads.laneCards, workersByOrchestrator: nested };
+    },
     [cards]
   );
   // The expensive part — filtering every card into its lane and sorting the
@@ -727,7 +763,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
           >
             {persona ? personaIcon(persona, 14) : profileIcon(t.profile, 14)}
           </span>
-          <span className="agent-card-title">{t.title}</span>
+          <span className="agent-card-title">{cohort?.executionJobTitle ?? t.title}</span>
           {!exited && <span className={`tab-agent-dot agent-${c.state}`} aria-hidden="true" />}
           <FavoriteStar session={t} className="agent-card-fav" />
         </span>
@@ -813,6 +849,11 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
             >
               {isOrchestrator ? <Crown size={9} aria-hidden="true" /> : <Users size={9} aria-hidden="true" />}
               {cohort.teamName}
+            </span>
+          )}
+          {cohort?.executionId && (
+            <span className="agent-card-badge" title={`Execution ${cohort.executionId}`}>
+              {c.state}
             </span>
           )}
           {t.headless && !exited && (

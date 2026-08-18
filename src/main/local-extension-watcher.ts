@@ -20,7 +20,7 @@
  * fs watcher.
  */
 
-import { watch as fsWatchDefault, type FSWatcher } from 'node:fs';
+import { existsSync, watch as fsWatchDefault, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
 import type { Result } from '../shared/types.js';
 
@@ -74,6 +74,7 @@ interface Entry {
   workingDir: string;
   watcher: FSWatcher | null;
   debounce: TimerHandle | null;
+  recovery: TimerHandle | null;
   /** Sessions currently cwd'd into this working dir. */
   sessionIds: Set<string>;
 }
@@ -135,15 +136,56 @@ export class LocalExtensionWatcher {
       entry.sessionIds.add(sessionId);
       return;
     }
-    entry = { id, workingDir, watcher: null, debounce: null, sessionIds: new Set([sessionId]) };
+    entry = { id, workingDir, watcher: null, debounce: null, recovery: null, sessionIds: new Set([sessionId]) };
     this.entries.set(workingDir, entry);
+    this.attachWatch(entry);
+  }
+
+  private attachWatch(entry: Entry): void {
+    if (!this.entries.has(entry.workingDir) || entry.watcher) return;
+    const distDir = join(entry.workingDir, 'dist');
     const watchFn = this.deps.watch ?? defaultWatch;
     // Watch `dist/` itself (not `workingDir`) so a changed file is a DIRECT
     // child of the watched path — on Linux, fs.watch's recursive option is
     // unsupported and silently falls back to non-recursive (see defaultWatch),
     // which only reports direct children. Watching workingDir would miss
     // `workingDir/dist/renderer.js` edits on Linux CI.
-    entry.watcher = watchFn(join(workingDir, 'dist'), () => this.onChange(entry!));
+    try {
+      const watcher = watchFn(distDir, () => this.onChange(entry));
+      entry.watcher = watcher;
+      if (!watcher) {
+        this.scheduleRecovery(entry);
+        return;
+      }
+      // Test doubles only need change/close; real FSWatchers expose error events.
+      if (typeof watcher.on === 'function') watcher.on('error', () => this.recoverWatch(entry, watcher));
+    } catch {
+      this.scheduleRecovery(entry);
+    }
+  }
+
+  private recoverWatch(entry: Entry, watcher: FSWatcher): void {
+    if (entry.watcher !== watcher) return;
+    try {
+      watcher.close();
+    } catch {
+      /* ignore */
+    }
+    entry.watcher = null;
+    this.scheduleRecovery(entry);
+  }
+
+  private scheduleRecovery(entry: Entry): void {
+    if (!this.entries.has(entry.workingDir) || entry.recovery) return;
+    const setTimer = this.deps.setTimer ?? defaultSetTimer;
+    entry.recovery = setTimer(() => {
+      entry.recovery = null;
+      if (!existsSync(join(entry.workingDir, 'dist'))) {
+        this.scheduleRecovery(entry);
+        return;
+      }
+      this.attachWatch(entry);
+    }, this.deps.debounceMs ?? 400);
   }
 
   private release(sessionId: string, workingDir: string): void {
@@ -171,9 +213,16 @@ export class LocalExtensionWatcher {
       clearTimer(entry.debounce);
       entry.debounce = null;
     }
+    if (entry.recovery) {
+      clearTimer(entry.recovery);
+      entry.recovery = null;
+    }
   }
 
   private onChange(entry: Entry): void {
+    // fs.watch may deliver a queued callback after close; never revive a
+    // released entry or install from a working directory with no live session.
+    if (this.entries.get(entry.workingDir) !== entry || entry.sessionIds.size === 0) return;
     const clearTimer = this.deps.clearTimer ?? defaultClearTimer;
     const setTimer = this.deps.setTimer ?? defaultSetTimer;
     if (entry.debounce) clearTimer(entry.debounce);
@@ -187,8 +236,10 @@ export class LocalExtensionWatcher {
     // Re-check ownership at fire time — the source manifest could have been
     // hand-edited to a different id since we armed (mirrors reinstallLocal's
     // ID_MISMATCH gate), and this entry could already be closing.
-    if (!this.entries.has(entry.workingDir)) return;
+    if (this.entries.get(entry.workingDir) !== entry || entry.sessionIds.size === 0) return;
     const declaredId = await this.deps.readWorkingDirId(entry.workingDir);
+    // The last session can close while the manifest read is in flight.
+    if (this.entries.get(entry.workingDir) !== entry || entry.sessionIds.size === 0) return;
     if (declaredId !== entry.id) {
       this.deps.onFailure(
         entry.id,

@@ -1105,6 +1105,10 @@ export interface SessionCohort {
   slotLabel?: string;
   /** Main-minted stable identity for this expanded slot within one cohort. */
   slotId?: string;
+  /** Durable execution identity stamped only by main's execution coordinator. */
+  executionId?: string;
+  /** Immutable execution title stamped by main for board display. */
+  executionJobTitle?: string;
 }
 
 export interface TerminalSession {
@@ -3489,6 +3493,16 @@ export interface TeamLaunchAuthorizationResult {
   teamId: string;
   projectId: string;
   slots: Array<TeamLaunchTaskSlot & { personaId: string; authorizationId: string }>;
+  context?: TeamLaunchAuthorizationContextV1;
+}
+
+/** Main-issued audit snapshot. Historical only; never a reusable launch grant. */
+export interface TeamLaunchAuthorizationContextV1 {
+  version: 1;
+  principalId: string;
+  authorizedAt: number;
+  expiresAt: number;
+  slots: Array<{ slotId: string; personaId: string; authorizationIdDigest: string }>;
 }
 
 export interface TeamLaunchRequestInput {
@@ -3499,6 +3513,10 @@ export interface TeamLaunchRequestInput {
   goal?: string;
   /** Main route adapter stamps this for public structured launches. */
   requirePreauthorization?: boolean;
+  /** Main-only correlation for execution-managed Team launches. */
+  executionId?: string;
+  /** Main-only immutable execution display title for Team session cohorts. */
+  executionJobTitle?: string;
 }
 
 export interface TeamLaunchedWorker {
@@ -3583,6 +3601,22 @@ export interface SquadBundle {
   version: 1;
   team: TeamInput & { id: string };
   personas: Array<PersonaInput & { id: string }>;
+  /** Optional portable workflow profile. Runtime execution authority stays in main. */
+  workflow?: SquadBundleWorkflowMetadataV1;
+}
+
+/**
+ * Declarative profile metadata for an importable Squad bundle. It identifies
+ * the intended controller and worker slots but never carries runtime grants,
+ * execution ids, resolved models, or task payloads.
+ */
+export interface SquadBundleWorkflowMetadataV1 {
+  schemaVersion: 1;
+  profileId: string;
+  profileVersion: string;
+  controller: { personaId: string; slotId: string };
+  workers: Array<{ role: string; personaId: string; slotId: string }>;
+  supportedRequestVersions: number[];
 }
 
 /**
@@ -5010,6 +5044,7 @@ export interface CcApi {
     verifyTmux(): Promise<TmuxVerifyResult>;
     listTmuxRestoreCandidates(): Promise<TmuxRestoreCandidate[]>;
     list(projectId: string): Promise<TerminalSession[]>;
+    /** Test-only, unavailable outside the gated E2E bridge. */
     create(req: CreateTerminalRequest): Promise<Result<TerminalSession>>;
     /** Recreate a persisted tab from a main-owned capability. Legacy recipes require native confirmation. */
     restore(input: {

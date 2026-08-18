@@ -534,4 +534,12 @@ describe('team lifecycle integration', () => {
     expect(await integration.getTeamLaunch('principal-a', 'request-1'))
       .toMatchObject({ ok: true, record: { id: claimed.record.id } });
   }));
+
+  it('accepts a task report only from the exact spawned worker session', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
+    await store.claim(claimInput('principal-a'));
+    const integration = createTeamLifecycleIntegration({ store, isLiveSession: () => true, closeSession: async () => true, releaseCapacity: () => undefined });
+    await expect(integration.reportWorkerTask('other-session', 'request-1', 'slot-1', 'complete')).resolves.toEqual({ ok: false, code: 'NOT_FOUND' });
+    await expect(integration.reportWorkerTask('session-1', 'request-1', 'slot-1', 'complete')).resolves.toMatchObject({ ok: true, record: { workers: [{ task: 'caller-reported-complete' }] } });
+  }));
 });

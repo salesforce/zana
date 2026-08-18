@@ -1,6 +1,7 @@
-import type { Persona, PersonaInput, SquadBundle, Team, TeamInput } from '../shared/types.js';
+import type { Persona, PersonaInput, SquadBundle, SquadBundleWorkflowMetadataV1, Team, TeamInput } from '../shared/types.js';
 import { sanitizePersona } from './persona-store.js';
 import { sanitizeTeam } from './team-store.js';
+import { expandTeamSlots, type ExpandedTeamSlot } from './team-slot-expansion.js';
 
 const BUNDLE_KIND = 'zcc-squad-bundle' as const;
 const BUNDLE_VERSION = 1 as const;
@@ -27,7 +28,11 @@ function withoutSource<T extends { source?: unknown }>(value: T): Omit<T, 'sourc
  * slot — so exporting a team with a dangling reference still produces a usable
  * (if incomplete) bundle rather than failing outright.
  */
-export function buildSquadBundle(team: Team, allPersonas: Persona[]): SquadBundle {
+export function buildSquadBundle(
+  team: Team,
+  allPersonas: Persona[],
+  workflow?: SquadBundleWorkflowMetadataV1
+): SquadBundle {
   const byId = new Map(allPersonas.map((p) => [p.id, p] as const));
   const personas: Array<PersonaInput & { id: string }> = [];
   for (const id of referencedPersonaIds(team)) {
@@ -38,7 +43,8 @@ export function buildSquadBundle(team: Team, allPersonas: Persona[]): SquadBundl
     kind: BUNDLE_KIND,
     version: BUNDLE_VERSION,
     team: withoutSource(team) as TeamInput & { id: string },
-    personas
+    personas,
+    ...(workflow ? { workflow: sanitizeWorkflowMetadata(workflow) } : {})
   };
 }
 
@@ -53,7 +59,7 @@ export function buildSquadBundle(team: Team, allPersonas: Persona[]): SquadBundl
  */
 export function validateSquadBundle(
   raw: unknown
-): { team: Team; personas: Persona[] } | { error: string } {
+): { team: Team; personas: Persona[]; workflow?: SquadBundleWorkflowMetadataV1 } | { error: string } {
   if (!raw || typeof raw !== 'object') return { error: 'not an object' };
   const r = raw as Partial<SquadBundle>;
   if (r.kind !== BUNDLE_KIND) return { error: `not a squad bundle (kind: ${String(r.kind)})` };
@@ -69,5 +75,83 @@ export function validateSquadBundle(
     if (persona) personas.push(persona);
   }
 
-  return { team, personas };
+  const workflow = sanitizeWorkflowMetadata(r.workflow);
+  return { team, personas, ...(workflow ? { workflow } : {}) };
+}
+
+const MAX_WORKFLOW_STRING = 256;
+const MAX_WORKFLOW_WORKERS = 64;
+
+function boundedWorkflowString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 && value.length <= MAX_WORKFLOW_STRING ? value : undefined;
+}
+
+/** Drop malformed optional metadata. A valid Team/persona bundle must remain importable. */
+export function sanitizeWorkflowMetadata(value: unknown): SquadBundleWorkflowMetadataV1 | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const metadata = value as Partial<SquadBundleWorkflowMetadataV1>;
+  if (metadata.schemaVersion !== 1) return undefined;
+  const profileId = boundedWorkflowString(metadata.profileId);
+  const profileVersion = boundedWorkflowString(metadata.profileVersion);
+  const controller = metadata.controller;
+  const controllerPersonaId = boundedWorkflowString(controller?.personaId);
+  const controllerSlotId = boundedWorkflowString(controller?.slotId);
+  if (!profileId || !profileVersion || !controllerPersonaId || !controllerSlotId
+    || !Array.isArray(metadata.workers) || metadata.workers.length > MAX_WORKFLOW_WORKERS
+    || !Array.isArray(metadata.supportedRequestVersions) || metadata.supportedRequestVersions.length === 0
+    || metadata.supportedRequestVersions.length > 8
+    || metadata.supportedRequestVersions.some((version) => !Number.isInteger(version) || version < 1 || version > 100)) {
+    return undefined;
+  }
+  const workers: SquadBundleWorkflowMetadataV1['workers'] = [];
+  const slotIds = new Set([controllerSlotId]);
+  for (const worker of metadata.workers) {
+    const role = boundedWorkflowString(worker?.role);
+    const personaId = boundedWorkflowString(worker?.personaId);
+    const slotId = boundedWorkflowString(worker?.slotId);
+    if (!role || !personaId || !slotId || slotIds.has(slotId)) return undefined;
+    slotIds.add(slotId);
+    workers.push({ role, personaId, slotId });
+  }
+  return {
+    schemaVersion: 1,
+    profileId,
+    profileVersion,
+    controller: { personaId: controllerPersonaId, slotId: controllerSlotId },
+    workers,
+    supportedRequestVersions: [...new Set(metadata.supportedRequestVersions)]
+  };
+}
+
+export type WorkflowProfilePreflight =
+  | { ok: true; slots: ExpandedTeamSlot[] }
+  | { ok: false; code: 'INVALID_WORKFLOW_PROFILE'; message: string };
+
+/** Validate portable metadata against current host-owned Team/persona state. */
+export function preflightWorkflowProfile(
+  workflow: unknown,
+  team: Team,
+  personas: readonly Persona[]
+): WorkflowProfilePreflight {
+  const profile = sanitizeWorkflowMetadata(workflow);
+  if (!profile) return { ok: false, code: 'INVALID_WORKFLOW_PROFILE', message: 'workflow profile metadata is invalid' };
+  const known = new Set(personas.map((persona) => persona.id));
+  const slots = expandTeamSlots(team);
+  const declared = [
+    { ...profile.controller, role: 'orchestrator' as const },
+    ...profile.workers.map((worker) => ({ ...worker, role: 'worker' as const }))
+  ];
+  if (declared.some((slot) => !known.has(slot.personaId))) {
+    return { ok: false, code: 'INVALID_WORKFLOW_PROFILE', message: 'workflow profile references an unknown persona' };
+  }
+  for (const declaration of declared) {
+    const slot = slots.find((candidate) => candidate.slotId === declaration.slotId);
+    if (!slot || slot.personaId !== declaration.personaId || slot.role !== declaration.role) {
+      return { ok: false, code: 'INVALID_WORKFLOW_PROFILE', message: `workflow profile does not match Team slot ${declaration.slotId}` };
+    }
+  }
+  if (declared.length !== slots.length) {
+    return { ok: false, code: 'INVALID_WORKFLOW_PROFILE', message: 'workflow profile does not cover every Team slot' };
+  }
+  return { ok: true, slots };
 }

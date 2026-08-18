@@ -8,6 +8,7 @@ import {
   cardNeedsAttention,
   LANES,
   groupCardsByProject,
+  partitionExecutionMembers,
   partitionSquads,
   scheduleBySessionId,
   formatCountdown,
@@ -401,6 +402,26 @@ describe('partitionSquads', () => {
     const { workersByOrchestrator } = partitionSquads(cards);
     // Workers keep their incoming order (w2 before w1), not sorted.
     expect(workersByOrchestrator.get('o1')?.map((c) => c.session.id)).toEqual(['w2', 'w1']);
+  });
+});
+
+describe('partitionExecutionMembers', () => {
+  it('groups separate cohorts under one live execution orchestrator', () => {
+    const host = memberCard('host', 'co1', 'orchestrator');
+    const worker = memberCard('worker', 'co2', 'worker');
+    host.session.cohort!.executionId = 'execution-1';
+    worker.session.cohort!.executionId = 'execution-1';
+    const { top, workersByHost } = partitionExecutionMembers([host, worker]);
+    expect(top.map((card) => card.session.id)).toEqual(['host']);
+    expect(workersByHost.get('host')?.map((card) => card.session.id)).toEqual(['worker']);
+  });
+
+  it('keeps driverless execution members visible', () => {
+    const worker = memberCard('worker', 'co1', 'worker');
+    worker.session.cohort!.executionId = 'execution-1';
+    const { top, workersByHost } = partitionExecutionMembers([worker]);
+    expect(top.map((card) => card.session.id)).toEqual(['worker']);
+    expect(workersByHost.size).toBe(0);
   });
 });
 

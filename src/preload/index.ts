@@ -800,5 +800,6 @@ if (process.argv.includes('--zcc-e2e')) {
     drainEvents: (cursor: number) => ipcRenderer.invoke(IPC.test.drainEvents, cursor),
     snapshot: () => ipcRenderer.invoke(IPC.test.snapshot),
     reset: () => ipcRenderer.invoke(IPC.test.reset)
+    ,mcpRoute: (sessionId: string) => ipcRenderer.invoke(IPC.test.mcpRoute, sessionId)
   });
 }

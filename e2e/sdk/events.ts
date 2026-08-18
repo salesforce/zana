@@ -48,6 +48,7 @@ interface ZccTestBridge {
   drainEvents(cursor: number): Promise<DrainResult>;
   snapshot(): Promise<SnapshotResult>;
   reset(): Promise<void>;
+  mcpRoute(sessionId: string): Promise<string | null>;
 }
 
 declare global {

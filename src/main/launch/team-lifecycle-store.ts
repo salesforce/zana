@@ -628,6 +628,22 @@ export function createTeamLifecycleIntegration(opts: TeamLifecycleIntegrationOpt
         return { ok: true as const, record: updated.record };
       });
     },
+    reportWorkerTask(
+      workerSessionId: string,
+      launchRequestId: string,
+      slotId: string,
+      outcome: 'complete' | 'failed'
+    ) {
+      return serialize(async () => {
+        const record = (await opts.store.list()).find((candidate) => candidate.launchRequestId === launchRequestId || candidate.id === launchRequestId);
+        const worker = record?.workers.find((candidate) => candidate.slotId === slotId && candidate.sessionId === workerSessionId);
+        if (!record || !worker) return { ok: false as const, code: 'NOT_FOUND' as const };
+        const updated = await opts.store.updateWorker(record.id, slotId, {
+          task: outcome === 'complete' ? 'caller-reported-complete' : 'caller-reported-failed'
+        });
+        return { ok: true as const, record: updated.record };
+      });
+    },
     reconcileStartup(recoveredSessionIds: readonly string[]): Promise<void> {
       return serialize(async () => {
         const recovered = new Set(recoveredSessionIds);

@@ -678,6 +678,8 @@ export const IPC = {
     /** () => { seq:number; size:number; cap:number } — ring stats/current cursor. */
     snapshot: 'test:snapshot',
     /** () => void — clear the ring (seq stays monotonic). */
-    reset: 'test:reset'
+    reset: 'test:reset',
+    /** E2E only: resolve a live session's already-issued MCP URL. */
+    mcpRoute: 'test:mcpRoute'
   }
 } as const;
