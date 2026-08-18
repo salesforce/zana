@@ -26,14 +26,31 @@ export type HarnessExecutionRisk = 'low' | 'medium' | 'high' | 'critical';
 export type HarnessConsentRequirement = 'none' | 'required';
 export type ProviderModelRelationship = 'fixed-provider' | 'provider-then-model' | 'combined-provider-model' | 'model-only';
 
-/** Renderer-safe effective OpenCode agent metadata. */
-export interface OpenCodeAgentDescriptor {
+/** Renderer-safe dynamic harness-agent metadata. */
+export interface HarnessAgentDescriptor {
   id: string;
   label: string;
+  directLaunchAllowed: boolean;
+  /** Harness-specific renderer-safe details are preserved for compatible pickers. */
+  readonly [detail: string]: unknown;
+}
+
+/** Renderer-safe effective OpenCode agent metadata. */
+export interface OpenCodeAgentDescriptor extends HarnessAgentDescriptor {
   mode: 'primary' | 'subagent' | 'all';
   hidden: boolean;
-  directLaunchAllowed: boolean;
 }
+
+/** A registration-owned catalog that can safely cross the main/renderer boundary. */
+export type HarnessAgentDiscoveryResult =
+  | { status: 'success'; descriptors: HarnessAgentDescriptor[] }
+  | {
+      status: 'failure';
+      /** A symbolic registration-owned code only; never process output or paths. */
+      reason?: string;
+      /** A validated agent identifier when a single descriptor caused the failure. */
+      agentId?: string;
+    };
 
 export type OpenCodeAgentDiscoveryFailureReason =
   | 'list-failed'

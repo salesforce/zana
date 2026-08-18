@@ -45,6 +45,9 @@ const ZCC_CLI_SKILL_FILE = join(ZCC_CLI_SKILL_DIR, 'SKILL.md');
 const EXT_CREATOR_SKILL_DIR = join(homedir(), '.claude', 'skills', 'extension-creator');
 const EXT_CREATOR_SKILL_FILE = join(EXT_CREATOR_SKILL_DIR, 'SKILL.md');
 
+const HARNESS_AUTHORING_SKILL_DIR = join(homedir(), '.claude', 'skills', 'harness-authoring');
+const HARNESS_AUTHORING_SKILL_FILE = join(HARNESS_AUTHORING_SKILL_DIR, 'SKILL.md');
+
 /**
  * Resolve a shipped resource file. In dev, electron-vite runs from the repo
  * root with `__dirname = out/main`, so the source is `../../resources`. Once
@@ -170,6 +173,19 @@ async function installExtensionCreatorSkill(
   );
 }
 
+/** Deploy the bundled `harness-authoring` skill (first-party CLI integrations). */
+async function installHarnessAuthoringSkill(
+  log?: (context: string, err: unknown) => void
+): Promise<string | null> {
+  return installSkill(
+    'installHarnessAuthoringSkill',
+    'harness-authoring-skill.md',
+    HARNESS_AUTHORING_SKILL_DIR,
+    HARNESS_AUTHORING_SKILL_FILE,
+    log
+  );
+}
+
 /**
  * One entry per bundled skill: a stable `name` (the skill dir slug, used in the
  * redeploy summary) and its installer. Keeping the list here — beside the
@@ -186,7 +202,8 @@ const BUNDLED_SKILLS: ReadonlyArray<{
   { name: 'brainstorm', install: installBrainstormSkill },
   { name: 'library-curator', install: installLibraryCuratorSkill },
   { name: 'zcc-cli', install: installZccCliSkill },
-  { name: 'extension-creator', install: installExtensionCreatorSkill }
+  { name: 'extension-creator', install: installExtensionCreatorSkill },
+  { name: 'harness-authoring', install: installHarnessAuthoringSkill }
 ];
 
 /** The bundled-skill names, for callers that only need the roster (e.g. boot). */

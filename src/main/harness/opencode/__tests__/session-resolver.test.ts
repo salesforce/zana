@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { OpenCodeSessionResolver } from '../opencode-session-resolver.js';
+import { OpenCodeSessionResolver } from '../session-resolver.js';
 
 function fakeRunList(rows: Array<{ id: string; created: number; directory: string }>) {
   return async (_cwd: string, _limit: number) => rows;

@@ -16,12 +16,12 @@
  * — so it builds its own command rather than calling the base helper.
  */
 
-import type { AppConfig, LaunchProfileId } from '../../shared/types.js';
-import type { RemoteCommandInput, RemoteCommandResult, ResolvedLaunch } from './launch-provider.js';
-import { BaseLaunchProvider } from './base-provider.js';
-import { remoteCdPrefix, shellQuoteArgv } from './shell-quote.js';
-import type { ModelLevel } from "../../shared/harness-adapter.js";
-import { facetSupport, type TrustedHarnessAdapter } from './adapter-contract.js';
+import type { AppConfig, LaunchProfileId } from '../../../shared/types.js';
+import type { RemoteCommandInput, RemoteCommandResult, ResolvedLaunch } from '../launch-provider.js';
+import { BaseLaunchProvider } from '../base-provider.js';
+import { remoteCdPrefix, shellQuoteArgv } from '../shell-quote.js';
+import type { ModelLevel } from "../../../shared/harness-adapter.js";
+import { facetSupport, type TrustedHarnessAdapter } from '../adapter-contract.js';
 
 const SHELL_ADAPTER: TrustedHarnessAdapter = {
   descriptor: {

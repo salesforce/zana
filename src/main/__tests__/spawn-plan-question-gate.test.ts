@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { buildHookSettings } from '../harness/spawn-plan.js';
+import { buildClaudeHookSettings } from '../harness/claude/hooks.js';
 
 /**
  * GATE test for the EXPERIMENTAL AskUserQuestion in-app feature (flag
- * `askUserQuestionUiEnabled`, default false). `buildHookSettings` is where the
+ * `askUserQuestionUiEnabled`, default false). `buildClaudeHookSettings` is where the
  * `question` hook is (or is not) registered. The contract:
  *   - flag OFF  → emitted hooks are byte-identical to today (no /hook/question
  *     forwarding hook; the notify blocked/unblocked entries are untouched).
@@ -35,21 +35,21 @@ const baseOpts = {
   subagents: true
 } as const;
 
-describe('buildHookSettings — AskUserQuestion gate', () => {
+describe('buildClaudeHookSettings — AskUserQuestion gate', () => {
   describe('flag OFF', () => {
     it('emits identical hooks whether `question` is omitted or explicitly false', () => {
-      const omitted = buildHookSettings({ ...baseOpts });
-      const explicitFalse = buildHookSettings({ ...baseOpts, question: false });
+      const omitted = buildClaudeHookSettings({ ...baseOpts });
+      const explicitFalse = buildClaudeHookSettings({ ...baseOpts, question: false });
       expect(explicitFalse).toBe(omitted);
     });
 
     it('registers no /hook/question forwarding hook', () => {
-      const hooks = parseHooks(buildHookSettings({ ...baseOpts, question: false }));
+      const hooks = parseHooks(buildClaudeHookSettings({ ...baseOpts, question: false }));
       expect(allCommands(hooks).some((c) => c.includes('ZCC_QUESTION_URL'))).toBe(false);
     });
 
     it('leaves the notify blocked/unblocked entries unchanged', () => {
-      const hooks = parseHooks(buildHookSettings({ ...baseOpts, question: false }));
+      const hooks = parseHooks(buildClaudeHookSettings({ ...baseOpts, question: false }));
       // Notify's AskUserQuestion PreToolUse entry pings /blocked, discards stdin.
       const askEntry = hooks.PreToolUse.find((e) => e.matcher === 'AskUserQuestion');
       expect(askEntry).toBeDefined();
@@ -64,8 +64,8 @@ describe('buildHookSettings — AskUserQuestion gate', () => {
 
   describe('flag ON', () => {
     it('adds exactly one additive PreToolUse hook forwarding to $ZCC_QUESTION_URL', () => {
-      const off = parseHooks(buildHookSettings({ ...baseOpts, question: false }));
-      const on = parseHooks(buildHookSettings({ ...baseOpts, question: true }));
+      const off = parseHooks(buildClaudeHookSettings({ ...baseOpts, question: false }));
+      const on = parseHooks(buildClaudeHookSettings({ ...baseOpts, question: true }));
 
       // Exactly one more PreToolUse entry than the OFF case.
       expect(on.PreToolUse).toHaveLength(off.PreToolUse.length + 1);
@@ -82,14 +82,14 @@ describe('buildHookSettings — AskUserQuestion gate', () => {
     });
 
     it('exactly one command across all hooks references $ZCC_QUESTION_URL', () => {
-      const on = parseHooks(buildHookSettings({ ...baseOpts, question: true }));
+      const on = parseHooks(buildClaudeHookSettings({ ...baseOpts, question: true }));
       const qCmds = allCommands(on).filter((c) => c.includes('ZCC_QUESTION_URL'));
       expect(qCmds).toHaveLength(1);
     });
 
     it('does not perturb the other hook groups (only PreToolUse changes)', () => {
-      const off = parseHooks(buildHookSettings({ ...baseOpts, question: false }));
-      const on = parseHooks(buildHookSettings({ ...baseOpts, question: true }));
+      const off = parseHooks(buildClaudeHookSettings({ ...baseOpts, question: false }));
+      const on = parseHooks(buildClaudeHookSettings({ ...baseOpts, question: true }));
       for (const key of Object.keys(off)) {
         if (key === 'PreToolUse') continue;
         expect(on[key]).toEqual(off[key]);

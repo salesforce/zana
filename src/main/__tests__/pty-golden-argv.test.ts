@@ -157,7 +157,22 @@ const PROJECT_SETTINGS: ProjectSettings = {
   extraArgs: ['--verbose']
 };
 
-const PROFILES: LaunchProfileId[] = ['claude', 'claude-resume', 'claude-yolo', 'shell'];
+const PROFILES: LaunchProfileId[] = [
+  'claude',
+  'claude-resume',
+  'claude-yolo',
+  'cursor',
+  'cursor-resume',
+  'cursor-yolo',
+  'codex',
+  'codex-resume',
+  'codex-yolo',
+  'pi',
+  'pi-resume',
+  'opencode',
+  'opencode-resume',
+  'shell'
+];
 type LayerName = 'plain' | 'persona' | 'projectSettings' | 'persona+projectSettings';
 const LAYERS: LayerName[] = ['plain', 'persona', 'projectSettings', 'persona+projectSettings'];
 
@@ -420,7 +435,7 @@ describe('golden argv — caller-pinned session id', () => {
   });
 });
 
-describe.skip('golden command — remote buildRemoteCmd matrix', () => {
+describe('golden command — remote buildRemoteCmd matrix', () => {
   beforeEach(() => {
     spawns.length = 0;
   });

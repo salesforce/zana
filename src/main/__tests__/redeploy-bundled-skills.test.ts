@@ -37,11 +37,11 @@ describe('redeployBundledSkills', () => {
     const results = await redeployBundledSkills();
     // One result per roster entry, and the names match the exported roster.
     expect(results.map((r) => r.name).sort()).toEqual([...BUNDLED_SKILL_NAMES].sort());
-    const curator = results.find((r) => r.name === 'library-curator');
-    expect(curator?.ok).toBe(true);
-    const skillFile = join(testHome, '.claude', 'skills', 'library-curator', 'SKILL.md');
+    const harnessAuthoring = results.find((r) => r.name === 'harness-authoring');
+    expect(harnessAuthoring?.ok).toBe(true);
+    const skillFile = join(testHome, '.claude', 'skills', 'harness-authoring', 'SKILL.md');
     expect(existsSync(skillFile)).toBe(true);
-    expect(readFileSync(skillFile, 'utf-8')).toMatch(/durable project knowledge/i);
+    expect(readFileSync(skillFile, 'utf-8')).toMatch(/first-party.*coding-agent/i);
   });
 
   it('is idempotent — a second run leaves the files and still reports ok', async () => {

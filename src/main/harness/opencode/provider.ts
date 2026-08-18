@@ -48,30 +48,29 @@
  * dispatches through the interface.
  */
 
-import type { AppConfig, LaunchProfileId } from '../../shared/types.js';
+import type { AppConfig, LaunchProfileId } from '../../../shared/types.js';
 import type {
-  NativeConversationResume,
   RemoteCommandInput,
   RemoteCommandResult,
   ResolvedLaunch
-} from './launch-provider.js';
-import { BaseLaunchProvider } from './base-provider.js';
+} from '../launch-provider.js';
+import { BaseLaunchProvider } from '../base-provider.js';
 import type {
   HarnessRoleTarget,
   ModelLevel,
   OpenCodeAgentDescriptor,
   OpenCodeAgentDiscoveryFailureReason,
   OpenCodeAgentDiscoveryResult
-} from '../../shared/harness-adapter.js';
-import { facetSupport, type TrustedHarnessAdapter } from './adapter-contract.js';
+} from '../../../shared/harness-adapter.js';
+import { facetSupport, type TrustedHarnessAdapter } from '../adapter-contract.js';
 import { spawn } from 'node:child_process';
 import { closeSync, openSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { remoteCdPrefix, shellQuote, shellQuoteArgv } from './shell-quote.js';
-import { cleanExtraArgs } from './argv-utils.js';
-import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from './target-resolution.js';
+import { remoteCdPrefix, shellQuote, shellQuoteArgv } from '../shell-quote.js';
+import { cleanExtraArgs } from '../argv-utils.js';
+import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from '../target-resolution.js';
 
 const OPENCODE_MIN_VERSION = '1.18.0';
 const OPENCODE_REVIEWED_AT = '2026-08-04';
@@ -153,6 +152,17 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
       { names: ['--auto'], arity: 0 }
     ],
     terminatesAtDoubleDash: true
+  },
+  status: {
+    mode: 'screen-scan',
+    detectBlockedPrompt(recentText) {
+      const t = recentText.toLowerCase();
+      return (
+        (t.includes('permission required') &&
+          (t.includes('reject') || t.includes('allow once') || t.includes('allow always'))) ||
+        (t.includes('enter submit') && t.includes('esc dismiss'))
+      );
+    }
   },
   evidence: [
     openCodeEvidence('aisuite/gpt-5.6-luna', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
@@ -437,9 +447,6 @@ function discoverOpenCodeAgents(context: { cwd: string; config: AppConfig }, opt
 }
 
 export class OpenCodeProvider extends BaseLaunchProvider {
-  nativeConversationResume(nativeConversationId: string): NativeConversationResume | undefined {
-    return nativeConversationId ? { profile: 'opencode-resume', resumeSessionId: nativeConversationId } : undefined;
-  }
   readonly id = 'opencode';
   readonly adapter = OPENCODE_ADAPTER;
   readonly acceptsDynamicRoleTargets = true;

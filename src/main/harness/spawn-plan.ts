@@ -14,8 +14,7 @@
  * What remains here are the PURE, widely-imported helpers both the local
  * (`pty.ts`) and the provider paths share so they can't drift: `projectSettingsArgs`,
  * `personaArgs_build`, `applyHeapCeiling`, `cleanExtraArgs`,
- * `extractPinnedSessionId`, `buildHookSettings`, `buildAutoModeSettings`, and the
- * guidance/allowed-tools builders. Keeping them pure is what makes the launch
+ * `extractPinnedSessionId`, and guidance/allowed-tools builders. Keeping them pure is what makes the launch
  * path VERIFIABLE and testable without Electron or a real pty.
  */
 import type {
@@ -486,7 +485,8 @@ export function extractPinnedSessionId(argv: string[]): string | undefined {
  *    the one hook here that blocks the agent and prints output. Fail-open: any
  *    error / empty reply leaves the normal prompt intact. See {@link Overseer}.
  */
-export function buildHookSettings(opts: {
+/** @deprecated Claude hook encoding belongs to `harness/claude/hooks`. */
+function buildHookSettings(opts: {
   stop: boolean;
   notify: boolean;
   firstPrompt?: boolean;
@@ -711,7 +711,8 @@ export function buildHookSettings(opts: {
  * docs: an array without `"$defaults"` discards every built-in rule for that
  * section). Called only when the launch is actually in auto mode.
  */
-export function buildAutoModeSettings(config: AppConfig): Record<string, unknown> | undefined {
+/** @deprecated Claude auto-mode settings belong to `harness/claude/hooks`. */
+function buildAutoModeSettings(config: AppConfig): Record<string, unknown> | undefined {
   const block: Record<string, unknown> = {};
   const withDefaults = (arr?: string[]) =>
     arr && arr.length > 0 ? ['$defaults', ...arr] : undefined;

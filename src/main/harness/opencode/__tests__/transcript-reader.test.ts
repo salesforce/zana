@@ -15,7 +15,7 @@ import {
   readSessionDigestOpenCode,
   readSessionStatsOpenCode,
   openCodeDbPath
-} from '../opencode-transcript-reader.js';
+} from '../transcript-reader.js';
 
 const representativeRows = [
   {
@@ -162,6 +162,23 @@ describe('buildSessionStatsOpenCode', () => {
     expect(buildSessionStatsOpenCode(undefined, addRows).files).toEqual([{ path: 'new.ts', op: 'C' }]);
   });
 
+  it('resolves apply_patch relative paths against the session cwd for git consumers', () => {
+    const patchRows = [
+      {
+        mdata: JSON.stringify({ role: 'assistant' }),
+        pdata: JSON.stringify({
+          type: 'tool',
+          tool: 'apply_patch',
+          state: { metadata: { files: [{ relativePath: 'src/server.ts', type: 'update' }] } }
+        })
+      }
+    ];
+
+    expect(buildSessionStatsOpenCode(undefined, patchRows, '/repo').files).toEqual([
+      { path: '/repo/src/server.ts', op: 'W' }
+    ]);
+  });
+
   it('reads write/edit tool parts by filePath', () => {
     const rows2 = [
       {
@@ -219,6 +236,20 @@ describe('buildSessionStatsOpenCodeExport', () => {
       agent: 'build',
       tokens: { input: 100, output: 25, cacheRead: 300, cacheWrite: 0 }
     });
+  });
+
+  it('resolves exported apply_patch relative paths against the session cwd', () => {
+    expect(buildSessionStatsOpenCodeExport({
+      info: { tokens: {} },
+      messages: [{
+        info: { role: 'assistant' },
+        parts: [{
+          type: 'tool',
+          tool: 'apply_patch',
+          state: { metadata: { files: [{ relativePath: 'src/server.ts', type: 'update' }] } }
+        }]
+      }]
+    }, '/repo')?.files).toEqual([{ path: '/repo/src/server.ts', op: 'W' }]);
   });
 });
 

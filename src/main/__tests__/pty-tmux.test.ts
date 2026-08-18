@@ -475,10 +475,10 @@ describe('remote hooks over ssh -R reverse tunnel', () => {
     const remoteCmd = args.at(-1) as string;
     expect(remoteCmd).toContain(`ZCC_NOTIFY_URL='http://127.0.0.1:${remotePort}/hook/notify/proj-remote/${session.id}'`);
     expect(remoteCmd).toContain(`ZCC_SUBAGENT_URL='http://127.0.0.1:${remotePort}/hook/subagent/proj-remote/${session.id}'`);
-    // Interactive sessions carry both lifecycle boundaries: UserPromptSubmit
-    // begins a new turn and Stop marks the completed turn idle.
+    // Remote lifecycle keeps notification, prompt, and subagent signals over
+    // the reverse tunnel while omitting the completion callback environment.
     expect(remoteCmd).toContain('ZCC_FIRSTPROMPT_URL=');
-    expect(remoteCmd).toContain(`ZCC_HOOK_URL='http://127.0.0.1:${remotePort}/hook/stop/proj-remote/${session.id}'`);
+    expect(remoteCmd).not.toContain('ZCC_HOOK_URL=');
     // The hook `--settings` JSON is spliced into claude's argv.
     expect(remoteCmd).toContain('--settings');
     expect(remoteCmd).toContain('Notification');

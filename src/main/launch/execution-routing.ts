@@ -5,7 +5,7 @@ import { executionEvidenceFor, executionTargetFor } from '../harness/evidence-re
 import type { ExecutionConsentService } from '../harness/execution-consent.js';
 import type { ExecutionConsentScope, createExecutionConsentStore } from '../harness/execution-consent-store.js';
 import type { LaunchProvider } from '../harness/launch-provider.js';
-import { providerFor } from '../harness/registry.js';
+import { providerFor, registrationFor } from '../harness/registry.js';
 import { resolveExecutionState } from '../harness/target-resolution.js';
 import { resolveModelTarget, resolveRoleTarget } from '../harness/target-resolution.js';
 import { evaluateFacetEvidence, evaluateTargetEvidence } from '../harness/routing-evidence.js';
@@ -75,7 +75,16 @@ export async function preflightTerminalExecution(
     return { decision: 'allowed', scope: input.scope };
   }
   if (resolved.origin === 'legacy-compatibility') {
-    const reason = auditLegacyCompatibility(adapterId, resolved);
+    const selection = resolved.targetId && resolved.nativePolicy
+      ? {
+          targetId: resolved.targetId,
+          contribution: resolved.contribution,
+          nativePolicy: resolved.nativePolicy
+        }
+      : undefined;
+    const reason = selection
+      ? provider.adapter.legacyRouting?.auditExecution?.(selection) ?? 'unaudited legacy compatibility target'
+      : 'unaudited legacy compatibility target';
     return reason ? { decision: 'blocked', reason } : { decision: 'allowed', scope: input.scope };
   }
   const target = resolved.targetId ? executionTargetFor(provider, resolved.targetId) : undefined;
@@ -100,23 +109,6 @@ export async function preflightTerminalExecution(
   });
 }
 
-function auditLegacyCompatibility(
-  adapterId: string,
-  resolved: ReturnType<typeof resolveExecutionState>
-): string | undefined {
-  if (adapterId !== 'codex' || !resolved.targetId?.startsWith('codex.native.') || !resolved.nativePolicy) {
-    return 'unaudited legacy compatibility target';
-  }
-  const { codexSandbox, codexApproval } = resolved.nativePolicy;
-  if (codexSandbox && !['read-only', 'workspace-write', 'danger-full-access'].includes(codexSandbox)) {
-    return 'invalid legacy sandbox policy';
-  }
-  if (codexApproval && !['untrusted', 'on-request', 'never'].includes(codexApproval)) {
-    return 'invalid legacy approval policy';
-  }
-  return undefined;
-}
-
 async function preflightStructuredRouting(
   provider: LaunchProvider,
   input: TerminalExecutionPreflightInput,
@@ -124,15 +116,11 @@ async function preflightStructuredRouting(
   resolved: ReturnType<typeof resolveStructuredRouting>
 ): Promise<string | undefined> {
   if (!installedVersion) return 'selected harness is unavailable or has no verifiable version';
-  const enabledFlag = ({
-    claude: true,
-    cursor: input.config.harnessCursorEnabled,
-    codex: input.config.harnessCodexEnabled,
-    pi: input.config.harnessPiEnabled,
-    opencode: input.config.harnessOpenCodeEnabled,
-    shell: false
-  } as const)[provider.adapter.descriptor.id];
-  if (enabledFlag === false) return 'selected harness is disabled';
+  const registration = registrationFor(provider.adapter.descriptor.defaultProfileId ?? input.profile);
+  const verification = registration?.verification;
+  const enabled = verification?.alwaysEnabled === true ||
+    (verification?.enabledConfigKey !== undefined && input.config[verification.enabledConfigKey as keyof AppConfig] === true);
+  if (!enabled) return 'selected harness is disabled';
   for (const facet of resolved.facets) {
     const evaluated = evaluateFacetEvidence(provider, facet, input.scope, installedVersion);
     if (evaluated.classification === 'unavailable') return `${facet}: ${evaluated.reason}`;

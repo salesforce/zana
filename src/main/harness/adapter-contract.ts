@@ -7,6 +7,8 @@ import type {
   HarnessScope,
   HarnessSupport
 } from '../../shared/harness-adapter.js';
+import type { HarnessStatusAdapter } from '@zcc/harness-sdk';
+import type { HarnessLegacyRoutingAdapter } from './legacy-routing-adapter.js';
 
 /** Opaque native material. Only a trusted adapter may create this value. */
 export interface HarnessNativeContribution {
@@ -38,6 +40,10 @@ export interface TrustedHarnessAdapter {
   }>>>;
   readonly collision: HarnessCollisionContract;
   readonly evidence: readonly HarnessEvidence[];
+  /** Primary visual source. Hook/SDK lifecycle signals remain additive overlays. */
+  readonly status?: HarnessStatusAdapter;
+  /** Historical persistence decoding belongs to the owning harness. */
+  readonly legacyRouting?: HarnessLegacyRoutingAdapter;
 }
 
 export const HARNESS_SETTINGS_CONTRIBUTIONS = [

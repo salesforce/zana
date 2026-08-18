@@ -41,8 +41,7 @@ import * as testTap from './test-tap.js';
 import { AgentStatusTracker } from './agent-status.js';
 import { OutputActivityMonitor } from './output-activity.js';
 import { ScreenScanBlockedDetector } from './screen-scan-blocked-detector.js';
-import { providerFor, harnessAdapterDescriptorsFromVerify, refreshDynamicHarnessCatalogs } from './harness/registry.js';
-import { OpenCodeProvider } from './harness/opencode-provider.js';
+import { HARNESS_REGISTRATIONS, providerFor, registrationFor, harnessAdapterDescriptorsFromVerify, refreshDynamicHarnessCatalogs } from './harness/registry.js';
 import { createExecutionConsentStore } from './harness/execution-consent-store.js';
 import { createExecutionConsentManagement } from './harness/execution-consent-management.js';
 import { ExecutionConsentService } from './harness/execution-consent.js';
@@ -196,9 +195,8 @@ import {
   transcriptPath,
   readSessionStats,
   type SessionStats
-} from './transcript-reader.js';
+} from './harness/claude/transcript-reader.js';
 import { TranscriptSource } from './transcript-source.js';
-import { OpenCodeSessionResolver } from './opencode-session-resolver.js';
 import { ClaudeCliProvider } from './llm/claude-cli-provider.js';
 import { OpenAiProvider } from './llm/openai-provider.js';
 import { GeminiProvider } from './llm/gemini-provider.js';
@@ -747,25 +745,19 @@ function refreshRestoreCapability(session: TerminalSession): void {
   if (!session.restoreCapabilityId) return;
   const capability = restoreCapabilities.get(session.restoreCapabilityId);
   if (!capability) return;
+  const registration = registrationFor(session.profile);
+  const projection = registration?.restoreProjection?.({
+    session,
+    extraArgs: capability.request.extraArgs
+  });
   const request: CreateTerminalRequest = {
     ...capability.request,
     title: session.title,
-    profile: isCodexProfile(session.profile)
-      ? 'codex-resume'
-      : isOpenCodeProfile(session.profile) ? 'opencode-resume' : session.profile,
+    profile: projection?.profile ?? session.profile,
     prompt: undefined,
-    extraArgs: restoredExtraArgs(session.profile, capability.request.extraArgs),
-    resumeSessionId: isCodexProfile(session.profile)
-      ? session.codexSessionId
-      : isOpenCodeProfile(session.profile) ? session.openCodeSessionId : undefined
+    extraArgs: projection?.extraArgs ?? capability.request.extraArgs,
+    resumeSessionId: projection?.resumeSessionId
   };
-  if (isClaudeProfile(session.profile) && session.claudeSessionId) {
-    const args = (capability.request.extraArgs ?? []).filter((arg, index, all) => {
-      const previous = all[index - 1];
-      return arg !== '--continue' && arg !== '-c' && arg !== '--resume' && previous !== '--resume';
-    });
-    request.extraArgs = [...args, '--resume', session.claudeSessionId];
-  }
   restoreCapabilities.put({
     ...capability,
     request,
@@ -775,24 +767,6 @@ function refreshRestoreCapability(session: TerminalSession): void {
     remoteTmuxId: session.remoteTmuxId ?? capability.remoteTmuxId,
     exitedAt: session.status === 'exited' ? Date.now() : undefined
   });
-}
-
-function restoredExtraArgs(
-  profile: LaunchProfileId,
-  extraArgs: string[] | undefined
-): string[] | undefined {
-  if (!extraArgs?.length) return extraArgs;
-  if (!isOpenCodeProfile(profile)) return extraArgs;
-  const restored: string[] = [];
-  for (let index = 0; index < extraArgs.length; index += 1) {
-    if (extraArgs[index] === '--prompt') {
-      index += 1;
-      continue;
-    }
-    if (extraArgs[index].startsWith('--prompt=')) continue;
-    restored.push(extraArgs[index]);
-  }
-  return restored.length ? restored : undefined;
 }
 
 function isTeamWorkerRestore(request: CreateTerminalRequest): boolean {
@@ -910,8 +884,8 @@ const screenScanBlocked = new ScreenScanBlockedDetector({
   detect: (sessionId, recentText) => {
     const session = ptys.getSession(sessionId);
     if (!session) return false;
-    const profile = session.profile as LaunchProfileId;
-    return providerFor(profile).detectBlockedPrompt(profile, recentText);
+    return providerFor(session.profile as LaunchProfileId)
+      .adapter.status?.detectBlockedPrompt?.(recentText) ?? false;
   },
   setTimer: (fn, ms) => setTimeout(fn, ms),
   clearTimer: (handle) => clearTimeout(handle)
@@ -1037,12 +1011,9 @@ const llmNamedSessions = new Set<string>();
  * id + spawn time. One instance so the Codex resolver cache is shared; released
  * per session on pty exit via `transcriptSource.forget(id)` (Rule 5).
  */
-const transcriptSource = new TranscriptSource(undefined, (ptyId, codexSessionId) => {
-  // Codex mints its own rollout UUID; the resolver detects it on the first
-  // transcript read. Stamp it onto the live session so a restored codex tab can
-  // `codex resume <id>` its OWN conversation (the codex twin of claudeSessionId).
-  // Main-authoritative (the id came from main's own rollout scan — Rule 1).
-  ptys.setCodexSessionId(ptyId, codexSessionId);
+const transcriptSource = new TranscriptSource((ptyId, patch) => {
+  // Native ids originate from a main-owned adapter resolver, never the renderer.
+  ptys.setNativeSessionFields(ptyId, patch);
 }, () => store.getConfig().opencodeBinary || 'opencode');
 const EXITED_SESSION_STATS_MAX = 200;
 const exitedSessionStats = new Map<string, { projectId: string; stats: SessionStats | null; pending?: Promise<SessionStats | null> }>();
@@ -1057,6 +1028,7 @@ function transcriptRefForSession(session: TerminalSession) {
     profile: session.profile,
     cwd: session.cwd,
     claudeSessionId: session.claudeSessionId,
+    codexSessionId: session.codexSessionId,
     openCodeSessionId: session.openCodeSessionId,
     createdAt: session.createdAt
   };
@@ -1083,17 +1055,7 @@ async function readLiveSessionStats(session: TerminalSession): Promise<SessionSt
   if (cached?.value !== undefined && cached.expiresAt && cached.expiresAt > Date.now()) return cached.value;
 
   const entry = cached ?? {};
-  const read = async (): Promise<SessionStats | null> => {
-    let ref = transcriptRefForSession(session);
-    if (isOpenCodeProfile(session.profile) && !session.openCodeSessionId) {
-      const match = await opencodeSessionResolver.resolve(session.id, session.cwd, session.createdAt);
-      if (match) {
-        ref = { ...ref, openCodeSessionId: match.sessionId };
-        if (ptys.getSession(session.id)) ptys.setOpenCodeSessionId(session.id, match.sessionId);
-      }
-    }
-    return transcriptSource.readStats(ref);
-  };
+  const read = (): Promise<SessionStats | null> => transcriptSource.readStats(transcriptRefForSession(session));
   entry.pending = read().then((stats) => {
     entry.pending = undefined;
     entry.value = stats;
@@ -1111,28 +1073,6 @@ async function readLiveSessionStats(session: TerminalSession): Promise<SessionSt
   }
   return entry.pending;
 }
-/**
- * OpenCode session-id detection ("resume only" scope — no transcript reader).
- * OpenCode mints its own `ses_<hex>` id server-side; there's no transcript
- * read to piggyback detection on (unlike Codex), so this hangs off the SAME
- * `agentStatus.on('status', ...)` dispatch every live session's transitions
- * already flow through (see below) — an OpenCode tab's first status edge
- * after spawn is well within the window OpenCode creates its session row.
- * One resolver instance so its cache is shared; released per session on pty
- * exit via `opencodeSessionResolver.forget(id)` (Rule 5).
- */
-const opencodeSessionResolver = new OpenCodeSessionResolver({
-  binary: () => store.getConfig().opencodeBinary || 'opencode'
-});
-const opencodeSessionSync = {
-  observe(sessionId: string): void {
-    const session = ptys.getSession(sessionId);
-    if (!session || session.openCodeSessionId || !isOpenCodeProfile(session.profile)) return;
-    void opencodeSessionResolver.resolve(sessionId, session.cwd, session.createdAt).then((match) => {
-      if (match) ptys.setOpenCodeSessionId(sessionId, match.sessionId);
-    });
-  }
-};
 const idleTriage = new IdleTriageService({
   isEnabled: () => store.getConfig().idleTriageEnabled === true,
   delaySeconds: () => store.getConfig().idleTriageDelaySeconds ?? 20,
@@ -4532,20 +4472,15 @@ function wireBridgeListeners() {
     // Feed the raw PTY stream through the OSC-title detector. Cheap and
     // off the render path — only emits when the agent state actually changes.
     agentStatus.observeData(sessionId, data);
-    // Provider-agnostic status (B6): an agent that doesn't emit OSC status
-    // glyphs (codex/cursor) gets its working/idle from output activity instead,
-    // so it doesn't sit at `unknown`. Claude (emitsOscStatus) and plain shells
-    // (not an agent) are skipped — the OSC path already covers Claude, and a
-    // shell has no agent state. Capability-gated, never a profile literal (Rule 6).
+    // The registration chooses a primary visual source. Lifecycle hooks remain
+    // an additive AgentStatusTracker overlay, never a mutually exclusive mode.
     const session = ptys.getSession(sessionId);
     if (session) {
-      const caps = providerCapabilities(session.profile as LaunchProfileId);
-      if (caps.isAgent && !caps.emitsOscStatus) {
+      const status = providerFor(session.profile as LaunchProfileId).adapter.status;
+      if (status?.mode === 'output-activity' || status?.mode === 'screen-scan') {
         outputActivity.observe(sessionId, data);
-        // Same gate: a non-OSC agent that goes quiet at a permission prompt would
-        // read as `idle` — the screen-scan detector recovers the `blocked` state
-        // for it (OpenCode's `△ Permission required` TUI). No-op for a provider
-        // with no such pattern (its `detectBlockedPrompt` returns false).
+      }
+      if (status?.mode === 'screen-scan') {
         screenScanBlocked.observe(sessionId, data);
       }
     }
@@ -4587,7 +4522,6 @@ function wireBridgeListeners() {
     // a no-op for Claude/shell sessions (nothing cached under that key).
     transcriptSource.forget(sessionId);
     // Same release for the OpenCode session-id resolver's cache (Rule 5).
-    opencodeSessionResolver.forget(sessionId);
     heartbeat.remove(sessionId);
     // Drop a session that exits while working so a dead pty can't pin the Mac
     // awake; releases (after grace) if it was the last working agent.
@@ -4698,6 +4632,8 @@ function wireBridgeListeners() {
   });
   agentStatus.on('status', (sessionId: string, state, seq) => {
     safeSend(IPC.terminals.onAgentStatus, sessionId, state, seq);
+    const session = ptys.getSession(sessionId);
+    if (session) void transcriptSource.observe(transcriptRefForSession(session));
     void teamLifecycleIntegration.onAgentStatus(sessionId, state).catch((error) =>
       logMainError(`team lifecycle status ${sessionId}`, error)
     );
@@ -4745,12 +4681,6 @@ function wireBridgeListeners() {
     // Drive autonomous runs off the SAME edge: nudge an idle member toward the
     // goal (no-op for any session not in a running autonomous run).
     autonomousRuns.observe(sessionId, state);
-    // Piggyback OpenCode session-id detection off the SAME edge — no idle-read
-    // hook exists for it (transcript reading is out of scope), so the first
-    // resolved-state transition after spawn is the trigger. Self-gated (no-op
-    // once stamped or for non-opencode sessions), and cheap: the subprocess
-    // call is fired-and-forgotten and only runs until it succeeds once.
-    opencodeSessionSync.observe(sessionId);
     // Diagnostic: the debounced state actually pushed to the renderer (drives
     // the dot + Agents tray). Pairs with [notify-hook] to show the full chain.
     console.log(`[agent-status] session=${sessionId.slice(0, 8)} → ${state}`);
@@ -5602,17 +5532,20 @@ function registerIpc() {
   );
   safeHandle(
     IPC.harness.agentDescriptors,
-    async (projectId: unknown, refresh: unknown) => {
-      if (typeof projectId !== 'string') return { status: 'failure' };
+    async (projectId: unknown, profile: unknown, refresh: unknown) => {
+      if (typeof projectId !== 'string' || typeof profile !== 'string') return { status: 'failure' };
       const project = store.listProjects().find((entry) => entry.id === projectId);
       if (!project || project.remote) return { status: 'failure' };
-      const provider = providerFor('opencode');
-      if (!(provider instanceof OpenCodeProvider)) return { status: 'failure' };
-      const discovery = await provider.discoverAgentDescriptors({
+      const registration = registrationFor(profile as LaunchProfileId);
+      if (!registration?.discoverAgentDescriptors) return { status: 'failure' };
+      const verified = (await verifiedHarnesses()).find((result) => result.family === registration.id);
+      if (!verified?.enabled || !verified.installed) return { status: 'failure' };
+      return registration.discoverAgentDescriptors({
+        profile: profile as LaunchProfileId,
         cwd: project.path,
-        config: store.getConfig()
-      }, { bypassCache: refresh === true });
-      return discovery;
+        config: store.getConfig(),
+        refresh: refresh === true
+      });
     },
     () => ({ status: 'failure' as const })
   );
@@ -5702,8 +5635,8 @@ function registerIpc() {
       if (!row) return { ok: false, code: 'DENIED', message: 'Conversation history row unavailable' };
       const project = store.listProjects().find((entry) => entry.id === row.projectId && !entry.remote);
       if (!project) return { ok: false, code: 'NOT_FOUND', message: 'Conversation project is unavailable' };
-      const provider = providerFor(row.source === 'claude' ? 'claude' : 'opencode');
-      const resume = provider.nativeConversationResume?.(row.nativeConversationId);
+      const profile = row.source === 'claude' ? 'claude' : 'opencode';
+      const resume = registrationFor(profile)?.nativeConversationResume?.(row.nativeConversationId);
       if (!resume) return { ok: false, code: 'DENIED', message: 'Exact native resume is unavailable' };
       return createInteractiveTerminal({
         projectId: project.id,
@@ -8501,17 +8434,19 @@ async function bootstrapNormal() {
   } catch (err) {
     logMainError('ensureQuickAgentProject', err);
   }
-  // Warm every registered local project's effective OpenCode agents in the
-  // background. The launcher reads this app-lifetime cache, so opening it never
-  // starts the expensive list + debug sweep; explicit Refresh remains the only
-  // cache-bypass path.
-  const openCodeProvider = providerFor('opencode');
-  if (openCodeProvider instanceof OpenCodeProvider) {
+  // Warm each discovery-capable registration for local projects. The launcher
+  // reads the harness-owned cache; only an explicit refresh bypasses it.
+  for (const registration of HARNESS_REGISTRATIONS) {
+    if (!registration.discoverAgentDescriptors) continue;
+    const profile = registration.defaultProfileId ?? registration.profiles[0]?.id;
+    if (!profile) continue;
     for (const project of store.listProjects()) {
       if (project.remote) continue;
-      void openCodeProvider.discoverAgentDescriptors({
+      void registration.discoverAgentDescriptors({
+        profile,
         cwd: project.path,
-        config: store.getConfig()
+        config: store.getConfig(),
+        refresh: false
       });
     }
   }

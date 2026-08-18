@@ -41,15 +41,15 @@
  * the interface.
  */
 
-import type { AppConfig, LaunchProfileId, ProjectSettings } from '../../shared/types.js';
+import type { AppConfig, LaunchProfileId, ProjectSettings } from '../../../shared/types.js';
 import type {
   RemoteCommandInput,
   RemoteCommandResult,
   ResolvedLaunch
-} from './launch-provider.js';
-import { BaseLaunchProvider } from './base-provider.js';
-import type { ModelLevel } from '../../shared/harness-adapter.js';
-import { facetSupport, type TrustedHarnessAdapter } from './adapter-contract.js';
+} from '../launch-provider.js';
+import { BaseLaunchProvider } from '../base-provider.js';
+import type { ModelLevel } from '../../../shared/harness-adapter.js';
+import { facetSupport, type TrustedHarnessAdapter } from '../adapter-contract.js';
 
 const PI_EVIDENCE_VERSION = '0.52.12';
 const PI_OPENING_PROMPT_EVIDENCE = {
@@ -79,6 +79,7 @@ const PI_ADAPTER: TrustedHarnessAdapter = {
     model: [{ names: ['--provider', '--model', '--thinking'], arity: 1, acceptsAttachedValue: true }],
     terminatesAtDoubleDash: true
   },
+  status: { mode: 'output-activity' },
   evidence: [PI_OPENING_PROMPT_EVIDENCE]
 };
 

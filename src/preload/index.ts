@@ -66,8 +66,8 @@ const api: CcApi = {
   harness: {
     verify: () => ipcRenderer.invoke(IPC.harness.verify),
     descriptors: () => ipcRenderer.invoke(IPC.harness.descriptors),
-    agentDescriptors: (projectId, refresh = false) =>
-      ipcRenderer.invoke(IPC.harness.agentDescriptors, projectId, refresh === true),
+    agentDescriptors: (projectId, profile, refresh = false) =>
+      ipcRenderer.invoke(IPC.harness.agentDescriptors, projectId, profile, refresh === true),
     effectiveDefault: (projectId) => ipcRenderer.invoke(IPC.harness.effectiveDefault, projectId)
   },
   editor: {

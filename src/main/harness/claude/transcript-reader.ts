@@ -30,7 +30,7 @@ import type {
 // the RENDERER build in electron.vite.config.ts. A `import type` from @shared is
 // erased before Rollup, but this is a VALUE import — the main build must resolve
 // it, so it uses the main-side relative convention.
-import { encodeProjectCwd } from '../shared/path-encoding.js';
+import { encodeProjectCwd } from '../../../shared/path-encoding.js';
 
 export type { SessionStats, SessionFileTouch, SessionQueueItem, SessionTokenBreakdown };
 

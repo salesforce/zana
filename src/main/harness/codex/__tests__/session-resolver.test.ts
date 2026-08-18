@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CodexSessionResolver } from '../codex-session-resolver.js';
+import { CodexSessionResolver } from '../session-resolver.js';
 
 let root: string;
 
@@ -66,6 +66,23 @@ describe('CodexSessionResolver', () => {
     expect(resolver.size).toBe(0);
   });
 
+  it('claims a native rollout id so concurrent same-cwd tabs cannot share it', async () => {
+    const cwd = '/Users/me/project-a';
+    const first = '019c668c-0a8e-79b0-9ee8-348f7e2665d9';
+    const second = '019c668c-0a8e-79b0-9ee8-348f7e2665e0';
+    writeRollout('2026/07/17', first, cwd);
+    writeRollout('2026/07/17', second, cwd);
+    const resolver = new CodexSessionResolver({ root, now: () => Date.parse('2026-07-17T12:00:00Z') });
+    const spawnedAt = Date.parse('2026-07-17T00:00:00Z') - 10_000;
+
+    const [a, b] = await Promise.all([
+      resolver.resolve('sess-a', cwd, spawnedAt),
+      resolver.resolve('sess-b', cwd, spawnedAt)
+    ]);
+    expect([a?.sessionId, b?.sessionId]).toEqual(expect.arrayContaining([first, second]));
+    expect(a?.sessionId).not.toBe(b?.sessionId);
+  });
+
   it('returns null (uncached) when no rollout exists yet, then matches once it appears', async () => {
     const cwd = '/Users/me/project-a';
     const resolver = new CodexSessionResolver({ root, now: () => Date.parse('2026-07-17T12:00:00Z') });
@@ -82,5 +99,34 @@ describe('CodexSessionResolver', () => {
   it('never throws when the sessions root is absent', async () => {
     const resolver = new CodexSessionResolver({ root: join(root, 'nope'), now: () => 0 });
     expect(await resolver.resolve('sess-1', '/x', 0)).toBeNull();
+  });
+
+  it('uses a restored native id even when the original rollout predates the replacement PTY', async () => {
+    const cwd = '/Users/me/project-a';
+    const restored = '019c668c-0a8e-79b0-9ee8-348f7e2665d9';
+    const sibling = '019c668c-0a8e-79b0-9ee8-348f7e2665e0';
+    const restoredPath = writeRollout('2026/07/17', restored, cwd);
+    writeRollout('2026/07/17', sibling, cwd);
+    const resolver = new CodexSessionResolver({ root, now: () => Date.parse('2026-07-18T12:00:00Z') });
+
+    await expect(resolver.resolve(
+      'replacement-pty',
+      cwd,
+      Date.parse('2026-07-18T12:00:00Z'),
+      restored
+    )).resolves.toEqual({ sessionId: restored, rolloutPath: restoredPath });
+  });
+
+  it('fails closed instead of selecting a same-cwd sibling when a restored native id is absent', async () => {
+    const cwd = '/Users/me/project-a';
+    writeRollout('2026/07/17', '019c668c-0a8e-79b0-9ee8-348f7e2665e0', cwd);
+    const resolver = new CodexSessionResolver({ root, now: () => Date.parse('2026-07-18T12:00:00Z') });
+
+    await expect(resolver.resolve(
+      'replacement-pty',
+      cwd,
+      Date.parse('2026-07-18T12:00:00Z'),
+      '019c668c-0a8e-79b0-9ee8-348f7e2665d9'
+    )).resolves.toBeNull();
   });
 });

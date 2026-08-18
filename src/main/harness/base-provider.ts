@@ -41,6 +41,7 @@ import type {
 } from './launch-provider.js';
 import type { HarnessAuthCredential, HarnessAuthKey } from '../harness-auth.js';
 import type { TrustedHarnessAdapter } from './adapter-contract.js';
+import type { HarnessIntegrationAdapter } from '@zcc/harness-sdk';
 import { cleanExtraArgs } from './argv-utils.js';
 import { remoteCdPrefix, shellQuoteArgv } from './shell-quote.js';
 import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from "./target-resolution.js";
@@ -51,6 +52,29 @@ export abstract class BaseLaunchProvider implements LaunchProvider {
   /** Stable provider id — set by the concrete subclass (Rule 6). */
   abstract readonly id: string;
   abstract readonly adapter: TrustedHarnessAdapter;
+
+  /** Compatibility bridge while native encoders move into harness-local adapters. */
+  readonly integration: HarnessIntegrationAdapter = {
+    configure: ({ profile, mcp, guidance, lifecycle, auth }) => {
+      const hookUrls: ProviderHookUrls = lifecycle ? {
+        stop: lifecycle.stop,
+        notify: lifecycle.blocked?.replace(/\/blocked$/, ''),
+        firstPrompt: lifecycle.firstPrompt,
+        subagent: lifecycle.subagentStart?.replace(/\/start$/, '')
+      } : {};
+      const injection = auth
+        ? this.authInjection(profile as LaunchProfileId, auth)
+        : {};
+      return {
+        mcpArgs: mcp ? this.mcpArgs(profile as LaunchProfileId, mcp.url) : [],
+        guidanceArgs: mcp && guidance ? this.guidanceArgs(profile as LaunchProfileId, guidance) : [],
+        hookArgs: lifecycle ? this.hookArgs(profile as LaunchProfileId, hookUrls) : [],
+        authArgs: injection.args ?? [],
+        authEnv: injection.env,
+        mcpEnv: mcp ? this.mcpEnv(profile as LaunchProfileId, mcp.url) : {}
+      };
+    }
+  };
 
   launchMetadata(input: {
     model: import('./target-resolution.js').ModelResolution;

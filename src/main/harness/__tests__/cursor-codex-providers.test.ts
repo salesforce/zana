@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { providerFor } from '../registry.js';
-import { CursorProvider } from '../cursor-provider.js';
-import { CodexProvider } from '../codex-provider.js';
-import { ClaudeCodeProvider } from '../claude-code-provider.js';
+import { CursorProvider } from '../cursor/provider.js';
+import { CodexProvider } from '../codex/provider.js';
+import { ClaudeCodeProvider } from '../claude/provider.js';
 import { shellQuote, shellQuoteArgv } from '../shell-quote.js';
 import type { AppConfig, ProjectRemote, ProjectSettings } from '../../../shared/types.js';
 

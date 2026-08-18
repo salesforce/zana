@@ -21,6 +21,38 @@ export type { HarnessCapabilities, HookKind } from './capabilities.js';
 export { LEAST_CAPABLE } from './capabilities.js';
 
 export type {
+  HarnessProfileDefinition,
+  HarnessProfilePosture,
+  HarnessRegistration,
+  HarnessRegistrationIssue,
+  HarnessScope
+} from './registration.js';
+export { validateHarnessRegistrations } from './registration.js';
+
+export type {
+  HarnessIntegrationAdapter,
+  HarnessIntegrationContribution,
+  HarnessIntegrationRequest,
+  HarnessLifecycleEndpoints,
+  HarnessMcpConnection
+} from './integration.js';
+
+export type {
+  HarnessDisposable,
+  HarnessLifecycleAdapter,
+  HarnessLifecycleEvent
+} from './lifecycle.js';
+
+export type {
+  HarnessResumeTarget,
+  HarnessSessionAdapter,
+  HarnessSessionReference
+} from './session.js';
+
+export type { HarnessStatusAdapter, HarnessStatusMode } from './status.js';
+export type { HarnessVerificationDefinition } from './verification.js';
+
+export type {
   AgentAction,
   AgentActionKind,
   AgentActionResult,

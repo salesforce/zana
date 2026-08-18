@@ -33,5 +33,10 @@
     "slug": "extensions-sdk-reference",
     "title": "Extension SDK reference",
     "group": "Extensions"
+  },
+  {
+    "slug": "harness-authoring",
+    "title": "Author a harness",
+    "group": "Harnesses"
   }
 ]
