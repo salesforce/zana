@@ -86,83 +86,64 @@ export function TokenManager({ initialTokens }: { initialTokens: TokenSummary[] 
   }
 
   return (
-    <div>
+    <div className="clean-token-manager">
       {mintedToken && (
-        <div
-          className="card"
-          style={{ marginBottom: 20, borderColor: 'rgba(254,188,46,0.4)', background: 'rgba(254,188,46,0.06)' }}
-        >
-          <p style={{ margin: '0 0 10px', color: 'var(--warn)', fontWeight: 600, fontSize: 13 }}>
+        <div className="clean-token-notice">
+          <p>
             Copy this token now — it is shown only once and cannot be retrieved again.
           </p>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            <code
-              style={{
-                flex: 1,
-                background: 'var(--bg-soft)',
-                border: '1px solid var(--border)',
-                borderRadius: 8,
-                padding: '10px 12px',
-                fontSize: 13,
-                wordBreak: 'break-all'
-              }}
-            >
-              {mintedToken}
-            </code>
-            <button type="button" className="btn" onClick={copyMinted}>
+          <div className="clean-token-value">
+            <code>{mintedToken}</code>
+            <button type="button" className="clean-button clean-button-small" onClick={copyMinted}>
               {copied ? 'Copied ✓' : 'Copy'}
             </button>
           </div>
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
+      <div className="clean-token-create">
         <input
-          className="search-box"
-          style={{ margin: 0, maxWidth: 320 }}
+          className="clean-token-input"
           placeholder="Token name (optional)"
           aria-label="Token name (optional)"
           value={name}
           onChange={(e) => setName(e.target.value)}
           disabled={busy}
         />
-        <button type="button" className="btn btn-primary" onClick={createToken} disabled={busy}>
+        <button type="button" className="clean-button clean-button-dark" onClick={createToken} disabled={busy}>
           Create token
         </button>
       </div>
 
-      {error && <p role="alert" style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 16 }}>{error}</p>}
+      {error && <p className="clean-token-error" role="alert">{error}</p>}
 
       {tokens.length === 0 ? (
         <div className="empty">No publish tokens yet. Create one to publish from the CLI.</div>
       ) : (
-        <table className="prose" style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <div className="clean-token-table-wrap">
+          <table className="clean-token-table">
           <thead>
             <tr>
-              <th style={{ textAlign: 'left', borderBottom: '1px solid var(--border)', padding: '8px 10px', fontSize: 12, color: 'var(--muted)' }}>Name</th>
-              <th style={{ textAlign: 'left', borderBottom: '1px solid var(--border)', padding: '8px 10px', fontSize: 12, color: 'var(--muted)' }}>Prefix</th>
-              <th style={{ textAlign: 'left', borderBottom: '1px solid var(--border)', padding: '8px 10px', fontSize: 12, color: 'var(--muted)' }}>Created</th>
-              <th style={{ textAlign: 'left', borderBottom: '1px solid var(--border)', padding: '8px 10px', fontSize: 12, color: 'var(--muted)' }}>Last used</th>
-              <th style={{ borderBottom: '1px solid var(--border)', padding: '8px 10px' }} />
+              <th>Name</th>
+              <th>Prefix</th>
+              <th>Created</th>
+              <th>Last used</th>
+              <th><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
             {tokens.map((t) => (
               <tr key={t.id}>
-                <td style={{ padding: '10px', borderBottom: '1px solid var(--border-soft)' }}>{t.name ?? <em style={{ color: 'var(--muted-2)' }}>unnamed</em>}</td>
-                <td style={{ padding: '10px', borderBottom: '1px solid var(--border-soft)' }}>
+                <td>{t.name ?? <em>unnamed</em>}</td>
+                <td>
                   <code>{t.prefix}…</code>
                 </td>
-                <td style={{ padding: '10px', borderBottom: '1px solid var(--border-soft)', color: 'var(--muted)', fontSize: 13 }}>
-                  {formatDate(t.createdAt)}
-                </td>
-                <td style={{ padding: '10px', borderBottom: '1px solid var(--border-soft)', color: 'var(--muted)', fontSize: 13 }}>
-                  {formatDate(t.lastUsedAt)}
-                </td>
-                <td style={{ padding: '10px', borderBottom: '1px solid var(--border-soft)', textAlign: 'right' }}>
+                <td>{formatDate(t.createdAt)}</td>
+                <td>{formatDate(t.lastUsedAt)}</td>
+                <td>
                   <button
                     type="button"
-                    className="btn"
+                    className="clean-button clean-button-small"
                     onClick={() => revokeToken(t.id)}
                     disabled={busy}
                     aria-label={`Revoke token ${t.name ?? t.prefix}`}
@@ -173,7 +154,8 @@ export function TokenManager({ initialTokens }: { initialTokens: TokenSummary[] 
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </div>
       )}
     </div>
   );

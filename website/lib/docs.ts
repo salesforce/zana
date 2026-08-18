@@ -164,27 +164,26 @@ export async function renderDoc(meta: DocMeta): Promise<RenderedDoc> {
 
   const renderer = new marked.Renderer();
 
-  // marked v12 uses positional renderer args: heading(html, level, raw).
-  renderer.heading = (text: string, level: number, rawText: string) => {
-    const plain = (rawText || text).replace(/<[^>]+>/g, '');
+  renderer.heading = ({ text, depth }) => {
+    const plain = text.replace(/<[^>]+>/g, '');
     const id = slugify(plain);
-    if (level === 2 || level === 3) {
-      toc.push({ id, text: plain, level: level as 2 | 3 });
+    if (depth === 2 || depth === 3) {
+      toc.push({ id, text: plain, level: depth as 2 | 3 });
     }
     const anchor =
-      level === 2 || level === 3
+      depth === 2 || depth === 3
         ? `<a class="heading-anchor" href="#${id}" aria-label="Link to this section">#</a>`
         : '';
-    return `<h${level} id="${id}">${text}${anchor}</h${level}>\n`;
+    return `<h${depth} id="${id}">${text}${anchor}</h${depth}>\n`;
   };
 
-  // code(code, infostring, escaped) — `code` is the raw source string. Tokenize
+  // `text` is the raw source string. Tokenize
   // with shiki (dual-theme) and wrap in .code-wrap with the copy button. Shiki's
   // rendered text content equals the source, so DocsEnhancer's `code.innerText`
   // still copies the raw source. Unknown/absent langs render as plaintext.
-  renderer.code = (code: string, infostring: string | undefined) => {
+  renderer.code = ({ text, lang: infostring }) => {
     const lang = resolveLang(infostring);
-    const highlighted = highlighter.codeToHtml(code, {
+    const highlighted = highlighter.codeToHtml(text, {
       lang,
       themes: { light: 'github-light', dark: 'github-dark' },
       defaultColor: false // emit CSS vars for both themes; globals.css picks one
@@ -192,10 +191,10 @@ export async function renderDoc(meta: DocMeta): Promise<RenderedDoc> {
     return `<div class="code-wrap"><button class="code-copy" type="button" aria-label="Copy code">Copy</button>${highlighted}</div>\n`;
   };
 
-  // link(href, title, text) — rewrite repo-relative links for the public site;
+  // Rewrite repo-relative links for the public site;
   // drop links whose target isn't published here (render their text plain) so
   // no doc ships a 404. External URLs get rel/target for safety.
-  renderer.link = (href: string, title: string | null | undefined, text: string) => {
+  renderer.link = ({ href, title, text }) => {
     const resolved = rewriteDocHref(href);
     // Defense-in-depth: marked already escapes the title, but we build the
     // attribute by hand — escape the quote/angle chars so a title can never

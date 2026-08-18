@@ -48,7 +48,7 @@ describe('auth', () => {
       const { buildSessionCookieValue, verifySessionCookie } = await import('../auth.ts');
       const cookieValue = buildSessionCookieValue('session-id-abc');
       const [id, sig] = cookieValue.split('.');
-      const tampered = `${id}.${sig.slice(0, -1)}${sig.at(-1) === 'A' ? 'B' : 'A'}`;
+      const tampered = `${id}.${sig.slice(0, -1)}${sig[sig.length - 1] === 'A' ? 'B' : 'A'}`;
       expect(verifySessionCookie(tampered)).toBeNull();
     });
 
@@ -103,7 +103,7 @@ describe('auth', () => {
       const { upsertGithubUser, mintSession, requireSession } = await import('../auth.ts');
       const user = await upsertGithubUser({ githubId: 1002, login: 'tamper-user' });
       const { cookieValue } = await mintSession(user.id);
-      const tampered = cookieValue.slice(0, -1) + (cookieValue.at(-1) === 'A' ? 'B' : 'A');
+      const tampered = cookieValue.slice(0, -1) + (cookieValue[cookieValue.length - 1] === 'A' ? 'B' : 'A');
 
       const req = new Request('http://localhost/test', { headers: { cookie: `zcc_session=${tampered}` } });
       expect(await requireSession(req)).toBeNull();

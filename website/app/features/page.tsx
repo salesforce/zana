@@ -29,16 +29,12 @@ const FEATURE_SHOTS: Partial<Record<string, ProductShotId>> = {
 
 export default function Features() {
   return (
-    <>
-      <section className="hero" style={{ padding: '96px 0 24px' }}>
+    <div className="clean-features-page">
+      <section className="clean-page-hero">
         <div className="wrap">
-          <div className="badge-row">
-            <span className="eyebrow">Features</span>
-          </div>
-          <h1 style={{ fontSize: 'clamp(34px,5.4vw,56px)' }}>
-            Everything the <span className="grad">cockpit</span> gives you.
-          </h1>
-          <p className="lede">
+          <span className="clean-page-kicker">Features</span>
+          <h1>Everything the cockpit gives you.</h1>
+          <p>
             Zana Command Center turns supported coding harnesses into a multi-project fleet. Here is what you
             actually get, grounded in the real app.
           </p>
@@ -46,13 +42,12 @@ export default function Features() {
       </section>
 
       {/* quick jump chips */}
-      <div className="wrap" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'center', marginBottom: 24 }}>
+      <div className="wrap clean-feature-nav">
         {FEATURES.map((f) => (
           <a
             key={f.slug}
             href={`#${f.slug}`}
-            className="btn btn-sm btn-ghost"
-            style={{ borderColor: 'var(--border)' }}
+            className="clean-feature-link"
           >
             {f.title}
           </a>
@@ -60,19 +55,18 @@ export default function Features() {
       </div>
 
       {FEATURES.map((f, i) => (
-        <section key={f.slug} id={f.slug} style={{ paddingTop: 40, paddingBottom: 40 }}>
+        <section key={f.slug} id={f.slug} className="clean-feature-section">
           <div className="wrap">
-              <div className={`product-proof ${i % 2 === 1 ? 'reverse' : ''}`} data-reveal>
-                <div>
+            <div className={`product-proof ${i % 2 === 1 ? 'reverse' : ''}`} data-reveal>
+              <div className="clean-feature-copy">
+                <span className="clean-feature-number">0{i + 1}</span>
                 <h2>{f.title}</h2>
-                <p style={{ color: 'var(--accent)', fontWeight: 600, marginBottom: 12 }}>{f.tagline}</p>
-                <p>{f.body}</p>
+                <p className="clean-feature-tagline">{f.tagline}</p>
+                <p className="clean-feature-body">{f.body}</p>
                 {f.docs && (
-                  <p style={{ marginTop: 14 }}>
-                    <Link className="btn btn-sm btn-ghost" href={`/docs/${f.docs}/`}>
-                      Read the docs →
-                    </Link>
-                  </p>
+                  <Link className="clean-inline-link" href={`/docs/${f.docs}/`}>
+                    Read the docs <span aria-hidden="true">→</span>
+                  </Link>
                 )}
               </div>
                 {(() => {
@@ -84,22 +78,19 @@ export default function Features() {
         </section>
       ))}
 
-      <section>
+      <section className="clean-page-cta-section">
         <div className="wrap">
-          <div className="cta-strip" data-reveal>
-            <span className="eyebrow">Get started</span>
+          <div className="clean-page-cta" data-reveal>
+            <span className="clean-page-kicker">Get started</span>
             <h2>Ready to run a fleet?</h2>
-            <div className="cta" style={{ display: 'flex', gap: 14, justifyContent: 'center', marginTop: 22 }}>
-              <Link className="btn btn-primary btn-lg" href="/download/">
-                ⬇ Download
-              </Link>
-              <Link className="btn btn-ghost btn-lg" href="/marketplace/">
-                Browse extensions
-              </Link>
+            <p>Start with the desktop app, then extend the workspace as your process grows.</p>
+            <div className="clean-page-actions">
+              <Link className="clean-button clean-button-dark" href="/download/">Download for macOS <span aria-hidden="true">→</span></Link>
+              <Link className="clean-button" href="/marketplace/">Browse extensions</Link>
             </div>
           </div>
         </div>
       </section>
-    </>
+    </div>
   );
 }

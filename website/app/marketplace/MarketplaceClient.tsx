@@ -36,33 +36,33 @@ export function MarketplaceClient() {
   });
 
   return (
-    <section style={{ paddingTop: 56 }}>
+    <section className="clean-marketplace-page">
       <div className="wrap">
-        <div className="section-head" style={{ maxWidth: 720 }}>
-          <span className="eyebrow">Marketplace</span>
-          <h1 style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+        <div className="clean-page-hero clean-marketplace-hero">
+          <span className="clean-page-kicker">Marketplace</span>
+          <h1>
             Extensions
             <span className={`feed-pill ${status === 'live' ? 'live' : ''}`}>
               <span className="fdot" />
               {status === 'loading' ? 'connecting…' : status === 'live' ? 'live feed' : 'sample catalog'}
             </span>
           </h1>
-          <p className="section-lede">
+          <p>
             Add new features to the app — panels, tabs, commands, personas, and teams. Install from the same
             catalog the desktop app reads.
             {status === 'sample' && ' Connect a live registry feed to list published extensions.'}
           </p>
         </div>
 
-        <div className="marketplace-install-guide" data-reveal>
+        <div className="clean-marketplace-guide" data-reveal>
           <div>
-            <span className="eyebrow">How installation works</span>
+            <span className="clean-page-kicker">How installation works</span>
             <h2>Discover here. Install from Zana.</h2>
             <p>Use this catalog to evaluate extensions. In the desktop app, open <strong>Settings → Extensions → Marketplace</strong> to install a published extension, or choose a local build when you are developing privately.</p>
           </div>
-          <div className="marketplace-install-actions">
-            <Link className="btn btn-primary" href="/extensions/install/">See all install paths</Link>
-            <Link className="btn btn-ghost" href="/extensions/">Build an extension</Link>
+          <div className="clean-marketplace-actions">
+            <Link className="clean-button clean-button-dark" href="/extensions/install/">See install paths <span aria-hidden="true">→</span></Link>
+            <Link className="clean-button" href="/extensions/">Build an extension</Link>
           </div>
         </div>
 
@@ -77,8 +77,8 @@ export function MarketplaceClient() {
           <span style={{ color: 'var(--muted-2)', fontSize: 13 }}>
             {filtered.length} {filtered.length === 1 ? 'extension' : 'extensions'}
           </span>
-          <Link href="/dashboard/" className="btn btn-sm" style={{ marginLeft: 'auto' }}>
-            + Publish yours
+          <Link href="/dashboard/" className="clean-button clean-button-small clean-marketplace-publish">
+            Publish yours
           </Link>
         </div>
 
@@ -87,13 +87,13 @@ export function MarketplaceClient() {
         ) : (
           <div className="mk-grid" data-reveal-stagger>
             {filtered.map((e) => (
-              <div className="card mk-card" key={e.id}>
+              <div className="clean-marketplace-card" key={e.id}>
                 <div className="mk-head">
                   <span className="mk-icon">{e.title.charAt(0).toUpperCase()}</span>
-                  <h3 style={{ margin: 0 }}>{e.title}</h3>
+                  <h3>{e.title}</h3>
                   <span className="mk-badge">v{e.version}</span>
                 </div>
-                {e.author && <p style={{ fontSize: 12, margin: 0, color: 'var(--muted)' }}>by {e.author}</p>}
+                {e.author && <p className="clean-marketplace-author">by {e.author}</p>}
                 <p>{e.description ?? 'No description provided.'}</p>
                 {e.permissions.length > 0 && (
                   <div className="mk-perms">
@@ -104,7 +104,7 @@ export function MarketplaceClient() {
                     ))}
                   </div>
                 )}
-                <p style={{ fontSize: 13, color: 'var(--text-2)', marginTop: 4 }}>
+                <p className="clean-marketplace-install-command">
                   Install in Zana: <code>Settings → Extensions → Marketplace → {e.id}</code>
                 </p>
               </div>
