@@ -76,6 +76,14 @@ const OC_QUESTION_SCREEN = [
   '↑↓ select  enter submit  esc dismiss'
 ].join('\n');
 
+/** Current OpenCode question cards use "confirm" rather than "submit". */
+const OC_CONFIRM_QUESTION_SCREEN = [
+  'Should I proceed with an implementation-ready design only?',
+  '  1. Design only',
+  '  2. Implement shell',
+  'tab select  enter confirm  esc dismiss'
+].join('\n');
+
 function makeDetector(overrides: Partial<ScreenScanBlockedDeps> = {}) {
   const blocked: string[] = [];
   const clock = makeClock();
@@ -282,6 +290,17 @@ describe('ScreenScanBlockedDetector × AgentStatusTracker × OutputActivity (Ope
     // Paints the question card and goes silent (same behavior as the permission
     // prompt — the gap this closes: it used to settle to `idle`, reading as "done").
     f.feed('oc', '\x1b[2J' + OC_QUESTION_SCREEN);
+    vi.advanceTimersByTime(DEFAULT_IDLE_AFTER_MS + 300);
+    expect(f.tracker.get('oc')).toBe('blocked');
+  });
+
+  it('OpenCode questions with the current "enter confirm" footer surface as `blocked`', () => {
+    const f = makeFusion();
+    f.feed('oc', 'I need a decision before continuing.');
+    vi.advanceTimersByTime(300);
+    expect(f.tracker.get('oc')).toBe('working');
+
+    f.feed('oc', '\x1b[2J' + OC_CONFIRM_QUESTION_SCREEN);
     vi.advanceTimersByTime(DEFAULT_IDLE_AFTER_MS + 300);
     expect(f.tracker.get('oc')).toBe('blocked');
   });

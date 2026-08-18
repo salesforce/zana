@@ -671,9 +671,16 @@ describe('OpenCodeProvider', () => {
       expect(p.detectBlockedPrompt('opencode', QUESTION_SCREEN)).toBe(true);
     });
 
+    it('matches the current interactive question footer using "enter confirm"', () => {
+      expect(
+        p.detectBlockedPrompt('opencode', 'tab select  enter confirm  esc dismiss')
+      ).toBe(true);
+    });
+
     it('requires BOTH footer phrases — a lone "submit"/"dismiss" cannot trip it', () => {
       // Only one half of the key-hint pair present.
       expect(p.detectBlockedPrompt('opencode', 'press enter submit to continue')).toBe(false);
+      expect(p.detectBlockedPrompt('opencode', 'press enter confirm to continue')).toBe(false);
       expect(p.detectBlockedPrompt('opencode', 'you can esc dismiss this later')).toBe(false);
       // Prose that mentions submit/dismiss but never the contiguous key hints.
       expect(
