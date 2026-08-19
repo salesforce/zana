@@ -37,6 +37,7 @@ export interface RuntimeSupervisor {
   executeTerminal(command: TerminalHostCommand): Promise<TerminalHostEvent[]>;
   recordTerminalEvent(event: TerminalHostEvent): Promise<boolean>;
   onTerminalEvent(listener: (event: TerminalHostEvent) => void): () => void;
+  onProjectSettingsChanged(listener: (projectId: string) => void): () => void;
   close(): Promise<void>;
 }
 
@@ -96,6 +97,7 @@ export async function startRuntimeSupervisor(options: StartRuntimeSupervisorOpti
       terminalListeners.add(listener);
       return () => terminalListeners.delete(listener);
     },
+    onProjectSettingsChanged: () => () => {},
     async close(): Promise<void> {
       await Promise.allSettled([renderer.close(), host.close()]);
     }
@@ -173,6 +175,7 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
   const server = createUtilityRuntime(renderer);
   const hostRuntime = createUtilityRuntime(host);
   const terminalListeners = new Set<(event: TerminalHostEvent) => void>();
+  const projectSettingsListeners = new Set<(projectId: string) => void>();
   let terminalEventChain = Promise.resolve();
   host.child.on('message', (message: unknown) => {
     const parsed = RuntimeOutboundSchema.safeParse(message);
@@ -187,6 +190,11 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
       .catch(() => {
         // A host event without a live server session is not safe to forward.
       });
+  });
+  renderer.child.on('message', (message: unknown) => {
+    const parsed = RuntimeOutboundSchema.safeParse(message);
+    if (!parsed.success || parsed.data.type !== 'project-settings-changed') return;
+    for (const listener of projectSettingsListeners) listener(parsed.data.projectId);
   });
   return {
     rendererUrl: renderer.url,
@@ -222,6 +230,10 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
     onTerminalEvent(listener) {
       terminalListeners.add(listener);
       return () => terminalListeners.delete(listener);
+    },
+    onProjectSettingsChanged(listener) {
+      projectSettingsListeners.add(listener);
+      return () => projectSettingsListeners.delete(listener);
     },
     async close(): Promise<void> {
       await Promise.allSettled([server.stop(), hostRuntime.stop()]);

@@ -4902,6 +4902,7 @@ export interface CcApi {
   projectSettings: {
     get(id: string): Promise<ProjectSettings>;
     set(id: string, patch: Partial<ProjectSettings>): Promise<ProjectSettings>;
+    onChanged(callback: (projectId: string) => void): () => void;
   };
   executionConsent: {
     listProject(projectId: string): Promise<ProjectExecutionConsentGrant[]>;

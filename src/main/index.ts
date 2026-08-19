@@ -2436,6 +2436,9 @@ async function ensureRendererStaticHost(): Promise<void> {
     runtimeDir: __dirname,
     version: resolvedAppVersion()
   });
+  runtimeSupervisor.onProjectSettingsChanged((projectId) => {
+    safeSend(IPC.projectSettings.onChanged, projectId);
+  });
   setRuntimeHostSupervisor(runtimeSupervisor);
   setProductionRendererOrigin(runtimeSupervisor.rendererUrl);
 }
@@ -5569,7 +5572,11 @@ function registerIpc() {
   ipcMain.handle(IPC.projectSettings.set, (_event, id: string, patch: Partial<ProjectSettings>) =>
     runtimeSupervisor
       ? runtimeSupervisor.setProjectSettings(id, patch)
-      : store.setProjectSettings(id, patch)
+      : (() => {
+          const settings = store.setProjectSettings(id, patch);
+          safeSend(IPC.projectSettings.onChanged, id);
+          return settings;
+        })()
   );
   ipcMain.handle(IPC.executionConsent.listProject, (_event, projectId: string) =>
     executionConsentManagement.listProjectGrants(projectId)

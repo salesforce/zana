@@ -36,6 +36,7 @@ describe('runtime host execution environment', () => {
         listener = next;
         return () => { listener = null; };
       },
+      onProjectSettingsChanged: () => () => {},
       close: async () => {}
     };
     const environment = createRuntimeHostExecutionEnvironment({
@@ -124,6 +125,7 @@ describe('runtime host execution environment', () => {
       recordTerminalEvent: async () => true,
       executeTerminal: async (command) => [{ kind: 'rejected', commandId: command.commandId, sessionId: command.sessionId, reason: 'host unavailable' }],
       onTerminalEvent: () => () => {},
+      onProjectSettingsChanged: () => () => {},
       close: async () => {}
     };
     const environment = createRuntimeHostExecutionEnvironment({ runtime });
@@ -173,6 +175,7 @@ describe('runtime host execution environment', () => {
         listener = next;
         return () => { listener = null; };
       },
+      onProjectSettingsChanged: () => () => {},
       close: async () => {}
     };
     const environment = createRuntimeHostExecutionEnvironment({ runtime });

@@ -143,7 +143,8 @@ export const IPC = {
   },
   projectSettings: {
     get: 'projectSettings:get',
-    set: 'projectSettings:set'
+    set: 'projectSettings:set',
+    onChanged: 'projectSettings:onChanged'
   },
   /**
    * Per-harness auth (Settings → Harness): a base URL + API token for each agent

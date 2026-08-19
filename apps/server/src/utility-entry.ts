@@ -106,7 +106,9 @@ parentPort.on('message', async ({ data }) => {
         parentPort.postMessage({ type: 'error', id: message.id, message: 'project settings storage is unavailable' });
         return;
       }
-      parentPort.postMessage({ type: 'result', id: message.id, value: await projectSettings.set(message.projectId, message.patch) });
+      const value = await projectSettings.set(message.projectId, message.patch);
+      parentPort.postMessage({ type: 'result', id: message.id, value });
+      parentPort.postMessage({ type: 'project-settings-changed', projectId: message.projectId });
     }
     if (message.operation === 'terminal-execute') {
       if (!message.command || !terminalSessions) {

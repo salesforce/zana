@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ServerRuntimeInboundSchema } from './runtime.js';
+import { RuntimeOutboundSchema, ServerRuntimeInboundSchema } from './runtime.js';
 
 const request = {
   type: 'request',
@@ -49,6 +49,17 @@ describe('server runtime contract', () => {
       operation: 'project-settings-set',
       projectId: 'project-1',
       patch: { arbitrary: true }
+    }).success).toBe(false);
+  });
+
+  it('accepts a scoped post-commit project settings invalidation', () => {
+    expect(RuntimeOutboundSchema.safeParse({
+      type: 'project-settings-changed',
+      projectId: 'project-1'
+    }).success).toBe(true);
+    expect(RuntimeOutboundSchema.safeParse({
+      type: 'project-settings-changed',
+      projectId: ''
     }).success).toBe(false);
   });
 });

@@ -199,6 +199,13 @@ compatible. The next separate slice is moving those launch-time readers to the
 server; do not delete `store.getProjectSettings` until its asynchronous
 replacement preserves launch snapshot and commit-time revalidation behavior.
 
+Following the reference architecture's post-commit invalidation discipline, a
+successful server settings write now emits a typed, project-scoped
+`project-settings-changed` event. Desktop forwards the invalidation through the
+preload bridge, and mounted project settings views refetch the authoritative
+projection unless they have an in-flight local save. The event carries no
+settings payload, so the renderer never becomes a second source of truth.
+
 Update (2026-08-19): packaged `projects:remove` now deletes the project record
 and its app-managed settings through one server runtime request. The server also
 performs best-effort cleanup of an exact remote placeholder path only when it is

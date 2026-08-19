@@ -114,13 +114,18 @@ export const HostTerminalEventMessageSchema = z.object({
   type: z.literal('terminal-event'),
   event: TerminalHostEventSchema
 }).strict();
+export const ProjectSettingsChangedMessageSchema = z.object({
+  type: z.literal('project-settings-changed'),
+  projectId: ProjectIdSchema
+}).strict();
 
 export const RuntimeOutboundSchema = z.discriminatedUnion('type', [
   RuntimeReadySchema,
   RuntimeResultSchema,
   RuntimeErrorSchema,
   RuntimeStoppedSchema,
-  HostTerminalEventMessageSchema
+  HostTerminalEventMessageSchema,
+  ProjectSettingsChangedMessageSchema
 ]);
 
 export type ServerRuntimeInbound = z.infer<typeof ServerRuntimeInboundSchema>;
