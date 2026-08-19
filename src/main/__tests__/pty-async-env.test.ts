@@ -70,7 +70,7 @@ let pending: {
   resolve: (s: ExecutionSession) => void;
   reject: (e: unknown) => void;
 } | null = null;
-let lastCtx: (ExecEnvContext & { cols: number; rows: number; sessionEnv: Record<string, string> }) | null =
+let lastCtx: (ExecEnvContext & { cols: number; rows: number; sessionEnv: Record<string, string>; spawnEnv?: Record<string, string> }) | null =
   null;
 let lastInner: InnerLaunch | null = null;
 
@@ -175,6 +175,7 @@ describe('PtyManager — async createSession environment', () => {
   it('passes the REWRITTEN callback env to createSession', () => {
     ptys.create({ ...base, config: cfg(), environment: 'sandbox' });
     expect(lastCtx?.sessionEnv.ZCC_REWRITTEN).toBe('1');
+    expect(lastCtx?.spawnEnv?.ZCC_REWRITTEN).toBe('1');
     expect(lastInner).not.toBeNull();
   });
 

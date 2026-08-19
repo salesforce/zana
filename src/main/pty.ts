@@ -850,6 +850,8 @@ export class PtyManager extends EventEmitter {
     microVmImage?: string;
     microVmCpus?: number;
     microVmMemoryMib?: number;
+    /** Internal migration lane: authenticated server-host execution for local shells only. */
+    runtimeHost?: boolean;
   }): TerminalSession {
     if (opts.remote) {
       return this.createRemote({ ...opts, remote: opts.remote });
@@ -1469,7 +1471,14 @@ export class PtyManager extends EventEmitter {
     // a sandboxed process shares the host loopback), but the hook is applied here
     // so a future container/VM env (whose loopback ≠ host) plugs in with no caller
     // change.
-    const execEnv = environmentFor(opts.environment);
+    // This is an intentionally narrow migration lane: only an explicit local
+    // shell launch may cross the server-host execution boundary. Every agent,
+    // remote SSH, tmux-backed, sandbox, and microVM launch retains its legacy path.
+    const useRuntimeHost = opts.runtimeHost === true && effectiveProfile === 'shell' && !useTmux;
+    // `runtime-host` is internal-only. A renderer-provided value remains a local
+    // launch unless the trusted main coordinator opts into the migration lane.
+    const requestedEnvironment = opts.environment === 'runtime-host' ? 'local' : opts.environment;
+    const execEnv = environmentFor(useRuntimeHost ? 'runtime-host' : requestedEnvironment);
     const envCtx: ExecEnvContext = {
       sessionId,
       projectId: opts.projectId,
@@ -1538,7 +1547,11 @@ export class PtyManager extends EventEmitter {
       // Agents board can badge a sandboxed session and surface an honest posture
       // when the kernel couldn't enforce it (warn-and-run). Omitted for a plain
       // local launch (the common case) to keep the record lean.
-      environment: opts.environment && opts.environment !== 'local' ? opts.environment : undefined,
+      environment: useRuntimeHost
+        ? 'runtime-host'
+        : requestedEnvironment && requestedEnvironment !== 'local'
+          ? requestedEnvironment
+          : undefined,
       isolationStatus: isolationStatus.isolated || isolationStatus.reason ? isolationStatus : undefined
     };
 
@@ -1553,7 +1566,7 @@ export class PtyManager extends EventEmitter {
       const deferred = new DeferredExecSession();
       this.live.set(session.id, { session, proc: deferred });
       this.emit('sessionUpdated', session);
-      void this.attachExecutionSession(session, execEnv, inner, envCtx, rewrittenCallbackEnv, opts, caps);
+      void this.attachExecutionSession(session, execEnv, inner, envCtx, rewrittenCallbackEnv, env, opts, caps);
       return session;
     }
 
@@ -1667,6 +1680,7 @@ export class PtyManager extends EventEmitter {
     inner: { command: string; args: string[] },
     envCtx: ExecEnvContext,
     sessionEnv: Record<string, string>,
+    spawnEnv: Record<string, string>,
     opts: { autonomous?: boolean; persona?: Persona; scheduled?: boolean; cols: number; rows: number },
     caps: { injectsClaudeMcpConfig: boolean }
   ): Promise<void> {
@@ -1677,7 +1691,8 @@ export class PtyManager extends EventEmitter {
         ...envCtx,
         cols: opts.cols,
         rows: opts.rows,
-        sessionEnv
+          sessionEnv,
+          spawnEnv
       });
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -2486,7 +2501,9 @@ export class PtyManager extends EventEmitter {
     this.expectedClose.add(id);
     this.disarmReattach(l);
     try {
-      l.proc.kill();
+      const expectedTermination = l.proc as ExecutionSession & { terminateExpected?: () => void };
+      if (expectedTermination.terminateExpected) expectedTermination.terminateExpected();
+      else l.proc.kill();
     } catch {
       /* already dead — the onExit (if any) will still clear the flag */
     }

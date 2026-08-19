@@ -53,9 +53,11 @@ import {
 } from '../zcc-harness/sandbox.js';
 import { sensitiveRoots as defaultSensitiveRoots } from '../extensions/permission-broker.js';
 import { createMicroVmEnvironment } from './microvm-environment.js';
+import type { RuntimeSupervisor } from '../runtime-supervisor.js';
+import { createRuntimeHostExecutionEnvironment } from './runtime-host-environment.js';
 
 /** The registered execution environments. `local` is the identity element. */
-export type ExecEnvId = 'local' | 'sandbox' | 'microvm';
+export type ExecEnvId = 'local' | 'sandbox' | 'microvm' | 'runtime-host';
 
 /** A resolved inner launch — the provider's `{command, args}`, tmux-agnostic. */
 export interface InnerLaunch {
@@ -122,6 +124,8 @@ export interface ExecutionSession {
   resize(cols: number, rows: number): void;
   /** Terminate the guest process (and tear down the VM for an attached sandbox). */
   kill(signal?: string): void;
+  /** Optional semantic close for runtimes that distinguish expected completion. */
+  terminateExpected?(): void;
   /**
    * Release any host resources (masters/fds/child handles). Optional twin of
    * node-pty's `destroy()` — called from `finalizeExit` defensively.
@@ -152,7 +156,14 @@ export interface ExecutionEnvironment {
    */
   createSession?(
     inner: InnerLaunch,
-    ctx: ExecEnvContext & { cols: number; rows: number; sessionEnv: Record<string, string> }
+    ctx: ExecEnvContext & {
+      cols: number;
+      rows: number;
+      /** Session-only callback overrides, for guests that must scrub host env. */
+      sessionEnv: Record<string, string>;
+      /** Complete environment for a host-local execution backend. */
+      spawnEnv?: Record<string, string>;
+    }
   ): Promise<ExecutionSession>;
 }
 
@@ -221,8 +232,23 @@ const sandboxEnvironment: ExecutionEnvironment = {
  */
 const microVmEnvironment: ExecutionEnvironment = createMicroVmEnvironment();
 
+let runtimeHostEnvironment: ExecutionEnvironment | null = null;
+
+/**
+ * The runtime-host lane is injected at desktop startup because it depends on the
+ * live authenticated server/host pair. It is intentionally unavailable elsewhere.
+ */
+export function setRuntimeHostSupervisor(runtime: RuntimeSupervisor | null): void {
+  runtimeHostEnvironment = runtime ? createRuntimeHostExecutionEnvironment({ runtime }) : null;
+}
+
+/** Whether the trusted desktop has paired the authenticated server-host runtime. */
+export function runtimeHostAvailable(): boolean {
+  return runtimeHostEnvironment !== null;
+}
+
 /** Frozen registry — built once at module load (Rule 3: nothing to subscribe/dispose). */
-const EXECUTION_ENVIRONMENTS: Readonly<Record<ExecEnvId, ExecutionEnvironment>> = Object.freeze({
+const EXECUTION_ENVIRONMENTS: Readonly<Record<Exclude<ExecEnvId, 'runtime-host'>, ExecutionEnvironment>> = Object.freeze({
   local: localEnvironment,
   sandbox: sandboxEnvironment,
   microvm: microVmEnvironment
@@ -233,5 +259,6 @@ const EXECUTION_ENVIRONMENTS: Readonly<Record<ExecEnvId, ExecutionEnvironment>> 
  * falls back to `local` (never crashes a spawn), mirroring `providerFor`.
  */
 export function environmentFor(id: ExecEnvId | undefined): ExecutionEnvironment {
+  if (id === 'runtime-host') return runtimeHostEnvironment ?? localEnvironment;
   return (id && EXECUTION_ENVIRONMENTS[id]) || localEnvironment;
 }

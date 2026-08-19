@@ -8,6 +8,26 @@ import { resolve } from 'node:path';
 // the matching source file; the bare specifier maps to the package entry.
 const sdkAlias = [
   {
+    find: /^@zana-ai\/zcc-contracts\/canonical-json$/,
+    replacement: resolve(__dirname, 'packages/contracts/src/canonical-json.ts')
+  },
+  {
+    find: /^@zana-ai\/zcc-contracts\/terminal-execution$/,
+    replacement: resolve(__dirname, 'packages/contracts/src/terminal-execution.ts')
+  },
+  {
+    find: /^@zana-ai\/zcc-contracts\/runtime$/,
+    replacement: resolve(__dirname, 'packages/contracts/src/runtime.ts')
+  },
+  {
+    find: /^@zana-ai\/zcc-server\/static-host$/,
+    replacement: resolve(__dirname, 'apps/server/src/static-host.ts')
+  },
+  {
+    find: /^@zana-ai\/zcc-host-daemon$/,
+    replacement: resolve(__dirname, 'apps/host-daemon/src/index.ts')
+  },
+  {
     find: /^@zana-ai\/zcc-extension-sdk$/,
     replacement: resolve(__dirname, 'packages/extension-sdk/src/index.ts')
   },
@@ -37,7 +57,7 @@ export default defineConfig({
       // bundle via the registry, but lives outside `src/`; without this the
       // dev watcher won't restart the main process when a plugin file changes,
       // leaving a stale main that answers `modules:call` with "Unknown module".
-      watch: { include: ['src/**', 'plugins/**'] },
+      watch: { include: ['src/**', 'plugins/**', 'apps/**'] },
       rollupOptions: {
         // `host-child` is the core-owned bootstrap that runs inside each
         // per-extension `utilityProcess` (P3-A). Build it as a SEPARATE main
@@ -48,7 +68,9 @@ export default defineConfig({
         input: {
           index: resolve(__dirname, 'src/main/bootstrap.ts'),
           main: resolve(__dirname, 'src/main/index.ts'),
-          'host-child': resolve(__dirname, 'src/main/extensions/host-child.ts')
+          'host-child': resolve(__dirname, 'src/main/extensions/host-child.ts'),
+          'server-runtime': resolve(__dirname, 'apps/server/src/utility-entry.ts'),
+          'host-runtime': resolve(__dirname, 'apps/host-daemon/src/utility-entry.ts')
         }
       }
     }

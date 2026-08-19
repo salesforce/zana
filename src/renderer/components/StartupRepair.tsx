@@ -10,8 +10,14 @@ export function StartupRepair() {
     setMessage(undefined);
     try {
       const state = await window.cc.startup.retry();
-      if (state.mode === 'ready') window.location.reload();
-      else setMessage('Repair is still required. Review diagnostics before retrying.');
+      // On success, main unconditionally navigates this window itself
+      // (runStartupMigration) — including in dev, where it reloads the same
+      // origin. Do not also reload here: a renderer-initiated navigation
+      // racing main's own `loadURL` can cancel BOTH (whichever the renderer's
+      // `will-navigate` guard sees second gets prevented, and a prevented
+      // navigation replacing an in-flight one leaves neither completing), so
+      // main must be the only side that navigates this window.
+      if (state.mode !== 'ready') setMessage('Repair is still required. Review diagnostics before retrying.');
     } catch {
       setMessage('Retry failed. Review diagnostics before retrying.');
     } finally {

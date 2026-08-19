@@ -13,7 +13,7 @@
  * in the project window, then DISABLE it and assert the tab disappears there
  * live. Both toggles cross the window boundary, so we cover show + hide.
  */
-import { test, expect } from './fixtures/app';
+import { isAppRendererUrl, test, expect } from './fixtures/app';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -62,7 +62,7 @@ test('config: toggling Follow-ups in one window flips the tab in another live', 
         () => {
           projectWindow = electron
             .windows()
-            .find((w) => w !== window && w.url().includes('index.html'));
+            .find((w) => w !== window && isAppRendererUrl(w.url()));
           return projectWindow ? 'opened' : 'waiting';
         },
         { timeout: 20_000 }

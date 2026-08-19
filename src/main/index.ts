@@ -20,6 +20,9 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, realpathSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, relative } from 'node:path';
+import { isTrustedRendererUrl, rendererUrl, setProductionRendererOrigin } from './renderer-url.js';
+import { startRuntimeSupervisor, type RuntimeSupervisor } from './runtime-supervisor.js';
+import { runtimeHostAvailable, setRuntimeHostSupervisor } from './harness/execution-environment.js';
 import { IPC } from '../shared/ipc.js';
 import { sanitizeExtraArgs } from '../shared/launch-sanitize.js';
 import { providerCapabilities, isClaudeProfile, isCodexProfile, isOpenCodeProfile, seedPromptArgs } from '../shared/launch-provider.js';
@@ -2411,6 +2414,31 @@ let extensionsWatcher: FSWatcher | null = null;
 let extensionsChangeDebounce: NodeJS.Timeout | null = null;
 let mcpServer: McpServerHandle | null = null;
 let controlPlane: ControlPlaneHandle | null = null;
+let runtimeSupervisor: RuntimeSupervisor | null = null;
+
+function resolvedAppVersion(): string {
+  const version = app.getVersion();
+  const e2eVersion = process.env.ZCC_E2E_APP_VERSION;
+  return version === '0.0' && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(e2eVersion ?? '')
+    ? e2eVersion!
+    : version;
+}
+
+async function ensureRendererStaticHost(): Promise<void> {
+  if (process.env.ELECTRON_RENDERER_URL || runtimeSupervisor) return;
+  // electron-vite emits renderer assets beside the main bundle. Electron's asar
+  // filesystem support keeps this usable in packaged builds without exposing a
+  // broad filesystem server.
+  const rootDir = join(__dirname, '../renderer');
+  runtimeSupervisor = await startRuntimeSupervisor({
+    rendererRoot: rootDir,
+    dataDir: join(app.getPath('home'), '.zcc'),
+    runtimeDir: __dirname,
+    version: resolvedAppVersion()
+  });
+  setRuntimeHostSupervisor(runtimeSupervisor);
+  setProductionRendererOrigin(runtimeSupervisor.rendererUrl);
+}
 
 // Resolve packaged or unpackaged icon location. In dev electron-vite runs from
 // repo root with __dirname=out/main, so the parent is the project root. Once
@@ -3070,7 +3098,10 @@ export function createTerminalConfined(
       // chain (launcher > persona > project > global); cpu/mem stay launcher-only hints.
       microVmImage: resolvedMicroVmImage,
       microVmCpus: req.microVmCpus,
-      microVmMemoryMib: req.microVmMemoryMib
+      microVmMemoryMib: req.microVmMemoryMib,
+      // Kept off while this first lane is verified through a dedicated internal
+      // control path. Public terminal IPC remains behaviorally unchanged.
+      runtimeHost: process.env.ZCC_RUNTIME_HOST_SHELL === '1' && runtimeHostAvailable()
     });
     // Remember the worktree so the exit handler can prune it once the agent is
     // done (the `exit` event fires after the live session is dropped, so we
@@ -3547,7 +3578,10 @@ async function launchBackgroundTerminal(
       session.restoreCapabilityId = restoreCapabilityId;
       restoreCapabilities.put({
         id: restoreCapabilityId,
-        request: finalPlan.request,
+        request: {
+          ...finalPlan.request,
+          environment: finalPlan.request.environment === 'runtime-host' ? 'local' : finalPlan.request.environment
+        },
         sessionId: session.id,
         sessionProfile: session.profile,
         sessionTitle: session.title,
@@ -4422,12 +4456,14 @@ function createWindow(projectId?: string, repairOnly = false) {
 
   // The scoped project id rides in as a query param so the renderer can lock to
   // it before first paint (read in main.tsx). Unscoped windows get no param.
-  const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
-  if (process.env.ELECTRON_RENDERER_URL) {
-    win.loadURL(`${process.env.ELECTRON_RENDERER_URL}${query}`);
+  const url = rendererUrl(projectId ? { projectId } : {});
+  if (url) {
+    win.loadURL(url);
   } else {
+    // Startup-repair can render before normal bootstrap starts the local static
+    // host. It is the only permitted file-backed product surface.
     win.loadFile(join(__dirname, '../renderer/index.html'), {
-      search: query ? query.slice(1) : undefined
+      search: projectId ? `projectId=${encodeURIComponent(projectId)}` : undefined
     });
   }
 
@@ -4782,7 +4818,10 @@ function registerIpc() {
     harnessVerificationCache = { expiresAt: Date.now() + 30_000, result };
     return result;
   };
-  safeHandle(IPC.projects.list, () => store.listProjects(), () => []);
+  safeHandle(IPC.projects.list, async () => {
+    const projects = await runtimeSupervisor?.listProjects();
+    return runtimeSupervisor ? projects as Project[] : store.listProjects();
+  }, () => []);
   ipcMain.handle(IPC.projects.add, async (_e, path: string): Promise<Result<Project>> => {
     try {
       const project = store.addProject(path);
@@ -5409,6 +5448,9 @@ function registerIpc() {
     () => []
   );
 
+  // Config remains on the compatibility owner until its normalizer, canonical
+  // harness projection, and atomic write transaction move together. A raw JSON
+  // server reader would silently change persisted compatibility semantics.
   safeHandle(IPC.config.get, () => store.getConfig(), () => store.getConfig());
   safeHandle<[Partial<AppConfig>], AppConfig>(
     IPC.config.set,
@@ -7227,17 +7269,7 @@ function registerIpc() {
     safeSend(IPC.skills.bundles.onChanged, bundles);
   });
   safeHandle(IPC.app.homedir, () => homedir(), () => '');
-  safeHandle(
-    IPC.app.version,
-    () => {
-      const version = app.getVersion();
-      const e2eVersion = process.env.ZCC_E2E_APP_VERSION;
-      return version === '0.0' && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(e2eVersion ?? '')
-        ? e2eVersion!
-        : version;
-    },
-    () => ''
-  );
+  safeHandle(IPC.app.version, () => runtimeSupervisor?.appVersion() ?? resolvedAppVersion(), () => '');
   safeHandle(IPC.app.microVmSupported, () => microVmPlatformSupported(), () => false);
   // Renderer-driven fullscreen targets its sender window, never whichever window
   // happened to gain focus before main handles the request.
@@ -8345,6 +8377,22 @@ async function runStartupMigration(): Promise<StartupState> {
       else showMainWindow();
     }
   });
+  // A repair-only window is loaded via `loadFile` (the loopback static host
+  // isn't up yet — see createWindow). Once retry succeeds, that host IS up, so
+  // `isTrustedRendererUrl` (renderer-url.ts) now judges the still-open file://
+  // document untrusted against the new loopback origin and would block a
+  // renderer-initiated reload. Main must drive this navigation itself (Rule 1:
+  // renderer is untrusted, main authorizes) — and must be the ONLY side that
+  // navigates: a renderer-initiated `location.reload()` firing around the same
+  // time races this `loadURL`, and whichever loses cancels the other (both can
+  // end up cancelled, leaving the window stuck). The renderer's retry() no
+  // longer reloads itself; this is unconditional so dev (ELECTRON_RENDERER_URL,
+  // same origin throughout) also gets its remount via this one path.
+  if (startupState.mode === 'ready') {
+    const win = unscopedWindow();
+    const url = rendererUrl();
+    if (win && !win.isDestroyed() && url) win.loadURL(url);
+  }
   return startupState;
 }
 
@@ -9199,6 +9247,12 @@ async function bootstrapNormal() {
     callback(permission === 'media');
   });
   session.defaultSession.setPermissionCheckHandler((_wc, permission) => permission === 'media');
+  try {
+    await ensureRendererStaticHost();
+  } catch (error) {
+    normalBootstrapStarted = false;
+    throw error;
+  }
   if (!unscopedWindow()) createWindow();
   // tmux orphan reaper (Phase 2): when persistence covers local sessions, kill `cc-*` tmux
   // servers left over from a previous run that no live pty is bound to. Runs
@@ -9611,6 +9665,12 @@ app.on('before-quit', (event) => {
     controlPlane = null;
     handle.close().catch((err) => logMainError('controlPlane.close', err));
   }
+  if (runtimeSupervisor) {
+    const runtime = runtimeSupervisor;
+    runtimeSupervisor = null;
+    setRuntimeHostSupervisor(null);
+    runtime.close().catch((err) => logMainError('runtimeSupervisor.close', err));
+  }
 });
 
 process.on('uncaughtException', (err) => {
@@ -9637,17 +9697,6 @@ app.on('web-contents-created', (_e, contents) => {
     } catch {
       return false;
     }
-  };
-  const isTrustedRendererUrl = (value: string) => {
-    const devUrl = process.env.ELECTRON_RENDERER_URL;
-    if (devUrl) {
-      try {
-        return new URL(value).origin === new URL(devUrl).origin;
-      } catch {
-        return false;
-      }
-    }
-    return value.startsWith('file://');
   };
   const preventExternalNavigation = (event: Electron.Event, url: string) => {
     if (!isTrustedRendererUrl(url)) event.preventDefault();

@@ -20,7 +20,7 @@ async function makeMainModule(fs: Partial<FsCap>) {
     storage: { get: vi.fn(async () => undefined), set: vi.fn() },
     host: {} as never
   };
-  return { mod: defineMain.setup(ctx) as any, fs: full };
+  return { mod: defineMain.setup(ctx as never) as any, fs: full };
 }
 
 describe('getProfile', () => {
