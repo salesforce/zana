@@ -2443,6 +2443,17 @@ async function ensureRendererStaticHost(): Promise<void> {
   setProductionRendererOrigin(runtimeSupervisor.rendererUrl);
 }
 
+/**
+ * Launch authorization must read the same settings authority that accepts the
+ * write. The legacy store remains the development-mode fallback until its
+ * runtime replacement is available there as well.
+ */
+async function getAuthoritativeProjectSettings(projectId: string): Promise<ProjectSettings> {
+  return runtimeSupervisor
+    ? await runtimeSupervisor.getProjectSettings(projectId) as ProjectSettings
+    : store.getProjectSettings(projectId);
+}
+
 // Resolve packaged or unpackaged icon location. In dev electron-vite runs from
 // repo root with __dirname=out/main, so the parent is the project root. Once
 // packaged, electron-builder copies resources/ next to app.asar via `extraResources`,
@@ -3055,6 +3066,9 @@ export function createTerminalConfined(
     // all absent). Every candidate is ADVISORY — the microVM builder re-resolves
     // the winner against the closed image allowlist before spawn (Rule 1), so a
     // stale/unknown persona or project value is rejected there, not honored.
+    // All production launches arrive with the immutable authorized snapshot.
+    // Keep the legacy sync fallback for narrow direct-call tests and development
+    // tools that deliberately exercise this low-level helper in isolation.
     const projectMicroVmSettings = opts?.launchSnapshot?.projectSettings
       ?? store.getProjectSettings(req.projectId);
     const resolvedMicroVmImage =
@@ -3160,7 +3174,7 @@ async function launchAuthorizedTerminal(
   const project = foundProject;
   const config = store.getConfig();
   const personaSnapshot = personas.list();
-  const projectSettings = store.getProjectSettings(req.projectId);
+  const projectSettings = await getAuthoritativeProjectSettings(req.projectId);
   const effectiveLaunch = resolveEffectiveLaunch(req, project);
   const userGaveTask = !!(req.prompt?.trim() || req.extraArgs?.length);
   const frameworkPersona = !req.personaId && req.frameworkIds?.length
@@ -3376,7 +3390,7 @@ async function launchAuthorizedTerminal(
     const currentProject = currentProjects.find((candidate) => candidate.id === project.id);
     if (!currentProject) return { ok: false, reason: 'project identity changed after preflight' };
     const currentConfig = store.getConfig();
-    const currentSettings = store.getProjectSettings(project.id);
+    const currentSettings = await getAuthoritativeProjectSettings(project.id);
     const currentPersonaCatalog = personas.list();
     const currentFrameworkPersona = !authorizedPlan.request.personaId && authorizedPlan.request.frameworkIds?.length
       ? resolveFrameworkPersona(
@@ -3450,6 +3464,7 @@ async function launchBackgroundTerminal(
   const project = projects.find((candidate) => candidate.id === opts.projectId);
   if (!project) throw new LaunchSpawnError('NOT_FOUND', 'project not found');
   const effectiveLaunch = resolveEffectiveLaunch(opts, project);
+  const projectSettings = await getAuthoritativeProjectSettings(project.id);
   const plan = preflightLaunch(opts, {
     principal: () => principal,
     binding: () => ({
@@ -3463,12 +3478,12 @@ async function launchBackgroundTerminal(
       requestedProfile: opts.profile,
       requestedPersonaId: opts.persona?.id,
       config: opts.config,
-      projectSettings: opts.projectSettings,
+      projectSettings,
       effectiveLaunch,
       storeRevision: launchDigest({
         projects,
         config: opts.config,
-        projectSettings: opts.projectSettings,
+        projectSettings,
         persona: opts.persona
       })
     })
@@ -3477,7 +3492,7 @@ async function launchBackgroundTerminal(
     config: opts.config,
     profile: opts.profile,
     persona: opts.persona,
-    projectSettings: opts.projectSettings,
+    projectSettings,
     harnessRouting: opts.harnessRouting,
     extraArgs: opts.extraArgs,
     projectId: project.id,
@@ -3510,7 +3525,7 @@ async function launchBackgroundTerminal(
       const currentProject = currentProjects.find((candidate) => candidate.id === project.id);
       if (!currentProject) return { ok: false as const, reason: 'project identity changed after preflight' };
       const currentConfig = store.getConfig();
-      const currentSettings = store.getProjectSettings(project.id);
+      const currentSettings = await getAuthoritativeProjectSettings(project.id);
       const currentPersona = opts.persona?.id
         ? personas.list().find((candidate) => candidate.id === opts.persona!.id)
         : undefined;
@@ -3563,6 +3578,7 @@ async function launchBackgroundTerminal(
       const spawnLaunch = materializeEffectiveLaunch(authorizedPlan.resolved.effectiveLaunch);
       const session = createTerminalFromAuthorizedPlan({
         ...authorizedPlan.request,
+        projectSettings: authorizedPlan.resolved.projectSettings,
         cwd: spawnLaunch.cwd,
         preallocatedSessionId: authorizedPlan.sessionId
       });

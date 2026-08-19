@@ -193,11 +193,17 @@ and `project-settings-remove` are bounded runtime operations. Packaged renderer
 IPC reads/writes and project-removal cleanup route through the server; reads stay
 best-effort while writes deliberately reject so optimistic UI state can roll
 back. The server projects canonical harness compatibility fields back to the
-legacy launch-facing view and persists writes in the canonical containers, so
-the current synchronous Electron launch, scheduler, and goal consumers remain
-compatible. The next separate slice is moving those launch-time readers to the
-server; do not delete `store.getProjectSettings` until its asynchronous
-replacement preserves launch snapshot and commit-time revalidation behavior.
+legacy launch-facing view and persists writes in the canonical containers.
+
+Update (2026-08-19): production launch preflight and commit-time revalidation
+now read settings through the runtime supervisor, so an interactive launch and
+background scheduler/goal launch consume the same server-owned snapshot that
+accepted the write. Background managers no longer attach settings from the
+legacy store; `launchBackgroundTerminal` fetches and snapshots them before
+authorization, then passes the authorized snapshot to spawn. The synchronous
+legacy fallback remains only when no runtime supervisor is active, including
+development and isolated low-level spawn tests. Do not delete
+`store.getProjectSettings` until those compatibility paths are retired.
 
 Following the reference architecture's post-commit invalidation discipline, a
 successful server settings write now emits a typed, project-scoped

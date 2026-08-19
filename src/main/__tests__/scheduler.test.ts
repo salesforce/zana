@@ -166,8 +166,7 @@ function makeManager(extraTaskFields?: Record<string, unknown>): {
   };
   const fakeStore = {
     listProjects: () => [project],
-    getConfig: () => ({}),
-    getProjectSettings: () => ({})
+    getConfig: () => ({})
   };
   const manager = new SchedulerManager();
   // The Deps type wants the real PtyManager + Store shapes. The fakes have a
@@ -210,8 +209,7 @@ describe('SchedulerManager.fire — headless spawn', () => {
       },
       store: {
         listProjects: () => [{ id: 'proj-1', name: 'P', path: '/tmp/proj', createdAt: 0, lastActiveAt: 0 }],
-        getConfig: () => ({}),
-        getProjectSettings: () => ({})
+        getConfig: () => ({})
       } as unknown as Parameters<SchedulerManager['setDeps']>[0]['store']
     });
     const task = manager.create({ name: 't', projectId: 'proj-1', profile: 'claude', every: '5m', enabled: false });
@@ -372,8 +370,7 @@ function makeMultiScheduleManager(count: number): {
   };
   const fakeStore = {
     listProjects: () => [project],
-    getConfig: () => ({}),
-    getProjectSettings: () => ({})
+    getConfig: () => ({})
   };
   const manager = new SchedulerManager();
   manager.setDeps({

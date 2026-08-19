@@ -206,8 +206,7 @@ function makeManager(opts?: {
   const principals: Array<{ kind: string; id: string }> = [];
   const fakeStore = {
     listProjects: () => [project],
-    getConfig: () => ({}),
-    getProjectSettings: () => ({})
+    getConfig: () => ({})
   };
   const inboxAppend = vi.fn(async (_input: Record<string, unknown>) => {});
   const verdicts = [...(opts?.verdicts ?? [])];
@@ -565,8 +564,7 @@ describe('GoalManager — launch failures respect the stall budget', () => {
     const ptys = new FakePtyManager();
     const fakeStore = {
       listProjects: () => [project],
-      getConfig: () => ({}),
-      getProjectSettings: () => ({})
+      getConfig: () => ({})
     };
     const inboxAppend = vi.fn(async (_input: Record<string, unknown>) => {});
     let calls = 0;
