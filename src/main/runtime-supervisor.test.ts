@@ -73,4 +73,24 @@ describe('runtime supervisor', () => {
     await exited;
     expect(events).toEqual(expect.arrayContaining(['output', 'exited']));
   });
+
+  it('rejects duplicate host events through the server session authority', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'zcc-runtime-'));
+    writeFileSync(join(root, 'index.html'), '<main>runtime</main>');
+    runtime = await startRuntimeSupervisor({ rendererRoot: root });
+    const sessionId = randomUUID();
+    const projectId = randomUUID();
+    await runtime.executeTerminal({
+      kind: 'start', commandId: randomUUID(), sessionId, projectId, launchEpoch: 0,
+      deadlineAt: new Date(Date.now() + 10_000).toISOString(),
+      launch: {
+        argv: [process.execPath, '-e', 'setTimeout(() => {}, 1000)'], cwd: root, env: { PATH: process.env.PATH ?? '' },
+        cols: 80, rows: 24, mode: 'local-pty'
+      }
+    });
+
+    expect(await runtime.recordTerminalEvent({ kind: 'output', sessionId, launchEpoch: 0, sequence: 99, data: 'late' })).toBe(true);
+    expect(await runtime.recordTerminalEvent({ kind: 'output', sessionId, launchEpoch: 0, sequence: 99, data: 'duplicate' })).toBe(false);
+    expect(await runtime.recordTerminalEvent({ kind: 'output', sessionId, launchEpoch: 1, sequence: 100, data: 'stale' })).toBe(false);
+  });
 });

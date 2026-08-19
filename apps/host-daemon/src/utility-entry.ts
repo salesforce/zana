@@ -31,6 +31,7 @@ parentPort.on('message', async ({ data }) => {
   }
   if (message.type === 'stop') {
     await close?.();
+    parentPort.postMessage({ type: 'stopped' });
     process.exit(0);
   }
 });

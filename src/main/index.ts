@@ -3101,7 +3101,7 @@ export function createTerminalConfined(
       microVmMemoryMib: req.microVmMemoryMib,
       // Kept off while this first lane is verified through a dedicated internal
       // control path. Public terminal IPC remains behaviorally unchanged.
-      runtimeHost: process.env.ZCC_RUNTIME_HOST_SHELL === '1' && runtimeHostAvailable()
+      runtimeHost: process.env.ZCC_RUNTIME_HOST === '1' && runtimeHostAvailable()
     });
     // Remember the worktree so the exit handler can prune it once the agent is
     // done (the `exit` event fires after the live session is dropped, so we
@@ -4824,7 +4824,12 @@ function registerIpc() {
   }, () => []);
   ipcMain.handle(IPC.projects.add, async (_e, path: string): Promise<Result<Project>> => {
     try {
-      const project = store.addProject(path);
+      // Once the runtime is active, the server is the only local-project writer.
+      // Do not fall back after a server error: an expired response may still have
+      // committed, and a second legacy write could create a divergent record.
+      const project = runtimeSupervisor
+        ? await runtimeSupervisor.addProject(path) as Project
+        : store.addProject(path);
       // Fire-and-forget the .mcp.json write; failure shouldn't block
       // adding a project (terminal still works without inbox push). Logged
       // for visibility.
@@ -4844,6 +4849,10 @@ function registerIpc() {
       scheduler.rebindWatchers();
       goals.rebindWatchers();
       followups.rebindWatchers();
+      safeSend(
+        IPC.projects.onChanged,
+        runtimeSupervisor ? await runtimeSupervisor.listProjects() as Project[] : store.listProjects()
+      );
       return { ok: true, value: project };
     } catch (err) {
       return { ok: false, code: 'ADD_FAILED', message: String(err) };
@@ -4967,7 +4976,7 @@ function registerIpc() {
   );
   safeHandle(
     IPC.projects.update,
-    (
+    async (
       id: string,
       patch: {
         name?: string;
@@ -4978,23 +4987,48 @@ function registerIpc() {
         favorite?: boolean;
         remotePath?: string;
       }
-    ) => store.updateProject(id, patch),
+    ) => {
+      const usesLegacyFields = patch.defaultAgents !== undefined
+        || patch.defaultPersonas !== undefined
+        || patch.launchDefault !== undefined
+        || patch.favorite !== undefined
+        || patch.remotePath !== undefined;
+      if (!runtimeSupervisor || usesLegacyFields || (patch.name === undefined && patch.color === undefined)) {
+        return store.updateProject(id, patch);
+      }
+      const project = await runtimeSupervisor.updateProject(id, {
+        ...(patch.name !== undefined ? { name: patch.name } : {}),
+        ...(patch.color !== undefined ? { color: patch.color as '#2f81f7' | '#3fb950' | '#d4a017' | '#bc8cff' | '#39c5cf' | '#f85149' | '#ff7b72' | '#8b949e' } : {})
+      });
+      safeSend(IPC.projects.onChanged, await runtimeSupervisor.listProjects() as Project[]);
+      return project as Project | null;
+    },
     () => null
   );
   safeHandle(
     IPC.projects.touch,
-    (id: string) => {
-      const touched = store.touchProject(id);
+    async (id: string) => {
+      const touched = runtimeSupervisor
+        ? await runtimeSupervisor.touchProject(id) as Project | null
+        : store.touchProject(id);
       // Re-point the per-project skills watcher whenever the renderer signals
       // a project switch — `projects.touch` is the canonical "selected" signal.
       setActiveProjectSkillsWatcher(touched?.path ?? null, touched?.id ?? null);
+      if (runtimeSupervisor && touched) {
+        safeSend(IPC.projects.onChanged, await runtimeSupervisor.listProjects() as Project[]);
+      }
       return touched;
     },
     () => null
   );
   safeHandle(
     IPC.projects.reorder,
-    (orderedIds: string[]) => store.reorderProjects(orderedIds),
+    async (orderedIds: string[]) => {
+      if (!runtimeSupervisor) return store.reorderProjects(orderedIds);
+      const projects = await runtimeSupervisor.reorderProjects(orderedIds);
+      safeSend(IPC.projects.onChanged, projects as Project[]);
+      return projects as Project[];
+    },
     () => []
   );
   safeHandle(

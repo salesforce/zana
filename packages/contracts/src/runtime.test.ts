@@ -1,0 +1,39 @@
+import { describe, expect, it } from 'vitest';
+import { ServerRuntimeInboundSchema } from './runtime.js';
+
+const request = {
+  type: 'request',
+  id: '00000000-0000-4000-8000-000000000001',
+  deadlineAt: '2026-08-19T12:00:00.000Z'
+};
+
+describe('server runtime contract', () => {
+  it('accepts only bounded local project mutations', () => {
+    expect(ServerRuntimeInboundSchema.safeParse({
+      ...request,
+      operation: 'projects-add',
+      path: '/workspace/project'
+    }).success).toBe(true);
+    expect(ServerRuntimeInboundSchema.safeParse({
+      ...request,
+      operation: 'projects-update',
+      projectId: 'project-1',
+      patch: { name: 'Renamed', color: '#2f81f7' }
+    }).success).toBe(true);
+  });
+
+  it('rejects unbounded project payloads before they reach the server store', () => {
+    expect(ServerRuntimeInboundSchema.safeParse({
+      ...request,
+      operation: 'projects-update',
+      projectId: 'project-1',
+      patch: { favorite: true }
+    }).success).toBe(false);
+    expect(ServerRuntimeInboundSchema.safeParse({
+      ...request,
+      operation: 'projects-update',
+      projectId: 'project-1',
+      patch: { name: 'bad\nname' }
+    }).success).toBe(false);
+  });
+});

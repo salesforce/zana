@@ -149,11 +149,49 @@ delegates `getConfig`/`setConfig` to it directly — this is still an in-process
 extraction (no IPC/server boundary crossed yet; `registeredAdapters()` is
 still called from Electron's own harness registry), so it does not yet satisfy
 "Route renderer IPC reads through desktop-to-server RPC" (#3) on its own. It
-has no dedicated focused test file yet. It is a plausible (unconfirmed)
-contributor to the `harness-routing-settings.spec.ts` E2E regression noted
-above, since that spec exercises exactly this config read/write path through
-a UI flow that depends on `registeredAdapters()`-driven projections — check it
-first when root-causing that failure.
+has no dedicated focused test file yet. (The `harness-routing-settings.spec.ts`
+E2E regression this note used to flag as a plausible contributor turned out to
+be the `PopoverPicklist` selector-migration issue documented in the Runtime
+Foundation regression note above — unrelated to this extraction.)
+
+Update (2026-08-19): Durable Foundation #4's first end-to-end vertical slice
+now routes local `projects:list`, `projects:add`, and the simple
+name/color form of `projects:update` through the server utility process. The
+strict desktop-to-server control protocol is in
+`packages/contracts/src/runtime.ts`; `apps/server/src/utility-entry.ts` owns
+one `createProjectStore` instance for all three operations (the former
+read-only `project-reader` compatibility path is deleted); and
+`src/main/runtime-supervisor.ts` exposes its typed adapter. A packaged runtime
+does not fall back to `store.addProject` after a server failure because a timed
+out request may already have committed. The compatibility path remains only
+when no runtime supervisor is active, and for fields not yet migrated
+(`defaultAgents`, personas, launch defaults, favorite, and remote path).
+
+`apps/server/src/project-store.ts` persists only canonical absolute local
+paths: it `realpath`s an existing directory before deduplicating and writing,
+so relative paths and symlink aliases cannot become separate durable project
+trust anchors. Its strict contract permits only the bounded name/color/category
+patch; names reject controls and invalid colors are ignored. The store queues
+read-modify-write transactions and CAS-guards them against an external legacy
+writer, preserving the existing `{version: 1, projects: [...]}` envelope and
+legacy bare-array reads. It deliberately does not yet own remote project
+creation, removal, ordering, touch/backfill, scratch/Quick Agent behavior, or
+project settings.
+
+Electron main still owns all post-mutation native integration: MCP config
+creation, feed records, store rebinding, watcher updates, and renderer push
+compatibility. `IPC.projects.onChanged` now publishes the server snapshot after
+a successful server-authoritative local add/update, eliminating the previous
+cross-window staleness for these two paths. The host utility process now also
+sends the `stopped` acknowledgement required by the supervisor shutdown
+protocol.
+
+Remaining project slices: migrate remote creation/update, remove, reorder,
+touch, Quick Agent/clone/extension registration, project settings, and then
+replace Electron-main project readers in authorization consumers with a server
+snapshot subscription. Do not remove `store` project compatibility methods
+until each dependent consumer is migrated and packaged Electron E2E proves the
+new authority path.
 
 ### 3. Execution Foundation
 
@@ -166,6 +204,27 @@ first when root-causing that failure.
 4. Route terminal IPC through server, then remove legacy PTY ownership from
    Electron main.
 5. Migrate local/remote/tmux recovery and restore capabilities.
+
+Reference alignment: the target design follows the clean split proven in the
+reference workspace: server owns accepted session identity, state, and event
+sequencing; host owns only PTY handles plus bounded scrollback; desktop remains
+the native-shell and compatibility adapter, never the durable terminal owner.
+The existing signed terminal-command seam is retained because it is stricter
+than a transport-only daemon session. The next terminal slice is intentionally
+the host replay/attach boundary, not a premature rewrite of remote SSH or tmux:
+the runtime-host adapter requests the host's bounded backlog before handing
+output to late listeners, de-duplicates by sequence, and caps its own
+pre-attachment buffer. This gives the current local-shell lane the required
+replay-before-live behavior while server session records and other terminal
+modes migrate separately.
+
+The local non-tmux lane is now profile-agnostic behind the internal
+`ZCC_RUNTIME_HOST=1` gate: the existing main-side launch planner still produces
+the exact authorized argv/env, but Claude, Codex, OpenCode, Cursor, Pi, and
+shell can hand their final local PTY command to the signed host boundary. This
+does not include remote SSH, local tmux, sandbox, or microVM, which retain their
+specialized compatibility paths until their recovery/isolation semantics have
+dedicated host contracts and parity coverage.
 
 Completion gate: host owns every live terminal child; server owns every session
 record and authorization decision; golden argv and terminal E2E suites pass.

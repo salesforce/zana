@@ -1471,13 +1471,16 @@ export class PtyManager extends EventEmitter {
     // a sandboxed process shares the host loopback), but the hook is applied here
     // so a future container/VM env (whose loopback ≠ host) plugs in with no caller
     // change.
-    // This is an intentionally narrow migration lane: only an explicit local
-    // shell launch may cross the server-host execution boundary. Every agent,
-    // remote SSH, tmux-backed, sandbox, and microVM launch retains its legacy path.
-    const useRuntimeHost = opts.runtimeHost === true && effectiveProfile === 'shell' && !useTmux;
     // `runtime-host` is internal-only. A renderer-provided value remains a local
     // launch unless the trusted main coordinator opts into the migration lane.
     const requestedEnvironment = opts.environment === 'runtime-host' ? 'local' : opts.environment;
+    // This migration lane now covers every plain local profile. Tmux, remote SSH,
+    // sandbox, and microVM stay on their dedicated compatibility backends until
+    // their lifecycle/recovery contracts move to the host.
+    const useRuntimeHost = opts.runtimeHost === true
+      && !useTmux
+      && !opts.remote
+      && (requestedEnvironment === undefined || requestedEnvironment === 'local');
     const execEnv = environmentFor(useRuntimeHost ? 'runtime-host' : requestedEnvironment);
     const envCtx: ExecEnvContext = {
       sessionId,

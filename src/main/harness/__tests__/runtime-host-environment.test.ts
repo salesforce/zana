@@ -16,6 +16,11 @@ describe('runtime host execution environment', () => {
       hostSigningKey: 'key',
       appVersion: async () => '',
       listProjects: async () => [],
+      addProject: async () => { throw new Error('not used'); },
+      updateProject: async () => { throw new Error('not used'); },
+      reorderProjects: async () => { throw new Error('not used'); },
+      touchProject: async () => { throw new Error('not used'); },
+      recordTerminalEvent: async () => true,
       executeTerminal: async (command) => {
         commands.push(command);
         if (command.kind !== 'start') return [];
@@ -81,7 +86,7 @@ describe('runtime host execution environment', () => {
     session.write('echo hi\r');
     session.resize(120, 40);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(commands.slice(1)).toEqual([
+    expect(commands.slice(2)).toEqual([
       expect.objectContaining({ kind: 'write', data: 'echo hi\r', sessionId: 'session-1', launchEpoch: 0, deadlineAt: deadline }),
       expect.objectContaining({ kind: 'resize', cols: 120, rows: 40, sessionId: 'session-1', launchEpoch: 0, deadlineAt: deadline })
     ]);
@@ -106,6 +111,11 @@ describe('runtime host execution environment', () => {
       hostSigningKey: 'key',
       appVersion: async () => '',
       listProjects: async () => [],
+      addProject: async () => { throw new Error('not used'); },
+      updateProject: async () => { throw new Error('not used'); },
+      reorderProjects: async () => { throw new Error('not used'); },
+      touchProject: async () => { throw new Error('not used'); },
+      recordTerminalEvent: async () => true,
       executeTerminal: async (command) => [{ kind: 'rejected', commandId: command.commandId, sessionId: command.sessionId, reason: 'host unavailable' }],
       onTerminalEvent: () => () => {},
       close: async () => {}
@@ -116,5 +126,59 @@ describe('runtime host execution environment', () => {
       { command: '/bin/zsh', args: [] },
       { sessionId: 'session-1', projectId: 'project-1', cwd: '/workspace', cols: 80, rows: 24, sessionEnv: {}, spawnEnv: {} }
     )).rejects.toThrow('runtime host did not start terminal session');
+  });
+
+  it('replays bounded host output before delivering live events without duplication', async () => {
+    const commands: Array<{ kind: string; afterSequence?: number }> = [];
+    let listener: ((event: TerminalHostEvent) => void) | null = null;
+    const runtime: RuntimeSupervisor = {
+      rendererUrl: 'http://127.0.0.1:1/',
+      hostUrl: 'http://127.0.0.1:2',
+      hostToken: 'token',
+      hostSigningKey: 'key',
+      appVersion: async () => '',
+      listProjects: async () => [],
+      addProject: async () => { throw new Error('not used'); },
+      updateProject: async () => { throw new Error('not used'); },
+      reorderProjects: async () => { throw new Error('not used'); },
+      touchProject: async () => { throw new Error('not used'); },
+      recordTerminalEvent: async () => true,
+      executeTerminal: async (command) => {
+        commands.push(command);
+        if (command.kind === 'start') {
+          return [
+            { kind: 'accepted', commandId: command.commandId, sessionId: command.sessionId, launchEpoch: 0, hostSessionId: 'host-1' },
+            { kind: 'started', sessionId: command.sessionId, launchEpoch: 0, pid: 1234 }
+          ];
+        }
+        if (command.kind === 'get-backlog') {
+          listener!({ kind: 'output', sessionId: command.sessionId, launchEpoch: 0, sequence: 2, data: 'live' });
+          return [
+            { kind: 'output', sessionId: command.sessionId, launchEpoch: 0, sequence: 0, data: 'zero' },
+            { kind: 'output', sessionId: command.sessionId, launchEpoch: 0, sequence: 1, data: 'one' }
+          ];
+        }
+        return [];
+      },
+      onTerminalEvent: (next) => {
+        listener = next;
+        return () => { listener = null; };
+      },
+      close: async () => {}
+    };
+    const environment = createRuntimeHostExecutionEnvironment({ runtime });
+    const session = await environment.createSession!(
+      { command: '/bin/zsh', args: [] },
+      { sessionId: 'session-1', projectId: 'project-1', cwd: '/workspace', cols: 80, rows: 24, sessionEnv: {}, spawnEnv: {} }
+    );
+    const output: string[] = [];
+
+    session.onData((data) => output.push(data));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    listener!({ kind: 'output', sessionId: 'session-1', launchEpoch: 0, sequence: 2, data: 'duplicate' });
+    listener!({ kind: 'output', sessionId: 'session-1', launchEpoch: 0, sequence: 3, data: 'three' });
+
+    expect(commands.find((command) => command.kind === 'get-backlog')).toMatchObject({ afterSequence: -1 });
+    expect(output).toEqual(['zero', 'one', 'live', 'three']);
   });
 });

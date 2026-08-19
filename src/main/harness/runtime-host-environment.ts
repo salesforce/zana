@@ -10,6 +10,7 @@ import type {
 } from './execution-environment.js';
 
 const COMMAND_DEADLINE_MS = 5_000;
+const MAX_BUFFERED_OUTPUT_BYTES = 256 * 1024;
 
 export interface RuntimeHostExecutionEnvironmentOptions {
   runtime: RuntimeSupervisor;
@@ -42,8 +43,13 @@ export function createRuntimeHostExecutionEnvironment(
 class RuntimeHostExecutionSession implements ExecutionSession {
   private readonly dataListeners = new Set<(data: string) => void>();
   private readonly exitListeners = new Set<(event: { exitCode: number }) => void>();
-  private readonly bufferedEvents: Array<Extract<TerminalHostEvent, { kind: 'output' | 'exited' }>> = [];
+  private readonly bufferedOutput = new Map<number, Extract<TerminalHostEvent, { kind: 'output' }>>();
   private readonly unsubscribe: () => void;
+  private bufferedOutputBytes = 0;
+  private exitEvent: Extract<TerminalHostEvent, { kind: 'exited' }> | null = null;
+  private lastDeliveredSequence = -1;
+  private attachingOutput = false;
+  private outputAttached = false;
   private launchEpoch = 0;
   private started = false;
   private exited = false;
@@ -87,6 +93,7 @@ class RuntimeHostExecutionSession implements ExecutionSession {
 
   onData(listener: (data: string) => void): void {
     this.dataListeners.add(listener);
+    if (!this.outputAttached && !this.attachingOutput) void this.attachOutput();
     this.flushBufferedEvents();
   }
 
@@ -115,7 +122,9 @@ class RuntimeHostExecutionSession implements ExecutionSession {
     this.unsubscribe();
     this.dataListeners.clear();
     this.exitListeners.clear();
-    this.bufferedEvents.length = 0;
+    this.bufferedOutput.clear();
+    this.bufferedOutputBytes = 0;
+    this.exitEvent = null;
   }
 
   private execute(
@@ -124,6 +133,7 @@ class RuntimeHostExecutionSession implements ExecutionSession {
       | { kind: 'write'; data: string }
       | { kind: 'resize'; cols: number; rows: number }
       | { kind: 'terminate'; expected: boolean }
+      | { kind: 'get-backlog'; afterSequence?: number }
   ): Promise<TerminalHostEvent[]> {
     return this.runtime.executeTerminal({
       ...command,
@@ -142,28 +152,57 @@ class RuntimeHostExecutionSession implements ExecutionSession {
       this._pid = event.pid;
       return;
     }
-    if (event.kind === 'output' || event.kind === 'exited') {
-      this.bufferedEvents.push(event);
+    if (event.kind === 'output') {
+      this.bufferOutput(event);
+      this.flushBufferedEvents();
+      return;
+    }
+    if (event.kind === 'exited') {
+      if (!this.exitEvent || event.sequence < this.exitEvent.sequence) this.exitEvent = event;
       this.flushBufferedEvents();
     }
   }
 
-  private flushBufferedEvents(): void {
-    while (this.bufferedEvents.length > 0) {
-      const event = this.bufferedEvents[0]!;
-      if (event.kind === 'output') {
-        if (this.dataListeners.size === 0) return;
-        this.bufferedEvents.shift();
-        for (const listener of this.dataListeners) listener(event.data);
-        continue;
-      }
-      if (this.exitListeners.size === 0) return;
-      this.bufferedEvents.shift();
-      if (this.exited) continue;
-      this.exited = true;
-      for (const listener of this.exitListeners) listener({ exitCode: event.code ?? -1 });
-      this.unsubscribe();
+  private async attachOutput(): Promise<void> {
+    this.attachingOutput = true;
+    try {
+      const events = await this.execute({ kind: 'get-backlog', afterSequence: this.lastDeliveredSequence });
+      for (const event of events) this.handleEvent(event);
+    } catch {
+      // The live subscription was established before start(). If the host has
+      // already exited or rejects replay, deliver the bounded events received on
+      // that subscription rather than turning a late renderer attachment into a
+      // second terminal failure.
+    } finally {
+      this.attachingOutput = false;
+      this.outputAttached = true;
+      this.flushBufferedEvents();
     }
+  }
+
+  private bufferOutput(event: Extract<TerminalHostEvent, { kind: 'output' }>): void {
+    if (event.sequence <= this.lastDeliveredSequence || this.bufferedOutput.has(event.sequence)) return;
+    this.bufferedOutput.set(event.sequence, event);
+    this.bufferedOutputBytes += Buffer.byteLength(event.data);
+    if (this.bufferedOutputBytes > MAX_BUFFERED_OUTPUT_BYTES) this.exitWithFailure();
+  }
+
+  private flushBufferedEvents(): void {
+    if (this.dataListeners.size > 0 && this.outputAttached) {
+      const output = [...this.bufferedOutput.values()].sort((left, right) => left.sequence - right.sequence);
+      for (const event of output) {
+        this.bufferedOutput.delete(event.sequence);
+        this.bufferedOutputBytes -= Buffer.byteLength(event.data);
+        this.lastDeliveredSequence = Math.max(this.lastDeliveredSequence, event.sequence);
+        for (const listener of this.dataListeners) listener(event.data);
+      }
+    }
+    if (!this.exitEvent || this.exitListeners.size === 0 || this.exited) return;
+    if (this.bufferedOutput.size > 0 || !this.outputAttached) return;
+    this.exited = true;
+    for (const listener of this.exitListeners) listener({ exitCode: this.exitEvent.code ?? -1 });
+    this.unsubscribe();
+    this.exitEvent = null;
   }
 
   private exitWithFailure(): void {
