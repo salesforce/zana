@@ -20,11 +20,19 @@ export interface TerminalSessionRecord {
  */
 export class TerminalSessionService {
   private readonly sessions = new Map<string, TerminalSessionRecord>();
+  /** Bounded server-owned event retention for late desktop attachment. */
+  private readonly events = new Map<string, TerminalHostEvent[]>();
 
   constructor(private readonly execution: TerminalExecutionService) {}
 
   get(sessionId: string): TerminalSessionRecord | null {
     return this.sessions.get(sessionId) ?? null;
+  }
+
+  eventsSince(sessionId: string, afterSequence = -1): TerminalHostEvent[] {
+    return (this.events.get(sessionId) ?? []).filter((event) =>
+      !('sequence' in event) || event.sequence > afterSequence
+    );
   }
 
   async execute(command: TerminalHostCommand): Promise<TerminalHostEvent[]> {
@@ -55,12 +63,14 @@ export class TerminalSessionService {
     if (event.kind === 'accepted') {
       if (session.state !== 'starting' || session.accepted) return false;
       session.accepted = true;
+      this.append(event);
       return true;
     }
     if (event.kind === 'started') {
       if (session.state !== 'starting' || !session.accepted) return false;
       session.state = 'running';
       session.pid = event.pid;
+      this.append(event);
       return true;
     }
     if (event.kind === 'output') {
@@ -69,12 +79,24 @@ export class TerminalSessionService {
       // still transitions the record to running once its response is processed.
       if (session.state === 'exited' || event.sequence < session.nextSequence) return false;
       session.nextSequence = event.sequence + 1;
+      this.append(event);
       return true;
     }
     if (session.state === 'exited' || event.sequence < session.nextSequence) return false;
     session.state = 'exited';
     session.nextSequence = event.sequence + 1;
     session.expectedExit = event.expected;
+    this.append(event);
     return true;
+  }
+
+  private append(event: Exclude<TerminalHostEvent, { kind: 'rejected' }>): void {
+    const events = this.events.get(event.sessionId) ?? [];
+    events.push(event);
+    // Host and desktop each retain 256 KiB of output. The server's smaller
+    // metadata stream prevents unbounded session history while preserving the
+    // ordered attachment handoff once it owns the session record.
+    while (events.length > 1_000) events.shift();
+    this.events.set(event.sessionId, events);
   }
 }

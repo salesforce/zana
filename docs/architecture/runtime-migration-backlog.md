@@ -225,6 +225,24 @@ authorization consumers with a server snapshot subscription. Do not remove
 `store` project compatibility methods until each dependent consumer is migrated
 and packaged Electron E2E proves the new authority path.
 
+Update (2026-08-19): clone execution remains desktop-owned for its bounded git
+process, destination lock, and filesystem cleanup semantics, but the completed
+clone's local-project registration now uses the existing server `projects-add`
+operation in packaged mode. The shared helper covers both UI and MCP clone
+entry points, preserves native post-registration rebinds, and never falls back
+to the legacy writer after a server failure because a timed-out response may
+already have committed. The agent-facing `register_project` tool follows the
+same rule after desktop confines its supplied path to HOME, the clone root, or
+an existing project. Remote creation, Quick Agent/scratch migration, and
+extension-project registration remain distinct slices.
+
+Update (2026-08-19): local extension project registration now also uses server
+`projects-add` in packaged mode, followed by the bounded name/category update
+needed to preserve the local-source self-healing contract. The source
+`extension.json` remains a best-effort classification hint; the main-owned
+local record explicitly establishes the `Ext: <title>` label. Quick Agent/scratch
+and remote project records still require dedicated server contracts.
+
 ### 3. Execution Foundation
 
 1. Specify session launch, input, resize, close, restore, output, and exit
@@ -257,6 +275,14 @@ shell can hand their final local PTY command to the signed host boundary. This
 does not include remote SSH, local tmux, sandbox, or microVM, which retain their
 specialized compatibility paths until their recovery/isolation semantics have
 dedicated host contracts and parity coverage.
+
+Update (2026-08-19): the runtime-host lane's late attachment replay now comes
+from the server's accepted terminal-event history rather than requesting host
+scrollback directly. The server records only events it accepted for the current
+session epoch and exposes a bounded `terminal-events-since` control operation;
+desktop still deduplicates by sequence while its live host subscription remains
+active. This advances server session authority without changing the host's
+bounded raw-scrollback retention or any remote/tmux/isolation path.
 
 Completion gate: host owns every live terminal child; server owns every session
 record and authorization decision; golden argv and terminal E2E suites pass.

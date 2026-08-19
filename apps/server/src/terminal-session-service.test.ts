@@ -45,4 +45,28 @@ describe('TerminalSessionService', () => {
     await pending;
     expect(service.get(sessionId)).toMatchObject({ state: 'starting', nextSequence: 1 });
   });
+
+  it('retains accepted server events for a late attachment without duplicate output', async () => {
+    const service = new TerminalSessionService({
+      token: 'token',
+      signingKey: 'key',
+      execute: async (command) => [
+        { kind: 'accepted' as const, commandId: command.commandId, sessionId, launchEpoch: 0, hostSessionId: 'host-1' },
+        { kind: 'started' as const, sessionId, launchEpoch: 0, pid: 123 }
+      ]
+    });
+    await service.execute(start());
+    service.record({ kind: 'output', sessionId, launchEpoch: 0, sequence: 0, data: 'one' });
+    service.record({ kind: 'output', sessionId, launchEpoch: 0, sequence: 0, data: 'duplicate' });
+    service.record({ kind: 'output', sessionId, launchEpoch: 0, sequence: 1, data: 'two' });
+
+    expect(service.eventsSince(sessionId).map((event) => event.kind)).toEqual([
+      'accepted', 'started', 'output', 'output'
+    ]);
+    expect(service.eventsSince(sessionId, 0)).toEqual([
+      expect.objectContaining({ kind: 'accepted' }),
+      expect.objectContaining({ kind: 'started' }),
+      expect.objectContaining({ kind: 'output', sequence: 1, data: 'two' })
+    ]);
+  });
 });

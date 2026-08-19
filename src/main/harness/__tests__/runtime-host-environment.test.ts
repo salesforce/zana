@@ -24,6 +24,7 @@ describe('runtime host execution environment', () => {
       getProjectSettings: async () => ({}),
       setProjectSettings: async () => ({}),
       recordTerminalEvent: async () => true,
+      terminalEventsSince: async () => [],
       executeTerminal: async (command) => {
         commands.push(command);
         if (command.kind !== 'start') return [];
@@ -90,7 +91,7 @@ describe('runtime host execution environment', () => {
     session.write('echo hi\r');
     session.resize(120, 40);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(commands.slice(2)).toEqual([
+    expect(commands.slice(1)).toEqual([
       expect.objectContaining({ kind: 'write', data: 'echo hi\r', sessionId: 'session-1', launchEpoch: 0, deadlineAt: deadline }),
       expect.objectContaining({ kind: 'resize', cols: 120, rows: 40, sessionId: 'session-1', launchEpoch: 0, deadlineAt: deadline })
     ]);
@@ -123,6 +124,7 @@ describe('runtime host execution environment', () => {
       getProjectSettings: async () => ({}),
       setProjectSettings: async () => ({}),
       recordTerminalEvent: async () => true,
+      terminalEventsSince: async () => [],
       executeTerminal: async (command) => [{ kind: 'rejected', commandId: command.commandId, sessionId: command.sessionId, reason: 'host unavailable' }],
       onTerminalEvent: () => () => {},
       onProjectSettingsChanged: () => () => {},
@@ -154,19 +156,20 @@ describe('runtime host execution environment', () => {
       getProjectSettings: async () => ({}),
       setProjectSettings: async () => ({}),
       recordTerminalEvent: async () => true,
+      terminalEventsSince: async (_sessionId, afterSequence) => {
+        commands.push({ kind: 'events-since', afterSequence });
+        listener!({ kind: 'output', sessionId: 'session-1', launchEpoch: 0, sequence: 2, data: 'live' });
+        return [
+          { kind: 'output', sessionId: 'session-1', launchEpoch: 0, sequence: 0, data: 'zero' },
+          { kind: 'output', sessionId: 'session-1', launchEpoch: 0, sequence: 1, data: 'one' }
+        ];
+      },
       executeTerminal: async (command) => {
         commands.push(command);
         if (command.kind === 'start') {
           return [
             { kind: 'accepted', commandId: command.commandId, sessionId: command.sessionId, launchEpoch: 0, hostSessionId: 'host-1' },
             { kind: 'started', sessionId: command.sessionId, launchEpoch: 0, pid: 1234 }
-          ];
-        }
-        if (command.kind === 'get-backlog') {
-          listener!({ kind: 'output', sessionId: command.sessionId, launchEpoch: 0, sequence: 2, data: 'live' });
-          return [
-            { kind: 'output', sessionId: command.sessionId, launchEpoch: 0, sequence: 0, data: 'zero' },
-            { kind: 'output', sessionId: command.sessionId, launchEpoch: 0, sequence: 1, data: 'one' }
           ];
         }
         return [];
@@ -190,7 +193,7 @@ describe('runtime host execution environment', () => {
     listener!({ kind: 'output', sessionId: 'session-1', launchEpoch: 0, sequence: 2, data: 'duplicate' });
     listener!({ kind: 'output', sessionId: 'session-1', launchEpoch: 0, sequence: 3, data: 'three' });
 
-    expect(commands.find((command) => command.kind === 'get-backlog')).toMatchObject({ afterSequence: -1 });
+    expect(commands.find((command) => command.kind === 'events-since')).toMatchObject({ afterSequence: -1 });
     expect(output).toEqual(['zero', 'one', 'live', 'three']);
   });
 });

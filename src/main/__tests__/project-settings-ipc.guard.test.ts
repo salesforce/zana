@@ -16,4 +16,19 @@ describe('project settings IPC failure handling', () => {
     expect(source).toMatch(/async function revalidateTerminalCommit[\s\S]*?await getAuthoritativeProjectSettings\(project\.id\)/);
     expect(source).toMatch(/async function launchBackgroundTerminal[\s\S]*?await getAuthoritativeProjectSettings\(project\.id\)/);
   });
+
+  it('registers cloned directories through the server project authority', () => {
+    expect(source).toMatch(/async function cloneAndRegisterProject[\s\S]*?runtimeSupervisor\s*\? await runtimeSupervisor\.addProject\(res\.path!\)[\s\S]*?: store\.addProject\(res\.path!\)/);
+    expect(source).toMatch(/cloneAndRegisterProject[\s\S]*?runtimeSupervisor \? await runtimeSupervisor\.listProjects\(\) as Project\[\] : store\.listProjects\(\)/);
+  });
+
+  it('registers agent-requested directories through the server after main authorizes the path', () => {
+    expect(source).toMatch(/registerProject: async \(absPath: string\)[\s\S]*?realpathSync\(absPath\)/);
+    expect(source).toMatch(/registerProject: async \(absPath: string\)[\s\S]*?runtimeSupervisor\s*\? await runtimeSupervisor\.addProject\(realTarget\)[\s\S]*?: store\.addProject\(realTarget\)/);
+  });
+
+  it('self-heals local extension projects through server add and bounded update operations', () => {
+    expect(source).toMatch(/const registerExtensionProject = async[\s\S]*?runtimeSupervisor\s*\? await runtimeSupervisor\.addProject\(workingDir\)[\s\S]*?: store\.ensureExtensionProject\(workingDir, name\)/);
+    expect(source).toMatch(/registerExtensionProject = async[\s\S]*?runtimeSupervisor\.updateProject\(project\.id, \{ category: EXTENSION_PROJECT_CATEGORY, name: label \}\)/);
+  });
 });

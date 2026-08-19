@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ProjectIdSchema } from '@zana-ai/zcc-domain';
+import { ProjectIdSchema, SessionIdSchema } from '@zana-ai/zcc-domain';
 import { TerminalHostCommandSchema, TerminalHostEventSchema } from './terminal-execution.js';
 import { ProjectSettingsPatchSchema } from './project-settings.js';
 
@@ -87,6 +87,11 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('terminal-record'),
     event: TerminalHostEventSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('terminal-events-since'),
+    sessionId: SessionIdSchema,
+    afterSequence: z.number().int().min(-1).optional()
   }).strict()
 ]);
 

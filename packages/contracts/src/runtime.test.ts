@@ -62,4 +62,19 @@ describe('server runtime contract', () => {
       projectId: ''
     }).success).toBe(false);
   });
+
+  it('accepts bounded server-owned terminal replay requests', () => {
+    expect(ServerRuntimeInboundSchema.safeParse({
+      ...request,
+      operation: 'terminal-events-since',
+      sessionId: '00000000-0000-4000-8000-000000000002',
+      afterSequence: -1
+    }).success).toBe(true);
+    expect(ServerRuntimeInboundSchema.safeParse({
+      ...request,
+      operation: 'terminal-events-since',
+      sessionId: '00000000-0000-4000-8000-000000000002',
+      afterSequence: -2
+    }).success).toBe(false);
+  });
 });

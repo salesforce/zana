@@ -26,7 +26,7 @@ import { runtimeHostAvailable, setRuntimeHostSupervisor } from './harness/execut
 import { IPC } from '../shared/ipc.js';
 import { sanitizeExtraArgs } from '../shared/launch-sanitize.js';
 import { providerCapabilities, isClaudeProfile, isCodexProfile, isOpenCodeProfile, seedPromptArgs } from '../shared/launch-provider.js';
-import { store, scratchWorkspaceRoot, worktreeRoot, worktreeTargetDir } from './store.js';
+import { EXTENSION_PROJECT_CATEGORY, store, scratchWorkspaceRoot, worktreeRoot, worktreeTargetDir } from './store.js';
 import { PtyManager } from './pty.js';
 import { resolveMaxLiveSessions } from './launch/capacity.js';
 import { revalidateLaunchCommit as revalidateCommonLaunchCommit } from './launch/commit-revalidation.js';
@@ -2239,12 +2239,26 @@ moduleRouter = new ModuleRouter(moduleHost, extProcessHost);
 // renderer wouldn't otherwise re-pull the project list). Idempotent: on a
 // reload/continue against an already-registered project it's a cheap no-op
 // beyond the refresh.
-const registerExtensionProject = (workingDir: string, name: string): Project => {
-  const existed = store.listProjects().some((p) => p.path === workingDir);
-  const project = store.ensureExtensionProject(workingDir, name);
+const registerExtensionProject = async (workingDir: string, name: string): Promise<Project> => {
+  const projects = runtimeSupervisor
+    ? await runtimeSupervisor.listProjects() as Project[]
+    : store.listProjects();
+  const existed = projects.some((p) => p.path === workingDir);
+  const label = `Ext: ${name}`.slice(0, 256);
+  // The server add path recognizes well-formed extension sources. Follow it with
+  // the explicit category/name projection so the local-source record remains the
+  // authority for a self-heal, matching the legacy ensureExtensionProject contract.
+  // Never fall back after a runtime error: either server mutation may have committed.
+  const project = runtimeSupervisor
+    ? await runtimeSupervisor.addProject(workingDir) as Project
+    : store.ensureExtensionProject(workingDir, name);
+  const categorized = runtimeSupervisor && (project.category !== EXTENSION_PROJECT_CATEGORY || project.name !== label)
+    ? await runtimeSupervisor.updateProject(project.id, { category: EXTENSION_PROJECT_CATEGORY, name: label }) as Project | null
+    : project;
+  if (!categorized) throw new Error('extension project disappeared during registration');
   if (!existed) {
-    ensureMcpConfigForProject(project.id).catch((err) =>
-      logMainError(`ensureMcpConfigForProject(${project.id})`, err)
+    ensureMcpConfigForProject(categorized.id).catch((err) =>
+      logMainError(`ensureMcpConfigForProject(${categorized.id})`, err)
     );
     templates.rebindProjects();
     personas.rebindProjects();
@@ -2254,8 +2268,11 @@ const registerExtensionProject = (workingDir: string, name: string): Project => 
     goals.rebindWatchers();
     followups.rebindWatchers();
   }
-  safeSend(IPC.projects.onChanged, store.listProjects());
-  return project;
+  safeSend(
+    IPC.projects.onChanged,
+    runtimeSupervisor ? await runtimeSupervisor.listProjects() as Project[] : store.listProjects()
+  );
+  return categorized;
 };
 // Pack a local extension's source working dir + install it through the
 // trusted seam + reconcile — the shared tail of `createLocal`, `reinstallLocal`,
@@ -2331,7 +2348,7 @@ const createLocalExtension = async (
   // too. Terminal spawn confines cwd to this project root (Rule 2). Wiring +
   // the projects:onChanged push (so the sidebar shows the new "Extensions"
   // group live) go through the shared helper.
-  const project = registerExtensionProject(workingDir, name);
+  const project = await registerExtensionProject(workingDir, name);
   // Feed: a local extension has a real per-project home (its Extensions-
   // category project), so its lifecycle IS observable in that project's feed.
   // Global (marketplace/bundled/dir) installs have no project home, so they
@@ -2369,7 +2386,7 @@ const adoptLocalSource = async (workingDir: string): Promise<Result<CreateLocalE
   }
 
   const name = extensionEntries.find((entry) => entry.id === id)?.manifest?.title ?? id;
-  const project = registerExtensionProject(workingDir, name);
+  const project = await registerExtensionProject(workingDir, name);
   return { ok: true, value: { id, workingDir, projectId: project.id } };
 };
 // Hot-reload for a local extension being actively developed: while a live
@@ -4808,7 +4825,14 @@ async function cloneAndRegisterProject(
       };
     }
     try {
-      const project = store.addProject(res.path!);
+      // Clone execution remains Electron-owned for its filesystem/process
+      // confinement, but registering its completed directory must use the same
+      // server authority as every other local project mutation in packaged mode.
+      // Do not fall back after a runtime failure: the server may have committed
+      // before its response timed out.
+      const project = runtimeSupervisor
+        ? await runtimeSupervisor.addProject(res.path!) as Project
+        : store.addProject(res.path!);
       ensureMcpConfigForProject(project.id).catch((err) =>
         logMainError(`ensureMcpConfigForProject(${project.id})`, err)
       );
@@ -4819,7 +4843,10 @@ async function cloneAndRegisterProject(
       scheduler.rebindWatchers();
       goals.rebindWatchers();
       followups.rebindWatchers();
-      safeSend(IPC.projects.onChanged, store.listProjects());
+      safeSend(
+        IPC.projects.onChanged,
+        runtimeSupervisor ? await runtimeSupervisor.listProjects() as Project[] : store.listProjects()
+      );
       return { ok: true, project, reused: res.reused };
     } catch (err) {
       return { ok: false, code: 'ADD_FAILED', message: String(err), path: res.path };
@@ -7087,7 +7114,7 @@ function registerIpc() {
       // main's own record — never renderer/agent free-text (Rule 1). Seed the
       // display name from the installed entry's title, falling back to the id.
       const name = extensionEntries.find((e) => e.id === id)?.manifest?.title ?? id;
-      const project = registerExtensionProject(record.workingDir, name);
+      const project = await registerExtensionProject(record.workingDir, name);
       return { ok: true, value: { id, workingDir: record.workingDir, projectId: project.id } };
     },
     (err): Result<CreateLocalExtensionResult> => ({
@@ -9018,7 +9045,7 @@ async function bootstrapNormal() {
     // register_project tool: add a cloned/created dir to the project list on the
     // agent's behalf. Mirrors the IPC `projects.add` side-effects (mcp config +
     // store rebinds) and pushes `projects:onChanged` so the sidebar updates live.
-    registerProject: (absPath: string) => {
+    registerProject: async (absPath: string) => {
       // Trust gate: register_project turns an AGENT-supplied path into a trusted
       // project root (subsequent fs.create/rename/delete confine to it). Without
       // a gate, a running agent could register `/etc`, `/`, or any readable dir
@@ -9051,8 +9078,16 @@ async function bootstrapNormal() {
           `register_project rejected: ${absPath} is outside HOME, the clone root, and all known projects`
         );
       }
-      const existed = store.listProjects().some((p) => p.path === absPath);
-      const project = store.addProject(absPath); // throws on a bad path → tool reports isError
+      const projects = runtimeSupervisor
+        ? await runtimeSupervisor.listProjects() as Project[]
+        : store.listProjects();
+      const existed = projects.some((p) => p.path === realTarget);
+      // The main-side gate above establishes that the agent's path is allowed;
+      // packaged registration still crosses the server's canonical add boundary.
+      // No runtime fallback after an error: the server may already have committed.
+      const project = runtimeSupervisor
+        ? await runtimeSupervisor.addProject(realTarget) as Project
+        : store.addProject(realTarget); // throws on a bad path → tool reports isError
       if (!existed) {
         ensureMcpConfigForProject(project.id).catch((err) =>
           logMainError(`ensureMcpConfigForProject(${project.id})`, err)
@@ -9063,7 +9098,10 @@ async function bootstrapNormal() {
         libraryStore.rebindProjects?.();
         scheduler.rebindWatchers();
       }
-      safeSend(IPC.projects.onChanged, store.listProjects());
+      safeSend(
+        IPC.projects.onChanged,
+        runtimeSupervisor ? await runtimeSupervisor.listProjects() as Project[] : store.listProjects()
+      );
       return { project, alreadyExisted: existed };
     },
     cloneProject: cloneAndRegisterProject,

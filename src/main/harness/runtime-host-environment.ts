@@ -133,8 +133,11 @@ class RuntimeHostExecutionSession implements ExecutionSession {
       | { kind: 'write'; data: string }
       | { kind: 'resize'; cols: number; rows: number }
       | { kind: 'terminate'; expected: boolean }
-      | { kind: 'get-backlog'; afterSequence?: number }
+      | { kind: 'events-since'; afterSequence?: number }
   ): Promise<TerminalHostEvent[]> {
+    if (command.kind === 'events-since') {
+      return this.runtime.terminalEventsSince(this.sessionId, command.afterSequence);
+    }
     return this.runtime.executeTerminal({
       ...command,
       commandId: this.commandId(),
@@ -166,7 +169,7 @@ class RuntimeHostExecutionSession implements ExecutionSession {
   private async attachOutput(): Promise<void> {
     this.attachingOutput = true;
     try {
-      const events = await this.execute({ kind: 'get-backlog', afterSequence: this.lastDeliveredSequence });
+      const events = await this.execute({ kind: 'events-since', afterSequence: this.lastDeliveredSequence });
       for (const event of events) this.handleEvent(event);
     } catch {
       // The live subscription was established before start(). If the host has

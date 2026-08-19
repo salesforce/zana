@@ -120,6 +120,13 @@ parentPort.on('message', async ({ data }) => {
     if (message.operation === 'terminal-record') {
       parentPort.postMessage({ type: 'result', id: message.id, value: terminalSessions?.record(message.event) ?? false });
     }
+    if (message.operation === 'terminal-events-since') {
+      parentPort.postMessage({
+        type: 'result',
+        id: message.id,
+        value: terminalSessions?.eventsSince(message.sessionId, message.afterSequence) ?? []
+      });
+    }
   }
   if (message.type === 'stop') {
     await close?.();

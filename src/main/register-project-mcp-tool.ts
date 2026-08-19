@@ -60,7 +60,7 @@ export interface RegisterProjectOpts {
    * existed (so the tool can word its reply honestly). Throws on a bad path
    * (not a directory / missing); the handler turns that into an `isError`.
    */
-  registerProject: (absPath: string) => { project: Project; alreadyExisted: boolean };
+  registerProject: (absPath: string) => { project: Project; alreadyExisted: boolean } | Promise<{ project: Project; alreadyExisted: boolean }>;
 }
 
 /**
@@ -97,7 +97,7 @@ export function registerRegisterProjectTool(server: McpServer, opts: RegisterPro
             ]
           };
         }
-        const { project, alreadyExisted } = registerProject(absPath);
+        const { project, alreadyExisted } = await registerProject(absPath);
         const verb = alreadyExisted ? 'Already registered' : 'Registered';
         return {
           content: [
