@@ -200,10 +200,10 @@ importers:
     devDependencies:
       '@zana-ai/zcc-extension-sdk':
         specifier: ^1.0.0
-        version: 1.0.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+        version: 1.0.0(react-dom@18.3.1(react@19.2.8))(react@19.2.8)
       react:
-        specifier: ^18.3.1
-        version: 18.3.1
+        specifier: ^19.2.8
+        version: 19.2.8
       typescript:
         specifier: ^5.6.3
         version: 5.9.3
@@ -214,17 +214,17 @@ importers:
   extensions/zana:
     dependencies:
       react:
-        specifier: ^18
-        version: 18.3.1
+        specifier: ^18 || ^19
+        version: 19.2.8
 
   extensions/zana-hub:
     devDependencies:
       '@zana-ai/zcc-extension-sdk':
         specifier: ^1.0.0
-        version: 1.0.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+        version: 1.0.0(react-dom@18.3.1(react@19.2.8))(react@19.2.8)
       react:
-        specifier: ^18.3.1
-        version: 18.3.1
+        specifier: ^19.2.8
+        version: 19.2.8
       typescript:
         specifier: ^5.6.3
         version: 5.9.3
@@ -267,11 +267,11 @@ importers:
   packages/extension-sdk:
     dependencies:
       react:
-        specifier: ^18 || ^19
-        version: 18.3.1
+        specifier: ^19
+        version: 19.2.8
       react-dom:
-        specifier: ^18 || ^19
-        version: 18.3.1(react@18.3.1)
+        specifier: ^19
+        version: 19.2.8(react@19.2.8)
 
   packages/harness-sdk: {}
 
@@ -294,8 +294,8 @@ importers:
   packages/ui:
     dependencies:
       react:
-        specifier: ^18.3.1 || ^19.0.0
-        version: 18.3.1
+        specifier: ^19
+        version: 19.2.8
     devDependencies:
       '@types/react':
         specifier: ^18.3.11
@@ -4442,10 +4442,6 @@ packages:
       '@types/react': '>=18'
       react: '>=18'
 
-  react@18.3.1:
-    resolution: {integrity: sha512-wS+hAgJShR0KhEvPJArfuPVN1+Hz1t0Y6n5jLrGQbkb4urgPE/0Rve+1kMB1v/oWgHgm4WIcV+i7F2pTVj+2iQ==}
-    engines: {node: '>=0.10.0'}
-
   react@19.2.8:
     resolution: {integrity: sha512-PWaYA1L/q9u2u7xYQi+Y3L3Yfnie7XyLeaJICV1MGD6LprsBxcAqGjYyr0eY3p+QdsA+x/Irkt4Qif8D63+Sbw==}
     engines: {node: '>=0.10.0'}
@@ -6612,7 +6608,7 @@ snapshots:
     dependencies:
       '@types/http-cache-semantics': 4.2.0
       '@types/keyv': 3.1.4
-      '@types/node': 22.20.1
+      '@types/node': 26.2.0
       '@types/responselike': 1.0.3
 
   '@types/chai@5.2.3':
@@ -6751,7 +6747,7 @@ snapshots:
 
   '@types/fs-extra@9.0.13':
     dependencies:
-      '@types/node': 22.20.1
+      '@types/node': 26.2.0
 
   '@types/geojson@7946.0.16': {}
 
@@ -6763,7 +6759,7 @@ snapshots:
 
   '@types/keyv@3.1.4':
     dependencies:
-      '@types/node': 22.20.1
+      '@types/node': 26.2.0
 
   '@types/mdast@4.0.4':
     dependencies:
@@ -6810,7 +6806,7 @@ snapshots:
 
   '@types/responselike@1.0.3':
     dependencies:
-      '@types/node': 22.20.1
+      '@types/node': 26.2.0
 
   '@types/retry@0.12.0': {}
 
@@ -6968,10 +6964,10 @@ snapshots:
 
   '@xterm/xterm@6.0.0': {}
 
-  '@zana-ai/zcc-extension-sdk@1.0.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
+  '@zana-ai/zcc-extension-sdk@1.0.0(react-dom@18.3.1(react@19.2.8))(react@19.2.8)':
     optionalDependencies:
-      react: 18.3.1
-      react-dom: 18.3.1(react@18.3.1)
+      react: 19.2.8
+      react-dom: 18.3.1(react@19.2.8)
 
   abbrev@4.0.0: {}
 
@@ -8500,6 +8496,7 @@ snapshots:
   loose-envify@1.4.0:
     dependencies:
       js-tokens: 4.0.0
+    optional: true
 
   lowercase-keys@2.0.0: {}
 
@@ -9385,11 +9382,12 @@ snapshots:
       - '@types/react'
       - supports-color
 
-  react-dom@18.3.1(react@18.3.1):
+  react-dom@18.3.1(react@19.2.8):
     dependencies:
       loose-envify: 1.4.0
-      react: 18.3.1
+      react: 19.2.8
       scheduler: 0.23.2
+    optional: true
 
   react-dom@19.2.8(react@19.2.8):
     dependencies:
@@ -9415,10 +9413,6 @@ snapshots:
       vfile: 6.0.3
     transitivePeerDependencies:
       - supports-color
-
-  react@18.3.1:
-    dependencies:
-      loose-envify: 1.4.0
 
   react@19.2.8: {}
 
@@ -9634,6 +9628,7 @@ snapshots:
   scheduler@0.23.2:
     dependencies:
       loose-envify: 1.4.0
+    optional: true
 
   scheduler@0.27.0: {}
 
