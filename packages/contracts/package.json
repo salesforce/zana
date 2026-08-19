@@ -14,6 +14,11 @@
       "source": "./src/execution.ts",
       "default": "./src/execution.ts"
     },
+    "./project-settings": {
+      "types": "./src/project-settings.ts",
+      "source": "./src/project-settings.ts",
+      "default": "./src/project-settings.ts"
+    },
     "./runtime": {
       "types": "./src/runtime.ts",
       "source": "./src/runtime.ts",

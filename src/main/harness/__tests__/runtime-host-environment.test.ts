@@ -20,6 +20,9 @@ describe('runtime host execution environment', () => {
       updateProject: async () => { throw new Error('not used'); },
       reorderProjects: async () => { throw new Error('not used'); },
       touchProject: async () => { throw new Error('not used'); },
+      removeProject: async () => null,
+      getProjectSettings: async () => ({}),
+      setProjectSettings: async () => ({}),
       recordTerminalEvent: async () => true,
       executeTerminal: async (command) => {
         commands.push(command);
@@ -115,6 +118,9 @@ describe('runtime host execution environment', () => {
       updateProject: async () => { throw new Error('not used'); },
       reorderProjects: async () => { throw new Error('not used'); },
       touchProject: async () => { throw new Error('not used'); },
+      removeProject: async () => null,
+      getProjectSettings: async () => ({}),
+      setProjectSettings: async () => ({}),
       recordTerminalEvent: async () => true,
       executeTerminal: async (command) => [{ kind: 'rejected', commandId: command.commandId, sessionId: command.sessionId, reason: 'host unavailable' }],
       onTerminalEvent: () => () => {},
@@ -142,6 +148,9 @@ describe('runtime host execution environment', () => {
       updateProject: async () => { throw new Error('not used'); },
       reorderProjects: async () => { throw new Error('not used'); },
       touchProject: async () => { throw new Error('not used'); },
+      removeProject: async () => null,
+      getProjectSettings: async () => ({}),
+      setProjectSettings: async () => ({}),
       recordTerminalEvent: async () => true,
       executeTerminal: async (command) => {
         commands.push(command);

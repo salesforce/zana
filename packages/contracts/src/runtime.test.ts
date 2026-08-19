@@ -36,4 +36,19 @@ describe('server runtime contract', () => {
       patch: { name: 'bad\nname' }
     }).success).toBe(false);
   });
+
+  it('accepts bounded project settings patches only', () => {
+    expect(ServerRuntimeInboundSchema.safeParse({
+      ...request,
+      operation: 'project-settings-set',
+      projectId: 'project-1',
+      patch: { worktreeIsolation: true }
+    }).success).toBe(true);
+    expect(ServerRuntimeInboundSchema.safeParse({
+      ...request,
+      operation: 'project-settings-set',
+      projectId: 'project-1',
+      patch: { arbitrary: true }
+    }).success).toBe(false);
+  });
 });

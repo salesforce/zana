@@ -2,6 +2,7 @@ import { startStaticHost } from './static-host.js';
 import { ServerRuntimeInboundSchema } from '@zana-ai/zcc-contracts/runtime';
 import { join } from 'node:path';
 import { createProjectStore, type ProjectStore } from './project-store.js';
+import { createProjectSettingsStore, type ProjectSettingsStore } from './project-settings-store.js';
 import { createTerminalExecutionService, type TerminalExecutionService } from './terminal-execution-service.js';
 import { TerminalSessionService } from './terminal-session-service.js';
 
@@ -18,6 +19,7 @@ let version = '';
 let terminalExecution: TerminalExecutionService | null = null;
 let terminalSessions: TerminalSessionService | null = null;
 let projects: ProjectStore | null = null;
+let projectSettings: ProjectSettingsStore | null = null;
 parentPort.on('message', async ({ data }) => {
   const parsed = ServerRuntimeInboundSchema.safeParse(data);
   if (!parsed.success) {
@@ -30,7 +32,11 @@ parentPort.on('message', async ({ data }) => {
       const host = await startStaticHost({ rootDir: message.rendererRoot });
       close = host.close;
       version = message.version ?? '';
-      projects = createProjectStore({ projectsFile: join(message.dataDir, 'projects.json') });
+      projects = createProjectStore({
+        projectsFile: join(message.dataDir, 'projects.json'),
+        remotePlaceholderRoot: join(message.dataDir, 'remote-projects')
+      });
+      projectSettings = createProjectSettingsStore({ projectSettingsFile: join(message.dataDir, 'project-settings.json') });
       terminalExecution = createTerminalExecutionService({
         hostUrl: message.hostUrl,
         token: message.hostToken,
@@ -80,6 +86,27 @@ parentPort.on('message', async ({ data }) => {
         return;
       }
       parentPort.postMessage({ type: 'result', id: message.id, value: await projects.touch(message.projectId) });
+    }
+    if (message.operation === 'projects-remove') {
+      if (!projects || !projectSettings) {
+        parentPort.postMessage({ type: 'error', id: message.id, message: 'project storage is unavailable' });
+        return;
+      }
+      // Preserve legacy ordering: a settings-cleanup failure can leave an
+      // orphaned row, but never a live project without its launch settings.
+      const removed = await projects.remove(message.projectId);
+      await projectSettings.remove(message.projectId);
+      parentPort.postMessage({ type: 'result', id: message.id, value: removed });
+    }
+    if (message.operation === 'project-settings-get') {
+      parentPort.postMessage({ type: 'result', id: message.id, value: projectSettings?.get(message.projectId) ?? {} });
+    }
+    if (message.operation === 'project-settings-set') {
+      if (!projectSettings) {
+        parentPort.postMessage({ type: 'error', id: message.id, message: 'project settings storage is unavailable' });
+        return;
+      }
+      parentPort.postMessage({ type: 'result', id: message.id, value: await projectSettings.set(message.projectId, message.patch) });
     }
     if (message.operation === 'terminal-execute') {
       if (!message.command || !terminalSessions) {

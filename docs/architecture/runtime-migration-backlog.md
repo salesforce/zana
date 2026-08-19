@@ -186,12 +186,31 @@ cross-window staleness for these two paths. The host utility process now also
 sends the `stopped` acknowledgement required by the supervisor shutdown
 protocol.
 
-Remaining project slices: migrate remote creation/update, remove, reorder,
-touch, Quick Agent/clone/extension registration, project settings, and then
-replace Electron-main project readers in authorization consumers with a server
-snapshot subscription. Do not remove `store` project compatibility methods
-until each dependent consumer is migrated and packaged Electron E2E proves the
-new authority path.
+Update (2026-08-19): the app-managed `project-settings.json` mutation path now
+has a server-owned `ProjectSettingsStore`, serialized and CAS-guarded with the
+same durable writer as projects. `project-settings-get`, `project-settings-set`,
+and `project-settings-remove` are bounded runtime operations. Packaged renderer
+IPC reads/writes and project-removal cleanup route through the server; reads stay
+best-effort while writes deliberately reject so optimistic UI state can roll
+back. The server projects canonical harness compatibility fields back to the
+legacy launch-facing view and persists writes in the canonical containers, so
+the current synchronous Electron launch, scheduler, and goal consumers remain
+compatible. The next separate slice is moving those launch-time readers to the
+server; do not delete `store.getProjectSettings` until its asynchronous
+replacement preserves launch snapshot and commit-time revalidation behavior.
+
+Update (2026-08-19): packaged `projects:remove` now deletes the project record
+and its app-managed settings through one server runtime request. The server also
+performs best-effort cleanup of an exact remote placeholder path only when it is
+the app-owned `<dataDir>/remote-projects/<projectId>` directory. Desktop keeps
+the remaining native fan-out (closing PTYs, schedule/goal/follow-up/feed
+rebinding, watcher teardown) after the authoritative removal succeeds.
+
+Remaining project slices: migrate remote creation/update, Quick Agent/clone/
+extension registration, and then replace Electron-main project readers in
+authorization consumers with a server snapshot subscription. Do not remove
+`store` project compatibility methods until each dependent consumer is migrated
+and packaged Electron E2E proves the new authority path.
 
 ### 3. Execution Foundation
 

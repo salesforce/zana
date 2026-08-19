@@ -11,12 +11,14 @@ import {
   type ProjectMutationPatchSchema,
   type ProjectRecordSchema
 } from '@zana-ai/zcc-contracts/runtime';
+import type { ProjectSettingsPatch } from '@zana-ai/zcc-contracts/project-settings';
 import type { TerminalHostEvent } from '@zana-ai/zcc-contracts/terminal-execution';
 import type { TerminalHostCommand } from '@zana-ai/zcc-contracts/terminal-execution';
 import type { z } from 'zod';
 
 export type RuntimeProject = z.infer<typeof ProjectRecordSchema>;
 export type RuntimeProjectPatch = z.infer<typeof ProjectMutationPatchSchema>;
+export type RuntimeProjectSettings = ProjectSettingsPatch;
 
 export interface RuntimeSupervisor {
   readonly rendererUrl: string;
@@ -29,6 +31,9 @@ export interface RuntimeSupervisor {
   updateProject(id: string, patch: RuntimeProjectPatch): Promise<RuntimeProject | null>;
   reorderProjects(orderedIds: string[]): Promise<RuntimeProject[]>;
   touchProject(id: string): Promise<RuntimeProject | null>;
+  removeProject(id: string): Promise<RuntimeProject | null>;
+  getProjectSettings(id: string): Promise<RuntimeProjectSettings>;
+  setProjectSettings(id: string, patch: RuntimeProjectSettings): Promise<RuntimeProjectSettings>;
   executeTerminal(command: TerminalHostCommand): Promise<TerminalHostEvent[]>;
   recordTerminalEvent(event: TerminalHostEvent): Promise<boolean>;
   onTerminalEvent(listener: (event: TerminalHostEvent) => void): () => void;
@@ -82,6 +87,9 @@ export async function startRuntimeSupervisor(options: StartRuntimeSupervisorOpti
     updateProject: async () => { throw new Error('runtime project storage is unavailable'); },
     reorderProjects: async () => { throw new Error('runtime project storage is unavailable'); },
     touchProject: async () => { throw new Error('runtime project storage is unavailable'); },
+    removeProject: async () => { throw new Error('runtime project storage is unavailable'); },
+    getProjectSettings: async () => { throw new Error('runtime project settings storage is unavailable'); },
+    setProjectSettings: async () => { throw new Error('runtime project settings storage is unavailable'); },
     executeTerminal: (command) => terminalSessions!.execute(command),
     recordTerminalEvent: async (event) => terminalSessions!.record(event),
     onTerminalEvent(listener) {
@@ -110,6 +118,9 @@ interface UtilityRuntime {
   request(operation: 'projects-update', projectId: string, patch: RuntimeProjectPatch): Promise<unknown>;
   request(operation: 'projects-reorder', orderedIds: string[]): Promise<unknown>;
   request(operation: 'projects-touch', projectId: string): Promise<unknown>;
+  request(operation: 'projects-remove', projectId: string): Promise<unknown>;
+  request(operation: 'project-settings-get', projectId: string): Promise<unknown>;
+  request(operation: 'project-settings-set', projectId: string, patch: RuntimeProjectSettings): Promise<unknown>;
   request(operation: 'terminal-execute', command: TerminalHostCommand): Promise<unknown>;
   request(operation: 'terminal-record', event: TerminalHostEvent): Promise<unknown>;
   stop(): Promise<void>;
@@ -194,6 +205,12 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
     updateProject: (id, patch) => server.request('projects-update', id, patch) as Promise<RuntimeProject | null>,
     reorderProjects: (orderedIds) => server.request('projects-reorder', orderedIds) as Promise<RuntimeProject[]>,
     touchProject: (id) => server.request('projects-touch', id) as Promise<RuntimeProject | null>,
+    removeProject: (id) => server.request('projects-remove', id) as Promise<RuntimeProject | null>,
+    getProjectSettings: async (id) => {
+      const value = await server.request('project-settings-get', id);
+      return value && typeof value === 'object' ? value as RuntimeProjectSettings : {};
+    },
+    setProjectSettings: (id, patch) => server.request('project-settings-set', id, patch) as Promise<RuntimeProjectSettings>,
     executeTerminal: async (command) => {
       const value = await server.request('terminal-execute', command);
       return Array.isArray(value) ? value as TerminalHostEvent[] : [];
@@ -245,8 +262,8 @@ function createUtilityRuntime(runtime: { child: UtilityChild; url: string }): Ut
   return {
     ...runtime,
     request(
-      operation: 'app-version' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'terminal-execute' | 'terminal-record',
-      ...args: [TerminalHostCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, RuntimeProjectPatch] | []
+      operation: 'app-version' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record',
+      ...args: [TerminalHostCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | []
     ) {
       const id = randomUUID();
       return new Promise<unknown>((resolveResult, rejectResult) => {
@@ -265,7 +282,13 @@ function createUtilityRuntime(runtime: { child: UtilityChild; url: string }): Ut
             patch: args[1] as RuntimeProjectPatch
           } : {}),
           ...(operation === 'projects-reorder' ? { orderedIds: args[0] as string[] } : {}),
-          ...(operation === 'projects-touch' ? { projectId: args[0] as string } : {})
+          ...(operation === 'projects-touch' ? { projectId: args[0] as string } : {}),
+          ...(operation === 'projects-remove' ? { projectId: args[0] as string } : {}),
+          ...(operation === 'project-settings-get' ? { projectId: args[0] as string } : {}),
+          ...(operation === 'project-settings-set' ? {
+            projectId: args[0] as string,
+            patch: args[1] as RuntimeProjectSettings
+          } : {})
         });
       });
     },

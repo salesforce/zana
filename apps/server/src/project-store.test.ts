@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -231,6 +231,28 @@ describe('createProjectStore', () => {
 
     expect(touched).toMatchObject({ id: 'legacy', tag: 'legacy-project', color: PROJECT_COLORS[0] });
     expect(touched!.lastActiveAt).toBeGreaterThan(1);
+  });
+
+  it('removes a project and only its matching app-owned remote placeholder', async () => {
+    const home = makeDir();
+    const dataDir = join(home, '.zcc');
+    const placeholderRoot = join(dataDir, 'remote-projects');
+    const placeholder = join(placeholderRoot, 'remote-1');
+    mkdirSync(placeholder, { recursive: true });
+    const projectsFile = join(dataDir, 'projects.json');
+    writeFileSync(projectsFile, JSON.stringify({
+      version: 1,
+      projects: [
+        { id: 'remote-1', name: 'Remote', path: placeholder, createdAt: 1, lastActiveAt: 1, remote: { host: 'example' } },
+        { id: 'local-1', name: 'Local', path: join(home, 'local'), createdAt: 1, lastActiveAt: 1 }
+      ]
+    }));
+    const store = createProjectStore({ projectsFile, remotePlaceholderRoot: placeholderRoot });
+
+    expect(await store.remove('remote-1')).toMatchObject({ id: 'remote-1' });
+    expect(existsSync(placeholder)).toBe(false);
+    expect(store.list().map((project) => project.id)).toEqual(['local-1']);
+    expect(await store.remove('missing')).toBeNull();
   });
 
   it('serializes concurrent add() calls so neither write is lost', async () => {

@@ -29,6 +29,10 @@ export default defineConfig({
         replacement: resolve(__dirname, 'packages/contracts/src/terminal-execution.ts')
       },
       {
+        find: /^@zana-ai\/zcc-contracts\/project-settings$/,
+        replacement: resolve(__dirname, 'packages/contracts/src/project-settings.ts')
+      },
+      {
         find: /^@zana-ai\/zcc-contracts\/runtime$/,
         replacement: resolve(__dirname, 'packages/contracts/src/runtime.ts')
       },

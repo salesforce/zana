@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { atomicDurableWrite, createSerializedTransactionQueue } from './durable-store.js';
 
@@ -25,6 +25,7 @@ export interface ProjectRecord {
   sortIndex?: number;
   tag?: string;
   category?: string;
+  remote?: unknown;
 }
 
 export type ProjectMutationPatch = Partial<Pick<ProjectRecord, 'name' | 'color' | 'category'>>;
@@ -136,6 +137,8 @@ interface ProjectsSnapshot {
 export interface ProjectStoreOptions {
   /** Absolute path to `projects.json`. Injectable so tests never touch a real HOME. */
   projectsFile: string;
+  /** App-owned placeholder directory for remote projects, if this store owns it. */
+  remotePlaceholderRoot?: string;
 }
 
 export interface ProjectStore {
@@ -144,6 +147,7 @@ export interface ProjectStore {
   update(id: string, patch: ProjectMutationPatch): Promise<ProjectRecord | null>;
   reorder(orderedIds: string[]): Promise<ProjectRecord[]>;
   touch(id: string): Promise<ProjectRecord | null>;
+  remove(id: string): Promise<ProjectRecord | null>;
 }
 
 function canonicalProjectPath(path: string): string {
@@ -211,7 +215,7 @@ function backfillProjectMetadata(projects: ProjectRecord[]): ProjectRecord[] {
  * writer — the legacy Electron-main `store.ts`, during the migration window —
  * can never be silently clobbered.
  */
-export function createProjectStore({ projectsFile }: ProjectStoreOptions): ProjectStore {
+export function createProjectStore({ projectsFile, remotePlaceholderRoot }: ProjectStoreOptions): ProjectStore {
   const readSnapshot = (): ProjectsSnapshot => {
     try {
       if (!existsSync(projectsFile)) {
@@ -333,6 +337,35 @@ export function createProjectStore({ projectsFile }: ProjectStoreOptions): Proje
         projects[index] = project;
         writeProjects(projects, hash);
         return project;
+      });
+    },
+
+    remove(id: string): Promise<ProjectRecord | null> {
+      return queue.run(async () => {
+        const { file, hash } = readSnapshot();
+        const index = file.projects.findIndex((project) => project.id === id);
+        if (index === -1) return null;
+        const removed = file.projects[index];
+        writeProjects(file.projects.filter((_, current) => current !== index), hash);
+
+        // This directory is app-created for remote projects. Never trust an id
+        // as a path segment, and only remove the exact placeholder recorded by
+        // the server-authoritative project row.
+        if (
+          remotePlaceholderRoot &&
+          removed.remote &&
+          basename(id) === id &&
+          removed.path === join(remotePlaceholderRoot, id) &&
+          existsSync(removed.path)
+        ) {
+          try {
+            rmSync(removed.path, { recursive: true, force: true });
+          } catch {
+            // Removing a project record must not fail because best-effort
+            // cleanup of its app-owned placeholder cannot complete.
+          }
+        }
+        return removed;
       });
     }
   };

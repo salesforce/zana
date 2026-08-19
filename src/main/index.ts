@@ -4954,9 +4954,12 @@ function registerIpc() {
   );
   safeHandle(
     IPC.projects.remove,
-    (id: string) => {
+    async (id: string) => {
       ptys.list(id).forEach((s) => ptys.close(s.id));
-      store.removeProject(id);
+      // A packaged runtime owns the project record and its settings cleanup.
+      // Never fall back after a server error: the request may have committed.
+      if (runtimeSupervisor) await runtimeSupervisor.removeProject(id);
+      else store.removeProject(id);
       scheduler.onProjectRemoved(id);
       scheduler.rebindWatchers();
       goals.onProjectRemoved(id);
@@ -5556,13 +5559,17 @@ function registerIpc() {
 
   safeHandle(
     IPC.projectSettings.get,
-    (id: string) => store.getProjectSettings(id),
+    async (id: string) => runtimeSupervisor
+      ? await runtimeSupervisor.getProjectSettings(id) as ProjectSettings
+      : store.getProjectSettings(id),
     () => ({} as ProjectSettings)
   );
   // Mutations must reject on persistence failure so the renderer can roll back
   // its optimistic state and show the write error. Reads remain best-effort.
   ipcMain.handle(IPC.projectSettings.set, (_event, id: string, patch: Partial<ProjectSettings>) =>
-    store.setProjectSettings(id, patch)
+    runtimeSupervisor
+      ? runtimeSupervisor.setProjectSettings(id, patch)
+      : store.setProjectSettings(id, patch)
   );
   ipcMain.handle(IPC.executionConsent.listProject, (_event, projectId: string) =>
     executionConsentManagement.listProjectGrants(projectId)

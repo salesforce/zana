@@ -1357,16 +1357,18 @@ export const store = {
     trustDirInClaudeConfig(dir);
     return dir;
   },
-  removeProject(id: string) {
+  removeProject(id: string, { removeProjectSettings = true }: { removeProjectSettings?: boolean } = {}) {
     const projects = this.listProjects();
     const removed = projects.find((p) => p.id === id);
     writeProjects(projects.filter((p) => p.id !== id));
     // Drop any orphaned per-project settings so project-settings.json
     // doesn't grow unbounded as projects come and go.
-    const all = readJsonRaw<Record<string, ProjectSettings>>(projectSettingsFile, {});
-    if (id in all) {
-      delete all[id];
-      writeJson(projectSettingsFile, all);
+    if (removeProjectSettings) {
+      const all = readJsonRaw<Record<string, ProjectSettings>>(projectSettingsFile, {});
+      if (id in all) {
+        delete all[id];
+        writeJson(projectSettingsFile, all);
+      }
     }
     // Clean up the remote-project placeholder dir we mkdir'd in addRemoteProject.
     // We only nuke paths under our own data dir — never anything user-supplied.

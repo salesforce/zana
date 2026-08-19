@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ProjectIdSchema } from '@zana-ai/zcc-domain';
 import { TerminalHostCommandSchema, TerminalHostEventSchema } from './terminal-execution.js';
+import { ProjectSettingsPatchSchema } from './project-settings.js';
 
 const RequestIdSchema = z.string().uuid();
 const DeadlineSchema = z.string().datetime();
@@ -65,6 +66,19 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('projects-touch'),
     projectId: ProjectIdSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('projects-remove'),
+    projectId: ProjectIdSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('project-settings-get'),
+    projectId: ProjectIdSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('project-settings-set'),
+    projectId: ProjectIdSchema,
+    patch: ProjectSettingsPatchSchema
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('terminal-execute'),
