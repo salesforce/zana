@@ -4276,6 +4276,10 @@ const squadExecutionService = new SquadExecutionService({
   cancelTeamLaunch: async (callerPrincipalId, launchRequestId) => cancelTeamLaunch(callerPrincipalId, launchRequestId),
   replyToSession: (sessionId, text) => ptys.reply(sessionId, text),
   resumeGrants: executionResumeGrants,
+  hasLivePredecessor: (projectId, ownerPrincipalIds) => {
+    const owners = new Set(ownerPrincipalIds);
+    return ptys.list(projectId).some((session) => session.status !== 'exited' && owners.has(session.id));
+  },
   clearResumeToken: (projectId, executionId) => executionResumeTokens.clear(projectId, executionId),
   preflightWorkflow: (teamId, workflow) => {
     const team = teams.list().find((candidate) => candidate.id === teamId);

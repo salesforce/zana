@@ -56,15 +56,38 @@ describe('relaunchExecutionMonitor', () => {
     expect(input.clearToken).toHaveBeenCalledWith('project-1', 'execution-1');
   });
 
-  it('closes monitor and preserves token when binding rejects or throws', async () => {
+  it('closes monitor and clears rejected tokens while preserving tokens after transport failures', async () => {
     const rejected = deps({ bindMonitor: vi.fn(async () => ({ ok: false as const, code: 'NOT_FOUND', message: 'grant expired' })) });
     await expect(relaunchExecutionMonitor(rejected, 'project-1', 'execution-1')).resolves.toMatchObject({ ok: false, code: 'NOT_FOUND' });
     expect(rejected.closeMonitor).toHaveBeenCalledWith('monitor-1');
-    expect(rejected.clearToken).not.toHaveBeenCalled();
+    expect(rejected.clearToken).toHaveBeenCalledWith('project-1', 'execution-1');
 
     const thrown = deps({ bindMonitor: vi.fn(async () => { throw new Error('binding transport failed'); }) });
     await expect(relaunchExecutionMonitor(thrown, 'project-1', 'execution-1')).resolves.toMatchObject({ ok: false, code: 'SPAWN_FAILED' });
     expect(thrown.closeMonitor).toHaveBeenCalledWith('monitor-1');
     expect(thrown.clearToken).not.toHaveBeenCalled();
+  });
+
+  it('keeps a successfully bound monitor alive when token cleanup fails', async () => {
+    const input = deps({ clearToken: vi.fn(() => { throw new Error('cache unavailable'); }) });
+    await expect(relaunchExecutionMonitor(input, 'project-1', 'execution-1')).resolves.toEqual({
+      ok: true, value: { sessionId: 'monitor-1' }
+    });
+    expect(input.closeMonitor).not.toHaveBeenCalled();
+  });
+
+  it('rejects a concurrent relaunch before it can read or spend the same token', async () => {
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const input = deps({ confirm: vi.fn(async () => { await pending; return true; }) });
+    const first = relaunchExecutionMonitor(input, 'project-1', 'execution-1');
+    await Promise.resolve();
+    await expect(relaunchExecutionMonitor(input, 'project-1', 'execution-1')).resolves.toEqual({
+      ok: false, code: 'CONFLICT', message: 'monitor relaunch already in progress'
+    });
+    expect(input.readToken).not.toHaveBeenCalled();
+    release();
+    await expect(first).resolves.toMatchObject({ ok: true });
+    expect(input.readToken).toHaveBeenCalledOnce();
   });
 });

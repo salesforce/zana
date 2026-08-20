@@ -27,6 +27,7 @@ export interface ExecutionRecord {
   attempt: number;
   state: ExecutionState;
   stateVersion: number;
+  lastEventSequence?: number;
   resolvedModels: ResolvedModelSnapshotV1[];
   authorizationContext?: TeamLaunchAuthorizationContextV1;
   authorizationContextDigest?: string;
@@ -122,7 +123,9 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && validString(record.jobTitle) && validString(record.requestDigest)
     && validString(record.launchRequestId) && validString(record.teamLaunchRequestId) && validRequestSnapshot(record.request)
     && (record.summary === undefined || validString(record.summary)) && Number.isInteger(record.attempt)
-    && isState(record.state) && Number.isInteger(record.stateVersion) && Array.isArray(record.resolvedModels) && record.resolvedModels.every(validModelSnapshot)
+    && isState(record.state) && Number.isInteger(record.stateVersion)
+    && (record.lastEventSequence === undefined || Number.isInteger(record.lastEventSequence) && record.lastEventSequence >= 0)
+    && Array.isArray(record.resolvedModels) && record.resolvedModels.every(validModelSnapshot)
     && (record.authorizationContext === undefined || validAuthorizationContext(record.authorizationContext))
     && (record.authorizationContextDigest === undefined || validString(record.authorizationContextDigest))
     && (record.launchIntent === undefined || validLaunchIntent(record.launchIntent))
@@ -276,7 +279,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       }
       const timestamp = now();
       const record: ExecutionRecord = {
-        ...bounded, id: string(id(), 'id'), teamLaunchRequestId: bounded.launchRequestId, attempt: 1, state: 'READY', stateVersion: 0,
+        ...bounded, id: string(id(), 'id'), teamLaunchRequestId: bounded.launchRequestId, attempt: 1, state: 'READY', stateVersion: 0, lastEventSequence: 0,
         createdAt: timestamp, updatedAt: timestamp
       };
       snapshot.state.records.push(record);
@@ -375,13 +378,14 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       const timestamp = now();
       const event: ExecutionEvent = {
         id: eventId, executionId: record.id, attempt: record.attempt,
-        sequence: nextSequence(snapshot.state, record.id), state: record.state, stateVersion: record.stateVersion,
+        sequence: (record.lastEventSequence ?? nextSequence(snapshot.state, record.id) - 1) + 1, state: record.state, stateVersion: record.stateVersion,
         kind: 'event', eventType: input.type, severity: input.severity,
         summary: string(input.summary, 'event summary'), createdAt: timestamp,
         ...(input.slotId === undefined ? {} : { slotId: string(input.slotId, 'slot id') }),
         ...(input.detail === undefined ? {} : { detail: string(input.detail, 'event detail') }),
         ...(input.blocker === undefined ? {} : { blocker: clone(input.blocker) })
       };
+      record.lastEventSequence = event.sequence;
       snapshot.state.events.push(event);
       persist(snapshot.state, snapshot.hash);
       return { outcome: 'accepted' as const, event: clone(event) };
@@ -532,31 +536,40 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     executionId: string,
     after = 0,
     limit = 100
-  ): Promise<{ events: ExecutionEvent[]; nextSequence?: number }> {
+  ): Promise<{ events: ExecutionEvent[]; nextSequence?: number; resyncRequired?: boolean }> {
     const safeLimit = Math.max(1, Math.min(limit, 100));
     return storeQueue.run(async () => {
       const state = read().state;
       const record = state.records.find((candidate) => candidate.id === string(executionId, 'id'));
       if (!record || record.callerPrincipalId !== string(callerPrincipalId, 'caller principal id')
         || record.projectId !== string(projectId, 'project id')) return { events: [] };
-      const matching = state.events.filter((event) => event.executionId === record.id && event.sequence > after);
+      const all = state.events.filter((event) => event.executionId === record.id);
+      const earliest = all[0]?.sequence;
+      const matching = all.filter((event) => event.sequence > after);
       const events = matching.slice(0, safeLimit);
       return {
         events: clone(events),
-        ...(matching.length > events.length ? { nextSequence: events.at(-1)!.sequence } : {})
+        ...(matching.length > events.length ? { nextSequence: events.at(-1)!.sequence } : {}),
+        ...((earliest === undefined ? after > 0 : after < earliest - 1 || after > (record.lastEventSequence ?? 0)) ? { resyncRequired: true } : {})
       };
     });
   }
 
-  async function eventsInProject(projectId: string, executionId: string, after = 0, limit = 100): Promise<{ events: ExecutionEvent[]; nextSequence?: number }> {
+  async function eventsInProject(projectId: string, executionId: string, after = 0, limit = 100): Promise<{ events: ExecutionEvent[]; nextSequence?: number; resyncRequired?: boolean }> {
     const safeLimit = Math.max(1, Math.min(limit, 100));
     return storeQueue.run(async () => {
       const state = read().state;
       const record = state.records.find((candidate) => candidate.id === string(executionId, 'id'));
       if (!record || record.projectId !== string(projectId, 'project id')) return { events: [] };
-      const matching = state.events.filter((event) => event.executionId === record.id && event.sequence > after);
+      const all = state.events.filter((event) => event.executionId === record.id);
+      const earliest = all[0]?.sequence;
+      const matching = all.filter((event) => event.sequence > after);
       const events = matching.slice(0, safeLimit);
-      return { events: clone(events), ...(matching.length > events.length ? { nextSequence: events.at(-1)!.sequence } : {}) };
+      return {
+        events: clone(events),
+        ...(matching.length > events.length ? { nextSequence: events.at(-1)!.sequence } : {}),
+        ...((earliest === undefined ? after > 0 : after < earliest - 1 || after > (record.lastEventSequence ?? 0)) ? { resyncRequired: true } : {})
+      };
     });
   }
 
@@ -577,7 +590,8 @@ function append(
   createdAt: number,
   metadata: Pick<ExecutionEvent, 'kind' | 'fromState' | 'toState' | 'slotId'> = {}
 ): void {
-  const sequence = nextSequence(state, record.id);
+  const sequence = (record.lastEventSequence ?? nextSequence(state, record.id) - 1) + 1;
+  record.lastEventSequence = sequence;
   state.events.push({ id: randomUUID(), executionId: record.id, attempt: record.attempt, sequence, state: eventState, stateVersion: record.stateVersion, severity, summary, createdAt, ...metadata });
 }
 

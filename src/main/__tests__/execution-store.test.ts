@@ -58,6 +58,56 @@ describe('execution store', () => {
     expect(await store.get(running.id)).toMatchObject({ state: 'RUNNING' });
   }));
 
+  it('requires event resync when retention removed requested cursor history', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', maxEvents: 2 });
+    const claimed = await store.claim(request());
+    if (claimed.outcome !== 'claimed') throw new Error('expected claim');
+    const starting = await store.transition(claimed.record.id, 0, 'STARTING', 'info', 'Starting');
+    const running = await store.transition(starting.id, 1, 'RUNNING', 'info', 'Running');
+    expect(await store.events('session-1', 'project-1', running.id, 0)).toMatchObject({
+      events: [{ sequence: 2 }, { sequence: 3 }],
+      resyncRequired: true
+    });
+  }));
+
+  it('requires event resync after retention removed every prior event', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', maxEvents: 1 });
+    const claimed = await store.claim(request());
+    if (claimed.outcome !== 'claimed') throw new Error('expected claim');
+    const starting = await store.transition(claimed.record.id, 0, 'STARTING', 'info', 'Starting');
+    await store.transition(starting.id, 1, 'RUNNING', 'info', 'Running');
+    expect(await store.events('session-1', 'project-1', claimed.record.id, 1)).toMatchObject({
+      events: [{ sequence: 3 }],
+      resyncRequired: true
+    });
+  }));
+
+  it('keeps producer and lifecycle event sequences monotonic across retention', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', maxEvents: 2 });
+    const claimed = await store.claim(request());
+    if (claimed.outcome !== 'claimed') throw new Error('expected claim');
+    const starting = await store.transition(claimed.record.id, 0, 'STARTING', 'info', 'Starting');
+    await store.producerEvent(starting.id, { id: 'producer-1', type: 'progress', severity: 'info', summary: 'Progress' });
+    const running = await store.transition(starting.id, 1, 'RUNNING', 'info', 'Running');
+    await store.producerEvent(running.id, { id: 'producer-2', type: 'outcome', severity: 'info', summary: 'Done' });
+    expect((await store.events('session-1', 'project-1', running.id)).events.map((event) => event.sequence)).toEqual([4, 5]);
+  }));
+
+  it('requires resync for an old cursor when global retention removed this execution events', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: (() => { let index = 0; return () => `execution-${++index}`; })(), maxEvents: 1 });
+    const first = await store.claim(request());
+    const second = await store.claim({ ...request(), launchRequestId: 'request-2', requestDigest: 'digest-2' });
+    if (first.outcome !== 'claimed' || second.outcome !== 'claimed') throw new Error('expected claims');
+    expect(await store.events('session-1', 'project-1', first.record.id, 1)).toEqual({ events: [], resyncRequired: true });
+  }));
+
+  it('requires resync for a future event cursor', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const claimed = await store.claim(request());
+    if (claimed.outcome !== 'claimed') throw new Error('expected claim');
+    expect(await store.events('session-1', 'project-1', claimed.record.id, 9)).toEqual({ events: [], resyncRequired: true });
+  }));
+
   it('retains active records and preserves newest terminal history', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: (() => { let i = 0; return () => `execution-${++i}`; })(), maxRecords: 3 });
     const active = await store.claim(request());

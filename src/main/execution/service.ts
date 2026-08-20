@@ -40,11 +40,14 @@ export interface ExecutionServiceDeps {
   replyToSession: (sessionId: string, text: string) => boolean;
   preflightWorkflow?: (teamId: string, workflow: SquadBundleWorkflowMetadataV1) => { ok: boolean; code?: string; message?: string };
   resumeGrants?: ReturnType<typeof createResumeGrantStore>;
+  hasLivePredecessor?: (projectId: string, ownerPrincipalIds: readonly string[]) => boolean;
   clearResumeToken?: (projectId: string, executionId: string) => void | Promise<void>;
 }
 
 export class SquadExecutionService {
   private readonly starting = new Map<string, number>();
+  private readonly bindingTails = new Map<string, Promise<void>>();
+  private readonly pendingBindingOwners = new Map<string, string>();
 
   constructor(private readonly deps: ExecutionServiceDeps) {}
 
@@ -325,19 +328,35 @@ export class SquadExecutionService {
   }
 
   async resumeBinding(callerPrincipalId: string, projectId: string, executionId: string, token: string) {
-    const record = await this.deps.store.getInProject(projectId, executionId);
-    if (!record || isResumeGrantTerminal(record.state) || !this.deps.resumeGrants) {
-      return { ok: false as const, code: 'NOT_FOUND', message: 'execution resume grant is not current' };
-    }
-    try {
-      await this.deps.resumeGrants.consume({ token, executionId, projectId, effectiveOwnerPrincipalId: callerPrincipalId });
-      return { ok: true as const, value: await this.deps.store.addEffectiveOwner(executionId, callerPrincipalId) };
-    } catch (error) {
-      if (error instanceof Error && error.message === 'execution resume grant is not current') {
-        return { ok: false as const, code: 'NOT_FOUND', message: error.message };
+    return this.serializeBinding(executionId, async () => {
+      const record = await this.deps.store.getInProject(projectId, executionId);
+      if (!record || isResumeGrantTerminal(record.state) || !this.deps.resumeGrants) {
+        return { ok: false as const, code: 'NOT_FOUND', message: 'execution resume grant is not current' };
       }
-      return { ok: false as const, code: 'BINDING_TRANSIENT', message: 'execution resume binding could not be persisted; retry with the same token' };
-    }
+      const pendingOwner = this.pendingBindingOwners.get(executionId);
+      const ownerIds = [record.callerPrincipalId, ...(record.effectiveOwnerPrincipalIds ?? []), ...(pendingOwner ? [pendingOwner] : [])];
+      if (pendingOwner && pendingOwner !== callerPrincipalId) {
+        return { ok: false as const, code: 'LIVE_PREDECESSOR', message: 'execution still has a live predecessor' };
+      }
+      if (this.deps.hasLivePredecessor?.(projectId, ownerIds)) {
+        return { ok: false as const, code: 'LIVE_PREDECESSOR', message: 'execution still has a live predecessor' };
+      }
+      try {
+        await this.deps.resumeGrants.consume({ token, executionId, projectId, effectiveOwnerPrincipalId: callerPrincipalId });
+        this.pendingBindingOwners.set(executionId, callerPrincipalId);
+        const value = await this.deps.store.addEffectiveOwner(executionId, callerPrincipalId);
+        this.pendingBindingOwners.delete(executionId);
+        return { ok: true as const, value };
+      } catch (error) {
+        if (this.pendingBindingOwners.get(executionId) === callerPrincipalId) {
+          this.pendingBindingOwners.delete(executionId);
+        }
+        if (error instanceof Error && error.message === 'execution resume grant is not current') {
+          return { ok: false as const, code: 'NOT_FOUND', message: error.message };
+        }
+        return { ok: false as const, code: 'BINDING_TRANSIENT', message: 'execution resume binding could not be persisted; retry with the same token' };
+      }
+    });
   }
 
   async mintResumeGrant(callerPrincipalId: string, projectId: string, executionId: string) {
@@ -497,6 +516,21 @@ export class SquadExecutionService {
     const count = this.starting.get(executionId) ?? 0;
     if (count <= 1) this.starting.delete(executionId);
     else this.starting.set(executionId, count - 1);
+  }
+
+  private async serializeBinding<T>(executionId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.bindingTails.get(executionId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    const tail = previous.then(() => current);
+    this.bindingTails.set(executionId, tail);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.bindingTails.get(executionId) === tail) this.bindingTails.delete(executionId);
+    }
   }
 
   private async failLaunch(record: ExecutionRecord, summary: string): Promise<ExecutionRecord> {

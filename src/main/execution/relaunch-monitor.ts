@@ -45,24 +45,29 @@ export interface RelaunchMonitorDeps {
   clearToken(projectId: string, executionId: string): void;
 }
 
+const inFlightRelaunches = new Set<string>();
+
 /** Main-only relaunch flow. Validate route ownership before touching token state. */
 export async function relaunchExecutionMonitor(
   deps: RelaunchMonitorDeps,
   projectId: string,
   executionId: string
 ): Promise<Result<{ sessionId: string }>> {
-  const project = deps.findProject(projectId);
-  const record = project ? await deps.getExecution(project.id, executionId) : undefined;
-  if (!project || !record) return { ok: false, code: 'NOT_FOUND', message: 'execution not found for project' };
-
-  if (!await deps.confirm(record)) return { ok: false, code: 'CANCELED', message: 'monitor relaunch canceled' };
-
-  const token = deps.readToken(project.id, record.id);
-  if (!token) return { ok: false, code: 'NOT_FOUND', message: 'no current resume token for execution' };
-  const persona = deps.findOrchestratorPersona();
-  if (!persona) return { ok: false, code: 'NOT_FOUND', message: 'builtin monitor persona is unavailable' };
-
+  const key = `${projectId}\u0000${executionId}`;
+  if (inFlightRelaunches.has(key)) return { ok: false, code: 'CONFLICT', message: 'monitor relaunch already in progress' };
+  inFlightRelaunches.add(key);
   try {
+    const project = deps.findProject(projectId);
+    const record = project ? await deps.getExecution(project.id, executionId) : undefined;
+    if (!project || !record) return { ok: false, code: 'NOT_FOUND', message: 'execution not found for project' };
+
+    if (!await deps.confirm(record)) return { ok: false, code: 'CANCELED', message: 'monitor relaunch canceled' };
+
+    const token = deps.readToken(project.id, record.id);
+    if (!token) return { ok: false, code: 'NOT_FOUND', message: 'no current resume token for execution' };
+    const persona = deps.findOrchestratorPersona();
+    if (!persona) return { ok: false, code: 'NOT_FOUND', message: 'builtin monitor persona is unavailable' };
+
     const created = deps.createMonitor({
       projectId: project.id,
       profile: 'claude',
@@ -85,18 +90,25 @@ export async function relaunchExecutionMonitor(
 
     try {
       const bound = await deps.bindMonitor(created.value.id, project.id, record.id, token);
-      if (!bound.ok) {
-        deps.closeMonitor(created.value.id);
-        return { ok: false, code: bound.code, message: bound.message };
+      if (bound.ok) {
+        try {
+          deps.clearToken(project.id, record.id);
+        } catch {
+          // Binding is durable authority. A local token-cache cleanup failure must
+          // not close the newly bound monitor and strand the execution.
+        }
+        return { ok: true, value: { sessionId: created.value.id } };
       }
+      deps.closeMonitor(created.value.id);
+      try { deps.clearToken(project.id, record.id); } catch { /* Durable grant validation remains authoritative. */ }
+      return { ok: false, code: bound.code, message: bound.message };
     } catch (error) {
       deps.closeMonitor(created.value.id);
       return { ok: false, code: 'SPAWN_FAILED', message: error instanceof Error ? error.message : String(error) };
     }
-
-    deps.clearToken(project.id, record.id);
-    return { ok: true, value: { sessionId: created.value.id } };
   } catch (error) {
     return { ok: false, code: 'SPAWN_FAILED', message: error instanceof Error ? error.message : String(error) };
+  } finally {
+    inFlightRelaunches.delete(key);
   }
 }

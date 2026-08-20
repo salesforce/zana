@@ -150,6 +150,47 @@ describe('SquadExecutionService', () => {
     await expect(service.resumeBinding('session-3', 'project-1', 'execution-1', started.value.resumeToken)).resolves.toMatchObject({ ok: false });
   }));
 
+  it('rejects resume binding while an existing execution owner remains live', async () => fixture(async (filePath) => {
+    const grants = createResumeGrantStore({ filePath: `${filePath}.grants`, token: () => 'resume-token' });
+    const service = new SquadExecutionService(deps(filePath, {
+      resumeGrants: grants,
+      hasLivePredecessor: (_projectId, ownerIds) => ownerIds.includes('session-1')
+    }));
+    const started = await service.start('session-1', 'project-1', request);
+    if (!started.ok || !started.value.resumeToken) throw new Error('missing resume token');
+    await expect(service.resumeBinding('session-2', 'project-1', 'execution-1', started.value.resumeToken))
+      .resolves.toEqual({ ok: false, code: 'LIVE_PREDECESSOR', message: 'execution still has a live predecessor' });
+  }));
+
+  it('serializes competing resume bindings so only one replacement owner is admitted', async () => fixture(async (filePath) => {
+    let token = 0;
+    let firstCheck = true;
+    let releaseCheck!: () => void;
+    const checkStarted = new Promise<void>((resolve) => { releaseCheck = resolve; });
+    const grants = createResumeGrantStore({ filePath: `${filePath}.grants`, token: () => `resume-token-${++token}` });
+    const service = new SquadExecutionService(deps(filePath, {
+      resumeGrants: grants,
+      hasLivePredecessor: (_projectId, ownerIds) => {
+        if (firstCheck) {
+          firstCheck = false;
+          releaseCheck();
+          return false;
+        }
+        return ownerIds.includes('session-2');
+      }
+    }));
+    await service.start('session-1', 'project-1', request);
+    const first = await grants.mint({ executionId: 'execution-1', projectId: 'project-1', callerPrincipalId: 'session-1' });
+    const second = await grants.mint({ executionId: 'execution-1', projectId: 'project-1', callerPrincipalId: 'session-1' });
+    const binding = service.resumeBinding('session-2', 'project-1', 'execution-1', first.token);
+    await checkStarted;
+    const competing = service.resumeBinding('session-3', 'project-1', 'execution-1', second.token);
+    await expect(binding).resolves.toMatchObject({ ok: true });
+    await expect(competing).resolves.toEqual({
+      ok: false, code: 'LIVE_PREDECESSOR', message: 'execution still has a live predecessor'
+    });
+  }));
+
   it('recovers a consumed binding after transient effective-owner persistence failure', async () => fixture(async (filePath) => {
     const grants = createResumeGrantStore({ filePath: `${filePath}.grants`, token: () => 'resume-token' });
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
