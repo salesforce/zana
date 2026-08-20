@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { registerExecutionTools } from '../execution-mcp-tool.js';
 import { createExecutionHandoffStore } from '../execution/handoff-store.js';
 
@@ -25,7 +27,8 @@ function text(result: { content: Array<{ type: string; text?: string }> }): stri
 
 function service() {
   return {
-    start: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', state: 'RUNNING' } })),
+    start: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', state: 'RUNNING', resumeToken: 'resume-token', resumeTokenExpiresAt: 1735689600000 } })),
+    resumeBinding: vi.fn(async () => ({ ok: true as const, value: { callerPrincipalId: 'session-1', effectiveOwnerPrincipalIds: ['session-2'] } })),
     status: vi.fn(async () => ({ id: 'execution-1', state: 'RUNNING' })),
     list: vi.fn(async () => [{ id: 'execution-1', jobTitle: 'Ship', state: 'RUNNING' }]),
     events: vi.fn(async () => [{ sequence: 1, summary: 'Execution reserved' }]),
@@ -40,6 +43,8 @@ function service() {
     mintResumeGrant: vi.fn(async () => ({ ok: true as const, value: { token: 'replacement-token', expiresAt: 100 } }))
   };
 }
+
+const contractFixturePath = fileURLToPath(new URL('../../../test/fixtures/execution-contract-v1.json', import.meta.url));
 
 describe('execution MCP tools', () => {
   it('registers only route-scoped execution controls', () => {
@@ -65,6 +70,40 @@ describe('execution MCP tools', () => {
     expect(execution.mintResumeGrant).toHaveBeenCalledWith('session-1', 'project-1', 'execution-1');
     await tools.get('execution.event')!({ executionId: 'execution-1', eventId: 'event-1', type: 'blocker', severity: 'warning', summary: 'Need answer', blocker: { question: 'Ship?' } });
     expect(execution.reportEvent).toHaveBeenCalledWith('session-1', 'project-1', 'execution-1', expect.objectContaining({ id: 'event-1', type: 'blocker' }));
+  });
+
+  it('matches exported execution v1 public start and resume-binding contract', async () => {
+    const fixture = JSON.parse(await readFile(contractFixturePath, 'utf8')) as {
+      version: number;
+      tools: {
+        'execution.start': { success: { result: object }; failure: { isError: boolean; text: string } };
+        'execution.resume_binding': { input: { executionId: string; token: string }; success: { result: object }; failure: { isError: boolean; text: string } };
+      };
+    };
+    const execution = service();
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, { sessionId: 'session-1', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true });
+
+    const started = await tools.get('execution.start')!({
+      version: fixture.version, teamId: 'team-1', launchRequestId: 'request-1', slots: [{ initialTask: 'Run tests' }]
+    });
+    const resumed = await tools.get('execution.resume_binding')!(fixture.tools['execution.resume_binding'].input);
+    expect(JSON.parse(text(started))).toMatchObject(fixture.tools['execution.start'].success.result);
+    expect(JSON.parse(text(resumed))).toEqual(fixture.tools['execution.resume_binding'].success.result);
+
+    const failedExecution = {
+      ...execution,
+      start: vi.fn(async () => ({ ok: false as const, code: 'DENIED', message: 'team launch denied' })),
+      resumeBinding: vi.fn(async () => ({ ok: false as const, code: 'NOT_FOUND', message: 'execution resume grant is not current' }))
+    };
+    const failed = fakeServer();
+    registerExecutionTools(failed.server as never, { sessionId: 'session-1', projectId: 'project-1', service: failedExecution as never, validateRouteIdentity: () => true });
+    const failedStart = await failed.tools.get('execution.start')!({
+      version: fixture.version, teamId: 'team-1', launchRequestId: 'request-2', slots: [{ initialTask: 'Run tests' }]
+    });
+    const failedResume = await failed.tools.get('execution.resume_binding')!(fixture.tools['execution.resume_binding'].input);
+    expect({ isError: failedStart.isError, text: text(failedStart) }).toEqual(fixture.tools['execution.start'].failure);
+    expect({ isError: failedResume.isError, text: text(failedResume) }).toEqual(fixture.tools['execution.resume_binding'].failure);
   });
 
   it('does not accept caller-provided resolved model snapshots', async () => {

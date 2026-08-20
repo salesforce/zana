@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "tools": {
+    "execution.start": {
+      "success": {
+        "result": {
+          "id": "execution-1",
+          "resumeToken": "resume-token",
+          "resumeTokenExpiresAt": 1735689600000
+        }
+      },
+      "failure": {
+        "isError": true,
+        "text": "execution.start failed: team launch denied"
+      }
+    },
+    "execution.resume_binding": {
+      "input": {
+        "executionId": "execution-1",
+        "token": "resume-token"
+      },
+      "success": {
+        "result": {
+          "callerPrincipalId": "session-1",
+          "effectiveOwnerPrincipalIds": [
+            "session-2"
+          ]
+        }
+      },
+      "failure": {
+        "isError": true,
+        "text": "execution.resume_binding failed: execution resume grant is not current"
+      }
+    }
+  }
+}
