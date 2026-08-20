@@ -65,7 +65,9 @@ describe('inbox MCP server (end-to-end)', () => {
       summary: string,
       status?: 'success' | 'partial' | 'failure'
     ) => void,
-    registerProject?: (absPath: string) => { project: Project; alreadyExisted: boolean },
+    registerProject?: (absPath: string) =>
+      | { project: Project; alreadyExisted: boolean }
+      | Promise<{ project: Project; alreadyExisted: boolean }>,
     cloneProject?: (input: { url: string; name?: string }) => Promise<import('../../shared/types.js').CloneProjectResult>,
     listPersonas?: () => PersonaSummary[],
     listProjects?: () => ProjectSummary[],
@@ -534,6 +536,31 @@ describe('inbox MCP server (end-to-end)', () => {
     // alreadyExisted → honest wording.
     const text = JSON.stringify((res as { content?: unknown }).content ?? '');
     expect(text).toMatch(/Already registered/);
+  });
+
+  it('5bb. register_project awaits an asynchronous registration authority', async () => {
+    const store = createMemoryInboxStore();
+    const registerProject = vi.fn(async (absPath: string) => ({
+      project: makeProject('new-async', 'async-project'),
+      alreadyExisted: absPath === '/work/p1/async-project'
+    }));
+    const h = await boot(
+      store,
+      [{ ...makeProject('proj-1', 'P1'), path: '/work/p1' }],
+      undefined,
+      registerProject
+    );
+
+    const client = await connectClient(h.url, 'proj-1/sess-A');
+    clients.push(client);
+    const res = await client.callTool({
+      name: 'register_project',
+      arguments: { path: 'async-project' }
+    });
+
+    expect((res as { isError?: boolean }).isError).toBeFalsy();
+    expect(registerProject).toHaveBeenCalledWith('/work/p1/async-project');
+    expect(JSON.stringify((res as { content?: unknown }).content ?? '')).toMatch(/Already registered/);
   });
 
   it('5c. register_project: reports an error (does not crash) when the add throws', async () => {

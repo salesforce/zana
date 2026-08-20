@@ -13,6 +13,6 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "peerDependencies": {
-    "react": "^18"
+    "react": "^18 || ^19"
   }
 }

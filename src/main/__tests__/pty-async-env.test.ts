@@ -70,7 +70,7 @@ let pending: {
   resolve: (s: ExecutionSession) => void;
   reject: (e: unknown) => void;
 } | null = null;
-let lastCtx: (ExecEnvContext & { cols: number; rows: number; sessionEnv: Record<string, string> }) | null =
+let lastCtx: (ExecEnvContext & { cols: number; rows: number; sessionEnv: Record<string, string>; spawnEnv?: Record<string, string> }) | null =
   null;
 let lastInner: InnerLaunch | null = null;
 
@@ -175,12 +175,13 @@ describe('PtyManager — async createSession environment', () => {
   it('passes the REWRITTEN callback env to createSession', () => {
     ptys.create({ ...base, config: cfg(), environment: 'sandbox' });
     expect(lastCtx?.sessionEnv.ZCC_REWRITTEN).toBe('1');
+    expect(lastCtx?.spawnEnv?.ZCC_REWRITTEN).toBe('1');
     expect(lastInner).not.toBeNull();
   });
 
   it('FAILS CLOSED on boot failure — finalizes with a non-zero exit, no local fallback', async () => {
     const s = ptys.create({ ...base, config: cfg(), environment: 'sandbox' });
-    const ready = expect(ptys.waitForReady(s.id)).rejects.toThrow('failed before execution handle was ready');
+    const ready = expect(ptys.waitForReady(s.id)).rejects.toThrow('no hypervisor');
     const exits: Array<[string, number]> = [];
     ptys.on('exit', (id: string, code: number) => exits.push([id, code]));
 

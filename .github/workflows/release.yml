@@ -32,17 +32,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       # Fail early if the tagged version has no curated release notes — the
       # "What's New" modal bundles docs/releases/<version>.md, so a release
       # can't ship without it (see scripts/check-release-notes.mjs).
-      - run: npm run check:release-notes
-      - run: npm run typecheck
-      - run: npm test
+      - run: pnpm run check:release-notes
+      - run: pnpm run typecheck
+      - run: pnpm test
 
   # Release gate: boot the BUILT app under headless Electron and confirm it
   # launches + its main↔renderer IPC round-trips (e2e/smoke.spec.ts). Unlike
@@ -57,19 +58,21 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
+          cache: pnpm
 
-      # node-pty / better-sqlite3 are native; npm ci runs their install scripts.
+      # node-pty / better-sqlite3 are native; pnpm runs their install scripts.
       # distutils was dropped from Python 3.12 stdlib, so pin 3.11 (matches ci.yml).
       - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       # Electron needs a display + Chromium shared libs; xvfb-run supplies a
       # virtual X server and playwright's installer pulls the libs.
@@ -80,14 +83,14 @@ jobs:
           npx playwright install-deps chromium
 
       - name: Build app
-        run: npm run build
+        run: pnpm run build
         env:
           # The renderer bundle (monaco) blows past Node's default heap during
           # electron-vite build; raise it (matches the build job below).
           NODE_OPTIONS: --max-old-space-size=6144
 
       - name: Smoke test (boot + IPC round-trip)
-        run: xvfb-run -a npm run test:smoke:only
+        run: xvfb-run -a pnpm run test:smoke:only
 
       - name: Upload Playwright report on failure
         if: failure()
@@ -119,10 +122,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
+          cache: pnpm
 
       # electron-builder rebuilds node-pty via node-gyp, which still imports
       # Python's distutils. The runner default (Python 3.12+) removed distutils
@@ -132,7 +137,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Build and package
         # electron-builder rebuilds node-pty for the bundled Electron's ABI
@@ -155,7 +160,7 @@ jobs:
         # For unsigned builds, pass --config.mac.notarize=false to override the
         # config's notarize: true (electron-builder 25.x CLI flag overrides config).
         run: |
-          npm run build
+          pnpm run build
           if [ -n "$CSC_LINK_SECRET" ]; then
             # Fail-fast: signing enabled but missing notarization secrets
             : "${APPLE_ID_SECRET:?ERROR: CSC_LINK is set but APPLE_ID secret is missing. Add all 5 secrets (see docs/auto-update-setup.md).}"
@@ -167,12 +172,12 @@ jobs:
             export APPLE_ID="$APPLE_ID_SECRET"
             export APPLE_APP_SPECIFIC_PASSWORD="$APPLE_APP_SPECIFIC_PASSWORD_SECRET"
             export APPLE_TEAM_ID="$APPLE_TEAM_ID_SECRET"
-            npx electron-builder --mac --${{ matrix.arch }} --publish never
+            pnpm exec electron-builder --mac --${{ matrix.arch }} --publish never
           else
             echo "No signing cert — building UNSIGNED (auto-update disabled, notarization disabled)."
             export CSC_IDENTITY_AUTO_DISCOVERY=false
             # Override config's notarize: true for unsigned builds (would fail without Apple secrets)
-            npx electron-builder --mac --${{ matrix.arch }} --publish never --config.mac.notarize=false
+            pnpm exec electron-builder --mac --${{ matrix.arch }} --publish never --config.mac.notarize=false
           fi
         env:
           # The renderer bundle pulls in the heavy monaco-vscode packages, which

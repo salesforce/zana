@@ -12,7 +12,6 @@
     "isolatedModules": true,
     "noEmit": true,
     "types": ["node"],
-    "baseUrl": ".",
     "paths": {
       "@zana-ai/zcc-extension-sdk": ["../../../packages/extension-sdk/src/index.ts"],
       "@zana-ai/zcc-extension-sdk/*": ["../../../packages/extension-sdk/src/*"]

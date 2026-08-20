@@ -5,11 +5,12 @@ import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import type { Project, ProjectRemote, AppConfig, ProjectSettings, OpenTarget, ProjectLaunchDefault, HarnessFamily } from '../shared/types.js';
 import { SESSION_MEMORY_DEFAULTS, AUTO_CLOSE_IDLE_DEFAULTS } from '../shared/types.js';
-import { isTerminalThemeId, DEFAULT_TERMINAL_THEME } from '../shared/terminalThemes.js';
+import { isTerminalThemeId } from '../shared/terminalThemes.js';
 import { PROJECT_COLORS, pickProjectColor } from '../shared/project-colors.js';
 import { registeredAdapters } from './harness/registry.js';
 import { atomicDurableWrite } from './harness-routing-migration/storage.js';
 import { normalizeRepoUrl } from './git-clone.js';
+import { createConfigStore } from './config-store.js';
 
 const HARNESS_FAMILIES = ['claude', 'cursor', 'codex', 'pi', 'opencode'] as const;
 
@@ -1074,6 +1075,11 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   return normalized;
 }
 
+const configStore = createConfigStore(
+  { homeDir: app.getPath('home'), configFile },
+  { normalizeConfig, projectConfigCompatibility, canonicalConfigForWrite, harnessEnabled }
+);
+
 export const store = {
   listProjects(): Project[] {
     return readProjectsFile().projects;
@@ -1351,16 +1357,18 @@ export const store = {
     trustDirInClaudeConfig(dir);
     return dir;
   },
-  removeProject(id: string) {
+  removeProject(id: string, { removeProjectSettings = true }: { removeProjectSettings?: boolean } = {}) {
     const projects = this.listProjects();
     const removed = projects.find((p) => p.id === id);
     writeProjects(projects.filter((p) => p.id !== id));
     // Drop any orphaned per-project settings so project-settings.json
     // doesn't grow unbounded as projects come and go.
-    const all = readJsonRaw<Record<string, ProjectSettings>>(projectSettingsFile, {});
-    if (id in all) {
-      delete all[id];
-      writeJson(projectSettingsFile, all);
+    if (removeProjectSettings) {
+      const all = readJsonRaw<Record<string, ProjectSettings>>(projectSettingsFile, {});
+      if (id in all) {
+        delete all[id];
+        writeJson(projectSettingsFile, all);
+      }
     }
     // Clean up the remote-project placeholder dir we mkdir'd in addRemoteProject.
     // We only nuke paths under our own data dir — never anything user-supplied.
@@ -1469,85 +1477,10 @@ export const store = {
     return projects[idx];
   },
   getConfig(): AppConfig {
-    const fallback: AppConfig = {
-      version: 1,
-      theme: 'dark',
-      terminalTheme: DEFAULT_TERMINAL_THEME,
-      shell: process.env.SHELL || '/bin/zsh',
-      claudeBinary: 'claude',
-      fontSize: 13,
-      lastProjectId: null,
-      workspaceModes: {},
-      agentsBoardView: 'board',
-      inboxGrouping: 'project',
-      // Auto mode is ON by default (a claude session launches with the native
-      // classifier-backed --permission-mode auto). Absent-in-file ⇒ true; the
-      // user opts OUT by persisting false. See AppConfig.autoModeEnabled.
-      autoModeEnabled: true,
-      // tmux session persistence defaults to 'all' (both local and remote).
-      // Absent-in-file ⇒ 'all'; the user narrows it to 'remote'-only or 'off'
-      // by persisting one of those. Still degrades gracefully to a plain
-      // node-pty spawn when tmux isn't installed (always on Windows). See
-      // AppConfig.tmuxScope.
-      tmuxScope: 'all',
-      // Menu-bar popover is ON by default (macOS). Absent-in-file ⇒ true; the
-      // user opts OUT by persisting false. The tray is still built regardless;
-      // `menubarPopoverEnabled()` in index.ts also gates on darwin, so this
-      // default is a no-op on win/linux. See AppConfig.menubarPopoverEnabled.
-      menubarPopoverEnabled: true,
-      // Local-extension hot-reload watcher is ON by default. Absent-in-file ⇒
-      // true; the user opts OUT by persisting false. See
-      // AppConfig.localExtensionHotReloadEnabled.
-      localExtensionHotReloadEnabled: true,
-      // Trust all ZCC tools is ON by default. Absent-in-file ⇒ true; the user
-      // opts OUT by persisting false. This flips the default for every install
-      // (fresh or updated) with no migration step — an existing explicit
-      // `false` (a deliberate opt-out) still reads back false. See
-      // AppConfig.trustZccToolsEnabled.
-      trustZccToolsEnabled: true,
-      // Default start path for remote (SSH) projects with no per-project
-      // remotePath of their own. A per-project remotePath still overrides this;
-      // blanking the Settings field re-applies this fallback. See
-      // AppConfig.remoteDefaultPath.
-      // A blank default lets each remote start from its own $HOME.
-      remoteDefaultPath: ''
-    };
-    const stored = normalizeConfig(readJsonRaw<Partial<AppConfig>>(configFile, {}));
-    return projectConfigCompatibility({ ...fallback, ...stored, version: 1 });
+    return configStore.getConfig();
   },
   setConfig(patch: Partial<AppConfig>): AppConfig {
-    const normalizedPatch = normalizeConfig(patch);
-    const next = { ...this.getConfig(), ...normalizedPatch, version: 1 as const };
-    // `undefined` is an intentional reset for optional canonical fields. The
-    // normalizer omits it for safety, so apply this deletion after validation.
-    const optionalHarnessKeys = [
-      'defaultHarness',
-      'harnessRouting',
-      'claudeAppendSystemPrompt',
-      'claudeExtraArgs',
-      'claudeAddDirs',
-      'claudeAllowedTools',
-      'claudeDeniedTools',
-      'defaultCodexSandbox',
-      'defaultCodexApproval',
-      'defaultExecutionState',
-      'piProvider',
-      'piModel',
-      'piThinking'
-    ] as const;
-    for (const key of optionalHarnessKeys) {
-      if (Object.prototype.hasOwnProperty.call(patch, key) && patch[key] === undefined) {
-        delete next[key];
-      }
-    }
-    // A disabled harness cannot remain the global default. Reset atomically to
-    // the absent/Claude compatibility default rather than persisting invalid
-    // state that launch UI would have to repair later.
-    if (next.defaultHarness && !harnessEnabled(next, next.defaultHarness)) {
-      delete next.defaultHarness;
-    }
-    writeJson(configFile, canonicalConfigForWrite(next));
-    return next;
+    return configStore.setConfig(patch);
   },
   getProjectSettings(id: string): ProjectSettings {
     const all = readJsonRaw<Record<string, ProjectSettings>>(projectSettingsFile, {});

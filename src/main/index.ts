@@ -20,10 +20,13 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, realpathSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, relative } from 'node:path';
+import { isTrustedRendererUrl, rendererUrl, setProductionRendererOrigin } from './renderer-url.js';
+import { startRuntimeSupervisor, type RuntimeSupervisor } from './runtime-supervisor.js';
+import { runtimeHostAvailable, setRuntimeHostSupervisor } from './harness/execution-environment.js';
 import { IPC } from '../shared/ipc.js';
 import { sanitizeExtraArgs } from '../shared/launch-sanitize.js';
 import { providerCapabilities, isClaudeProfile, isCodexProfile, isOpenCodeProfile, seedPromptArgs } from '../shared/launch-provider.js';
-import { store, scratchWorkspaceRoot, worktreeRoot, worktreeTargetDir } from './store.js';
+import { EXTENSION_PROJECT_CATEGORY, store, scratchWorkspaceRoot, worktreeRoot, worktreeTargetDir } from './store.js';
 import { PtyManager } from './pty.js';
 import { resolveMaxLiveSessions } from './launch/capacity.js';
 import { revalidateLaunchCommit as revalidateCommonLaunchCommit } from './launch/commit-revalidation.js';
@@ -2236,12 +2239,26 @@ moduleRouter = new ModuleRouter(moduleHost, extProcessHost);
 // renderer wouldn't otherwise re-pull the project list). Idempotent: on a
 // reload/continue against an already-registered project it's a cheap no-op
 // beyond the refresh.
-const registerExtensionProject = (workingDir: string, name: string): Project => {
-  const existed = store.listProjects().some((p) => p.path === workingDir);
-  const project = store.ensureExtensionProject(workingDir, name);
+const registerExtensionProject = async (workingDir: string, name: string): Promise<Project> => {
+  const projects = runtimeSupervisor
+    ? await runtimeSupervisor.listProjects() as Project[]
+    : store.listProjects();
+  const existed = projects.some((p) => p.path === workingDir);
+  const label = `Ext: ${name}`.slice(0, 256);
+  // The server add path recognizes well-formed extension sources. Follow it with
+  // the explicit category/name projection so the local-source record remains the
+  // authority for a self-heal, matching the legacy ensureExtensionProject contract.
+  // Never fall back after a runtime error: either server mutation may have committed.
+  const project = runtimeSupervisor
+    ? await runtimeSupervisor.addProject(workingDir) as Project
+    : store.ensureExtensionProject(workingDir, name);
+  const categorized = runtimeSupervisor && (project.category !== EXTENSION_PROJECT_CATEGORY || project.name !== label)
+    ? await runtimeSupervisor.updateProject(project.id, { category: EXTENSION_PROJECT_CATEGORY, name: label }) as Project | null
+    : project;
+  if (!categorized) throw new Error('extension project disappeared during registration');
   if (!existed) {
-    ensureMcpConfigForProject(project.id).catch((err) =>
-      logMainError(`ensureMcpConfigForProject(${project.id})`, err)
+    ensureMcpConfigForProject(categorized.id).catch((err) =>
+      logMainError(`ensureMcpConfigForProject(${categorized.id})`, err)
     );
     templates.rebindProjects();
     personas.rebindProjects();
@@ -2251,8 +2268,11 @@ const registerExtensionProject = (workingDir: string, name: string): Project => 
     goals.rebindWatchers();
     followups.rebindWatchers();
   }
-  safeSend(IPC.projects.onChanged, store.listProjects());
-  return project;
+  safeSend(
+    IPC.projects.onChanged,
+    runtimeSupervisor ? await runtimeSupervisor.listProjects() as Project[] : store.listProjects()
+  );
+  return categorized;
 };
 // Pack a local extension's source working dir + install it through the
 // trusted seam + reconcile — the shared tail of `createLocal`, `reinstallLocal`,
@@ -2328,7 +2348,7 @@ const createLocalExtension = async (
   // too. Terminal spawn confines cwd to this project root (Rule 2). Wiring +
   // the projects:onChanged push (so the sidebar shows the new "Extensions"
   // group live) go through the shared helper.
-  const project = registerExtensionProject(workingDir, name);
+  const project = await registerExtensionProject(workingDir, name);
   // Feed: a local extension has a real per-project home (its Extensions-
   // category project), so its lifecycle IS observable in that project's feed.
   // Global (marketplace/bundled/dir) installs have no project home, so they
@@ -2366,7 +2386,7 @@ const adoptLocalSource = async (workingDir: string): Promise<Result<CreateLocalE
   }
 
   const name = extensionEntries.find((entry) => entry.id === id)?.manifest?.title ?? id;
-  const project = registerExtensionProject(workingDir, name);
+  const project = await registerExtensionProject(workingDir, name);
   return { ok: true, value: { id, workingDir, projectId: project.id } };
 };
 // Hot-reload for a local extension being actively developed: while a live
@@ -2411,6 +2431,45 @@ let extensionsWatcher: FSWatcher | null = null;
 let extensionsChangeDebounce: NodeJS.Timeout | null = null;
 let mcpServer: McpServerHandle | null = null;
 let controlPlane: ControlPlaneHandle | null = null;
+let runtimeSupervisor: RuntimeSupervisor | null = null;
+
+function resolvedAppVersion(): string {
+  const version = app.getVersion();
+  const e2eVersion = process.env.ZCC_E2E_APP_VERSION;
+  return version === '0.0' && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(e2eVersion ?? '')
+    ? e2eVersion!
+    : version;
+}
+
+async function ensureRendererStaticHost(): Promise<void> {
+  if (process.env.ELECTRON_RENDERER_URL || runtimeSupervisor) return;
+  // electron-vite emits renderer assets beside the main bundle. Electron's asar
+  // filesystem support keeps this usable in packaged builds without exposing a
+  // broad filesystem server.
+  const rootDir = join(__dirname, '../renderer');
+  runtimeSupervisor = await startRuntimeSupervisor({
+    rendererRoot: rootDir,
+    dataDir: join(app.getPath('home'), '.zcc'),
+    runtimeDir: __dirname,
+    version: resolvedAppVersion()
+  });
+  runtimeSupervisor.onProjectSettingsChanged((projectId) => {
+    safeSend(IPC.projectSettings.onChanged, projectId);
+  });
+  setRuntimeHostSupervisor(runtimeSupervisor);
+  setProductionRendererOrigin(runtimeSupervisor.rendererUrl);
+}
+
+/**
+ * Launch authorization must read the same settings authority that accepts the
+ * write. The legacy store remains the development-mode fallback until its
+ * runtime replacement is available there as well.
+ */
+async function getAuthoritativeProjectSettings(projectId: string): Promise<ProjectSettings> {
+  return runtimeSupervisor
+    ? await runtimeSupervisor.getProjectSettings(projectId) as ProjectSettings
+    : store.getProjectSettings(projectId);
+}
 
 // Resolve packaged or unpackaged icon location. In dev electron-vite runs from
 // repo root with __dirname=out/main, so the parent is the project root. Once
@@ -3024,6 +3083,9 @@ export function createTerminalConfined(
     // all absent). Every candidate is ADVISORY — the microVM builder re-resolves
     // the winner against the closed image allowlist before spawn (Rule 1), so a
     // stale/unknown persona or project value is rejected there, not honored.
+    // All production launches arrive with the immutable authorized snapshot.
+    // Keep the legacy sync fallback for narrow direct-call tests and development
+    // tools that deliberately exercise this low-level helper in isolation.
     const projectMicroVmSettings = opts?.launchSnapshot?.projectSettings
       ?? store.getProjectSettings(req.projectId);
     const resolvedMicroVmImage =
@@ -3070,7 +3132,10 @@ export function createTerminalConfined(
       // chain (launcher > persona > project > global); cpu/mem stay launcher-only hints.
       microVmImage: resolvedMicroVmImage,
       microVmCpus: req.microVmCpus,
-      microVmMemoryMib: req.microVmMemoryMib
+      microVmMemoryMib: req.microVmMemoryMib,
+      // Kept off while this first lane is verified through a dedicated internal
+      // control path. Public terminal IPC remains behaviorally unchanged.
+      runtimeHost: process.env.ZCC_RUNTIME_HOST === '1' && runtimeHostAvailable()
     });
     // Remember the worktree so the exit handler can prune it once the agent is
     // done (the `exit` event fires after the live session is dropped, so we
@@ -3126,7 +3191,7 @@ async function launchAuthorizedTerminal(
   const project = foundProject;
   const config = store.getConfig();
   const personaSnapshot = personas.list();
-  const projectSettings = store.getProjectSettings(req.projectId);
+  const projectSettings = await getAuthoritativeProjectSettings(req.projectId);
   const effectiveLaunch = resolveEffectiveLaunch(req, project);
   const userGaveTask = !!(req.prompt?.trim() || req.extraArgs?.length);
   const frameworkPersona = !req.personaId && req.frameworkIds?.length
@@ -3342,7 +3407,7 @@ async function launchAuthorizedTerminal(
     const currentProject = currentProjects.find((candidate) => candidate.id === project.id);
     if (!currentProject) return { ok: false, reason: 'project identity changed after preflight' };
     const currentConfig = store.getConfig();
-    const currentSettings = store.getProjectSettings(project.id);
+    const currentSettings = await getAuthoritativeProjectSettings(project.id);
     const currentPersonaCatalog = personas.list();
     const currentFrameworkPersona = !authorizedPlan.request.personaId && authorizedPlan.request.frameworkIds?.length
       ? resolveFrameworkPersona(
@@ -3416,6 +3481,7 @@ async function launchBackgroundTerminal(
   const project = projects.find((candidate) => candidate.id === opts.projectId);
   if (!project) throw new LaunchSpawnError('NOT_FOUND', 'project not found');
   const effectiveLaunch = resolveEffectiveLaunch(opts, project);
+  const projectSettings = await getAuthoritativeProjectSettings(project.id);
   const plan = preflightLaunch(opts, {
     principal: () => principal,
     binding: () => ({
@@ -3429,12 +3495,12 @@ async function launchBackgroundTerminal(
       requestedProfile: opts.profile,
       requestedPersonaId: opts.persona?.id,
       config: opts.config,
-      projectSettings: opts.projectSettings,
+      projectSettings,
       effectiveLaunch,
       storeRevision: launchDigest({
         projects,
         config: opts.config,
-        projectSettings: opts.projectSettings,
+        projectSettings,
         persona: opts.persona
       })
     })
@@ -3443,7 +3509,7 @@ async function launchBackgroundTerminal(
     config: opts.config,
     profile: opts.profile,
     persona: opts.persona,
-    projectSettings: opts.projectSettings,
+    projectSettings,
     harnessRouting: opts.harnessRouting,
     extraArgs: opts.extraArgs,
     projectId: project.id,
@@ -3476,7 +3542,7 @@ async function launchBackgroundTerminal(
       const currentProject = currentProjects.find((candidate) => candidate.id === project.id);
       if (!currentProject) return { ok: false as const, reason: 'project identity changed after preflight' };
       const currentConfig = store.getConfig();
-      const currentSettings = store.getProjectSettings(project.id);
+      const currentSettings = await getAuthoritativeProjectSettings(project.id);
       const currentPersona = opts.persona?.id
         ? personas.list().find((candidate) => candidate.id === opts.persona!.id)
         : undefined;
@@ -3529,6 +3595,7 @@ async function launchBackgroundTerminal(
       const spawnLaunch = materializeEffectiveLaunch(authorizedPlan.resolved.effectiveLaunch);
       const session = createTerminalFromAuthorizedPlan({
         ...authorizedPlan.request,
+        projectSettings: authorizedPlan.resolved.projectSettings,
         cwd: spawnLaunch.cwd,
         preallocatedSessionId: authorizedPlan.sessionId
       });
@@ -3547,7 +3614,10 @@ async function launchBackgroundTerminal(
       session.restoreCapabilityId = restoreCapabilityId;
       restoreCapabilities.put({
         id: restoreCapabilityId,
-        request: finalPlan.request,
+        request: {
+          ...finalPlan.request,
+          environment: finalPlan.request.environment === 'runtime-host' ? 'local' : finalPlan.request.environment
+        },
         sessionId: session.id,
         sessionProfile: session.profile,
         sessionTitle: session.title,
@@ -4422,12 +4492,14 @@ function createWindow(projectId?: string, repairOnly = false) {
 
   // The scoped project id rides in as a query param so the renderer can lock to
   // it before first paint (read in main.tsx). Unscoped windows get no param.
-  const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
-  if (process.env.ELECTRON_RENDERER_URL) {
-    win.loadURL(`${process.env.ELECTRON_RENDERER_URL}${query}`);
+  const url = rendererUrl(projectId ? { projectId } : {});
+  if (url) {
+    win.loadURL(url);
   } else {
+    // Startup-repair can render before normal bootstrap starts the local static
+    // host. It is the only permitted file-backed product surface.
     win.loadFile(join(__dirname, '../renderer/index.html'), {
-      search: query ? query.slice(1) : undefined
+      search: projectId ? `projectId=${encodeURIComponent(projectId)}` : undefined
     });
   }
 
@@ -4753,7 +4825,14 @@ async function cloneAndRegisterProject(
       };
     }
     try {
-      const project = store.addProject(res.path!);
+      // Clone execution remains Electron-owned for its filesystem/process
+      // confinement, but registering its completed directory must use the same
+      // server authority as every other local project mutation in packaged mode.
+      // Do not fall back after a runtime failure: the server may have committed
+      // before its response timed out.
+      const project = runtimeSupervisor
+        ? await runtimeSupervisor.addProject(res.path!) as Project
+        : store.addProject(res.path!);
       ensureMcpConfigForProject(project.id).catch((err) =>
         logMainError(`ensureMcpConfigForProject(${project.id})`, err)
       );
@@ -4764,7 +4843,10 @@ async function cloneAndRegisterProject(
       scheduler.rebindWatchers();
       goals.rebindWatchers();
       followups.rebindWatchers();
-      safeSend(IPC.projects.onChanged, store.listProjects());
+      safeSend(
+        IPC.projects.onChanged,
+        runtimeSupervisor ? await runtimeSupervisor.listProjects() as Project[] : store.listProjects()
+      );
       return { ok: true, project, reused: res.reused };
     } catch (err) {
       return { ok: false, code: 'ADD_FAILED', message: String(err), path: res.path };
@@ -4782,10 +4864,18 @@ function registerIpc() {
     harnessVerificationCache = { expiresAt: Date.now() + 30_000, result };
     return result;
   };
-  safeHandle(IPC.projects.list, () => store.listProjects(), () => []);
+  safeHandle(IPC.projects.list, async () => {
+    const projects = await runtimeSupervisor?.listProjects();
+    return runtimeSupervisor ? projects as Project[] : store.listProjects();
+  }, () => []);
   ipcMain.handle(IPC.projects.add, async (_e, path: string): Promise<Result<Project>> => {
     try {
-      const project = store.addProject(path);
+      // Once the runtime is active, the server is the only local-project writer.
+      // Do not fall back after a server error: an expired response may still have
+      // committed, and a second legacy write could create a divergent record.
+      const project = runtimeSupervisor
+        ? await runtimeSupervisor.addProject(path) as Project
+        : store.addProject(path);
       // Fire-and-forget the .mcp.json write; failure shouldn't block
       // adding a project (terminal still works without inbox push). Logged
       // for visibility.
@@ -4805,6 +4895,10 @@ function registerIpc() {
       scheduler.rebindWatchers();
       goals.rebindWatchers();
       followups.rebindWatchers();
+      safeSend(
+        IPC.projects.onChanged,
+        runtimeSupervisor ? await runtimeSupervisor.listProjects() as Project[] : store.listProjects()
+      );
       return { ok: true, value: project };
     } catch (err) {
       return { ok: false, code: 'ADD_FAILED', message: String(err) };
@@ -4906,9 +5000,12 @@ function registerIpc() {
   );
   safeHandle(
     IPC.projects.remove,
-    (id: string) => {
+    async (id: string) => {
       ptys.list(id).forEach((s) => ptys.close(s.id));
-      store.removeProject(id);
+      // A packaged runtime owns the project record and its settings cleanup.
+      // Never fall back after a server error: the request may have committed.
+      if (runtimeSupervisor) await runtimeSupervisor.removeProject(id);
+      else store.removeProject(id);
       scheduler.onProjectRemoved(id);
       scheduler.rebindWatchers();
       goals.onProjectRemoved(id);
@@ -4928,7 +5025,7 @@ function registerIpc() {
   );
   safeHandle(
     IPC.projects.update,
-    (
+    async (
       id: string,
       patch: {
         name?: string;
@@ -4939,23 +5036,48 @@ function registerIpc() {
         favorite?: boolean;
         remotePath?: string;
       }
-    ) => store.updateProject(id, patch),
+    ) => {
+      const usesLegacyFields = patch.defaultAgents !== undefined
+        || patch.defaultPersonas !== undefined
+        || patch.launchDefault !== undefined
+        || patch.favorite !== undefined
+        || patch.remotePath !== undefined;
+      if (!runtimeSupervisor || usesLegacyFields || (patch.name === undefined && patch.color === undefined)) {
+        return store.updateProject(id, patch);
+      }
+      const project = await runtimeSupervisor.updateProject(id, {
+        ...(patch.name !== undefined ? { name: patch.name } : {}),
+        ...(patch.color !== undefined ? { color: patch.color as '#2f81f7' | '#3fb950' | '#d4a017' | '#bc8cff' | '#39c5cf' | '#f85149' | '#ff7b72' | '#8b949e' } : {})
+      });
+      safeSend(IPC.projects.onChanged, await runtimeSupervisor.listProjects() as Project[]);
+      return project as Project | null;
+    },
     () => null
   );
   safeHandle(
     IPC.projects.touch,
-    (id: string) => {
-      const touched = store.touchProject(id);
+    async (id: string) => {
+      const touched = runtimeSupervisor
+        ? await runtimeSupervisor.touchProject(id) as Project | null
+        : store.touchProject(id);
       // Re-point the per-project skills watcher whenever the renderer signals
       // a project switch — `projects.touch` is the canonical "selected" signal.
       setActiveProjectSkillsWatcher(touched?.path ?? null, touched?.id ?? null);
+      if (runtimeSupervisor && touched) {
+        safeSend(IPC.projects.onChanged, await runtimeSupervisor.listProjects() as Project[]);
+      }
       return touched;
     },
     () => null
   );
   safeHandle(
     IPC.projects.reorder,
-    (orderedIds: string[]) => store.reorderProjects(orderedIds),
+    async (orderedIds: string[]) => {
+      if (!runtimeSupervisor) return store.reorderProjects(orderedIds);
+      const projects = await runtimeSupervisor.reorderProjects(orderedIds);
+      safeSend(IPC.projects.onChanged, projects as Project[]);
+      return projects as Project[];
+    },
     () => []
   );
   safeHandle(
@@ -5409,6 +5531,9 @@ function registerIpc() {
     () => []
   );
 
+  // Config remains on the compatibility owner until its normalizer, canonical
+  // harness projection, and atomic write transaction move together. A raw JSON
+  // server reader would silently change persisted compatibility semantics.
   safeHandle(IPC.config.get, () => store.getConfig(), () => store.getConfig());
   safeHandle<[Partial<AppConfig>], AppConfig>(
     IPC.config.set,
@@ -5480,13 +5605,21 @@ function registerIpc() {
 
   safeHandle(
     IPC.projectSettings.get,
-    (id: string) => store.getProjectSettings(id),
+    async (id: string) => runtimeSupervisor
+      ? await runtimeSupervisor.getProjectSettings(id) as ProjectSettings
+      : store.getProjectSettings(id),
     () => ({} as ProjectSettings)
   );
   // Mutations must reject on persistence failure so the renderer can roll back
   // its optimistic state and show the write error. Reads remain best-effort.
   ipcMain.handle(IPC.projectSettings.set, (_event, id: string, patch: Partial<ProjectSettings>) =>
-    store.setProjectSettings(id, patch)
+    runtimeSupervisor
+      ? runtimeSupervisor.setProjectSettings(id, patch)
+      : (() => {
+          const settings = store.setProjectSettings(id, patch);
+          safeSend(IPC.projectSettings.onChanged, id);
+          return settings;
+        })()
   );
   ipcMain.handle(IPC.executionConsent.listProject, (_event, projectId: string) =>
     executionConsentManagement.listProjectGrants(projectId)
@@ -6981,7 +7114,7 @@ function registerIpc() {
       // main's own record — never renderer/agent free-text (Rule 1). Seed the
       // display name from the installed entry's title, falling back to the id.
       const name = extensionEntries.find((e) => e.id === id)?.manifest?.title ?? id;
-      const project = registerExtensionProject(record.workingDir, name);
+      const project = await registerExtensionProject(record.workingDir, name);
       return { ok: true, value: { id, workingDir: record.workingDir, projectId: project.id } };
     },
     (err): Result<CreateLocalExtensionResult> => ({
@@ -7227,17 +7360,7 @@ function registerIpc() {
     safeSend(IPC.skills.bundles.onChanged, bundles);
   });
   safeHandle(IPC.app.homedir, () => homedir(), () => '');
-  safeHandle(
-    IPC.app.version,
-    () => {
-      const version = app.getVersion();
-      const e2eVersion = process.env.ZCC_E2E_APP_VERSION;
-      return version === '0.0' && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(e2eVersion ?? '')
-        ? e2eVersion!
-        : version;
-    },
-    () => ''
-  );
+  safeHandle(IPC.app.version, () => runtimeSupervisor?.appVersion() ?? resolvedAppVersion(), () => '');
   safeHandle(IPC.app.microVmSupported, () => microVmPlatformSupported(), () => false);
   // Renderer-driven fullscreen targets its sender window, never whichever window
   // happened to gain focus before main handles the request.
@@ -8345,6 +8468,22 @@ async function runStartupMigration(): Promise<StartupState> {
       else showMainWindow();
     }
   });
+  // A repair-only window is loaded via `loadFile` (the loopback static host
+  // isn't up yet — see createWindow). Once retry succeeds, that host IS up, so
+  // `isTrustedRendererUrl` (renderer-url.ts) now judges the still-open file://
+  // document untrusted against the new loopback origin and would block a
+  // renderer-initiated reload. Main must drive this navigation itself (Rule 1:
+  // renderer is untrusted, main authorizes) — and must be the ONLY side that
+  // navigates: a renderer-initiated `location.reload()` firing around the same
+  // time races this `loadURL`, and whichever loses cancels the other (both can
+  // end up cancelled, leaving the window stuck). The renderer's retry() no
+  // longer reloads itself; this is unconditional so dev (ELECTRON_RENDERER_URL,
+  // same origin throughout) also gets its remount via this one path.
+  if (startupState.mode === 'ready') {
+    const win = unscopedWindow();
+    const url = rendererUrl();
+    if (win && !win.isDestroyed() && url) win.loadURL(url);
+  }
   return startupState;
 }
 
@@ -8906,7 +9045,7 @@ async function bootstrapNormal() {
     // register_project tool: add a cloned/created dir to the project list on the
     // agent's behalf. Mirrors the IPC `projects.add` side-effects (mcp config +
     // store rebinds) and pushes `projects:onChanged` so the sidebar updates live.
-    registerProject: (absPath: string) => {
+    registerProject: async (absPath: string) => {
       // Trust gate: register_project turns an AGENT-supplied path into a trusted
       // project root (subsequent fs.create/rename/delete confine to it). Without
       // a gate, a running agent could register `/etc`, `/`, or any readable dir
@@ -8939,8 +9078,16 @@ async function bootstrapNormal() {
           `register_project rejected: ${absPath} is outside HOME, the clone root, and all known projects`
         );
       }
-      const existed = store.listProjects().some((p) => p.path === absPath);
-      const project = store.addProject(absPath); // throws on a bad path → tool reports isError
+      const projects = runtimeSupervisor
+        ? await runtimeSupervisor.listProjects() as Project[]
+        : store.listProjects();
+      const existed = projects.some((p) => p.path === realTarget);
+      // The main-side gate above establishes that the agent's path is allowed;
+      // packaged registration still crosses the server's canonical add boundary.
+      // No runtime fallback after an error: the server may already have committed.
+      const project = runtimeSupervisor
+        ? await runtimeSupervisor.addProject(realTarget) as Project
+        : store.addProject(realTarget); // throws on a bad path → tool reports isError
       if (!existed) {
         ensureMcpConfigForProject(project.id).catch((err) =>
           logMainError(`ensureMcpConfigForProject(${project.id})`, err)
@@ -8951,7 +9098,10 @@ async function bootstrapNormal() {
         libraryStore.rebindProjects?.();
         scheduler.rebindWatchers();
       }
-      safeSend(IPC.projects.onChanged, store.listProjects());
+      safeSend(
+        IPC.projects.onChanged,
+        runtimeSupervisor ? await runtimeSupervisor.listProjects() as Project[] : store.listProjects()
+      );
       return { project, alreadyExisted: existed };
     },
     cloneProject: cloneAndRegisterProject,
@@ -9199,6 +9349,12 @@ async function bootstrapNormal() {
     callback(permission === 'media');
   });
   session.defaultSession.setPermissionCheckHandler((_wc, permission) => permission === 'media');
+  try {
+    await ensureRendererStaticHost();
+  } catch (error) {
+    normalBootstrapStarted = false;
+    throw error;
+  }
   if (!unscopedWindow()) createWindow();
   // tmux orphan reaper (Phase 2): when persistence covers local sessions, kill `cc-*` tmux
   // servers left over from a previous run that no live pty is bound to. Runs
@@ -9611,6 +9767,12 @@ app.on('before-quit', (event) => {
     controlPlane = null;
     handle.close().catch((err) => logMainError('controlPlane.close', err));
   }
+  if (runtimeSupervisor) {
+    const runtime = runtimeSupervisor;
+    runtimeSupervisor = null;
+    setRuntimeHostSupervisor(null);
+    runtime.close().catch((err) => logMainError('runtimeSupervisor.close', err));
+  }
 });
 
 process.on('uncaughtException', (err) => {
@@ -9637,17 +9799,6 @@ app.on('web-contents-created', (_e, contents) => {
     } catch {
       return false;
     }
-  };
-  const isTrustedRendererUrl = (value: string) => {
-    const devUrl = process.env.ELECTRON_RENDERER_URL;
-    if (devUrl) {
-      try {
-        return new URL(value).origin === new URL(devUrl).origin;
-      } catch {
-        return false;
-      }
-    }
-    return value.startsWith('file://');
   };
   const preventExternalNavigation = (event: Electron.Event, url: string) => {
     if (!isTrustedRendererUrl(url)) event.preventDefault();

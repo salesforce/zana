@@ -149,9 +149,12 @@ export function ProjectWorktreeSettings({
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const savingRef = useRef(false);
+  const currentProjectId = useRef(project.id);
 
   useEffect(() => {
     let cancelled = false;
+    currentProjectId.current = project.id;
     setLoaded(false);
     setError(null);
     window.cc.projectSettings.get(project.id)
@@ -170,10 +173,20 @@ export function ProjectWorktreeSettings({
     return () => { cancelled = true; };
   }, [project.id]);
 
+  useEffect(() => window.cc.projectSettings.onChanged((projectId) => {
+    if (projectId !== project.id || savingRef.current) return;
+    void window.cc.projectSettings.get(projectId).then((settings) => {
+      if (projectId === currentProjectId.current) setValue(settings.worktreeIsolation);
+    }).catch(() => {
+      // A background refresh is advisory and must not replace an already-rendered value.
+    });
+  }), [project.id]);
+
   const save = async (next: boolean | undefined) => {
     if (saving) return;
     const previous = value;
     setValue(next);
+    savingRef.current = true;
     setSaving(true);
     setError(null);
     try {
@@ -190,6 +203,7 @@ export function ProjectWorktreeSettings({
       setError(message);
       pushToast(message, 'error');
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -281,6 +295,7 @@ export function ProjectHarnessSettings({
   const [activeHarnessTabs, setActiveHarnessTabs] = useState<Record<string, 'launch' | 'harness' | 'files'>>({});
   const writeSequence = useRef(0);
   const currentProjectId = useRef(project.id);
+  const pendingSettingsWrites = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -306,6 +321,16 @@ export function ProjectHarnessSettings({
     });
     return () => { cancelled = true; };
   }, [project.id]);
+
+  useEffect(() => window.cc.projectSettings.onChanged((projectId) => {
+    if (projectId !== project.id || pendingSettingsWrites.current > 0) return;
+    void window.cc.projectSettings.get(projectId).then((value) => {
+      if (projectId === currentProjectId.current) setSettingsState({ projectId, value });
+    }).catch(() => {
+      // The normal load path renders a useful error. A background refresh is
+      // advisory and must not erase an already-visible settings projection.
+    });
+  }), [project.id]);
 
   const settingsReady = settingsState?.projectId === project.id;
   const settings = settingsReady ? settingsState.value : null;
@@ -340,6 +365,7 @@ export function ProjectHarnessSettings({
     if (!settings) return;
     const sequence = ++writeSequence.current;
     const previous = settings;
+    pendingSettingsWrites.current += 1;
     setSettingsError(null);
     setSettingsState({ projectId: project.id, value: { ...settings, ...patch } });
     try {
@@ -358,6 +384,8 @@ export function ProjectHarnessSettings({
       setSettingsState({ projectId: project.id, value: previous });
       setSettingsError(message);
       pushToast(message, 'error');
+    } finally {
+      pendingSettingsWrites.current -= 1;
     }
   };
 

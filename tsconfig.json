@@ -19,7 +19,13 @@
       "@zana-ai/zcc-extension-sdk": ["./packages/extension-sdk/src/index.ts"],
       "@zana-ai/zcc-extension-sdk/*": ["./packages/extension-sdk/src/*"],
       "@zcc/harness-sdk": ["./packages/harness-sdk/src/index.ts"],
-      "@zcc/harness-sdk/*": ["./packages/harness-sdk/src/*"]
+      "@zcc/harness-sdk/*": ["./packages/harness-sdk/src/*"],
+      "@zana-ai/zcc-server/static-host": ["./apps/server/src/static-host.ts"],
+       "@zana-ai/zcc-host-daemon": ["./apps/host-daemon/src/index.ts"],
+       "@zana-ai/zcc-contracts/project-settings": ["./packages/contracts/src/project-settings.ts"],
+       "@zana-ai/zcc-contracts/runtime": ["./packages/contracts/src/runtime.ts"],
+      "@zana-ai/zcc-contracts/terminal-execution": ["./packages/contracts/src/terminal-execution.ts"],
+      "@zana-ai/zcc-contracts/canonical-json": ["./packages/contracts/src/canonical-json.ts"]
     }
   },
   "include": [

@@ -1,6 +1,7 @@
 import { BrowserWindow, screen, type Tray } from 'electron';
 import { join } from 'node:path';
 import { IPC } from '../shared/ipc.js';
+import { rendererUrl } from './renderer-url.js';
 import type { PtyManager } from './pty.js';
 import type { SchedulerManager } from './scheduler.js';
 import type { AgentStatusTracker } from './agent-status.js';
@@ -250,11 +251,12 @@ export class MenubarController {
       this.win = null;
     });
 
-    const query = 'surface=popover';
-    if (process.env.ELECTRON_RENDERER_URL) {
-      void win.loadURL(`${process.env.ELECTRON_RENDERER_URL}?${query}`);
+    const url = rendererUrl({ surface: 'popover' });
+    if (url) {
+      void win.loadURL(url);
     } else {
-      void win.loadFile(join(__dirname, '../renderer/index.html'), { search: query });
+      // Only reachable during startup-repair before the supervised host starts.
+      void win.loadFile(join(__dirname, '../renderer/index.html'), { search: 'surface=popover' });
     }
 
     this.win = win;

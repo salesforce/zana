@@ -1,0 +1,23 @@
+{
+  "name": "@zana-ai/zcc-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ZCC authoritative local control-plane service.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@zana-ai/zcc-contracts": "workspace:*",
+    "@zana-ai/zcc-domain": "workspace:*",
+    "@zana-ai/zcc-host-daemon": "workspace:*",
+    "better-sqlite3": "^12.11.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

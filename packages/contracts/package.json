@@ -1,0 +1,48 @@
+{
+  "name": "@zana-ai/zcc-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "source": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./execution": {
+      "types": "./src/execution.ts",
+      "source": "./src/execution.ts",
+      "default": "./src/execution.ts"
+    },
+    "./project-settings": {
+      "types": "./src/project-settings.ts",
+      "source": "./src/project-settings.ts",
+      "default": "./src/project-settings.ts"
+    },
+    "./runtime": {
+      "types": "./src/runtime.ts",
+      "source": "./src/runtime.ts",
+      "default": "./src/runtime.ts"
+    },
+    "./terminal-execution": {
+      "types": "./src/terminal-execution.ts",
+      "source": "./src/terminal-execution.ts",
+      "default": "./src/terminal-execution.ts"
+    },
+    "./canonical-json": {
+      "types": "./src/canonical-json.ts",
+      "source": "./src/canonical-json.ts",
+      "default": "./src/canonical-json.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@zana-ai/zcc-domain": "workspace:*",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}

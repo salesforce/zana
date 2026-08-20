@@ -1,0 +1,29 @@
+{
+  "name": "@zana-ai/zcc-host-daemon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ZCC local execution host for authorized PTY and harness work.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "source": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@zana-ai/zcc-contracts": "workspace:*",
+    "@zana-ai/zcc-domain": "workspace:*",
+    "node-pty": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

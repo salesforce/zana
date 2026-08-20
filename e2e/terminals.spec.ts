@@ -17,7 +17,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-test.use({ e2e: true });
+test.use({ e2e: true, initialConfig: { tmuxScope: 'off' } });
 
 test('shell session streams onData then onExit on the live timeline', async ({ app, events }) => {
   const { window } = app;
@@ -42,10 +42,10 @@ test('shell session streams onData then onExit on the live timeline', async ({ a
         rows: 24,
         title: 'Shell Probe'
       });
-      const s = (res && 'ok' in res ? (res as { value: { id: string } }).value : res) as {
-        id: string;
-      };
-      return s.id;
+      if (!res || !('ok' in res) || !res.ok) {
+        throw new Error(`terminal create failed: ${res && 'message' in res ? res.message : JSON.stringify(res)}`);
+      }
+      return res.value.id;
     }, projectId);
     expect(sessionId).toBeTruthy();
 

@@ -1,0 +1,19 @@
+{
+  "name": "@zana-ai/zcc-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ZCC Electron shell and native desktop integration.",
+  "scripts": {
+    "dev": "pnpm --dir ../.. run predev && pnpm --dir ../.. run dev",
+    "start": "pnpm --dir ../.. run prestart && pnpm --dir ../.. run start",
+    "build": "pnpm --dir ../.. run prebuild && pnpm --dir ../.. run build",
+    "typecheck": "pnpm --dir ../.. run typecheck",
+    "package": "pnpm --dir ../.. run check:release-notes && pnpm --dir ../.. run build:cli && pnpm --dir ../.. run fetch:opencode && pnpm run build && pnpm --dir ../.. exec electron-builder",
+    "package:mac": "pnpm run package -- --mac",
+    "release:mac": "pnpm --dir ../.. run check:release-notes && pnpm --dir ../.. run build:cli && pnpm --dir ../.. run fetch:opencode && GH_TOKEN=$(GH_HOST=github.com gh auth token) pnpm run build && GH_TOKEN=$(GH_HOST=github.com gh auth token) pnpm --dir ../.. exec electron-builder --mac --publish always"
+  },
+  "dependencies": {
+    "@zana-ai/zcc-contracts": "workspace:*"
+  }
+}

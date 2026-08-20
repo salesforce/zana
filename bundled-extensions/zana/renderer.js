@@ -131,7 +131,7 @@ var reactDefault = new Proxy({}, {
 	}
 });
 //#endregion
-//#region ../../node_modules/lucide-react/dist/esm/shared/src/utils/mergeClasses.mjs
+//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@18.3.1/node_modules/lucide-react/dist/esm/shared/src/utils/mergeClasses.mjs
 /**
 * @license lucide-react v1.31.0 - ISC
 *
@@ -142,7 +142,7 @@ var mergeClasses = (...classes) => classes.filter((className, index, array) => {
 	return Boolean(className) && className.trim() !== "" && array.indexOf(className) === index;
 }).join(" ").trim();
 //#endregion
-//#region ../../node_modules/lucide-react/dist/esm/shared/src/utils/toKebabCase.mjs
+//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@18.3.1/node_modules/lucide-react/dist/esm/shared/src/utils/toKebabCase.mjs
 /**
 * @license lucide-react v1.31.0 - ISC
 *
@@ -151,7 +151,7 @@ var mergeClasses = (...classes) => classes.filter((className, index, array) => {
 */
 var toKebabCase = (string) => string.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
 //#endregion
-//#region ../../node_modules/lucide-react/dist/esm/shared/src/utils/toCamelCase.mjs
+//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@18.3.1/node_modules/lucide-react/dist/esm/shared/src/utils/toCamelCase.mjs
 /**
 * @license lucide-react v1.31.0 - ISC
 *
@@ -160,7 +160,7 @@ var toKebabCase = (string) => string.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLo
 */
 var toCamelCase = (string) => string.replace(/^([A-Z])|[\s-_]+(\w)/g, (match, p1, p2) => p2 ? p2.toUpperCase() : p1.toLowerCase());
 //#endregion
-//#region ../../node_modules/lucide-react/dist/esm/shared/src/utils/toPascalCase.mjs
+//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@18.3.1/node_modules/lucide-react/dist/esm/shared/src/utils/toPascalCase.mjs
 /**
 * @license lucide-react v1.31.0 - ISC
 *
@@ -172,7 +172,7 @@ var toPascalCase = (string) => {
 	return camelCase.charAt(0).toUpperCase() + camelCase.slice(1);
 };
 //#endregion
-//#region ../../node_modules/lucide-react/dist/esm/defaultAttributes.mjs
+//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@18.3.1/node_modules/lucide-react/dist/esm/defaultAttributes.mjs
 /**
 * @license lucide-react v1.31.0 - ISC
 *
@@ -191,7 +191,7 @@ var defaultAttributes = {
 	strokeLinejoin: "round"
 };
 //#endregion
-//#region ../../node_modules/lucide-react/dist/esm/shared/src/utils/hasA11yProp.mjs
+//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@18.3.1/node_modules/lucide-react/dist/esm/shared/src/utils/hasA11yProp.mjs
 /**
 * @license lucide-react v1.31.0 - ISC
 *
@@ -203,7 +203,7 @@ var hasA11yProp = (props) => {
 	return false;
 };
 //#endregion
-//#region ../../node_modules/lucide-react/dist/esm/context.mjs
+//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@18.3.1/node_modules/lucide-react/dist/esm/context.mjs
 /**
 * @license lucide-react v1.31.0 - ISC
 *
@@ -213,7 +213,7 @@ var hasA11yProp = (props) => {
 var LucideContext = createContext({});
 var useLucideContext = () => useContext(LucideContext);
 //#endregion
-//#region ../../node_modules/lucide-react/dist/esm/Icon.mjs
+//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@18.3.1/node_modules/lucide-react/dist/esm/Icon.mjs
 /**
 * @license lucide-react v1.31.0 - ISC
 *
@@ -236,7 +236,7 @@ var Icon = forwardRef(({ color, size, strokeWidth, absoluteStrokeWidth, classNam
 	}, [...iconNode.map(([tag, attrs]) => createElement(tag, attrs)), ...Array.isArray(children) ? children : [children]]);
 });
 //#endregion
-//#region ../../node_modules/lucide-react/dist/esm/createLucideIcon.mjs
+//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@18.3.1/node_modules/lucide-react/dist/esm/createLucideIcon.mjs
 /**
 * @license lucide-react v1.31.0 - ISC
 *
@@ -972,7 +972,7 @@ function isClosedZanaStatus(status, closedAt) {
 	return CLOSED_STATUSES.has((status ?? "").trim().toLowerCase());
 }
 //#endregion
-//#region ../../node_modules/zustand/esm/vanilla.mjs
+//#region ../../node_modules/.pnpm/zustand@5.0.15_@types+react@18.3.31_react@18.3.1/node_modules/zustand/esm/vanilla.mjs
 var createStoreImpl = (createState) => {
 	let state;
 	const listeners = /* @__PURE__ */ new Set();
@@ -1001,7 +1001,7 @@ var createStoreImpl = (createState) => {
 };
 var createStore = ((createState) => createState ? createStoreImpl(createState) : createStoreImpl);
 //#endregion
-//#region ../../node_modules/zustand/esm/react.mjs
+//#region ../../node_modules/.pnpm/zustand@5.0.15_@types+react@18.3.31_react@18.3.1/node_modules/zustand/esm/react.mjs
 var identity = (arg) => arg;
 function useStore(api, selector = identity) {
 	const slice = reactDefault.useSyncExternalStore(api.subscribe, reactDefault.useCallback(() => selector(api.getState()), [api, selector]), reactDefault.useCallback(() => selector(api.getInitialState()), [api, selector]));
@@ -1985,7 +1985,7 @@ function AssignMenu({ profiles, onPick, onClose, align = "left" }) {
 	});
 }
 //#endregion
-//#region ../../node_modules/comma-separated-tokens/index.js
+//#region ../../node_modules/.pnpm/comma-separated-tokens@2.0.3/node_modules/comma-separated-tokens/index.js
 /**
 * Serialize an array of strings or numbers to comma-separated tokens.
 *
@@ -2001,7 +2001,7 @@ function stringify$1(values, options) {
 	return (values[values.length - 1] === "" ? [...values, ""] : values).join((settings.padRight ? " " : "") + "," + (settings.padLeft === false ? "" : " ")).trim();
 }
 //#endregion
-//#region ../../node_modules/estree-util-is-identifier-name/lib/index.js
+//#region ../../node_modules/.pnpm/estree-util-is-identifier-name@3.0.0/node_modules/estree-util-is-identifier-name/lib/index.js
 var nameRe = /^[$_\p{ID_Start}][$_\u{200C}\u{200D}\p{ID_Continue}]*$/u;
 var nameReJsx = /^[$_\p{ID_Start}][-$_\u{200C}\u{200D}\p{ID_Continue}]*$/u;
 /** @type {Options} */
@@ -2020,7 +2020,7 @@ function name(name, options) {
 	return ((options || emptyOptions$3).jsx ? nameReJsx : nameRe).test(name);
 }
 //#endregion
-//#region ../../node_modules/hast-util-whitespace/lib/index.js
+//#region ../../node_modules/.pnpm/hast-util-whitespace@3.0.0/node_modules/hast-util-whitespace/lib/index.js
 /**
 * @typedef {import('hast').Nodes} Nodes
 */
@@ -2047,7 +2047,7 @@ function empty$1(value) {
 	return value.replace(re, "") === "";
 }
 //#endregion
-//#region ../../node_modules/property-information/lib/util/schema.js
+//#region ../../node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/util/schema.js
 /**
 * @import {Schema as SchemaType, Space} from 'property-information'
 */
@@ -2073,7 +2073,7 @@ Schema.prototype.normal = {};
 Schema.prototype.property = {};
 Schema.prototype.space = void 0;
 //#endregion
-//#region ../../node_modules/property-information/lib/util/merge.js
+//#region ../../node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/util/merge.js
 /**
 * @import {Info, Space} from 'property-information'
 */
@@ -2097,7 +2097,7 @@ function merge(definitions, space) {
 	return new Schema(property, normal, space);
 }
 //#endregion
-//#region ../../node_modules/property-information/lib/normalize.js
+//#region ../../node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/normalize.js
 /**
 * Get the cleaned case insensitive form of an attribute or property.
 *
@@ -2111,7 +2111,7 @@ function normalize$1(value) {
 	return value.toLowerCase();
 }
 //#endregion
-//#region ../../node_modules/property-information/lib/util/info.js
+//#region ../../node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/util/info.js
 /**
 * @import {Info as InfoType} from 'property-information'
 */
@@ -2143,7 +2143,7 @@ Info.prototype.property = "";
 Info.prototype.spaceSeparated = false;
 Info.prototype.space = void 0;
 //#endregion
-//#region ../../node_modules/property-information/lib/util/types.js
+//#region ../../node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/util/types.js
 var types_exports = /* @__PURE__ */ __exportAll({
 	boolean: () => boolean,
 	booleanish: () => booleanish,
@@ -2165,7 +2165,7 @@ function increment() {
 	return 2 ** ++powers;
 }
 //#endregion
-//#region ../../node_modules/property-information/lib/util/defined-info.js
+//#region ../../node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/util/defined-info.js
 /**
 * @import {Space} from 'property-information'
 */
@@ -2211,7 +2211,7 @@ function mark(values, key, value) {
 	if (value) values[key] = value;
 }
 //#endregion
-//#region ../../node_modules/property-information/lib/util/create.js
+//#region ../../node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/util/create.js
 /**
 * @import {Info, Space} from 'property-information'
 */
@@ -2260,7 +2260,7 @@ function create(definition) {
 	return new Schema(properties, normals, definition.space);
 }
 //#endregion
-//#region ../../node_modules/property-information/lib/aria.js
+//#region ../../node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/aria.js
 var aria = create({
 	properties: {
 		ariaActiveDescendant: null,
@@ -2318,7 +2318,7 @@ var aria = create({
 	}
 });
 //#endregion
-//#region ../../node_modules/property-information/lib/util/case-sensitive-transform.js
+//#region ../../node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/util/case-sensitive-transform.js
 /**
 * @param {Record<string, string>} attributes
 *   Attributes.
@@ -2331,7 +2331,7 @@ function caseSensitiveTransform(attributes, attribute) {
 	return attribute in attributes ? attributes[attribute] : attribute;
 }
 //#endregion
-//#region ../../node_modules/property-information/lib/util/case-insensitive-transform.js
+//#region ../../node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/util/case-insensitive-transform.js
 /**
 * @param {Record<string, string>} attributes
 *   Attributes.
@@ -2344,7 +2344,7 @@ function caseInsensitiveTransform(attributes, property) {
 	return caseSensitiveTransform(attributes, property.toLowerCase());
 }
 //#endregion
-//#region ../../node_modules/property-information/lib/html.js
+//#region ../../node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/html.js
 var html$3 = create({
 	attributes: {
 		acceptcharset: "accept-charset",
@@ -2666,7 +2666,7 @@ var html$3 = create({
 	transform: caseInsensitiveTransform
 });
 //#endregion
-//#region ../../node_modules/property-information/lib/svg.js
+//#region ../../node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/svg.js
 var svg$1 = create({
 	attributes: {
 		accentHeight: "accent-height",
@@ -3226,7 +3226,7 @@ var svg$1 = create({
 	transform: caseSensitiveTransform
 });
 //#endregion
-//#region ../../node_modules/property-information/lib/xlink.js
+//#region ../../node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/xlink.js
 var xlink = create({
 	properties: {
 		xLinkActuate: null,
@@ -3243,7 +3243,7 @@ var xlink = create({
 	}
 });
 //#endregion
-//#region ../../node_modules/property-information/lib/xmlns.js
+//#region ../../node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/xmlns.js
 var xmlns = create({
 	attributes: { xmlnsxlink: "xmlns:xlink" },
 	properties: {
@@ -3254,7 +3254,7 @@ var xmlns = create({
 	transform: caseInsensitiveTransform
 });
 //#endregion
-//#region ../../node_modules/property-information/lib/xml.js
+//#region ../../node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/xml.js
 var xml = create({
 	properties: {
 		xmlBase: null,
@@ -3267,7 +3267,7 @@ var xml = create({
 	}
 });
 //#endregion
-//#region ../../node_modules/property-information/lib/hast-to-react.js
+//#region ../../node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/hast-to-react.js
 /**
 * Special cases for React (`Record<string, string>`).
 *
@@ -3299,7 +3299,7 @@ var hastToReact = {
 	xmlnsXLink: "xmlnsXlink"
 };
 //#endregion
-//#region ../../node_modules/property-information/lib/find.js
+//#region ../../node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/find.js
 /**
 * @import {Schema} from 'property-information'
 */
@@ -3376,7 +3376,7 @@ function camelcase($0) {
 	return $0.charAt(1).toUpperCase();
 }
 //#endregion
-//#region ../../node_modules/property-information/index.js
+//#region ../../node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/index.js
 var html$2 = merge([
 	aria,
 	html$3,
@@ -3392,7 +3392,7 @@ var svg = merge([
 	xml
 ], "svg");
 //#endregion
-//#region ../../node_modules/space-separated-tokens/index.js
+//#region ../../node_modules/.pnpm/space-separated-tokens@2.0.2/node_modules/space-separated-tokens/index.js
 /**
 * Serialize an array of strings as space separated-tokens.
 *
@@ -3405,7 +3405,7 @@ function stringify(values) {
 	return values.join(" ").trim();
 }
 //#endregion
-//#region ../../node_modules/inline-style-parser/cjs/index.js
+//#region ../../node_modules/.pnpm/inline-style-parser@0.2.7/node_modules/inline-style-parser/cjs/index.js
 var require_cjs$2 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	var COMMENT_REGEX = /\/\*[^*]*\*+([^/*][^*]*\*+)*\//g;
 	var NEWLINE_REGEX = /\n/g;
@@ -3606,7 +3606,7 @@ var require_cjs$2 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	module.exports = index;
 }));
 //#endregion
-//#region ../../node_modules/style-to-object/cjs/index.js
+//#region ../../node_modules/.pnpm/style-to-object@1.0.14/node_modules/style-to-object/cjs/index.js
 var require_cjs$1 = /* @__PURE__ */ __commonJSMin(((exports) => {
 	var __importDefault = exports && exports.__importDefault || function(mod) {
 		return mod && mod.__esModule ? mod : { "default": mod };
@@ -3646,7 +3646,7 @@ var require_cjs$1 = /* @__PURE__ */ __commonJSMin(((exports) => {
 	}
 }));
 //#endregion
-//#region ../../node_modules/style-to-js/cjs/utilities.js
+//#region ../../node_modules/.pnpm/style-to-js@1.1.21/node_modules/style-to-js/cjs/utilities.js
 var require_utilities = /* @__PURE__ */ __commonJSMin(((exports) => {
 	Object.defineProperty(exports, "__esModule", { value: true });
 	exports.camelCase = void 0;
@@ -3687,7 +3687,7 @@ var require_utilities = /* @__PURE__ */ __commonJSMin(((exports) => {
 	exports.camelCase = camelCase;
 }));
 //#endregion
-//#region ../../node_modules/style-to-js/cjs/index.js
+//#region ../../node_modules/.pnpm/style-to-js@1.1.21/node_modules/style-to-js/cjs/index.js
 var require_cjs = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	var style_to_object_1 = (exports && exports.__importDefault || function(mod) {
 		return mod && mod.__esModule ? mod : { "default": mod };
@@ -3708,7 +3708,7 @@ var require_cjs = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	module.exports = StyleToJS;
 }));
 //#endregion
-//#region ../../node_modules/unist-util-position/lib/index.js
+//#region ../../node_modules/.pnpm/unist-util-position@5.0.0/node_modules/unist-util-position/lib/index.js
 /**
 * @typedef {import('unist').Node} Node
 * @typedef {import('unist').Point} Point
@@ -3788,7 +3788,7 @@ function position$1(node) {
 	};
 }
 //#endregion
-//#region ../../node_modules/unist-util-stringify-position/lib/index.js
+//#region ../../node_modules/.pnpm/unist-util-stringify-position@4.0.0/node_modules/unist-util-stringify-position/lib/index.js
 /**
 * @typedef {import('unist').Node} Node
 * @typedef {import('unist').Point} Point
@@ -3852,7 +3852,7 @@ function index(value) {
 	return value && typeof value === "number" ? value : 1;
 }
 //#endregion
-//#region ../../node_modules/vfile-message/lib/index.js
+//#region ../../node_modules/.pnpm/vfile-message@4.0.3/node_modules/vfile-message/lib/index.js
 /**
 * @import {Node, Point, Position} from 'unist'
 */
@@ -4099,7 +4099,7 @@ VFileMessage.prototype.place = void 0;
 VFileMessage.prototype.ruleId = void 0;
 VFileMessage.prototype.source = void 0;
 //#endregion
-//#region ../../node_modules/hast-util-to-jsx-runtime/lib/index.js
+//#region ../../node_modules/.pnpm/hast-util-to-jsx-runtime@2.3.6/node_modules/hast-util-to-jsx-runtime/lib/index.js
 /**
 * @import {Identifier, Literal, MemberExpression} from 'estree'
 * @import {Jsx, JsxDev, Options, Props} from 'hast-util-to-jsx-runtime'
@@ -4647,7 +4647,7 @@ function toDash($0) {
 	return "-" + $0.toLowerCase();
 }
 //#endregion
-//#region ../../node_modules/html-url-attributes/lib/index.js
+//#region ../../node_modules/.pnpm/html-url-attributes@3.0.1/node_modules/html-url-attributes/lib/index.js
 /**
 * HTML URL properties.
 *
@@ -4690,7 +4690,7 @@ var urlAttributes = {
 	]
 };
 //#endregion
-//#region ../../node_modules/mdast-util-to-string/lib/index.js
+//#region ../../node_modules/.pnpm/mdast-util-to-string@4.0.0/node_modules/mdast-util-to-string/lib/index.js
 /**
 * @typedef {import('mdast').Nodes} Nodes
 *
@@ -4772,7 +4772,7 @@ function node(value) {
 	return Boolean(value && typeof value === "object");
 }
 //#endregion
-//#region ../../node_modules/decode-named-character-reference/index.dom.js
+//#region ../../node_modules/.pnpm/decode-named-character-reference@1.3.0/node_modules/decode-named-character-reference/index.dom.js
 var element = document.createElement("i");
 /**
 * @param {string} value
@@ -4786,7 +4786,7 @@ function decodeNamedCharacterReference(value) {
 	return character === characterReference ? false : character;
 }
 //#endregion
-//#region ../../node_modules/micromark-util-chunked/index.js
+//#region ../../node_modules/.pnpm/micromark-util-chunked@2.0.1/node_modules/micromark-util-chunked/index.js
 /**
 * Like `Array#splice`, but smarter for giant arrays.
 *
@@ -4856,7 +4856,7 @@ function push(list, items) {
 	return items;
 }
 //#endregion
-//#region ../../node_modules/micromark-util-combine-extensions/index.js
+//#region ../../node_modules/.pnpm/micromark-util-combine-extensions@2.0.1/node_modules/micromark-util-combine-extensions/index.js
 /**
 * @import {
 *   Extension,
@@ -4927,7 +4927,7 @@ function constructs(existing, list) {
 	splice(existing, 0, 0, before);
 }
 //#endregion
-//#region ../../node_modules/micromark-util-decode-numeric-character-reference/index.js
+//#region ../../node_modules/.pnpm/micromark-util-decode-numeric-character-reference@2.0.2/node_modules/micromark-util-decode-numeric-character-reference/index.js
 /**
 * Turn the number (in string form as either hexa- or plain decimal) coming from
 * a numeric character reference into a character.
@@ -4948,7 +4948,7 @@ function decodeNumericCharacterReference(value, base) {
 	return String.fromCodePoint(code);
 }
 //#endregion
-//#region ../../node_modules/micromark-util-normalize-identifier/index.js
+//#region ../../node_modules/.pnpm/micromark-util-normalize-identifier@2.0.1/node_modules/micromark-util-normalize-identifier/index.js
 /**
 * Normalize an identifier (as found in references, definitions).
 *
@@ -4972,7 +4972,7 @@ function normalizeIdentifier(value) {
 	return value.replace(/[\t\n\r ]+/g, " ").replace(/^ | $/g, "").toLowerCase().toUpperCase();
 }
 //#endregion
-//#region ../../node_modules/micromark-util-character/index.js
+//#region ../../node_modules/.pnpm/micromark-util-character@2.1.1/node_modules/micromark-util-character/index.js
 /**
 * @import {Code} from 'micromark-util-types'
 */
@@ -5200,7 +5200,7 @@ function regexCheck(regex) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-util-sanitize-uri/index.js
+//#region ../../node_modules/.pnpm/micromark-util-sanitize-uri@2.0.1/node_modules/micromark-util-sanitize-uri/index.js
 /**
 * Normalize a URL.
 *
@@ -5245,7 +5245,7 @@ function normalizeUri(value) {
 	return result.join("") + value.slice(start);
 }
 //#endregion
-//#region ../../node_modules/micromark-factory-space/index.js
+//#region ../../node_modules/.pnpm/micromark-factory-space@2.0.1/node_modules/micromark-factory-space/index.js
 /**
 * @import {Effects, State, TokenType} from 'micromark-util-types'
 */
@@ -5304,7 +5304,7 @@ function factorySpace(effects, ok, type, max) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark/lib/initialize/content.js
+//#region ../../node_modules/.pnpm/micromark@4.0.2/node_modules/micromark/lib/initialize/content.js
 /**
 * @import {
 *   InitialConstruct,
@@ -5371,7 +5371,7 @@ function initializeContent(effects) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark/lib/initialize/document.js
+//#region ../../node_modules/.pnpm/micromark@4.0.2/node_modules/micromark/lib/initialize/document.js
 /**
 * @import {
 *   Construct,
@@ -5587,7 +5587,7 @@ function tokenizeContainer(effects, ok, nok) {
 	return factorySpace(effects, effects.attempt(this.parser.constructs.document, ok, nok), "linePrefix", this.parser.constructs.disable.null.includes("codeIndented") ? void 0 : 4);
 }
 //#endregion
-//#region ../../node_modules/micromark-util-classify-character/index.js
+//#region ../../node_modules/.pnpm/micromark-util-classify-character@2.0.1/node_modules/micromark-util-classify-character/index.js
 /**
 * @import {Code} from 'micromark-util-types'
 */
@@ -5610,7 +5610,7 @@ function classifyCharacter(code) {
 	if (unicodePunctuation(code)) return 2;
 }
 //#endregion
-//#region ../../node_modules/micromark-util-resolve-all/index.js
+//#region ../../node_modules/.pnpm/micromark-util-resolve-all@2.0.1/node_modules/micromark-util-resolve-all/index.js
 /**
 * @import {Event, Resolver, TokenizeContext} from 'micromark-util-types'
 */
@@ -5640,7 +5640,7 @@ function resolveAll(constructs, events, context) {
 	return events;
 }
 //#endregion
-//#region ../../node_modules/micromark-core-commonmark/lib/attention.js
+//#region ../../node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/attention.js
 /**
 * @import {
 *   Code,
@@ -5860,7 +5860,7 @@ function movePoint(point, offset) {
 	point._bufferIndex += offset;
 }
 //#endregion
-//#region ../../node_modules/micromark-core-commonmark/lib/autolink.js
+//#region ../../node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/autolink.js
 /**
 * @import {
 *   Construct,
@@ -6071,7 +6071,7 @@ function tokenizeAutolink(effects, ok, nok) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-core-commonmark/lib/blank-line.js
+//#region ../../node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/blank-line.js
 /**
 * @import {
 *   Construct,
@@ -6128,7 +6128,7 @@ function tokenizeBlankLine(effects, ok, nok) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-core-commonmark/lib/block-quote.js
+//#region ../../node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/block-quote.js
 /**
 * @import {
 *   Construct,
@@ -6255,7 +6255,7 @@ function exit$1(effects) {
 	effects.exit("blockQuote");
 }
 //#endregion
-//#region ../../node_modules/micromark-core-commonmark/lib/character-escape.js
+//#region ../../node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/character-escape.js
 /**
 * @import {
 *   Construct,
@@ -6315,7 +6315,7 @@ function tokenizeCharacterEscape(effects, ok, nok) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-core-commonmark/lib/character-reference.js
+//#region ../../node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/character-reference.js
 /**
 * @import {
 *   Code,
@@ -6453,7 +6453,7 @@ function tokenizeCharacterReference(effects, ok, nok) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-core-commonmark/lib/code-fenced.js
+//#region ../../node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/code-fenced.js
 /**
 * @import {
 *   Code,
@@ -6868,7 +6868,7 @@ function tokenizeNonLazyContinuation(effects, ok, nok) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-core-commonmark/lib/code-indented.js
+//#region ../../node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/code-indented.js
 /**
 * @import {
 *   Construct,
@@ -7012,7 +7012,7 @@ function tokenizeFurtherStart(effects, ok, nok) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-core-commonmark/lib/code-text.js
+//#region ../../node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/code-text.js
 /**
 * @import {
 *   Construct,
@@ -7197,7 +7197,7 @@ function tokenizeCodeText(effects, ok, nok) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-util-subtokenize/lib/splice-buffer.js
+//#region ../../node_modules/.pnpm/micromark-util-subtokenize@2.1.0/node_modules/micromark-util-subtokenize/lib/splice-buffer.js
 /**
 * Some of the internal operations of micromark do lots of editing
 * operations on very large arrays. This runs into problems with two
@@ -7427,7 +7427,7 @@ function chunkedPush(list, right) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-util-subtokenize/index.js
+//#region ../../node_modules/.pnpm/micromark-util-subtokenize@2.1.0/node_modules/micromark-util-subtokenize/index.js
 /**
 * @import {Chunk, Event, Token} from 'micromark-util-types'
 */
@@ -7582,7 +7582,7 @@ function subcontent(events, eventIndex) {
 	return gaps;
 }
 //#endregion
-//#region ../../node_modules/micromark-core-commonmark/lib/content.js
+//#region ../../node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/content.js
 /**
 * @import {
 *   Construct,
@@ -7715,7 +7715,7 @@ function tokenizeContinuation(effects, ok, nok) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-factory-destination/index.js
+//#region ../../node_modules/.pnpm/micromark-factory-destination@2.0.1/node_modules/micromark-factory-destination/index.js
 /**
 * @import {Effects, State, TokenType} from 'micromark-util-types'
 */
@@ -7899,7 +7899,7 @@ function factoryDestination(effects, ok, nok, type, literalType, literalMarkerTy
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-factory-label/index.js
+//#region ../../node_modules/.pnpm/micromark-factory-label@2.0.1/node_modules/micromark-factory-label/index.js
 /**
 * @import {
 *   Effects,
@@ -8033,7 +8033,7 @@ function factoryLabel(effects, ok, nok, type, markerType, stringType) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-factory-title/index.js
+//#region ../../node_modules/.pnpm/micromark-factory-title@2.0.1/node_modules/micromark-factory-title/index.js
 /**
 * @import {
 *   Code,
@@ -8178,7 +8178,7 @@ function factoryTitle(effects, ok, nok, type, markerType, stringType) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-factory-whitespace/index.js
+//#region ../../node_modules/.pnpm/micromark-factory-whitespace@2.0.1/node_modules/micromark-factory-whitespace/index.js
 /**
 * @import {Effects, State} from 'micromark-util-types'
 */
@@ -8218,7 +8218,7 @@ function factoryWhitespace(effects, ok) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-core-commonmark/lib/definition.js
+//#region ../../node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/definition.js
 /**
 * @import {
 *   Construct,
@@ -8433,7 +8433,7 @@ function tokenizeTitleBefore(effects, ok, nok) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-core-commonmark/lib/hard-break-escape.js
+//#region ../../node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/hard-break-escape.js
 /**
 * @import {
 *   Construct,
@@ -8490,7 +8490,7 @@ function tokenizeHardBreakEscape(effects, ok, nok) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-core-commonmark/lib/heading-atx.js
+//#region ../../node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/heading-atx.js
 /**
 * @import {
 *   Construct,
@@ -8675,7 +8675,7 @@ function tokenizeHeadingAtx(effects, ok, nok) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-util-html-tag-name/index.js
+//#region ../../node_modules/.pnpm/micromark-util-html-tag-name@2.0.1/node_modules/micromark-util-html-tag-name/index.js
 /**
 * List of lowercase HTML “block” tag names.
 *
@@ -8774,7 +8774,7 @@ var htmlRawNames = [
 	"textarea"
 ];
 //#endregion
-//#region ../../node_modules/micromark-core-commonmark/lib/html-flow.js
+//#region ../../node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/html-flow.js
 /**
 * @import {
 *   Code,
@@ -9547,7 +9547,7 @@ function tokenizeBlankLineBefore(effects, ok, nok) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-core-commonmark/lib/html-text.js
+//#region ../../node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/html-text.js
 /**
 * @import {
 *   Code,
@@ -10161,7 +10161,7 @@ function tokenizeHtmlText(effects, ok, nok) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-core-commonmark/lib/label-end.js
+//#region ../../node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/label-end.js
 /**
 * @import {
 *   Construct,
@@ -10631,7 +10631,7 @@ function tokenizeReferenceCollapsed(effects, ok, nok) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-core-commonmark/lib/label-start-image.js
+//#region ../../node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/label-start-image.js
 /**
 * @import {
 *   Construct,
@@ -10724,7 +10724,7 @@ function tokenizeLabelStartImage(effects, ok, nok) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-core-commonmark/lib/label-start-link.js
+//#region ../../node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/label-start-link.js
 /**
 * @import {
 *   Construct,
@@ -10772,7 +10772,7 @@ function tokenizeLabelStartLink(effects, ok, nok) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-core-commonmark/lib/line-ending.js
+//#region ../../node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/line-ending.js
 /**
 * @import {
 *   Construct,
@@ -10802,7 +10802,7 @@ function tokenizeLineEnding(effects, ok) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-core-commonmark/lib/thematic-break.js
+//#region ../../node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/thematic-break.js
 /**
 * @import {
 *   Code,
@@ -10897,7 +10897,7 @@ function tokenizeThematicBreak(effects, ok, nok) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-core-commonmark/lib/list.js
+//#region ../../node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/list.js
 /**
 * @import {
 *   Code,
@@ -11069,7 +11069,7 @@ function tokenizeListItemPrefixWhitespace(effects, ok, nok) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-core-commonmark/lib/setext-underline.js
+//#region ../../node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/setext-underline.js
 /**
 * @import {
 *   Code,
@@ -11221,7 +11221,7 @@ function tokenizeSetextUnderline(effects, ok, nok) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark/lib/initialize/flow.js
+//#region ../../node_modules/.pnpm/micromark@4.0.2/node_modules/micromark/lib/initialize/flow.js
 /**
 * @import {
 *   InitialConstruct,
@@ -11268,7 +11268,7 @@ function initializeFlow(effects) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark/lib/initialize/text.js
+//#region ../../node_modules/.pnpm/micromark@4.0.2/node_modules/micromark/lib/initialize/text.js
 /**
 * @import {
 *   Code,
@@ -11445,7 +11445,7 @@ function resolveAllLineSuffixes(events, context) {
 	return events;
 }
 //#endregion
-//#region ../../node_modules/micromark/lib/constructs.js
+//#region ../../node_modules/.pnpm/micromark@4.0.2/node_modules/micromark/lib/constructs.js
 /**
 * @import {Extension} from 'micromark-util-types'
 */
@@ -11523,7 +11523,7 @@ var attentionMarkers = { null: [42, 95] };
 /** @satisfies {Extension['disable']} */
 var disable = { null: [] };
 //#endregion
-//#region ../../node_modules/micromark/lib/create-tokenizer.js
+//#region ../../node_modules/.pnpm/micromark@4.0.2/node_modules/micromark/lib/create-tokenizer.js
 /**
 * @import {
 *   Chunk,
@@ -11992,7 +11992,7 @@ function serializeChunks(chunks, expandTabs) {
 	return result.join("");
 }
 //#endregion
-//#region ../../node_modules/micromark/lib/parse.js
+//#region ../../node_modules/.pnpm/micromark@4.0.2/node_modules/micromark/lib/parse.js
 /**
 * @import {
 *   Create,
@@ -12036,7 +12036,7 @@ function parse(options) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark/lib/postprocess.js
+//#region ../../node_modules/.pnpm/micromark@4.0.2/node_modules/micromark/lib/postprocess.js
 /**
 * @import {Event} from 'micromark-util-types'
 */
@@ -12051,7 +12051,7 @@ function postprocess(events) {
 	return events;
 }
 //#endregion
-//#region ../../node_modules/micromark/lib/preprocess.js
+//#region ../../node_modules/.pnpm/micromark@4.0.2/node_modules/micromark/lib/preprocess.js
 /**
 * @import {Chunk, Code, Encoding, Value} from 'micromark-util-types'
 */
@@ -12152,7 +12152,7 @@ function preprocess() {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-util-decode-string/index.js
+//#region ../../node_modules/.pnpm/micromark-util-decode-string@2.0.1/node_modules/micromark-util-decode-string/index.js
 var characterEscapeOrReference = /\\([!-/:-@[-`{-~])|&(#(?:\d{1,7}|x[\da-f]{1,6})|[\da-z]{1,31});/gi;
 /**
 * Decode markdown strings (which occur in places such as fenced code info
@@ -12189,7 +12189,7 @@ function decode($0, $1, $2) {
 	return decodeNamedCharacterReference($2) || $0;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-from-markdown/lib/index.js
+//#region ../../node_modules/.pnpm/mdast-util-from-markdown@2.0.3/node_modules/mdast-util-from-markdown/lib/index.js
 /**
 * @import {
 *   Break,
@@ -13159,7 +13159,7 @@ function defaultOnError(left, right) {
 	}) + ") is still open");
 }
 //#endregion
-//#region ../../node_modules/remark-parse/lib/index.js
+//#region ../../node_modules/.pnpm/remark-parse@11.0.0/node_modules/remark-parse/lib/index.js
 /**
 * @typedef {import('mdast').Root} Root
 * @typedef {import('mdast-util-from-markdown').Options} FromMarkdownOptions
@@ -13194,7 +13194,7 @@ function remarkParse(options) {
 	}
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/handlers/blockquote.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/blockquote.js
 /**
 * @import {Element} from 'hast'
 * @import {Blockquote} from 'mdast'
@@ -13222,7 +13222,7 @@ function blockquote$1(state, node) {
 	return state.applyData(node, result);
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/handlers/break.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/break.js
 /**
 * @import {Element, Text} from 'hast'
 * @import {Break} from 'mdast'
@@ -13253,7 +13253,7 @@ function hardBreak$1(state, node) {
 	}];
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/handlers/code.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/code.js
 /**
 * @import {Element, Properties} from 'hast'
 * @import {Code} from 'mdast'
@@ -13298,7 +13298,7 @@ function code$2(state, node) {
 	return result;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/handlers/delete.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/delete.js
 /**
 * @import {Element} from 'hast'
 * @import {Delete} from 'mdast'
@@ -13326,7 +13326,7 @@ function strikethrough(state, node) {
 	return state.applyData(node, result);
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/handlers/emphasis.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/emphasis.js
 /**
 * @import {Element} from 'hast'
 * @import {Emphasis} from 'mdast'
@@ -13354,7 +13354,7 @@ function emphasis$1(state, node) {
 	return state.applyData(node, result);
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/handlers/footnote-reference.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/footnote-reference.js
 /**
 * @import {Element} from 'hast'
 * @import {FootnoteReference} from 'mdast'
@@ -13412,7 +13412,7 @@ function footnoteReference$1(state, node) {
 	return state.applyData(node, sup);
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/handlers/heading.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/heading.js
 /**
 * @import {Element} from 'hast'
 * @import {Heading} from 'mdast'
@@ -13440,7 +13440,7 @@ function heading$1(state, node) {
 	return state.applyData(node, result);
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/handlers/html.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/html.js
 /**
 * @import {Element} from 'hast'
 * @import {Html} from 'mdast'
@@ -13470,7 +13470,7 @@ function html$1(state, node) {
 	}
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/revert.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/revert.js
 /**
 * @import {ElementContent} from 'hast'
 * @import {Reference, Nodes} from 'mdast'
@@ -13511,7 +13511,7 @@ function revert(state, node) {
 	return contents;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/handlers/image-reference.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/image-reference.js
 /**
 * @import {ElementContent, Element, Properties} from 'hast'
 * @import {ImageReference} from 'mdast'
@@ -13548,7 +13548,7 @@ function imageReference$1(state, node) {
 	return state.applyData(node, result);
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/handlers/image.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/image.js
 /**
 * @import {Element, Properties} from 'hast'
 * @import {Image} from 'mdast'
@@ -13580,7 +13580,7 @@ function image$1(state, node) {
 	return state.applyData(node, result);
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/handlers/inline-code.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/inline-code.js
 /**
 * @import {Element, Text} from 'hast'
 * @import {InlineCode} from 'mdast'
@@ -13614,7 +13614,7 @@ function inlineCode$1(state, node) {
 	return state.applyData(node, result);
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/handlers/link-reference.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/link-reference.js
 /**
 * @import {ElementContent, Element, Properties} from 'hast'
 * @import {LinkReference} from 'mdast'
@@ -13648,7 +13648,7 @@ function linkReference$1(state, node) {
 	return state.applyData(node, result);
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/handlers/link.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/link.js
 /**
 * @import {Element, Properties} from 'hast'
 * @import {Link} from 'mdast'
@@ -13679,7 +13679,7 @@ function link$1(state, node) {
 	return state.applyData(node, result);
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/handlers/list-item.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/list-item.js
 /**
 * @import {ElementContent, Element, Properties} from 'hast'
 * @import {ListItem, Parents} from 'mdast'
@@ -13782,7 +13782,7 @@ function listItemLoose(node) {
 	return spread === null || spread === void 0 ? node.children.length > 1 : spread;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/handlers/list.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/list.js
 /**
 * @import {Element, Properties} from 'hast'
 * @import {List} from 'mdast'
@@ -13822,7 +13822,7 @@ function list$1(state, node) {
 	return state.applyData(node, result);
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/handlers/paragraph.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/paragraph.js
 /**
 * @import {Element} from 'hast'
 * @import {Paragraph} from 'mdast'
@@ -13850,7 +13850,7 @@ function paragraph$1(state, node) {
 	return state.applyData(node, result);
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/handlers/root.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/root.js
 /**
 * @import {Parents as HastParents, Root as HastRoot} from 'hast'
 * @import {Root as MdastRoot} from 'mdast'
@@ -13876,7 +13876,7 @@ function root$1(state, node) {
 	return state.applyData(node, result);
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/handlers/strong.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/strong.js
 /**
 * @import {Element} from 'hast'
 * @import {Strong} from 'mdast'
@@ -13904,7 +13904,7 @@ function strong$1(state, node) {
 	return state.applyData(node, result);
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/handlers/table.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/table.js
 /**
 * @import {Table} from 'mdast'
 * @import {Element} from 'hast'
@@ -13963,7 +13963,7 @@ function table(state, node) {
 	return state.applyData(node, result);
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/handlers/table-row.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/table-row.js
 /**
 * @import {Element, ElementContent, Properties} from 'hast'
 * @import {Parents, TableRow} from 'mdast'
@@ -14020,7 +14020,7 @@ function tableRow(state, node, parent) {
 	return state.applyData(node, result);
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/handlers/table-cell.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/table-cell.js
 /**
 * @import {Element} from 'hast'
 * @import {TableCell} from 'mdast'
@@ -14048,7 +14048,7 @@ function tableCell(state, node) {
 	return state.applyData(node, result);
 }
 //#endregion
-//#region ../../node_modules/trim-lines/index.js
+//#region ../../node_modules/.pnpm/trim-lines@3.0.1/node_modules/trim-lines/index.js
 var tab = 9;
 var space = 32;
 /**
@@ -14105,7 +14105,7 @@ function trimLine(value, start, end) {
 	return endIndex > startIndex ? value.slice(startIndex, endIndex) : "";
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/handlers/text.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/text.js
 /**
 * @import {Element as HastElement, Text as HastText} from 'hast'
 * @import {Text as MdastText} from 'mdast'
@@ -14131,7 +14131,7 @@ function text$2(state, node) {
 	return state.applyData(node, result);
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/handlers/thematic-break.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/thematic-break.js
 /**
 * @import {Element} from 'hast'
 * @import {ThematicBreak} from 'mdast'
@@ -14159,7 +14159,7 @@ function thematicBreak$1(state, node) {
 	return state.applyData(node, result);
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/handlers/index.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/index.js
 /**
 * @import {Handlers} from '../state.js'
 */
@@ -14199,7 +14199,7 @@ var handlers = {
 };
 function ignore() {}
 //#endregion
-//#region ../../node_modules/@ungap/structured-clone/esm/deserialize.js
+//#region ../../node_modules/.pnpm/@ungap+structured-clone@1.3.3/node_modules/@ungap/structured-clone/esm/deserialize.js
 var env = typeof self === "object" ? self : globalThis;
 var guard = (name, init) => {
 	switch (name) {
@@ -14250,7 +14250,7 @@ var deserializer = ($, _) => {
 			}
 			case 7: {
 				const { name, message } = value;
-				return as(guard(name, message), index);
+				return as(typeof env[name] === "function" ? guard(name, message) : new Error(message), index);
 			}
 			case 8: return as(BigInt(value), index);
 			case "BigInt": return as(Object(BigInt(value)), index);
@@ -14274,7 +14274,7 @@ var deserializer = ($, _) => {
 */
 var deserialize = (serialized) => deserializer(/* @__PURE__ */ new Map(), serialized)(0);
 //#endregion
-//#region ../../node_modules/@ungap/structured-clone/esm/serialize.js
+//#region ../../node_modules/.pnpm/@ungap+structured-clone@1.3.3/node_modules/@ungap/structured-clone/esm/serialize.js
 var EMPTY = "";
 var { toString } = {};
 var { keys } = Object;
@@ -14292,7 +14292,7 @@ var typeOf = (value) => {
 		case "DataView": return [1, asString];
 	}
 	if (asString.includes("Array")) return [1, asString];
-	if (asString.includes("Error")) return [7, asString];
+	if (value instanceof Error) return [7, value.name || "Error"];
 	return [2, asString];
 };
 var shouldSkip = ([TYPE, type]) => TYPE === 0 && (type === "function" || type === "symbol");
@@ -14347,7 +14347,7 @@ var serializer = (strict, json, $, _) => {
 				for (const key of keys(value)) if (strict || !shouldSkip(typeOf(value[key]))) entries.push([pair(key), pair(value[key])]);
 				return index;
 			}
-			case 3: return as([TYPE, value.toISOString()], value);
+			case 3: return as([TYPE, isNaN(value.getTime()) ? EMPTY : value.toISOString()], value);
 			case 4: {
 				const { source, flags } = value;
 				return as([TYPE, {
@@ -14392,7 +14392,7 @@ var serialize$1 = (value, { json, lossy } = {}) => {
 	return serializer(!(json || lossy), !!json, /* @__PURE__ */ new Map(), _)(value), _;
 };
 //#endregion
-//#region ../../node_modules/@ungap/structured-clone/esm/index.js
+//#region ../../node_modules/.pnpm/@ungap+structured-clone@1.3.3/node_modules/@ungap/structured-clone/esm/index.js
 /**
 * @typedef {Array<string,any>} Record a type representation
 */
@@ -14408,7 +14408,7 @@ var esm_default = typeof structuredClone === "function" ?
 /* c8 ignore start */
 (any, options) => options && ("json" in options || "lossy" in options) ? deserialize(serialize$1(any, options)) : structuredClone(any) : (any, options) => deserialize(serialize$1(any, options));
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/footer.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/footer.js
 /**
 * @import {ElementContent, Element} from 'hast'
 * @import {State} from './state.js'
@@ -14622,7 +14622,7 @@ function footer(state) {
 	};
 }
 //#endregion
-//#region ../../node_modules/unist-util-is/lib/index.js
+//#region ../../node_modules/.pnpm/unist-util-is@6.0.1/node_modules/unist-util-is/lib/index.js
 /**
 * Generate an assertion from a test.
 *
@@ -14736,7 +14736,7 @@ function looksLikeANode(value) {
 	return value !== null && typeof value === "object" && "type" in value;
 }
 //#endregion
-//#region ../../node_modules/unist-util-visit-parents/lib/color.js
+//#region ../../node_modules/.pnpm/unist-util-visit-parents@6.0.2/node_modules/unist-util-visit-parents/lib/color.js
 /**
 * @param {string} d
 * @returns {string}
@@ -14745,7 +14745,7 @@ function color(d) {
 	return d;
 }
 //#endregion
-//#region ../../node_modules/unist-util-visit-parents/lib/index.js
+//#region ../../node_modules/.pnpm/unist-util-visit-parents@6.0.2/node_modules/unist-util-visit-parents/lib/index.js
 /**
 * @import {Node as UnistNode, Parent as UnistParent} from 'unist'
 */
@@ -15066,7 +15066,7 @@ function toResult(value) {
 	return value === null || value === void 0 ? empty : [value];
 }
 //#endregion
-//#region ../../node_modules/unist-util-visit/lib/index.js
+//#region ../../node_modules/.pnpm/unist-util-visit@5.1.0/node_modules/unist-util-visit/lib/index.js
 /**
 * @import {Node as UnistNode, Parent as UnistParent} from 'unist'
 * @import {VisitorResult} from 'unist-util-visit-parents'
@@ -15351,7 +15351,7 @@ function visit(tree, testOrVisitor, visitorOrReverse, maybeReverse) {
 	}
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/state.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/state.js
 /**
 * @import {
 *   ElementContent as HastElementContent,
@@ -15750,7 +15750,7 @@ function trimMarkdownSpaceStart(value) {
 	return value.slice(index);
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-hast/lib/index.js
+//#region ../../node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/index.js
 /**
 * @import {Nodes as HastNodes} from 'hast'
 * @import {Nodes as MdastNodes} from 'mdast'
@@ -15855,7 +15855,7 @@ function toHast(tree, options) {
 	return result;
 }
 //#endregion
-//#region ../../node_modules/remark-rehype/lib/index.js
+//#region ../../node_modules/.pnpm/remark-rehype@11.1.2/node_modules/remark-rehype/lib/index.js
 /**
 * @import {Root as HastRoot} from 'hast'
 * @import {Root as MdastRoot} from 'mdast'
@@ -16022,7 +16022,7 @@ function remarkRehype(destination, options) {
 	};
 }
 //#endregion
-//#region ../../node_modules/bail/index.js
+//#region ../../node_modules/.pnpm/bail@2.0.2/node_modules/bail/index.js
 /**
 * Throw a given error.
 *
@@ -16034,7 +16034,7 @@ function bail(error) {
 	if (error) throw error;
 }
 //#endregion
-//#region ../../node_modules/extend/index.js
+//#region ../../node_modules/.pnpm/extend@3.0.2/node_modules/extend/index.js
 var require_extend = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	var hasOwn = Object.prototype.hasOwnProperty;
 	var toStr = Object.prototype.toString;
@@ -16107,14 +16107,14 @@ var require_extend = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	};
 }));
 //#endregion
-//#region ../../node_modules/is-plain-obj/index.js
+//#region ../../node_modules/.pnpm/is-plain-obj@4.1.0/node_modules/is-plain-obj/index.js
 function isPlainObject(value) {
 	if (typeof value !== "object" || value === null) return false;
 	const prototype = Object.getPrototypeOf(value);
 	return (prototype === null || prototype === Object.prototype || Object.getPrototypeOf(prototype) === null) && !(Symbol.toStringTag in value) && !(Symbol.iterator in value);
 }
 //#endregion
-//#region ../../node_modules/trough/lib/index.js
+//#region ../../node_modules/.pnpm/trough@2.2.0/node_modules/trough/lib/index.js
 /**
 * @typedef {(error?: Error | null | undefined, ...output: Array<any>) => void} Callback
 *   Callback.
@@ -16272,7 +16272,7 @@ function wrap(middleware, callback) {
 	}
 }
 //#endregion
-//#region ../../node_modules/vfile/lib/minpath.browser.js
+//#region ../../node_modules/.pnpm/vfile@6.0.3/node_modules/vfile/lib/minpath.browser.js
 var minpath = {
 	basename,
 	dirname,
@@ -16508,13 +16508,13 @@ function assertPath$1(path) {
 	if (typeof path !== "string") throw new TypeError("Path must be a string. Received " + JSON.stringify(path));
 }
 //#endregion
-//#region ../../node_modules/vfile/lib/minproc.browser.js
+//#region ../../node_modules/.pnpm/vfile@6.0.3/node_modules/vfile/lib/minproc.browser.js
 var minproc = { cwd };
 function cwd() {
 	return "/";
 }
 //#endregion
-//#region ../../node_modules/vfile/lib/minurl.shared.js
+//#region ../../node_modules/.pnpm/vfile@6.0.3/node_modules/vfile/lib/minurl.shared.js
 /**
 * Checks if a value has the shape of a WHATWG URL object.
 *
@@ -16537,7 +16537,7 @@ function isUrl(fileUrlOrPath) {
 	return Boolean(fileUrlOrPath !== null && typeof fileUrlOrPath === "object" && "href" in fileUrlOrPath && fileUrlOrPath.href && "protocol" in fileUrlOrPath && fileUrlOrPath.protocol && fileUrlOrPath.auth === void 0);
 }
 //#endregion
-//#region ../../node_modules/vfile/lib/minurl.browser.js
+//#region ../../node_modules/.pnpm/vfile@6.0.3/node_modules/vfile/lib/minurl.browser.js
 /**
 * @param {URL | string} path
 *   File URL.
@@ -16589,7 +16589,7 @@ function getPathFromURLPosix(url) {
 	return decodeURIComponent(pathname);
 }
 //#endregion
-//#region ../../node_modules/vfile/lib/index.js
+//#region ../../node_modules/.pnpm/vfile@6.0.3/node_modules/vfile/lib/index.js
 /**
 * @import {Node, Point, Position} from 'unist'
 * @import {Options as MessageOptions} from 'vfile-message'
@@ -17108,7 +17108,7 @@ function isUint8Array$1(value) {
 	return Boolean(value && typeof value === "object" && "byteLength" in value && "byteOffset" in value);
 }
 //#endregion
-//#region ../../node_modules/unified/lib/callable-instance.js
+//#region ../../node_modules/.pnpm/unified@11.0.5/node_modules/unified/lib/callable-instance.js
 var CallableInstance = (
 /**
 * @this {Function}
@@ -17126,7 +17126,7 @@ function(property) {
 	return apply;
 });
 //#endregion
-//#region ../../node_modules/unified/lib/index.js
+//#region ../../node_modules/.pnpm/unified@11.0.5/node_modules/unified/lib/index.js
 /**
 * @typedef {import('trough').Pipeline} Pipeline
 *
@@ -18207,7 +18207,7 @@ function isUint8Array(value) {
 	return Boolean(value && typeof value === "object" && "byteLength" in value && "byteOffset" in value);
 }
 //#endregion
-//#region ../../node_modules/react-markdown/lib/index.js
+//#region ../../node_modules/.pnpm/react-markdown@10.1.0_@types+react@18.3.31_react@18.3.1/node_modules/react-markdown/lib/index.js
 /**
 * @import {Element, Nodes, Parents, Root} from 'hast'
 * @import {Root as MdastRoot} from 'mdast'
@@ -18515,7 +18515,7 @@ function defaultUrlTransform(value) {
 	return "";
 }
 //#endregion
-//#region ../../node_modules/ccount/index.js
+//#region ../../node_modules/.pnpm/ccount@2.0.1/node_modules/ccount/index.js
 /**
 * Count how often a character (or substring) is used in a string.
 *
@@ -18538,13 +18538,13 @@ function ccount(value, character) {
 	return count;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-find-and-replace/node_modules/escape-string-regexp/index.js
+//#region ../../node_modules/.pnpm/escape-string-regexp@5.0.0/node_modules/escape-string-regexp/index.js
 function escapeStringRegexp(string) {
 	if (typeof string !== "string") throw new TypeError("Expected a string");
 	return string.replace(/[|\\{}()[\]^$+*?.]/g, "\\$&").replace(/-/g, "\\x2d");
 }
 //#endregion
-//#region ../../node_modules/mdast-util-find-and-replace/lib/index.js
+//#region ../../node_modules/.pnpm/mdast-util-find-and-replace@3.0.2/node_modules/mdast-util-find-and-replace/lib/index.js
 /**
 * @import {Nodes, Parents, PhrasingContent, Root, Text} from 'mdast'
 * @import {BuildVisitor, Test, VisitorResult} from 'unist-util-visit-parents'
@@ -18739,7 +18739,7 @@ function toFunction(replace) {
 	};
 }
 //#endregion
-//#region ../../node_modules/mdast-util-gfm-autolink-literal/lib/index.js
+//#region ../../node_modules/.pnpm/mdast-util-gfm-autolink-literal@2.0.1/node_modules/mdast-util-gfm-autolink-literal/lib/index.js
 /**
 * @import {RegExpMatchObject, ReplaceFunction} from 'mdast-util-find-and-replace'
 * @import {CompileContext, Extension as FromMarkdownExtension, Handle as FromMarkdownHandle, Transform as FromMarkdownTransform} from 'mdast-util-from-markdown'
@@ -18960,7 +18960,7 @@ function previous(match, email) {
 	return (match.index === 0 || unicodeWhitespace(code) || unicodePunctuation(code)) && (!email || code !== 47);
 }
 //#endregion
-//#region ../../node_modules/mdast-util-gfm-footnote/lib/index.js
+//#region ../../node_modules/.pnpm/mdast-util-gfm-footnote@2.1.0/node_modules/mdast-util-gfm-footnote/lib/index.js
 /**
 * @import {
 *   CompileContext,
@@ -19152,7 +19152,7 @@ function mapAll(line, index, blank) {
 	return (blank ? "" : "    ") + line;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-gfm-strikethrough/lib/index.js
+//#region ../../node_modules/.pnpm/mdast-util-gfm-strikethrough@2.0.0/node_modules/mdast-util-gfm-strikethrough/lib/index.js
 /**
 * @typedef {import('mdast').Delete} Delete
 *
@@ -19253,7 +19253,7 @@ function peekDelete() {
 	return "~";
 }
 //#endregion
-//#region ../../node_modules/markdown-table/index.js
+//#region ../../node_modules/.pnpm/markdown-table@3.0.4/node_modules/markdown-table/index.js
 /**
 * @typedef {Options} MarkdownTableOptions
 *   Configuration.
@@ -19542,7 +19542,7 @@ function toAlignment(value) {
 	return code === 67 || code === 99 ? 99 : code === 76 || code === 108 ? 108 : code === 82 || code === 114 ? 114 : 0;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/handle/blockquote.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/blockquote.js
 /**
 * @import {Blockquote, Parents} from 'mdast'
 * @import {Info, Map, State} from 'mdast-util-to-markdown'
@@ -19568,7 +19568,7 @@ function map$1(line, _, blank) {
 	return ">" + (blank ? "" : " ") + line;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/util/pattern-in-scope.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/pattern-in-scope.js
 /**
 * @import {ConstructName, Unsafe} from 'mdast-util-to-markdown'
 */
@@ -19594,7 +19594,7 @@ function listInScope(stack, list, none) {
 	return false;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/handle/break.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/break.js
 /**
 * @import {Break, Parents} from 'mdast'
 * @import {Info, State} from 'mdast-util-to-markdown'
@@ -19612,7 +19612,7 @@ function hardBreak(_, _1, state, info) {
 	return "\\\n";
 }
 //#endregion
-//#region ../../node_modules/longest-streak/index.js
+//#region ../../node_modules/.pnpm/longest-streak@3.1.0/node_modules/longest-streak/index.js
 /**
 * Get the count of the longest repeating streak of `substring` in `value`.
 *
@@ -19640,7 +19640,7 @@ function longestStreak(value, substring) {
 	return max;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/util/format-code-as-indented.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/format-code-as-indented.js
 /**
 * @import {State} from 'mdast-util-to-markdown'
 * @import {Code} from 'mdast'
@@ -19654,7 +19654,7 @@ function formatCodeAsIndented(node, state) {
 	return Boolean(state.options.fences === false && node.value && !node.lang && /[^ \r\n]/.test(node.value) && !/^[\t ]*(?:[\r\n]|$)|(?:^|[\r\n])[\t ]*$/.test(node.value));
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/util/check-fence.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/check-fence.js
 /**
 * @import {Options, State} from 'mdast-util-to-markdown'
 */
@@ -19668,7 +19668,7 @@ function checkFence(state) {
 	return marker;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/handle/code.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/code.js
 /**
 * @import {Info, Map, State} from 'mdast-util-to-markdown'
 * @import {Code, Parents} from 'mdast'
@@ -19726,7 +19726,7 @@ function map(line, _, blank) {
 	return (blank ? "" : "    ") + line;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/util/check-quote.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/check-quote.js
 /**
 * @import {Options, State} from 'mdast-util-to-markdown'
 */
@@ -19740,7 +19740,7 @@ function checkQuote(state) {
 	return marker;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/handle/definition.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/definition.js
 /**
 * @import {Info, State} from 'mdast-util-to-markdown'
 * @import {Definition, Parents} from 'mdast'
@@ -19799,7 +19799,7 @@ function definition(node, _, state, info) {
 	return value;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/util/check-emphasis.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/check-emphasis.js
 /**
 * @import {Options, State} from 'mdast-util-to-markdown'
 */
@@ -19813,7 +19813,7 @@ function checkEmphasis(state) {
 	return marker;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/util/encode-character-reference.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/encode-character-reference.js
 /**
 * Encode a code point as a character reference.
 *
@@ -19826,7 +19826,7 @@ function encodeCharacterReference(code) {
 	return "&#x" + code.toString(16).toUpperCase() + ";";
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/util/encode-info.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/encode-info.js
 /**
 * @import {EncodeSides} from '../types.js'
 */
@@ -19898,7 +19898,7 @@ function encodeInfo(outside, inside, marker) {
 	};
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/handle/emphasis.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/emphasis.js
 /**
 * @import {Info, State} from 'mdast-util-to-markdown'
 * @import {Emphasis, Parents} from 'mdast'
@@ -19945,7 +19945,7 @@ function emphasisPeek(_, _1, state) {
 	return state.options.emphasis || "*";
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/util/format-heading-as-setext.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/format-heading-as-setext.js
 /**
 * @import {State} from 'mdast-util-to-markdown'
 * @import {Heading} from 'mdast'
@@ -19966,7 +19966,7 @@ function formatHeadingAsSetext(node, state) {
 	return Boolean((!node.depth || node.depth < 3) && toString$1(node) && (state.options.setext || literalWithBreak));
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/handle/heading.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/heading.js
 /**
 * @import {Info, State} from 'mdast-util-to-markdown'
 * @import {Heading, Parents} from 'mdast'
@@ -20010,7 +20010,7 @@ function heading(node, _, state, info) {
 	return value;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/handle/html.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/html.js
 /**
 * @import {Html} from 'mdast'
 */
@@ -20029,7 +20029,7 @@ function htmlPeek() {
 	return "<";
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/handle/image.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/image.js
 /**
 * @import {Info, State} from 'mdast-util-to-markdown'
 * @import {Image, Parents} from 'mdast'
@@ -20096,7 +20096,7 @@ function imagePeek() {
 	return "!";
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/handle/image-reference.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/image-reference.js
 /**
 * @import {Info, State} from 'mdast-util-to-markdown'
 * @import {ImageReference, Parents} from 'mdast'
@@ -20145,7 +20145,7 @@ function imageReferencePeek() {
 	return "!";
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/handle/inline-code.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/inline-code.js
 /**
 * @import {State} from 'mdast-util-to-markdown'
 * @import {InlineCode, Parents} from 'mdast'
@@ -20184,7 +20184,7 @@ function inlineCodePeek() {
 	return "`";
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/util/format-link-as-autolink.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/format-link-as-autolink.js
 /**
 * @import {State} from 'mdast-util-to-markdown'
 * @import {Link} from 'mdast'
@@ -20199,7 +20199,7 @@ function formatLinkAsAutolink(node, state) {
 	return Boolean(!state.options.resourceLink && node.url && !node.title && node.children && node.children.length === 1 && node.children[0].type === "text" && (raw === node.url || "mailto:" + raw === node.url) && /^[a-z][a-z+.-]+:/i.test(node.url) && !/[\0- <>\u007F]/.test(node.url));
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/handle/link.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/link.js
 /**
 * @import {Info, State} from 'mdast-util-to-markdown'
 * @import {Link, Parents} from 'mdast'
@@ -20289,7 +20289,7 @@ function linkPeek(node, _, state) {
 	return formatLinkAsAutolink(node, state) ? "<" : "[";
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/handle/link-reference.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/link-reference.js
 /**
 * @import {Info, State} from 'mdast-util-to-markdown'
 * @import {LinkReference, Parents} from 'mdast'
@@ -20338,7 +20338,7 @@ function linkReferencePeek() {
 	return "[";
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/util/check-bullet.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/check-bullet.js
 /**
 * @import {Options, State} from 'mdast-util-to-markdown'
 */
@@ -20352,7 +20352,7 @@ function checkBullet(state) {
 	return marker;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/util/check-bullet-other.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/check-bullet-other.js
 /**
 * @import {Options, State} from 'mdast-util-to-markdown'
 */
@@ -20369,7 +20369,7 @@ function checkBulletOther(state) {
 	return bulletOther;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/util/check-bullet-ordered.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/check-bullet-ordered.js
 /**
 * @import {Options, State} from 'mdast-util-to-markdown'
 */
@@ -20383,7 +20383,7 @@ function checkBulletOrdered(state) {
 	return marker;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/util/check-rule.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/check-rule.js
 /**
 * @import {Options, State} from 'mdast-util-to-markdown'
 */
@@ -20397,7 +20397,7 @@ function checkRule(state) {
 	return marker;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/handle/list.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/list.js
 /**
 * @import {Info, State} from 'mdast-util-to-markdown'
 * @import {List, Parents} from 'mdast'
@@ -20440,7 +20440,7 @@ function list(node, parent, state, info) {
 	return value;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/util/check-list-item-indent.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/check-list-item-indent.js
 /**
 * @import {Options, State} from 'mdast-util-to-markdown'
 */
@@ -20454,7 +20454,7 @@ function checkListItemIndent(state) {
 	return style;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/handle/list-item.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/list-item.js
 /**
 * @import {Info, Map, State} from 'mdast-util-to-markdown'
 * @import {ListItem, Parents} from 'mdast'
@@ -20486,7 +20486,7 @@ function listItem(node, parent, state, info) {
 	}
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/handle/paragraph.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/paragraph.js
 /**
 * @import {Info, State} from 'mdast-util-to-markdown'
 * @import {Paragraph, Parents} from 'mdast'
@@ -20507,7 +20507,7 @@ function paragraph(node, _, state, info) {
 	return value;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-phrasing/lib/index.js
+//#region ../../node_modules/.pnpm/mdast-util-phrasing@4.1.0/node_modules/mdast-util-phrasing/lib/index.js
 /**
 * @typedef {import('mdast').Html} Html
 * @typedef {import('mdast').PhrasingContent} PhrasingContent
@@ -20541,7 +20541,7 @@ var phrasing = convert([
 	"textDirective"
 ]);
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/handle/root.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/root.js
 /**
 * @import {Info, State} from 'mdast-util-to-markdown'
 * @import {Parents, Root} from 'mdast'
@@ -20559,7 +20559,7 @@ function root(node, _, state, info) {
 	}) ? state.containerPhrasing : state.containerFlow).call(state, node, info);
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/util/check-strong.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/check-strong.js
 /**
 * @import {Options, State} from 'mdast-util-to-markdown'
 */
@@ -20573,7 +20573,7 @@ function checkStrong(state) {
 	return marker;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/handle/strong.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/strong.js
 /**
 * @import {Info, State} from 'mdast-util-to-markdown'
 * @import {Parents, Strong} from 'mdast'
@@ -20620,7 +20620,7 @@ function strongPeek(_, _1, state) {
 	return state.options.strong || "*";
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/handle/text.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/text.js
 /**
 * @import {Info, State} from 'mdast-util-to-markdown'
 * @import {Parents, Text} from 'mdast'
@@ -20636,7 +20636,7 @@ function text$1(node, _, state, info) {
 	return state.safe(node.value, info);
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/util/check-rule-repetition.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/check-rule-repetition.js
 /**
 * @import {Options, State} from 'mdast-util-to-markdown'
 */
@@ -20650,7 +20650,7 @@ function checkRuleRepetition(state) {
 	return repetition;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/handle/thematic-break.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/thematic-break.js
 /**
 * @import {State} from 'mdast-util-to-markdown'
 * @import {Parents, ThematicBreak} from 'mdast'
@@ -20666,7 +20666,7 @@ function thematicBreak(_, _1, state) {
 	return state.options.ruleSpaces ? value.slice(0, -1) : value;
 }
 //#endregion
-//#region ../../node_modules/mdast-util-to-markdown/lib/handle/index.js
+//#region ../../node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/index.js
 /**
 * Default (CommonMark) handlers.
 */
@@ -20693,7 +20693,7 @@ var handle = {
 	thematicBreak
 };
 //#endregion
-//#region ../../node_modules/mdast-util-gfm-table/lib/index.js
+//#region ../../node_modules/.pnpm/mdast-util-gfm-table@2.0.0/node_modules/mdast-util-gfm-table/lib/index.js
 /**
 * @typedef {import('mdast').InlineCode} InlineCode
 * @typedef {import('mdast').Table} Table
@@ -20957,7 +20957,7 @@ function gfmTableToMarkdown(options) {
 	}
 }
 //#endregion
-//#region ../../node_modules/mdast-util-gfm-task-list-item/lib/index.js
+//#region ../../node_modules/.pnpm/mdast-util-gfm-task-list-item@2.0.0/node_modules/mdast-util-gfm-task-list-item/lib/index.js
 /**
 * @typedef {import('mdast').ListItem} ListItem
 * @typedef {import('mdast').Paragraph} Paragraph
@@ -21067,7 +21067,7 @@ function listItemWithTaskListItem(node, parent, state, info) {
 	}
 }
 //#endregion
-//#region ../../node_modules/mdast-util-gfm/lib/index.js
+//#region ../../node_modules/.pnpm/mdast-util-gfm@3.1.0/node_modules/mdast-util-gfm/lib/index.js
 /**
 * @import {Extension as FromMarkdownExtension} from 'mdast-util-from-markdown'
 * @import {Options} from 'mdast-util-gfm'
@@ -21110,7 +21110,7 @@ function gfmToMarkdown(options) {
 	] };
 }
 //#endregion
-//#region ../../node_modules/micromark-extension-gfm-autolink-literal/lib/syntax.js
+//#region ../../node_modules/.pnpm/micromark-extension-gfm-autolink-literal@2.1.0/node_modules/micromark-extension-gfm-autolink-literal/lib/syntax.js
 /**
 * @import {Code, ConstructRecord, Event, Extension, Previous, State, TokenizeContext, Tokenizer} from 'micromark-util-types'
 */
@@ -21811,7 +21811,7 @@ function previousUnbalanced(events) {
 	return result;
 }
 //#endregion
-//#region ../../node_modules/micromark-extension-gfm-footnote/lib/syntax.js
+//#region ../../node_modules/.pnpm/micromark-extension-gfm-footnote@2.1.0/node_modules/micromark-extension-gfm-footnote/lib/syntax.js
 /**
 * @import {Event, Exiter, Extension, Resolver, State, Token, TokenizeContext, Tokenizer} from 'micromark-util-types'
 */
@@ -22230,7 +22230,7 @@ function tokenizeIndent(effects, ok, nok) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-extension-gfm-strikethrough/lib/syntax.js
+//#region ../../node_modules/.pnpm/micromark-extension-gfm-strikethrough@2.1.0/node_modules/micromark-extension-gfm-strikethrough/lib/syntax.js
 /**
 * @import {Options} from 'micromark-extension-gfm-strikethrough'
 * @import {Event, Extension, Resolver, State, Token, TokenizeContext, Tokenizer} from 'micromark-util-types'
@@ -22371,7 +22371,7 @@ function gfmStrikethrough(options) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-extension-gfm-table/lib/edit-map.js
+//#region ../../node_modules/.pnpm/micromark-extension-gfm-table@2.1.1/node_modules/micromark-extension-gfm-table/lib/edit-map.js
 /**
 * @import {Event} from 'micromark-util-types'
 */
@@ -22463,7 +22463,7 @@ function addImplementation(editMap, at, remove, add) {
 	]);
 }
 //#endregion
-//#region ../../node_modules/micromark-extension-gfm-table/lib/infer.js
+//#region ../../node_modules/.pnpm/micromark-extension-gfm-table@2.1.1/node_modules/micromark-extension-gfm-table/lib/infer.js
 /**
 * @import {Event} from 'micromark-util-types'
 */
@@ -22501,7 +22501,7 @@ function gfmTableAlign(events, index) {
 	return align;
 }
 //#endregion
-//#region ../../node_modules/micromark-extension-gfm-table/lib/syntax.js
+//#region ../../node_modules/.pnpm/micromark-extension-gfm-table@2.1.1/node_modules/micromark-extension-gfm-table/lib/syntax.js
 /**
 * @import {Event, Extension, Point, Resolver, State, Token, TokenizeContext, Tokenizer} from 'micromark-util-types'
 */
@@ -23197,7 +23197,7 @@ function getPoint(events, index) {
 	return event[1][side];
 }
 //#endregion
-//#region ../../node_modules/micromark-extension-gfm-task-list-item/lib/syntax.js
+//#region ../../node_modules/.pnpm/micromark-extension-gfm-task-list-item@2.1.0/node_modules/micromark-extension-gfm-task-list-item/lib/syntax.js
 /**
 * @import {Extension, State, TokenizeContext, Tokenizer} from 'micromark-util-types'
 */
@@ -23316,7 +23316,7 @@ function spaceThenNonSpace(effects, ok, nok) {
 	}
 }
 //#endregion
-//#region ../../node_modules/micromark-extension-gfm/index.js
+//#region ../../node_modules/.pnpm/micromark-extension-gfm@3.0.0/node_modules/micromark-extension-gfm/index.js
 /**
 * @typedef {import('micromark-extension-gfm-footnote').HtmlOptions} HtmlOptions
 * @typedef {import('micromark-extension-gfm-strikethrough').Options} Options
@@ -23344,7 +23344,7 @@ function gfm(options) {
 	]);
 }
 //#endregion
-//#region ../../node_modules/remark-gfm/lib/index.js
+//#region ../../node_modules/.pnpm/remark-gfm@4.0.1/node_modules/remark-gfm/lib/index.js
 /**
 * @import {Root} from 'mdast'
 * @import {Options} from 'remark-gfm'

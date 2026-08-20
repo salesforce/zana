@@ -14,7 +14,6 @@
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
-    "baseUrl": ".",
     "paths": {
       "@zana-ai/zcc-extension-sdk": ["../../packages/extension-sdk/src/index.ts"],
       "@zana-ai/zcc-extension-sdk/*": ["../../packages/extension-sdk/src/*"],

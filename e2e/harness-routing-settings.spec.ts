@@ -4,7 +4,6 @@ import { makeFakeAgentBinary } from './sdk/harness';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-
 async function selectPicklistOption(
   trigger: Locator,
   window: Page,
@@ -22,11 +21,11 @@ test('Global and Project harness settings persist provider, model, execution, an
   const { window } = app;
   const openCode = makeFakeAgentBinary({ profile: 'generic', sequence: 'plain-exit' });
   const projectDir = mkdtempSync(join(tmpdir(), 'zcc-routing-settings-'));
-  const projectName = basename(projectDir);
   const project = await window.evaluate((path) => window.cc.projects.add(path), projectDir);
   expect(project.ok).toBe(true);
   if (!project.ok) return;
   const projectId = project.value.id;
+  const projectName = basename(projectDir);
 
   try {
     await window.evaluate(() => window.cc.config.set({

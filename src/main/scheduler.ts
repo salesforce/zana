@@ -678,7 +678,6 @@ export class SchedulerManager extends EventEmitter {
       cols: 80,
       rows: 24,
       config: this.deps.store.getConfig(),
-      projectSettings: this.deps.store.getProjectSettings(project.id),
       extraArgs,
       title: `Scheduled: ${live.task.name}`,
       remote: project.remote,

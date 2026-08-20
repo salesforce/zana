@@ -52,7 +52,12 @@ const api: CcApi = {
   },
   projectSettings: {
     get: (id) => ipcRenderer.invoke(IPC.projectSettings.get, id),
-    set: (id, patch) => ipcRenderer.invoke(IPC.projectSettings.set, id, patch)
+    set: (id, patch) => ipcRenderer.invoke(IPC.projectSettings.set, id, patch),
+    onChanged: (callback) => {
+      const handler = (_event: unknown, projectId: string) => callback(projectId);
+      ipcRenderer.on(IPC.projectSettings.onChanged, handler);
+      return () => ipcRenderer.off(IPC.projectSettings.onChanged, handler);
+    }
   },
   executionConsent: {
     listProject: (projectId) => ipcRenderer.invoke(IPC.executionConsent.listProject, projectId),

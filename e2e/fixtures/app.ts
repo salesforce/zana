@@ -156,11 +156,16 @@ async function appWindow(app: ElectronApplication): Promise<Page> {
   await app.firstWindow({ timeout: 60_000 });
   for (let i = 0; i < 80; i++) {
     for (const w of app.windows()) {
-      if (w.url().includes('index.html')) return w;
+      if (isAppRendererUrl(w.url())) return w;
     }
     await new Promise((r) => setTimeout(r, 250));
   }
-  throw new Error('app renderer window (index.html) never appeared');
+  throw new Error('app renderer window never appeared');
+}
+
+/** Production uses the supervised loopback server; dev/repair keeps file URLs. */
+export function isAppRendererUrl(url: string): boolean {
+  return url.includes('index.html') || /^http:\/\/127\.0\.0\.1:\d+\//.test(url);
 }
 
 export interface LaunchOptions {

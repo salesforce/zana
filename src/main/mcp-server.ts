@@ -245,7 +245,9 @@ export interface McpServerOptions {
    * already existed; throws on a bad path. Absent disables the tool. The main
    * process also handles the side-effects (mcp config, live sidebar refresh).
    */
-  registerProject?: (absPath: string) => { project: Project; alreadyExisted: boolean };
+  registerProject?: (absPath: string) =>
+    | { project: Project; alreadyExisted: boolean }
+    | Promise<{ project: Project; alreadyExisted: boolean }>;
   /**
    * Clone and register a repository in the configured clone root. The main
    * process owns destination selection so a temporary session cwd never leaks

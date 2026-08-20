@@ -565,7 +565,6 @@ export class GoalManager extends EventEmitter {
       cols: 80,
       rows: 24,
       config: this.deps.store.getConfig(),
-      projectSettings: this.deps.store.getProjectSettings(project.id),
       extraArgs: promptArgs,
       title: `Goal: ${goal.title}`,
       remote: project.remote,

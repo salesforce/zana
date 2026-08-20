@@ -1,0 +1,17 @@
+{
+  "name": "@zana-ai/zcc-app-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ZCC product renderer application.",
+  "scripts": {
+    "build": "pnpm --dir ../.. run build",
+    "dev": "pnpm --dir ../.. run dev",
+    "typecheck": "pnpm --dir ../.. run typecheck",
+    "test": "pnpm --dir ../.. exec vitest run src/renderer"
+  },
+  "dependencies": {
+    "@zana-ai/zcc-contracts": "workspace:*",
+    "@zana-ai/zcc-ui": "workspace:*"
+  }
+}

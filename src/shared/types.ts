@@ -1238,7 +1238,7 @@ export interface TerminalSession {
    * Agents-board isolation badge. See {@link isolationStatus} for whether it's
    * actually enforced.
    */
-  environment?: 'local' | 'sandbox' | 'microvm';
+  environment?: 'local' | 'sandbox' | 'microvm' | 'runtime-host';
   /**
    * Honest isolation posture, recorded at spawn. `{ isolated: true }` ⇒ the kernel
    * sandbox is in force. `{ isolated: false, reason }` ⇒ isolation was REQUESTED
@@ -4902,6 +4902,7 @@ export interface CcApi {
   projectSettings: {
     get(id: string): Promise<ProjectSettings>;
     set(id: string, patch: Partial<ProjectSettings>): Promise<ProjectSettings>;
+    onChanged(callback: (projectId: string) => void): () => void;
   };
   executionConsent: {
     listProject(projectId: string): Promise<ProjectExecutionConsentGrant[]>;
