@@ -3,6 +3,23 @@ import { realpath, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, resolve, sep } from 'node:path';
 
+export interface BrowserProjectSummary {
+  id: string;
+  name: string;
+  color?: string;
+  tag?: string;
+  category?: string;
+}
+
+/**
+ * Deliberately small, browser-safe startup projection. It must never gain
+ * filesystem paths, server/host credentials, or a capability to mutate state.
+ */
+export interface BrowserBootstrap {
+  appVersion: string;
+  projects: BrowserProjectSummary[];
+}
+
 export interface StaticHost {
   readonly url: string;
   close(): Promise<void>;
@@ -13,6 +30,8 @@ export interface StartStaticHostOptions {
   rootDir: string;
   host?: string;
   port?: number;
+  /** Enables the read-only same-origin browser bootstrap endpoint. */
+  browserBootstrap?: () => BrowserBootstrap;
 }
 
 function isContained(rootDir: string, candidate: string): boolean {
@@ -54,12 +73,17 @@ function pathForRequest(rootDir: string, pathname: string): string | null {
  * migration is complete, so a browser origin never gains a mutation endpoint.
  */
 export async function startStaticHost(options: StartStaticHostOptions): Promise<StaticHost> {
+  if (options.browserBootstrap && options.host && options.host !== '127.0.0.1' && options.host !== '::1') {
+    throw new Error('browser bootstrap is restricted to a loopback host');
+  }
   const rootDir = await realpath(resolve(options.rootDir));
   const indexPath = resolve(rootDir, 'index.html');
   if (!existsSync(indexPath)) {
     throw new Error(`Renderer artifact is missing ${indexPath}`);
   }
 
+  const hostName = options.host ?? '127.0.0.1';
+  let expectedOrigin = '';
   const server = createServer(async (request, response) => {
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       response.writeHead(405, { Allow: 'GET, HEAD' }).end();
@@ -70,6 +94,30 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
     if (requestUrl.pathname === '/_zcc/health') {
       response.writeHead(200, { 'Cache-Control': 'no-store', 'Content-Type': 'application/json' });
       response.end(JSON.stringify({ ok: true }));
+      return;
+    }
+    if (requestUrl.pathname === '/_zcc/bootstrap') {
+      // This endpoint is a browser projection, not an authentication boundary.
+      // Keep it same-origin so another page cannot use a loopback response as a
+      // local-data oracle, and expose only the explicitly redacted projection.
+      if (!options.browserBootstrap) {
+        response.writeHead(404).end();
+        return;
+      }
+      if (request.headers.host !== expectedOrigin.replace(/^http:\/\//, '')) {
+        response.writeHead(400).end();
+        return;
+      }
+      if (request.headers.origin && request.headers.origin !== expectedOrigin) {
+        response.writeHead(403).end();
+        return;
+      }
+      response.writeHead(200, {
+        'Cache-Control': 'no-store',
+        'Content-Type': 'application/json; charset=utf-8',
+        'X-Content-Type-Options': 'nosniff'
+      });
+      response.end(JSON.stringify(options.browserBootstrap()));
       return;
     }
 
@@ -106,7 +154,9 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
     response.writeHead(200, {
       'Cache-Control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
       'Content-Type': contentType(file),
-      'X-Content-Type-Options': 'nosniff'
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+      'X-Frame-Options': 'DENY'
     });
     if (request.method === 'HEAD') {
       response.end();
@@ -117,7 +167,7 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
 
   await new Promise<void>((resolveListen, rejectListen) => {
     server.once('error', rejectListen);
-    server.listen(options.port ?? 0, options.host ?? '127.0.0.1', () => {
+    server.listen(options.port ?? 0, hostName, () => {
       server.off('error', rejectListen);
       resolveListen();
     });
@@ -128,7 +178,8 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
     server.close();
     throw new Error('Static host did not bind a TCP address');
   }
-  const url = `http://${options.host ?? '127.0.0.1'}:${address.port}/`;
+  const url = `http://${hostName}:${address.port}/`;
+  expectedOrigin = url.slice(0, -1);
   return {
     url,
     close: () => new Promise<void>((resolveClose, rejectClose) => {

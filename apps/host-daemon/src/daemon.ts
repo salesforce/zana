@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import { createServer, type Server, type ServerResponse } from 'node:http';
@@ -9,7 +9,12 @@ import {
   type ExecutionEvent,
   type SignedExecutionCommand
 } from '@zana-ai/zcc-contracts/execution';
-import { SignedTerminalHostCommandSchema } from '@zana-ai/zcc-contracts/terminal-execution';
+import {
+  HostConnectionAckSchema,
+  SignedHostConnectionHelloSchema,
+  SignedTerminalHostCommandSchema,
+  type TerminalHostBinding
+} from '@zana-ai/zcc-contracts/terminal-execution';
 import { canonicalJson } from '@zana-ai/zcc-contracts/canonical-json';
 import { rejectMalformedExecutionCommand } from './index.js';
 import { HostTerminalManager } from './terminal-manager.js';
@@ -22,6 +27,8 @@ export interface HostDaemon {
 export interface StartHostDaemonOptions {
   token: string;
   signingKey: string;
+  hostId?: string;
+  instanceId?: string;
   host?: string;
   port?: number;
   terminalManager?: HostTerminalManager;
@@ -60,6 +67,8 @@ function hasValidTerminalSignature(command: { command: unknown; signature: strin
   return received.length === expected.length && timingSafeEqual(received, expected);
 }
 
+const HOST_CONNECTION_LEASE_MS = 30_000;
+
 function toEvent(value: unknown): ExecutionEvent | null {
   const parsed = ExecutionEventSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
@@ -81,12 +90,19 @@ function startCommand(command: SignedExecutionCommand['command']): ChildProcessB
  * server and reports bounded process output in the response stream.
  */
 export async function startHostDaemon(options: StartHostDaemonOptions): Promise<HostDaemon> {
+  const hostId = options.hostId ?? randomUUID();
+  const instanceId = options.instanceId ?? randomUUID();
+  let activeConnection: { binding: TerminalHostBinding; expiresAt: number } | null = null;
+  const sameBinding = (left: TerminalHostBinding, right: TerminalHostBinding) =>
+    left.hostId === right.hostId &&
+    left.instanceId === right.instanceId &&
+    left.hostConnectionId === right.hostConnectionId;
   const server = createServer(async (request, response) => {
     if (request.method === 'GET' && request.url === '/health') {
       json(response, 200, { ok: true });
       return;
     }
-    if (request.method !== 'POST' || (request.url !== '/commands' && request.url !== '/terminals')) {
+    if (request.method !== 'POST' || (request.url !== '/commands' && request.url !== '/terminals' && request.url !== '/connection')) {
       json(response, 404, { error: 'not found' });
       return;
     }
@@ -104,6 +120,41 @@ export async function startHostDaemon(options: StartHostDaemonOptions): Promise<
       json(response, 400, { error: 'invalid JSON' });
       return;
     }
+    if (request.url === '/connection') {
+      const signedHello = SignedHostConnectionHelloSchema.safeParse(input);
+      if (!signedHello.success) {
+        json(response, 400, { error: 'invalid host connection hello' });
+        return;
+      }
+      if (!hasValidTerminalSignature({ command: signedHello.data.hello, signature: signedHello.data.signature }, options.signingKey)) {
+        json(response, 403, { error: 'invalid host connection hello' });
+        return;
+      }
+      if (Date.parse(signedHello.data.hello.deadlineAt) <= Date.now()) {
+        json(response, 410, { error: 'host connection hello expired' });
+        return;
+      }
+      if (
+        signedHello.data.hello.binding.hostId !== hostId ||
+        signedHello.data.hello.binding.instanceId !== instanceId
+      ) {
+        json(response, 409, { error: 'host connection identity mismatch' });
+        return;
+      }
+      if (activeConnection && !sameBinding(activeConnection.binding, signedHello.data.hello.binding)) {
+        options.terminalManager?.revokeBinding?.(activeConnection.binding);
+      }
+      activeConnection = {
+        binding: signedHello.data.hello.binding,
+        expiresAt: Date.now() + HOST_CONNECTION_LEASE_MS
+      };
+      json(response, 200, HostConnectionAckSchema.parse({
+        protocolVersion: signedHello.data.hello.protocolVersion,
+        binding: activeConnection.binding,
+        leaseExpiresAt: activeConnection.expiresAt
+      }));
+      return;
+    }
     if (request.url === '/terminals') {
       const signedTerminal = SignedTerminalHostCommandSchema.safeParse(input);
       if (!signedTerminal.success) {
@@ -112,6 +163,14 @@ export async function startHostDaemon(options: StartHostDaemonOptions): Promise<
       }
       if (!hasValidTerminalSignature(signedTerminal.data, options.signingKey)) {
         json(response, 403, { error: 'invalid terminal command' });
+        return;
+      }
+      if (
+        !activeConnection ||
+        activeConnection.expiresAt <= Date.now() ||
+        !sameBinding(activeConnection.binding, signedTerminal.data.command.binding)
+      ) {
+        json(response, 409, { error: 'host connection is unavailable or replaced' });
         return;
       }
       if (!options.terminalManager) {
@@ -188,6 +247,7 @@ export async function startHostDaemon(options: StartHostDaemonOptions): Promise<
   return {
     url: `http://${options.host ?? '127.0.0.1'}:${address.port}`,
     close: () => new Promise<void>((resolveClose, rejectClose) => {
+      options.terminalManager?.close?.();
       server.close((error) => error ? rejectClose(error) : resolveClose());
     })
   };

@@ -12,7 +12,8 @@
   "dependencies": {
     "@zana-ai/zcc-contracts": "workspace:*",
     "@zana-ai/zcc-domain": "workspace:*",
-    "@zana-ai/zcc-host-daemon": "workspace:*"
+    "@zana-ai/zcc-host-daemon": "workspace:*",
+    "better-sqlite3": "^12.11.1"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",

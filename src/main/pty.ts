@@ -480,6 +480,8 @@ export class PtyManager extends EventEmitter {
    * dropped in {@link clearDataBuffer} on exit teardown.
    */
   private backlogs = new Map<string, string>();
+  /** Async execution failures are available to the creator until readiness settles. */
+  private startupFailures = new Map<string, string>();
 
   /**
    * Buffer a PTY chunk and arm a flush. All output for a session funnels
@@ -591,7 +593,9 @@ export class PtyManager extends EventEmitter {
       const onExit = (id: string, code: number) => {
         if (id !== sessionId) return;
         cleanup();
-        reject(new Error(`terminal failed before execution handle was ready (exit ${code})`));
+        const reason = this.startupFailures.get(sessionId);
+        this.startupFailures.delete(sessionId);
+        reject(new Error(reason ?? `terminal failed before execution handle was ready (exit ${code})`));
       };
       this.on('sessionUpdated', onUpdate);
       this.on('exit', onExit);
@@ -1705,6 +1709,7 @@ export class PtyManager extends EventEmitter {
       if (!live) return;
       // Surface an honest failure line in the terminal, then fail-closed.
       const reason = err instanceof Error ? err.message : String(err);
+      this.startupFailures.set(session.id, reason);
       this.bufferData(
         session.id,
         `\r\n\x1b[31m[zcc] isolated environment failed to start: ${reason}\x1b[0m\r\n`
@@ -1746,6 +1751,7 @@ export class PtyManager extends EventEmitter {
     this.clearDataBuffer(sessionId);
     const live = this.live.get(sessionId);
     if (!live) return;
+    if (live.session.status === 'running') this.startupFailures.delete(sessionId);
     live.session.status = 'exited';
     live.session.exitCode = exitCode;
     this.emit('exit', sessionId, exitCode);

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
-import { Bot, Plus, Sparkles } from 'lucide-react';
+import { Bot, PanelRight, Plus, Sparkles } from 'lucide-react';
 import type { AgentState, IdleTriageResult, TerminalSession } from '@shared/types';
 import { useData, useUi, useAgentStatus, useIdleTriage, openWhatsNewAll } from '../store';
 import { getScopedProjectId } from '../util/windowScope';
@@ -66,6 +66,10 @@ export function sideListNeedsYou(
   if (r.state === 'blocked') return true;
   if (!promoteTriage || !r.triage || r.state === 'working') return false;
   return idleSurfacesToNeedsYou(r.triage.resolution, r.triage.confidence ?? 0, sensitivity);
+}
+
+export function openFullAgentsList(setView: (view: 'list') => void): void {
+  setView('list');
 }
 
 /**
@@ -141,6 +145,11 @@ export function AgentsListPane() {
   const promoteTriage = useData((s) => s.agentListNeedsYouFromTriage);
   const sensitivity = useData((s) => s.idleAttentionSensitivity);
   const [launcherOpen, setLauncherOpen] = useState(false);
+  const openBoard = () => {
+    // List mode consumes the full content area, avoiding a duplicate fleet list
+    // beside the board while preserving the board/list preference in one place.
+    openFullAgentsList(useUi.getState().setAgentsBoardView);
+  };
   // Right-click lifecycle menu — the SAME hook the kanban board uses, so a row
   // and a board card drive the identical pty actions and expose the identical
   // menu (Stop / Restart / Rename / Delete …). No parallel action path.
@@ -341,6 +350,15 @@ export function AgentsListPane() {
         {live.length + background.length > 0 && (
           <span className="agents-count">{live.length + background.length}</span>
         )}
+        <button
+          type="button"
+          className="icon-btn agents-expand"
+          onClick={openBoard}
+          aria-label="Open full-width Agents list"
+          title="Open full-width Agents list"
+        >
+          <PanelRight size={14} />
+        </button>
         <button
           type="button"
           data-testid="agents-new"

@@ -181,7 +181,7 @@ describe('PtyManager — async createSession environment', () => {
 
   it('FAILS CLOSED on boot failure — finalizes with a non-zero exit, no local fallback', async () => {
     const s = ptys.create({ ...base, config: cfg(), environment: 'sandbox' });
-    const ready = expect(ptys.waitForReady(s.id)).rejects.toThrow('failed before execution handle was ready');
+    const ready = expect(ptys.waitForReady(s.id)).rejects.toThrow('no hypervisor');
     const exits: Array<[string, number]> = [];
     ptys.on('exit', (id: string, code: number) => exits.push([id, code]));
 

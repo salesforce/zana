@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { RuntimeOutboundSchema, ServerRuntimeInboundSchema } from './runtime.js';
+import {
+  RuntimeOutboundSchema,
+  SERVER_RUNTIME_PROTOCOL_VERSION,
+  ServerRuntimeInboundSchema
+} from './runtime.js';
 
 const request = {
   type: 'request',
+  protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
   id: '00000000-0000-4000-8000-000000000001',
   deadlineAt: '2026-08-19T12:00:00.000Z'
 };
@@ -55,11 +60,25 @@ describe('server runtime contract', () => {
   it('accepts a scoped post-commit project settings invalidation', () => {
     expect(RuntimeOutboundSchema.safeParse({
       type: 'project-settings-changed',
+      protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
       projectId: 'project-1'
     }).success).toBe(true);
     expect(RuntimeOutboundSchema.safeParse({
       type: 'project-settings-changed',
+      protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
       projectId: ''
+    }).success).toBe(false);
+  });
+
+  it('rejects incompatible utility-process protocol versions before dispatch', () => {
+    expect(ServerRuntimeInboundSchema.safeParse({
+      ...request,
+      protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION + 1,
+      operation: 'projects-list'
+    }).success).toBe(false);
+    expect(RuntimeOutboundSchema.safeParse({
+      type: 'stopped',
+      protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION + 1
     }).success).toBe(false);
   });
 

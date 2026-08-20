@@ -32,6 +32,13 @@ flowchart LR
   enforcement. No extension gets raw server or host credentials.
 - Every migration task has a compatibility adapter, focused tests, and an
   end-to-end proof before the former main-process owner is removed.
+- Every wire message declares its protocol version. A version mismatch fails
+  before dispatch; changing a field's shape or meaning requires a version bump
+  unless compatibility with the previously shipped endpoint is implemented and
+  tested deliberately.
+- Server restart or desktop reconnect can lose only bounded convenience caches.
+  Accepted product state and terminal event history are durable and replayable
+  from a server-owned cursor, never reconstructed from Electron memory.
 
 ## Ordered Work
 
@@ -109,11 +116,18 @@ notes below for the closest existing work.
 ### 2. Durable Foundation
 
 1. Extract a server-owned persistence adapter with atomic serialized writes.
-2. Migrate app configuration reads and project reads to it.
-3. Route renderer IPC reads through desktop-to-server RPC.
-4. Migrate configuration and project mutations, including path confinement and
+2. Introduce a server-owned database/schema/migration boundary before adding
+   more independent JSON stores. Preserve existing JSON files only as an
+   idempotent import/export compatibility format during the transition.
+3. Model state by its read and consistency requirements: normalized records for
+   projects, host-scoped locations, sessions, and pending work; revisioned
+   blobs only for truly transient layout/preferences; append-only tables for
+   audit/replay history.
+4. Migrate app configuration reads and project reads to it.
+5. Route renderer IPC reads through desktop-to-server RPC.
+6. Migrate configuration and project mutations, including path confinement and
    change subscriptions.
-5. Migrate local extension metadata and project-category metadata.
+7. Migrate local extension metadata and project-category metadata.
 
 Completion gate: server owns reads, writes, and emitted snapshots for projects
 and config; Electron main no longer imports their storage implementation except
@@ -219,6 +233,17 @@ the app-owned `<dataDir>/remote-projects/<projectId>` directory. Desktop keeps
 the remaining native fan-out (closing PTYs, schedule/goal/follow-up/feed
 rebinding, watcher teardown) after the authoritative removal succeeds.
 
+**Reference-alignment prerequisite (2026-08-19)**: the current project and
+project-settings stores correctly provide atomic, serialized, CAS-guarded JSON
+writes, but they remain separate JSON files. Before migrating the broader
+Product Services set, introduce one server-owned database/schema and migration
+boundary. The database must become the only durable source of truth; the
+existing JSON envelopes become a startup import/export compatibility path, not
+the permanent product model. This is intentionally ahead of broad service
+migration: independent JSON stores cannot provide transactional relationships,
+query-specific indexes, or a durable event log as sessions/schedules/inbox
+state arrive.
+
 Remaining project slices: migrate remote creation/update, Quick Agent/clone/
 extension registration, and then replace Electron-main project readers in
 authorization consumers with a server snapshot subscription. Do not remove
@@ -245,15 +270,50 @@ and remote project records still require dedicated server contracts.
 
 ### 3. Execution Foundation
 
+**Execution modes are deliberately separate.** This migration lane covers the
+current direct PTY product: a `plain-terminal` is a shell or command in a host
+PTY, and a `terminal-agent` is an authorized coding-agent CLI in that same
+visible PTY. Both retain direct terminal input, resize, output, scrollback, and
+exit behavior. An agent may later associate with a logical product record, but
+the raw ANSI stream remains terminal transport data rather than a structured
+agent event log.
+
+**Managed harness work is deferred.** Provider bridges, structured threads,
+native provider session identity, transcripts, approvals, and BB-style harness
+events require their own server-owned contracts and parity coverage. Do not add
+those semantics as optional fields to the direct terminal protocol or make the
+host infer provider policy. A future `managed-harness` mode will be introduced
+as a separate capability after the direct PTY authority boundary is stable.
+
+Every host connection has three identities: a stable `hostId` for the durable
+host installation, a fresh `instanceId` for one daemon lifetime, and a
+server-issued `hostConnectionId` lease bound to that host instance. Signed
+terminal commands and every host event carry this binding. The server rejects
+events from expired, replaced, or different host instances before they mutate a
+session or its replay cache. A restarted daemon is a new host epoch, not proof
+that prior PTY handles survive; recovery remains an explicit server decision.
+The server renews the active lease before its bounded expiry and the host applies
+the same expiry locally. A new lease for a host finalizes terminal rows owned by
+the superseded lease as unavailable rather than allowing stale PTY state to look
+running; a later reconciliation capability must explicitly prove reattachment.
+
 1. Specify session launch, input, resize, close, restore, output, and exit
    contracts.
 2. Implement host session lifecycle with bounded stream retention and sequence
    IDs.
-3. Move launch planning and authorization to server, preserving exact argv
+3. Persist accepted terminal session records and append-only events in the
+   server database. The server assigns the durable per-session sequence inside
+   the accepting transaction; host-provided stream offsets are transport hints,
+   never the authoritative replay cursor.
+4. Define host identity separately from an authenticated host-connection
+   session, then define reconnect/re-dispatch semantics for live PTYs. A host
+   restart may lose only its process handles and bounded local scrollback; a
+   server restart must recover accepted session state and replay history.
+5. Move launch planning and authorization to server, preserving exact argv
    precedence and project/path checks.
-4. Route terminal IPC through server, then remove legacy PTY ownership from
+6. Route terminal IPC through server, then remove legacy PTY ownership from
    Electron main.
-5. Migrate local/remote/tmux recovery and restore capabilities.
+7. Migrate local/remote/tmux recovery and restore capabilities.
 
 Reference alignment: the target design follows the clean split proven in the
 reference workspace: server owns accepted session identity, state, and event
@@ -283,6 +343,47 @@ session epoch and exposes a bounded `terminal-events-since` control operation;
 desktop still deduplicates by sequence while its live host subscription remains
 active. This advances server session authority without changing the host's
 bounded raw-scrollback retention or any remote/tmux/isolation path.
+
+Update (2026-08-19): both process boundaries now have strict wire-version
+gates. `SERVER_RUNTIME_PROTOCOL_VERSION` is required on every desktop-to-server
+utility-process message, and `TERMINAL_HOST_PROTOCOL_VERSION` is required on
+every signed terminal command and host event. The schemas reject mismatches
+before dispatch, and the signed terminal version participates in canonical JSON
+and therefore in the HMAC. Bump the respective version for any wire-shape or
+meaning change unless an explicit compatibility path and test covers the
+previous version. This is a compatibility prerequisite, not a claim that the
+protocol is network-ready: the current transport remains local Electron utility
+IPC plus loopback HTTP.
+
+Update (2026-08-20): the loopback renderer host now exposes one deliberately
+bounded browser surface, `GET /_zcc/bootstrap`. It is enabled only on a
+loopback bind, requires same-origin requests when an Origin is supplied, and
+returns only the app version plus redacted project summaries (no paths,
+credentials, host identifiers, or mutation capability). `src/renderer/main.tsx`
+detects a missing Electron preload and renders a browser-only local-status view
+instead of polyfilling `window.cc`. This is an explicit safety boundary, not a
+browser migration claim: terminal input/output, event streams, settings,
+extensions, and every privileged action remain desktop-only until individually
+designed as server-owned APIs.
+
+**Reference-alignment ordering (2026-08-19)**: the current
+`TerminalSessionService` is an in-memory acceptance/replay cache and accepts
+host-assigned output sequence values. Do not extend terminal IPC ownership or
+remote/tmux recovery on that foundation. First replace it with a server-backed
+session/event repository that transactionally assigns the replay cursor and
+persists accepted events, then add host identity/connection records and
+reconnect behavior. This prevents a server restart from losing the only
+accepted-event history or making replay cursor semantics ambiguous.
+
+Update (2026-08-19): the first server database migration is now live for the
+terminal lane. The server owns `runtime.sqlite`, records applied schema
+migrations, and persists accepted `terminal_sessions` plus bounded
+`terminal_events`; restart tests prove replay survives a new server repository
+instance. The current persisted cursor deliberately mirrors the host stream
+sequence for compatibility. A later terminal-contract version bump must add a
+distinct server-minted durable cursor before claiming full reference alignment;
+the database slice establishes the schema/migration boundary without changing
+the live terminal protocol's semantics.
 
 Completion gate: host owns every live terminal child; server owns every session
 record and authorization decision; golden argv and terminal E2E suites pass.
@@ -329,6 +430,12 @@ regression bar step 3 must clear before any IPC route changes).
 
 Completion gate: server owns the product's durable state and event hub; desktop
 contains no product-service persistence or scheduling loops.
+
+Reference ordering: start only after Durable Foundation's schema/migration
+boundary and Execution Foundation's durable event repository exist. Product
+services that need audit/replay state append typed server-sequenced events;
+services with independent query/concurrency needs receive dedicated normalized
+records rather than additional unrelated JSON blobs.
 
 ### 5. Extension and Integration Services
 

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { startRuntimeSupervisor, type RuntimeSupervisor } from './runtime-supervisor.js';
+import { TERMINAL_HOST_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/terminal-execution';
 
 let runtime: RuntimeSupervisor | null = null;
 
@@ -51,6 +52,7 @@ describe('runtime supervisor', () => {
     });
     const accepted = await runtime.executeTerminal({
       kind: 'start',
+      protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION,
       commandId: randomUUID(),
       sessionId,
       projectId,
@@ -80,8 +82,8 @@ describe('runtime supervisor', () => {
     runtime = await startRuntimeSupervisor({ rendererRoot: root });
     const sessionId = randomUUID();
     const projectId = randomUUID();
-    await runtime.executeTerminal({
-      kind: 'start', commandId: randomUUID(), sessionId, projectId, launchEpoch: 0,
+    const accepted = await runtime.executeTerminal({
+      kind: 'start', protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION, commandId: randomUUID(), sessionId, projectId, launchEpoch: 0,
       deadlineAt: new Date(Date.now() + 10_000).toISOString(),
       launch: {
         argv: [process.execPath, '-e', 'setTimeout(() => {}, 1000)'], cwd: root, env: { PATH: process.env.PATH ?? '' },
@@ -89,8 +91,9 @@ describe('runtime supervisor', () => {
       }
     });
 
-    expect(await runtime.recordTerminalEvent({ kind: 'output', sessionId, launchEpoch: 0, sequence: 99, data: 'late' })).toBe(true);
-    expect(await runtime.recordTerminalEvent({ kind: 'output', sessionId, launchEpoch: 0, sequence: 99, data: 'duplicate' })).toBe(false);
-    expect(await runtime.recordTerminalEvent({ kind: 'output', sessionId, launchEpoch: 1, sequence: 100, data: 'stale' })).toBe(false);
+    const binding = accepted.find((event) => event.kind === 'accepted')!.binding;
+    expect(await runtime.recordTerminalEvent({ kind: 'output', protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION, binding, sessionId, launchEpoch: 0, sequence: 99, data: 'late' })).toBe(true);
+    expect(await runtime.recordTerminalEvent({ kind: 'output', protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION, binding, sessionId, launchEpoch: 0, sequence: 99, data: 'duplicate' })).toBe(false);
+    expect(await runtime.recordTerminalEvent({ kind: 'output', protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION, binding, sessionId, launchEpoch: 1, sequence: 100, data: 'stale' })).toBe(false);
   });
 });

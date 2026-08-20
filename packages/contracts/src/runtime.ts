@@ -1,8 +1,14 @@
 import { z } from 'zod';
 import { ProjectIdSchema, SessionIdSchema } from '@zana-ai/zcc-domain';
-import { TerminalHostCommandSchema, TerminalHostEventSchema } from './terminal-execution.js';
+import { TerminalRequestCommandSchema, TerminalHostEventSchema } from './terminal-execution.js';
 import { ProjectSettingsPatchSchema } from './project-settings.js';
 
+/**
+ * Bump when any desktop-to-server utility-process message changes shape or
+ * meaning. Both endpoints reject a mismatched version before dispatching it.
+ */
+export const SERVER_RUNTIME_PROTOCOL_VERSION = 1;
+const ServerRuntimeProtocolVersionSchema = z.literal(SERVER_RUNTIME_PROTOCOL_VERSION);
 const RequestIdSchema = z.string().uuid();
 const DeadlineSchema = z.string().datetime();
 const ProjectPathSchema = z.string().min(1).max(32_768);
@@ -33,16 +39,22 @@ export const ProjectRecordSchema = z.object({
 
 export const ServerRuntimeStartSchema = z.object({
   type: z.literal('start'),
+  protocolVersion: ServerRuntimeProtocolVersionSchema,
   rendererRoot: z.string().min(1),
   dataDir: z.string().min(1),
   hostUrl: z.string().url(),
   hostToken: z.string().min(32),
   hostSigningKey: z.string().min(32),
+  hostBinding: z.object({
+    hostId: z.string().uuid(),
+    instanceId: z.string().uuid()
+  }).strict(),
   version: z.string()
 }).strict();
 
 const ServerRuntimeRequestBaseSchema = z.object({
   type: z.literal('request'),
+  protocolVersion: ServerRuntimeProtocolVersionSchema,
   id: RequestIdSchema,
   deadlineAt: DeadlineSchema
 }).strict();
@@ -82,7 +94,7 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('terminal-execute'),
-    command: TerminalHostCommandSchema
+    command: TerminalRequestCommandSchema
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('terminal-record'),
@@ -95,7 +107,10 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
   }).strict()
 ]);
 
-export const RuntimeStopSchema = z.object({ type: z.literal('stop') }).strict();
+export const RuntimeStopSchema = z.object({
+  type: z.literal('stop'),
+  protocolVersion: ServerRuntimeProtocolVersionSchema
+}).strict();
 
 export const ServerRuntimeInboundSchema = z.discriminatedUnion('type', [
   ServerRuntimeStartSchema,
@@ -103,24 +118,35 @@ export const ServerRuntimeInboundSchema = z.discriminatedUnion('type', [
   RuntimeStopSchema
 ]);
 
-export const RuntimeReadySchema = z.object({ type: z.literal('ready'), url: z.string().url() }).strict();
+export const RuntimeReadySchema = z.object({
+  type: z.literal('ready'),
+  protocolVersion: ServerRuntimeProtocolVersionSchema,
+  url: z.string().url()
+}).strict();
 export const RuntimeResultSchema = z.object({
   type: z.literal('result'),
+  protocolVersion: ServerRuntimeProtocolVersionSchema,
   id: RequestIdSchema,
   value: z.unknown()
 }).strict();
 export const RuntimeErrorSchema = z.object({
   type: z.literal('error'),
+  protocolVersion: ServerRuntimeProtocolVersionSchema,
   message: z.string().min(1),
   id: RequestIdSchema.optional()
 }).strict();
-export const RuntimeStoppedSchema = z.object({ type: z.literal('stopped') }).strict();
+export const RuntimeStoppedSchema = z.object({
+  type: z.literal('stopped'),
+  protocolVersion: ServerRuntimeProtocolVersionSchema
+}).strict();
 export const HostTerminalEventMessageSchema = z.object({
   type: z.literal('terminal-event'),
+  protocolVersion: ServerRuntimeProtocolVersionSchema,
   event: TerminalHostEventSchema
 }).strict();
 export const ProjectSettingsChangedMessageSchema = z.object({
   type: z.literal('project-settings-changed'),
+  protocolVersion: ServerRuntimeProtocolVersionSchema,
   projectId: ProjectIdSchema
 }).strict();
 

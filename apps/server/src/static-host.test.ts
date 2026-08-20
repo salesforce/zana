@@ -26,4 +26,37 @@ describe('startStaticHost', () => {
     symlinkSync(outside, join(root, 'escaped.txt'));
     await expect(fetch(`${host.url}escaped.txt`).then((response) => response.status)).resolves.toBe(403);
   });
+
+  it('exposes only an explicit same-origin browser bootstrap projection', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'zcc-static-host-'));
+    writeFileSync(join(root, 'index.html'), '<main>zana</main>');
+    host = await startStaticHost({
+      rootDir: root,
+      browserBootstrap: () => ({
+        appVersion: '1.2.3',
+        projects: [{ id: 'project-1', name: 'Project one', color: '#2f81f7' }]
+      })
+    });
+
+    const response = await fetch(`${host.url}_zcc/bootstrap`);
+    await expect(response.json()).resolves.toEqual({
+      appVersion: '1.2.3',
+      projects: [{ id: 'project-1', name: 'Project one', color: '#2f81f7' }]
+    });
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    await expect(fetch(`${host.url}_zcc/bootstrap`, {
+      headers: { Origin: 'http://untrusted.example' }
+    }).then((result) => result.status)).resolves.toBe(403);
+  });
+
+  it('refuses to expose browser bootstrap outside loopback', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'zcc-static-host-'));
+    writeFileSync(join(root, 'index.html'), '<main>zana</main>');
+
+    await expect(startStaticHost({
+      rootDir: root,
+      host: '0.0.0.0',
+      browserBootstrap: () => ({ appVersion: '', projects: [] })
+    })).rejects.toThrow('loopback');
+  });
 });
