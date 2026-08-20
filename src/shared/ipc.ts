@@ -24,6 +24,12 @@ export const IPC = {
     listProject: 'executionConsent:listProject',
     revokeProject: 'executionConsent:revokeProject'
   },
+  executionBoard: {
+    listProject: 'executionBoard:listProject',
+    setResumeToken: 'executionBoard:setResumeToken',
+    clearResumeToken: 'executionBoard:clearResumeToken',
+    relaunchMonitor: 'executionBoard:relaunchMonitor'
+  },
   ssh: {
     listHosts: 'ssh:listHosts',
     syncHosts: 'ssh:syncHosts'

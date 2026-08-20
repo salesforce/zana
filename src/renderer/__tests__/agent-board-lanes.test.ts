@@ -423,6 +423,18 @@ describe('partitionExecutionMembers', () => {
     expect(top.map((card) => card.session.id)).toEqual(['worker']);
     expect(workersByHost.size).toBe(0);
   });
+
+  it('creates a synthetic job host when retained execution workers have no live orchestrator', () => {
+    const worker = memberCard('worker', 'co1', 'worker');
+    worker.session.cohort!.executionId = 'execution-1';
+    const { top, workersByHost } = partitionExecutionMembers([worker], [{
+      executionId: 'execution-1', projectId: 'p1', jobTitle: 'Release train', state: 'RUNNING', attempt: 2, updatedAt: 50
+    }]);
+    expect(top.map((card) => card.session.id)).toEqual(['execution:execution-1']);
+    expect(top[0].session.title).toBe('Release train');
+    expect(top[0].isSyntheticExecutionHost).toBe(true);
+    expect(workersByHost.get('execution:execution-1')?.map((card) => card.session.id)).toEqual(['worker']);
+  });
 });
 
 describe('formatCountdown', () => {

@@ -32,6 +32,7 @@ export interface ExecutionRecord {
   authorizationContextDigest?: string;
   launchIntent?: ExecutionLaunchIntentV1;
   policyResult?: WorkflowPolicyResultV1;
+  effectiveOwnerPrincipalIds?: string[];
   createdAt: number;
   updatedAt: number;
 }
@@ -126,6 +127,7 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.authorizationContextDigest === undefined || validString(record.authorizationContextDigest))
     && (record.launchIntent === undefined || validLaunchIntent(record.launchIntent))
     && (record.policyResult === undefined || validPolicyResult(record.policyResult))
+    && (record.effectiveOwnerPrincipalIds === undefined || Array.isArray(record.effectiveOwnerPrincipalIds) && record.effectiveOwnerPrincipalIds.every(validString))
     && typeof record.createdAt === 'number' && typeof record.updatedAt === 'number';
 }
 
@@ -444,6 +446,38 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
+  async function addEffectiveOwner(executionId: string, principalId: string): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      const safePrincipalId = string(principalId, 'effective owner principal id');
+      const owners = new Set(record.effectiveOwnerPrincipalIds ?? []);
+      owners.add(safePrincipalId);
+      record.effectiveOwnerPrincipalIds = [...owners];
+      record.stateVersion += 1;
+      record.updatedAt = now();
+      append(snapshot.state, record, record.state, 'info', 'Execution monitor rebound', record.updatedAt);
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
+  async function removeEffectiveOwner(executionId: string, principalId: string): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      const safePrincipalId = string(principalId, 'effective owner principal id');
+      record.effectiveOwnerPrincipalIds = (record.effectiveOwnerPrincipalIds ?? []).filter((owner) => owner !== safePrincipalId);
+      record.stateVersion += 1;
+      record.updatedAt = now();
+      append(snapshot.state, record, record.state, 'info', 'Execution monitor binding revoked', record.updatedAt);
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
   async function beginRetry(executionId: string, expectedStateVersion: number): Promise<ExecutionRecord> {
     return storeQueue.run(async () => {
       const snapshot = read();
@@ -526,7 +560,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, beginRetry, get, getInProject, list, listInProject, events, eventsInProject };
+  return { claim, transition, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, beginRetry, get, getInProject, list, listInProject, events, eventsInProject };
 }
 
 function normalizeRequest(input: ExecutionRequestSnapshotV1): ExecutionRequestSnapshotV1 {

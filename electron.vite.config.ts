@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 
 const require = createRequire(import.meta.url);
-const monacoVsRoot = resolve(dirname(require.resolve('monaco-editor')), '../../esm/vs');
+const monacoVsRoot = resolve(dirname(require.resolve('monaco-editor/package.json')), 'esm/vs');
 
 // Resolve the extension SDK (`@zana-ai/zcc-extension-sdk` + subpaths) to its source
 // in all three bundles. The SDK is the canonical extension contract; core and

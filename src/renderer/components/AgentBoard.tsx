@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { Bot, AlertCircle, Zap, Moon, CheckCircle2, HelpCircle, CheckCheck, PauseCircle, Network, Crown, Users, Clock, GitBranch, ShieldCheck, ShieldAlert, Boxes, Unplug } from 'lucide-react';
-import type { AgentState, IdleResolution, IdleTriageResult, OverseerActivity, Persona, ScheduledTask, TerminalSession } from '@shared/types';
+import type { AgentState, ExecutionBoardProjection, IdleResolution, IdleTriageResult, OverseerActivity, Persona, ScheduledTask, TerminalSession } from '@shared/types';
 import { scheduleSummary } from '@shared/schedule-spec';
 import { profileIcon, personaIcon } from '../util/profileIcon';
 import { isRecentlyFinished } from '../util/sessionBuckets';
@@ -50,6 +50,8 @@ export interface AgentCard {
    *  none / untracked). Drives the Delegating lane: an at-rest-looking agent
    *  with children still running is parked awaiting them, not truly idle. */
   liveSubagents?: number;
+  /** Board-only job host when an execution outlives its live orchestrator tab. */
+  isSyntheticExecutionHost?: boolean;
 }
 
 /**
@@ -298,27 +300,73 @@ export function partitionSquads(cards: AgentCard[]): SquadPartition {
  * retry/recovery leaves more than one cohort, retain one visible host and nest
  * all other members under it. Ordinary Teams keep their existing cohort rules.
  */
-export function partitionExecutionMembers<T extends { session: TerminalSession }>(
-  items: T[]
-): { top: T[]; workersByHost: Map<string, T[]> } {
-  const hostByExecution = new Map<string, T>();
+export function partitionExecutionMembers(
+  items: AgentCard[],
+  executions: readonly ExecutionBoardProjection[] = []
+): { top: AgentCard[]; workersByHost: Map<string, AgentCard[]> } {
+  const hostByExecution = new Map<string, AgentCard>();
   for (const item of items) {
     const cohort = item.session.cohort;
     if (!cohort?.executionId || cohort.role !== 'orchestrator' || item.session.status === 'exited') continue;
     if (!hostByExecution.has(cohort.executionId)) hostByExecution.set(cohort.executionId, item);
   }
-  const top: T[] = [];
-  const workersByHost = new Map<string, T[]>();
+  const executionById = new Map(executions.map((execution) => [execution.executionId, execution]));
+  const syntheticByExecution = new Map<string, AgentCard>();
+  const top: AgentCard[] = [];
+  const workersByHost = new Map<string, AgentCard[]>();
   for (const item of items) {
     const executionId = item.session.cohort?.executionId;
-    const host = executionId ? hostByExecution.get(executionId) : undefined;
+    let host = executionId ? hostByExecution.get(executionId) : undefined;
+    if (!host && executionId) {
+      const execution = executionById.get(executionId);
+      if (execution) {
+        host = syntheticByExecution.get(executionId);
+        if (!host) {
+          host = executionHost(item, execution);
+          syntheticByExecution.set(executionId, host);
+          top.push(host);
+        }
+      }
+    }
     if (host && item.session.id !== host.session.id) {
       const members = workersByHost.get(host.session.id) ?? [];
       members.push(item);
       workersByHost.set(host.session.id, members);
     } else top.push(item);
   }
+  for (const execution of executions) {
+    if (hostByExecution.has(execution.executionId) || syntheticByExecution.has(execution.executionId)) continue;
+    const template = items.find((item) => item.projectId === execution.projectId);
+    if (!template) continue;
+    const host = executionHost(template, execution);
+    syntheticByExecution.set(execution.executionId, host);
+    top.push(host);
+  }
   return { top, workersByHost };
+}
+
+/** Board-only job host for retained execution workers after their real lead exits. */
+function executionHost(member: AgentCard, execution: ExecutionBoardProjection): AgentCard {
+  return {
+    ...member,
+    session: {
+      ...member.session,
+      id: `execution:${execution.executionId}`,
+      title: execution.jobTitle,
+      status: 'running',
+      headless: true,
+      cohort: {
+        ...(member.session.cohort ?? { cohortId: execution.executionId, teamId: 'execution', teamName: 'Execution', role: 'orchestrator' }),
+        executionId: execution.executionId,
+        executionJobTitle: execution.jobTitle,
+        role: 'orchestrator'
+      }
+    },
+    state: execution.state === 'BLOCKED' ? 'blocked' : execution.state === 'RUNNING' || execution.state === 'STARTING' ? 'working' : 'idle',
+    stateSince: execution.updatedAt,
+    liveSubagents: 0,
+    isSyntheticExecutionHost: true
+  };
 }
 
 /**
@@ -593,6 +641,7 @@ interface AgentBoardLanesProps {
   onPick: (c: AgentCard) => void;
   /** Show a per-card project chip (the global, cross-project board). */
   showProject?: boolean;
+  executions?: readonly ExecutionBoardProjection[];
 }
 
 /**
@@ -600,7 +649,7 @@ interface AgentBoardLanesProps {
  * "running for X" timers. Caller computes `cards` behind a memo so a status
  * tick doesn't rebuild the world (render-storm guard).
  */
-export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProject }: AgentBoardLanesProps) {
+export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProject, executions }: AgentBoardLanesProps) {
   const personas = usePersonas((s) => s.personas);
   // Idle-attention sensitivity (mirror of AppConfig, hydrated in the data
   // store): governs which triaged idle agents the "Needs you" lane pulls up.
@@ -614,6 +663,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
   // Lifecycle actions + right-click menu state, shared with the list view so
   // both layouts drive the same pty and expose the same menu.
   const { menu, setMenu, actions, rename, closeRename, submitRename } = useAgentCardActions();
+  const [relaunchingExecutionId, setRelaunchingExecutionId] = useState<string | null>(null);
 
   // One timer drives every live "running for X". Recomputed at render from
   // createdAt vs. now; only mounted while a board is shown.
@@ -631,15 +681,15 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
   // Memoized on `cards` alone; the nested rows re-render with the parent.
   const { laneCards: boardCards, workersByOrchestrator } = useMemo(
     () => {
-      const executions = partitionExecutionMembers(cards);
-      const squads = partitionSquads(executions.top);
+      const executionMembers = partitionExecutionMembers(cards, executions);
+      const squads = partitionSquads(executionMembers.top);
       const nested = new Map(squads.workersByOrchestrator);
-      for (const [hostId, members] of executions.workersByHost) {
+      for (const [hostId, members] of executionMembers.workersByHost) {
         nested.set(hostId, [...(nested.get(hostId) ?? []), ...members]);
       }
       return { laneCards: squads.laneCards, workersByOrchestrator: nested };
     },
-    [cards]
+    [cards, executions]
   );
   // The expensive part — filtering every card into its lane and sorting the
   // idle/delegating lanes — depends ONLY on `boardCards` + `sensitivity`, not on
@@ -720,6 +770,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
     // Team cohort stamp (set by launchTeam): drives the per-card team chip +
     // a left-accent so a launched team reads as one unit across the lanes.
     const cohort = cardCohort(c);
+    const execution = cohort?.executionId ? executions?.find((candidate) => candidate.executionId === cohort.executionId) : undefined;
     const isOrchestrator = cohort?.role === 'orchestrator';
     // Workers of this squad, nested under their orchestrator card (empty for
     // every non-orchestrator card). `partitionSquads` pulled these OUT of the
@@ -740,8 +791,11 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
         className={`agent-card lane-${laneKey} ${active ? 'active' : ''} ${bad ? 'bad' : ''} ${
           cohort ? `has-cohort ${isOrchestrator ? 'cohort-orch' : 'cohort-worker'}` : ''
         }`}
-        onClick={() => onInspect(c)}
+        onClick={() => {
+          if (!c.isSyntheticExecutionHost) onInspect(c);
+        }}
         onContextMenu={(e) => {
+          if (c.isSyntheticExecutionHost) return;
           e.preventDefault();
           e.stopPropagation();
           setMenu({ card: c, ...clampMenuAnchor(e) });
@@ -765,7 +819,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
           </span>
           <span className="agent-card-title">{cohort?.executionJobTitle ?? t.title}</span>
           {!exited && <span className={`tab-agent-dot agent-${c.state}`} aria-hidden="true" />}
-          <FavoriteStar session={t} className="agent-card-fav" />
+          {!c.isSyntheticExecutionHost && <FavoriteStar session={t} className="agent-card-fav" />}
         </span>
         {triageBadge && (
           // Resolution badge with the model's one-line gloss as the tooltip.
@@ -853,7 +907,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
           )}
           {cohort?.executionId && (
             <span className="agent-card-badge" title={`Execution ${cohort.executionId}`}>
-              {c.state}
+              {execution?.state ?? c.state} · {cohort.executionId.slice(0, 8)}
             </span>
           )}
           {t.headless && !exited && (
@@ -892,10 +946,31 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
     // A solo agent (or a worker whose orchestrator is gone) renders as the bare
     // card. An orchestrator with live workers wraps its card in a squad shell and
     // nests compact worker rows beneath it, so the whole team is one board unit.
-    if (nestedWorkers.length === 0) return cardButton;
+    const monitorAction = execution && c.isSyntheticExecutionHost ? (
+      <button
+        type="button"
+        className="agent-squad-worker"
+        disabled={relaunchingExecutionId === execution.executionId}
+        onClick={async () => {
+          if (!execution.hasResumeToken) {
+            const token = window.prompt('Paste resume token for this execution');
+            if (!token) return;
+            const stored = await window.cc.executionBoard.setResumeToken(execution.projectId, execution.executionId, token, Date.now() + 24 * 60 * 60 * 1000);
+            if (!stored.ok) return;
+          }
+          setRelaunchingExecutionId(execution.executionId);
+          try { await window.cc.executionBoard.relaunchMonitor(execution.projectId, execution.executionId); }
+          finally { setRelaunchingExecutionId(null); }
+        }}
+      >
+        {relaunchingExecutionId === execution.executionId ? 'Launching monitor...' : 'Relaunch monitor'}
+      </button>
+    ) : null;
+    if (nestedWorkers.length === 0 && !monitorAction) return cardButton;
     return (
       <div key={t.id} className="agent-squad">
         {cardButton}
+        {monitorAction}
         <SquadWorkers workers={nestedWorkers} now={now} onInspect={onInspect} personas={personas} />
       </div>
     );

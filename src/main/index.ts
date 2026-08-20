@@ -37,9 +37,13 @@ import { preflightTerminalExecution } from './launch/execution-routing.js';
 import { createRestoreCapabilityStore } from './launch/restore-capability-store.js';
 import { createTeamLifecycleIntegration, createTeamLifecycleStore } from './launch/team-lifecycle-store.js';
 import { createExecutionStore } from './execution/store.js';
+import { projectExecutionProjection } from './execution/projection.js';
 import { SquadExecutionService } from './execution/service.js';
 import { createExecutionArtifactStore } from './execution/artifact-store.js';
 import { createExecutionHandoffStore } from './execution/handoff-store.js';
+import { createResumeGrantStore } from './execution/resume-grant-store.js';
+import { createResumeTokenStore } from './execution/resume-token-store.js';
+import { relaunchExecutionMonitor } from './execution/relaunch-monitor.js';
 import { preflightWorkflowProfile } from './squad-bundle.js';
 import { bindLaunchPrincipal, type LaunchAuthorizationBinding, type LaunchPrincipal, type LaunchPrincipalRef } from './launch/types.js';
 import type { TerminalLaunchOptions } from './launch/terminal-launcher.js';
@@ -750,6 +754,12 @@ const executionArtifacts = createExecutionArtifactStore({
 });
 const executionHandoffs = createExecutionHandoffStore({
   filePath: join(app.getPath('userData'), 'squad-execution-handoffs.json')
+});
+const executionResumeGrants = createResumeGrantStore({
+  filePath: join(app.getPath('userData'), 'squad-execution-resume-grants.json')
+});
+const executionResumeTokens = createResumeTokenStore({
+  filePath: join(app.getPath('home'), '.zcc', 'execution-resume.enc')
 });
 const restoreCapabilities = createRestoreCapabilityStore({
   filePath: join(app.getPath('userData'), 'restore-capabilities.json')
@@ -3652,6 +3662,7 @@ export function cascadeCloseTeamOnOrchestratorExit(deps: {
 }): { teamName: string; cohortId: string; closed: string[] } | null {
   const cohort = deps.getSession(deps.exitedSessionId)?.cohort;
   if (cohort?.role !== 'orchestrator') return null;
+  if (cohort.executionId) return null;
   const closed: string[] = [];
   for (const member of deps.listAll()) {
     if (member.id === deps.exitedSessionId) continue;
@@ -4264,6 +4275,8 @@ const squadExecutionService = new SquadExecutionService({
   },
   cancelTeamLaunch: async (callerPrincipalId, launchRequestId) => cancelTeamLaunch(callerPrincipalId, launchRequestId),
   replyToSession: (sessionId, text) => ptys.reply(sessionId, text),
+  resumeGrants: executionResumeGrants,
+  clearResumeToken: (projectId, executionId) => executionResumeTokens.clear(projectId, executionId),
   preflightWorkflow: (teamId, workflow) => {
     const team = teams.list().find((candidate) => candidate.id === teamId);
     return team ? preflightWorkflowProfile(workflow, team, personas.list()) : { ok: false, code: 'INVALID_WORKFLOW_PROFILE', message: 'workflow profile Team is unavailable' };
@@ -4944,6 +4957,53 @@ function registerIpc() {
       }
     },
     () => []
+  );
+  ipcMain.handle(
+    IPC.executionBoard.setResumeToken,
+    async (_e, projectId: string, executionId: string, token: string, expiresAt: number): Promise<Result<true>> => {
+      const project = store.listProjects().find((candidate) => candidate.id === projectId);
+      const record = project ? await executionStore.getInProject(project.id, executionId) : undefined;
+      if (!project || !record) return { ok: false, code: 'NOT_FOUND', message: 'execution not found for project' };
+      try {
+        executionResumeTokens.set({ projectId: project.id, executionId: record.id, token, expiresAt });
+        return { ok: true, value: true };
+      } catch (error) {
+        return { ok: false, code: 'INVALID', message: error instanceof Error ? error.message : String(error) };
+      }
+    }
+  );
+  ipcMain.handle(
+    IPC.executionBoard.clearResumeToken,
+    async (_e, projectId: string, executionId: string): Promise<Result<true>> => {
+      const project = store.listProjects().find((candidate) => candidate.id === projectId);
+      const record = project ? await executionStore.getInProject(project.id, executionId) : undefined;
+      if (!project || !record) return { ok: false, code: 'NOT_FOUND', message: 'execution not found for project' };
+      try {
+        executionResumeTokens.clear(project.id, record.id);
+        return { ok: true, value: true };
+      } catch (error) {
+        return { ok: false, code: 'INVALID', message: error instanceof Error ? error.message : String(error) };
+      }
+    }
+  );
+  ipcMain.handle(
+    IPC.executionBoard.relaunchMonitor,
+    async (_e, projectId: string, executionId: string): Promise<Result<{ sessionId: string }>> =>
+      relaunchExecutionMonitor({
+        findProject: (id) => store.listProjects().find((candidate) => candidate.id === id),
+        getExecution: (id, execution) => executionStore.getInProject(id, execution),
+        confirm: async (record) => (await dialog.showMessageBox({
+          type: 'question', buttons: ['Launch monitor', 'Cancel'], defaultId: 1, cancelId: 1,
+          title: 'Relaunch execution monitor', message: `Launch a monitor for "${record.jobTitle}"?`,
+          detail: 'This consumes the stored resume token and grants the new monitor access to this execution.'
+        })).response === 0,
+        readToken: (id, execution) => executionResumeTokens.readForBinding(id, execution),
+        findOrchestratorPersona: () => personas.list().find((candidate) => candidate.id === 'builtin:orchestrator'),
+        createMonitor: createTerminalConfined,
+        bindMonitor: (sessionId, id, execution, token) => squadExecutionService.resumeBinding(sessionId, id, execution, token),
+        closeMonitor: (sessionId) => ptys.close(sessionId),
+        clearToken: (id, execution) => executionResumeTokens.clear(id, execution)
+      }, projectId, executionId)
   );
   safeHandle(
     IPC.ssh.syncHosts,
@@ -7848,6 +7908,20 @@ function registerIpc() {
     async (_e, runId: string): Promise<Result<true>> => stopAutonomousRun(runId)
   );
   safeHandle(IPC.autonomousRuns.list, () => autonomousRuns.list(), () => []);
+  safeHandle(
+    IPC.executionBoard.listProject,
+    async (projectId: string) => {
+      if (typeof projectId !== 'string' || !projectId.trim()) return [];
+      const project = store.listProjects().find((candidate) => candidate.id === projectId);
+      if (!project) return [];
+      return projectExecutionProjection(await executionStore.listInProject(project.id), ptys.list(project.id)).map((execution) => ({
+        ...execution,
+        hasResumeToken: executionResumeTokens.status(project.id, execution.executionId).configured,
+        teamName: teams.list().find((team) => team.id === execution.teamId)?.name ?? execution.teamId
+      }));
+    },
+    () => []
+  );
   // Export a team + its referenced personas as one bundle file. Main owns the
   // save dialog (Rule 1 — never a renderer-supplied path); a dismissed dialog
   // resolves `canceled: true`, not an error.

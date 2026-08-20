@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Bot, Moon, Plus, Search, X, Loader2 } from 'lucide-react';
-import type { TerminalSession } from '@shared/types';
+import type { ExecutionBoardProjection, TerminalSession } from '@shared/types';
 import { useData, useUi, useAgentStatus, useIdleTriage, useOverseerActivity, useSubagents, useFavoriteAgents, favoriteKey, listedTerminals } from '../store';
 import { AgentBoardLanes, isReclaimableIdle, type AgentCard } from './AgentBoard';
 import { AgentViewToggle } from './AgentViewToggle';
@@ -50,6 +50,17 @@ export function GlobalAgentsBoard() {
   // but here it can target any registered project (its default is the scratch
   // workspace). Opened from the primary button in the header.
   const [launcherOpen, setLauncherOpen] = useState(false);
+  const [executions, setExecutions] = useState<ExecutionBoardProjection[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => void Promise.all(projects.map((project) => window.cc.executionBoard.listProject(project.id))).then((lists) => {
+      if (!cancelled) setExecutions(lists.flat());
+    });
+    refresh();
+    const timer = setInterval(refresh, 5_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [projects, terminals]);
 
   // Flatten every project's listed (visible + hidden-but-alive) non-shell
   // sessions into one card list. Raw store slices only; derive behind a memo so
@@ -236,7 +247,7 @@ export function GlobalAgentsBoard() {
           </p>
         </div>
       ) : (
-        <AgentBoardLanes cards={visibleCards} onInspect={inspect} onPick={pick} showProject />
+        <AgentBoardLanes cards={visibleCards} onInspect={inspect} onPick={pick} showProject executions={executions} />
       )}
 
       {closeIdleTarget && (

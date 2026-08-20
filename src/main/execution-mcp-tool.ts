@@ -49,6 +49,9 @@ const monitorRequestSchema = { targetSessionId: z.string().min(1).max(2048), ...
 const resumeMonitorExecuteSchema = { token: z.string().min(1).max(2048), ...executionMessageSchema };
 const monitorStatusSchema = { token: z.string().min(1).max(2048), ...executionIdSchema };
 const monitorEventsSchema = { ...monitorStatusSchema, after: z.number().int().min(0).optional(), limit: z.number().int().min(1).max(100).optional() };
+const resumeBindingSchema = { ...executionIdSchema, token: z.string().min(1).max(2048) };
+const mintResumeGrantSchema = executionIdSchema;
+const revokeResumeGrantSchema = { ...executionIdSchema, effectiveOwnerPrincipalId: z.string().min(1).max(2048).optional() };
 
 export interface RegisterExecutionToolOptions {
   sessionId?: string;
@@ -95,6 +98,36 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     return record
       ? { content: [{ type: 'text' as const, text: JSON.stringify(record) }] }
       : { isError: true, content: [{ type: 'text' as const, text: 'execution.status failed: execution not found for caller.' }] };
+  });
+
+  server.registerTool('execution.resume_binding', {
+    description: 'Bind this fresh session to an execution using a durable resume grant. Retry same token after a transient binding failure.', inputSchema: resumeBindingSchema
+  }, async ({ executionId, token }) => {
+    if (!authorized()) return denied('execution.resume_binding');
+    const result = await options.service.resumeBinding(options.sessionId!, options.projectId, executionId, token);
+    return result.ok
+      ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
+      : { isError: true, content: [{ type: 'text' as const, text: `execution.resume_binding failed: ${result.message}` }] };
+  });
+
+  server.registerTool('execution.mint_resume_grant', {
+    description: 'Mint a replacement resume grant for an active execution owned by this session when its start token was lost.', inputSchema: mintResumeGrantSchema
+  }, async ({ executionId }) => {
+    if (!authorized()) return denied('execution.mint_resume_grant');
+    const result = await options.service.mintResumeGrant(options.sessionId!, options.projectId, executionId);
+    return result.ok
+      ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
+      : { isError: true, content: [{ type: 'text' as const, text: `execution.mint_resume_grant failed: ${result.message}` }] };
+  });
+
+  server.registerTool('execution.revoke_resume_grant', {
+    description: 'Revoke pending durable resume grants for one owner-scoped execution.', inputSchema: revokeResumeGrantSchema
+  }, async ({ executionId, effectiveOwnerPrincipalId }) => {
+    if (!authorized()) return denied('execution.revoke_resume_grant');
+    const result = await options.service.revokeResumeGrant(options.sessionId!, options.projectId, executionId, effectiveOwnerPrincipalId);
+    return result.ok
+      ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
+      : { isError: true, content: [{ type: 'text' as const, text: `execution.revoke_resume_grant failed: ${result.message}` }] };
   });
 
   server.registerTool('execution.list', {

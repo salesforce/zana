@@ -59,6 +59,12 @@ const api: CcApi = {
     revokeProject: (projectId, grantId) =>
       ipcRenderer.invoke(IPC.executionConsent.revokeProject, projectId, grantId)
   },
+  executionBoard: {
+    listProject: (projectId) => ipcRenderer.invoke(IPC.executionBoard.listProject, projectId),
+    setResumeToken: (projectId, executionId, token, expiresAt) => ipcRenderer.invoke(IPC.executionBoard.setResumeToken, projectId, executionId, token, expiresAt),
+    clearResumeToken: (projectId, executionId) => ipcRenderer.invoke(IPC.executionBoard.clearResumeToken, projectId, executionId),
+    relaunchMonitor: (projectId, executionId) => ipcRenderer.invoke(IPC.executionBoard.relaunchMonitor, projectId, executionId)
+  },
   harnessAuth: {
     status: () => ipcRenderer.invoke(IPC.harnessAuth.status),
     set: (key, patch) => ipcRenderer.invoke(IPC.harnessAuth.set, key, patch)

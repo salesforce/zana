@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Bot, Moon, Plus, Loader2 } from 'lucide-react';
-import type { Project } from '@shared/types';
+import type { ExecutionBoardProjection, Project } from '@shared/types';
 import { useData, useUi, useAgentStatus, useIdleTriage, useOverseerActivity, useSubagents, useFavoriteAgents, favoriteKey, listedTerminals } from '../store';
 import { AgentBoardLanes, isReclaimableIdle, type AgentCard } from './AgentBoard';
 import { AgentViewToggle } from './AgentViewToggle';
@@ -45,6 +45,17 @@ export function ProjectAgentsBoard({ project, onNewAgent }: Props) {
   // button) or one cohort's idle members (a team chip). Null = closed.
   const [closeIdleTarget, setCloseIdleTarget] = useState<AgentCard[] | null>(null);
   const [busyAction, setBusyAction] = useState<null | 'close'>(null);
+  const [executions, setExecutions] = useState<ExecutionBoardProjection[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => void window.cc.executionBoard.listProject(project.id).then((next) => {
+      if (!cancelled) setExecutions(next);
+    });
+    refresh();
+    const timer = setInterval(refresh, 5_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [project.id, sessions]);
 
   // Raw slices only — derive cards behind a memo so we don't trip zustand's
   // re-render loop (see zustand-selector-stable-ref memory). Listed sessions
@@ -170,7 +181,7 @@ export function ProjectAgentsBoard({ project, onNewAgent }: Props) {
           </button>
         </div>
       ) : (
-        <AgentBoardLanes cards={cards} activeId={activeTabId} onInspect={inspect} onPick={pick} />
+        <AgentBoardLanes cards={cards} activeId={activeTabId} onInspect={inspect} onPick={pick} executions={executions} />
       )}
 
       {closeIdleTarget && (

@@ -36,7 +36,8 @@ function service() {
     ,controlWithHandoff: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', state: 'RUNNING' } }))
     ,retry: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', attempt: 2, state: 'RUNNING' } }))
     ,putArtifact: vi.fn(async () => ({ ok: true as const, value: { id: 'artifact-1' } })),
-    listArtifacts: vi.fn(async () => [{ id: 'artifact-1' }])
+    listArtifacts: vi.fn(async () => [{ id: 'artifact-1' }]),
+    mintResumeGrant: vi.fn(async () => ({ ok: true as const, value: { token: 'replacement-token', expiresAt: 100 } }))
   };
 }
 
@@ -44,7 +45,7 @@ describe('execution MCP tools', () => {
   it('registers only route-scoped execution controls', () => {
     const { server, tools } = fakeServer();
     registerExecutionTools(server as never, { sessionId: 'session-1', projectId: 'project-1', service: service() as never, validateRouteIdentity: () => true });
-    expect([...tools.keys()]).toEqual(['execution.start', 'execution.status', 'execution.list', 'execution.events', 'execution.event', 'execution.stop', 'execution.retry', 'execution.respond', 'execution.resume', 'execution.artifact.put', 'execution.artifact.list']);
+    expect([...tools.keys()]).toEqual(['execution.start', 'execution.status', 'execution.resume_binding', 'execution.mint_resume_grant', 'execution.revoke_resume_grant', 'execution.list', 'execution.events', 'execution.event', 'execution.stop', 'execution.retry', 'execution.respond', 'execution.resume', 'execution.artifact.put', 'execution.artifact.list']);
   });
 
   it('uses route identity and project, never caller-supplied authority', async () => {
@@ -60,6 +61,8 @@ describe('execution MCP tools', () => {
     expect(execution.start).toHaveBeenCalledWith('session-1', 'project-1', expect.objectContaining({ teamId: 'team-1' }));
     expect(execution.list).toHaveBeenCalledWith('session-1', 'project-1');
     expect(execution.events).toHaveBeenCalledWith('session-1', 'project-1', 'execution-1', 1, 100);
+    await tools.get('execution.mint_resume_grant')!({ executionId: 'execution-1' });
+    expect(execution.mintResumeGrant).toHaveBeenCalledWith('session-1', 'project-1', 'execution-1');
     await tools.get('execution.event')!({ executionId: 'execution-1', eventId: 'event-1', type: 'blocker', severity: 'warning', summary: 'Need answer', blocker: { question: 'Ship?' } });
     expect(execution.reportEvent).toHaveBeenCalledWith('session-1', 'project-1', 'execution-1', expect.objectContaining({ id: 'event-1', type: 'blocker' }));
   });

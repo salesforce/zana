@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { SquadExecutionService, deriveJobTitle } from '../execution/service.js';
 import { createExecutionStore } from '../execution/store.js';
 import { createExecutionArtifactStore } from '../execution/artifact-store.js';
+import { createResumeGrantStore } from '../execution/resume-grant-store.js';
 
 async function fixture(run: (filePath: string) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), 'zcc-execution-service-'));
@@ -71,7 +72,28 @@ describe('SquadExecutionService', () => {
     if (!blocked) throw new Error('missing blocked execution');
     await expect(service.retry('session-1', 'project-1', 'execution-1', blocked.stateVersion)).resolves.toMatchObject({ ok: true, value: { id: 'execution-1', attempt: 2, state: 'RUNNING', teamLaunchRequestId: 'execution-1:attempt:2' } });
     expect(authorizeTeamLaunch).toHaveBeenLastCalledWith('session-1', 'team-1', 'project-1', 'execution-1:attempt:2', {}, request.slots);
-    expect(launchTeam).toHaveBeenCalledWith('team-1', 'project-1', expect.objectContaining({ launchRequestId: 'execution-1:attempt:2', executionId: 'execution-1' }));
+    expect(launchTeam).toHaveBeenCalledWith('team-1', 'project-1', expect.objectContaining({ launchRequestId: 'execution-1:attempt:2', executionId: 'execution-1', executionJobTitle: 'Build release' }));
+  }));
+
+  it('uses immutable audit owner for retries requested by an effective owner', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let tokenNumber = 0;
+    const grants = createResumeGrantStore({ filePath: `${filePath}.grants`, token: () => `resume-token-${++tokenNumber}` });
+    let calls = 0;
+    const authorizeTeamLaunch = vi.fn(() => {
+      calls += 1;
+      return calls === 1
+        ? { ok: false as const, code: 'DENIED', message: 'blocked' }
+        : { ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: { version: 1 as const, principalId: 'owner', authorizedAt: 10, expiresAt: 20, slots: [] } } };
+    });
+    const service = new SquadExecutionService(deps(filePath, { store, resumeGrants: grants, authorizeTeamLaunch }));
+    await service.start('session-1', 'project-1', request);
+    const grant = await grants.mint({ executionId: 'execution-1', projectId: 'project-1', callerPrincipalId: 'session-1' });
+    await expect(service.resumeBinding('session-2', 'project-1', 'execution-1', grant.token)).resolves.toMatchObject({ ok: true });
+    const blocked = await store.get('execution-1');
+    if (!blocked) throw new Error('missing execution');
+    await expect(service.retry('session-2', 'project-1', 'execution-1', blocked.stateVersion)).resolves.toMatchObject({ ok: true });
+    expect(authorizeTeamLaunch).toHaveBeenLastCalledWith('session-1', 'team-1', 'project-1', 'execution-1:attempt:2', {}, request.slots);
   }));
 
   it('reruns workflow profile preflight before retry', async () => fixture(async (filePath) => {
@@ -109,6 +131,78 @@ describe('SquadExecutionService', () => {
     expect(await service.list('replacement-session', 'other-project')).toEqual([]);
     expect(await service.events('replacement-session', 'other-project', 'execution-1')).toEqual({ events: [] });
     await expect(service.stop('replacement-session', 'project-1', 'execution-1', 3)).resolves.toMatchObject({ ok: false, code: 'NOT_FOUND' });
+  }));
+
+  it('rebinds a fresh owner with one durable grant without rewriting audit ownership', async () => fixture(async (filePath) => {
+    const grants = createResumeGrantStore({ filePath: `${filePath}.grants`, token: () => 'resume-token' });
+    const getTeamLaunch = vi.fn(async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' }] }));
+    const cancelTeamLaunch = vi.fn(async () => ({ ok: true, value: { canceledSessionIds: [], pendingSessionIds: [] } }));
+    const service = new SquadExecutionService(deps(filePath, { resumeGrants: grants, getTeamLaunch, cancelTeamLaunch }));
+    const started = await service.start('session-1', 'project-1', request);
+    if (!started.ok || !started.value.resumeToken) throw new Error('missing resume token');
+    await expect(service.resumeBinding('session-2', 'project-1', 'execution-1', started.value.resumeToken)).resolves.toMatchObject({ ok: true, value: { callerPrincipalId: 'session-1', effectiveOwnerPrincipalIds: ['session-2'] } });
+    expect(await service.status('session-2', 'project-1', 'execution-1')).toMatchObject({ id: 'execution-1' });
+    expect(await service.events('session-2', 'project-1', 'execution-1')).toMatchObject({ events: expect.any(Array) });
+    const record = await service.status('session-2', 'project-1', 'execution-1');
+    if (!record) throw new Error('missing execution');
+    await expect(service.stop('session-2', 'project-1', 'execution-1', record.stateVersion)).resolves.toMatchObject({ ok: true });
+    expect(cancelTeamLaunch).toHaveBeenCalledWith('session-1', 'request-1');
+    await expect(service.resumeBinding('session-3', 'project-1', 'execution-1', started.value.resumeToken)).resolves.toMatchObject({ ok: false });
+  }));
+
+  it('recovers a consumed binding after transient effective-owner persistence failure', async () => fixture(async (filePath) => {
+    const grants = createResumeGrantStore({ filePath: `${filePath}.grants`, token: () => 'resume-token' });
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const addEffectiveOwner = store.addEffectiveOwner;
+    let failOnce = true;
+    const service = new SquadExecutionService(deps(filePath, {
+      store: { ...store, addEffectiveOwner: async (...args) => {
+        if (failOnce) {
+          failOnce = false;
+          throw new Error('temporary write failure');
+        }
+        return addEffectiveOwner(...args);
+      } },
+      resumeGrants: grants
+    }));
+    const started = await service.start('session-1', 'project-1', request);
+    if (!started.ok || !started.value.resumeToken) throw new Error('missing resume token');
+    await expect(service.resumeBinding('session-2', 'project-1', 'execution-1', started.value.resumeToken)).resolves.toMatchObject({ ok: false, code: 'BINDING_TRANSIENT' });
+    await expect(service.resumeBinding('session-2', 'project-1', 'execution-1', started.value.resumeToken)).resolves.toMatchObject({ ok: true, value: { effectiveOwnerPrincipalIds: ['session-2'] } });
+  }));
+
+  it('lets immutable owner mint a replacement grant after start token is lost', async () => fixture(async (filePath) => {
+    const grants = createResumeGrantStore({ filePath: `${filePath}.grants`, token: () => 'replacement-token' });
+    const service = new SquadExecutionService(deps(filePath, { resumeGrants: grants }));
+    await service.start('session-1', 'project-1', request);
+    await expect(service.mintResumeGrant('other', 'project-1', 'execution-1')).resolves.toMatchObject({ ok: false, code: 'NOT_FOUND' });
+    await expect(service.mintResumeGrant('session-1', 'project-1', 'execution-1')).resolves.toEqual({ ok: true, value: { token: 'replacement-token', expiresAt: expect.any(Number) } });
+  }));
+
+  it('revokes durable grants and clears in-app token after terminal service transition', async () => fixture(async (filePath) => {
+    const grants = createResumeGrantStore({ filePath: `${filePath}.grants`, token: () => 'resume-token' });
+    const clearResumeToken = vi.fn();
+    const service = new SquadExecutionService(deps(filePath, { resumeGrants: grants, clearResumeToken }));
+    const started = await service.start('session-1', 'project-1', request);
+    if (!started.ok || !started.value.resumeToken) throw new Error('missing resume token');
+    const record = await service.status('session-1', 'project-1', 'execution-1');
+    if (!record) throw new Error('missing execution');
+    await expect(service.stop('session-1', 'project-1', 'execution-1', record.stateVersion)).resolves.toMatchObject({ ok: true, value: { state: 'STOPPED' } });
+    expect(clearResumeToken).toHaveBeenCalledWith('project-1', 'execution-1');
+    await expect(service.resumeBinding('session-2', 'project-1', 'execution-1', started.value.resumeToken)).resolves.toMatchObject({ ok: false, code: 'NOT_FOUND' });
+  }));
+
+  it('permits a fresh owner to bind and resume a blocked execution', async () => fixture(async (filePath) => {
+    const grants = createResumeGrantStore({ filePath: `${filePath}.grants`, token: () => 'resume-token' });
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, { store, resumeGrants: grants }));
+    const started = await service.start('session-1', 'project-1', request);
+    if (!started.ok || !started.value.resumeToken) throw new Error('missing resume token');
+    const running = await store.get('execution-1');
+    if (!running) throw new Error('missing execution');
+    const blocked = await store.transition('execution-1', running.stateVersion, 'BLOCKED', 'warning', 'Waiting');
+    await expect(service.resumeBinding('session-2', 'project-1', 'execution-1', started.value.resumeToken)).resolves.toMatchObject({ ok: true });
+    await expect(service.resume('session-2', 'project-1', 'execution-1', blocked.stateVersion + 1, 'slot-1', 'Continue')).resolves.toMatchObject({ ok: true, value: { state: 'RUNNING' } });
   }));
 
   it('rejects a consumed handoff when its execution became terminal', async () => fixture(async (filePath) => {

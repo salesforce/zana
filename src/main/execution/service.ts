@@ -4,6 +4,7 @@ import type { ExecutionRecord, ResolvedModelSnapshotV1 } from './store.js';
 import type { createExecutionStore } from './store.js';
 import type { ExecutionArtifactRecord, createExecutionArtifactStore } from './artifact-store.js';
 import { validateWorkflowPolicyResult, type WorkflowPolicyResultV1 } from './policy-result.js';
+import { isResumeGrantTerminal, type createResumeGrantStore } from './resume-grant-store.js';
 
 export interface SquadExecutionRequestV1 {
   version: 1;
@@ -38,6 +39,8 @@ export interface ExecutionServiceDeps {
   }>;
   replyToSession: (sessionId: string, text: string) => boolean;
   preflightWorkflow?: (teamId: string, workflow: SquadBundleWorkflowMetadataV1) => { ok: boolean; code?: string; message?: string };
+  resumeGrants?: ReturnType<typeof createResumeGrantStore>;
+  clearResumeToken?: (projectId: string, executionId: string) => void | Promise<void>;
 }
 
 export class SquadExecutionService {
@@ -46,7 +49,7 @@ export class SquadExecutionService {
   constructor(private readonly deps: ExecutionServiceDeps) {}
 
   async start(callerPrincipalId: string, projectId: string, request: SquadExecutionRequestV1): Promise<
-    { ok: true; value: ExecutionRecord } | { ok: false; code: string; message: string }
+    { ok: true; value: ExecutionRecord & { resumeToken?: string; resumeTokenExpiresAt?: number } } | { ok: false; code: string; message: string }
   > {
     if (request.version !== 1 || !request.teamId?.trim() || !request.launchRequestId?.trim() || !request.slots?.length) {
       return { ok: false, code: 'INVALID', message: 'invalid execution request' };
@@ -88,8 +91,12 @@ export class SquadExecutionService {
     }
 
     let record: ExecutionRecord;
+    let resumeGrant: { token: string; expiresAt: number } | undefined;
     this.beginStarting(claim.record.id);
     try {
+      if (this.deps.resumeGrants) {
+        resumeGrant = await this.deps.resumeGrants.mint({ executionId: claim.record.id, projectId, callerPrincipalId });
+      }
       record = await this.deps.store.transition(claim.record.id, claim.record.stateVersion, 'STARTING', 'info', 'Team launch authorized');
     } catch (error) {
       this.endStarting(claim.record.id);
@@ -99,20 +106,20 @@ export class SquadExecutionService {
       if (request.workflow) {
         const preflight = this.deps.preflightWorkflow?.(request.teamId, request.workflow);
         if (!preflight?.ok) {
-          await this.deps.store.transition(record.id, record.stateVersion, 'BLOCKED', 'warning', preflight?.message ?? 'workflow profile is unavailable');
+          await this.transitionOrCurrent(record, 'BLOCKED', 'warning', preflight?.message ?? 'workflow profile is unavailable');
           return { ok: false, code: preflight?.code ?? 'INVALID_WORKFLOW_PROFILE', message: preflight?.message ?? 'workflow profile is unavailable' };
         }
       }
       const authorization = await this.deps.authorizeTeamLaunch(
         callerPrincipalId, request.teamId, projectId, record.teamLaunchRequestId, request.policy ?? {}, request.slots
       );
-      if (!authorization.ok) {
-        await this.deps.store.transition(record.id, record.stateVersion, 'BLOCKED', 'warning', authorization.message);
-        return { ok: false, code: authorization.code, message: authorization.message };
+        if (!authorization.ok) {
+          await this.transitionOrCurrent(record, 'BLOCKED', 'warning', authorization.message);
+          return { ok: false, code: authorization.code, message: authorization.message };
       }
-      if (!authorization.value.context) {
-        await this.deps.store.transition(record.id, record.stateVersion, 'BLOCKED', 'warning', 'Team authorization context unavailable');
-        return { ok: false, code: 'AUTHORIZATION_CONTEXT_UNAVAILABLE', message: 'Team authorization context unavailable' };
+        if (!authorization.value.context) {
+          await this.transitionOrCurrent(record, 'BLOCKED', 'warning', 'Team authorization context unavailable');
+          return { ok: false, code: 'AUTHORIZATION_CONTEXT_UNAVAILABLE', message: 'Team authorization context unavailable' };
       }
       record = await this.deps.store.setAuthorizationContext(
         record.id,
@@ -134,11 +141,11 @@ export class SquadExecutionService {
         policy: request.policy, requirePreauthorization: true, executionId: record.id, executionJobTitle: record.jobTitle
       });
       if (!launched.ok) {
-        await this.deps.store.transition(record.id, record.stateVersion, 'FAILED', 'error', launched.message ?? 'Team launch failed');
+        await this.transitionOrCurrent(record, 'FAILED', 'error', launched.message ?? 'Team launch failed');
         return { ok: false, code: launched.code ?? 'TEAM_LAUNCH_FAILED', message: launched.message ?? 'Team launch failed' };
       }
       record = await this.transitionOrCurrent(record, 'RUNNING', 'info', 'Team launch started');
-      return { ok: true, value: record };
+      return { ok: true, value: { ...record, ...(resumeGrant ? { resumeToken: resumeGrant.token, resumeTokenExpiresAt: resumeGrant.expiresAt } : {}) } };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const current = await this.failLaunch(record, `Team launch error: ${message}`);
@@ -151,7 +158,7 @@ export class SquadExecutionService {
   }
 
   async status(callerPrincipalId: string, projectId: string, executionId: string) {
-    const record = await this.getAuthorized(callerPrincipalId, projectId, executionId);
+    const record = await this.getAuthorizedForControl(callerPrincipalId, projectId, executionId);
     return record ? this.reconcile(callerPrincipalId, projectId, record) : undefined;
   }
 
@@ -161,7 +168,8 @@ export class SquadExecutionService {
   }
 
   async events(callerPrincipalId: string, projectId: string, executionId: string, after = 0, limit = 100) {
-    return this.deps.store.events(callerPrincipalId, projectId, executionId, after, limit);
+    const record = await this.getAuthorizedForControl(callerPrincipalId, projectId, executionId);
+    return record ? this.deps.store.eventsInProject(projectId, executionId, after, limit) : { events: [] };
   }
 
   async reportEvent(
@@ -170,7 +178,7 @@ export class SquadExecutionService {
     executionId: string,
     input: Parameters<ExecutionServiceDeps['store']['producerEvent']>[1]
   ) {
-    const record = await this.getAuthorized(callerPrincipalId, projectId, executionId);
+    const record = await this.getAuthorizedForControl(callerPrincipalId, projectId, executionId);
     if (!record) return { ok: false as const, code: 'NOT_FOUND', message: 'execution not found for caller' };
     try {
       return { ok: true as const, value: await this.deps.store.producerEvent(record.id, input) };
@@ -180,7 +188,7 @@ export class SquadExecutionService {
   }
 
   async retry(callerPrincipalId: string, projectId: string, executionId: string, expectedStateVersion: number) {
-    const record = await this.getAuthorized(callerPrincipalId, projectId, executionId);
+    const record = await this.getAuthorizedForControl(callerPrincipalId, projectId, executionId);
     if (!record) return { ok: false as const, code: 'NOT_FOUND', message: 'execution not found for caller' };
     let retry: ExecutionRecord;
     this.beginStarting(record.id);
@@ -202,7 +210,7 @@ export class SquadExecutionService {
           return { ok: false as const, code: preflight?.code ?? 'INVALID_WORKFLOW_PROFILE', message: preflight?.message ?? 'workflow profile is unavailable', value: blocked };
         }
       }
-      const authorization = await this.deps.authorizeTeamLaunch(callerPrincipalId, retry.teamId, projectId, retry.teamLaunchRequestId, request.policy ?? {}, request.slots);
+      const authorization = await this.deps.authorizeTeamLaunch(retry.callerPrincipalId, retry.teamId, projectId, retry.teamLaunchRequestId, request.policy ?? {}, request.slots);
       if (!authorization.ok || !authorization.value.context) {
         const blocked = await this.transitionOrCurrent(retry, 'BLOCKED', 'warning', authorization.ok ? 'Team authorization context unavailable' : authorization.message);
         return { ok: false as const, code: authorization.ok ? 'AUTHORIZATION_CONTEXT_UNAVAILABLE' : authorization.code, message: authorization.ok ? 'Team authorization context unavailable' : authorization.message, value: blocked };
@@ -212,7 +220,7 @@ export class SquadExecutionService {
         version: 1, authorizationContextDigest: current.authorizationContextDigest!,
         slots: authorization.value.slots.map(({ slotId, personaId, initialTask }) => ({ slotId, personaId, initialTaskDigest: launchDigest(initialTask) }))
       });
-      const launched = await this.deps.launchTeam(retry.teamId, projectId, { callerPrincipalId, launchRequestId: retry.teamLaunchRequestId, slots: authorization.value.slots, policy: request.policy, requirePreauthorization: true, executionId: retry.id });
+      const launched = await this.deps.launchTeam(retry.teamId, projectId, { callerPrincipalId: retry.callerPrincipalId, launchRequestId: retry.teamLaunchRequestId, slots: authorization.value.slots, policy: request.policy, requirePreauthorization: true, executionId: retry.id, executionJobTitle: retry.jobTitle });
       if (!launched.ok) {
         const failed = await this.failLaunch(current, launched.message ?? 'Team launch failed');
         return { ok: false as const, code: launched.code ?? 'TEAM_LAUNCH_FAILED', message: launched.message ?? 'Team launch failed', value: failed };
@@ -234,7 +242,7 @@ export class SquadExecutionService {
     mediaType: string,
     content: string
   ): Promise<{ ok: true; value: ExecutionArtifactRecord } | { ok: false; code: string; message: string }> {
-    const record = await this.getAuthorized(callerPrincipalId, projectId, executionId);
+    const record = await this.getAuthorizedForControl(callerPrincipalId, projectId, executionId);
     if (!record) return { ok: false, code: 'NOT_FOUND', message: 'execution not found for caller' };
     if (record.state === 'COMPLETED' || record.state === 'FAILED' || record.state === 'STOPPED') {
       return { ok: false, code: 'TERMINAL', message: `execution is ${record.state.toLowerCase()}` };
@@ -252,7 +260,7 @@ export class SquadExecutionService {
   }
 
   async listArtifacts(callerPrincipalId: string, projectId: string, executionId: string) {
-    const record = await this.getAuthorized(callerPrincipalId, projectId, executionId);
+    const record = await this.getAuthorizedForControl(callerPrincipalId, projectId, executionId);
     return record ? this.deps.artifacts.list(record.id, projectId) : undefined;
   }
 
@@ -274,9 +282,9 @@ export class SquadExecutionService {
   }
 
   async stop(callerPrincipalId: string, projectId: string, executionId: string, expectedStateVersion: number) {
-    const record = await this.getAuthorized(callerPrincipalId, projectId, executionId);
+    const record = await this.getAuthorizedForControl(callerPrincipalId, projectId, executionId);
     if (!record) return { ok: false as const, code: 'NOT_FOUND', message: 'execution not found for caller' };
-    return this.stopOwned(record, callerPrincipalId, expectedStateVersion);
+    return this.stopOwned(record, expectedStateVersion);
   }
 
   async respond(callerPrincipalId: string, projectId: string, executionId: string, expectedStateVersion: number, slotId: string, response: string) {
@@ -300,14 +308,56 @@ export class SquadExecutionService {
     if (record.state === 'COMPLETED' || record.state === 'FAILED' || record.state === 'STOPPED') {
       return { ok: false as const, code: 'TERMINAL', message: `execution is ${record.state.toLowerCase()}` };
     }
-    if (action === 'stop') return this.stopOwned(record, authority.sourceOwnerSessionId, expectedStateVersion);
+    if (action === 'stop') return this.stopOwned(record, expectedStateVersion);
     if (!slotId || !message) return { ok: false as const, code: 'INVALID', message: 'execution handoff requires slotId and message' };
-    return this.deliverOwned(record, authority.sourceOwnerSessionId, expectedStateVersion, slotId, message, action === 'resume');
+    return this.deliverOwned(record, expectedStateVersion, slotId, message, action === 'resume');
   }
 
   private async getAuthorized(callerPrincipalId: string, projectId: string, executionId: string) {
     const record = await this.deps.store.get(executionId);
     return record && record.callerPrincipalId === callerPrincipalId && record.projectId === projectId ? record : undefined;
+  }
+
+  private async getAuthorizedForControl(callerPrincipalId: string, projectId: string, executionId: string) {
+    const record = await this.deps.store.get(executionId);
+    return record && record.projectId === projectId
+      && (record.callerPrincipalId === callerPrincipalId || record.effectiveOwnerPrincipalIds?.includes(callerPrincipalId)) ? record : undefined;
+  }
+
+  async resumeBinding(callerPrincipalId: string, projectId: string, executionId: string, token: string) {
+    const record = await this.deps.store.getInProject(projectId, executionId);
+    if (!record || isResumeGrantTerminal(record.state) || !this.deps.resumeGrants) {
+      return { ok: false as const, code: 'NOT_FOUND', message: 'execution resume grant is not current' };
+    }
+    try {
+      await this.deps.resumeGrants.consume({ token, executionId, projectId, effectiveOwnerPrincipalId: callerPrincipalId });
+      return { ok: true as const, value: await this.deps.store.addEffectiveOwner(executionId, callerPrincipalId) };
+    } catch (error) {
+      if (error instanceof Error && error.message === 'execution resume grant is not current') {
+        return { ok: false as const, code: 'NOT_FOUND', message: error.message };
+      }
+      return { ok: false as const, code: 'BINDING_TRANSIENT', message: 'execution resume binding could not be persisted; retry with the same token' };
+    }
+  }
+
+  async mintResumeGrant(callerPrincipalId: string, projectId: string, executionId: string) {
+    const record = await this.getAuthorized(callerPrincipalId, projectId, executionId);
+    if (!record || !this.deps.resumeGrants || isResumeGrantTerminal(record.state)) {
+      return { ok: false as const, code: 'NOT_FOUND', message: 'execution resume grant is not current' };
+    }
+    try {
+      return { ok: true as const, value: await this.deps.resumeGrants.mint({ executionId, projectId, callerPrincipalId }) };
+    } catch (error) {
+      return { ok: false as const, code: 'MINT_TRANSIENT', message: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  async revokeResumeGrant(callerPrincipalId: string, projectId: string, executionId: string, effectiveOwnerPrincipalId?: string) {
+    const record = await this.getAuthorizedForControl(callerPrincipalId, projectId, executionId);
+    if (!record || !this.deps.resumeGrants) return { ok: false as const, code: 'NOT_FOUND', message: 'execution not found for caller' };
+    await this.deps.resumeGrants.revoke(executionId, projectId);
+    const value = effectiveOwnerPrincipalId ? await this.deps.store.removeEffectiveOwner(executionId, effectiveOwnerPrincipalId) : record;
+    return { ok: true as const, value };
   }
 
   private async deliver(
@@ -322,18 +372,18 @@ export class SquadExecutionService {
     if (!slotId.trim() || !text.trim() || text.length > 64 * 1024) {
       return { ok: false as const, code: 'INVALID', message: 'invalid execution slot or message' };
     }
-    const record = await this.getAuthorized(callerPrincipalId, projectId, executionId);
+    const record = await this.getAuthorizedForControl(callerPrincipalId, projectId, executionId);
     if (!record) return { ok: false as const, code: 'NOT_FOUND', message: 'execution not found for caller' };
-    return this.deliverOwned(record, callerPrincipalId, expectedStateVersion, slotId, text, resume);
+    return this.deliverOwned(record, expectedStateVersion, slotId, text, resume);
   }
 
-  private async deliverOwned(record: ExecutionRecord, callerPrincipalId: string, expectedStateVersion: number, slotId: string, text: string, resume: boolean) {
+  private async deliverOwned(record: ExecutionRecord, expectedStateVersion: number, slotId: string, text: string, resume: boolean) {
     if (record.state === 'COMPLETED' || record.state === 'FAILED' || record.state === 'STOPPED') {
       return { ok: false as const, code: 'TERMINAL', message: `execution is ${record.state.toLowerCase()}` };
     }
     const fenced = await this.fenceCommand(record, expectedStateVersion, resume ? 'Execution resume requested' : 'Execution response requested', slotId);
     if (!fenced.ok) return fenced;
-    const lifecycle = await this.deps.getTeamLaunch(callerPrincipalId, fenced.value.launchRequestId) as {
+    const lifecycle = await this.deps.getTeamLaunch(record.callerPrincipalId, fenced.value.launchRequestId) as {
       workers?: Array<{ slotId?: string; sessionId?: string; projectId?: string }>;
     } | undefined;
     const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === slotId && candidate.projectId === record.projectId);
@@ -351,13 +401,13 @@ export class SquadExecutionService {
     return { ok: true as const, value: current };
   }
 
-  private async stopOwned(record: ExecutionRecord, callerPrincipalId: string, expectedStateVersion: number) {
+  private async stopOwned(record: ExecutionRecord, expectedStateVersion: number) {
     if (record.state === 'COMPLETED' || record.state === 'STOPPED') {
       return { ok: false as const, code: 'TERMINAL', message: `execution is already ${record.state.toLowerCase()}` };
     }
     const fenced = await this.fenceCommand(record, expectedStateVersion, 'Execution stop requested');
     if (!fenced.ok) return fenced;
-    const canceled = await this.deps.cancelTeamLaunch(callerPrincipalId, fenced.value.launchRequestId);
+    const canceled = await this.deps.cancelTeamLaunch(record.callerPrincipalId, fenced.value.launchRequestId);
     if (!canceled.ok) return { ok: false as const, code: canceled.code ?? 'CANCEL_FAILED', message: canceled.message ?? 'Team cancellation failed' };
     if (fenced.value.state === 'FAILED') {
       const current = await this.emitOrCurrent(fenced.value, 'info', 'Stop requested for surviving partial-launch slots');
@@ -428,7 +478,9 @@ export class SquadExecutionService {
     summary: string
   ): Promise<ExecutionRecord> {
     try {
-      return await this.deps.store.transition(record.id, record.stateVersion, state, severity, summary);
+      const updated = await this.deps.store.transition(record.id, record.stateVersion, state, severity, summary);
+      if (isResumeGrantTerminal(updated.state)) await this.cleanupTerminal(updated);
+      return updated;
     } catch (error) {
       if (!(error instanceof Error) || error.message !== 'stale execution state') throw error;
       const current = await this.deps.store.get(record.id);
@@ -452,7 +504,9 @@ export class SquadExecutionService {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       if (current.state !== 'STARTING' && current.state !== 'RUNNING') return current;
       try {
-        return await this.deps.store.transition(current.id, current.stateVersion, 'FAILED', 'error', summary);
+        const failed = await this.deps.store.transition(current.id, current.stateVersion, 'FAILED', 'error', summary);
+        await this.cleanupTerminal(failed);
+        return failed;
       } catch (error) {
         if (!(error instanceof Error) || error.message !== 'stale execution state') throw error;
         const refreshed = await this.deps.store.get(current.id);
@@ -471,6 +525,15 @@ export class SquadExecutionService {
       const current = await this.deps.store.get(record.id);
       if (!current) throw error;
       return current;
+    }
+  }
+
+  private async cleanupTerminal(record: ExecutionRecord): Promise<void> {
+    await this.deps.resumeGrants?.revoke(record.id, record.projectId);
+    try {
+      await this.deps.clearResumeToken?.(record.projectId, record.id);
+    } catch {
+      // Token cleanup is best effort; durable grant revocation already closes authority.
     }
   }
 }

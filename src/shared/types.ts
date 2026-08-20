@@ -3490,7 +3490,7 @@ export interface TeamLaunchAuthorizationInputSlot {
 }
 
 export interface TeamLaunchAuthorizationResult {
-  teamId: string;
+  teamId?: string;
   projectId: string;
   slots: Array<TeamLaunchTaskSlot & { personaId: string; authorizationId: string }>;
   context?: TeamLaunchAuthorizationContextV1;
@@ -4926,6 +4926,20 @@ export interface ProjectExecutionConsentGrant {
   expiresAt?: number;
 }
 
+/** Non-secret execution status projected by main for one project Agent Board. */
+export interface ExecutionBoardProjection {
+  executionId: string;
+  projectId: string;
+  teamId?: string;
+  jobTitle: string;
+  state: 'READY' | 'STARTING' | 'RUNNING' | 'COMPLETED' | 'BLOCKED' | 'STOPPED' | 'FAILED';
+  attempt: number;
+  updatedAt: number;
+  orchestratorSessionId?: string;
+  hasResumeToken?: boolean;
+  teamName?: string;
+}
+
 export interface CcApi {
   startup: {
     state(): Promise<{ mode: 'ready' } | { mode: 'repair-required'; reason: 'harness-routing-migration' }>;
@@ -4940,6 +4954,12 @@ export interface CcApi {
   executionConsent: {
     listProject(projectId: string): Promise<ProjectExecutionConsentGrant[]>;
     revokeProject(projectId: string, grantId: string): Promise<ProjectExecutionConsentGrant[]>;
+  };
+  executionBoard: {
+    listProject(projectId: string): Promise<ExecutionBoardProjection[]>;
+    setResumeToken(projectId: string, executionId: string, token: string, expiresAt: number): Promise<Result<true>>;
+    clearResumeToken(projectId: string, executionId: string): Promise<Result<true>>;
+    relaunchMonitor(projectId: string, executionId: string): Promise<Result<{ sessionId: string }>>;
   };
   /**
    * Per-harness auth (Settings → Harness). `status` returns the base URL +
