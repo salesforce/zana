@@ -227,7 +227,7 @@ export const LANES: LaneDef[] = [
     // blocked worker falls through to its normal lane instead of nagging you.
     match: (c, sensitivity) =>
       c.session.status !== 'exited' &&
-      !isBackgroundAgent(c) &&
+      (!isBackgroundAgent(c) || c.isSyntheticExecutionHost === true) &&
       (c.state === 'blocked' || cardNeedsAttention(c, sensitivity))
   },
   {
@@ -240,7 +240,7 @@ export const LANES: LaneDef[] = [
     // surface it as working rather than nagging the user.
     match: (c) =>
       c.session.status !== 'exited' &&
-      (c.state === 'working' || (isBackgroundAgent(c) && c.state === 'blocked'))
+      (c.state === 'working' || (isBackgroundAgent(c) && !c.isSyntheticExecutionHost && c.state === 'blocked'))
   },
   {
     key: 'delegating',
@@ -337,7 +337,6 @@ export function partitionExecutionMembers(
   for (const execution of executions) {
     if (hostByExecution.has(execution.executionId) || syntheticByExecution.has(execution.executionId)) continue;
     const template = items.find((item) => item.projectId === execution.projectId);
-    if (!template) continue;
     const host = executionHost(template, execution);
     syntheticByExecution.set(execution.executionId, host);
     top.push(host);
@@ -346,17 +345,24 @@ export function partitionExecutionMembers(
 }
 
 /** Board-only job host for retained execution workers after their real lead exits. */
-function executionHost(member: AgentCard, execution: ExecutionBoardProjection): AgentCard {
+function executionHost(member: AgentCard | undefined, execution: ExecutionBoardProjection): AgentCard {
+  const terminal = execution.state === 'COMPLETED' || execution.state === 'FAILED' || execution.state === 'STOPPED';
+  const session = member?.session ?? {
+    id: `execution:${execution.executionId}`,
+    title: execution.jobTitle,
+    status: terminal ? 'exited' : 'running',
+    profile: 'claude'
+  } as TerminalSession;
   return {
-    ...member,
+    ...(member ?? { projectId: execution.projectId, projectName: 'Project', liveSubagents: 0 }),
     session: {
-      ...member.session,
+      ...session,
       id: `execution:${execution.executionId}`,
       title: execution.jobTitle,
-      status: 'running',
+      status: terminal ? 'exited' : 'running',
       headless: true,
       cohort: {
-        ...(member.session.cohort ?? { cohortId: execution.executionId, teamId: 'execution', teamName: 'Execution', role: 'orchestrator' }),
+        ...(session.cohort ?? { cohortId: execution.executionId, teamId: 'execution', teamName: 'Execution', role: 'orchestrator' }),
         executionId: execution.executionId,
         executionJobTitle: execution.jobTitle,
         role: 'orchestrator'
@@ -952,12 +958,6 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
         className="agent-squad-worker"
         disabled={relaunchingExecutionId === execution.executionId}
         onClick={async () => {
-          if (!execution.hasResumeToken) {
-            const token = window.prompt('Paste resume token for this execution');
-            if (!token) return;
-            const stored = await window.cc.executionBoard.setResumeToken(execution.projectId, execution.executionId, token, Date.now() + 24 * 60 * 60 * 1000);
-            if (!stored.ok) return;
-          }
           setRelaunchingExecutionId(execution.executionId);
           try { await window.cc.executionBoard.relaunchMonitor(execution.projectId, execution.executionId); }
           finally { setRelaunchingExecutionId(null); }

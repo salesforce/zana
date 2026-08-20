@@ -4281,6 +4281,7 @@ const squadExecutionService = new SquadExecutionService({
     return ptys.list(projectId).some((session) => session.status !== 'exited' && owners.has(session.id));
   },
   clearResumeToken: (projectId, executionId) => executionResumeTokens.clear(projectId, executionId),
+  cacheResumeToken: (projectId, executionId, token, expiresAt) => executionResumeTokens.set({ projectId, executionId, token, expiresAt }),
   preflightWorkflow: (teamId, workflow) => {
     const team = teams.list().find((candidate) => candidate.id === teamId);
     return team ? preflightWorkflowProfile(workflow, team, personas.list()) : { ok: false, code: 'INVALID_WORKFLOW_PROFILE', message: 'workflow profile Team is unavailable' };
@@ -4961,20 +4962,6 @@ function registerIpc() {
       }
     },
     () => []
-  );
-  ipcMain.handle(
-    IPC.executionBoard.setResumeToken,
-    async (_e, projectId: string, executionId: string, token: string, expiresAt: number): Promise<Result<true>> => {
-      const project = store.listProjects().find((candidate) => candidate.id === projectId);
-      const record = project ? await executionStore.getInProject(project.id, executionId) : undefined;
-      if (!project || !record) return { ok: false, code: 'NOT_FOUND', message: 'execution not found for project' };
-      try {
-        executionResumeTokens.set({ projectId: project.id, executionId: record.id, token, expiresAt });
-        return { ok: true, value: true };
-      } catch (error) {
-        return { ok: false, code: 'INVALID', message: error instanceof Error ? error.message : String(error) };
-      }
-    }
   );
   ipcMain.handle(
     IPC.executionBoard.clearResumeToken,

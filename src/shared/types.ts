@@ -4957,7 +4957,6 @@ export interface CcApi {
   };
   executionBoard: {
     listProject(projectId: string): Promise<ExecutionBoardProjection[]>;
-    setResumeToken(projectId: string, executionId: string, token: string, expiresAt: number): Promise<Result<true>>;
     clearResumeToken(projectId: string, executionId: string): Promise<Result<true>>;
     relaunchMonitor(projectId: string, executionId: string): Promise<Result<{ sessionId: string }>>;
   };

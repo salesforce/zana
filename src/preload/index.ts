@@ -61,7 +61,6 @@ const api: CcApi = {
   },
   executionBoard: {
     listProject: (projectId) => ipcRenderer.invoke(IPC.executionBoard.listProject, projectId),
-    setResumeToken: (projectId, executionId, token, expiresAt) => ipcRenderer.invoke(IPC.executionBoard.setResumeToken, projectId, executionId, token, expiresAt),
     clearResumeToken: (projectId, executionId) => ipcRenderer.invoke(IPC.executionBoard.clearResumeToken, projectId, executionId),
     relaunchMonitor: (projectId, executionId) => ipcRenderer.invoke(IPC.executionBoard.relaunchMonitor, projectId, executionId)
   },

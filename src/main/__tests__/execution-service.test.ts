@@ -233,6 +233,14 @@ describe('SquadExecutionService', () => {
     await expect(service.resumeBinding('session-2', 'project-1', 'execution-1', started.value.resumeToken)).resolves.toMatchObject({ ok: false, code: 'NOT_FOUND' });
   }));
 
+  it('writes the initial resume token only through main-owned storage', async () => fixture(async (filePath) => {
+    const cacheResumeToken = vi.fn();
+    const grants = createResumeGrantStore({ filePath: `${filePath}.grants`, token: () => 'resume-token' });
+    const service = new SquadExecutionService(deps(filePath, { resumeGrants: grants, cacheResumeToken }));
+    await expect(service.start('session-1', 'project-1', request)).resolves.toMatchObject({ ok: true });
+    expect(cacheResumeToken).toHaveBeenCalledWith('project-1', 'execution-1', 'resume-token', expect.any(Number));
+  }));
+
   it('permits a fresh owner to bind and resume a blocked execution', async () => fixture(async (filePath) => {
     const grants = createResumeGrantStore({ filePath: `${filePath}.grants`, token: () => 'resume-token' });
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
@@ -413,7 +421,7 @@ describe('SquadExecutionService', () => {
     await expect(service.putArtifact('session-1', 'project-1', 'execution-1', 'late.json', 'application/json', '{}')).resolves.toMatchObject({ ok: false, code: 'TERMINAL' });
   }));
 
-  it('fails workflow preflight before reserving or launching execution', async () => fixture(async (filePath) => {
+  it('persists workflow preflight failure before blocking launch', async () => fixture(async (filePath) => {
     const launchTeam = vi.fn(async () => ({ ok: true }));
     const service = new SquadExecutionService(deps(filePath, {
       launchTeam,
@@ -424,6 +432,16 @@ describe('SquadExecutionService', () => {
       workflow: { schemaVersion: 1, profileId: 'profile', profileVersion: '1', controller: { personaId: 'controller', slotId: 'orchestrator:controller' }, workers: [], supportedRequestVersions: [1] }
     })).resolves.toEqual({ ok: false, code: 'INVALID_WORKFLOW_PROFILE', message: 'missing controller slot' });
     expect(launchTeam).not.toHaveBeenCalled();
+    expect(await service.status('session-1', 'project-1', 'execution-1')).toMatchObject({ state: 'BLOCKED', jobTitle: 'Build release' });
+  }));
+
+  it('lists executions for an effective owner after a successful resume binding', async () => fixture(async (filePath) => {
+    const grants = createResumeGrantStore({ filePath: `${filePath}.grants`, token: () => 'resume-token' });
+    const service = new SquadExecutionService(deps(filePath, { resumeGrants: grants }));
+    const started = await service.start('session-1', 'project-1', request);
+    if (!started.ok || !started.value.resumeToken) throw new Error('missing resume token');
+    await expect(service.resumeBinding('session-2', 'project-1', 'execution-1', started.value.resumeToken)).resolves.toMatchObject({ ok: true });
+    await expect(service.list('session-2', 'project-1')).resolves.toMatchObject([{ id: 'execution-1' }]);
   }));
 
   it('persists explicit resolved models and rejects duplicate slot snapshots', async () => fixture(async (filePath) => {

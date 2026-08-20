@@ -435,6 +435,21 @@ describe('partitionExecutionMembers', () => {
     expect(top[0].isSyntheticExecutionHost).toBe(true);
     expect(workersByHost.get('execution:execution-1')?.map((card) => card.session.id)).toEqual(['worker']);
   });
+
+  it('retains a projection-only execution when no terminal card remains', () => {
+    const { top } = partitionExecutionMembers([], [{
+      executionId: 'execution-1', projectId: 'p1', jobTitle: 'Release train', state: 'BLOCKED', attempt: 2, updatedAt: 50
+    }]);
+    expect(top).toMatchObject([{ projectId: 'p1', isSyntheticExecutionHost: true, session: { id: 'execution:execution-1', status: 'running' } }]);
+  });
+});
+
+describe('synthetic execution hosts', () => {
+  it('surfaces a blocked synthetic host in Needs you rather than Working', () => {
+    const host = memberCard('execution:execution-1', 'co1', 'orchestrator', { state: 'blocked', isSyntheticExecutionHost: true });
+    expect(needsYou.match(host, 'medium')).toBe(true);
+    expect(working.match(host, 'medium')).toBe(false);
+  });
 });
 
 describe('formatCountdown', () => {

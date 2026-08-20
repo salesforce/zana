@@ -26,7 +26,6 @@ export const IPC = {
   },
   executionBoard: {
     listProject: 'executionBoard:listProject',
-    setResumeToken: 'executionBoard:setResumeToken',
     clearResumeToken: 'executionBoard:clearResumeToken',
     relaunchMonitor: 'executionBoard:relaunchMonitor'
   },

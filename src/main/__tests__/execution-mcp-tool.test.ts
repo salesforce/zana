@@ -118,6 +118,19 @@ describe('execution MCP tools', () => {
     expect(execution.start).toHaveBeenCalledWith('session-1', 'project-1', expect.not.objectContaining({ resolvedModels: expect.anything() }));
   });
 
+  it('forwards bounded lifecycle event metadata without consumer semantics', async () => {
+    const execution = service();
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, { sessionId: 'session-1', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true });
+    await tools.get('execution.event')!({
+      executionId: 'execution-1', eventId: 'event-1', producerRole: 'worker', type: 'progress', severity: 'info', summary: 'Half done',
+      attention: false, progress: { completed: 1, total: 2 }, references: [{ label: 'result', uri: 'artifact://result.json' }]
+    });
+    expect(execution.reportEvent).toHaveBeenCalledWith('session-1', 'project-1', 'execution-1', expect.objectContaining({
+      producerRole: 'worker', attention: false, progress: { completed: 1, total: 2 }, references: [{ label: 'result', uri: 'artifact://result.json' }]
+    }));
+  });
+
   it('routes stop, respond, and resume through authenticated route scope', async () => {
     const execution = service();
     const { server, tools } = fakeServer();

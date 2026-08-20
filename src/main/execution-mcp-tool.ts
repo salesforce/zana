@@ -26,11 +26,15 @@ const executionProducerEventSchema = {
   ...executionIdSchema,
   eventId: z.string().min(1).max(2048),
   slotId: z.string().min(1).max(2048).optional(),
+  producerRole: z.enum(['worker', 'orchestrator']).optional(),
   type: z.enum(['progress', 'blocker', 'failure', 'outcome']),
   severity: z.enum(['info', 'warning', 'error']),
   summary: z.string().min(1).max(2048),
   detail: z.string().min(1).max(2048).optional(),
-  blocker: z.object({ question: z.string().min(1).max(2048), options: z.array(z.string().min(1).max(2048)).max(20).optional() }).optional()
+  blocker: z.object({ question: z.string().min(1).max(2048), options: z.array(z.string().min(1).max(2048)).max(20).optional() }).optional(),
+  attention: z.boolean().optional(),
+  progress: z.object({ completed: z.number().int().min(0), total: z.number().int().min(0) }).refine((value) => value.completed <= value.total).optional(),
+  references: z.array(z.object({ label: z.string().min(1).max(2048), uri: z.string().min(1).max(2048) })).max(20).optional()
 };
 const executionMessageSchema = { ...executionControlSchema, slotId: z.string().min(1).max(2048), message: z.string().min(1).max(64 * 1024) };
 const executionArtifactSchema = { ...executionIdSchema, name: z.string().min(1).max(512), mediaType: z.string().min(1).max(512), content: z.string().min(1).max(64 * 1024) };
@@ -148,10 +152,10 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
 
   server.registerTool('execution.event', {
     description: 'Record one idempotent, owner-scoped lifecycle, blocker, failure, or outcome event.', inputSchema: executionProducerEventSchema
-  }, async ({ executionId, eventId, slotId, type, severity, summary, detail, blocker }) => {
+  }, async ({ executionId, eventId, slotId, producerRole, type, severity, summary, detail, blocker, attention, progress, references }) => {
     if (!authorized()) return denied('execution.event');
     const result = await options.service.reportEvent(options.sessionId!, options.projectId, executionId, {
-      id: eventId, slotId, type, severity, summary, detail, blocker
+      id: eventId, slotId, producerRole, type, severity, summary, detail, blocker, attention, progress, references
     });
     return result.ok
       ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }

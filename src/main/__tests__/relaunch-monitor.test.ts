@@ -68,6 +68,13 @@ describe('relaunchExecutionMonitor', () => {
     expect(thrown.clearToken).not.toHaveBeenCalled();
   });
 
+  it('closes monitor but retains token after a transient binding failure for retry', async () => {
+    const input = deps({ bindMonitor: vi.fn(async () => ({ ok: false as const, code: 'BINDING_TRANSIENT', message: 'retry' })) });
+    await expect(relaunchExecutionMonitor(input, 'project-1', 'execution-1')).resolves.toMatchObject({ ok: false, code: 'BINDING_TRANSIENT' });
+    expect(input.closeMonitor).toHaveBeenCalledWith('monitor-1');
+    expect(input.clearToken).not.toHaveBeenCalled();
+  });
+
   it('keeps a successfully bound monitor alive when token cleanup fails', async () => {
     const input = deps({ clearToken: vi.fn(() => { throw new Error('cache unavailable'); }) });
     await expect(relaunchExecutionMonitor(input, 'project-1', 'execution-1')).resolves.toEqual({

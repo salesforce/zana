@@ -100,7 +100,10 @@ export async function relaunchExecutionMonitor(
         return { ok: true, value: { sessionId: created.value.id } };
       }
       deps.closeMonitor(created.value.id);
-      try { deps.clearToken(project.id, record.id); } catch { /* Durable grant validation remains authoritative. */ }
+      // A transient bind leaves its grant retryable with this exact token.
+      if (bound.code !== 'BINDING_TRANSIENT') {
+        try { deps.clearToken(project.id, record.id); } catch { /* Durable grant validation remains authoritative. */ }
+      }
       return { ok: false, code: bound.code, message: bound.message };
     } catch (error) {
       deps.closeMonitor(created.value.id);

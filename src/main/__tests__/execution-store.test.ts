@@ -93,6 +93,19 @@ describe('execution store', () => {
     expect((await store.events('session-1', 'project-1', running.id)).events.map((event) => event.sequence)).toEqual([4, 5]);
   }));
 
+  it('persists replayable producer role, attention, progress, and references', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const claimed = await store.claim(request());
+    if (claimed.outcome !== 'claimed') throw new Error('expected claim');
+    await store.producerEvent(claimed.record.id, {
+      id: 'event-1', slotId: 'slot-1', producerRole: 'worker', type: 'progress', severity: 'info', summary: 'Half done',
+      attention: false, progress: { completed: 1, total: 2 }, references: [{ label: 'result', uri: 'artifact://result.json' }]
+    });
+    expect(await store.events('session-1', 'project-1', claimed.record.id)).toMatchObject({ events: [
+      {}, { id: 'event-1', producerRole: 'worker', attention: false, progress: { completed: 1, total: 2 }, references: [{ label: 'result', uri: 'artifact://result.json' }] }
+    ] });
+  }));
+
   it('requires resync for an old cursor when global retention removed this execution events', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: (() => { let index = 0; return () => `execution-${++index}`; })(), maxEvents: 1 });
     const first = await store.claim(request());

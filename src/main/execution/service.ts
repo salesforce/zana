@@ -42,6 +42,7 @@ export interface ExecutionServiceDeps {
   resumeGrants?: ReturnType<typeof createResumeGrantStore>;
   hasLivePredecessor?: (projectId: string, ownerPrincipalIds: readonly string[]) => boolean;
   clearResumeToken?: (projectId: string, executionId: string) => void | Promise<void>;
+  cacheResumeToken?: (projectId: string, executionId: string, token: string, expiresAt: number) => void | Promise<void>;
 }
 
 export class SquadExecutionService {
@@ -59,13 +60,6 @@ export class SquadExecutionService {
     }
     const jobTitle = deriveJobTitle(request);
     const summary = request.summary?.trim() || undefined;
-    if (request.workflow) {
-      const preflight = this.deps.preflightWorkflow?.(request.teamId, request.workflow);
-      if (!preflight?.ok) return { ok: false, code: preflight?.code ?? 'INVALID_WORKFLOW_PROFILE', message: preflight?.message ?? 'workflow profiles are unavailable' };
-      if (!request.workflow.supportedRequestVersions.includes(request.version)) {
-        return { ok: false, code: 'INVALID_WORKFLOW_PROFILE', message: 'workflow profile does not support this execution request version' };
-      }
-    }
     const resolvedModels = request.resolvedModels ?? [];
     if (!hasUniqueModelSlots(resolvedModels)) return { ok: false, code: 'INVALID', message: 'duplicate resolved model slot' };
     const startingKey = `${callerPrincipalId}:${request.launchRequestId}`;
@@ -97,13 +91,32 @@ export class SquadExecutionService {
     let resumeGrant: { token: string; expiresAt: number } | undefined;
     this.beginStarting(claim.record.id);
     try {
-      if (this.deps.resumeGrants) {
-        resumeGrant = await this.deps.resumeGrants.mint({ executionId: claim.record.id, projectId, callerPrincipalId });
+      if (request.workflow) {
+        const preflight = this.deps.preflightWorkflow?.(request.teamId, request.workflow);
+        if (!preflight?.ok || !request.workflow.supportedRequestVersions.includes(request.version)) {
+          const message = !preflight?.ok
+            ? preflight?.message ?? 'workflow profiles are unavailable'
+            : 'workflow profile does not support this execution request version';
+          const blocked = await this.deps.store.transition(claim.record.id, claim.record.stateVersion, 'BLOCKED', 'warning', message);
+          this.endStarting(claim.record.id);
+          return { ok: false, code: preflight?.code ?? 'INVALID_WORKFLOW_PROFILE', message: blocked ? message : 'workflow profile is unavailable' };
+        }
       }
       record = await this.deps.store.transition(claim.record.id, claim.record.stateVersion, 'STARTING', 'info', 'Team launch authorized');
     } catch (error) {
       this.endStarting(claim.record.id);
       return { ok: false, code: 'EXECUTION_STORE_ERROR', message: error instanceof Error ? error.message : String(error) };
+    }
+    try {
+      if (this.deps.resumeGrants) {
+        resumeGrant = await this.deps.resumeGrants.mint({ executionId: claim.record.id, projectId, callerPrincipalId });
+        await this.deps.cacheResumeToken?.(projectId, claim.record.id, resumeGrant.token, resumeGrant.expiresAt);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.failLaunch(record, `Resume grant setup failed: ${message}`);
+      this.endStarting(claim.record.id);
+      return { ok: false, code: 'EXECUTION_STORE_ERROR', message };
     }
     try {
       if (request.workflow) {

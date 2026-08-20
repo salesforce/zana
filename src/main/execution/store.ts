@@ -72,7 +72,11 @@ export interface ExecutionEvent {
   fromState?: ExecutionState;
   toState?: ExecutionState;
   slotId?: string;
+  producerRole?: 'worker' | 'orchestrator';
   eventType?: 'progress' | 'blocker' | 'failure' | 'outcome';
+  attention?: boolean;
+  progress?: { completed: number; total: number };
+  references?: Array<{ label: string; uri: string }>;
   detail?: string;
   blocker?: { question: string; options?: string[] };
   severity: 'info' | 'warning' | 'error';
@@ -191,7 +195,11 @@ function validEvent(value: unknown): value is ExecutionEvent {
     && (event.kind === undefined || event.kind === 'reservation' || event.kind === 'transition' || event.kind === 'command' || event.kind === 'event')
     && (event.fromState === undefined || isState(event.fromState)) && (event.toState === undefined || isState(event.toState))
     && (event.slotId === undefined || validString(event.slotId))
+    && (event.producerRole === undefined || event.producerRole === 'worker' || event.producerRole === 'orchestrator')
     && (event.eventType === undefined || event.eventType === 'progress' || event.eventType === 'blocker' || event.eventType === 'failure' || event.eventType === 'outcome')
+    && (event.attention === undefined || typeof event.attention === 'boolean')
+    && (event.progress === undefined || validProgress(event.progress))
+    && (event.references === undefined || Array.isArray(event.references) && event.references.length <= 20 && event.references.every(validReference))
     && (event.detail === undefined || validString(event.detail))
     && (event.blocker === undefined || validBlocker(event.blocker))
     && (event.severity === 'info' || event.severity === 'warning' || event.severity === 'error')
@@ -203,6 +211,19 @@ function validBlocker(value: unknown): value is { question: string; options?: st
   const blocker = value as { question?: unknown; options?: unknown };
   return validString(blocker.question) && (blocker.options === undefined
     || Array.isArray(blocker.options) && blocker.options.length <= 20 && blocker.options.every(validString));
+}
+
+function validProgress(value: unknown): value is { completed: number; total: number } {
+  if (!value || typeof value !== 'object') return false;
+  const progress = value as { completed: unknown; total: unknown };
+  return Number.isInteger(progress.completed) && Number.isInteger(progress.total)
+    && (progress.completed as number) >= 0 && (progress.total as number) >= (progress.completed as number);
+}
+
+function validReference(value: unknown): value is { label: string; uri: string } {
+  if (!value || typeof value !== 'object') return false;
+  const reference = value as { label?: unknown; uri?: unknown };
+  return validString(reference.label) && validString(reference.uri);
 }
 
 function validString(value: unknown): value is string {
@@ -358,11 +379,15 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     input: {
       id: string;
       slotId?: string;
+      producerRole?: 'worker' | 'orchestrator';
       type: NonNullable<ExecutionEvent['eventType']>;
       severity: ExecutionEvent['severity'];
       summary: string;
       detail?: string;
       blocker?: { question: string; options?: string[] };
+      attention?: boolean;
+      progress?: { completed: number; total: number };
+      references?: Array<{ label: string; uri: string }>;
     }
   ): Promise<{ outcome: 'accepted' | 'replay'; event: ExecutionEvent }> {
     return storeQueue.run(async () => {
@@ -382,8 +407,12 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         kind: 'event', eventType: input.type, severity: input.severity,
         summary: string(input.summary, 'event summary'), createdAt: timestamp,
         ...(input.slotId === undefined ? {} : { slotId: string(input.slotId, 'slot id') }),
+        ...(input.producerRole === undefined ? {} : { producerRole: input.producerRole }),
         ...(input.detail === undefined ? {} : { detail: string(input.detail, 'event detail') }),
-        ...(input.blocker === undefined ? {} : { blocker: clone(input.blocker) })
+        ...(input.blocker === undefined ? {} : { blocker: clone(input.blocker) }),
+        ...(input.attention === undefined ? {} : { attention: input.attention }),
+        ...(input.progress === undefined ? {} : { progress: validProgress(input.progress) ? clone(input.progress) : (() => { throw new Error('invalid execution progress'); })() }),
+        ...(input.references === undefined ? {} : { references: Array.isArray(input.references) && input.references.length <= 20 && input.references.every(validReference) ? clone(input.references) : (() => { throw new Error('invalid execution references'); })() })
       };
       record.lastEventSequence = event.sequence;
       snapshot.state.events.push(event);
@@ -518,7 +547,8 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
   async function list(callerPrincipalId: string, projectId: string, limit = 100): Promise<ExecutionRecord[]> {
     const safeLimit = Math.max(1, Math.min(limit, 100));
     return storeQueue.run(async () => clone(read().state.records
-      .filter((record) => record.callerPrincipalId === string(callerPrincipalId, 'caller principal id')
+      .filter((record) => (record.callerPrincipalId === string(callerPrincipalId, 'caller principal id')
+          || record.effectiveOwnerPrincipalIds?.includes(callerPrincipalId))
         && record.projectId === string(projectId, 'project id'))
       .slice(-safeLimit).reverse()));
   }
