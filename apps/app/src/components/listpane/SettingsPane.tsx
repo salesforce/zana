@@ -3,11 +3,11 @@ import { useData, useUi } from '../../store.js';
 import { SETTINGS_SECTIONS, SETTINGS_GROUPS } from '@/views/settings/SettingsView';
 
 /**
- * Focused Settings rail. Each Settings section
- * (Global · Prompts · Plugins · Skills · MCP · Extensions, + the project-scoped
- * Project settings) is a row that sets `settingsTab`. Scope (Global vs a single
- * project) is chosen in the content header's scope control (see `ScopeControl`
- * in SettingsPanel.tsx), NOT here.
+ * Focused Settings rail. Each Settings section (Global · Prompts · Personas ·
+ * Squads · Usage · …, + the project-scoped Project settings) is a row that
+ * sets `settingsTab`. Scope (Global vs a single project) is chosen in the
+ * content header's scope control (see `ScopeControl` in SettingsPanel.tsx),
+ * NOT here. Plugins / Skills / MCP live on the top-level Extensions workspace.
  *
  * `SETTINGS_SECTIONS` is the shared source of truth for labels/icons/descs.
  */

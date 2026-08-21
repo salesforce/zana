@@ -19,14 +19,14 @@ const SOURCE_FILTERS: Array<{ id: 'all' | McpSource; label: string }> = [
 ];
 
 /**
- * MCP servers catalogue, rendered as the Settings → MCP tab. Returns tab
- * content only — SettingsPanel supplies the `settings-panel` / `settings-inner`
- * shell, so this must NOT render its own `<main>`.
+ * MCP servers catalogue, rendered on the Extensions workspace MCP page.
+ * Returns tab content only — the host panel supplies the `settings-panel` /
+ * `settings-inner` shell, so this must NOT render its own `<main>`.
  */
-export function McpBody() {
+export function McpBody({ showHeader = true }: { showHeader?: boolean } = {}) {
   const entries = useMcpCatalogue((s) => s.entries);
   const loading = useMcpCatalogue((s) => s.loading);
-  const setSettingsTab = useUi((s) => s.setSettingsTab);
+  const setExtensionsTab = useUi((s) => s.setExtensionsTab);
   const catalogueFilter = useUi((s) => s.catalogueFilter);
   const setCatalogueFilter = useUi((s) => s.setCatalogueFilter);
   const pushToast = useUi((s) => s.pushToast);
@@ -129,9 +129,10 @@ export function McpBody() {
 
   return (
     <div className="settings-catalogue mcp-catalogue">
-      <div className="scheduler-header">
-        <div className="scheduler-header-text">
-          <h2>MCP servers</h2>
+      {showHeader && (
+        <div className="scheduler-header">
+          <div className="scheduler-header-text">
+            <h2>MCP servers</h2>
             <p className="settings-help scheduler-subtitle">
               MCP servers from <code>~/.claude.json</code> (user), each
               installed plugin's <code>.mcp.json</code>, and per-project{' '}
@@ -143,6 +144,7 @@ export function McpBody() {
             </p>
           </div>
         </div>
+      )}
 
         <div className="skills-layout skills-layout--single">
           <section className="skills-left">
@@ -200,7 +202,7 @@ export function McpBody() {
                     onToggle={(enabled) => toggleEntry(entry, enabled)}
                     onReveal={() => reveal(entry)}
                     onExpandToggle={() => toggleExpand(entry.id)}
-                    onOpenPlugins={() => setSettingsTab('extensions')}
+                    onOpenPlugins={() => setExtensionsTab('installed')}
                   />
                 ))}
               </ul>

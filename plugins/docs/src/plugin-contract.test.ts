@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -28,5 +28,9 @@ describe('docs plugin contract', () => {
     expect(src).toMatch(/icon:\s*'Library'/);
     expect(src).toMatch(/label:\s*'Library'/);
     expect(src).toMatch(/global:\s*true/);
+  });
+
+  it('is the only shipped docs plugin (no bundled-extensions copy)', () => {
+    expect(existsSync(join(root, '../../bundled-extensions/docs'))).toBe(false);
   });
 });

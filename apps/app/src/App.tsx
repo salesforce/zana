@@ -60,7 +60,7 @@ import { useFavoriteCount } from './hooks/useAgentCards.js';
 import { focusInboxEntry } from './lib/inboxNavigation.js';
 import { projectDefaultLaunch } from './lib/launchProfile.js';
 import { getScopedProjectId } from './lib/windowScope.js';
-import { resolveShellLayout } from './lib/shellLayout.js';
+import { keepsProjectFocusRail, resolveShellLayout, shellTitlebarLabel } from './lib/shellLayout.js';
 import { installShortcuts } from './shortcuts.js';
 import { isLibraryPluginModule } from './lib/libraryPlugin.js';
 import { useShellChromeState } from './hooks/useShellChromeState.js';
@@ -525,8 +525,16 @@ export function App() {
   }, []);
 
   // The shell is always nav + one full content track. Settings/Extensions
-  // swap the left rail; every destination's panel owns any inner split.
-  const shellLayout = resolveShellLayout(nav, !!scopedProject);
+  // swap the left rail; a focused project keeps ProjectScopedNav so workspace
+  // modes live in the side panel instead of a horizontal tab strip.
+  const focusedProject = focusedProjectId
+    ? projects.find((project) => project.id === focusedProjectId) ?? null
+    : null;
+  const projectRailLocked =
+    !!scopedProject || keepsProjectFocusRail(nav, focusedProjectId);
+  const shellLayout = resolveShellLayout(nav, projectRailLocked);
+  const titlebarProject = scopedProject ?? (projectRailLocked ? focusedProject : null);
+  const titlebarLabel = shellTitlebarLabel(titlebarProject?.name, projectRailLocked);
 
   return (
     <div
@@ -537,8 +545,8 @@ export function App() {
       data-fullscreen={shellChrome.isFullScreen}
     >
       <div className="titlebar">
-        <span className="titlebar-title">
-          Zana
+        <span className="titlebar-title" title={titlebarProject?.path ?? undefined}>
+          {titlebarLabel}
         </span>
         <button
           type="button"
@@ -575,11 +583,21 @@ export function App() {
           `has-update-banner` class above adds that row). Renders null when no
           newer release / dismissed, so it costs nothing when up to date. */}
       <UpdateBanner />
-      {/* A dedicated project window stays hard-scoped. The main window keeps its
-          unified global rail even while a project workspace is open, so users can
-          switch projects and inspect live sessions without first backing out. */}
+      {/* A dedicated project window stays hard-scoped. Opening a project in the
+          main window swaps the global rail for ProjectScopedNav so Agents /
+          Terminals / Scheduler / … live in the side panel, with Back returning
+          to the cross-project home. */}
       {sidebarCollapsed ? null : scopedProject ? (
         <ProjectScopedNav project={scopedProject} variant="window" />
+      ) : focusedProject && keepsProjectFocusRail(nav, focusedProjectId) ? (
+        <ProjectScopedNav
+          project={focusedProject}
+          variant="focus"
+          onBack={() => {
+            useUi.getState().exitProjectFocus();
+            useUi.getState().setNav('home');
+          }}
+        />
       ) : shellLayout.rail === 'settings' ? (
         <SettingsPane />
       ) : shellLayout.rail === 'extensions' ? (

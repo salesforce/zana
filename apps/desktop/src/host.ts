@@ -4907,6 +4907,7 @@ function registerIpc() {
     get menubarPopoverEnabled() { return menubarPopoverEnabled; },
     get moduleRouter() { return moduleRouter; },
     get offLoudInboxAppended() { return offLoudInboxAppended; },
+    set offLoudInboxAppended(value) { offLoudInboxAppended = value; },
     get openProjectWindow() { return openProjectWindow; },
     get overseerAudit() { return overseerAudit; },
     get packAndInstallLocal() { return packAndInstallLocal; },

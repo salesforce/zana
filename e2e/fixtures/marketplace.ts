@@ -1,5 +1,6 @@
 /**
- * Page object for Settings → Extensions → Marketplace, plus a thin IPC helper.
+ * Page object for Sidebar → Extensions → Browse extensions (Marketplace), plus
+ * a thin IPC helper.
  *
  * Two layers, used deliberately:
  *   - UI methods (open, rows, install) drive the real renderer the way a user
@@ -13,17 +14,10 @@ import type { Page } from '@playwright/test';
 export class MarketplacePage {
   constructor(private readonly window: Page) {}
 
-  /** Navigate Sidebar → Settings → Extensions section → Marketplace sub-tab. */
+  /** Navigate Sidebar → Extensions → Browse extensions. */
   async open(): Promise<void> {
-    // Sidebar "Settings" rail entry.
-    await this.window.locator('.nav-item', { hasText: 'Settings' }).first().click();
-    // Settings section row "Extensions" (a .settings-section-item, not a button).
-    await this.window
-      .locator('.settings-section-item')
-      .filter({ has: this.window.locator('.project-name', { hasText: 'Extensions' }) })
-      .click();
-    // Extensions hub sub-tab "Marketplace".
-    await this.window.getByRole('tab', { name: 'Marketplace' }).click();
+    await this.window.locator('.nav-item', { hasText: 'Extensions' }).first().click();
+    await this.window.getByTestId('extensions-nav-marketplace').click();
     await this.window.waitForSelector('.ext-market', { timeout: 15_000 });
   }
 

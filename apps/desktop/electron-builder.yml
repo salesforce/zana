@@ -55,10 +55,17 @@ extraResources:
   # `resolveOpencodeBinDir` finds resourcesPath/opencode/<arch>/opencode.
   - from: vendor/opencode
     to: opencode
-  # First-party plugins (package.json zcc). Packaged copies also live in
-  # bundled-extensions/ as the committed runnable artifacts.
-  - from: bundled-extensions
-    to: extensions
+  # First-party plugins (`plugins/<id>` with a package.json `zcc` block).
+  # PluginService.reconcileBuiltins auto-installs from this tree; tests and
+  # packaging scripts stay in the repo and are not shipped.
+  - from: plugins
+    to: plugins
+    filter:
+      - "**/*"
+      - "!README.md"
+      - "!*/src/**"
+      - "!*/scripts/**"
+      - "!**/*.{test,spec}.{ts,tsx,js,mjs}"
   # Bundled agent-detection manifests (herdr TOML format), read by
   # src/main/manifest-detector.ts via process.resourcesPath/manifests in packaged
   # builds; dev falls back to the repo-relative manifests/ dir. User overrides

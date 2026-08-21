@@ -94,6 +94,7 @@ export function CommandPalette({ onClose }: Props) {
   const selectTab = useUi((s) => s.selectTab);
   const setNav = useUi((s) => s.setNav);
   const setSettingsTab = useUi((s) => s.setSettingsTab);
+  const setExtensionsTab = useUi((s) => s.setExtensionsTab);
   const setWorkspaceMode = useUi((s) => s.setWorkspaceMode);
   const setOverviewOpen = useUi((s) => s.setOverviewOpen);
   const overviewOpen = useUi((s) => s.overviewOpen);
@@ -326,11 +327,11 @@ export function CommandPalette({ onClose }: Props) {
     projects, terminals, selectedProject, selectedProjectTabs, activeTab,
     scheduledTasks, personas, modules, overviewOpen, whenCtx, onClose, launch,
     launchPersona, addProject, setNav, selectProject, selectTab, setWorkspaceMode,
-    setSettingsTab, setOverviewOpen, setPinned, restartTerminal, closeTerminal,
+    setSettingsTab, setExtensionsTab, setOverviewOpen, setPinned, restartTerminal, closeTerminal,
     reopenLastClosed, restoreLastDetached, pushToast
   }), [projects, terminals, selectedProject, selectedProjectTabs, activeTab,
     scheduledTasks, personas, modules, overviewOpen, whenCtx, onClose, addProject, setNav,
-    selectProject, selectTab, setWorkspaceMode, setSettingsTab, setOverviewOpen,
+    selectProject, selectTab, setWorkspaceMode, setSettingsTab, setExtensionsTab, setOverviewOpen,
     setPinned, restartTerminal, closeTerminal, reopenLastClosed, restoreLastDetached, pushToast]);
 
   // --- command filtering / ranking -----------------------------------------

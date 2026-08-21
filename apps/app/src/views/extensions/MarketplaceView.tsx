@@ -1,5 +1,5 @@
 /**
- * Settings → Extensions → Marketplace. Browses the (opt-in) internal registry
+ * Extensions → Browse extensions (Marketplace). Browses the (opt-in) internal registry
  * and lets the user install / update an extension WITHOUT rebuilding the app.
  *
  * The catalog comes from `window.cc.extensions.marketplaceList()`, which returns

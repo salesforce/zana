@@ -2,9 +2,6 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   Settings2,
   Sparkles,
-  BookOpen,
-  Plug,
-  Blocks,
   FlaskConical,
   Bot,
   Drama,
@@ -19,8 +16,6 @@ import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import type { SettingsTab } from '@/store';
 import { applyTheme, useData, useUi } from '@/store';
 import { PromptsTab } from '@/views/settings/PromptsView';
-import { ExtensionsHub } from '@/views/extensions/ExtensionsHub';
-import { PluginSettingsSections } from '@/plugins/PluginSettingsSections';
 import { ScopeControl } from '@/components/settings/ScopeControl';
 import { GlobalTab } from '@/views/settings/GlobalView';
 import { TerminalTab } from '@/views/settings/TerminalSettingsView';
@@ -30,8 +25,6 @@ import { EditorTab } from '@/views/settings/EditorView';
 import { ExperimentalTab } from '@/views/settings/ExperimentalView';
 import { AboutTab } from '@/views/settings/AboutView';
 import { ProjectTab } from '@/views/settings/ProjectSettingsView';
-import { SkillsBody } from '@/views/extensions/SkillsView';
-import { McpBody } from '@/views/extensions/McpView';
 import { PersonasPanel } from '@/views/settings/PersonasView';
 import { SquadsPanel } from '@/views/settings/SquadsView';
 import { UsagePanel } from '@/views/settings/UsageView';
@@ -40,11 +33,8 @@ import { UsagePanel } from '@/views/settings/UsageView';
  * Settings sections. The section *picker* now lives in the list pane (column 2,
  * see `SettingsPane` in ListPane.tsx) — this map is the single source of truth
  * for each section's label + icon, shared by the picker and this panel's header.
- * Plugins / Skills / MCP are configuration catalogues, not content. The Plugins
- * hub owns ZCC extensions; Claude Code's separate plugin catalogue is not
- * surfaced in Settings.
- */
-/**
+ * Plugins / Skills / MCP live on the top-level Extensions workspace, not here.
+ *
  * Section groups for the settings picker (column 2). Each section names its
  * `group`; the picker renders these headers in this order with the group's
  * sections beneath. Ordered most-used → most-specialised. `project` is not in
@@ -80,9 +70,6 @@ export const SETTINGS_SECTIONS: Array<{
   { id: 'agents', label: 'Agents', icon: Bot, desc: 'Attention, automation, heartbeat & Overseer', group: 'agents' },
   { id: 'personas', label: 'Personas', icon: Drama, desc: 'Reusable launch profiles', group: 'agents' },
   { id: 'squads', label: 'Squads', icon: Users, desc: 'Reusable multi-agent teams', group: 'agents' },
-  { id: 'extensions', label: 'Plugins', icon: Blocks, desc: 'Installed plugins, versions & settings', group: 'catalogues' },
-  { id: 'skills', label: 'Skills', icon: BookOpen, desc: 'User, plugin & project skills', group: 'catalogues', projectScoped: true },
-  { id: 'mcp', label: 'MCP', icon: Plug, desc: 'MCP servers', group: 'catalogues', projectScoped: true },
   { id: 'usage', label: 'Usage', icon: BarChart3, desc: 'Session activity rollup', group: 'catalogues' },
   { id: 'experimental', label: 'Experimental', icon: FlaskConical, desc: 'Opt-in features under evaluation', group: 'labs' },
   { id: 'about', label: 'About', icon: Info, desc: 'Version, updates & release notes', group: 'app' }
@@ -93,7 +80,7 @@ export const SETTINGS_SECTIONS: Array<{
  * exposes as clickable jump targets. `id` matches the `anchorId` passed to the
  * corresponding `<Section>` (which renders `id="settings-anchor-<id>"`); the
  * picker switches to `tab` then scrolls that element into view. Only the two
- * config-heavy tabs have anchors — the catalogue tabs (Plugins/Skills/MCP/…) are
+ * config-heavy tabs have anchors — catalogue tabs (Personas/Squads/Usage) are
  * whole sub-components with no core `<Section>` blocks to target.
  */
 export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: string; label: string }>>> = {
@@ -140,8 +127,6 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
 
 /** Catalogue sections that need room for their list/detail controls. */
 const WIDE_TABS = new Set<SettingsTab>([
-  'skills',
-  'mcp',
   'personas',
   'squads',
   'usage'
@@ -286,8 +271,7 @@ export function SettingsView() {
   };
 
   const meta = sectionMeta(tab);
-  // Project settings are inherently project-scoped; Skills/MCP can be viewed at
-  // Global (user + plugin sources) or scoped to one project. Everything else is
+  // Project settings are inherently project-scoped. Everything else is
   // app-wide and shows no scope control.
   const showScope = tab === 'project' || !!meta?.projectScoped;
   const allowGlobalScope = tab !== 'project';
@@ -338,15 +322,6 @@ export function SettingsView() {
             onConfigDraft={setConfig}
             onUpdate={update}
           />
-        ) : tab === 'extensions' ? (
-          <>
-            <ExtensionsHub />
-            <PluginSettingsSections />
-          </>
-        ) : tab === 'skills' ? (
-          <SkillsBody />
-        ) : tab === 'mcp' ? (
-          <McpBody />
         ) : tab === 'personas' ? (
           <PersonasPanel />
         ) : tab === 'squads' ? (

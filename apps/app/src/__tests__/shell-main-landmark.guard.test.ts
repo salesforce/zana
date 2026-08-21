@@ -64,4 +64,18 @@ describe('single shell <main> landmark', () => {
     expect(src('views/scheduler/SchedulerView.tsx')).not.toMatch(/<SchedulerPane\b/);
     expect(src('views/scheduler/SchedulerView.tsx')).not.toMatch(/scheduler-panel--split/);
   });
+
+  it('project workspace modes live on ProjectScopedNav, not a horizontal tab strip', () => {
+    const app = src('App.tsx');
+    expect(app).toMatch(/variant="focus"/);
+    expect(app).toMatch(/keepsProjectFocusRail/);
+    expect(src('views/project/WorkspaceView.tsx')).not.toMatch(/workspace-mode-segmented/);
+    expect(src('App.tsx')).toMatch(/shellTitlebarLabel/);
+    expect(src('components/ProjectScopedNav.tsx')).toMatch(/mode: 'scheduler'/);
+    expect(src('components/ProjectScopedNav.tsx')).toMatch(/\?\? 'agents'/);
+    expect(src('components/ProjectScopedNav.tsx')).toMatch(/sidebar--titlebar-controls/);
+    expect(src('components/ProjectScopedNav.tsx')).toMatch(/sidebar-utility-bar/);
+    expect(src('components/ProjectScopedNav.tsx')).not.toMatch(/nav-section-label/);
+    expect(src('components/ProjectScopedNav.tsx')).not.toMatch(/Project workspace/);
+  });
 });

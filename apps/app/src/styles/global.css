@@ -604,10 +604,13 @@ button.statusbar-update {
 
 .titlebar-title {
   /* Centered via the flex container; the bell is absolutely positioned so it
-     never shifts the title off-center. */
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+     never shifts the title off-center. Long project names truncate instead of
+     colliding with traffic lights or the titlebar actions. */
+  display: block;
+  max-width: min(46vw, 420px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .titlebar-beta {
@@ -1887,43 +1890,20 @@ body.resizing-sidebar-section .sidebar-agents-resizer::after {
 
 /* --- Focused-project rail (main window drilled into a project) --- */
 
-/* "← Projects" back button, above the project brand. A dimmer, smaller-feeling
-   affordance than a destination nav-item — it's an exit, not a place. The
-   chevron nudges left on hover to reinforce "go back". */
-.project-focused-back {
-  color: var(--text-dim);
-  margin-bottom: 2px;
-}
-
-.project-focused-back .nav-item-icon {
-  transition: transform 0.12s ease;
-}
-
-.project-focused-back:hover .nav-item-icon {
-  transform: translateX(-2px);
-}
-
-/* The mode list sits in the middle; the agent tray + footer are pushed to the
-   bottom of the rail so the global escape-hatch reads as separate from the
-   project's own views. Only the nav-list div grows — the agent tray has its own
-   margin-top:auto + capped height, and the footer is fixed-height. */
-.project-focused-nav > .sidebar-nav {
+/* Same chrome / utility dock as the global Sidebar: history lives in the
+ * titlebar, destinations are a flat list, Settings is an icon in the dock. */
+.project-scoped-nav .sidebar-nav {
+  display: flex;
   flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
   min-height: 0;
   overflow-y: auto;
+  padding-bottom: 4px;
 }
 
-.project-focused-footer {
-  flex-shrink: 0;
-  margin-top: 8px;
-  padding-top: 13px;
-  border-top: 1px solid var(--sidebar-border);
-}
-
-/* On the collapsed icon-rail the "Projects" label is dropped like every other
-   nav label; the chevron alone stands in for "back". */
-.sidebar.collapsed .project-focused-back .nav-item-label {
-  display: none;
+.project-scoped-nav .sidebar-sections {
+  min-height: 0;
 }
 
 .list-pane {
@@ -14221,10 +14201,10 @@ body.resizing-col .explorer-resizer::after {
 
 /* ===== Skills panel ====================================================== */
 
-/* The catalogue tabs (Plugins / Skills / MCP) now render inside Settings'
+/* The catalogue tabs (Skills / MCP) render inside the Extensions workspace's
    shared `.settings-inner`. Their toolbar + multi-column layouts were sized for
    a wide column, so widen the inner wrapper when it hosts a catalogue body —
-   beyond the 920px the `--wide` (Prompts/Extensions) layout uses. */
+   beyond the 920px the `--wide` (Prompts/Extensions hub) layout uses. */
 .skills-panel .settings-inner,
 .settings-inner:has(.settings-catalogue) {
   max-width: 1200px;
@@ -14232,9 +14212,7 @@ body.resizing-col .explorer-resizer::after {
 
 /* Top-level Extensions view is the same case: ListPane returns null for the
  * 'extensions' nav, so without this span the settings-panel auto-places in the
- * narrow --col-list track (col 2) and col 3 sits empty. (Settings → Extensions
- * keeps its own SettingsPane section picker in col 2, so this modifier is only
- * on the standalone ExtensionsPanel, not the shared ExtensionsHub.) */
+ * narrow --col-list track (col 2) and col 3 sits empty. */
 .extensions-panel,
 /* Library owns the whole content area (folder tree + doc list + preview): same
  * case, ListPane returns null for the 'library' nav. */
@@ -26216,28 +26194,18 @@ body.resizing-col .library-split-resizer::after {
 
 /* --- Focused-project rail (main window drilled into a project) --- */
 
-/* "← Projects" back button, above the project brand. A dimmer, smaller-feeling
-   affordance than a destination nav-item — it's an exit, not a place. The
-   chevron nudges left on hover to reinforce "go back". */
-.project-focused-back {
-  color: var(--text-dim);
-  margin-bottom: 2px;
-}
-
-/* The mode list sits in the middle; the agent tray + footer are pushed to the
-   bottom of the rail so the global escape-hatch reads as separate from the
-   project's own views. Only the nav-list div grows — the agent tray has its own
-   margin-top:auto + capped height, and the footer is fixed-height. */
-.project-focused-nav > .sidebar-nav {
+.project-scoped-nav .sidebar-nav {
+  display: flex;
   flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
   min-height: 0;
   overflow-y: auto;
+  padding-bottom: 4px;
 }
 
-/* On the collapsed icon-rail the "Projects" label is dropped like every other
-   nav label; the chevron alone stands in for "back". */
-.sidebar.collapsed .project-focused-back .nav-item-label {
-  display: none;
+.project-scoped-nav .sidebar-sections {
+  min-height: 0;
 }
 
 /* Divider-style section header (Projects rail Remote/Local groups): a hairline
@@ -26952,9 +26920,7 @@ body.resizing-col .library-split-resizer::after {
 
 /* Top-level Extensions view is the same case: ListPane returns null for the
  * 'extensions' nav, so without this span the settings-panel auto-places in the
- * narrow --col-list track (col 2) and col 3 sits empty. (Settings → Extensions
- * keeps its own SettingsPane section picker in col 2, so this modifier is only
- * on the standalone ExtensionsPanel, not the shared ExtensionsHub.) */
+ * narrow --col-list track (col 2) and col 3 sits empty. */
 .extensions-panel,
 /* Library is the same case: ListPane returns null for the 'library' nav. */
 .library-panel {

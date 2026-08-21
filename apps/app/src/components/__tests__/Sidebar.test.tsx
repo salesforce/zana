@@ -17,7 +17,7 @@ const h = vi.hoisted(() => {
     setAgentsBoardView: vi.fn(),
     setLauncherOpen: vi.fn()
   };
-  const data = { projects: [], suggestionsEnabled: false };
+  const data = { projects: [], suggestionsEnabled: false, followUpsEnabled: false };
   return {
     cache,
     state,
@@ -133,7 +133,7 @@ describe('Sidebar structure and compact accessibility', () => {
   });
 
   it('uses translation-only transforms when compact rows cross collection sections', () => {
-    const source = readFileSync(new URL('../Sidebar.tsx', import.meta.url), 'utf8');
+    const source = readFileSync(new URL('../sidebarSortable.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain('CSS.Translate.toString(transform)');
     expect(source).not.toContain('CSS.Transform.toString(transform)');

@@ -1,5 +1,5 @@
 /**
- * Settings → Extensions hub. A master–detail view over EVERY module the shell
+ * Extensions hub. A master–detail view over EVERY module the shell
  * knows: built-ins (Zana, Slack) and runtime disk extensions, listed uniformly
  * via `useMergedModules()`. Core stays extension-agnostic — it never names a
  * module here; each one supplies its own settings UI through
@@ -285,9 +285,9 @@ function readHubListWidth(): number {
 export function InstalledView() {
   const modules = useMergedModules() as (AppModule & { loadError?: string })[];
   const [entries, setEntries] = useState<ExtensionEntry[]>([]);
-  // Selection lives in the UI store so the settings picker's Extensions
-  // sub-list (ListPane) and this detail pane stay in sync — clicking an
-  // extension in the picker jumps straight to its settings here.
+  // Selection lives in the UI store so a deep-link (`selectSettingsExtension`)
+  // and this detail pane stay in sync — opening an extension jumps straight
+  // to its settings here.
   const selectedId = useUi((s) => s.settingsExtensionId);
   const setSelectedId = useUi((s) => s.setSettingsExtensionId);
   const [creating, setCreating] = useState(false);

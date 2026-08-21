@@ -4,9 +4,11 @@
  * install. The companion to `skill-installer.ts` (same boot-time, best-effort,
  * never-throws posture), for extensions instead of skills.
  *
- * The app ships each canonical extension artifact under `resources/extensions/<id>/`
- * (electron-builder `extraResources`, sourced from the committed
- * `bundled-extensions/<id>/`). On boot — BEFORE discovery — we compare the
+ * The app used to ship each canonical extension artifact under
+ * `resources/extensions/<id>/` (electron-builder `extraResources`). First-party
+ * plugins now live in `plugins/` and auto-install via PluginService. This
+ * seeder still walks whatever dirs remain under the bundled-extensions root.
+ * On boot — BEFORE discovery — we compare the
  * bundled `version` to the installed copy and reseed when the bundled one is
  * newer (or nothing is installed). We NEVER downgrade: a user/dev who hand-
  * installed a newer build (e.g. via the dev watcher) keeps it.
@@ -45,11 +47,12 @@ function installRoot(): string {
 }
 
 /**
- * Resolve the bundled-extensions root. Test override (`ZCC_BUNDLED_EXTENSIONS_DIR`)
- * wins; packaged: `process.resourcesPath/extensions` (electron-builder
- * `extraResources`); dev: the committed `bundled-extensions` (electron-vite runs
- * with `__dirname = out/main`, so source is `../../bundled-extensions`). Returns
- * the first that exists, or null.
+ * Resolve the legacy bundled-extensions root. Test override
+ * (`ZCC_BUNDLED_EXTENSIONS_DIR`) wins; packaged: `process.resourcesPath/extensions`
+ * (electron-builder `extraResources`); dev: a leftover `bundled-extensions` dir
+ * (electron-vite runs with `__dirname = out/main`). First-party plugins are
+ * not seeded here — they live in `plugins/` and load via PluginService.
+ * Returns the first path that exists, or null.
  */
 function bundledRoot(): string | null {
   // An explicit override is AUTHORITATIVE — if set, never fall back to the

@@ -3,6 +3,7 @@ import {
   ChevronLeft,
   ChevronRight,
   FolderOpen,
+  Plug,
   Sparkles
 } from 'lucide-react';
 import { useUi, type ExtensionsTab } from '../../store.js';
@@ -22,6 +23,12 @@ const EXTENSIONS_GROUPS: Array<{
     label: 'Skills',
     items: [
       { id: 'skills', label: 'Skills', icon: Sparkles }
+    ]
+  },
+  {
+    label: 'MCP',
+    items: [
+      { id: 'mcp', label: 'MCP', icon: Plug }
     ]
   }
 ];

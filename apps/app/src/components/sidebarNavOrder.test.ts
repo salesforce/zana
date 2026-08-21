@@ -47,6 +47,16 @@ describe('sidebar navigation order', () => {
     expect(reorderSidebarNavItems(available, 'agents', 'inbox')).toEqual(available);
   });
 
+  it('pins Inbox first on the project rail', () => {
+    const projectIds = ['inbox', 'feed', 'terminals', 'sidebar-section:agents'];
+    expect(
+      normalizeSidebarNavOrder(['feed', 'inbox', 'terminals'], projectIds, ['inbox'])
+    ).toEqual(['inbox', 'feed', 'terminals', 'sidebar-section:agents']);
+    expect(
+      reorderSidebarNavItems(projectIds, 'inbox', 'feed', ['inbox'])
+    ).toEqual(projectIds);
+  });
+
   it('persists collection sections alongside ordinary destinations', () => {
     const sections = ['home', 'inbox', 'scheduler', 'sidebar-section:agents', 'sidebar-section:workspaces'];
     expect(reorderSidebarNavItems(sections, 'sidebar-section:workspaces', 'scheduler')).toEqual([

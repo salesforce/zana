@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect } from 'react';
-import { TerminalSquare, FolderTree, GitBranch, Columns2, Rows2, LayoutGrid, Square, Clock, Bot, Target, MessageCircleQuestion, Activity } from 'lucide-react';
+import { TerminalSquare, GitBranch, Columns2, Rows2, LayoutGrid, Square, Bot } from 'lucide-react';
 import type { SplitLayout, ProjectView } from '@/store';
 import { useData, useUi, visibleTerminals, backgroundTerminals } from '@/store';
 import { TabBar } from '@/components/TabBar';
@@ -9,8 +9,6 @@ import { FindBar } from '@/components/FindBar';
 import { ProjectAgentsBoard } from '@/views/agents/ProjectAgentsView';
 import { ProjectExtensionTab } from '@/views/project/ProjectExtensionTab';
 import { useProjectTabModules } from '@/modules';
-import { resolveIcon } from '@/lib/resolveIcon';
-import { isScopedWindow } from '@/lib/windowScope';
 import { resolveProjectTabModule } from '@/lib/libraryPlugin';
 
 // Lazy-load the editor surface. monaco-editor registers default editor
@@ -219,123 +217,17 @@ export function WorkspaceView() {
     </div>
   );
 
-  // When the workspace modes live on the left rail (ProjectScopedNav) — either a
-  // per-project window OR the main window drilled into a project — the
-  // horizontal segmented control is redundant, so it's hidden in both.
-  const modeToggle = project && !isScopedWindow() && (
-    <div className="workspace-mode-segmented" role="group" aria-label="Workspace mode">
-      <button
-        type="button"
-        className={isAgents ? 'active' : ''}
-        onClick={() => setWorkspaceMode(project.id, 'agents')}
-        title="Agents in this project"
-        aria-pressed={isAgents}
-      >
-        <Bot size={13} />
-        <span>Agents</span>
-      </button>
-      <button
-        type="button"
-        className={isTerminals ? 'active' : ''}
-        onClick={() => setWorkspaceMode(project.id, 'terminals')}
-        title="Terminals (⌘B toggles vs Explorer)"
-        aria-pressed={isTerminals}
-      >
-        <TerminalSquare size={13} />
-        <span>Terminals</span>
-      </button>
-      <button
-        type="button"
-        className={isExplorer ? 'active' : ''}
-        onClick={() => setWorkspaceMode(project.id, 'explorer')}
-        title="Explorer (⌘B toggles vs Terminals)"
-        aria-pressed={isExplorer}
-      >
-        <FolderTree size={13} />
-        <span>Explorer</span>
-      </button>
-      <button
-        type="button"
-        className={isScheduler ? 'active' : ''}
-        onClick={() => setWorkspaceMode(project.id, 'scheduler')}
-        title="Scheduled agents that spawn in this project"
-        aria-pressed={isScheduler}
-      >
-        <Clock size={13} />
-        <span>Scheduler</span>
-      </button>
-      <button
-        type="button"
-        className={isFeed ? 'active' : ''}
-        onClick={() => setWorkspaceMode(project.id, 'feed')}
-        title="Activity feed — a read-only history of this project"
-        aria-pressed={isFeed}
-      >
-        <Activity size={13} />
-        <span>Feed</span>
-      </button>
-      {goalsEnabled && (
-        <button
-          type="button"
-          className={isGoals ? 'active' : ''}
-          onClick={() => setWorkspaceMode(project.id, 'goals')}
-          title="Goals for this project"
-          aria-pressed={isGoals}
-        >
-          <Target size={13} />
-          <span>Goals</span>
-        </button>
-      )}
-      {followUpsEnabled && (
-        <button
-          type="button"
-          className={isFollowups ? 'active' : ''}
-          onClick={() => setWorkspaceMode(project.id, 'followups')}
-          title="Follow-ups for this project"
-          aria-pressed={isFollowups}
-        >
-          <MessageCircleQuestion size={13} />
-          <span>Follow-ups</span>
-        </button>
-      )}
-      {/* Extension-contributed project tabs, appended after the built-in tabs.
-          Each mounts the extension's panel scoped to this project. */}
-      {projectTabModules.map((m) => {
-        const Icon = resolveIcon(m.projectTab?.icon ?? m.icon);
-        const label = m.projectTab?.label ?? m.title;
-        const active = mode === m.id;
-        return (
-          <button
-            key={m.id}
-            type="button"
-            className={active ? 'active' : ''}
-            onClick={() => setWorkspaceMode(project.id, m.id)}
-            title={`${label} for this project`}
-            aria-pressed={active}
-          >
-            <Icon size={13} />
-            <span>{label}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-
   // Always mount TerminalSurface (preserves scrollback). When in explorer mode
   // we visually swap the middle section to ExplorerView via display:none.
   return (
     <div className="workspace panel-body--full">
       <div className="workspace-topbar">
-        {/* Mode switcher (Terminals/Explorer/Library) on its own row
-            above the tabs, so a long tab strip never squeezes it. Only mount
-            the row when it actually has content — in a focused-project view
-            both the layout picker and the segmented control are hidden (the
-            modes live on the left rail), so rendering the wrapper would leave
-            an empty padded band where the old horizontal menu used to be. */}
-        {project && (layoutPicker || modeToggle) && (
+        {/* Layout picker only. Mode switching lives on ProjectScopedNav; mounting
+            an empty modes row would leave a padded band where the old horizontal
+            menu used to be. */}
+        {project && layoutPicker && (
           <div className="workspace-topbar-modes">
             {layoutPicker}
-            {modeToggle}
           </div>
         )}
         <div className="workspace-topbar-tabs">
@@ -390,6 +282,10 @@ export function WorkspaceView() {
         ) : isScheduler ? (
           <div className="explorer-topbar">
             <span className="explorer-topbar-label">Scheduler</span>
+          </div>
+        ) : isFeed ? (
+          <div className="explorer-topbar">
+            <span className="explorer-topbar-label">Feed</span>
           </div>
         ) : isGoals ? (
           <div className="explorer-topbar">

@@ -1,21 +1,21 @@
-# Plugin System: Reaching bb's Model — Detailed Plan
+# Plugin System: Reaching the In-Process Model — Detailed Plan
 
 This expands [`runtime-migration-backlog.md`](./runtime-migration-backlog.md)
 Section 5 ("Plugin and Integration Services"). That section commits to the
 direction — plugins as full-trust, in-process, server-owned code using a
-`definePluginApp` slot registry modeled on bb's plugin system, replacing the
+`definePluginApp` slot registry, replacing the
 retired per-extension `utilityProcess` + `PermissionBroker` design described in
 `docs/extensions.md` / `docs/extensions-authoring.md`. This document is the
 detailed, file-level plan for getting there: what already exists, the one
 broken link blocking end-to-end operation, and a slot-by-slot comparison
-against bb's actual implementation with a concrete proposal for each gap.
+against the target slot set with a concrete proposal for each gap.
 
-Everything here is grounded in reading both codebases directly — bb's
+Everything here is grounded in reading the current plugin surface directly —
 `packages/plugin-sdk/src/app-contract.ts`, `apps/app/src/lib/plugin-slots.ts`,
-`apps/app/src/lib/plugin-slot-resolvers.ts`, and its nav-sidebar/panel-tab/
+`apps/app/src/lib/plugin-slot-resolvers.ts`, and the nav-sidebar/panel-tab/
 composer components; and zana's `packages/plugin-sdk`, `apps/server/src/plugins/`,
 and `src/renderer/plugins/` as they exist today. No section below describes
-aspirational bb behavior without citing the file that implements it, and no
+aspirational slot behavior without citing the file that implements it, and no
 "current state" claim is made without citing the zana file it's read from.
 
 ## 1. Where we already are
@@ -29,10 +29,10 @@ Zod, `.strict()`), parsed by `readPluginManifest()` into a `PluginManifest`
 `serverEntry`, `appEntry`, `skillsRootPaths`, `projectTab`, `engines`).
 `derivePluginId()` turns an npm package name into a stable id
 (`@zana/tasks` / `zcc-plugin-tasks` → `tasks`) and rejects the reserved
-sentinel `BUILTIN_NAV_SENTINEL = '__builtin__'` — the exact same sentinel bb
-uses (`BUILTIN_NAV_ROW_PLUGIN_ID = "__builtin__"` in bb's
-`PluginNavSidebarItems.tsx`) so host-owned chrome can share a plugin row's
-ordering/hiding machinery without ever colliding with a real plugin id.
+sentinel `BUILTIN_NAV_SENTINEL = '__builtin__'` (`BUILTIN_NAV_ROW_PLUGIN_ID
+= "__builtin__"` in `PluginNavSidebarItems.tsx`) so host-owned chrome can
+share a plugin row's ordering/hiding machinery without ever colliding with a
+real plugin id.
 
 **One-release legacy bridge (`packages/plugin-sdk/src/legacy-shim.ts`).**
 `shimLegacyExtensionManifest()` projects an already-installed `extension.json`
@@ -50,8 +50,8 @@ first time the server starts.
 source kinds (`path:` / `git:` / `npm:` / `builtin:`) plus `catalog:` (resolved
 against a marketplace index), `npm install --ignore-scripts` for npm sources,
 `containsNativeAddon()` rejection, `engines.zcc` / `engines.zccPluginSdk`
-range gating (`assertEngines`, using the same `satisfiesRange`/`compareVersions`
-helpers bb's `checkApiCompat`/`compareVersions` inspired), and a
+range gating (`assertEngines`, using `satisfiesRange`/`compareVersions`
+inspired by `checkApiCompat`/`compareVersions`), and a
 status machine (`disabled` / `degraded` / `running`) persisted through
 `plugin-store.ts`. `enable`/`disable`/`reload`/`remove` all route through
 `loadOne`/`disposeOne`, which import the plugin's `serverEntry` via
@@ -61,7 +61,7 @@ degrades that one plugin (`status: 'degraded'`, `statusDetail`); it does not
 take down the server.
 
 **Server-side plugin API (`packages/plugin-sdk/src/server.ts`).** `ZccPluginApi`
-already has the shape bb's server-side plugin surface conceptually mirrors:
+already has the shape the in-process server-side plugin surface needs:
 `log`, `settings` (typed descriptors + `PluginSettingsHandle`), `storage.kv`,
 `rpc.method`, `realtime.publish`, `background.service`/`schedule`,
 `agents.contributeInstructions`/`contributeSkills`, `ui.requestInput`,
@@ -69,12 +69,11 @@ already has the shape bb's server-side plugin surface conceptually mirrors:
 implements all of it except one member — see §2.
 
 **Renderer slot registry (`src/renderer/plugins/plugin-slots.ts`).** This file
-is explicitly bb's `plugin-slots.ts` ported by name and by comment
-("Client-side plugin slot registry (BB's plugin-slots.ts pattern)"):
+is the client-side plugin slot registry (see the file's own header comment):
 registrations are replaced wholesale per plugin id via `replacePluginSlots`
 (never appended — a reload cannot duplicate a row), `generation` increments
 per reinterpretation (`bump()`), and `arrangePluginNavPanels()` is a direct
-port of bb's `arrangePluginNavPanels` from `pluginNavSidebarOrder.ts` — same
+port of `arrangePluginNavPanels` from `pluginNavSidebarOrder.ts` — same
 "never-ordered panels append in registry order" and "a stored key for a panel
 that's not currently registered keeps its slot" invariants, same reasoning
 (a slow-loading plugin's absence must not be read as removal).
@@ -84,18 +83,18 @@ drag-reorder:**
 - `src/renderer/components/Sidebar.tsx` imports `listSidebarFooterActions`/
   `subscribePluginSlots`, uses `@dnd-kit/core` + `@dnd-kit/sortable` +
   `@dnd-kit/utilities` (`DndContext` at line 462) for reordering, and keys
-  rendered actions `${action.id}:${action.generation}` (line 520) — the same
-  generation-in-React-key pattern as bb.
+  rendered actions `${action.id}:${action.generation}` (line 520) — the
+  generation-in-React-key remount pattern.
 - `src/renderer/components/HomePanel.tsx` imports `listHomepageSections`/
   `subscribePluginSlots` and `PluginSlotBoundary`
   (`src/renderer/plugins/PluginSlotBoundary.tsx`) — a real per-slot error
   boundary keyed by `pluginId`+`generation`
   (`getDerivedStateFromError`/`componentDidCatch`, isolated render fallback),
   mounted at `key={`${section.id}:${section.generation}`}` (line 204) with
-  `generation={section.generation}` passed through (line 206). This is bb's
-  crash-containment model (§7.6 of the bb report — "a throwing component
-  degrades to that one card disappearing, never a page crash") **already
-  implemented correctly** for the homepage slot.
+  `generation={section.generation}` passed through (line 206). This is the
+  crash-containment model ("a throwing component degrades to that one card
+  disappearing, never a page crash") **already implemented correctly** for
+  the homepage slot.
 
 **V1 slot contract (`packages/plugin-sdk/src/app-contract.ts`).** `navPanel`,
 `settingsSection`, `homepageSection`, `projectTab`, `sidebarFooterAction` —
@@ -103,9 +102,9 @@ each a typed registration function on `PluginAppSlots`, collected by
 `collectPluginApp()` into a `PluginRegistrationSet`, unit-tested in `app.test.ts`.
 
 So: manifest → install → server factory → RPC, and registry → sidebar/homepage
-rendering, are both real, tested, and follow bb's exact patterns where bb has
-an equivalent. The system is not "not started" — it has no working end-to-end
-path yet, for one specific reason.
+rendering, are both real, tested, and follow the in-process slot patterns
+where an equivalent exists. The system is not "not started" — it has no
+working end-to-end path yet, for one specific reason.
 
 ## 2. The one broken link (fix first, before adding any new slot)
 
@@ -166,10 +165,10 @@ bundle actually reaches `interpretPluginApp`.
    server-hosted-static-assets model per Runtime Foundation #2), reads its
    default export, and calls `interpretPluginApp(row.id, defaultExport)`. On
    `disabled`/`degraded`/removal, call `clearPluginSlots(row.id)`.
-3. **React injection, if still needed.** bb's plugins never bundle React —
-   they receive the host's instance through `activate({ React, host })`
-   (`packages/plugin-sdk/src/app-contract.ts` in bb; see bb report §7.3-adjacent
-   material on `definePluginApp`). Zana's new `definePluginApp` setup function
+3. **React injection, if still needed.** The in-process model does not have
+   plugins bundle React — they receive the host's instance through
+   `activate({ React, host })` (`packages/plugin-sdk/src/app-contract.ts`; see
+   `definePluginApp`). Zana's new `definePluginApp` setup function
    takes only `app` (`PluginAppSetup = (app: PluginAppBuilder) => void`), no
    React argument — so a plugin's `component: ComponentType<...>` fields are
    plain values calling `React.createElement`/JSX like any other module.
@@ -189,25 +188,25 @@ bundle actually reaches `interpretPluginApp`.
    populates the registry; a degraded/disabled plugin does not; a
    status-flip event reloads or clears the registry entry; a bundle that
    throws on evaluation degrades gracefully (does not crash the shell) —
-   mirroring bb's `resetCrashedPluginSlots` intent even though the actual
+   mirroring `resetCrashedPluginSlots` intent even though the actual
    error-boundary work (`PluginSlotBoundary`) is already done downstream.
 
-## 3. Slot-by-slot: bb's model vs. zana's V1 vs. proposed
+## 3. Slot-by-slot: target model vs. zana's V1 vs. proposed
 
-| bb mechanism (source) | zana today | Gap | Proposal |
+| Target mechanism (source) | zana today | Gap | Proposal |
 |---|---|---|---|
-| `navPanel` (bb `app-contract.ts`; ordering/hiding in `pluginNavSidebarOrder.ts`) | `navPanel` slot exists (`app-contract.ts`); `arrangePluginNavPanels` ported verbatim into `plugin-slots.ts`; drag-reorder wired in `Sidebar.tsx` | Loader gap only (§2) — the mechanism itself is done | No new work beyond Phase 0 |
+| `navPanel` (`app-contract.ts`; ordering/hiding in `pluginNavSidebarOrder.ts`) | `navPanel` slot exists (`app-contract.ts`); `arrangePluginNavPanels` ported verbatim into `plugin-slots.ts`; drag-reorder wired in `Sidebar.tsx` | Loader gap only (§2) — the mechanism itself is done | No new work beyond Phase 0 |
 | `sidebarFooterAction` | Exists, wired in `Sidebar.tsx` with generation keys | Loader gap only | No new work beyond Phase 0 |
 | `homepageSection` | Exists, wired in `HomePanel.tsx` with `PluginSlotBoundary` | Loader gap only | No new work beyond Phase 0 |
 | `settingsSection` | Slot exists in `app-contract.ts`/`plugin-slots.ts` (`listSettingsSections`) | **No renderer consumer yet** — grep found no `listSettingsSections` import outside `plugin-slots.ts` itself | Add a settings-panel mount point (likely in `src/renderer/components/settings/ExtensionsHub.tsx`, which the current uncommitted diff already touches) that renders each registered `PluginSettingsSectionRegistration.component` inside its own `PluginSlotBoundary`, keyed by generation — same pattern as `HomePanel.tsx`, not a new pattern |
-| `experimental_threadList` (exclusive list-replacement slot; bb `app-contract.ts`) | No equivalent | N/A today | **Defer.** This slot exists in bb because bb's whole shell is built around one scrollable thread list. Zana's closest analogue would be replacing the project list (`ListPane.tsx`/`ProjectsList.tsx`) — a much higher-blast-radius slot than anything else here. Do not build it speculatively; revisit only if a concrete plugin needs to replace the project list wholesale |
-| `threadPanelAction` / `experimental_newThreadPanelAction` + the `FixedPanelTab` union + `thread_tabs` JSON-blob-plus-revision persistence (bb `fixed-panel-tabs-state.ts`, `packages/db/src/schema.ts`) | `projectTab` exists — but it is **one static tab per plugin**, declared in the manifest, not a runtime "open an ad-hoc tab" call. There is no tab-strip union a plugin can insert into dynamically, and no persistence table for it | Real gap — bb's richest UI mechanism has no zana counterpart yet | **Proposed `projectPanelAction` slot** (naming intentionally distinct from `projectTab` to avoid confusion): `{ id, title, icon?, component, run?() }`, resolved the same way bb resolves `threadPanelAction` — calling `run()` (or, if absent, opening with defaults) inserts an entry into a new per-project tab-strip state analogous to bb's `FixedPanelTab` union. Given zana's existing per-project tabs (Terminals · Explorer · Preview · Library · Tickets, per `docs/extensions-authoring.md`'s `projectTab` section) are apparently already a **fixed, enumerable set** rather than a dynamic strip, the first implementation step is establishing that the tab strip *can* hold a dynamic, session-scoped list at all — a strictly smaller version of bb's `threadTabs` table (one JSON blob + revision, scoped by project id instead of thread id) is the right persistence shape once that exists. **Sequence this after Phase 0 and after `settingsSection` — it is a UI architecture change, not just a new slot type** |
-| `fileOpener` (bb `app-contract.ts`) | No equivalent | Real gap, but low priority | Zana's `Explorer` project tab is a candidate host, but wiring "which viewer wins for a given extension" needs the tab-strip work above to land first, so a plugin-registered opener has somewhere to open into |
-| `experimental_threadHeaderAction` / `messageAction` / `messageDirective` / `experimental_providerIcon` (bb — all chat-transcript-scoped) | No equivalent, and **arguably no analogue** | N/A — zana has no per-message chat transcript UI; it is a terminal/session hub, not a chat client | **Do not port.** These bb slots exist because bb renders an agent conversation as a message list. Zana's nearest surface is a terminal pane (raw PTY output) or a session's status row — neither is "per message." Revisit only if zana grows a structured per-turn transcript view (e.g. a persona chat panel) that these would genuinely extend |
-| `pendingInteraction` (bb — backend-triggered, scoped to one interaction, `submit`/`cancel`) | **Server API promises it** (`ZccPluginApi.ui.requestInput`) but **the implementation always throws** (`plugin-api.ts:81-82`) | Real, concrete, already-half-committed gap — the contract exists, the renderer half doesn't | Add a `pendingInteraction` V2 slot: `{ id, component: ComponentType<{ payload, submit, cancel }> }`. Server-side, `requestInput(rendererId, payload)` needs a real channel to the renderer (piggybacking on whatever transport Phase 0 builds for snapshots/events) that (a) delivers `{ rendererId, pluginId, payload }` to a renderer-side pending-interaction store, (b) mounts the matching registered component, and (c) round-trips `submit(value)`/`cancel()` back to resolve/reject the original `requestInput` promise. This is bb's exact model (§7.6 of the bb architecture report) — server-triggered, not always-mounted |
-| `composer.customize()` (bb — actions/banners/plusMenu/richText on the shared prompt composer) | No equivalent | N/A — no shared "composer" surface exists in zana today | **Do not port speculatively.** If zana's `AgentLauncher.tsx` prompt box grows plugin-extensibility needs (e.g. a plugin wanting to add a banner above the launch form), design a zana-specific customization surface against that concrete component then — don't pre-build bb's four-contribution-kind abstraction against a surface that doesn't need it yet |
-| `contentScripts.register()` (bb — headless same-origin script, `AbortSignal`-scoped) | No equivalent | Low priority | Covered implicitly by `background.service()` already on `ZccPluginApi` (server-side) — a renderer-side headless-script slot would only be worth adding if a plugin needs renderer-only background work with no visible UI at all, which `background: () => void` in `ActivateResult`-equivalent (the retired extension-sdk had this) did not carry over into the V1 slot set. Track as a candidate, not a commitment |
-| `agentPreset`, `skills`/`mcpServers` contribution, `ssh:hosts` provider, Personas/Teams contribution (retired extension-sdk, `docs/extensions-authoring.md`) | **Not yet re-ported** to the new plugin-sdk manifest/`ZccPluginApi` at all | Real gap — these are zana-specific capabilities bb has no equivalent for, but they are real, documented, working features today on the old system that `migrateLegacySidecars` will otherwise silently drop | **This is the actual risk in the retirement, not the bb-parity gaps above.** Before removing the old extension-sdk (backlog Section 5's stated goal), each of `agentPreset`, `skills`/`mcpServers`, `ssh:hosts`, and Personas/Teams needs either a `ZccPluginApi`/`PluginAppSlots` equivalent or an explicit decision that it's out of scope for V1 plugins. `ctx.personas`/`ctx.teams` (in-memory, lifecycle-bound, host-namespaced `ext:<id>:<slug>`) maps cleanly onto `ZccPluginApi` — add `personas`/`teams` members mirroring the retired `MainModuleContext` shape. `agentPreset`/`skills`/`mcpServers` are manifest-declared today (not runtime-registered) — the natural home is `PluginManifest`/`pluginZccManifestSchema` (`packages/domain/src/plugin-manifest.ts`), which does not yet have fields for any of them |
+| `experimental_threadList` (exclusive list-replacement slot; `app-contract.ts`) | No equivalent | N/A today | **Defer.** This slot exists in chat-client shells built around one scrollable thread list. Zana's closest analogue would be replacing the project list (`ListPane.tsx`/`ProjectsList.tsx`) — a much higher-blast-radius slot than anything else here. Do not build it speculatively; revisit only if a concrete plugin needs to replace the project list wholesale |
+| `threadPanelAction` / `experimental_newThreadPanelAction` + the `FixedPanelTab` union + `thread_tabs` JSON-blob-plus-revision persistence (`fixed-panel-tabs-state.ts`, `packages/db/src/schema.ts`) | `projectTab` exists — but it is **one static tab per plugin**, declared in the manifest, not a runtime "open an ad-hoc tab" call. There is no tab-strip union a plugin can insert into dynamically, and no persistence table for it | Real gap — the richest UI mechanism in the target set has no zana counterpart yet | **Proposed `projectPanelAction` slot** (naming intentionally distinct from `projectTab` to avoid confusion): `{ id, title, icon?, component, run?() }`, resolved the same way `threadPanelAction` is resolved — calling `run()` (or, if absent, opening with defaults) inserts an entry into a new per-project tab-strip state analogous to the `FixedPanelTab` union. Given zana's existing per-project tabs (Terminals · Explorer · Preview · Library · Tickets, per `docs/extensions-authoring.md`'s `projectTab` section) are apparently already a **fixed, enumerable set** rather than a dynamic strip, the first implementation step is establishing that the tab strip *can* hold a dynamic, session-scoped list at all — a strictly smaller version of a `threadTabs` table (one JSON blob + revision, scoped by project id instead of thread id) is the right persistence shape once that exists. **Sequence this after Phase 0 and after `settingsSection` — it is a UI architecture change, not just a new slot type** |
+| `fileOpener` (`app-contract.ts`) | No equivalent | Real gap, but low priority | Zana's `Explorer` project tab is a candidate host, but wiring "which viewer wins for a given extension" needs the tab-strip work above to land first, so a plugin-registered opener has somewhere to open into |
+| `experimental_threadHeaderAction` / `messageAction` / `messageDirective` / `experimental_providerIcon` (all chat-transcript-scoped) | No equivalent, and **arguably no analogue** | N/A — zana has no per-message chat transcript UI; it is a terminal/session hub, not a chat client | **Do not port.** These slots exist because a chat client renders an agent conversation as a message list. Zana's nearest surface is a terminal pane (raw PTY output) or a session's status row — neither is "per message." Revisit only if zana grows a structured per-turn transcript view (e.g. a persona chat panel) that these would genuinely extend |
+| `pendingInteraction` (backend-triggered, scoped to one interaction, `submit`/`cancel`) | **Server API promises it** (`ZccPluginApi.ui.requestInput`) but **the implementation always throws** (`plugin-api.ts:81-82`) | Real, concrete, already-half-committed gap — the contract exists, the renderer half doesn't | Add a `pendingInteraction` V2 slot: `{ id, component: ComponentType<{ payload, submit, cancel }> }`. Server-side, `requestInput(rendererId, payload)` needs a real channel to the renderer (piggybacking on whatever transport Phase 0 builds for snapshots/events) that (a) delivers `{ rendererId, pluginId, payload }` to a renderer-side pending-interaction store, (b) mounts the matching registered component, and (c) round-trips `submit(value)`/`cancel()` back to resolve/reject the original `requestInput` promise. This is the exact model — server-triggered, not always-mounted |
+| `composer.customize()` (actions/banners/plusMenu/richText on the shared prompt composer) | No equivalent | N/A — no shared "composer" surface exists in zana today | **Do not port speculatively.** If zana's `AgentLauncher.tsx` prompt box grows plugin-extensibility needs (e.g. a plugin wanting to add a banner above the launch form), design a zana-specific customization surface against that concrete component then — don't pre-build a four-contribution-kind abstraction against a surface that doesn't need it yet |
+| `contentScripts.register()` (headless same-origin script, `AbortSignal`-scoped) | No equivalent | Low priority | Covered implicitly by `background.service()` already on `ZccPluginApi` (server-side) — a renderer-side headless-script slot would only be worth adding if a plugin needs renderer-only background work with no visible UI at all, which `background: () => void` in `ActivateResult`-equivalent (the retired extension-sdk had this) did not carry over into the V1 slot set. Track as a candidate, not a commitment |
+| `agentPreset`, `skills`/`mcpServers` contribution, `ssh:hosts` provider, Personas/Teams contribution (retired extension-sdk, `docs/extensions-authoring.md`) | **Not yet re-ported** to the new plugin-sdk manifest/`ZccPluginApi` at all | Real gap — these are zana-specific capabilities the generic slot set has no equivalent for, but they are real, documented, working features today on the old system that `migrateLegacySidecars` will otherwise silently drop | **This is the actual risk in the retirement, not the slot-parity gaps above.** Before removing the old extension-sdk (backlog Section 5's stated goal), each of `agentPreset`, `skills`/`mcpServers`, `ssh:hosts`, and Personas/Teams needs either a `ZccPluginApi`/`PluginAppSlots` equivalent or an explicit decision that it's out of scope for V1 plugins. `ctx.personas`/`ctx.teams` (in-memory, lifecycle-bound, host-namespaced `ext:<id>:<slug>`) maps cleanly onto `ZccPluginApi` — add `personas`/`teams` members mirroring the retired `MainModuleContext` shape. `agentPreset`/`skills`/`mcpServers` are manifest-declared today (not runtime-registered) — the natural home is `PluginManifest`/`pluginZccManifestSchema` (`packages/domain/src/plugin-manifest.ts`), which does not yet have fields for any of them |
 
 ## 4. Phased plan
 
@@ -240,7 +239,7 @@ component calls `submit`/`cancel`.
 `skills`/`mcpServers`, `ssh:hosts`).** Do this **before** deleting the old
 extension-sdk runtime, not after — `migrateLegacySidecars` only moves the
 *plugin*, not any of these contributions, into the new system. Completion
-gate: every bundled first-party extension in `bundled-extensions/` that uses
+gate: every bundled first-party plugin in `plugins/` that uses
 one of these (check each one's `extension.json` for `agentPreset`/`skills`/
 `mcpServers`/`ssh:hosts` before assuming none do) has a working equivalent on
 the new system.
@@ -249,7 +248,7 @@ the new system.
 The biggest single piece of net-new UI architecture in this plan. Sequence it
 last among the items above because it is the one gap that is a genuine
 product decision (does zana want plugin-openable ad-hoc tabs at all,
-independent of bb parity) rather than a mechanical port. Completion gate:
+independent of slot-parity) rather than a mechanical port. Completion gate:
 a plugin can open a tab into a project's workspace at runtime (not just
 declare one static `projectTab`), and that tab's presence survives a reload
 via a persisted per-project tab-state record.
@@ -261,17 +260,17 @@ via a persisted per-project tab-state record.
   full-trust... Install uses path containment, `engines` gates,
   `npm --ignore-scripts`, and native-addon rejection — not capability tokens
   or a permission broker." This plan does not revisit that; every slot
-  proposal above assumes full trust, which is also — accurately — bb's own
-  model (bb has no permission broker either; its trust boundary is the
+  proposal above assumes full trust, which is also the in-process model's
+  own model (no permission broker either; the trust boundary is the
   host-daemon/server split, which zana's plugins sit entirely inside, on the
   server side of).
-- **No renderer-side process isolation.** bb's plugin UI shares one page/React
-  tree with curated trust, error-boundary-isolated only (bb report §7.6, the
+- **No renderer-side process isolation.** Plugin UI shares one page/React
+  tree with curated trust, error-boundary-isolated only (the
   "Honest residual" section of zana's own retired `extensions-authoring.md`
   says the same about the old system: "all panels currently share one
   `window.cc`... Treat the platform as curated-trust for panels"). The new
   model doesn't change this, and this plan doesn't propose changing it —
-  `PluginSlotBoundary` is the only isolation, matching bb exactly.
+  `PluginSlotBoundary` is the only isolation.
 - **No message-level extensibility** (`messageAction`/`messageDirective`/
   `experimental_threadHeaderAction`/`experimental_providerIcon`) — no product
   surface in zana to extend (§3 table, row 6).

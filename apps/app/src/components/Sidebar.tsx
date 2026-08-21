@@ -1,36 +1,19 @@
-import { Fragment, cloneElement, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactElement } from 'react';
-import {
-  DndContext,
-  KeyboardSensor,
-  PointerSensor,
-  closestCenter,
-  pointerWithin,
-  useSensor,
-  useSensors,
-  type CollisionDetection,
-  type DragEndEvent,
-  type DragStartEvent
-} from '@dnd-kit/core';
+import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactElement } from 'react';
+import { DndContext } from '@dnd-kit/core';
 import {
   SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
   verticalListSortingStrategy
 } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 import {
   Blocks,
   Bot,
   ChevronLeft,
   ChevronRight,
   Clock,
-  Compass,
   FolderGit2,
   House,
   Inbox,
-  LayoutDashboard,
   MessageCircleQuestion,
-  MessageCirclePlus,
   Sparkles,
   Settings,
   type LucideIcon
@@ -46,13 +29,17 @@ import {
 } from '../store.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
 import { useMergedModules } from '../modules/index.js';
-import { AgentTray } from './AgentTray.js';
+import { AgentsSidebarSection } from './AgentsSidebarSection.js';
 import { ProjectsList } from './listpane/ProjectsList.js';
+import { PINNED_SIDEBAR_NAV_IDS } from './sidebarNavOrder.js';
 import {
-  normalizeSidebarNavOrder,
-  PINNED_SIDEBAR_NAV_IDS,
-  reorderSidebarNavItems
-} from './sidebarNavOrder.js';
+  AGENTS_SECTION_SORT_ID,
+  GLOBAL_NAV_ORDER_KEY,
+  SortableNavItem,
+  SortableSidebarSection,
+  WORKSPACES_SECTION_SORT_ID,
+  useSortableSidebarNav
+} from './sidebarSortable.js';
 import { listSidebarFooterActions, subscribePluginSlots } from '../plugins/plugin-slots.js';
 
 interface NavEntry {
@@ -79,193 +66,17 @@ const suggestionsNavItem: NavEntry = { id: 'suggestions', label: 'Next Steps', i
 // until now. Slots in right after Inbox, alongside its sibling launchers.
 const followupsNavItem: NavEntry = { id: 'followups', label: 'Follow-ups', icon: MessageCircleQuestion };
 
-// Plugins / Skills / MCP are no longer top-level rail destinations — they live
-// as tabs inside the Settings panel (configuration, not content). Extensions,
-// by contrast, IS a content/discovery destination (browse + install, the
-// VSCode-style store), so it earns a system-level rail entry alongside Settings.
+// Plugins / Skills / MCP live on the focused Extensions workspace (not
+// Settings). Extensions itself is a content/discovery destination (browse +
+// install, the VSCode-style store), so it earns a system-level rail entry
+// alongside Settings.
 const extensionsNavItem: NavEntry = { id: 'extensions', label: 'Extensions', icon: Blocks };
 const settingsNavItem: NavEntry = { id: 'settings', label: 'Settings', icon: Settings };
 // Fixed utility dock, separate from the movable destinations. Add future
 // utility actions here; the layout remains a compact horizontal icon row.
 const sidebarUtilityItems = [settingsNavItem];
 
-function SortableNavItem({
-  id,
-  children
-}: {
-  id: string;
-  children: ReactElement<React.ButtonHTMLAttributes<HTMLButtonElement>>;
-}) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
-  return (
-    <div
-      ref={setNodeRef}
-      className={`sidebar-nav-sortable ${isDragging ? 'is-dragging' : ''}`}
-      data-sortable-nav-id={id}
-      // The sidebar mixes compact rows with tall collection sections. Preserve a
-      // dragged item's own dimensions instead of scaling it to the target's rect.
-      style={{ transform: CSS.Translate.toString(transform), transition }}
-    >
-      {cloneElement(children, { ...attributes, ...listeners })}
-    </div>
-  );
-}
-
-function SortableSidebarSection({
-  id,
-  children
-}: {
-  id: string;
-  children: ReactElement<{ dragHandle?: React.HTMLAttributes<HTMLElement> }>;
-}) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
-  return (
-    <div
-      ref={setNodeRef}
-      className={`sidebar-section-sortable ${isDragging ? 'is-dragging' : ''}`}
-      data-sortable-sidebar-section-id={id}
-      // See SortableNavItem: a section must translate between slots, not stretch
-      // to the height of a nav row while it crosses one.
-      style={{ transform: CSS.Translate.toString(transform), transition }}
-    >
-      {cloneElement(children, { dragHandle: { ...attributes, ...listeners } })}
-    </div>
-  );
-}
-
-const NAV_ORDER_KEY = 'zcc.sidebarNavOrder';
-
-const navCollisionDetection: CollisionDetection = (args) => {
-  const pointerCollisions = pointerWithin(args);
-  return pointerCollisions.length > 0 ? pointerCollisions : closestCenter(args);
-};
-
-function readNavOrder(): unknown {
-  if (typeof localStorage === 'undefined') return null;
-  try {
-    return JSON.parse(localStorage.getItem(NAV_ORDER_KEY) ?? 'null');
-  } catch {
-    return null;
-  }
-}
-
-const AGENTS_SECTION_KEY = 'sidebar:agents';
-const AGENTS_SECTION_ID = 'sidebar-agents-list';
-const AGENTS_SECTION_SORT_ID = 'sidebar-section:agents';
-const WORKSPACES_SECTION_SORT_ID = 'sidebar-section:workspaces';
-const AGENTS_SECTION_HEIGHT_KEY = 'zcc.sidebarAgentsHeight';
-const AGENTS_SECTION_DEFAULT_HEIGHT = 176;
-const AGENTS_SECTION_MIN_HEIGHT = 64;
-const AGENTS_SECTION_MAX_HEIGHT = 420;
-
-function clampAgentsSectionHeight(value: number): number {
-  return Math.max(AGENTS_SECTION_MIN_HEIGHT, Math.min(AGENTS_SECTION_MAX_HEIGHT, value));
-}
-
-function readAgentsSectionHeight(): number {
-  if (typeof localStorage === 'undefined') return AGENTS_SECTION_DEFAULT_HEIGHT;
-  const value = Number(localStorage.getItem(AGENTS_SECTION_HEIGHT_KEY));
-  return Number.isFinite(value) ? clampAgentsSectionHeight(value) : AGENTS_SECTION_DEFAULT_HEIGHT;
-}
-
-/** Active agents use the same collapsible collection treatment as Workspaces. */
-function AgentsSidebarSection({
-  dragHandle
-}: {
-  dragHandle?: React.HTMLAttributes<HTMLElement>;
-}) {
-  const collapsed = useUi((s) => !!s.collapsedSections[AGENTS_SECTION_KEY]);
-  const toggleSection = useUi((s) => s.toggleSection);
-  const setLauncherOpen = useUi((s) => s.setLauncherOpen);
-  const setNav = useUi((s) => s.setNav);
-  const [height, setHeight] = useState(readAgentsSectionHeight);
-
-  const setSectionHeight = (next: number) => {
-    const clamped = clampAgentsSectionHeight(next);
-    setHeight(clamped);
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(AGENTS_SECTION_HEIGHT_KEY, String(clamped));
-    }
-  };
-
-  const onResizeMouseDown = (event: React.MouseEvent) => {
-    event.preventDefault();
-    const startY = event.clientY;
-    const startHeight = height;
-    document.body.classList.add('resizing-sidebar-section');
-    const onMove = (moveEvent: MouseEvent) => setSectionHeight(startHeight + moveEvent.clientY - startY);
-    const onUp = () => {
-      document.body.classList.remove('resizing-sidebar-section');
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  };
-
-  return (
-    <section
-      className={`sidebar-agents ${collapsed ? 'sidebar-agents--collapsed' : ''}`}
-      style={collapsed ? undefined : { '--sidebar-agents-height': `${height}px` } as React.CSSProperties}
-    >
-      <header className="sidebar-agents-header">
-        <button
-          type="button"
-          className="sidebar-agents-heading"
-          {...dragHandle}
-          onClick={() => toggleSection(AGENTS_SECTION_KEY)}
-          aria-label={`${collapsed ? 'Expand' : 'Collapse'} Agents section`}
-          aria-controls={AGENTS_SECTION_ID}
-          aria-expanded={!collapsed}
-          title={`${collapsed ? 'Expand' : 'Collapse'} Agents`}
-        >
-          <span>Agents</span>
-          <ChevronRight
-            size={14}
-            aria-hidden="true"
-            className={`sidebar-agents-chevron ${collapsed ? '' : 'open'}`}
-          />
-        </button>
-        <div className="sidebar-agents-actions">
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="Open Agents dashboard"
-            title="Open Agents dashboard"
-            onClick={() => setNav('agents')}
-          >
-            <LayoutDashboard size={18} />
-          </button>
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="New quick agent"
-            title="New quick agent"
-            onClick={() => setLauncherOpen(true)}
-          >
-            <MessageCirclePlus size={18} />
-          </button>
-        </div>
-      </header>
-      <div id={AGENTS_SECTION_ID} className="sidebar-agents-body" hidden={collapsed}>
-        <AgentTray placement="inline" />
-      </div>
-      {!collapsed && (
-        <div
-          className="sidebar-agents-resizer"
-          role="separator"
-          aria-orientation="horizontal"
-          aria-valuemin={AGENTS_SECTION_MIN_HEIGHT}
-          aria-valuemax={AGENTS_SECTION_MAX_HEIGHT}
-          aria-valuenow={height}
-          title="Drag to resize · double-click to reset"
-          onMouseDown={onResizeMouseDown}
-          onDoubleClick={() => setSectionHeight(AGENTS_SECTION_DEFAULT_HEIGHT)}
-        />
-      )}
-    </section>
-  );
-}
+const NAV_ORDER_KEY = GLOBAL_NAV_ORDER_KEY;
 
 export function Sidebar() {
   const nav = useUi((s) => s.nav);
@@ -277,23 +88,9 @@ export function Sidebar() {
   const agentCounts = useAgentNavCounts();
   const suggestionsEnabled = useData((s) => s.suggestionsEnabled);
   const followUpsEnabled = useData((s) => s.followUpsEnabled);
-  const [storedNavOrder, setStoredNavOrder] = useState(readNavOrder);
-  const suppressNavClickRef = useRef(false);
   const navHistoryRef = useRef<NavId[]>([nav]);
   const navHistoryIndexRef = useRef(0);
   const [, setNavHistoryRevision] = useState(0);
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
-  );
-  useEffect(() => {
-    const onStorage = (event: StorageEvent) => {
-      if (event.key !== NAV_ORDER_KEY) return;
-      try { setStoredNavOrder(JSON.parse(event.newValue ?? 'null')); } catch { setStoredNavOrder(null); }
-    };
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
-  }, []);
   useEffect(() => {
     const history = navHistoryRef.current;
     const index = navHistoryIndexRef.current;
@@ -339,14 +136,19 @@ export function Sidebar() {
     ...moduleNavItems
   ];
   const navItemsById = new Map<string, NavEntry>(fixedNavItems.map((item) => [item.id, item]));
-  const sortableSidebarSectionIds = [AGENTS_SECTION_SORT_ID, WORKSPACES_SECTION_SORT_ID];
-  const orderedNavIds = normalizeSidebarNavOrder(
-    storedNavOrder,
-    [...fixedNavItems.map((item) => item.id), ...sortableSidebarSectionIds]
-  );
-  const pinnedNavIds = orderedNavIds.filter((id) => PINNED_SIDEBAR_NAV_IDS.includes(id as never));
-  const sortableNavIds = orderedNavIds.filter(
-    (id) => !PINNED_SIDEBAR_NAV_IDS.includes(id as never)
+  const {
+    pinnedNavIds,
+    sortableNavIds,
+    sensors,
+    collisionDetection,
+    onDragStart,
+    onDragCancel,
+    onDragEnd,
+    consumeNavClick
+  } = useSortableSidebarNav(
+    NAV_ORDER_KEY,
+    [...fixedNavItems.map((item) => item.id), AGENTS_SECTION_SORT_ID, WORKSPACES_SECTION_SORT_ID],
+    PINNED_SIDEBAR_NAV_IDS
   );
 
   const renderNavItem = (
@@ -380,10 +182,7 @@ export function Sidebar() {
         data-testid={`nav-${item.id}`}
         className={`nav-item ${compactOnly ? 'nav-item--compact-only' : ''} ${nav === item.id ? 'active' : ''}`}
         onClick={() => {
-          if (suppressNavClickRef.current) {
-            suppressNavClickRef.current = false;
-            return;
-          }
+          if (consumeNavClick()) return;
           // Clicking the top-level Projects rail item always returns to the
           // un-focused home (the cross-project Agents board + project list),
           // never staying drilled into / highlighting the last project.
@@ -443,24 +242,6 @@ export function Sidebar() {
     );
   };
 
-  const handleNavDragEnd = ({ active, over }: DragEndEvent) => {
-    window.setTimeout(() => { suppressNavClickRef.current = false; }, 0);
-    if (!over || active.id === over.id) return;
-    const next = reorderSidebarNavItems(orderedNavIds, String(active.id), String(over.id));
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(NAV_ORDER_KEY, JSON.stringify(next));
-    }
-    setStoredNavOrder(next);
-  };
-
-  const handleNavDragStart = ({ activatorEvent }: DragStartEvent) => {
-    suppressNavClickRef.current = activatorEvent.type === 'pointerdown';
-  };
-
-  const handleNavDragCancel = () => {
-    window.setTimeout(() => { suppressNavClickRef.current = false; }, 0);
-  };
-
   const goNavHistory = (direction: -1 | 1) => {
     const nextIndex = navHistoryIndexRef.current + direction;
     const nextNav = navHistoryRef.current[nextIndex];
@@ -503,10 +284,10 @@ export function Sidebar() {
 
       <DndContext
         sensors={sensors}
-        collisionDetection={navCollisionDetection}
-        onDragStart={handleNavDragStart}
-        onDragCancel={handleNavDragCancel}
-        onDragEnd={handleNavDragEnd}
+        collisionDetection={collisionDetection}
+        onDragStart={onDragStart}
+        onDragCancel={onDragCancel}
+        onDragEnd={onDragEnd}
       >
         <div className="sidebar-sections">
           <nav className="sidebar-nav sidebar-nav--sortable" aria-label="Main navigation" data-testid="sidebar-navigation">

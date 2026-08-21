@@ -627,12 +627,11 @@ export function defaultBundledRoot(): string {
       ? process.resourcesPath
       : null;
   const candidates = [
-    resourcesPath ? join(resourcesPath, 'extensions') : null,
     resourcesPath ? join(resourcesPath, 'plugins') : null,
+    resourcesPath ? join(resourcesPath, 'extensions') : null,
     join(process.cwd(), 'plugins'),
+    join(moduleDir, '../../../../plugins'),
     join(moduleDir, '../../../plugins'),
-    join(process.cwd(), 'bundled-extensions'),
-    join(moduleDir, '../../../bundled-extensions'),
     join(process.cwd(), 'extensions')
   ].filter((dir): dir is string => !!dir);
   return candidates.find((dir) => existsSync(dir)) ?? candidates[0]!;

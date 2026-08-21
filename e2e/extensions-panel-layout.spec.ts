@@ -4,9 +4,7 @@
  * `.extensions-panel { grid-column: 2 / -1 }` span the shell grid auto-places
  * the panel in the narrow --col-list track (280px) and leaves column 3 empty.
  *
- * This drives the SIDEBAR Extensions entry (the standalone ExtensionsPanel),
- * NOT Settings → Extensions (which keeps its own section picker in column 2 and
- * was never affected).
+ * This drives the SIDEBAR Extensions entry (the standalone ExtensionsPanel).
  */
 import { test, expect } from './fixtures/app.js';
 

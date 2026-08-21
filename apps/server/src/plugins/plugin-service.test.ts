@@ -229,6 +229,17 @@ describe('PluginService', () => {
     expect(service.snapshot()[0]?.appUrl).toBe('/plugins/nested/assets/dist/app.js?v=42');
   });
 
+  it('reconcileBuiltins auto-installs docs from bundledRoot/docs', async () => {
+    const dataDir = root();
+    const bundled = root();
+    writePlugin(join(bundled, 'docs'), 'docs');
+    const service = createPluginService({ dataDir, bundledRoot: bundled });
+    const installed = await service.reconcileBuiltins();
+    expect(installed.map((row) => row.id)).toEqual(['docs']);
+    expect(service.get('docs')?.provenance).toBe('builtin');
+    expect(service.get('docs')?.sourceKind).toBe('builtin');
+  });
+
   it('rejects a server entry that escapes the plugin root', async () => {
     const { resolveContainedEntry } = await import('./plugin-api.js');
     const dir = root();

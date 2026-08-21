@@ -39,12 +39,9 @@ test('imported editable folder automatically reloads a rebuilt dist while its sh
 
   try {
     writeExtension(source, 'initial-marker');
-    // This is the user-facing path: Settings → Extensions → Import editable folder.
-    await app.window.locator('.nav-item', { hasText: 'Settings' }).first().click();
-    await app.window
-      .locator('.settings-section-item')
-      .filter({ has: app.window.locator('.project-name', { hasText: 'Extensions' }) })
-      .click();
+    // This is the user-facing path: Extensions → Installed → Open existing extension.
+    await app.window.locator('.nav-item', { hasText: 'Extensions' }).first().click();
+    await app.window.getByTestId('extensions-nav-installed').click();
     const importButton = app.window.getByRole('button', { name: 'Open existing extension' });
     await expect(importButton).toBeVisible();
     await importButton.click();

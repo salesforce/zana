@@ -4,9 +4,6 @@
   "private": true,
   "type": "module",
   "description": "Cross-project Docs rail and per-project Library — durable findings, decisions, and ideas.",
-  "scripts": {
-    "package": "node scripts/package.mjs"
-  },
   "engines": {
     "zcc": ">=1.0.0",
     "zccPluginSdk": ">=0.1.0"

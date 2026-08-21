@@ -2,17 +2,17 @@
  * Shared fixture loader for the Wave-1 conformance net.
  *
  * ONE place the seeded-extension roster lives (surface #2 — the BUILT ARTIFACT
- * under `bundled-extensions/<id>`, the dir electron-builder packs into the app
- * as `extensions/` and that `discoverExtensions` reseeds from). The W1-2 lesson:
- * a capability/manifest change is only real once it lands on THIS artifact, not
- * the source `extensions/<id>/extension.json` that never runs. So the net drives
- * the REAL discovery pipeline (`validateManifest` → `toManifestView`, both
- * private, run inside the exported `discoverExtensions`) against a temp
- * `ZCC_EXTENSIONS_DIR` seeded from the artifact — zero source edits.
+ * electron-builder used to pack as `extensions/` for `discoverExtensions` to
+ * reseed). The W1-2 lesson: a capability/manifest change is only real once it
+ * lands on the shipped artifact, not a source `extension.json` that never runs.
+ * So the net drives the REAL discovery pipeline (`validateManifest` →
+ * `toManifestView`, both private, run inside the exported `discoverExtensions`)
+ * against a temp `ZCC_EXTENSIONS_DIR` seeded from the artifact — zero source edits.
  *
- * Only docs is auto-installed from `bundled-extensions/`. This net currently
- * snapshots zero disk-extension artifacts (docs uses `package.json` `zcc`,
- * not `extension.json`, so discovery's extension.json scanner does not see it).
+ * First-party plugins now live in `plugins/` (docs auto-installs from
+ * `plugins/docs` via PluginService). This net currently snapshots zero
+ * disk-extension artifacts (docs uses `package.json` `zcc`, not
+ * `extension.json`, so discovery's extension.json scanner does not see it).
  */
 import { cp, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -31,7 +31,7 @@ export type SeededId = (typeof SEEDED_IDS)[number];
 const CONFORMANCE_DIR = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(CONFORMANCE_DIR, '../../../../../../');
 
-/** The built-artifact surface the net snapshots against (surface #2). */
+/** Unused while SEEDED_IDS is empty — first-party plugins live in `plugins/`. */
 export const ARTIFACT_ROOT = join(REPO_ROOT, 'bundled-extensions');
 
 /**

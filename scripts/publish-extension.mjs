@@ -45,7 +45,7 @@
  *     --api https://exts.example.com --token zpat_...
  *
  * `<extensionDir>` is a built artifact dir (a manifest + its runtime files, e.g.
- * `bundled-extensions/zana`). `--base-url` is prepended to the archive filename
+ * `plugins/docs`). `--base-url` is prepended to the archive filename
  * to form the release `url`; the engine REQUIRES it to be HTTPS. `--out` holds
  * the archive + (default) index; `--index` overrides the index path.
  */
@@ -80,7 +80,7 @@ API mode:
 
 Arguments:
   <extensionDir>        Built artifact dir (a manifest + its runtime files,
-                         e.g. bundled-extensions/zana).
+                         e.g. plugins/docs).
 
 Local-file mode options:
   --out <dir>           Output dir for the archive + default index

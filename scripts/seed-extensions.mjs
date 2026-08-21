@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 /**
- * Build + package every first-party disk extension under `extensions/*` so a
- * cold `npm run dev` never loads a stale bundle. This is the SAFETY NET for the
- * dev inner loop (see docs/extension-lifecycle-design.md §3): the per-extension
- * `npm run dev` watcher gives live reload, but if you start the app without it,
- * `predev` runs this once so what's in `~/.zcc/extensions/<id>` matches source.
+ * Build + package every first-party plugin under `plugins/*` that still needs
+ * a compile step, so a cold `npm run dev` never loads a stale bundle. Plugins
+ * that ship as source (docs: package.json + server.mjs + skills) skip this —
+ * PluginService auto-installs them from `plugins/<id>` in place.
  *
- * Extension-agnostic by design (engineering rule #6): it discovers extensions
- * by scanning `extensions/*` for a `package.json` with both `build` and
- * `package` scripts — it never hard-codes an id. Best-effort per extension: one
+ * Extension-agnostic by design (engineering rule #6): it discovers plugins
+ * by scanning `plugins/*` for a `package.json` with both `build` and
+ * `package` scripts — it never hard-codes an id. Best-effort per plugin: one
  * failing build logs and does not abort the others (or the app launch).
  */
 import { spawnSync } from 'node:child_process';

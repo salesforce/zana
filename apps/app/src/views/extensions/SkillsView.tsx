@@ -30,15 +30,15 @@ const SOURCE_LABEL: Record<SkillSource, string> = {
 };
 
 /**
- * Skills catalogue, rendered as the Settings → Skills tab AND (scoped to one
- * project) as the per-project Skills tab. Returns the tab content only —
- * SettingsPanel supplies the surrounding `settings-panel` / `settings-inner`
- * shell, so this must NOT render its own `<main>` (that would double-nest two
- * settings-panel mains).
+ * Skills catalogue, rendered on the Extensions workspace Skills page AND
+ * (scoped to one project) as the per-project Skills tab. Returns the tab
+ * content only — the host panel supplies the surrounding `settings-panel` /
+ * `settings-inner` shell, so this must NOT render its own `<main>` (that
+ * would double-nest two settings-panel mains).
  *
  * `projectId` (optional) locks the project scope for the per-project view (via
  * {@link ProjectSkillsView}); when omitted, the panel follows the globally
- * selected project — the historical Settings-tab behaviour.
+ * selected project.
  */
 export function SkillsBody({
   projectId,

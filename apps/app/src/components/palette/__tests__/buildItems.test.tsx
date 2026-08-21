@@ -66,6 +66,7 @@ function baseCtx(over: Partial<PaletteBuildContext> = {}): PaletteBuildContext {
     selectTab: noop,
     setWorkspaceMode: noop,
     setSettingsTab: noop,
+    setExtensionsTab: noop,
     setOverviewOpen: noop,
     setPinned: noop,
     restartTerminal: asyncNoop,
@@ -166,6 +167,24 @@ describe('buildPaletteItems', () => {
     expect(item).toBeTruthy();
     item!.run();
     expect(setNav).toHaveBeenCalledWith('agents');
+  });
+
+  it('opens Skills, Plugins, and MCP on the Extensions workspace', () => {
+    const setNav = vi.fn();
+    const setExtensionsTab = vi.fn();
+    const items = buildPaletteItems(baseCtx({ setNav, setExtensionsTab }));
+
+    items.find((i) => i.key === 'action:skills')!.run();
+    expect(setNav).toHaveBeenCalledWith('extensions');
+    expect(setExtensionsTab).toHaveBeenCalledWith('skills');
+
+    items.find((i) => i.key === 'action:plugin-hub')!.run();
+    expect(setNav).toHaveBeenCalledWith('extensions');
+    expect(setExtensionsTab).toHaveBeenCalledWith('installed');
+
+    items.find((i) => i.key === 'action:mcp')!.run();
+    expect(setNav).toHaveBeenCalledWith('extensions');
+    expect(setExtensionsTab).toHaveBeenCalledWith('mcp');
   });
 
   it('opening a project from the palette focuses that workspace', () => {

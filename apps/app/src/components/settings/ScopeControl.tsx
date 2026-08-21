@@ -5,8 +5,8 @@ import { PopoverPicklist } from '../ui/PopoverPicklist.js';
 /**
  * Scope control in the Settings content header: a `Global | Project-Specific`
  * segmented toggle plus, in Project-Specific mode, a single project dropdown.
- * Drives `selectedProjectId` (null = Global) which the Skills/MCP bodies and the
- * Project tab already read. When `allowGlobal` is false (the Project section),
+ * Drives `selectedProjectId` (null = Global) which the Project tab already
+ * reads. When `allowGlobal` is false (the Project section),
  * only the dropdown shows — there's no global project-settings scope.
  *
  * Switching to Project-Specific with nothing selected defaults to the first

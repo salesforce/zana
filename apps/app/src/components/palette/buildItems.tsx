@@ -65,7 +65,8 @@ export interface PaletteBuildContext {
   selectProject: (id: string) => void;
   selectTab: (projectId: string, tabId: string) => void;
   setWorkspaceMode: (projectId: string, mode: 'agents' | 'terminals' | 'explorer') => void;
-  setSettingsTab: (tab: 'global' | 'project' | 'prompts' | 'skills' | 'mcp' | 'extensions' | 'personas' | 'squads' | 'usage') => void;
+  setSettingsTab: (tab: 'global' | 'project' | 'prompts' | 'personas' | 'squads' | 'usage') => void;
+  setExtensionsTab: (tab: 'marketplace' | 'installed' | 'skills' | 'mcp') => void;
   setOverviewOpen: (open: boolean) => void;
   setPinned: (projectId: string, sessionId: string, pinned: boolean) => void;
   restartTerminal: (sessionId: string, projectId: string) => Promise<unknown> | unknown;
@@ -141,7 +142,7 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
     projects, terminals, selectedProject, selectedProjectTabs, activeTab,
     scheduledTasks, personas, overviewOpen, onClose, launch, launchPersona,
     addProject, setNav, selectProject, selectTab, setWorkspaceMode,
-    setSettingsTab, setOverviewOpen, setPinned, restartTerminal, closeTerminal,
+    setSettingsTab, setExtensionsTab, setOverviewOpen, setPinned, restartTerminal, closeTerminal,
     reopenLastClosed, restoreLastDetached, pushToast
   } = ctx;
 
@@ -244,8 +245,8 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
       category: 'Actions',
       source: 'core',
       run: () => {
-        setNav('settings');
-        setSettingsTab('skills');
+        setNav('extensions');
+        setExtensionsTab('skills');
         onClose();
       }
     },
@@ -256,8 +257,8 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
       category: 'Actions',
       source: 'core',
       run: () => {
-        setNav('settings');
-        setSettingsTab('extensions');
+        setNav('extensions');
+        setExtensionsTab('installed');
         onClose();
       }
     },
@@ -268,8 +269,8 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
       category: 'Actions',
       source: 'core',
       run: () => {
-        setNav('settings');
-        setSettingsTab('mcp');
+        setNav('extensions');
+        setExtensionsTab('mcp');
         onClose();
       }
     },

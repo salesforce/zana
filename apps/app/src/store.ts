@@ -137,12 +137,11 @@ export type NavId = CoreNavId | (string & {});
 
 /**
  * Active Settings sub-section. The fixed core tabs plus any settings-placed
- * module's id (`AppModule.placement === 'settings'`). `'extensions'` is the
- * Plugins hub (lists every module + mounts its `settingsPanel`).
- * `'skills' | 'mcp' | 'personas' | 'squads' | 'usage'` are the
- * configuration catalogues, folded in from their former top-level rail
- * destinations. `(string & {})` keeps the core literals in autocomplete while
- * allowing a module id.
+ * module's id (`AppModule.placement === 'settings'`).
+ * `'personas' | 'squads' | 'usage'` are the remaining configuration catalogues
+ * (Plugins / Skills / MCP live on the top-level Extensions workspace).
+ * `(string & {})` keeps the core literals in autocomplete while allowing a
+ * module id.
  */
 export type SettingsTab =
   | 'global'
@@ -152,9 +151,6 @@ export type SettingsTab =
   | 'editor'
   | 'project'
   | 'prompts'
-  | 'extensions'
-  | 'skills'
-  | 'mcp'
   | 'personas'
   | 'squads'
   | 'usage'
@@ -163,7 +159,7 @@ export type SettingsTab =
   | (string & {});
 
 /** The focused top-level Extensions workspace page. */
-export type ExtensionsTab = 'marketplace' | 'installed' | 'skills';
+export type ExtensionsTab = 'marketplace' | 'installed' | 'skills' | 'mcp';
 
 export interface Toast {
   id: string;
@@ -521,15 +517,15 @@ interface UiState {
   extensionsTab: ExtensionsTab;
   setExtensionsTab: (tab: ExtensionsTab) => void;
   /**
-   * When the Extensions section is open, which module's settings the picker
+   * When the Extensions workspace is open, which module's settings the hub
    * has selected (an opaque module id — built-in or disk extension; core never
-   * enumerates them, Rule 6). Drives the ExtensionsHub's detail pane so the
-   * picker sub-list and the hub stay in sync. `null` = default to the first.
-   * Set alongside `settingsTab: 'extensions'` by `selectSettingsExtension`.
+   * enumerates them, Rule 6). Drives the ExtensionsHub's detail pane.
+   * `null` = default to the first. Set alongside `nav: 'extensions'` by
+   * `selectSettingsExtension`.
    */
   settingsExtensionId: string | null;
   setSettingsExtensionId: (id: string | null) => void;
-  /** Open the Extensions section focused on one module (picker jump-link). */
+  /** Open the Extensions workspace focused on one installed module. */
   selectSettingsExtension: (id: string) => void;
   /**
    * Pending anchor id to scroll to after a settings-section switch (see
@@ -993,7 +989,8 @@ export const useUi = create<UiState>((set, get) => ({
   setSettingsTab: (settingsTab) => set({ settingsTab }),
   setExtensionsTab: (extensionsTab) => set({ extensionsTab }),
   setSettingsExtensionId: (settingsExtensionId) => set({ settingsExtensionId }),
-  selectSettingsExtension: (id) => set({ settingsTab: 'extensions', settingsExtensionId: id }),
+  selectSettingsExtension: (id) =>
+    set({ nav: 'extensions', extensionsTab: 'installed', settingsExtensionId: id }),
   settingsAnchor: null,
   setSettingsAnchor: (settingsAnchor) => set({ settingsAnchor }),
   setSchedulerTab: (schedulerTab) => set({ schedulerTab }),

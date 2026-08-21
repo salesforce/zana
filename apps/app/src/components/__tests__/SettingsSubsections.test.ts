@@ -17,7 +17,7 @@ describe('Settings subsection navigation', () => {
     );
   });
 
-  it('keeps Extensions as one settings destination without installed-module jump links', () => {
+  it('keeps Settings navigation without installed-module jump links', () => {
     const source = readFileSync(
       fileURLToPath(new URL('../listpane/SettingsPane.tsx', import.meta.url)),
       'utf8'
@@ -27,9 +27,12 @@ describe('Settings subsection navigation', () => {
     expect(source).not.toContain('selectSettingsExtension');
   });
 
-  it('lists the Plugins hub under Catalogues without the Claude Code plugin catalogue', () => {
-    const plugins = SETTINGS_SECTIONS.find((section) => section.id === 'extensions');
-    expect(plugins).toMatchObject({ label: 'Plugins', group: 'catalogues' });
-    expect(SETTINGS_SECTIONS.some((section) => section.id === 'plugins')).toBe(false);
+  it('keeps Plugins, Skills, and MCP off Settings — they live on the Extensions workspace', () => {
+    const ids = SETTINGS_SECTIONS.map((section) => section.id);
+    expect(ids).not.toContain('extensions');
+    expect(ids).not.toContain('skills');
+    expect(ids).not.toContain('mcp');
+    expect(ids).not.toContain('plugins');
+    expect(ids).toContain('usage');
   });
 });

@@ -146,11 +146,8 @@ test.describe('marketplace lifecycle — install and uninstall', () => {
     }
 
     // Trigger a rescan via the Extensions panel
-    await app.window.locator('.nav-item', { hasText: 'Settings' }).first().click();
-    await app.window
-      .locator('.settings-section-item')
-      .filter({ has: app.window.locator('.project-name', { hasText: 'Extensions' }) })
-      .click();
+    await app.window.locator('.nav-item', { hasText: 'Extensions' }).first().click();
+    await app.window.getByTestId('extensions-nav-installed').click();
 
     // Click "Reload" or "Rescan" button
     const rescanButton = app.window.locator('button', { hasText: /Reload|Rescan/ });

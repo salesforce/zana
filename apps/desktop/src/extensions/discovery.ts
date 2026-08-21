@@ -91,7 +91,7 @@ const MANIFEST_NAME = 'extension.json';
  * with `MAIN_MODULES` ids anyway, for callers that don't pass `reservedIds`.
  *
  * `MAIN_MODULES` is currently empty — first-party plugins load at runtime
- * (docs auto-installs from `bundled-extensions/docs`). Nothing is reserved here.
+ * (docs auto-installs from `plugins/docs`). Nothing is reserved here.
  */
 export const RESERVED_BUILTIN_IDS: readonly string[] = [];
 
