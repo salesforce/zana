@@ -16,6 +16,9 @@
     "paths": {
       "@shared/*": ["./src/shared/*"],
       "@renderer/*": ["./src/renderer/*"],
+      "@zana-ai/zcc-plugin-sdk": ["./packages/plugin-sdk/src/index.ts"],
+      "@zana-ai/zcc-plugin-sdk/*": ["./packages/plugin-sdk/src/*"],
+      "@zana-ai/zcc-domain": ["./packages/domain/src/index.ts"],
       "@zana-ai/zcc-extension-sdk": ["./packages/extension-sdk/src/index.ts"],
       "@zana-ai/zcc-extension-sdk/*": ["./packages/extension-sdk/src/*"],
       "@zcc/harness-sdk": ["./packages/harness-sdk/src/index.ts"],
@@ -31,6 +34,8 @@
   "include": [
     "src/**/*.ts",
     "src/**/*.tsx",
+    "packages/plugin-sdk/src/**/*.ts",
+    "packages/domain/src/**/*.ts",
     "packages/extension-sdk/src/**/*.ts",
     "packages/harness-sdk/src/**/*.ts",
     "plugins/**/*.ts",

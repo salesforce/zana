@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { AppModule } from '@shared/module-api';
 import type { ExtensionEntry } from '@shared/types';
-import { buildHubRows } from '../ExtensionsHub';
+import { buildHubRows, canOpenGlobalPanel } from '../ExtensionsHub';
 
 /**
  * Regression guard for the "extension vanishes from the Installed list when its
@@ -103,5 +103,19 @@ describe('buildHubRows — union of loaded modules + discovered entries', () => 
     expect(rows.map((r) => r.module.title)).toEqual(['Aardvark', 'Slack']);
     // The built-in row has no disk entry.
     expect(rows.find((r) => r.module.id === 'slack')?.entry).toBeNull();
+  });
+});
+
+describe('canOpenGlobalPanel', () => {
+  const panel = () => null;
+
+  it('opens a normal extension panel from the Extensions hub', () => {
+    expect(canOpenGlobalPanel(mod('global', 'Global', { panel }))).toBe(true);
+  });
+
+  it('keeps Settings-only, project-only, and panel-less modules out of the launcher', () => {
+    expect(canOpenGlobalPanel(mod('settings', 'Settings', { panel, placement: 'settings' }))).toBe(false);
+    expect(canOpenGlobalPanel(mod('project', 'Project', { panel, projectTab: { global: false } }))).toBe(false);
+    expect(canOpenGlobalPanel(mod('commands', 'Commands'))).toBe(false);
   });
 });

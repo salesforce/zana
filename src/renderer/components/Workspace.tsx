@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect } from 'react';
-import { TerminalSquare, FolderTree, GitBranch, Columns2, Rows2, LayoutGrid, Square, Library, Clock, Bot, Target, MessageCircleQuestion, Activity } from 'lucide-react';
+import { TerminalSquare, FolderTree, GitBranch, Columns2, Rows2, LayoutGrid, Square, Clock, Bot, Target, MessageCircleQuestion, Activity } from 'lucide-react';
 import type { SplitLayout, ProjectView } from '../store';
 import { useData, useUi, visibleTerminals, backgroundTerminals } from '../store';
 import { TabBar } from './TabBar';
@@ -10,17 +10,15 @@ import { ProjectAgentsBoard } from './ProjectAgentsBoard';
 import { ProjectExtensionTab } from './ProjectExtensionTab';
 import { useProjectTabModules } from '../modules';
 import { resolveIcon } from '../util/resolveIcon';
-import { isProjectFocusedView } from '../util/windowScope';
+import { isScopedWindow } from '../util/windowScope';
+import { resolveProjectTabModule } from '../util/libraryPlugin';
 
 // Lazy-load the editor surface. monaco-editor registers default editor
 // extensions into a global `RegistryImpl` singleton, so it's lazy-loaded to
-// keep it out of the initial bundle. LibraryView also imports monaco so it's
-// lazy-loaded too.
+// keep it out of the initial bundle. The Docs plugin's Library view lazy-loads
+// monaco itself.
 const ExplorerView = lazy(() =>
   import('./ExplorerView').then((m) => ({ default: m.ExplorerView }))
-);
-const LibraryView = lazy(() =>
-  import('./LibraryView').then((m) => ({ default: m.LibraryView }))
 );
 const ProjectGoalsView = lazy(() =>
   import('./ProjectGoalsView').then((m) => ({ default: m.ProjectGoalsView }))
@@ -40,7 +38,6 @@ export function Workspace() {
   const projects = useData((s) => s.projects);
   const terminals = useData((s) => s.terminals);
   const selectedProjectId = useUi((s) => s.selectedProjectId);
-  const focusedProjectId = useUi((s) => s.focusedProjectId);
   const selectedTabId = useUi((s) => s.selectedTabId);
   const selectTab = useUi((s) => s.selectTab);
   const findOpen = useUi((s) => s.findOpen);
@@ -94,11 +91,10 @@ export function Workspace() {
   // project-tab module's id (not a core mode). An id whose extension is gone is
   // tolerated: `extModule` is undefined and the view falls through to the
   // Terminals catch-all below.
-  const extModule = project ? projectTabModules.find((m) => m.id === mode) : undefined;
+  const extModule = project ? resolveProjectTabModule(mode, projectTabModules) : undefined;
   const isExtTab = !!extModule;
   const isAgents = mode === 'agents' && !!project;
   const isExplorer = mode === 'explorer' && !!project;
-  const isLibrary = mode === 'library' && !!project;
   const isScheduler = mode === 'scheduler' && !!project;
   const isFeed = mode === 'feed' && !!project;
   // Goals + Follow-ups are opt-in experimental features. The ProjectScopedNav
@@ -114,7 +110,6 @@ export function Workspace() {
   const isTerminals =
     !isAgents &&
     !isExplorer &&
-    !isLibrary &&
     !isScheduler &&
     !isFeed &&
     !isGoals &&
@@ -227,7 +222,7 @@ export function Workspace() {
   // When the workspace modes live on the left rail (ProjectScopedNav) — either a
   // per-project window OR the main window drilled into a project — the
   // horizontal segmented control is redundant, so it's hidden in both.
-  const modeToggle = project && !isProjectFocusedView(focusedProjectId) && (
+  const modeToggle = project && !isScopedWindow() && (
     <div className="workspace-mode-segmented" role="group" aria-label="Workspace mode">
       <button
         type="button"
@@ -258,16 +253,6 @@ export function Workspace() {
       >
         <FolderTree size={13} />
         <span>Explorer</span>
-      </button>
-      <button
-        type="button"
-        className={isLibrary ? 'active' : ''}
-        onClick={() => setWorkspaceMode(project.id, 'library')}
-        title="Library documents"
-        aria-pressed={isLibrary}
-      >
-        <Library size={13} />
-        <span>Library</span>
       </button>
       <button
         type="button"
@@ -339,7 +324,7 @@ export function Workspace() {
   // Always mount TerminalSurface (preserves scrollback). When in explorer mode
   // we visually swap the middle section to ExplorerView via display:none.
   return (
-    <main className="workspace">
+    <div className="workspace panel-body--full">
       <div className="workspace-topbar">
         {/* Mode switcher (Terminals/Explorer/Library) on its own row
             above the tabs, so a long tab strip never squeezes it. Only mount
@@ -401,10 +386,6 @@ export function Workspace() {
         ) : isExplorer ? (
           <div className="explorer-topbar">
             <span className="explorer-topbar-label">Explorer</span>
-          </div>
-        ) : isLibrary ? (
-          <div className="explorer-topbar">
-            <span className="explorer-topbar-label">Library</span>
           </div>
         ) : isScheduler ? (
           <div className="explorer-topbar">
@@ -470,11 +451,6 @@ export function Workspace() {
               <ExplorerView project={project} />
             </Suspense>
           )}
-          {isLibrary && project && (
-            <Suspense fallback={<div className="workbench-status">Loading library…</div>}>
-              <LibraryView project={project} />
-            </Suspense>
-          )}
           {isScheduler && project && (
             <Suspense fallback={<div className="workbench-status">Loading scheduler…</div>}>
               <SchedulerPanel projectId={project.id} />
@@ -505,8 +481,12 @@ export function Workspace() {
           )}
           {isAgents && project && (
             // Agents mode: a Kanban-style status board. Cards auto-flow across
-            // lanes by live agent state; "New agent" opens the launcher modal.
-            <ProjectAgentsBoard project={project} onNewAgent={() => setLauncherOpen(true)} />
+            // lanes by live agent state; its composer opens inline in this pane.
+            <ProjectAgentsBoard
+              project={project}
+              launcherOpen={launcherOpen}
+              onLauncherClose={() => setLauncherOpen(false)}
+            />
           )}
       </div>
       <div className="statusbar">
@@ -536,13 +516,13 @@ export function Workspace() {
           </>
         )}
       </div>
-      {launcherOpen && project && (
+      {launcherOpen && project && !isAgents && (
         <AgentLauncher
           project={project}
           backgroundTabs={backgroundTabs}
           onClose={() => setLauncherOpen(false)}
         />
       )}
-    </main>
+    </div>
   );
 }

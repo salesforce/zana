@@ -28,7 +28,7 @@ const SECTIONS: Section[] = [
       { keys: ['⌘', 'R'], label: 'Resume Claude session…' },
       { keys: ['⌘', 'B'], label: 'Toggle Terminals / Explorer' },
       { keys: ['⌘', 'L'], label: 'Open Preview Browser' },
-      { keys: ['⌘', 'O'], label: 'Toggle Overview (workspaces dashboard)' },
+      { keys: ['⌘', 'O'], label: 'Open Agents dashboard' },
       { keys: ['⌘', 'I'], label: 'Toggle Inbox' },
       { keys: ['⌘', 'J'], label: 'Toggle Scheduler' },
       { keys: ['⌘', ','], label: 'Toggle Settings' },

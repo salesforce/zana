@@ -104,8 +104,7 @@ export function CreateExtensionDialog({ onClose }: Props) {
       });
       if (session) {
         const ui = useUi.getState();
-        ui.setNav('projects');
-        ui.selectProject(projectId);
+        ui.enterProjectFocus(projectId);
         ui.selectTab(projectId, session.id);
       }
       onClose();

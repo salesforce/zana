@@ -77,7 +77,7 @@ export function installShortcuts(): () => void {
     // cmd+, — toggle Settings
     if (e.key === ',') {
       e.preventDefault();
-      ui.setNav(ui.nav === 'settings' ? 'projects' : 'settings');
+      ui.setNav(ui.nav === 'settings' ? 'home' : 'settings');
       return;
     }
     // cmd+. — close the agent detail modal. Escape is reserved for the embedded
@@ -89,26 +89,26 @@ export function installShortcuts(): () => void {
       ui.closeAgentModal();
       return;
     }
-    // cmd+i — toggle Inbox. Returns to Projects when already on inbox so it
+    // cmd+i — toggle Inbox. Returns to Home when already on inbox so it
     // works as a single round-trip key from anywhere in the app.
     if (e.key === 'i' && !e.shiftKey) {
       e.preventDefault();
-      ui.setNav(ui.nav === 'inbox' ? 'projects' : 'inbox');
+      ui.setNav(ui.nav === 'inbox' ? 'home' : 'inbox');
       return;
     }
-    // cmd+o — jump to the cross-project Agents board (the Projects home).
-    // Exits any opened project; from anywhere it lands you on the board.
+    // cmd+o — jump to the Agents dashboard (kanban). Exits any opened
+    // project; from anywhere it lands you on the board.
     if (e.key === 'o' && !e.shiftKey) {
       e.preventDefault();
-      if (ui.nav !== 'projects') ui.setNav('projects');
+      if (ui.nav !== 'agents') ui.setNav('agents');
       ui.exitProjectFocus();
       return;
     }
-    // cmd+j — toggle Scheduler. Round-trip back to projects when already on
+    // cmd+j — toggle Scheduler. Round-trip back to Home when already on
     // scheduler so it works as a single key from anywhere.
     if (e.key === 'j' && !e.shiftKey) {
       e.preventDefault();
-      ui.setNav(ui.nav === 'scheduler' ? 'projects' : 'scheduler');
+      ui.setNav(ui.nav === 'scheduler' ? 'home' : 'scheduler');
       return;
     }
     // cmd+/ or cmd+? — keyboard shortcuts help

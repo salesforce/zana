@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { ExtensionEntry } from '@shared/types';
-import { agentCapabilityLines, PERMISSION_LABELS } from '../ExtensionConsent';
+import { agentCapabilityLines, pluginCapabilityLines, PERMISSION_LABELS } from '../ExtensionConsent';
 
 /**
  * docs/extension-agent-capabilities-plan.md §8 — the consent screen must name
@@ -57,5 +57,22 @@ describe('ExtensionConsent agentCapabilityLines', () => {
 
   it('has a plain-language label for agent:contribute, marked loud (⚠)', () => {
     expect(PERMISSION_LABELS['agent:contribute']).toMatch(/^⚠/);
+  });
+});
+
+describe('pluginCapabilityLines', () => {
+  it('lists skills, always-on MCP, and extra string values without a permission gate', () => {
+    expect(
+      pluginCapabilityLines({
+        skillNames: ['hello'],
+        mcpServers: [{ name: 'library', alwaysOn: true }],
+        extra: { notes: 'Host MCP library_search', commands: ['./commands'] }
+      })
+    ).toEqual([
+      'Skills it adds: hello',
+      'Integration servers it adds: library (always on)',
+      'Also: notes: Host MCP library_search',
+      'Also: commands'
+    ]);
   });
 });

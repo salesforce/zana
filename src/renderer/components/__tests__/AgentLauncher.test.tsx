@@ -89,6 +89,16 @@ describe('Quick Agent composer', () => {
   });
 });
 
+describe('launcher presentation', () => {
+  it('keeps global launchers modal and allows project launchers to render inline', () => {
+    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
+    expect(source).toContain("presentation?: 'modal' | 'inline';");
+    expect(source).toContain("useDialogFocusTrap(dialogRef, onClose, presentation === 'modal');");
+    expect(source).toContain("data-testid={presentation === 'modal' ? 'launch-modal' : 'launch-inline'}");
+    expect(source).toContain("return presentation === 'modal'");
+  });
+});
+
 describe('Fix with AI recovery launch', () => {
   it('uses the managed scratch workspace root instead of retrying a failed project cwd', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');

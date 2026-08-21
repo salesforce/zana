@@ -122,20 +122,8 @@ export function PersonasPanel() {
   }, [personas]);
 
   return (
-    <main className="settings-panel skills-panel personas-panel">
-      <div className="settings-inner">
-        <div className="scheduler-header">
-          <div className="scheduler-header-text">
-            <h2>Personas</h2>
-            <p className="settings-help scheduler-subtitle">
-              Named, reusable launch profiles — a bundle of <code>claude</code> flags
-              (system prompt, model, permission mode, allowed tools). Discovered from{' '}
-              <code>~/.zcc/personas</code> and each project's{' '}
-              <code>.zcc/personas</code>. Pick one in the “+” launcher to start a
-              session as that persona. Click a persona to view or edit it.
-            </p>
-          </div>
-          <div className="personas-header-actions">
+    <section className="settings-catalogue skills-panel personas-panel">
+        <div className="settings-catalogue-actions">
             <button
               type="button"
               className="settings-btn primary"
@@ -144,7 +132,6 @@ export function PersonasPanel() {
               <Plus size={12} /> New persona
             </button>
             <RevealPersonasButton />
-          </div>
         </div>
 
         <div className="skills-layout">
@@ -210,8 +197,6 @@ export function PersonasPanel() {
             )}
           </section>
         </div>
-      </div>
-
       {editor && (
         <PersonaEditor
           key={editor.kind === 'new' ? 'new' : `${editor.persona.id}:${editor.persona.source === 'user' ? 'edit' : 'view'}`}
@@ -241,7 +226,7 @@ export function PersonasPanel() {
           onDelete={() => void deletePersona(rowMenu.persona)}
         />
       )}
-    </main>
+    </section>
   );
 
   async function duplicatePersona(persona: Persona) {

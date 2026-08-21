@@ -240,7 +240,7 @@ describe('extension loader', () => {
     await rm(extDir, { recursive: true, force: true });
   });
 
-  it('does NOT spawn a main-bearing extension until it is consented (P3-D)', async () => {
+  it('loads a main-bearing plugin in-process (install = full trust)', async () => {
     const dir = await writeExt('mainmod', {
       id: 'mainmod',
       title: 'MainMod',
@@ -248,37 +248,44 @@ describe('extension loader', () => {
       entry: { main: './main.mjs' },
       engines: goodEngines
     });
-    // P3-A: this file must NEVER be import()'d by the loader (untrusted code runs
-    // in the child). A side-effecting throw here would surface if it were.
     await writeFile(
       join(dir, 'main.mjs'),
-      `throw new Error('loader must not import this into main');`,
+      `export default { id: 'mainmod', setup() { return {}; } };`,
       'utf-8'
     );
     const { loadExtensions } = await importLoader();
-
-    // Unconsented → discovered + listed (so the UI can prompt) but NO spec.
-    const first = await loadExtensions();
-    expect(first.entries).toHaveLength(1);
-    expect(first.entries[0]).toMatchObject({
+    const loaded = await loadExtensions();
+    expect(loaded.diskSpecs).toHaveLength(0);
+    expect(loaded.modules).toHaveLength(1);
+    expect(loaded.entries[0]).toMatchObject({
       id: 'mainmod',
-      loaded: true,
+      consented: true,
+      needsConsent: null,
+      mainActive: true,
+      loaded: true
+    });
+  });
+
+  it('isolates a throwing plugin server entry as degraded', async () => {
+    const dir = await writeExt('boommod', {
+      id: 'boommod',
+      title: 'Boom',
+      icon: 'Cog',
+      entry: { main: './main.mjs' },
+      engines: goodEngines
+    });
+    await writeFile(join(dir, 'main.mjs'), `throw new Error('broken factory');`, 'utf-8');
+    const { loadExtensions } = await importLoader();
+    const first = await loadExtensions();
+    expect(first.entries[0]).toMatchObject({
+      id: 'boommod',
+      consented: true,
+      needsConsent: null,
       mainActive: false,
-      consented: false,
-      needsConsent: 'new'
+      error: 'main-load-failed'
     });
     expect(first.diskSpecs).toHaveLength(0);
     expect(first.modules).toHaveLength(0);
-
-    // After consent → a spawn spec is collected; still never imported into main.
-    const { grantConsent } = await import('../extensions/consent.js');
-    await grantConsent('mainmod', []); // manifest declares no perms → grant the empty set
-    const after = await loadExtensions();
-    expect(after.entries[0]).toMatchObject({ consented: true, needsConsent: null });
-    // A6 realpath-confine: entryPath is the canonicalized (realpath'd) path.
-    expect(after.diskSpecs).toEqual([
-      { moduleId: 'mainmod', entryPath: join(await realpath(dir), 'main.mjs') }
-    ]);
   });
 
   it('re-discovery mode collects no spec; mainActive reflects the live set', async () => {

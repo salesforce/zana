@@ -80,8 +80,6 @@ export function HomeAgentComposer() {
   const harnessCodexEnabled = useData((s) => s.harnessCodexEnabled);
   const harnessPiEnabled = useData((s) => s.harnessPiEnabled);
   const harnessOpenCodeEnabled = useData((s) => s.harnessOpenCodeEnabled);
-  const setNav = useUi((s) => s.setNav);
-  const selectProject = useUi((s) => s.selectProject);
   const selectTab = useUi((s) => s.selectTab);
   const pushToast = useUi((s) => s.pushToast);
   const [preferences, setPreferences] = useState(readHomeLauncherPreferences);
@@ -230,8 +228,7 @@ export function HomeAgentComposer() {
       if (!session) return;
       setPrompt('');
       setAttachments([]);
-      setNav('projects');
-      selectProject(project.id);
+      useUi.getState().enterProjectFocus(project.id);
       selectTab(project.id, session.id);
       useUi.getState().openAgentModal(session.id, project.id);
     } catch (err) {

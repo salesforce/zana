@@ -11,3 +11,8 @@ export * from './project-store.js';
 export * from './terminal-execution-service.js';
 export * from './terminal-session-service.js';
 export * from './durable-store.js';
+export * from './plugins/plugin-service.js';
+export * from './plugins/plugin-store.js';
+export * from './plugins/builtin-registry.js';
+export * from './plugins/marketplace.js';
+export * from './plugins/marketplace-store.js';

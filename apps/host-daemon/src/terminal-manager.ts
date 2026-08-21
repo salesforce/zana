@@ -1,5 +1,5 @@
-import { randomUUID } from 'node:crypto';
 import {
+  TERMINAL_HOST_PROTOCOL_VERSION,
   TerminalHostCommandSchema,
   type TerminalHostCommand,
   type TerminalHostEvent
@@ -17,11 +17,11 @@ export interface PtyHandle {
 export interface HostTerminalManagerOptions {
   spawn(command: string, args: string[], options: { cwd: string; env: Record<string, string>; cols: number; rows: number }): PtyHandle;
   emit(event: TerminalHostEvent): void;
-  hostSessionId?: () => string;
 }
 
 interface LiveTerminal {
   handle: PtyHandle;
+  binding: TerminalHostCommand['binding'];
   epoch: number;
   sequence: number;
   exited: boolean;
@@ -41,6 +41,44 @@ export class HostTerminalManager {
 
   constructor(private readonly options: HostTerminalManagerOptions) {}
 
+  /**
+   * A host shutdown ends its authority over every PTY it owns. On macOS the
+   * helper creates a new session, so closing only the HTTP server would orphan
+   * terminal processes after their host utility process exits.
+   */
+  close(): void {
+    const terminals = [...this.live.values()];
+    for (const live of terminals) {
+      try {
+        live.handle.kill();
+      } catch {
+        // A process can win the exit race; the host still drops its handle.
+      }
+      live.exited = true;
+    }
+    this.live.clear();
+    this.handled.clear();
+  }
+
+  /** Revoke handles from a replaced server lease before it can orphan them. */
+  revokeBinding(binding: TerminalHostCommand['binding']): void {
+    for (const [sessionId, live] of this.live) {
+      if (
+        live.binding.hostId === binding.hostId &&
+        live.binding.instanceId === binding.instanceId &&
+        live.binding.hostConnectionId === binding.hostConnectionId
+      ) {
+        try {
+          live.handle.kill();
+        } catch {
+          // A process can win the exit race; it is no longer host-controlled.
+        }
+        live.exited = true;
+        this.live.delete(sessionId);
+      }
+    }
+  }
+
   handle(input: unknown): TerminalHostEvent[] {
     const command = TerminalHostCommandSchema.parse(input);
     const prior = this.handled.get(command.commandId);
@@ -55,8 +93,11 @@ export class HostTerminalManager {
     } catch (error) {
       const rejected: TerminalHostEvent = {
         kind: 'rejected',
+        protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION,
+        binding: command.binding,
         commandId: command.commandId,
         sessionId: command.sessionId,
+        launchEpoch: command.launchEpoch,
         reason: error instanceof Error ? error.message : 'terminal command failed'
       };
       emit(rejected);
@@ -72,7 +113,14 @@ export class HostTerminalManager {
     if (Date.parse(command.deadlineAt) <= Date.now()) throw new Error('terminal command expired');
     if (command.kind === 'start') return this.start(command, emit);
     const live = this.live.get(command.sessionId);
-    if (!live || live.epoch !== command.launchEpoch || live.exited) throw new Error('unknown terminal session epoch');
+    if (
+      !live ||
+      live.epoch !== command.launchEpoch ||
+      live.exited ||
+      live.binding.hostId !== command.binding.hostId ||
+      live.binding.instanceId !== command.binding.instanceId ||
+      live.binding.hostConnectionId !== command.binding.hostConnectionId
+    ) throw new Error('unknown terminal session epoch');
     if (command.kind === 'write') {
       live.handle.write(command.data);
       return;
@@ -88,7 +136,7 @@ export class HostTerminalManager {
     }
     for (const item of live.backlog) {
       if (item.sequence > (command.afterSequence ?? -1)) {
-        emit({ kind: 'output', sessionId: command.sessionId, launchEpoch: live.epoch, sequence: item.sequence, data: item.data });
+        emit({ kind: 'output', protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION, binding: live.binding, sessionId: command.sessionId, launchEpoch: live.epoch, sequence: item.sequence, data: item.data });
       }
     }
   }
@@ -100,14 +148,14 @@ export class HostTerminalManager {
     const [file, ...args] = command.launch.argv;
     if (!file) throw new Error('terminal argv is empty');
     const handle = this.options.spawn(file, args, command.launch);
-    const live: LiveTerminal = { handle, epoch: command.launchEpoch, sequence: 0, exited: false, expectedExit: false, backlog: [] };
+    const live: LiveTerminal = { handle, binding: command.binding, epoch: command.launchEpoch, sequence: 0, exited: false, expectedExit: false, backlog: [] };
     this.live.set(command.sessionId, live);
-    emit({ kind: 'accepted', commandId: command.commandId, sessionId: command.sessionId, launchEpoch: command.launchEpoch, hostSessionId: (this.options.hostSessionId ?? randomUUID)() });
-    emit({ kind: 'started', sessionId: command.sessionId, launchEpoch: command.launchEpoch, ...(handle.pid ? { pid: handle.pid } : {}) });
+    emit({ kind: 'accepted', protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION, binding: command.binding, commandId: command.commandId, sessionId: command.sessionId, launchEpoch: command.launchEpoch, hostSessionId: command.binding.hostConnectionId });
+    emit({ kind: 'started', protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION, binding: command.binding, sessionId: command.sessionId, launchEpoch: command.launchEpoch, ...(handle.pid ? { pid: handle.pid } : {}) });
     handle.onData((data) => {
       if (live.exited) return;
       const event: TerminalHostEvent = {
-        kind: 'output', sessionId: command.sessionId, launchEpoch: live.epoch, sequence: live.sequence++, data
+        kind: 'output', protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION, binding: live.binding, sessionId: command.sessionId, launchEpoch: live.epoch, sequence: live.sequence++, data
       };
       live.backlog.push({ sequence: event.sequence, data });
       let size = live.backlog.reduce((total, item) => total + Buffer.byteLength(item.data), 0);
@@ -119,7 +167,7 @@ export class HostTerminalManager {
       live.exited = true;
       // The exit sequence is deliberately after every emitted output sequence.
       this.options.emit({
-        kind: 'exited', sessionId: command.sessionId, launchEpoch: live.epoch,
+        kind: 'exited', protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION, binding: live.binding, sessionId: command.sessionId, launchEpoch: live.epoch,
         sequence: live.sequence++, code: exitCode, expected: live.expectedExit
       });
       this.live.delete(command.sessionId);

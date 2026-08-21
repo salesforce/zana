@@ -117,21 +117,37 @@ export function scopeLines(entry: ExtensionEntry): string[] {
  * commands/urls (never env VALUES; `ExtensionMcpServerContributionView`
  * already strips those before this ever reaches the renderer).
  */
-export function agentCapabilityLines(entry: ExtensionEntry): string[] {
-  const m = entry.manifest;
-  if (!m?.permissions?.includes('agent:contribute')) return [];
+export function pluginCapabilityLines(input: {
+  skillNames?: string[];
+  mcpServers?: Array<{ name: string; alwaysOn?: boolean }>;
+  extra?: Record<string, unknown>;
+}): string[] {
   const lines: string[] = [];
-  if (m.skills?.length) {
-    lines.push(`Skills it adds: ${m.skills.map((s) => s.slug ?? s.path).join(', ')}`);
+  if (input.skillNames?.length) {
+    lines.push(`Skills it adds: ${input.skillNames.join(', ')}`);
   }
-  if (m.mcpServers?.length) {
+  if (input.mcpServers?.length) {
     lines.push(
-      `Integration servers it adds: ${m.mcpServers
+      `Integration servers it adds: ${input.mcpServers
         .map((s) => `${s.name}${s.alwaysOn ? ' (always on)' : ''}`)
         .join(', ')}`
     );
   }
+  if (input.extra) {
+    for (const [key, value] of Object.entries(input.extra)) {
+      lines.push(typeof value === 'string' ? `Also: ${key}: ${value}` : `Also: ${key}`);
+    }
+  }
   return lines;
+}
+
+export function agentCapabilityLines(entry: ExtensionEntry): string[] {
+  const m = entry.manifest;
+  if (!m?.permissions?.includes('agent:contribute')) return [];
+  return pluginCapabilityLines({
+    skillNames: m.skills?.map((s) => s.slug ?? s.path),
+    mcpServers: m.mcpServers
+  });
 }
 
 /**

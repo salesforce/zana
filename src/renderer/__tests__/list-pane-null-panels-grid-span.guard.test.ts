@@ -1,19 +1,14 @@
 /**
- * Regression guard — panels whose ListPane nav returns null MUST span cols 2..-1.
+ * Regression guard — the shell is always nav + full content.
  *
- * Background: panels where ListPane.tsx (lines ~546-550) returns null for their
- * nav value have NO list column; they own the whole content area. Without an
- * explicit `grid-column: 2 / -1` CSS declaration, these panels auto-flow into
- * the narrow list column (col 2) and collapse into a sliver.
+ * Background: the app shell is two tracks (`var(--col-nav) minmax(0, 1fr)`),
+ * plus the collapsed-sidebar one-track variant. Panels that used to sit in a
+ * middle ListPane column now own any inner list/detail chrome. Without an
+ * explicit `grid-column: 2 / -1` a panel that still declares that span (or a
+ * new full-width panel) can regress into a sliver if a third track returns.
  *
- * The fix was applied in Sprint 2026-06 after the (since-removed) .teams-panel
- * regression was root-caused. This source-text guard (mirroring the repo's rule6
- * guard) ensures that the CSS rules for every ListPane-null panel remain in
- * global.css and declare the full-width span — so the fix can never silently
- * regress through a refactor or CSS cleanup.
- *
- * Style: source-text assertion (not jsdom) — jsdom cannot evaluate computed grid
- * placement, and a missing rule would silently pass a DOM-based test.
+ * This source-text guard ensures full-content panels keep spanning the remaining
+ * track in global.css.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -24,54 +19,41 @@ const STYLES_ROOT = fileURLToPath(new URL('../styles', import.meta.url));
 const GLOBAL_CSS_PATH = join(STYLES_ROOT, 'global.css');
 
 /**
- * Panels whose ListPane nav returns null (see src/renderer/components/ListPane.tsx
- * lines ~546-550) — they MUST declare `grid-column: 2 / -1` or they collapse.
+ * Content panels that occupy the remaining shell track (column 2 of the
+ * always-full nav+content grid).
  */
 const REQUIRED_FULL_WIDTH_PANELS = [
   'home-panel',
   'followups-panel',
-  'personas-panel',
-  'squads-panel',
+  'inbox-view',
+  'agents-board--global',
   'gus-panel',
   'cu-panel',
-  'library-panel'
+  'scheduler-page'
 ] as const;
 
-describe('ListPane-null panels declare grid-column: 2 / -1', () => {
+describe('shell content panels span the remaining track', () => {
   const css = readFileSync(GLOBAL_CSS_PATH, 'utf8');
+
+  it('the shell grid is always nav + full content', () => {
+    expect(css).toMatch(
+      /\.app-shell\s*\{[^}]*grid-template-columns:\s*var\(--col-nav\)\s+minmax\(0,\s*1fr\);/
+    );
+    expect(css).not.toMatch(/Inbox and Scheduler deliberately do not receive/);
+  });
 
   it.each(REQUIRED_FULL_WIDTH_PANELS)(
     '.%s must declare grid-column: 2 / -1',
     (panel) => {
-      // Match the rule block for `.${panel}` declaring `grid-column: 2 / -1`.
-      // Use `[^}]*` (flat rule block, no nested braces) NOT greedy `[\s\S]*`
-      // which would match across unrelated blocks.
       const ruleRegex = new RegExp(
         `\\.${panel}\\s*\\{[^}]*grid-column:\\s*2\\s*/\\s*-1\\s*;[^}]*\\}`
       );
       expect(
         ruleRegex.test(css),
         `.${panel} is missing the 'grid-column: 2 / -1;' declaration in ` +
-          `global.css. Without it, the panel collapses into the narrow list ` +
-          `column (col 2) because ListPane.tsx returns null for its nav value ` +
-          `(lines ~546-550), so there's no list column to occupy col 2. Add:\n\n` +
-          `  .${panel} {\n` +
-          `    grid-column: 2 / -1;\n` +
-          `    /* ...existing styles... */\n` +
-          `  }\n`
+          `global.css. The shell is always full content; without the span a ` +
+          `panel can collapse if a list track reappears.\n`
       ).toBe(true);
     }
   );
-
-  it('the guard panel list matches the ListPane-null branches', () => {
-    // Pin the guard's source-of-truth array to the ListPane contract. If a new
-    // panel is added that returns null from ListPane, this test will remind the
-    // developer to add it to REQUIRED_FULL_WIDTH_PANELS above.
-    //
-    // NOTE: .zana-panel reuses .gus-panel as its root class (see global.css
-    // line ~10651), so it's covered transitively — do NOT add it here.
-    expect([...REQUIRED_FULL_WIDTH_PANELS].sort()).toEqual(
-      ['home-panel', 'followups-panel', 'personas-panel', 'squads-panel', 'gus-panel', 'cu-panel', 'library-panel'].sort()
-    );
-  });
 });

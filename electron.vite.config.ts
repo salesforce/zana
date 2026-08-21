@@ -32,6 +32,18 @@ const sdkAlias = [
     replacement: resolve(__dirname, 'apps/host-daemon/src/index.ts')
   },
   {
+    find: /^@zana-ai\/zcc-plugin-sdk$/,
+    replacement: resolve(__dirname, 'packages/plugin-sdk/src/index.ts')
+  },
+  {
+    find: /^@zana-ai\/zcc-plugin-sdk\/(.*)$/,
+    replacement: resolve(__dirname, 'packages/plugin-sdk/src/$1.ts')
+  },
+  {
+    find: /^@zana-ai\/zcc-domain$/,
+    replacement: resolve(__dirname, 'packages/domain/src/index.ts')
+  },
+  {
     find: /^@zana-ai\/zcc-extension-sdk$/,
     replacement: resolve(__dirname, 'packages/extension-sdk/src/index.ts')
   },
@@ -108,17 +120,16 @@ export default defineConfig({
         // `src/renderer`, so use this explicit source alias instead of a brittle
         // relative path back into the host UI.
         { find: '@renderer', replacement: resolve(__dirname, 'src/renderer') },
-        // Monaco 0.56 restricts its public exports, while its Vite worker
-        // entrypoints remain under `esm/vs`. Resolve that subtree directly.
-        {
-          find: 'monaco-editor/esm/vs',
-          replacement: resolve(__dirname, 'node_modules/monaco-editor/esm/vs')
-        },
         { find: '@shared', replacement: resolve(__dirname, 'src/shared') }
       ],
       dedupe: ['monaco-editor']
     },
     plugins: [react()],
+    // Monaco workers are ESM side-effect scripts. Do not alias
+    // `monaco-editor/esm/vs` to a filesystem path — that bypasses optimizeDeps
+    // exclude and Vite 8 prebundles workers with no `default` export.
+    worker: { format: 'es' },
+    optimizeDeps: { exclude: ['monaco-editor', '@monaco-editor/react'] },
     build: {
       rollupOptions: {
         input: resolve(__dirname, 'src/renderer/index.html')

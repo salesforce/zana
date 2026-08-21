@@ -27,6 +27,7 @@ import type {
   McpServerEntry,
   MenubarSnapshot,
   Persona,
+  PluginAppEntry,
   PluginEntry,
   Project,
   QuickPrompt,
@@ -473,6 +474,14 @@ const api: CcApi = {
       const handler = (_e: unknown, entries: PluginEntry[]) => cb(entries);
       ipcRenderer.on(IPC.plugins.onChanged, handler);
       return () => ipcRenderer.off(IPC.plugins.onChanged, handler);
+    }
+  },
+  pluginApps: {
+    list: () => ipcRenderer.invoke(IPC.pluginApps.list),
+    onChanged: (cb) => {
+      const handler = (_e: unknown, entries: PluginAppEntry[]) => cb(entries);
+      ipcRenderer.on(IPC.pluginApps.onChanged, handler);
+      return () => ipcRenderer.off(IPC.pluginApps.onChanged, handler);
     }
   },
   extensions: {

@@ -358,7 +358,7 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
           />
           <p className="modal-hint">
             Sort this schedule into a Personal / Work bucket. Manage groups
-            from the scheduler sidebar.
+            from the Groups button in the Scheduler header.
           </p>
         </div>
       )}

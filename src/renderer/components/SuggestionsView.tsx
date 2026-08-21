@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useData, useUi, useSuggestions, useInboxScopeProjectId, type NavId } from '../store';
 import type { Suggestion, SuggestedActionKind } from '@shared/types';
+import { AppPageHeader } from './AppPageHeader';
 
 /** The STANDALONE action kinds, in display order — drives the filter-chip row.
  *  (open-view/navigate are combo-tail only, so a top-level card is always one of
@@ -135,8 +136,7 @@ export function SuggestionsView() {
 
   const applyDirective = (d: { nav?: string; projectId?: string; tabId?: string }): void => {
     if (d.projectId) {
-      useUi.getState().selectProject(d.projectId);
-      useUi.getState().setNav('projects');
+    useUi.getState().enterProjectFocus(d.projectId);
       return;
     }
     if (d.nav) useUi.getState().setNav(d.nav as NavId);
@@ -170,12 +170,12 @@ export function SuggestionsView() {
 
   return (
     <section className="suggestions-view">
-      <header className="suggestions-header">
-        <Sparkles size={16} aria-hidden />
-        <h2>Next Steps</h2>
-        {entries.length > 0 && <span className="suggestions-count">{entries.length}</span>}
-      </header>
+      <AppPageHeader
+        title={<><Sparkles size={16} aria-hidden /> <h1>Next Steps</h1></>}
+        actions={entries.length > 0 ? <span className="suggestions-count">{entries.length}</span> : undefined}
+      />
 
+      <div className="settings-inner">
       {/* Triage bar — search + kind-filter chips. Only shown once there's more
           than a card or two to sift, so a near-empty launcher stays clean. */}
       {!loading && entries.length > 2 && (
@@ -311,6 +311,7 @@ export function SuggestionsView() {
           })}
         </div>
       )}
+      </div>
     </section>
   );
 }

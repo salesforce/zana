@@ -31,7 +31,7 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     if (!this.state.hasError) return this.props.children;
     return (
-      <main className="settings-panel">
+      <div className="settings-panel">
         <div className="settings-inner">
           <h2>Renderer crashed</h2>
           <p>The app hit an unexpected error and recovered to a safe screen.</p>
@@ -42,7 +42,7 @@ export class ErrorBoundary extends Component<Props, State> {
             </button>
           </div>
         </div>
-      </main>
+      </div>
     );
   }
 }

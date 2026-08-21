@@ -1,21 +1,38 @@
-import { useMemo, useState } from 'react';
+import { Fragment, cloneElement, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactElement } from 'react';
 import {
-  BarChart3,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  pointerWithin,
+  useSensor,
+  useSensors,
+  type CollisionDetection,
+  type DragEndEvent,
+  type DragStartEvent
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import {
   Blocks,
   Bot,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Compass,
-  Drama,
   FolderGit2,
   House,
   Inbox,
-  Library,
+  LayoutDashboard,
   MessageCircleQuestion,
+  MessageCirclePlus,
   Sparkles,
   Settings,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Users,
   type LucideIcon
 } from 'lucide-react';
 import {
@@ -28,69 +45,20 @@ import {
   type NavId
 } from '../store';
 import { resolveIcon } from '../util/resolveIcon';
-import zanaMark from '../assets/zana-mark.svg';
-import zanaMarkLight from '../assets/zana-mark-light.svg';
 import { useMergedModules } from '../modules';
-import { getHost } from '../modules/ModulePanelHost';
 import { AgentTray } from './AgentTray';
-import type { AppModule } from '@shared/module-api';
-import { useShallow } from 'zustand/react/shallow';
+import { ProjectsList } from './listpane/ProjectsList';
+import {
+  normalizeSidebarNavOrder,
+  PINNED_SIDEBAR_NAV_IDS,
+  reorderSidebarNavItems
+} from './sidebarNavOrder';
+import { listSidebarFooterActions, subscribePluginSlots } from '../plugins/plugin-slots';
 
 interface NavEntry {
   id: NavId;
   label: string;
   icon: LucideIcon;
-  /**
-   * Pre-evaluated extension nav badge (from `AppModule.navBadge`). Only set for
-   * app-module entries that declare one. A number, a short string, or
-   * null/0/'' for no badge.
-   */
-  moduleBadge?: number | string | null;
-}
-
-/**
- * Evaluate a merged module's `navBadge(host)` safely. V1 simplicity: this runs
- * on every Sidebar render. Extensions with cache-backed badges call
- * `host.cache.refreshBadge()` after updating that cache, which bumps the UI
- * store revision Sidebar subscribes to below.
- *
- * A throwing or absent factory yields no badge — it never breaks the rail.
- */
-function evalModuleBadge(m: { id: string; navBadge?: (host: ReturnType<typeof getHost>) => number | string | null }): number | string | null {
-  if (!m.navBadge) return null;
-  try {
-    return m.navBadge(getHost(m.id));
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Whether a merged app-module earns a sidebar (Extensions-group) rail entry. A
- * module qualifies only when it is NOT `placement: 'settings'` AND actually
- * contributes a renderer surface — a `panel`, `commands`, or a `navBadge`. A
- * module with none (e.g. the dissolved Zana manifest) would otherwise show a
- * ghost nav entry that mounts ModulePanelHost's empty "no view" card. Generic
- * capability check — no module-id literal (Rule 6). `commands` / `navBadge` are
- * factories; a presence check tests *declaration*, the right semantics (a
- * momentarily-null badge keeps its rail entry).
- *
- * A `projectTab` module KEEPS its global sidebar entry by default (the
- * cross-project view of the tool) AND ALSO surfaces as a per-project tab — two
- * different scopes of the same panel: the sidebar entry is global
- * (host.getScopedProjectId() === null) while the project tab is filtered to one
- * project (the project-tab mount overrides getScopedProjectId()). The extension
- * decides what "scoped" means; core just exposes both surfaces.
- *
- * The one exception: a module that declares `projectTab.global === false` is
- * project-tab ONLY — its data has no meaningful cross-project view, so it is
- * excluded here and surfaces solely from a project's tab strip. Generic: this
- * reads the manifest flag, never an extension id (Rule 6).
- */
-export function contributesSurface(m: AppModule): boolean {
-  if (m.placement === 'settings') return false;
-  if (m.projectTab && m.projectTab.global === false) return false;
-  return !!(m.panel || m.commands || m.navBadge);
 }
 
 const coreNavItems: NavEntry[] = [
@@ -98,9 +66,7 @@ const coreNavItems: NavEntry[] = [
   { id: 'inbox', label: 'Inbox', icon: Inbox },
   { id: 'agents', label: 'Agents', icon: Bot },
   { id: 'projects', label: 'Projects', icon: FolderGit2 },
-  { id: 'scheduler', label: 'Scheduler', icon: Clock },
-  { id: 'personas', label: 'Personas', icon: Drama },
-  { id: 'squads', label: 'Squads', icon: Users }
+  { id: 'scheduler', label: 'Scheduler', icon: Clock }
 ];
 
 // Next Steps launcher (afl-03) — opt-in via AppConfig.suggestionsEnabled. The
@@ -117,57 +83,276 @@ const followupsNavItem: NavEntry = { id: 'followups', label: 'Follow-ups', icon:
 // as tabs inside the Settings panel (configuration, not content). Extensions,
 // by contrast, IS a content/discovery destination (browse + install, the
 // VSCode-style store), so it earns a system-level rail entry alongside Settings.
-const usageNavItem: NavEntry = { id: 'usage', label: 'Usage', icon: BarChart3 };
 const extensionsNavItem: NavEntry = { id: 'extensions', label: 'Extensions', icon: Blocks };
 const settingsNavItem: NavEntry = { id: 'settings', label: 'Settings', icon: Settings };
-// The full cross-project library (durable docs: findings/decisions/ideas/etc,
-// Global + every project) — a content/discovery destination like Extensions,
-// so it earns its own system-level rail entry rather than living only inside
-// a project's left rail (ProjectScopedNav keeps its own project-scoped entry).
-const libraryNavItem: NavEntry = { id: 'library', label: 'Library', icon: Library };
+// Fixed utility dock, separate from the movable destinations. Add future
+// utility actions here; the layout remains a compact horizontal icon row.
+const sidebarUtilityItems = [settingsNavItem];
+
+function SortableNavItem({
+  id,
+  children
+}: {
+  id: string;
+  children: ReactElement<React.ButtonHTMLAttributes<HTMLButtonElement>>;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  return (
+    <div
+      ref={setNodeRef}
+      className={`sidebar-nav-sortable ${isDragging ? 'is-dragging' : ''}`}
+      data-sortable-nav-id={id}
+      // The sidebar mixes compact rows with tall collection sections. Preserve a
+      // dragged item's own dimensions instead of scaling it to the target's rect.
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+    >
+      {cloneElement(children, { ...attributes, ...listeners })}
+    </div>
+  );
+}
+
+function SortableSidebarSection({
+  id,
+  children
+}: {
+  id: string;
+  children: ReactElement<{ dragHandle?: React.HTMLAttributes<HTMLElement> }>;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  return (
+    <div
+      ref={setNodeRef}
+      className={`sidebar-section-sortable ${isDragging ? 'is-dragging' : ''}`}
+      data-sortable-sidebar-section-id={id}
+      // See SortableNavItem: a section must translate between slots, not stretch
+      // to the height of a nav row while it crosses one.
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+    >
+      {cloneElement(children, { dragHandle: { ...attributes, ...listeners } })}
+    </div>
+  );
+}
+
+const NAV_ORDER_KEY = 'zcc.sidebarNavOrder';
+
+const navCollisionDetection: CollisionDetection = (args) => {
+  const pointerCollisions = pointerWithin(args);
+  return pointerCollisions.length > 0 ? pointerCollisions : closestCenter(args);
+};
+
+function readNavOrder(): unknown {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    return JSON.parse(localStorage.getItem(NAV_ORDER_KEY) ?? 'null');
+  } catch {
+    return null;
+  }
+}
+
+const AGENTS_SECTION_KEY = 'sidebar:agents';
+const AGENTS_SECTION_ID = 'sidebar-agents-list';
+const AGENTS_SECTION_SORT_ID = 'sidebar-section:agents';
+const WORKSPACES_SECTION_SORT_ID = 'sidebar-section:workspaces';
+const AGENTS_SECTION_HEIGHT_KEY = 'zcc.sidebarAgentsHeight';
+const AGENTS_SECTION_DEFAULT_HEIGHT = 176;
+const AGENTS_SECTION_MIN_HEIGHT = 64;
+const AGENTS_SECTION_MAX_HEIGHT = 420;
+
+function clampAgentsSectionHeight(value: number): number {
+  return Math.max(AGENTS_SECTION_MIN_HEIGHT, Math.min(AGENTS_SECTION_MAX_HEIGHT, value));
+}
+
+function readAgentsSectionHeight(): number {
+  if (typeof localStorage === 'undefined') return AGENTS_SECTION_DEFAULT_HEIGHT;
+  const value = Number(localStorage.getItem(AGENTS_SECTION_HEIGHT_KEY));
+  return Number.isFinite(value) ? clampAgentsSectionHeight(value) : AGENTS_SECTION_DEFAULT_HEIGHT;
+}
+
+/** Active agents use the same collapsible collection treatment as Workspaces. */
+function AgentsSidebarSection({
+  dragHandle
+}: {
+  dragHandle?: React.HTMLAttributes<HTMLElement>;
+}) {
+  const collapsed = useUi((s) => !!s.collapsedSections[AGENTS_SECTION_KEY]);
+  const toggleSection = useUi((s) => s.toggleSection);
+  const setLauncherOpen = useUi((s) => s.setLauncherOpen);
+  const setNav = useUi((s) => s.setNav);
+  const [height, setHeight] = useState(readAgentsSectionHeight);
+
+  const setSectionHeight = (next: number) => {
+    const clamped = clampAgentsSectionHeight(next);
+    setHeight(clamped);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(AGENTS_SECTION_HEIGHT_KEY, String(clamped));
+    }
+  };
+
+  const onResizeMouseDown = (event: React.MouseEvent) => {
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = height;
+    document.body.classList.add('resizing-sidebar-section');
+    const onMove = (moveEvent: MouseEvent) => setSectionHeight(startHeight + moveEvent.clientY - startY);
+    const onUp = () => {
+      document.body.classList.remove('resizing-sidebar-section');
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  return (
+    <section
+      className={`sidebar-agents ${collapsed ? 'sidebar-agents--collapsed' : ''}`}
+      style={collapsed ? undefined : { '--sidebar-agents-height': `${height}px` } as React.CSSProperties}
+    >
+      <header className="sidebar-agents-header">
+        <button
+          type="button"
+          className="sidebar-agents-heading"
+          {...dragHandle}
+          onClick={() => toggleSection(AGENTS_SECTION_KEY)}
+          aria-label={`${collapsed ? 'Expand' : 'Collapse'} Agents section`}
+          aria-controls={AGENTS_SECTION_ID}
+          aria-expanded={!collapsed}
+          title={`${collapsed ? 'Expand' : 'Collapse'} Agents`}
+        >
+          <span>Agents</span>
+          <ChevronRight
+            size={14}
+            aria-hidden="true"
+            className={`sidebar-agents-chevron ${collapsed ? '' : 'open'}`}
+          />
+        </button>
+        <div className="sidebar-agents-actions">
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Open Agents dashboard"
+            title="Open Agents dashboard"
+            onClick={() => setNav('agents')}
+          >
+            <LayoutDashboard size={18} />
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="New quick agent"
+            title="New quick agent"
+            onClick={() => setLauncherOpen(true)}
+          >
+            <MessageCirclePlus size={18} />
+          </button>
+        </div>
+      </header>
+      <div id={AGENTS_SECTION_ID} className="sidebar-agents-body" hidden={collapsed}>
+        <AgentTray placement="inline" />
+      </div>
+      {!collapsed && (
+        <div
+          className="sidebar-agents-resizer"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-valuemin={AGENTS_SECTION_MIN_HEIGHT}
+          aria-valuemax={AGENTS_SECTION_MAX_HEIGHT}
+          aria-valuenow={height}
+          title="Drag to resize · double-click to reset"
+          onMouseDown={onResizeMouseDown}
+          onDoubleClick={() => setSectionHeight(AGENTS_SECTION_DEFAULT_HEIGHT)}
+        />
+      )}
+    </section>
+  );
+}
 
 export function Sidebar() {
   const nav = useUi((s) => s.nav);
-  // Cache mutations are intentionally not reactive. This revision lets an
-  // extension request a badge-only Sidebar render after it updates its cache.
-  useUi((s) => s.moduleBadgeRevision);
   const setNav = useUi((s) => s.setNav);
   const collapsed = useUi((s) => s.sidebarCollapsed);
-  const toggleSidebar = useUi((s) => s.toggleSidebar);
   const unreadInbox = useUnreadInboxCount();
   const enabledSchedules = useEnabledSchedulerCount();
   const runningSchedules = useRunningSchedulerCount();
   const agentCounts = useAgentNavCounts();
-  const theme = useData((s) => s.theme);
   const suggestionsEnabled = useData((s) => s.suggestionsEnabled);
   const followUpsEnabled = useData((s) => s.followUpsEnabled);
+  const [storedNavOrder, setStoredNavOrder] = useState(readNavOrder);
+  const suppressNavClickRef = useRef(false);
+  const navHistoryRef = useRef<NavId[]>([nav]);
+  const navHistoryIndexRef = useRef(0);
+  const [, setNavHistoryRevision] = useState(0);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== NAV_ORDER_KEY) return;
+      try { setStoredNavOrder(JSON.parse(event.newValue ?? 'null')); } catch { setStoredNavOrder(null); }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+  useEffect(() => {
+    const history = navHistoryRef.current;
+    const index = navHistoryIndexRef.current;
+    if (history[index] === nav) return;
+    history.splice(index + 1);
+    history.push(nav);
+    navHistoryIndexRef.current = history.length - 1;
+    setNavHistoryRevision((revision) => revision + 1);
+  }, [nav]);
   const navItems = useMemo(() => {
     const items = [...coreNavItems];
     if (suggestionsEnabled) items.splice(2, 0, suggestionsNavItem);
     if (followUpsEnabled) items.splice(2, 0, followupsNavItem);
     return items;
   }, [suggestionsEnabled, followUpsEnabled]);
-
-  // App modules (built-in plugins/* + runtime-loaded extensions) contribute
-  // their own nav entries, grouped under an "Extensions" heading to set them
-  // apart from the core tool. Built-ins and runtime extensions are treated
-  // identically here; the merged set is reactive so a discovered extension's
-  // nav appears (and a disabled one disappears) without a reload.
   const modules = useMergedModules();
-  // Modules placed in Settings render as a Settings sub-section (not the
-  // sidebar); a module also needs a real renderer surface to earn a rail
-  // entry. See `contributesSurface` — the dissolved Zana manifest (no panel /
-  // commands / navBadge) is correctly excluded, avoiding a ghost nav entry.
+  const footerActions = useSyncExternalStore(
+    subscribePluginSlots,
+    listSidebarFooterActions,
+    listSidebarFooterActions
+  );
+  // Extensions shares installation and configuration in one hub. Installed
+  // panels with a global surface also get a direct shortcut above Workspaces;
+  // project-only and Settings-only modules stay in their native surfaces.
   const moduleNavItems: NavEntry[] = modules
-    .filter(contributesSurface)
-    .map((m) => ({
-      id: m.id,
-      label: m.title,
-      icon: resolveIcon(m.icon),
-      moduleBadge: evalModuleBadge(m)
+    .filter((module) =>
+      !!module.panel &&
+      module.placement !== 'settings' &&
+      module.projectTab?.global !== false
+    )
+    .map((module) => ({
+      id: module.id,
+      label: module.title,
+      icon: resolveIcon(module.icon)
     }));
+  const fixedNavItems = [
+    ...navItems.filter((item) => PINNED_SIDEBAR_NAV_IDS.includes(item.id as never)),
+    ...navItems.filter(
+      (item) => !['agents', 'projects', 'scheduler', ...PINNED_SIDEBAR_NAV_IDS].includes(item.id)
+    ),
+    coreNavItems.find((item) => item.id === 'scheduler')!,
+    extensionsNavItem,
+    ...moduleNavItems
+  ];
+  const navItemsById = new Map<string, NavEntry>(fixedNavItems.map((item) => [item.id, item]));
+  const sortableSidebarSectionIds = [AGENTS_SECTION_SORT_ID, WORKSPACES_SECTION_SORT_ID];
+  const orderedNavIds = normalizeSidebarNavOrder(
+    storedNavOrder,
+    [...fixedNavItems.map((item) => item.id), ...sortableSidebarSectionIds]
+  );
+  const pinnedNavIds = orderedNavIds.filter((id) => PINNED_SIDEBAR_NAV_IDS.includes(id as never));
+  const sortableNavIds = orderedNavIds.filter(
+    (id) => !PINNED_SIDEBAR_NAV_IDS.includes(id as never)
+  );
 
-  const renderNavItem = (item: NavEntry) => {
+  const renderNavItem = (
+    item: NavEntry,
+    compactOnly = false
+  ): ReactElement<React.ButtonHTMLAttributes<HTMLButtonElement>> => {
     const Icon = item.icon;
     const showBadge = item.id === 'inbox' && unreadInbox > 0;
     // Scheduler badge only appears when a scheduled agent is running right now;
@@ -187,27 +372,18 @@ export function Sidebar() {
     const agentsTitle = agentsBlocked
       ? `${agentCounts.active} active · ${agentCounts.blocked} need you`
       : `${agentCounts.active} active`;
-    // Extension-contributed badge (AppModule.navBadge), pre-evaluated when the
-    // module nav entries were built. Distinct from the core inbox/scheduler
-    // badges above, which are gated on their own ids — a module id never
-    // collides with 'inbox'/'scheduler', so this can't disturb them.
-    const moduleBadge = item.moduleBadge;
-    const showModuleBadge =
-      moduleBadge != null && moduleBadge !== 0 && moduleBadge !== '';
-    const moduleBadgeText =
-      typeof moduleBadge === 'number'
-        ? moduleBadge > 99
-          ? '99+'
-          : String(moduleBadge)
-        : String(moduleBadge);
     return (
       <button
         key={item.id}
         // Stable e2e hook (inert in prod — a plain data attr): the UI-driven
         // specs click nav entries by id (`nav-agents`, `nav-projects`, …).
         data-testid={`nav-${item.id}`}
-        className={`nav-item ${nav === item.id ? 'active' : ''}`}
+        className={`nav-item ${compactOnly ? 'nav-item--compact-only' : ''} ${nav === item.id ? 'active' : ''}`}
         onClick={() => {
+          if (suppressNavClickRef.current) {
+            suppressNavClickRef.current = false;
+            return;
+          }
           // Clicking the top-level Projects rail item always returns to the
           // un-focused home (the cross-project Agents board + project list),
           // never staying drilled into / highlighting the last project.
@@ -215,9 +391,10 @@ export function Sidebar() {
             useUi.getState().exitProjectFocus();
             useUi.getState().selectProject(null);
           }
-          setNav(item.id);
+          setNav(item.id as NavId);
         }}
         aria-current={nav === item.id ? 'page' : undefined}
+        aria-label={collapsed ? item.label : undefined}
         title={
           collapsed
             ? showScheduleBadge
@@ -262,77 +439,149 @@ export function Sidebar() {
             {agentCounts.active > 99 ? '99+' : agentCounts.active}
           </span>
         )}
-        {showModuleBadge && (
-          <span
-            className="nav-badge"
-            aria-label={`${moduleBadgeText} for ${item.label}`}
-            title={`${moduleBadgeText} for ${item.label}`}
-          >
-            {moduleBadgeText}
-          </span>
-        )}
       </button>
     );
   };
 
+  const handleNavDragEnd = ({ active, over }: DragEndEvent) => {
+    window.setTimeout(() => { suppressNavClickRef.current = false; }, 0);
+    if (!over || active.id === over.id) return;
+    const next = reorderSidebarNavItems(orderedNavIds, String(active.id), String(over.id));
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(NAV_ORDER_KEY, JSON.stringify(next));
+    }
+    setStoredNavOrder(next);
+  };
+
+  const handleNavDragStart = ({ activatorEvent }: DragStartEvent) => {
+    suppressNavClickRef.current = activatorEvent.type === 'pointerdown';
+  };
+
+  const handleNavDragCancel = () => {
+    window.setTimeout(() => { suppressNavClickRef.current = false; }, 0);
+  };
+
+  const goNavHistory = (direction: -1 | 1) => {
+    const nextIndex = navHistoryIndexRef.current + direction;
+    const nextNav = navHistoryRef.current[nextIndex];
+    if (!nextNav) return;
+    navHistoryIndexRef.current = nextIndex;
+    setNav(nextNav);
+    setNavHistoryRevision((revision) => revision + 1);
+  };
+  const canGoBack = navHistoryIndexRef.current > 0;
+  const canGoForward = navHistoryIndexRef.current < navHistoryRef.current.length - 1;
+
+  // The shell owns the single persistent toggle. Returning no rail removes the
+  // navigation column while its fixed trigger stays available above the shell.
+  if (collapsed) return null;
+
   return (
-    <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
-      <div className="brand">
-        <img
-          className="brand-avatar"
-          src={theme === 'light' ? zanaMarkLight : zanaMark}
-          alt=""
-          aria-hidden="true"
-        />
-        <div className="brand-name">Zana</div>
-        <button
-          className="sidebar-toggle"
-          onClick={toggleSidebar}
-          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          aria-pressed={collapsed}
-        >
-          {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-        </button>
+    <aside className="sidebar sidebar--global">
+      <div className="sidebar-chrome">
+        <div className="sidebar-history-controls" aria-label="Navigation history">
+          <button
+            type="button"
+            aria-label="Go back"
+            title="Go back"
+            disabled={!canGoBack}
+            onClick={() => goNavHistory(-1)}
+          >
+            <ChevronLeft size={19} />
+          </button>
+          <button
+            type="button"
+            aria-label="Go forward"
+            title="Go forward"
+            disabled={!canGoForward}
+            onClick={() => goNavHistory(1)}
+          >
+            <ChevronRight size={19} />
+          </button>
+        </div>
       </div>
 
-      <div>
-        {navItems.map((item) => (
-          <div key={item.id}>
-            {renderNavItem(item)}
-          </div>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={navCollisionDetection}
+        onDragStart={handleNavDragStart}
+        onDragCancel={handleNavDragCancel}
+        onDragEnd={handleNavDragEnd}
+      >
+        <div className="sidebar-sections">
+          <nav className="sidebar-nav sidebar-nav--sortable" aria-label="Main navigation" data-testid="sidebar-navigation">
+            {pinnedNavIds.map((id) => {
+              const item = navItemsById.get(id);
+              return item ? (
+                <Fragment key={id}>
+                  {renderNavItem(item)}
+                </Fragment>
+              ) : null;
+            })}
+            <SortableContext items={sortableNavIds} strategy={verticalListSortingStrategy}>
+              {sortableNavIds.map((id) => {
+                const item = navItemsById.get(id);
+                if (item) return (
+                  <Fragment key={id}>
+                    <SortableNavItem
+                      id={id}
+                    >
+                      {renderNavItem(item)}
+                    </SortableNavItem>
+                  </Fragment>
+                );
+                if (id === AGENTS_SECTION_SORT_ID) return (
+                  <SortableSidebarSection key={id} id={id}>
+                    <AgentsSidebarSection />
+                  </SortableSidebarSection>
+                );
+                if (id === WORKSPACES_SECTION_SORT_ID) return (
+                  <SortableSidebarSection key={id} id={id}>
+                    <ProjectsList placement="sidebar" />
+                  </SortableSidebarSection>
+                );
+                return null;
+              })}
+            </SortableContext>
+          </nav>
+        </div>
+      </DndContext>
+
+      <div className="sidebar-utility-bar" aria-label="Sidebar utilities">
+        {sidebarUtilityItems.map((item) => {
+          const Icon = item.icon;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              className={`sidebar-utility-button ${nav === item.id ? 'active' : ''}`}
+              aria-label={item.label}
+              aria-current={nav === item.id ? 'page' : undefined}
+              title={item.label}
+              onClick={() => setNav(item.id as NavId)}
+            >
+              <Icon size={18} />
+            </button>
+          );
+        })}
+        {footerActions.map((action) => (
+          <button
+            key={`${action.id}:${action.generation}`}
+            type="button"
+            className="sidebar-utility-button"
+            aria-label={action.title}
+            title={action.title}
+            onClick={() => {
+              void action.run();
+            }}
+          >
+            {(() => {
+              const Icon = resolveIcon(action.icon);
+              return <Icon size={18} />;
+            })()}
+          </button>
         ))}
-
-        {/* App modules (plugins/*) sit under their own heading so it's clear
-         * they're extensions rather than part of the core tool. Each section
-         * break is a hairline rule; a label sits below the rule when the group
-         * has a name. The label is hidden on the collapsed rail (the rule
-         * stands in for it there). */}
-        {moduleNavItems.length > 0 && (
-          <div className="nav-section">
-            <div className="nav-divider" role="separator" />
-            <div className="nav-section-label">Extensions</div>
-            {moduleNavItems.map(renderNavItem)}
-          </div>
-        )}
-
-        {/* Usage + Extensions + Settings are system-level, below the same
-         * hairline rule. Usage is a cross-project analytics dashboard (not
-         * per-project content), so it sits here rather than in the core content
-         * group above. Extensions is the browse/install front door (its own
-         * top-level view); Settings holds configuration (Plugins / Skills / MCP
-         * live as tabs there, as does the per-extension versions & settings
-         * section). */}
-        <div className="nav-divider" role="separator" />
-        {renderNavItem(libraryNavItem)}
-        {renderNavItem(usageNavItem)}
-        {renderNavItem(extensionsNavItem)}
-        {renderNavItem(settingsNavItem)}
       </div>
-
-      {/* Running / needs-you agents, pinned to the bottom of the rail. Renders
-       * nothing when no agent is active, so it never takes space idle. */}
-      <AgentTray />
     </aside>
   );
 }

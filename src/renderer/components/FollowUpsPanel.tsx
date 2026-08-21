@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { AppPageHeader } from './AppPageHeader';
 import type {
   FollowUp,
   FollowUpCreateInput,
@@ -157,15 +158,15 @@ export function FollowUpsPanel({ projectId }: { projectId?: string } = {}) {
   }, [scopedAll, showResolved]);
 
   return (
-    <main
-      className={`settings-panel scheduler-panel scheduler-panel--full ${
+    <div
+      className={`settings-panel scheduler-panel ${
         scoped ? 'scheduler-panel--embedded' : 'followups-panel'
       }`}
     >
+      {!scoped && <AppPageHeader title={<h1>Follow-ups</h1>} />}
       <div className="settings-inner">
         <div className="scheduler-header">
           <div className="scheduler-header-text">
-            <h2>Follow-ups</h2>
             <p className="settings-help scheduler-subtitle">
               Parked questions and decisions an agent left for you instead of
               blocking — plus anything you jot down yourself. Each one persists
@@ -192,7 +193,7 @@ export function FollowUpsPanel({ projectId }: { projectId?: string } = {}) {
               Add a project before creating a follow-up.{' '}
               <button
                 className="settings-btn settings-btn--primary"
-                onClick={() => setNav('projects')}
+                onClick={() => setNav('home')}
                 style={{ marginTop: 8 }}
               >
                 Go to Projects
@@ -325,7 +326,7 @@ export function FollowUpsPanel({ projectId }: { projectId?: string } = {}) {
           }}
         />
       )}
-    </main>
+    </div>
   );
 }
 
@@ -448,8 +449,7 @@ function FollowUpRow({
         // means the visual lock is skipped — don't surface it as a spawn error.
         void window.cc.followups.markSpawned(followUp.id);
         const ui = useUi.getState();
-        ui.setNav('projects');
-        ui.selectProject(project.id);
+        ui.enterProjectFocus(project.id);
         ui.selectTab(project.id, session.id);
       }
       // createTerminal surfaces its own error on failure; nothing else to do.
@@ -773,8 +773,7 @@ function FollowUpAnswerBox({
       // no tab to show — leave the user in the Follow-ups view in that case.
       if (result.session && result.project) {
         const ui = useUi.getState();
-        ui.setNav('projects');
-        ui.selectProject(result.project.id);
+        ui.enterProjectFocus(result.project.id);
         ui.selectTab(result.project.id, result.session.id);
       }
     }

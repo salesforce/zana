@@ -17,14 +17,10 @@ describe('CORE_NAV_IDS', () => {
         'goals',
         'home',
         'inbox',
-        'library',
-        'personas',
         'projects',
         'scheduler',
         'settings',
-        'squads',
-        'suggestions',
-        'usage'
+        'suggestions'
       ].sort()
     );
   });

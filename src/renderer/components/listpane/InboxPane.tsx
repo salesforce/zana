@@ -6,6 +6,7 @@ import { isReport } from '../../util/feedCategories';
 import { ListPaneResizer } from '../ListPaneResizer';
 import { InboxSidebar } from '../InboxSidebar';
 import { SavedSidebar } from '../SavedSidebar';
+import { AppPageHeader } from '../AppPageHeader';
 
 export function InboxPane() {
   const allEntries = useInbox((s) => s.entries);
@@ -74,9 +75,10 @@ export function InboxPane() {
 
   return (
     <section className="list-pane inbox-list-pane">
-      <header className="list-header">
-        <h2>Inbox</h2>
-        <div className="list-header-actions">
+      <AppPageHeader
+        className="list-header"
+        title={<h1>Inbox</h1>}
+        actions={<div className="list-header-actions">
           {/* Group-by toggle: per-project subgroups vs. a flat chronological
               stream. A persisted view preference (store.inboxGrouping). */}
           {showingFeed && (
@@ -147,8 +149,8 @@ export function InboxPane() {
               <Trash2 size={14} />
             </button>
           )}
-        </div>
-      </header>
+        </div>}
+      />
       {/* Tab strip: the live feed vs. durable saved-for-later reports. */}
       <div className="inbox-tabs" role="tablist" aria-label="Inbox view">
         <button

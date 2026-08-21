@@ -70,7 +70,7 @@ describe('discovery projectTab parsing + projection', () => {
     expect(tab?.global).toBeUndefined();
   });
 
-  it('opts in with an empty object (sidebar-only otherwise)', async () => {
+  it('opts in with an empty object (global-panel-only otherwise)', async () => {
     const { discoverExtensions } = await importDiscovery();
     await writeExt('acme.bare', base('acme.bare', { projectTab: {} }));
     await writeExt('acme.none', base('acme.none'));
@@ -82,7 +82,7 @@ describe('discovery projectTab parsing + projection', () => {
       icon: undefined,
       order: undefined
     });
-    // Absent => sidebar-only.
+    // Absent => global panel only.
     expect(found.find((x) => x.id === 'acme.none')?.manifest?.projectTab).toBeUndefined();
   });
 

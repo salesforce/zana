@@ -10,19 +10,15 @@
 import { useMemo } from 'react';
 import type { AppModule } from '@shared/module-api';
 import { slackModule } from '../../../plugins/slack/module';
+import { docsModule } from '../docs/module';
 import { useExtensionModules } from './loader';
+import { usePluginAppModules } from '../plugins/plugin-app-loader';
 
-// Zana ships as a disk extension, merged in at runtime via
-// `useExtensionModules` / `mergeModules` below. It is now a
-// FULL disk extension (main + renderer, `extensions/zana/`): its per-project
-// Tickets surface reaches ticket/sprint/artifact/profile DATA through its own
-// out-of-process main child, which maps each capability onto zana's MCP server
-// via the host MCP pool over the brokered `mcp` capability — no more native
-// better-sqlite3 pinned to a main-only built-in. Only `slackModule` remains a
-// renderer built-in (slack needs in-process timers for the live-bot poll loop
-// and a trusted ctx.fetch; promoted from a disk extension — see plugins/slack/).
-// See extensions/zana/.
-export const APP_MODULES: AppModule[] = [slackModule];
+// Docs UI is compiled in from `src/renderer/docs` (inside the Vite renderer
+// root) so Monaco workers stay on the same graph as Explorer. The matching
+// disk package auto-installs the library-curator skill. Zana ships as a disk
+// plugin and merges in at runtime via `useExtensionModules`.
+export const APP_MODULES: AppModule[] = [slackModule, docsModule];
 
 /** Built-in module ids, used to widen the NavId union at runtime. */
 export const MODULE_IDS = APP_MODULES.map((m) => m.id);
@@ -38,10 +34,14 @@ export function getModule(id: string): AppModule | undefined {
  * runtime extension may not collide with a built-in id; if one does, the
  * built-in wins (it was registered first and is trusted).
  */
-function mergeModules(extensionModules: AppModule[]): AppModule[] {
-  if (extensionModules.length === 0) return APP_MODULES;
+function mergeModules(pluginAppModules: AppModule[], extensionModules: AppModule[]): AppModule[] {
+  if (pluginAppModules.length === 0 && extensionModules.length === 0) return APP_MODULES;
   const taken = new Set(APP_MODULES.map((m) => m.id));
-  const extras = extensionModules.filter((m) => !taken.has(m.id));
+  const extras = [...pluginAppModules, ...extensionModules].filter((m) => {
+    if (taken.has(m.id)) return false;
+    taken.add(m.id);
+    return true;
+  });
   return extras.length === 0 ? APP_MODULES : [...APP_MODULES, ...extras];
 }
 
@@ -53,13 +53,20 @@ function mergeModules(extensionModules: AppModule[]): AppModule[] {
  * the zustand fresh-array selector trap).
  */
 export function useMergedModules(): AppModule[] {
+  const pluginAppModules = usePluginAppModules((s) => s.modules);
   const extensionModules = useExtensionModules((s) => s.modules);
-  return useMemo(() => mergeModules(extensionModules), [extensionModules]);
+  return useMemo(
+    () => mergeModules(pluginAppModules, extensionModules),
+    [pluginAppModules, extensionModules]
+  );
 }
 
 /** Imperative merged-module lookup for non-React call sites. */
 export function getMergedModule(id: string): AppModule | undefined {
-  return mergeModules(useExtensionModules.getState().modules).find((m) => m.id === id);
+  return mergeModules(
+    usePluginAppModules.getState().modules,
+    useExtensionModules.getState().modules
+  ).find((m) => m.id === id);
 }
 
 /** Reactive merged-module lookup by id (built-ins + runtime extensions). */
@@ -95,10 +102,15 @@ export function useProjectTabModules(): AppModule[] {
 
 /** Imperative project-tab module set for non-React call sites. */
 export function getProjectTabModules(): AppModule[] {
-  return selectProjectTabModules(mergeModules(useExtensionModules.getState().modules));
+  return selectProjectTabModules(
+    mergeModules(usePluginAppModules.getState().modules, useExtensionModules.getState().modules)
+  );
 }
 
 /** Imperative merged id set (built-ins + currently-loaded extensions). */
 export function getMergedModuleIds(): string[] {
-  return mergeModules(useExtensionModules.getState().modules).map((m) => m.id);
+  return mergeModules(
+    usePluginAppModules.getState().modules,
+    useExtensionModules.getState().modules
+  ).map((m) => m.id);
 }

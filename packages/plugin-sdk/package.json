@@ -1,0 +1,50 @@
+{
+  "name": "@zana-ai/zcc-plugin-sdk",
+  "version": "0.1.0",
+  "description": "SDK contract for Zana Command Center plugins — ZccPluginApi, definePluginApp, and the package.json zcc manifest.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/salesforce/zana"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "README.md"],
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./app": {
+      "types": "./src/app.ts",
+      "default": "./src/app.ts"
+    },
+    "./server": {
+      "types": "./src/server.ts",
+      "default": "./src/server.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "react": "^19"
+  },
+  "peerDependenciesMeta": {
+    "react": { "optional": true }
+  },
+  "dependencies": {
+    "@zana-ai/zcc-domain": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

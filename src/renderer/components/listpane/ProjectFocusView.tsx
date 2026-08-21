@@ -11,6 +11,7 @@ import { SectionHeader } from './SectionHeader';
 import { AgentStatusDot } from './AgentStatusDot';
 import { AgentRowDetail } from './AgentRowDetail';
 import { ProjectRollupDot } from './ProjectRollupDot';
+import { AppPageHeader } from '../AppPageHeader';
 
 /** Quick-launch profiles offered by the focus-view "+" dropdown, in order. */
 const FOCUS_NEW_PROFILES: { profile: LaunchProfileId; label: string }[] = [
@@ -123,8 +124,9 @@ export function ProjectFocusView({ project }: { project: Project }) {
 
   return (
     <section className="list-pane">
-      <header className="list-header">
-        {!scopedProjectId && (
+      <AppPageHeader
+        className="list-header"
+        title={!scopedProjectId ? (
           <button
             type="button"
             className="focus-back"
@@ -134,11 +136,8 @@ export function ProjectFocusView({ project }: { project: Project }) {
             <ArrowLeft size={14} />
             <span>All projects</span>
           </button>
-        )}
-        {/* Pop this project out into its own window. Hidden in a scoped window
-            (it's already its own window) — and left-aligned back button +
-            space-between keep it on the right of the header. */}
-        {!scopedProjectId && (
+        ) : <span />}
+        actions={!scopedProjectId ? (
           <button
             type="button"
             className="focus-popout"
@@ -148,8 +147,8 @@ export function ProjectFocusView({ project }: { project: Project }) {
           >
             <AppWindow size={14} />
           </button>
-        )}
-      </header>
+        ) : undefined}
+      />
       <div className="focus-project-header">
         <span
           className="project-dot"

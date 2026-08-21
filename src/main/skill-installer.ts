@@ -23,8 +23,9 @@ import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { readFile, writeFile, mkdir, rename, readdir, rm } from 'node:fs/promises';
 import { resolveContainedReal } from './extensions/path-util.js';
+import { discoverPluginSkillNames } from '../../apps/server/src/plugins/plugin-skills.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const moduleDir = dirname(fileURLToPath(import.meta.url));
 
 const SKILLS_ROOT = join(homedir(), '.claude', 'skills');
 const SKILL_DIR = join(homedir(), '.claude', 'skills', 'zcc-center');
@@ -35,9 +36,6 @@ const SAVED_SKILL_FILE = join(SAVED_SKILL_DIR, 'SKILL.md');
 
 const BRAINSTORM_SKILL_DIR = join(homedir(), '.claude', 'skills', 'brainstorm');
 const BRAINSTORM_SKILL_FILE = join(BRAINSTORM_SKILL_DIR, 'SKILL.md');
-
-const LIBRARY_CURATOR_SKILL_DIR = join(homedir(), '.claude', 'skills', 'library-curator');
-const LIBRARY_CURATOR_SKILL_FILE = join(LIBRARY_CURATOR_SKILL_DIR, 'SKILL.md');
 
 const ZCC_CLI_SKILL_DIR = join(homedir(), '.claude', 'skills', 'zcc-cli');
 const ZCC_CLI_SKILL_FILE = join(ZCC_CLI_SKILL_DIR, 'SKILL.md');
@@ -50,14 +48,16 @@ const HARNESS_AUTHORING_SKILL_FILE = join(HARNESS_AUTHORING_SKILL_DIR, 'SKILL.md
 
 /**
  * Resolve a shipped resource file. In dev, electron-vite runs from the repo
- * root with `__dirname = out/main`, so the source is `../../resources`. Once
+ * root with `moduleDir = out/main`, so the source is `../../resources`. Once
  * packaged, electron-builder copies it next to app.asar via `extraResources`,
  * surfaced as `process.resourcesPath`. Mirrors `resolveIconPath` in index.ts.
  */
 function resolveShippedPath(fileName: string): string | null {
   const candidates = [
     process.resourcesPath ? join(process.resourcesPath, fileName) : null,
-    join(__dirname, `../../resources/${fileName}`)
+    join(moduleDir, `../../resources/${fileName}`),
+    // Shared chunks emit below out/main/chunks, unlike the main entry.
+    join(moduleDir, `../../../resources/${fileName}`)
   ].filter((p): p is string => !!p);
   for (const p of candidates) {
     if (existsSync(p)) return p;
@@ -140,19 +140,6 @@ async function installBrainstormSkill(
   );
 }
 
-/** Deploy the bundled `library-curator` skill (durable project knowledge). */
-async function installLibraryCuratorSkill(
-  log?: (context: string, err: unknown) => void
-): Promise<string | null> {
-  return installSkill(
-    'installLibraryCuratorSkill',
-    'library-curator-skill.md',
-    LIBRARY_CURATOR_SKILL_DIR,
-    LIBRARY_CURATOR_SKILL_FILE,
-    log
-  );
-}
-
 /** Deploy the bundled `zcc-cli` skill (drive/inspect the app via the `zcc` CLI). */
 async function installZccCliSkill(
   log?: (context: string, err: unknown) => void
@@ -200,7 +187,6 @@ const BUNDLED_SKILLS: ReadonlyArray<{
   { name: 'zcc-center', install: installZccCenterSkill },
   { name: 'saved-reports', install: installSavedReportsSkill },
   { name: 'brainstorm', install: installBrainstormSkill },
-  { name: 'library-curator', install: installLibraryCuratorSkill },
   { name: 'zcc-cli', install: installZccCliSkill },
   { name: 'extension-creator', install: installExtensionCreatorSkill },
   { name: 'harness-authoring', install: installHarnessAuthoringSkill }
@@ -376,6 +362,101 @@ export async function syncExtensionSkills(
     contributors.map(async (ext) => {
       await removeSkillsForExtension(ext.id, log);
       await deploySkillsForExtension(ext, log);
+    })
+  );
+}
+
+export interface PluginSkillContributor {
+  id: string;
+  rootDir: string;
+  enabled: boolean;
+  skillsRootPaths: string[];
+}
+
+function pluginSkillDirName(pluginId: string, skillName: string): string {
+  return `plugin-${slugify(pluginId, 'plugin')}-${slugify(skillName, 'skill')}`;
+}
+
+export async function removeSkillsForPlugin(
+  pluginId: string,
+  log?: (context: string, err: unknown) => void
+): Promise<void> {
+  try {
+    const prefix = `plugin-${slugify(pluginId, 'plugin')}-`;
+    const entries = await readdir(SKILLS_ROOT).catch(() => [] as string[]);
+    await Promise.all(
+      entries
+        .filter((name) => name.startsWith(prefix))
+        .map((name) =>
+          rm(join(SKILLS_ROOT, name), { recursive: true, force: true }).catch((err) =>
+            log?.(`removeSkillsForPlugin:${pluginId}`, err)
+          )
+        )
+    );
+  } catch (err) {
+    log?.(`removeSkillsForPlugin:${pluginId}`, err);
+  }
+}
+
+async function deploySkillsForPlugin(
+  plugin: PluginSkillContributor,
+  log?: (context: string, err: unknown) => void
+): Promise<Array<{ name: string; ok: boolean }>> {
+  try {
+    if (!plugin.enabled) return [];
+    const names = discoverPluginSkillNames(plugin.rootDir, plugin.skillsRootPaths).slice(
+      0,
+      SKILLS_PER_EXTENSION_MAX
+    );
+    const out: Array<{ name: string; ok: boolean }> = [];
+    for (const skillName of names) {
+      const dirName = pluginSkillDirName(plugin.id, skillName);
+      try {
+        let src: string | null = null;
+        for (const rootRel of plugin.skillsRootPaths) {
+          src = await resolveContainedReal(plugin.rootDir, `${rootRel.replace(/\/\*$/, '')}/${skillName}/SKILL.md`);
+          if (src) break;
+        }
+        if (!src) {
+          out.push({ name: dirName, ok: false });
+          continue;
+        }
+        const shipped = await readFile(src, 'utf-8');
+        const dir = join(SKILLS_ROOT, dirName);
+        const file = join(dir, 'SKILL.md');
+        let current: string | null = null;
+        try {
+          current = await readFile(file, 'utf-8');
+        } catch {
+          current = null;
+        }
+        if (current !== shipped) {
+          await mkdir(dir, { recursive: true });
+          const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
+          await writeFile(tmp, shipped, 'utf-8');
+          await rename(tmp, file);
+        }
+        out.push({ name: dirName, ok: true });
+      } catch (err) {
+        log?.(`deploySkillsForPlugin:${plugin.id}`, err);
+        out.push({ name: dirName, ok: false });
+      }
+    }
+    return out;
+  } catch (err) {
+    log?.(`deploySkillsForPlugin:${plugin.id}`, err);
+    return [];
+  }
+}
+
+export async function syncPluginSkills(
+  contributors: readonly PluginSkillContributor[],
+  log?: (context: string, err: unknown) => void
+): Promise<void> {
+  await Promise.all(
+    contributors.map(async (plugin) => {
+      await removeSkillsForPlugin(plugin.id, log);
+      await deploySkillsForPlugin(plugin, log);
     })
   );
 }

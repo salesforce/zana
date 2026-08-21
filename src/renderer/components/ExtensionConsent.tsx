@@ -19,7 +19,7 @@ import { ConsentBody, consentDelta } from './ConsentBody';
 // re-exports preserve the historical import surface — ExtensionsHub imports
 // PERMISSION_LABELS from here, and the consent-delta / scope-lines guard tests
 // import consentDelta / scopeLines from here.
-export { PERMISSION_LABELS, consentDelta, scopeLines, agentCapabilityLines } from './ConsentBody';
+export { PERMISSION_LABELS, consentDelta, scopeLines, agentCapabilityLines, pluginCapabilityLines } from './ConsentBody';
 export type { ConsentDelta } from './ConsentBody';
 
 /**

@@ -22,6 +22,7 @@ import {
   Trash2,
   ShieldCheck,
   Boxes,
+  X,
   type LucideIcon
 } from 'lucide-react';
 import type {
@@ -909,6 +910,12 @@ function QuickPromptEditor({
 interface Props {
   onClose: () => void;
   /**
+   * The default modal keeps global launch points above their originating view.
+   * Project launch points use `inline` so the composer occupies the central
+   * Agents workspace instead of covering it with a dialog.
+   */
+  presentation?: 'modal' | 'inline';
+  /**
    * Pin the launcher to one registered project. When set, the launcher is in
    * PROJECT mode: no project picker, no starter chips, but it surfaces the
    * resume list, background tray, and default-persona star. When omitted, it's
@@ -940,6 +947,7 @@ interface Props {
 
 export const AgentLauncher = memo(function AgentLauncher({
   onClose,
+  presentation = 'modal',
   project,
   backgroundTabs,
   onLaunched,
@@ -1526,9 +1534,9 @@ export const AgentLauncher = memo(function AgentLauncher({
     composerRef.current?.focus();
   }, []);
 
-  // Escape closes; Tab is trapped within the dialog; focus returns to the
-  // opener on unmount.
-  useDialogFocusTrap(dialogRef, onClose);
+  // Only the modal captures focus and Escape. The inline central workspace is
+  // ordinary page content, with its own visible close control.
+  useDialogFocusTrap(dialogRef, onClose, presentation === 'modal');
 
   // Post-launch: the caller can override what happens (the Agents global view
   // pops the inspector modal instead of navigating). Default — redirect into the
@@ -1546,8 +1554,7 @@ export const AgentLauncher = memo(function AgentLauncher({
         onLaunched(session, target.id);
       } else {
         const ui = useUi.getState();
-        ui.setNav('projects');
-        ui.selectProject(target.id);
+        ui.enterProjectFocus(target.id);
         ui.selectTab(target.id, session.id);
       }
     }
@@ -1708,8 +1715,7 @@ export const AgentLauncher = memo(function AgentLauncher({
         setLaunchError(null);
         clearDraft();
         const ui = useUi.getState();
-        ui.setNav('projects');
-        ui.selectProject(anchor.id);
+        ui.enterProjectFocus(anchor.id);
         ui.selectTab(anchor.id, session.id);
         onClose();
       }
@@ -1825,32 +1831,39 @@ export const AgentLauncher = memo(function AgentLauncher({
 
   const bg = projectMode ? backgroundTabs ?? [] : [];
 
-  // Portal the overlay to <body>. Rendered in-tree it can sit inside a
-  // positioned, z-indexed stacking context (the Agents `.list-pane`), which
-  // would trap the `position: fixed` backdrop within that column. Escaping to
-  // <body> (same trick as TerminalSurface's portal) lets the fixed backdrop
-  // cover the whole window and centers the modal regardless of where it's mounted.
-  return createPortal(
-    <div className="palette-backdrop" onMouseDown={() => onClose()}>
+  const content = (
       <div
         ref={dialogRef}
-        data-testid="launch-modal"
-        className="palette launch-modal"
-        onMouseDown={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
+        data-testid={presentation === 'modal' ? 'launch-modal' : 'launch-inline'}
+        className={presentation === 'modal' ? 'palette launch-modal' : 'launch-inline'}
+        role={presentation === 'modal' ? 'dialog' : 'region'}
+        aria-modal={presentation === 'modal' || undefined}
         aria-label="New agent"
+        onMouseDown={presentation === 'modal' ? (event) => event.stopPropagation() : undefined}
       >
         <div className="launch-panel">
           <div className="launch-header">
-            <h3>{projectMode ? project!.name : scratchIsTarget ? 'Quick agent' : target?.name ?? 'New agent'}</h3>
-            <p>
-              {projectMode
-                ? 'Start a session'
-                : scratchIsTarget
-                  ? 'A scratch Claude session in your workspace'
-                  : 'Start a Claude session in this project'}
-            </p>
+            <div>
+              <h3>{projectMode ? project!.name : scratchIsTarget ? 'Quick agent' : target?.name ?? 'New agent'}</h3>
+              <p>
+                {projectMode
+                  ? 'Start a session'
+                  : scratchIsTarget
+                    ? 'A scratch Claude session in your workspace'
+                    : 'Start a Claude session in this project'}
+              </p>
+            </div>
+            {presentation === 'inline' && (
+              <button
+                type="button"
+                className="launch-inline-close"
+                aria-label="Close new agent"
+                title="Close new agent"
+                onClick={onClose}
+              >
+                <X size={16} />
+              </button>
+            )}
           </div>
 
           {anchorError && scratchIsTarget && (
@@ -2548,7 +2561,14 @@ export const AgentLauncher = memo(function AgentLauncher({
           )}
         </div>
       </div>
-    </div>,
-    document.body
   );
+
+  return presentation === 'modal'
+    ? createPortal(
+        <div className="palette-backdrop" onMouseDown={onClose}>
+          {content}
+        </div>,
+        document.body
+      )
+    : content;
 });

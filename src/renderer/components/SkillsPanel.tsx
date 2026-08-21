@@ -40,7 +40,15 @@ const SOURCE_LABEL: Record<SkillSource, string> = {
  * {@link ProjectSkillsView}); when omitted, the panel follows the globally
  * selected project — the historical Settings-tab behaviour.
  */
-export function SkillsBody({ projectId }: { projectId?: string } = {}) {
+export function SkillsBody({
+  projectId,
+  initialFilter = 'all',
+  showHeader = true
+}: {
+  projectId?: string;
+  initialFilter?: 'all' | SkillSource;
+  showHeader?: boolean;
+} = {}) {
   const projects = useData((s) => s.projects);
   const selectedProjectId = useUi((s) => s.selectedProjectId);
   const scopedProjectId = projectId ?? selectedProjectId;
@@ -51,7 +59,7 @@ export function SkillsBody({ projectId }: { projectId?: string } = {}) {
   const [skills, setSkills] = useState<SkillEntry[]>([]);
   const [bundles, setBundles] = useState<SkillBundle[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<'all' | SkillSource>('all');
+  const [filter, setFilter] = useState<'all' | SkillSource>(initialFilter);
   const [query, setQuery] = useState('');
   const [editingBundle, setEditingBundle] = useState<SkillBundle | 'new' | null>(null);
   const [savedFlash, setSavedFlash] = useState(false);
@@ -207,21 +215,23 @@ export function SkillsBody({ projectId }: { projectId?: string } = {}) {
   return (
     <>
       <div className="settings-catalogue skills-catalogue">
-        <div className="scheduler-header">
-          <div className="scheduler-header-text">
-            <h2>Skills</h2>
-            <p className="settings-help scheduler-subtitle">
-              Discover skills across your agent tools — Claude Code
-              (<code>~/.claude/skills</code>, <code>~/.claude/plugins</code>, a
-              project's <code>.claude/skills</code>) and Cursor rules
-              (<code>.cursor/rules</code>). Toggling a Claude user or project skill
-              writes to <code>skillOverrides</code> in{' '}
-              <code>~/.claude/settings.json</code>; read-only tools (plugin skills,
-              Cursor rules) appear for visibility. Group skills into bundles to
-              enable/disable them in batches.
-            </p>
+        {showHeader && (
+          <div className="scheduler-header">
+            <div className="scheduler-header-text">
+              <h2>Skills</h2>
+              <p className="settings-help scheduler-subtitle">
+                Discover skills across your agent tools — Claude Code
+                (<code>~/.claude/skills</code>, <code>~/.claude/plugins</code>, a
+                project's <code>.claude/skills</code>) and Cursor rules
+                (<code>.cursor/rules</code>). Toggling a Claude user or project skill
+                writes to <code>skillOverrides</code> in{' '}
+                <code>~/.claude/settings.json</code>; read-only tools (plugin skills,
+                Cursor rules) appear for visibility. Group skills into bundles to
+                enable/disable them in batches.
+              </p>
+            </div>
           </div>
-        </div>
+        )}
 
         {!pluginBannerDismissed && (
           <aside className="skills-plugin-banner" role="note">

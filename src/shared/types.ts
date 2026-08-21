@@ -4412,6 +4412,24 @@ export interface PluginEntry {
 }
 
 /**
+ * Redacted server-owned plugin app state. `appUrl` is same-origin and contains
+ * no install path or credentials; the renderer uses it only to import a bundle.
+ */
+export interface PluginAppEntry {
+  id: string;
+  name: string;
+  icon: string;
+  status: 'running' | 'disabled' | 'degraded' | 'needs-configuration';
+  appUrl: string | null;
+  projectTab?: {
+    label?: string;
+    icon?: string;
+    order?: number;
+    global?: boolean;
+  };
+}
+
+/**
  * One discovered runtime extension under `~/.zcc/extensions/<id>/`, as
  * surfaced to the renderer by `cc.extensions.list()`. Mirrors the SDK's
  * `ExtensionManifest` shape inline so this IPC-contract file stays dependency-
@@ -4546,9 +4564,9 @@ export interface ExtensionManifestView {
    * Present when the extension opts its renderer panel into a PER-PROJECT TAB
    * (SDK `ExtensionManifest.projectTab`). The renderer loader copies this onto
    * the built `AppModule.projectTab`; the Workspace then adds a project tab for
-   * the module. Absent ⇒ sidebar-only (the default). `label`/`icon` default to
+   * the module. Absent ⇒ global panel only (the default). `label`/`icon` default to
    * the module's title/icon; `order` sorts extension tabs (default 100).
-   * `global: false` suppresses the top-level sidebar entry (project-tab only).
+   * `global: false` suppresses the global Extensions-hub launch (project-tab only).
    */
   projectTab?: { label?: string; icon?: string; order?: number; global?: boolean };
   /**
@@ -5649,6 +5667,10 @@ export interface CcApi {
     setEnabled(id: string, enabled: boolean): Promise<Result<true>>;
     reveal(id: string): Promise<Result<true>>;
     onChanged(cb: (entries: PluginEntry[]) => void): () => void;
+  };
+  pluginApps: {
+    list(): Promise<PluginAppEntry[]>;
+    onChanged(cb: (entries: PluginAppEntry[]) => void): () => void;
   };
   /**
    * Runtime extensions discovered under `~/.zcc/extensions/<id>/`.

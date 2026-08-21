@@ -4,7 +4,7 @@ This directory is a **working example** of the static marketplace the app's
 remote-update / install channel consumes. It was produced by:
 
 ```sh
-npm run publish-extension -- bundled-extensions/consensus \
+npm run publish-extension -- bundled-extensions/zana \
   --out examples/registry \
   --base-url https://extensions.example.com
 ```
@@ -59,9 +59,9 @@ TLS in front of it.
 
 ```sh
 # 1. Build + package the extension into a committed artifact dir.
-#    (e.g. `cd extensions/consensus && npm run package` → bundled-extensions/consensus)
+#    (e.g. `cd plugins/zana && npm run package` → bundled-extensions/zana)
 # 2. Publish it into the registry, signing with your Ed25519 key:
-npm run publish-extension -- bundled-extensions/consensus \
+npm run publish-extension -- bundled-extensions/zana \
   --out dist-registry \
   --base-url https://extensions.example.com \
   --key ./registry-signing-key.pem

@@ -200,7 +200,7 @@ export function McpBody() {
                     onToggle={(enabled) => toggleEntry(entry, enabled)}
                     onReveal={() => reveal(entry)}
                     onExpandToggle={() => toggleExpand(entry.id)}
-                    onOpenPlugins={() => setSettingsTab('plugins')}
+                    onOpenPlugins={() => setSettingsTab('extensions')}
                   />
                 ))}
               </ul>

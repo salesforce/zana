@@ -3,8 +3,8 @@
  * the SAME {@link ExtensionsHub} that lives under Settings → Extensions, but as
  * a first-class rail view opened on the Marketplace tab, so browsing/installing
  * extensions is one click from the sidebar instead of buried two levels deep in
- * Settings. Settings keeps its Extensions section (versions & per-extension
- * settings); this is the discovery front door.
+ * Settings. It also launches global extension panels; Settings keeps its
+ * Extensions section for versions and per-extension settings.
  *
  * Reuses the settings-panel shell classes so it inherits the same wide,
  * multi-column layout the hub was authored for — no new styling surface.
@@ -15,22 +15,30 @@
  * column 3 empty. The `extensions-panel` modifier spans it cols 2..end, the
  * same fix Personas/Teams use for their list-less panels.
  */
-import { Blocks } from 'lucide-react';
+import { useUi } from '../store';
 import { ExtensionsHub } from './settings/ExtensionsHub';
+import { SkillsBody } from './SkillsPanel';
+import { AppPageHeader } from './AppPageHeader';
 
 export function ExtensionsPanel() {
+  const tab = useUi((s) => s.extensionsTab);
+  const setExtensionsTab = useUi((s) => s.setExtensionsTab);
+  const showingSkills = tab === 'skills';
+
   return (
-    <main className="settings-panel extensions-panel">
-      <div className="settings-inner settings-inner--wide">
-        <header className="settings-header">
-          <div className="settings-header-title">
-            <Blocks size={18} />
-            <h2>Extensions</h2>
-            <span className="settings-header-desc">Browse, install & manage extensions</span>
-          </div>
-        </header>
-        <ExtensionsHub initialTab="marketplace" />
+    <div className="settings-panel extensions-panel">
+      <AppPageHeader title={<h1>Extensions</h1>} />
+      <div className={`settings-inner${showingSkills ? '' : ' settings-inner--wide'}`}>
+        {showingSkills ? (
+          <SkillsBody showHeader={false} />
+        ) : (
+          <ExtensionsHub
+            tab={tab}
+            onTabChange={setExtensionsTab}
+            showTabs={false}
+          />
+        )}
       </div>
-    </main>
+    </div>
   );
 }

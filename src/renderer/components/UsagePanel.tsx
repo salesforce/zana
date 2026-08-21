@@ -22,9 +22,8 @@ function formatCount(n: number): string {
  * title, or file. There is no message preview to render because there is none in
  * the data.
  *
- * Full-width standalone panel (ListPane returns null for the `usage` nav, and
- * `.usage-panel` spans `grid-column: 2 / -1` in global.css). Mirrors the outer
- * structure of PersonasPanel.
+ * Settings catalogue panel. It shares the outer structure of PersonasPanel and
+ * is selected from the focused Settings sidebar.
  */
 export function UsagePanel() {
   const summary = useUsage((s) => s.summary);
@@ -41,18 +40,8 @@ export function UsagePanel() {
   const empty = loaded && (!summary || summary.sessionCount === 0);
 
   return (
-    <main className="settings-panel usage-panel">
-      <div className="settings-inner">
-        <div className="scheduler-header">
-          <div className="scheduler-header-text">
-            <h2>Usage</h2>
-            <p className="settings-help scheduler-subtitle">
-              An activity rollup across your projects' Claude sessions — tokens,
-              prompts, and tool &amp; MCP calls, counted from the transcripts. It
-              shows session identifiers only, never any prompt or file content.
-            </p>
-          </div>
-          <div className="personas-header-actions">
+    <section className="settings-catalogue usage-panel">
+        <div className="settings-catalogue-actions">
             <button
               type="button"
               className="settings-btn"
@@ -63,7 +52,6 @@ export function UsagePanel() {
               <RefreshCw size={12} className={loading ? 'usage-spin' : undefined} />{' '}
               {loading ? 'Refreshing…' : 'Refresh'}
             </button>
-          </div>
         </div>
 
         {!loaded && !summary ? (
@@ -101,8 +89,7 @@ export function UsagePanel() {
             )}
           </div>
         ) : null}
-      </div>
-    </main>
+    </section>
   );
 }
 

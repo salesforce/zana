@@ -64,8 +64,8 @@ export interface PaletteBuildContext {
   setNav: (nav: string) => void;
   selectProject: (id: string) => void;
   selectTab: (projectId: string, tabId: string) => void;
-  setWorkspaceMode: (projectId: string, mode: 'agents' | 'terminals' | 'explorer' | 'library') => void;
-  setSettingsTab: (tab: 'global' | 'project' | 'prompts' | 'plugins' | 'skills' | 'mcp' | 'extensions') => void;
+  setWorkspaceMode: (projectId: string, mode: 'agents' | 'terminals' | 'explorer') => void;
+  setSettingsTab: (tab: 'global' | 'project' | 'prompts' | 'skills' | 'mcp' | 'extensions' | 'personas' | 'squads' | 'usage') => void;
   setOverviewOpen: (open: boolean) => void;
   setPinned: (projectId: string, sessionId: string, pinned: boolean) => void;
   restartTerminal: (sessionId: string, projectId: string) => Promise<unknown> | unknown;
@@ -153,8 +153,7 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
     category: 'Projects',
     source: 'core',
     run: () => {
-      setNav('projects');
-      selectProject(p.id);
+      useUi.getState().enterProjectFocus(p.id);
       onClose();
     }
   }));
@@ -251,14 +250,14 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
       }
     },
     {
-      key: 'action:plugins',
+      key: 'action:plugin-hub',
       icon: <Puzzle size={14} />,
       label: 'Open Plugins',
       category: 'Actions',
       source: 'core',
       run: () => {
         setNav('settings');
-        setSettingsTab('plugins');
+        setSettingsTab('extensions');
         onClose();
       }
     },
@@ -281,7 +280,8 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
       category: 'Actions',
       source: 'core',
       run: () => {
-        setNav('personas');
+        setNav('settings');
+        setSettingsTab('personas');
         onClose();
       }
     },
@@ -293,8 +293,7 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
       category: 'Actions',
       source: 'core',
       run: () => {
-        setNav('projects');
-        // Exit any opened project → the cross-project Agents board (the home).
+        setNav('agents');
         useUi.getState().exitProjectFocus();
         onClose();
       }
@@ -317,10 +316,9 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
       category: 'Tabs',
       source: 'core',
       run: () => {
-        selectProject(proj.id);
+        useUi.getState().enterProjectFocus(proj.id);
         selectTab(proj.id, t.id);
         setWorkspaceMode(proj.id, 'terminals');
-        setNav('projects');
         onClose();
       }
     });
@@ -349,8 +347,8 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
         category: 'Actions',
         source: 'core',
         run: () => {
+          useUi.getState().enterProjectFocus(selectedProject.id);
           setWorkspaceMode(selectedProject.id, 'agents');
-          setNav('projects');
           onClose();
         }
       },

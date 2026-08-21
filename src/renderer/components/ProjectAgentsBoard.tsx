@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Bot, Moon, Plus, Loader2 } from 'lucide-react';
 import type { Project } from '@shared/types';
-import { useData, useUi, useAgentStatus, useIdleTriage, useOverseerActivity, useSubagents, useFavoriteAgents, favoriteKey, listedTerminals } from '../store';
+import { useData, useUi, useAgentStatus, useIdleTriage, useOverseerActivity, useSubagents, useFavoriteAgents, favoriteKey, listedTerminals, backgroundTerminals } from '../store';
 import { AgentBoardLanes, isReclaimableIdle, type AgentCard } from './AgentBoard';
 import { AgentViewToggle } from './AgentViewToggle';
 import { SquadFlowView } from './SquadFlowView';
@@ -9,6 +9,7 @@ import { AutonomousRunBanner } from './AutonomousRunBanner';
 import { AgentMonitor } from './AgentMonitor';
 import { CloseIdleAgentsDialog } from './CloseIdleAgentsDialog';
 import { CohortBar, type LiveCohort } from './CohortBar';
+import { AgentLauncher } from './AgentLauncher';
 
 /**
  * Per-project Agents board — the Kanban-style status board scoped to one
@@ -22,10 +23,11 @@ import { CohortBar, type LiveCohort } from './CohortBar';
 
 interface Props {
   project: Project;
-  onNewAgent: () => void;
+  launcherOpen: boolean;
+  onLauncherClose: () => void;
 }
 
-export function ProjectAgentsBoard({ project, onNewAgent }: Props) {
+export function ProjectAgentsBoard({ project, launcherOpen, onLauncherClose }: Props) {
   const sessions = useData((s) => s.terminals[project.id]);
   const byId = useAgentStatus((s) => s.byId);
   const sinceById = useAgentStatus((s) => s.since);
@@ -96,6 +98,19 @@ export function ProjectAgentsBoard({ project, onNewAgent }: Props) {
     setWorkspaceMode(project.id, 'terminals');
   };
 
+  // This branch stays after every hook above. Opening or closing the composer
+  // must not change the board's hook order between renders.
+  if (launcherOpen) {
+    return (
+      <AgentLauncher
+        project={project}
+        backgroundTabs={backgroundTerminals(sessions)}
+        presentation="inline"
+        onClose={onLauncherClose}
+      />
+    );
+  }
+
   return (
     <div className="agents-board">
       <div className="agents-board-header">
@@ -128,7 +143,7 @@ export function ProjectAgentsBoard({ project, onNewAgent }: Props) {
         <button
           type="button"
           className="btn primary agents-board-new"
-          onClick={onNewAgent}
+          onClick={() => useUi.getState().setLauncherOpen(true)}
           title="Start a new agent in this project"
         >
           <Plus size={14} />
@@ -164,7 +179,7 @@ export function ProjectAgentsBoard({ project, onNewAgent }: Props) {
           <Bot size={28} aria-hidden="true" />
           <h4>No agents yet</h4>
           <p>Start a Claude session in this project and watch it move across the board.</p>
-          <button type="button" className="btn primary" onClick={onNewAgent}>
+          <button type="button" className="btn primary" onClick={() => useUi.getState().setLauncherOpen(true)}>
             <Plus size={14} />
             New agent
           </button>

@@ -17,6 +17,7 @@ import { join, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile, rename } from 'node:fs/promises';
 import { mkdirSync, writeFileSync, renameSync } from 'node:fs';
+import { rewritePluginMcpArgs } from '../../apps/server/src/plugins/plugin-skills.js';
 
 const MCP_CONFIG_DIR = join(homedir(), '.zcc', 'mcp');
 
@@ -48,6 +49,7 @@ const MCP_SERVER_SEED: Record<string, McpServerDef> = {
  * with an app-owned or another extension's server name.
  */
 let extensionServerRegistry: Record<string, McpServerDef> = {};
+let pluginServerRegistry: Record<string, McpServerDef> = {};
 
 /**
  * Extension ids whose `mcpServers` contributions include at least one
@@ -56,9 +58,10 @@ let extensionServerRegistry: Record<string, McpServerDef> = {};
  * opt in by name. Maps id → the `ext:<id>:<name>` keys to always include.
  */
 let alwaysOnServerNamesByExtension: Record<string, string[]> = {};
+let alwaysOnServerNamesByPlugin: Record<string, string[]> = {};
 
 function mcpServerRegistry(): Record<string, McpServerDef> {
-  return { ...MCP_SERVER_SEED, ...extensionServerRegistry };
+  return { ...MCP_SERVER_SEED, ...extensionServerRegistry, ...pluginServerRegistry };
 }
 
 /**
@@ -130,9 +133,64 @@ export function rebuildExtensionServers(contributors: readonly McpServerContribu
   alwaysOnServerNamesByExtension = alwaysOn;
 }
 
+export interface PluginMcpContributor {
+  id: string;
+  enabled: boolean;
+  rootDir: string;
+  mcpServers: Array<{
+    name: string;
+    type: string;
+    command?: string;
+    args?: string[];
+    url?: string;
+    env?: Record<string, string>;
+    alwaysOn?: boolean;
+  }>;
+}
+
+/**
+ * Plugin-contributed MCP servers (package.json `zcc.mcpServers`). Enabled
+ * plugins contribute; there is no consent / agent:contribute gate. Keys are
+ * `plugin:<id>:<name>`. Relative args that exist under the plugin root are
+ * rewritten to contained realpaths; an escaping arg drops that server.
+ */
+export function rebuildPluginServers(contributors: readonly PluginMcpContributor[]): void {
+  const registry: Record<string, McpServerDef> = {};
+  const alwaysOn: Record<string, string[]> = {};
+  for (const plugin of contributors) {
+    try {
+      if (!plugin.enabled) continue;
+      const alwaysOnNames: string[] = [];
+      for (const s of plugin.mcpServers) {
+        if (!s.name || !s.type) continue;
+        let args = s.args;
+        if (s.type === 'stdio') {
+          if (!s.command || s.command !== basename(s.command)) continue;
+          const rewritten = rewritePluginMcpArgs(plugin.rootDir, s.args);
+          if (rewritten === null) continue;
+          args = rewritten;
+        } else if (!s.url) {
+          continue;
+        }
+        const key = `plugin:${plugin.id}:${s.name}`;
+        registry[key] = { type: s.type, command: s.command, args, url: s.url, env: s.env };
+        if (s.alwaysOn) alwaysOnNames.push(key);
+      }
+      if (alwaysOnNames.length) alwaysOn[plugin.id] = alwaysOnNames;
+    } catch {
+      /* one contributor's malformed data must never block the rest */
+    }
+  }
+  pluginServerRegistry = registry;
+  alwaysOnServerNamesByPlugin = alwaysOn;
+}
+
 /** Every currently-registered `ext:<id>:<name>` key with `alwaysOn: true`, across all enabled+consented extensions. */
 function allAlwaysOnServerNames(): string[] {
-  return Object.values(alwaysOnServerNamesByExtension).flat();
+  return [
+    ...Object.values(alwaysOnServerNamesByExtension).flat(),
+    ...Object.values(alwaysOnServerNamesByPlugin).flat()
+  ];
 }
 
 /**

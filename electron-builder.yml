@@ -27,8 +27,6 @@ extraResources:
     to: saved-reports-skill.md
   - from: resources/brainstorm-skill.md
     to: brainstorm-skill.md
-  - from: resources/library-curator-skill.md
-    to: library-curator-skill.md
   - from: resources/zcc-cli-skill.md
     to: zcc-cli-skill.md
   - from: resources/extension-creator-skill.md
@@ -57,9 +55,8 @@ extraResources:
   # `resolveOpencodeBinDir` finds resourcesPath/opencode/<arch>/opencode.
   - from: vendor/opencode
     to: opencode
-  # Bundled first-party disk extensions, auto-reseeded into ~/.zcc/extensions/<id>
-  # on boot when the shipped version is newer (see src/main/extension-installer.ts).
-  # The committed bundled-extensions/<id> dirs are the canonical packaged form.
+  # First-party plugins (package.json zcc). Packaged copies also live in
+  # bundled-extensions/ as the committed runnable artifacts.
   - from: bundled-extensions
     to: extensions
   # Bundled agent-detection manifests (herdr TOML format), read by

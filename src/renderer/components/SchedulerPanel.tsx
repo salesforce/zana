@@ -1,8 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Clock, Plus, Sparkles, Pause, PlayCircle, AlertTriangle, Activity } from 'lucide-react';
+import { Clock, Plus, Sparkles, Pause, PlayCircle, AlertTriangle, Activity, Settings } from 'lucide-react';
 import type { ScheduledTask, ScheduleRun, ScheduleTemplate } from '@shared/types';
 import { useData, useScheduler, useScheduleGroups, useUi } from '../store';
-import { groupIcon, GROUP_FALLBACK_COLOR } from './scheduleGroupMeta';
 import { EmptyStateWithFeatured } from './scheduler/EmptyStateWithFeatured';
 import { ScheduleRow } from './scheduler/ScheduleRow';
 import { ScheduleModal } from './scheduler/ScheduleModal';
@@ -10,6 +9,8 @@ import { DeleteConfirmModal } from './scheduler/DeleteConfirmModal';
 import { RunReportModal } from './scheduler/RunReportModal';
 import { TemplatePickerModal } from './scheduler/TemplatePickerModal';
 import { SchedulerOverview } from './scheduler/SchedulerOverview';
+import { AppPageHeader } from './AppPageHeader';
+import { ScheduleGroupsModal } from './ScheduleGroupsModal';
 
 /** Seed values handed to ScheduleModal. May come from a template (“Use this”)
  *  or a duplicate of an existing schedule (“Duplicate”). */
@@ -31,14 +32,11 @@ function isSeed(value: unknown): value is Seed {
 
 /**
  * The Scheduler view. Mounted two ways:
- * - Cross-project (top-level nav, no props): the scope is driven by the
- *   `schedulerTab` store state (Overview / Groups / Ungrouped / per-project),
- *   filtering on `t.source` (where the schedule's JSON lives).
- * - Project-locked (`projectId` set — the per-project workspace tab): the panel
- *   ignores `schedulerTab` and shows every schedule that spawns a terminal IN
- *   this project (filter on `t.projectId`, the spawn target), so a global-scoped
- *   schedule that targets the project appears here too. The create modal
- *   defaults to this project + project scope.
+ * - Cross-project (top-level nav, no props): every schedule, Overview first.
+ * - Project-locked (`projectId` set — the per-project workspace tab): every
+ *   schedule that spawns a terminal IN this project (filter on `t.projectId`,
+ *   the spawn target), so a global-scoped schedule that targets the project
+ *   appears here too. The create modal defaults to this project + project scope.
  */
 export function SchedulerPanel({ projectId }: { projectId?: string } = {}) {
   const tasks = useScheduler((s) => s.tasks);
@@ -52,6 +50,7 @@ export function SchedulerPanel({ projectId }: { projectId?: string } = {}) {
   const [editing, setEditing] = useState<ScheduledTask | 'new' | Seed | null>(null);
   const [pickingTemplate, setPickingTemplate] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<ScheduledTask | null>(null);
+  const [managingGroups, setManagingGroups] = useState(false);
   // Run report viewer — lifted here so both the per-task run rows and the
   // Overview "Recent activity" list open the same modal.
   const [report, setReport] = useState<{ run: ScheduleRun; taskName: string } | null>(null);
@@ -61,10 +60,7 @@ export function SchedulerPanel({ projectId }: { projectId?: string } = {}) {
   /** When the user hits "Pause all", we stash the ids that were enabled so
    *  "Resume all" only re-enables those. Session-local — by design. */
   const [pausedSet, setPausedSet] = useState<Set<string> | null>(null);
-  // Project-locked panel only: a local Overview/Schedules sub-view. The
-  // cross-project panel drives its scope from the store's `schedulerTab`
-  // instead, so this is ignored there. Defaults to the at-a-glance overview.
-  const [projectView, setProjectView] = useState<'overview' | 'schedules'>('overview');
+  const [view, setView] = useState<'overview' | 'schedules'>('overview');
 
   // 1Hz tick drives the per-row "fires in 14m 32s" countdown and the Overview's
   // time-relative computations without the main process pushing the same number
@@ -75,19 +71,18 @@ export function SchedulerPanel({ projectId }: { projectId?: string } = {}) {
     return () => clearInterval(t);
   }, []);
 
-  const schedulerTab = useUi((s) => s.schedulerTab);
-  const selectedProjectId = useUi((s) => s.selectedProjectId);
-  const selectedGroupId = useUi((s) => s.selectedGroupId);
   const revealScheduleId = useUi((s) => s.revealScheduleId);
   const groups = useScheduleGroups((s) => s.groups);
-  const activeGroup = useMemo(
-    () => groups.find((g) => g.id === selectedGroupId) ?? null,
-    [groups, selectedGroupId]
-  );
 
   useEffect(() => {
     setPausedSet(null);
-  }, [schedulerTab, selectedProjectId, selectedGroupId]);
+  }, [lockedProjectId, view]);
+
+  // Tray "Show in Scheduler" lands on the list so ScheduleRow can scroll to
+  // and highlight the matching card.
+  useEffect(() => {
+    if (revealScheduleId) setView('schedules');
+  }, [revealScheduleId]);
 
   const scopedTasks = useMemo(() => {
     // Project-locked (per-project tab): every schedule that spawns in this
@@ -95,24 +90,8 @@ export function SchedulerPanel({ projectId }: { projectId?: string } = {}) {
     if (lockedProjectId) {
       return tasks.filter((t) => t.projectId === lockedProjectId);
     }
-    const isGlobal = (t: ScheduledTask) => !t.source || t.source === 'global';
-    if (schedulerTab === 'group') {
-      if (!selectedGroupId) return [];
-      return tasks.filter((t) => isGlobal(t) && t.group === selectedGroupId);
-    }
-    if (schedulerTab === 'global') {
-      // Ungrouped bucket: global schedules with no group or a stale group id.
-      const known = new Set(groups.map((g) => g.id));
-      return tasks.filter((t) => isGlobal(t) && (!t.group || !known.has(t.group)));
-    }
-    if (!selectedProjectId) return [];
-    return tasks.filter(
-      (t) =>
-        t.source &&
-        t.source !== 'global' &&
-        (t.source as { projectId: string }).projectId === selectedProjectId
-    );
-  }, [tasks, schedulerTab, selectedProjectId, selectedGroupId, groups, lockedProjectId]);
+    return tasks;
+  }, [tasks, lockedProjectId]);
 
   const filteredTasks = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -157,14 +136,12 @@ export function SchedulerPanel({ projectId }: { projectId?: string } = {}) {
   };
 
   // Shared SchedulerOverview handlers — used by both the cross-project overview
-  // and the per-project overview (the scoped tab). Jump behaves differently per
-  // context, so it's supplied at each call site.
+  // and the per-project overview (the scoped tab).
   const openScheduledTerminal = (t: ScheduledTask, sessionId: string) => {
     // Scheduled fires are headless — restoreTerminal un-hides the session
     // before selecting it. enterProjectFocus (not selectProject) is required:
     // the Workspace — and its tab strip — only mounts when focusedProjectId is
     // set; setWorkspaceMode('terminals') lands on the tab, not the Agents board.
-    useUi.getState().setNav('projects');
     useUi.getState().enterProjectFocus(t.projectId);
     void useData.getState().restoreTerminal(sessionId, t.projectId);
     useUi.getState().setWorkspaceMode(t.projectId, 'terminals');
@@ -194,49 +171,34 @@ export function SchedulerPanel({ projectId }: { projectId?: string } = {}) {
       useUi.getState().pushToast(`Failed to stop "${t.name}"`, 'error');
     }
   };
+  const openProjectSchedules = (id: string) => {
+    useUi.getState().enterProjectFocus(id);
+    useUi.getState().setWorkspaceMode(id, 'scheduler');
+  };
 
-  // The per-project tab renders the overview (KPI grid + Next up / Recent
-  // activity columns), which reads better across the full column — so opt the
-  // locked panel out of the 880px reading cap, like Goals / Follow-ups.
   return (
-    <main
+    <div
       className={`settings-panel scheduler-panel${
-        lockedProject ? ' scheduler-panel--full scheduler-panel--embedded' : ''
+        lockedProject ? ' scheduler-panel--embedded' : ' scheduler-page'
       }`}
     >
+      {!lockedProject && <AppPageHeader title={<h1>Scheduler</h1>} />}
       <div className="settings-inner">
         <div className="scheduler-header">
           <div className="scheduler-header-text">
             {lockedProject ? (
-              <h2>Scheduler</h2>
-            ) : schedulerTab === 'group' && activeGroup ? (
-              <h2 className="scheduler-header-group">
-                {(() => {
-                  const Icon = groupIcon(activeGroup.icon);
-                  return (
-                    <Icon
-                      size={18}
-                      style={{ color: activeGroup.color ?? GROUP_FALLBACK_COLOR }}
-                    />
-                  );
-                })()}
-                {activeGroup.name}
-              </h2>
+              <h2>Project schedules</h2>
             ) : (
-              <h2>Scheduler</h2>
+              <h2>Schedules</h2>
             )}
             <p className="settings-help scheduler-subtitle">
               {lockedProject
                 ? `Recurring agents that spawn a terminal in ${lockedProject.name} on a fixed interval.`
-                : schedulerTab === 'group' && activeGroup
-                ? `Global schedules in the “${activeGroup.name}” group.`
-                : schedulerTab === 'global'
-                ? 'Global schedules with no group.'
-                : 'Recurring tasks that spawn a terminal in the chosen project on a fixed interval.'}
+                : 'Recurring agents that spawn a terminal on a fixed interval.'}
             </p>
           </div>
           <div className="scheduler-header-actions">
-            {lockedProject && scopedTasks.length > 0 && (
+            {scopedTasks.length > 0 && (
               <div
                 className="scheduler-subview-toggle"
                 role="group"
@@ -244,21 +206,30 @@ export function SchedulerPanel({ projectId }: { projectId?: string } = {}) {
               >
                 <button
                   type="button"
-                  className={projectView === 'overview' ? 'active' : ''}
-                  onClick={() => setProjectView('overview')}
-                  aria-pressed={projectView === 'overview'}
+                  className={view === 'overview' ? 'active' : ''}
+                  onClick={() => setView('overview')}
+                  aria-pressed={view === 'overview'}
                 >
                   <Activity size={13} /> Overview
                 </button>
                 <button
                   type="button"
-                  className={projectView === 'schedules' ? 'active' : ''}
-                  onClick={() => setProjectView('schedules')}
-                  aria-pressed={projectView === 'schedules'}
+                  className={view === 'schedules' ? 'active' : ''}
+                  onClick={() => setView('schedules')}
+                  aria-pressed={view === 'schedules'}
                 >
                   <Clock size={13} /> Schedules
                 </button>
               </div>
+            )}
+            {!lockedProject && (
+              <button
+                className="settings-btn"
+                onClick={() => setManagingGroups(true)}
+                title="Manage schedule groups"
+              >
+                <Settings size={14} /> Groups
+              </button>
             )}
             <button
               className="settings-btn"
@@ -296,7 +267,7 @@ export function SchedulerPanel({ projectId }: { projectId?: string } = {}) {
               Add a project before creating a schedule.{' '}
               <button
                 className="settings-btn settings-btn--primary"
-                onClick={() => setNav('projects')}
+                onClick={() => setNav('home')}
                 style={{ marginTop: 8 }}
               >
                 Go to Projects
@@ -305,33 +276,14 @@ export function SchedulerPanel({ projectId }: { projectId?: string } = {}) {
           </div>
         ) : loading ? (
           <div className="scheduler-empty">Loading…</div>
-        ) : !lockedProject && schedulerTab === 'overview' ? (
+        ) : view === 'overview' && (!lockedProject || scopedTasks.length > 0) ? (
           <SchedulerOverview
-            tasks={tasks}
+            tasks={lockedProject ? scopedTasks : tasks}
             projects={projects}
             tick={tick}
-            onJump={(t) => {
-              if (t.source && t.source !== 'global') {
-                useUi.getState().selectProject((t.source as { projectId: string }).projectId);
-                useUi.getState().setSchedulerTab('project');
-              } else {
-                useUi.getState().setSchedulerTab('global');
-              }
-            }}
-            onOpenTerminal={openScheduledTerminal}
-            onEdit={(t) => setEditing(t)}
-            onShowReport={showReport}
-            onToggle={toggleSchedule}
-            onRunNow={runScheduleNow}
-            onStopLive={stopScheduleLive}
-          />
-        ) : lockedProject && projectView === 'overview' && scopedTasks.length > 0 ? (
-          <SchedulerOverview
-            tasks={scopedTasks}
-            projects={projects}
-            tick={tick}
-            hideByProject
-            onJump={() => setProjectView('schedules')}
+            hideByProject={Boolean(lockedProject)}
+            onJump={lockedProject ? () => setView('schedules') : (t) => setEditing(t)}
+            onOpenProject={lockedProject ? undefined : openProjectSchedules}
             onOpenTerminal={openScheduledTerminal}
             onEdit={(t) => setEditing(t)}
             onShowReport={showReport}
@@ -445,6 +397,9 @@ export function SchedulerPanel({ projectId }: { projectId?: string } = {}) {
           onClose={() => setReport(null)}
         />
       )}
-    </main>
+      {managingGroups && (
+        <ScheduleGroupsModal onClose={() => setManagingGroups(false)} />
+      )}
+    </div>
   );
 }

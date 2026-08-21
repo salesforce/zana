@@ -39,8 +39,7 @@ export function DoctorSection() {
       });
       if (session) {
         const ui = useUi.getState();
-        ui.setNav('projects');
-        ui.selectProject(anchor.id);
+        ui.enterProjectFocus(anchor.id);
         ui.selectTab(anchor.id, session.id);
       }
     } catch (err) {

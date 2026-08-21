@@ -29,8 +29,8 @@ export function OverviewPanel() {
   };
 
   return (
-    <main className="overview-panel">
-      <div className="overview-inner">
+    <div className="overview-panel">
+      <div className="settings-inner">
         <header className="overview-header">
           <h2>Workspaces Overview</h2>
           <span className="overview-count">
@@ -103,7 +103,7 @@ export function OverviewPanel() {
           </div>
         )}
       </div>
-    </main>
+    </div>
   );
 }
 

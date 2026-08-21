@@ -1,0 +1,62 @@
+import { z } from 'zod';
+
+export const marketplaceSourceNpmSchema = z
+  .object({
+    package: z.string().min(1),
+    range: z.string().min(1)
+  })
+  .strict();
+
+export const marketplaceSourceGitSchema = z
+  .object({
+    url: z.string().min(1),
+    subdir: z.string().min(1).optional(),
+    range: z.string().min(1).optional(),
+    ref: z.string().min(1).optional(),
+    tagPrefix: z.string().max(128).optional()
+  })
+  .strict();
+
+export const marketplaceEntrySchema = z
+  .object({
+    id: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
+    displayName: z.string().min(1),
+    description: z.string().min(1),
+    icon: z
+      .object({
+        url: z.string().min(1).optional(),
+        lucide: z.string().min(1).optional()
+      })
+      .strict()
+      .optional(),
+    author: z
+      .object({
+        name: z.string().min(1),
+        github: z.string().min(1).optional(),
+        url: z.string().url().optional()
+      })
+      .strict(),
+    source: z
+      .object({
+        npm: marketplaceSourceNpmSchema.optional(),
+        git: marketplaceSourceGitSchema.optional()
+      })
+      .strict()
+      .refine((source) => source.npm !== undefined || source.git !== undefined, {
+        message: 'entry source must declare npm or git'
+      })
+  })
+  .strict();
+
+export const marketplaceIndexSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    name: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
+    displayName: z.string().min(1),
+    description: z.string().min(1).optional(),
+    plugins: z.array(marketplaceEntrySchema)
+  })
+  .strict();
+
+export type MarketplaceIndex = z.infer<typeof marketplaceIndexSchema>;
+export type MarketplaceEntry = z.infer<typeof marketplaceEntrySchema>;

@@ -1,17 +1,17 @@
-import { useEffect, useState, lazy, Suspense } from 'react';
+import { useEffect } from 'react';
 import { Bell, Star } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
-import { ListPane } from './components/ListPane';
+import { SidebarTriggerOverlay } from './components/SidebarTriggerOverlay';
+import { AgentLauncher } from './components/AgentLauncher';
+import { SettingsPane } from './components/listpane/SettingsPane';
+import { ExtensionsPane } from './components/listpane/ExtensionsPane';
 import { Workspace } from './components/Workspace';
 import { TerminalSurface } from './components/TerminalSurface';
 import { GlobalAgentsBoard } from './components/GlobalAgentsBoard';
 import { ProjectScopedNav } from './components/ProjectScopedNav';
 import { SettingsPanel } from './components/SettingsPanel';
 import { SchedulerPanel } from './components/SchedulerPanel';
-import { PersonasPanel } from './components/PersonasPanel';
-import { SquadsPanel } from './components/SquadsPanel';
 import { ExtensionsPanel } from './components/ExtensionsPanel';
-import { UsagePanel } from './components/UsagePanel';
 import { InboxView } from './components/InboxView';
 import { HomePanel } from './components/HomePanel';
 import { FollowUpsPanel } from './components/FollowUpsPanel';
@@ -32,12 +32,12 @@ import { HostDialogs } from './components/HostDialogs';
 import { nextHostDialogId as hostDialogId } from './modules/host';
 import { UpdateBanner } from './components/UpdateBanner';
 import { WhatsNewModal } from './components/WhatsNewModal';
-import { StatusBar } from './components/StatusBar';
 import { ExtensionConsent } from './components/ExtensionConsent';
 import { ModulePanelHost } from './modules/ModulePanelHost';
 import { ModuleBackgroundHost } from './modules/ModuleBackgroundHost';
 import { useMergedModules } from './modules';
 import { initExtensionModules, reconcileExtensionModules } from './modules/loader';
+import { initPluginApps, reconcilePluginApps } from './plugins/plugin-app-loader';
 import {
   CORE_NAV_IDS,
   scheduleGitRefresh,
@@ -60,29 +60,24 @@ import { useFavoriteCount } from './util/useAgentCards';
 import { focusInboxEntry } from './util/inboxNavigation';
 import { projectDefaultLaunch } from './util/launchProfile';
 import { getScopedProjectId } from './util/windowScope';
-import { shouldHideListPane } from './util/agentsLayout';
+import { resolveShellLayout } from './util/shellLayout';
 import { installShortcuts } from './shortcuts';
-
-// Lazy-load: LibraryPanel's doc preview pulls in monaco-editor, which registers
-// default editor extensions into a global `RegistryImpl` singleton, so it's
-// kept out of the initial bundle — same reasoning as ExplorerView/LibraryView
-// in Workspace.tsx.
-const LibraryPanel = lazy(() =>
-  import('./components/LibraryPanel').then((m) => ({ default: m.LibraryPanel }))
-);
+import { isLibraryPluginModule } from './util/libraryPlugin';
+import { useShellChromeState } from './util/useShellChromeState';
 
 export function App() {
   const init = useData((s) => s.init);
   const nav = useUi((s) => s.nav);
-  const agentsBoardView = useUi((s) => s.agentsBoardView);
+  const sidebarCollapsed = useUi((s) => s.sidebarCollapsed);
   const focusedProjectId = useUi((s) => s.focusedProjectId);
+  const launcherOpen = useUi((s) => s.launcherOpen);
   const selectedProjectId = useUi((s) => s.selectedProjectId);
   const selectedTabId = useUi((s) => s.selectedTabId);
   const projects = useData((s) => s.projects);
   const terminals = useData((s) => s.terminals);
   const suggestionsEnabled = useData((s) => s.suggestionsEnabled);
   useEffect(() => {
-    if (nav === 'suggestions' && !suggestionsEnabled) useUi.getState().setNav('projects');
+    if (nav === 'suggestions' && !suggestionsEnabled) useUi.getState().setNav('home');
   }, [nav, suggestionsEnabled]);
   const unreadInbox = useUnreadInboxCount();
   const favoritesOpen = useUi((s) => s.favoritesDrawerOpen);
@@ -108,14 +103,30 @@ export function App() {
   // top-level panels, but are still valid nav and must NOT bounce. 'followups'
   // is BOTH — a project-scoped mode AND now a top-level panel, above.)
   useEffect(() => {
+    if (nav === 'library') {
+      const libraryModule = modules.find(isLibraryPluginModule);
+      useUi.getState().setNav(libraryModule?.id ?? 'home');
+      return;
+    }
     if (CORE_NAV_IDS.has(nav as never)) return;
     if (modules.some((m) => m.id === nav)) return;
-    useUi.getState().setNav('projects');
+    useUi.getState().setNav('home');
   }, [nav, modules]);
-  // App version shown next to the "beta" tag in the titlebar.
-  const [appVersion, setAppVersion] = useState<string>('');
+  const shellChrome = useShellChromeState();
+
+  // Server-owned plugins publish a redacted app snapshot through the supervised
+  // runtime. Their bundles load from the same-origin static host, not the legacy
+  // extension filesystem bridge.
   useEffect(() => {
-    window.cc.app.version().then(setAppVersion).catch(() => {});
+    let cancelled = false;
+    void initPluginApps();
+    const off = window.cc.pluginApps.onChanged((entries) => {
+      if (!cancelled) void reconcilePluginApps(entries);
+    });
+    return () => {
+      cancelled = true;
+      off();
+    };
   }, []);
   // In a per-project window, the project this window is locked to (else null).
   // Drives scoped rendering of the Agents board (and is the anchor the other
@@ -125,14 +136,13 @@ export function App() {
     ? projects.find((p) => p.id === scopedProjectId) ?? null
     : null;
 
-  // Main window drilled into a project (focus mode). Distinct from a scoped
-  // WINDOW: focus is a soft, store-driven state the user enters/leaves with the
-  // back button. Only meaningful when this isn't already a scoped window (that
-  // rail wins). Drives the 'focus'-variant ProjectScopedNav below.
-  const focusedProject =
-    !scopedProject && focusedProjectId
-      ? projects.find((p) => p.id === focusedProjectId) ?? null
-      : null;
+  // A stale persisted focus must not strand the main workspace after a project
+  // is removed in another window.
+  useEffect(() => {
+    if (focusedProjectId && !projects.some((project) => project.id === focusedProjectId)) {
+      useUi.getState().exitProjectFocus();
+    }
+  }, [focusedProjectId, projects]);
 
   // Reflect the current project + active tab into the OS window title so
   // ⌘-Tab / Mission Control disambiguates Zana across projects.
@@ -160,24 +170,8 @@ export function App() {
       document.title = `${inboxBadge}Scheduler · ${base}`;
       return;
     }
-    if (nav === 'personas') {
-      document.title = `${inboxBadge}Personas · ${base}`;
-      return;
-    }
-    if (nav === 'squads') {
-      document.title = `${inboxBadge}Squads · ${base}`;
-      return;
-    }
-    if (nav === 'usage') {
-      document.title = `${inboxBadge}Usage · ${base}`;
-      return;
-    }
     if (nav === 'extensions') {
       document.title = `${inboxBadge}Extensions · ${base}`;
-      return;
-    }
-    if (nav === 'library') {
-      document.title = `${inboxBadge}Library · ${base}`;
       return;
     }
     const activeModule = modules.find((m) => m.id === nav);
@@ -312,10 +306,10 @@ export function App() {
       const projectId = ui.selectedProjectId;
       switch (event) {
         case 'app:openSettings':
-          ui.setNav(ui.nav === 'settings' ? 'projects' : 'settings');
+          ui.setNav(ui.nav === 'settings' ? 'home' : 'settings');
           return;
         case 'app:toggleInbox':
-          ui.setNav(ui.nav === 'inbox' ? 'projects' : 'inbox');
+          ui.setNav(ui.nav === 'inbox' ? 'home' : 'inbox');
           return;
         case 'app:openPalette':
           ui.setPaletteOpen(true);
@@ -374,8 +368,7 @@ export function App() {
     });
     const offFocusSession = window.cc.app.onFocusSession((sessionId, projectId) => {
       const ui = useUi.getState();
-      ui.setNav('projects');
-      ui.selectProject(projectId);
+      ui.enterProjectFocus(projectId);
       // restoreTerminal un-hides a headless session (e.g. a scheduled run)
       // AND selects it. selectTab alone silently no-ops for a headless id, so
       // the tray "focus session" click would otherwise focus nothing. Safe for
@@ -531,33 +524,21 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // In a project's workspace modes (terminals/explorer/…), column 2 (the
-  // ListPane session list) is redundant with the Workspace's own tab bar, so we
-  // drop it and reclaim its column. This applies both to a per-project WINDOW
-  // (scopedProject) and to the MAIN WINDOW drilled into a project (focusedProject)
-  // — the project rail + tab bar already cover navigation, so the middle session
-  // list is just noise. The global Agents List view also owns its agent list, so
-  // its monitor expands into column 2 instead of repeating the quick-agent list.
-  // The Inbox view still needs column 2 (its entry list lives there), so keep it
-  // when nav==='inbox'.
-  const hideListPane = shouldHideListPane(
-    nav,
-    agentsBoardView,
-    !!scopedProject || !!focusedProject
-  );
+  // The shell is always nav + one full content track. Settings/Extensions
+  // swap the left rail; every destination's panel owns any inner split.
+  const shellLayout = resolveShellLayout(nav, !!scopedProject);
 
   return (
     <div
-      className={`app-shell has-statusbar nav-${nav} ${hideListPane ? 'scoped-no-list' : ''} ${
+      className={`app-shell nav-${nav} shell-rail-${shellLayout.rail} ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''} scoped-no-list ${
         updateBannerVisible ? 'has-update-banner' : ''
       }`}
+      data-platform={shellChrome.platform}
+      data-fullscreen={shellChrome.isFullScreen}
     >
       <div className="titlebar">
         <span className="titlebar-title">
           Zana
-          <span className="titlebar-beta">beta</span>
-          {import.meta.env.DEV && <span className="titlebar-version">DEV</span>}
-          {appVersion && <span className="titlebar-version">v{appVersion}</span>}
         </span>
         <button
           type="button"
@@ -594,67 +575,47 @@ export function App() {
           `has-update-banner` class above adds that row). Renders null when no
           newer release / dismissed, so it costs nothing when up to date. */}
       <UpdateBanner />
-      {/* Left rail. Three cases, same purpose-built ProjectScopedNav for the
-          first two (Filtered Inbox + workspace modes promoted to rail entries):
-          - per-project window  → 'window' variant (hard URL-locked, no back)
-          - main window, drilled into a project → 'focus' variant (back button +
-            slim global footer so nothing is trapped)
-          - main window, project home → the full cross-project Sidebar */}
-      {scopedProject ? (
+      {/* A dedicated project window stays hard-scoped. The main window keeps its
+          unified global rail even while a project workspace is open, so users can
+          switch projects and inspect live sessions without first backing out. */}
+      {sidebarCollapsed ? null : scopedProject ? (
         <ProjectScopedNav project={scopedProject} variant="window" />
-      ) : focusedProject ? (
-        <ProjectScopedNav
-          project={focusedProject}
-          variant="focus"
-          onBack={() => {
-            const ui = useUi.getState();
-            ui.exitProjectFocus();
-            ui.selectProject(null);
-          }}
-        />
+      ) : shellLayout.rail === 'settings' ? (
+        <SettingsPane />
+      ) : shellLayout.rail === 'extensions' ? (
+        <ExtensionsPane />
       ) : (
         <Sidebar />
       )}
-      {!hideListPane && <ListPane />}
-      {/* Column 3 under Projects: the opened project's Workspace when a project
-          is focused, else the cross-project Agents board (the default home).
-          Workspace stays mounted (just hidden) so its TerminalSurface anchor is
-          available the instant a project is opened. */}
-      <div
-        className={`main-slot ${nav === 'projects' && focusedProjectId ? 'show' : 'hide'}`}
-      >
-        <Workspace />
-      </div>
-      {/* The single source of truth for live terminals. Mounted once, for every
-          nav, so its xterm instances (and scrollback) are never disposed; it
-          portals its grid into the Workspace's column-3 anchor under 'projects',
-          and parks in its own hidden host node otherwise. Must stay OUTSIDE the
-          conditionally-rendered views above so it isn't unmounted on nav change. */}
-      <TerminalSurface />
-      {/* The cross-project Agents Kanban owns column 3 both on the Projects home
-          (no project focused) AND under the dedicated Agents nav — same board,
-          same lanes. Clicking a card graduates that agent into Projects. In a
-          per-project window the Agents view is reached via the scoped rail's
-          Agents item, which sets workspaceMode='agents' so the Workspace renders
-          its own per-project ProjectAgentsBoard — this global board stays for the
-          main window only. */}
-      {((nav === 'projects' && !focusedProjectId) || nav === 'agents') && <GlobalAgentsBoard />}
-      {nav === 'home' && <HomePanel />}
-      {nav === 'followups' && <FollowUpsPanel />}
-      {nav === 'inbox' && <InboxView />}
-      {nav === 'suggestions' && suggestionsEnabled && <SuggestionsView />}
-      {nav === 'scheduler' && <SchedulerPanel />}
-      {nav === 'personas' && <PersonasPanel />}
-      {nav === 'squads' && <SquadsPanel />}
-      {nav === 'usage' && <UsagePanel />}
-      {nav === 'extensions' && <ExtensionsPanel />}
-      {nav === 'library' && (
-        <Suspense fallback={<div className="workbench-status">Loading library…</div>}>
-          <LibraryPanel />
-        </Suspense>
+      {/* One persistent landmark. display:contents on .shell-main so route
+          panels still participate in the app-shell grid. Workspace stays
+          mounted (CSS-hidden) so the terminal portal always has its park
+          anchor. TerminalSurface must stay mounted across nav — this landmark
+          already does that; it must not sit beside the shell as a host node. */}
+      <main className="shell-main">
+        {nav === 'home' && <HomePanel />}
+        {nav === 'agents' && <GlobalAgentsBoard />}
+        {nav === 'followups' && <FollowUpsPanel />}
+        {nav === 'inbox' && <InboxView />}
+        {nav === 'suggestions' && suggestionsEnabled && <SuggestionsView />}
+        {nav === 'scheduler' && <SchedulerPanel />}
+        {nav === 'extensions' && <ExtensionsPanel />}
+        {nav === 'settings' && <SettingsPanel />}
+        <ModulePanelHost />
+        <div
+          className={`workspace-slot ${nav === 'projects' && focusedProjectId ? 'show' : 'hide'}`}
+        >
+          <Workspace />
+        </div>
+        <TerminalSurface />
+      </main>
+      {/* The global Agents sidebar can open the shared launcher while no project
+          workspace is mounted. Keep one host here for every non-project route;
+          Workspace continues to own project-scoped launches. */}
+      {launcherOpen && (nav !== 'projects' || !focusedProjectId) && (
+        <AgentLauncher onClose={() => useUi.getState().setLauncherOpen(false)} />
       )}
-      {nav === 'settings' && <SettingsPanel />}
-      <ModulePanelHost />
+      <SidebarTriggerOverlay />
       {/* Headless, always-mounted module backgrounds. Runtime activation results
           retain valid background components, which mount here outside nav-conditional
           views so long-lived work keeps running when a panel is not selected. */}
@@ -674,9 +635,6 @@ export function App() {
       <HostDialogs />
       <Toaster />
       <ExtensionConsent />
-      {/* Always-on status strip pinned to the bottom row of the shell grid
-          (see `.app-shell.has-statusbar`). Spans all columns. */}
-      <StatusBar />
     </div>
   );
 }

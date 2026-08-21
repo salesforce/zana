@@ -85,7 +85,7 @@ export function Walkthrough({ onClose }: Props) {
   // over the real surface the user is being pointed at.
   useEffect(() => {
     if (step.id === 'agent') setNav('agents');
-    else if (step.id === 'project') setNav('projects');
+    else if (step.id === 'project') setNav('home');
     else if (step.id === 'schedule') setNav('scheduler');
   }, [step.id, setNav]);
 

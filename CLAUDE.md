@@ -22,6 +22,11 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
 8. **New or modified code needs at least 80% test coverage.** Cover meaningful branches and failure paths, not only line count. For Electron main/renderer seams, unit coverage alone is insufficient: add or update the relevant built-Electron E2E test. Before completion, run the focused tests and the production-boundary E2E required by any affected coupling note.
 9. **PR monitoring means diagnose and repair, not only report.** After pushing a PR, watch its checks until complete. On failure, fetch job logs with `gh run view <run-id> --job <job-id> --log-failed`; for external checks, query `gh api repos/<owner>/<repo>/commits/<sha>/check-runs` then `gh api repos/<owner>/<repo>/check-runs/<id>/annotations` to get file, line, rule, and remediation. Fix actionable failures, run focused local verification, push, and repeat until every required check passes. Do not stop at an external failure summary when annotations are available.
 
+## Product Design Rules
+
+- **Choose a layout per feature; do not expose the choice as a user preference.** A new panel is either a centered reading/configuration surface or a full-width workbench. Make that decision from the feature's task and information density, encode it in the panel's layout classes, and do not add a global "Centered / Full width" control to Settings.
+- **Keep catalogues distinct by ownership.** ZCC-installed extensions are presented as **Plugins** in the ZCC Plugins hub. Claude Code's `~/.claude/plugins` catalogue is an implementation-specific compatibility surface and must not appear as a competing Settings destination unless a user explicitly asks for it.
+
 ## Coupling notes (don't regress these)
 
 - **Child-process integrations must be verified at the real Electron production
@@ -389,9 +394,9 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   Overseer rail toggle only flips `off`↔`on`; the full `off/dryRun/on` range
   stays in Settings, so keep the store field a tri-state, not a boolean.
 
-- **Zana is a FULL DISK EXTENSION (`extensions/zana/`, main + renderer) whose data
-  flows over MCP — no more native better-sqlite3.** The whole Zana feature is now
-  ONE disk extension: `entry.main` (`main.mjs`, from `src/main-entry.ts` →
+- **Zana is a FULL DISK PLUGIN (`plugins/zana/`, main + renderer) whose data
+  flows through the host MCP pool.** The whole Zana feature is now
+  ONE first-party plugin: `entry.main` (`main.mjs`, from `src/main-entry.ts` →
   `src/main/zana-main.ts`) and `entry.renderer` (`renderer.js`, from
   `src/renderer-entry.tsx`), dual-built by `vite.config.ts` (`BUILD_TARGET`
   main/renderer). It contributes a **project-tab-only** surface
@@ -519,5 +524,6 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   `isClaudeProfile` triplet — so keep the two `-suffix` claude profile literals on
   SEPARATE lines in provider code (a one-line pair trips the dedup guard).
 
-Zana is a full disk extension under `extensions/zana/`; its data flows through
-the host MCP pool rather than native SQLite.
+Zana is a first-party plugin under `plugins/zana/`; its data flows through
+the host MCP pool rather than native SQLite. Plugins are full-trust in-process
+after install and never receive host-daemon tokens.

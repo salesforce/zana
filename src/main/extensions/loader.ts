@@ -14,6 +14,7 @@
  */
 
 import type { MainModule } from '@zana-ai/zcc-extension-sdk/main';
+import { pathToFileURL } from 'node:url';
 import { discoverExtensions, toEntry } from './discovery.js';
 import type { ExtensionEntry } from '../../shared/types.js';
 import type { DiskExtensionSpec } from './process-host.js';
@@ -91,28 +92,36 @@ export async function loadExtensions(opts: LoadOptions = {}): Promise<LoadedExte
   const activeMainIds = opts.activeMainIds ?? new Set<string>();
 
   const discovered = await discoverExtensions(log, opts.reservedIds);
-  const diskSpecs: DiskExtensionSpec[] = [];
+  const modules: MainModule[] = [];
   const entries: ExtensionEntry[] = [];
 
   for (const ext of discovered) {
     const entry = toEntry(ext);
-
-    if (ext.mainEntryPath && ext.loaded) {
+    // Install = full trust. Consent grants are not part of the plugin model.
+    entry.consented = true;
+    entry.needsConsent = null;
+    if (ext.mainEntryPath && ext.loaded && ext.enabled) {
       if (reDiscover) {
-        // A main module is only active if its child is live right now.
-        entry.mainActive = activeMainIds.has(ext.id);
-      } else if (ext.consented) {
-        // Boot path: only a CONSENTED ext is spawned. Not active until the child
-        // reports ready (caller re-stamps from the live set). An unconsented /
-        // widened ext is skipped here — its main never runs until approval.
-        diskSpecs.push({ moduleId: ext.id, entryPath: ext.mainEntryPath });
-        entry.mainActive = false;
+        entry.mainActive = activeMainIds.has(ext.id) || modules.some((m) => m.id === ext.id);
       } else {
-        entry.mainActive = false;
+        try {
+          const imported = (await import(pathToFileURL(ext.mainEntryPath).href)) as {
+            default?: MainModule;
+          };
+          if (imported.default && typeof imported.default.setup === 'function') {
+            modules.push(imported.default);
+            entry.mainActive = true;
+          }
+        } catch (err) {
+          log(`main-load-failed: ${ext.id}`, err);
+          entry.error = 'main-load-failed';
+          entry.loaded = false;
+          entry.mainActive = false;
+        }
       }
     }
     entries.push(entry);
   }
 
-  return { entries, modules: [], diskSpecs };
+  return { entries, modules, diskSpecs: [] };
 }

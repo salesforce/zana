@@ -22,8 +22,8 @@ import { TerminalView } from './TerminalView';
 // node that React always owns, and move THAT node between anchors imperatively
 // with appendChild. A DOM move leaves the portal container unchanged, so React
 // never remounts — the one-xterm-per-session invariant (and its scrollback)
-// holds. Under every other nav the node parks in its own hidden host (terminals
-// display:none, scrollback preserved).
+// holds. When no modal/monitor is open the node parks on the always-mounted
+// Workspace terminal-host (CSS-hidden with the workspace-slot).
 //
 // Pane placement (`area`) is one of:
 //   'a' — primary (always present when any pane is shown)
@@ -35,9 +35,9 @@ type Area = 'a' | 'b' | 'c' | 'd';
 
 const SLOT_AREA: Array<Area> = ['b', 'c', 'd'];
 
-// DOM id of the Workspace's column-3 portal anchor. The surface portals its
-// grid here under the Projects nav; under any other nav it stays in its hidden
-// host node.
+// DOM id of the Workspace's portal anchor. The surface parks its grid here
+// whenever no modal or List-monitor anchor is active. Workspace stays mounted
+// (CSS-hidden) so this node is always in the tree.
 export const PROJECTS_TERMINAL_ANCHOR_ID = 'cc-terminal-anchor-projects';
 
 // DOM id of the agent-inspector modal's terminal anchor. When the modal is open
@@ -68,10 +68,6 @@ export function TerminalSurface() {
   const agentModal = useUi((s) => s.agentModal);
   const agentMonitor = useUi((s) => s.agentMonitor);
 
-  // Fallback host: when no view anchor exists yet (first paint) or the active
-  // nav isn't a terminal-hosting view, the grid lives here (hidden via CSS).
-  const hostRef = useRef<HTMLDivElement>(null);
-
   // The single, persistent portal node. React renders the grid into THIS node
   // for the surface's whole lifetime; we only ever move the node between anchors
   // (never swap createPortal's container), so the xterm subtree is never
@@ -87,11 +83,11 @@ export function TerminalSurface() {
   // destination anchor (which mounts in the same commit) is present. Re-resolve
   // when nav OR the modal/monitor selection changes. Precedence: the
   // agent-inspector modal (when open) outranks the inline monitor, which
-  // outranks the Projects nav, which outranks the hidden fallback host. The
-  // monitor anchor only exists in the DOM while the Agents List view is shown,
-  // so `getElementById` returning null naturally falls through to the next tier.
-  // appendChild is a no-op when the node is already the anchor's child, so a
-  // re-render that doesn't change the target won't thrash the DOM.
+  // outranks the always-mounted Workspace park. The monitor anchor only exists
+  // in the DOM while the Agents List view is shown, so `getElementById`
+  // returning null naturally falls through to the next tier. appendChild is a
+  // no-op when the node is already the anchor's child, so a re-render that
+  // doesn't change the target won't thrash the DOM.
   const modalSessionId = agentModal?.sessionId ?? null;
   const monitorSessionId = agentMonitor?.sessionId ?? null;
   useLayoutEffect(() => {
@@ -107,10 +103,9 @@ export function TerminalSurface() {
     const anchor =
       modalAnchor ??
       monitorAnchor ??
-      (nav === 'projects' ? document.getElementById(PROJECTS_TERMINAL_ANCHOR_ID) : null) ??
-      hostRef.current;
+      document.getElementById(PROJECTS_TERMINAL_ANCHOR_ID);
     if (anchor && node.parentElement !== anchor) anchor.appendChild(node);
-  }, [nav, modalSessionId, monitorSessionId]);
+  }, [modalSessionId, monitorSessionId]);
 
   // Build a tab-id → area map for the layout. The agent modal wins: when open,
   // it forces a single pane showing ONLY its session (so the live xterm appears
@@ -176,11 +171,8 @@ export function TerminalSurface() {
   );
 
   // Always portal into the SAME persistent node; the node itself is what moves
-  // between anchors (see the layout effect above). The node starts life parked
-  // in the hidden fallback host until the first layout pass relocates it.
-  return (
-    <div ref={hostRef} className="terminal-surface-host">
-      {createPortal(surface, portalNodeRef.current)}
-    </div>
-  );
+  // between anchors (see the layout effect above). First paint parks on the
+  // Workspace terminal-host; the layout effect relocates it if a modal/monitor
+  // outranks that park.
+  return createPortal(surface, portalNodeRef.current);
 }

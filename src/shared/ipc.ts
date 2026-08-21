@@ -319,6 +319,11 @@ export const IPC = {
     reveal: 'plugins:reveal',
     onChanged: 'plugins:onChanged'
   },
+  /** Server-owned ZCC plugin renderer apps (distinct from Claude plugins). */
+  pluginApps: {
+    list: 'pluginApps:list',
+    onChanged: 'pluginApps:onChanged'
+  },
   /**
    * Runtime extensions under `~/.zcc/extensions/<id>/`. Mirrors the
    * `plugins:` shape. `readRendererEntry` returns the extension's renderer

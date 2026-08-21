@@ -14,7 +14,7 @@ import {
   Square
 } from 'lucide-react';
 import type { ScheduledTask, Project, ScheduleRun } from '@shared/types';
-import { useData, useUi } from '../../store';
+import { useData } from '../../store';
 import { KpiCard } from './KpiCard';
 import {
   formatRelative,
@@ -38,6 +38,8 @@ interface SchedulerOverviewProps {
   /** Hide the cross-project "By project" breakdown — redundant when the
    *  overview is already scoped to a single project (the per-project tab). */
   hideByProject?: boolean;
+  /** Open a project's own Scheduler tab from the "By project" breakdown. */
+  onOpenProject?: (projectId: string) => void;
 }
 
 export function SchedulerOverview({
@@ -51,7 +53,8 @@ export function SchedulerOverview({
   onToggle,
   onRunNow,
   onStopLive,
-  hideByProject = false
+  hideByProject = false,
+  onOpenProject
 }: SchedulerOverviewProps) {
   const terminalsByProject = useData((s) => s.terminals);
 
@@ -195,8 +198,8 @@ export function SchedulerOverview({
   const nextFire = upcoming[0]?.at ?? null;
 
   // Every schedule, armed ones first (by soonest fire), then paused ones — so
-  // the rail's "Overview" answers "what's on?" at a glance and lets you flip any
-  // schedule on/off inline without drilling into its group/project scope.
+  // Overview answers "what's on?" at a glance and lets you flip any schedule
+  // on/off inline.
   const allSchedules = useMemo(() => {
     const nextAt = (t: ScheduledTask) => {
       const ts = t.status?.nextRunAt ? Date.parse(t.status.nextRunAt) : NaN;
@@ -555,17 +558,18 @@ export function SchedulerOverview({
                   className="project-dot"
                   style={s.project.color ? { background: s.project.color } : undefined}
                 />
-                <button
-                  type="button"
-                  className="overview-project-name"
-                  onClick={() => {
-                    useUi.getState().selectProject(s.project.id);
-                    useUi.getState().setSchedulerTab('project');
-                  }}
-                  title="Open project schedules"
-                >
-                  {s.project.name}
-                </button>
+                {onOpenProject ? (
+                  <button
+                    type="button"
+                    className="overview-project-name"
+                    onClick={() => onOpenProject(s.project.id)}
+                    title="Open project schedules"
+                  >
+                    {s.project.name}
+                  </button>
+                ) : (
+                  <span className="overview-project-name">{s.project.name}</span>
+                )}
                 <span className="overview-project-count">{s.total}</span>
                 <span className="overview-project-split">
                   {s.enabled} on · {s.disabled} off

@@ -21,19 +21,6 @@ import { loadSeededEntries, requireEntry } from './seeded-manifests.js';
  * transform (never a bare `*`) is asserted directly.
  */
 describe('W1-8 consent-scopelines — seeded built artifacts', () => {
-  it('consensus renders its mcp scope in plain language (post file-drop→MCP migration)', async () => {
-    // Consensus migrated its re-analysis record-back channel from a file-drop
-    // (fs:read on ~/.zana/consensus-inbox) to zana MCP artifacts (commit
-    // 1e9ea2f5b), so the manifest now declares `mcp`/mcpAllowlist:["zana"] and
-    // NO fs scope. The consent copy must track that: an integration-server line,
-    // and NO "Folders it may access" line.
-    const entries = await loadSeededEntries();
-    const lines = scopeLines(requireEntry(entries, 'consensus'));
-    expect(lines).toContain('Integration servers it may use: zana');
-    expect(lines.some((l) => l.startsWith('Folders it may access:'))).toBe(false);
-    expect(lines).toMatchSnapshot();
-  });
-
   it('zana scope lines are stable', async () => {
     const entries = await loadSeededEntries();
     expect(scopeLines(requireEntry(entries, 'zana'))).toMatchSnapshot();

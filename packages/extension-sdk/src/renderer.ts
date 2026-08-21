@@ -681,9 +681,8 @@ export interface AppModule {
   /** Window-title suffix when active; defaults to `title`. */
   titleLabel?: string;
   /**
-   * Where the module's nav entry + panel live in the shell:
-   *   - `'sidebar'` (default) — its own entry under the sidebar "Extensions"
-   *     group; selecting it mounts {@link AppModule.panel} as a full view.
+   * Where the module's panel lives in the shell:
+   *   - `'sidebar'` (default) — a global panel launched from the Extensions hub.
    *   - `'settings'` — the module is a Settings sub-section instead: it gets a
    *     row in the Settings list (not the sidebar), and its `panel` mounts
    *     inside the Settings content area. Use for configuration-style modules
@@ -695,8 +694,8 @@ export interface AppModule {
   /**
    * Opt-in to ALSO mounting {@link AppModule.panel} as a PER-PROJECT TAB,
    * alongside core's built-in project tabs (Terminals / Explorer / Tickets / …),
-   * IN ADDITION to the module's top-level sidebar entry. The panel surfaces in
-   * two scopes: the global sidebar entry ({@link ModuleHost.getScopedProjectId}
+   * IN ADDITION to the module's global Extensions-hub launch. The panel surfaces
+   * in two scopes: the global panel ({@link ModuleHost.getScopedProjectId}
    * is `null`) and the per-project tab (core mounts the panel with a host whose
    * {@link ModuleHost.getScopedProjectId} returns that project's id). A
    * project-aware panel reads that to filter to one project; a panel that
@@ -712,9 +711,8 @@ export interface AppModule {
    * code-splitting can export a lazy component here themselves.
    *
    * **Optional** as of the Phase 2 contract: a module may contribute only
-   * `commands` and/or a `navBadge` without a panel. When omitted, the module's
-   * nav entry has no view to mount — core decides how to present that (e.g.
-   * hide the nav entry, or render a placeholder).
+   * `commands` and/or a `navBadge` without a panel. When omitted, the module
+   * remains available through its commands/badge but has no global panel.
    */
   panel?: ComponentType<{ host: ModuleHost }>;
   /**

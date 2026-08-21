@@ -12,17 +12,9 @@ import { loadSeededEntries, requireEntry } from './seeded-manifests.js';
  * extensions that must carry it — so a future edit that touches only the source
  * manifest (leaving the artifact stale, the exact W1-2 bug) reds here.
  *
- * Ground truth at base cc824a6: consensus @ v0.2.0 carries `mcp` +
- * `mcpAllowlist:["zana"]`; zana carries `mcp` + `mcpAllowlist:["zana"]`.
+ * Ground truth: zana carries `mcp` + `mcpAllowlist:["zana"]`.
  */
 describe('W1-8 mcp-on-artifact drift guard', () => {
-  it('consensus artifact carries mcp + mcpAllowlist=["zana"] (W1-2 payoff)', async () => {
-    const entries = await loadSeededEntries();
-    const consensus = requireEntry(entries, 'consensus');
-    expect(consensus.manifest?.permissions).toContain('mcp');
-    expect(consensus.manifest?.permissionScopes?.mcpAllowlist).toEqual(['zana']);
-  });
-
   it('zana artifact carries mcp + mcpAllowlist=["zana"]', async () => {
     const entries = await loadSeededEntries();
     const zana = requireEntry(entries, 'zana');

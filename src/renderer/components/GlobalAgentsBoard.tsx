@@ -135,13 +135,13 @@ export function GlobalAgentsBoard() {
   };
 
   return (
-    <main className="agents-board agents-board--global">
-      <div className="agents-board-header">
-        <h3>Agents</h3>
+    <div className="agents-board agents-board--global panel-body--full">
+      <header className="agents-board-header">
+        <h1>Agents</h1>
+        <div className="agents-board-header-actions">
         <span className="agents-board-count">
           {liveCount} live{projectsWithAgents > 0 ? ` · ${projectsWithAgents} ${projectsWithAgents === 1 ? 'project' : 'projects'}` : ''}
         </span>
-        <span className="grow" />
         {/* Show the toggle whenever there's something to switch between OR we're
             already in list view — otherwise closing the last agent while in list
             view would strip the toggle and trap the user there. */}
@@ -191,7 +191,8 @@ export function GlobalAgentsBoard() {
           <Plus size={14} />
           New agent
         </button>
-      </div>
+        </div>
+      </header>
 
       {/* Live Team cohorts — one chip per launch, with a per-team Close scoped to
           that cohort (same reclaimable filter as the board buttons: skips
@@ -278,6 +279,6 @@ export function GlobalAgentsBoard() {
           onLaunched={onLauncherLaunched}
         />
       )}
-    </main>
+    </div>
   );
 }

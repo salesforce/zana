@@ -4,13 +4,10 @@ import {
   Bot,
   TerminalSquare,
   FolderTree,
-  Library,
   Clock,
   Target,
   MessageCircleQuestion,
   Activity,
-  PanelLeftClose,
-  PanelLeftOpen,
   ChevronLeft,
   Settings,
   AppWindow,
@@ -32,6 +29,7 @@ import {
 } from '../store';
 import { useProjectTabModules } from '../modules';
 import { resolveIcon } from '../util/resolveIcon';
+import { resolveProjectTabModule } from '../util/libraryPlugin';
 import { AgentTray } from './AgentTray';
 
 /**
@@ -42,7 +40,7 @@ import { AgentTray } from './AgentTray';
  * modes (which are horizontal tabs in the main window's Workspace) to
  * first-class rail entries:
  *
- *   Filtered Inbox · Agents · Terminals · Explorer · Library · Feed · Goals · Follow-ups
+ *   Filtered Inbox · Agents · Terminals · Explorer · Feed · Goals · Follow-ups
  *
  * Inbox switches `nav`; the workspace modes set `nav='projects'` + the
  * project's `workspaceMode`, which the Workspace already renders from. Reuses
@@ -71,7 +69,6 @@ const MODE_ITEMS: ModeItem[] = [
   { mode: 'agents', label: 'Agents', icon: Bot },
   { mode: 'terminals', label: 'Terminals', icon: TerminalSquare },
   { mode: 'explorer', label: 'Explorer', icon: FolderTree },
-  { mode: 'library', label: 'Library', icon: Library },
   { mode: 'scheduler', label: 'Scheduler', icon: Clock },
   { mode: 'goals', label: 'Goals', icon: Target },
   { mode: 'followups', label: 'Follow-ups', icon: MessageCircleQuestion }
@@ -102,10 +99,10 @@ export function ProjectScopedNav({
   // filtered to this project — the useSuggestions slice is already scoped by the
   // window (init fetch + push filter keyed on getScopedProjectId).
   const suggestionsEnabled = useData((s) => s.suggestionsEnabled);
-  // Reuse the global rail's collapse flag + `.sidebar.collapsed` styles, so the
-  // scoped rail shrinks to an icon-only column exactly like the main sidebar.
+  // The global shell owns collapse state and the one persistent trigger. This
+  // rail only uses the value to shorten accessible names while it is animating
+  // out of the shell.
   const collapsed = useUi((s) => s.sidebarCollapsed);
-  const toggleSidebar = useUi((s) => s.toggleSidebar);
   // Terminals is the default when the project has no explicit mode yet —
   // mirror Workspace's `?? 'terminals'` so the rail's active state agrees.
   const mode = useUi((s) => s.workspaceMode[project.id]) ?? 'terminals';
@@ -147,11 +144,7 @@ export function ProjectScopedNav({
   };
 
   return (
-    <aside
-      className={`sidebar project-scoped-nav ${isFocus ? 'project-focused-nav' : ''} ${
-        collapsed ? 'collapsed' : ''
-      }`}
-    >
+    <aside className={`sidebar project-scoped-nav ${isFocus ? 'project-focused-nav' : ''}`}>
       {/* The focused project, in the brand slot — sits at the very top of the
           rail (above the "← Projects" back button) so the rail leads with WHERE
           you are, then offers the way out, matching the global Sidebar's
@@ -165,18 +158,12 @@ export function ProjectScopedNav({
         >
           {project.name.trim().slice(0, 2).toUpperCase()}
         </div>
-        <div className="brand-name" title={project.path}>
-          {project.name}
+        <div className="brand-copy">
+          <div className="brand-name" title={project.path}>
+            {project.name}
+          </div>
+          <div className="brand-subtitle">Project workspace</div>
         </div>
-        <button
-          className="sidebar-toggle"
-          onClick={toggleSidebar}
-          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          aria-pressed={collapsed}
-        >
-          {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-        </button>
       </div>
 
       {/* "← Projects" back button — focus variant only, directly under the
@@ -198,116 +185,127 @@ export function ProjectScopedNav({
         </button>
       )}
 
-      <div>
-        <button
-          className={`nav-item ${nav === 'inbox' ? 'active' : ''}`}
-          onClick={() => setNav('inbox')}
-          aria-current={nav === 'inbox' ? 'page' : undefined}
-          title="Inbox for this project"
-        >
-          <span className="nav-item-icon">
-            <Inbox size={16} />
-          </span>
-          <span className="nav-item-label">Inbox</span>
-          {unreadInbox > 0 && (
-            <span className="nav-badge" aria-label={`${unreadInbox} unread`} title={`${unreadInbox} unread`}>
-              {unreadInbox > 99 ? '99+' : unreadInbox}
-            </span>
-          )}
-        </button>
-
-        {suggestionsEnabled && (
+      <nav
+        className="sidebar-nav"
+        aria-label={`${project.name} navigation`}
+        data-testid="sidebar-navigation"
+      >
+        <div className="nav-section" role="group" aria-label="Project">
+          <div className="nav-section-label">Project</div>
           <button
-            className={`nav-item ${nav === 'suggestions' ? 'active' : ''}`}
-            onClick={() => setNav('suggestions')}
-            aria-current={nav === 'suggestions' ? 'page' : undefined}
-            title="Next Steps for this project"
+            className={`nav-item ${nav === 'inbox' ? 'active' : ''}`}
+            onClick={() => setNav('inbox')}
+            aria-current={nav === 'inbox' ? 'page' : undefined}
+            aria-label={collapsed ? 'Inbox' : undefined}
+            title="Inbox for this project"
           >
             <span className="nav-item-icon">
-              <Sparkles size={16} />
+              <Inbox size={16} />
             </span>
-            <span className="nav-item-label">Next Steps</span>
+            <span className="nav-item-label">Inbox</span>
+            {unreadInbox > 0 && (
+              <span className="nav-badge" aria-label={`${unreadInbox} unread`} title={`${unreadInbox} unread`}>
+                {unreadInbox > 99 ? '99+' : unreadInbox}
+              </span>
+            )}
           </button>
-        )}
 
-        <div className="nav-divider" role="separator" />
-
-        {modeItems.map((item) => {
-          const Icon = item.icon;
-          const active = onProjects && mode === item.mode;
-          const agentsActive = item.mode === 'agents' && agentCounts.active > 0;
-          const agentsBlocked = item.mode === 'agents' && agentCounts.blocked > 0;
-          const goalsActive = item.mode === 'goals' && activeGoals > 0;
-          const followupsOpen = item.mode === 'followups' && openFollowUps > 0;
-          const schedulerCount = item.mode === 'scheduler' && scheduleCount > 0;
-          const terminalsRunning = item.mode === 'terminals' && runningTerminals > 0;
-          return (
+          {suggestionsEnabled && (
             <button
-              key={item.mode}
-              className={`nav-item ${active ? 'active' : ''}`}
-              onClick={() => selectMode(item.mode)}
-              aria-current={active ? 'page' : undefined}
-              title={item.label}
+              className={`nav-item ${nav === 'suggestions' ? 'active' : ''}`}
+              onClick={() => setNav('suggestions')}
+              aria-current={nav === 'suggestions' ? 'page' : undefined}
+              aria-label={collapsed ? 'Next Steps' : undefined}
+              title="Next Steps for this project"
             >
               <span className="nav-item-icon">
-                <Icon size={16} />
-                {(agentsActive || goalsActive || followupsOpen || terminalsRunning) && (
-                  <span className="nav-running-dot" aria-hidden="true" />
-                )}
+                <Sparkles size={16} />
               </span>
-              <span className="nav-item-label">{item.label}</span>
-              {agentsActive && (
-                <span
-                  className={`nav-badge ${agentsBlocked ? 'nav-badge--blocked' : 'nav-badge--running'}`}
-                  aria-label={`${agentCounts.active} active`}
-                  title={
-                    agentsBlocked
-                      ? `${agentCounts.active} active · ${agentCounts.blocked} need you`
-                      : `${agentCounts.active} active`
-                  }
-                >
-                  {agentCounts.active > 99 ? '99+' : agentCounts.active}
-                </span>
-              )}
-              {goalsActive && (
-                <span
-                  className="nav-badge nav-badge--running"
-                  aria-label={`${activeGoals} active goal${activeGoals === 1 ? '' : 's'}`}
-                  title={`${activeGoals} active goal${activeGoals === 1 ? '' : 's'}`}
-                >
-                  {activeGoals > 99 ? '99+' : activeGoals}
-                </span>
-              )}
-              {followupsOpen && (
-                <span
-                  className="nav-badge nav-badge--running"
-                  aria-label={`${openFollowUps} open follow-up${openFollowUps === 1 ? '' : 's'}`}
-                  title={`${openFollowUps} open follow-up${openFollowUps === 1 ? '' : 's'}`}
-                >
-                  {openFollowUps > 99 ? '99+' : openFollowUps}
-                </span>
-              )}
-              {schedulerCount && (
-                <span
-                  className="nav-badge"
-                  aria-label={`${scheduleCount} schedule${scheduleCount === 1 ? '' : 's'}`}
-                  title={`${scheduleCount} schedule${scheduleCount === 1 ? '' : 's'} spawning in this project`}
-                >
-                  {scheduleCount > 99 ? '99+' : scheduleCount}
-                </span>
-              )}
-              {terminalsRunning && (
-                <span
-                  className="nav-badge nav-badge--running"
-                  aria-label={`${runningTerminals} terminal${runningTerminals === 1 ? '' : 's'} running`}
-                  title={`${runningTerminals} terminal${runningTerminals === 1 ? '' : 's'} running`}
-                >
-                  {runningTerminals > 99 ? '99+' : runningTerminals}
-                </span>
-              )}
+              <span className="nav-item-label">Next Steps</span>
             </button>
-          );
-        })}
+          )}
+        </div>
+
+        <div className="nav-section nav-section--separated" role="group" aria-label="Workspace">
+          <div className="nav-section-label">Workspace</div>
+          {modeItems.map((item) => {
+            const Icon = item.icon;
+            const active = onProjects && mode === item.mode;
+            const agentsActive = item.mode === 'agents' && agentCounts.active > 0;
+            const agentsBlocked = item.mode === 'agents' && agentCounts.blocked > 0;
+            const goalsActive = item.mode === 'goals' && activeGoals > 0;
+            const followupsOpen = item.mode === 'followups' && openFollowUps > 0;
+            const schedulerCount = item.mode === 'scheduler' && scheduleCount > 0;
+            const terminalsRunning = item.mode === 'terminals' && runningTerminals > 0;
+            return (
+              <button
+                key={item.mode}
+                className={`nav-item ${active ? 'active' : ''}`}
+                onClick={() => selectMode(item.mode)}
+                aria-current={active ? 'page' : undefined}
+                aria-label={collapsed ? item.label : undefined}
+                title={item.label}
+              >
+                <span className="nav-item-icon">
+                  <Icon size={16} />
+                  {(agentsActive || goalsActive || followupsOpen || terminalsRunning) && (
+                    <span className="nav-running-dot" aria-hidden="true" />
+                  )}
+                </span>
+                <span className="nav-item-label">{item.label}</span>
+                {agentsActive && (
+                  <span
+                    className={`nav-badge ${agentsBlocked ? 'nav-badge--blocked' : 'nav-badge--running'}`}
+                    aria-label={`${agentCounts.active} active`}
+                    title={
+                      agentsBlocked
+                        ? `${agentCounts.active} active · ${agentCounts.blocked} need you`
+                        : `${agentCounts.active} active`
+                    }
+                  >
+                    {agentCounts.active > 99 ? '99+' : agentCounts.active}
+                  </span>
+                )}
+                {goalsActive && (
+                  <span
+                    className="nav-badge nav-badge--running"
+                    aria-label={`${activeGoals} active goal${activeGoals === 1 ? '' : 's'}`}
+                    title={`${activeGoals} active goal${activeGoals === 1 ? '' : 's'}`}
+                  >
+                    {activeGoals > 99 ? '99+' : activeGoals}
+                  </span>
+                )}
+                {followupsOpen && (
+                  <span
+                    className="nav-badge nav-badge--running"
+                    aria-label={`${openFollowUps} open follow-up${openFollowUps === 1 ? '' : 's'}`}
+                    title={`${openFollowUps} open follow-up${openFollowUps === 1 ? '' : 's'}`}
+                  >
+                    {openFollowUps > 99 ? '99+' : openFollowUps}
+                  </span>
+                )}
+                {schedulerCount && (
+                  <span
+                    className="nav-badge"
+                    aria-label={`${scheduleCount} schedule${scheduleCount === 1 ? '' : 's'}`}
+                    title={`${scheduleCount} schedule${scheduleCount === 1 ? '' : 's'} spawning in this project`}
+                  >
+                    {scheduleCount > 99 ? '99+' : scheduleCount}
+                  </span>
+                )}
+                {terminalsRunning && (
+                  <span
+                    className="nav-badge nav-badge--running"
+                    aria-label={`${runningTerminals} terminal${runningTerminals === 1 ? '' : 's'} running`}
+                    title={`${runningTerminals} terminal${runningTerminals === 1 ? '' : 's'} running`}
+                  >
+                    {runningTerminals > 99 ? '99+' : runningTerminals}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
 
         {/* Extension-contributed project tabs, under their own "Extensions"
             heading so they read as extensions rather than core modes — mirrors
@@ -316,19 +314,20 @@ export function ProjectScopedNav({
             which the Workspace renders as that extension's panel scoped to this
             project. */}
         {projectTabModules.length > 0 && (
-          <div className="nav-section">
-            <div className="nav-divider" role="separator" />
+          <div className="nav-section nav-section--separated" role="group" aria-label="Extensions">
             <div className="nav-section-label">Extensions</div>
             {projectTabModules.map((m) => {
               const Icon = resolveIcon(m.projectTab?.icon ?? m.icon);
               const label = m.projectTab?.label ?? m.title;
-              const active = onProjects && mode === m.id;
+              const extActive = resolveProjectTabModule(mode, [m])?.id === m.id;
+              const active = onProjects && (mode === m.id || extActive);
               return (
                 <button
                   key={m.id}
                   className={`nav-item ${active ? 'active' : ''}`}
                   onClick={() => selectMode(m.id)}
                   aria-current={active ? 'page' : undefined}
+                  aria-label={collapsed ? label : undefined}
                   title={label}
                 >
                   <span className="nav-item-icon">
@@ -340,53 +339,54 @@ export function ProjectScopedNav({
             })}
           </div>
         )}
-      </div>
-
-      {/* Running / needs-you agents for THIS project, pinned to the bottom of
-          the rail — same tray as the global Sidebar, scoped to the focused
-          project so a drilled-in user still sees "needs you" without leaving.
-          Renders nothing when no agent is active, so it never takes space idle. */}
-      <AgentTray projectId={project.id} />
+      </nav>
 
       {/* Slim global footer — focus variant only. Keeps the system-level
-          destination reachable in one click so "focused" never means "trapped":
+           destination reachable in one click so "focused" never means "trapped":
           Settings jumps straight to the global panel WITHOUT leaving focus
           (`focusedProjectId` stays set, so this rail stays mounted and the back
           button is still there to return home). Inbox already has a dedicated
           rail item above (and the titlebar bell), so it isn't duplicated here. A
           per-project window omits this footer — those destinations belong to the
           main window. */}
-      {isFocus && (
-        <div className="project-focused-footer">
-          <div className="nav-divider" role="separator" />
-          {/* Pop this project out into its own dedicated window. Focus variant
-              only — a per-project window is already its own window, so there's
-              nothing to pop out (mirrors the old ListPane header affordance the
-              project-focus nav replaced). */}
-          <button
-            className="nav-item"
-            onClick={() => void window.cc.windows.openProject(project.id)}
-            title="Open this project in a new window"
-            aria-label="Open this project in a new window"
-          >
-            <span className="nav-item-icon">
-              <AppWindow size={16} />
-            </span>
-            <span className="nav-item-label">Open in new window</span>
-          </button>
-          <button
-            className={`nav-item ${nav === 'settings' ? 'active' : ''}`}
-            onClick={() => setNav('settings')}
-            aria-current={nav === 'settings' ? 'page' : undefined}
-            title="Settings"
-          >
-            <span className="nav-item-icon">
-              <Settings size={16} />
-            </span>
-            <span className="nav-item-label">Settings</span>
-          </button>
-        </div>
-      )}
+        {isFocus && (
+          <div className="project-focused-footer">
+            <div className="nav-section-label">System</div>
+            {/* Pop this project out into its own dedicated window. Focus variant
+               only — a per-project window is already its own window, so there's
+               nothing to pop out (mirrors the old ListPane header affordance the
+               project-focus nav replaced). */}
+            <button
+              className="nav-item"
+              onClick={() => void window.cc.windows.openProject(project.id)}
+              title="Open this project in a new window"
+              aria-label="Open this project in a new window"
+            >
+              <span className="nav-item-icon">
+                <AppWindow size={16} />
+              </span>
+              <span className="nav-item-label">Open in new window</span>
+            </button>
+            <button
+              className={`nav-item ${nav === 'settings' ? 'active' : ''}`}
+              onClick={() => setNav('settings')}
+              aria-current={nav === 'settings' ? 'page' : undefined}
+              aria-label={collapsed ? 'Settings' : undefined}
+              title="Settings"
+            >
+              <span className="nav-item-icon">
+                <Settings size={16} />
+              </span>
+              <span className="nav-item-label">Settings</span>
+            </button>
+          </div>
+        )}
+
+      {/* Running / needs-you agents for THIS project, pinned to the bottom of
+          the rail — same tray as the global Sidebar, scoped to the focused
+          project so a drilled-in user still sees "needs you" without leaving.
+          Renders nothing when no agent is active, so it never takes space idle. */}
+      <AgentTray projectId={project.id} />
     </aside>
   );
 }

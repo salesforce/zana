@@ -18,11 +18,22 @@
   --danger: #f85149;
   --success: #3fb950;
 
-  --col-nav: 220px;
+  --sidebar-bg: var(--bg-base);
+  --sidebar-hover: var(--bg-hover);
+  --sidebar-active: var(--bg-elevated);
+  --sidebar-border: var(--border);
+  --focus-ring: var(--accent-blue);
+
+  --col-nav: 256px;
   --col-list: 280px;
   --tab-h: 36px;
   --status-h: 24px;
   --titlebar-h: 38px;
+  /* The trigger and global back/forward controls share Electron's native title
+     bar. Collapsed route headers clear the trigger's final edge. */
+  --shell-trigger-size: 28px;
+  --shell-trigger-left: 12px;
+  --shell-leading-reserve: 32px;
 }
 
 :root[data-theme='light'] {
@@ -42,6 +53,12 @@
   --accent: var(--accent-blue);
   --danger: #cf222e;
   --success: #1a7f37;
+
+  --sidebar-bg: var(--bg-base);
+  --sidebar-hover: var(--bg-hover);
+  --sidebar-active: var(--bg-elevated);
+  --sidebar-border: var(--border);
+  --focus-ring: var(--accent-blue);
 }
 
 * {
@@ -117,17 +134,23 @@ input {
 
 .app-shell {
   display: grid;
-  /* minmax(0, 1fr) on the workspace column — a bare 1fr is minmax(auto, 1fr),
+  /* minmax(0, 1fr) on the content column — a bare 1fr is minmax(auto, 1fr),
      whose min is the track's min-content width, so wide content deep inside
-     the workspace (e.g. the Library preview) expands this top-level track past
-     the viewport and clips everything (including the list pane) at the window
-     edge. Pinning the min to 0 keeps the column inside the shell. */
-  grid-template-columns: var(--col-nav) var(--col-list) minmax(0, 1fr);
+     a panel expands this top-level track past the viewport. Pinning the min
+     to 0 keeps the column inside the shell. The shell is always nav + one
+     full content track; panels that want list/detail draw it internally. */
+  grid-template-columns: var(--col-nav) minmax(0, 1fr);
   grid-template-rows: var(--titlebar-h) 1fr;
   height: 100vh;
   /* Final backstop: the shell itself never scrolls horizontally. */
   overflow: hidden;
   --statusbar-h: 24px;
+}
+
+.app-shell[data-platform='macos'][data-fullscreen='false'] {
+  --shell-trigger-left: 84px;
+  /* 120px target edge minus the header's regular 16px leading inset. */
+  --shell-leading-reserve: 104px;
 }
 
 /* Always-on status strip: add a fixed bottom row for it. Composes with the
@@ -158,18 +181,125 @@ input {
   grid-template-rows: var(--titlebar-h) auto 1fr auto var(--statusbar-h);
 }
 
-/* Collapsed sidebar: shrink the nav column to an icon-only rail. */
-.app-shell:has(.sidebar.collapsed) {
-  --col-nav: 56px;
+/* A collapsed sidebar is removed from the grid entirely. Its restore control is
+ * rendered in the active content surface, rather than leaving a bordered rail. */
+.app-shell:has(.sidebar.collapsed),
+.app-shell.sidebar-is-collapsed {
+  --col-nav: 0px;
 }
 
-/* Scoped window in a workspace mode: column 2 (the session list) is dropped
-   from the DOM — the Workspace's own tab bar covers it. Drop the middle track
-   entirely (nav | main) so the main column grabs ALL the remaining space rather
-   than leaving a gap where the list used to be. (The Inbox view keeps column 2;
-   this class is only set otherwise.) */
+/* Historical class name retained for the E2E contract. It marks the
+   always-full content track so the surface spans the remaining shell. */
 .app-shell.scoped-no-list {
   grid-template-columns: var(--col-nav) minmax(0, 1fr);
+}
+
+/* A collapsed sidebar is removed from the grid. Full-content destinations
+ * take the remaining shell as one track. */
+.app-shell.sidebar-is-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Full-content destinations normally span from the second shell column. Once
+ * navigation is gone there is only one explicit column, so reset placement. */
+.app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .settings-panel,
+.app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .extensions-panel,
+.app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .library-panel,
+.app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .home-panel,
+.app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .followups-panel,
+.app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .suggestions-view,
+.app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .gus-panel,
+.app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .cu-panel,
+.app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .inbox-view,
+.app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .scheduler-panel,
+.app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .scheduler-page,
+.app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .agents-board--global,
+.app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .module-panel-slot {
+  grid-column: 1 / -1;
+}
+
+.app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .module-panel-host {
+  grid-column: 1 / -1;
+}
+
+/* One persistent title-bar control. It is a sibling of the rail and route
+ * content, so the rail slides below it rather than moving the control between
+ * headers. The global rail's history controls share this same native row. */
+.sidebar-trigger-overlay {
+  position: fixed;
+  top: 0;
+  left: var(--shell-trigger-left);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  height: var(--titlebar-h);
+  -webkit-app-region: drag;
+}
+
+.sidebar-expand-control {
+  -webkit-app-region: no-drag;
+  display: grid;
+  width: var(--shell-trigger-size);
+  height: var(--shell-trigger-size);
+  margin: 0;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.sidebar-expand-control:hover,
+.sidebar-expand-control:focus-visible {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.sidebar-expand-control:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.app-page-header {
+  min-height: var(--titlebar-h);
+  flex: 0 0 var(--titlebar-h);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  -webkit-app-region: drag;
+}
+
+.app-page-header-content-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: var(--titlebar-h);
+  padding: 0 16px;
+  transition: padding-left 200ms linear;
+}
+
+.app-shell.sidebar-is-collapsed .app-page-header--top-left .app-page-header-content-row {
+  padding-left: var(--shell-leading-reserve);
+}
+
+.app-page-header-title {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.app-page-header-title h1 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.app-page-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
 }
 
 /* Update-available banner — spans all columns in its own grid row below the
@@ -601,25 +731,86 @@ button.statusbar-update {
 }
 
 .sidebar {
-  background: var(--bg-base);
-  border-right: 1px solid var(--border);
+  min-height: 0;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--sidebar-border);
   display: flex;
   flex-direction: column;
-  padding: 12px 8px;
+  padding: 0 10px 10px;
   overflow: hidden;
+}
+
+.sidebar-chrome {
+  display: flex;
+  align-items: center;
+  min-height: var(--titlebar-h);
+  padding: 0 8px;
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+}
+
+/* Back/forward pairs belong beside the persistent sidebar trigger in the title
+ * bar, not in a redundant second chrome row below it. A focused rail can opt
+ * in while retaining its own routing behavior (for example, Settings returns
+ * to the app rather than navigating global history). */
+.sidebar--global .sidebar-chrome,
+.sidebar--titlebar-controls .sidebar-chrome {
+  min-height: 0;
+  height: 0;
+  padding: 0;
+}
+
+.sidebar--global .sidebar-history-controls,
+.sidebar--titlebar-controls .sidebar-history-controls {
+  position: fixed;
+  top: 0;
+  left: calc(var(--col-nav) - 64px);
+  z-index: 50;
+  height: var(--titlebar-h);
+  gap: 8px;
+  align-items: center;
+}
+
+.sidebar-history-controls {
+  display: flex;
+  gap: 14px;
+  margin-left: auto;
+}
+
+.sidebar-history-controls button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--text-muted);
+  -webkit-app-region: no-drag;
+}
+
+.sidebar-history-controls button:hover:not(:disabled),
+.sidebar-history-controls button:focus-visible {
+  color: var(--text-primary);
+  background: var(--sidebar-hover);
+}
+
+.sidebar-history-controls button:disabled {
+  cursor: default;
+  opacity: 0.36;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 6px 16px;
+  gap: 7px;
+  min-height: 36px;
+  padding: 3px 6px 18px;
+  flex-shrink: 0;
 }
 
 .brand-avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
   flex-shrink: 0;
   object-fit: contain;
 }
@@ -649,12 +840,12 @@ button.statusbar-update {
   width: 26px;
   height: 26px;
   flex-shrink: 0;
-  border-radius: 6px;
+  border-radius: 7px;
   color: var(--text-dim);
 }
 
 .sidebar-toggle:hover {
-  background: var(--bg-hover);
+  background: var(--sidebar-hover);
   color: var(--text-primary);
 }
 
@@ -666,22 +857,39 @@ button.statusbar-update {
   min-width: 0;
 }
 
+.brand-copy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+.brand-subtitle {
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* --- Collapsed (icon-rail) state --- */
 
 .sidebar.collapsed .brand {
   gap: 0;
-  padding: 8px 0 16px;
+  padding: 4px 0 10px;
   justify-content: center;
   position: relative;
 }
 
-.sidebar.collapsed .brand-name {
+.sidebar.collapsed .brand-copy {
   display: none;
 }
 
-/* The avatar fills the rail; on hover it fades out and the expand toggle
- * fades in over it, keeping the rail clean but the control reachable. */
-.sidebar.collapsed .sidebar-toggle {
+/* Historic project-avatar hover treatment. The shell owns the one persistent
+ * trigger now, so no sidebar remains mounted in the collapsed state. */
+.sidebar.collapsed .brand > .sidebar-toggle {
   position: absolute;
   inset: 0;
   margin: auto;
@@ -696,15 +904,49 @@ button.statusbar-update {
 
 .sidebar.collapsed .brand:hover .sidebar-toggle {
   opacity: 1;
-  background: var(--bg-hover);
+  background: var(--sidebar-hover);
   color: var(--text-primary);
 }
 
 .sidebar.collapsed .nav-item {
   position: relative;
   justify-content: center;
-  padding: 8px 0;
+  width: 54px;
+  min-height: 54px;
+  margin: 0 auto;
+  padding: 14px 0;
   gap: 0;
+  border-radius: 14px;
+}
+
+.sidebar.collapsed .nav-item svg {
+  width: 24px;
+  height: 24px;
+  stroke-width: 1.9;
+}
+
+.sidebar.collapsed .nav-item.active {
+  background: var(--sidebar-active);
+  border-color: color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+
+.sidebar.collapsed .sidebar-utility-bar {
+  justify-content: flex-start;
+  min-height: 48px;
+  margin-top: 8px;
+  padding: 6px 0 0 8px;
+}
+
+.sidebar.collapsed .sidebar-utility-button {
+  width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border-radius: 8px;
+}
+
+.sidebar.collapsed .sidebar-utility-button svg {
+  width: 18px;
+  height: 18px;
 }
 
 .sidebar.collapsed .nav-item-label {
@@ -717,14 +959,14 @@ button.statusbar-update {
 .sidebar.collapsed .nav-badge {
   position: absolute;
   top: 0;
-  right: 9px;
+  right: 5px;
   min-width: 12px;
   padding: 0 3px;
   font-size: 8px;
   font-weight: 600;
   line-height: 12px;
   border-radius: 7px;
-  box-shadow: 0 0 0 1.5px var(--bg-base);
+  box-shadow: 0 0 0 1.5px var(--sidebar-bg);
 }
 
 /* Icon wrapper anchors the small running-dot indicator. */
@@ -746,7 +988,7 @@ button.statusbar-update {
   height: 6px;
   border-radius: 50%;
   background: var(--accent-gold);
-  box-shadow: 0 0 0 2px var(--bg-base);
+  box-shadow: 0 0 0 2px var(--sidebar-bg);
 }
 
 /* Running agents: gold + pulsing, mirroring the working-agent status dot
@@ -780,8 +1022,8 @@ button.statusbar-update {
  * the nav list. A top border separates it from the nav above. */
 .agent-tray {
   margin-top: auto;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
+  padding: 10px 0 0;
+  border-top: 1px solid var(--sidebar-border);
   /* Cap the list and let it scroll so a burst of agents can't push the rail
    * past the viewport. */
   max-height: 40vh;
@@ -790,15 +1032,42 @@ button.statusbar-update {
   min-height: 0;
 }
 
+/* The global sidebar keeps active agents directly beneath the Agents destination.
+ * This compact inline variant travels with that movable nav item instead of
+ * competing with the fixed utility dock at the bottom of the rail. */
+.agent-tray--inline {
+  margin: 0;
+  padding: 2px 0 6px 26px;
+  border-top: 0;
+  max-height: 176px;
+}
+
+.agent-tray--inline .agent-tray-header {
+  display: none;
+}
+
+.agent-tray--inline .agent-tray-list {
+  gap: 1px;
+}
+
+.agent-tray--inline .agent-tray-row {
+  padding: 5px 8px;
+  border-radius: 6px;
+}
+
+.agent-tray--inline .agent-tray-row-meta {
+  display: none;
+}
+
 .agent-tray-header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  padding-right: 10px;
+  padding: 0 10px;
 }
 
 .agent-tray-label {
-  padding-bottom: 4px;
+  padding: 0 0 6px;
 }
 
 .agent-tray-count {
@@ -815,14 +1084,26 @@ button.statusbar-update {
   min-height: 0;
 }
 
+.agent-tray-empty {
+  margin: 0;
+  padding: 2px 10px 9px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.sidebar-agents .agent-tray-empty {
+  padding: 0 10px 9px;
+}
+
 .agent-tray-row {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
   text-align: left;
-  padding: 6px 10px;
-  border-radius: 6px;
+  padding: 7px 10px;
+  border-radius: 5px;
   color: var(--text-muted);
   position: relative;
 }
@@ -841,7 +1122,7 @@ button.statusbar-update {
 }
 
 .agent-tray-row:hover {
-  background: var(--bg-hover);
+  background: var(--sidebar-hover);
   color: var(--text-primary);
 }
 
@@ -886,8 +1167,8 @@ button.statusbar-update {
   padding: 1px 5px;
   border-radius: 999px;
   color: var(--text-dim);
-  background: var(--bg-hover);
-  border: 1px solid var(--border);
+  background: var(--sidebar-hover);
+  border: 1px solid var(--sidebar-border);
 }
 
 /* Background rows read a touch quieter — they're detached work, not live. */
@@ -915,9 +1196,56 @@ button.statusbar-update {
 /* Collapsed rail: just the activity button + count badge, centered like the
  * other rail icons. Reuses .nav-item geometry via the markup. */
 .agent-tray.collapsed {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--sidebar-border);
   padding-top: 8px;
   max-height: none;
+}
+
+.agent-tray--inline.collapsed {
+  margin: 0;
+  padding: 0;
+  border-top: 0;
+}
+
+/* Fixed extension point for durable sidebar actions. Settings is the first
+ * resident; future utilities append beside it without joining nav reordering. */
+.sidebar-utility-bar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  margin-top: 10px;
+  padding: 8px 6px 0;
+  border-top: 1px solid var(--sidebar-border);
+}
+
+.sidebar-utility-button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--text-muted);
+  background: transparent;
+}
+
+.sidebar-utility-button:hover {
+  color: var(--text-primary);
+  background: var(--sidebar-hover);
+}
+
+.sidebar-utility-button.active {
+  color: var(--text-primary);
+  background: var(--sidebar-active);
+  border-color: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.sidebar-utility-button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 .sidebar.collapsed .agent-tray-rail-btn {
@@ -948,8 +1276,8 @@ button.statusbar-update {
 }
 
 .brand-name {
-  font-weight: 600;
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .nav-section-label {
@@ -958,30 +1286,38 @@ button.statusbar-update {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-dim);
-  padding: 6px 10px 6px;
+  padding: 4px 10px 6px;
 }
 
-/* The heading text is dropped on the collapsed rail — the preceding
- * .nav-divider already separates the section, so no substitute is needed. */
+/* The heading text is dropped on the collapsed rail; the group rule still
+ * separates the icon clusters without consuming horizontal space. */
 .sidebar.collapsed .nav-section-label {
   display: none;
 }
 
-/* Section separator — a hairline rule between nav groups (before the
- * Extensions heading, and before Settings). The single source of every
- * section break, so they all read identically. */
-.nav-divider {
-  height: 0;
-  margin: 8px 8px;
-  border-top: 1px solid var(--border);
+.nav-section--separated {
+  position: relative;
+  margin-top: 12px;
+  padding-top: 13px;
+}
+
+.nav-section--separated::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 8px;
+  left: 8px;
+  border-top: 1px solid var(--sidebar-border);
 }
 
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: 6px;
+  gap: 9px;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
   color: var(--text-muted);
   width: 100%;
   text-align: left;
@@ -989,15 +1325,565 @@ button.statusbar-update {
 }
 
 .nav-item:hover {
-  background: var(--bg-hover);
+  background: var(--sidebar-hover);
   color: var(--text-primary);
 }
 
 .nav-item.active {
-  background: var(--bg-panel);
+  background: var(--sidebar-active);
+  border-color: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.nav-item:focus-visible,
+.sidebar-toggle:focus-visible,
+.agent-tray-row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* The sidebar has one scroll owner. Header and AgentTray remain fixed, so a
+   long extension list or a burst of agents never displaces either surface. */
+.sidebar-nav {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 8px;
+}
+
+.sidebar:not(.project-scoped-nav) .sidebar-nav {
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: auto;
+  overflow: visible;
+  padding-bottom: 0;
+}
+
+.sidebar:not(.collapsed) .nav-item--compact-only {
+  display: none;
+}
+
+.sidebar-nav--bottom {
+  max-height: 38%;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 8px;
+}
+
+/* The main-window navigation is one flat sortable list. Home and Inbox are
+ * pinned first in code; every other core destination and installed extension
+ * can be reordered. Projects remain a separate bottom-pinned tree. */
+.sidebar-sections {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sidebar-sections::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.sidebar-nav--sortable {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow: visible;
+  padding: 0 0 4px;
+}
+
+.sidebar-nav-sortable {
+  position: relative;
+  cursor: grab;
+  touch-action: none;
+}
+
+.sidebar-nav-sortable > .nav-item {
+  cursor: grab;
+}
+
+.sidebar-nav-sortable:active {
+  cursor: grabbing;
+}
+
+.sidebar-nav-sortable:active > .nav-item {
+  cursor: grabbing;
+}
+
+.sidebar-nav-sortable.is-dragging {
+  opacity: 0.45;
+}
+
+.sidebar-section-sortable {
+  min-width: 0;
+}
+
+.sidebar-section-sortable .sidebar-agents-heading,
+.sidebar-section-sortable .sidebar-projects-heading {
+  cursor: grab;
+  touch-action: none;
+}
+
+.sidebar-section-sortable .sidebar-agents-heading:active,
+.sidebar-section-sortable .sidebar-projects-heading:active {
+  cursor: grabbing;
+}
+
+.sidebar-section-sortable.is-dragging {
+  opacity: 0.45;
+}
+
+.sidebar-nav-inline-action {
+  position: absolute;
+  top: 50%;
+  right: 7px;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  transform: translateY(-50%);
+  border-radius: 7px;
+  color: var(--text-muted);
+}
+
+.sidebar-nav-inline-action:hover,
+.sidebar-nav-inline-action:focus-visible {
+  color: var(--text-primary);
+  background: var(--sidebar-hover);
+}
+
+/* The project tree starts as its own quiet area below the flat action list.
+ * It fills remaining space but never becomes another draggable nav category. */
+.sidebar-projects {
+  position: relative;
+  display: flex;
+  /* This section moves with the rest of the sidebar. Its cap must use a concrete
+   * viewport-relative length: percentages had no definite flex-parent height
+   * after reordering and let a long tree consume the entire rail. */
+  flex: 0 1 min(320px, 42vh);
+  flex-direction: column;
+  min-height: 0;
+  max-height: min(320px, 42vh);
+  margin: 12px 0 0;
+  border: 0;
+  overflow: hidden;
+}
+
+/* Agents is the same kind of sidebar collection as Workspaces: a collapsible
+ * heading with compact actions and its live rows beneath it. */
+.sidebar-agents {
+  position: relative;
+  display: flex;
+  flex: 0 0 var(--sidebar-agents-height, 176px);
+  flex-direction: column;
+  min-height: 64px;
+  margin-top: 12px;
+  overflow: hidden;
+}
+
+.sidebar-agents-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 30px;
+  padding: 0 8px 6px;
+}
+
+.sidebar-agents-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0;
+  border: 0;
+  color: var(--text-muted);
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.sidebar-agents-heading:hover {
   color: var(--text-primary);
 }
 
+.sidebar-agents-heading:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.sidebar-agents-chevron {
+  transition: transform 120ms ease;
+}
+
+.sidebar-agents-chevron.open {
+  transform: rotate(90deg);
+}
+
+.sidebar-agents-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.sidebar-agents-actions .icon-btn {
+  width: 26px;
+  height: 26px;
+  border-color: transparent;
+  border-radius: 7px;
+}
+
+.sidebar-agents-actions .icon-btn:hover {
+  border-color: transparent;
+  background: var(--sidebar-hover);
+  color: var(--text-primary);
+}
+
+.sidebar-agents-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.sidebar-agents .agent-tray--inline {
+  padding: 0 5px 6px;
+  max-height: none;
+}
+
+.sidebar-agents--collapsed {
+  /* Override the fixed, user-resized flex basis. A collapsed collection is only
+   * its header; retaining the prior height leaves a dead gap above Workspaces. */
+  flex: 0 0 36px;
+  height: 36px;
+  min-height: 0;
+}
+
+.sidebar-agents-resizer {
+  position: absolute;
+  z-index: 2;
+  right: 8px;
+  bottom: -4px;
+  left: 8px;
+  height: 8px;
+  cursor: row-resize;
+}
+
+.sidebar-agents-resizer::after {
+  position: absolute;
+  top: 3px;
+  right: 0;
+  left: 0;
+  height: 1px;
+  content: '';
+  background: transparent;
+  transition: background 120ms ease;
+}
+
+.sidebar-agents-resizer:hover::after,
+body.resizing-sidebar-section .sidebar-agents-resizer::after {
+  background: var(--accent-blue);
+}
+
+.sidebar-projects-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 30px;
+  padding: 0 8px 6px;
+}
+
+.sidebar-projects-header h2 {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.sidebar-projects-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0;
+  border: 0;
+  color: var(--text-muted);
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.sidebar-projects-heading:hover {
+  color: var(--text-primary);
+}
+
+.sidebar-projects-heading:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.sidebar-projects-chevron {
+  transition: transform 120ms ease;
+}
+
+.sidebar-projects-chevron.open {
+  transform: rotate(90deg);
+}
+
+.sidebar-projects--collapsed {
+  flex: 0 0 auto;
+  min-height: 0;
+  /* An open workspace tree belongs at the rail bottom; a collapsed heading is
+   * another sidebar section and should stay directly below Agents. */
+  margin-top: 12px;
+}
+
+.sidebar-projects .list-header-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.sidebar-projects .icon-btn {
+  width: 26px;
+  height: 26px;
+  border-color: transparent;
+  border-radius: 7px;
+}
+
+.sidebar-projects-add-row {
+  display: none;
+}
+
+.sidebar-projects-add-menu {
+  position: absolute;
+  z-index: 5;
+  top: 36px;
+  right: 8px;
+  display: flex;
+  min-width: 180px;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  border: 1px solid var(--sidebar-border);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  box-shadow: 0 10px 28px color-mix(in srgb, #000 22%, transparent);
+}
+
+.sidebar-projects-add-menu button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 29px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: left;
+}
+
+.sidebar-projects-add-menu button:hover,
+.sidebar-projects-add-menu button:focus-visible {
+  color: var(--text-primary);
+  background: var(--sidebar-hover);
+}
+
+.sidebar-projects-organize-menu {
+  position: absolute;
+  z-index: 5;
+  top: 36px;
+  right: 40px;
+  display: flex;
+  min-width: 190px;
+  flex-direction: column;
+  padding: 8px;
+  border: 1px solid var(--sidebar-border);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  box-shadow: 0 10px 28px color-mix(in srgb, #000 22%, transparent);
+}
+
+.sidebar-projects-menu-label {
+  padding: 5px 7px 7px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.sidebar-projects-organize-menu button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 29px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: left;
+}
+
+.sidebar-projects-organize-menu button:hover,
+.sidebar-projects-organize-menu button:focus-visible {
+  color: var(--text-primary);
+  background: var(--sidebar-hover);
+}
+
+.sidebar-projects .list-add-btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-color: transparent;
+  border-radius: 50%;
+  color: var(--text-muted);
+  background: transparent;
+}
+
+.sidebar-projects .list-add-btn > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.sidebar-projects .list-add-btn:hover,
+.sidebar-projects .icon-btn:hover {
+  border-color: transparent;
+  background: var(--sidebar-hover);
+  color: var(--text-primary);
+}
+
+.sidebar-projects .sidebar-projects-filter {
+  display: none;
+}
+
+.sidebar-projects-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 5px 8px;
+  scrollbar-width: none;
+}
+
+.sidebar-projects-body::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+
+.sidebar-projects .list-empty {
+  padding: 18px 12px;
+  font-size: 11px;
+}
+
+.sidebar-projects .project-item {
+  min-width: 0;
+  padding: 5px 6px;
+  border-radius: 7px;
+}
+
+.project-select {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+
+.project-select:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+.sidebar-projects .project-terminals {
+  margin: 3px 3px 6px 38px;
+}
+
+.project-reorder-handle,
+.project-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: var(--text-dim);
+  background: transparent;
+}
+
+.project-reorder-handle {
+  cursor: grab;
+  opacity: 0;
+  touch-action: none;
+}
+
+.project-reorder-handle:active {
+  cursor: grabbing;
+}
+
+.project-reorder-handle:disabled {
+  cursor: default;
+}
+
+.project-actions {
+  opacity: 0;
+}
+
+.project-item:hover .project-reorder-handle:not(:disabled),
+.project-item:hover .project-actions,
+.project-item.active .project-reorder-handle:not(:disabled),
+.project-item.active .project-actions,
+.project-reorder-handle:focus-visible,
+.project-actions:focus-visible {
+  opacity: 1;
+}
+
+.project-reorder-handle:hover:not(:disabled),
+.project-actions:hover {
+  color: var(--text-primary);
+  background: var(--sidebar-hover);
+}
+
+.project-reorder-handle:focus-visible,
+.project-actions:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.project-group.is-dragging {
+  opacity: 0.45;
+}
+
+.project-menu-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.sidebar.collapsed .sidebar-projects {
+  display: none;
+}
 
 /* --- Focused-project rail (main window drilled into a project) --- */
 
@@ -1021,15 +1907,17 @@ button.statusbar-update {
    bottom of the rail so the global escape-hatch reads as separate from the
    project's own views. Only the nav-list div grows — the agent tray has its own
    margin-top:auto + capped height, and the footer is fixed-height. */
-.project-focused-nav > div:not(.brand):not(.project-focused-footer):not(.agent-tray) {
+.project-focused-nav > .sidebar-nav {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
 }
 
 .project-focused-footer {
-  margin-top: auto;
   flex-shrink: 0;
+  margin-top: 8px;
+  padding-top: 13px;
+  border-top: 1px solid var(--sidebar-border);
 }
 
 /* On the collapsed icon-rail the "Projects" label is dropped like every other
@@ -1105,6 +1993,19 @@ body.resizing-col {
   border-bottom: 1px solid var(--border);
 }
 
+.app-page-header.list-header {
+  padding: 0;
+}
+
+.app-page-header.list-header .app-page-header-content-row {
+  padding-right: 14px;
+  padding-left: 14px;
+}
+
+.app-shell.sidebar-is-collapsed .app-page-header.list-header.app-page-header--top-left .app-page-header-content-row {
+  padding-left: var(--shell-leading-reserve);
+}
+
 .list-header h2 {
   margin: 0;
   font-size: 14px;
@@ -1128,7 +2029,7 @@ body.resizing-col {
   min-width: 0;
   padding: 6px 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 5px;
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 500;
@@ -1402,15 +2303,6 @@ body.resizing-col {
 
 .project-tree-chevron.expanded {
   transform: rotate(90deg);
-}
-
-/* Empty (no-session) projects render an invisible chevron-sized spacer so the
-   project dot + name line up with sibling rows that do have a disclosure. */
-.project-tree-chevron--placeholder {
-  pointer-events: none;
-}
-.project-tree-chevron--placeholder:hover {
-  background: transparent;
 }
 
 .project-tree-chevron svg {
@@ -3271,6 +4163,108 @@ body.resizing-col {
   gap: 6px;
 }
 
+.browser-projects {
+  margin-top: 28px;
+}
+
+.browser-projects-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.browser-projects-kicker {
+  margin: 0 0 3px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.browser-projects h2 {
+  margin: 0;
+  color: var(--text-bright);
+  font-size: 17px;
+}
+
+.browser-project-count {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.browser-project-list {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.browser-project-row {
+  display: flex;
+  align-items: center;
+  min-height: 38px;
+  gap: 10px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--bg-raised) 65%, transparent);
+}
+
+.browser-project-color {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.browser-project-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-project-category {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.browser-project-empty {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 7px;
+  color: var(--text-muted);
+}
+
+.browser-project-empty p {
+  margin: 0;
+}
+
+.browser-updated {
+  align-self: center;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 .btn {
   background: transparent;
   border: 1px solid var(--border, #30363d);
@@ -3638,50 +4632,85 @@ body.resizing-col {
   pointer-events: none;
 }
 
-.main-slot {
+.shell-main {
   display: contents;
 }
 
-.main-slot.hide > * {
+.workspace-slot {
+  display: contents;
+}
+
+.workspace-slot.hide > * {
   display: none !important;
 }
 
 .settings-panel {
-  background: var(--bg-base);
+  background: var(--bg-panel);
   min-width: 0;
   overflow-y: auto;
-  /* Slightly smaller base font across Settings for a denser, calmer panel. */
   font-size: 12px;
 }
 
-/* Use the full content width now that the section picker lives in the list
-   pane and the scope control sits in the header — settings forms get the whole
-   column instead of a narrow centered card. A generous cap keeps very wide
-   windows readable; below that it's fluid. */
+.settings-page-title {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 52px;
+  padding: 0 22px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+.settings-page-title h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+/* Two panel-body layouts, encoded per feature (not a user preference):
+   .settings-inner   — centered reading/config: 32px gutters + 1040px cap
+   .panel-body--full — workbench: no padding; the panel owns its chrome */
 .settings-inner {
   max-width: min(100%, 1040px);
   margin: 0 auto;
   padding: 24px 32px 48px;
 }
 
-/* Wide sections (catalogues, Prompts/Extensions master-detail) take the full
-   column with no centered cap. */
+.panel-body--full {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* Wide catalogues stay in the centered family (same gutters) but drop the cap. */
 .settings-inner--wide {
   max-width: 100%;
 }
 
-.settings-inner h2 {
-  margin: 0 0 20px;
-  font-size: 18px;
-  font-weight: 600;
+/* Catalogue tabs live inside SettingsPanel's shared shell. Keep their own
+ * action rows clear of the section title, while reusing existing button styles. */
+.settings-catalogue {
+  min-width: 0;
+}
+
+.settings-catalogue-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 18px;
 }
 
 .settings-section {
   margin-bottom: 28px;
   padding: 16px 18px;
-  background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 10px;
+  background: var(--bg-panel);
 }
 
 /* Flush section: no panel chrome, just the heading + intro above self-contained
@@ -3691,8 +4720,9 @@ body.resizing-col {
   background: none;
   border: none;
   border-radius: 0;
+  margin-bottom: 28px;
 }
-/* First card sits below the intro; give it room now the panel padding is gone. */
+
 .settings-section--flush .settings-section-help {
   margin-bottom: 14px;
 }
@@ -4493,9 +5523,7 @@ body.resizing-col {
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
-  margin-bottom: 22px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--border);
+  margin-bottom: 26px;
 }
 
 .settings-header-title {
@@ -4505,15 +5533,15 @@ body.resizing-col {
   min-width: 0;
   color: var(--text-primary);
 }
-.settings-header-title h2 {
+.settings-header-title :is(h1, h2) {
   margin: 0;
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 600;
 }
 .settings-header-desc {
   color: var(--text-dim);
   font-weight: 400;
-  font-size: 12px;
+  font-size: 13px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4633,6 +5661,10 @@ body.resizing-col {
 }
 
 .settings-picker {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 6px 6px 12px;
 }
 
@@ -4640,12 +5672,12 @@ body.resizing-col {
    Separated from the next group by a hairline so the menu reads as distinct
    zones without needing a collapse control. */
 .settings-group {
-  padding-top: 10px;
-  margin-top: 10px;
-  border-top: 1px solid var(--border);
+  padding-top: 16px;
+  margin-top: 16px;
+  border-top: 0;
 }
 .settings-group:first-child {
-  padding-top: 2px;
+  padding-top: 0;
   margin-top: 0;
   border-top: none;
 }
@@ -4653,12 +5685,12 @@ body.resizing-col {
 /* Static group header — a plain, quiet label (no chevron, not a button). The
    sections beneath are always visible. */
 .settings-group-label {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  padding: 0 9px 6px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-muted);
+  padding: 0 12px 8px;
   user-select: none;
 }
 
@@ -4668,20 +5700,54 @@ body.resizing-col {
 }
 
 .settings-section-item {
+  display: flex;
+  width: 100%;
   position: relative;
-  align-items: flex-start;
-  gap: 9px;
-  padding: 7px 9px 7px 11px;
-  border-radius: 6px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  text-align: left;
+  font: inherit;
+  line-height: 1.3;
+  cursor: pointer;
   transition: background 0.12s ease;
 }
 
-.settings-section-item.active {
-  background: var(--bg-elevated);
-}
-.settings-section-item.active .project-name {
+.settings-section-item:hover,
+.settings-section-item:focus-visible {
   color: var(--text-primary);
-  font-weight: 600;
+  background: var(--sidebar-hover);
+}
+
+.settings-section-item.active {
+  color: var(--text-primary);
+  background: var(--sidebar-active);
+}
+
+.settings-section-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-section-label {
+  /* Match the primary sidebar destination labels. */
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-section-desc {
+  display: none !important;
+  color: var(--text-dim);
+  font-size: 11px;
 }
 
 /* Sub-section anchors under a section row: indented, quiet jump-links that
@@ -4692,9 +5758,9 @@ body.resizing-col {
   /* A single guide rail runs down the whole sub-list, aligned under the section
      icon, so the anchors read as one indented tree rather than each carrying its
      own stub of border. */
-  margin: 2px 0 6px 20px;
-  padding-left: 12px;
-  border-left: 1px solid var(--border);
+  margin: 2px 0 6px 26px;
+  padding-left: 10px;
+  border-left: 1px solid var(--sidebar-border);
 }
 .settings-subsection-item {
   appearance: none;
@@ -4711,6 +5777,112 @@ body.resizing-col {
 .settings-subsection-item:hover {
   color: var(--text-primary);
   background: var(--bg-hover, rgba(127, 127, 127, 0.08));
+}
+
+.settings-app-back {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 34px;
+  margin: 0 0 12px;
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-app-back:hover,
+.settings-app-back:focus-visible {
+  background: var(--sidebar-hover);
+}
+
+.settings-pane.collapsed .settings-picker,
+.settings-pane.collapsed .settings-app-back {
+  display: none;
+}
+
+/* ── Focused Extensions navigation ─────────────────────────────────────── */
+.extensions-pane-back {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 34px;
+  margin: 0 0 16px;
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.extensions-pane-back:hover,
+.extensions-pane-back:focus-visible {
+  background: var(--sidebar-hover);
+}
+
+.extensions-picker {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 6px 12px;
+}
+
+.extensions-picker-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.extensions-picker-label {
+  margin: 0;
+  padding: 0 12px 7px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.extensions-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+
+.extensions-picker-item:hover,
+.extensions-picker-item:focus-visible {
+  color: var(--text-primary);
+  background: var(--sidebar-hover);
+}
+
+.extensions-picker-item.active {
+  color: var(--text-primary);
+  background: var(--sidebar-active);
 }
 
 .settings-tabs,
@@ -4995,13 +6167,12 @@ body.resizing-col {
   display: flex;
   flex-direction: column;
   flex: 1;
+  width: min(100%, 1040px);
   min-height: 0;
-  /* The hub is a master–detail layout, not a single-column form: let it span
-     the full panel width instead of the centered 920px `--wide` column, so the
-     detail pane uses all the available space rather than leaving a dead gutter
-     on the right. */
-  max-width: none;
-  margin: 0;
+  max-width: 1040px;
+  /* Keep the hub's split-pane controls inside the normal Settings reading
+     column, rather than stretching them edge to edge. */
+  margin: 0 auto;
   /* Trim the default bottom padding — the detail column owns its own scroll. */
   padding-bottom: 28px;
 }
@@ -5028,6 +6199,12 @@ body.resizing-col {
 }
 .ext-hub-tabs-spacer {
   flex: 1;
+}
+
+.ext-hub-top-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex: 0 0 auto;
 }
 .ext-hub-more-wrap {
   position: relative;
@@ -6253,20 +7430,11 @@ body.resizing-col .ext-hub-resizer::before {
   min-height: 0;
 }
 
-/* The app-level TerminalSurface lives inside this host but portals its grid
-   into whichever view owns column 3. The host is the fallback home when no
-   view anchor is active (nav not projects/agents); keep it out of the grid
-   flow AND hidden so parked terminals stay alive but invisible and never
-   claim a grid cell. */
-.terminal-surface-host {
-  display: none;
-}
-
 /* The single persistent portal node that TerminalSurface moves between anchors
-   (Projects column, agent modal, or the hidden fallback host) without ever
-   remounting the xterm subtree. It must fill whichever positioned anchor it's
-   currently parented under so the absolutely-placed .terminal-surface inside it
-   covers the full area. */
+   (Workspace park, agent modal, or List monitor) without ever remounting the
+   xterm subtree. It must fill whichever positioned anchor it's currently
+   parented under so the absolutely-placed .terminal-surface inside it covers
+   the full area. */
 .terminal-surface-portal {
   position: absolute;
   inset: 0;
@@ -6819,10 +7987,18 @@ body.resizing-col .ext-hub-resizer::before {
    (block/flex, width:auto) then fills it. Built-in module panels that already set
    their own `grid-column: 2 / -1` (e.g. .gus-panel, .cu-panel) still work — they
    just fill this stretched slot instead of the grid track directly. */
-.module-panel-slot {
+.module-panel-host {
   grid-column: 2 / -1;
   min-width: 0;
   height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.module-panel-slot {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
   overflow: auto;
   display: flex;
   flex-direction: column;
@@ -9101,8 +10277,18 @@ body.resizing-col .explorer-resizer::after {
 }
 
 .inbox-view {
+  grid-column: 2 / -1;
   background: var(--bg-base);
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: var(--col-list) minmax(0, 1fr);
+}
+
+.inbox-view-detail {
+  min-width: 0;
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -9304,19 +10490,87 @@ body.resizing-col .explorer-resizer::after {
    (like the other top-level panels), not a flex child of .workspace-body — so
    it must establish its own full-height column flow and clip overflow. */
 .agents-board--global {
+  grid-column: 2 / -1;
   min-height: 0;
   overflow: hidden;
+}
+
+/* Project-row chat actions open this composer in the central Agents workspace,
+   not in a global backdrop that obscures the board. */
+.workspace-body > .launch-inline {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.launch-inline {
+  display: flex;
+  justify-content: center;
+  overflow: auto;
+  padding: 28px;
+  background: var(--bg-panel);
+}
+
+.launch-inline > .launch-panel {
+  width: min(680px, 100%);
+  height: min(100%, 820px);
+  min-height: 0;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+}
+
+.launch-inline .launch-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.launch-inline-close {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--text-muted);
+}
+
+.launch-inline-close:hover,
+.launch-inline-close:focus-visible {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.launch-inline-close:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .agents-board-header {
   display: flex;
   align-items: center;
+  flex: 0 0 var(--titlebar-h);
+  min-height: var(--titlebar-h);
   gap: 10px;
-  padding: 12px 16px;
+  padding: 0 16px;
   border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
 }
 
-.agents-board-header h3 {
+.agents-board-header-actions {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.agents-board-header h1 {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
@@ -9381,10 +10635,6 @@ body.resizing-col .explorer-resizer::after {
 .agents-board-filter-clear:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
-}
-
-.agents-board-header .grow {
-  flex: 1;
 }
 
 /* Segmented kanban/list switch — two icon buttons sharing one pill, sitting
@@ -9598,9 +10848,10 @@ body.resizing-col .explorer-resizer::after {
 /* Empty state fills the board. */
 .agents-board-empty {
   flex: 1;
-  display: grid;
-  place-content: center;
-  justify-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   gap: 6px;
   text-align: center;
   color: var(--text-muted);
@@ -10242,12 +11493,15 @@ body.resizing-col .explorer-resizer::after {
 }
 
 .agents-count {
-  margin-left: auto;
   font-size: 11px;
   color: var(--text-muted);
   background: var(--bg-elevated);
   border-radius: 10px;
   padding: 1px 8px;
+}
+
+.agents-expand {
+  margin-left: auto;
 }
 
 /* Flex column so the at-rest sections can be pushed to the bottom. */
@@ -12112,6 +13366,13 @@ body.resizing-col .explorer-resizer::after {
   max-width: 880px;
 }
 
+/* Global Scheduler nav owns the full content track (no inner list rail).
+   Do NOT put grid-column on every .scheduler-panel — the embedded project-tab
+   lives inside Workspace, not the app-shell grid. */
+.scheduler-page {
+  grid-column: 2 / -1;
+}
+
 /* Overview / Schedules sub-view toggle — the per-project Scheduler tab's
    segmented control, mirroring the workspace mode segmented look. */
 .scheduler-subview-toggle {
@@ -12147,11 +13408,7 @@ body.resizing-col .explorer-resizer::after {
   background: var(--bg-hover);
 }
 
-/* Goals / Follow-ups reuse the scheduler chrome but are list-first views that
-   read better across the full column — opt them out of the 880px reading cap. */
-.scheduler-panel--full .settings-inner {
-  max-width: 100%;
-}
+/* Goals / Follow-ups / Scheduler use the centered .settings-inner contract. */
 
 .scheduler-header {
   display: flex;
@@ -12973,21 +14230,12 @@ body.resizing-col .explorer-resizer::after {
   max-width: 1200px;
 }
 
-/* Personas owns the whole content area: ListPane yields (returns null) for the
- * 'personas' nav, so without an explicit span the .settings-panel would
- * auto-flow into the narrow list column (col 2) and leave col 3 empty. Span
- * cols 2..end like the module panels (.gus-panel) so the catalogue gets the
- * full width its toolbar + rows are laid out for. */
-.personas-panel,
 /* Top-level Extensions view is the same case: ListPane returns null for the
  * 'extensions' nav, so without this span the settings-panel auto-places in the
  * narrow --col-list track (col 2) and col 3 sits empty. (Settings → Extensions
  * keeps its own SettingsPane section picker in col 2, so this modifier is only
  * on the standalone ExtensionsPanel, not the shared ExtensionsHub.) */
 .extensions-panel,
-/* Usage dashboard is the same case: ListPane returns null for the 'usage' nav,
- * so without this span the panel renders cramped in col 2 with col 3 empty. */
-.usage-panel,
 /* Library owns the whole content area (folder tree + doc list + preview): same
  * case, ListPane returns null for the 'library' nav. */
 .library-panel {
@@ -24242,7 +25490,10 @@ body.resizing-col .library-split-resizer::after {
   grid-column: 2 / -1;
   height: 100%;
   overflow-y: auto;
-  padding: 20px 24px 32px;
+  display: flex;
+  flex-direction: column;
+}
+.suggestions-view .settings-inner {
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -24812,11 +26063,8 @@ body.resizing-col .library-split-resizer::after {
   grid-template-rows: var(--titlebar-h) auto 1fr;
 }
 
-/* Scoped window in a workspace mode: column 2 (the session list) is dropped
-   from the DOM — the Workspace's own tab bar covers it. Drop the middle track
-   entirely (nav | main) so the main column grabs ALL the remaining space rather
-   than leaving a gap where the list used to be. (The Inbox view keeps column 2;
-   this class is only set otherwise.) */
+/* The shell is always nav + full content. Historical class name retained
+   for the E2E contract. */
 .app-shell.scoped-no-list {
   grid-template-columns: var(--col-nav) minmax(0, 1fr);
 }
@@ -24859,9 +26107,9 @@ body.resizing-col .library-split-resizer::after {
   color: var(--text-dim);
 }
 
-/* The avatar fills the rail; on hover it fades out and the expand toggle
- * fades in over it, keeping the rail clean but the control reachable. */
-.sidebar.collapsed .sidebar-toggle {
+/* The project-scoped rail keeps this avatar-overlay behavior. The global
+ * sidebar's `.sidebar-workspace-control` remains visibly actionable instead. */
+.sidebar.collapsed .brand > .sidebar-toggle {
   position: absolute;
   inset: 0;
   margin: auto;
@@ -24876,14 +26124,14 @@ body.resizing-col .library-split-resizer::after {
 .sidebar.collapsed .nav-badge {
   position: absolute;
   top: 0;
-  right: 9px;
+  right: 5px;
   min-width: 12px;
   padding: 0 3px;
   font-size: 8px;
   font-weight: 600;
   line-height: 12px;
   border-radius: 7px;
-  box-shadow: 0 0 0 1.5px var(--bg-base);
+  box-shadow: 0 0 0 1.5px var(--sidebar-bg);
 }
 
 /* Tiny gold pip on the scheduler icon when a scheduled agent is running. The
@@ -24897,7 +26145,7 @@ body.resizing-col .library-split-resizer::after {
   height: 6px;
   border-radius: 50%;
   background: var(--accent-gold);
-  box-shadow: 0 0 0 2px var(--bg-base);
+  box-shadow: 0 0 0 2px var(--sidebar-bg);
 }
 
 /* --- Agent tray (bottom of sidebar) --- */
@@ -24906,8 +26154,8 @@ body.resizing-col .library-split-resizer::after {
  * the nav list. A top border separates it from the nav above. */
 .agent-tray {
   margin-top: auto;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
+  padding: 10px 0 0;
+  border-top: 1px solid var(--sidebar-border);
   /* Cap the list and let it scroll so a burst of agents can't push the rail
    * past the viewport. */
   max-height: 40vh;
@@ -24932,8 +26180,8 @@ body.resizing-col .library-split-resizer::after {
 /* Collapsed rail: just the activity button + count badge, centered like the
  * other rail icons. Reuses .nav-item geometry via the markup. */
 .agent-tray.collapsed {
-  border-top: 1px solid var(--border);
-  padding-top: 8px;
+  border-top: 1px solid var(--sidebar-border);
+  padding-top: 10px;
   max-height: none;
 }
 
@@ -24960,21 +26208,11 @@ body.resizing-col .library-split-resizer::after {
   display: none;
 }
 
-/* The heading text is dropped on the collapsed rail — the preceding
- * .nav-divider already separates the section, so no substitute is needed. */
+/* The heading text is dropped on the collapsed rail; the group rule still
+ * separates the icon clusters without consuming horizontal space. */
 .sidebar.collapsed .nav-section-label {
   display: none;
 }
-
-/* Section separator — a hairline rule between nav groups (before the
- * Extensions heading, and before Settings). The single source of every
- * section break, so they all read identically. */
-.nav-divider {
-  height: 0;
-  margin: 8px 8px;
-  border-top: 1px solid var(--border);
-}
-
 
 /* --- Focused-project rail (main window drilled into a project) --- */
 
@@ -24990,7 +26228,7 @@ body.resizing-col .library-split-resizer::after {
    bottom of the rail so the global escape-hatch reads as separate from the
    project's own views. Only the nav-list div grows — the agent tray has its own
    margin-top:auto + capped height, and the footer is fixed-height. */
-.project-focused-nav > div:not(.brand):not(.project-focused-footer):not(.agent-tray) {
+.project-focused-nav > .sidebar-nav {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
@@ -25207,18 +26445,13 @@ body.resizing-col .library-split-resizer::after {
   overflow: auto;
 }
 
-/* Use the full content width now that the section picker lives in the list
-   pane and the scope control sits in the header — settings forms get the whole
-   column instead of a narrow centered card. A generous cap keeps very wide
-   windows readable; below that it's fluid. */
+/* Duplicate of the panel-body contract above — keep padding in lockstep. */
 .settings-inner {
   max-width: min(100%, 1040px);
   margin: 0 auto;
   padding: 24px 32px 48px;
 }
 
-/* Wide sections (catalogues, Prompts/Extensions master-detail) take the full
-   column with no centered cap. */
 .settings-inner--wide {
   max-width: 100%;
 }
@@ -25240,8 +26473,6 @@ body.resizing-col .library-split-resizer::after {
   gap: 16px;
   flex-wrap: wrap;
   margin-bottom: 22px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--border);
 }
 
 /* ===== Settings section picker (column 2) — VSCode-style menu ===== *
@@ -25276,10 +26507,10 @@ body.resizing-col .library-split-resizer::after {
 .settings-group-label {
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-dim);
-  padding: 0 9px 6px;
+  padding: 4px 10px 6px;
   user-select: none;
 }
 
@@ -25372,20 +26603,11 @@ body.resizing-col .library-split-resizer::after {
   margin-right: 1px;
 }
 
-/* The app-level TerminalSurface lives inside this host but portals its grid
-   into whichever view owns column 3. The host is the fallback home when no
-   view anchor is active (nav not projects/agents); keep it out of the grid
-   flow AND hidden so parked terminals stay alive but invisible and never
-   claim a grid cell. */
-.terminal-surface-host {
-  display: none;
-}
-
 /* The single persistent portal node that TerminalSurface moves between anchors
-   (Projects column, agent modal, or the hidden fallback host) without ever
-   remounting the xterm subtree. It must fill whichever positioned anchor it's
-   currently parented under so the absolutely-placed .terminal-surface inside it
-   covers the full area. */
+   (Workspace park, agent modal, or List monitor) without ever remounting the
+   xterm subtree. It must fill whichever positioned anchor it's currently
+   parented under so the absolutely-placed .terminal-surface inside it covers
+   the full area. */
 .terminal-surface-portal {
   position: absolute;
   inset: 0;
@@ -25397,23 +26619,6 @@ body.resizing-col .library-split-resizer::after {
 .session-agent-row {
   align-items: flex-start;
   border-radius: 8px;
-}
-
-/* Shell-grid placement for EVERY mounted extension panel. The host owns this so
-   an extension's own root doesn't need to know the app-shell's column layout:
-   the list column returns null for a module nav, so a bare panel would auto-place
-   into the narrow list track (col 2) and leave col 3 empty (the "cramped panel"
-   bug). This slot spans cols 2→3 and fills the height; the extension's own root
-   (block/flex, width:auto) then fills it. Built-in module panels that already set
-   their own `grid-column: 2 / -1` (e.g. .gus-panel, .cu-panel) still work — they
-   just fill this stretched slot instead of the grid track directly. */
-.module-panel-slot {
-  grid-column: 2 / -1;
-  min-width: 0;
-  height: 100%;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
 }
 
 /* Stronger active-row treatment: a clearer fill plus a left accent bar so the
@@ -25514,6 +26719,7 @@ body.resizing-col .library-split-resizer::after {
    (like the other top-level panels), not a flex child of .workspace-body — so
    it must establish its own full-height column flow and clip overflow. */
 .agents-board--global {
+  grid-column: 2 / -1;
   min-height: 0;
   overflow: hidden;
 }
@@ -25744,15 +26950,6 @@ body.resizing-col .library-split-resizer::after {
   outline: none;
 }
 
-/* Personas owns the whole content area: ListPane yields (returns null) for the
- * 'personas' nav, so without an explicit span the .settings-panel would
- * auto-flow into the narrow list column (col 2) and leave col 3 empty. Span
- * cols 2..end like the module panels (.gus-panel) so the catalogue gets the
- * full width its toolbar + rows are laid out for. */
-.personas-panel,
-/* Squads is the same case: ListPane returns null for 'teams', so without this
- * span the panel renders cramped in col 2 with col 3 left empty. */
-.squads-panel,
 /* Top-level Extensions view is the same case: ListPane returns null for the
  * 'extensions' nav, so without this span the settings-panel auto-places in the
  * narrow --col-list track (col 2) and col 3 sits empty. (Settings → Extensions
@@ -26463,21 +27660,6 @@ body.resizing-col .library-split-resizer::after {
   padding: 12px 16px;
   border-top: 1px solid var(--border);
   flex: 0 0 auto;
-}
-
-/* Personas mirrors the above: ListPane yields (returns null) for the 'personas'
- * nav, so without an explicit span the .settings-panel auto-flows into the
- * narrow list column (col 2) — collapsing the catalogue into a sliver. A
- * dedicated block (alongside the grouped selector) keeps the full-width span
- * guarded independently (list-pane-null-panels-grid-span.guard). */
-.personas-panel {
-  grid-column: 2 / -1;
-}
-
-/* Squads is the same case: ListPane returns null for 'teams', so without this
- * span the panel renders cramped in col 2 with col 3 left empty. */
-.squads-panel {
-  grid-column: 2 / -1;
 }
 
 /* Library mirrors the above: ListPane returns null for the 'library' nav, so

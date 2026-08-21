@@ -228,19 +228,8 @@ export function SquadsPanel() {
   };
 
   return (
-    <main className="settings-panel skills-panel squads-panel">
-      <div className="settings-inner">
-        <div className="scheduler-header">
-          <div className="scheduler-header-text">
-            <h2>Squads</h2>
-            <p className="settings-help scheduler-subtitle">
-              Named bundles of personas. Launching a squad opens one terminal tab per
-              slot — the orchestrator first, carrying the team prompt. Discovered from{' '}
-              <code>~/.zcc/teams</code>, each project's <code>.zcc/teams</code>, and
-              installed extensions.
-            </p>
-          </div>
-          <div className="personas-header-actions">
+    <section className="settings-catalogue skills-panel squads-panel">
+        <div className="settings-catalogue-actions">
             <button
               type="button"
               className="settings-btn primary"
@@ -254,7 +243,6 @@ export function SquadsPanel() {
             <button type="button" className="settings-btn" onClick={reveal}>
               <FolderOpen size={12} /> Reveal
             </button>
-          </div>
         </div>
 
         <div className="skills-layout">
@@ -332,8 +320,6 @@ export function SquadsPanel() {
             )}
           </section>
         </div>
-      </div>
-
       {editor && (
         <SquadEditor
           team={editor.kind === 'open' ? editor.team : null}
@@ -361,7 +347,7 @@ export function SquadsPanel() {
           onDelete={() => void deleteTeam(rowMenu.team)}
         />
       )}
-    </main>
+    </section>
   );
 }
 

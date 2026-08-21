@@ -45,6 +45,18 @@ export default defineConfig({
         replacement: resolve(__dirname, 'apps/host-daemon/src/index.ts')
       },
       {
+        find: /^@zana-ai\/zcc-plugin-sdk$/,
+        replacement: resolve(__dirname, 'packages/plugin-sdk/src/index.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-plugin-sdk\/(.*)$/,
+        replacement: resolve(__dirname, 'packages/plugin-sdk/src/$1.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-domain$/,
+        replacement: resolve(__dirname, 'packages/domain/src/index.ts')
+      },
+      {
         find: /^@zana-ai\/zcc-extension-sdk$/,
         replacement: resolve(__dirname, 'packages/extension-sdk/src/index.ts')
       },

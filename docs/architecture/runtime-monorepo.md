@@ -22,9 +22,12 @@ flowchart LR
 
 ## Authority Model
 
-The renderer, CLI, agent tools, host daemon, and disk extensions are callers,
-not authorities. The server validates identity, registered project ownership,
-path confinement, policy, and grants before it emits an execution command.
+The renderer, CLI, agent tools, and host daemon are callers, not authorities.
+Installed plugins run in-process on the server and share that trust after
+install, but they still never receive host-daemon tokens — they call
+`ZccPluginApi` and the server signs execution commands. The server validates
+identity, registered project ownership, path confinement, and policy before it
+emits an execution command.
 The host daemon validates the serialized protocol again but does not infer a
 new project root, executable, or permission grant. It returns bounded events;
 the server alone writes durable product state.
@@ -36,7 +39,8 @@ the server alone writes durable product state.
 | `domain` | Serializable product vocabulary | Electron, React, storage, PTY, service imports |
 | `contracts` | Zod schemas and serializable protocol messages | BrowserWindow, ChildProcess, mutable services |
 | `ui` | Generic host UI tokens and prop-driven primitives | IPC calls, stores, routes, extension policy |
-| `extension-sdk` | Public extension API only | Internal workspace packages |
+| `plugin-sdk` | Public plugin API (`ZccPluginApi`, `definePluginApp`, `package.json` `zcc` schema) | Internal workspace packages |
+| `extension-sdk` | Deprecated compatibility re-exports during the shim window | Internal workspace packages |
 | `zcc-app` | Built runtime composition and supervision | Source-tree copies at runtime |
 
 ## Compatibility Phase

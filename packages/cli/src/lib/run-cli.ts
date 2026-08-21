@@ -200,6 +200,12 @@ export async function runCli(argv: string[], deps?: Partial<CliDeps>): Promise<C
       const id = rest[0];
       if (!id) return errResult(`schedule ${subcommand} requires a <scheduleId>`, 2);
       return await live(dataDir, 'sched.setEnabled', { id, enabled: subcommand === 'enable' }, jsonOutput);
+    } else if (command === 'plugin') {
+      const { runPluginCommand } = await import('./plugin-commands.js');
+      return await runPluginCommand(dataDir, subcommand, rest, jsonOutput);
+    } else if (command === 'marketplace') {
+      const { runMarketplaceCommand } = await import('./plugin-commands.js');
+      return await runMarketplaceCommand(dataDir, subcommand, rest, jsonOutput);
     } else {
       return {
         exitCode: 1,
@@ -232,8 +238,20 @@ READ COMMANDS (work whether the app is running or not):
   followup ls              List follow-ups (parked questions/decisions)
        [--project ID] [--status open|resolved|dismissed] [--all]
        Defaults to open only; --all shows every state.
+  plugin ls                List installed plugins (from ~/.zcc/plugins)
+  plugin new <name>        Scaffold a plugin package in the current directory
+       [--dir PATH]
 
 LIVE COMMANDS (require the app to be running):
+  plugin install <source>  Install path: | git: | npm: | builtin:<name>
+  plugin enable <id>       Enable and load a plugin
+  plugin disable <id>      Unload a plugin
+  plugin reload <id>       Dispose and load again
+  plugin remove <id>       Unregister (path sources stay on disk)
+  marketplace ls           List configured marketplace catalogs
+  marketplace add <url>    Add a provenance-only marketplace index
+  marketplace install <id@marketplace>
+                           Install through the catalog pointer (never from a file-bundle archive)
   agent ls                 List live agents + their state
   team ls                  List the team catalogue (builtins + files + extensions)
   agent send <h> <msg>     Send a message to agent <handle>

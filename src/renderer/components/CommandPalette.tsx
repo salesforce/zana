@@ -158,7 +158,7 @@ export function CommandPalette({ onClose }: Props) {
     if (session) {
       selectTab(selectedProject.id, session.id);
       setWorkspaceMode(selectedProject.id, 'terminals');
-      setNav('projects');
+      useUi.getState().enterProjectFocus(selectedProject.id);
     }
   };
 
@@ -168,7 +168,7 @@ export function CommandPalette({ onClose }: Props) {
     void window.cc.terminals.reply(activeTab.id, invocation);
     if (selectedProject) {
       setWorkspaceMode(selectedProject.id, 'terminals');
-      setNav('projects');
+      useUi.getState().enterProjectFocus(selectedProject.id);
     }
   };
 
@@ -198,10 +198,9 @@ export function CommandPalette({ onClose }: Props) {
       title: trimmed ? titleFromPrompt(trimmed) : undefined
     });
     if (session) {
-      selectProject(project.id);
+      useUi.getState().enterProjectFocus(project.id);
       selectTab(project.id, session.id);
       setWorkspaceMode(project.id, 'terminals');
-      setNav('projects');
       onClose();
     }
   };

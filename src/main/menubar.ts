@@ -2,6 +2,7 @@ import { BrowserWindow, screen, type Tray } from 'electron';
 import { join } from 'node:path';
 import { IPC } from '../shared/ipc.js';
 import { rendererUrl } from './renderer-url.js';
+import { DEFAULT_RENDERER_ZOOM_FACTOR } from './window-zoom.js';
 import type { PtyManager } from './pty.js';
 import type { SchedulerManager } from './scheduler.js';
 import type { AgentStatusTracker } from './agent-status.js';
@@ -236,7 +237,8 @@ export class MenubarController {
         preload: this.deps.preloadPath,
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: true
+        sandbox: true,
+        zoomFactor: DEFAULT_RENDERER_ZOOM_FACTOR
       }
     });
     // Float above full-screen apps so the popover is reachable from anywhere.

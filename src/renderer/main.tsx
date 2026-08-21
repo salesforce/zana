@@ -35,29 +35,41 @@ if (!root) {
   });
 } else {
   const appRoot = createRoot(root);
-  const start = async () => {
-    try {
-      const startup = await window.cc.startup.state();
-      // Keep repair mode outside App: importing App initializes renderer stores
-      // backed by data that migration has not made safe to read yet.
-      const Content = startup.mode === 'repair-required'
-        ? (await import('./components/StartupRepair')).StartupRepair
-        : (await import('./App')).App;
+  // A regular browser has no preload. Keep it on the intentionally small
+  // server-owned surface instead of polyfilling privileged desktop APIs.
+  if (!('cc' in window)) {
+    void import('./components/BrowserAccess').then(({ BrowserAccess }) => {
       appRoot.render(
         <ErrorBoundary>
-          <Content />
+          <BrowserAccess />
         </ErrorBoundary>
       );
-    } catch (error) {
-      console.error('[renderer] startup state failed:', error);
-      const { StartupError } = await import('./components/StartupRepair');
-      const message = error instanceof Error ? error.message : String(error);
-      appRoot.render(
-        <ErrorBoundary>
-          <StartupError error={message} onRetry={() => void start()} />
-        </ErrorBoundary>
-      );
-    }
-  };
-  void start();
+    });
+  } else {
+    const start = async () => {
+      try {
+        const startup = await window.cc.startup.state();
+        // Keep repair mode outside App: importing App initializes renderer stores
+        // backed by data that migration has not made safe to read yet.
+        const Content = startup.mode === 'repair-required'
+          ? (await import('./components/StartupRepair')).StartupRepair
+          : (await import('./App')).App;
+        appRoot.render(
+          <ErrorBoundary>
+            <Content />
+          </ErrorBoundary>
+        );
+      } catch (error) {
+        console.error('[renderer] startup state failed:', error);
+        const { StartupError } = await import('./components/StartupRepair');
+        const message = error instanceof Error ? error.message : String(error);
+        appRoot.render(
+          <ErrorBoundary>
+            <StartupError error={message} onRetry={() => void start()} />
+          </ErrorBoundary>
+        );
+      }
+    };
+    void start();
+  }
 }

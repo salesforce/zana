@@ -1,0 +1,17 @@
+{
+  "name": "@zcc-ext/slack",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Slack bot and settings for Zana Command Center",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "zcc": {
+    "name": "Slack",
+    "description": "Slack live-bot and notification settings",
+    "branding": { "icon": "MessageSquare" },
+    "server": "./server.mjs"
+  }
+}

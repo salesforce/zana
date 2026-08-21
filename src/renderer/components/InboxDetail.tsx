@@ -147,7 +147,6 @@ function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }
   // landing page (see `InboxView`).
   const clearSelection = useInboxSelection((s) => s.select);
   const setNav = useUi((s) => s.setNav);
-  const selectProject = useUi((s) => s.selectProject);
   const selectTab = useUi((s) => s.selectTab);
   const pushToast = useUi((s) => s.pushToast);
 
@@ -255,8 +254,7 @@ function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }
    */
   const handleOpen = async () => {
     if (!aliveProject || reopening) return;
-    selectProject(aliveProject.id);
-    setNav('projects');
+    useUi.getState().enterProjectFocus(aliveProject.id);
 
     // 1. Live originating tab (or one we already reopened) → focus it.
     if (originalSession || reopenedSession) {
@@ -294,8 +292,7 @@ function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }
   const answerOnDeadSession = async (answer: string): Promise<boolean> => {
     const body = answer.trim();
     if (!aliveProject || reopening || !body) return false;
-    selectProject(aliveProject.id);
-    setNav('projects');
+    useUi.getState().enterProjectFocus(aliveProject.id);
     setReopening(true);
     try {
       const opening = resumable ? body : `${buildSeedPrompt(entry)}\n\nMy answer: ${body}`;

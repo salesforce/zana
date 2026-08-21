@@ -43,7 +43,13 @@ interface TrayAgent {
  * (ProjectScopedNav) uses this so a drilled-in user still sees "needs you"
  * agents for the project they're in, without the cross-project noise.
  */
-export function AgentTray({ projectId }: { projectId?: string } = {}) {
+export function AgentTray({
+  projectId,
+  placement = 'footer'
+}: {
+  projectId?: string;
+  placement?: 'footer' | 'inline';
+} = {}) {
   const terminals = useData((s) => s.terminals);
   const projects = useData((s) => s.projects);
   const byId = useAgentStatus((s) => s.byId);
@@ -91,7 +97,16 @@ export function AgentTray({ projectId }: { projectId?: string } = {}) {
     useUi.getState().openAgentModal(a.session.id, a.projectId);
   };
 
-  if (agents.length === 0) return null;
+  // The sidebar collection stays visible even when it has no live work. A small
+  // empty state makes the intentional space clear without adding a second CTA
+  // beside the section header's New quick agent control.
+  if (agents.length === 0) {
+    return placement === 'inline' ? (
+      <p className="agent-tray-empty" role="status">
+        No active agents
+      </p>
+    ) : null;
+  }
 
   // Collapsed rail: a single activity icon carrying the count. Red when any
   // agent is blocked (needs you), otherwise muted. Clicking expands the rail so
@@ -102,7 +117,7 @@ export function AgentTray({ projectId }: { projectId?: string } = {}) {
         ? `${agents.length} active · ${blockedCount} need you`
         : `${agents.length} active`;
     return (
-      <div className="agent-tray collapsed">
+      <div className={`agent-tray ${placement === 'inline' ? 'agent-tray--inline' : ''} collapsed`}>
         <button
           className="nav-item agent-tray-rail-btn"
           onClick={toggleSidebar}
@@ -124,9 +139,9 @@ export function AgentTray({ projectId }: { projectId?: string } = {}) {
   }
 
   return (
-    <div className="agent-tray">
+    <div className={`agent-tray ${placement === 'inline' ? 'agent-tray--inline' : ''}`}>
       <div className="agent-tray-header">
-        <span className="nav-section-label agent-tray-label">Agents</span>
+        <span className="nav-section-label agent-tray-label">Active agents</span>
         <span className="agent-tray-count">{agents.length}</span>
       </div>
       <div className="agent-tray-list">

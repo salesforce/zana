@@ -22,7 +22,8 @@ vi.mock('node:os', async (importOriginal) => {
 import {
   deploySkillsForExtension,
   removeSkillsForExtension,
-  syncExtensionSkills
+  syncExtensionSkills,
+  syncPluginSkills
 } from '../skill-installer.js';
 
 let extRoot: string;
@@ -209,5 +210,27 @@ describe('extension skill contributions', () => {
       ])
     ).resolves.not.toThrow();
     expect(existsSync(join(testHome, '.claude', 'skills', 'ext-acme.good-foo'))).toBe(true);
+  });
+
+  it('syncPluginSkills deploys SKILL.md from a skills root without agent:contribute', async () => {
+    const dir = makeExtDir('docs', { 'skills/hello/SKILL.md': '# Hello plugin skill\n' });
+    await syncPluginSkills([
+      { id: 'docs', rootDir: dir, enabled: true, skillsRootPaths: ['skills'] }
+    ]);
+    const file = join(testHome, '.claude', 'skills', 'plugin-docs-hello', 'SKILL.md');
+    expect(existsSync(file)).toBe(true);
+    expect(readFileSync(file, 'utf-8')).toBe('# Hello plugin skill\n');
+  });
+
+  it('syncPluginSkills prunes when the plugin is disabled', async () => {
+    const dir = makeExtDir('docs-off', { 'skills/hello/SKILL.md': '# Hello\n' });
+    await syncPluginSkills([
+      { id: 'docs-off', rootDir: dir, enabled: true, skillsRootPaths: ['skills'] }
+    ]);
+    expect(existsSync(join(testHome, '.claude', 'skills', 'plugin-docs-off-hello'))).toBe(true);
+    await syncPluginSkills([
+      { id: 'docs-off', rootDir: dir, enabled: false, skillsRootPaths: ['skills'] }
+    ]);
+    expect(existsSync(join(testHome, '.claude', 'skills', 'plugin-docs-off-hello'))).toBe(false);
   });
 });

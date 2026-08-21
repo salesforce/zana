@@ -250,12 +250,9 @@ describe('Core-extension separation guard', () => {
     // extension reaching data through the host MCP pool). Neither the module nor
     // its former plugins/ source may be imported by the registry anymore.
     expect(registry).not.toMatch(/zanaMainModule/);
-    expect(registry).not.toMatch(/from.*plugins\/zana/);
-
-    // Disk extensions (extensions/consensus, extensions/zana, etc.) are NOT imported.
-    expect(registry).not.toMatch(/from.*extensions\/consensus/);
-    expect(registry).not.toMatch(/from.*extensions\/zana/);
-    expect(registry).not.toMatch(/from.*extensions\/zana-hub/);
+    expect(registry).not.toMatch(/from.*plugins\/zana['"]/);
+    expect(registry).not.toMatch(/from.*plugins\/consensus/);
+    expect(registry).not.toMatch(/from.*plugins\/zana-hub/);
 
     // The comment in index.ts explicitly states these are no longer compiled in.
     expect(registry).toContain('no longer compiled in');

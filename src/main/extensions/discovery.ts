@@ -539,8 +539,8 @@ function parseProjectTab(raw: unknown): ExtensionManifest['projectTab'] {
   const label = typeof p.label === 'string' && p.label ? p.label : undefined;
   const icon = typeof p.icon === 'string' && p.icon ? p.icon : undefined;
   const order = typeof p.order === 'number' && Number.isFinite(p.order) ? p.order : undefined;
-  // `global` opts the extension OUT of its top-level sidebar entry (project-tab
-  // only) when explicitly false; absent/true keeps the default dual surface.
+  // `global` opts the extension OUT of its global Extensions-hub launch
+  // (project-tab only) when explicitly false; absent/true keeps dual surface.
   const global = typeof p.global === 'boolean' ? p.global : undefined;
   return { label, icon, order, global };
 }

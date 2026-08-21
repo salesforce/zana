@@ -249,7 +249,14 @@ const KNOWN_OPS = new Set<string>([
   'agent.send',
   'session.status',
   'sched.runNow',
-  'sched.setEnabled'
+  'sched.setEnabled',
+  'plugin.install',
+  'plugin.enable',
+  'plugin.disable',
+  'plugin.remove',
+  'plugin.reload',
+  'marketplace.list',
+  'marketplace.add'
 ]);
 
 /**
@@ -355,6 +362,17 @@ export function authorizeRequest(
 }
 
 /** Dispatch an authorized op against the injected deps. Pure-ish (deps do the IO). */
+let controlPlanePluginService: Awaited<
+  ReturnType<typeof import('../../apps/server/src/plugins/plugin-service.js')['createPluginService']>
+> | null = null;
+
+function getControlPlanePluginService(
+  create: () => NonNullable<typeof controlPlanePluginService>
+): NonNullable<typeof controlPlanePluginService> {
+  if (!controlPlanePluginService) controlPlanePluginService = create();
+  return controlPlanePluginService;
+}
+
 export async function dispatchOp(
   op: string,
   args: Record<string, unknown>,
@@ -519,6 +537,70 @@ export async function dispatchOp(
         return { ok: false, code: 'BAD_ARGS', message: 'id and enabled required' };
       }
       return deps.setScheduleEnabled(id, args.enabled);
+    }
+    case 'plugin.install':
+    case 'plugin.enable':
+    case 'plugin.disable':
+    case 'plugin.remove':
+    case 'plugin.reload':
+    case 'marketplace.list':
+    case 'marketplace.add': {
+      const { createPluginService, defaultBundledRoot, defaultPluginDataDir } = await import(
+        '../../apps/server/src/plugins/plugin-service.js'
+      );
+      const { applyPluginAgentCapabilities } = await import('./plugin-agent-sync.js');
+      const service = getControlPlanePluginService(() =>
+        createPluginService({
+          dataDir: defaultPluginDataDir(),
+          bundledRoot: defaultBundledRoot(),
+          onAgentCapabilitiesChanged: (contributors) => {
+            void applyPluginAgentCapabilities(contributors);
+          }
+        })
+      );
+      try {
+        if (op === 'plugin.install') {
+          const source = str(args.source);
+          if (!source) return { ok: false, code: 'BAD_ARGS', message: 'source required' };
+          return { ok: true, value: await service.install(source) };
+        }
+        if (op === 'plugin.enable') {
+          const id = str(args.id);
+          if (!id) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
+          return { ok: true, value: await service.enable(id) };
+        }
+        if (op === 'plugin.disable') {
+          const id = str(args.id);
+          if (!id) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
+          return { ok: true, value: await service.disable(id) };
+        }
+        if (op === 'plugin.remove') {
+          const id = str(args.id);
+          if (!id) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
+          await service.remove(id);
+          return { ok: true, value: { ok: true } };
+        }
+        if (op === 'plugin.reload') {
+          const id = str(args.id);
+          if (!id) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
+          return { ok: true, value: await service.reload(id) };
+        }
+        if (op === 'marketplace.list') {
+          return { ok: true, value: service.listMarketplaces() };
+        }
+        if (op === 'marketplace.add') {
+          const url = str(args.url);
+          if (!url) return { ok: false, code: 'BAD_ARGS', message: 'url required' };
+          return { ok: true, value: await service.addMarketplace(url) };
+        }
+      } catch (error) {
+        return {
+          ok: false,
+          code: 'PLUGIN_ERROR',
+          message: error instanceof Error ? error.message : String(error)
+        };
+      }
+      return { ok: false, code: 'BAD_OP', message: `unhandled op: ${op}` };
     }
     default:
       return { ok: false, code: 'BAD_OP', message: `unhandled op: ${op}` };

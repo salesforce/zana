@@ -261,10 +261,10 @@ export interface ExtensionManifest {
   permissionScopes?: ExtensionPermissionScopes;
   /**
    * Opt-in to mounting the extension's renderer panel as a PER-PROJECT TAB (see
-   * {@link ProjectTabContribution}). Absent ⇒ the extension only surfaces as a
-   * top-level sidebar entry (the default). Present ⇒ core also adds a tab to
-   * each project's workspace; selecting it mounts the same `renderer` panel
-   * scoped to the active project.
+   * {@link ProjectTabContribution}). The extension's global panel is opened
+   * from the Extensions hub by default. Present ⇒ core also adds a tab to each
+   * project's workspace; selecting it mounts the same `renderer` panel scoped
+   * to the active project.
    */
   projectTab?: ProjectTabContribution;
   /**
@@ -345,11 +345,11 @@ export interface ExtensionMcpServerContribution {
 /**
  * Declares that an extension's renderer {@link AppModule.panel} should ALSO be
  * mounted as a **per-project tab** (alongside the core Terminals / Explorer /
- * Tickets / … tabs), IN ADDITION to its top-level entry under the sidebar
- * "Extensions" group.
+ * Tickets / … tabs), in addition to its optional global panel opened from the
+ * Extensions hub.
  *
  * The same panel surfaces in two scopes:
- *   - the **global sidebar entry** — cross-project; {@link ModuleHost.getScopedProjectId}
+ *   - the **global Extensions-hub launch** — cross-project; {@link ModuleHost.getScopedProjectId}
  *     returns `null`.
  *   - the **per-project tab** — bound to one project; core mounts the panel with
  *     a host whose {@link ModuleHost.getScopedProjectId} returns THAT project's
@@ -382,11 +382,11 @@ export interface ProjectTabContribution {
    */
   order?: number;
   /**
-   * Whether the extension ALSO keeps its top-level sidebar entry (the default
-   * dual-surface behaviour). `true`/absent ⇒ the panel surfaces BOTH globally
-   * (cross-project, scoped id `null`) and as a per-project tab. `false` ⇒
-   * project-tab ONLY: core suppresses the global sidebar entry, so the panel is
-   * reachable solely from a project's tab strip (scoped id always a project id).
+   * Whether the extension ALSO exposes a global panel from the Extensions hub
+   * (the default dual-surface behaviour). `true`/absent ⇒ the panel surfaces
+   * BOTH globally (cross-project, scoped id `null`) and as a per-project tab.
+   * `false` ⇒ project-tab ONLY: the panel is reachable solely from a project's
+   * tab strip (scoped id always a project id).
    * Use `false` for inherently project-scoped data that has no meaningful
    * cross-project view. Core reads this generically — no extension id appears in
    * its placement logic (Rule 6).

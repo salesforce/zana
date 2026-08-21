@@ -20,6 +20,13 @@ import { useMergedModules } from './index';
 import { createModuleHost, createMountScopedHost, clearModuleCache } from './host';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import type { ModuleHost } from '@shared/module-api';
+import { listNavPanels } from '../plugins/plugin-slots';
+import { PluginSlotBoundary } from '../plugins/PluginSlotBoundary';
+import { AppPageHeader } from '../components/AppPageHeader';
+
+function generationFor(pluginId: string): number {
+  return listNavPanels().find((panel) => panel.pluginId === pluginId)?.generation ?? 0;
+}
 
 export function ModulePanelHost() {
   const nav = useUi((s) => s.nav);
@@ -45,11 +52,14 @@ export function ModulePanelHost() {
   const Panel = mod.panel;
   if (!Panel) {
     return (
-      <div className="module-panel-slot module-no-panel" role="status">
-        <p>{mod.title} has no view of its own.</p>
-        <p className="module-no-panel-hint">
-          It contributes commands and badges — open the command palette (⌘K) to use them.
-        </p>
+      <div className="module-panel-host">
+        <AppPageHeader title={<h1>{mod.title}</h1>} />
+        <div className="module-panel-slot module-no-panel" role="status">
+          <p>{mod.title} has no view of its own.</p>
+          <p className="module-no-panel-hint">
+            It contributes commands and badges — open the command palette (⌘K) to use them.
+          </p>
+        </div>
       </div>
     );
   }
@@ -61,10 +71,15 @@ export function ModulePanelHost() {
   // leave col 3 empty. This slot spans both — the extension's own root just needs
   // to fill 100% (which `width:auto`/block already does inside a stretched slot).
   return (
-    <div className="module-panel-slot">
-      <ErrorBoundary key={mod.id}>
-        <Panel host={host} />
-      </ErrorBoundary>
+    <div className="module-panel-host">
+      <AppPageHeader title={<h1>{mod.title}</h1>} />
+      <div className="module-panel-slot panel-body--full">
+        <PluginSlotBoundary pluginId={mod.id} generation={generationFor(mod.id)}>
+          <ErrorBoundary key={`${mod.id}:${generationFor(mod.id)}`}>
+            <Panel host={host} />
+          </ErrorBoundary>
+        </PluginSlotBoundary>
+      </div>
     </div>
   );
 }

@@ -166,8 +166,6 @@ const KIND_ICON = {
 function PointRow({ point, onSpawned }: { point: DetailedInboxPoint; onSpawned: () => void }) {
   const projects = useData((s) => s.projects);
   const createTerminal = useData((s) => s.createTerminal);
-  const setNav = useUi((s) => s.setNav);
-  const selectProject = useUi((s) => s.selectProject);
   const selectTab = useUi((s) => s.selectTab);
   const pushToast = useUi((s) => s.pushToast);
 
@@ -186,8 +184,7 @@ function PointRow({ point, onSpawned }: { point: DetailedInboxPoint; onSpawned: 
         prompt: prompt.trim()
       });
       if (session) {
-        selectProject(project.id);
-        setNav('projects');
+        useUi.getState().enterProjectFocus(project.id);
         selectTab(project.id, session.id);
         pushToast(`Agent spawned in ${project.name}`, 'info');
         onSpawned();

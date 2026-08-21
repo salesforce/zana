@@ -12,7 +12,13 @@ import { installKeyboardHarness, type KeyboardHarness } from './helpers/keyboard
 // env and each test drives a hand-built UI state. `vi.hoisted` so the spies
 // exist before the hoisted `vi.mock` factories run.
 const { uiState, dataState } = vi.hoisted(() => ({
-  uiState: { agentModal: null as unknown, closeAgentModal: vi.fn() },
+  uiState: {
+    nav: 'home' as string,
+    agentModal: null as unknown,
+    closeAgentModal: vi.fn(),
+    setNav: vi.fn(),
+    exitProjectFocus: vi.fn()
+  },
   dataState: { projects: [], terminals: {} as Record<string, unknown[]> }
 }));
 
@@ -36,8 +42,11 @@ describe('shortcuts: ⌘. closes the agent detail modal', () => {
   beforeEach(() => {
     kb = installKeyboardHarness();
     uninstall = installShortcuts();
+    uiState.nav = 'home';
     uiState.agentModal = null;
     uiState.closeAgentModal.mockClear();
+    uiState.setNav.mockClear();
+    uiState.exitProjectFocus.mockClear();
   });
 
   afterEach(() => {
@@ -62,5 +71,42 @@ describe('shortcuts: ⌘. closes the agent detail modal', () => {
     uiState.agentModal = { sessionId: 's1', projectId: 'p1' };
     kb.press('.');
     expect(uiState.closeAgentModal).not.toHaveBeenCalled();
+  });
+});
+
+describe('shortcuts: round-trip and dashboard chords', () => {
+  let kb: KeyboardHarness;
+  let uninstall: () => void;
+
+  beforeEach(() => {
+    kb = installKeyboardHarness();
+    uninstall = installShortcuts();
+    uiState.nav = 'home';
+    uiState.agentModal = null;
+    uiState.setNav.mockClear();
+    uiState.exitProjectFocus.mockClear();
+  });
+
+  afterEach(() => {
+    uninstall();
+    kb.teardown();
+  });
+
+  it('⌘O opens the Agents dashboard and exits project focus', () => {
+    kb.press('o', { meta: true });
+    expect(uiState.setNav).toHaveBeenCalledWith('agents');
+    expect(uiState.exitProjectFocus).toHaveBeenCalled();
+  });
+
+  it('⌘I round-trips Inbox back to Home', () => {
+    uiState.nav = 'inbox';
+    kb.press('i', { meta: true });
+    expect(uiState.setNav).toHaveBeenCalledWith('home');
+  });
+
+  it('⌘J round-trips Scheduler back to Home', () => {
+    uiState.nav = 'scheduler';
+    kb.press('j', { meta: true });
+    expect(uiState.setNav).toHaveBeenCalledWith('home');
   });
 });

@@ -78,10 +78,6 @@ export type CoreNavId =
   | 'scheduler'
   | 'goals'
   | 'followups'
-  | 'personas'
-  | 'squads'
-  | 'library'
-  | 'usage'
   | 'extensions'
   | 'settings';
 
@@ -102,10 +98,6 @@ export const CORE_NAV_IDS = new Set<CoreNavId>([
   'scheduler',
   'goals',
   'followups',
-  'personas',
-  'squads',
-  'library',
-  'usage',
   'extensions',
   'settings'
 ]);
@@ -120,10 +112,11 @@ export type NavId = CoreNavId | (string & {});
 /**
  * Active Settings sub-section. The fixed core tabs plus any settings-placed
  * module's id (`AppModule.placement === 'settings'`). `'extensions'` is the
- * Extensions hub (lists every module + mounts its `settingsPanel`).
- * `'plugins' | 'skills' | 'mcp'` are the configuration catalogues, folded in
- * from their former top-level rail destinations. `(string & {})` keeps the
- * core literals in autocomplete while allowing a module id.
+ * Plugins hub (lists every module + mounts its `settingsPanel`).
+ * `'skills' | 'mcp' | 'personas' | 'squads' | 'usage'` are the
+ * configuration catalogues, folded in from their former top-level rail
+ * destinations. `(string & {})` keeps the core literals in autocomplete while
+ * allowing a module id.
  */
 export type SettingsTab =
   | 'global'
@@ -134,12 +127,17 @@ export type SettingsTab =
   | 'project'
   | 'prompts'
   | 'extensions'
-  | 'plugins'
   | 'skills'
   | 'mcp'
+  | 'personas'
+  | 'squads'
+  | 'usage'
   | 'experimental'
   | 'about'
   | (string & {});
+
+/** The focused top-level Extensions workspace page. */
+export type ExtensionsTab = 'marketplace' | 'installed' | 'skills';
 
 export interface Toast {
   id: string;
@@ -493,6 +491,9 @@ interface UiState {
    */
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
+  /** Page selected in the focused top-level Extensions workspace. */
+  extensionsTab: ExtensionsTab;
+  setExtensionsTab: (tab: ExtensionsTab) => void;
   /**
    * When the Extensions section is open, which module's settings the picker
    * has selected (an opaque module id — built-in or disk extension; core never
@@ -753,7 +754,7 @@ function pushErrorToast(message: string) {
 }
 
 export const useUi = create<UiState>((set, get) => ({
-  nav: 'projects',
+  nav: 'home',
   moduleBadgeRevision: 0,
   refreshModuleBadges: () => set((s) => ({ moduleBadgeRevision: s.moduleBadgeRevision + 1 })),
   overviewOpen: false,
@@ -776,6 +777,7 @@ export const useUi = create<UiState>((set, get) => ({
   agentModal: null,
   agentMonitor: null,
   settingsTab: 'global',
+  extensionsTab: 'marketplace',
   settingsExtensionId: null,
   schedulerTab: 'overview',
   selectedGroupId: null,
@@ -890,7 +892,13 @@ export const useUi = create<UiState>((set, get) => ({
   // happens inside the panel via setSchedulerTab, so this only resets on
   // re-entry, not when the user navigates the scope rail.
   setNav: (nav) =>
-    set(nav === 'scheduler' ? { nav, schedulerTab: 'overview' } : { nav }),
+    set(
+      nav === 'scheduler'
+        ? { nav, schedulerTab: 'overview' }
+        : nav === 'extensions'
+          ? { nav, extensionsTab: 'marketplace' }
+          : { nav }
+    ),
   inboxTab: 'feed',
   setInboxTab: (inboxTab) => set({ inboxTab }),
   inboxGrouping: 'project',
@@ -924,13 +932,12 @@ export const useUi = create<UiState>((set, get) => ({
     useData.getState().loadGitStatus(id);
   },
   enterProjectFocus: (id) => {
-    set({ focusedProjectId: id });
+    // Opening a workspace always brings its content surface forward. Its last
+    // selected mode remains in `workspaceMode`, so reopening a project returns
+    // to the view the user last used instead of resetting to Agents.
+    set({ focusedProjectId: id, nav: 'projects' });
     // Keep selection in sync with focus so the workspace tracks the column.
     get().selectProject(id);
-    // Selecting a project always lands on the Agents board first, not whatever
-    // mode it was left in. The user switches to Terminals/Explorer/etc. from
-    // there if they want it.
-    get().setWorkspaceMode(id, 'agents');
     window.cc.config.set({ focusedProjectId: id }).catch(() => {});
   },
   exitProjectFocus: () => {
@@ -958,6 +965,7 @@ export const useUi = create<UiState>((set, get) => ({
   selectMonitorAgent: (sessionId, projectId) => set({ agentMonitor: { sessionId, projectId } }),
   clearMonitorAgent: () => set({ agentMonitor: null }),
   setSettingsTab: (settingsTab) => set({ settingsTab }),
+  setExtensionsTab: (extensionsTab) => set({ extensionsTab }),
   setSettingsExtensionId: (settingsExtensionId) => set({ settingsExtensionId }),
   selectSettingsExtension: (id) => set({ settingsTab: 'extensions', settingsExtensionId: id }),
   settingsAnchor: null,
@@ -992,6 +1000,8 @@ export const useUi = create<UiState>((set, get) => ({
     // The deep-link id is set alongside so LibraryView selects the doc as soon
     // as it renders in the project's Library.
     get().enterProjectFocus(projectId);
+    // `'library'` is the pre-plugin persisted alias; Workspace remaps it onto
+    // the Docs plugin's project tab without naming that plugin's id here.
     get().setWorkspaceMode(projectId, 'library');
     set({ revealLibraryDocId: docId });
   },
@@ -1902,12 +1912,11 @@ export const useData = create<DataState>((set, get) => ({
       const scopedProjectId = getScopedProjectId();
       if (scopedProjectId && projects.find((p) => p.id === scopedProjectId)) {
         useUi.getState().selectProject(scopedProjectId);
-        useUi.setState({ focusedProjectId: scopedProjectId });
+        useUi.setState({ focusedProjectId: scopedProjectId, nav: 'projects' });
       } else {
-        // The main window opens with NO project selected or focused — the
-        // Projects list starts unhighlighted and the cross-project Agents board
-        // is the home. Neither lastProjectId nor focusedProjectId is restored;
-        // the user picks a project explicitly each session.
+        // The main window opens on Home with no project selected or focused.
+        // Neither lastProjectId nor focusedProjectId is restored; the user
+        // picks a project explicitly each session.
         // First-run walkthrough: auto-open once, in the main window only (a
         // scoped per-project window short-circuits above and never shows it).
         // The flag is flipped true when the user finishes/skips it, so it won't

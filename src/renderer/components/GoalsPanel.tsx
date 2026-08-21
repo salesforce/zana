@@ -30,6 +30,7 @@ import type {
 import { useData, useGoals, useUi } from '../store';
 import { ImprovePromptButton } from './ImprovePromptButton';
 import { PopoverPicklist } from './ui/PopoverPicklist';
+import { AppPageHeader } from './AppPageHeader';
 import { VALID_PROFILES } from '@shared/launch-provider';
 
 const PROFILES = VALID_PROFILES;
@@ -124,11 +125,11 @@ export function GoalsPanel({ projectId }: { projectId?: string } = {}) {
     : goals.length > 0;
 
   return (
-    <main className={`settings-panel scheduler-panel scheduler-panel--full ${scoped ? 'scheduler-panel--embedded' : ''}`}>
+    <div className={`settings-panel scheduler-panel ${scoped ? 'scheduler-panel--embedded' : ''}`}>
+      {!scoped && <AppPageHeader title={<h1>Goals</h1>} />}
       <div className="settings-inner">
         <div className="scheduler-header">
           <div className="scheduler-header-text">
-            <h2>Goals</h2>
             <p className="settings-help scheduler-subtitle">
               A persistent objective plus falsifiable success criteria. The app
               spawns a worker, evaluates it, and re-spawns with feedback until
@@ -164,7 +165,7 @@ export function GoalsPanel({ projectId }: { projectId?: string } = {}) {
               Add a project before creating a goal.{' '}
               <button
                 className="settings-btn settings-btn--primary"
-                onClick={() => setNav('projects')}
+                onClick={() => setNav('home')}
                 style={{ marginTop: 8 }}
               >
                 Go to Projects
@@ -253,7 +254,7 @@ export function GoalsPanel({ projectId }: { projectId?: string } = {}) {
           onClose={() => setReport(null)}
         />
       )}
-    </main>
+    </div>
   );
 }
 

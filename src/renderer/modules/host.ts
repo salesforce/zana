@@ -517,8 +517,7 @@ export function createModuleHost(
       }
       const session = launched.value;
       const ui = useUi.getState();
-      ui.setNav('projects');
-      ui.selectProject(projectId);
+      ui.enterProjectFocus(projectId);
       ui.selectTab(projectId, session.id);
       ui.setWorkspaceMode(projectId, 'terminals');
       return { id: session.id };

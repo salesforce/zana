@@ -3,9 +3,9 @@ import type { Metadata } from 'next';
 import { ProductShot } from '../components/ProductShot';
 
 export const metadata: Metadata = {
-  title: 'Extensions',
+  title: 'Plugins',
   description:
-    'Install, build, and publish Zana Command Center extensions with a task-oriented guide to the marketplace, SDK, permissions, and live reload workflow.',
+    'Install and author Zana Command Center plugins. Manifests live in package.json, load in-process on the server, and register UI slots in the app.',
   alternates: { canonical: '/extensions/' },
   openGraph: {
     title: 'Extensions for Zana Command Center',

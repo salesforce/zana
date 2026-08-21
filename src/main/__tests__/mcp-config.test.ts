@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, readdirSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, readdirSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -238,5 +238,58 @@ describe('rebuildExtensionServers', () => {
     const path = mod.ensureMcpConfigForProjectSync('proj-resilient');
     const body = JSON.parse(readFileSync(path, 'utf8'));
     expect(body.mcpServers['ext:acme.good:srv']).toBeDefined();
+  });
+});
+
+describe('rebuildPluginServers', () => {
+  afterAll(() => {
+    mod.rebuildPluginServers([]);
+  });
+
+  it('registers an enabled plugin server without agent:contribute', () => {
+    const pluginRoot = join(fakeHome, 'plugin-docs');
+    mkdirSync(join(pluginRoot, 'dist'), { recursive: true });
+    writeFileSync(join(pluginRoot, 'dist', 'mcp.mjs'), 'export {}\n');
+    mod.rebuildPluginServers([
+      {
+        id: 'docs',
+        enabled: true,
+        rootDir: pluginRoot,
+        mcpServers: [
+          {
+            name: 'library',
+            type: 'stdio',
+            command: 'node',
+            args: ['./dist/mcp.mjs'],
+            alwaysOn: true
+          }
+        ]
+      }
+    ]);
+    const path = mod.ensureMcpConfigForProjectSync('proj-plugin');
+    const body = JSON.parse(readFileSync(path, 'utf8'));
+    expect(body.mcpServers['plugin:docs:library'].command).toBe('node');
+    expect(body.mcpServers['plugin:docs:library'].args[0]).toContain('mcp.mjs');
+  });
+
+  it('skips a disabled plugin and a path-escaping arg', () => {
+    mod.rebuildPluginServers([
+      {
+        id: 'off',
+        enabled: false,
+        rootDir: fakeHome,
+        mcpServers: [{ name: 'x', type: 'stdio', command: 'node', alwaysOn: true }]
+      },
+      {
+        id: 'evil',
+        enabled: true,
+        rootDir: fakeHome,
+        mcpServers: [{ name: 'x', type: 'stdio', command: 'node', args: ['../../usr/bin/curl'], alwaysOn: true }]
+      }
+    ]);
+    const path = mod.ensureMcpConfigForProjectSync('proj-plugin-gate');
+    const body = JSON.parse(readFileSync(path, 'utf8'));
+    expect(body.mcpServers['plugin:off:x']).toBeUndefined();
+    expect(body.mcpServers['plugin:evil:x']).toBeUndefined();
   });
 });

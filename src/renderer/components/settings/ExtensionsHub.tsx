@@ -8,13 +8,14 @@
  * none.
  *
  * The detail pane mounts the selected module's `settingsPanel` with the same
- * cached `ModuleHost` its sidebar/settings panel would use (`getHost(id)`), so
+ * cached `ModuleHost` its global panel/settings panel would use (`getHost(id)`), so
  * the extension's storage/cache/host calls resolve against one host instance.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   FolderOpen,
+  ExternalLink,
   Power,
   Plus,
   RotateCw,
@@ -33,8 +34,7 @@ import { useMergedModules } from '../../modules';
 import { getHost } from '../../modules/ModulePanelHost';
 import { resolveIcon } from '../../util/resolveIcon';
 import { ErrorBoundary } from '../ErrorBoundary';
-import { PERMISSION_LABELS } from '../ExtensionConsent';
-import { ConsentBody, consentDelta } from '../ConsentBody';
+import { PERMISSION_LABELS, pluginCapabilityLines } from '../ExtensionConsent';
 import { CreateExtensionDialog } from '../CreateExtensionDialog';
 import { InstallFromGitDialog } from '../InstallFromGitDialog';
 import { Marketplace } from './Marketplace';
@@ -49,13 +49,12 @@ async function openExtensionLauncher(id: string): Promise<{ ok: false; message: 
   const info = await window.cc.extensions.localInfo(id);
   if (!info.ok) return { ok: false, message: info.message ?? 'Could not resolve source' };
   const ui = useUi.getState();
-  ui.setNav('projects');
-  ui.selectProject(info.value.projectId);
+  ui.enterProjectFocus(info.value.projectId);
   ui.setLauncherOpen(true);
   return null;
 }
 
-type HubTab = 'installed' | 'marketplace';
+export type HubTab = 'installed' | 'marketplace';
 
 /** A module paired with its disk-extension entry (built-ins have no entry). */
 interface HubRow {
@@ -117,8 +116,19 @@ export function buildHubRows(
   return rows.sort((a, b) => a.module.title.localeCompare(b.module.title));
 }
 
-export function ExtensionsHub({ initialTab = 'installed' }: { initialTab?: HubTab } = {}) {
-  const [tab, setTab] = useState<HubTab>(initialTab);
+export function ExtensionsHub({
+  initialTab = 'installed',
+  tab: controlledTab,
+  onTabChange,
+  showTabs = true
+}: {
+  initialTab?: HubTab;
+  tab?: HubTab;
+  onTabChange?: (tab: HubTab) => void;
+  showTabs?: boolean;
+} = {}) {
+  const [uncontrolledTab, setUncontrolledTab] = useState<HubTab>(initialTab);
+  const tab = controlledTab ?? uncontrolledTab;
   const [reloading, setReloading] = useState(false);
   const [redeploying, setRedeploying] = useState(false);
   const [redeployNote, setRedeployNote] = useState<string | null>(null);
@@ -164,53 +174,66 @@ export function ExtensionsHub({ initialTab = 'installed' }: { initialTab?: HubTa
     setCreating(true);
   };
 
+  const selectTab = (next: HubTab) => {
+    if (controlledTab === undefined) setUncontrolledTab(next);
+    onTabChange?.(next);
+  };
+
+  const maintenanceActions = (
+    <div className="ext-hub-more-wrap">
+      <button
+        type="button"
+        className="settings-btn"
+        aria-haspopup="menu"
+        aria-expanded={moreOpen}
+        onClick={() => setMoreOpen((open) => !open)}
+      >
+        <MoreHorizontal size={16} />
+        More
+      </button>
+      {moreOpen && (
+        <div className="ext-hub-more-menu" role="menu" aria-label="Extension maintenance">
+          <button type="button" role="menuitem" onClick={redeploy} disabled={redeploying}>
+            <RefreshCw size={14} className={redeploying ? 'ext-spin' : undefined} />
+            {redeploying ? 'Reloading skills and MCP…' : 'Reload skills and MCP'}
+          </button>
+          <button type="button" role="menuitem" onClick={reload} disabled={reloading}>
+            <RotateCw size={14} className={reloading ? 'ext-spin' : undefined} />
+            {reloading ? 'Rescanning extensions…' : 'Rescan installed extensions'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="ext-hub-shell">
-      <div className="ext-hub-tabs" role="tablist" aria-label="Extensions">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'installed'}
-          className={`ext-hub-tab ${tab === 'installed' ? 'active' : ''}`}
-          onClick={() => setTab('installed')}
-        >
-          Installed
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'marketplace'}
-          className={`ext-hub-tab ${tab === 'marketplace' ? 'active' : ''}`}
-          onClick={() => setTab('marketplace')}
-        >
-          Marketplace
-        </button>
-        <span className="ext-hub-tabs-spacer" />
-        <div className="ext-hub-more-wrap">
+      {showTabs ? (
+        <div className="ext-hub-tabs" role="tablist" aria-label="Extensions">
           <button
             type="button"
-            className="settings-btn"
-            aria-haspopup="menu"
-            aria-expanded={moreOpen}
-            onClick={() => setMoreOpen((open) => !open)}
+            role="tab"
+            aria-selected={tab === 'installed'}
+            className={`ext-hub-tab ${tab === 'installed' ? 'active' : ''}`}
+            onClick={() => selectTab('installed')}
           >
-            <MoreHorizontal size={16} />
-            More
+            Installed
           </button>
-          {moreOpen && (
-            <div className="ext-hub-more-menu" role="menu" aria-label="Extension maintenance">
-              <button type="button" role="menuitem" onClick={redeploy} disabled={redeploying}>
-                <RefreshCw size={14} className={redeploying ? 'ext-spin' : undefined} />
-                {redeploying ? 'Reloading skills and MCP…' : 'Reload skills and MCP'}
-              </button>
-              <button type="button" role="menuitem" onClick={reload} disabled={reloading}>
-                <RotateCw size={14} className={reloading ? 'ext-spin' : undefined} />
-                {reloading ? 'Rescanning extensions…' : 'Rescan installed extensions'}
-              </button>
-            </div>
-          )}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'marketplace'}
+            className={`ext-hub-tab ${tab === 'marketplace' ? 'active' : ''}`}
+            onClick={() => selectTab('marketplace')}
+          >
+            Marketplace
+          </button>
+          <span className="ext-hub-tabs-spacer" />
+          {maintenanceActions}
         </div>
-      </div>
+      ) : (
+        <div className="ext-hub-top-actions">{maintenanceActions}</div>
+      )}
       {tab === 'installed' && (
         <section className="ext-dev-guide" aria-labelledby="ext-dev-guide-title">
           <div className="ext-dev-guide-copy">
@@ -432,12 +455,12 @@ function fmtBuilt(iso: string): string {
 /**
  * Where the module surfaces in the shell, derived purely from its capabilities
  * (Rule 6 — no module-id literal). A module is:
- *   - GLOBAL when it contributes a top-level surface (panel / commands / navBadge)
- *     and hasn't opted its sidebar entry out via `projectTab.global === false`.
+ *   - GLOBAL when it contributes a panel that can be opened from the Extensions
+ *     hub and hasn't opted that global surface out via `projectTab.global === false`.
  *   - PROJECT when it declares a `projectTab` with a `panel` (a per-project tab).
  * The two are NOT exclusive: the default for a `projectTab` module is BOTH (a
- * global sidebar entry AND a per-project tab). This mirrors `contributesSurface`
- * in Sidebar.tsx and `selectProjectTabModules` in modules/index.ts.
+ * global hub launch AND a per-project tab). This mirrors `canOpenGlobalPanel`
+ * and `selectProjectTabModules` in modules/index.ts.
  */
 function moduleSurface(module: AppModule, entry?: ExtensionEntry | null): { label: string; hint: string } {
   // A placeholder row (unconsented / disabled / incompatible extension) carries
@@ -454,18 +477,27 @@ function moduleSurface(module: AppModule, entry?: ExtensionEntry | null): { labe
   const isProject = !!(projectTab && hasRenderer);
 
   if (module.placement === 'settings') {
-    return { label: 'Settings only', hint: 'Appears under Settings, no rail entry' };
+    return { label: 'Settings only', hint: 'Appears under Settings, no global panel' };
   }
   if (isGlobal && isProject) {
-    return { label: 'Global + Project', hint: 'Sidebar entry and a per-project tab' };
+    return { label: 'Global + Project', hint: 'Extensions-hub launch and a per-project tab' };
   }
   if (isProject) {
-    return { label: 'Project only', hint: 'Per-project tab only (no sidebar entry)' };
+    return { label: 'Project only', hint: 'Per-project tab only (no global panel)' };
   }
   if (isGlobal) {
-    return { label: 'Global', hint: 'Top-level sidebar entry' };
+    return { label: 'Global', hint: 'Opened from the Extensions hub' };
   }
   return { label: 'Background', hint: 'No visible surface (main/background only)' };
+}
+
+/** Whether this module can be opened as a cross-project panel from the hub. */
+export function canOpenGlobalPanel(module: AppModule): boolean {
+  return (
+    !!module.panel &&
+    module.placement !== 'settings' &&
+    module.projectTab?.global !== false
+  );
 }
 
 /** A short status chip for the list row. */
@@ -476,7 +508,6 @@ function rowStatus(
   if (module.loadError) return { label: 'Failed', tone: 'error' };
   if (!entry) return { label: 'Built-in', tone: 'muted' };
   if (entry.error === 'version-mismatch') return { label: 'Incompatible', tone: 'error' };
-  if (entry.needsConsent) return { label: 'Needs consent', tone: 'warn' };
   if (!entry.enabled) return { label: 'Disabled', tone: 'muted' };
   return { label: 'Enabled', tone: 'ok' };
 }
@@ -497,8 +528,7 @@ function ExtensionDetail({ row }: { row: HubRow }) {
   return (
     <>
       <AboutCard row={row} />
-      {entry?.needsConsent && <ConsentCard entry={entry} />}
-      {entry && <PermissionsCard entry={entry} />}
+      {entry && <InstallConfirmationCard entry={entry} />}
       {module.loadError ? (
         <section className="settings-section">
           <p className="modal-error">{module.loadError}</p>
@@ -521,77 +551,45 @@ function ExtensionDetail({ row }: { row: HubRow }) {
 }
 
 /**
- * Inline, PERSISTENT consent affordance for an extension awaiting approval
- * (`needsConsent` is `'new'` or `'widened'`). This is the durable fallback to
- * the transient global overlay (`ExtensionConsent`): once that overlay is
- * dismissed ("Not now") for the session it stays suppressed, and this card is
- * then the ONLY in-app way to approve — closing the reported dead-end.
- *
- * It reuses the shared `<ConsentBody>` so the perms delta, scope lines, and
- * remote-origin provenance (incl. LOUD "*" wildcards) can't drift from the
- * overlay, and calls the SAME server-authoritative `grantConsent(id)` — main
- * re-derives the declared perms/scopes from the live manifest (Rule 1). On
- * success the `onChanged` push re-stamps `needsConsent: null`, this card
- * unmounts, and the loader mounts the extension's real surface. There is no
- * "Not now" here: the hub is the persistent management surface, so there is
- * nothing to dismiss — the user simply navigates away.
+ * Install confirmation: exact npm version / git commit / path source.
+ * Plugins are full-trust after install; there is no permission grant set.
  */
-export function ConsentCard({ entry }: { entry: ExtensionEntry }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export function InstallConfirmationCard({ entry }: { entry: ExtensionEntry }) {
   const title = entry.manifest?.title ?? entry.id;
-  const widened = entry.needsConsent === 'widened';
-  const { scopeOnlyWiden } = consentDelta(entry);
-
-  const approve = () => {
-    setBusy(true);
-    setError(null);
-    window.cc.extensions
-      .grantConsent(entry.id)
-      .then((res) => {
-        if (!res.ok) setError(res.message ?? 'Could not save consent');
-        // Success: the onChanged push clears needsConsent and this card unmounts.
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-      .finally(() => setBusy(false));
-  };
-
+  const version = entry.manifest?.version ?? 'unknown';
+  const origin = entry.remoteOrigin ?? entry.source ?? entry.path;
+  const originLabel =
+    typeof origin === 'string' ? origin : `${origin.url}${origin.ref ? `#${origin.ref}` : ''}`;
+  const capabilityLines = pluginCapabilityLines({
+    skillNames: entry.manifest?.skills?.map((s) => s.slug ?? s.path),
+    mcpServers: entry.manifest?.mcpServers,
+    extra: undefined
+  });
   return (
-    <section className="settings-section ext-hub-consent">
-      <div className="ext-hub-consent-head">
-        <ShieldCheck size={18} className="ext-hub-consent-icon" />
-        <div>
-          <h3>
-            {widened
-              ? scopeOnlyWiden
-                ? `${title} wants broader access`
-                : `${title} wants new permissions`
-              : `Approve “${title}” to activate it`}
-          </h3>
-          <p className="settings-help">
-            {widened
-              ? scopeOnlyWiden
-                ? 'An update broadened what this extension can access. Review and allow to keep using it.'
-                : 'An update added permissions you haven’t approved. Review and allow to keep using it.'
-              : 'This extension is installed but inactive until you approve what it can do.'}
-          </p>
-        </div>
-      </div>
-      <ConsentBody entry={entry} />
-      <div className="ext-actions">
-        <button
-          type="button"
-          className="settings-btn primary"
-          onClick={approve}
-          disabled={busy}
-        >
-          <ShieldCheck size={14} />
-          {busy ? 'Allowing…' : widened ? 'Allow new permissions' : 'Allow'}
-        </button>
-      </div>
-      {error && <p className="modal-error">{error}</p>}
+    <section className="settings-section">
+      <h3>Installed</h3>
+      <p className="settings-help">
+        {title} {version} — installing a plugin runs it in-process with full
+        trust. Host-daemon tokens stay on the server.
+      </p>
+      <p className="settings-help settings-help--muted">{originLabel}</p>
+      {capabilityLines.length > 0 && (
+        <ul className="ext-hub-perm-list">
+          {capabilityLines.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      )}
     </section>
   );
+}
+
+/**
+ * @deprecated Consent grants are not part of the plugin model. Kept so older
+ * tests that import the symbol still typecheck during the shim window.
+ */
+export function ConsentCard({ entry }: { entry: ExtensionEntry }) {
+  return <InstallConfirmationCard entry={entry} />;
 }
 
 /**
@@ -707,6 +705,11 @@ function AboutCard({ row }: { row: HubRow }) {
 
   const isLocal = entry?.source === 'local';
   const isGit = entry?.source === 'git';
+  // Global panels are launched from this hub instead of earning a separate
+  // sidebar row. Project-only and Settings-only modules remain in their native
+  // project/settings surfaces.
+  const canOpenPanel = canOpenGlobalPanel(module);
+  const openPanel = () => useUi.getState().setNav(module.id);
 
   const toggleEnabled = () => {
     if (!entry) return;
@@ -849,6 +852,14 @@ function AboutCard({ row }: { row: HubRow }) {
           </>
         )}
       </div>
+      {canOpenPanel && (
+        <div className="ext-actions">
+          <button type="button" className="settings-btn primary" onClick={openPanel}>
+            <ExternalLink size={14} />
+            Open
+          </button>
+        </div>
+      )}
       {/* Primary "build" cluster for a local extension — the two things you
           actually DO with source you're authoring. Kept visually distinct (a
           titled block with a filled primary + secondary) from the management

@@ -10,8 +10,8 @@
  * private, run inside the exported `discoverExtensions`) against a temp
  * `ZCC_EXTENSIONS_DIR` seeded from the artifact — zero source edits.
  *
- * Only two extensions are ever seeded: `capabilities` ships a `dist/` with no
- * manifest (not an extension), and `zana-hub` is unseeded — neither appears here.
+ * Only `zana` is seeded here. `zana-hub` is unseeded, and Consensus is no
+ * longer a shipped plugin — neither appears in this roster.
  */
 import { cp, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import type { ExtensionEntry } from '@shared/types';
 
 /** The ids seeded into the packaged app. The single source of this list. */
-export const SEEDED_IDS = ['consensus', 'zana'] as const;
+export const SEEDED_IDS = ['zana'] as const;
 export type SeededId = (typeof SEEDED_IDS)[number];
 
 /**

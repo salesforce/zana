@@ -20,6 +20,10 @@ import { create } from 'zustand';
 import type { AppModule } from '@shared/module-api';
 import type { ActivateResult, RendererEntry } from '@zana-ai/zcc-extension-sdk/renderer';
 import type { ExtensionEntry } from '@shared/types';
+import { isPluginAppDefinition } from '@zana-ai/zcc-plugin-sdk';
+import type { PluginRegistrationSet } from '@zana-ai/zcc-plugin-sdk';
+import { interpretPluginApp } from '../plugins/plugin-slots';
+import { PluginSlotBoundary } from '../plugins/PluginSlotBoundary';
 import { evictHost, getHost } from './ModulePanelHost';
 import { setExtensionGrants } from './host';
 
@@ -78,6 +82,49 @@ function makeErrorModule(entry: ExtensionEntry, message: string): ExtensionModul
     titleLabel: entry.manifest?.titleLabel,
     panel: Panel,
     loadError: message
+  };
+}
+
+function appModuleFromPluginSet(entry: ExtensionEntry, set: PluginRegistrationSet): ExtensionModule {
+  const title = entry.manifest?.title ?? entry.id;
+  const nav = set.navPanels[0];
+  const settings = set.settingsSections[0];
+  const projectTab = set.projectTabs[0];
+  const Panel = nav
+    ? function PluginNavPanel() {
+        const Component = nav.component;
+        return React.createElement(
+          PluginSlotBoundary,
+          { pluginId: entry.id, generation: nav.generation },
+          React.createElement(Component, { pluginId: entry.id, subPath: '' })
+        );
+      }
+    : undefined;
+  const Settings = settings
+    ? function PluginSettingsPanel() {
+        const Component = settings.component;
+        return React.createElement(
+          PluginSlotBoundary,
+          { pluginId: entry.id, generation: settings.generation },
+          React.createElement(Component, { pluginId: entry.id })
+        );
+      }
+    : undefined;
+  return {
+    id: entry.id,
+    title: nav?.title ?? title,
+    icon: nav?.icon ?? entry.manifest?.icon ?? 'Puzzle',
+    titleLabel: entry.manifest?.titleLabel,
+    panel: Panel,
+    settingsPanel: Settings,
+    projectTab: projectTab
+      ? {
+          label: projectTab.label,
+          icon: projectTab.icon,
+          order: projectTab.order,
+          global: projectTab.global
+        }
+      : entry.manifest?.projectTab
   };
 }
 
@@ -171,11 +218,15 @@ async function loadExtensionModule(entry: ExtensionEntry): Promise<ExtensionModu
     // global up front covers that eval-time window so such bundles import
     // cleanly. Bundles that import nothing (like the hello sample) ignore it.
     (globalThis as Record<string, unknown>).__ZCC_HOST_REACT__ = React;
-    // @vite-ignore keeps Vite from trying to analyze/bundle this dynamic import.
-    const mod = (await import(/* @vite-ignore */ blobUrl)) as { default?: RendererEntry };
-    const rendererEntry = mod.default;
+    const mod = (await import(/* @vite-ignore */ blobUrl)) as { default?: RendererEntry | unknown };
+    const exported = mod.default;
+    if (isPluginAppDefinition(exported)) {
+      const set = interpretPluginApp(entry.id, exported);
+      return appModuleFromPluginSet(entry, set);
+    }
+    const rendererEntry = exported as RendererEntry | undefined;
     if (!rendererEntry || typeof rendererEntry.activate !== 'function') {
-      return makeErrorModule(entry, 'Bundle did not default-export a RendererEntry.');
+      return makeErrorModule(entry, 'Bundle did not default-export a plugin app or RendererEntry.');
     }
     // Use the SAME cached host ModulePanelHost will inject as the `host` prop,
     // so the panel closes over one host instance and `evictHost` releases it.
@@ -280,7 +331,7 @@ export async function reconcileExtensionModules(entries: ExtensionEntry[]): Prom
   // ext is discovered + listed (so the UI can prompt) but its panel never loads
   // until the user approves — consent precedes code running.
   const wanted = entries.filter(
-    (e) => e.enabled && e.loaded && e.consented && e.manifest?.entry.renderer
+    (e) => e.enabled && e.loaded && e.manifest?.entry.renderer
   );
   const wantedIds = new Set(wanted.map((e) => e.id));
 

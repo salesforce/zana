@@ -1,11 +1,5 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`W1-8 consent-scopelines — seeded built artifacts > consensus renders its mcp scope in plain language (post file-drop→MCP migration) 1`] = `
-[
-  "Integration servers it may use: zana",
-]
-`;
-
 exports[`W1-8 consent-scopelines — seeded built artifacts > zana scope lines are stable 1`] = `
 [
   "Tools it may run: npm",

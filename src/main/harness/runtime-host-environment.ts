@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { RuntimeSupervisor } from '../runtime-supervisor.js';
-import type { TerminalHostEvent } from '@zana-ai/zcc-contracts/terminal-execution';
+import type { TerminalHostBinding, TerminalHostEvent } from '@zana-ai/zcc-contracts/terminal-execution';
+import { TERMINAL_HOST_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/terminal-execution';
 import type {
   ExecEnvContext,
   ExecutionEnvironment,
@@ -54,6 +55,8 @@ class RuntimeHostExecutionSession implements ExecutionSession {
   private started = false;
   private exited = false;
   private _pid: number | undefined;
+  private binding: TerminalHostBinding | null = null;
+  private startError: string | null = null;
 
   constructor(
     private readonly runtime: RuntimeSupervisor,
@@ -86,8 +89,9 @@ class RuntimeHostExecutionSession implements ExecutionSession {
     });
     for (const event of events) this.handleEvent(event);
     if (!this.started) {
+      const error = this.startError ?? 'runtime host did not start terminal session';
       this.destroy();
-      throw new Error('runtime host did not start terminal session');
+      throw new Error(error);
     }
   }
 
@@ -140,6 +144,7 @@ class RuntimeHostExecutionSession implements ExecutionSession {
     }
     return this.runtime.executeTerminal({
       ...command,
+      protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION,
       commandId: this.commandId(),
       sessionId: this.sessionId,
       launchEpoch: this.launchEpoch,
@@ -148,11 +153,20 @@ class RuntimeHostExecutionSession implements ExecutionSession {
   }
 
   private handleEvent(event: TerminalHostEvent): void {
-    if (event.kind === 'rejected') return;
+    if (event.kind === 'rejected') {
+      if (event.sessionId === this.sessionId && event.launchEpoch === this.launchEpoch) {
+        this.startError = event.reason;
+      }
+      return;
+    }
     if (event.sessionId !== this.sessionId || event.launchEpoch !== this.launchEpoch) return;
     if (event.kind === 'started') {
       this.started = true;
       this._pid = event.pid;
+      return;
+    }
+    if (event.kind === 'accepted') {
+      this.binding = event.binding;
       return;
     }
     if (event.kind === 'output') {
@@ -212,6 +226,12 @@ class RuntimeHostExecutionSession implements ExecutionSession {
     if (this.exited) return;
     this.handleEvent({
       kind: 'exited',
+      protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION,
+      binding: this.binding ?? {
+        hostId: '00000000-0000-4000-8000-000000000000',
+        instanceId: '00000000-0000-4000-8000-000000000000',
+        hostConnectionId: '00000000-0000-4000-8000-000000000000'
+      },
       sessionId: this.sessionId,
       launchEpoch: this.launchEpoch,
       sequence: Number.MAX_SAFE_INTEGER,

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { buildPaletteItems, type PaletteBuildContext } from '../buildItems.js';
+import { useUi } from '../../../store';
 import type { WhenContext } from '../whenContext.js';
 import type { AppModule } from '@shared/module-api';
 import type { Project, TerminalSession, ScheduledTask, Persona } from '@shared/types';
@@ -13,7 +14,9 @@ vi.mock('../../../modules/ModulePanelHost', () => ({
 // run handlers — never at build time — but the module-load still resolves it.
 vi.mock('../../../store', async () => {
   return {
-    useUi: { getState: () => ({}) },
+    useUi: {
+      getState: vi.fn(() => ({ exitProjectFocus: () => {}, enterProjectFocus: () => {} }))
+    },
     visibleTerminals: (list: TerminalSession[] | undefined) => list ?? []
   };
 });
@@ -86,7 +89,7 @@ describe('buildPaletteItems', () => {
       'action:inbox',
       'action:scheduler',
       'action:skills',
-      'action:plugins',
+       'action:plugin-hub',
       'action:mcp',
       'action:personas',
       'action:overview',
@@ -149,12 +152,32 @@ describe('buildPaletteItems', () => {
       'action:inbox',
       'action:scheduler',
       'action:skills',
-      'action:plugins',
+       'action:plugin-hub',
       'action:mcp',
       'action:personas',
       'action:overview',
       'open-window:p1'
     ]);
+  });
+
+  it('Show all agents opens the Agents dashboard, not Projects home', () => {
+    const setNav = vi.fn();
+    const item = buildPaletteItems(baseCtx({ setNav })).find((i) => i.key === 'action:overview');
+    expect(item).toBeTruthy();
+    item!.run();
+    expect(setNav).toHaveBeenCalledWith('agents');
+  });
+
+  it('opening a project from the palette focuses that workspace', () => {
+    const enterProjectFocus = vi.fn();
+    vi.mocked(useUi.getState).mockReturnValue({
+      exitProjectFocus: () => {},
+      enterProjectFocus
+    } as never);
+    const item = buildPaletteItems(baseCtx()).find((i) => i.key === 'project:p1');
+    expect(item).toBeTruthy();
+    item!.run();
+    expect(enterProjectFocus).toHaveBeenCalledWith('p1');
   });
 
   it('tags every item with a category and source', () => {
@@ -200,4 +223,3 @@ describe('buildPaletteItems', () => {
     expect(keys.some((k) => k.startsWith('ext:bad:'))).toBe(false);
   });
 });
-

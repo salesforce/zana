@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, relative } from 'node:path';
 import { isTrustedRendererUrl, rendererUrl, setProductionRendererOrigin } from './renderer-url.js';
 import { startRuntimeSupervisor, type RuntimeSupervisor } from './runtime-supervisor.js';
+import { applyPluginAgentCapabilities } from './plugin-agent-sync.js';
 import { runtimeHostAvailable, setRuntimeHostSupervisor } from './harness/execution-environment.js';
 import { IPC } from '../shared/ipc.js';
 import { sanitizeExtraArgs } from '../shared/launch-sanitize.js';
@@ -52,6 +53,7 @@ import { showExecutionConsentDialog } from './harness/execution-consent-dialog.j
 import { runHarnessRoutingMigration } from './harness-routing-migration/migrator.js';
 import { MigrationRepairRequiredError } from './harness-routing-migration/journal.js';
 import { runStartupGate, type StartupState } from './startup-gate.js';
+import { DEFAULT_RENDERER_ZOOM_FACTOR } from './window-zoom.js';
 import { resolveLaunchSelection } from './harness/launch-selection.js';
 import { resolveEffectiveHarnessDefault } from './harness/effective-default.js';
 import { resolveExecutionState } from './harness/target-resolution.js';
@@ -2456,6 +2458,12 @@ async function ensureRendererStaticHost(): Promise<void> {
   runtimeSupervisor.onProjectSettingsChanged((projectId) => {
     safeSend(IPC.projectSettings.onChanged, projectId);
   });
+  runtimeSupervisor.onPluginCapabilitiesChanged((contributors) => {
+    void applyPluginAgentCapabilities(contributors, logMainError).then(() => safeSend(IPC.skills.onChanged));
+  });
+  runtimeSupervisor.onPluginAppsChanged((apps) => {
+    safeSend(IPC.pluginApps.onChanged, apps);
+  });
   setRuntimeHostSupervisor(runtimeSupervisor);
   setProductionRendererOrigin(runtimeSupervisor.rendererUrl);
 }
@@ -4415,6 +4423,7 @@ function createWindow(projectId?: string, repairOnly = false) {
       nodeIntegration: false,
       sandbox: true,
       webviewTag: true,
+      zoomFactor: DEFAULT_RENDERER_ZOOM_FACTOR,
       // The sandboxed preload can't reliably read process.env, so pass the e2e
       // flag as an argv token it CAN read (process.argv). Only present when the
       // tap is enabled; gates the window.__zccTest bridge in preload.
@@ -6565,6 +6574,11 @@ function registerIpc() {
       message: err instanceof Error ? err.message : String(err)
     })
   );
+  safeHandle(
+    IPC.pluginApps.list,
+    async () => runtimeSupervisor?.listPluginApps() ?? [],
+    () => []
+  );
 
   // Runtime extensions (~/.zcc/extensions/<id>/). Mirrors the plugins
   // handlers. `list` returns the latest scan; `setEnabled` flips the
@@ -6743,6 +6757,18 @@ function registerIpc() {
       // next boot/rescan.
       rebuildExtensionServers(extensionEntries);
       await syncExtensionSkills(extensionEntries, logMainError);
+      try {
+        const { createPluginService, defaultBundledRoot, defaultPluginDataDir } = await import(
+          '../../apps/server/src/plugins/plugin-service.js'
+        );
+        const pluginService = createPluginService({
+          dataDir: defaultPluginDataDir(),
+          bundledRoot: defaultBundledRoot()
+        });
+        await applyPluginAgentCapabilities(pluginService.agentContributions(), logMainError);
+      } catch (err) {
+        logMainError('redeployCapabilities:pluginAgentCapabilities', err);
+      }
       const projects = store.listProjects();
       const results = await Promise.all(
         projects.map((p) =>
@@ -8339,7 +8365,14 @@ function buildAppMenu() {
         { role: 'forceReload' },
         { role: 'toggleDevTools' },
         { type: 'separator' },
-        { role: 'resetZoom' },
+        {
+          label: 'Reset Zoom',
+          accelerator: 'CmdOrCtrl+0',
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow() ?? mainWindow();
+            if (win && !win.isDestroyed()) win.webContents.setZoomFactor(DEFAULT_RENDERER_ZOOM_FACTOR);
+          }
+        },
         { role: 'zoomIn' },
         { role: 'zoomOut' },
         { type: 'separator' },
@@ -8790,8 +8823,9 @@ async function bootstrapNormal() {
         // and are NOT applied — logged for the user to approve in-app. Discovery
         // needs the installed ids; do a cheap discover-only pass first.
         .then(() => loadExtensions({ log: logMainError, reservedIds: builtinIds }))
-        .then(({ entries }) =>
-          maybeCheckRemoteUpdates(
+        .then(async ({ entries, modules }) => {
+          await moduleHost.setupAll(modules);
+          return maybeCheckRemoteUpdates(
             entries.map((e) => e.id),
             logMainError
           ).then((outcomes) => {
@@ -8800,12 +8834,12 @@ async function bootstrapNormal() {
                 console.log(`[main] extension update: ${o.id} ${o.fromVersion ?? '∅'} → ${o.toVersion}`);
               } else if (o.status === 'needs-consent') {
                 console.log(
-                  `[main] extension update held (needs consent): ${o.id} → ${o.toVersion} (+${(o.addedPermissions ?? []).join(', ')})`
+                  `[main] plugin update held: ${o.id} → ${o.toVersion}`
                 );
               }
             }
-          })
-        )
+          });
+        })
         // Boot is just "rescan with empty prev + empty live" — runDiskSync spawns
         // every desired spec and tears down nothing, exactly as the old inline
         // block did, and now also picks up any staged remote update.

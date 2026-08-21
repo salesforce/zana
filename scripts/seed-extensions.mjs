@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, '..');
-const extsRoot = join(repoRoot, 'extensions');
+const extsRoot = join(repoRoot, 'plugins');
 
 if (!existsSync(extsRoot)) process.exit(0);
 

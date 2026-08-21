@@ -131,7 +131,7 @@ var reactDefault = new Proxy({}, {
 	}
 });
 //#endregion
-//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@18.3.1/node_modules/lucide-react/dist/esm/shared/src/utils/mergeClasses.mjs
+//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@19.2.8/node_modules/lucide-react/dist/esm/shared/src/utils/mergeClasses.mjs
 /**
 * @license lucide-react v1.31.0 - ISC
 *
@@ -142,7 +142,7 @@ var mergeClasses = (...classes) => classes.filter((className, index, array) => {
 	return Boolean(className) && className.trim() !== "" && array.indexOf(className) === index;
 }).join(" ").trim();
 //#endregion
-//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@18.3.1/node_modules/lucide-react/dist/esm/shared/src/utils/toKebabCase.mjs
+//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@19.2.8/node_modules/lucide-react/dist/esm/shared/src/utils/toKebabCase.mjs
 /**
 * @license lucide-react v1.31.0 - ISC
 *
@@ -151,7 +151,7 @@ var mergeClasses = (...classes) => classes.filter((className, index, array) => {
 */
 var toKebabCase = (string) => string.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
 //#endregion
-//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@18.3.1/node_modules/lucide-react/dist/esm/shared/src/utils/toCamelCase.mjs
+//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@19.2.8/node_modules/lucide-react/dist/esm/shared/src/utils/toCamelCase.mjs
 /**
 * @license lucide-react v1.31.0 - ISC
 *
@@ -160,7 +160,7 @@ var toKebabCase = (string) => string.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLo
 */
 var toCamelCase = (string) => string.replace(/^([A-Z])|[\s-_]+(\w)/g, (match, p1, p2) => p2 ? p2.toUpperCase() : p1.toLowerCase());
 //#endregion
-//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@18.3.1/node_modules/lucide-react/dist/esm/shared/src/utils/toPascalCase.mjs
+//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@19.2.8/node_modules/lucide-react/dist/esm/shared/src/utils/toPascalCase.mjs
 /**
 * @license lucide-react v1.31.0 - ISC
 *
@@ -172,7 +172,7 @@ var toPascalCase = (string) => {
 	return camelCase.charAt(0).toUpperCase() + camelCase.slice(1);
 };
 //#endregion
-//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@18.3.1/node_modules/lucide-react/dist/esm/defaultAttributes.mjs
+//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@19.2.8/node_modules/lucide-react/dist/esm/defaultAttributes.mjs
 /**
 * @license lucide-react v1.31.0 - ISC
 *
@@ -191,7 +191,7 @@ var defaultAttributes = {
 	strokeLinejoin: "round"
 };
 //#endregion
-//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@18.3.1/node_modules/lucide-react/dist/esm/shared/src/utils/hasA11yProp.mjs
+//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@19.2.8/node_modules/lucide-react/dist/esm/shared/src/utils/hasA11yProp.mjs
 /**
 * @license lucide-react v1.31.0 - ISC
 *
@@ -203,7 +203,7 @@ var hasA11yProp = (props) => {
 	return false;
 };
 //#endregion
-//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@18.3.1/node_modules/lucide-react/dist/esm/context.mjs
+//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@19.2.8/node_modules/lucide-react/dist/esm/context.mjs
 /**
 * @license lucide-react v1.31.0 - ISC
 *
@@ -213,7 +213,7 @@ var hasA11yProp = (props) => {
 var LucideContext = createContext({});
 var useLucideContext = () => useContext(LucideContext);
 //#endregion
-//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@18.3.1/node_modules/lucide-react/dist/esm/Icon.mjs
+//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@19.2.8/node_modules/lucide-react/dist/esm/Icon.mjs
 /**
 * @license lucide-react v1.31.0 - ISC
 *
@@ -236,7 +236,7 @@ var Icon = forwardRef(({ color, size, strokeWidth, absoluteStrokeWidth, classNam
 	}, [...iconNode.map(([tag, attrs]) => createElement(tag, attrs)), ...Array.isArray(children) ? children : [children]]);
 });
 //#endregion
-//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@18.3.1/node_modules/lucide-react/dist/esm/createLucideIcon.mjs
+//#region ../../node_modules/.pnpm/lucide-react@1.31.0_react@19.2.8/node_modules/lucide-react/dist/esm/createLucideIcon.mjs
 /**
 * @license lucide-react v1.31.0 - ISC
 *
@@ -972,7 +972,7 @@ function isClosedZanaStatus(status, closedAt) {
 	return CLOSED_STATUSES.has((status ?? "").trim().toLowerCase());
 }
 //#endregion
-//#region ../../node_modules/.pnpm/zustand@5.0.15_@types+react@18.3.31_react@18.3.1/node_modules/zustand/esm/vanilla.mjs
+//#region ../../node_modules/.pnpm/zustand@5.0.15_@types+react@19.2.18_react@19.2.8/node_modules/zustand/esm/vanilla.mjs
 var createStoreImpl = (createState) => {
 	let state;
 	const listeners = /* @__PURE__ */ new Set();
@@ -1001,7 +1001,7 @@ var createStoreImpl = (createState) => {
 };
 var createStore = ((createState) => createState ? createStoreImpl(createState) : createStoreImpl);
 //#endregion
-//#region ../../node_modules/.pnpm/zustand@5.0.15_@types+react@18.3.31_react@18.3.1/node_modules/zustand/esm/react.mjs
+//#region ../../node_modules/.pnpm/zustand@5.0.15_@types+react@19.2.18_react@19.2.8/node_modules/zustand/esm/react.mjs
 var identity = (arg) => arg;
 function useStore(api, selector = identity) {
 	const slice = reactDefault.useSyncExternalStore(api.subscribe, reactDefault.useCallback(() => selector(api.getState()), [api, selector]), reactDefault.useCallback(() => selector(api.getInitialState()), [api, selector]));
@@ -18207,7 +18207,7 @@ function isUint8Array(value) {
 	return Boolean(value && typeof value === "object" && "byteLength" in value && "byteOffset" in value);
 }
 //#endregion
-//#region ../../node_modules/.pnpm/react-markdown@10.1.0_@types+react@18.3.31_react@18.3.1/node_modules/react-markdown/lib/index.js
+//#region ../../node_modules/.pnpm/react-markdown@10.1.0_@types+react@19.2.18_react@19.2.8/node_modules/react-markdown/lib/index.js
 /**
 * @import {Element, Nodes, Parents, Root} from 'hast'
 * @import {Root as MdastRoot} from 'mdast'

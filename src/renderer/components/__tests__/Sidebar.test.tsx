@@ -1,35 +1,28 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import type { AppModule } from '@shared/module-api';
 
 const h = vi.hoisted(() => {
   const cache = new Map<string, unknown>();
   const state = {
     nav: 'projects',
-    moduleBadgeRevision: 0,
     setNav: vi.fn(),
     sidebarCollapsed: false,
     toggleSidebar: vi.fn(),
     exitProjectFocus: vi.fn(),
-    selectProject: vi.fn()
+    selectProject: vi.fn(),
+    collapsedSections: {},
+    toggleSection: vi.fn(),
+    setAgentsBoardView: vi.fn(),
+    setLauncherOpen: vi.fn()
   };
   const data = { projects: [], suggestionsEnabled: false };
   return {
     cache,
     state,
     data,
-    modules: [] as AppModule[],
-    host: {
-      moduleId: 'badge-module',
-      cache: {
-        get: <T = unknown>(key: string) => cache.get(key) as T | undefined,
-        set: (key: string, value: unknown) => cache.set(key, value),
-        delete: (key: string) => cache.delete(key),
-        refreshBadge: () => {
-          state.moduleBadgeRevision += 1;
-        }
-      }
-    }
+    modules: [] as AppModule[]
   };
 });
 
@@ -46,87 +39,103 @@ vi.mock('../../store', () => ({
   useAgentNavCounts: () => ({ active: 0, blocked: 0 })
 }));
 vi.mock('../../modules', () => ({ useMergedModules: () => h.modules }));
-vi.mock('../../modules/ModulePanelHost', () => ({ getHost: () => h.host }));
-vi.mock('../AgentTray', () => ({ AgentTray: () => null }));
+vi.mock('../AgentTray', () => ({
+  AgentTray: ({ placement }: { placement?: string }) => <div data-agent-tray-placement={placement} />
+}));
+vi.mock('../listpane/ProjectsList', () => ({
+  ProjectsList: () => <div data-testid="sidebar-projects" />
+}));
+vi.mock('../../plugins/plugin-slots', () => ({
+  subscribePluginSlots: (listener: () => void) => {
+    listener();
+    return () => undefined;
+  },
+  listSidebarFooterActions: () => []
+}));
 
-import { contributesSurface, Sidebar } from '../Sidebar.js';
+import { Sidebar } from '../Sidebar.js';
 
-const base = (over: Partial<AppModule>): AppModule =>
-  ({ id: 'm', title: 'M', icon: 'Box', ...over }) as AppModule;
+describe('Sidebar structure and compact accessibility', () => {
+  it('renders a labelled navigation region that owns the scrollable destinations', () => {
+    h.state.sidebarCollapsed = false;
+    h.modules = [];
 
-describe('Sidebar.contributesSurface — rail-entry gate', () => {
-  it('a surfaceless module (no panel/commands/navBadge) earns NO rail entry', () => {
-    // The dissolved Zana manifest: id/title/icon/permissions only.
-    expect(contributesSurface(base({}))).toBe(false);
+    const markup = renderToStaticMarkup(<Sidebar />);
+
+    expect(markup).toContain('class="sidebar sidebar--global"');
+    expect(markup).toContain('data-testid="sidebar-navigation"');
+    expect(markup).toContain('aria-label="Main navigation"');
+    expect(markup).not.toContain('role="group"');
+    expect(markup).toContain('data-testid="sidebar-projects"');
+    expect(markup).toContain('data-sortable-sidebar-section-id="sidebar-section:agents"');
+    expect(markup).toContain('data-sortable-sidebar-section-id="sidebar-section:workspaces"');
+    expect(markup.indexOf('data-testid="nav-home"')).toBeLessThan(
+      markup.indexOf('data-testid="nav-inbox"')
+    );
+    expect(markup.indexOf('data-testid="nav-inbox"')).toBeLessThan(
+      markup.indexOf('data-sortable-nav-id="scheduler"')
+    );
+    expect(markup).not.toContain('data-sortable-nav-id="home"');
+    expect(markup).not.toContain('data-sortable-nav-id="inbox"');
+    expect(markup).toContain('>Scheduler<');
+    expect(markup).not.toContain('>Docs<');
+    expect(markup).not.toContain('>New thread<');
+    expect(markup).not.toContain('aria-label="Search commands"');
+    expect(markup).not.toContain('Command center');
+    expect(markup).toContain('aria-label="Go back"');
+    expect(markup).toContain('aria-label="Go forward"');
+    expect(markup).toContain('data-sortable-nav-id="scheduler"');
+    expect(markup).not.toContain('data-sortable-nav-id="personas"');
+    expect(markup).not.toContain('data-sortable-nav-id="squads"');
+    expect(markup).not.toContain('data-sortable-nav-id="usage"');
+    expect(markup).not.toContain('data-sortable-nav-id="settings"');
+    expect(markup).toContain('class="sidebar-utility-bar"');
+    expect(markup).toContain('aria-label="Settings"');
+    expect(markup).not.toContain('>Settings<');
+    expect(markup).toContain('aria-label="New quick agent"');
+    expect(markup).toContain('aria-label="Open Agents dashboard"');
+    expect(markup).toContain('class="sidebar-agents-resizer"');
+    expect(markup).toContain('aria-orientation="horizontal"');
+    expect(markup).toContain('data-agent-tray-placement="inline"');
+    expect(markup).toContain('aria-label="New quick agent"');
   });
 
-  it('a panel-only module STILL earns a rail entry', () => {
-    expect(contributesSurface(base({ panel: (() => null) as unknown as AppModule['panel'] }))).toBe(true);
-  });
-
-  it('a commands-only module STILL earns a rail entry', () => {
-    expect(contributesSurface(base({ commands: () => [] }))).toBe(true);
-  });
-
-  it('a navBadge-only module STILL earns a rail entry', () => {
-    expect(contributesSurface(base({ navBadge: () => 1 }))).toBe(true);
-  });
-
-  it("a placement:'settings' module stays out regardless of surface", () => {
-    expect(
-      contributesSurface(
-        base({ placement: 'settings', panel: (() => null) as unknown as AppModule['panel'], commands: () => [] })
-      )
-    ).toBe(false);
-  });
-
-  it('a projectTab module KEEPS its global sidebar entry (it also surfaces as a project tab)', () => {
-    expect(
-      contributesSurface(
-        base({ panel: (() => null) as unknown as AppModule['panel'], projectTab: { label: 'X' } })
-      )
-    ).toBe(true);
-  });
-
-  it("a projectTab:{global:false} module is project-tab ONLY — no rail entry", () => {
-    expect(
-      contributesSurface(
-        base({ panel: (() => null) as unknown as AppModule['panel'], projectTab: { label: 'X', global: false } })
-      )
-    ).toBe(false);
-  });
-
-  it('projectTab.global:true is explicit dual-surface (keeps the rail entry)', () => {
-    expect(
-      contributesSurface(
-        base({ panel: (() => null) as unknown as AppModule['panel'], projectTab: { label: 'X', global: true } })
-      )
-    ).toBe(true);
-  });
-});
-
-describe('Sidebar extension nav badges', () => {
-  it('renders new cache-backed badge value after refreshBadge without navigation', () => {
-    h.cache.clear();
-    h.state.nav = 'projects';
-    h.state.moduleBadgeRevision = 0;
+  it('puts installed extension panels in the movable primary navigation list', () => {
+    h.state.sidebarCollapsed = false;
     h.modules = [
-      base({
-        id: 'badge-module',
-        title: 'Badge module',
-        navBadge: (host) => host.cache.get<number>('unreadCount') ?? null
-      })
+      {
+        id: 'library-surface',
+        title: 'Docs',
+        icon: 'Library',
+        panel: (() => null) as AppModule['panel']
+      }
     ];
 
-    expect(renderToStaticMarkup(<Sidebar />)).not.toContain('>3<');
+    const markup = renderToStaticMarkup(<Sidebar />);
+    expect(markup).toContain('data-testid="nav-extensions"');
+    expect(markup).toContain('>Extensions<');
+    expect(markup).toContain('data-testid="nav-library-surface"');
+    expect(markup).toContain('>Docs<');
+    expect(markup).toContain('data-sortable-nav-id="library-surface"');
+    expect(markup).not.toContain('aria-label="Installed extensions"');
+    expect(markup.indexOf('data-sortable-nav-id="library-surface"')).toBeLessThan(
+      markup.indexOf('data-testid="sidebar-projects"')
+    );
+  });
 
-    h.host.cache.set('unreadCount', 3);
-    h.host.cache.refreshBadge();
+  it('renders no rail when the shell overlay owns sidebar restoration', () => {
+    h.state.sidebarCollapsed = true;
+    h.modules = [];
 
-    // Nav state is unchanged; the host-triggered revision is Sidebar's reactive
-    // dependency, so its navBadge factory reads the new cache value immediately.
-    expect(h.state.nav).toBe('projects');
-    expect(h.state.moduleBadgeRevision).toBe(1);
-    expect(renderToStaticMarkup(<Sidebar />)).toContain('>3<');
+    const markup = renderToStaticMarkup(<Sidebar />);
+
+    expect(markup).toBe('');
+  });
+
+  it('uses translation-only transforms when compact rows cross collection sections', () => {
+    const source = readFileSync(new URL('../Sidebar.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('CSS.Translate.toString(transform)');
+    expect(source).not.toContain('CSS.Transform.toString(transform)');
   });
 });

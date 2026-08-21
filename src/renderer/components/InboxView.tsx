@@ -2,14 +2,13 @@ import { useMemo } from 'react';
 import { useInbox, useInboxScopeProjectId, useInboxSelection, useUi } from '../store';
 import { InboxDetail } from './InboxDetail';
 import { InboxOverview } from './InboxOverview';
+import { InboxPane } from './listpane/InboxPane';
 import { SavedDetail } from './SavedDetail';
 
 /**
- * Inbox detail surface mounted in the app shell's main column when
- * nav==='inbox'. The list lives in `ListPane`'s inbox branch alongside
- * the existing Projects/Settings list panes, so the two-pane layout
- * (sidebar list + detail) reuses the existing 3-column app grid
- * (nav | list | main).
+ * Inbox surface: the feed list and the detail column live together as an
+ * internal grid. The shell is always nav + full content, so this panel owns
+ * any list/detail chrome rather than borrowing a middle ListPane column.
  *
  * The inbox has three tabs (`inboxTab`): the live Feed, the Reports filter
  * (entries flagged `report: true`), and the durable Saved reports. Feed and
@@ -41,14 +40,17 @@ export function InboxView() {
   );
 
   return (
-    <section className="inbox-view">
-      {showingSaved ? (
-        <SavedDetail visible={active} />
-      ) : selectedId ? (
-        <InboxDetail visible={active} />
-      ) : (
-        <InboxOverview scopeProjectId={scopeProjectId} entries={entries} />
-      )}
+    <section className="inbox-view panel-body--full">
+      <InboxPane />
+      <div className="inbox-view-detail">
+        {showingSaved ? (
+          <SavedDetail visible={active} />
+        ) : selectedId ? (
+          <InboxDetail visible={active} />
+        ) : (
+          <InboxOverview scopeProjectId={scopeProjectId} entries={entries} />
+        )}
+      </div>
     </section>
   );
 }

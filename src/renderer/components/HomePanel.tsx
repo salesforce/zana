@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
 import {
   Clock,
   Compass,
@@ -22,6 +22,9 @@ import { AuroraGrid } from './AuroraGrid';
 import { CreateExtensionDialog } from './CreateExtensionDialog';
 import { GuideModal } from './GuideModal';
 import { HomeAgentComposer } from './HomeAgentComposer';
+import { listHomepageSections, subscribePluginSlots } from '../plugins/plugin-slots';
+import { PluginSlotBoundary } from '../plugins/PluginSlotBoundary';
+import { AppPageHeader } from './AppPageHeader';
 
 interface GuideItem {
   id: string;
@@ -52,6 +55,11 @@ export function HomePanel() {
   const markInboxRead = useInboxRead((s) => s.markRead);
   const [creatingExtension, setCreatingExtension] = useState(false);
   const [openGuideId, setOpenGuideId] = useState<string | null>(null);
+  const pluginHomepage = useSyncExternalStore(
+    subscribePluginSlots,
+    listHomepageSections,
+    listHomepageSections
+  );
 
   const latestInbox = useMemo(
     () => [...inboxEntries].sort((a, b) => b.ts - a.ts).slice(0, 5),
@@ -100,7 +108,10 @@ export function HomePanel() {
       title: 'Set up Personas',
       description: 'Give an agent a role, model, and system prompt you can reuse.',
       actionLabel: 'Open Personas',
-      onAction: () => setNav('personas')
+      onAction: () => {
+        useUi.getState().setSettingsTab('personas');
+        setNav('settings');
+      }
     },
     {
       id: 'shortcuts',
@@ -122,12 +133,12 @@ export function HomePanel() {
   const openGuide = guides.find((g) => g.id === openGuideId) ?? null;
 
   return (
-    <main className="settings-panel home-panel">
+    <div className="settings-panel home-panel">
       <AuroraGrid />
-      <div className="settings-inner settings-inner--wide">
+      <AppPageHeader title={<h1>Home</h1>} />
+      <div className="settings-inner">
         <div className="scheduler-header">
           <div className="scheduler-header-text">
-            <h2>Home</h2>
             <p className="settings-help scheduler-subtitle">
               Your open follow-ups, the latest inbox activity, and everything currently
               running — one glance across every project.
@@ -189,6 +200,26 @@ export function HomePanel() {
           </HomeCard>
         </div>
 
+        {pluginHomepage.length > 0 && (
+          <div className="home-plugin-sections">
+            {pluginHomepage.map((section) => {
+              const Section = section.component;
+              return (
+                <PluginSlotBoundary
+                  key={`${section.id}:${section.generation}`}
+                  pluginId={section.id}
+                  generation={section.generation}
+                >
+                  <section className="home-plugin-section">
+                    <h3>{section.title}</h3>
+                    <Section pluginId={section.id} projectId={null} />
+                  </section>
+                </PluginSlotBoundary>
+              );
+            })}
+          </div>
+        )}
+
       </div>
 
       {creatingExtension && (
@@ -207,7 +238,7 @@ export function HomePanel() {
           onClose={() => setOpenGuideId(null)}
         />
       )}
-    </main>
+    </div>
   );
 }
 

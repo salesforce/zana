@@ -2,12 +2,14 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   Settings2,
   Sparkles,
-  Puzzle,
   BookOpen,
   Plug,
   Blocks,
   FlaskConical,
   Bot,
+  Drama,
+  Users,
+  BarChart3,
   Info,
   TerminalSquare,
   SquareArrowOutUpRight,
@@ -18,6 +20,7 @@ import type { SettingsTab } from '../store';
 import { applyTheme, useData, useUi } from '../store';
 import { PromptsTab } from './settings/PromptsTab';
 import { ExtensionsHub } from './settings/ExtensionsHub';
+import { PluginSettingsSections } from '../plugins/PluginSettingsSections';
 import { ScopeControl } from './settings/ScopeControl';
 import { GlobalTab } from './settings/GlobalTab';
 import { TerminalTab } from './settings/TerminalTab';
@@ -27,16 +30,19 @@ import { EditorTab } from './settings/EditorTab';
 import { ExperimentalTab } from './settings/ExperimentalTab';
 import { AboutTab } from './settings/AboutTab';
 import { ProjectTab } from './settings/ProjectTab';
-import { PluginsBody } from './PluginsPanel';
 import { SkillsBody } from './SkillsPanel';
 import { McpBody } from './McpPanel';
+import { PersonasPanel } from './PersonasPanel';
+import { SquadsPanel } from './SquadsPanel';
+import { UsagePanel } from './UsagePanel';
 
 /**
  * Settings sections. The section *picker* now lives in the list pane (column 2,
  * see `SettingsPane` in ListPane.tsx) — this map is the single source of truth
  * for each section's label + icon, shared by the picker and this panel's header.
- * Plugins / Skills / MCP were promoted in from their former top-level rail
- * destinations — they're configuration catalogues, not content.
+ * Plugins / Skills / MCP are configuration catalogues, not content. The Plugins
+ * hub owns ZCC extensions; Claude Code's separate plugin catalogue is not
+ * surfaced in Settings.
  */
 /**
  * Section groups for the settings picker (column 2). Each section names its
@@ -44,13 +50,12 @@ import { McpBody } from './McpPanel';
  * sections beneath. Ordered most-used → most-specialised. `project` is not in
  * this list — Project settings is its own trailing group in the picker.
  */
-export type SettingsGroup = 'config' | 'agents' | 'catalogues' | 'extensions' | 'labs' | 'app';
+export type SettingsGroup = 'config' | 'agents' | 'catalogues' | 'labs' | 'app';
 
 export const SETTINGS_GROUPS: Array<{ id: SettingsGroup; label: string }> = [
   { id: 'config', label: 'Configuration' },
   { id: 'agents', label: 'Agents & Automation' },
   { id: 'catalogues', label: 'Catalogues' },
-  { id: 'extensions', label: 'Extensions' },
   { id: 'labs', label: 'Labs' },
   // Trailing group: app-level meta (version, updates, release notes) — not
   // configuration/behaviour, so it sits apart from the config groups, like the
@@ -73,10 +78,12 @@ export const SETTINGS_SECTIONS: Array<{
   { id: 'editor', label: 'Editor', icon: SquareArrowOutUpRight, desc: 'Open-in-editor & terminal buttons', group: 'config' },
   { id: 'prompts', label: 'Prompts', icon: Sparkles, desc: 'LLM micro-call prompts', group: 'config' },
   { id: 'agents', label: 'Agents', icon: Bot, desc: 'Attention, automation, heartbeat & Overseer', group: 'agents' },
-  { id: 'plugins', label: 'Plugins', icon: Puzzle, desc: 'Installed plugins', group: 'catalogues' },
+  { id: 'personas', label: 'Personas', icon: Drama, desc: 'Reusable launch profiles', group: 'agents' },
+  { id: 'squads', label: 'Squads', icon: Users, desc: 'Reusable multi-agent teams', group: 'agents' },
+  { id: 'extensions', label: 'Plugins', icon: Blocks, desc: 'Installed plugins, versions & settings', group: 'catalogues' },
   { id: 'skills', label: 'Skills', icon: BookOpen, desc: 'User, plugin & project skills', group: 'catalogues', projectScoped: true },
   { id: 'mcp', label: 'MCP', icon: Plug, desc: 'MCP servers', group: 'catalogues', projectScoped: true },
-  { id: 'extensions', label: 'Extensions', icon: Blocks, desc: 'Versions & settings', group: 'extensions' },
+  { id: 'usage', label: 'Usage', icon: BarChart3, desc: 'Session activity rollup', group: 'catalogues' },
   { id: 'experimental', label: 'Experimental', icon: FlaskConical, desc: 'Opt-in features under evaluation', group: 'labs' },
   { id: 'about', label: 'About', icon: Info, desc: 'Version, updates & release notes', group: 'app' }
 ];
@@ -131,8 +138,14 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
   ],
 };
 
-/** Sections that lay out wide (catalogues + the multi-column Prompts/Extensions hubs). */
-const WIDE_TABS = new Set<SettingsTab>(['prompts', 'extensions', 'plugins', 'skills', 'mcp']);
+/** Catalogue sections that need room for their list/detail controls. */
+const WIDE_TABS = new Set<SettingsTab>([
+  'skills',
+  'mcp',
+  'personas',
+  'squads',
+  'usage'
+]);
 
 function sectionMeta(tab: SettingsTab) {
   return SETTINGS_SECTIONS.find((s) => s.id === tab);
@@ -190,9 +203,11 @@ export function SettingsPanel() {
 
   if (!config) {
     return (
-      <main className="settings-panel">
-        <div className="settings-empty">Loading…</div>
-      </main>
+      <div className="settings-panel" aria-label="Settings" aria-busy="true">
+        <div className="settings-inner">
+          <div className="settings-empty">Loading…</div>
+        </div>
+      </div>
     );
   }
 
@@ -278,12 +293,12 @@ export function SettingsPanel() {
   const allowGlobalScope = tab !== 'project';
 
   return (
-    <main className="settings-panel">
+    <div className="settings-panel">
       <div className={`settings-inner${WIDE_TABS.has(tab) ? ' settings-inner--wide' : ''}`}>
         <header className="settings-header">
           <div className="settings-header-title">
             {meta?.icon ? <meta.icon size={18} /> : null}
-            <h2>{tab === 'project' ? 'Project settings' : meta?.label ?? 'Settings'}</h2>
+            <h1>{tab === 'project' ? 'Project settings' : meta?.label ?? 'Settings'}</h1>
             {meta?.desc && tab !== 'project' && (
               <span className="settings-header-desc">{meta.desc}</span>
             )}
@@ -324,13 +339,20 @@ export function SettingsPanel() {
             onUpdate={update}
           />
         ) : tab === 'extensions' ? (
-          <ExtensionsHub />
-        ) : tab === 'plugins' ? (
-          <PluginsBody />
+          <>
+            <ExtensionsHub />
+            <PluginSettingsSections />
+          </>
         ) : tab === 'skills' ? (
           <SkillsBody />
         ) : tab === 'mcp' ? (
           <McpBody />
+        ) : tab === 'personas' ? (
+          <PersonasPanel />
+        ) : tab === 'squads' ? (
+          <SquadsPanel />
+        ) : tab === 'usage' ? (
+          <UsagePanel />
         ) : tab === 'experimental' ? (
           <ExperimentalTab
             config={config}
@@ -349,6 +371,6 @@ export function SettingsPanel() {
 
         {savedFlash && <div className="settings-saved">Saved</div>}
       </div>
-    </main>
+    </div>
   );
 }
