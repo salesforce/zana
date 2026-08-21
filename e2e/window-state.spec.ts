@@ -1,8 +1,8 @@
-import { test, expect } from './fixtures/app';
+import { test, expect } from './fixtures/app.js';
 
 const isMacOS = process.platform === 'darwin';
 
-async function mainWindowState(app: import('./fixtures/app').AppHandle) {
+async function mainWindowState(app: import('./fixtures/app.js').AppHandle) {
   return app.electron.evaluate(({ BrowserWindow }) => {
     const win = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes('index.html') || /^http:\/\/127\.0\.0\.1:\d+\//.test(candidate.webContents.getURL()));
     return {
@@ -15,7 +15,7 @@ async function mainWindowState(app: import('./fixtures/app').AppHandle) {
   });
 }
 
-async function zoomToWorkArea(app: import('./fixtures/app').AppHandle) {
+async function zoomToWorkArea(app: import('./fixtures/app.js').AppHandle) {
   const normal = await app.electron.evaluate(({ BrowserWindow }) => {
     const win = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes('index.html') || /^http:\/\/127\.0\.0\.1:\d+\//.test(candidate.webContents.getURL()));
     if (!win) throw new Error('main window not found');
@@ -53,7 +53,7 @@ test.describe('macOS native-window behavior', () => {
   await app.electron.evaluate(({ app: electronApp }) => electronApp.quit());
   await appClosed;
 
-  const relaunched = await import('./fixtures/app').then(({ launchApp }) => launchApp(app.home));
+  const relaunched = await import('./fixtures/app.js').then(({ launchApp }) => launchApp(app.home));
   try {
     await expect.poll(() => mainWindowState(relaunched)).toMatchObject({
       fullscreen: false,
@@ -97,7 +97,7 @@ test('native fullscreen relaunches as a regular window', async ({ app }) => {
   await app.electron.evaluate(({ app: electronApp }) => electronApp.quit());
   await appClosed;
 
-  const relaunched = await import('./fixtures/app').then(({ launchApp }) => launchApp(app.home));
+  const relaunched = await import('./fixtures/app.js').then(({ launchApp }) => launchApp(app.home));
   try {
     await expect.poll(() => mainWindowState(relaunched)).toMatchObject({
       normal: true,

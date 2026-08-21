@@ -9,16 +9,27 @@
       "types": "./src/button.tsx",
       "source": "./src/button.tsx",
       "default": "./src/button.tsx"
+    },
+    "./popover-picklist": {
+      "types": "./src/popover-picklist.tsx",
+      "source": "./src/popover-picklist.tsx",
+      "default": "./src/popover-picklist.tsx"
     }
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "peerDependencies": {
-    "react": "^19"
+    "lucide-react": "^1",
+    "react": "^19",
+    "react-dom": "^19"
   },
   "devDependencies": {
-    "@types/react": "^18.3.11",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "lucide-react": "^1.31.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "typescript": "^7.0.2"
   }
 }

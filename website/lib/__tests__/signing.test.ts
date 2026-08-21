@@ -3,7 +3,7 @@ import { createHash, verify as cryptoVerify } from 'node:crypto';
 import { sha256Hex, signEd25519, generateEd25519Keypair } from '../signing';
 
 /**
- * Replicates `makeEd25519Verifier` from `src/main/extension-registry.ts`
+ * Replicates `makeEd25519Verifier` from `apps/server/src/services/extensions/extension-registry.ts`
  * EXACTLY (`crypto.verify(null, data, publicKey, Buffer.from(signatureB64,'base64'))`)
  * so this test proves `signing.ts` produces signatures the UNCHANGED desktop
  * engine accepts, without importing across the worktree's package boundary.

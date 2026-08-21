@@ -5,15 +5,20 @@
   "type": "module",
   "description": "ZCC Electron shell and native desktop integration.",
   "scripts": {
-    "dev": "pnpm --dir ../.. run predev && pnpm --dir ../.. run dev",
-    "start": "pnpm --dir ../.. run prestart && pnpm --dir ../.. run start",
-    "build": "pnpm --dir ../.. run prebuild && pnpm --dir ../.. run build",
-    "typecheck": "pnpm --dir ../.. run typecheck",
-    "package": "pnpm --dir ../.. run check:release-notes && pnpm --dir ../.. run build:cli && pnpm --dir ../.. run fetch:opencode && pnpm run build && pnpm --dir ../.. exec electron-builder",
+    "dev": "pnpm --dir ../.. run predev && pnpm --dir ../.. exec electron-vite dev",
+    "start": "pnpm --dir ../.. run prestart && pnpm --dir ../.. exec electron-vite dev",
+    "build": "pnpm --dir ../.. run prebuild && pnpm --dir ../.. exec electron-vite build",
+    "typecheck": "pnpm --dir ../.. exec tsc --noEmit -p apps/desktop/tsconfig.json",
+    "test": "pnpm --dir ../.. exec vitest run --config apps/desktop/vitest.config.ts",
+    "package": "pnpm --dir ../.. run check:release-notes && pnpm --dir ../.. run build:cli && pnpm --dir ../.. run fetch:opencode && pnpm run build && pnpm --dir ../.. exec electron-builder --config apps/desktop/electron-builder.yml",
     "package:mac": "pnpm run package -- --mac",
-    "release:mac": "pnpm --dir ../.. run check:release-notes && pnpm --dir ../.. run build:cli && pnpm --dir ../.. run fetch:opencode && GH_TOKEN=$(GH_HOST=github.com gh auth token) pnpm run build && GH_TOKEN=$(GH_HOST=github.com gh auth token) pnpm --dir ../.. exec electron-builder --mac --publish always"
+    "release:mac": "pnpm --dir ../.. run check:release-notes && pnpm --dir ../.. run build:cli && pnpm --dir ../.. run fetch:opencode && GH_TOKEN=$(GH_HOST=github.com gh auth token) pnpm run build && GH_TOKEN=$(GH_HOST=github.com gh auth token) pnpm --dir ../.. exec electron-builder --config apps/desktop/electron-builder.yml --mac --publish always"
   },
   "dependencies": {
-    "@zana-ai/zcc-contracts": "workspace:*"
+    "@zana-ai/zcc-contracts": "workspace:*",
+    "@zana-ai/zcc-desktop-contract": "workspace:*",
+    "@zana-ai/zcc-domain": "workspace:*",
+    "@zana-ai/zcc-host-daemon": "workspace:*",
+    "@zana-ai/zcc-server": "workspace:*"
   }
 }

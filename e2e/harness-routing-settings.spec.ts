@@ -1,6 +1,6 @@
-import { test, expect } from './fixtures/app';
+import { test, expect } from './fixtures/app.js';
 import type { Locator, Page } from '@playwright/test';
-import { makeFakeAgentBinary } from './sdk/harness';
+import { makeFakeAgentBinary } from './sdk/harness.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';

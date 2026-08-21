@@ -1,6 +1,6 @@
-import { test, expect } from './fixtures/app';
+import { test, expect } from './fixtures/app.js';
 import type { Locator, Page } from '@playwright/test';
-import { makeFakeOpenCodeBinary, makeRefreshableFakeOpenCodeBinary } from './sdk/harness';
+import { makeFakeOpenCodeBinary, makeRefreshableFakeOpenCodeBinary } from './sdk/harness.js';
 import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';

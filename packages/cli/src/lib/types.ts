@@ -1,11 +1,11 @@
 /**
  * Minimal type definitions for the CLI, mirroring shapes from
- * ../../src/shared/types.ts. These are the read-only subsets the CLI needs.
- * We declare them here instead of importing from src/shared to keep the
+ * `@zana-ai/zcc-domain`. These are the read-only subsets the CLI needs.
+ * We declare them here instead of importing the domain package to keep the
  * package self-contained and avoid path-mapping complexity.
  */
 
-// MIRROR of core's `src/shared/launch-provider.ts` VALID_PROFILES. Kept in sync
+// MIRROR of core's `packages/domain/src/launch-provider.ts` VALID_PROFILES. Kept in sync
 // by `src/main/__tests__/profile-completeness.guard.test.ts` — add a profile in
 // core and this list must match, or the guard fails.
 export type LaunchProfileId =
@@ -138,7 +138,7 @@ export type FollowUpStatus = 'open' | 'resolved' | 'dismissed';
 export type FollowUpKind = 'question' | 'decision' | 'note';
 
 /**
- * Read-only subset of the app-side `FollowUp` (see ../../../src/shared/types.ts).
+ * Read-only subset of the app-side `FollowUp` (see `@zana-ai/zcc-domain`).
  * Follow-ups are file-backed (one JSON per record under `~/.zcc/followups` or
  * `<project>/.zcc/followups`), so the CLI reads them directly — no running app
  * required, same as schedules / inbox.

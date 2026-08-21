@@ -9,6 +9,11 @@
       "types": "./src/index.ts",
       "source": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./*": {
+      "types": "./src/*.ts",
+      "source": "./src/*.ts",
+      "default": "./src/*.ts"
     }
   },
   "scripts": {
@@ -19,6 +24,9 @@
   "dependencies": {
     "@zana-ai/zcc-contracts": "workspace:*",
     "@zana-ai/zcc-domain": "workspace:*",
+    "@zana-ai/zcc-path-confine": "workspace:*",
+    "@zana-ai/zcc-process-utils": "workspace:*",
+    "@zana-ai/zcc-spawn-plan": "workspace:*",
     "node-pty": "^1.0.0"
   },
   "devDependencies": {

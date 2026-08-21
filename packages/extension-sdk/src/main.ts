@@ -534,10 +534,10 @@ export interface LlmInvokeResult {
 /**
  * SDK-local persona/team shapes used by the {@link MainModuleContext.personas} /
  * {@link MainModuleContext.teams} services. The SDK package is deliberately
- * decoupled from core's `src/shared/types.ts` (it ships standalone to external
+ * decoupled from core's `@zana-ai/zcc-domain` (it ships standalone to external
  * authors), so these mirror core's `Persona` / `Team` STRUCTURALLY — the same
  * mirroring the SDK already does for `ExtensionManifest`. Core's wiring passes
- * its own `shared/types` values through these signatures, which are
+ * its own domain `Persona` / `Team` values through these signatures, which are
  * structurally identical, so the two never drift in practice (a drift surfaces
  * as a type error at the core wiring site).
  */

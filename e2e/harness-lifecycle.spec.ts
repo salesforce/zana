@@ -20,8 +20,8 @@
  * the REAL ~/.zcc. The fixture snapshots/restores config.json; we remove the
  * project in `finally`.
  */
-import { test, expect } from './fixtures/app';
-import { makeFakeAgentBinary } from './sdk/harness';
+import { test, expect } from './fixtures/app.js';
+import { makeFakeAgentBinary } from './sdk/harness.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

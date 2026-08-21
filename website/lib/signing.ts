@@ -1,6 +1,6 @@
 /**
  * Server-side signing helpers, matching the desktop client's verification
- * exactly (`src/main/extension-registry.ts`) and `scripts/publish-extension.mjs`'s
+ * exactly (`apps/server/src/services/extensions/extension-registry.ts`) and `scripts/publish-extension.mjs`'s
  * existing signing convention — so a release signed here is installable by the
  * UNCHANGED engine:
  *   - `sha256Hex` mirrors the engine's own `sha256Hex` (lowercase hex).

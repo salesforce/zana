@@ -12,7 +12,7 @@
  *   3. Run the REAL CLI (`scripts/publish-extension.mjs --api --token`) as a
  *      child process against a freshly-built dummy extension artifact dir
  *      (id `e2e-marketplace-pub`, mirroring `fixtures/registry.ts`'s dummy —
- *      NOT one of the app's bundled ids like `gus`/`zana`/`cu`/`consensus`.
+ *      NOT one of the app's bundled ids like `docs`.
  *      Publishing under a bundled id was tried first and failed: the app
  *      seeds those at boot (`seedBundledExtensions`) at the exact version
  *      this test would publish, so the marketplace row is already
@@ -43,9 +43,9 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 
-import { startWebsiteServer, type WebsiteServer } from './fixtures/website-server';
-import { launchApp, writeRegistryConfig, dismissConsentOverlays, type AppHandle } from './fixtures/app';
-import { MarketplacePage } from './fixtures/marketplace';
+import { startWebsiteServer, type WebsiteServer } from './fixtures/website-server.js';
+import { launchApp, writeRegistryConfig, dismissConsentOverlays, type AppHandle } from './fixtures/app.js';
+import { MarketplacePage } from './fixtures/marketplace.js';
 
 const execFileAsync = promisify(execFile);
 

@@ -63,3 +63,35 @@ export {
   type MarketplaceIndex,
   type MarketplaceEntry
 } from './plugin-marketplace.js';
+
+export type * from './harness.js';
+export * from './project.js';
+export * from './inbox.js';
+export type * from './library.js';
+export type * from './agent.js';
+export type * from './session.js';
+export * from './config.js';
+export type * from './settings.js';
+export type * from './fs.js';
+export type * from './schedule.js';
+export type * from './llm.js';
+export type * from './voice.js';
+export * from './persona.js';
+export type * from './goal.js';
+export * from './follow-up.js';
+export type * from './feed.js';
+export type * from './skills.js';
+export type * from './mcp.js';
+export type * from './updates.js';
+export * from './parse-cron.js';
+export * from './parse-every.js';
+export * from './schedule-spec.js';
+export * from './path-encoding.js';
+export * from './project-colors.js';
+export * from './terminal-themes.js';
+export * from './workflow-args.js';
+export * from './authorizations.js';
+export * from './telemetry-events.js';
+export * from './harness-adapter.js';
+export * from './launch-provider.js';
+export * from './launch-sanitize.js';

@@ -212,7 +212,7 @@ code — both from `@zana-ai/zcc-extension-sdk/renderer`. Don't hand-roll a host
 panels keep using the `host` prop.
 
 Style with the app's theme CSS variables so you match light/dark automatically.
-The defined ones (see `src/renderer/styles/global.css` `:root`):
+The defined ones (see `apps/app/src/styles/global.css` `:root`):
 `var(--text-primary)` (body text), `var(--text-muted)` (secondary text),
 `var(--border)`, `var(--bg-panel)`, `var(--accent-blue)`. Always pass a literal
 fallback for anything else, e.g. `var(--surface-2, rgba(127,127,127,0.06))`.

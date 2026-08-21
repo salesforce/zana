@@ -7,11 +7,44 @@
   "scripts": {
     "build": "pnpm --dir ../.. run build",
     "dev": "pnpm --dir ../.. run dev",
-    "typecheck": "pnpm --dir ../.. run typecheck",
-    "test": "pnpm --dir ../.. exec vitest run src/renderer"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
+    "@monaco-editor/react": "^4.7.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-search": "^0.16.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/addon-webgl": "^0.19.0",
+    "@xterm/xterm": "^6.0.0",
     "@zana-ai/zcc-contracts": "workspace:*",
-    "@zana-ai/zcc-ui": "workspace:*"
+    "@zana-ai/zcc-desktop-contract": "workspace:*",
+    "@zana-ai/zcc-domain": "workspace:*",
+    "@zana-ai/zcc-extension-sdk": "workspace:*",
+    "@zana-ai/zcc-plugin-sdk": "workspace:*",
+    "@zana-ai/zcc-ui": "workspace:*",
+    "highlight.js": "^11.11.1",
+    "lucide-react": "^1.31.0",
+    "mermaid": "^11.16.1",
+    "monaco-editor": "^0.56.0",
+    "react": "^19.2.8",
+    "react-diff-viewer-continued": "^4.3.0",
+    "react-dom": "^19.2.8",
+    "react-markdown": "^10.1.0",
+    "rehype-highlight": "^7.0.2",
+    "remark-gfm": "^4.0.1",
+    "zod": "^4.0.0",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@zana-ai/zcc-tsconfig": "workspace:*",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.1",
+    "vitest": "^4.1.10"
   }
 }

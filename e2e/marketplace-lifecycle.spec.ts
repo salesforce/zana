@@ -9,8 +9,8 @@
  *   4. Uninstall removes it from disk and tears down the live child
  *   5. All without an app relaunch
  */
-import { test, expect } from './fixtures/app';
-import { MarketplacePage } from './fixtures/marketplace';
+import { test, expect } from './fixtures/app.js';
+import { MarketplacePage } from './fixtures/marketplace.js';
 
 test.describe('marketplace lifecycle — search', () => {
   test.use({ useRegistry: true });
@@ -134,17 +134,16 @@ test.describe('marketplace lifecycle — install and uninstall', () => {
   });
 
   test('reconcile picks up manual install without relaunch', async ({ app, home }) => {
-    // Manually copy hello-sample into ~/.zcc/extensions (simulating a manual install)
-    const { cp, mkdir } = await import('node:fs/promises');
+    // Manually write hello-sample into ~/.zcc/extensions (simulating a manual install)
+    const { mkdir, writeFile } = await import('node:fs/promises');
     const { join } = await import('node:path');
-    const { fileURLToPath } = await import('node:url');
+    const { HELLO_SAMPLE_FILES } = await import('./fixtures/sample-extensions.js');
 
-    const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
-    const FIXTURE = join(REPO_ROOT, 'test/fixtures/hello-sample');
-    const INSTALL_DIR = join(home, '.zcc', 'extensions');
-
+    const INSTALL_DIR = join(home, '.zcc', 'extensions', 'hello-sample');
     await mkdir(INSTALL_DIR, { recursive: true });
-    await cp(FIXTURE, join(INSTALL_DIR, 'hello-sample'), { recursive: true });
+    for (const [rel, contents] of Object.entries(HELLO_SAMPLE_FILES)) {
+      await writeFile(join(INSTALL_DIR, rel), contents);
+    }
 
     // Trigger a rescan via the Extensions panel
     await app.window.locator('.nav-item', { hasText: 'Settings' }).first().click();

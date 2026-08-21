@@ -101,6 +101,6 @@ jobs:
           name: playwright-report
           path: |
             playwright-report
-            test-results
+            e2e/.artifacts
           retention-days: 7
           if-no-files-found: ignore

@@ -3,8 +3,8 @@
  * Electron app, then prove a source dist/ edit is automatically reinstalled
  * while a shell session remains rooted in that imported source directory.
  */
-import { test, expect } from './fixtures/app';
-import { stubOpenDialog } from './sdk/native-dialog';
+import { test, expect } from './fixtures/app.js';
+import { stubOpenDialog } from './sdk/native-dialog.js';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

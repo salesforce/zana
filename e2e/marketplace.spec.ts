@@ -6,8 +6,8 @@
  * shipped engine enforces: opt-in channel, HTTPS, sha256 integrity, Ed25519
  * signature, and the UI wiring from a click through IPC to disk.
  */
-import { test, expect } from './fixtures/app';
-import { MarketplacePage } from './fixtures/marketplace';
+import { test, expect } from './fixtures/app.js';
+import { MarketplacePage } from './fixtures/marketplace.js';
 
 test.describe('marketplace — channel off by default', () => {
   // No `useRegistry` → no ~/.zcc/extension-registry.json → channel stays off.

@@ -14,18 +14,16 @@
  * kills the daemon. The daemon binds 127.0.0.1 only.
  */
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
-import { mkdirSync, writeFileSync, cpSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
 
-/** One extension's source, either copied from a fixture dir or spelled inline. */
+/** One extension's source, spelled as an inline file map. */
 export interface GitRepoSpec {
   /** Repo folder name as served (the `<repoName>.git` path segment). */
   repoName: string;
-  /** Copy this dir's contents in as the repo tree (e.g. a fixture extension). */
-  fromDir?: string;
-  /** Or write these files verbatim (relPath → contents). Merged over `fromDir`. */
-  files?: Record<string, string>;
+  /** Files to write into the repo (relPath → contents). */
+  files: Record<string, string>;
   /** Extra commit made and tagged; lets a spec pin `ref`. */
   tag?: string;
 }
@@ -86,8 +84,7 @@ export async function startGitDaemon(workDir: string, specs: GitRepoSpec[]): Pro
   for (const spec of specs) {
     const src = join(srcRoot, spec.repoName);
     mkdirSync(src, { recursive: true });
-    if (spec.fromDir) cpSync(spec.fromDir, src, { recursive: true });
-    for (const [rel, contents] of Object.entries(spec.files ?? {})) {
+    for (const [rel, contents] of Object.entries(spec.files)) {
       const dest = join(src, rel);
       mkdirSync(join(dest, '..'), { recursive: true });
       writeFileSync(dest, contents);

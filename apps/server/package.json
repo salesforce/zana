@@ -4,6 +4,23 @@
   "private": true,
   "type": "module",
   "description": "ZCC authoritative local control-plane service.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "source": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./static-host": {
+      "types": "./src/static-host.ts",
+      "source": "./src/static-host.ts",
+      "default": "./src/static-host.ts"
+    },
+    "./*": {
+      "types": "./src/*.ts",
+      "source": "./src/*.ts",
+      "default": "./src/*.ts"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",

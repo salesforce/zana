@@ -23,7 +23,6 @@ vendor/opencode
 
 # Playwright E2E artifacts (reports, traces, screenshots) — regenerated per run.
 playwright-report
-test-results
 e2e/.artifacts
 e2e-artifacts/
 *.log

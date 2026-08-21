@@ -21,11 +21,10 @@ zcc plugin dev .
 Official first-party plugins:
 
 ```
-zcc plugin install builtin:zana
-zcc plugin install builtin:zana-hub
+zcc plugin install builtin:docs
 ```
 
-Slack is a builtin and auto-installs on boot.
+Docs is a builtin and auto-installs on boot.
 
 See [`extensions-authoring.md`](./extensions-authoring.md) for slots and the
 server API.

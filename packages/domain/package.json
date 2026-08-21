@@ -8,15 +8,134 @@
       "types": "./src/index.ts",
       "source": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./product": {
+      "types": "./src/product.ts",
+      "source": "./src/product.ts",
+      "default": "./src/product.ts"
+    },
+    "./project": {
+      "types": "./src/project.ts",
+      "source": "./src/project.ts",
+      "default": "./src/project.ts"
+    },
+    "./session": {
+      "types": "./src/session.ts",
+      "source": "./src/session.ts",
+      "default": "./src/session.ts"
+    },
+    "./inbox": {
+      "types": "./src/inbox.ts",
+      "source": "./src/inbox.ts",
+      "default": "./src/inbox.ts"
+    },
+    "./schedule": {
+      "types": "./src/schedule.ts",
+      "source": "./src/schedule.ts",
+      "default": "./src/schedule.ts"
+    },
+    "./persona": {
+      "types": "./src/persona.ts",
+      "source": "./src/persona.ts",
+      "default": "./src/persona.ts"
+    },
+    "./harness": {
+      "types": "./src/harness.ts",
+      "source": "./src/harness.ts",
+      "default": "./src/harness.ts"
+    },
+    "./llm": {
+      "types": "./src/llm.ts",
+      "source": "./src/llm.ts",
+      "default": "./src/llm.ts"
+    },
+    "./parse-cron": {
+      "types": "./src/parse-cron.ts",
+      "source": "./src/parse-cron.ts",
+      "default": "./src/parse-cron.ts"
+    },
+    "./parse-every": {
+      "types": "./src/parse-every.ts",
+      "source": "./src/parse-every.ts",
+      "default": "./src/parse-every.ts"
+    },
+    "./schedule-spec": {
+      "types": "./src/schedule-spec.ts",
+      "source": "./src/schedule-spec.ts",
+      "default": "./src/schedule-spec.ts"
+    },
+    "./path-encoding": {
+      "types": "./src/path-encoding.ts",
+      "source": "./src/path-encoding.ts",
+      "default": "./src/path-encoding.ts"
+    },
+    "./project-colors": {
+      "types": "./src/project-colors.ts",
+      "source": "./src/project-colors.ts",
+      "default": "./src/project-colors.ts"
+    },
+    "./terminal-themes": {
+      "types": "./src/terminal-themes.ts",
+      "source": "./src/terminal-themes.ts",
+      "default": "./src/terminal-themes.ts"
+    },
+    "./workflow-args": {
+      "types": "./src/workflow-args.ts",
+      "source": "./src/workflow-args.ts",
+      "default": "./src/workflow-args.ts"
+    },
+    "./authorizations": {
+      "types": "./src/authorizations.ts",
+      "source": "./src/authorizations.ts",
+      "default": "./src/authorizations.ts"
+    },
+    "./telemetry-events": {
+      "types": "./src/telemetry-events.ts",
+      "source": "./src/telemetry-events.ts",
+      "default": "./src/telemetry-events.ts"
+    },
+    "./harness-adapter": {
+      "types": "./src/harness-adapter.ts",
+      "source": "./src/harness-adapter.ts",
+      "default": "./src/harness-adapter.ts"
+    },
+    "./extensions": {
+      "types": "./src/extensions.ts",
+      "source": "./src/extensions.ts",
+      "default": "./src/extensions.ts"
+    },
+    "./launch-provider": {
+      "types": "./src/launch-provider.ts",
+      "source": "./src/launch-provider.ts",
+      "default": "./src/launch-provider.ts"
+    },
+    "./launch-sanitize": {
+      "types": "./src/launch-sanitize.ts",
+      "source": "./src/launch-sanitize.ts",
+      "default": "./src/launch-sanitize.ts"
+    },
+    "./feed-categories": {
+      "types": "./src/feed-categories.ts",
+      "source": "./src/feed-categories.ts",
+      "default": "./src/feed-categories.ts"
+    },
+    "./inbox-grouping": {
+      "types": "./src/inbox-grouping.ts",
+      "source": "./src/inbox-grouping.ts",
+      "default": "./src/inbox-grouping.ts"
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
+    "croner": "^10.0.1",
     "zod": "^4.0.0"
   },
   "devDependencies": {
-    "typescript": "^7.0.2"
+    "@zana-ai/zcc-tsconfig": "workspace:*",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   }
 }

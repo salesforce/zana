@@ -13,7 +13,7 @@
  * in the project window, then DISABLE it and assert the tab disappears there
  * live. Both toggles cross the window boundary, so we cover show + hide.
  */
-import { isAppRendererUrl, test, expect } from './fixtures/app';
+import { isAppRendererUrl, test, expect } from './fixtures/app.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';

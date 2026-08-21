@@ -8,7 +8,7 @@
  * `--experimental-https` flag is dev-only and unsupported for the built
  * `standalone/server.js` this fixture runs (production semantics — the same
  * server.js a real deploy's Docker image runs). The desktop engine
- * (`fetchRegistryIndex`/`applyRelease` in `src/main/extension-registry.ts`)
+ * (`fetchRegistryIndex`/`applyRelease` in `apps/server/src/services/extensions/extension-registry.ts`)
  * hard-requires `https://` release/index URLs, so a thin same-process HTTPS
  * front door (self-signed cert, trusted via `NODE_EXTRA_CA_CERTS` — same
  * mechanism `registry.ts` uses) that reverse-proxies to the plain-HTTP Next

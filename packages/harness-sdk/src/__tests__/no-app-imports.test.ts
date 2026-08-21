@@ -12,8 +12,7 @@ import { fileURLToPath } from 'node:url';
  *  - electron / node-pty / any Node built-in (`node:*`, `fs`, `path`, …) — the
  *    package ships pure TYPE + tiny pure-fn contracts, no runtime host access;
  *  - `@shared/*` or a reach back into `src/` — app-coupled types (`AppConfig`,
- *    `Persona`, `AgentEvent`) belong in `src/main`, NOT here (that's why
- *    `session.ts`, which imports `@shared/types`, stayed behind);
+ *    `Persona`, `AgentEvent`) belong in `src/main` or `@zana-ai/zcc-domain`, NOT here;
  *  - `@zana-ai/zcc-extension-sdk` — a sibling SDK, not a dependency of this one.
  *
  * The guard itself is exempt (it reads files to scan them). Scans real `import`/

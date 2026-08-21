@@ -26,9 +26,7 @@ untrusted; the server still confines paths.
 
 | Package | Role |
 | --- | --- |
-| `plugins/slack` | Builtin (`autoInstall: true`) — settings + live bot |
-| `plugins/zana` | Official — per-project tickets (`projectTab.global: false`) |
-| `plugins/zana-hub` | Official — orchestration dashboard |
+| `plugins/docs` | Builtin (`autoInstall: true`) — Docs rail, Library, library-curator skill |
 
 Core must not hardcode those ids outside `apps/server/src/plugins/builtin-registry.ts`.
 

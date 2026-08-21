@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures/app';
+import { test, expect } from './fixtures/app.js';
 
 test('Quick Agent command surface matches Home without Home picker controls', async ({ app }, testInfo) => {
   const { window } = app;

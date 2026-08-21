@@ -5,7 +5,7 @@ describe('parsePluginSource', () => {
   it('parses path, builtin, npm, git, and catalog specs', () => {
     expect(parsePluginSource('./plugins/tasks')).toEqual({ kind: 'path', path: './plugins/tasks' });
     expect(parsePluginSource('path:/tmp/x')).toEqual({ kind: 'path', path: '/tmp/x' });
-    expect(parsePluginSource('builtin:slack')).toEqual({ kind: 'builtin', name: 'slack' });
+    expect(parsePluginSource('builtin:docs')).toEqual({ kind: 'builtin', name: 'docs' });
     expect(parsePluginSource('npm:@zana/tasks@^1.0.0')).toEqual({
       kind: 'npm',
       name: '@zana/tasks',

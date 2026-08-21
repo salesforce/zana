@@ -1,13 +1,13 @@
 /**
  * Read-only type subsets this package needs, mirroring shapes from core's
- * `src/shared/types.ts` and the control-plane dep interface in
+ * `packages/domain` and the control-plane dep interface in
  * `src/main/control-plane.ts`. Declared here (rather than imported) to keep the
  * package self-contained — same discipline as `@zcc/cli`'s `lib/types.ts`.
  */
 
 /**
  * Live agent state, fused server-side onto each `agent.list` row. MIRROR of
- * core's `AgentState` (`src/shared/types.ts`). Add a value in core and this must
+ * core's `AgentState` (`packages/domain`). Add a value in core and this must
  * follow.
  */
 export type AgentState = 'working' | 'blocked' | 'done' | 'idle' | 'unknown';
@@ -95,7 +95,7 @@ export function stateToDeckStatus(state: AgentState): DeckStatus {
 
 /**
  * One row from the `project.list` control-plane op. Read-only subset of core's
- * `Project` (`src/shared/types.ts`) — only the fields the deck renders/acts on.
+ * `Project` (`packages/domain`) — only the fields the deck renders/acts on.
  * `tag` is the URL-safe slug; `name` is the display label.
  */
 export interface ProjectItem {

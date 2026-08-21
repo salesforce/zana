@@ -1,0 +1,159 @@
+appId: dev.grebmann.zana-command-center
+productName: Zana
+copyright: © 2026 grebmann
+
+directories:
+  buildResources: resources
+  output: dist
+
+files:
+  - out/**/*
+  - package.json
+  - "!**/*.{md,markdown,d.ts.map,js.map}"
+
+extraResources:
+  # NOTE: don't copy icon.icns here — `mac.icon` already places it at
+  # Contents/Resources/icon.icns (== process.resourcesPath/icon.icns), so a
+  # second copy collides (EEXIST hard-link during packaging). The runtime
+  # resolver in index.ts finds the mac.icon copy; win/linux fall back to the
+  # png below.
+  - from: resources/icon-1024.png
+    to: icon-1024.png
+  # Bundled Claude Code skills, deployed to ~/.claude/skills/<name> on boot
+  # (see src/main/skill-installer.ts). Resolved via process.resourcesPath.
+  - from: resources/zcc-center-skill.md
+    to: zcc-center-skill.md
+  - from: resources/saved-reports-skill.md
+    to: saved-reports-skill.md
+  - from: resources/brainstorm-skill.md
+    to: brainstorm-skill.md
+  - from: resources/zcc-cli-skill.md
+    to: zcc-cli-skill.md
+  - from: resources/extension-creator-skill.md
+    to: extension-creator-skill.md
+  - from: resources/harness-authoring-skill.md
+    to: harness-authoring-skill.md
+  # Editable starter template the "create local extension" scaffolder copies +
+  # token-substitutes (see src/main/local-extension.ts `templateRoot`). Resolved
+  # via process.resourcesPath/extension-template in packaged builds.
+  - from: templates/extension-starter
+    to: extension-template
+  # The @zcc/cli build output, so a bare `zcc` resolves on PATH inside every pty
+  # the packaged app spawns. `npm run build:cli` (chained ahead of electron-builder
+  # in the dist/dist:mac/release:mac scripts) emits packages/cli/dist including an
+  # extensionless, executable `dist/bin/zcc` launcher; extraResources copies that
+  # tree to resourcesPath/zcc-cli, where src/main/env.ts `resolveZccCliBinDir`
+  # finds resourcesPath/zcc-cli/bin/zcc.
+  - from: packages/cli/dist
+    to: zcc-cli
+  # The embedded `opencode serve` binary the `opencode` chat harness backend
+  # spawns (see src/main/zcc-harness/backends/opencode/process-pool.ts).
+  # `npm run fetch:opencode` (chained ahead of electron-builder in the
+  # dist/dist:mac/release:mac scripts) downloads the per-arch mac binaries
+  # from registry.npmjs.org into vendor/opencode/<arch>/opencode; this copies
+  # that tree to resourcesPath/opencode, where src/main/env.ts
+  # `resolveOpencodeBinDir` finds resourcesPath/opencode/<arch>/opencode.
+  - from: vendor/opencode
+    to: opencode
+  # First-party plugins (package.json zcc). Packaged copies also live in
+  # bundled-extensions/ as the committed runnable artifacts.
+  - from: bundled-extensions
+    to: extensions
+  # Bundled agent-detection manifests (herdr TOML format), read by
+  # src/main/manifest-detector.ts via process.resourcesPath/manifests in packaged
+  # builds; dev falls back to the repo-relative manifests/ dir. User overrides
+  # live in ~/.zcc/manifests and win over these bundled copies.
+  - from: manifests
+    to: manifests
+  # Curated per-release notes rendered in-app by the "What's New" modal on the
+  # first launch after an update (see src/main/release-notes.ts `releaseNotesRoot`,
+  # resolved via process.resourcesPath/release-notes in packaged builds; dev falls
+  # back to the repo docs/releases dir). One `<version>.md` per release; the CI
+  # guard (scripts/check-release-notes.mjs) fails a build whose package.json
+  # version has no matching file here, so these can never lag the version again.
+  - from: docs/releases
+    to: release-notes
+
+# Auto-update feed. electron-updater reads `latest-mac.yml` from the public GitHub
+# release repo and offers any newer published version. Build generates
+# `latest-mac.yml` locally so `npm run dist:mac` produces a feed you can eyeball.
+# host/owner/repo are explicit (not derived from package.json) so a stale
+# `homepage` can't point the updater at the wrong repo.
+#
+# The release feed is the public github.com repo grebmann1/zcc-releases.
+# electron-updater's `GitHubProvider` reads latest-mac.yml and artifacts
+# anonymously (no token, no VPN). Omitting `host:` defaults to public github.com.
+publish:
+  provider: github
+  owner: grebmann1
+  repo: zcc-releases
+
+asar: true
+asarUnpack:
+  # node-pty and better-sqlite3 each ship a native .node binary that can't run
+  # from inside asar
+  - "node_modules/node-pty/**/*"
+  - "node_modules/better-sqlite3/**/*"
+
+mac:
+  category: public.app-category.developer-tools
+  icon: resources/icon.icns
+  # Apple Developer ID code signing + notarization. The signing certificate is
+  # supplied at build time: locally from the login keychain, in CI from CSC_LINK
+  # + CSC_KEY_PASSWORD (must be a Developer ID Application cert, NOT self-signed).
+  # electron-updater (Squirrel.Mac) REQUIRES the app to be signed, and requires
+  # the new build to share the same signing identity as the running one — so do
+  # NOT disable signing here.
+  #
+  # hardenedRuntime: REQUIRED for notarization. Enforces modern security
+  # constraints; specific exceptions granted via entitlements.mac.plist (JIT for
+  # V8, unsigned memory for native modules like node-pty, library validation
+  # disabled for third-party dylibs).
+  #
+  # notarize: Submits the signed app to Apple's notarization service. Requires
+  # APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD (generated at appleid.apple.com), and
+  # APPLE_TEAM_ID env vars. electron-builder 25.x reads these directly; no
+  # afterSign hook needed. Notarization response is stapled to the .dmg/.zip so
+  # Gatekeeper allows first-install without user intervention (no right-click →
+  # Open / no xattr workaround).
+  #
+  # gatekeeperAssess: Left OFF so local builds don't fail the assessment check
+  # (it's advisory; Gatekeeper will still validate notarization when the app is
+  # installed from a download).
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  notarize: true
+  entitlements: resources/entitlements.mac.plist
+  entitlementsInherit: resources/entitlements.mac.inherit.plist
+  extendInfo:
+    NSMicrophoneUsageDescription: "Zana Command Center uses the microphone to transcribe voice input for agent prompts."
+  # Arch is selected per build via the CLI flag (e.g. `electron-builder --mac
+  # --arm64`). node-pty is a native module, so each arch must be packaged on a
+  # runner of that arch — the release workflow uses a macos-13/macos-14 matrix.
+  # Listing arch here would override the flag and force a cross-rebuild.
+  #
+  # dmg = first-install artifact; zip = the artifact Squirrel.Mac swaps in for
+  # auto-update. Both must ship in the Release (electron-builder lists both in
+  # latest-mac.yml).
+  target:
+    - dmg
+    - zip
+  # Keep mac artifact naming stable and URL-safe for latest-mac.yml consumers.
+  artifactName: "Zana-Command-Center-${version}-${arch}.${ext}"
+
+dmg:
+  sign: false
+  artifactName: "Zana-Command-Center-${version}-${arch}.${ext}"
+
+win:
+  icon: resources/icon-1024.png
+  target:
+    - target: nsis
+      arch: [x64]
+
+linux:
+  icon: resources/icon-1024.png
+  category: Development
+  target:
+    - target: AppImage
+      arch: [x64]

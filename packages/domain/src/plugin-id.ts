@@ -10,6 +10,11 @@ export const BUILTIN_NAV_SENTINEL = '__builtin__';
 const PLUGIN_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
 export function derivePluginId(packageName: string): string {
+  // Check the raw name first: sanitization turns `__builtin__` into `builtin`,
+  // which would otherwise pass the pattern and mint the reserved sentinel.
+  if (packageName === BUILTIN_NAV_SENTINEL) {
+    throw new Error(`cannot derive a plugin id from package name "${packageName}"`);
+  }
   const base = packageName.includes('/')
     ? (packageName.split('/').at(-1) ?? packageName)
     : packageName;

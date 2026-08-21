@@ -40,7 +40,7 @@
     "test:e2e:headed": "pnpm run build:legacy && playwright test --headed",
     "test:smoke": "pnpm run build:legacy && playwright test e2e/smoke.spec.ts",
     "test:smoke:only": "playwright test e2e/smoke.spec.ts",
-    "test:codex:live": "ZCC_LIVE_CODEX=1 vitest run src/main/harness/__tests__/codex-provider.live.test.ts",
+    "test:codex:live": "ZCC_LIVE_CODEX=1 vitest run apps/host-daemon/src/harness/__tests__/codex-provider.live.test.ts",
     "rebuild": "electron-rebuild -f -w node-pty,better-sqlite3",
     "check:release-notes": "node scripts/check-release-notes.mjs",
     "dist": "pnpm --filter @zana-ai/zcc-desktop package",

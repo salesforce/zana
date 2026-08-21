@@ -10,7 +10,7 @@
  * mechanism. We drive schedule creation + fire via the real window.cc IPC, then
  * click the real DOM button and assert against the real renderer state.
  */
-import { test, expect } from './fixtures/app';
+import { test, expect } from './fixtures/app.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';

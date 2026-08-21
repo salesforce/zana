@@ -11,7 +11,7 @@
  * browses + installs it.
  *
  * This is the PUBLISH side of the same engine the app's remote-update channel
- * (`src/main/extension-registry.ts`) consumes — it deliberately reproduces that
+ * (`apps/server/src/services/extensions/extension-registry.ts`) consumes — it deliberately reproduces that
  * module's contracts so a published release is installable without any guesswork:
  *   - Archive format = the JSON file-bundle `decodeArchive` expects:
  *     `{ "files": { "<name>": "<base64>" } }`. File names must NOT contain
@@ -45,7 +45,7 @@
  *     --api https://exts.example.com --token zpat_...
  *
  * `<extensionDir>` is a built artifact dir (a manifest + its runtime files, e.g.
- * `bundled-extensions/consensus`). `--base-url` is prepended to the archive filename
+ * `bundled-extensions/zana`). `--base-url` is prepended to the archive filename
  * to form the release `url`; the engine REQUIRES it to be HTTPS. `--out` holds
  * the archive + (default) index; `--index` overrides the index path.
  */
@@ -80,7 +80,7 @@ API mode:
 
 Arguments:
   <extensionDir>        Built artifact dir (a manifest + its runtime files,
-                         e.g. bundled-extensions/consensus).
+                         e.g. bundled-extensions/zana).
 
 Local-file mode options:
   --out <dir>           Output dir for the archive + default index

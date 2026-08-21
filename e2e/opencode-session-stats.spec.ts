@@ -1,4 +1,4 @@
-import { test, expect, launchApp } from './fixtures/app';
+import { test, expect, launchApp } from './fixtures/app.js';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

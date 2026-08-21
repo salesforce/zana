@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures/app';
+import { test, expect } from './fixtures/app.js';
 
 test.use({
   e2e: true,

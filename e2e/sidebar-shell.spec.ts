@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures/app';
+import { test, expect } from './fixtures/app.js';
 
 test('the shell keeps its sidebar trigger and history controls in Electron title-bar chrome', async ({ app }) => {
   const { window } = app;

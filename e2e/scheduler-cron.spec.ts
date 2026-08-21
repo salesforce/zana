@@ -11,7 +11,7 @@
  * tested; this spec's job is the UI seam that was dropped: the toggle, the cron
  * input, its validation, the preview, and the save-path cadence branch.
  */
-import { test, expect } from './fixtures/app';
+import { test, expect } from './fixtures/app.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';

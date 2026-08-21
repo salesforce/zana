@@ -13,7 +13,7 @@
  * effect (and the handler wiring we care about) still ran, and dispatchEvent does
  * not require visibility.
  */
-import { test, expect } from './fixtures/app';
+import { test, expect } from './fixtures/app.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

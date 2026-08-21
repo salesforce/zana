@@ -8,7 +8,7 @@
  * NOT Settings → Extensions (which keeps its own section picker in column 2 and
  * was never affected).
  */
-import { test, expect } from './fixtures/app';
+import { test, expect } from './fixtures/app.js';
 
 test('top-level Extensions view fills the content area, not the narrow list column', async ({
   app,

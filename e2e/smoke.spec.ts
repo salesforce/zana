@@ -10,7 +10,7 @@
  * mutating call would leak into the developer's real state and there's no
  * cleanup hook in this deliberately-minimal spec.
  */
-import { test, expect } from './fixtures/app';
+import { test, expect } from './fixtures/app.js';
 
 test('app boots: renderer mounts and the IPC bridge is live', async ({ app }) => {
   expect(app.window.url()).toMatch(/^http:\/\/127\.0\.0\.1:\d+\//);

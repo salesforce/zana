@@ -18,7 +18,7 @@ It contains:
   `author` / `icon` shown in the in-app Marketplace.
 - **`<id>-<version>.json`** — one archive per release: a dependency-free JSON
   file-bundle, `{ "files": { "<name>": "<base64>" } }`. This is exactly what
-  `decodeArchive` (`src/main/extension-registry.ts`) expects — no tar/zip.
+  `decodeArchive` (`apps/server/src/services/extensions/extension-registry.ts`) expects — no tar/zip.
 
 ## How the app uses it
 
@@ -59,7 +59,7 @@ TLS in front of it.
 
 ```sh
 # 1. Build + package the extension into a committed artifact dir.
-#    (e.g. `cd plugins/zana && npm run package` → bundled-extensions/zana)
+#    (e.g. `cd plugins/docs && npm run package` → bundled-extensions/docs)
 # 2. Publish it into the registry, signing with your Ed25519 key:
 npm run publish-extension -- bundled-extensions/zana \
   --out dist-registry \

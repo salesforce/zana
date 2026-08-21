@@ -36,8 +36,8 @@ import {
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startLocalRegistry, type LocalRegistry, type DummyExtensionSpec } from './registry';
-import { EventRecorder } from '../sdk/events';
+import { startLocalRegistry, type LocalRegistry, type DummyExtensionSpec } from './registry.js';
+import { EventRecorder } from '../sdk/events.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const MAIN_ENTRY = join(REPO_ROOT, 'out/main/index.js');
@@ -209,7 +209,7 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
 }
 
 /**
- * On a fresh boot the app seeds its bundled extensions (gus/cu/consensus), each
+ * On a fresh boot the app seeds its bundled extensions (docs), each
  * of which declares permissions and raises a first-run consent overlay that
  * intercepts pointer events. Tests aren't about that flow, so dismiss every
  * pending overlay (the overlay shows one un-consented extension at a time).

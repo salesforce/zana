@@ -17,7 +17,7 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
 3. **Subscribe long-lived emitters once, at app init** — never inside `createWindow()` (it re-runs). Release every subscription, timer, and per-session resource on its shutdown path.
 4. **Shared-file writes are atomic and serialized** — tmp + uniquely-suffixed rename, and one in-process mutex for read-modify-write (or be strictly append-only).
 5. **Keep heavy, unbounded work off the main event loop** — bound/`LIMIT`/paginate growing reads; an unbounded accumulating store needs a retention cap.
-6. **Core never names a specific extension in logic** — concrete ids appear only in the `MAIN_MODULES` / `APP_MODULES` registration. In the RENDERER the invariant is now absolute: the `'zana'` module-id literal must appear NOWHERE in `src/renderer/**` code (the whole Zana feature — main + renderer — is now a disk extension, see the zana note below, so there is no longer any core quarantine seam). The source-text guard (`src/renderer/__tests__/rule6-zana-literal.guard.test.ts`) scans comment-stripped renderer code and fails on ANY bare `'zana'`/`"zana"` token. NOTE: `MAIN_MODULES` now registers ONLY `slack` (the sole compiled-in built-in) — `zana` is no longer a built-in main module (it left core when its data moved off native better-sqlite3 onto the host MCP pool over the brokered `mcp` cap); the registration site is guarded by `src/main/__tests__/core-extension-separation.guard.test.ts`.
+6. **Core never names a specific extension in logic** — concrete ids appear only in the `MAIN_MODULES` / `APP_MODULES` registration. `MAIN_MODULES` is empty; `APP_MODULES` registers `docs` (compiled library UI). In the RENDERER the `'zana'` module-id literal must appear NOWHERE in `apps/app/src/**` code. The source-text guard (`apps/app/src/__tests__/rule6-zana-literal.guard.test.ts`) scans comment-stripped renderer code and fails on ANY bare `'zana'`/`"zana"` token. The registration site is guarded by `apps/server/src/services/extensions/__tests__/core-extension-separation.guard.test.ts`.
 7. **Promotion to a built-in is deliberate and bounded** — only when the broker can't grant the capability even scoped, and the trusted version (`builtinExec`/`builtinFetch`) is no weaker than its broker-gated twin (redirects, body cap, timeout).
 8. **New or modified code needs at least 80% test coverage.** Cover meaningful branches and failure paths, not only line count. For Electron main/renderer seams, unit coverage alone is insufficient: add or update the relevant built-Electron E2E test. Before completion, run the focused tests and the production-boundary E2E required by any affected coupling note.
 9. **PR monitoring means diagnose and repair, not only report.** After pushing a PR, watch its checks until complete. On failure, fetch job logs with `gh run view <run-id> --job <job-id> --log-failed`; for external checks, query `gh api repos/<owner>/<repo>/commits/<sha>/check-runs` then `gh api repos/<owner>/<repo>/check-runs/<id>/annotations` to get file, line, rule, and remediation. Fix actionable failures, run focused local verification, push, and repeat until every required check passes. Do not stop at an external failure summary when annotations are available.
@@ -44,7 +44,7 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   on unit tests or shell reproduction. Mock tests remain useful for malformed
   output and failure paths, but they do not establish production-boundary behavior.
   OpenCode agent discovery is the current regression example:
-  `src/main/harness/opencode-provider.ts` uses bounded temp-file capture, and any
+  `apps/host-daemon/src/harness/opencode-provider.ts` uses bounded temp-file capture, and any
   change to its discovery, filtering, IPC, or launcher selection MUST run
   `npm run build && ZCC_LIVE_OPENCODE=1 npx playwright test
   e2e/opencode-agent-picker.spec.ts -g 'actual project agents'` against this actual
@@ -56,7 +56,7 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   SIGNAL (surfaced inline as solo rows) from NOISE (folded into collapsible
   per-project sections so high-volume recurring events — agent-closed,
   scheduled runs, heartbeat pauses — can't bury what matters). That decision is
-  the `FEED_CATEGORIES` registry in `src/renderer/util/feedCategories.ts`:
+  the `FEED_CATEGORIES` registry in `packages/domain/src/feed-categories.ts`:
   `classifyEntry(entry)` maps an entry → a `FeedCategoryId` from the same
   implicit signals the store already carries (`dedupeKey` prefix —
   `auto-close:`/`heartbeat:`/`goal:` —, the `scheduled`+`notify` pair, and
@@ -82,14 +82,14 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   `scheduled` (a scheduled run that also auto-closed folds as agent-closed). The
   folded sections reuse the historically-named `inbox-scheduled-*` CSS classes
   in `global.css` as ONE shared visual treatment (don't rename without updating
-  `FoldedSection`). The Activity Feed (`src/main/feed-service.ts`,
+  `FoldedSection`). The Activity Feed (`apps/server/src/services/feed/feed-service.ts`,
   `FeedEventKind`) is a SEPARATE per-project history timeline with its own
   taxonomy — it re-imports `AUTO_CLOSE_KEY_PREFIX`/`isAutoCloseEntry` from the
   registry but keeps its own `deriveFromInbox` mapping; don't conflate the two.
   **The OPTIONAL feed-noise classifier — `builtin:feed-noise-classifier` — is now
   WIRED (default OFF, `feedNoiseClassifierEnabled` in `AppConfig` + the Settings
   "Feed-noise classifier" toggle).** It's a haiku micro-call
-  (`src/main/feed-noise-classifier.ts`, `FeedNoiseClassifier`, mirroring
+  (`apps/server/src/services/feed/feed-noise-classifier.ts`, `FeedNoiseClassifier`, mirroring
   `inbox-summary.ts`: DI'd `readEntries`/`runClassify` deps, reads main's own
   store — Rule 1 — capped at `FEED_NOISE_MAX_ENTRIES = 60`, never throws → empty
   set on failure) that background-DEMOTES an ambiguous routine `report` into a
@@ -120,7 +120,7 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   wildcard (it'd hide breadth from the consent screen and defeat least-privilege).
   The wildcard lives one level down, in the two OPAQUE scope allowlists:
   `execAllowlist: ["*"]` (any bin) and `egressAllowlist: ["*"]` (any host), honored
-  in `PermissionBroker.decide` (`src/main/extensions/permission-broker.ts`) via
+  in `PermissionBroker.decide` (`apps/desktop/src/extensions/permission-broker.ts`) via
   `grant.<list>.has('*') || grant.<list>.has(concrete)`. Two invariants that MUST
   hold: (1) the exec basename guard (`scope.bin === basename(scope.bin)`) is
   checked BEFORE the wildcard, so `"*"` widens WHICH bins, never HOW they're named
@@ -139,7 +139,7 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   styles (`gus-modal`, `gus-card-type`, `gus-chatter-*`, `gus-spin`, `gus-facts`,
   and the Tickets-only `zana-*` overrides `zana-modal`, `zana-blocker-chip`,
   `zana-timeline-spinner`, `zana-ver-*`) are defined in
-  `src/renderer/styles/global.css` (~514 refs) yet are consumed by BOTH the live
+  `apps/app/src/styles/global.css` (~514 refs) yet are consumed by BOTH the live
   `gus` disk extension AND the `zana` disk extension (`extensions/zana/src/renderer/*`
   — `ProjectTicketsView`, `TicketDetailModal`, `VersionSettings`). Neither
   extension bundles its own CSS: their panels mount into the HOST document
@@ -148,15 +148,15 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   `gus-*`/`zana-*` in core silently restyles both extensions' panels** — scope
   changes under the `zana-*` modifiers, or split the shared base out first; and
   (2) **do NOT delete these class definitions from `global.css` as "unused"** — a
-  source-only search of `src/renderer` will show no consumers now that the Tickets
+  source-only search of `apps/app/src` will show no consumers now that the Tickets
   UI moved out, but the extensions depend on them at runtime. The classes were
   deliberately NOT renamed in the zana→core merge (a risky global rename) and stay
   put after the zana extension extraction for the same reason.
 
 - **The host owns extension-panel placement, not the extension
   (`.module-panel-slot`).** Every extension panel is mounted by
-  `ModulePanelHost` (`src/renderer/modules/ModulePanelHost.tsx`) inside a
-  `.module-panel-slot` wrapper (defined in `src/renderer/styles/global.css`) that
+  `ModulePanelHost` (`apps/app/src/modules/ModulePanelHost.tsx`) inside a
+  `.module-panel-slot` wrapper (defined in `apps/app/src/styles/global.css`) that
   spans the shell grid's content columns (`grid-column: 2 / -1`, full height,
   own scroll) and stretches its child (`flex: 1 1 auto; min-height/min-width: 0`).
   This exists because `ListPane` returns `null` for a module nav — so a bare panel
@@ -174,7 +174,7 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   inner reading-width wrapper). Changing the slot contract means updating those
   three teaching artifacts too, or new extensions regress the bug.
 
-- **Extension-contributed personas/teams (`PersonaTeamRegistry`).** `src/main/extensions/persona-team-registry.ts` lets a live extension contribute personas/teams in-memory via `ctx.personas`/`ctx.teams`. Provenance is **host-stamped** (`source: { extensionId }` from the authenticated `moduleId`, never a literal — a Rule-6-clean pattern; ids namespaced `ext:<moduleId>:<slug>`), cleared on teardown/crash. Coupling: changes to the shared `sanitizePersona`/`sanitizeTeam` gate or to `PersonaSource` narrowing now also affect extension-contributed entries, and the renderer source badge narrows on `'extensionId' in source`.
+- **Extension-contributed personas/teams (`PersonaTeamRegistry`).** `apps/desktop/src/extensions/persona-team-registry.ts` lets a live extension contribute personas/teams in-memory via `ctx.personas`/`ctx.teams`. Provenance is **host-stamped** (`source: { extensionId }` from the authenticated `moduleId`, never a literal — a Rule-6-clean pattern; ids namespaced `ext:<moduleId>:<slug>`), cleared on teardown/crash. Coupling: changes to the shared `sanitizePersona`/`sanitizeTeam` gate or to `PersonaSource` narrowing now also affect extension-contributed entries, and the renderer source badge narrows on `'extensionId' in source`.
 
 - **Extension-contributed agent capabilities — skills + MCP servers, one
   permission token (`agent:contribute`), MANIFEST-declared not `ctx`-registered
@@ -188,14 +188,14 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   `redeployBundledSkills`/`ensureMcpConfigForProject` already used (boot,
   install/uninstall/enable/disable, the disk-sync reconcile, the "Reload
   skills & MCP" button — the button's name stops being aspirational here):
-  (1) `rebuildExtensionServers` (`src/main/mcp-config.ts`) declaratively
+  (1) `rebuildExtensionServers` (`apps/host-daemon/src/mcp-config.ts`) declaratively
   REPLACES a module-scoped `ext:<id>:<name>`-namespaced slice of the MCP
   server registry every call (mirrors `PersonaTeamRegistry.setPersonas`); an
   `alwaysOn: true` server merges into every project's `.mcp.json`
   unconditionally, others resolve only when a persona names them via
   `extraServerNames`. `command` is basename-only — the identical guard
   `execAllowlist` already enforces. (2) `syncExtensionSkills`
-  (`src/main/skill-installer.ts`) deploys each contributor's declared skills to
+  (`apps/server/src/services/skills/skill-installer.ts`) deploys each contributor's declared skills to
   `~/.claude/skills/ext-<id>-<slug>/SKILL.md` (reusing the bundled-skill
   installer's idempotent tmp+rename write) after first PRUNING any
   previously-deployed `ext-<id>-*` dirs (so a renamed/dropped slug or a
@@ -212,7 +212,7 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   projection ever reaches the renderer, Rule 1).
 
 - **Inbox read/write split (`inbox_push` vs `inbox_search`).** The inbox now has
-  a read tool (`src/main/inbox-search-mcp-tool.ts`, registered on both route
+  a read tool (`apps/server/src/services/inbox/inbox-search-mcp-tool.ts`, registered on both route
   shapes in `mcp-server.ts`). Like `inbox_push`, its default scope is the
   **route's** `projectId` (closed over from the MCP URL, never agent free-text —
   rule 1); `allProjects: true` is the only opt-in cross-project read. It's
@@ -222,7 +222,7 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   `resources/inbox-skill.md`; keep the two in sync.
 
 - **Inbox AI Summary reads main's store, not the renderer view.** `inbox:summarize`
-  (`src/main/inbox-summary.ts`) summarizes from main's own inbox store — the
+  (`apps/server/src/services/inbox/inbox-summary.ts`) summarizes from main's own inbox store — the
   source of truth — never from a renderer-supplied list (rule 1). It's capped at
   `INBOX_SUMMARY_MAX_ENTRIES = 60`, runs the `builtin:inbox-summary` micro-call,
   and never throws (failures resolve to `{ ok:false, reason }`). The renderer
@@ -234,9 +234,9 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   `projectTab.global: false` suppresses its top-level sidebar entry, making it a
   project-tab-only contribution; absent/`true` keeps the default dual surface
   (global sidebar entry + per-project tab). Parsed in
-  `src/main/extensions/discovery.ts` (`parseProjectTab` → `toManifestView`),
+  `apps/desktop/src/extensions/discovery.ts` (`parseProjectTab` → `toManifestView`),
   typed on `ExtensionManifestView.projectTab` and the SDK's
-  `ProjectTabContribution`. Consensus uses `false` (project-scoped decisions).
+  `ProjectTabContribution`. Docs uses `true` (global Docs rail + per-project Library).
   Coupling: a project-tab-only extension must still branch on
   `host.getScopedProjectId()` for its data scope — `global:false` only hides the
   sidebar entry, it doesn't scope the data.
@@ -278,7 +278,7 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
 - **Local (in-app authored) extensions are ordinary disk extensions + a pointer,
   NOT a trust tier.** The "create your own extension" feature
   (`CreateExtensionDialog` → `extensions:createLocal`) mints a unique id
-  (`src/main/local-extension.ts` `mintLocalId`), scaffolds a renderer-only starter
+  (`apps/server/src/services/extensions/local-extension.ts` `mintLocalId`), scaffolds a renderer-only starter
   into a scratch working dir (`workingDirFor(scratchWorkspaceRoot(), id)` =
   `~/zcc-workspace/extensions/<id>` — never HOME, a project, or `~/.zcc`)
   **including a `CLAUDE.md` "template"** the Creator auto-loads as project
@@ -320,7 +320,7 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   fresh id rather than reclaiming the orphaned dir. The install-seam invariant
   (`local-extension.ts` never touches the install root; only `installFromDir`
   writes there) is guarded by
-  `src/main/__tests__/local-extension-install-seam.guard.test.ts`.
+  `apps/server/src/services/extensions/__tests__/local-extension-install-seam.guard.test.ts`.
 
 - **The local-extension starter is an EDITABLE repo template, not inline strings.**
   `templates/extension-starter/` holds the real starter files (`extension.json`
@@ -355,10 +355,10 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   *contribute* skills/MCP directly (only personas/teams via `ctx.personas`/`ctx.teams`,
   plus `mcpServers` string refs on a persona) — the button reloads the APP's
   bundled artifacts, not extension-contributed ones. Covered by
-  `src/main/__tests__/redeploy-bundled-skills.test.ts`.
+  `apps/server/src/services/skills/__tests__/redeploy-bundled-skills.test.ts`.
 
 - **Auto-close-idle depends on the human-vs-agent write split + a triage cache.**
-  `src/main/auto-close-idle.ts` (OFF by default; `autoCloseIdleEnabled` master
+  `apps/server/src/services/followups/auto-close-idle.ts` (OFF by default; `autoCloseIdleEnabled` master
   switch, sidebar + Settings toggle) closes a non-background, non-delegating
   agent after it sits idle for `autoCloseIdleMinutes` (default 15, clamp [1,240]).
   It's a `HeartbeatService`-shaped timer service — every eligibility gate is
@@ -386,7 +386,7 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
 
 - **Sidebar automation toggles own their config round-trip.** The two switches
   under the Agents rail entry (`AutomationToggles` in
-  `src/renderer/components/Sidebar.tsx` — auto-close-idle + Overseer) call
+  `apps/app/src/components/Sidebar.tsx` — auto-close-idle + Overseer) call
   `useData.setAutoCloseIdleEnabled` / `setOverseerMode`, which — UNLIKE the
   pure-local Settings mirrors (`setCloseIdleEnabled` et al., driven after the
   panel's own `config.set`) — write `AppConfig` themselves (optimistic flip →
@@ -394,66 +394,9 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   Overseer rail toggle only flips `off`↔`on`; the full `off/dryRun/on` range
   stays in Settings, so keep the store field a tri-state, not a boolean.
 
-- **Zana is a FULL DISK PLUGIN (`plugins/zana/`, main + renderer) whose data
-  flows through the host MCP pool.** The whole Zana feature is now
-  ONE first-party plugin: `entry.main` (`main.mjs`, from `src/main-entry.ts` →
-  `src/main/zana-main.ts`) and `entry.renderer` (`renderer.js`, from
-  `src/renderer-entry.tsx`), dual-built by `vite.config.ts` (`BUILD_TARGET`
-  main/renderer). It contributes a **project-tab-only** surface
-  (`projectTab.global: false`) — no top-level sidebar entry — and scopes to
-  `host.getActiveProject()`. The renderer source
-  (`extensions/zana/src/renderer/*` — `ProjectTicketsView`, `TicketDetailModal`,
-  `VersionSettings`, `ticketsStore`, `ticketsApi`, `zanaPrefs`, `ticketColumns`, …)
-  moved verbatim out of the old `plugins/zana/renderer/*` (both `plugins/zana/`
-  and the interim `extensions/zana-tickets/` are DELETED). Four load-bearing
-  couplings: (1) **The 7 renderer-facing capabilities are mapped onto zana's MCP
-  server, not SQLite.** `zana-main.ts` implements `getSnapshot` / `getTicket` /
-  `getArtifact` / `listProfiles` / `getProfile` / `assignTicket` (the only write)
-  / `getVersionInfo`, each calling the brokered `ctx.mcp('zana', <tool>, args, {
-  projectPath | useGlobal })` capability — which forwards over the broker port to
-  the host-managed MCP child pool (`src/main/zana/mcp-pool.ts`, see its own note).
-  `getVersionInfo` additionally uses the brokered `ctx.exec`/`ctx.fetch` caps
-  (npm query + registry fetch). The extension fails CLOSED if `ctx.mcp` is absent
-  (throws at setup), and every read degrades to an empty/`null` result rather than
-  throwing. (2) **The renderer reaches its OWN main child, not a core built-in.**
-  The data seam `extensions/zana/src/renderer/ticketsApi.ts` calls
-  `getHost().call(cap, arg)` (→ `window.cc.modules.call('<ext-id>', cap, [arg])`);
-  the host bridge lives in the module-level `host-holder.ts` (twin of
-  `host-react.ts`) primed by `activate({ host })`, because the `useTickets` zustand
-  store is a module singleton and can't take `host` as a prop. `projectPath`/
-  `useGlobal` remain ADVISORY hints — main (and the MCP pool's `resolveWorkspace`)
-  re-authorizes every path (Rule 1/2). The dead `listSources`/`probeProjects`
-  capabilities were dropped. (3) **Core is fully zana-free** — no `zana` in
-  `MAIN_MODULES`/`APP_MODULES`, no Overview KPI line, no `zana-status` palette
-  command, no `SettingsPanel` version section (the `@zana-ai/mcp` version check is
-  the extension's own `settingsPanel`, `VersionSettings`). `RESERVED_BUILTIN_IDS`
-  is now `['slack']`; the Rule-6 guard forbids the `'zana'` literal anywhere in
-  `src/renderer` (see Rule 6). (4) **The extension bundles no CSS** — it styles via
-  core's shared `gus-*`/`zana-*` classes (see the shared-CSS coupling note above);
-  those class defs must NOT be deleted as "unused."
-
-- **The host MCP child pool (`src/main/zana/mcp-pool.ts`) is a TRUSTED core
-  subsystem — the transport zana's data rides on.** MCP-over-stdio is a persistent
-  JSON-RPC session; the brokered one-shot process cap has no stdin stream, so the
-  child pool CANNOT be owned by the sandboxed extension — it lives in core and the
-  extension reaches it only through the narrow brokered `mcp` capability
-  (permission token `mcp` + scope `mcpAllowlist`, gated in `PermissionBroker.decide`
-  and forwarded by `broker-caps.ts`'s `mcp` cap → `McpPool.call`). The pool keeps
-  per-workspace `zana-mcp-server` stdio children keyed by `(serverId, workspace)`,
-  spawned with `env.ZANA_WORKSPACE = realpath(project root)` — the workspace hint is
-  realpath-confined against a registered project BEFORE spawn (Rule 1/2), so a
-  renderer/agent-supplied `projectPath` can't escape. It is bounded (`MAX_CHILDREN`,
-  idle-TTL teardown, per-request timeout) and subscribed/disposed once at app init
-  (wired in `index.ts`, disposed on shutdown — Rule 3). Bin resolution is robust
-  (`ZANA_MCP_BIN` override → volta shim) and degrades gracefully: bin absent /
-  handshake failure → `McpUnavailableError`, surfaced as an honest empty state, never
-  a crash. This is the load-bearing architectural decision of the plugins→extensions
-  migration: the feature module is a disk extension, the long-lived process
-  management stays trusted in core.
-
 - **Core is portable; integrations are extensions.** Do not add environment- or
   vendor-specific behavior to core files. The generic SSH parser
-  (`src/main/ssh-config.ts`) and extension SSH-host-provider seam are the public
+  (`apps/server/src/services/projects/ssh-config.ts`) and extension SSH-host-provider seam are the public
   integration points. An environment-specific integration belongs in a separately
   distributed extension, never in the app source tree.
 
@@ -462,7 +405,7 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   the new build with `npm run release:mac` so the auto-updater can offer it.
 
 - **The local-spawn argv/env assembly lives in `PtyManager.create()` and
-  dispatches through the per-profile `LaunchProvider`; `spawn-plan.ts` is now the
+  dispatches through the per-profile `LaunchProvider`; `@zana-ai/zcc-spawn-plan` is now the
   PURE HELPER library it draws on.** HISTORY: a monolithic
   `buildSpawnPlan(SpawnRequest): SpawnPlan` used to own the whole one-pass
   assembly; it was RETIRED (Decision D3 / T5.3, codex-parity plan 2026-07-22) once
@@ -478,23 +421,23 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   PERSONA → hookArgs → per-tab extraArgs`, then `mergeAllowedTools(argv,
   inboxAllow)` (from `argv-utils.ts`) folds every `--allowedTools` into ONE
   last-wins flag; reordering any layer changes spawned argv. (2) **The golden-argv
-  net is the regression contract** — `src/main/__tests__/pty-golden-argv.test.ts`
+  net is the regression contract** — `apps/host-daemon/src/__tests__/pty-golden-argv.test.ts`
   snapshots `create()`'s `{command,args,env}` (UUIDs normalized to `<SID>`) across
   the profile × persona × projectSettings × scheduled × overseer × pinned-session ×
   heap-ceiling matrix; a diff in that `.snap` means you changed launch behavior —
   regenerate ONLY if that was intended. (3) **The historical import surface is
   preserved via re-exports** — `pty.ts` re-exports
   `personaArgs_build`/`cleanExtraArgs`/`extractPinnedSessionId`/`applyHeapCeiling`/
-  `buildAutoModeSettings` from `./harness/spawn-plan.js` so the ~17 test files +
+  `buildAutoModeSettings` so the ~17 test files +
   `chat-runner.ts` that import them from `../pty.js` keep working; new code should
-  import from `./harness/spawn-plan.js` directly. (4) **`buildRemoteCmd` shares the
+  import spawn-plan helpers from `@zana-ai/zcc-spawn-plan` directly. (4) **`buildRemoteCmd` shares the
   same pure helpers** (`resolveLaunch`, `computeAutoModeActive`,
   `resolveEffectiveModel`, `personaArgs_build`, `projectSettingsArgs`,
   `cleanExtraArgs`, `buildHookSettings`) but assembles its own remote precedence —
   so a change to a shared helper touches BOTH the local and remote spawn paths;
   keep them in lockstep (see the `pty.ts createRemote()` remote-parity hot-zone note).
 
-- **Launch IDENTITY is registry-dispatched (`src/main/harness/registry.ts`), the
+- **Launch IDENTITY is registry-dispatched (`apps/host-daemon/src/harness/registry.ts`), the
   `MAIN_MODULES` analogue for interactive harnesses (Rule 6).** Per-profile launch
   *identity* — the concrete provider id, tab title, capability descriptor, and base
   command/args — lives ONLY in the provider files (`harness/launch-provider.ts`:
@@ -503,8 +446,8 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   profile via `providerForProfile(profile)` and reads `.title(...)` /
   `.capabilities(...)` / `.resolveBaseLaunch(...)`. This is DELIBERATELY BOUNDED
   (per `designs/harness-extraction-refreshed-strategy-2026-07-10.md`): the seam owns
-  only identity; the byte-sensitive argv/env/hook ASSEMBLY stays in
-  `PtyManager.create()` (drawing on `spawn-plan.ts`'s pure helpers — see the
+  only identity;   the byte-sensitive argv/env/hook ASSEMBLY stays in
+  `PtyManager.create()` (drawing on `@zana-ai/zcc-spawn-plan`'s pure helpers — see the
   spawn-assembly note above), and `capabilities()` just re-wraps the existing
   `providerCapabilities` accessor — the rich `{hooks:{events}, mcp:{transports}}`
   shape is NOT built until a second real provider (Codex/Gemini) lands. Four
@@ -517,13 +460,10 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   to subscribe/dispose). (3) **`titleFor` in `pty.ts` now delegates** to
   `providerForProfile(profile).title(profile)` — byte-identical to the old inline map,
   asserted by the golden-argv net (which snapshots `create()`'s title). (4) **Two
-  source-text guards protect the seam**: the new
-  `harness-provider-registry.guard.test.ts` fails if the `'claude-code'` id or the
-  `'claude --resume'` title literal reappears outside `harness/`, and the existing
-  `src/shared/__tests__/launch-provider.guard.test.ts` still forbids a re-rolled
+  source-text guards protect the seam**: `apps/host-daemon/src/__tests__/rule6-launch-provider.guard.test.ts`
+  fails if the `'claude-code'` id reappears in `pty.ts`, and the existing
+  `packages/domain/src/launch-provider.guard.test.ts` still forbids a re-rolled
   `isClaudeProfile` triplet — so keep the two `-suffix` claude profile literals on
   SEPARATE lines in provider code (a one-line pair trips the dedup guard).
 
-Zana is a first-party plugin under `plugins/zana/`; its data flows through
-the host MCP pool rather than native SQLite. Plugins are full-trust in-process
-after install and never receive host-daemon tokens.
+Plugins are full-trust in-process after install and never receive host-daemon tokens.

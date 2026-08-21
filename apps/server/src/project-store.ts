@@ -31,7 +31,7 @@ export interface ProjectRecord {
 export type ProjectMutationPatch = Partial<Pick<ProjectRecord, 'name' | 'color' | 'category'>>;
 
 /** The 8-color project palette. First entry is the conventional default.
- *  Mirrors `src/shared/project-colors.ts` byte-for-byte. */
+ *  Mirrors `packages/domain/src/project-colors.ts` byte-for-byte. */
 export const PROJECT_COLORS = [
   '#2f81f7', // blue (default)
   '#3fb950', // green

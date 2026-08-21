@@ -2,7 +2,7 @@
  * Top-level Scheduler view layout — the panel owns the full content track
  * with no inner project/group list rail (Inbox still splits; Scheduler does not).
  */
-import { test, expect } from './fixtures/app';
+import { test, expect } from './fixtures/app.js';
 
 test('top-level Scheduler view fills the content area without a list rail', async ({
   app

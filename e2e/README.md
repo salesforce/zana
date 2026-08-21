@@ -10,7 +10,7 @@ npm run test:e2e          # build, then run the suite
 npm run test:e2e:only     # run against the existing out/ build (faster inner loop)
 npm run test:e2e:headed   # build + run with a visible window (debugging)
 npx playwright test smoke # a single spec
-npx playwright show-trace test-results/<…>/trace.zip   # post-mortem a failure
+npx playwright show-trace e2e/.artifacts/<…>/trace.zip   # post-mortem a failure
 ```
 
 ## Optional Linux CI reproduction
@@ -41,11 +41,11 @@ container is removed on exit. Set
 
 This reproduces CI's Linux userspace and commands, not GitHub's Azure VM kernel.
 If a failure remains hosted-runner-only, download `playwright-report` and
-`test-results` from the failed Actions run before changing test lifecycle code.
+`e2e/.artifacts` from the failed Actions run before changing test lifecycle code.
 
 ## Why these exist (and what they cover)
 
-The marketplace's pure engine (`src/main/extension-registry.ts`) is already
+The marketplace's pure engine (`apps/server/src/services/extensions/extension-registry.ts`) is already
 unit-tested. What was untested is the **full path**: a click in the renderer →
 IPC → download over HTTPS → sha256 + Ed25519 verification → stage to disk →
 reconcile → the row re-renders as installed. `marketplace.spec.ts` exercises

@@ -2,7 +2,7 @@
  * Shapes mirrored from the desktop app so the website reads the EXACT SAME feeds:
  *   - RegistryRelease / RegistryIndex  ← packages/extension-sdk/src/index.ts
  *   - the public extension catalog is the same `index.json` the app fetches via
- *     `src/main/extension-registry.ts` (registryUrl).
+ *     `apps/server/src/services/extensions/extension-registry.ts` (registryUrl).
  *
  * Keep these in sync with the app. They are intentionally a narrow, read-only
  * projection — the website never installs or verifies, it only displays.

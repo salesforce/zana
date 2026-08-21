@@ -27,8 +27,8 @@
  * ~/.zcc — the fixture snapshots/restores config.json; we remove the tmp project
  * we register in `finally`.
  */
-import { test, expect } from './fixtures/app';
-import { makeFakeAgentBinary } from './sdk/harness';
+import { test, expect } from './fixtures/app.js';
+import { makeFakeAgentBinary } from './sdk/harness.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';

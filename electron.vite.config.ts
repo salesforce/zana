@@ -8,6 +8,34 @@ import { resolve } from 'node:path';
 // the matching source file; the bare specifier maps to the package entry.
 const sdkAlias = [
   {
+    find: /^@zana-ai\/zcc-llm$/,
+    replacement: resolve(__dirname, 'packages/llm/src/index.ts')
+  },
+  {
+    find: /^@zana-ai\/zcc-path-confine$/,
+    replacement: resolve(__dirname, 'packages/path-confine/src/index.ts')
+  },
+  {
+    find: /^@zana-ai\/zcc-spawn-plan$/,
+    replacement: resolve(__dirname, 'packages/spawn-plan/src/index.ts')
+  },
+  {
+    find: /^@zana-ai\/zcc-process-utils$/,
+    replacement: resolve(__dirname, 'packages/process-utils/src/index.ts')
+  },
+  {
+    find: /^@zana-ai\/zcc-ui\/(.*)$/,
+    replacement: resolve(__dirname, 'packages/ui/src/$1.tsx')
+  },
+  {
+    find: /^@zana-ai\/zcc-desktop-contract$/,
+    replacement: resolve(__dirname, 'packages/desktop-contract/src/index.ts')
+  },
+  {
+    find: /^@zana-ai\/zcc-domain\/(.*)$/,
+    replacement: resolve(__dirname, 'packages/domain/src/$1.ts')
+  },
+  {
     find: /^@zana-ai\/zcc-contracts\/canonical-json$/,
     replacement: resolve(__dirname, 'packages/contracts/src/canonical-json.ts')
   },
@@ -24,12 +52,20 @@ const sdkAlias = [
     replacement: resolve(__dirname, 'packages/contracts/src/runtime.ts')
   },
   {
-    find: /^@zana-ai\/zcc-server\/static-host$/,
-    replacement: resolve(__dirname, 'apps/server/src/static-host.ts')
+    find: /^@zana-ai\/zcc-server$/,
+    replacement: resolve(__dirname, 'apps/server/src/index.ts')
+  },
+  {
+    find: /^@zana-ai\/zcc-server\/(.*)$/,
+    replacement: resolve(__dirname, 'apps/server/src/$1.ts')
   },
   {
     find: /^@zana-ai\/zcc-host-daemon$/,
     replacement: resolve(__dirname, 'apps/host-daemon/src/index.ts')
+  },
+  {
+    find: /^@zana-ai\/zcc-host-daemon\/(.*)$/,
+    replacement: resolve(__dirname, 'apps/host-daemon/src/$1.ts')
   },
   {
     find: /^@zana-ai\/zcc-plugin-sdk$/,
@@ -60,20 +96,24 @@ const sdkAlias = [
   {
     find: /^@zcc\/harness-sdk\/(.*)$/,
     replacement: resolve(__dirname, 'packages/harness-sdk/src/$1.ts')
+  },
+  {
+    find: /^@\//,
+    replacement: resolve(__dirname, 'apps/app/src') + '/'
   }
 ];
 
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
-    resolve: { alias: sdkAlias },
+    resolve: { alias: sdkAlias, conditions: ['source'] },
     build: {
       // In `dev`, watch app-module sources under `plugins/` as well as `src/`.
-      // A module's main side (e.g. plugins/slack/main) is pulled into the main
+      // A module's main side (e.g. plugins/docs) is pulled into the main
       // bundle via the registry, but lives outside `src/`; without this the
       // dev watcher won't restart the main process when a plugin file changes,
       // leaving a stale main that answers `modules:call` with "Unknown module".
-      watch: { include: ['src/**', 'plugins/**', 'apps/**'] },
+      watch: { include: ['src/**', 'plugins/**', 'apps/**', 'packages/**'] },
       rollupOptions: {
         // `host-child` is the core-owned bootstrap that runs inside each
         // per-extension `utilityProcess` (P3-A). Build it as a SEPARATE main
@@ -82,9 +122,9 @@ export default defineConfig({
         // runtime. It's a Node/utilityProcess context — same externalize-node/
         // electron treatment as the main entry (externalizeDepsPlugin above).
         input: {
-          index: resolve(__dirname, 'src/main/bootstrap.ts'),
-          main: resolve(__dirname, 'src/main/index.ts'),
-          'host-child': resolve(__dirname, 'src/main/extensions/host-child.ts'),
+          index: resolve(__dirname, 'apps/desktop/src/bootstrap.ts'),
+          main: resolve(__dirname, 'apps/desktop/src/main.ts'),
+          'host-child': resolve(__dirname, 'apps/desktop/src/extensions/host-child.ts'),
           'server-runtime': resolve(__dirname, 'apps/server/src/utility-entry.ts'),
           'host-runtime': resolve(__dirname, 'apps/host-daemon/src/utility-entry.ts')
         }
@@ -93,16 +133,16 @@ export default defineConfig({
   },
   preload: {
     plugins: [externalizeDepsPlugin()],
-    resolve: { alias: sdkAlias },
+    resolve: { alias: sdkAlias, conditions: ['source'] },
     build: {
-      watch: { include: ['src/**', 'plugins/**'] },
+      watch: { include: ['src/**', 'plugins/**', 'packages/**', 'apps/**'] },
       rollupOptions: {
-        input: { index: resolve(__dirname, 'src/preload/index.ts') },
+        input: { index: resolve(__dirname, 'apps/desktop/src/preload.ts') },
         // A SANDBOXED preload (webPreferences.sandbox:true) MUST be CommonJS —
         // Electron cannot load an ESM preload in a sandboxed renderer, and it
         // fails SILENTLY (the preload never runs, so `window.cc` is undefined
         // and the renderer crashes on first access). Force CJS `index.js`
-        // output instead of the default `.mjs`. The path in src/main/index.ts
+        // output instead of the default `.mjs`. The path in apps/desktop/src/host.ts
         // must match (`../preload/index.js`).
         output: {
           format: 'cjs',
@@ -112,19 +152,21 @@ export default defineConfig({
     }
   },
   renderer: {
-    root: resolve(__dirname, 'src/renderer'),
+    root: resolve(__dirname, 'apps/app'),
     resolve: {
+      conditions: ['source'],
       alias: [
         ...sdkAlias,
-        // Built-in plugins share core renderer controls but live outside
-        // `src/renderer`, so use this explicit source alias instead of a brittle
-        // relative path back into the host UI.
-        { find: '@renderer', replacement: resolve(__dirname, 'src/renderer') },
-        { find: '@shared', replacement: resolve(__dirname, 'src/shared') }
+        { find: /^@\//, replacement: resolve(__dirname, 'apps/app/src') + '/' }
       ],
       dedupe: ['monaco-editor']
     },
     plugins: [react()],
+    server: {
+      // Vite root is apps/app; the slack built-in and other plugins live at
+      // repo-root `plugins/`. Allow the workspace so those imports are served.
+      fs: { allow: [resolve(__dirname)] }
+    },
     // Monaco workers are ESM side-effect scripts. Do not alias
     // `monaco-editor/esm/vs` to a filesystem path — that bypasses optimizeDeps
     // exclude and Vite 8 prebundles workers with no `default` export.
@@ -132,7 +174,7 @@ export default defineConfig({
     optimizeDeps: { exclude: ['monaco-editor', '@monaco-editor/react'] },
     build: {
       rollupOptions: {
-        input: resolve(__dirname, 'src/renderer/index.html')
+        input: resolve(__dirname, 'apps/app/index.html')
       }
     }
   }

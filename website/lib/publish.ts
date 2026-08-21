@@ -5,7 +5,7 @@
  * `completeGithubLogin` in `lib/auth.ts`.
  *
  * Byte/validation rules are reproduced EXACTLY from the frozen desktop client
- * (`src/main/extension-registry.ts::decodeArchive`, `ARCHIVE_MAX_BYTES`) and
+ * (`apps/server/src/services/extensions/extension-registry.ts::decodeArchive`, `ARCHIVE_MAX_BYTES`) and
  * `scripts/publish-extension.mjs::buildArchive` — re-declared here rather than
  * imported, since `website/` has no dependency on the app's `src/main/**`
  * (same "locally mirrored, not imported" precedent `lib/registry.ts` and
@@ -29,7 +29,7 @@ import { compareVersions, type RegistryRelease } from './registry.ts';
 import type { PublishRequestBody } from './validation.ts';
 import type { User, NewExtension, NewRelease, Extension } from './db/schema.sqlite.ts';
 
-/** Matches `src/main/extension-registry.ts::ARCHIVE_MAX_BYTES` (16 MiB per release). */
+/** Matches `apps/server/src/services/extensions/extension-registry.ts::ARCHIVE_MAX_BYTES` (16 MiB per release). */
 export const ARCHIVE_MAX_BYTES = 16 * 1024 * 1024;
 
 export type PublishErrorCode = 'bad_archive' | 'bad_manifest' | 'not_owner' | 'stale_version' | 'too_large';
@@ -76,7 +76,7 @@ function deriveArchiveBytes(body: PublishRequestBody): Buffer {
 }
 
 // ---------------------------------------------------------------------------
-// `decodeArchive` rules, reproduced EXACTLY from `src/main/extension-registry.ts`
+// `decodeArchive` rules, reproduced EXACTLY from `apps/server/src/services/extensions/extension-registry.ts`
 // ---------------------------------------------------------------------------
 
 type ArchiveFiles = Record<string, Buffer>;

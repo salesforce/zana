@@ -12,7 +12,7 @@
  * macOS caveat: the added project lands in the REAL ~/.zcc/projects.json (the
  * app ignores sandbox HOME for ~/.zcc); removed in `finally`.
  */
-import { test, expect } from './fixtures/app';
+import { test, expect } from './fixtures/app.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

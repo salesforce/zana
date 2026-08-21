@@ -11,14 +11,11 @@
  * and no test-only app seam are needed — the app clones exactly as it would from
  * github.
  */
-import { test, expect } from './fixtures/app';
-import { MarketplacePage } from './fixtures/marketplace';
-import { startGitDaemon, type GitDaemon } from './fixtures/git-daemon';
+import { test, expect } from './fixtures/app.js';
+import { MarketplacePage } from './fixtures/marketplace.js';
+import { startGitDaemon, type GitDaemon } from './fixtures/git-daemon.js';
+import { HELLO_SAMPLE_FILES } from './fixtures/sample-extensions.js';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
-const HELLO_FIXTURE = join(REPO_ROOT, 'test/fixtures/hello-sample');
 
 /** A minimal renderer-only extension with NO permissions (installs consent-free). */
 const NOPERM_MANIFEST = JSON.stringify(
@@ -58,7 +55,7 @@ test.describe('install from git — live app flow', () => {
     // hello-sample declares `storage`, so it raises the P3-D consent overlay —
     // exactly where the loud remote-origin provenance line must appear.
     daemon = await startGitDaemon(join(home, '.git-daemon'), [
-      { repoName: 'hello', fromDir: HELLO_FIXTURE, tag: 'v1.0.0' },
+      { repoName: 'hello', files: HELLO_SAMPLE_FILES, tag: 'v1.0.0' },
     ]);
     const url = daemon.urlFor('hello');
     const market = new MarketplacePage(app.window);

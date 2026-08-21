@@ -2,7 +2,7 @@
 /**
  * Copy the Docs plugin's installable bits (manifest, server, skills) into the
  * committed bundled-extensions/docs artifact so packaged builds seed it the
- * same way as zana/consensus.
+ * same way as zana.
  */
 import { cp, mkdir, readFile, writeFile, access } from 'node:fs/promises';
 import { join, dirname } from 'node:path';

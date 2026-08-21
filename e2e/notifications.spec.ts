@@ -12,21 +12,20 @@
  *    instead of navigating to the Inbox nav route, and a pushed entry shows
  *    up there.
  *
- * Installs the `inbox-push-sample` fixture (test/fixtures/inbox-push-sample)
- * from a local `git://` daemon — the same offline, no-network install path
+ * Installs the inline `inbox-push-sample` extension from a local `git://`
+ * daemon — the same offline, no-network install path
  * `install-from-git.spec.ts` uses — so this exercises a REAL sandboxed
  * `main.mjs` utilityProcess, not a stub.
  */
-import { test, expect } from './fixtures/app';
-import { startGitDaemon, type GitDaemon } from './fixtures/git-daemon';
-import { MarketplacePage } from './fixtures/marketplace';
+import { test, expect } from './fixtures/app.js';
+import { startGitDaemon, type GitDaemon } from './fixtures/git-daemon.js';
+import { MarketplacePage } from './fixtures/marketplace.js';
+import { INBOX_PUSH_SAMPLE_FILES } from './fixtures/sample-extensions.js';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
-const SAMPLE_FIXTURE = join(REPO_ROOT, 'test/fixtures/inbox-push-sample');
+const INBOX_PUSH_REPO = { repoName: 'inbox-push-sample', files: INBOX_PUSH_SAMPLE_FILES };
 
 /** Same manifest, permissions:[] — proves the deny path without a real grant. */
 const NOPERM_MANIFEST = JSON.stringify(
@@ -69,7 +68,7 @@ test.describe('notifications — extension inbox push + bell drawer', () => {
     home
   }) => {
     daemon = await startGitDaemon(join(home, '.git-daemon'), [
-      { repoName: 'inbox-push-sample', fromDir: SAMPLE_FIXTURE },
+      INBOX_PUSH_REPO,
       {
         repoName: 'inbox-push-noperm',
         files: {
@@ -191,7 +190,7 @@ test.describe('notifications — extension inbox push + bell drawer', () => {
     home
   }) => {
     daemon = await startGitDaemon(join(home, '.git-daemon'), [
-      { repoName: 'inbox-push-sample', fromDir: SAMPLE_FIXTURE }
+      INBOX_PUSH_REPO
     ]);
     const market = new MarketplacePage(app.window);
     const win = app.window;
@@ -287,7 +286,7 @@ test.describe('notifications — extension inbox push + bell drawer', () => {
     home
   }) => {
     daemon = await startGitDaemon(join(home, '.git-daemon'), [
-      { repoName: 'inbox-push-sample', fromDir: SAMPLE_FIXTURE }
+      INBOX_PUSH_REPO
     ]);
     const market = new MarketplacePage(app.window);
     const win = app.window;

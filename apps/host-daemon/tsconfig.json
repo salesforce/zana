@@ -11,6 +11,12 @@
     "customConditions": ["source"],
     "types": ["node"]
   },
-  "include": ["src/**/*.ts"],
+  "include": [
+    "src/index.ts",
+    "src/daemon.ts",
+    "src/local-pty-host.ts",
+    "src/terminal-manager.ts",
+    "src/utility-entry.ts"
+  ],
   "exclude": ["src/**/*.test.ts"]
 }

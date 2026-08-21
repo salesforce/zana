@@ -14,7 +14,7 @@
  * ("Open in new window") window takes. Before the fix the card collapsed into
  * Idle after reload; with the seed it stays in Working.
  */
-import { test, expect, dismissConsentOverlays } from './fixtures/app';
+import { test, expect, dismissConsentOverlays } from './fixtures/app.js';
 import { mkdtempSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

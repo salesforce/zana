@@ -14,18 +14,11 @@ export async function GET() {
     description: 'First-party plugins shipped with Zana Command Center',
     plugins: [
       {
-        id: 'zana',
-        displayName: 'Zana',
-        description: 'Per-project tickets board',
+        id: 'docs',
+        displayName: 'Docs',
+        description: 'Durable project knowledge: Docs rail, per-project Library, and the library-curator skill',
         author: { name: 'Zana' },
-        source: { git: { url: 'https://github.com/salesforce/zana', subdir: 'plugins/zana', ref: 'HEAD' } }
-      },
-      {
-        id: 'zana-hub',
-        displayName: 'Zana Hub',
-        description: 'Orchestration dashboard',
-        author: { name: 'Zana' },
-        source: { git: { url: 'https://github.com/salesforce/zana', subdir: 'plugins/zana-hub', ref: 'HEAD' } }
+        source: { git: { url: 'https://github.com/salesforce/zana', subdir: 'plugins/docs', ref: 'HEAD' } }
       }
     ]
   };

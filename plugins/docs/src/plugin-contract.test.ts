@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { derivePluginId, readPluginManifest } from '@zana-ai/zcc-domain';
-import { discoverPluginSkillNames } from '../../../apps/server/src/plugins/plugin-skills.js';
+import { discoverPluginSkillNames } from '@zana-ai/zcc-server/plugins/plugin-skills';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -20,7 +20,7 @@ describe('docs plugin contract', () => {
 
   it('registers a compiled Docs rail + Library project tab under the renderer root', () => {
     const src = readFileSync(
-      join(root, '../../src/renderer/docs/module.ts'),
+      join(root, '../../apps/app/src/views/library/module.ts'),
       'utf8'
     );
     expect(src).toMatch(/id:\s*'docs'/);
