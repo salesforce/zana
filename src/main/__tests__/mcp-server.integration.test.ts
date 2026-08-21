@@ -179,6 +179,50 @@ describe('inbox MCP server (end-to-end)', () => {
     expect(cancelTeamLaunch).not.toHaveBeenCalledWith('caller-session', 'request-2');
   });
 
+  it('routes execution calls through authenticated URL identity and rejects stale or cross-project routes', async () => {
+    const projects = [makeProject('proj-1', 'One'), makeProject('proj-2', 'Two')];
+    const routeIsLive = vi.fn((sessionId: string, projectId: string) => sessionId === 'caller-session' && projectId === 'proj-1');
+    const executionService = {
+      start: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', state: 'RUNNING' } })),
+      list: vi.fn(async () => [{ id: 'execution-1', state: 'RUNNING' }]),
+      snapshot: vi.fn(async () => ({ execution: { id: 'execution-1', state: 'RUNNING' }, executions: [], events: [], nextAfter: 0, truncated: false, artifacts: [], artifactsTruncated: false }))
+    };
+    const map = new Map(projects.map((project) => [project.id, project]));
+    handle = await startMcpServer({
+      inboxStore: createMemoryInboxStore(),
+      suggestionsStore: createMemorySuggestionsStore(),
+      projects: { get: (id) => map.get(id) ?? null },
+      executionService: executionService as never,
+      validateTeamRouteIdentity: routeIsLive,
+      log: () => {}
+    });
+    const credential = controlCredentialForSession('caller-session');
+    const owner = await connectClient(handle.url, `proj-1/caller-session/${credential}`);
+    clients.push(owner);
+
+    const started = await owner.callTool({
+      name: 'execution.start',
+      arguments: { version: 1, teamId: 'team-1', launchRequestId: 'request-1', slots: [{ initialTask: 'Run' }] }
+    });
+    expect((started as { isError?: boolean }).isError).toBeFalsy();
+    expect(executionService.start).toHaveBeenCalledWith('caller-session', 'proj-1', expect.objectContaining({ teamId: 'team-1' }));
+
+    const snapshot = await owner.callTool({ name: 'execution.snapshot', arguments: { executionId: 'execution-1', after: 4 } });
+    expect((snapshot as { isError?: boolean }).isError).toBeFalsy();
+    expect(executionService.snapshot).toHaveBeenCalledWith('caller-session', 'proj-1', 'execution-1', 4);
+
+    routeIsLive.mockReturnValue(false);
+    const stale = await owner.callTool({ name: 'execution.list', arguments: {} });
+    expect((stale as { isError?: boolean }).isError).toBe(true);
+    expect(executionService.list).not.toHaveBeenCalled();
+
+    const wrongProject = await connectClient(handle.url, `proj-2/caller-session/${credential}`);
+    clients.push(wrongProject);
+    const crossProject = await wrongProject.callTool({ name: 'execution.list', arguments: {} });
+    expect((crossProject as { isError?: boolean }).isError).toBe(true);
+    expect(executionService.list).not.toHaveBeenCalled();
+  });
+
   it('rejects Team mutations on a forged or uncredentialed live session route', async () => {
     const project = makeProject('proj-1', 'My Project');
     const cancelTeamLaunch = vi.fn(() => ({

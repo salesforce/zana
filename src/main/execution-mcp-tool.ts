@@ -22,6 +22,7 @@ const executionStartSchema = {
 const executionIdSchema = { executionId: z.string().min(1).max(2048) };
 const executionControlSchema = { ...executionIdSchema, expectedStateVersion: z.number().int().min(0) };
 const executionEventsSchema = { ...executionIdSchema, after: z.number().int().min(0).optional(), limit: z.number().int().min(1).max(100).optional() };
+const executionSnapshotSchema = { ...executionIdSchema, after: z.number().int().min(0).optional() };
 const executionProducerEventSchema = {
   ...executionIdSchema,
   eventId: z.string().min(1).max(2048),
@@ -148,6 +149,30 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     if (!authorized()) return denied('execution.events');
     const events = await options.service.events(options.sessionId!, options.projectId, executionId, after ?? 0, limit ?? 100);
     return { content: [{ type: 'text' as const, text: JSON.stringify(events) }] };
+  });
+
+  server.registerTool('execution.snapshot', {
+    description: 'Read one bounded durable execution snapshot. Does not reconcile or poll Team workers.', inputSchema: executionSnapshotSchema
+  }, async ({ executionId, after }) => {
+    if (!authorized()) return denied('execution.snapshot');
+    try {
+      const snapshot = await options.service.snapshot(options.sessionId!, options.projectId, executionId, after ?? 0);
+      if (!snapshot) return { isError: true, content: [{ type: 'text' as const, text: 'execution.snapshot failed: execution not found for caller.' }] };
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({
+            ...snapshot,
+            artifacts: snapshot.artifacts.map(({ content: _content, ...artifact }) => artifact)
+          })
+        }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: 'text' as const, text: `execution.snapshot failed: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
   });
 
   server.registerTool('execution.event', {

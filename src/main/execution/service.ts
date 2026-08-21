@@ -43,6 +43,13 @@ export interface ExecutionServiceDeps {
   hasLivePredecessor?: (projectId: string, ownerPrincipalIds: readonly string[]) => boolean;
   clearResumeToken?: (projectId: string, executionId: string) => void | Promise<void>;
   cacheResumeToken?: (projectId: string, executionId: string, token: string, expiresAt: number) => void | Promise<void>;
+  monotonicNow?: () => number;
+}
+
+export class ExecutionSnapshotTimeoutError extends Error {
+  constructor() {
+    super('Snapshot exceeded 15-second budget');
+  }
 }
 
 export class SquadExecutionService {
@@ -186,6 +193,43 @@ export class SquadExecutionService {
   async events(callerPrincipalId: string, projectId: string, executionId: string, after = 0, limit = 100) {
     const record = await this.getAuthorizedForControl(callerPrincipalId, projectId, executionId);
     return record ? this.deps.store.eventsInProject(projectId, executionId, after, limit) : { events: [] };
+  }
+
+  /**
+   * Read a bounded durable snapshot without reconciling Team lifecycle state.
+   * Reconciliation may mutate state after a caller deadline, so it remains an
+   * explicit operation rather than part of an observer snapshot.
+   */
+  async snapshot(callerPrincipalId: string, projectId: string, executionId: string, after = 0) {
+    const now = this.deps.monotonicNow ?? (() => performance.now());
+    const deadline = now() + 15_000;
+    const checkDeadline = () => {
+      if (now() >= deadline) throw new ExecutionSnapshotTimeoutError();
+    };
+    checkDeadline();
+    const execution = await this.getAuthorizedForControl(callerPrincipalId, projectId, executionId);
+    if (!execution) return undefined;
+    checkDeadline();
+    const executions = await this.deps.store.list(callerPrincipalId, projectId);
+    checkDeadline();
+    const first = await this.deps.store.eventsInProject(projectId, executionId, after, 100);
+    checkDeadline();
+    const second = first.nextSequence === undefined
+      ? undefined
+      : await this.deps.store.eventsInProject(projectId, executionId, first.nextSequence, 100);
+    checkDeadline();
+    const artifacts = await this.deps.artifacts.list(execution.id, projectId);
+    checkDeadline();
+    const events = [...first.events, ...(second?.events ?? [])];
+    return {
+      execution,
+      executions,
+      events,
+      nextAfter: events.at(-1)?.sequence ?? after,
+      truncated: second?.nextSequence !== undefined,
+      artifacts: artifacts.slice(0, 100),
+      artifactsTruncated: artifacts.length > 100
+    };
   }
 
   async reportEvent(

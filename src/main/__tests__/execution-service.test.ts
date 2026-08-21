@@ -411,6 +411,29 @@ describe('SquadExecutionService', () => {
     expect(await service.listArtifacts('replacement-session', 'other-project', 'execution-1')).toBeUndefined();
   }));
 
+  it('reads a bounded durable snapshot without reconciling Team lifecycle', async () => fixture(async (filePath) => {
+    const getTeamLaunch = vi.fn(async () => ({ workers: [] }));
+    const service = new SquadExecutionService(deps(filePath, { getTeamLaunch }));
+    await service.start('session-1', 'project-1', request);
+    await service.putArtifact('session-1', 'project-1', 'execution-1', 'result.json', 'application/json', '{"ok":true}');
+    const snapshot = await service.snapshot('session-1', 'project-1', 'execution-1');
+    expect(snapshot).toMatchObject({ execution: { id: 'execution-1', state: 'RUNNING' }, executions: [{ id: 'execution-1' }], artifacts: [{ name: 'result.json' }], truncated: false });
+    expect(getTeamLaunch).not.toHaveBeenCalled();
+  }));
+
+  it('stops durable snapshot before later reads when total deadline expires', async () => fixture(async (filePath) => {
+    let clock = 0;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, { store, monotonicNow: () => clock }));
+    await service.start('session-1', 'project-1', request);
+    const originalList = store.list;
+    store.list = async (...args) => {
+      clock = 15_000;
+      return originalList(...args);
+    };
+    await expect(service.snapshot('session-1', 'project-1', 'execution-1')).rejects.toThrow('Snapshot exceeded 15-second budget');
+  }));
+
   it('does not accept artifacts after execution reaches a terminal state', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const service = new SquadExecutionService(deps(filePath, { store }));

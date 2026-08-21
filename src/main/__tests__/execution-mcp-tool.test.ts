@@ -31,6 +31,7 @@ function service() {
     resumeBinding: vi.fn(async () => ({ ok: true as const, value: { callerPrincipalId: 'session-1', effectiveOwnerPrincipalIds: ['session-2'] } })),
     status: vi.fn(async () => ({ id: 'execution-1', state: 'RUNNING' })),
     list: vi.fn(async () => [{ id: 'execution-1', jobTitle: 'Ship', state: 'RUNNING' }]),
+    snapshot: vi.fn(async () => ({ execution: { id: 'execution-1', state: 'RUNNING' }, executions: [{ id: 'execution-1', state: 'RUNNING' }], events: [], nextAfter: 0, truncated: false, artifacts: [{ id: 'artifact-1', name: 'result.md', mediaType: 'text/markdown', content: 'secret' }], artifactsTruncated: false })),
     events: vi.fn(async () => [{ sequence: 1, summary: 'Execution reserved' }]),
     reportEvent: vi.fn(async () => ({ ok: true as const, value: { outcome: 'accepted', event: { sequence: 2 } } })),
     stop: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', state: 'STOPPED' } })),
@@ -50,7 +51,7 @@ describe('execution MCP tools', () => {
   it('registers only route-scoped execution controls', () => {
     const { server, tools } = fakeServer();
     registerExecutionTools(server as never, { sessionId: 'session-1', projectId: 'project-1', service: service() as never, validateRouteIdentity: () => true });
-    expect([...tools.keys()]).toEqual(['execution.start', 'execution.status', 'execution.resume_binding', 'execution.mint_resume_grant', 'execution.revoke_resume_grant', 'execution.list', 'execution.events', 'execution.event', 'execution.stop', 'execution.retry', 'execution.respond', 'execution.resume', 'execution.artifact.put', 'execution.artifact.list']);
+    expect([...tools.keys()]).toEqual(['execution.start', 'execution.status', 'execution.resume_binding', 'execution.mint_resume_grant', 'execution.revoke_resume_grant', 'execution.list', 'execution.events', 'execution.snapshot', 'execution.event', 'execution.stop', 'execution.retry', 'execution.respond', 'execution.resume', 'execution.artifact.put', 'execution.artifact.list']);
   });
 
   it('uses route identity and project, never caller-supplied authority', async () => {
@@ -153,6 +154,16 @@ describe('execution MCP tools', () => {
     expect(result.isError).toBe(true);
     expect(text(result)).toContain('originating session is not live');
     expect(execution.list).not.toHaveBeenCalled();
+  });
+
+  it('returns bounded snapshot metadata without artifact content', async () => {
+    const execution = service();
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, { sessionId: 'session-1', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true });
+    const result = await tools.get('execution.snapshot')!({ executionId: 'execution-1', after: 4 });
+    expect(execution.snapshot).toHaveBeenCalledWith('session-1', 'project-1', 'execution-1', 4);
+    expect(JSON.parse(text(result))).toMatchObject({ nextAfter: 0, artifacts: [{ id: 'artifact-1', name: 'result.md' }] });
+    expect(text(result)).not.toContain('secret');
   });
 
   it('uses one approved handoff only from exact target route', async () => {
