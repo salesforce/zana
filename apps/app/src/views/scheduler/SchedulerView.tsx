@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Clock, Plus, Sparkles, Pause, PlayCircle, AlertTriangle, Activity, Settings } from 'lucide-react';
 import type { ScheduledTask, ScheduleRun, ScheduleTemplate } from '@zana-ai/zcc-domain/product';
@@ -117,7 +118,7 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
     const pausable = scopedTasks.filter((t) => t.enabled && t.external?.kind !== 'claude-loop');
     setPausedSet(new Set(pausable.map((t) => t.id)));
     await Promise.all(
-      pausable.map((t) => window.cc.scheduler.setEnabled(t.id, false).catch(() => null))
+      pausable.map((t) => product.scheduler.setEnabled(t.id, false).catch(() => null))
     );
   };
 
@@ -126,7 +127,7 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
     const ids = [...pausedSet];
     setPausedSet(null);
     await Promise.all(
-      ids.map((id) => window.cc.scheduler.setEnabled(id, true).catch(() => null))
+      ids.map((id) => product.scheduler.setEnabled(id, true).catch(() => null))
     );
   };
 
@@ -146,14 +147,14 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
     useUi.getState().setWorkspaceMode(t.projectId, 'terminals');
   };
   const toggleSchedule = async (t: ScheduledTask) => {
-    const result = await window.cc.scheduler.setEnabled(t.id, !t.enabled);
+    const result = await product.scheduler.setEnabled(t.id, !t.enabled);
     if (!result.ok) useUi.getState().pushToast(result.message, 'error');
   };
   // Fire a schedule immediately from the overview's "All schedules" list — the
   // same gesture as a card's Run-now button (headless background fire; the
   // toast confirms it took, deep-links / the live row can promote it to a tab).
   const runScheduleNow = async (t: ScheduledTask) => {
-    const result = await window.cc.scheduler.runNow(t.id);
+    const result = await product.scheduler.runNow(t.id);
     if (!result.ok) {
       useUi.getState().pushToast(`Run failed: ${result.message}`, 'error');
       return;
@@ -162,7 +163,7 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
   };
   const stopScheduleLive = async (t: ScheduledTask, sessionId: string) => {
     try {
-      if (!await window.cc.terminals.close(sessionId)) {
+      if (!await product.terminals.close(sessionId)) {
         throw new Error('session remains live');
       }
       useUi.getState().pushToast(`Stopped "${t.name}"`, 'info');
@@ -381,7 +382,7 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
           onConfirm={async () => {
             const id = confirmDelete.id;
             setConfirmDelete(null);
-            const result = await window.cc.scheduler.delete(id);
+            const result = await product.scheduler.delete(id);
             if (!result.ok) {
               useUi.getState().pushToast(`Delete failed: ${result.message}`, 'error');
             }

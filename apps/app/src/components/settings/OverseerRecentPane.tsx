@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import { useState, useEffect } from 'react';
 import type { OverseerAuditEntry } from '@zana-ai/zcc-domain/product';
 
@@ -14,7 +15,7 @@ export function OverseerRecentPane({ dryRun }: { dryRun: boolean}) {
   useEffect(() => {
     let alive = true;
     const load = () => {
-      window.cc.overseer
+      product.overseer
         .recent(30)
         .then((r) => {
           if (alive) setRows(r);

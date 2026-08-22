@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   BookOpen,
@@ -85,8 +86,8 @@ export function SkillsBody({
   const reload = useCallback(async () => {
     try {
       const [list, bundleList] = await Promise.all([
-        window.cc.skills.list(selectedProject?.path),
-        window.cc.skills.bundles.list()
+        product.skills.list(selectedProject?.path),
+        product.skills.bundles.list()
       ]);
       setSkills(list);
       setBundles(bundleList);
@@ -108,10 +109,10 @@ export function SkillsBody({
     if (!cancelled) void reload();
 
     // Subscribe to live changes
-    const offSkills = window.cc.skills.onChanged(() => {
+    const offSkills = product.skills.onChanged(() => {
       if (!cancelled) void reload();
     });
-    const offBundles = window.cc.skills.bundles.onChanged((next) => {
+    const offBundles = product.skills.bundles.onChanged((next) => {
       if (!cancelled) setBundles(next);
     });
 
@@ -169,7 +170,7 @@ export function SkillsBody({
       prev.map((s) => (s.id === skill.id ? { ...s, enabled, toggle: { ...s.toggle, enabled } } : s))
     );
     try {
-      await window.cc.skills.setEnabled(skill.name, enabled);
+      await product.skills.setEnabled(skill.name, enabled);
       flashSaved();
     } catch {
       // revert on failure
@@ -182,11 +183,11 @@ export function SkillsBody({
   };
 
   const reveal = (skill: SkillEntry) => {
-    window.cc.skills.reveal(skill.id, selectedProject?.path).catch(() => {});
+    product.skills.reveal(skill.id, selectedProject?.path).catch(() => {});
   };
 
   const applyBundle = async (bundle: SkillBundle, mode: SkillBundleApplyMode) => {
-    const result = await window.cc.skills.bundles.apply(
+    const result = await product.skills.bundles.apply(
       bundle.id,
       mode,
       selectedProject?.path
@@ -208,7 +209,7 @@ export function SkillsBody({
 
   const deleteBundle = async (bundle: SkillBundle) => {
     if (!confirm(`Delete bundle "${bundle.name}"?`)) return;
-    await window.cc.skills.bundles.delete(bundle.id);
+    await product.skills.bundles.delete(bundle.id);
     setBundles((prev) => prev.filter((b) => b.id !== bundle.id));
   };
 
@@ -578,9 +579,9 @@ function BundleEditorModal({
         skillIds: [...selectedIds]
       };
       if (isNew) {
-        await window.cc.skills.bundles.create(input);
+        await product.skills.bundles.create(input);
       } else {
-        await window.cc.skills.bundles.update(bundle!.id, input);
+        await product.skills.bundles.update(bundle!.id, input);
       }
       onSaved();
     } catch (err) {

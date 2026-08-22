@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 /**
  * "Install from repo" dialog — installs a shared extension straight from a git
  * repository. The user gives a repo URL (+ optional branch/tag and subfolder);
@@ -64,7 +65,7 @@ export function InstallFromGitDialog({ onClose, mode = 'install' }: Props) {
   // fire-and-forget lines via IPC.extensions.installProgress).
   useEffect(() => {
     if (!busy) return;
-    const off = window.cc.extensions.onInstallProgress((line) => setProgress(line));
+    const off = product.extensions.onInstallProgress((line) => setProgress(line));
     return off;
   }, [busy]);
 
@@ -79,12 +80,12 @@ export function InstallFromGitDialog({ onClose, mode = 'install' }: Props) {
     try {
       const res =
         mode === 'open'
-          ? await window.cc.extensions.adoptLocalGit({
+          ? await product.extensions.adoptLocalGit({
               url: trimmedUrl,
               ref: ref.trim() || undefined,
               subdir: subdir.trim() || undefined
             })
-          : await window.cc.extensions.install({
+          : await product.extensions.install({
               kind: 'git',
               url: trimmedUrl,
               ref: ref.trim() || undefined,
@@ -110,7 +111,7 @@ export function InstallFromGitDialog({ onClose, mode = 'install' }: Props) {
     setBusy(true);
     setError(null);
     try {
-      const res = await window.cc.extensions.adoptLocal();
+      const res = await product.extensions.adoptLocal();
       if (!res.ok) {
         if (res.code !== 'CANCELED') setError(res.message ?? 'Could not open folder');
         return;

@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FileText } from 'lucide-react';
 import type { Project, WalkedFile } from '@zana-ai/zcc-domain/product';
@@ -50,7 +51,7 @@ export function QuickOpen({ project, onClose }: Props) {
   useEffect(() => {
     if (files !== null) return;
     let cancelled = false;
-    window.cc.fs.walkFiles(project.path)
+    product.fs.walkFiles(project.path)
       .then((list) => {
         if (cancelled) return;
         fileCache.set(project.path, list);

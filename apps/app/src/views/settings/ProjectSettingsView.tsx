@@ -1,3 +1,5 @@
+import { product } from '../../lib/product-client.js';
+import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { ChevronRight } from 'lucide-react';
 import type {
@@ -83,7 +85,7 @@ export function ProjectExecutionConsentSettings({
   const load = useCallback(async () => {
     setError(null);
     try {
-      setGrants(await window.cc.executionConsent.listProject(project.id));
+      setGrants(await product.executionConsent.listProject(project.id));
     } catch (err) {
       setGrants([]);
       setError(err instanceof Error ? err.message : 'Failed to load execution grants');
@@ -94,7 +96,7 @@ export function ProjectExecutionConsentSettings({
     let cancelled = false;
     setGrants(null);
     setError(null);
-    window.cc.executionConsent.listProject(project.id)
+    product.executionConsent.listProject(project.id)
       .then((value) => { if (!cancelled) setGrants(value); })
       .catch((err) => {
         if (!cancelled) {
@@ -109,7 +111,7 @@ export function ProjectExecutionConsentSettings({
     setRevokingId(grant.id);
     setError(null);
     try {
-      setGrants(await window.cc.executionConsent.revokeProject(project.id, grant.id));
+      setGrants(await product.executionConsent.revokeProject(project.id, grant.id));
       onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to revoke execution grant');
@@ -157,7 +159,7 @@ export function ProjectWorktreeSettings({
     currentProjectId.current = project.id;
     setLoaded(false);
     setError(null);
-    window.cc.projectSettings.get(project.id)
+    product.projectSettings.get(project.id)
       .then((settings) => {
         if (!cancelled) {
           setValue(settings.worktreeIsolation);
@@ -173,9 +175,9 @@ export function ProjectWorktreeSettings({
     return () => { cancelled = true; };
   }, [project.id]);
 
-  useEffect(() => window.cc.projectSettings.onChanged((projectId) => {
+  useEffect(() => product.projectSettings.onChanged((projectId) => {
     if (projectId !== project.id || savingRef.current) return;
-    void window.cc.projectSettings.get(projectId).then((settings) => {
+    void product.projectSettings.get(projectId).then((settings) => {
       if (projectId === currentProjectId.current) setValue(settings.worktreeIsolation);
     }).catch(() => {
       // A background refresh is advisory and must not replace an already-rendered value.
@@ -193,7 +195,7 @@ export function ProjectWorktreeSettings({
       const canonical = await persistProjectSettings(
         project.id,
         { worktreeIsolation: next },
-        (id, patch) => window.cc.projectSettings.set(id, patch)
+        (id, patch) => product.projectSettings.set(id, patch)
       );
       setValue(canonical.worktreeIsolation);
       onSaved();
@@ -299,7 +301,7 @@ export function ProjectHarnessSettings({
 
   useEffect(() => {
     let cancelled = false;
-    window.cc.harness.descriptors()
+    product.harness.descriptors()
       .then((value) => { if (!cancelled) setDescriptors(value); })
       .catch(() => { if (!cancelled) setDescriptors([]); });
     return () => { cancelled = true; };
@@ -311,7 +313,7 @@ export function ProjectHarnessSettings({
     writeSequence.current += 1;
     setSettingsState(null);
     setSettingsError(null);
-    window.cc.projectSettings.get(project.id).then((value) => {
+    product.projectSettings.get(project.id).then((value) => {
       if (!cancelled) setSettingsState({ projectId: project.id, value });
     }).catch((error) => {
       if (!cancelled) {
@@ -322,9 +324,9 @@ export function ProjectHarnessSettings({
     return () => { cancelled = true; };
   }, [project.id]);
 
-  useEffect(() => window.cc.projectSettings.onChanged((projectId) => {
+  useEffect(() => product.projectSettings.onChanged((projectId) => {
     if (projectId !== project.id || pendingSettingsWrites.current > 0) return;
-    void window.cc.projectSettings.get(projectId).then((value) => {
+    void product.projectSettings.get(projectId).then((value) => {
       if (projectId === currentProjectId.current) setSettingsState({ projectId, value });
     }).catch(() => {
       // The normal load path renders a useful error. A background refresh is
@@ -372,7 +374,7 @@ export function ProjectHarnessSettings({
       const canonical = await persistProjectSettings(
         project.id,
         patch,
-        (id, value) => window.cc.projectSettings.set(id, value)
+        (id, value) => product.projectSettings.set(id, value)
       );
       if (project.id === currentProjectId.current && sequence === writeSequence.current) {
         setSettingsState({ projectId: project.id, value: canonical });
@@ -997,17 +999,17 @@ function ProjectClaudeSettings({
     setLocal(null);
     // Guard against a stale preload (electron-vite HMRs the renderer but
     // not the preload — devs hitting save before a full app restart see
-    // window.cc.claudeSettings undefined). Surfacing a clear hint beats
+    // product.claudeSettings undefined). Surfacing a clear hint beats
     // a hanging spinner.
-    if (!window.cc?.claudeSettings?.read) {
+    if (!hasDesktopBridge()) {
       setBindingError('claudeSettings binding not loaded — quit (⌘Q) and relaunch the app.');
       return;
     }
     setBindingError(null);
     try {
       const [s, l] = await Promise.all([
-        window.cc.claudeSettings.read(projectId, 'shared'),
-        window.cc.claudeSettings.read(projectId, 'local')
+        product.claudeSettings.read(projectId, 'shared'),
+        product.claudeSettings.read(projectId, 'local')
       ]);
       if (request !== requestRef.current) return;
       settingsRef.current = { shared: s, local: l };
@@ -1028,7 +1030,7 @@ function ProjectClaudeSettings({
       const current = settingsRef.current[scope];
       if (!current || (current.state !== 'missing' && current.state !== 'valid')) return;
       try {
-        const next = await window.cc.claudeSettings.write(projectId, scope, patch, current.hash);
+        const next = await product.claudeSettings.write(projectId, scope, patch, current.hash);
         if (next.state === 'valid') {
           setScopeResult(scope, next);
           onSaved();
@@ -1103,11 +1105,11 @@ export function ProjectCodexSettings({
   onSaved: () => void;
 }) {
   const [result, setResult] = useState<CodexSettingsResult | null>(null);
-  const load = useCallback(() => window.cc.codexSettings.read(projectId).then(setResult), [projectId]);
+  const load = useCallback(() => product.codexSettings.read(projectId).then(setResult), [projectId]);
   useEffect(() => { void load(); }, [load]);
   const save = async (patch: CodexProjectSettings) => {
     if (!result || (result.state !== 'missing' && result.state !== 'valid')) return;
-    const next = await window.cc.codexSettings.write(projectId, patch, result.hash);
+    const next = await product.codexSettings.write(projectId, patch, result.hash);
     setResult(next);
     if (next.state === 'valid') onSaved();
   };
@@ -1146,11 +1148,11 @@ export function ProjectOpenCodeSettings({
   onSaved: () => void;
 }) {
   const [result, setResult] = useState<OpenCodeSettingsResult | null>(null);
-  const load = useCallback(() => window.cc.openCodeSettings.read(projectId).then(setResult), [projectId]);
+  const load = useCallback(() => product.openCodeSettings.read(projectId).then(setResult), [projectId]);
   useEffect(() => { void load(); }, [load]);
   const save = async (patch: OpenCodeProjectSettings) => {
     if (!result || (result.state !== 'missing' && result.state !== 'valid')) return;
-    const next = await window.cc.openCodeSettings.write(projectId, patch, result.hash);
+    const next = await product.openCodeSettings.write(projectId, patch, result.hash);
     setResult(next);
     if (next.state === 'valid') onSaved();
   };

@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Target,
@@ -238,7 +239,7 @@ export function GoalsPanel({ projectId }: { projectId?: string } = {}) {
           onConfirm={async () => {
             const id = confirmDelete.id;
             setConfirmDelete(null);
-            const result = await window.cc.goals.delete(id);
+            const result = await product.goals.delete(id);
             if (!result.ok) {
               useUi.getState().pushToast(`Delete failed: ${result.message}`, 'error');
             }
@@ -279,11 +280,11 @@ function GoalRow({
   const latest = iterations[0];
 
   const setStatus = async (status: GoalStatus, verb: string) => {
-    const result = await window.cc.goals.setStatus(goal.id, status);
+    const result = await product.goals.setStatus(goal.id, status);
     if (!result.ok) pushToast(`${verb} failed: ${result.message}`, 'error');
   };
   const runNow = async () => {
-    const result = await window.cc.goals.runNow(goal.id);
+    const result = await product.goals.runNow(goal.id);
     if (!result.ok) {
       pushToast(`Run failed: ${result.message}`, 'error');
       return;
@@ -549,14 +550,14 @@ function GoalModal({
           scope: scope === 'project' ? { projectId } : 'global',
           activate
         };
-        const result = await window.cc.goals.create(input);
+        const result = await product.goals.create(input);
         if (!result.ok) {
           setError(result.message);
           setSaving(false);
           return;
         }
       } else {
-        const result = await window.cc.goals.update(goal!.id, {
+        const result = await product.goals.update(goal!.id, {
           title: title.trim(),
           statement: statement.trim(),
           successCriteria: criteria,

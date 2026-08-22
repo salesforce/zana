@@ -6,7 +6,8 @@ const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'u
 describe('WorkspaceView launcher host', () => {
   it('mounts the project launcher as a modal for every workspace mode', () => {
     const source = readFileSync(new URL('./WorkspaceView.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('{launcherOpen && project && (');
+    expect(source).toContain('{launcherOpen && project && workspaceShown && (');
+    expect(source).toContain("route.nav === 'projects' && !!route.focusedProjectId");
     expect(source).not.toContain('launcherOpen && project && !isAgents');
     expect(source).toContain('<AgentLauncher');
     expect(source).not.toContain('presentation=');

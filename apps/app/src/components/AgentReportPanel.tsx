@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Copy, Download, FileText, Loader2 } from 'lucide-react';
 import type { InboxDoc, InboxEntry, Project } from '@zana-ai/zcc-domain/product';
@@ -109,7 +110,7 @@ function ReportBody({ entry, project }: { entry: InboxEntry; project: Project | 
         continue;
       }
       try {
-        const r = await window.cc.fs.readFile(joinPath(project.path, d.path));
+        const r = await product.fs.readFile(joinPath(project.path, d.path));
         if (r.ok && typeof r.content === 'string') {
           totalBytes += r.content.length;
           docs.push({ path: d.path, content: r.content });
@@ -145,7 +146,7 @@ function ReportBody({ entry, project }: { entry: InboxEntry; project: Project | 
     try {
       const docs = await readDocs();
       const html = await renderReportHtml({ title, docs, comments: entry.comments });
-      const result = await window.cc.inbox.exportPdf({ html, suggestedName: title });
+      const result = await product.inbox.exportPdf({ html, suggestedName: title });
       if (result.ok) {
         pushToast(result.path ? `PDF saved to ${result.path}` : 'PDF saved', 'info');
       } else if (result.message) {
@@ -203,7 +204,7 @@ function ReportBody({ entry, project }: { entry: InboxEntry; project: Project | 
   );
 }
 
-/** One report doc, fetched live via window.cc.fs.readFile against the project root. */
+/** One report doc, fetched live via product.fs.readFile against the project root. */
 function ReportDoc({ doc, project }: { doc: InboxDoc; project: Project | null }) {
   const [content, setContent] = useState<string | null | undefined>(undefined);
 
@@ -215,7 +216,7 @@ function ReportDoc({ doc, project }: { doc: InboxDoc; project: Project | null })
       return;
     }
     const abs = joinPath(project.path, doc.path);
-    void window.cc.fs.readFile(abs).then((r) => {
+    void product.fs.readFile(abs).then((r) => {
       if (cancelled) return;
       setContent(r.ok && typeof r.content === 'string' ? r.content : null);
     });

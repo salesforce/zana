@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 /**
  * P3-D install-time consent prompt. A self-contained global overlay (mounted in
  * App alongside the Toaster) that surfaces a plain-language permission screen
@@ -43,8 +44,8 @@ export function ExtensionConsent() {
       if (cancelled) return;
       setPending(entries.filter((e) => e.needsConsent !== null));
     };
-    void window.cc.extensions.list().then(apply);
-    const off = window.cc.extensions.onChanged(apply);
+    void product.extensions.list().then(apply);
+    const off = product.extensions.onChanged(apply);
     return () => {
       cancelled = true;
       off();
@@ -70,7 +71,7 @@ export function ExtensionConsent() {
   const approve = async () => {
     setBusy(entry.id);
     try {
-      await window.cc.extensions.grantConsent(entry.id);
+      await product.extensions.grantConsent(entry.id);
       // The onChanged push refreshes `pending`; clear any stale dismissal.
       setDismissed((prev) => {
         const next = new Set(prev);

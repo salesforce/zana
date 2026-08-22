@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import { useState, useCallback } from 'react';
 import { ShieldCheck } from 'lucide-react';
 import {
@@ -46,7 +47,7 @@ export function AuthorizationsSection() {
     setError(null);
     setResults(null);
     try {
-      const res = await window.cc.authorizations.apply({ providers: chosen, tier });
+      const res = await product.authorizations.apply({ providers: chosen, tier });
       setResults(res);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

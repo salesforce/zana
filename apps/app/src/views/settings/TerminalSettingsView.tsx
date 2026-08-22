@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import { useEffect, useState } from 'react';
 import { CheckCircle2, XCircle } from 'lucide-react';
 import type { AppConfig, TmuxVerifyResult } from '@zana-ai/zcc-domain/product';
@@ -32,7 +33,7 @@ export function TerminalSettingsView({
   const checkTmux = async () => {
     setCheckingTmux(true);
     setTmuxError(null);
-    const result = await verifyTmux(() => window.cc.terminals.verifyTmux());
+    const result = await verifyTmux(() => product.terminals.verifyTmux());
     setTmux(result.status);
     setTmuxError(result.error);
     setCheckingTmux(false);
@@ -41,7 +42,7 @@ export function TerminalSettingsView({
   useEffect(() => {
     let active = true;
     setCheckingTmux(true);
-    void verifyTmux(() => window.cc.terminals.verifyTmux()).then((result) => {
+    void verifyTmux(() => product.terminals.verifyTmux()).then((result) => {
       if (!active) return;
       setTmux(result.status);
       setTmuxError(result.error);

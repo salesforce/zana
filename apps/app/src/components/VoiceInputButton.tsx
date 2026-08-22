@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useState, useRef, useEffect } from 'react';
 import { Mic, Loader2 } from 'lucide-react';
 import { useUi } from '../store.js';
@@ -55,7 +56,7 @@ export function VoiceInputButton({ value, onChange, className, textareaRef, icon
   const barRefs = useRef<Array<HTMLSpanElement | null>>([]);
 
   useEffect(() => {
-    window.cc.voice.hasApiKey().then(setHasKey).catch(() => setHasKey(false));
+    product.voice.hasApiKey().then(setHasKey).catch(() => setHasKey(false));
   }, []);
 
   useEffect(() => {
@@ -131,7 +132,7 @@ export function VoiceInputButton({ value, onChange, className, textareaRef, icon
 
     // On macOS, getUserMedia is silently denied unless the OS-level mic
     // permission is granted first — request/verify it before we open the mic.
-    const micOk = await window.cc.voice.ensureMicAccess().catch(() => true);
+    const micOk = await product.voice.ensureMicAccess().catch(() => true);
     if (!micOk) {
       pushToast(
         'Microphone access is off. Enable it for the app in System Settings › Privacy › Microphone.',
@@ -179,7 +180,7 @@ export function VoiceInputButton({ value, onChange, className, textareaRef, icon
           const arrayBuffer = await blob.arrayBuffer();
           const base64 = bytesToBase64(new Uint8Array(arrayBuffer));
 
-          const result = await window.cc.voice.transcribe(base64, actualType);
+          const result = await product.voice.transcribe(base64, actualType);
 
           if (!result.ok || !result.text.trim()) {
             pushToast(result.error || 'No speech detected', 'error');

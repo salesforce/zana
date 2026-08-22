@@ -1375,8 +1375,16 @@ export interface CcApi {
   };
 }
 
+/**
+ * OS chrome that remains on the Electron preload after product I/O moves to
+ * loopback HTTP. Window bounds, native menu, tray, updater, notifications —
+ * not projects, terminals, inbox, or config.
+ */
+export type ZccDesktopApi = Pick<CcApi, 'app' | 'windows' | 'updates' | 'menubar'>;
+
 declare global {
   interface Window {
     cc: CcApi;
+    zccDesktop?: ZccDesktopApi;
   }
 }

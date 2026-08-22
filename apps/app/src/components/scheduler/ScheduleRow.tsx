@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import React, { useState, useEffect, useLayoutEffect, useRef, type MouseEvent as ReactMouseEvent } from 'react';
 import {
   Play,
@@ -89,11 +90,11 @@ export const ScheduleRow = React.memo(function ScheduleRow({
   const pushToast = useUi((s) => s.pushToast);
 
   const toggle = async () => {
-    const result = await window.cc.scheduler.setEnabled(task.id, !task.enabled);
+    const result = await product.scheduler.setEnabled(task.id, !task.enabled);
     if (!result.ok) pushToast(result.message, 'error');
   };
   const runNow = async () => {
-    const result = await window.cc.scheduler.runNow(task.id);
+    const result = await product.scheduler.runNow(task.id);
     if (!result.ok) {
       pushToast(`Run failed: ${result.message}`, 'error');
       return;
@@ -152,7 +153,7 @@ export const ScheduleRow = React.memo(function ScheduleRow({
     e?.stopPropagation();
     if (!liveSessionId) return;
     try {
-      if (!await window.cc.terminals.close(liveSessionId)) {
+      if (!await product.terminals.close(liveSessionId)) {
         throw new Error('session remains live');
       }
       pushToast(`Stopped "${task.name}"`, 'info');

@@ -1,3 +1,5 @@
+import { product } from '../lib/product-client.js';
+import { hasDesktopBridge } from '../lib/app-surface.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw, Search, X } from 'lucide-react';
 import type { SshHostEntry } from '@zana-ai/zcc-domain/product';
@@ -50,7 +52,7 @@ export function AddRemoteProjectDialog({ onClose, onSubmit }: AddRemoteProjectDi
   const loadHosts = useCallback((sync: boolean) => {
     // Guard against a stale preload (when a dev session was running before
     // the ssh binding existed). Surfacing a friendly message beats crashing.
-    if (!window.cc?.ssh?.listHosts) {
+    if (!hasDesktopBridge()) {
       setError('SSH binding not loaded — quit (⌘Q) and relaunch the app.');
       setHosts([]);
       return;
@@ -62,9 +64,9 @@ export function AddRemoteProjectDialog({ onClose, onSubmit }: AddRemoteProjectDi
     // syncHosts returns { hosts, warning? }; listHosts returns a bare array.
     // Normalize both to the same shape.
     const op =
-      sync && window.cc.ssh.syncHosts
-        ? window.cc.ssh.syncHosts()
-        : window.cc.ssh.listHosts().then((hosts) => ({ hosts, warning: undefined }));
+      sync && product.ssh.syncHosts
+        ? product.ssh.syncHosts()
+        : product.ssh.listHosts().then((hosts) => ({ hosts, warning: undefined }));
     op
       .then(({ hosts, warning }) => {
         if (seq !== loadSeq.current) return;

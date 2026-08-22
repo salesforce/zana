@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { Code2, FolderOpen, TerminalSquare } from 'lucide-react';
 import type { OpenTarget } from '@zana-ai/zcc-domain/product';
 import { useData, useUi } from '../store.js';
@@ -41,7 +42,7 @@ export function OpenerButtons({ path, editorPath, size = 14, className }: Props)
 
   const onClick = async (target: OpenTarget) => {
     const dest = EDITOR_TARGETS.has(target) ? editorPath ?? path : path;
-    const r = await window.cc.openers.openIn(target, dest);
+    const r = await product.openers.openIn(target, dest);
     if (!r.ok) pushToast(r.message ?? `Failed to open in ${target}`, 'error');
   };
 

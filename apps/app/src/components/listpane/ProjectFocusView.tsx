@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, X, ArrowLeft, AppWindow } from 'lucide-react';
 import { useData, useUi, useAgentStatus, usePersonas } from '../../store.js';
@@ -130,7 +131,7 @@ export function ProjectFocusView({ project }: { project: Project }) {
           <button
             type="button"
             className="focus-popout"
-            onClick={() => void window.cc.windows.openProject(project.id)}
+            onClick={() => void product.windows.openProject(project.id)}
             title="Open this project in a new window"
             aria-label="Open this project in a new window"
           >

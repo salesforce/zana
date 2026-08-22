@@ -1,20 +1,11 @@
-import { Fragment, useMemo, useSyncExternalStore, type ReactElement } from 'react';
-import { DndContext } from '@dnd-kit/core';
-import {
-  SortableContext,
-  verticalListSortingStrategy
-} from '@dnd-kit/sortable';
-import { Link } from 'react-router-dom';
+import { useMemo, type ReactNode } from 'react';
 import {
   Blocks,
-  Bot,
   Clock,
-  FolderGit2,
   House,
   Inbox,
   MessageCircleQuestion,
   Sparkles,
-  Settings,
   type LucideIcon
 } from 'lucide-react';
 import {
@@ -23,7 +14,6 @@ import {
   useUnreadInboxCount,
   useEnabledSchedulerCount,
   useRunningSchedulerCount,
-  useAgentNavCounts,
   type NavId
 } from '../store.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
@@ -33,18 +23,17 @@ import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js
 import { useRouteState } from '../hooks/useRouteState.js';
 import { AgentsSidebarSection } from './AgentsSidebarSection.js';
 import { ProjectsList } from './listpane/ProjectsList.js';
-import { SidebarResizer } from './SidebarResizer.js';
-import { SidebarHistoryControls } from './SidebarHistoryControls.js';
 import { PINNED_SIDEBAR_NAV_IDS } from './sidebarNavOrder.js';
 import {
   AGENTS_SECTION_SORT_ID,
   GLOBAL_NAV_ORDER_KEY,
-  SortableNavItem,
-  SortableSidebarSection,
-  WORKSPACES_SECTION_SORT_ID,
-  useSortableSidebarNav
+  WORKSPACES_SECTION_SORT_ID
 } from './sidebarSortable.js';
-import { listSidebarFooterActions, subscribePluginSlots } from '../plugins/plugin-slots.js';
+import {
+  SidebarCountBadge,
+  SidebarRail,
+  type SidebarRailItem
+} from './SidebarRail.js';
 
 interface NavEntry {
   id: NavId;
@@ -52,13 +41,9 @@ interface NavEntry {
   icon: LucideIcon;
 }
 
-const coreNavItems: NavEntry[] = [
-  { id: 'home', label: 'Home', icon: House },
-  { id: 'inbox', label: 'Inbox', icon: Inbox },
-  { id: 'agents', label: 'Agents', icon: Bot },
-  { id: 'projects', label: 'Projects', icon: FolderGit2 },
-  { id: 'scheduler', label: 'Scheduler', icon: Clock }
-];
+const homeNavItem: NavEntry = { id: 'home', label: 'Home', icon: House };
+const inboxNavItem: NavEntry = { id: 'inbox', label: 'Inbox', icon: Inbox };
+const schedulerNavItem: NavEntry = { id: 'scheduler', label: 'Scheduler', icon: Clock };
 
 // Next Steps launcher (afl-03) — opt-in via AppConfig.suggestionsEnabled. The
 // nav id stays 'suggestions' (stable internal id); only the label is user-facing.
@@ -75,12 +60,6 @@ const followupsNavItem: NavEntry = { id: 'followups', label: 'Follow-ups', icon:
 // install, the VSCode-style store), so it earns a system-level rail entry
 // alongside Settings.
 const extensionsNavItem: NavEntry = { id: 'extensions', label: 'Extensions', icon: Blocks };
-const settingsNavItem: NavEntry = { id: 'settings', label: 'Settings', icon: Settings };
-// Fixed utility dock, separate from the movable destinations. Add future
-// utility actions here; the layout remains a compact horizontal icon row.
-const sidebarUtilityItems = [settingsNavItem];
-
-const NAV_ORDER_KEY = GLOBAL_NAV_ORDER_KEY;
 
 export function Sidebar() {
   const { nav } = useRouteState();
@@ -88,22 +67,16 @@ export function Sidebar() {
   const unreadInbox = useUnreadInboxCount();
   const enabledSchedules = useEnabledSchedulerCount();
   const runningSchedules = useRunningSchedulerCount();
-  const agentCounts = useAgentNavCounts();
   const suggestionsEnabled = useData((s) => s.suggestionsEnabled);
   const followUpsEnabled = useData((s) => s.followUpsEnabled);
   const routeMemory = useAppSettingsRouteMemory();
-  const navItems = useMemo(() => {
-    const items = [...coreNavItems];
-    if (suggestionsEnabled) items.splice(2, 0, suggestionsNavItem);
-    if (followUpsEnabled) items.splice(2, 0, followupsNavItem);
-    return items;
-  }, [suggestionsEnabled, followUpsEnabled]);
   const modules = useMergedModules();
-  const footerActions = useSyncExternalStore(
-    subscribePluginSlots,
-    listSidebarFooterActions,
-    listSidebarFooterActions
-  );
+  const extraItems = useMemo(() => {
+    const extras: NavEntry[] = [];
+    if (followUpsEnabled) extras.push(followupsNavItem);
+    if (suggestionsEnabled) extras.push(suggestionsNavItem);
+    return extras;
+  }, [followUpsEnabled, suggestionsEnabled]);
   // Extensions shares installation and configuration in one hub. Installed
   // panels with a global surface also get a direct shortcut above Workspaces;
   // project-only and Settings-only modules stay in their native surfaces.
@@ -118,35 +91,8 @@ export function Sidebar() {
       label: module.title,
       icon: resolveIcon(module.icon)
     }));
-  const fixedNavItems = [
-    ...navItems.filter((item) => PINNED_SIDEBAR_NAV_IDS.includes(item.id as never)),
-    ...navItems.filter(
-      (item) => !['agents', 'projects', 'scheduler', ...PINNED_SIDEBAR_NAV_IDS].includes(item.id)
-    ),
-    coreNavItems.find((item) => item.id === 'scheduler')!,
-    extensionsNavItem,
-    ...moduleNavItems
-  ];
-  const navItemsById = new Map<string, NavEntry>(fixedNavItems.map((item) => [item.id, item]));
-  const {
-    pinnedNavIds,
-    sortableNavIds,
-    sensors,
-    collisionDetection,
-    onDragStart,
-    onDragCancel,
-    onDragEnd,
-    consumeNavClick
-  } = useSortableSidebarNav(
-    NAV_ORDER_KEY,
-    [...fixedNavItems.map((item) => item.id), AGENTS_SECTION_SORT_ID, WORKSPACES_SECTION_SORT_ID],
-    PINNED_SIDEBAR_NAV_IDS
-  );
 
-  const renderNavItem = (
-    item: NavEntry,
-    compactOnly = false
-  ): ReactElement => {
+  const toRow = (item: NavEntry): SidebarRailItem => {
     const Icon = item.icon;
     const showBadge = item.id === 'inbox' && unreadInbox > 0;
     // Scheduler badge only appears when a scheduled agent is running right now;
@@ -155,185 +101,74 @@ export function Sidebar() {
     // no badge.
     const isScheduler = item.id === 'scheduler';
     const running = isScheduler && runningSchedules > 0;
-    const showScheduleBadge = running;
     const scheduleTitle = `${runningSchedules} running · ${enabledSchedules} scheduled`;
-    // Agents badge: live count of working/blocked agents, red when any is
-    // blocked (needs you), gold-ish (running) otherwise. Mirrors the scheduler
-    // running-dot treatment so a working agent reads at a glance on the rail.
-    const isAgents = item.id === 'agents';
-    const agentsActive = isAgents && agentCounts.active > 0;
-    const agentsBlocked = isAgents && agentCounts.blocked > 0;
-    const agentsTitle = agentsBlocked
-      ? `${agentCounts.active} active · ${agentCounts.blocked} need you`
-      : `${agentCounts.active} active`;
-    return (
-      <Link
-        key={item.id}
-        to={item.id === 'extensions' ? routeMemory.toolsRoutePath : getNavRoutePath(item.id)}
-        // Stable e2e hook (inert in prod — a plain data attr): the UI-driven
-        // specs click nav entries by id (`nav-agents`, `nav-projects`, …).
-        data-testid={`nav-${item.id}`}
-        className={`nav-item ${compactOnly ? 'nav-item--compact-only' : ''} ${nav === item.id ? 'active' : ''}`}
-        onClick={(event) => {
-          if (consumeNavClick()) {
-            event.preventDefault();
-            return;
-          }
-          // Clicking the top-level Projects rail item always returns to the
-          // un-focused home (the cross-project Agents board + project list),
-          // never staying drilled into / highlighting the last project.
-          if (item.id === 'projects') {
-            useUi.getState().exitProjectFocus();
-            useUi.getState().selectProject(null);
-          }
-        }}
-        aria-current={nav === item.id ? 'page' : undefined}
-        aria-label={collapsed ? item.label : undefined}
-        title={
-          collapsed
-            ? showScheduleBadge
-              ? `${item.label} — ${scheduleTitle}`
-              : agentsActive
-                ? `${item.label} — ${agentsTitle}`
-                : item.label
-            : undefined
-        }
-      >
-        <span className="nav-item-icon">
-          <Icon size={16} />
-          {(running || agentsActive) && (
-            <span className="nav-running-dot" aria-hidden="true" />
-          )}
-        </span>
-        <span className="nav-item-label">{item.label}</span>
-        {showBadge && (
-          <span
-            className="nav-badge"
-            aria-label={`${unreadInbox} unread`}
-            title={`${unreadInbox} unread`}
-          >
-            {unreadInbox > 99 ? '99+' : unreadInbox}
-          </span>
-        )}
-        {showScheduleBadge && (
-          <span
-            className="nav-badge nav-badge--running"
-            aria-label={scheduleTitle}
-            title={scheduleTitle}
-          >
-            {runningSchedules > 99 ? '99+' : runningSchedules}
-          </span>
-        )}
-        {agentsActive && (
-          <span
-            className={`nav-badge ${agentsBlocked ? 'nav-badge--blocked' : 'nav-badge--running'}`}
-            aria-label={agentsTitle}
-            title={agentsTitle}
-          >
-            {agentCounts.active > 99 ? '99+' : agentCounts.active}
-          </span>
-        )}
-      </Link>
-    );
+    let badge: ReactNode;
+    if (showBadge) {
+      badge = (
+        <SidebarCountBadge
+          count={unreadInbox}
+          label={`${unreadInbox} unread`}
+          title={`${unreadInbox} unread`}
+        />
+      );
+    } else if (running) {
+      badge = (
+        <SidebarCountBadge
+          count={runningSchedules}
+          label={scheduleTitle}
+          title={scheduleTitle}
+          kind="running"
+        />
+      );
+    }
+    return {
+      kind: 'row',
+      id: item.id,
+      label: item.label,
+      icon: <Icon size={16} />,
+      to: item.id === 'extensions' ? routeMemory.toolsRoutePath : getNavRoutePath(item.id),
+      testId: `nav-${item.id}`,
+      active: nav === item.id,
+      running,
+      badge,
+      title: collapsed
+        ? running
+          ? `${item.label} — ${scheduleTitle}`
+          : item.label
+        : undefined
+    };
   };
+
+  const items: SidebarRailItem[] = [
+    toRow(homeNavItem),
+    toRow(inboxNavItem),
+    ...extraItems.map(toRow),
+    toRow(schedulerNavItem),
+    toRow(extensionsNavItem),
+    ...moduleNavItems.map(toRow),
+    {
+      kind: 'section',
+      id: AGENTS_SECTION_SORT_ID,
+      node: <AgentsSidebarSection />
+    },
+    {
+      kind: 'section',
+      id: WORKSPACES_SECTION_SORT_ID,
+      node: <ProjectsList placement="sidebar" />
+    }
+  ];
 
   // The shell owns the single persistent toggle. Returning no rail removes the
   // navigation column while its fixed trigger stays available above the shell.
   if (collapsed) return null;
 
   return (
-    <aside className="sidebar sidebar--global">
-      <div className="sidebar-chrome">
-        <SidebarHistoryControls />
-      </div>
-
-      <DndContext
-        sensors={sensors}
-        collisionDetection={collisionDetection}
-        onDragStart={onDragStart}
-        onDragCancel={onDragCancel}
-        onDragEnd={onDragEnd}
-      >
-        <div className="sidebar-sections">
-          <nav className="sidebar-nav sidebar-nav--sortable" aria-label="Main navigation" data-testid="sidebar-navigation">
-            {pinnedNavIds.map((id) => {
-              const item = navItemsById.get(id);
-              return item ? (
-                <Fragment key={id}>
-                  {renderNavItem(item)}
-                </Fragment>
-              ) : null;
-            })}
-            <SortableContext items={sortableNavIds} strategy={verticalListSortingStrategy}>
-              {sortableNavIds.map((id) => {
-                const item = navItemsById.get(id);
-                if (item) return (
-                  <Fragment key={id}>
-                    <SortableNavItem
-                      id={id}
-                    >
-                      {renderNavItem(item)}
-                    </SortableNavItem>
-                  </Fragment>
-                );
-                if (id === AGENTS_SECTION_SORT_ID) return (
-                  <SortableSidebarSection key={id} id={id}>
-                    <AgentsSidebarSection
-                      onNavigate={(event) => {
-                        if (consumeNavClick()) event.preventDefault();
-                      }}
-                    />
-                  </SortableSidebarSection>
-                );
-                if (id === WORKSPACES_SECTION_SORT_ID) return (
-                  <SortableSidebarSection key={id} id={id}>
-                    <ProjectsList placement="sidebar" />
-                  </SortableSidebarSection>
-                );
-                return null;
-              })}
-            </SortableContext>
-          </nav>
-        </div>
-      </DndContext>
-
-      <SidebarResizer />
-
-      <div className="sidebar-utility-bar" aria-label="Sidebar utilities">
-        {sidebarUtilityItems.map((item) => {
-          const Icon = item.icon;
-          const to = item.id === 'settings' ? routeMemory.settingsRoutePath : getNavRoutePath(item.id);
-          return (
-            <Link
-              key={item.id}
-              to={to}
-              className={`sidebar-utility-button ${nav === item.id ? 'active' : ''}`}
-              aria-label={item.label}
-              aria-current={nav === item.id ? 'page' : undefined}
-              title={item.label}
-            >
-              <Icon size={18} />
-            </Link>
-          );
-        })}
-        {footerActions.map((action) => (
-          <button
-            key={`${action.id}:${action.generation}`}
-            type="button"
-            className="sidebar-utility-button"
-            aria-label={action.title}
-            title={action.title}
-            onClick={() => {
-              void action.run();
-            }}
-          >
-            {(() => {
-              const Icon = resolveIcon(action.icon);
-              return <Icon size={18} />;
-            })()}
-          </button>
-        ))}
-      </div>
-    </aside>
+    <SidebarRail
+      className="sidebar sidebar--global"
+      navAriaLabel="Main navigation"
+      storageKey={GLOBAL_NAV_ORDER_KEY}
+      pinnedIds={PINNED_SIDEBAR_NAV_IDS}
+      items={items}
+    />
   );
 }

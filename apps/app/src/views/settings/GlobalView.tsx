@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { SESSION_MEMORY_DEFAULTS } from '@zana-ai/zcc-domain/product';
 import { useUi } from '@/store';
@@ -196,7 +197,7 @@ export function GlobalView({
           type="button"
           className="settings-btn"
           onClick={() => {
-            void window.cc.deps.check();
+            void product.deps.check();
             useUi.getState().setSetupOpen(true);
           }}
         >

@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { hasDesktopBridge } from '../../lib/app-surface.js';
+import { product } from '../../lib/product-client.js';
 import { CheckCircle2, XCircle, RefreshCw, ChevronRight } from 'lucide-react';
 import type { AppConfig, HarnessFamily, HarnessVerifyResult, LaunchProfileId } from '@zana-ai/zcc-domain/product';
 import type { HarnessAdapterDescriptor } from '@zana-ai/zcc-domain/harness-adapter';
@@ -353,7 +355,7 @@ export function HarnessView({
   }, [refresh]);
 
   useEffect(() => {
-    const descriptors = window.cc?.harness?.descriptors;
+    const descriptors = hasDesktopBridge() ? product.harness.descriptors : undefined;
     if (typeof descriptors !== 'function') return;
     let cancelled = false;
     descriptors()

@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 /**
  * Extensions hub. A master–detail view over EVERY module the shell
  * knows: built-ins (Zana, Slack) and runtime disk extensions, listed uniformly
@@ -46,7 +47,7 @@ import { useUi } from '@/store';
  * the renderer never treats a source path as an authority (Rule 1).
  */
 async function openExtensionLauncher(id: string): Promise<{ ok: false; message: string } | null> {
-  const info = await window.cc.extensions.localInfo(id);
+  const info = await product.extensions.localInfo(id);
   if (!info.ok) return { ok: false, message: info.message ?? 'Could not resolve source' };
   const ui = useUi.getState();
   ui.enterProjectFocus(info.value.projectId);
@@ -159,7 +160,7 @@ export function ExtensionsHub({
   // reconcile in main (spawn new / tear down removed / respawn changed).
   const reload = () => {
     setReloading(true);
-    window.cc.extensions
+    product.extensions
       .rescan()
       .catch(() => {})
       .finally(() => setReloading(false));
@@ -172,7 +173,7 @@ export function ExtensionsHub({
   const redeploy = () => {
     setRedeploying(true);
     setRedeployNote(null);
-    window.cc.extensions
+    product.extensions
       .redeployCapabilities()
       .then((res) => {
         if (!res.ok) {
@@ -343,7 +344,7 @@ export function InstalledView() {
   useEffect(() => {
     let cancelled = false;
     const load = () => {
-      window.cc.extensions
+      product.extensions
         .list()
         .then((e) => {
           if (!cancelled) setEntries(e);
@@ -351,7 +352,7 @@ export function InstalledView() {
         .catch(() => {});
     };
     load();
-    const off = window.cc.extensions.onChanged((next) => {
+    const off = product.extensions.onChanged((next) => {
       if (!cancelled) setEntries(next);
     });
     return () => {
@@ -633,7 +634,7 @@ function PermissionsCard({ entry }: { entry: ExtensionEntry }) {
   const addPermission = (permission: string) => {
     setBusy(permission);
     setError(null);
-    window.cc.extensions
+    product.extensions
       .addPermission(entry.id, permission)
       .then((res) => {
         if (!res.ok) setError(res.message);
@@ -650,7 +651,7 @@ function PermissionsCard({ entry }: { entry: ExtensionEntry }) {
   const removePermission = (permission: string) => {
     setBusy(permission);
     setError(null);
-    window.cc.extensions
+    product.extensions
       .removePermission(entry.id, permission)
       .then((res) => {
         if (!res.ok) setError(res.message);
@@ -736,11 +737,11 @@ function AboutCard({ row }: { row: HubRow }) {
 
   const toggleEnabled = () => {
     if (!entry) return;
-    window.cc.extensions.setEnabled(entry.id, !entry.enabled).catch(() => {});
+    product.extensions.setEnabled(entry.id, !entry.enabled).catch(() => {});
   };
   const reveal = () => {
     if (!entry) return;
-    window.cc.extensions.reveal(entry.id).catch(() => {});
+    product.extensions.reveal(entry.id).catch(() => {});
   };
   // Reload a local extension from its source working dir (re-pack + reinstall).
   const reloadFromSource = async () => {
@@ -748,7 +749,7 @@ function AboutCard({ row }: { row: HubRow }) {
     setReloading(true);
     setLocalError(null);
     try {
-      const res = await window.cc.extensions.reinstallLocal(entry.id);
+      const res = await product.extensions.reinstallLocal(entry.id);
       if (!res.ok) setLocalError(res.message ?? 'Reload failed');
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : String(err));
@@ -766,7 +767,7 @@ function AboutCard({ row }: { row: HubRow }) {
     setSharing(true);
     setLocalError(null);
     try {
-      const res = await window.cc.extensions.prepareShare(entry.id);
+      const res = await product.extensions.prepareShare(entry.id);
       if (!res.ok) setLocalError(res.message ?? 'Could not prepare a share export');
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : String(err));
@@ -782,7 +783,7 @@ function AboutCard({ row }: { row: HubRow }) {
     setReloading(true);
     setLocalError(null);
     try {
-      const res = await window.cc.extensions.reinstallFromGit(entry.id);
+      const res = await product.extensions.reinstallFromGit(entry.id);
       if (!res.ok) setLocalError(res.message ?? 'Update failed');
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : String(err));
@@ -806,7 +807,7 @@ function AboutCard({ row }: { row: HubRow }) {
     setRemoving(true);
     setRemoveError(null);
     try {
-      const res = await window.cc.extensions.uninstall(entry.id);
+      const res = await product.extensions.uninstall(entry.id);
       if (!res.ok) {
         setRemoveError(res.message ?? 'Uninstall failed');
         setRemoving(false);

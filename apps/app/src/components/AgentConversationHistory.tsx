@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useEffect, useRef, useState } from 'react';
 import { Clock, RefreshCw, Sparkles } from 'lucide-react';
 import type { ConversationHistorySnapshot } from '@zana-ai/zcc-domain/product';
@@ -55,19 +56,19 @@ export function AgentConversationHistory({ projectId, unavailableProviders, onRe
     let next: ConversationHistorySnapshot;
     try {
       next = refresh && snapshotId.current
-        ? await window.cc.history.refresh(snapshotId.current)
-        : await window.cc.history.start({ projectId, filter: 'project' });
+        ? await product.history.refresh(snapshotId.current)
+        : await product.history.start({ projectId, filter: 'project' });
     } catch {
       if (currentGeneration === generation.current) setSnapshot({ ...initialSnapshot(), status: 'ready' });
       if (currentGeneration === generation.current) setRefreshState(false);
       return;
     }
     if (currentGeneration !== generation.current) {
-      if (next.snapshotId) void window.cc.history.release(next.snapshotId);
+      if (next.snapshotId) void product.history.release(next.snapshotId);
       return;
     }
     if (snapshotId.current && snapshotId.current !== next.snapshotId) {
-      void window.cc.history.release(snapshotId.current);
+      void product.history.release(snapshotId.current);
     }
     snapshotId.current = next.snapshotId;
     showSnapshot(next, refresh);
@@ -83,7 +84,7 @@ export function AgentConversationHistory({ projectId, unavailableProviders, onRe
       if (!id) return;
       let next: ConversationHistorySnapshot;
       try {
-        next = await window.cc.history.page(id);
+        next = await product.history.page(id);
       } catch {
         return;
       }
@@ -97,7 +98,7 @@ export function AgentConversationHistory({ projectId, unavailableProviders, onRe
     return () => {
       generation.current += 1;
       window.clearInterval(poll);
-      if (snapshotId.current) void window.cc.history.release(snapshotId.current);
+      if (snapshotId.current) void product.history.release(snapshotId.current);
       snapshotId.current = '';
     };
     // History is scoped to the project, not to form edits or provider settlement.
@@ -134,7 +135,7 @@ export function AgentConversationHistory({ projectId, unavailableProviders, onRe
                 disabled={resuming === row.historyId}
                 onClick={async () => {
                   setResuming(row.historyId);
-                  const result = await window.cc.history.resume(snapshotId.current, row.historyId);
+                  const result = await product.history.resume(snapshotId.current, row.historyId);
                   setResuming(null);
                   if (result.ok) onResumed();
                 }}

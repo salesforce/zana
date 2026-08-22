@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Search } from 'lucide-react';
 import type { Project, SearchHit, SearchResult } from '@zana-ai/zcc-domain/product';
@@ -48,7 +49,7 @@ export function SearchPanel({ project, onClose }: Props) {
     setRunning(true);
     const handle = window.setTimeout(async () => {
       try {
-        const r = await window.cc.fs.searchFiles(project.path, q, {
+        const r = await product.fs.searchFiles(project.path, q, {
           caseSensitive,
           regex
         });

@@ -71,7 +71,7 @@ describe('launcher attachments', () => {
 
   it('renders removable pills and uploads remote attachments at launch', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('window.cc.fs.uploadToRemote(remoteTarget.id, localPath, \'.\')');
+    expect(source).toContain('product.fs.uploadToRemote(remoteTarget.id, localPath, \'.\')');
     expect(source).toContain('attachments={attachments}');
     expect(source).toContain('onAddAttachments={addAttachments}');
     expect(source).toContain('appendAttachmentContext(prompt, attachmentPaths)');
@@ -82,6 +82,8 @@ describe('Quick Agent composer', () => {
   it('uses the Home-style command surface without duplicating launcher pickers', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
     expect(source).toContain('const useQuickAgentHomeComposer = scratchIsTarget;');
+    expect(source).toContain('product.quickPrompts.list().catch(() => [])');
+    expect(source).toContain('product.extensions.list().catch(() => [])');
     expect(source).toContain("variant={useQuickAgentHomeComposer ? 'home' : 'default'}");
     expect(source).toContain("submitLabel={mode === 'autonomous' ? 'Launch autonomous team' : 'Launch agent'}");
     expect(source).toContain('{!useQuickAgentHomeComposer && (');
@@ -124,7 +126,7 @@ describe('Fix with AI recovery launch', () => {
   it('uses the managed scratch workspace root instead of retrying a failed project cwd', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
     const fixWithAi = source.slice(source.indexOf('const fixWithAi = async'));
-    expect(fixWithAi).toContain('window.cc.projects.ensureQuickAgent()');
+    expect(fixWithAi).toContain('product.projects.ensureQuickAgent()');
     expect(fixWithAi).toContain("createTerminal(anchor.id, 'claude-yolo'");
     expect(fixWithAi).not.toContain('isolateScratch:');
   });
@@ -280,7 +282,7 @@ describe('OpenCode project agent discovery', () => {
 
   it('loads through project-id IPC once, refreshes explicitly, and prevents stale updates', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('window.cc.harness.agentDescriptors(\n      openCodeAgentDiscoveryProjectId,\n      openCodeAgentDiscoveryProfile,\n      agentDescriptorsRefresh > 0\n    )');
+    expect(source).toContain('product.harness.agentDescriptors(\n      openCodeAgentDiscoveryProjectId,\n      openCodeAgentDiscoveryProfile,\n      agentDescriptorsRefresh > 0\n    )');
     expect(source).toContain('setAgentDescriptorsRefresh((value) => value + 1);');
     expect(source).toContain('Effective OpenCode agent');
     expect(source).toContain('Refresh agents');

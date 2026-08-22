@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   GitCommit,
@@ -118,7 +119,7 @@ export function FeedView({ project }: { project: Project }) {
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      const page = await window.cc.feed.refresh(project.id, { limit: PAGE_SIZE });
+      const page = await product.feed.refresh(project.id, { limit: PAGE_SIZE });
       if (projectIdRef.current !== project.id) return;
       setEvents(page.events);
       setHasMore(page.hasMore);
@@ -140,7 +141,7 @@ export function FeedView({ project }: { project: Project }) {
     setExpanded(new Set());
     setExpandedEvents(new Set());
     void load();
-    const off = window.cc.feed.onChanged((changedId) => {
+    const off = product.feed.onChanged((changedId) => {
       if (changedId === project.id) void load();
     });
     return off;
@@ -151,7 +152,7 @@ export function FeedView({ project }: { project: Project }) {
     setLoadingMore(true);
     try {
       const oldest = events[events.length - 1]!.ts;
-      const page = await window.cc.feed.list(project.id, { limit: PAGE_SIZE, before: oldest });
+      const page = await product.feed.list(project.id, { limit: PAGE_SIZE, before: oldest });
       if (projectIdRef.current !== project.id) return;
       // De-dupe by id in case an event shares the boundary timestamp.
       setEvents((prev) => {
@@ -167,7 +168,7 @@ export function FeedView({ project }: { project: Project }) {
   const generateRecap = useCallback(async () => {
     setDigestState('loading');
     try {
-      const res = await window.cc.feed.digest(project.id);
+      const res = await product.feed.digest(project.id);
       if (projectIdRef.current !== project.id) return;
       if (res.ok) {
         setDigest(res.digest);

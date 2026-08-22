@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import React, { useState, useMemo } from 'react';
 import { Sparkles, Copy } from 'lucide-react';
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
@@ -181,7 +182,7 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
           // Group only applies to global scope; main drops it for project scope.
           group: scope === 'global' && group ? group : undefined
         };
-        const result = await window.cc.scheduler.create(input);
+        const result = await product.scheduler.create(input);
         if (!result.ok) {
           setError(result.message);
           setSaving(false);
@@ -195,7 +196,7 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
           cadenceMode === 'cron'
             ? { cron: cron.trim(), tz: tz.trim() || null }
             : { every };
-        const result = await window.cc.scheduler.update(task!.id, {
+        const result = await product.scheduler.update(task!.id, {
           name: name.trim(),
           description: description.trim(),
           projectId,

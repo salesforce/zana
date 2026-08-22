@@ -54,6 +54,8 @@ import {
 } from './lib/sessionRestore.js';
 import { getScopedProjectId, isScopedWindow } from './lib/windowScope.js';
 import { appNavigate } from './lib/app-navigate.js';
+import { hasDesktopBridge } from './lib/app-surface.js';
+import { product } from './lib/product-client.js';
 import { decodeRoutePath } from './lib/decode-route.js';
 import {
   getExtensionsTabRoutePath,
@@ -761,14 +763,14 @@ function persistWorkspaceModes() {
     for (const [k, v] of Object.entries(map)) {
       if (v) persisted[k] = v;
     }
-    window.cc.config.set({ workspaceModes: persisted }).catch(() => {});
+    product.config.set({ workspaceModes: persisted }).catch(() => {});
   }, 200);
 }
 
 // Fire-and-forget write of the global agents-board view preference. No debounce
 // needed — it changes only on an explicit user toggle, not on a typing/drag.
 function persistAgentsBoardView(view: AgentsBoardView) {
-  window.cc.config.set({ agentsBoardView: view }).catch(() => {});
+  product.config.set({ agentsBoardView: view }).catch(() => {});
 }
 
 // Per-project debounced git refresh. Terminal output is high-frequency, so
@@ -978,7 +980,7 @@ export const useUi = create<UiState>((set, get) => ({
   inboxGrouping: 'project',
   setInboxGrouping: (grouping) => {
     set({ inboxGrouping: grouping });
-    window.cc.config.set({ inboxGrouping: grouping }).catch(() => {});
+    product.config.set({ inboxGrouping: grouping }).catch(() => {});
   },
   catalogueFilter: {},
   setCatalogueFilter: (key, value) =>
@@ -994,15 +996,15 @@ export const useUi = create<UiState>((set, get) => ({
       // Tell main no project is active so the per-project skills watcher
       // is torn down. touch() with a falsy id is a no-op for state but is
       // the canonical "selected changed" signal.
-      window.cc.projects.touch('').catch(() => {});
+      product.projects.touch('').catch(() => {});
       return;
     }
-    window.cc.config.set({ lastProjectId: id }).catch(() => {});
+    product.config.set({ lastProjectId: id }).catch(() => {});
     // Persist the touch to disk so the next launch's auto-sort reflects
     // recent use, but DON'T merge the updated lastActiveAt back into the
     // in-memory projects list — that causes the just-clicked project to
     // jump to the top of the sidebar mid-session, which is jarring.
-    window.cc.projects.touch(id).catch(() => {});
+    product.projects.touch(id).catch(() => {});
     useData.getState().loadGitStatus(id);
   },
   enterProjectFocus: (id) => {
@@ -1013,11 +1015,11 @@ export const useUi = create<UiState>((set, get) => ({
     // Keep selection in sync with focus so the workspace tracks the column.
     get().selectProject(id);
     get().setWorkspaceMode(id, 'agents');
-    window.cc.config.set({ focusedProjectId: id }).catch(() => {});
+    product.config.set({ focusedProjectId: id }).catch(() => {});
   },
   exitProjectFocus: () => {
     set({ focusedProjectId: null });
-    window.cc.config.set({ focusedProjectId: null }).catch(() => {});
+    product.config.set({ focusedProjectId: null }).catch(() => {});
   },
   selectTab: (projectId, tabId) => {
     set((s) => {
@@ -1831,7 +1833,7 @@ export const useData = create<DataState>((set, get) => ({
 
   async refreshHarnessStatus() {
     try {
-      const status = await window.cc.harness.verify();
+      const status = await product.harness.verify();
       set({ harnessStatus: status });
     } catch {
       set({ harnessStatus: [] });
@@ -1840,7 +1842,7 @@ export const useData = create<DataState>((set, get) => ({
 
   async refreshEditorStatus() {
     try {
-      const status = await window.cc.editor.verify();
+      const status = await product.editor.verify();
       set({ editorStatus: status });
     } catch {
       set({ editorStatus: [] });
@@ -1882,7 +1884,7 @@ export const useData = create<DataState>((set, get) => ({
     const prev = get().autoCloseIdleEnabled;
     set({ autoCloseIdleEnabled: on });
     try {
-      await window.cc.config.set({ autoCloseIdleEnabled: on });
+      await product.config.set({ autoCloseIdleEnabled: on });
     } catch (err) {
       pushErrorToast(errorMessage(err, 'Failed to toggle auto-close idle'));
       set({ autoCloseIdleEnabled: prev });
@@ -1893,7 +1895,7 @@ export const useData = create<DataState>((set, get) => ({
     const prev = get().overseerMode;
     set({ overseerMode: mode });
     try {
-      await window.cc.config.set({ overseerMode: mode });
+      await product.config.set({ overseerMode: mode });
     } catch (err) {
       pushErrorToast(errorMessage(err, 'Failed to toggle overseer'));
       set({ overseerMode: prev });
@@ -1904,7 +1906,7 @@ export const useData = create<DataState>((set, get) => ({
     const prev = get().reviewerApprovalMode;
     set({ reviewerApprovalMode: mode });
     try {
-      await window.cc.config.set({ reviewerApprovalMode: mode });
+      await product.config.set({ reviewerApprovalMode: mode });
     } catch (err) {
       pushErrorToast(errorMessage(err, 'Failed to change approval mode'));
       set({ reviewerApprovalMode: prev });
@@ -1927,7 +1929,7 @@ export const useData = create<DataState>((set, get) => ({
       }
     }));
     try {
-      await window.cc.terminals.setHeartbeat(sessionId, on);
+      await product.terminals.setHeartbeat(sessionId, on);
     } catch (err) {
       pushErrorToast(errorMessage(err, 'Failed to toggle heartbeat'));
       set((s) => ({
@@ -1944,8 +1946,8 @@ export const useData = create<DataState>((set, get) => ({
   async init() {
     try {
       const [projects, config] = await Promise.all([
-        window.cc.projects.list(),
-        window.cc.config.get()
+        product.projects.list(),
+        product.config.get()
       ]);
       // Hydrate the mirrored config flags from the SAME projection the live
       // `config.onChanged` handler uses (below), so boot and cross-window sync
@@ -1966,7 +1968,7 @@ export const useData = create<DataState>((set, get) => ({
       // window (e.g. Follow-ups) flips this window's mirrored gate at once
       // instead of lingering until reload. Re-apply the same config→flag
       // mapping init uses, plus theme (the other visible cross-window setting).
-      window.cc.config.onChanged((next) => {
+      product.config.onChanged((next) => {
         set(mirroredConfigFlags(next));
         applyTheme(next.theme);
         if (typeof next.listPaneWidth === 'number') {
@@ -2028,7 +2030,7 @@ export const useData = create<DataState>((set, get) => ({
       await Promise.all(
         projects.map(async (p) => {
           try {
-            const sessions = await window.cc.terminals.list(p.id);
+            const sessions = await product.terminals.list(p.id);
             if (sessions.length > 0) {
               set((s) => ({ terminals: { ...s.terminals, [p.id]: sessions } }));
             }
@@ -2052,7 +2054,7 @@ export const useData = create<DataState>((set, get) => ({
       // window over the same snapshot. The scoped window already hydrated its
       // own live ptys above (display only); spawning + snapshot ownership belong
       // to the unscoped main window. (persistOpenSessions is likewise gated.)
-      if (!isScopedWindow()) {
+      if (!isScopedWindow() && hasDesktopBridge()) {
         await get().restoreSessions(hydrationFailed);
       }
     } catch (err) {
@@ -2075,7 +2077,7 @@ export const useData = create<DataState>((set, get) => ({
     // others. Push-subscriptions below are synchronous and registered regardless.
     const loadInbox = (async () => {
       try {
-        const { entries } = await window.cc.inbox.history({
+        const { entries } = await product.inbox.history({
           limit: 100,
           ...(scopedProjectId ? { projectId: scopedProjectId } : {})
         });
@@ -2086,7 +2088,7 @@ export const useData = create<DataState>((set, get) => ({
     })();
     const loadSuggestions = (async () => {
       try {
-        const { entries } = await window.cc.suggestions.list(scopedProjectId ?? undefined);
+        const { entries } = await product.suggestions.list(scopedProjectId ?? undefined);
         useSuggestions.setState({ entries, loading: false });
       } catch {
         useSuggestions.setState({ loading: false });
@@ -2094,7 +2096,7 @@ export const useData = create<DataState>((set, get) => ({
     })();
     const loadSaved = (async () => {
       try {
-        const records = await window.cc.saved.list();
+        const records = await product.saved.list();
         useSaved.setState({ records, loading: false });
       } catch {
         useSaved.setState({ loading: false });
@@ -2103,8 +2105,8 @@ export const useData = create<DataState>((set, get) => ({
     const loadMesh = (async () => {
       try {
         const [agents, messages] = await Promise.all([
-          window.cc.agents.list(),
-          window.cc.agents.messages()
+          product.agents.list(),
+          product.agents.messages()
         ]);
         useAgentMesh.setState({ agents, messages });
       } catch {
@@ -2113,19 +2115,19 @@ export const useData = create<DataState>((set, get) => ({
     })();
     await Promise.all([loadInbox, loadSuggestions, loadSaved, loadMesh]);
 
-    window.cc.inbox.onAppended((entry) => {
+    product.inbox.onAppended((entry) => {
       if (scopedProjectId && entry.projectId !== scopedProjectId) return;
       useInbox.getState().prepend(entry);
     });
-    window.cc.inbox.onRemoved((id) => {
+    product.inbox.onRemoved((id) => {
       useInbox.getState().removeLocal(id);
       pruneInboxMarkers([id]);
     });
-    window.cc.inbox.onUpdated((entry) => {
+    product.inbox.onUpdated((entry) => {
       if (scopedProjectId && entry.projectId !== scopedProjectId) return;
       useInbox.getState().upsert(entry);
     });
-    window.cc.inbox.onPruned((removedIds) => {
+    product.inbox.onPruned((removedIds) => {
       // Retention rolled these off disk: drop the rows and prune the persisted
       // read/answered/saved/keep markers so those localStorage maps stay bounded.
       useInbox.getState().removeManyLocal(removedIds);
@@ -2135,24 +2137,24 @@ export const useData = create<DataState>((set, get) => ({
     // Suggested Actions (afl-03): push subscriptions (the one-shot list load ran
     // concurrently above). Scoped to the window's project like the inbox. A
     // sibling surface, not a feed category.
-    window.cc.suggestions.onAppended((entry) => {
+    product.suggestions.onAppended((entry) => {
       if (scopedProjectId && entry.projectId !== scopedProjectId) return;
       useSuggestions.getState().prepend(entry);
     });
-    window.cc.suggestions.onRemoved((id) => {
+    product.suggestions.onRemoved((id) => {
       useSuggestions.getState().removeLocal(id);
     });
-    window.cc.suggestions.onUpdated((entry) => {
+    product.suggestions.onUpdated((entry) => {
       if (scopedProjectId && entry.projectId !== scopedProjectId) return;
       useSuggestions.getState().upsert(entry);
     });
-    window.cc.suggestions.onPruned((removedIds) => {
+    product.suggestions.onPruned((removedIds) => {
       useSuggestions.getState().removeManyLocal(removedIds);
     });
 
     // Saved reports: full-list push (the one-shot list load ran concurrently
     // above). Low volume, so main replaces the whole list on every save/delete.
-    window.cc.saved.onChanged((records) => {
+    product.saved.onChanged((records) => {
       useSaved.setState({ records, loading: false });
     });
 
@@ -2160,16 +2162,16 @@ export const useData = create<DataState>((set, get) => ({
     // concurrently above). Registry changes (register/seed/drop) re-fetch the
     // whole list; each agent→agent message prepends. Read-only — the renderer
     // never mutates the mesh, it only mirrors it for the Agents board.
-    window.cc.agents.onRegistryChanged(() => {
-      window.cc.agents
+    product.agents.onRegistryChanged(() => {
+      product.agents
         .list()
         .then((agents) => useAgentMesh.getState().setAgents(agents))
         .catch(() => {});
     });
-    window.cc.agents.onMessage((msg) => {
+    product.agents.onMessage((msg) => {
       useAgentMesh.getState().prependMessage(msg);
     });
-    window.cc.agents.onMessagesPruned((removedIds) => {
+    product.agents.onMessagesPruned((removedIds) => {
       useAgentMesh.getState().removeMessages(removedIds);
     });
 
@@ -2177,7 +2179,7 @@ export const useData = create<DataState>((set, get) => ({
     // is kicked from main; here we mirror status into the store (for the About
     // section) and surface the key transitions as toasts. Progress is stored
     // but not toasted — the About section renders the bar.
-    window.cc.updates.onStatus((status) => {
+    product.updates.onStatus((status) => {
       const prev = useUpdates.getState().status;
       useUpdates.setState({ status });
       if (status.kind === 'available') {
@@ -2203,7 +2205,7 @@ export const useData = create<DataState>((set, get) => ({
         useUi.getState().pushToast(`Update check failed: ${status.message ?? 'unknown error'}`, 'error');
       }
     });
-    window.cc.updates.onProgress((progress) => {
+    product.updates.onProgress((progress) => {
       useUpdates.setState({ progress });
     });
     // Seed from main's remembered status: the boot check runs before this
@@ -2211,7 +2213,7 @@ export const useData = create<DataState>((set, get) => ({
     // missed by the UI (it only lands in the inbox, which main writes directly).
     // Pull it once so the banner/footer reflect a launch-time update. Only apply
     // a meaningful status so this can't clobber a live push that raced ahead.
-    window.cc.updates
+    product.updates
       .getStatus()
       .then((status) => {
         if (status.kind === 'idle') return;
@@ -2229,11 +2231,11 @@ export const useData = create<DataState>((set, get) => ({
     // We show ONLY the version the user just updated TO — a single, focused
     // "here's what's new" card, not a backlog of every version they skipped.
     // (The About tab's "What's new" link still shows the full history on demand.)
-    window.cc.updates
+    product.updates
       .consumeWhatsNew()
       .then(async (evt) => {
         if (!evt) return;
-        const notes = await window.cc.updates.getReleaseNotes({
+        const notes = await product.updates.getReleaseNotes({
           fromVersion: evt.fromVersion,
           toVersion: evt.toVersion
         });
@@ -2252,12 +2254,12 @@ export const useData = create<DataState>((set, get) => ({
     // Capture the dismissed flag once: a per-project window never auto-opens
     // (mirrors the walkthrough), and a fresh config read keeps this independent
     // of the earlier try-block's `config` binding.
-    const setupDismissed = await window.cc.config
+    const setupDismissed = await product.config
       .get()
       .then((c) => !!c.setupDismissed)
       .catch(() => true);
     const setupScopedId = getScopedProjectId();
-    window.cc.deps.onStatus((status) => {
+    product.deps.onStatus((status) => {
       useSetup.setState({ status, progress: {} });
       if (!setupScopedId && !setupDismissed && hasMissingSetup(status)) {
         // Don't fight the walkthrough for the screen on a truly fresh install —
@@ -2267,13 +2269,13 @@ export const useData = create<DataState>((set, get) => ({
         }
       }
     });
-    window.cc.deps.onProgress((p) => {
+    product.deps.onProgress((p) => {
       useSetup.setState((s) => ({ progress: { ...s.progress, [p.id]: p.message } }));
     });
     // Seed the current snapshot in case the boot check already completed before
     // this subscription attached (the push is deduped, so a late subscriber
     // would otherwise miss it).
-    window.cc.deps
+    product.deps
       .get()
       .then((status) => useSetup.setState((s) => ({ status, progress: s.progress })))
       .catch(() => {});
@@ -2282,12 +2284,12 @@ export const useData = create<DataState>((set, get) => ({
     // `scheduler:onChanged` after every fire and after every CRUD action,
     // so the panel never needs to poll.
     try {
-      const tasks = await window.cc.scheduler.list();
+      const tasks = await product.scheduler.list();
       useScheduler.setState({ tasks, loading: false });
     } catch {
       useScheduler.setState({ loading: false });
     }
-    window.cc.scheduler.onChanged((tasks) => {
+    product.scheduler.onChanged((tasks) => {
       useScheduler.setState({ tasks });
     });
 
@@ -2295,12 +2297,12 @@ export const useData = create<DataState>((set, get) => ({
     // emits `goals:onChanged` after every CRUD action, every iteration spawn,
     // and every evaluator verdict, so the panel never polls.
     try {
-      const goals = await window.cc.goals.list();
+      const goals = await product.goals.list();
       useGoals.setState({ goals, loading: false });
     } catch {
       useGoals.setState({ loading: false });
     }
-    window.cc.goals.onChanged((goals) => {
+    product.goals.onChanged((goals) => {
       useGoals.setState({ goals });
     });
 
@@ -2308,60 +2310,60 @@ export const useData = create<DataState>((set, get) => ({
     // `followups:onChanged` after every CRUD action and every idle-triage bridge,
     // so the panel never polls.
     try {
-      const followups = await window.cc.followups.list();
+      const followups = await product.followups.list();
       useFollowUps.setState({ followups, loading: false });
     } catch {
       useFollowUps.setState({ loading: false });
     }
-    window.cc.followups.onChanged((followups) => {
+    product.followups.onChanged((followups) => {
       useFollowUps.setState({ followups });
     });
 
     // Templates: same one-shot + push pattern. Main watches the user dir +
     // per-project dirs for hand-edited files and pushes refreshed lists.
     try {
-      const templates = await window.cc.scheduler.listTemplates();
+      const templates = await product.scheduler.listTemplates();
       useScheduleTemplates.setState({ templates, loading: false });
     } catch {
       useScheduleTemplates.setState({ loading: false });
     }
-    window.cc.scheduler.onTemplatesChanged((templates) => {
+    product.scheduler.onTemplatesChanged((templates) => {
       useScheduleTemplates.setState({ templates });
     });
 
     // Personas: one-shot list + push. Main watches the user dir + per-project
     // dirs for hand-edited persona files and pushes refreshed lists.
     try {
-      const personas = await window.cc.personas.list();
+      const personas = await product.personas.list();
       usePersonas.setState({ personas, loading: false });
     } catch {
       usePersonas.setState({ loading: false });
     }
-    window.cc.personas.onChanged((personas) => {
+    product.personas.onChanged((personas) => {
       usePersonas.setState({ personas });
     });
 
     // Teams: one-shot list + push, mirroring personas. Main merges builtin/user/
     // project/extension teams and pushes a refreshed list on any change.
     try {
-      const teams = await window.cc.teams.list();
+      const teams = await product.teams.list();
       useTeams.setState({ teams, loading: false });
     } catch {
       useTeams.setState({ loading: false });
     }
-    window.cc.teams.onChanged((teams) => {
+    product.teams.onChanged((teams) => {
       useTeams.setState({ teams });
     });
 
     // Autonomous runs: one-shot list + push, mirroring teams. Live-only (no
     // persistence); the main supervisor pushes a refreshed list on every change.
     try {
-      const runs = await window.cc.autonomousRuns.list();
+      const runs = await product.autonomousRuns.list();
       useAutonomousRuns.setState({ runs });
     } catch {
       /* leave empty */
     }
-    window.cc.autonomousRuns.onChanged((runs) => {
+    product.autonomousRuns.onChanged((runs) => {
       useAutonomousRuns.setState({ runs });
     });
 
@@ -2369,31 +2371,31 @@ export const useData = create<DataState>((set, get) => ({
     // an agent adds a cloned repo via the `register_project` MCP tool. The
     // renderer's own add/remove/reorder still drive `loadProjects()` directly;
     // this push covers mutations the renderer didn't initiate.
-    window.cc.projects.onChanged((projects) => {
+    product.projects.onChanged((projects) => {
       set({ projects });
     });
 
     // Library: one-shot list + full-list push (like saved). Reconciled on read:
     // manifest + on-disk, both scopes, newest-first.
     try {
-      const docs = await window.cc.library.list();
+      const docs = await product.library.list();
       useLibrary.setState({ docs, loading: false });
     } catch {
       useLibrary.setState({ loading: false });
     }
-    window.cc.library.onChanged((docs) => {
+    product.library.onChanged((docs) => {
       useLibrary.setState({ docs, loading: false });
     });
 
     // Schedule groups: one-shot + push. Main seeds Personal/Work on first run
     // and watches ~/.zcc/groups.json for hand edits.
     try {
-      const groups = await window.cc.scheduler.groups.list();
+      const groups = await product.scheduler.groups.list();
       useScheduleGroups.setState({ groups, loading: false });
     } catch {
       useScheduleGroups.setState({ loading: false });
     }
-    window.cc.scheduler.groups.onChanged((groups) => {
+    product.scheduler.groups.onChanged((groups) => {
       useScheduleGroups.setState({ groups });
     });
 
@@ -2401,29 +2403,29 @@ export const useData = create<DataState>((set, get) => ({
     // a single debounced fs.watch into `plugins:onChanged` and `mcp:onChanged`
     // so we never poll.
     try {
-      const entries = await window.cc.plugins.list();
+      const entries = await product.plugins.list();
       usePlugins.setState({ entries, loading: false });
     } catch {
       usePlugins.setState({ loading: false });
     }
-    window.cc.plugins.onChanged((entries) => {
+    product.plugins.onChanged((entries) => {
       usePlugins.setState({ entries });
     });
 
     try {
-      const entries = await window.cc.mcp.listAll();
+      const entries = await product.mcp.listAll();
       useMcpCatalogue.setState({ entries, loading: false });
     } catch {
       useMcpCatalogue.setState({ loading: false });
     }
-    window.cc.mcp.onChanged((entries) => {
+    product.mcp.onChanged((entries) => {
       useMcpCatalogue.setState({ entries });
     });
 
     // Session metadata changes (e.g. title/headless changes, exit transitions,
     // or a scheduler-spawned tab being broadcast) come in via this push so the
     // tab strip re-renders without polling.
-    window.cc.terminals.onUpdated((session) => {
+    product.terminals.onUpdated((session) => {
       set((s) => {
         const list = s.terminals[session.projectId];
         if (!list) {
@@ -2457,7 +2459,7 @@ export const useData = create<DataState>((set, get) => ({
     // by session id, with a precomputed per-project rollup. We resolve the
     // owning project from useData here so the status event itself stays a
     // lean (sessionId, state, seq) tuple.
-    window.cc.terminals.onAgentStatus((sessionId, state, seq) => {
+    product.terminals.onAgentStatus((sessionId, state, seq) => {
       const projectId = findProjectIdForSession(sessionId);
       if (!projectId) return;
       useAgentStatus.getState().apply(sessionId, projectId, state, seq);
@@ -2476,12 +2478,12 @@ export const useData = create<DataState>((set, get) => ({
     // Live sub-agent (Task tool) counts land in their own slice (useSubagents),
     // keyed by parent session id. Kept off onAgentStatus so a sub-agent
     // start/stop never rebuilds the status rollup — it only badges the parent.
-    window.cc.terminals.onSubagents((sessionId, count) => {
+    product.terminals.onSubagents((sessionId, count) => {
       useSubagents.getState().apply(sessionId, count);
     });
     // Seed sub-agent counts for any parent already fanned out before this window
     // opened — onSubagents is edge-triggered and would otherwise miss them.
-    window.cc.terminals
+    product.terminals
       .subagentSnapshot()
       .then((pairs) => {
         for (const [sessionId, count] of pairs) {
@@ -2496,7 +2498,7 @@ export const useData = create<DataState>((set, get) => ({
     // so a window opened after an agent's last transition (every per-project sub-window
     // / "Open in new window") would otherwise read `unknown` for every card.
     // Resolve the owning project the same way the live handler above does.
-    window.cc.terminals
+    product.terminals
       .agentStatusSince(useAgentStatus.getState().lastSeq)
       .then((result) => {
         if (result.mode === 'replay') {
@@ -2526,12 +2528,12 @@ export const useData = create<DataState>((set, get) => ({
 
     // Per-child sub-agent records (name/type + running/done) — sibling channel
     // to onSubagents, lands in its own slice for the same render-storm reason.
-    window.cc.terminals.onSubagentChildren((sessionId, children) => {
+    product.terminals.onSubagentChildren((sessionId, children) => {
       useSubagentChildren.getState().apply(sessionId, children);
     });
     // Seed child records for parents already fanned out before this window
     // opened — edge-triggered like the count snapshot.
-    window.cc.terminals
+    product.terminals
       .subagentChildrenSnapshot()
       .then((pairs) => {
         for (const [sessionId, children] of pairs) {
@@ -2544,7 +2546,7 @@ export const useData = create<DataState>((set, get) => ({
 
     // Idle-triage add-on (off by default): WHY an idle agent is idle. Lands in
     // its own slice keyed by session id, surfaced as a badge on idle cards.
-    window.cc.terminals.onIdleTriage((result) => {
+    product.terminals.onIdleTriage((result) => {
       useIdleTriage.getState().apply(result);
     });
 
@@ -2553,7 +2555,7 @@ export const useData = create<DataState>((set, get) => ({
     // session id, surfaced as a badge on the agent card. Unlike idle-triage it's
     // NOT cleared on leaving idle — the count is about the session's lifetime, so
     // it persists until the tab closes (cleared in the close/clearProject paths).
-    window.cc.terminals.onOverseerActivity((activity) => {
+    product.terminals.onOverseerActivity((activity) => {
       useOverseerActivity.getState().apply(activity);
     });
 
@@ -2561,14 +2563,14 @@ export const useData = create<DataState>((set, get) => ({
     // markdown summary of where the agent is and what changed, surfaced under
     // the terminal in the agent modal when the agent sits idle or blocked long
     // enough. Own slice keyed by session id, mirroring onIdleTriage pattern.
-    window.cc.terminals.onCatchUpSummary((result) => {
+    product.terminals.onCatchUpSummary((result) => {
       useCatchUpSummary.getState().apply(result);
     });
 
     // Tab auto-rename: Claude writes a task summary into its idle OSC title;
     // main parses it and pushes it here. Adopt it as the tab name unless the
     // user has manually renamed the tab.
-    window.cc.terminals.onTitle((sessionId, title, source) => {
+    product.terminals.onTitle((sessionId, title, source) => {
       get().autoTitleTerminal(sessionId, title, source);
     });
 
@@ -2591,7 +2593,7 @@ export const useData = create<DataState>((set, get) => ({
     // Guarded to remote projects inside reconnectRemote too; we pre-filter here
     // to avoid churning the whole session map. Sequential to avoid a burst of
     // concurrent ssh spawns.
-    window.cc.terminals.onWake(() => {
+    product.terminals.onWake(() => {
       // The proxy's exit event may still be in flight when wake fires. Give it a
       // beat so the tombstone and its exit code are settled before we scan.
       setTimeout(() => {
@@ -2618,7 +2620,7 @@ export const useData = create<DataState>((set, get) => ({
 
   async loadProjects() {
     try {
-      const projects = await window.cc.projects.list();
+      const projects = await product.projects.list();
       set({ projects });
     } catch (err) {
       pushErrorToast(errorMessage(err, 'Failed to load projects'));
@@ -2629,7 +2631,7 @@ export const useData = create<DataState>((set, get) => ({
     const project = get().projects.find((p) => p.id === projectId);
     if (!project) return;
     try {
-      const sessions = await window.cc.claude.listSessions(projectId);
+      const sessions = await product.claude.listSessions(projectId);
       set((s) => ({ claudeSessions: { ...s.claudeSessions, [projectId]: sessions } }));
     } catch (err) {
       pushErrorToast(errorMessage(err, 'Failed to load Claude sessions'));
@@ -2638,9 +2640,9 @@ export const useData = create<DataState>((set, get) => ({
 
   async addProject() {
     try {
-      const path = await window.cc.projects.pickDirectory();
+      const path = await product.projects.pickDirectory();
       if (!path) return null;
-      const result = await window.cc.projects.add(path);
+      const result = await product.projects.add(path);
       if (!result.ok) {
         pushErrorToast(result.message);
         return null;
@@ -2655,7 +2657,7 @@ export const useData = create<DataState>((set, get) => ({
 
   async addProjectByPath(path) {
     try {
-      const result = await window.cc.projects.add(path);
+      const result = await product.projects.add(path);
       if (!result.ok) {
         pushErrorToast(result.message);
         return null;
@@ -2670,7 +2672,7 @@ export const useData = create<DataState>((set, get) => ({
 
   async addRemoteProject(input) {
     try {
-      const result = await window.cc.projects.addRemote(input);
+      const result = await product.projects.addRemote(input);
       if (!result.ok) {
         pushErrorToast(result.message);
         return null;
@@ -2685,7 +2687,7 @@ export const useData = create<DataState>((set, get) => ({
 
   async cloneProject(input) {
     try {
-      const result = await window.cc.projects.clone(input);
+      const result = await product.projects.clone(input);
       // The dialog surfaces failures inline (it needs the code/path for the
       // DEST_EXISTS branch), so we DON'T toast here — just refresh on success.
       if (result.ok) await get().loadProjects();
@@ -2701,7 +2703,7 @@ export const useData = create<DataState>((set, get) => ({
 
   async updateProject(id, patch) {
     try {
-      const updated = await window.cc.projects.update(id, patch);
+      const updated = await product.projects.update(id, patch);
       if (!updated) return;
       // Preserve the in-memory lastActiveAt (and sortIndex). Disk may have a
       // newer lastActiveAt from an earlier `touch`, but adopting it here would
@@ -2734,7 +2736,7 @@ export const useData = create<DataState>((set, get) => ({
       return { projects: next };
     });
     try {
-      const persisted = await window.cc.projects.reorder(orderedIds);
+      const persisted = await product.projects.reorder(orderedIds);
       set({ projects: persisted });
     } catch (err) {
       pushErrorToast(errorMessage(err, 'Failed to reorder projects'));
@@ -2744,7 +2746,7 @@ export const useData = create<DataState>((set, get) => ({
 
   async removeProject(id) {
     try {
-      await window.cc.projects.remove(id);
+      await product.projects.remove(id);
     } catch (err) {
       pushErrorToast(errorMessage(err, 'Failed to remove project'));
       return;
@@ -2804,7 +2806,7 @@ export const useData = create<DataState>((set, get) => ({
 
   async createTerminal(projectId, profile, cols, rows, opts) {
     try {
-      const result = await window.cc.terminals.create({
+      const result = await product.terminals.create({
         projectId,
         profile,
         profileSource: opts?.profileSource,
@@ -2887,7 +2889,7 @@ export const useData = create<DataState>((set, get) => ({
     const liveProjects = new Set(Object.entries(terminals)
       .filter(([, sessions]) => sessions.some((session) => session.status !== 'exited'))
       .map(([projectId]) => projectId));
-    const tmuxCandidates = await window.cc.terminals.listTmuxRestoreCandidates();
+    const tmuxCandidates = await product.terminals.listTmuxRestoreCandidates();
     for (const candidate of tmuxCandidates) {
       if (plannedCapabilities.has(candidate.capabilityId)) continue;
       if (!knownProjects.has(candidate.projectId) || liveProjects.has(candidate.projectId)) continue;
@@ -2906,7 +2908,7 @@ export const useData = create<DataState>((set, get) => ({
       // can race the same per-project .mcp.json write and thrash the CLI's
       // session store. Order within a project is preserved (plan is tab order).
       for (const item of plan) {
-        const restored = await window.cc.terminals.restore({
+        const restored = await product.terminals.restore({
           capabilityId: item.restoreCapabilityId,
           legacyRequest: item.restoreCapabilityId ? undefined : {
             projectId: item.projectId,
@@ -2971,7 +2973,7 @@ export const useData = create<DataState>((set, get) => ({
     // neighbor, not a hidden background session. Matches hideTerminal.
     const closingIdx = visibleTerminals(list).findIndex((t) => t.id === sessionId);
     try {
-      if (!await window.cc.terminals.close(sessionId)) {
+      if (!await product.terminals.close(sessionId)) {
         pushErrorToast('Failed to close terminal; its remote session may still be running');
         return;
       }
@@ -3067,7 +3069,7 @@ export const useData = create<DataState>((set, get) => ({
     let followedUp = 0;
     if (summarize) {
       try {
-        const res = await window.cc.terminals.closeFollowup(projectId, ids);
+        const res = await product.terminals.closeFollowup(projectId, ids);
         summarized = res.summarized;
         followedUp = res.followedUp;
       } catch (err) {
@@ -3099,7 +3101,7 @@ export const useData = create<DataState>((set, get) => ({
     // Read-only: fold the agents into one inbox digest and leave them running.
     // Main reads live transcripts and never throws; guard the IPC anyway.
     try {
-      const res = await window.cc.terminals.summarizeIdle(projectId, sessionIds);
+      const res = await product.terminals.summarizeIdle(projectId, sessionIds);
       if (res.summarized > 0) {
         useUi
           .getState()
@@ -3119,7 +3121,7 @@ export const useData = create<DataState>((set, get) => ({
 
   async summarizeSession(sessionId, projectId) {
     try {
-      const res = await window.cc.terminals.summarizeSession(projectId, sessionId);
+      const res = await product.terminals.summarizeSession(projectId, sessionId);
       if (res.ok) {
         useUi.getState().pushToast('Summary sent to your inbox.', 'info');
         return true;
@@ -3163,7 +3165,7 @@ export const useData = create<DataState>((set, get) => ({
     useUi.getState().clearUnread(sessionId);
     useUi.getState().removeFromSplit(projectId, sessionId);
     try {
-      await window.cc.terminals.setHeadless(sessionId, true);
+      await product.terminals.setHeadless(sessionId, true);
     } catch (err) {
       // Revert on failure so the tab reappears rather than vanishing
       // silently. Failure is rare (only if the pty is already gone).
@@ -3210,7 +3212,7 @@ export const useData = create<DataState>((set, get) => ({
     }));
     let updated: TerminalSession | null = null;
     try {
-      updated = await window.cc.terminals.setHeadless(sessionId, false);
+      updated = await product.terminals.setHeadless(sessionId, false);
     } catch (err) {
       pushErrorToast(errorMessage(err, 'Failed to resume session'));
       // Re-hide on failure to keep state consistent.
@@ -3291,7 +3293,7 @@ export const useData = create<DataState>((set, get) => ({
       openCodeSessionId: src.openCodeSessionId
     };
     try {
-      if (!await window.cc.terminals.close(sessionId)) {
+      if (!await product.terminals.close(sessionId)) {
         pushErrorToast('Failed to restart terminal; its remote session may still be running');
         return null;
       }
@@ -3367,7 +3369,7 @@ export const useData = create<DataState>((set, get) => ({
     };
     let result: Result<TerminalSession>;
     try {
-      result = await window.cc.terminals.reconnectRemote({
+      result = await product.terminals.reconnectRemote({
         capabilityId: src.restoreCapabilityId,
         legacy: src.restoreCapabilityId ? undefined : {
           projectId,
@@ -3610,7 +3612,7 @@ export const useData = create<DataState>((set, get) => ({
     const project = get().projects.find((p) => p.id === projectId);
     if (!project) return;
     try {
-      const status = await window.cc.git.status(project.path);
+      const status = await product.git.status(project.path);
       set((s) => ({ gitStatus: { ...s.gitStatus, [projectId]: status } }));
     } catch {
       set((s) => ({ gitStatus: { ...s.gitStatus, [projectId]: null } }));
@@ -3622,7 +3624,7 @@ export const useData = create<DataState>((set, get) => ({
     // Sequential to avoid spawning N git processes at once.
     for (const p of projects) {
       try {
-        const status = await window.cc.git.status(p.path);
+        const status = await product.git.status(p.path);
         set((s) => ({ gitStatus: { ...s.gitStatus, [p.id]: status } }));
       } catch {
         /* ignore */

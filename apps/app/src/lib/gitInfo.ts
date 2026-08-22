@@ -1,3 +1,4 @@
+import { product } from './product-client.js';
 import { useEffect } from 'react';
 import { create } from 'zustand';
 
@@ -71,7 +72,7 @@ export function refreshGitInfo(cwd: string): void {
   if (cur?.fetchedAt && Date.now() - cur.fetchedAt < GIT_INFO_TTL_MS) return;
   const { setItem } = useGitInfo.getState();
   setItem(cwd, { loading: true });
-  void window.cc.git
+  void product.git
     .status(cwd)
     .then((st) => {
       setItem(cwd, {

@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   Settings2,
@@ -152,9 +153,9 @@ export function SettingsView() {
   const [homedir, setHomedir] = useState<string>('');
 
   useEffect(() => {
-    window.cc.config.get().then(setConfig).catch(() => {});
-    window.cc.app.homedir().then(setHomedir).catch(() => {});
-    window.cc.skills.readHooks().then(setHooks).catch(() => {});
+    product.config.get().then(setConfig).catch(() => {});
+    product.app.homedir().then(setHomedir).catch(() => {});
+    product.skills.readHooks().then(setHooks).catch(() => {});
   }, []);
 
   const markSaved = useCallback(() => {
@@ -198,12 +199,12 @@ export function SettingsView() {
 
   const resolve = (p: string) => (homedir ? p.replace(/^~/, homedir) : p);
   const openFile = (path: string) => {
-    window.cc.openers.openIn('cursor', resolve(path)).catch(() => {});
+    product.openers.openIn('cursor', resolve(path)).catch(() => {});
   };
 
   const update = async (patch: Partial<AppConfig>) => {
     try {
-      const next = await window.cc.config.set(patch);
+      const next = await product.config.set(patch);
       setConfig(next);
       if (typeof patch.fontSize === 'number') useData.getState().setFontSize(patch.fontSize);
       if (typeof patch.terminalTheme === 'string') {

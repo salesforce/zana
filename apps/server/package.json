@@ -24,17 +24,21 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run --config vitest.config.ts"
+    "test": "vitest run --config vitest.config.ts",
+    "listen": "tsx src/http/listen.ts"
   },
   "dependencies": {
     "@zana-ai/zcc-contracts": "workspace:*",
     "@zana-ai/zcc-domain": "workspace:*",
     "@zana-ai/zcc-host-daemon": "workspace:*",
     "@zana-ai/zcc-plugin-sdk": "workspace:*",
-    "better-sqlite3": "^12.11.1"
+    "better-sqlite3": "^12.11.1",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.23.12",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }

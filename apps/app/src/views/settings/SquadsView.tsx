@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import { Users, Search, FolderOpen, Play, ChevronDown, ChevronRight, Plus, Download, Upload, Copy, Pencil, Trash2 } from 'lucide-react';
 import type { CancelTeamLaunchResult, LaunchTeamResult, Project, Result, Team, Persona } from '@zana-ai/zcc-domain/product';
@@ -165,7 +166,7 @@ export function SquadsView() {
       pushToast('Add a project before launching a team.', 'error');
       return null;
     }
-    const res = await window.cc.teams.launch(team.id, projectId);
+    const res = await product.teams.launch(team.id, projectId);
     if (res.ok) {
       const n = res.value.launched;
       const where = projects.find((p) => p.id === projectId)?.name ?? 'project';
@@ -182,12 +183,12 @@ export function SquadsView() {
   };
 
   const reveal = async () => {
-    const res = await window.cc.teams.revealDir();
+    const res = await product.teams.revealDir();
     if (!res.ok) pushToast(res.message ?? 'Failed to reveal teams directory', 'error');
   };
 
   const exportTeam = async (team: Team) => {
-    const res = await window.cc.teams.exportBundle(team.id);
+    const res = await product.teams.exportBundle(team.id);
     if (!res.ok) {
       pushToast(`Export failed: ${res.message}`, 'error');
       return;
@@ -197,7 +198,7 @@ export function SquadsView() {
   };
 
   const duplicateTeam = async (team: Team) => {
-    const result = await window.cc.teams.duplicate(team.id);
+    const result = await product.teams.duplicate(team.id);
     if (!result.ok) {
       pushToast(`Duplicate failed: ${result.message}`, 'error');
       return;
@@ -206,7 +207,7 @@ export function SquadsView() {
   };
 
   const deleteTeam = async (team: Team) => {
-    const result = await window.cc.teams.delete(team.id);
+    const result = await product.teams.delete(team.id);
     if (!result.ok) {
       pushToast(`Delete failed: ${result.message}`, 'error');
       return;
@@ -215,7 +216,7 @@ export function SquadsView() {
   };
 
   const importBundle = async () => {
-    const res = await window.cc.teams.importBundle();
+    const res = await product.teams.importBundle();
     if (!res.ok) {
       pushToast(`Import failed: ${res.message}`, 'error');
       return;
@@ -479,7 +480,7 @@ function TeamRow({
   const cancelLaunch = async (launchRequestId: string) => {
     setCancelState({ kind: 'pending', message: 'Canceling launch…' });
     try {
-      const result = await window.cc.teams.cancel(launchRequestId);
+      const result = await product.teams.cancel(launchRequestId);
       if (!result.ok) {
         setCancelState({ kind: 'error', message: `Cancel failed: ${result.message}` });
         return;

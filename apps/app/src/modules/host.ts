@@ -1,6 +1,7 @@
+import { product } from '../lib/product-client.js';
 /**
  * Builds a `ModuleHost` for a given module id. Each method routes through the
- * generic `window.cc.modules` bridge (multiplexed IPC) or existing core
+ * generic `product.modules` bridge (multiplexed IPC) or existing core
  * surfaces (inbox push, toasts), keeping modules decoupled from core wiring.
  */
 
@@ -17,8 +18,8 @@ import { sanitizeExtraArgs } from '@zana-ai/zcc-domain/launch-sanitize';
  *
  * IMPORTANT (honest scope): this gate is **ADVISORY**, not authoritative. All
  * panels today share one `window.cc` and one IPC connection, so a malicious
- * panel can bypass `ModuleHost` and call `window.cc.terminals.create` /
- * `window.cc.openers.openIn` directly — the renderer cannot authenticate which
+ * panel can bypass `ModuleHost` and call `product.terminals.create` /
+ * `product.openers.openIn` directly — the renderer cannot authenticate which
  * extension made a call. Authoritative renderer attribution (origin-based, per
  * sandboxed-iframe panel) is design §4 / a later "open the UI to strangers"
  * ticket (P3-C). Until then this gate:
@@ -225,31 +226,31 @@ function subscribeHostEvent<E extends keyof HostEvents>(
 
   switch (event) {
     case 'session:updated':
-      return window.cc.terminals.onUpdated((session) => {
+      return product.terminals.onUpdated((session) => {
         fire({ session: toSessionInfo(session) });
       });
     case 'session:agentStatus':
-      return window.cc.terminals.onAgentStatus((sessionId, state) => {
+      return product.terminals.onAgentStatus((sessionId, state) => {
         fire({ sessionId, state });
       });
     case 'session:exit':
-      return window.cc.terminals.onExit((sessionId, code) => {
+      return product.terminals.onExit((sessionId, code) => {
         fire({ sessionId, code });
       });
     case 'inbox:appended':
-      return window.cc.inbox.onAppended((entry) => {
+      return product.inbox.onAppended((entry) => {
         fire({ id: entry.id });
       });
     case 'inbox:removed':
-      return window.cc.inbox.onRemoved((id) => {
+      return product.inbox.onRemoved((id) => {
         fire({ id });
       });
     case 'schedule:changed':
-      return window.cc.scheduler.onChanged(() => fire({}));
+      return product.scheduler.onChanged(() => fire({}));
     case 'mcp:changed':
-      return window.cc.mcp.onChanged(() => fire({}));
+      return product.mcp.onChanged(() => fire({}));
     case 'skills:changed':
-      return window.cc.skills.onChanged(() => fire({}));
+      return product.skills.onChanged(() => fire({}));
     case 'project:changed': {
       // Derive from the shell's selected project. Subscribe to the whole UI
       // store (zustand v5 vanilla subscribe fires on every change) and diff the
@@ -290,7 +291,7 @@ function subscribeHostEvent<E extends keyof HostEvents>(
  * capability). Frames arrive core→renderer on ONE pair of IPC channels
  * (`modules:streamFrame` / `modules:streamDone`) keyed by the opaque subId; this
  * registry demultiplexes them to the panel handler(s) that subscribed to that
- * subId. The two underlying `window.cc.modules.on*` listeners are attached LAZILY
+ * subId. The two underlying `product.modules.on*` listeners are attached LAZILY
  * on the first subscribe and detached when the last handler unsubscribes, so a
  * shell with no live stream holds no listener.
  */
@@ -312,13 +313,13 @@ function detachStreamListenersIfIdle(): void {
 
 function ensureStreamListeners(): void {
   if (streamOffFrame) return; // already attached
-  streamOffFrame = window.cc.modules.onStreamFrame((subId, frame) => {
+  streamOffFrame = product.modules.onStreamFrame((subId, frame) => {
     const set = streamSubs.get(subId);
     if (!set) return;
     // Snapshot before firing: a handler may unsubscribe during dispatch.
     for (const h of [...set]) h.onFrame(frame);
   });
-  streamOffDone = window.cc.modules.onStreamDone((subId, reason) => {
+  streamOffDone = product.modules.onStreamDone((subId, reason) => {
     const set = streamSubs.get(subId);
     if (!set) return;
     // Terminal: fire onDone, then drop every handler for this subId — no more
@@ -365,11 +366,11 @@ export function createModuleHost(
   return {
     moduleId,
     call: <T = unknown>(capability: string, ...args: unknown[]) =>
-      window.cc.modules.call(moduleId, capability, args) as Promise<T>,
+      product.modules.call(moduleId, capability, args) as Promise<T>,
     storage: {
       get: <T = unknown>(key: string) =>
-        window.cc.modules.storageGet(moduleId, key) as Promise<T | undefined>,
-      set: (key: string, value: unknown) => window.cc.modules.storageSet(moduleId, key, value)
+        product.modules.storageGet(moduleId, key) as Promise<T | undefined>,
+      set: (key: string, value: unknown) => product.modules.storageSet(moduleId, key, value)
     },
     openExternal: (url: string) => {
       // Gate: external:open (advisory) + scheme allowlist (http/https only).
@@ -388,7 +389,7 @@ export function createModuleHost(
         useUi.getState().pushToast(`${moduleId}: only http(s) URLs may be opened`, 'error');
         return;
       }
-      void window.cc.openers.openIn('browser', url);
+      void product.openers.openIn('browser', url);
     },
     pushInbox: async (msg) => {
       // Gate: inbox:push. (Main-side pushInbox also receives moduleId and can
@@ -401,7 +402,7 @@ export function createModuleHost(
       if (!projectId) {
         throw new Error('pushInbox: no projectId and no active project');
       }
-      return window.cc.modules.pushInbox(moduleId, { ...msg, projectId });
+      return product.modules.pushInbox(moduleId, { ...msg, projectId });
     },
     toast: (message: string, kind?: 'info' | 'error') => {
       useUi.getState().pushToast(message, kind);
@@ -411,7 +412,7 @@ export function createModuleHost(
       // the respawn off this `moduleId`, not a renderer-supplied one). A built-in
       // has no separate child, so main returns ok:false → false here.
       try {
-        const res = await window.cc.extensions.relaunch(moduleId);
+        const res = await product.extensions.relaunch(moduleId);
         return res.ok ? res.value : false;
       } catch {
         return false;
@@ -443,7 +444,7 @@ export function createModuleHost(
       // the returned id — its project-scope guard (`projects.some`) reads
       // useData's list and would reject an id the renderer hasn't seen yet.
       try {
-        const res = await window.cc.projects.ensureQuickAgent();
+        const res = await product.projects.ensureQuickAgent();
         if (!res.ok) {
           useUi.getState().pushToast(`${moduleId}: ${res.message}`, 'error');
           return null;
@@ -500,7 +501,7 @@ export function createModuleHost(
       // Shared renderer origin cannot authenticate module identity. Use the one
       // generic renderer launch seam; main presents native confirmation and
       // treats this as interactive renderer intent, never extension attribution.
-      const launched = await window.cc.terminals.create({
+      const launched = await product.terminals.create({
         projectId,
         profile: baseProfile,
         cols: 80,
@@ -526,7 +527,7 @@ export function createModuleHost(
       // must not submit, use writeToSession (no Enter).
       if (!sessionInputAllowed(moduleId, sessionId, text)) return false;
       try {
-        await window.cc.terminals.reply(sessionId, text);
+        await product.terminals.reply(sessionId, text);
         return true;
       } catch {
         return false;
@@ -536,7 +537,7 @@ export function createModuleHost(
       // Raw write, NO trailing Enter (Esc, Ctrl-C, …). Same gate + scope.
       if (!sessionInputAllowed(moduleId, sessionId, data)) return false;
       try {
-        await window.cc.terminals.write(sessionId, data);
+        await product.terminals.write(sessionId, data);
         return true;
       } catch {
         return false;

@@ -75,7 +75,7 @@ describe('single shell <main> landmark', () => {
     expect(src('components/ProjectScopedNav.tsx')).toMatch(/mode: 'scheduler'/);
     expect(src('components/ProjectScopedNav.tsx')).toMatch(/\?\? 'agents'/);
     expect(src('components/ProjectScopedNav.tsx')).toMatch(/sidebar--titlebar-controls/);
-    expect(src('components/ProjectScopedNav.tsx')).toMatch(/sidebar-utility-bar/);
+    expect(src('components/SidebarRail.tsx')).toMatch(/sidebar-utility-bar/);
     expect(src('components/ProjectScopedNav.tsx')).not.toMatch(/nav-section-label/);
     expect(src('components/ProjectScopedNav.tsx')).not.toMatch(/Project workspace/);
   });

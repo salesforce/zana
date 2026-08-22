@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 /**
  * "Create your own extension" dialog — the entry point for authoring a LOCAL
  * extension in-app. The user gives a name (+ optional description); on submit we:
@@ -83,7 +84,7 @@ export function CreateExtensionDialog({ onClose }: Props) {
     setBusy(true);
     setError(null);
     try {
-      const res = await window.cc.extensions.createLocal({
+      const res = await product.extensions.createLocal({
         name: trimmed,
         description: description.trim() || undefined,
         kind

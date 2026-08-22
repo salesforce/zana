@@ -1,5 +1,7 @@
 import { startStaticHost } from './static-host.js';
 import { toBrowserProjectSummaries } from './browser-bootstrap.js';
+import { createProductHttpContext } from './http/product-context.js';
+import { DEFAULT_DEV_APP_PORT } from './http/ports.js';
 import { SERVER_RUNTIME_PROTOCOL_VERSION, ServerRuntimeInboundSchema } from '@zana-ai/zcc-contracts/runtime';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -72,6 +74,11 @@ parentPort.on('message', async ({ data }) => {
         }
       });
       await plugins.start();
+      const product = createProductHttpContext({
+        dataDir: message.dataDir,
+        origins: { serverPort: 0, devAppPort: DEFAULT_DEV_APP_PORT },
+        projects: projects ?? undefined
+      });
       const host = await startStaticHost({
         rootDir: message.rendererRoot,
         browserBootstrap: () => ({
@@ -82,7 +89,8 @@ parentPort.on('message', async ({ data }) => {
         pluginAssetRoot: (pluginId) => {
           const row = plugins?.get(pluginId);
           return row?.enabled && row.appEntry ? row.rootDir : null;
-        }
+        },
+        product
       });
       close = host.close;
       terminalExecution = createTerminalExecutionService({

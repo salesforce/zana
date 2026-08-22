@@ -1,7 +1,7 @@
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
-import type { CcApi } from '@zana-ai/zcc-desktop-contract';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
+import { hasDesktopBridge } from './lib/app-surface.js';
 // Prevent the OS from navigating to files dropped outside the terminal area.
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => e.preventDefault());
@@ -37,48 +37,38 @@ if (!root) {
   });
 } else {
   const appRoot = createRoot(root);
-  // A regular browser has no preload. Keep it on the intentionally small
-  // server-owned surface instead of polyfilling privileged desktop APIs.
-  if (!('cc' in window)) {
-    void import('./components/BrowserAccess.js').then(({ BrowserAccess }) => {
+  const start = async () => {
+    try {
+      const startup = hasDesktopBridge()
+        ? await window.cc.startup.state()
+        : { mode: 'ready' as const };
+      // Keep repair mode outside App: importing App initializes renderer stores
+      // backed by data that migration has not made safe to read yet.
+      const isRepair = startup.mode === 'repair-required';
+      const Content = isRepair
+        ? (await import('./components/StartupRepair.js')).StartupRepair
+        : (await import('./App.js')).App;
       appRoot.render(
         <ErrorBoundary>
-          <BrowserAccess />
+          {isRepair ? (
+            <Content />
+          ) : (
+            <BrowserRouter>
+              <Content />
+            </BrowserRouter>
+          )}
         </ErrorBoundary>
       );
-    });
-  } else {
-    const start = async () => {
-      try {
-        const startup = await window.cc.startup.state();
-        // Keep repair mode outside App: importing App initializes renderer stores
-        // backed by data that migration has not made safe to read yet.
-        const isRepair = startup.mode === 'repair-required';
-        const Content = isRepair
-          ? (await import('./components/StartupRepair.js')).StartupRepair
-          : (await import('./App.js')).App;
-        appRoot.render(
-          <ErrorBoundary>
-            {isRepair ? (
-              <Content />
-            ) : (
-              <BrowserRouter>
-                <Content />
-              </BrowserRouter>
-            )}
-          </ErrorBoundary>
-        );
-      } catch (error) {
-        console.error('[renderer] startup state failed:', error);
-        const { StartupError } = await import('./components/StartupRepair.js');
-        const message = error instanceof Error ? error.message : String(error);
-        appRoot.render(
-          <ErrorBoundary>
-            <StartupError error={message} onRetry={() => void start()} />
-          </ErrorBoundary>
-        );
-      }
-    };
-    void start();
-  }
+    } catch (error) {
+      console.error('[renderer] startup state failed:', error);
+      const { StartupError } = await import('./components/StartupRepair.js');
+      const message = error instanceof Error ? error.message : String(error);
+      appRoot.render(
+        <ErrorBoundary>
+          <StartupError error={message} onRetry={() => void start()} />
+        </ErrorBoundary>
+      );
+    }
+  };
+  void start();
 }

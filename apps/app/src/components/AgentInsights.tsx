@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useEffect, useState } from 'react';
 import { FileText, FileCode, FileJson, FilePlus } from 'lucide-react';
 import type { SessionStats } from '@zana-ai/zcc-domain/product';
@@ -54,7 +55,7 @@ export function useSessionStats(
     if (!enabled) return;
     let alive = true;
     const pull = () => {
-      void window.cc.terminals
+      void product.terminals
         .sessionStats(projectId, sessionId)
         .then((s) => {
           if (alive) setStats(s);

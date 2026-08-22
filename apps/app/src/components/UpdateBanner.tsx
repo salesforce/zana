@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { Sparkles, X, Loader2, CheckCircle2 } from 'lucide-react';
 import { useUpdates, useUpdateBanner, isUpdateBannerVisible } from '../store.js';
 
@@ -57,7 +58,7 @@ export function UpdateBanner() {
           <button
             type="button"
             className="update-banner-btn update-banner-btn--primary"
-            onClick={() => void window.cc.updates.download({ installNow: true })}
+            onClick={() => void product.updates.download({ installNow: true })}
             title="Download the update and relaunch into it"
           >
             Update now
@@ -65,7 +66,7 @@ export function UpdateBanner() {
           <button
             type="button"
             className="update-banner-btn"
-            onClick={() => version && void window.cc.updates.skip(version)}
+            onClick={() => version && void product.updates.skip(version)}
             disabled={!version}
             title="Don't offer this version again"
           >
@@ -85,7 +86,7 @@ export function UpdateBanner() {
         <button
           type="button"
           className="update-banner-btn update-banner-btn--primary"
-          onClick={() => void window.cc.updates.quitAndInstall()}
+          onClick={() => void product.updates.quitAndInstall()}
           title="Quit and install the update now"
         >
           Restart now

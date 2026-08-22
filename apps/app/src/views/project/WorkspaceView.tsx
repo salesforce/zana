@@ -1,7 +1,9 @@
+import { product } from '../../lib/product-client.js';
 import { lazy, Suspense, useEffect } from 'react';
 import { TerminalSquare, GitBranch, Columns2, Rows2, LayoutGrid, Square, Bot } from 'lucide-react';
 import type { SplitLayout, ProjectView } from '@/store';
 import { useData, useUi, visibleTerminals, backgroundTerminals } from '@/store';
+import { useRouteState } from '@/hooks/useRouteState';
 import { TabBar } from '@/components/TabBar';
 import { PROJECTS_TERMINAL_ANCHOR_ID } from '@/components/TerminalSurface';
 import { AgentLauncher } from '@/components/AgentLauncher';
@@ -65,6 +67,8 @@ export function WorkspaceView() {
   // Generic — core never names a concrete extension here (Rule 6).
   const projectTabModules = useProjectTabModules();
 
+  const route = useRouteState();
+  const workspaceShown = route.nav === 'projects' && !!route.focusedProjectId;
   const project = projects.find((p) => p.id === selectedProjectId) ?? null;
   const gitStatus = useData((s) => (project ? s.gitStatus[project.id] : null)) ?? null;
   // Terminals mode is shells-only. Claude agents (whether launched manually,
@@ -126,7 +130,7 @@ export function WorkspaceView() {
   const splitActive = splitLayout !== 'single';
 
   useEffect(() => {
-    const off = window.cc.terminals.onExit((id, code) => markExited(id, code));
+    const off = product.terminals.onExit((id, code) => markExited(id, code));
     return off;
   }, [markExited]);
 
@@ -164,7 +168,7 @@ export function WorkspaceView() {
   // select it, drop into Agents mode, and open the Quick Agent launcher — the
   // same path the Agents nav uses, reachable from the bare Workspace.
   const handleStartQuickAgent = async () => {
-    const res = await window.cc.projects.ensureQuickAgent();
+    const res = await product.projects.ensureQuickAgent();
     if (!res.ok) return; // ensureQuickAgent surfaces its own failure upstream
     await loadProjects();
     selectProject(res.value.id);
@@ -408,7 +412,7 @@ export function WorkspaceView() {
           </>
         )}
       </div>
-      {launcherOpen && project && (
+      {launcherOpen && project && workspaceShown && (
         <AgentLauncher
           project={project}
           backgroundTabs={backgroundTabs}

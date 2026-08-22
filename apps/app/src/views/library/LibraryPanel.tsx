@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { RefreshCw, Search, X, Trash2, ExternalLink, AtSign, BotMessageSquare } from 'lucide-react';
 
@@ -229,7 +230,7 @@ export function LibraryPanel() {
       return;
     }
     const relPath = parentRelPath ? `${parentRelPath}/${name}` : name;
-    const r = await window.cc.library.createFolder(scope, relPath, projectId);
+    const r = await product.library.createFolder(scope, relPath, projectId);
     if (!r.ok) {
       pushToast(r.message ?? 'Failed to create folder', 'error');
       return;
@@ -263,7 +264,7 @@ export function LibraryPanel() {
     const fileName = /\.\w+$/.test(name) ? name : `${name}.md`;
     const relPath = parentRelPath ? `${parentRelPath}/${fileName}` : fileName;
     const title = fileName.replace(/\.\w+$/, '');
-    const created = await window.cc.library.add({
+    const created = await product.library.add({
       scope,
       projectId,
       relPath,
@@ -304,7 +305,7 @@ export function LibraryPanel() {
       if (next.includes('..')) pushToast('Path cannot contain ".."', 'error');
       return;
     }
-    const r = await window.cc.library.move(
+    const r = await product.library.move(
       { scope, relPath, projectId },
       { scope, relPath: next, projectId }
     );
@@ -325,7 +326,7 @@ export function LibraryPanel() {
     const what = node.kind === 'dir' ? 'folder (and everything inside it)' : 'document';
     const label = node.kind === 'dir' ? node.name : node.doc?.title ?? node.name;
     if (!window.confirm(`Delete ${what} "${label}"? This cannot be undone.`)) return;
-    const r = await window.cc.library.deleteEntry(node.scope, node.relPath, node.projectId);
+    const r = await product.library.deleteEntry(node.scope, node.relPath, node.projectId);
     if (!r.ok) {
       pushToast(r.message ?? 'Delete failed', 'error');
       return;
@@ -346,7 +347,7 @@ export function LibraryPanel() {
 
   const handleReveal = async (node: LibraryTreeNode) => {
     try {
-      const result = await window.cc.library.reveal(node.scope, node.projectId);
+      const result = await product.library.reveal(node.scope, node.projectId);
       if (!result.ok) pushToast(result.message ?? 'Failed to reveal directory', 'error');
     } catch (err) {
       pushToast(`Reveal failed: ${err}`, 'error');
@@ -381,7 +382,7 @@ export function LibraryPanel() {
             type="button"
             className="opener-btn"
             title="Refresh"
-            onClick={() => window.cc.library.list().then((d) => useLibrary.setState({ docs: d }))}
+            onClick={() => product.library.list().then((d) => useLibrary.setState({ docs: d }))}
           >
             <RefreshCw size={13} />
           </button>

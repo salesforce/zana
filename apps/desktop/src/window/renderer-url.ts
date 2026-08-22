@@ -14,7 +14,7 @@ export function setProductionRendererOrigin(value: string): void {
 }
 
 export function rendererUrl(params: Record<string, string | undefined> = {}): string | null {
-  const devUrl = process.env.ELECTRON_RENDERER_URL;
+  const devUrl = process.env.ZCC_DESKTOP_APP_URL || process.env.ELECTRON_RENDERER_URL;
   if (devUrl) {
     const url = new URL(devUrl);
     for (const [key, value] of Object.entries(params)) {

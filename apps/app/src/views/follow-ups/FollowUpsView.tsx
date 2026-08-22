@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   MessageCircleQuestion,
@@ -317,7 +318,7 @@ export function FollowUpsView({ projectId }: { projectId?: string } = {}) {
           onConfirm={async () => {
             const id = confirmDelete.id;
             setConfirmDelete(null);
-            const result = await window.cc.followups.delete(id);
+            const result = await product.followups.delete(id);
             if (!result.ok) {
               useUi.getState().pushToast(`Delete failed: ${result.message}`, 'error');
             }
@@ -400,7 +401,7 @@ function FollowUpRow({
   const spawnDisabled = spawning || locked;
 
   const setStatus = async (status: FollowUpStatus, verb: string, resolution?: string) => {
-    const result = await window.cc.followups.setStatus(followUp.id, status, resolution);
+    const result = await product.followups.setStatus(followUp.id, status, resolution);
     if (!result.ok) pushToast(`${verb} failed: ${result.message}`, 'error');
   };
 
@@ -445,7 +446,7 @@ function FollowUpRow({
         // buttons stay locked for the next minute (survives a window reload).
         // Best-effort: the agent is already launched, so a failed stamp only
         // means the visual lock is skipped — don't surface it as a spawn error.
-        void window.cc.followups.markSpawned(followUp.id);
+        void product.followups.markSpawned(followUp.id);
         const ui = useUi.getState();
         ui.enterProjectFocus(project.id);
         ui.selectTab(project.id, session.id);
@@ -899,14 +900,14 @@ function FollowUpModal({
           origin: { source: 'user' },
           scope: scope === 'project' ? { projectId } : 'global'
         };
-        const result = await window.cc.followups.create(input);
+        const result = await product.followups.create(input);
         if (!result.ok) {
           setError(result.message);
           setSaving(false);
           return;
         }
       } else {
-        const result = await window.cc.followups.update(followUp!.id, {
+        const result = await product.followups.update(followUp!.id, {
           title: title.trim(),
           detail: detail.trim() || undefined,
           kind

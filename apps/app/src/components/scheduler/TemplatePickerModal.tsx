@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import React, { useState, useMemo } from 'react';
 import { Sparkles, FolderOpen } from 'lucide-react';
 import type { ScheduleTemplate } from '@zana-ai/zcc-domain/product';
@@ -36,7 +37,7 @@ export function TemplatePickerModal({ onClose, onPick }: TemplatePickerModalProp
   }, [filtered]);
 
   const reveal = () => {
-    window.cc.scheduler.revealTemplatesDir().catch(() => {});
+    product.scheduler.revealTemplatesDir().catch(() => {});
   };
 
   return (

@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useEffect, useRef, useState } from 'react';
 import { X, Trash2, Copy, Pencil, FolderOpen, ChevronRight } from 'lucide-react';
 import type { HarnessAdapterDescriptor } from '@zana-ai/zcc-domain/harness-adapter';
@@ -506,7 +507,7 @@ function PersonaForm({ persona, onClose }: { persona: Persona | null; onClose: (
 
   useEffect(() => {
     let cancelled = false;
-    window.cc.harness.descriptors()
+    product.harness.descriptors()
       .then((value) => { if (!cancelled) setDescriptors(value); })
       .catch(() => { if (!cancelled) setDescriptors([]); });
     return () => { cancelled = true; };
@@ -579,7 +580,7 @@ function PersonaForm({ persona, onClose }: { persona: Persona | null; onClose: (
     };
     if (keepsId && persona) input.id = persona.id;
 
-    const result = await savePersona(input, (value) => window.cc.personas.save(value));
+    const result = await savePersona(input, (value) => product.personas.save(value));
     if (!result.ok) {
       pushToast(`Save failed: ${result.message}`, 'error');
       setSaving(false);
@@ -591,7 +592,7 @@ function PersonaForm({ persona, onClose }: { persona: Persona | null; onClose: (
 
   const remove = async () => {
     if (!persona) return;
-    const result = await window.cc.personas.delete(persona.id);
+    const result = await product.personas.delete(persona.id);
     if (!result.ok) {
       pushToast(`Delete failed: ${result.message}`, 'error');
       return;
@@ -840,7 +841,7 @@ export function RevealPersonasButton() {
     <button
       type="button"
       className="settings-btn"
-      onClick={() => window.cc.personas.revealDir().catch(() => {})}
+      onClick={() => product.personas.revealDir().catch(() => {})}
       title="Open the personas directory in Finder"
     >
       <FolderOpen size={12} /> Reveal personas dir

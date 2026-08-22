@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useShallow } from 'zustand/react/shallow';
@@ -660,7 +661,7 @@ function slugifyId(label: string): string {
  * the source of truth for which `{{arg}}` slots exist — the per-argument metadata
  * section is derived live from `parseArgumentNames(prompt)`, so the author fills
  * in type/description/default for exactly the slots they typed, and can't declare
- * a phantom argument. Saving round-trips through `window.cc.quickPrompts.save`,
+ * a phantom argument. Saving round-trips through `product.quickPrompts.save`,
  * where main re-validates and re-sanitizes (Rule 1). A builtin is edited by
  * saving a user file that shadows its id; "Reset" deletes that user file.
  */
@@ -747,7 +748,7 @@ function QuickPromptEditor({
     setBusy(true);
     setError(null);
     try {
-      await window.cc.quickPrompts.save(entry);
+      await product.quickPrompts.save(entry);
       onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -763,7 +764,7 @@ function QuickPromptEditor({
     setBusy(true);
     setError(null);
     try {
-      await window.cc.quickPrompts.delete(initial.id);
+      await product.quickPrompts.delete(initial.id);
       pushToast(
         isBuiltin ? `Reset "${initial.label}" to default` : `Deleted "${initial.label}"`,
         'info'
@@ -1054,7 +1055,7 @@ export const AgentLauncher = memo(function AgentLauncher({
   const [microVmSupported, setMicroVmSupported] = useState<boolean | null>(null);
   useEffect(() => {
     let alive = true;
-    window.cc.app
+    product.app
       .microVmSupported()
       .then((ok) => alive && setMicroVmSupported(ok))
       .catch(() => alive && setMicroVmSupported(false));
@@ -1194,7 +1195,7 @@ export const AgentLauncher = memo(function AgentLauncher({
     if (!remoteTarget) return attachments;
     const uploaded: string[] = [];
     for (const localPath of attachments) {
-      const result = await window.cc.fs.uploadToRemote(remoteTarget.id, localPath, '.');
+      const result = await product.fs.uploadToRemote(remoteTarget.id, localPath, '.');
       if (!result.ok || !result.path) {
         pushToast(result.message ?? `Failed to upload ${attachmentName(localPath)}`, 'error');
         return null;
@@ -1312,7 +1313,7 @@ export const AgentLauncher = memo(function AgentLauncher({
     let cancelled = false;
     setTargetIsGitRepo(false);
     if (!worktreeStructurallyEligible || !target) return;
-    void window.cc.git.isRepo(target.path)
+    void product.git.isRepo(target.path)
       .then((isRepo) => {
         if (!cancelled) setTargetIsGitRepo(isRepo);
       })
@@ -1357,7 +1358,7 @@ export const AgentLauncher = memo(function AgentLauncher({
       return;
     }
     let cancelled = false;
-    void window.cc.projectSettings
+    void product.projectSettings
       .get(target.id)
       .then((settings) => {
         const effective = resolveWorktreeDefault(
@@ -1430,9 +1431,9 @@ export const AgentLauncher = memo(function AgentLauncher({
     let cancelled = false;
     (async () => {
       const [prompts, entries, anchorRes] = await Promise.all([
-        window.cc.quickPrompts.list(),
-        window.cc.extensions.list(),
-        projectMode ? Promise.resolve(null) : window.cc.projects.ensureQuickAgent()
+        product.quickPrompts.list().catch(() => []),
+        product.extensions.list().catch(() => []),
+        projectMode ? Promise.resolve(null) : product.projects.ensureQuickAgent()
       ]);
       if (cancelled) return;
       setPresets(prompts);
@@ -1458,7 +1459,7 @@ export const AgentLauncher = memo(function AgentLauncher({
     });
     // Live-refresh the chip list when the store changes (editor save/delete, or
     // a hand-edited file in the user dir).
-    const off = window.cc.quickPrompts.onChanged((prompts) => {
+    const off = product.quickPrompts.onChanged((prompts) => {
       if (!cancelled) setPresets(prompts);
     });
     return () => {
@@ -1468,7 +1469,7 @@ export const AgentLauncher = memo(function AgentLauncher({
   }, [projectMode, loadProjects]);
 
   useEffect(() => {
-    void window.cc.harness.descriptors().then(setHarnessDescriptors).catch(() => setHarnessDescriptors([]));
+    void product.harness.descriptors().then(setHarnessDescriptors).catch(() => setHarnessDescriptors([]));
   }, []);
 
   useEffect(() => {
@@ -1483,7 +1484,7 @@ export const AgentLauncher = memo(function AgentLauncher({
       profile: openCodeAgentDiscoveryProfile,
       discovery: { status: 'loading' }
     });
-    void window.cc.harness.agentDescriptors(
+    void product.harness.agentDescriptors(
       openCodeAgentDiscoveryProjectId,
       openCodeAgentDiscoveryProfile,
       agentDescriptorsRefresh > 0
@@ -1658,7 +1659,7 @@ export const AgentLauncher = memo(function AgentLauncher({
     try {
       const attachmentPaths = await resolveAttachmentPaths();
       if (attachmentPaths === null) return;
-      const res = await window.cc.teams.launchAutonomous(
+      const res = await product.teams.launchAutonomous(
         teamId,
         target.id,
         appendAttachmentContext(goal, attachmentPaths)
@@ -1692,7 +1693,7 @@ export const AgentLauncher = memo(function AgentLauncher({
     if (!launchError || fixingWithAi) return;
     setFixingWithAi(true);
     try {
-      const anchorRes = await window.cc.projects.ensureQuickAgent();
+      const anchorRes = await product.projects.ensureQuickAgent();
       if (!anchorRes.ok) {
         setLaunchError(anchorRes.message);
         return;

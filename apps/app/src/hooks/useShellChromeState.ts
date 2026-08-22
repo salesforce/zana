@@ -1,3 +1,5 @@
+import { getAppSurface, type AppSurface } from '../lib/app-surface.js';
+import { product } from '../lib/product-client.js';
 import { useEffect, useState } from 'react';
 import {
   shellPlatform,
@@ -8,20 +10,22 @@ import {
 export interface ShellChromeState {
   platform: ShellPlatform;
   isFullScreen: boolean;
+  surface: AppSurface;
   reserveMacosTrafficLights: boolean;
 }
 
 /** Reads window state once for the whole shell; individual headers stay pure. */
 export function useShellChromeState(): ShellChromeState {
   const [platform] = useState(shellPlatform);
+  const [surface] = useState(getAppSurface);
   const [isFullScreen, setFullScreen] = useState(false);
 
   useEffect(() => {
     let active = true;
-    void window.cc.app.isFullScreen().then((fullScreen) => {
+    void product.app.isFullScreen().then((fullScreen) => {
       if (active) setFullScreen(fullScreen);
     }).catch(() => {});
-    const off = window.cc.app.onFullScreenChanged(setFullScreen);
+    const off = product.app.onFullScreenChanged(setFullScreen);
     return () => {
       active = false;
       off();
@@ -31,6 +35,7 @@ export function useShellChromeState(): ShellChromeState {
   return {
     platform,
     isFullScreen,
-    reserveMacosTrafficLights: shouldReserveMacosTrafficLights(platform, isFullScreen)
+    surface,
+    reserveMacosTrafficLights: shouldReserveMacosTrafficLights(platform, isFullScreen, surface)
   };
 }

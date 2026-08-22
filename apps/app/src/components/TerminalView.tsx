@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -165,7 +166,7 @@ function TerminalViewImpl({ session, area }: Props) {
       }
       try {
         fit.fit();
-        void window.cc.terminals.resize(session.id, term.cols, term.rows).catch(() => {});
+        void product.terminals.resize(session.id, term.cols, term.rows).catch(() => {});
       } catch {
         /* ignore */
       }
@@ -183,7 +184,7 @@ function TerminalViewImpl({ session, area }: Props) {
         if (disposedRef.current) return;
         try {
           fit.fit();
-          void window.cc.terminals.resize(session.id, term.cols, term.rows).catch(() => {});
+          void product.terminals.resize(session.id, term.cols, term.rows).catch(() => {});
           if (stickToBottomRef.current) term.scrollToBottom();
         } catch {
           /* ignore */
@@ -257,7 +258,7 @@ function TerminalViewImpl({ session, area }: Props) {
         if (follow && !disposedRef.current && !term.hasSelection()) term.scrollToBottom();
       });
     };
-    void window.cc.terminals
+    void product.terminals
       .backlog(session.id)
       .then((tail) => {
         if (disposedRef.current) return;
@@ -277,7 +278,7 @@ function TerminalViewImpl({ session, area }: Props) {
         for (const chunk of queued) term.write(chunk);
       });
 
-    const offData = window.cc.terminals.onData((id, data) => {
+    const offData = product.terminals.onData((id, data) => {
       if (id !== session.id) return;
       // Before the backlog replay lands, hold live chunks so they can't be
       // written ahead of the older tail (see the replay block above).
@@ -287,7 +288,7 @@ function TerminalViewImpl({ session, area }: Props) {
       }
       writeFollowing(data);
     });
-    const offExit = window.cc.terminals.onExit((id, code) => {
+    const offExit = product.terminals.onExit((id, code) => {
       if (id !== session.id) return;
       // 0 / undefined → dim "[session exited]"; non-zero → red "[exited code N]".
       const bad = typeof code === 'number' && code !== 0;
@@ -298,7 +299,7 @@ function TerminalViewImpl({ session, area }: Props) {
     offsRef.current = [offData, offExit, () => offScroll.dispose()];
 
     const onInput = term.onData((data) => {
-      void window.cc.terminals.write(session.id, data).catch(() => {});
+      void product.terminals.write(session.id, data).catch(() => {});
     });
 
     // Shift+Enter → insert a newline in Claude Code's prompt instead of
@@ -344,7 +345,7 @@ function TerminalViewImpl({ session, area }: Props) {
       ) {
         e.preventDefault();
         e.stopPropagation();
-        void window.cc.terminals.write(session.id, '\x0A').catch(() => {});
+        void product.terminals.write(session.id, '\x0A').catch(() => {});
         return false;
       }
       return true;
@@ -411,7 +412,7 @@ function TerminalViewImpl({ session, area }: Props) {
         try {
           perfCount('terminal-fit'); // TEMP diagnostic — remove after verifying
           perfTime('terminal-fit', () => fit.fit());
-          void window.cc.terminals.resize(session.id, term.cols, term.rows).catch(() => {});
+          void product.terminals.resize(session.id, term.cols, term.rows).catch(() => {});
         } catch {
           /* ignore */
         }
@@ -448,7 +449,7 @@ function TerminalViewImpl({ session, area }: Props) {
       try {
         if (disposedRef.current) return;
         fitRef.current?.fit();
-        void window.cc.terminals.resize(session.id, term.cols, term.rows).catch(() => {});
+        void product.terminals.resize(session.id, term.cols, term.rows).catch(() => {});
       } catch {
         /* ignore */
       }
@@ -485,7 +486,7 @@ function TerminalViewImpl({ session, area }: Props) {
           if (disposedRef.current) return;
           fitRef.current?.fit();
           if (termRef.current) {
-            void window.cc.terminals
+            void product.terminals
               .resize(session.id, termRef.current.cols, termRef.current.rows)
               .catch(() => {});
             // Output that arrived while hidden couldn't auto-scroll (zero-height
@@ -593,10 +594,10 @@ function TerminalViewImpl({ session, area }: Props) {
         // genuine dimension change (two SIGWINCHs), prompting claude to redraw
         // its whole frame so an idle agent isn't left showing a stale grid after
         // the reparent. Harmless for a shell — it just re-wraps once.
-        void window.cc.terminals.resize(session.id, cols, Math.max(1, rows - 1)).catch(() => {});
+        void product.terminals.resize(session.id, cols, Math.max(1, rows - 1)).catch(() => {});
         requestAnimationFrame(() => {
           if (disposedRef.current) return;
-          void window.cc.terminals.resize(session.id, cols, rows).catch(() => {});
+          void product.terminals.resize(session.id, cols, rows).catch(() => {});
           // Repaint xterm's own viewport too: the reparent can leave the
           // renderer's texture stale, so refresh the visible rows and tail-snap.
           try {
@@ -623,7 +624,7 @@ function TerminalViewImpl({ session, area }: Props) {
   const pushToast = useUi((s) => s.pushToast);
   const { dropOver, dropHandlers } = useFileDrop(
     (paths) => {
-      void window.cc.terminals.write(session.id, paths).catch(() => {});
+      void product.terminals.write(session.id, paths).catch(() => {});
       termRef.current?.focus();
     },
     remote
@@ -635,7 +636,7 @@ function TerminalViewImpl({ session, area }: Props) {
           const destDir = '.';
           const uploaded: string[] = [];
           for (const local of localPaths) {
-            const r = await window.cc.fs.uploadToRemote(session.projectId, local, destDir);
+            const r = await product.fs.uploadToRemote(session.projectId, local, destDir);
             if (r.ok && r.path) {
               uploaded.push(r.path);
               pushToast(`Uploaded ${local.split('/').pop()} → ${remote.host}`);

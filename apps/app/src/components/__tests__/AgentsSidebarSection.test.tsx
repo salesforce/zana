@@ -45,6 +45,7 @@ describe('AgentsSidebarSection', () => {
     expect(markup).toContain('aria-label="Open Agents dashboard"');
     expect(markup).toContain('aria-label="New quick agent"');
     expect(markup).toContain('class="sidebar-agents-resizer"');
+    expect(markup).toContain('--sidebar-agents-height');
     expect(markup).toContain('data-agent-tray-project="proj-1"');
     expect(markup).toContain('data-agent-tray-placement="inline"');
   });
@@ -59,6 +60,7 @@ describe('AgentsSidebarSection', () => {
     expect(markup).toContain('aria-label="Expand Agents section"');
     expect(markup).toContain('aria-expanded="false"');
     expect(markup).toContain('hidden=""');
+    expect(markup).not.toContain('--sidebar-agents-height');
     expect(markup).not.toContain('class="sidebar-agents-resizer"');
   });
 
@@ -99,5 +101,7 @@ describe('AgentsSidebarSection', () => {
     expect(toggleStart).toBeGreaterThan(headingStart);
     expect(source.slice(headingStart, toggleStart)).not.toContain('toggleSection');
     expect(source.slice(toggleStart, toggleStart + 400)).toContain('toggleSection(AGENTS_SECTION_KEY)');
+    expect(source).toContain('<LayoutDashboard size={14} />');
+    expect(source).toContain('<MessageCirclePlus size={14} />');
   });
 });

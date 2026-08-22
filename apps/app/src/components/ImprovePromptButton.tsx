@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useState } from 'react';
 import { Sparkles, Undo2, Loader2 } from 'lucide-react';
 import { useUi } from '../store.js';
@@ -44,7 +45,7 @@ export function ImprovePromptButton({ value, onChange, className }: Props) {
     const original = value;
     setBusy(true);
     try {
-      const res = await window.cc.llmPrompts.test('builtin:improve-prompt', { prompt: original });
+      const res = await product.llmPrompts.test('builtin:improve-prompt', { prompt: original });
       if (!res.ok || !res.text.trim()) {
         pushToast(res.error ? `Couldn’t improve prompt: ${res.error}` : 'Couldn’t improve prompt', 'error');
         return;

@@ -1,3 +1,4 @@
+import { product } from '../../../lib/product-client.js';
 import React, { useEffect, useRef, useState, isValidElement, type ReactNode } from 'react';
 import { Pencil, Eye, Save } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -39,7 +40,7 @@ function loadSplitRatio(): number {
 /**
  * Preview + (for markdown) inline edit for a single library doc. Shared by the
  * per-project LibraryView and the global cross-project LibraryPanel — both read
- * through the same scope-confined `window.cc.library.read/write` seam, so a
+ * through the same scope-confined `product.library.read/write` seam, so a
  * doc's scope (global vs project) is opaque to this component.
  */
 export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProps) {
@@ -112,7 +113,7 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProp
       // doc lives in ~/.zcc/library, outside any registered project, so the
       // generic project-confined fs.readFile would reject it. Pass scope +
       // relPath (never the absPath) so main resolves the trusted dir itself.
-      window.cc.library
+      product.library
         .read(doc.scope ?? 'global', doc.relPath, doc.projectId)
         .then((result) => {
           if (result.ok && result.content !== undefined) {
@@ -125,7 +126,7 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProp
         .finally(() => setLoading(false));
     } else if (doc.kind === 'image') {
       // Read as data URL
-      window.cc.fs
+      product.fs
         .readDataUrl(doc.absPath)
         .then((result) => {
           if (result.ok && result.dataUrl) {
@@ -162,7 +163,7 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProp
     try {
       // Save through the scope-confined library seam (twin of the read above) so
       // a global doc's save isn't rejected by the project-confined fs.writeFile.
-      const res = await window.cc.library.write(doc.scope ?? 'global', doc.relPath, draft, doc.projectId);
+      const res = await product.library.write(doc.scope ?? 'global', doc.relPath, draft, doc.projectId);
       if (!res.ok) {
         pushToast(res.message ?? 'Save failed', 'error');
         return;
@@ -174,7 +175,7 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProp
       const heading = firstHeading(draft);
       if (heading && heading !== doc.title) {
         try {
-          await window.cc.library.update(doc.id, { title: heading });
+          await product.library.update(doc.id, { title: heading });
         } catch {
           /* title sync is best-effort; the file is already saved */
         }

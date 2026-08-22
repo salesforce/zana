@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import { useCallback } from 'react';
 import type { OpenTarget } from '@zana-ai/zcc-domain/product';
 
@@ -26,7 +27,7 @@ export function useFileOperations({ viewRoot, isRemote, projectId, pushToast }: 
     const posixQuote = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 
     try {
-      await window.cc.terminals.write(activeTabId, posixQuote(rel) + ' ');
+      await product.terminals.write(activeTabId, posixQuote(rel) + ' ');
     } catch (err) {
       pushToast(err instanceof Error ? err.message : 'Failed to write to terminal', 'error');
       return;
@@ -44,13 +45,13 @@ export function useFileOperations({ viewRoot, isRemote, projectId, pushToast }: 
   }, [pushToast]);
 
   const openInExternal = useCallback(async (target: OpenTarget, path: string) => {
-    const r = await window.cc.openers.openIn(target, path);
+    const r = await product.openers.openIn(target, path);
     if (!r.ok) pushToast(r.message ?? `Failed to open in ${target}`, 'error');
   }, [pushToast]);
 
   const downloadRemoteFile = useCallback(async (path: string) => {
     const name = path.split('/').pop() ?? 'file';
-    const r = await window.cc.fs.downloadFromRemote(projectId, path);
+    const r = await product.fs.downloadFromRemote(projectId, path);
     if (r.canceled) return;
     if (!r.ok) {
       pushToast(r.message ?? `Failed to download ${name}`, 'error');
@@ -63,7 +64,7 @@ export function useFileOperations({ viewRoot, isRemote, projectId, pushToast }: 
     let any = false;
     for (const local of localPaths) {
       const name = local.split('/').pop() ?? 'file';
-      const r = await window.cc.fs.uploadToRemote(projectId, local, destDir);
+      const r = await product.fs.uploadToRemote(projectId, local, destDir);
       if (r.ok) {
         any = true;
         pushToast(`Uploaded ${name}`);

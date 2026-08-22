@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { Zap, Square } from 'lucide-react';
 import { useAutonomousRuns } from '../store.js';
 
@@ -13,7 +14,7 @@ export function AutonomousRunBanner({ projectId }: { projectId: string }) {
   if (!run) return null;
 
   const stop = () => {
-    void window.cc.teams.stopAutonomous(run.runId);
+    void product.teams.stopAutonomous(run.runId);
   };
 
   return (

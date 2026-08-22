@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 // Pure builder for the command palette's item list. Extracted from
 // CommandPalette.tsx so the (large) item-construction logic is testable in
 // isolation — a golden snapshot of the produced `key`s guards against
@@ -172,7 +173,7 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
         category: 'Actions',
         source: 'core',
         run: () => {
-          void window.cc.windows.openProject(p.id);
+          void product.windows.openProject(p.id);
           onClose();
         }
       }));
@@ -336,7 +337,7 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
   if (selectedProject) {
     const path = selectedProject.path;
     const open = async (target: OpenTarget) => {
-      const r = await window.cc.openers.openIn(target, path);
+      const r = await product.openers.openIn(target, path);
       if (!r.ok) pushToast(r.message ?? `Failed to open in ${target}`, 'error');
     };
     actions.push(
@@ -561,7 +562,7 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
           const id = task.id;
           const name = task.name;
           onClose();
-          window.cc.scheduler.runNow(id).then((r) => {
+          product.scheduler.runNow(id).then((r) => {
             if (!r.ok) pushToast(r.message ?? `Failed to run ${name}`, 'error');
           }).catch(() => {});
         }

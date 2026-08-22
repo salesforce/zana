@@ -1,9 +1,10 @@
+import { product } from '../../lib/product-client.js';
 /**
  * Extensions → Browse extensions (Marketplace). Lists first-party plugins the
  * app ships (offline) and, when configured, the opt-in remote registry — so the
  * user can install / update without rebuilding the app.
  *
- * The catalog comes from `window.cc.extensions.marketplaceList()`. Each row is a
+ * The catalog comes from `product.extensions.marketplaceList()`. Each row is a
  * {@link MarketplaceEntry} already joined with this host's install state
  * (installed / hasUpdate / compatible), so the button label is a pure projection
  * of those flags — no extension id is hard-coded here (Rule #6: we iterate
@@ -66,7 +67,7 @@ export function MarketplaceView() {
   const refresh = useCallback(() => {
     setLoading(true);
     setError(null);
-    window.cc.extensions
+    product.extensions
       .marketplaceList()
       .then((res) => {
         if (res.ok) setEntries(res.value);
@@ -86,8 +87,8 @@ export function MarketplaceView() {
     refresh();
     // An install/update (or a watcher tick) re-stamps the installed set; refresh
     // the catalog so installed/hasUpdate flags stay accurate.
-    const offExt = window.cc.extensions.onChanged(() => refresh());
-    const offApps = window.cc.pluginApps?.onChanged?.(() => refresh()) ?? (() => {});
+    const offExt = product.extensions.onChanged(() => refresh());
+    const offApps = product.pluginApps?.onChanged?.(() => refresh()) ?? (() => {});
     return () => {
       offExt();
       offApps();
@@ -109,7 +110,7 @@ export function MarketplaceView() {
       entry.source === 'bundled'
         ? ({ kind: 'bundled', id: entry.id } as const)
         : ({ kind: 'marketplace', id: entry.id } as const);
-    window.cc.extensions
+    product.extensions
       .install(source)
       .then((res) => {
         if (!res.ok) {
@@ -135,7 +136,7 @@ export function MarketplaceView() {
 
   const checkUpdates = () => {
     setBusy((b) => ({ ...b, __all: 'Checking…' }));
-    window.cc.extensions
+    product.extensions
       .checkUpdates()
       .catch(() => {})
       .finally(() => {
@@ -211,7 +212,7 @@ export function MarketplaceView() {
                   className="ext-install-menu-item"
                   onClick={() => {
                     setInstallMenuOpen(false);
-                    window.cc.extensions.install({ kind: 'localDir' }).catch(() => {});
+                    product.extensions.install({ kind: 'localDir' }).catch(() => {});
                   }}
                 >
                   <FolderOpen size={14} />
@@ -223,7 +224,7 @@ export function MarketplaceView() {
                   className="ext-install-menu-item"
                   onClick={() => {
                     setInstallMenuOpen(false);
-                    window.cc.extensions.install({ kind: 'localArchive' }).catch(() => {});
+                    product.extensions.install({ kind: 'localArchive' }).catch(() => {});
                   }}
                 >
                   <FileArchive size={14} />

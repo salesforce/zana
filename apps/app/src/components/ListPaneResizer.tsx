@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { applyListPaneWidth, LIST_PANE_MIN, LIST_PANE_MAX } from '../store.js';
 
 /**
@@ -35,7 +36,7 @@ export function ListPaneResizer() {
         getComputedStyle(document.documentElement).getPropertyValue('--col-list')
       );
       if (Number.isFinite(w)) {
-        window.cc.config.set({ listPaneWidth: Math.round(w) }).catch(() => {});
+        product.config.set({ listPaneWidth: Math.round(w) }).catch(() => {});
       }
     };
     window.addEventListener('mousemove', onMove);
@@ -44,7 +45,7 @@ export function ListPaneResizer() {
 
   const onResizeDoubleClick = () => {
     applyListPaneWidth(280);
-    window.cc.config.set({ listPaneWidth: 280 }).catch(() => {});
+    product.config.set({ listPaneWidth: 280 }).catch(() => {});
   };
 
   return (

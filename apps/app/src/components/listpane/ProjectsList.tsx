@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   DndContext,
@@ -42,6 +43,8 @@ interface MenuState {
   projectId: string;
   x: number;
   y: number;
+  /** Open above the anchor (collapsed Workspaces has no room below the heading). */
+  preferAbove?: boolean;
 }
 
 interface RailGroup {
@@ -135,7 +138,7 @@ export function ProjectsList({
 
   const openIn = async (target: OpenTarget, path: string) => {
     try {
-      const r = await window.cc.openers.openIn(target, path);
+      const r = await product.openers.openIn(target, path);
       if (!r.ok) pushToast(r.message ?? `Failed to open in ${target}`, 'error');
     } catch (err) {
       pushToast(err instanceof Error ? err.message : `Failed to open in ${target}`, 'error');
@@ -325,11 +328,13 @@ export function ProjectsList({
     if (!el) return;
     const PAD = 8;
     const rect = el.getBoundingClientRect();
-    let left = menu.x;
-    let top = menu.y;
+    let left = menu.preferAbove ? menu.x - rect.width : menu.x;
+    let top = menu.preferAbove ? menu.y - rect.height - 4 : menu.y;
+    if (left < PAD) left = PAD;
     if (left + rect.width > window.innerWidth - PAD) {
       left = Math.max(PAD, window.innerWidth - rect.width - PAD);
     }
+    if (top < PAD) top = menu.preferAbove ? menu.y + 4 : PAD;
     if (top + rect.height > window.innerHeight - PAD) {
       top = Math.max(PAD, window.innerHeight - rect.height - PAD);
     }
@@ -373,7 +378,7 @@ export function ProjectsList({
     setDropOver(false);
     const files = Array.from(e.dataTransfer.files);
     const paths = files
-      .map((f) => window.cc.files.pathForFile(f))
+      .map((f) => product.files.pathForFile(f))
       .filter(Boolean);
     let lastAdded: { id: string } | null = null;
     for (const path of paths) {
@@ -623,7 +628,7 @@ export function ProjectsList({
                     setSidebarOrganizeOpen((open) => !open);
                   }}
                 >
-                  <ListFilter size={17} />
+                  <ListFilter size={14} />
                 </button>
                 {sidebarOrganizeOpen && (
                   <div className="sidebar-projects-organize-menu" role="menu" aria-label="Organize workspaces">
@@ -656,10 +661,15 @@ export function ProjectsList({
                   const rect = event.currentTarget.getBoundingClientRect();
                   setSidebarAddOpen(false);
                   setSidebarOrganizeOpen(false);
-                  setMenu({ projectId: '', x: rect.right, y: rect.bottom });
+                  setMenu({
+                    projectId: '',
+                    x: rect.right,
+                    y: sidebarProjectsCollapsed ? rect.top : rect.bottom,
+                    preferAbove: sidebarProjectsCollapsed
+                  });
                 }}
               >
-                <MoreHorizontal size={18} />
+                <MoreHorizontal size={14} />
               </button>
               <div className="sidebar-projects-menu-wrap" ref={sidebarAddRef}>
                 <button
@@ -674,7 +684,7 @@ export function ProjectsList({
                     setSidebarAddOpen((open) => !open);
                   }}
                 >
-                  <Plus size={18} />
+                  <Plus size={14} />
                 </button>
                 {sidebarAddOpen && (
                   <div className="sidebar-projects-add-menu" role="group" aria-label="Add a project">
@@ -922,7 +932,7 @@ export function ProjectsList({
                   className="project-menu-item"
                   onClick={() => {
                     setMenu(null);
-                    void window.cc.windows.openProject(p.id);
+                    void product.windows.openProject(p.id);
                   }}
                 >
                   <AppWindow size={12} />
@@ -1032,7 +1042,7 @@ export function ProjectsList({
       {showLocalDialog && (
         <AddLocalProjectDialog
           onClose={() => setShowLocalDialog(false)}
-          onBrowse={() => window.cc.projects.pickDirectory()}
+          onBrowse={() => product.projects.pickDirectory()}
           onSubmit={async (path) => {
             const p = await addProjectByPath(path);
             if (p) selectProject(p.id);

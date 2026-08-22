@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronDown,
@@ -178,7 +179,7 @@ export function AgentDiffPanel({ cwd, isRemote, exited, scope }: Props) {
       // sidebar — transcript-only — is full). Scoping also keeps the status
       // walk fast on big monorepos. main confines the paths to the repo.
       const scopeArg = scopeRef.current ? [...scopeRef.current] : undefined;
-      const status = await window.cc.git.status(cwd, scopeArg).catch(() => null);
+      const status = await product.git.status(cwd, scopeArg).catch(() => null);
       if (!status || !status.files) {
         setFiles([]);
         setBranch(status?.branch ?? null);
@@ -222,8 +223,8 @@ export function AgentDiffPanel({ cwd, isRemote, exited, scope }: Props) {
       [path]: { loading: true, head: prev[path]?.head ?? null, work: prev[path]?.work ?? null }
     }));
     const run = Promise.all([
-      window.cc.git.showHead(path).catch(() => null),
-      window.cc.fs.readFile(path).catch(() => null)
+      product.git.showHead(path).catch(() => null),
+      product.fs.readFile(path).catch(() => null)
     ])
       .then(([head, work]) => {
         setFileDiffs((prev) => ({ ...prev, [path]: { loading: false, head, work } }));

@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import { useState, useCallback } from 'react';
 import { Stethoscope } from 'lucide-react';
 import { useData, useUi } from '../../store.js';
@@ -25,7 +26,7 @@ export function DoctorSection() {
     setBusy(true);
     setError(null);
     try {
-      const res = await window.cc.projects.ensureQuickAgent();
+      const res = await product.projects.ensureQuickAgent();
       if (!res.ok) {
         setError(res.message);
         return;

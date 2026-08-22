@@ -147,7 +147,7 @@ input {
   --statusbar-h: 24px;
 }
 
-.app-shell[data-platform='macos'][data-fullscreen='false'] {
+.app-shell[data-traffic-lights='true'] {
   --shell-trigger-left: 84px;
   /* 120px target edge minus the header's regular 16px leading inset. */
   --shell-leading-reserve: 104px;
@@ -1402,10 +1402,10 @@ body.resizing-col .sidebar-resizer::after {
 }
 
 .sidebar:not(.project-scoped-nav) .sidebar-nav {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   min-width: 0;
-  min-height: auto;
-  overflow: visible;
+  min-height: 0;
+  overflow: hidden;
   padding-bottom: 0;
 }
 
@@ -1439,11 +1439,12 @@ body.resizing-col .sidebar-resizer::after {
 
 .sidebar-nav--sortable {
   display: flex;
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
-  overflow: visible;
+  min-height: 0;
+  overflow: hidden;
   padding: 0 0 4px;
 }
 
@@ -1470,7 +1471,11 @@ body.resizing-col .sidebar-resizer::after {
 }
 
 .sidebar-section-sortable {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
 }
 
 .sidebar-section-sortable .sidebar-agents-heading,
@@ -1608,14 +1613,14 @@ body.resizing-col .sidebar-resizer::after {
 }
 
 .sidebar-agents-actions .icon-btn {
-  width: 26px;
-  height: 26px;
-  border-color: transparent;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
   border-radius: 7px;
 }
 
 .sidebar-agents-actions .icon-btn:hover {
-  border-color: transparent;
   background: var(--sidebar-hover);
   color: var(--text-primary);
 }
@@ -1632,11 +1637,21 @@ body.resizing-col .sidebar-resizer::after {
 }
 
 .sidebar-agents--collapsed {
-  /* Override the fixed, user-resized flex basis. A collapsed collection is only
-   * its header; retaining the prior height leaves a dead gap above Workspaces. */
-  flex: 0 0 36px;
-  height: 36px;
+  /* Hug the heading. A fixed 36px basis (header min-height + padding) plus
+   * Workspaces' collection margin left a dead band between two collapsed rows. */
+  flex: 0 0 auto;
+  height: auto;
   min-height: 0;
+}
+
+.sidebar-agents--collapsed .sidebar-agents-header,
+.sidebar-projects--collapsed .sidebar-projects-header {
+  padding-bottom: 0;
+}
+
+.sidebar-agents--collapsed .sidebar-agents-body,
+.sidebar-projects--collapsed .sidebar-projects-body {
+  display: none;
 }
 
 .sidebar-agents-resizer {
@@ -1720,6 +1735,42 @@ body.resizing-sidebar-section .sidebar-agents-resizer::after {
   /* An open workspace tree belongs at the rail bottom; a collapsed heading is
    * another sidebar section and should stay directly below Agents. */
   margin-top: 12px;
+  /* Header menus (+, organize) are absolutely positioned; they must paint
+   * outside this heading instead of being clipped to its 30px box. */
+  overflow: visible;
+}
+
+.sidebar-projects--collapsed .sidebar-projects-add-menu,
+.sidebar-projects--collapsed .sidebar-projects-organize-menu {
+  top: auto;
+  bottom: calc(100% + 4px);
+  z-index: 20;
+}
+
+/* Two collapsed headings are sibling nav rows, not two collections. Drop the
+ * extra collection gap so they pack with the 2px list gap. Reordering is
+ * covered: whichever collapsed collection follows the other loses its margin. */
+.sidebar-section-sortable:has(.sidebar-agents--collapsed) + .sidebar-section-sortable .sidebar-projects,
+.sidebar-section-sortable:has(.sidebar-projects--collapsed) + .sidebar-section-sortable .sidebar-agents {
+  margin-top: 0;
+}
+
+/* Last expanded collection fills leftover rail height down to the utility dock.
+ * A destination below, or a collapsed last heading, keeps the default cap. */
+.sidebar-section-sortable:last-child:has(.sidebar-projects:not(.sidebar-projects--collapsed)),
+.sidebar-section-sortable:last-child:has(.sidebar-agents:not(.sidebar-agents--collapsed)) {
+  flex: 1 1 auto;
+}
+
+.sidebar-section-sortable:last-child:has(.sidebar-projects:not(.sidebar-projects--collapsed)) .sidebar-projects,
+.sidebar-section-sortable:last-child:has(.sidebar-agents:not(.sidebar-agents--collapsed)) .sidebar-agents {
+  flex: 1 1 auto;
+  max-height: none;
+  height: auto;
+}
+
+.sidebar-section-sortable:last-child:has(.sidebar-agents) .sidebar-agents-resizer {
+  display: none;
 }
 
 .sidebar-projects .list-header-actions {
@@ -1728,9 +1779,10 @@ body.resizing-sidebar-section .sidebar-agents-resizer::after {
 }
 
 .sidebar-projects .icon-btn {
-  width: 26px;
-  height: 26px;
-  border-color: transparent;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
   border-radius: 7px;
 }
 
@@ -1841,7 +1893,6 @@ body.resizing-sidebar-section .sidebar-agents-resizer::after {
 
 .sidebar-projects .list-add-btn:hover,
 .sidebar-projects .icon-btn:hover {
-  border-color: transparent;
   background: var(--sidebar-hover);
   color: var(--text-primary);
 }
@@ -1975,7 +2026,7 @@ body.resizing-sidebar-section .sidebar-agents-resizer::after {
   flex-direction: column;
   gap: 2px;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
   padding-bottom: 4px;
 }
 
@@ -2107,8 +2158,16 @@ body.resizing-col {
   place-items: center;
   width: 26px;
   height: 26px;
+  padding: 0;
+  border: 0;
   border-radius: 6px;
   color: var(--text-muted);
+  line-height: 0;
+  appearance: none;
+}
+
+.icon-btn svg {
+  display: block;
 }
 
 .icon-btn:hover {
@@ -20237,9 +20296,14 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
 
 /* Quick Agent borrows Home's focused command surface. Its project, harness, and
    model controls stay in the launcher below, so the composer has one uncluttered
-   action row rather than duplicating that picker strip. */
+   action row rather than duplicating that picker strip. Inside the launch modal
+   drop the extra card elevation — a second shadow reads as a dialog in a dialog. */
 .prompt-composer--home .ui-command-attachments {
   margin-bottom: 0;
+}
+
+.launch-modal .prompt-composer--home {
+  box-shadow: none;
 }
 
 .prompt-composer-home-toolbar {
@@ -26255,7 +26319,7 @@ body.resizing-col .library-split-resizer::after {
   flex-direction: column;
   gap: 2px;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
   padding-bottom: 4px;
 }
 

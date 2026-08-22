@@ -26,16 +26,15 @@ describe('SidebarResizer', () => {
     const source = readFileSync(new URL('../SidebarResizer.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain('applySidebarWidth(ev.clientX)');
-    expect(source).toContain("window.cc.config.set({ sidebarWidth: Math.round(w) })");
+    expect(source).toContain("product.config.set({ sidebarWidth: Math.round(w) })");
     expect(source).toContain('applySidebarWidth(SIDEBAR_MIN)');
-    expect(source).toContain("window.cc.config.set({ sidebarWidth: SIDEBAR_MIN })");
+    expect(source).toContain("product.config.set({ sidebarWidth: SIDEBAR_MIN })");
     expect(source).not.toContain('localStorage');
   });
 
   it('is mounted in every rail that occupies --col-nav', () => {
     const files = [
-      readFileSync(new URL('../Sidebar.tsx', import.meta.url), 'utf8'),
-      readFileSync(new URL('../ProjectScopedNav.tsx', import.meta.url), 'utf8'),
+      readFileSync(new URL('../SidebarRail.tsx', import.meta.url), 'utf8'),
       readFileSync(new URL('../listpane/SettingsPane.tsx', import.meta.url), 'utf8'),
       readFileSync(new URL('../listpane/ExtensionsPane.tsx', import.meta.url), 'utf8')
     ];

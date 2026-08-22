@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { X, Square, Inbox, Loader2, RefreshCw, TerminalSquare, FileDiff, FileText, Sparkles, MailCheck, BellOff, Maximize2, Minimize2 } from 'lucide-react';
@@ -86,17 +87,17 @@ export function AgentTerminalModal({
   const [fullScreen, setFullScreen] = useState(false);
   const fullScreenRef = useRef(false);
   fullScreenRef.current = fullScreen;
-  useEffect(() => window.cc.app.onFullScreenChanged(setFullScreen), []);
+  useEffect(() => product.app.onFullScreenChanged(setFullScreen), []);
   const toggleFullScreen = () => {
     const next = !fullScreen;
     setFullScreen(next);
-    void window.cc.app.setFullScreen(next);
+    void product.app.setFullScreen(next);
   };
   // Leaving the modal shouldn't strand the user in OS fullscreen — drop it on
   // unmount if THIS control put the window there.
   useEffect(() => {
     return () => {
-      if (fullScreenRef.current) void window.cc.app.setFullScreen(false);
+      if (fullScreenRef.current) void product.app.setFullScreen(false);
     };
   }, []);
 
@@ -256,7 +257,7 @@ export function AgentTerminalModal({
         !!triageVerdict &&
         idleSurfacesToNeedsYou(triageVerdict.resolution, triageVerdict.confidence ?? 0, sensitivity)));
   const markIdle = () => {
-    void window.cc.terminals.clearAgentBlocked(projectId, session.id);
+    void product.terminals.clearAgentBlocked(projectId, session.id);
     useIdleTriage.getState().clear(session.id);
   };
 
@@ -591,7 +592,7 @@ function CatchUpSummaryCard({
     if (refreshing) return;
     setRefreshing(true);
     try {
-      const freshResult = await window.cc.terminals.generateCatchUpSummary(
+      const freshResult = await product.terminals.generateCatchUpSummary(
         projectId,
         sessionId
       );

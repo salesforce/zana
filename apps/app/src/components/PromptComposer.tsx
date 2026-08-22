@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import {
   forwardRef,
   useCallback,
@@ -105,7 +106,7 @@ function useMention(
       return;
     }
     let cancelled = false;
-    void window.cc.fs.walkFiles(projectPath).then((list) => {
+    void product.fs.walkFiles(projectPath).then((list) => {
       if (cancelled) return;
       filesRef.current = { path: projectPath, files: list };
       setFiles(list);
@@ -282,7 +283,7 @@ export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function P
       {homeVariant ? (
         <div className="ui-command-composer-toolbar prompt-composer-home-toolbar">
           <ComposerIconButton
-            onClick={() => { void window.cc.fs.pickFiles().then(onAddAttachments); }}
+            onClick={() => { void product.fs.pickFiles().then(onAddAttachments); }}
             title="Attach files"
             aria-label="Attach files"
           >
@@ -307,7 +308,7 @@ export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function P
         <div className="prompt-composer-actions">
           <div className="prompt-composer-input-actions">
             <ComposerIconButton
-              onClick={() => { void window.cc.fs.pickFiles().then(onAddAttachments); }}
+              onClick={() => { void product.fs.pickFiles().then(onAddAttachments); }}
               title="Attach files"
               aria-label="Attach files"
             >

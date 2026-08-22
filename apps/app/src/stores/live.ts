@@ -34,6 +34,7 @@ import type {
 } from '@zana-ai/zcc-domain/product';
 import type { UsageSummary } from '@zana-ai/zcc-domain/telemetry-events';
 import { getScopedProjectId } from '../lib/windowScope.js';
+import { product } from '../lib/product-client.js';
 import { isClaudeProfile, knownProfile, projectDefaultProfile } from '../lib/launchProfile.js';
 import { buildFollowUpAnswerPrompt, followUpAgentTitle } from '../lib/followUpPrompt.js';
 import { classifyEntry } from '@zana-ai/zcc-domain/feed-categories';
@@ -709,7 +710,7 @@ export const useWhatsNew = create<WhatsNewState>((set) => ({
  */
 export async function openWhatsNewAll(): Promise<void> {
   try {
-    const notes = await window.cc.updates.getReleaseNotes();
+    const notes = await product.updates.getReleaseNotes();
     useWhatsNew.getState().openWith(notes, notes[0]?.version ?? null);
   } catch {
     // Degrade closed — the About tab keeps its "View on GitHub" fallback link.
@@ -747,7 +748,7 @@ export function hasMissingSetup(status: SetupStatus): boolean {
  * update is available / downloading / downloaded, and the target version) comes
  * straight from `useUpdates` (the electron-updater status stream). This slice
  * only tracks the per-session "I clicked ×" choice — a persisted "skip this
- * version" goes through `window.cc.updates.skip`, which the updater honors
+ * version" goes through `product.updates.skip`, which the updater honors
  * across launches. Kept tiny and separate so the banner can hide without
  * disturbing the shared updater status the About section also reads.
  */
@@ -1152,7 +1153,7 @@ export async function refreshInboxSummary(
   const { setItem } = useInboxSummary.getState();
   setItem(scopeKey, { loading: true });
   try {
-    const res = await window.cc.inbox.summarize(projectId);
+    const res = await product.inbox.summarize(projectId);
     if (res.ok) {
       setItem(scopeKey, {
         digest: res.digest,
@@ -1245,7 +1246,7 @@ export async function refreshFeedNoise(
   const { setItem } = useFeedNoise.getState();
   setItem(scopeKey, { loading: true });
   try {
-    const res = await window.cc.inbox.classifyNoise(projectId);
+    const res = await product.inbox.classifyNoise(projectId);
     setItem(scopeKey, {
       routineIds: new Set(res.routineIds),
       generatedAt: Date.now(),
@@ -1337,7 +1338,7 @@ export async function refreshDetailedInboxSummary(
   if (!force && item?.digest && item.signature === signature && item.generatedAt !== null) return;
   setItem(scopeKey, { loading: true });
   try {
-    const res = await window.cc.inbox.summarizeDetailed(projectId);
+    const res = await product.inbox.summarizeDetailed(projectId);
     if (res.ok) {
       setItem(scopeKey, {
         digest: res.digest,
@@ -1383,7 +1384,7 @@ export const useUsage = create<UsageState>((set, get) => ({
     set({ loading: true });
     try {
       // getSummary never throws — main resolves to an empty summary on failure.
-      const summary = await window.cc.usage.getSummary();
+      const summary = await product.usage.getSummary();
       set({ summary, loading: false, loaded: true });
     } catch {
       // Defensive: even if the bridge itself rejects, don't wedge the panel.
@@ -1715,7 +1716,7 @@ export function useAgentNavCounts(projectId?: string): { active: number; blocked
 export async function deleteInboxEntry(id: string): Promise<void> {
   useInbox.getState().removeLocal(id);
   try {
-    await window.cc.inbox.delete(id);
+    await product.inbox.delete(id);
   } catch (err) {
     pushErrorToast(errorMessage(err, 'Failed to delete inbox entry'));
   }
@@ -1742,7 +1743,7 @@ export async function clearInbox(projectId?: string | null): Promise<number> {
 
   removeManyLocal(toRemove);
   try {
-    await window.cc.inbox.deleteMany(toRemove);
+    await product.inbox.deleteMany(toRemove);
     useUi.getState().pushToast(
       `Cleared ${toRemove.length} ${toRemove.length === 1 ? 'message' : 'messages'}`,
       'info'
@@ -1769,7 +1770,7 @@ export async function saveInboxEntry(
   sourceEntryId?: string
 ): Promise<boolean> {
   try {
-    const rec = await window.cc.saved.save(input);
+    const rec = await product.saved.save(input);
     if (!rec) throw new Error('save returned null');
     if (sourceEntryId) useSavedMark.getState().markSaved(sourceEntryId);
     useUi.getState().pushToast('Saved for later', 'info');
@@ -1783,7 +1784,7 @@ export async function saveInboxEntry(
 /** Delete a saved report by id. The onChanged push reconciles the list. */
 export async function deleteSavedRecord(id: string): Promise<void> {
   try {
-    await window.cc.saved.delete(id);
+    await product.saved.delete(id);
   } catch (err) {
     pushErrorToast(errorMessage(err, 'Failed to delete saved report'));
   }
@@ -1817,7 +1818,7 @@ export async function replyToInboxEntry(
     // the question landing in the inbox and the user answering). Don't claim
     // success or mark the entry answered in that case — surface it so the user
     // reopens the agent (resume/fresh) instead of losing the reply silently.
-    const delivered = await window.cc.terminals.reply(sessionId, body);
+    const delivered = await product.terminals.reply(sessionId, body);
     if (!delivered) {
       pushErrorToast('Agent is no longer running — reopen it to continue.');
       return false;
@@ -1888,7 +1889,7 @@ export async function answerFollowUp(
 
   try {
     if (liveOrigin) {
-      const delivered = await window.cc.terminals.reply(liveOrigin.id, body);
+      const delivered = await product.terminals.reply(liveOrigin.id, body);
       if (!delivered) {
         // Raced: the agent died between parking and answering. Fall through to
         // the resume/spawn tiers rather than losing the answer silently.
@@ -1916,7 +1917,7 @@ export async function answerFollowUp(
       });
       if (created) {
         await markFollowUpAnswered(followUp.id, body);
-        void window.cc.followups.markSpawned(followUp.id);
+        void product.followups.markSpawned(followUp.id);
         useUi.getState().pushToast('Resumed the agent with your answer', 'info');
         return { ok: true, tier: 'resume', session: created, project };
       }
@@ -1937,7 +1938,7 @@ export async function answerFollowUp(
     });
     if (created) {
       await markFollowUpAnswered(followUp.id, body);
-      void window.cc.followups.markSpawned(followUp.id);
+      void product.followups.markSpawned(followUp.id);
       useUi.getState().pushToast('Spawned an agent with your answer', 'info');
       return { ok: true, tier: 'spawn', session: created, project };
     }
@@ -1957,7 +1958,7 @@ export async function answerFollowUp(
 async function markFollowUpAnswered(id: string, answer: string): Promise<void> {
   try {
     const resolution = answer.length > 140 ? `${answer.slice(0, 139)}…` : answer;
-    const result = await window.cc.followups.setStatus(id, 'resolved', resolution);
+    const result = await product.followups.setStatus(id, 'resolved', resolution);
     if (!result.ok) {
       useUi.getState().pushToast(`Answer sent, but marking resolved failed: ${result.message}`, 'error');
     }

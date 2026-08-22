@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useMemo } from 'react';
 import {
   FileText,
@@ -77,10 +78,10 @@ export function InboxOverview({
       return;
     }
     try {
-      const opened = await window.cc.openers.openIn('cursor', abs);
+      const opened = await product.openers.openIn('cursor', abs);
       if (opened.ok) return;
       // Fallback to Finder when Cursor opener is unavailable on this machine.
-      const finder = await window.cc.openers.openIn('finder', abs);
+      const finder = await product.openers.openIn('finder', abs);
       if (!finder.ok) {
         ui.pushToast(opened.message || finder.message || 'Failed to open idea file.', 'error');
       }

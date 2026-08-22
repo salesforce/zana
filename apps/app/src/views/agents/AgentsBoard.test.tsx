@@ -13,6 +13,8 @@ describe('AgentsBoard', () => {
     expect(board).not.toContain('<AgentLauncher');
     expect(board).toContain('setLauncherOpen(true)');
     expect(app).toContain('onLaunched={nav === \'agents\' ? stayOnAgentsBoard : undefined}');
+    expect(app).toContain('{launcherOpen && (nav !== \'projects\' || !focusedProjectId) && (');
+    expect(app).not.toContain("nav !== 'home'");
   });
 
   it('embeds the Home composer and AuroraGrid on both empty scopes', () => {

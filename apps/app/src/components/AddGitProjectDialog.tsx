@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { GitBranch, X } from 'lucide-react';
 import type { CloneProjectResult } from '@zana-ai/zcc-domain/product';
@@ -55,12 +56,12 @@ export function AddGitProjectDialog({ onClose, onClone, onSuccess }: AddGitProje
   const [progress, setProgress] = useState<string | null>(null);
 
   useEffect(() => {
-    window.cc.projects.cloneRoot().then(setCloneRoot).catch(() => {});
+    product.projects.cloneRoot().then(setCloneRoot).catch(() => {});
   }, []);
 
   // Stream clone progress into the footer line.
   useEffect(() => {
-    const off = window.cc.projects.onCloneProgress((line) => setProgress(line));
+    const off = product.projects.onCloneProgress((line) => setProgress(line));
     return off;
   }, []);
 

@@ -26,3 +26,12 @@ describe('HomeAgentComposer pinning', () => {
     expect(source).toContain('setProjectId(pinnedProject.id)');
   });
 });
+
+describe('HomeAgentComposer browser launch gate', () => {
+  it('keeps send disabled without the desktop bridge', () => {
+    const source = readFileSync(new URL('../HomeAgentComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('hasDesktopBridge()');
+    expect(source).toContain("Launching agents requires the desktop app");
+    expect(source).toContain('if (!canLaunch) return;');
+  });
+});

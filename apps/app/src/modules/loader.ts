@@ -1,6 +1,7 @@
+import { product } from '../lib/product-client.js';
 /**
  * Runtime extension loader (P1-C). Turns the enabled, loaded, renderer-bearing
- * extensions reported by `window.cc.extensions` into `AppModule`s that the
+ * extensions reported by `product.extensions` into `AppModule`s that the
  * shell treats identically to the static built-ins in `./index`.
  *
  * Loading is async (read bundle string → blob → dynamic import → activate), so
@@ -204,7 +205,7 @@ async function loadExtensionModule(entry: ExtensionEntry): Promise<ExtensionModu
   if (!manifest) return makeErrorModule(entry, 'Missing manifest.');
   let blobUrl: string | null = null;
   try {
-    const js = await window.cc.extensions.readRendererEntry(entry.id);
+    const js = await product.extensions.readRendererEntry(entry.id);
     if (js == null) {
       return makeErrorModule(entry, 'Renderer bundle could not be read.');
     }
@@ -302,7 +303,7 @@ async function loadExtensionModule(entry: ExtensionEntry): Promise<ExtensionModu
 let reconcileSeq = 0;
 
 /**
- * Reconcile the runtime extension set against what `window.cc.extensions`
+ * Reconcile the runtime extension set against what `product.extensions`
  * reports: load enabled + loaded + renderer-bearing extensions into modules,
  * evict the host cache for any extension that has dropped out (disabled /
  * removed), and publish the new set into the store.
@@ -356,7 +357,7 @@ export async function reconcileExtensionModules(entries: ExtensionEntry[]): Prom
  */
 export async function initExtensionModules(): Promise<void> {
   try {
-    const entries = await window.cc.extensions.list();
+    const entries = await product.extensions.list();
     await reconcileExtensionModules(entries);
   } catch {
     /* extensions are optional — a failed list just yields no extension nav */

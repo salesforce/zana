@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { X, Trash2, Copy, Pencil, Plus, GripVertical, Crown } from 'lucide-react';
 import { ImprovePromptButton } from './ImprovePromptButton.js';
@@ -308,7 +309,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
     };
     if (keepsId && team) input.id = team.id;
 
-    const result = await window.cc.teams.save(input);
+    const result = await product.teams.save(input);
     if (!result.ok) {
       pushToast(`Save failed: ${result.message}`, 'error');
       setSaving(false);
@@ -320,7 +321,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
 
   const remove = async () => {
     if (!team) return;
-    const result = await window.cc.teams.delete(team.id);
+    const result = await product.teams.delete(team.id);
     if (!result.ok) {
       pushToast(`Delete failed: ${result.message}`, 'error');
       return;

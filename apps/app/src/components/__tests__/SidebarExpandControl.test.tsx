@@ -24,7 +24,7 @@ describe('SidebarTriggerOverlay', () => {
     const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
 
     expect(css).toContain('.sidebar-trigger-overlay {\n  position: fixed;');
-    expect(css).toContain(".app-shell[data-platform='macos'][data-fullscreen='false']");
+    expect(css).toContain(".app-shell[data-traffic-lights='true']");
     expect(css).toContain('--shell-trigger-left: 84px;');
     expect(css).toContain('.sidebar--global .sidebar-history-controls,');
     expect(css).toContain('.sidebar--titlebar-controls .sidebar-history-controls {');

@@ -1,3 +1,5 @@
+import type { AppSurface } from './app-surface.js';
+
 /** Shared geometry for the application-chrome sidebar trigger. */
 export const SHELL_CHROME_HEIGHT = 38;
 export const SIDEBAR_TRIGGER_SIZE = 28;
@@ -13,9 +15,11 @@ export function shellPlatform(): ShellPlatform {
   return navigator.platform.toUpperCase().includes('MAC') ? 'macos' : 'other';
 }
 
+/** Native window controls exist only in the Electron frame, never a browser tab. */
 export function shouldReserveMacosTrafficLights(
   platform: ShellPlatform,
-  isFullScreen: boolean
+  isFullScreen: boolean,
+  surface: AppSurface
 ): boolean {
-  return platform === 'macos' && !isFullScreen;
+  return surface === 'desktop' && platform === 'macos' && !isFullScreen;
 }

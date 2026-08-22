@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useState } from 'react';
 import { posixQuote } from '../lib/quote.js';
 
@@ -67,7 +68,7 @@ export function useFileDrop(onPaths: (paths: string) => void, resolver: DropPath
     const files = Array.from(e.dataTransfer.files);
     if (files.length > 0) {
       const localPaths = files
-        .map((f) => window.cc.files.pathForFile(f))
+        .map((f) => product.files.pathForFile(f))
         .filter(Boolean);
       if (localPaths.length === 0) return;
       resolvePaths(localPaths);

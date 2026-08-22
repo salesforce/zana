@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useState } from 'react';
 import { AlertTriangle, FolderOpen, RefreshCw } from 'lucide-react';
 
@@ -9,7 +10,7 @@ export function StartupRepair() {
     setBusy(true);
     setMessage(undefined);
     try {
-      const state = await window.cc.startup.retry();
+      const state = await product.startup.retry();
       // On success, main unconditionally navigates this window itself
       // (runStartupMigration) — including in dev, where it reloads the same
       // origin. Do not also reload here: a renderer-initiated navigation
@@ -26,7 +27,7 @@ export function StartupRepair() {
   };
 
   const diagnostics = async () => {
-    const result = await window.cc.startup.diagnostics().catch(() => ({ ok: false }));
+    const result = await product.startup.diagnostics().catch(() => ({ ok: false }));
     if (!result.ok) setMessage('Diagnostics folder could not be opened.');
   };
 
@@ -54,7 +55,7 @@ export function StartupRepair() {
             <FolderOpen size={14} aria-hidden="true" />
             Open diagnostics
           </button>
-          <button className="btn" type="button" onClick={() => void window.cc.startup.quit()} disabled={busy}>
+          <button className="btn" type="button" onClick={() => void product.startup.quit()} disabled={busy}>
             Quit
           </button>
         </div>
@@ -78,7 +79,7 @@ export function StartupError({ error, onRetry }: { error: string; onRetry: () =>
           <button className="btn primary" type="button" onClick={onRetry}>
             <RefreshCw size={14} aria-hidden="true" /> Retry
           </button>
-          <button className="btn" type="button" onClick={() => void window.cc.startup.quit()}>
+          <button className="btn" type="button" onClick={() => void product.startup.quit()}>
             Quit
           </button>
         </div>

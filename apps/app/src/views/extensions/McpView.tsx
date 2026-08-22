@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ChevronDown,
@@ -101,7 +102,7 @@ export function McpBody({ showHeader = true }: { showHeader?: boolean } = {}) {
       return;
     }
     setOptimistic((prev) => ({ ...prev, [entry.id]: enabled }));
-    const res = await window.cc.mcp.setEnabledById(entry.id, enabled);
+    const res = await product.mcp.setEnabledById(entry.id, enabled);
     if (!res.ok) {
       setOptimistic((prev) => {
         const next = { ...prev };
@@ -115,7 +116,7 @@ export function McpBody({ showHeader = true }: { showHeader?: boolean } = {}) {
   };
 
   const reveal = (entry: McpServerEntry) => {
-    void window.cc.mcp.reveal(entry.id);
+    void product.mcp.reveal(entry.id);
   };
 
   const toggleExpand = (id: string) => {

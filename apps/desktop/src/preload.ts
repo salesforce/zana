@@ -803,6 +803,15 @@ const api: CcApi = {
 };
 
 contextBridge.exposeInMainWorld('cc', api);
+// OS chrome that remains after product I/O moves to loopback HTTP. The full
+// `cc` bridge is still exposed during the migration so existing desktop
+// families keep working; new product APIs should land on HTTP first.
+contextBridge.exposeInMainWorld('zccDesktop', {
+  app: api.app,
+  windows: api.windows,
+  updates: api.updates,
+  menubar: api.menubar
+});
 
 // E2E test-observability bridge (GATED). Exposed ONLY when main launched this
 // window with `--zcc-e2e` (see createWindow additionalArguments) — the sandboxed

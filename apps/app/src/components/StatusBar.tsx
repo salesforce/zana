@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useState } from 'react';
 import { Bot, Clock, Zap, Moon, AlertCircle, Network, Sparkles, Loader2, CheckCircle2, Heart, X } from 'lucide-react';
 import { useScheduler, useUpdates } from '../store.js';
@@ -67,8 +68,8 @@ export function StatusBar() {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    window.cc.app.version().then(setAppVersion).catch(() => {});
-    window.cc.config
+    product.app.version().then(setAppVersion).catch(() => {});
+    product.config
       .get()
       .then((c) => setShowSponsorPrompt(!c.sponsorPromptDismissed))
       .catch(() => {});
@@ -82,7 +83,7 @@ export function StatusBar() {
   };
   const dismissSponsorPrompt = () => {
     setShowSponsorPrompt(false);
-    window.cc.config.set({ sponsorPromptDismissed: true }).catch(() => {});
+    product.config.set({ sponsorPromptDismissed: true }).catch(() => {});
   };
 
   // Whether any enabled native schedule has a FUTURE run — derived off `tasks`
@@ -192,7 +193,7 @@ export function StatusBar() {
         <button
           type="button"
           className="statusbar-update statusbar-update--available"
-          onClick={() => void window.cc.updates.download({ installNow: true })}
+          onClick={() => void product.updates.download({ installNow: true })}
           title={`Update to v${updateStatus.version} now`}
         >
           <Sparkles size={11} aria-hidden />
@@ -209,7 +210,7 @@ export function StatusBar() {
         <button
           type="button"
           className="statusbar-update statusbar-update--ready"
-          onClick={() => void window.cc.updates.quitAndInstall()}
+          onClick={() => void product.updates.quitAndInstall()}
           title={`Restart to install v${updateStatus.version}`}
         >
           <CheckCircle2 size={11} aria-hidden />

@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, BotMessageSquare, Code2, Copy, CornerDownLeft, Download, ExternalLink, FileText, FolderOpen, MessageSquare, Send, Sparkles, Star, Trash2 } from 'lucide-react';
 import { inboxQuestions } from '@zana-ai/zcc-domain/product';
@@ -378,7 +379,7 @@ function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }
           continue;
         }
         try {
-          const r = await window.cc.fs.readFile(joinPath(aliveProject.path, d.path));
+          const r = await product.fs.readFile(joinPath(aliveProject.path, d.path));
           if (r.ok && typeof r.content === 'string') {
             totalBytes += r.content.length;
             docs.push({ path: d.path, content: r.content });
@@ -395,7 +396,7 @@ function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }
 
       const title = `${displayLabel} — ${formatAbsolute(entry.ts)}`;
       const html = await renderReportHtml({ title, docs, comments: entry.comments });
-      const result = await window.cc.inbox.exportPdf({ html, suggestedName: title });
+      const result = await product.inbox.exportPdf({ html, suggestedName: title });
       if (result.ok) {
         pushToast(result.path ? `PDF saved to ${result.path}` : 'PDF saved', 'info');
       } else if (result.message) {
@@ -432,7 +433,7 @@ function Detail({ entry, onDelete }: { entry: InboxEntry; onDelete: () => void }
           continue;
         }
         try {
-          const r = await window.cc.fs.readFile(joinPath(aliveProject.path, d.path));
+          const r = await product.fs.readFile(joinPath(aliveProject.path, d.path));
           if (r.ok && typeof r.content === 'string') totalBytes += r.content.length;
           docs.push({
             path: d.path,
@@ -956,7 +957,7 @@ function DocExplorer({
 }
 
 /**
- * Render one doc, fetched live via window.cc.fs.readFile against the project's
+ * Render one doc, fetched live via product.fs.readFile against the project's
  * root path. Re-fetches on doc change. If the project is tombstoned (deleted)
  * we render a "project missing" message — without a project root, we have no
  * anchor to resolve the relative path.
@@ -1000,7 +1001,7 @@ function DocPreview({
       const abs = joinPath(projectPath, doc.path);
       let r: FsReadResult;
       try {
-        r = await window.cc.fs.readFile(abs);
+        r = await product.fs.readFile(abs);
       } catch (err) {
         r = { ok: false, message: err instanceof Error ? err.message : 'Read failed' };
       }
@@ -1011,12 +1012,12 @@ function DocPreview({
       // Missing at the reported path — ask main to locate it (subdir / library /
       // origin cwd). On a hit, re-read at the resolved location.
       try {
-        const found = await window.cc.fs.resolveDoc(projectPath, doc.path, originCwd);
+        const found = await product.fs.resolveDoc(projectPath, doc.path, originCwd);
         if (cancelled) return;
         if (found.ok && found.rel) {
           setResolvedPath(found.rel);
           setRelocated(!!found.relocated);
-          const r2 = await window.cc.fs.readFile(joinPath(projectPath, found.rel));
+          const r2 = await product.fs.readFile(joinPath(projectPath, found.rel));
           if (!cancelled) setResult(r2);
           return;
         }
@@ -1037,13 +1038,13 @@ function DocPreview({
   const absResolved = project ? joinPath(project.path, resolvedPath) : null;
   const openIn = async (target: 'finder' | 'cursor' | 'code') => {
     if (!absResolved) return;
-    const r = await window.cc.openers.openIn(target, absResolved);
+    const r = await product.openers.openIn(target, absResolved);
     if (!r.ok) pushToast(r.message ?? `Failed to open in ${target}`, 'error');
   };
   const copyPath = async () => {
     if (!absResolved) return;
     try {
-      const r = await window.cc.clipboard.writeText(absResolved);
+      const r = await product.clipboard.writeText(absResolved);
       if (!r.ok) throw new Error('write failed');
       pushToast('Path copied', 'info');
     } catch {
@@ -1169,7 +1170,7 @@ function DocTombstone({
   const missing = !result.binary && !result.truncated;
   const revealProject = async () => {
     if (!project) return;
-    const r = await window.cc.openers.openIn('finder', project.path);
+    const r = await product.openers.openIn('finder', project.path);
     if (!r.ok) pushToast(r.message ?? 'Could not open the project folder', 'error');
   };
   return (

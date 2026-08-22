@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 /**
  * Loads renderer apps owned by the server-side PluginService. These are distinct
  * from legacy disk extensions: their bundles are served from the supervised
@@ -155,7 +156,7 @@ export async function reconcilePluginApps(
 /** Initial snapshot for the server-owned plugin app registry. */
 export async function initPluginApps(): Promise<void> {
   try {
-    await reconcilePluginApps(await window.cc.pluginApps.list());
+    await reconcilePluginApps(await product.pluginApps.list());
   } catch {
     // Plugins are optional. Keep the shell usable if the runtime is offline.
   }

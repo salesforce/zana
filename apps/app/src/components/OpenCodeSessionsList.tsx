@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useEffect, useState } from 'react';
 import { Clock, Sparkles } from 'lucide-react';
 import type { OpenCodeSessionSummary } from '@zana-ai/zcc-domain/product';
@@ -21,7 +22,7 @@ export function OpenCodeSessionsList({ projectId, onResume }: Props) {
 
   useEffect(() => {
     let active = true;
-    window.cc.opencode
+    product.opencode
       .listSessions(projectId)
       .then((items) => active && setSessions(items))
       .catch(() => active && setSessions([]));

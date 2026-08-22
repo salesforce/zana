@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useCallback, useRef, useState } from 'react';
 import type { OnMount } from '@monaco-editor/react';
 import { Sparkles, Loader2 } from 'lucide-react';
@@ -29,7 +30,7 @@ interface PendingEnhance {
  * selection (`editorHasSelection`) and the editor isn't read-only. On trigger
  * it captures the selected text + a bounded window of surrounding file text
  * for style context, asks for a one-line instruction, runs the
- * `builtin:enhance-selection` LLM micro-call via `window.cc.llmPrompts.test`,
+ * `builtin:enhance-selection` LLM micro-call via `product.llmPrompts.test`,
  * and replaces the ORIGINAL selection range with the result via
  * `executeEdits` (so Monaco's own undo stack covers it — ⌘Z reverts the AI
  * edit like any other keystroke). The caller's own `onChange`/`onDidChangeModelContent`
@@ -79,7 +80,7 @@ export function useAiEnhanceSelection() {
       const model = pending.editor.getModel();
       const fullText = model?.getValue() ?? pending.selectionText;
       const context = buildSurroundingContext(fullText, pending.startOffset, pending.endOffset);
-      const res = await window.cc.llmPrompts.test('builtin:enhance-selection', {
+      const res = await product.llmPrompts.test('builtin:enhance-selection', {
         selection: pending.selectionText,
         context,
         instruction: instruction.trim() || 'Improve clarity and correctness.'

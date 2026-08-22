@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import {
   WandSparkles,
@@ -55,11 +56,11 @@ export function MenubarPopover() {
   // read-only channel; main owns the data.
   useEffect(() => {
     let alive = true;
-    window.cc.menubar
+    product.menubar
       .request()
       .then((s) => alive && setSnapshot(s))
       .catch(() => {});
-    const off = window.cc.menubar.onSnapshot((s) => setSnapshot(s));
+    const off = product.menubar.onSnapshot((s) => setSnapshot(s));
     return () => {
       alive = false;
       off();
@@ -74,7 +75,7 @@ export function MenubarPopover() {
   // Esc dismisses, like a native menu.
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === 'Escape') window.cc.menubar.hide().catch(() => {});
+      if (e.key === 'Escape') product.menubar.hide().catch(() => {});
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -121,7 +122,7 @@ export function MenubarPopover() {
             className="mbp-icon-btn"
             title="Refresh"
             aria-label="Refresh"
-            onClick={() => window.cc.menubar.request().then(setSnapshot).catch(() => {})}
+            onClick={() => product.menubar.request().then(setSnapshot).catch(() => {})}
           >
             <RefreshCw size={13} />
           </button>
@@ -181,7 +182,7 @@ export function MenubarPopover() {
           onClick={() => setFilter('all')}
         />
         <NavButton icon={<Settings size={17} />} label="Settings" onClick={() => nav('settings')} />
-        <NavButton icon={<Power size={17} />} label="Quit" danger onClick={() => window.cc.menubar.quit()} />
+        <NavButton icon={<Power size={17} />} label="Quit" danger onClick={() => product.menubar.quit()} />
       </footer>
     </div>
   );
@@ -211,7 +212,7 @@ function Row({
         <button
           className="mbp-row-main"
           title={`${agent.title} — ${agent.projectName}`}
-          onClick={() => window.cc.menubar.focusSession(agent.sessionId, agent.projectId)}
+          onClick={() => product.menubar.focusSession(agent.sessionId, agent.projectId)}
         >
           <span className="mbp-row-title">{agent.title}</span>
           <span className="mbp-row-subline">
@@ -229,7 +230,7 @@ function Row({
             title={agent.favorite ? 'Following — click to unfollow' : 'Follow this agent'}
             aria-label={agent.favorite ? 'Unfollow agent' : 'Follow agent'}
             aria-pressed={agent.favorite}
-            onClick={() => window.cc.menubar.setFavorite(agent.sessionId, !agent.favorite)}
+            onClick={() => product.menubar.setFavorite(agent.sessionId, !agent.favorite)}
           >
             <Star size={13} fill={agent.favorite ? 'currentColor' : 'none'} />
           </button>
@@ -237,7 +238,7 @@ function Row({
             className="mbp-icon-btn mbp-open"
             title="Open in workspace"
             aria-label="Open in workspace"
-            onClick={() => window.cc.menubar.focusSession(agent.sessionId, agent.projectId)}
+            onClick={() => product.menubar.focusSession(agent.sessionId, agent.projectId)}
           >
             <ArrowRight size={14} />
           </button>
@@ -290,7 +291,7 @@ function NavButton({
 }
 
 function nav(view: 'dashboard' | 'agents' | 'settings' | 'scheduler') {
-  window.cc.menubar.open(view).catch(() => {});
+  product.menubar.open(view).catch(() => {});
 }
 
 /** Row subtitle: `state · reason/elapsed`. A live elapsed ticks for working. */

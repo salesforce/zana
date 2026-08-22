@@ -129,7 +129,7 @@ export function AgentsSidebarSection({
             title="Open Agents dashboard"
             onClick={openDashboard}
           >
-            <LayoutDashboard size={18} />
+            <LayoutDashboard size={14} />
           </button>
           <button
             type="button"
@@ -138,7 +138,7 @@ export function AgentsSidebarSection({
             title="New quick agent"
             onClick={() => setLauncherOpen(true)}
           >
-            <MessageCirclePlus size={18} />
+            <MessageCirclePlus size={14} />
           </button>
         </div>
       </header>

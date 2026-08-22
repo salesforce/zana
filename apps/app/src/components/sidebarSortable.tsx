@@ -19,6 +19,15 @@ export const WORKSPACES_SECTION_SORT_ID = 'sidebar-section:workspaces';
 export const GLOBAL_NAV_ORDER_KEY = 'zcc.sidebarNavOrder';
 export const PROJECT_NAV_ORDER_KEY = 'zcc.projectSidebarNavOrder';
 export const PINNED_PROJECT_NAV_IDS = ['inbox'] as const;
+const POST_DRAG_CLICK_SUPPRESS_MS = 80;
+
+/** Dropping with dnd-kit's default layout transition animates the node back to
+ *  its pre-drag slot, then React commits the new order — a one-frame blink. */
+const disableSortableLayoutAnimation = () => false;
+
+function sortableTranslateStyle(transform: Parameters<typeof CSS.Translate.toString>[0]) {
+  return { transform: CSS.Translate.toString(transform), transition: undefined };
+}
 
 export function SortableNavItem({
   id,
@@ -27,7 +36,10 @@ export function SortableNavItem({
   id: string;
   children: ReactElement;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({
+    id,
+    animateLayoutChanges: disableSortableLayoutAnimation
+  });
   return (
     <div
       ref={setNodeRef}
@@ -35,7 +47,7 @@ export function SortableNavItem({
       data-sortable-nav-id={id}
       // The sidebar mixes compact rows with tall collection sections. Preserve a
       // dragged item's own dimensions instead of scaling it to the target's rect.
-      style={{ transform: CSS.Translate.toString(transform), transition }}
+      style={sortableTranslateStyle(transform)}
     >
       {cloneElement(children, { ...attributes, ...listeners })}
     </div>
@@ -49,7 +61,10 @@ export function SortableSidebarSection({
   id: string;
   children: ReactElement<{ dragHandle?: HTMLAttributes<HTMLElement> }>;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({
+    id,
+    animateLayoutChanges: disableSortableLayoutAnimation
+  });
   return (
     <div
       ref={setNodeRef}
@@ -57,7 +72,7 @@ export function SortableSidebarSection({
       data-sortable-sidebar-section-id={id}
       // See SortableNavItem: a section must translate between slots, not stretch
       // to the height of a nav row while it crosses one.
-      style={{ transform: CSS.Translate.toString(transform), transition }}
+      style={sortableTranslateStyle(transform)}
     >
       {cloneElement(children, { dragHandle: { ...attributes, ...listeners } })}
     </div>
@@ -110,9 +125,11 @@ export function useSortableSidebarNav(
   const sortableNavIds = orderedNavIds.filter((id) => !pinnedSet.has(id));
 
   const onDragEnd = ({ active, over }: DragEndEvent) => {
+    // pointerup is followed by a click on the destination <Link>. Clearing on
+    // a 0ms timeout races that click and remounts the main view (a window blink).
     window.setTimeout(() => {
       suppressNavClickRef.current = false;
-    }, 0);
+    }, POST_DRAG_CLICK_SUPPRESS_MS);
     if (!over || active.id === over.id) return;
     const next = reorderSidebarNavItems(
       orderedNavIds,
@@ -133,7 +150,7 @@ export function useSortableSidebarNav(
   const onDragCancel = () => {
     window.setTimeout(() => {
       suppressNavClickRef.current = false;
-    }, 0);
+    }, POST_DRAG_CLICK_SUPPRESS_MS);
   };
 
   const consumeNavClick = () => {

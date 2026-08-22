@@ -69,6 +69,7 @@ import { useShellChromeState } from './hooks/useShellChromeState.js';
 import { useRouteSync } from './hooks/useRouteSync.js';
 import { useRouteState } from './hooks/useRouteState.js';
 import { HashNavigationScroll } from './components/HashNavigationScroll.js';
+import { product } from './lib/product-client.js';
 import {
   AGENTS_ROUTE_PATH,
   APP_ROOT_ROUTE_PATH,
@@ -210,7 +211,7 @@ export function App() {
   useEffect(() => {
     let cancelled = false;
     void initPluginApps();
-    const off = window.cc.pluginApps.onChanged((entries) => {
+    const off = product.pluginApps.onChanged((entries) => {
       if (!cancelled) void reconcilePluginApps(entries);
     });
     return () => {
@@ -294,7 +295,7 @@ export function App() {
     const viewingTerminals = nav === 'agents' || nav === 'projects';
     const activeSessionId =
       viewingTerminals && activeProjectId ? selectedTabId[activeProjectId] ?? null : null;
-    window.cc.terminals.setActiveSession(activeSessionId).catch(() => {});
+    product.terminals.setActiveSession(activeSessionId).catch(() => {});
   }, [nav, scopedProject, selectedProjectId, selectedTabId]);
 
   // Tell main which agents the user has starred so auto-close-idle can spare
@@ -304,7 +305,7 @@ export function App() {
   // last-write-wins on main is idempotent. Fire-and-forget on every change.
   const favoriteIds = useFavoriteAgents((s) => s.favoriteIds);
   useEffect(() => {
-    window.cc.terminals.setFavorites(Object.keys(favoriteIds)).catch(() => {});
+    product.terminals.setFavorites(Object.keys(favoriteIds)).catch(() => {});
   }, [favoriteIds]);
 
   // The menu-bar popover can toggle a pin (favorite) from main. Reflect main's
@@ -312,7 +313,7 @@ export function App() {
   // the popover pin stay one concept. Guard against a redundant write (same set)
   // to avoid a ping-pong with the report effect above.
   useEffect(() => {
-    return window.cc.app.onFavoritesChanged((keys) => {
+    return product.app.onFavoritesChanged((keys) => {
       const current = useFavoriteAgents.getState().favoriteIds;
       const next: Record<string, true> = {};
       for (const k of keys) next[k] = true;
@@ -339,7 +340,7 @@ export function App() {
       // is fine (it's a separate store); this guard just prevents any follow-on
       // work (like reconciliation callbacks) from firing after unmount.
     });
-    const off = window.cc.extensions.onChanged((entries) => {
+    const off = product.extensions.onChanged((entries) => {
       // Reconciliation is an external store write (extension-modules store), so
       // it's safe even if this component unmounts — but guard the call itself to
       // avoid invoking a stale closure if the component remounts quickly.
@@ -359,7 +360,7 @@ export function App() {
     // this re-hydrates them when another window writes (e.g. a per-project
     // window marks an entry read, the main window reflects it immediately).
     const offInboxSync = installInboxCrossWindowSync();
-    const offData = window.cc.terminals.onData((id) => {
+    const offData = product.terminals.onData((id) => {
       const ui = useUi.getState();
       const data = useData.getState();
       // find which project owns this session
@@ -390,7 +391,7 @@ export function App() {
     window.addEventListener('focus', onFocus);
     // Bridge native menu items (File / View / Help submenus) back to the
     // same store actions the in-renderer keyboard shortcuts use.
-    const offMenu = window.cc.app.onMenuEvent((event) => {
+    const offMenu = product.app.onMenuEvent((event) => {
       const ui = useUi.getState();
       const data = useData.getState();
       const projectId = ui.selectedProjectId;
@@ -456,7 +457,7 @@ export function App() {
         }
       }
     });
-    const offFocusSession = window.cc.app.onFocusSession((sessionId, projectId) => {
+    const offFocusSession = product.app.onFocusSession((sessionId, projectId) => {
       const ui = useUi.getState();
       ui.enterProjectFocus(projectId);
       // restoreTerminal un-hides a headless session (e.g. a scheduled run)
@@ -472,13 +473,13 @@ export function App() {
     // Tray "Open Scheduler" / per-schedule "Show in Scheduler". With a task id
     // we jump to that schedule's scope and reveal the row; without one we land
     // on the overview (matching the plain menu item).
-    const offOpenScheduler = window.cc.app.onOpenScheduler((taskId) => {
+    const offOpenScheduler = product.app.onOpenScheduler((taskId) => {
       const ui = useUi.getState();
       if (taskId) ui.revealSchedule(taskId);
       else ui.setNav('scheduler');
     });
     // Menu-bar popover footer "Agents" — land on the global Agents board.
-    const offOpenAgents = window.cc.app.onOpenAgents(() => {
+    const offOpenAgents = product.app.onOpenAgents(() => {
       useUi.getState().setNav('agents');
     });
     // A native loud-tier notification was clicked (Phase D) — resolve the
@@ -488,7 +489,7 @@ export function App() {
     // the full entry up from the already-loaded inbox store; if it's not
     // loaded yet (e.g. a fresh window), fall back to the plain project+nav
     // landing rather than dropping the click.
-    const offFocusInboxEntry = window.cc.app.onFocusInboxEntry((entryId, projectId) => {
+    const offFocusInboxEntry = product.app.onFocusInboxEntry((entryId, projectId) => {
       const entry = useInbox.getState().entries.find((e) => e.id === entryId);
       if (entry) {
         focusInboxEntry(entry);
@@ -521,12 +522,12 @@ export function App() {
   // attach — never dropped (the orchestrator's fail-closed fold-in).
   useEffect(() => {
     const drainParked = () => {
-      void window.cc.modules
+      void product.modules
         .drainParkedLaunches()
         .then((parked) => useUi.getState().addPendingLaunches(parked))
         .catch(() => {});
     };
-    const off = window.cc.modules.onHostCommand((cmd) => {
+    const off = product.modules.onHostCommand((cmd) => {
       const p = (cmd.payload ?? {}) as Record<string, unknown>;
       switch (cmd.kind) {
         case 'toast':
@@ -576,7 +577,7 @@ export function App() {
               cancelLabel: spec.cancelLabel as string | undefined,
               danger: !!spec.danger
             },
-            resolve: (answer) => void window.cc.modules.replyHostDialog(requestId, answer)
+            resolve: (answer) => void product.modules.replyHostDialog(requestId, answer)
           });
           return;
         }
@@ -600,7 +601,7 @@ export function App() {
                   }))
                 : undefined
             },
-            resolve: (answer) => void window.cc.modules.replyHostDialog(requestId, answer)
+            resolve: (answer) => void product.modules.replyHostDialog(requestId, answer)
           });
           return;
         }
@@ -633,6 +634,7 @@ export function App() {
       }`}
       data-platform={shellChrome.platform}
       data-fullscreen={shellChrome.isFullScreen}
+      data-traffic-lights={shellChrome.reserveMacosTrafficLights}
     >
       <div className="titlebar">
         <span className="titlebar-title" title={titlebarProject?.path ?? undefined}>
@@ -702,7 +704,9 @@ export function App() {
       </main>
       {/* The global Agents sidebar can open the shared launcher while no project
           workspace is mounted. Keep one host here for every non-project route;
-          Workspace continues to own project-scoped launches. */}
+          Workspace continues to own project-scoped launches — but only while
+          that slot is shown, so a CSS-hidden workspace cannot portal a second
+          dialog on top of this one. */}
       {launcherOpen && (nav !== 'projects' || !focusedProjectId) && (
         <AgentLauncher
           onClose={() => useUi.getState().setLauncherOpen(false)}
@@ -780,7 +784,7 @@ function WalkthroughHost() {
   // it shows once more next launch.
   const close = () => {
     useUi.getState().setWalkthroughOpen(false);
-    window.cc.config.set({ walkthroughCompleted: true }).catch(() => {});
+    product.config.set({ walkthroughCompleted: true }).catch(() => {});
   };
   if (!open) return null;
   return <Walkthrough onClose={close} />;

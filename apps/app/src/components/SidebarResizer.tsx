@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { applySidebarWidth, SIDEBAR_MIN, SIDEBAR_MAX } from '../store.js';
 
 /**
@@ -26,7 +27,7 @@ export function SidebarResizer() {
         getComputedStyle(document.documentElement).getPropertyValue('--col-nav')
       );
       if (Number.isFinite(w) && w > 0) {
-        window.cc.config.set({ sidebarWidth: Math.round(w) }).catch(() => {});
+        product.config.set({ sidebarWidth: Math.round(w) }).catch(() => {});
       }
     };
     window.addEventListener('mousemove', onMove);
@@ -35,7 +36,7 @@ export function SidebarResizer() {
 
   const onResizeDoubleClick = () => {
     applySidebarWidth(SIDEBAR_MIN);
-    window.cc.config.set({ sidebarWidth: SIDEBAR_MIN }).catch(() => {});
+    product.config.set({ sidebarWidth: SIDEBAR_MIN }).catch(() => {});
   };
 
   return (

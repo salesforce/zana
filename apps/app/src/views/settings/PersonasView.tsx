@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import { Bot, ChevronRight, Copy, FolderOpen, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import type { Persona } from '@zana-ai/zcc-domain/product';
@@ -77,7 +78,7 @@ export function PersonasView() {
   };
 
   const deletePersona = async (persona: Persona) => {
-    const result = await window.cc.personas.delete(persona.id);
+    const result = await product.personas.delete(persona.id);
     if (!result.ok) {
       pushToast(`Delete failed: ${result.message}`, 'error');
       return;
@@ -221,7 +222,7 @@ export function PersonasView() {
             rowMenu.trigger.focus();
           }}
           onOpen={() => setEditor({ kind: 'open', persona: rowMenu.persona })}
-          onReveal={() => void window.cc.personas.revealDir().catch(() => {})}
+          onReveal={() => void product.personas.revealDir().catch(() => {})}
           onDuplicate={() => void duplicatePersona(rowMenu.persona)}
           onDelete={() => void deletePersona(rowMenu.persona)}
         />
@@ -230,7 +231,7 @@ export function PersonasView() {
   );
 
   async function duplicatePersona(persona: Persona) {
-    const result = await window.cc.personas.duplicate(persona.id);
+    const result = await product.personas.duplicate(persona.id);
     if (!result.ok) {
       pushToast(`Duplicate failed: ${result.message}`, 'error');
       return;

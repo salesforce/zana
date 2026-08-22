@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import { useState, useEffect } from 'react';
 import {
   Sparkles,
@@ -131,7 +132,7 @@ function UpdateStatusCard() {
             <button
               type="button"
               className="settings-update-btn settings-update-btn--primary"
-              onClick={() => void window.cc.updates.download({ installNow: true })}
+              onClick={() => void product.updates.download({ installNow: true })}
               title="Download the update and relaunch into it"
             >
               <Download size={13} aria-hidden="true" /> Download &amp; restart
@@ -139,7 +140,7 @@ function UpdateStatusCard() {
             <button
               type="button"
               className="settings-update-btn"
-              onClick={() => void window.cc.updates.download({ installNow: false })}
+              onClick={() => void product.updates.download({ installNow: false })}
               title="Download in the background; install on your next quit"
             >
               Install on quit
@@ -148,7 +149,7 @@ function UpdateStatusCard() {
               <button
                 type="button"
                 className="settings-update-btn settings-update-btn--ghost"
-                onClick={() => void window.cc.updates.skip(status.version!)}
+                onClick={() => void product.updates.skip(status.version!)}
                 aria-label={`Skip version ${status.version}`}
                 title="Don't offer this version again"
               >
@@ -161,7 +162,7 @@ function UpdateStatusCard() {
           <button
             type="button"
             className="settings-update-btn settings-update-btn--primary"
-            onClick={() => void window.cc.updates.quitAndInstall()}
+            onClick={() => void product.updates.quitAndInstall()}
             title="Quit and install the update now"
           >
             <RotateCw size={13} aria-hidden="true" /> Restart now
@@ -172,7 +173,7 @@ function UpdateStatusCard() {
             type="button"
             className="settings-update-btn"
             disabled={checking || status.kind === 'disabled'}
-            onClick={() => void window.cc.updates.check()}
+            onClick={() => void product.updates.check()}
             title="Check the release feed for a newer version"
           >
             {checking ? 'Checking…' : error ? 'Retry' : 'Check for updates'}
@@ -199,7 +200,7 @@ export function AboutView({
   const [version, setVersion] = useState<string>('');
 
   useEffect(() => {
-    window.cc.app.version().then(setVersion).catch(() => {});
+    product.app.version().then(setVersion).catch(() => {});
   }, []);
 
   const simEnabled = config.enableUpdateSimulation ?? false;
@@ -238,7 +239,7 @@ export function AboutView({
             <button
               type="button"
               className="settings-btn"
-              onClick={() => void window.cc.updates.simulate?.('9.9.9')}
+              onClick={() => void product.updates.simulate?.('9.9.9')}
               title="Emit a fake update flow to exercise the banner + About card"
             >
               Simulate update (v9.9.9)

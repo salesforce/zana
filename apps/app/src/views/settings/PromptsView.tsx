@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { FolderOpen, Play, RotateCcw, Loader2 } from 'lucide-react';
@@ -7,7 +8,7 @@ import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
 /**
  * Providers offered in the editor, in display order. `base` is the human label;
  * whether each is *selectable* is derived at render from
- * `window.cc.llmPrompts.availableProviders()` (the ids whose API key is present
+ * `product.llmPrompts.availableProviders()` (the ids whose API key is present
  * right now — see {@link buildProviderOptions}), so a provider becomes usable the
  * moment its key is configured, rather than a hardcoded flag. `claude-cli` is
  * always available (no key needed); `anthropic-sdk` is not implemented yet.
@@ -45,7 +46,7 @@ function buildProviderOptions(
  * Settings → Prompts. Lists every registered LLM micro-call prompt (built-in +
  * user) and lets the user edit, save (shadowing a built-in), reset, and test
  * one. Mirrors the QuickPrompt-store pattern: edits write a JSON file in
- * `~/.zcc/llm-prompts/` via `window.cc.llmPrompts.*`.
+ * `~/.zcc/llm-prompts/` via `product.llmPrompts.*`.
  */
 export function PromptsView() {
   const [prompts, setPrompts] = useState<LlmPromptEntry[]>([]);
@@ -65,7 +66,7 @@ export function PromptsView() {
   // Load + subscribe to registry changes.
   useEffect(() => {
     let active = true;
-    window.cc.llmPrompts
+    product.llmPrompts
       .list()
       .then((list) => {
         if (!active) return;
@@ -73,13 +74,13 @@ export function PromptsView() {
         setSelectedId((cur) => cur ?? list[0]?.id ?? null);
       })
       .catch(() => {});
-    window.cc.llmPrompts
+    product.llmPrompts
       .availableProviders()
       .then((ids) => {
         if (active) setAvailableProviders(new Set(ids));
       })
       .catch(() => {});
-    const off = window.cc.llmPrompts.onChanged((list) => setPrompts(list));
+    const off = product.llmPrompts.onChanged((list) => setPrompts(list));
     return () => {
       active = false;
       off();
@@ -128,7 +129,7 @@ export function PromptsView() {
     if (!draft) return;
     setSaveError(null);
     try {
-      await window.cc.llmPrompts.save(draft);
+      await product.llmPrompts.save(draft);
       setSaved(true);
       window.setTimeout(() => setSaved(false), 1600);
     } catch (err) {
@@ -141,7 +142,7 @@ export function PromptsView() {
   const onReset = async () => {
     if (!draft) return;
     try {
-      await window.cc.llmPrompts.delete(draft.id);
+      await product.llmPrompts.delete(draft.id);
     } catch {
       /* noop */
     }
@@ -153,8 +154,8 @@ export function PromptsView() {
     setTestResult(null);
     try {
       // Persist first so the registry runs exactly what's on screen, then test.
-      if (dirty) await window.cc.llmPrompts.save(draft);
-      const r = await window.cc.llmPrompts.test(draft.id, testVars);
+      if (dirty) await product.llmPrompts.save(draft);
+      const r = await product.llmPrompts.test(draft.id, testVars);
       setTestResult(r);
     } catch (err) {
       setTestResult({
@@ -312,7 +313,7 @@ export function PromptsView() {
                   <button
                     type="button"
                     className="btn"
-                    onClick={() => window.cc.llmPrompts.revealDir().catch(() => {})}
+                    onClick={() => product.llmPrompts.revealDir().catch(() => {})}
                   >
                     <FolderOpen size={13} />
                     Reveal folder

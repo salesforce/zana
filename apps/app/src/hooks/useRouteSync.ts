@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useUi, type ExtensionsTab, type NavId, type ProjectView, type SettingsTab } from '../store.js';
@@ -102,8 +103,8 @@ export function useRouteSync(): void {
     if (decoded.focusedProjectId && decoded.focusedProjectId !== current.selectedProjectId) {
       useUi.getState().selectProject(decoded.focusedProjectId);
     }
-    if (patch.focusedProjectId !== undefined && typeof window.cc?.config?.set === 'function') {
-      window.cc.config.set({ focusedProjectId: patch.focusedProjectId }).catch(() => {});
+    if (patch.focusedProjectId !== undefined) {
+      product.config.set({ focusedProjectId: patch.focusedProjectId }).catch(() => {});
     }
   }, [location.hash, location.pathname]);
 }

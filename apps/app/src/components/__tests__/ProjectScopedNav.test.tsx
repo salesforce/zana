@@ -178,14 +178,13 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     h.modules = [];
   });
 
-  it('opens this project Agents board from the collection label and dashboard control', () => {
+  it('opens this project Agents board from the collection dashboard control', () => {
     const source = readFileSync(new URL('../ProjectScopedNav.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain("onOpenDashboard={() => selectMode('agents')}");
-    expect(source).toContain('onNavigate={onNavClick}');
     expect(source).toContain('projectId={project.id}');
     expect(source).toContain('PROJECT_NAV_ORDER_KEY');
-    expect(source).toContain('{...rest}');
+    expect(source).toContain('sidebar--titlebar-controls');
     expect(source).not.toContain("mode: 'agents'");
   });
 });

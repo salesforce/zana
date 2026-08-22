@@ -101,4 +101,21 @@ describe('startStaticHost', () => {
       ok: true
     });
   });
+
+  it('serves the loopback product API beside renderer assets', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'zcc-static-host-'));
+    writeFileSync(join(root, 'index.html'), '<main>zana</main>');
+    const { createProductHttpContext } = await import('./http/product-context.js');
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-static-product-'));
+    const product = createProductHttpContext({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    host = await startStaticHost({ rootDir: root, product });
+
+    await expect(fetch(`${host.url}api/v1/health`).then((response) => response.json())).resolves.toEqual({
+      ok: true
+    });
+    await expect(fetch(host.url).then((response) => response.text())).resolves.toContain('zana');
+  });
 });

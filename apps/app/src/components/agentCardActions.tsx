@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useEffect, useState } from 'react';
 import { useData, useIdleTriage } from '../store.js';
 import { cardNeedsAttention, type AgentCard } from './AgentBoard.js';
@@ -95,7 +96,7 @@ export function useAgentCardActions(): {
 
   const actions: AgentCardActions = {
     stop: (c) => {
-      void window.cc.terminals.write(c.session.id, '\x03').catch(() => {});
+      void product.terminals.write(c.session.id, '\x03').catch(() => {});
     },
     restart: (c) => {
       const live = c.session.status !== 'exited';
@@ -118,7 +119,7 @@ export function useAgentCardActions(): {
       // Blocked overlay lives in main (authorize there); the triage promotion is
       // a renderer-side advisory slice — clear both so the card leaves the lane
       // regardless of which path put it there.
-      void window.cc.terminals.clearAgentBlocked(c.projectId, c.session.id).catch(() => {});
+      void product.terminals.clearAgentBlocked(c.projectId, c.session.id).catch(() => {});
       useIdleTriage.getState().clear(c.session.id);
     },
     // Open the in-app PromptModal — Electron's renderer disables window.prompt

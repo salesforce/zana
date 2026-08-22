@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 // Side-effect: wires up MonacoEnvironment (local workers) + loader.config. See
 // util/monacoSetup.ts — shared with LibraryView and the modal's DiffViewer.
@@ -96,7 +97,7 @@ export function ExplorerView({ project }: Props) {
     if (viewRoot === project.path) {
       useData.getState().loadGitStatus(project.id);
     } else {
-      window.cc.git.status(viewRoot)
+      product.git.status(viewRoot)
         .then((s) => setWorktreeGitStatus(s))
         .catch(() => {});
     }
@@ -106,10 +107,10 @@ export function ExplorerView({ project }: Props) {
   // refresh). Best-effort; a non-repo just clears to empty.
   const reloadWorktrees = useCallback(() => {
     if (isRemote) return;
-    window.cc.git.listWorktrees(project.path)
+    product.git.listWorktrees(project.path)
       .then((list) => setWorktrees(list))
       .catch(() => setWorktrees([]));
-    window.cc.git.listBranches(project.path)
+    product.git.listBranches(project.path)
       .then((list) => setBranches(list))
       .catch(() => setBranches([]));
   }, [project.path, isRemote]);
@@ -128,10 +129,10 @@ export function ExplorerView({ project }: Props) {
       // If we're currently viewing the worktree being removed, fall back to the
       // main checkout first so the tree isn't left rooted at a deleted dir.
       if (viewRoot === wt.path) setViewRoot(project.path);
-      let res = await window.cc.git.removeWorktree(project.path, wt.path, false);
+      let res = await product.git.removeWorktree(project.path, wt.path, false);
       if (!res.ok && /dirty|contains modified|use --force|locked working tree/i.test(res.message ?? '')) {
         if (window.confirm(`“${wt.branch ?? wt.path}” has uncommitted changes.\n\nForce-remove and discard them?`)) {
-          res = await window.cc.git.removeWorktree(project.path, wt.path, true);
+          res = await product.git.removeWorktree(project.path, wt.path, true);
         } else {
           return;
         }
@@ -244,8 +245,8 @@ export function ExplorerView({ project }: Props) {
       let list: FsEntry[] = [];
       try {
         list = isRemote
-          ? await window.cc.fs.listDirRemote(project.id, path)
-          : await window.cc.fs.listDir(path);
+          ? await product.fs.listDirRemote(project.id, path)
+          : await product.fs.listDir(path);
       } catch (err) {
         pushToast(err instanceof Error ? err.message : 'Failed to list directory', 'error');
       }
@@ -314,7 +315,7 @@ export function ExplorerView({ project }: Props) {
       // it. `project.path` is only a local placeholder, so we can't list it.
       let cancelled = false;
       setViewRoot(project.path); // transient until the remote root resolves
-      window.cc.fs.remoteRoot(project.id)
+      product.fs.remoteRoot(project.id)
         .then((res) => {
           if (cancelled) return;
           if (!res.ok || !res.root) {
@@ -333,12 +334,12 @@ export function ExplorerView({ project }: Props) {
     loadDir(project.path, true);
     // Enumerate worktrees so the switcher can offer them. Cheap (`git worktree
     // list`), best-effort — a non-repo project just yields [] and hides the UI.
-    window.cc.git.listWorktrees(project.path)
+    product.git.listWorktrees(project.path)
       .then((list) => setWorktrees(list))
       .catch(() => setWorktrees([]));
     // Enumerate all local branches so the switcher can show branches that don't
     // (yet) have a worktree. Best-effort — non-repo yields [].
-    window.cc.git.listBranches(project.path)
+    product.git.listBranches(project.path)
       .then((list) => setBranches(list))
       .catch(() => setBranches([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -362,7 +363,7 @@ export function ExplorerView({ project }: Props) {
       // Remote projects have no local git status; worktree switching is local-only.
       setWorktreeGitStatus(null);
     } else {
-      window.cc.git.status(viewRoot)
+      product.git.status(viewRoot)
         .then((s) => setWorktreeGitStatus(s))
         .catch(() => setWorktreeGitStatus(null));
     }
@@ -387,7 +388,7 @@ export function ExplorerView({ project }: Props) {
     if (headResult) return;
     let cancelled = false;
     setHeadLoading(true);
-    window.cc.git.showHead(explorerFile)
+    product.git.showHead(explorerFile)
       .then((r) => {
         if (cancelled) return;
         setHeadResult(r);
@@ -414,8 +415,8 @@ export function ExplorerView({ project }: Props) {
     }
     setFileLoading(true);
     const read = isRemote
-      ? window.cc.fs.readFileRemote(project.id, explorerFile)
-      : window.cc.fs.readFile(explorerFile);
+      ? product.fs.readFileRemote(project.id, explorerFile)
+      : product.fs.readFile(explorerFile);
     read
       .then((r) => {
         if (cancelled) return;
@@ -450,7 +451,7 @@ export function ExplorerView({ project }: Props) {
     setImageError(null);
     if (!explorerFile || isRemote || !isImagePath(explorerFile)) return;
     let cancelled = false;
-    window.cc.fs.readDataUrl(explorerFile)
+    product.fs.readDataUrl(explorerFile)
       .then((r) => {
         if (cancelled) return;
         if (r.ok && r.dataUrl) setImageDataUrl(r.dataUrl);
@@ -473,8 +474,8 @@ export function ExplorerView({ project }: Props) {
       // discard unsaved keystrokes. The diff side is still safe to refresh.
       if (editedContent === null) {
         const reread = isRemote
-          ? window.cc.fs.readFileRemote(project.id, explorerFile)
-          : window.cc.fs.readFile(explorerFile);
+          ? product.fs.readFileRemote(project.id, explorerFile)
+          : product.fs.readFile(explorerFile);
         reread
           .then((r) => {
             setFileResult((prev) => (sameFileResult(prev, r) ? prev : r));
@@ -482,7 +483,7 @@ export function ExplorerView({ project }: Props) {
           .catch(() => {});
       }
       if (diffMode && !isRemote) {
-        window.cc.git.showHead(explorerFile)
+        product.git.showHead(explorerFile)
           .then((r) => {
             setHeadResult((prev) => (sameHeadResult(prev, r) ? prev : r));
           })
@@ -591,7 +592,7 @@ export function ExplorerView({ project }: Props) {
       : path;
     const verb = code === '?' || code === 'A' ? 'Delete' : 'Discard changes to';
     if (!window.confirm(`${verb} ${rel}? This cannot be undone.`)) return;
-    const r = await window.cc.git.discard(path);
+    const r = await product.git.discard(path);
     if (!r.ok) {
       pushToast(r.message ?? 'Discard failed', 'error');
       return;
@@ -603,9 +604,9 @@ export function ExplorerView({ project }: Props) {
         setExplorerFile(project.id, undefined);
       } else {
         setEditedContent(null);
-        window.cc.fs.readFile(path).then((res) => setFileResult(res)).catch(() => {});
+        product.fs.readFile(path).then((res) => setFileResult(res)).catch(() => {});
         if (diffMode) {
-          window.cc.git.showHead(path).then((h) => setHeadResult(h)).catch(() => {});
+          product.git.showHead(path).then((h) => setHeadResult(h)).catch(() => {});
         }
       }
     }
@@ -646,11 +647,11 @@ export function ExplorerView({ project }: Props) {
     const target = dir + '/' + name.replace(/^\/+/, '');
     const r = isRemote
       ? kind === 'dir'
-        ? await window.cc.fs.createDirRemote(project.id, target)
-        : await window.cc.fs.createFileRemote(project.id, target)
+        ? await product.fs.createDirRemote(project.id, target)
+        : await product.fs.createFileRemote(project.id, target)
       : kind === 'dir'
-        ? await window.cc.fs.createDir(viewRoot, target)
-        : await window.cc.fs.createFile(viewRoot, target);
+        ? await product.fs.createDir(viewRoot, target)
+        : await product.fs.createFile(viewRoot, target);
     if (!r.ok) {
       pushToast(r.message ?? 'Create failed', 'error');
       return;
@@ -681,8 +682,8 @@ export function ExplorerView({ project }: Props) {
     }
     const target = viewRoot + '/' + next.replace(/^\/+/, '');
     const r = isRemote
-      ? await window.cc.fs.renameRemote(project.id, path, target)
-      : await window.cc.fs.rename(viewRoot, path, target);
+      ? await product.fs.renameRemote(project.id, path, target)
+      : await product.fs.rename(viewRoot, path, target);
     if (!r.ok) {
       pushToast(r.message ?? 'Rename failed', 'error');
       return;
@@ -707,8 +708,8 @@ export function ExplorerView({ project }: Props) {
     const what = kind === 'dir' ? 'folder (and everything inside it)' : 'file';
     if (!window.confirm(`Delete ${what} ${rel}? This cannot be undone.`)) return;
     const r = isRemote
-      ? await window.cc.fs.deleteRemote(project.id, path)
-      : await window.cc.fs.delete(viewRoot, path);
+      ? await product.fs.deleteRemote(project.id, path)
+      : await product.fs.delete(viewRoot, path);
     if (!r.ok) {
       pushToast(r.message ?? 'Delete failed', 'error');
       return;
@@ -727,8 +728,8 @@ export function ExplorerView({ project }: Props) {
     if (!explorerFile || editedContent === null || saving) return;
     setSaving(true);
     const r = isRemote
-      ? await window.cc.fs.writeFileRemote(project.id, explorerFile, editedContent)
-      : await window.cc.fs.writeFile(explorerFile, editedContent);
+      ? await product.fs.writeFileRemote(project.id, explorerFile, editedContent)
+      : await product.fs.writeFile(explorerFile, editedContent);
     setSaving(false);
     if (!r.ok) {
       pushToast(r.message ?? 'Failed to save file', 'error');
@@ -739,7 +740,7 @@ export function ExplorerView({ project }: Props) {
     setFileResult((prev) => (prev ? { ...prev, content: editedContent, bytes: r.bytes } : prev));
     setEditedContent(null);
     if (diffMode && !isRemote) {
-      window.cc.git.showHead(explorerFile).then((h) => setHeadResult(h)).catch(() => {});
+      product.git.showHead(explorerFile).then((h) => setHeadResult(h)).catch(() => {});
     }
     reloadGitStatus();
   }, [explorerFile, editedContent, saving, pushToast, diffMode, reloadGitStatus, isRemote, project.id]);

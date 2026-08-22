@@ -1,7 +1,6 @@
-import { Fragment, useEffect, useSyncExternalStore, type ButtonHTMLAttributes, type ReactElement, type ReactNode } from 'react';
-import { DndContext } from '@dnd-kit/core';
-import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { Link, useNavigate } from 'react-router-dom';
+import { product } from '../lib/product-client.js';
+import { useEffect, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Inbox,
   TerminalSquare,
@@ -11,7 +10,6 @@ import {
   MessageCircleQuestion,
   Activity,
   ArrowLeft,
-  Settings,
   AppWindow,
   Sparkles,
   type LucideIcon
@@ -31,10 +29,7 @@ import {
 import { useProjectTabModules } from '../modules/index.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
 import { resolveProjectTabModule } from '../lib/libraryPlugin.js';
-import { listSidebarFooterActions, subscribePluginSlots } from '../plugins/plugin-slots.js';
 import { AgentsSidebarSection } from './AgentsSidebarSection.js';
-import { SidebarResizer } from './SidebarResizer.js';
-import { SidebarHistoryControls } from './SidebarHistoryControls.js';
 import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js';
 import { useRouteState } from '../hooks/useRouteState.js';
 import {
@@ -45,11 +40,13 @@ import {
 import {
   AGENTS_SECTION_SORT_ID,
   PINNED_PROJECT_NAV_IDS,
-  PROJECT_NAV_ORDER_KEY,
-  SortableNavItem,
-  SortableSidebarSection,
-  useSortableSidebarNav
+  PROJECT_NAV_ORDER_KEY
 } from './sidebarSortable.js';
+import {
+  SidebarCountBadge,
+  SidebarRail,
+  type SidebarRailItem
+} from './SidebarRail.js';
 
 /**
  * The left nav rail for a single-project FOCUSED VIEW. Replaces the global
@@ -89,96 +86,6 @@ const MODE_ITEMS: ModeItem[] = [
   { mode: 'followups', label: 'Follow-ups', icon: MessageCircleQuestion }
 ];
 
-/** Must forward extra button props — SortableNavItem cloneElement's dnd-kit
- *  listeners onto this component, not onto a host <button>. */
-function NavRow({
-  label,
-  icon,
-  active,
-  collapsed,
-  title,
-  testId,
-  badge,
-  running,
-  to,
-  onClick,
-  ...rest
-}: {
-  label: string;
-  icon: ReactNode;
-  active: boolean;
-  collapsed: boolean;
-  title?: string;
-  testId?: string;
-  badge?: ReactNode;
-  running?: boolean;
-  to?: string;
-  onClick?: (event: { preventDefault: () => void }) => void;
-} & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'type' | 'onClick' | 'children' | 'title'>): ReactElement {
-  const className = `nav-item ${active ? 'active' : ''}`;
-  const body = (
-    <>
-      <span className="nav-item-icon">
-        {icon}
-        {running && <span className="nav-running-dot" aria-hidden="true" />}
-      </span>
-      <span className="nav-item-label">{label}</span>
-      {badge}
-    </>
-  );
-  if (to) {
-    return (
-      <Link
-        to={to}
-        data-testid={testId}
-        className={className}
-        onClick={onClick}
-        aria-current={active ? 'page' : undefined}
-        aria-label={collapsed ? label : undefined}
-        title={title ?? label}
-      >
-        {body}
-      </Link>
-    );
-  }
-  return (
-    <button
-      type="button"
-      data-testid={testId}
-      className={className}
-      onClick={onClick}
-      aria-current={active ? 'page' : undefined}
-      aria-label={collapsed ? label : undefined}
-      title={title ?? label}
-      {...rest}
-    >
-      {body}
-    </button>
-  );
-}
-
-function CountBadge({
-  count,
-  label,
-  title,
-  kind
-}: {
-  count: number;
-  label: string;
-  title: string;
-  kind?: 'running' | 'blocked';
-}) {
-  return (
-    <span
-      className={`nav-badge${kind ? ` nav-badge--${kind}` : ''}`}
-      aria-label={label}
-      title={title}
-    >
-      {count > 99 ? '99+' : count}
-    </span>
-  );
-}
-
 export function ProjectScopedNav({
   project,
   variant = 'window',
@@ -198,7 +105,6 @@ export function ProjectScopedNav({
   const goalsEnabled = useData((s) => s.goalsEnabled);
   const followUpsEnabled = useData((s) => s.followUpsEnabled);
   const suggestionsEnabled = useData((s) => s.suggestionsEnabled);
-  const collapsed = useUi((s) => s.sidebarCollapsed);
   const mode = route.workspaceMode ?? 'agents';
   const routeMemory = useAppSettingsRouteMemory();
   const navigate = useNavigate();
@@ -208,12 +114,6 @@ export function ProjectScopedNav({
   const scheduleCount = useProjectScheduleCount(project.id);
   const runningTerminals = useProjectRunningTerminalCount(project.id);
   const projectTabModules = useProjectTabModules();
-  const footerActions = useSyncExternalStore(
-    subscribePluginSlots,
-    listSidebarFooterActions,
-    listSidebarFooterActions
-  );
-
   const onProjects = nav === 'projects';
 
   const modeItems = MODE_ITEMS.filter(
@@ -237,263 +137,157 @@ export function ProjectScopedNav({
     void navigate(routeMemory.projectBackRoutePath);
   };
 
-  const availableIds = [
-    'inbox',
-    ...(suggestionsEnabled ? ['suggestions'] : []),
-    ...modeItems.map((item) => item.mode),
-    ...projectTabModules.map((m) => m.id),
-    AGENTS_SECTION_SORT_ID
-  ];
-  const {
-    pinnedNavIds,
-    sortableNavIds,
-    sensors,
-    collisionDetection,
-    onDragStart,
-    onDragCancel,
-    onDragEnd,
-    consumeNavClick
-  } = useSortableSidebarNav(PROJECT_NAV_ORDER_KEY, availableIds, PINNED_PROJECT_NAV_IDS);
-
-  const onNavClick = (event: { preventDefault: () => void }) => {
-    if (consumeNavClick()) event.preventDefault();
-  };
-
-  const renderInbox = () => (
-    <NavRow
-      label="Inbox"
-      icon={<Inbox size={16} />}
-      active={nav === 'inbox'}
-      collapsed={collapsed}
-      title="Inbox for this project"
-      testId="project-nav-inbox"
-      to={getInboxRoutePath()}
-      onClick={onNavClick}
-      badge={
+  const items: SidebarRailItem[] = [
+    {
+      kind: 'row',
+      id: 'inbox',
+      label: 'Inbox',
+      icon: <Inbox size={16} />,
+      to: getInboxRoutePath(),
+      testId: 'project-nav-inbox',
+      active: nav === 'inbox',
+      title: 'Inbox for this project',
+      badge:
         unreadInbox > 0 ? (
-          <CountBadge
+          <SidebarCountBadge
             count={unreadInbox}
             label={`${unreadInbox} unread`}
             title={`${unreadInbox} unread`}
           />
         ) : null
-      }
-    />
-  );
-
-  const renderSuggestions = () => (
-    <NavRow
-      label="Next Steps"
-      icon={<Sparkles size={16} />}
-      active={nav === 'suggestions'}
-      collapsed={collapsed}
-      title="Next Steps for this project"
-      testId="project-nav-suggestions"
-      to={getSuggestionsRoutePath()}
-      onClick={onNavClick}
-    />
-  );
-
-  const renderModeRow = (item: ModeItem) => {
-    const Icon = item.icon;
-    const active = onProjects && mode === item.mode;
-    const goalsActive = item.mode === 'goals' && activeGoals > 0;
-    const followupsOpen = item.mode === 'followups' && openFollowUps > 0;
-    const schedulerCount = item.mode === 'scheduler' && scheduleCount > 0;
-    const terminalsRunning = item.mode === 'terminals' && runningTerminals > 0;
-    let badge: ReactNode = null;
-    if (goalsActive) {
-      badge = (
-        <CountBadge
-          count={activeGoals}
-          label={`${activeGoals} active goal${activeGoals === 1 ? '' : 's'}`}
-          title={`${activeGoals} active goal${activeGoals === 1 ? '' : 's'}`}
-          kind="running"
-        />
-      );
-    } else if (followupsOpen) {
-      badge = (
-        <CountBadge
-          count={openFollowUps}
-          label={`${openFollowUps} open follow-up${openFollowUps === 1 ? '' : 's'}`}
-          title={`${openFollowUps} open follow-up${openFollowUps === 1 ? '' : 's'}`}
-          kind="running"
-        />
-      );
-    } else if (schedulerCount) {
-      badge = (
-        <CountBadge
-          count={scheduleCount}
-          label={`${scheduleCount} schedule${scheduleCount === 1 ? '' : 's'}`}
-          title={`${scheduleCount} schedule${scheduleCount === 1 ? '' : 's'} spawning in this project`}
-        />
-      );
-    } else if (terminalsRunning) {
-      badge = (
-        <CountBadge
-          count={runningTerminals}
-          label={`${runningTerminals} terminal${runningTerminals === 1 ? '' : 's'} running`}
-          title={`${runningTerminals} terminal${runningTerminals === 1 ? '' : 's'} running`}
-          kind="running"
-        />
-      );
-    }
-    return (
-      <NavRow
-        label={item.label}
-        icon={<Icon size={16} />}
-        active={active}
-        collapsed={collapsed}
-        testId={`project-nav-${item.mode}`}
-        to={getProjectWorkspaceRoutePath(project.id, item.mode)}
-        onClick={onNavClick}
-        running={goalsActive || followupsOpen || terminalsRunning}
-        badge={badge}
-      />
-    );
-  };
-
-  const renderModuleRow = (id: string) => {
-    const m = projectTabModules.find((mod) => mod.id === id);
-    if (!m) return null;
-    const Icon = resolveIcon(m.projectTab?.icon ?? m.icon);
-    const label = m.projectTab?.label ?? m.title;
-    const extActive = resolveProjectTabModule(mode, [m])?.id === m.id;
-    const active = onProjects && (mode === m.id || extActive);
-    return (
-      <NavRow
-        label={label}
-        icon={<Icon size={16} />}
-        active={active}
-        collapsed={collapsed}
-        testId={`project-nav-${m.id}`}
-        to={getProjectWorkspaceRoutePath(project.id, m.id)}
-        onClick={onNavClick}
-      />
-    );
-  };
-
-  const renderSortableItem = (id: string) => {
-    if (id === 'suggestions') {
-      return (
-        <SortableNavItem key={id} id={id}>
-          {renderSuggestions()}
-        </SortableNavItem>
-      );
-    }
-    const modeItem = modeItems.find((item) => item.mode === id);
-    if (modeItem) {
-      return (
-        <SortableNavItem key={id} id={id}>
-          {renderModeRow(modeItem)}
-        </SortableNavItem>
-      );
-    }
-    if (id === AGENTS_SECTION_SORT_ID) {
-      return (
-        <SortableSidebarSection key={id} id={id}>
-          <AgentsSidebarSection
-            projectId={project.id}
-            onOpenDashboard={() => selectMode('agents')}
-            onNavigate={onNavClick}
+    },
+    ...(suggestionsEnabled
+      ? [
+          {
+            kind: 'row' as const,
+            id: 'suggestions',
+            label: 'Next Steps',
+            icon: <Sparkles size={16} />,
+            to: getSuggestionsRoutePath(),
+            testId: 'project-nav-suggestions',
+            active: nav === 'suggestions',
+            title: 'Next Steps for this project'
+          } satisfies SidebarRailItem
+        ]
+      : []),
+    ...modeItems.map((item): SidebarRailItem => {
+      const Icon = item.icon;
+      const active = onProjects && mode === item.mode;
+      const goalsActive = item.mode === 'goals' && activeGoals > 0;
+      const followupsOpen = item.mode === 'followups' && openFollowUps > 0;
+      const schedulerCount = item.mode === 'scheduler' && scheduleCount > 0;
+      const terminalsRunning = item.mode === 'terminals' && runningTerminals > 0;
+      let badge: ReactNode = null;
+      if (goalsActive) {
+        badge = (
+          <SidebarCountBadge
+            count={activeGoals}
+            label={`${activeGoals} active goal${activeGoals === 1 ? '' : 's'}`}
+            title={`${activeGoals} active goal${activeGoals === 1 ? '' : 's'}`}
+            kind="running"
           />
-        </SortableSidebarSection>
-      );
+        );
+      } else if (followupsOpen) {
+        badge = (
+          <SidebarCountBadge
+            count={openFollowUps}
+            label={`${openFollowUps} open follow-up${openFollowUps === 1 ? '' : 's'}`}
+            title={`${openFollowUps} open follow-up${openFollowUps === 1 ? '' : 's'}`}
+            kind="running"
+          />
+        );
+      } else if (schedulerCount) {
+        badge = (
+          <SidebarCountBadge
+            count={scheduleCount}
+            label={`${scheduleCount} schedule${scheduleCount === 1 ? '' : 's'}`}
+            title={`${scheduleCount} schedule${scheduleCount === 1 ? '' : 's'} spawning in this project`}
+          />
+        );
+      } else if (terminalsRunning) {
+        badge = (
+          <SidebarCountBadge
+            count={runningTerminals}
+            label={`${runningTerminals} terminal${runningTerminals === 1 ? '' : 's'} running`}
+            title={`${runningTerminals} terminal${runningTerminals === 1 ? '' : 's'} running`}
+            kind="running"
+          />
+        );
+      }
+      return {
+        kind: 'row',
+        id: item.mode,
+        label: item.label,
+        icon: <Icon size={16} />,
+        to: getProjectWorkspaceRoutePath(project.id, item.mode),
+        testId: `project-nav-${item.mode}`,
+        active,
+        running: goalsActive || followupsOpen || terminalsRunning,
+        badge
+      };
+    }),
+    ...projectTabModules.map((m): SidebarRailItem => {
+      const Icon = resolveIcon(m.projectTab?.icon ?? m.icon);
+      const label = m.projectTab?.label ?? m.title;
+      const extActive = resolveProjectTabModule(mode, [m])?.id === m.id;
+      return {
+        kind: 'row',
+        id: m.id,
+        label,
+        icon: <Icon size={16} />,
+        to: getProjectWorkspaceRoutePath(project.id, m.id),
+        testId: `project-nav-${m.id}`,
+        active: onProjects && (mode === m.id || extActive)
+      };
+    }),
+    {
+      kind: 'section',
+      id: AGENTS_SECTION_SORT_ID,
+      node: (
+        <AgentsSidebarSection
+          projectId={project.id}
+          onOpenDashboard={() => selectMode('agents')}
+        />
+      )
     }
-    const row = renderModuleRow(id);
-    if (!row) return null;
-    return (
-      <SortableNavItem key={id} id={id}>
-        {row}
-      </SortableNavItem>
-    );
-  };
+  ];
 
   return (
-    <aside
+    <SidebarRail
       className={`sidebar sidebar--titlebar-controls project-scoped-nav ${
         isFocus ? 'project-focused-nav' : ''
       }`}
-    >
-      <div className="sidebar-chrome">
-        <SidebarHistoryControls label={`${project.name} navigation history`} />
-      </div>
-
-      {isFocus && (
-        <button
-          type="button"
-          className="settings-app-back"
-          onClick={handleBack}
-          aria-label="Back to all projects"
-        >
-          <ArrowLeft size={17} aria-hidden="true" />
-          Back
-        </button>
-      )}
-
-      <DndContext
-        sensors={sensors}
-        collisionDetection={collisionDetection}
-        onDragStart={onDragStart}
-        onDragCancel={onDragCancel}
-        onDragEnd={onDragEnd}
-      >
-        <div className="sidebar-sections">
-          <nav
-            className="sidebar-nav sidebar-nav--sortable"
-            aria-label={`${project.name} navigation`}
-            data-testid="sidebar-navigation"
+      navAriaLabel={`${project.name} navigation`}
+      historyLabel={`${project.name} navigation history`}
+      storageKey={PROJECT_NAV_ORDER_KEY}
+      pinnedIds={PINNED_PROJECT_NAV_IDS}
+      items={items}
+      header={
+        isFocus ? (
+          <button
+            type="button"
+            className="settings-app-back"
+            onClick={handleBack}
+            aria-label="Back to all projects"
           >
-            {pinnedNavIds.map((id) =>
-              id === 'inbox' ? <Fragment key={id}>{renderInbox()}</Fragment> : null
-            )}
-            <SortableContext items={sortableNavIds} strategy={verticalListSortingStrategy}>
-              {sortableNavIds.map((id) => renderSortableItem(id))}
-            </SortableContext>
-          </nav>
-        </div>
-      </DndContext>
-
-      <div className="sidebar-utility-bar" aria-label="Sidebar utilities">
-        {isFocus && (
+            <ArrowLeft size={17} aria-hidden="true" />
+            Back
+          </button>
+        ) : null
+      }
+      utilityStart={
+        isFocus ? (
           <button
             type="button"
             className="sidebar-utility-button"
             title="Open this project in a new window"
             aria-label="Open this project in a new window"
-            onClick={() => void window.cc.windows.openProject(project.id)}
+            onClick={() => void product.windows.openProject(project.id)}
           >
             <AppWindow size={18} />
           </button>
-        )}
-        <Link
-          to={routeMemory.settingsRoutePath}
-          className={`sidebar-utility-button ${nav === 'settings' ? 'active' : ''}`}
-          aria-label="Settings"
-          aria-current={nav === 'settings' ? 'page' : undefined}
-          title="Settings"
-        >
-          <Settings size={18} />
-        </Link>
-        {footerActions.map((action) => {
-          const Icon = resolveIcon(action.icon);
-          return (
-            <button
-              key={`${action.id}:${action.generation}`}
-              type="button"
-              className="sidebar-utility-button"
-              aria-label={action.title}
-              title={action.title}
-              onClick={() => {
-                void action.run();
-              }}
-            >
-              <Icon size={18} />
-            </button>
-          );
-        })}
-      </div>
-      <SidebarResizer />
-    </aside>
+        ) : null
+      }
+    />
   );
 }

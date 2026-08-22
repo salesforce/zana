@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useState } from 'react';
 import {
   PackageCheck,
@@ -173,7 +174,7 @@ function SetupChecklist({ onClose }: Props) {
           <button
             type="button"
             className="btn ghost"
-            onClick={() => void window.cc.deps.check()}
+            onClick={() => void product.deps.check()}
             disabled={status.busy}
             title="Re-check after installing something yourself"
           >
@@ -193,7 +194,7 @@ function SetupChecklist({ onClose }: Props) {
               <button
                 type="button"
                 className="btn"
-                onClick={() => void window.cc.deps.install()}
+                onClick={() => void product.deps.install()}
                 disabled={status.busy || !installable}
                 title={
                   installable
@@ -229,7 +230,7 @@ export function SetupChecklistHost() {
   const open = useUi((s) => s.setupOpen);
   const close = () => {
     useUi.getState().setSetupOpen(false);
-    void window.cc.deps.dismiss();
+    void product.deps.dismiss();
   };
   if (!open) return null;
   return <SetupChecklist onClose={close} />;

@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useEffect, useRef, useState } from 'react';
 import { X, Plus, Trash2, Pencil, Check } from 'lucide-react';
 import type { ScheduleGroup } from '@zana-ai/zcc-domain/product';
@@ -40,7 +41,7 @@ export function ScheduleGroupsModal({ onClose }: { onClose: () => void }) {
     tasks.filter((t) => (!t.source || t.source === 'global') && t.group === gid).length;
 
   const remove = async (g: ScheduleGroup) => {
-    const result = await window.cc.scheduler.groups.delete(g.id);
+    const result = await product.scheduler.groups.delete(g.id);
     if (!result.ok) pushToast(`Delete failed: ${result.message}`, 'error');
   };
 
@@ -151,7 +152,7 @@ function GroupEditor({
     if (!canSave) return;
     setSaving(true);
     if (isNew) {
-      const result = await window.cc.scheduler.groups.create({ name: name.trim(), color, icon });
+      const result = await product.scheduler.groups.create({ name: name.trim(), color, icon });
       if (!result.ok) {
         pushToast(`Create failed: ${result.message}`, 'error');
         setSaving(false);
@@ -160,7 +161,7 @@ function GroupEditor({
       // Jump straight into the new group's tab so the user can start adding.
       selectGroup(result.value.id);
     } else {
-      const result = await window.cc.scheduler.groups.update(group.id, {
+      const result = await product.scheduler.groups.update(group.id, {
         name: name.trim(),
         color,
         icon

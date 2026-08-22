@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import { useEffect } from 'react';
 import { BarChart3, RefreshCw } from 'lucide-react';
 import type { UsageRollupEvent, UsageSessionEvent } from '@zana-ai/zcc-domain/telemetry-events';
@@ -13,7 +14,7 @@ function formatCount(n: number): string {
 /**
  * Usage dashboard (WARP R2 B7, PR B) — a whole-workspace rollup of Claude
  * session ACTIVITY (tokens, prompts, tool + MCP calls), read from
- * `window.cc.usage.getSummary()` (main reads the transcripts; see
+ * `product.usage.getSummary()` (main reads the transcripts; see
  * usage-service.ts). We track counts, not a dollar cost — a cost estimate hangs
  * on model rates that drift, whereas these are ground truth from the transcript.
  * Everything here is privacy-safe by construction: the summary is built from the

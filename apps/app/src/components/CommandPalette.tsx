@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight, FileText, Folder, Globe, Slash, CornerDownLeft } from 'lucide-react';
 import { useData, useScheduler, usePersonas, useUi, visibleTerminals } from '../store.js';
@@ -166,7 +167,7 @@ export function CommandPalette({ onClose }: Props) {
   // Send a slash command into the focused live Claude session, as if typed.
   const sendCommandToActiveTab = (invocation: string) => {
     if (!activeTab) return;
-    void window.cc.terminals.reply(activeTab.id, invocation);
+    void product.terminals.reply(activeTab.id, invocation);
     if (selectedProject) {
       setWorkspaceMode(selectedProject.id, 'terminals');
       useUi.getState().enterProjectFocus(selectedProject.id);
@@ -258,7 +259,7 @@ export function CommandPalette({ onClose }: Props) {
     }
     let cancelled = false;
     setFiles(null);
-    window.cc.fs.walkFiles(selectedProject.path)
+    product.fs.walkFiles(selectedProject.path)
       .then((list) => {
         if (cancelled) return;
         fileCache.set(selectedProject.path, list);
@@ -275,7 +276,7 @@ export function CommandPalette({ onClose }: Props) {
   useEffect(() => {
     if (!launchMode || hostCache) return;
     let cancelled = false;
-    window.cc.ssh.listHosts()
+    product.ssh.listHosts()
       .then((list) => {
         if (cancelled) return;
         hostCache = list;
@@ -293,7 +294,7 @@ export function CommandPalette({ onClose }: Props) {
   );
   useEffect(() => {
     let cancelled = false;
-    window.cc.commands.list(selectedProject?.path)
+    product.commands.list(selectedProject?.path)
       .then((cmds) => {
         if (cancelled) return;
         commandCache.set(selectedProject?.path ?? '', cmds);

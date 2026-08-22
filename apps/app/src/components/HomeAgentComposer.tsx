@@ -1,3 +1,4 @@
+import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, FolderGit2, Paperclip, Server } from 'lucide-react';
 import type { HarnessAdapterDescriptor, HarnessModelTarget } from '@zana-ai/zcc-domain/harness-adapter';
@@ -17,6 +18,7 @@ import { useData, usePersonas, useUi } from '../store.js';
 import { useShallow } from 'zustand/react/shallow';
 import { useFileDrop } from '../hooks/useFileDrop.js';
 import { posixQuote } from '../lib/quote.js';
+import { hasDesktopBridge } from '../lib/app-surface.js';
 import { appendAttachmentContext, attachmentName, mergeAttachmentPaths } from '../lib/attachments.js';
 
 const PROFILE_BY_FAMILY: Record<HarnessFamily, LaunchProfileId> = {
@@ -96,6 +98,7 @@ export function HomeAgentComposer({ project: pinnedProject }: { project?: Projec
   const [launching, setLaunching] = useState(false);
   const [attachments, setAttachments] = useState<string[]>([]);
   const [quickWorkspaceReady, setQuickWorkspaceReady] = useState(false);
+  const canLaunch = hasDesktopBridge();
   const selectionGeneration = useRef(0);
   const descriptorGeneration = useRef(0);
 
@@ -116,7 +119,7 @@ export function HomeAgentComposer({ project: pinnedProject }: { project?: Projec
   );
   useEffect(() => {
     const generation = ++descriptorGeneration.current;
-    void window.cc.harness.descriptors().then((next) => {
+    void product.harness.descriptors().then((next) => {
       if (generation === descriptorGeneration.current) setDescriptors(next);
     }).catch(() => {
       if (generation === descriptorGeneration.current) setDescriptors([]);
@@ -130,7 +133,7 @@ export function HomeAgentComposer({ project: pinnedProject }: { project?: Projec
       return;
     }
     let cancelled = false;
-    void window.cc.projects.ensureQuickAgent()
+    void product.projects.ensureQuickAgent()
       .then((result) => {
         if (cancelled || !result.ok) return;
         if (!projects.some((candidate) => candidate.id === result.value.id)) void loadProjects();
@@ -166,7 +169,7 @@ export function HomeAgentComposer({ project: pinnedProject }: { project?: Projec
     setSelectionMessage(null);
     setFamilyId('');
     setAutomaticProfile(null);
-    void window.cc.harness.effectiveDefault(projectId).then((result: EffectiveHarnessDefaultResult) => {
+    void product.harness.effectiveDefault(projectId).then((result: EffectiveHarnessDefaultResult) => {
       if (generation !== selectionGeneration.current) return;
       if (result.ok) {
         setFamilyId(result.family);
@@ -196,6 +199,7 @@ export function HomeAgentComposer({ project: pinnedProject }: { project?: Projec
   ]);
 
   const launch = async () => {
+    if (!canLaunch) return;
     if (!project || !familyId || !prompt.trim() || launching || selectionState !== 'resolved' || resolvedProjectId !== projectId) return;
     if (selectionProvenance === 'explicit' && !selectedHarness) return;
     const profile = selectionProvenance === 'automatic'
@@ -208,7 +212,7 @@ export function HomeAgentComposer({ project: pinnedProject }: { project?: Projec
       if (project.remote && attachments.length > 0) {
         const uploaded: string[] = [];
         for (const localPath of attachments) {
-          const result = await window.cc.fs.uploadToRemote(project.id, localPath, '.');
+          const result = await product.fs.uploadToRemote(project.id, localPath, '.');
           if (!result.ok || !result.path) {
             pushToast(result.message ?? `Failed to upload ${attachmentName(localPath)}`, 'error');
             return;
@@ -274,8 +278,9 @@ export function HomeAgentComposer({ project: pinnedProject }: { project?: Projec
 
         <ComposerToolbar>
           <ComposerIconButton
-            onClick={() => { void window.cc.fs.pickFiles().then(addAttachments); }}
-            title="Attach files"
+            onClick={() => { if (!canLaunch) return; void product.fs.pickFiles().then(addAttachments); }}
+            disabled={!canLaunch}
+            title={canLaunch ? 'Attach files' : 'File attachments require the desktop app'}
             aria-label="Attach files"
           >
             <Paperclip size={16} aria-hidden="true" />
@@ -366,9 +371,15 @@ export function HomeAgentComposer({ project: pinnedProject }: { project?: Projec
             <ComposerIconButton
               className="home-agent-launch"
               onClick={() => { void launch(); }}
-              disabled={!project || !familyId || !prompt.trim() || launching || selectionState !== 'resolved' || resolvedProjectId !== projectId || (selectionProvenance === 'explicit' && !selectedHarness)}
+              disabled={!canLaunch || !project || !familyId || !prompt.trim() || launching || selectionState !== 'resolved' || resolvedProjectId !== projectId || (selectionProvenance === 'explicit' && !selectedHarness)}
               aria-label={launching ? 'Launching agent' : 'Launch agent'}
-              title={launching ? 'Launching agent' : 'Launch agent'}
+              title={
+                !canLaunch
+                  ? 'Launching agents requires the desktop app'
+                  : launching
+                    ? 'Launching agent'
+                    : 'Launch agent'
+              }
             >
               <ArrowUp size={17} aria-hidden="true" />
           </ComposerIconButton>

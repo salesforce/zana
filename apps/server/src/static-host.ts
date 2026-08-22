@@ -2,6 +2,9 @@ import { createReadStream, existsSync } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, resolve, sep } from 'node:path';
+import { handleProductHttp } from './http/product-api.js';
+import type { ProductHttpContext } from './http/product-context.js';
+import { createProductWebSocketServer, handleProductUpgrade } from './http/product-ws.js';
 
 export interface BrowserProjectSummary {
   id: string;
@@ -38,6 +41,8 @@ export interface StartStaticHostOptions {
    * and serves a contained file from that tree (never the host-daemon).
    */
   pluginAssetRoot?: (pluginId: string) => string | null;
+  /** Loopback product API + `/ws`. Origin-guarded; no host-daemon tokens. */
+  product?: ProductHttpContext;
 }
 
 function isContained(rootDir: string, candidate: string): boolean {
@@ -74,9 +79,8 @@ function pathForRequest(rootDir: string, pathname: string): string | null {
 }
 
 /**
- * Serve only the renderer artifact directory. This is intentionally static:
- * product RPC remains on the authenticated desktop bridge until the server API
- * migration is complete, so a browser origin never gains a mutation endpoint.
+ * Serve the renderer artifact directory, plus the loopback product API when
+ * `product` is provided. Bind is loopback-only for any browser-facing surface.
  */
 export async function startStaticHost(options: StartStaticHostOptions): Promise<StaticHost> {
   if (options.browserBootstrap && options.host && options.host !== '127.0.0.1' && options.host !== '::1') {
@@ -90,13 +94,18 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
 
   const hostName = options.host ?? '127.0.0.1';
   let expectedOrigin = '';
+  const productWss = options.product ? createProductWebSocketServer(options.product) : null;
   const server = createServer(async (request, response) => {
+    const requestUrl = new URL(request.url ?? '/', 'http://zcc.local');
+    if (options.product && requestUrl.pathname.startsWith('/api/')) {
+      await handleProductHttp(request, response, options.product);
+      return;
+    }
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       response.writeHead(405, { Allow: 'GET, HEAD' }).end();
       return;
     }
 
-    const requestUrl = new URL(request.url ?? '/', 'http://zcc.local');
     if (requestUrl.pathname === '/_zcc/health') {
       response.writeHead(200, { 'Cache-Control': 'no-store', 'Content-Type': 'application/json' });
       response.end(JSON.stringify({ ok: true }));
@@ -209,6 +218,14 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
     createReadStream(file).on('error', () => response.destroy()).pipe(response);
   });
 
+  if (options.product && productWss) {
+    server.on('upgrade', (request, socket, head) => {
+      if (!handleProductUpgrade(request, socket, head, options.product!, productWss)) {
+        socket.destroy();
+      }
+    });
+  }
+
   await new Promise<void>((resolveListen, rejectListen) => {
     server.once('error', rejectListen);
     server.listen(options.port ?? 0, hostName, () => {
@@ -224,9 +241,19 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
   }
   const url = `http://${hostName}:${address.port}/`;
   expectedOrigin = url.slice(0, -1);
+  if (options.product) {
+    try {
+      options.product.origins.serverPort = new URL(expectedOrigin).port
+        ? Number(new URL(expectedOrigin).port)
+        : options.product.origins.serverPort;
+    } catch {
+      /* keep the configured port */
+    }
+  }
   return {
     url,
     close: () => new Promise<void>((resolveClose, rejectClose) => {
+      productWss?.close();
       server.close((error) => (error ? rejectClose(error) : resolveClose()));
     })
   };

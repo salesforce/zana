@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FileText, Trash2, ExternalLink, X, Search, Plus, AtSign, BotMessageSquare } from 'lucide-react';
 
@@ -159,7 +160,7 @@ export function LibraryView({ project }: Props) {
     let cancelled = false;
     setBodySearching(true);
     const t = setTimeout(() => {
-      window.cc.library
+      product.library
         .search(q)
         .then((res) => {
           if (cancelled) return;
@@ -345,7 +346,7 @@ export function LibraryView({ project }: Props) {
       return;
     }
     const relPath = parentRelPath ? `${parentRelPath}/${name}` : name;
-    const r = await window.cc.library.createFolder(scope, relPath, projectId);
+    const r = await product.library.createFolder(scope, relPath, projectId);
     if (!r.ok) {
       pushToast(r.message ?? 'Failed to create folder', 'error');
       return;
@@ -374,7 +375,7 @@ export function LibraryView({ project }: Props) {
     const fileName = /\.\w+$/.test(name) ? name : `${name}.md`;
     const relPath = parentRelPath ? `${parentRelPath}/${fileName}` : fileName;
     const title = fileName.replace(/\.\w+$/, '');
-    const created = await window.cc.library.add({
+    const created = await product.library.add({
       scope,
       projectId,
       relPath,
@@ -410,7 +411,7 @@ export function LibraryView({ project }: Props) {
       if (next.includes('..')) pushToast('Path cannot contain ".."', 'error');
       return;
     }
-    const r = await window.cc.library.move(
+    const r = await product.library.move(
       { scope, relPath, projectId },
       { scope, relPath: next, projectId }
     );
@@ -428,7 +429,7 @@ export function LibraryView({ project }: Props) {
     const what = node.kind === 'dir' ? 'folder (and everything inside it)' : 'document';
     const label = node.kind === 'dir' ? node.name : node.doc?.title ?? node.name;
     if (!window.confirm(`Delete ${what} "${label}"? This cannot be undone.`)) return;
-    const r = await window.cc.library.deleteEntry(node.scope, node.relPath, node.projectId);
+    const r = await product.library.deleteEntry(node.scope, node.relPath, node.projectId);
     if (!r.ok) {
       pushToast(r.message ?? 'Delete failed', 'error');
       return;
@@ -451,7 +452,7 @@ export function LibraryView({ project }: Props) {
 
   const handleReveal = async (scope: LibraryScope, projectId?: string) => {
     try {
-      const result = await window.cc.library.reveal(scope, projectId);
+      const result = await product.library.reveal(scope, projectId);
       if (!result.ok) {
         pushToast(result.message ?? 'Failed to reveal directory', 'error');
       }
@@ -485,7 +486,7 @@ export function LibraryView({ project }: Props) {
       now.getMinutes()
     ).padStart(2, '0')}`;
     try {
-      const created = await window.cc.library.add({
+      const created = await product.library.add({
         scope: 'global',
         relPath: `ideas/${stamp}.md`,
         title: 'Untitled idea',

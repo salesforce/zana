@@ -1,3 +1,4 @@
+import { product } from '../../lib/product-client.js';
 import { useMemo, useState, type ReactNode } from 'react';
 import {
   Sparkles,
@@ -37,7 +38,7 @@ interface ProjectGroup {
  * `suggest_action`, the IPC channels, the on-disk store) stay stable. Renders
  * the live `useSuggestions` slice as a responsive card grid. Each card proposes
  * a runnable next step an agent surfaced via `suggest_action`; "Run" hands the
- * id to main (`window.cc.suggestions.run`), which reads the suggestion from its
+ * id to main (`product.suggestions.run`), which reads the suggestion from its
  * OWN store and re-authorizes every step (Rule 1/2) — the renderer never
  * supplies the action. Any returned nav directive is applied to `useUi` here
  * (spawns happen in main; navigation is a renderer concern).
@@ -145,7 +146,7 @@ export function SuggestionsView() {
   const run = async (id: string): Promise<void> => {
     setBusyId(id);
     try {
-      const res = await window.cc.suggestions.run(id);
+      const res = await product.suggestions.run(id);
       if (res.ok) {
         // A durable open-view stays; everything else is a one-shot removed in
         // main. Optimistically drop the row unless it's a pure view directive
@@ -162,7 +163,7 @@ export function SuggestionsView() {
   const dismiss = async (id: string): Promise<void> => {
     removeLocal(id); // optimistic; onRemoved push reconciles
     try {
-      await window.cc.suggestions.dismiss(id);
+      await product.suggestions.dismiss(id);
     } catch {
       /* the row will reappear on next reconcile if the delete failed */
     }

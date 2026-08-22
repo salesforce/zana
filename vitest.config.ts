@@ -5,6 +5,9 @@ import { resolve } from 'node:path';
 // declared here too. Keeps `@zana-ai/zcc-extension-sdk[/subpath]` resolving in tests
 // (e.g. the markdown helper, now re-exported through the SDK).
 export default defineConfig({
+  define: {
+    __ZCC_DEV_WS_PORT__: 'undefined'
+  },
   test: {
     // Runs once per worker before any test file — scrubs inherited GIT_* vars
     // so a git-spawning test can never operate on the OUTER repo under the
