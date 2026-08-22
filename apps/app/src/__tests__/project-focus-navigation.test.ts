@@ -73,14 +73,14 @@ describe('project-focus navigation contract', () => {
     expect(mockConfig.set).toHaveBeenCalledWith({ focusedProjectId: null });
   });
 
-  it('enterProjectFocus opens Projects without replacing the workspace mode', async () => {
+  it('enterProjectFocus opens Projects on the Agents board', async () => {
     const { useUi } = await import('../store.js');
 
     useUi.getState().setWorkspaceMode('proj-123', 'explorer');
     useUi.getState().enterProjectFocus('proj-123');
 
     expect(useUi.getState().nav).toBe('projects');
-    expect(useUi.getState().workspaceMode['proj-123']).toBe('explorer');
+    expect(useUi.getState().workspaceMode['proj-123']).toBe('agents');
   });
 
   it('defaults to Home rather than an unfocused Projects board', async () => {

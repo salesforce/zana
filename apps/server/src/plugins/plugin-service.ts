@@ -12,6 +12,7 @@ import {
   type MarketplaceStore
 } from './marketplace-store.js';
 import {
+  isPluginId,
   parsePluginSource,
   readPluginManifest,
   satisfiesRange,
@@ -639,6 +640,106 @@ export function defaultBundledRoot(): string {
 
 export function defaultPluginDataDir(): string {
   return process.env.ZCC_CENTER_DIR ?? join(homedir(), '.zcc');
+}
+
+/**
+ * Catalog metadata for one first-party plugin the app ships under `plugins/`.
+ * Same shape `listMarketplace` already accepts for bundled disk extensions, so
+ * Browse extensions can union the two without a second row type.
+ */
+export interface BundledPluginCatalogEntry {
+  id: string;
+  version: string;
+  apiRange: string;
+  title: string;
+  icon?: string;
+  description?: string;
+  author?: string;
+  permissions: string[];
+}
+
+/**
+ * Enumerate first-party plugins from the bundled plugins root (`package.json`
+ * `zcc` block). This is the zero-network default Browse extensions shows after
+ * first-party packages moved out of the retired `bundled-extensions/` tree.
+ * Extension-agnostic (Rule 6): iterates dirs; never names a concrete id.
+ * Returns `[]` when the root is missing. Never throws.
+ */
+export function listBundledPluginCatalog(
+  bundledRoot = defaultBundledRoot(),
+  log?: (context: string, err?: unknown) => void
+): BundledPluginCatalogEntry[] {
+  const out: BundledPluginCatalogEntry[] = [];
+  try {
+    if (!existsSync(bundledRoot) || !statSync(bundledRoot).isDirectory()) return out;
+    const names = readdirSync(bundledRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+      .map((entry) => entry.name);
+    for (const name of names) {
+      const dir = join(bundledRoot, name);
+      const pkgPath = join(dir, 'package.json');
+      if (!existsSync(pkgPath)) continue;
+      try {
+        const manifest = readPluginManifest(JSON.parse(readFileSync(pkgPath, 'utf8')));
+        // Dir name must match the derived id so a mismatched package cannot be
+        // offered under another id (same guard installFromBundled uses).
+        if (manifest.id !== name) continue;
+        out.push({
+          id: manifest.id,
+          version: manifest.version,
+          apiRange: '',
+          title: manifest.name,
+          icon: manifest.branding.icon,
+          description: manifest.description,
+          permissions: []
+        });
+      } catch (err) {
+        log?.(`listBundledPluginCatalog:${name}`, err);
+      }
+    }
+  } catch (err) {
+    log?.('listBundledPluginCatalog', err);
+  }
+  return out;
+}
+
+/**
+ * Install a first-party plugin from the bundled plugins root. Returns `null`
+ * when `id` is not a plugin package there, so the caller can fall through to
+ * the legacy `extension.json` installer. Main maps id → the app-owned dir
+ * (Rule 1); a renderer-supplied id is never treated as a path.
+ */
+export async function installBundledPlugin(
+  id: string,
+  opts: { dataDir?: string; bundledRoot?: string } = {}
+): Promise<{ ok: true; value: { id: string } } | { ok: false; code: string; message: string } | null> {
+  if (!isPluginId(id)) return null;
+  const bundledRoot = opts.bundledRoot ?? defaultBundledRoot();
+  const dataDir = opts.dataDir ?? defaultPluginDataDir();
+  const dir = join(bundledRoot, id);
+  const pkgPath = join(dir, 'package.json');
+  if (!existsSync(pkgPath)) return null;
+  try {
+    const manifest = readPluginManifest(JSON.parse(readFileSync(pkgPath, 'utf8')));
+    if (manifest.id !== id) {
+      return { ok: false, code: 'NOT_FOUND', message: `No bundled plugin "${id}"` };
+    }
+  } catch {
+    return null;
+  }
+  const service = createPluginService({ dataDir, bundledRoot });
+  if (service.get(id)) return { ok: true, value: { id } };
+  try {
+    const source = bundledPluginByName(id) ? `builtin:${id}` : dir;
+    const row = await service.install(source);
+    return { ok: true, value: { id: row.id } };
+  } catch (err) {
+    return {
+      ok: false,
+      code: 'INSTALL_FAILED',
+      message: err instanceof Error ? err.message : String(err)
+    };
+  }
 }
 
 export { BUILTIN_PLUGINS, OFFICIAL_PLUGINS, bundledPluginByName } from './builtin-registry.js';

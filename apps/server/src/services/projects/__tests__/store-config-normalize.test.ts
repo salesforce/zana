@@ -50,6 +50,21 @@ describe('normalizeConfig — global Claude launch settings', () => {
   });
 });
 
+describe('normalizeConfig — sidebarWidth', () => {
+  it('clamps to the current sidebar width as the minimum and 480 as the max', () => {
+    expect(normalizeConfig({ sidebarWidth: 320 }).sidebarWidth).toBe(320);
+    expect(normalizeConfig({ sidebarWidth: 320.7 }).sidebarWidth).toBe(321);
+    expect(normalizeConfig({ sidebarWidth: 100 }).sidebarWidth).toBe(256);
+    expect(normalizeConfig({ sidebarWidth: 900 }).sidebarWidth).toBe(480);
+  });
+
+  it('rejects non-finite values and omits an absent width', () => {
+    expect(normalizeConfig({ sidebarWidth: Number.NaN }).sidebarWidth).toBeUndefined();
+    expect(normalizeConfig({ sidebarWidth: Number.POSITIVE_INFINITY }).sidebarWidth).toBeUndefined();
+    expect(normalizeConfig({}).sidebarWidth).toBeUndefined();
+  });
+});
+
 describe('normalizeConfig — window state', () => {
   it('does not change omitted window state', () => {
     expect(normalizeConfig({})).not.toHaveProperty('windowBounds');

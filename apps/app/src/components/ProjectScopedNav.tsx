@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useSyncExternalStore, type ButtonHTMLAttributes, type ReactElement, type ReactNode } from 'react';
 import { DndContext } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   Inbox,
   TerminalSquare,
@@ -10,8 +11,6 @@ import {
   MessageCircleQuestion,
   Activity,
   ArrowLeft,
-  ChevronLeft,
-  ChevronRight,
   Settings,
   AppWindow,
   Sparkles,
@@ -34,6 +33,15 @@ import { resolveIcon } from '../lib/resolveIcon.js';
 import { resolveProjectTabModule } from '../lib/libraryPlugin.js';
 import { listSidebarFooterActions, subscribePluginSlots } from '../plugins/plugin-slots.js';
 import { AgentsSidebarSection } from './AgentsSidebarSection.js';
+import { SidebarResizer } from './SidebarResizer.js';
+import { SidebarHistoryControls } from './SidebarHistoryControls.js';
+import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js';
+import { useRouteState } from '../hooks/useRouteState.js';
+import {
+  getInboxRoutePath,
+  getProjectWorkspaceRoutePath,
+  getSuggestionsRoutePath
+} from '../lib/route-paths.js';
 import {
   AGENTS_SECTION_SORT_ID,
   PINNED_PROJECT_NAV_IDS,
@@ -55,8 +63,8 @@ import {
  *
  * Inbox switches `nav`; workspace modes set `nav='projects'` + the project's
  * `workspaceMode`. Agents is a collapsible collection (same chrome as the
- * global Sidebar), not a destination row — the dashboard control opens the
- * project Agents board.
+ * global Sidebar): the label opens this project's Agents board, and only the
+ * chevron toggles the live tray.
  *
  * Two variants, same rail:
  * - `'window'` — a PER-PROJECT WINDOW (opened "in a new window"). The window is
@@ -92,6 +100,7 @@ function NavRow({
   testId,
   badge,
   running,
+  to,
   onClick,
   ...rest
 }: {
@@ -103,25 +112,47 @@ function NavRow({
   testId?: string;
   badge?: ReactNode;
   running?: boolean;
-  onClick: () => void;
-} & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'type' | 'onClick' | 'children' | 'title'>): ReactElement<ButtonHTMLAttributes<HTMLButtonElement>> {
-  return (
-    <button
-      type="button"
-      data-testid={testId}
-      className={`nav-item ${active ? 'active' : ''}`}
-      onClick={onClick}
-      aria-current={active ? 'page' : undefined}
-      aria-label={collapsed ? label : undefined}
-      title={title ?? label}
-      {...rest}
-    >
+  to?: string;
+  onClick?: (event: { preventDefault: () => void }) => void;
+} & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'type' | 'onClick' | 'children' | 'title'>): ReactElement {
+  const className = `nav-item ${active ? 'active' : ''}`;
+  const body = (
+    <>
       <span className="nav-item-icon">
         {icon}
         {running && <span className="nav-running-dot" aria-hidden="true" />}
       </span>
       <span className="nav-item-label">{label}</span>
       {badge}
+    </>
+  );
+  if (to) {
+    return (
+      <Link
+        to={to}
+        data-testid={testId}
+        className={className}
+        onClick={onClick}
+        aria-current={active ? 'page' : undefined}
+        aria-label={collapsed ? label : undefined}
+        title={title ?? label}
+      >
+        {body}
+      </Link>
+    );
+  }
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      className={className}
+      onClick={onClick}
+      aria-current={active ? 'page' : undefined}
+      aria-label={collapsed ? label : undefined}
+      title={title ?? label}
+      {...rest}
+    >
+      {body}
     </button>
   );
 }
@@ -160,15 +191,17 @@ export function ProjectScopedNav({
   /** Return to the cross-project home. Only used in the `'focus'` variant. */
   onBack?: () => void;
 }) {
-  const nav = useUi((s) => s.nav);
-  const setNav = useUi((s) => s.setNav);
+  const route = useRouteState();
+  const nav = route.nav;
   const isFocus = variant === 'focus';
   const setWorkspaceMode = useUi((s) => s.setWorkspaceMode);
   const goalsEnabled = useData((s) => s.goalsEnabled);
   const followUpsEnabled = useData((s) => s.followUpsEnabled);
   const suggestionsEnabled = useData((s) => s.suggestionsEnabled);
   const collapsed = useUi((s) => s.sidebarCollapsed);
-  const mode = useUi((s) => s.workspaceMode[project.id]) ?? 'agents';
+  const mode = route.workspaceMode ?? 'agents';
+  const routeMemory = useAppSettingsRouteMemory();
+  const navigate = useNavigate();
   const unreadInbox = useUnreadInboxCount();
   const activeGoals = useProjectActiveGoalCount(project.id);
   const openFollowUps = useProjectOpenFollowUpCount(project.id);
@@ -195,8 +228,13 @@ export function ProjectScopedNav({
   }, [mode, goalsEnabled, followUpsEnabled, project.id, setWorkspaceMode]);
 
   const selectMode = (m: ProjectView) => {
-    setNav('projects');
     setWorkspaceMode(project.id, m);
+  };
+
+  const handleBack = () => {
+    useUi.getState().exitProjectFocus();
+    onBack?.();
+    void navigate(routeMemory.projectBackRoutePath);
   };
 
   const availableIds = [
@@ -217,9 +255,8 @@ export function ProjectScopedNav({
     consumeNavClick
   } = useSortableSidebarNav(PROJECT_NAV_ORDER_KEY, availableIds, PINNED_PROJECT_NAV_IDS);
 
-  const click = (fn: () => void) => () => {
-    if (consumeNavClick()) return;
-    fn();
+  const onNavClick = (event: { preventDefault: () => void }) => {
+    if (consumeNavClick()) event.preventDefault();
   };
 
   const renderInbox = () => (
@@ -230,7 +267,8 @@ export function ProjectScopedNav({
       collapsed={collapsed}
       title="Inbox for this project"
       testId="project-nav-inbox"
-      onClick={click(() => setNav('inbox'))}
+      to={getInboxRoutePath()}
+      onClick={onNavClick}
       badge={
         unreadInbox > 0 ? (
           <CountBadge
@@ -251,7 +289,8 @@ export function ProjectScopedNav({
       collapsed={collapsed}
       title="Next Steps for this project"
       testId="project-nav-suggestions"
-      onClick={click(() => setNav('suggestions'))}
+      to={getSuggestionsRoutePath()}
+      onClick={onNavClick}
     />
   );
 
@@ -306,7 +345,8 @@ export function ProjectScopedNav({
         active={active}
         collapsed={collapsed}
         testId={`project-nav-${item.mode}`}
-        onClick={click(() => selectMode(item.mode))}
+        to={getProjectWorkspaceRoutePath(project.id, item.mode)}
+        onClick={onNavClick}
         running={goalsActive || followupsOpen || terminalsRunning}
         badge={badge}
       />
@@ -327,7 +367,8 @@ export function ProjectScopedNav({
         active={active}
         collapsed={collapsed}
         testId={`project-nav-${m.id}`}
-        onClick={click(() => selectMode(m.id))}
+        to={getProjectWorkspaceRoutePath(project.id, m.id)}
+        onClick={onNavClick}
       />
     );
   };
@@ -354,6 +395,7 @@ export function ProjectScopedNav({
           <AgentsSidebarSection
             projectId={project.id}
             onOpenDashboard={() => selectMode('agents')}
+            onNavigate={onNavClick}
           />
         </SortableSidebarSection>
       );
@@ -374,27 +416,14 @@ export function ProjectScopedNav({
       }`}
     >
       <div className="sidebar-chrome">
-        <div className="sidebar-history-controls" aria-label={`${project.name} navigation history`}>
-          <button
-            type="button"
-            aria-label={isFocus && onBack ? 'Back to all projects' : 'Go back'}
-            title={isFocus && onBack ? 'Back to all projects' : 'Go back'}
-            disabled={!(isFocus && onBack)}
-            onClick={onBack}
-          >
-            <ChevronLeft size={19} />
-          </button>
-          <button type="button" aria-label="No next view" title="No next view" disabled>
-            <ChevronRight size={19} />
-          </button>
-        </div>
+        <SidebarHistoryControls label={`${project.name} navigation history`} />
       </div>
 
-      {isFocus && onBack && (
+      {isFocus && (
         <button
           type="button"
           className="settings-app-back"
-          onClick={onBack}
+          onClick={handleBack}
           aria-label="Back to all projects"
         >
           <ArrowLeft size={17} aria-hidden="true" />
@@ -437,16 +466,15 @@ export function ProjectScopedNav({
             <AppWindow size={18} />
           </button>
         )}
-        <button
-          type="button"
+        <Link
+          to={routeMemory.settingsRoutePath}
           className={`sidebar-utility-button ${nav === 'settings' ? 'active' : ''}`}
           aria-label="Settings"
           aria-current={nav === 'settings' ? 'page' : undefined}
           title="Settings"
-          onClick={() => setNav('settings')}
         >
           <Settings size={18} />
-        </button>
+        </Link>
         {footerActions.map((action) => {
           const Icon = resolveIcon(action.icon);
           return (
@@ -465,6 +493,7 @@ export function ProjectScopedNav({
           );
         })}
       </div>
+      <SidebarResizer />
     </aside>
   );
 }

@@ -25,7 +25,7 @@ describe('monacoSetup worker imports', () => {
 
   it('does not statically import Docs UI from outside the Vite renderer root', () => {
     const imports = [...modulesIndex.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((m) => m[1]);
-    expect(imports).toContain('../views/library/module');
+    expect(imports).toContain('../views/library/module.js');
     expect(imports.some((s) => s.includes('plugins/docs'))).toBe(false);
   });
 });

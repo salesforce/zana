@@ -1,6 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import type { ReactElement } from 'react';
 
 const h = vi.hoisted(() => {
   const state = {
@@ -23,13 +25,21 @@ vi.mock('../AgentTray', () => ({
 
 import { AgentsSidebarSection } from '../AgentsSidebarSection.js';
 
+function renderSection(node: ReactElement, path = '/') {
+  return renderToStaticMarkup(<MemoryRouter initialEntries={[path]}>{node}</MemoryRouter>);
+}
+
 describe('AgentsSidebarSection', () => {
   it('renders the collapsible collection chrome with an inline tray', () => {
     h.state.collapsedSections = {};
 
-    const markup = renderToStaticMarkup(<AgentsSidebarSection projectId="proj-1" />);
+    const markup = renderSection(<AgentsSidebarSection projectId="proj-1" />);
 
     expect(markup).toContain('class="sidebar-agents "');
+    expect(markup).toContain('data-testid="sidebar-agents-heading"');
+    expect(markup).toContain('href="/projects/proj-1"');
+    expect(markup).toContain('>Agents</a>');
+    expect(markup).toContain('data-testid="sidebar-agents-toggle"');
     expect(markup).toContain('aria-label="Collapse Agents section"');
     expect(markup).toContain('aria-expanded="true"');
     expect(markup).toContain('aria-label="Open Agents dashboard"');
@@ -42,16 +52,36 @@ describe('AgentsSidebarSection', () => {
   it('collapses to the heading and hides the live list', () => {
     h.state.collapsedSections = { 'sidebar:agents': true };
 
-    const markup = renderToStaticMarkup(<AgentsSidebarSection />);
+    const markup = renderSection(<AgentsSidebarSection />);
 
     expect(markup).toContain('sidebar-agents--collapsed');
+    expect(markup).toContain('href="/agents"');
     expect(markup).toContain('aria-label="Expand Agents section"');
     expect(markup).toContain('aria-expanded="false"');
     expect(markup).toContain('hidden=""');
     expect(markup).not.toContain('class="sidebar-agents-resizer"');
   });
 
-  it('opens the global Agents board unless a project dashboard handler is provided', () => {
+  it('marks the Agents label as the current page on the matching route', () => {
+    const projectMarkup = renderSection(
+      <AgentsSidebarSection projectId="proj-1" />,
+      '/projects/proj-1'
+    );
+    expect(projectMarkup).toContain('aria-current="page"');
+    expect(projectMarkup).toContain('sidebar-agents-heading active');
+
+    const otherMode = renderSection(
+      <AgentsSidebarSection projectId="proj-1" />,
+      '/projects/proj-1/scheduler'
+    );
+    expect(otherMode).not.toContain('aria-current="page"');
+
+    const globalMarkup = renderSection(<AgentsSidebarSection />, '/agents');
+    expect(globalMarkup).toContain('href="/agents"');
+    expect(globalMarkup).toContain('aria-current="page"');
+  });
+
+  it('opens the Agents board from the label; only the chevron toggles the tray', () => {
     const source = readFileSync(new URL('../AgentsSidebarSection.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain('if (onOpenDashboard)');
@@ -59,5 +89,15 @@ describe('AgentsSidebarSection', () => {
     expect(source).toContain('setLauncherOpen(true)');
     expect(source).toContain('placement="inline"');
     expect(source).toContain('projectId={projectId}');
+    expect(source).toContain('getProjectWorkspaceRoutePath(projectId, \'agents\')');
+    expect(source).toContain('getAgentsRoutePath()');
+    expect(source).toContain('data-testid="sidebar-agents-heading"');
+    expect(source).toContain('data-testid="sidebar-agents-toggle"');
+    const headingStart = source.indexOf('data-testid="sidebar-agents-heading"');
+    const toggleStart = source.indexOf('data-testid="sidebar-agents-toggle"');
+    expect(headingStart).toBeGreaterThan(-1);
+    expect(toggleStart).toBeGreaterThan(headingStart);
+    expect(source.slice(headingStart, toggleStart)).not.toContain('toggleSection');
+    expect(source.slice(toggleStart, toggleStart + 400)).toContain('toggleSection(AGENTS_SECTION_KEY)');
   });
 });

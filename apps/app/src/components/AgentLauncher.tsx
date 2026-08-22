@@ -22,7 +22,6 @@ import {
   Trash2,
   ShieldCheck,
   Boxes,
-  X,
   type LucideIcon
 } from 'lucide-react';
 import type {
@@ -910,12 +909,6 @@ function QuickPromptEditor({
 interface Props {
   onClose: () => void;
   /**
-   * The default modal keeps global launch points above their originating view.
-   * Project launch points use `inline` so the composer occupies the central
-   * Agents workspace instead of covering it with a dialog.
-   */
-  presentation?: 'modal' | 'inline';
-  /**
    * Pin the launcher to one registered project. When set, the launcher is in
    * PROJECT mode: no project picker, no starter chips, but it surfaces the
    * resume list, background tray, and default-persona star. When omitted, it's
@@ -947,7 +940,6 @@ interface Props {
 
 export const AgentLauncher = memo(function AgentLauncher({
   onClose,
-  presentation = 'modal',
   project,
   backgroundTabs,
   onLaunched,
@@ -1534,9 +1526,7 @@ export const AgentLauncher = memo(function AgentLauncher({
     composerRef.current?.focus();
   }, []);
 
-  // Only the modal captures focus and Escape. The inline central workspace is
-  // ordinary page content, with its own visible close control.
-  useDialogFocusTrap(dialogRef, onClose, presentation === 'modal');
+  useDialogFocusTrap(dialogRef, onClose);
 
   // Post-launch: the caller can override what happens (the Agents global view
   // pops the inspector modal instead of navigating). Default — redirect into the
@@ -1834,12 +1824,12 @@ export const AgentLauncher = memo(function AgentLauncher({
   const content = (
       <div
         ref={dialogRef}
-        data-testid={presentation === 'modal' ? 'launch-modal' : 'launch-inline'}
-        className={presentation === 'modal' ? 'palette launch-modal' : 'launch-inline'}
-        role={presentation === 'modal' ? 'dialog' : 'region'}
-        aria-modal={presentation === 'modal' || undefined}
+        data-testid="launch-modal"
+        className="palette launch-modal"
+        role="dialog"
+        aria-modal
         aria-label="New agent"
-        onMouseDown={presentation === 'modal' ? (event) => event.stopPropagation() : undefined}
+        onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="launch-panel">
           <div className="launch-header">
@@ -1853,17 +1843,6 @@ export const AgentLauncher = memo(function AgentLauncher({
                     : 'Start a Claude session in this project'}
               </p>
             </div>
-            {presentation === 'inline' && (
-              <button
-                type="button"
-                className="launch-inline-close"
-                aria-label="Close new agent"
-                title="Close new agent"
-                onClick={onClose}
-              >
-                <X size={16} />
-              </button>
-            )}
           </div>
 
           {anchorError && scratchIsTarget && (
@@ -2563,12 +2542,10 @@ export const AgentLauncher = memo(function AgentLauncher({
       </div>
   );
 
-  return presentation === 'modal'
-    ? createPortal(
-        <div className="palette-backdrop" onMouseDown={onClose}>
-          {content}
-        </div>,
-        document.body
-      )
-    : content;
+  return createPortal(
+    <div className="palette-backdrop" onMouseDown={onClose}>
+      {content}
+    </div>,
+    document.body
+  );
 });

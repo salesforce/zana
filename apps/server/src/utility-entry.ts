@@ -1,4 +1,5 @@
 import { startStaticHost } from './static-host.js';
+import { toBrowserProjectSummaries } from './browser-bootstrap.js';
 import { SERVER_RUNTIME_PROTOCOL_VERSION, ServerRuntimeInboundSchema } from '@zana-ai/zcc-contracts/runtime';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -76,13 +77,7 @@ parentPort.on('message', async ({ data }) => {
         browserBootstrap: () => ({
           appVersion: version,
           // A browser never needs filesystem paths to render this landing view.
-          projects: (projects?.list() ?? []).map(({ id, name, color, tag, category }) => ({
-            id,
-            name,
-            color,
-            tag,
-            category
-          }))
+          projects: toBrowserProjectSummaries(projects?.list() ?? [])
         }),
         pluginAssetRoot: (pluginId) => {
           const row = plugins?.get(pluginId);

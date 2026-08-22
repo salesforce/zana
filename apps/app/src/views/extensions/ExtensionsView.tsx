@@ -17,13 +17,6 @@ import { ExtensionsHub } from '@/views/extensions/ExtensionsHub';
 import { PluginSettingsSections } from '@/plugins/PluginSettingsSections';
 import { SkillsBody } from '@/views/extensions/SkillsView';
 import { McpBody } from '@/views/extensions/McpView';
-import { AppPageHeader } from '@/components/AppPageHeader';
-
-function extensionsTitle(tab: string): string {
-  if (tab === 'skills') return 'Skills';
-  if (tab === 'mcp') return 'MCP';
-  return 'Extensions';
-}
 
 export function ExtensionsView() {
   const tab = useUi((s) => s.extensionsTab);
@@ -32,7 +25,6 @@ export function ExtensionsView() {
 
   return (
     <div className="settings-panel extensions-panel">
-      <AppPageHeader title={<h1>{extensionsTitle(tab)}</h1>} />
       <div className={`settings-inner${showingCatalogue ? '' : ' settings-inner--wide'}`}>
         {tab === 'skills' ? (
           <SkillsBody showHeader={false} />

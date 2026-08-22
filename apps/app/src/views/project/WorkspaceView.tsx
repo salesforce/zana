@@ -6,7 +6,7 @@ import { TabBar } from '@/components/TabBar';
 import { PROJECTS_TERMINAL_ANCHOR_ID } from '@/components/TerminalSurface';
 import { AgentLauncher } from '@/components/AgentLauncher';
 import { FindBar } from '@/components/FindBar';
-import { ProjectAgentsBoard } from '@/views/agents/ProjectAgentsView';
+import { AgentsBoard } from '@/views/agents/AgentsBoard';
 import { ProjectExtensionTab } from '@/views/project/ProjectExtensionTab';
 import { useProjectTabModules } from '@/modules';
 import { resolveProjectTabModule } from '@/lib/libraryPlugin';
@@ -80,8 +80,8 @@ export function WorkspaceView() {
   const backgroundTabs = project ? backgroundTerminals(terminals[project.id]) : [];
   const activeTabId = project ? selectedTabId[project.id] : undefined;
   const activeTab = terminalTabs.find((t) => t.id === activeTabId) ?? terminalTabs[0];
-  // Default a freshly-opened project to the Agents board (not Terminals) — a
-  // project the user has explicitly switched keeps its persisted mode.
+  // Opening a project writes 'agents' in enterProjectFocus. This fallback
+  // covers first paint / a project with no saved mode yet.
   const mode: ProjectView = project
     ? workspaceModeMap[project.id] ?? 'agents'
     : 'agents';
@@ -377,12 +377,8 @@ export function WorkspaceView() {
           )}
           {isAgents && project && (
             // Agents mode: a Kanban-style status board. Cards auto-flow across
-            // lanes by live agent state; its composer opens inline in this pane.
-            <ProjectAgentsBoard
-              project={project}
-              launcherOpen={launcherOpen}
-              onLauncherClose={() => setLauncherOpen(false)}
-            />
+            // lanes by live agent state; New agent opens the shared modal host.
+            <AgentsBoard scope={{ kind: 'project', project }} />
           )}
       </div>
       <div className="statusbar">
@@ -412,7 +408,7 @@ export function WorkspaceView() {
           </>
         )}
       </div>
-      {launcherOpen && project && !isAgents && (
+      {launcherOpen && project && (
         <AgentLauncher
           project={project}
           backgroundTabs={backgroundTabs}

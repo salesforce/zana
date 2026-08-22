@@ -22,7 +22,6 @@ import {
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { AppPageHeader } from '@/components/AppPageHeader';
 import type {
   FollowUp,
   FollowUpCreateInput,
@@ -163,7 +162,6 @@ export function FollowUpsView({ projectId }: { projectId?: string } = {}) {
         scoped ? 'scheduler-panel--embedded' : 'followups-panel'
       }`}
     >
-      {!scoped && <AppPageHeader title={<h1>Follow-ups</h1>} />}
       <div className="settings-inner">
         <div className="scheduler-header">
           <div className="scheduler-header-text">

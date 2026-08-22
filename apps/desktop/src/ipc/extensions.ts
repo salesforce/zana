@@ -3,6 +3,13 @@ import { ipcMain } from 'electron';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
 import { installFromArchiveFile, installFromBundled, installFromDir, installFromGit, listBundledCatalog, locateManifestDir, uninstallExtension } from '@zana-ai/zcc-server/services/extensions/extension-installer';
+import {
+  defaultBundledRoot,
+  defaultPluginDataDir,
+  installBundledPlugin,
+  listBundledPluginCatalog
+} from '@zana-ai/zcc-server/plugins/plugin-service';
+import { createPluginStore, pluginStorePath } from '@zana-ai/zcc-server/plugins/plugin-store';
 import { applyRelease, listMarketplace, maybeCheckRemoteUpdates, resolveMarketplaceRelease } from '@zana-ai/zcc-server/services/extensions/extension-registry';
 import { grantConsent, pruneConsentedPermission, revokeConsent } from '../extensions/consent.js';
 import { addExtensionPermission, clearGit, clearLocal, extensionDir, getGitRecord, getLocalRecord, markGit, readRendererEntry, removeExtensionPermission, setExtensionEnabled } from '../extensions/discovery.js';
@@ -318,10 +325,16 @@ export function registerExtensionsIpc(): void {
           res = { ok: true, value: { id: gitRes.value.id } };
         }
       } else if (source.kind === 'bundled') {
-        // Reinstall a first-party bundled extension from the app's own resources
-        // (no network, no picker). Main maps the id → the app-owned bundled dir;
-        // installFromBundled re-runs the same manifest/id/api/reserved gates.
-        res = await installFromBundled(source.id, installOpts);
+        // Reinstall a first-party plugin or leftover disk extension from the
+        // app's own resources (no network, no picker). Plugin-model packages
+        // live under `plugins/`; `extension.json` artifacts still use installFromBundled.
+        const pluginRes = await installBundledPlugin(source.id);
+        if (pluginRes) {
+          res = pluginRes;
+          if (res.ok) return res;
+        } else {
+          res = await installFromBundled(source.id, installOpts);
+        }
       } else {
         return { ok: false, code: 'BAD_SOURCE', message: 'Unknown install source' };
       }
@@ -631,15 +644,25 @@ export function registerExtensionsIpc(): void {
       message: err instanceof Error ? err.message : String(err)
     })
   );
-  // Browse the marketplace: the first-party BUNDLED catalog (offline, always
-  // available) unioned with the opt-in remote registry (a remote release for an
-  // id wins over its bundled twin). Never reaches the network by default — the
-  // bundled rows are read from the app's own resources.
+  // Browse the marketplace: first-party BUNDLED plugins (`plugins/`, offline)
+  // unioned with leftover bundled disk extensions and the opt-in remote
+  // registry (a remote release for an id wins over its bundled twin). Never
+  // reaches the network by default — bundled rows are read from app resources.
   ctx.safeHandle(
     IPC.extensions.marketplaceList,
     async (): Promise<Result<MarketplaceEntry[]>> => {
-      const installedIds = ctx.extensionEntries.map((e) => e.id);
-      const bundled = await listBundledCatalog(ctx.logMainError);
+      const pluginIds = createPluginStore({
+        file: pluginStorePath(defaultPluginDataDir())
+      })
+        .list()
+        .map((row) => row.id);
+      const installedIds = [
+        ...new Set([...ctx.extensionEntries.map((e) => e.id), ...pluginIds])
+      ];
+      const bundled = [
+        ...listBundledPluginCatalog(defaultBundledRoot(), ctx.logMainError),
+        ...(await listBundledCatalog(ctx.logMainError))
+      ];
       const entries = await listMarketplace(
         installedIds,
         ctx.logMainError,

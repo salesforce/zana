@@ -21,10 +21,10 @@ export class MarketplacePage {
     await this.window.waitForSelector('.ext-market', { timeout: 15_000 });
   }
 
-  /** The marketplace "off / not configured" hint (shown when no registry). */
+  /** The marketplace empty hint (shown when bundled + remote catalogs are both empty). */
   emptyHint() {
     return this.window.locator('.settings-help--muted', {
-      hasText: 'No marketplace configured',
+      hasText: 'No extensions to show',
     });
   }
 

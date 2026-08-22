@@ -752,6 +752,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.listPaneWidth === 'number' && Number.isFinite(input.listPaneWidth)) {
     normalized.listPaneWidth = Math.max(200, Math.min(600, Math.round(input.listPaneWidth)));
   }
+  if (typeof input.sidebarWidth === 'number' && Number.isFinite(input.sidebarWidth)) {
+    normalized.sidebarWidth = Math.max(256, Math.min(480, Math.round(input.sidebarWidth)));
+  }
   if (
     input.defaultModel === 'opus' ||
     input.defaultModel === 'sonnet' ||

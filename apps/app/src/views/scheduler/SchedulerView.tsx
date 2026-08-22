@@ -9,7 +9,6 @@ import { DeleteConfirmModal } from '@/components/scheduler/DeleteConfirmModal';
 import { RunReportModal } from '@/components/scheduler/RunReportModal';
 import { TemplatePickerModal } from '@/components/scheduler/TemplatePickerModal';
 import { SchedulerOverview } from '@/components/scheduler/SchedulerOverview';
-import { AppPageHeader } from '@/components/AppPageHeader';
 import { ScheduleGroupsModal } from '@/components/ScheduleGroupsModal';
 
 /** Seed values handed to ScheduleModal. May come from a template (“Use this”)
@@ -182,7 +181,6 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
         lockedProject ? ' scheduler-panel--embedded' : ' scheduler-page'
       }`}
     >
-      {!lockedProject && <AppPageHeader title={<h1>Scheduler</h1>} />}
       <div className="settings-inner">
         <div className="scheduler-header">
           <div className="scheduler-header-text">

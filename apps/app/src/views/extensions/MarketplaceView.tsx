@@ -1,19 +1,18 @@
 /**
- * Extensions → Browse extensions (Marketplace). Browses the (opt-in) internal registry
- * and lets the user install / update an extension WITHOUT rebuilding the app.
+ * Extensions → Browse extensions (Marketplace). Lists first-party plugins the
+ * app ships (offline) and, when configured, the opt-in remote registry — so the
+ * user can install / update without rebuilding the app.
  *
- * The catalog comes from `window.cc.extensions.marketplaceList()`, which returns
- * `[]` unless `~/.zcc/extension-registry.json` is enabled + HTTPS — so this view
- * shows an "off" hint by default and never implies a network reach that didn't
- * happen. Each row is a {@link MarketplaceEntry} already joined with this host's
- * install state (installed / hasUpdate / compatible), so the button label is a
- * pure projection of those flags — no extension id is hard-coded here (Rule #6:
- * we iterate `entry.id` variables; the renderer guard enforces no bare literal).
+ * The catalog comes from `window.cc.extensions.marketplaceList()`. Each row is a
+ * {@link MarketplaceEntry} already joined with this host's install state
+ * (installed / hasUpdate / compatible), so the button label is a pure projection
+ * of those flags — no extension id is hard-coded here (Rule #6: we iterate
+ * `entry.id` variables; the renderer guard enforces no bare literal).
  *
- * Install/Update routes through `extensions.install({kind:'marketplace', id})`,
- * which downloads + sha256/-signature verifies in main and then reconciles the
- * disk so the new code spawns live; a permission-widening release comes back as
- * a typed `NEEDS_CONSENT` failure we surface inline.
+ * Install/Update routes through `extensions.install({kind:'marketplace', id})`
+ * or `{kind:'bundled', id}` for first-party rows. Main owns both trust paths;
+ * the renderer only names the source kind + id. A permission-widening remote
+ * release comes back as a typed `NEEDS_CONSENT` failure we surface inline.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -87,8 +86,12 @@ export function MarketplaceView() {
     refresh();
     // An install/update (or a watcher tick) re-stamps the installed set; refresh
     // the catalog so installed/hasUpdate flags stay accurate.
-    const off = window.cc.extensions.onChanged(() => refresh());
-    return () => off();
+    const offExt = window.cc.extensions.onChanged(() => refresh());
+    const offApps = window.cc.pluginApps?.onChanged?.(() => refresh()) ?? (() => {});
+    return () => {
+      offExt();
+      offApps();
+    };
   }, [refresh]);
 
   const install = (entry: MarketplaceEntry) => {
@@ -268,9 +271,10 @@ export function MarketplaceView() {
         <p className="settings-help settings-help--muted">Loading marketplace…</p>
       ) : entries.length === 0 ? (
         <p className="settings-help settings-help--muted">
-          No extensions to show. Point <code>~/.zcc/extension-registry.json</code> at an HTTPS
-          registry (with <code>enabled: true</code>) to browse shared extensions, or install from a
-          local folder or archive above.
+          No extensions to show. First-party plugins ship with the app; if this list is empty,
+          the bundled plugins root was not found. Point <code>~/.zcc/extension-registry.json</code>{' '}
+          at an HTTPS registry (with <code>enabled: true</code>) to browse shared extensions, or
+          install from a local folder or archive above.
         </p>
       ) : filtered && filtered.length === 0 ? (
         <p className="settings-help settings-help--muted">

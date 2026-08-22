@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import type { AppModule } from '@zana-ai/zcc-extension-sdk/renderer';
 import type { ExtensionEntry } from '@zana-ai/zcc-domain/product';
 import { buildHubRows, canOpenGlobalPanel } from '@/views/extensions/ExtensionsHub';
@@ -117,5 +118,15 @@ describe('canOpenGlobalPanel', () => {
     expect(canOpenGlobalPanel(mod('settings', 'Settings', { panel, placement: 'settings' }))).toBe(false);
     expect(canOpenGlobalPanel(mod('project', 'Project', { panel, projectTab: { global: false } }))).toBe(false);
     expect(canOpenGlobalPanel(mod('commands', 'Commands'))).toBe(false);
+  });
+});
+
+describe('Extensions hub More menu', () => {
+  it('dismisses on outside mousedown and Escape', () => {
+    const source = readFileSync(new URL('./ExtensionsHub.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('if (!moreOpen) return;');
+    expect(source).toContain('moreRef.current && !moreRef.current.contains(e.target as Node)');
+    expect(source).toContain("if (e.key === 'Escape') setMoreOpen(false);");
+    expect(source).toContain('<div className="ext-hub-more-wrap" ref={moreRef}>');
   });
 });

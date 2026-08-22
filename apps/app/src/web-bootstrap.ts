@@ -18,6 +18,15 @@ export interface BrowserBootstrap {
  */
 export async function loadBrowserBootstrap(): Promise<BrowserBootstrap> {
   const response = await fetch('/_zcc/bootstrap', { credentials: 'same-origin' });
+  const contentType = response.headers.get('content-type') ?? '';
+  const body = await response.text();
   if (!response.ok) throw new Error(`Local web bootstrap failed (${response.status})`);
-  return response.json() as Promise<BrowserBootstrap>;
+  if (!contentType.includes('application/json')) {
+    throw new Error('Local web bootstrap is not available on this origin');
+  }
+  try {
+    return JSON.parse(body) as BrowserBootstrap;
+  } catch {
+    throw new Error('Local web bootstrap returned invalid JSON');
+  }
 }

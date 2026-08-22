@@ -126,17 +126,6 @@ export function ProjectFocusView({ project }: { project: Project }) {
     <section className="list-pane">
       <AppPageHeader
         className="list-header"
-        title={!scopedProjectId ? (
-          <button
-            type="button"
-            className="focus-back"
-            onClick={() => exitProjectFocus()}
-            title="Back to all projects"
-          >
-            <ArrowLeft size={14} />
-            <span>All projects</span>
-          </button>
-        ) : <span />}
         actions={!scopedProjectId ? (
           <button
             type="button"
@@ -148,7 +137,19 @@ export function ProjectFocusView({ project }: { project: Project }) {
             <AppWindow size={14} />
           </button>
         ) : undefined}
-      />
+      >
+        {!scopedProjectId ? (
+          <button
+            type="button"
+            className="focus-back"
+            onClick={() => exitProjectFocus()}
+            title="Back to all projects"
+          >
+            <ArrowLeft size={14} />
+            <span>All projects</span>
+          </button>
+        ) : null}
+      </AppPageHeader>
       <div className="focus-project-header">
         <span
           className="project-dot"

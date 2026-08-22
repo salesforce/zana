@@ -54,3 +54,13 @@ describe('sidebar workspace scrolling', () => {
     expect(source).toContain('.sidebar-agents--collapsed {\n  /* Override the fixed, user-resized flex basis. A collapsed collection is only\n   * its header; retaining the prior height leaves a dead gap above Workspaces. */\n  flex: 0 0 36px;\n  height: 36px;');
   });
 });
+
+describe('sidebar workspace header menus', () => {
+  it('dismisses the add and organize popovers on outside mousedown and Escape', () => {
+    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('if (!sidebarAddOpen && !sidebarOrganizeOpen) return;');
+    expect(source).toContain('sidebarAddRef.current?.contains(t) || sidebarOrganizeRef.current?.contains(t)');
+    expect(source).toContain("if (e.key === 'Escape')");
+    expect(source).toContain('setSidebarAddOpen(false);\n        setSidebarOrganizeOpen(false);');
+  });
+});

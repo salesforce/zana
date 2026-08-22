@@ -66,11 +66,11 @@ function availableAgentHarnesses(descriptors: HarnessAdapterDescriptor[]) {
 }
 
 /**
- * Compact launch surface for Home. It deliberately reuses the prompt, voice, and
- * model-picker controls used by the full launcher while keeping first-run choices
- * to the project and harness needed to start work immediately.
+ * Compact launch surface for Home and empty Agents boards. It reuses the prompt,
+ * voice, and model-picker controls used by the full launcher. Pass `project` to
+ * pin launches to one workspace (hides the picker; skips the scratch default).
  */
-export function HomeAgentComposer() {
+export function HomeAgentComposer({ project: pinnedProject }: { project?: Project } = {}) {
   const projects = useData((s) => s.projects);
   const loadProjects = useData((s) => s.loadProjects);
   const createTerminal = useData((s) => s.createTerminal);
@@ -84,7 +84,7 @@ export function HomeAgentComposer() {
   const pushToast = useUi((s) => s.pushToast);
   const [preferences, setPreferences] = useState(readHomeLauncherPreferences);
   const [prompt, setPrompt] = useState('');
-  const [projectId, setProjectId] = useState(preferences.projectId ?? '');
+  const [projectId, setProjectId] = useState(pinnedProject?.id ?? preferences.projectId ?? '');
   const [familyId, setFamilyId] = useState<HarnessFamily | ''>('');
   const [automaticProfile, setAutomaticProfile] = useState<LaunchProfileId | null>(null);
   const [selectionState, setSelectionState] = useState<'loading' | 'resolved' | 'unavailable'>('loading');
@@ -104,7 +104,7 @@ export function HomeAgentComposer() {
     [projects]
   );
   const harnesses = useMemo(() => availableAgentHarnesses(descriptors), [descriptors]);
-  const project = launchProjects.find((candidate) => candidate.id === projectId);
+  const project = pinnedProject ?? launchProjects.find((candidate) => candidate.id === projectId);
   const selectedHarness = harnesses.find((descriptor) => descriptor.id === familyId);
   const models: readonly HarnessModelTarget[] = selectedHarness?.targets?.models ?? EMPTY_MODELS;
   const addAttachments = (paths: string[]) => {
@@ -124,6 +124,11 @@ export function HomeAgentComposer() {
   }, [harnessCursorEnabled, harnessCodexEnabled, harnessPiEnabled, harnessOpenCodeEnabled]);
 
   useEffect(() => {
+    if (pinnedProject) {
+      setProjectId(pinnedProject.id);
+      setQuickWorkspaceReady(true);
+      return;
+    }
     let cancelled = false;
     void window.cc.projects.ensureQuickAgent()
       .then((result) => {
@@ -133,11 +138,12 @@ export function HomeAgentComposer() {
       })
       .finally(() => { if (!cancelled) setQuickWorkspaceReady(true); });
     return () => { cancelled = true; };
-  }, [loadProjects, projects]);
+  }, [loadProjects, pinnedProject, projects]);
 
   useEffect(() => {
+    if (pinnedProject) return;
     if (quickWorkspaceReady && !projectId && launchProjects[0]) setProjectId(launchProjects[0].id);
-  }, [launchProjects, projectId, quickWorkspaceReady]);
+  }, [launchProjects, pinnedProject, projectId, quickWorkspaceReady]);
 
   useEffect(() => {
     if (selectionState !== 'resolved' || (modelId && models.some((model) => model.id === modelId))) return;
@@ -145,10 +151,11 @@ export function HomeAgentComposer() {
   }, [modelId, models, selectionState]);
 
   useEffect(() => {
+    if (pinnedProject) return;
     const next = { projectId, modelId: modelId || undefined };
     setPreferences(next);
     writeHomeLauncherPreferences(next);
-  }, [projectId, modelId]);
+  }, [pinnedProject, projectId, modelId]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -273,6 +280,7 @@ export function HomeAgentComposer() {
           >
             <Paperclip size={16} aria-hidden="true" />
           </ComposerIconButton>
+          {!pinnedProject && (
           <div className="home-agent-select home-agent-project-picker">
             <FolderGit2 size={15} aria-hidden="true" />
             <PopoverPicklist
@@ -313,6 +321,7 @@ export function HomeAgentComposer() {
               }}
             />
           </div>
+          )}
 
           <PopoverPicklist
             ariaLabel="Agent harness"

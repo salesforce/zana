@@ -6,6 +6,7 @@
 export const SERVER_PROTOCOL_VERSION = 1;
 
 export * from './static-host.js';
+export * from './browser-bootstrap.js';
 export * from './execution-service.js';
 export * from './project-store.js';
 export * from './terminal-execution-service.js';

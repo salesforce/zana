@@ -172,6 +172,10 @@ async function readCatalogManifest(dir: string): Promise<BundledCatalogEntry | n
  * set of recommended/first-party extensions. Extension-agnostic (Rule #6): it
  * iterates whatever dirs ship under the bundled root; never names a concrete id.
  * Returns `[]` when nothing is bundled. Never throws.
+ *
+ * First-party *plugins* (`plugins/<id>` with a `package.json` `zcc` block) are
+ * enumerated separately by `listBundledPluginCatalog` and unioned at the IPC
+ * layer — this function still only reads leftover `extension.json` artifacts.
  */
 export async function listBundledCatalog(log?: LogFn): Promise<BundledCatalogEntry[]> {
   const out: BundledCatalogEntry[] = [];

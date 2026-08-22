@@ -34,6 +34,7 @@
     "react-diff-viewer-continued": "^4.3.0",
     "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",
+    "react-router-dom": "^7.18.2",
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1",
     "zod": "^4.0.0",

@@ -6,8 +6,7 @@ import { useEffect, useRef, type RefObject } from 'react';
  *   - Tab is trapped within `dialogRef` (wraps last→first and first→last),
  *   - focus returns to whatever opened the dialog when it unmounts.
  *
- * `enabled` lets a component that renders in both modal and inline variants
- * skip the trap for the non-modal case — pass `false` and the effect is a no-op.
+ * `enabled` lets a caller skip the trap (pass `false` and the effect is a no-op).
  *
  * `onClose` is read through a ref so an unstable identity (e.g. an inline
  * `() => setOpen(false)` from a parent that re-renders on a timer) does NOT

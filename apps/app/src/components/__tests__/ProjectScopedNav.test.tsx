@@ -1,6 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import type { ReactElement } from 'react';
 import type { AppModule } from '@zana-ai/zcc-extension-sdk/renderer';
 import type { Project } from '@zana-ai/zcc-domain/product';
 
@@ -48,7 +50,10 @@ vi.mock('../../store', () => ({
   useProjectActiveGoalCount: () => 0,
   useProjectOpenFollowUpCount: () => 0,
   useProjectScheduleCount: () => h.scheduleCount,
-  useProjectRunningTerminalCount: () => 0
+  useProjectRunningTerminalCount: () => 0,
+  applySidebarWidth: vi.fn(),
+  SIDEBAR_MIN: 256,
+  SIDEBAR_MAX: 480
 }));
 vi.mock('../../modules', () => ({
   useProjectTabModules: () => h.modules
@@ -74,9 +79,13 @@ vi.mock('../../lib/libraryPlugin', () => ({
 
 import { ProjectScopedNav } from '../ProjectScopedNav.js';
 
+function renderNav(node: ReactElement) {
+  return renderToStaticMarkup(<MemoryRouter>{node}</MemoryRouter>);
+}
+
 describe('ProjectScopedNav matches the global sidebar chrome', () => {
   it('uses titlebar history controls, a flat destination list, and the utility dock', () => {
-    const markup = renderToStaticMarkup(
+    const markup = renderNav(
       <ProjectScopedNav project={project} variant="focus" onBack={() => undefined} />
     );
 
@@ -87,6 +96,7 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     expect(markup).toContain('class="settings-app-back"');
     expect(markup).toContain('>Back</button>');
     expect(markup).toContain('class="sidebar-utility-bar"');
+    expect(markup).toContain('class="sidebar-resizer"');
     expect(markup).toContain('aria-label="Settings"');
     expect(markup).toContain('aria-label="Open this project in a new window"');
     expect(markup).not.toContain('>Settings<');
@@ -98,6 +108,9 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     expect(markup).not.toContain('>Workspace<');
     expect(markup).not.toContain('>System<');
     expect(markup).toContain('data-testid="project-nav-inbox"');
+    expect(markup).toContain('href="/inbox"');
+    expect(markup).toContain('href="/projects/proj-1/terminals"');
+    expect(markup).toContain('href="/projects/proj-1/scheduler"');
     expect(markup).not.toContain('data-testid="project-nav-agents"');
     expect(markup).not.toContain('data-sortable-nav-id="inbox"');
     expect(markup).toContain('data-sortable-nav-id="feed"');
@@ -110,6 +123,9 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     expect(markup).toContain('data-testid="project-nav-scheduler"');
     expect(markup).toContain('>Inbox<');
     expect(markup).toContain('class="sidebar-agents "');
+    expect(markup).toContain('data-testid="sidebar-agents-heading"');
+    expect(markup).toContain('href="/projects/proj-1"');
+    expect(markup).toContain('data-testid="sidebar-agents-toggle"');
     expect(markup).toContain('aria-label="Collapse Agents section"');
     expect(markup).toContain('aria-label="Open Agents dashboard"');
     expect(markup).toContain('aria-label="New quick agent"');
@@ -126,7 +142,7 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
   });
 
   it('omits the pop-out control in a dedicated project window', () => {
-    const markup = renderToStaticMarkup(
+    const markup = renderNav(
       <ProjectScopedNav project={project} variant="window" />
     );
 
@@ -150,21 +166,23 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
       }
     ];
 
-    const markup = renderToStaticMarkup(
+    const markup = renderNav(
       <ProjectScopedNav project={project} variant="focus" onBack={() => undefined} />
     );
 
     expect(markup).toContain('data-testid="project-nav-consensus"');
+    expect(markup).toContain('href="/projects/proj-1/consensus"');
     expect(markup).toContain('data-sortable-nav-id="consensus"');
     expect(markup).toContain('>Consensus<');
     expect(markup).not.toContain('>Extensions</div>');
     h.modules = [];
   });
 
-  it('opens this project Agents board from the collection dashboard control', () => {
+  it('opens this project Agents board from the collection label and dashboard control', () => {
     const source = readFileSync(new URL('../ProjectScopedNav.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain("onOpenDashboard={() => selectMode('agents')}");
+    expect(source).toContain('onNavigate={onNavClick}');
     expect(source).toContain('projectId={project.id}');
     expect(source).toContain('PROJECT_NAV_ORDER_KEY');
     expect(source).toContain('{...rest}');

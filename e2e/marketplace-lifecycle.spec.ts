@@ -13,7 +13,7 @@ import { test, expect } from './fixtures/app.js';
 import { MarketplacePage } from './fixtures/marketplace.js';
 
 test.describe('marketplace lifecycle — search', () => {
-  test.use({ useRegistry: true });
+  test.use({ useRegistry: true, isolateBundledCatalog: true });
 
   test('search box filters the catalog by title/id/description/author', async ({
     app,
@@ -67,7 +67,7 @@ test.describe('marketplace lifecycle — search', () => {
 });
 
 test.describe('marketplace lifecycle — install and uninstall', () => {
-  test.use({ useRegistry: true });
+  test.use({ useRegistry: true, isolateBundledCatalog: true });
 
   test('installs extension → surfaces live → uninstalls → gone', async ({ app, registry }) => {
     const id = registry!.extension.id;
@@ -188,6 +188,7 @@ test.describe('marketplace lifecycle — install and uninstall', () => {
 test.describe('marketplace lifecycle — permission-widening updates', () => {
   test.use({
     useRegistry: true,
+    isolateBundledCatalog: true,
     // Customize the dummy to have minimal permissions initially
     dummySpec: { permissions: ['storage'] },
   });

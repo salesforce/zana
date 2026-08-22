@@ -135,6 +135,25 @@ export function ExtensionsHub({
   const [creating, setCreating] = useState(false);
   const [openExisting, setOpenExisting] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (moreRef.current && !moreRef.current.contains(e.target as Node)) {
+        setMoreOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMoreOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [moreOpen]);
 
   // Explicit "Reload" fallback for the auto file-watcher: re-runs the disk
   // reconcile in main (spawn new / tear down removed / respawn changed).
@@ -180,7 +199,7 @@ export function ExtensionsHub({
   };
 
   const maintenanceActions = (
-    <div className="ext-hub-more-wrap">
+    <div className="ext-hub-more-wrap" ref={moreRef}>
       <button
         type="button"
         className="settings-btn"

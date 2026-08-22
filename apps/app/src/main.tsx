@@ -1,4 +1,5 @@
 import { createRoot } from 'react-dom/client';
+import { BrowserRouter } from 'react-router-dom';
 import type { CcApi } from '@zana-ai/zcc-desktop-contract';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
 // Prevent the OS from navigating to files dropped outside the terminal area.
@@ -52,12 +53,19 @@ if (!root) {
         const startup = await window.cc.startup.state();
         // Keep repair mode outside App: importing App initializes renderer stores
         // backed by data that migration has not made safe to read yet.
-        const Content = startup.mode === 'repair-required'
+        const isRepair = startup.mode === 'repair-required';
+        const Content = isRepair
           ? (await import('./components/StartupRepair.js')).StartupRepair
           : (await import('./App.js')).App;
         appRoot.render(
           <ErrorBoundary>
-            <Content />
+            {isRepair ? (
+              <Content />
+            ) : (
+              <BrowserRouter>
+                <Content />
+              </BrowserRouter>
+            )}
           </ErrorBoundary>
         );
       } catch (error) {

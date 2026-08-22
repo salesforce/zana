@@ -1,4 +1,4 @@
-import { cloneElement, useEffect, useRef, useState, type ButtonHTMLAttributes, type HTMLAttributes, type ReactElement } from 'react';
+import { cloneElement, useEffect, useRef, useState, type HTMLAttributes, type ReactElement } from 'react';
 import {
   KeyboardSensor,
   PointerSensor,
@@ -25,7 +25,7 @@ export function SortableNavItem({
   children
 }: {
   id: string;
-  children: ReactElement<ButtonHTMLAttributes<HTMLButtonElement>>;
+  children: ReactElement;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
   return (

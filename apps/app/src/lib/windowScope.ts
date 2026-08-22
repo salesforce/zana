@@ -6,9 +6,11 @@
  * lastProject/focusedProject restore is skipped so the window can't drift to a
  * different project.
  *
- * Read ONCE at module load — the URL never changes during a window's lifetime
- * (a different project gets a different window). `null` ⇒ the normal, unscoped
- * shell (the main window).
+ * Read ONCE at module load from `?projectId=` (set by main's `createWindow`),
+ * and remember that id in `sessionStorage` so a later document load that drops
+ * the query (address-bar `/inbox`, SPA fallback) still stays locked.
+ * Client-side path changes also keep that query so a refresh still locks the
+ * window. `null` ⇒ the normal, unscoped shell (the main window).
  *
  * SCOPE IS A DISPLAY LOCK, NOT A SECURITY/PRIVACY BOUNDARY. A scoped window runs
  * the same `window.cc` IPC surface as the main one, and main's `safeSend`
@@ -18,14 +20,27 @@
  * window from observing or acting on project Y. If a real isolation guarantee is
  * ever needed, filter `safeSend` per-window by the window's registered project.
  */
-const scopedProjectId: string | null = (() => {
+const SCOPED_PROJECT_STORAGE_KEY = 'zcc.scopedProjectId';
+
+function readScopedProjectId(): string | null {
   try {
-    const id = new URLSearchParams(window.location.search).get('projectId');
-    return id && id.trim() ? id : null;
+    const fromQuery = new URLSearchParams(window.location.search).get('projectId');
+    if (fromQuery && fromQuery.trim()) {
+      try {
+        window.sessionStorage?.setItem(SCOPED_PROJECT_STORAGE_KEY, fromQuery);
+      } catch {
+        /* private-mode / missing storage — the query still locks this load */
+      }
+      return fromQuery;
+    }
+    const stored = window.sessionStorage?.getItem(SCOPED_PROJECT_STORAGE_KEY);
+    return stored && stored.trim() ? stored : null;
   } catch {
     return null;
   }
-})();
+}
+
+const scopedProjectId: string | null = readScopedProjectId();
 
 /** The project this window is locked to, or `null` for the unscoped shell. */
 export function getScopedProjectId(): string | null {

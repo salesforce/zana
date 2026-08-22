@@ -317,7 +317,7 @@ test.describe('notifications — extension inbox push + bell drawer', () => {
       // `projects:onChanged` — land on Projects and reload so the renderer
       // actually knows about this project (else `focusInboxEntry`'s
       // `enterProjectFocus` has nothing to focus).
-      const projectsNav = win.locator('button.nav-item').filter({ hasText: 'Projects' });
+      const projectsNav = win.locator('.nav-item').filter({ hasText: 'Projects' });
       await projectsNav.first().click();
       await win.locator('button[aria-label="Reload project list"]').click();
 

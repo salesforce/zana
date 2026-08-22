@@ -235,6 +235,11 @@ type Fixtures = {
   home: string;
   /** Opt the marketplace channel ON (boots a signed HTTPS registry). */
   useRegistry: boolean;
+  /**
+   * Hide first-party bundled plugins from Browse so remote-registry specs can
+   * assert exact row counts. Default off — production Browse is non-empty.
+   */
+  isolateBundledCatalog: boolean;
   /** When useRegistry, reject unsigned releases (default true). */
   requireSignature: boolean;
   /** Customize the published dummy extension. */
@@ -261,6 +266,7 @@ type Fixtures = {
 
 export const test = base.extend<Fixtures>({
   useRegistry: [false, { option: true }],
+  isolateBundledCatalog: [false, { option: true }],
   requireSignature: [true, { option: true }],
   dummySpec: [{}, { option: true }],
   e2e: [false, { option: true }],
@@ -291,7 +297,7 @@ export const test = base.extend<Fixtures>({
     }
   },
 
-  app: async ({ home, registry, requireSignature, e2e, launchEnv, initialConfig, seedClaudeAuth }, use) => {
+  app: async ({ home, registry, requireSignature, e2e, launchEnv, initialConfig, seedClaudeAuth, isolateBundledCatalog }, use) => {
     if (registry) {
       writeRegistryConfig(home, {
         enabled: true,
@@ -324,10 +330,18 @@ export const test = base.extend<Fixtures>({
       writeFileSync(realConfigPath, JSON.stringify({ ...current, ...initialConfig }, null, 2));
     }
 
+    const env: Record<string, string> = { ...launchEnv };
+    if (isolateBundledCatalog) {
+      const empty = join(home, 'empty-bundled-catalog');
+      mkdirSync(empty, { recursive: true });
+      env.ZCC_BUNDLED_PLUGINS_DIR = empty;
+      env.ZCC_BUNDLED_EXTENSIONS_DIR = empty;
+    }
+
     const handle = await launchApp(home, {
       caCertPath: registry?.caCertPath,
       e2e,
-      env: launchEnv,
+      env,
       initialConfig
     });
     try {

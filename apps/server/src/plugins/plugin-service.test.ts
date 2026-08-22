@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createPluginService } from './plugin-service.js';
+import { createPluginService, installBundledPlugin, listBundledPluginCatalog } from './plugin-service.js';
 import { containsNativeAddon } from './plugin-api.js';
 
 const roots: string[] = [];
@@ -246,5 +247,75 @@ describe('PluginService', () => {
     writeFileSync(join(dir, 'ok.mjs'), 'export default function plugin() {}\n');
     expect(() => resolveContainedEntry(dir, '../outside.mjs')).toThrow(/escapes/);
     expect(resolveContainedEntry(dir, 'ok.mjs')).toContain('ok.mjs');
+  });
+});
+
+describe('listBundledPluginCatalog', () => {
+  it('returns [] when the root is missing', () => {
+    expect(listBundledPluginCatalog(join(root(), 'no-such'))).toEqual([]);
+  });
+
+  it('enumerates package.json zcc plugins and skips junk dirs', () => {
+    const bundled = root();
+    writePlugin(join(bundled, 'echo'), 'echo');
+    mkdirSync(join(bundled, 'empty'), { recursive: true });
+    writeFileSync(join(bundled, 'README.md'), 'not a plugin\n');
+    const out = listBundledPluginCatalog(bundled);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      id: 'echo',
+      version: '0.1.0',
+      title: 'echo',
+      icon: 'Puzzle',
+      description: 'echo plugin',
+      apiRange: '',
+      permissions: []
+    });
+  });
+
+  it('skips a dir whose package name derives a different id', () => {
+    const bundled = root();
+    const dir = join(bundled, 'other');
+    writePlugin(dir, 'echo');
+    expect(listBundledPluginCatalog(bundled)).toEqual([]);
+  });
+
+  it('never throws on a malformed package.json', () => {
+    const bundled = root();
+    mkdirSync(join(bundled, 'broken'), { recursive: true });
+    writeFileSync(join(bundled, 'broken', 'package.json'), '{not json');
+    expect(listBundledPluginCatalog(bundled)).toEqual([]);
+  });
+
+  it('catalogues first-party plugins from the repo plugins/ tree', () => {
+    const pluginsRoot = join(dirname(fileURLToPath(import.meta.url)), '../../../../plugins');
+    const out = listBundledPluginCatalog(pluginsRoot);
+    expect(out.some((entry) => entry.id === 'docs' && entry.title === 'Docs')).toBe(true);
+  });
+});
+
+describe('installBundledPlugin', () => {
+  it('returns null when the id is not a plugin package in the bundled root', async () => {
+    expect(await installBundledPlugin('echo', { dataDir: root(), bundledRoot: root() })).toBeNull();
+  });
+
+  it('installs a bundled plugin and is idempotent once installed', async () => {
+    const dataDir = root();
+    const bundled = root();
+    writePlugin(join(bundled, 'echo'), 'echo');
+    const first = await installBundledPlugin('echo', { dataDir, bundledRoot: bundled });
+    expect(first).toEqual({ ok: true, value: { id: 'echo' } });
+    const second = await installBundledPlugin('echo', { dataDir, bundledRoot: bundled });
+    expect(second).toEqual({ ok: true, value: { id: 'echo' } });
+  });
+
+  it('installs a registered builtin by builtin: source', async () => {
+    const dataDir = root();
+    const bundled = root();
+    writePlugin(join(bundled, 'docs'), 'docs');
+    const res = await installBundledPlugin('docs', { dataDir, bundledRoot: bundled });
+    expect(res).toEqual({ ok: true, value: { id: 'docs' } });
+    const service = createPluginService({ dataDir, bundledRoot: bundled });
+    expect(service.get('docs')?.sourceKind).toBe('builtin');
   });
 });

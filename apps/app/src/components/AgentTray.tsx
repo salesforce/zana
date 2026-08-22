@@ -5,21 +5,38 @@ import { useData, useUi, useAgentStatus } from '../store.js';
 import { FavoriteStar } from './FavoriteStar.js';
 
 /**
- * Which agent states the tray surfaces, in display-priority order. We show only
- * the two states that actually want the user's attention:
- *   blocked — agent is waiting on the user (permission prompt / question — the
- *             Notification-hook state), so it's listed first and pulses red.
- *   working — agent is actively running, so you can hop in and watch.
- * `done`/`idle`/`unknown` are deliberately excluded — they aren't "running" and
- * don't need you, so they'd just be noise here.
+ * Which agent states the tray surfaces, in display-priority order.
+ *
+ * Global (unscoped) tray: only states that want attention — blocked first,
+ * then working. Idle/done/unknown stay off that list so the footer isn't noise.
+ *
+ * Workspace (project-scoped) tray: also include idle / unknown so you can
+ * resume an at-rest agent in the project you're already in. Scheduled runs
+ * that are only waiting stay hidden — they aren't yours to resume until they
+ * actually work or need you.
  */
-const TRAY_STATES: readonly AgentState[] = ['blocked', 'working'];
-const STATE_RANK: Record<string, number> = { blocked: 0, working: 1 };
+const GLOBAL_TRAY_STATES: readonly AgentState[] = ['blocked', 'working'];
+const WORKSPACE_TRAY_STATES: readonly AgentState[] = ['blocked', 'working', 'idle', 'unknown'];
+const STATE_RANK: Record<string, number> = { blocked: 0, working: 1, idle: 2, unknown: 3 };
 
 const STATE_LABEL: Record<string, string> = {
   blocked: 'Needs you',
-  working: 'Working'
+  working: 'Working',
+  idle: 'Idle',
+  unknown: 'Idle'
 };
+
+export function trayStatesFor(projectId: string | undefined): readonly AgentState[] {
+  return projectId ? WORKSPACE_TRAY_STATES : GLOBAL_TRAY_STATES;
+}
+
+/** Scheduled runs that are merely waiting stay off the workspace rail. */
+export function isScheduledWaiting(
+  session: Pick<TerminalSession, 'scheduled'>,
+  state: AgentState
+): boolean {
+  return Boolean(session.scheduled) && (state === 'idle' || state === 'unknown');
+}
 
 interface TrayAgent {
   session: TerminalSession;
@@ -60,14 +77,16 @@ export function AgentTray({
   // return raw store slices (stable refs); the fresh array lives behind useMemo
   // so we don't trip zustand's re-render loop (see MEMORY zustand-selector-stable-ref).
   const agents = useMemo<TrayAgent[]>(() => {
+    const allowed = trayStatesFor(projectId);
     const byProjectId = new Map(projects.map((p) => [p.id, p]));
     const out: TrayAgent[] = [];
     for (const [pid, list] of Object.entries(terminals)) {
       // Project scope (focused rail): only this project's sessions.
       if (projectId && pid !== projectId) continue;
       for (const session of list) {
+        if (session.profile === 'shell' || session.status === 'exited') continue;
         const state = byId[session.id] ?? 'unknown';
-        if (!TRAY_STATES.includes(state)) continue;
+        if (!allowed.includes(state) || isScheduledWaiting(session, state)) continue;
         const project = byProjectId.get(pid);
         out.push({
           session,
@@ -103,7 +122,7 @@ export function AgentTray({
   if (agents.length === 0) {
     return placement === 'inline' ? (
       <p className="agent-tray-empty" role="status">
-        No active agents
+        {projectId ? 'No agents' : 'No active agents'}
       </p>
     ) : null;
   }
@@ -114,8 +133,8 @@ export function AgentTray({
   if (collapsed) {
     const title =
       blockedCount > 0
-        ? `${agents.length} active · ${blockedCount} need you`
-        : `${agents.length} active`;
+        ? `${agents.length} ${projectId ? 'agents' : 'active'} · ${blockedCount} need you`
+        : `${agents.length} ${projectId ? 'agents' : 'active'}`;
     return (
       <div className={`agent-tray ${placement === 'inline' ? 'agent-tray--inline' : ''} collapsed`}>
         <button
@@ -140,10 +159,12 @@ export function AgentTray({
 
   return (
     <div className={`agent-tray ${placement === 'inline' ? 'agent-tray--inline' : ''}`}>
+      {!(placement === 'inline' && projectId) && (
       <div className="agent-tray-header">
         <span className="nav-section-label agent-tray-label">Active agents</span>
         <span className="agent-tray-count">{agents.length}</span>
       </div>
+      )}
       <div className="agent-tray-list">
         {agents.map((a) => {
           // A scheduler-spawned (or otherwise headless/background) run isn't a

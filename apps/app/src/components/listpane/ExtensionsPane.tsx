@@ -1,12 +1,17 @@
 import {
   Blocks,
   ChevronLeft,
-  ChevronRight,
   FolderOpen,
   Plug,
   Sparkles
 } from 'lucide-react';
-import { useUi, type ExtensionsTab } from '../../store.js';
+import { Link } from 'react-router-dom';
+import { type ExtensionsTab } from '../../store.js';
+import { SidebarResizer } from '../SidebarResizer.js';
+import { SidebarHistoryControls } from '../SidebarHistoryControls.js';
+import { useAppSettingsRouteMemory } from '../../hooks/useAppSettingsRouteMemory.js';
+import { useRouteState } from '../../hooks/useRouteState.js';
+import { getExtensionsTabRoutePath } from '../../lib/route-paths.js';
 
 const EXTENSIONS_GROUPS: Array<{
   label: string;
@@ -35,53 +40,40 @@ const EXTENSIONS_GROUPS: Array<{
 
 /** Focused navigation for the top-level Extensions workspace. */
 export function ExtensionsPane() {
-  const extensionsTab = useUi((s) => s.extensionsTab);
-  const setExtensionsTab = useUi((s) => s.setExtensionsTab);
+  const { extensionsTab } = useRouteState();
+  const routeMemory = useAppSettingsRouteMemory();
   return (
     <aside className="sidebar sidebar--titlebar-controls extensions-pane">
       <div className="sidebar-chrome">
-        <div className="sidebar-history-controls" aria-label="Extensions navigation history">
-          <button
-            type="button"
-            aria-label="Back to app"
-            title="Back to app"
-            onClick={() => useUi.getState().setNav('home')}
-          >
-            <ChevronLeft size={19} />
-          </button>
-          <button type="button" aria-label="No next view" title="No next view" disabled>
-            <ChevronRight size={19} />
-          </button>
-        </div>
+        <SidebarHistoryControls label="Extensions navigation history" />
       </div>
-      <button
-            type="button"
+      <Link
+            to={routeMemory.toolsBackRoutePath}
             className="extensions-pane-back"
-            onClick={() => useUi.getState().setNav('home')}
           >
             <ChevronLeft size={17} aria-hidden="true" />
             Back to app
-          </button>
+          </Link>
           <nav className="extensions-picker" aria-label="Extensions navigation">
             {EXTENSIONS_GROUPS.map((group) => (
               <section key={group.label} className="extensions-picker-group" aria-label={group.label}>
                 <h2 className="extensions-picker-label">{group.label}</h2>
                 {group.items.map(({ id, label, icon: Icon }) => (
-                  <button
+                  <Link
                     key={id}
-                    type="button"
+                    to={getExtensionsTabRoutePath(id)}
                     data-testid={`extensions-nav-${id}`}
                     className={`extensions-picker-item ${extensionsTab === id ? 'active' : ''}`}
-                    onClick={() => setExtensionsTab(id)}
                     aria-current={extensionsTab === id ? 'page' : undefined}
                   >
                     <Icon size={16} aria-hidden="true" />
                     <span>{label}</span>
-                  </button>
+                  </Link>
                 ))}
               </section>
             ))}
       </nav>
+      <SidebarResizer />
     </aside>
   );
 }

@@ -1,14 +1,13 @@
-import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactElement } from 'react';
+import { Fragment, useMemo, useSyncExternalStore, type ReactElement } from 'react';
 import { DndContext } from '@dnd-kit/core';
 import {
   SortableContext,
   verticalListSortingStrategy
 } from '@dnd-kit/sortable';
+import { Link } from 'react-router-dom';
 import {
   Blocks,
   Bot,
-  ChevronLeft,
-  ChevronRight,
   Clock,
   FolderGit2,
   House,
@@ -28,9 +27,14 @@ import {
   type NavId
 } from '../store.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
+import { getNavRoutePath } from '../lib/route-paths.js';
 import { useMergedModules } from '../modules/index.js';
+import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js';
+import { useRouteState } from '../hooks/useRouteState.js';
 import { AgentsSidebarSection } from './AgentsSidebarSection.js';
 import { ProjectsList } from './listpane/ProjectsList.js';
+import { SidebarResizer } from './SidebarResizer.js';
+import { SidebarHistoryControls } from './SidebarHistoryControls.js';
 import { PINNED_SIDEBAR_NAV_IDS } from './sidebarNavOrder.js';
 import {
   AGENTS_SECTION_SORT_ID,
@@ -79,8 +83,7 @@ const sidebarUtilityItems = [settingsNavItem];
 const NAV_ORDER_KEY = GLOBAL_NAV_ORDER_KEY;
 
 export function Sidebar() {
-  const nav = useUi((s) => s.nav);
-  const setNav = useUi((s) => s.setNav);
+  const { nav } = useRouteState();
   const collapsed = useUi((s) => s.sidebarCollapsed);
   const unreadInbox = useUnreadInboxCount();
   const enabledSchedules = useEnabledSchedulerCount();
@@ -88,18 +91,7 @@ export function Sidebar() {
   const agentCounts = useAgentNavCounts();
   const suggestionsEnabled = useData((s) => s.suggestionsEnabled);
   const followUpsEnabled = useData((s) => s.followUpsEnabled);
-  const navHistoryRef = useRef<NavId[]>([nav]);
-  const navHistoryIndexRef = useRef(0);
-  const [, setNavHistoryRevision] = useState(0);
-  useEffect(() => {
-    const history = navHistoryRef.current;
-    const index = navHistoryIndexRef.current;
-    if (history[index] === nav) return;
-    history.splice(index + 1);
-    history.push(nav);
-    navHistoryIndexRef.current = history.length - 1;
-    setNavHistoryRevision((revision) => revision + 1);
-  }, [nav]);
+  const routeMemory = useAppSettingsRouteMemory();
   const navItems = useMemo(() => {
     const items = [...coreNavItems];
     if (suggestionsEnabled) items.splice(2, 0, suggestionsNavItem);
@@ -154,7 +146,7 @@ export function Sidebar() {
   const renderNavItem = (
     item: NavEntry,
     compactOnly = false
-  ): ReactElement<React.ButtonHTMLAttributes<HTMLButtonElement>> => {
+  ): ReactElement => {
     const Icon = item.icon;
     const showBadge = item.id === 'inbox' && unreadInbox > 0;
     // Scheduler badge only appears when a scheduled agent is running right now;
@@ -175,14 +167,18 @@ export function Sidebar() {
       ? `${agentCounts.active} active · ${agentCounts.blocked} need you`
       : `${agentCounts.active} active`;
     return (
-      <button
+      <Link
         key={item.id}
+        to={item.id === 'extensions' ? routeMemory.toolsRoutePath : getNavRoutePath(item.id)}
         // Stable e2e hook (inert in prod — a plain data attr): the UI-driven
         // specs click nav entries by id (`nav-agents`, `nav-projects`, …).
         data-testid={`nav-${item.id}`}
         className={`nav-item ${compactOnly ? 'nav-item--compact-only' : ''} ${nav === item.id ? 'active' : ''}`}
-        onClick={() => {
-          if (consumeNavClick()) return;
+        onClick={(event) => {
+          if (consumeNavClick()) {
+            event.preventDefault();
+            return;
+          }
           // Clicking the top-level Projects rail item always returns to the
           // un-focused home (the cross-project Agents board + project list),
           // never staying drilled into / highlighting the last project.
@@ -190,7 +186,6 @@ export function Sidebar() {
             useUi.getState().exitProjectFocus();
             useUi.getState().selectProject(null);
           }
-          setNav(item.id as NavId);
         }}
         aria-current={nav === item.id ? 'page' : undefined}
         aria-label={collapsed ? item.label : undefined}
@@ -238,20 +233,9 @@ export function Sidebar() {
             {agentCounts.active > 99 ? '99+' : agentCounts.active}
           </span>
         )}
-      </button>
+      </Link>
     );
   };
-
-  const goNavHistory = (direction: -1 | 1) => {
-    const nextIndex = navHistoryIndexRef.current + direction;
-    const nextNav = navHistoryRef.current[nextIndex];
-    if (!nextNav) return;
-    navHistoryIndexRef.current = nextIndex;
-    setNav(nextNav);
-    setNavHistoryRevision((revision) => revision + 1);
-  };
-  const canGoBack = navHistoryIndexRef.current > 0;
-  const canGoForward = navHistoryIndexRef.current < navHistoryRef.current.length - 1;
 
   // The shell owns the single persistent toggle. Returning no rail removes the
   // navigation column while its fixed trigger stays available above the shell.
@@ -260,26 +244,7 @@ export function Sidebar() {
   return (
     <aside className="sidebar sidebar--global">
       <div className="sidebar-chrome">
-        <div className="sidebar-history-controls" aria-label="Navigation history">
-          <button
-            type="button"
-            aria-label="Go back"
-            title="Go back"
-            disabled={!canGoBack}
-            onClick={() => goNavHistory(-1)}
-          >
-            <ChevronLeft size={19} />
-          </button>
-          <button
-            type="button"
-            aria-label="Go forward"
-            title="Go forward"
-            disabled={!canGoForward}
-            onClick={() => goNavHistory(1)}
-          >
-            <ChevronRight size={19} />
-          </button>
-        </div>
+        <SidebarHistoryControls />
       </div>
 
       <DndContext
@@ -313,7 +278,11 @@ export function Sidebar() {
                 );
                 if (id === AGENTS_SECTION_SORT_ID) return (
                   <SortableSidebarSection key={id} id={id}>
-                    <AgentsSidebarSection />
+                    <AgentsSidebarSection
+                      onNavigate={(event) => {
+                        if (consumeNavClick()) event.preventDefault();
+                      }}
+                    />
                   </SortableSidebarSection>
                 );
                 if (id === WORKSPACES_SECTION_SORT_ID) return (
@@ -328,21 +297,23 @@ export function Sidebar() {
         </div>
       </DndContext>
 
+      <SidebarResizer />
+
       <div className="sidebar-utility-bar" aria-label="Sidebar utilities">
         {sidebarUtilityItems.map((item) => {
           const Icon = item.icon;
+          const to = item.id === 'settings' ? routeMemory.settingsRoutePath : getNavRoutePath(item.id);
           return (
-            <button
+            <Link
               key={item.id}
-              type="button"
+              to={to}
               className={`sidebar-utility-button ${nav === item.id ? 'active' : ''}`}
               aria-label={item.label}
               aria-current={nav === item.id ? 'page' : undefined}
               title={item.label}
-              onClick={() => setNav(item.id as NavId)}
             >
               <Icon size={18} />
-            </button>
+            </Link>
           );
         })}
         {footerActions.map((action) => (

@@ -77,8 +77,7 @@ export function InboxPane() {
     <section className="list-pane inbox-list-pane">
       <AppPageHeader
         className="list-header"
-        title={<h1>Inbox</h1>}
-        actions={<div className="list-header-actions">
+        actions={!showingSaved ? <div className="list-header-actions">
           {/* Group-by toggle: per-project subgroups vs. a flat chronological
               stream. A persisted view preference (store.inboxGrouping). */}
           {showingFeed && (
@@ -149,7 +148,7 @@ export function InboxPane() {
               <Trash2 size={14} />
             </button>
           )}
-        </div>}
+        </div> : undefined}
       />
       {/* Tab strip: the live feed vs. durable saved-for-later reports. */}
       <div className="inbox-tabs" role="tablist" aria-label="Inbox view">

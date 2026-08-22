@@ -11,11 +11,10 @@ import { FavoriteStar } from './FavoriteStar.js';
 import { PromptModal } from './PromptModal.js';
 
 /**
- * Shared, presentational Kanban-style Agents board. Both the per-project board
- * ({@link ProjectAgentsBoard}) and the cross-project default
- * ({@link GlobalAgentsBoard}) feed it a flat `AgentCard[]` + a click handler;
- * this file owns the lane definitions, the live-timer tick, and the card/lane
- * rendering (pulse/sweep on working, red pulse on blocked).
+ * Shared, presentational Kanban-style Agents board. {@link AgentsBoard} feeds
+ * it a flat `AgentCard[]` + a click handler (global or one project); this file
+ * owns the lane definitions, the live-timer tick, and the card/lane rendering
+ * (pulse/sweep on working, red pulse on blocked).
  *
  * Unlike a classic Kanban, cards aren't dragged — the lane is decided by the
  * agent's own live {@link AgentState}, so cards flow left→right on their own as

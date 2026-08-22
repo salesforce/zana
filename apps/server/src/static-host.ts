@@ -194,8 +194,9 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
     }
 
     const immutable = file.includes(`${sep}assets${sep}`);
+    const spaPage = file === indexPath;
     response.writeHead(200, {
-      'Cache-Control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
+      'Cache-Control': spaPage ? 'no-store' : immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
       'Content-Type': contentType(file),
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer',

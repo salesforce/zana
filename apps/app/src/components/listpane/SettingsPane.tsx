@@ -1,11 +1,16 @@
 import { ArrowLeft } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useData, useUi } from '../../store.js';
 import { SETTINGS_SECTIONS, SETTINGS_GROUPS } from '@/views/settings/SettingsView';
+import { SidebarResizer } from '../SidebarResizer.js';
+import { useAppSettingsRouteMemory } from '../../hooks/useAppSettingsRouteMemory.js';
+import { getSettingsTabRoutePath } from '../../lib/route-paths.js';
 
 /**
  * Focused Settings rail. Each Settings section (Global · Prompts · Personas ·
  * Squads · Usage · …, + the project-scoped Project settings) is a row that
- * sets `settingsTab`. Scope (Global vs a single project) is chosen in the
+ * navigates to `/settings/:section` (project settings live at
+ * `/projects/:id/settings`). Scope (Global vs a single project) is chosen in the
  * content header's scope control (see `ScopeControl` in SettingsPanel.tsx),
  * NOT here. Plugins / Skills / MCP live on the top-level Extensions workspace.
  *
@@ -13,41 +18,38 @@ import { SETTINGS_SECTIONS, SETTINGS_GROUPS } from '@/views/settings/SettingsVie
  */
 export function SettingsPane() {
   const settingsTab = useUi((s) => s.settingsTab);
-  const setSettingsTab = useUi((s) => s.setSettingsTab);
   const selectedProjectId = useUi((s) => s.selectedProjectId);
+  const focusedProjectId = useUi((s) => s.focusedProjectId);
   const projects = useData((s) => s.projects);
   const selectedProject = projects.find((p) => p.id === selectedProjectId) ?? null;
+  const routeMemory = useAppSettingsRouteMemory();
+  const projectId = focusedProjectId ?? selectedProjectId ?? selectedProject?.id ?? null;
 
   const renderRow = (section: (typeof SETTINGS_SECTIONS)[number]) => {
     const { id, label, icon: Icon } = section;
     return (
       <div key={id} className="settings-section-group">
-        <button
-          type="button"
+        <Link
+          to={getSettingsTabRoutePath(id, projectId)}
           data-testid={`settings-nav-${id}`}
           className={`settings-section-item ${settingsTab === id ? 'active' : ''}`}
-          onClick={() => setSettingsTab(id)}
           aria-current={settingsTab === id ? 'page' : undefined}
         >
           <Icon size={16} aria-hidden="true" />
           <span className="settings-section-copy">
             <span className="settings-section-label">{label}</span>
           </span>
-        </button>
+        </Link>
       </div>
     );
   };
 
   return (
     <aside className="sidebar settings-pane">
-      <button
-        type="button"
-        className="settings-app-back"
-        onClick={() => useUi.getState().setNav('home')}
-      >
+      <Link to={routeMemory.appRoutePath} className="settings-app-back">
         <ArrowLeft size={17} aria-hidden="true" />
         Back
-      </button>
+      </Link>
       <nav className="settings-picker" aria-label="Settings navigation">
             <div className="settings-group-label">Settings</div>
             {SETTINGS_GROUPS.map((group) => {
@@ -62,19 +64,19 @@ export function SettingsPane() {
             })}
             <div className="settings-group">
               <div className="settings-group-label">Project</div>
-              <button
-                type="button"
+              <Link
+                to={getSettingsTabRoutePath('project', projectId)}
                 data-testid="settings-nav-project"
                 className={`settings-section-item ${settingsTab === 'project' ? 'active' : ''}`}
-                onClick={() => setSettingsTab('project')}
                 aria-current={settingsTab === 'project' ? 'page' : undefined}
               >
                 <span className="settings-section-copy">
                   <span className="settings-section-label">Project settings</span>
                 </span>
-              </button>
+              </Link>
             </div>
       </nav>
+      <SidebarResizer />
     </aside>
   );
 }

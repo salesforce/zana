@@ -153,6 +153,8 @@ export function ProjectsList({
   const [showLocalDialog, setShowLocalDialog] = useState(false);
   const [sidebarAddOpen, setSidebarAddOpen] = useState(false);
   const [sidebarOrganizeOpen, setSidebarOrganizeOpen] = useState(false);
+  const sidebarAddRef = useRef<HTMLDivElement | null>(null);
+  const sidebarOrganizeRef = useRef<HTMLDivElement | null>(null);
   const [sidebarProjectSort, setSidebarProjectSort] = useState<SidebarProjectSort>(readSidebarProjectSort);
   const [refreshing, setRefreshing] = useState(false);
   const sensors = useSensors(
@@ -191,9 +193,8 @@ export function ProjectsList({
     setRenamingId(null);
   };
 
-  // The chat action focuses the project and opens the same composer as the
-  // per-project Agents board. Focus defaults to Agents mode, so Workspace mounts
-  // it inline in the central pane instead of as a backdrop dialog.
+  // The chat action focuses the project (Agents board) and opens the same
+  // Start-a-session modal every other launch point uses.
   const spawnDefaultAgent = (p: Project) => {
     enterProjectFocus(p.id);
     setLauncherOpen(true);
@@ -288,6 +289,32 @@ export function ProjectsList({
       window.removeEventListener('keydown', close);
     };
   }, [menu]);
+
+  // The add / organize popovers are absolutely positioned over the tree, so a
+  // click in the list (or Escape) must dismiss them — same contract as the
+  // project-focus "+" menu. The trigger lives inside the ref so toggling the
+  // open button does not immediately re-close.
+  useEffect(() => {
+    if (!sidebarAddOpen && !sidebarOrganizeOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (sidebarAddRef.current?.contains(t) || sidebarOrganizeRef.current?.contains(t)) return;
+      setSidebarAddOpen(false);
+      setSidebarOrganizeOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSidebarAddOpen(false);
+        setSidebarOrganizeOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [sidebarAddOpen, sidebarOrganizeOpen]);
 
   // Clamp the context menu into the viewport. It's positioned at the raw click
   // coordinates, so right-clicking low in the list would otherwise push the
@@ -583,23 +610,48 @@ export function ProjectsList({
         <div className="list-header-actions">
           {inSidebar ? (
             <>
-              <button
-                className={`icon-btn ${hideIdleProjects ? 'on' : ''}`}
-                aria-label="Organize workspaces"
-                aria-expanded={sidebarOrganizeOpen}
-                title="Organize workspaces"
-                onClick={() => {
-                  setMenu(null);
-                  setSidebarAddOpen(false);
-                  setSidebarOrganizeOpen((open) => !open);
-                }}
-              >
-                <ListFilter size={17} />
-              </button>
+              <div className="sidebar-projects-menu-wrap" ref={sidebarOrganizeRef}>
                 <button
-                  className="icon-btn"
-                  aria-label="Workspace menu"
-                  title="Workspace menu"
+                  className={`icon-btn ${hideIdleProjects ? 'on' : ''}`}
+                  aria-label="Organize workspaces"
+                  aria-haspopup="menu"
+                  aria-expanded={sidebarOrganizeOpen}
+                  title="Organize workspaces"
+                  onClick={() => {
+                    setMenu(null);
+                    setSidebarAddOpen(false);
+                    setSidebarOrganizeOpen((open) => !open);
+                  }}
+                >
+                  <ListFilter size={17} />
+                </button>
+                {sidebarOrganizeOpen && (
+                  <div className="sidebar-projects-organize-menu" role="menu" aria-label="Organize workspaces">
+                    <span className="sidebar-projects-menu-label">Sort by</span>
+                    {([
+                      ['manual', 'Manual order'],
+                      ['recent', 'Recent activity'],
+                      ['created', 'Created date'],
+                      ['alphabetical', 'Alphabetical']
+                    ] as const).map(([sort, label]) => (
+                      <button
+                        key={sort}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={sidebarProjectSort === sort}
+                        onClick={() => setSidebarSort(sort)}
+                      >
+                        <span>{label}</span>
+                        {sidebarProjectSort === sort && <Check size={14} aria-hidden="true" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button
+                className="icon-btn"
+                aria-label="Workspace menu"
+                title="Workspace menu"
                 onClick={(event) => {
                   const rect = event.currentTarget.getBoundingClientRect();
                   setSidebarAddOpen(false);
@@ -609,19 +661,38 @@ export function ProjectsList({
               >
                 <MoreHorizontal size={18} />
               </button>
-              <button
-                className="icon-btn"
-                aria-label="Add project"
-                aria-expanded={sidebarAddOpen}
-                title="Add project"
-                onClick={() => {
-                  setMenu(null);
-                  setSidebarOrganizeOpen(false);
-                  setSidebarAddOpen((open) => !open);
-                }}
-              >
-                <Plus size={18} />
-              </button>
+              <div className="sidebar-projects-menu-wrap" ref={sidebarAddRef}>
+                <button
+                  className="icon-btn"
+                  aria-label="Add project"
+                  aria-haspopup="menu"
+                  aria-expanded={sidebarAddOpen}
+                  title="Add project"
+                  onClick={() => {
+                    setMenu(null);
+                    setSidebarOrganizeOpen(false);
+                    setSidebarAddOpen((open) => !open);
+                  }}
+                >
+                  <Plus size={18} />
+                </button>
+                {sidebarAddOpen && (
+                  <div className="sidebar-projects-add-menu" role="group" aria-label="Add a project">
+                    <button type="button" onClick={() => { setShowLocalDialog(true); setSidebarAddOpen(false); }}>
+                      <FolderOpen size={14} />
+                      <span>Add local folder</span>
+                    </button>
+                    <button type="button" onClick={() => { setShowGitDialog(true); setSidebarAddOpen(false); }}>
+                      <GitBranch size={14} />
+                      <span>Clone from Git</span>
+                    </button>
+                    <button type="button" onClick={() => { setShowRemoteDialog(true); setSidebarAddOpen(false); }}>
+                      <Network size={14} />
+                      <span>Add remote project</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             </>
           ) : (
             <>
@@ -647,44 +718,6 @@ export function ProjectsList({
           )}
         </div>
       </header>
-      {inSidebar && sidebarOrganizeOpen && (
-        <div className="sidebar-projects-organize-menu" role="menu" aria-label="Organize workspaces">
-          <span className="sidebar-projects-menu-label">Sort by</span>
-          {([
-            ['manual', 'Manual order'],
-            ['recent', 'Recent activity'],
-            ['created', 'Created date'],
-            ['alphabetical', 'Alphabetical']
-          ] as const).map(([sort, label]) => (
-            <button
-              key={sort}
-              type="button"
-              role="menuitemradio"
-              aria-checked={sidebarProjectSort === sort}
-              onClick={() => setSidebarSort(sort)}
-            >
-              <span>{label}</span>
-              {sidebarProjectSort === sort && <Check size={14} aria-hidden="true" />}
-            </button>
-          ))}
-        </div>
-      )}
-      {inSidebar && sidebarAddOpen && (
-        <div className="sidebar-projects-add-menu" role="group" aria-label="Add a project">
-          <button type="button" onClick={() => { setShowLocalDialog(true); setSidebarAddOpen(false); }}>
-            <FolderOpen size={14} />
-            <span>Add local folder</span>
-          </button>
-          <button type="button" onClick={() => { setShowGitDialog(true); setSidebarAddOpen(false); }}>
-            <GitBranch size={14} />
-            <span>Clone from Git</span>
-          </button>
-          <button type="button" onClick={() => { setShowRemoteDialog(true); setSidebarAddOpen(false); }}>
-            <Network size={14} />
-            <span>Add remote project</span>
-          </button>
-        </div>
-      )}
       <div className={inSidebar ? 'sidebar-projects-add-row' : 'list-add-row'} role="group" aria-label="Add a project">
         <button
           className="list-add-btn"

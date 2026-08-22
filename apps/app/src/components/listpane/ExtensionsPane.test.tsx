@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
@@ -14,16 +15,24 @@ const h = vi.hoisted(() => ({
 vi.mock('../../store', () => ({
   useUi: Object.assign((selector: (state: typeof h.state) => unknown) => selector(h.state), {
     getState: () => h.state
-  })
+  }),
+  applySidebarWidth: vi.fn(),
+  SIDEBAR_MIN: 256,
+  SIDEBAR_MAX: 480
 }));
 
 import { ExtensionsPane } from './ExtensionsPane.js';
 
 describe('ExtensionsPane', () => {
   it('replaces the global rail with plugin, skill, and MCP destinations', () => {
-    const markup = renderToStaticMarkup(<ExtensionsPane />);
+    const markup = renderToStaticMarkup(
+      <MemoryRouter>
+        <ExtensionsPane />
+      </MemoryRouter>
+    );
 
     expect(markup).toContain('sidebar--titlebar-controls');
+    expect(markup).toContain('class="sidebar-resizer"');
     expect(markup).toContain('Back to app');
     expect(markup).toContain('aria-label="Extensions navigation history"');
     expect(markup).toContain('>Extensions</h2>');
@@ -33,6 +42,10 @@ describe('ExtensionsPane', () => {
     expect(markup).toContain('>Installed extensions<');
     expect(markup).toContain('>Skills<');
     expect(markup).toContain('>MCP<');
+    expect(markup).toContain('href="/extensions/plugins/browse"');
+    expect(markup).toContain('href="/extensions/plugins"');
+    expect(markup).toContain('href="/extensions/skills"');
+    expect(markup).toContain('href="/extensions/mcp"');
     expect(markup).not.toContain('>Browse skills<');
     expect(markup).not.toContain('>My skills<');
     expect(markup).toContain('data-testid="extensions-nav-marketplace"');
@@ -43,7 +56,11 @@ describe('ExtensionsPane', () => {
 
   it('leaves sidebar restoration to the persistent shell overlay when collapsed', () => {
     h.state.sidebarCollapsed = true;
-    const markup = renderToStaticMarkup(<ExtensionsPane />);
+    const markup = renderToStaticMarkup(
+      <MemoryRouter>
+        <ExtensionsPane />
+      </MemoryRouter>
+    );
 
     expect(markup).not.toContain('Expand extensions navigation');
     expect(markup).toContain('Back to app');

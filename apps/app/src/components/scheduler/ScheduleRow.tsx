@@ -135,7 +135,7 @@ export const ScheduleRow = React.memo(function ScheduleRow({
     // enterProjectFocus (not selectProject) is what actually mounts the
     // Workspace + its tab strip (gated on focusedProjectId), and the mode flip
     // lands on the terminal rather than the project's Agents board — matching
-    // GlobalAgentsBoard's "open into workspace" path.
+    // AgentsBoard's "open into workspace" path.
     setNav('projects');
     enterProjectFocus(task.projectId);
     void restoreTerminal(sessionId, task.projectId);

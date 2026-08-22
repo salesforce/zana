@@ -1618,6 +1618,8 @@ export interface AppConfig {
    *  subgroups ('project', default) or a flat chronological stream ('time'). */
   inboxGrouping?: 'project' | 'time';
   listPaneWidth?: number;
+  /** Nav sidebar width in px. Absent ⇒ CSS default (256). Clamped [256, 480]. */
+  sidebarWidth?: number;
   windowBounds?: { x?: number; y?: number; width: number; height: number };
   /** macOS Option-green zoom/maximize state; native fullscreen is never restored. */
   windowMaximized?: boolean;

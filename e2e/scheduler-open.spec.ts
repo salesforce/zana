@@ -43,7 +43,7 @@ test('scheduler: clicking "open" on a running scheduled session promotes it to a
   // store's project list, which would silently undo the open we're testing.
   // (In real usage a scheduled task always targets a pre-existing project, so
   // this guard never fires — the reload models that precondition.)
-  const projectsNav = window.locator('button.nav-item').filter({ hasText: 'Projects' });
+  const projectsNav = window.locator('.nav-item').filter({ hasText: 'Projects' });
   await projectsNav.first().click();
   await window.locator('button[aria-label="Reload project list"]').click();
 
@@ -102,7 +102,7 @@ test('scheduler: clicking "open" on a running scheduled session promotes it to a
   ).toHaveCount(0);
 
   // Open the Scheduler view via its sidebar/nav control.
-  const schedNav = window.locator('button.nav-item').filter({ hasText: 'Scheduler' });
+  const schedNav = window.locator('.nav-item').filter({ hasText: 'Scheduler' });
   await schedNav.first().click();
 
   // The Overview "Running now" card renders one row per live scheduled session,

@@ -45,9 +45,10 @@ describe('single shell <main> landmark', () => {
     expect(src('components/TerminalSurface.tsx')).not.toMatch(/terminal-surface-host/);
   });
 
-  it('mounts AgentsView only when nav === \'agents\'', () => {
+  it('mounts AgentsView on the /agents route', () => {
     const app = src('App.tsx');
-    expect(app).toMatch(/\{nav === 'agents' && <AgentsView \/>\}/);
+    expect(app).toMatch(/path=\{AGENTS_ROUTE_PATH\}/);
+    expect(app).toMatch(/element=\{<AgentsView \/>\}/);
     expect(app).not.toMatch(/nav === 'projects' && !focusedProjectId/);
   });
 
@@ -77,5 +78,14 @@ describe('single shell <main> landmark', () => {
     expect(src('components/ProjectScopedNav.tsx')).toMatch(/sidebar-utility-bar/);
     expect(src('components/ProjectScopedNav.tsx')).not.toMatch(/nav-section-label/);
     expect(src('components/ProjectScopedNav.tsx')).not.toMatch(/Project workspace/);
+  });
+
+  it('declares an explicit route table and Extensions landing redirect', () => {
+    const app = src('App.tsx');
+    expect(app).toMatch(/<Routes>/);
+    expect(app).toMatch(/ExtensionsLandingRedirect/);
+    expect(app).toMatch(/Navigate to=\{TOOLS_PLUGINS_ROUTE_PATH\}/);
+    expect(app).toMatch(/useRouteSync\(\)/);
+    expect(src('main.tsx')).toMatch(/BrowserRouter/);
   });
 });

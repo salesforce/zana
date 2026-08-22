@@ -13,8 +13,7 @@ import { ListPaneResizer } from '@/components/ListPaneResizer';
 
 /**
  * The Agents section's column-2 list pane. Column 3 under the Agents nav is the
- * cross-project {@link GlobalAgentsBoard} Kanban (wired in App.tsx) — the same
- * board the Projects home shows.
+ * cross-project {@link AgentsBoard} (wired in App.tsx).
  *
  * AgentsListPane lists all agents across every project grouped by liveness,
  * with a live "running for X", a state dot, and badges. Clicking a row opens

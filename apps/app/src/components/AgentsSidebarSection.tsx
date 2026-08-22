@@ -1,6 +1,9 @@
 import { useState, type CSSProperties, type HTMLAttributes, type MouseEvent as ReactMouseEvent } from 'react';
+import { Link } from 'react-router-dom';
 import { ChevronRight, LayoutDashboard, MessageCirclePlus } from 'lucide-react';
 import { useUi } from '../store.js';
+import { useRouteState } from '../hooks/useRouteState.js';
+import { getAgentsRoutePath, getProjectWorkspaceRoutePath } from '../lib/route-paths.js';
 import { AgentTray } from './AgentTray.js';
 
 export const AGENTS_SECTION_KEY = 'sidebar:agents';
@@ -22,23 +25,33 @@ function readAgentsSectionHeight(): number {
 
 /**
  * Collapsible Agents collection used by both the global Sidebar and the
- * project rail. The dashboard control opens the Agents board; the list is
- * the live tray (optionally scoped to one project).
+ * project rail. The "Agents" label (and dashboard control) open the Agents
+ * board; only the chevron toggles the live tray (optionally scoped to one
+ * project).
  */
 export function AgentsSidebarSection({
   dragHandle,
   projectId,
-  onOpenDashboard
+  onOpenDashboard,
+  onNavigate
 }: {
   dragHandle?: HTMLAttributes<HTMLElement>;
   projectId?: string;
   onOpenDashboard?: () => void;
+  onNavigate?: (event: { preventDefault: () => void }) => void;
 }) {
   const collapsed = useUi((s) => !!s.collapsedSections[AGENTS_SECTION_KEY]);
   const toggleSection = useUi((s) => s.toggleSection);
   const setLauncherOpen = useUi((s) => s.setLauncherOpen);
   const setNav = useUi((s) => s.setNav);
+  const route = useRouteState();
   const [height, setHeight] = useState(readAgentsSectionHeight);
+  const dashboardPath = projectId
+    ? getProjectWorkspaceRoutePath(projectId, 'agents')
+    : getAgentsRoutePath();
+  const agentsActive = projectId
+    ? route.nav === 'projects' && (route.workspaceMode ?? 'agents') === 'agents'
+    : route.nav === 'agents';
 
   const setSectionHeight = (next: number) => {
     const clamped = clampAgentsSectionHeight(next);
@@ -77,23 +90,37 @@ export function AgentsSidebarSection({
       style={collapsed ? undefined : { '--sidebar-agents-height': `${height}px` } as CSSProperties}
     >
       <header className="sidebar-agents-header">
-        <button
-          type="button"
-          className="sidebar-agents-heading"
-          {...dragHandle}
-          onClick={() => toggleSection(AGENTS_SECTION_KEY)}
-          aria-label={`${collapsed ? 'Expand' : 'Collapse'} Agents section`}
-          aria-controls={AGENTS_SECTION_ID}
-          aria-expanded={!collapsed}
-          title={`${collapsed ? 'Expand' : 'Collapse'} Agents`}
-        >
-          <span>Agents</span>
-          <ChevronRight
-            size={14}
-            aria-hidden="true"
-            className={`sidebar-agents-chevron ${collapsed ? '' : 'open'}`}
-          />
-        </button>
+        <div className="sidebar-agents-title">
+          <Link
+            to={dashboardPath}
+            className={`sidebar-agents-heading ${agentsActive ? 'active' : ''}`}
+            {...dragHandle}
+            data-testid="sidebar-agents-heading"
+            onClick={(event) => {
+              onNavigate?.(event);
+            }}
+            aria-current={agentsActive ? 'page' : undefined}
+            title="Open Agents"
+          >
+            Agents
+          </Link>
+          <button
+            type="button"
+            className="sidebar-agents-toggle"
+            data-testid="sidebar-agents-toggle"
+            onClick={() => toggleSection(AGENTS_SECTION_KEY)}
+            aria-label={`${collapsed ? 'Expand' : 'Collapse'} Agents section`}
+            aria-controls={AGENTS_SECTION_ID}
+            aria-expanded={!collapsed}
+            title={`${collapsed ? 'Expand' : 'Collapse'} Agents`}
+          >
+            <ChevronRight
+              size={14}
+              aria-hidden="true"
+              className={`sidebar-agents-chevron ${collapsed ? '' : 'open'}`}
+            />
+          </button>
+        </div>
         <div className="sidebar-agents-actions">
           <button
             type="button"

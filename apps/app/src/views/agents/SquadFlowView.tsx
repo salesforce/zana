@@ -43,7 +43,7 @@ export function reconcileSquadSelection(
  *
  * Presentational + reactive only. The graph is folded from the raw store slices
  * (mesh / status / sub-agents / terminals) through the pure {@link buildSquadFlow}
- * behind a `useMemo`, mirroring how {@link GlobalAgentsBoard} derives its cards
+ * behind a `useMemo`, mirroring how {@link AgentsBoard} derives its cards
  * — so a status tick re-derives the graph without rebuilding any store
  * (render-storm guard). Reuses the shared `tab-agent-dot agent-*` status-dot
  * vocabulary; all other styling is a fresh `squad-flow-*` prefix (NOT `gus-*` /
@@ -558,8 +558,8 @@ function SquadGraph({ graph }: { graph: SquadFlowGraph }) {
 }
 
 interface SquadFlowViewProps {
-  /** Scope to one project (the per-project board passes this). Omitted on the
-   *  global board → one graph per project that has live agents. */
+  /** Scope to one project (the project-scoped AgentsBoard passes this). Omitted
+   *  on the global board → one graph per project that has live agents. */
   projectId?: string;
 }
 

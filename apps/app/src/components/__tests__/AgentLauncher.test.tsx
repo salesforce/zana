@@ -90,12 +90,33 @@ describe('Quick Agent composer', () => {
 });
 
 describe('launcher presentation', () => {
-  it('keeps global launchers modal and allows project launchers to render inline', () => {
+  it('always portals as a modal and has no inline presentation API', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
-    expect(source).toContain("presentation?: 'modal' | 'inline';");
-    expect(source).toContain("useDialogFocusTrap(dialogRef, onClose, presentation === 'modal');");
-    expect(source).toContain("data-testid={presentation === 'modal' ? 'launch-modal' : 'launch-inline'}");
-    expect(source).toContain("return presentation === 'modal'");
+    expect(source).not.toContain('presentation?:');
+    expect(source).not.toMatch(/presentation\s*=/);
+    expect(source).toContain('useDialogFocusTrap(dialogRef, onClose)');
+    expect(source).toContain('data-testid="launch-modal"');
+    expect(source).toContain("className=\"palette launch-modal\"");
+    expect(source).toContain('return createPortal(');
+    expect(source).toContain('className="palette-backdrop"');
+  });
+
+  it('is never mounted with a presentation prop', () => {
+    const files = [
+      new URL('../AgentLauncher.tsx', import.meta.url),
+      new URL('../../App.tsx', import.meta.url),
+      new URL('../../views/project/WorkspaceView.tsx', import.meta.url),
+      new URL('../../views/agents/AgentsView.tsx', import.meta.url),
+      new URL('../../views/agents/AgentsBoard.tsx', import.meta.url),
+      new URL('../listpane/AgentsList.tsx', import.meta.url),
+      new URL('../InboxDetail.tsx', import.meta.url),
+      new URL('../../views/library/LibraryView.tsx', import.meta.url),
+      new URL('../../views/library/LibraryPanel.tsx', import.meta.url)
+    ];
+    for (const file of files) {
+      const source = readFileSync(file, 'utf8');
+      expect(source, file.pathname).not.toMatch(/presentation=/);
+    }
   });
 });
 

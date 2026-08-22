@@ -24,7 +24,6 @@ import { GuideModal } from '@/components/GuideModal';
 import { HomeAgentComposer } from '@/components/HomeAgentComposer';
 import { listHomepageSections, subscribePluginSlots } from '@/plugins/plugin-slots';
 import { PluginSlotBoundary } from '@/plugins/PluginSlotBoundary';
-import { AppPageHeader } from '@/components/AppPageHeader';
 
 interface GuideItem {
   id: string;
@@ -133,9 +132,8 @@ export function HomeView() {
   const openGuide = guides.find((g) => g.id === openGuideId) ?? null;
 
   return (
-    <div className="settings-panel home-panel">
+    <div className="settings-panel home-panel aurora-host">
       <AuroraGrid />
-      <AppPageHeader title={<h1>Home</h1>} />
       <div className="settings-inner">
         <div className="scheduler-header">
           <div className="scheduler-header-text">

@@ -1,6 +1,7 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'node:path';
+import { zccBrowserBootstrapPlugin } from './apps/app/vite-plugin-browser-bootstrap';
 
 // Resolve the extension SDK (`@zana-ai/zcc-extension-sdk` + subpaths) to its source
 // in all three bundles. The SDK is the canonical extension contract; core and
@@ -161,7 +162,7 @@ export default defineConfig({
       ],
       dedupe: ['monaco-editor']
     },
-    plugins: [react()],
+    plugins: [react(), zccBrowserBootstrapPlugin()],
     server: {
       // Vite root is apps/app; the slack built-in and other plugins live at
       // repo-root `plugins/`. Allow the workspace so those imports are served.

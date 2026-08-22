@@ -22,7 +22,6 @@ import { ErrorBoundary } from '../components/ErrorBoundary.js';
 import type { ModuleHost } from '@zana-ai/zcc-extension-sdk/renderer';
 import { listNavPanels } from '../plugins/plugin-slots.js';
 import { PluginSlotBoundary } from '../plugins/PluginSlotBoundary.js';
-import { AppPageHeader } from '../components/AppPageHeader.js';
 
 function generationFor(pluginId: string): number {
   return listNavPanels().find((panel) => panel.pluginId === pluginId)?.generation ?? 0;
@@ -53,7 +52,6 @@ export function ModulePanelHost() {
   if (!Panel) {
     return (
       <div className="module-panel-host">
-        <AppPageHeader title={<h1>{mod.title}</h1>} />
         <div className="module-panel-slot module-no-panel" role="status">
           <p>{mod.title} has no view of its own.</p>
           <p className="module-no-panel-hint">
@@ -72,7 +70,6 @@ export function ModulePanelHost() {
   // to fill 100% (which `width:auto`/block already does inside a stretched slot).
   return (
     <div className="module-panel-host">
-      <AppPageHeader title={<h1>{mod.title}</h1>} />
       <div className="module-panel-slot panel-body--full">
         <PluginSlotBoundary pluginId={mod.id} generation={generationFor(mod.id)}>
           <ErrorBoundary key={`${mod.id}:${generationFor(mod.id)}`}>

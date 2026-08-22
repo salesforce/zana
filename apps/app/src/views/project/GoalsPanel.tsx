@@ -30,7 +30,6 @@ import type {
 import { useData, useGoals, useUi } from '@/store';
 import { ImprovePromptButton } from '@/components/ImprovePromptButton';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
-import { AppPageHeader } from '@/components/AppPageHeader';
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
 
 const PROFILES = VALID_PROFILES;
@@ -126,7 +125,6 @@ export function GoalsPanel({ projectId }: { projectId?: string } = {}) {
 
   return (
     <div className={`settings-panel scheduler-panel ${scoped ? 'scheduler-panel--embedded' : ''}`}>
-      {!scoped && <AppPageHeader title={<h1>Goals</h1>} />}
       <div className="settings-inner">
         <div className="scheduler-header">
           <div className="scheduler-header-text">

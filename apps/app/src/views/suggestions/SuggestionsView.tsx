@@ -171,7 +171,6 @@ export function SuggestionsView() {
   return (
     <section className="suggestions-view">
       <AppPageHeader
-        title={<><Sparkles size={16} aria-hidden /> <h1>Next Steps</h1></>}
         actions={entries.length > 0 ? <span className="suggestions-count">{entries.length}</span> : undefined}
       />
 

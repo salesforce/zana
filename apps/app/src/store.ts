@@ -53,6 +53,17 @@ import {
   type SessionSnapshotMap
 } from './lib/sessionRestore.js';
 import { getScopedProjectId, isScopedWindow } from './lib/windowScope.js';
+import { appNavigate } from './lib/app-navigate.js';
+import { decodeRoutePath } from './lib/decode-route.js';
+import {
+  getExtensionsTabRoutePath,
+  getFollowUpsRoutePath,
+  getNavRoutePath,
+  getPluginDetailRoutePath,
+  getProjectWorkspaceRoutePath,
+  getSchedulerRoutePath,
+  getSettingsTabRoutePath
+} from './lib/route-paths.js';
 import {
   findProjectIdForSession,
   hasMissingSetup,
@@ -620,6 +631,15 @@ export function applyListPaneWidth(px: number) {
   document.documentElement.style.setProperty('--col-list', `${clamped}px`);
 }
 
+/** Current `--col-nav` default. Dragging the sidebar cannot go narrower. */
+export const SIDEBAR_MIN = 256;
+export const SIDEBAR_MAX = 480;
+
+export function applySidebarWidth(px: number) {
+  const clamped = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, Math.round(px)));
+  document.documentElement.style.setProperty('--col-nav', `${clamped}px`);
+}
+
 /** Concrete dark/light the app should paint for a stored tri-state `theme`.
  *  'system' (WARP-A2) follows the OS `prefers-color-scheme`; anything else
  *  pins. Exported so the xterm-palette mirror resolves identically. */
@@ -775,6 +795,40 @@ export function pushErrorToast(message: string) {
   useUi.getState().pushToast(message, 'error');
 }
 
+const RAIL_KEEPING_NAVS = new Set(['projects', 'inbox', 'suggestions', 'settings']);
+
+function applyDestination(
+  set: (partial: Partial<UiState> | ((s: UiState) => Partial<UiState>)) => void,
+  path: string,
+  extra?: Partial<UiState>
+) {
+  const url = new URL(path, 'http://zcc.local');
+  const decoded = decodeRoutePath(url.pathname, url.hash);
+  set((s) => {
+    const keepFocus =
+      s.focusedProjectId != null &&
+      decoded.focusedProjectId == null &&
+      RAIL_KEEPING_NAVS.has(decoded.nav);
+    return {
+      nav: decoded.nav as NavId,
+      settingsTab: decoded.settingsTab as SettingsTab,
+      settingsAnchor: decoded.settingsAnchor,
+      extensionsTab: decoded.extensionsTab,
+      settingsExtensionId: decoded.settingsExtensionId,
+      focusedProjectId: decoded.focusedProjectId ?? (keepFocus ? s.focusedProjectId : null),
+      workspaceMode:
+        decoded.focusedProjectId && decoded.workspaceMode
+          ? {
+              ...s.workspaceMode,
+              [decoded.focusedProjectId]: decoded.workspaceMode as ProjectView
+            }
+          : s.workspaceMode,
+      ...extra
+    };
+  });
+  appNavigate(path);
+}
+
 export const useUi = create<UiState>((set, get) => ({
   nav: 'home',
   moduleBadgeRevision: 0,
@@ -914,12 +968,10 @@ export const useUi = create<UiState>((set, get) => ({
   // happens inside the panel via setSchedulerTab, so this only resets on
   // re-entry, not when the user navigates the scope rail.
   setNav: (nav) =>
-    set(
-      nav === 'scheduler'
-        ? { nav, schedulerTab: 'overview' }
-        : nav === 'extensions'
-          ? { nav, extensionsTab: 'marketplace' }
-          : { nav }
+    applyDestination(
+      set,
+      getNavRoutePath(nav),
+      nav === 'scheduler' ? { schedulerTab: 'overview' } : undefined
     ),
   inboxTab: 'feed',
   setInboxTab: (inboxTab) => set({ inboxTab }),
@@ -954,12 +1006,13 @@ export const useUi = create<UiState>((set, get) => ({
     useData.getState().loadGitStatus(id);
   },
   enterProjectFocus: (id) => {
-    // Opening a workspace always brings its content surface forward. Its last
-    // selected mode remains in `workspaceMode`, so reopening a project returns
-    // to the view the user last used instead of resetting to Agents.
+    // Opening a workspace always lands on the Agents board. Callers that need a
+    // different surface (Library, a live terminal, an extension project tab)
+    // set that mode AFTER focus so this default does not win.
     set({ focusedProjectId: id, nav: 'projects' });
     // Keep selection in sync with focus so the workspace tracks the column.
     get().selectProject(id);
+    get().setWorkspaceMode(id, 'agents');
     window.cc.config.set({ focusedProjectId: id }).catch(() => {});
   },
   exitProjectFocus: () => {
@@ -986,21 +1039,25 @@ export const useUi = create<UiState>((set, get) => ({
   closeAgentModal: () => set({ agentModal: null }),
   selectMonitorAgent: (sessionId, projectId) => set({ agentMonitor: { sessionId, projectId } }),
   clearMonitorAgent: () => set({ agentMonitor: null }),
-  setSettingsTab: (settingsTab) => set({ settingsTab }),
-  setExtensionsTab: (extensionsTab) => set({ extensionsTab }),
+  setSettingsTab: (settingsTab) =>
+    applyDestination(
+      set,
+      getSettingsTabRoutePath(settingsTab, get().focusedProjectId ?? get().selectedProjectId)
+    ),
+  setExtensionsTab: (extensionsTab) =>
+    applyDestination(set, getExtensionsTabRoutePath(extensionsTab)),
   setSettingsExtensionId: (settingsExtensionId) => set({ settingsExtensionId }),
-  selectSettingsExtension: (id) =>
-    set({ nav: 'extensions', extensionsTab: 'installed', settingsExtensionId: id }),
+  selectSettingsExtension: (id) => applyDestination(set, getPluginDetailRoutePath(id)),
   settingsAnchor: null,
   setSettingsAnchor: (settingsAnchor) => set({ settingsAnchor }),
   setSchedulerTab: (schedulerTab) => set({ schedulerTab }),
   selectGroup: (groupId) => set({ schedulerTab: 'group', selectedGroupId: groupId }),
   revealSchedule: (taskId) => {
     const task = useScheduler.getState().tasks.find((t) => t.id === taskId);
-    // setNav('scheduler') forces schedulerTab back to 'overview', so set the
-    // scope tab AFTER it. A project-scoped task also needs its project selected
-    // so the project scope renders the right list.
-    set({ nav: 'scheduler', revealScheduleId: taskId });
+    // applyDestination('/scheduler') forces schedulerTab back to 'overview' via
+    // setNav, so set the scope tab AFTER it. A project-scoped task also needs
+    // its project selected so the project scope renders the right list.
+    applyDestination(set, getSchedulerRoutePath(), { revealScheduleId: taskId });
     if (task?.source && task.source !== 'global') {
       get().selectProject((task.source as { projectId: string }).projectId);
       set({ schedulerTab: 'project' });
@@ -1014,14 +1071,8 @@ export const useUi = create<UiState>((set, get) => ({
   },
   clearRevealSchedule: () => set({ revealScheduleId: null }),
   revealLibraryDoc: (projectId, docId) => {
-    // Ensure the UI actually lands in the project workspace (not still on Inbox)
-    // before drilling into Library. Without this, the state updates can occur
-    // "behind" the inbox view and appear as a no-op to the user.
-    set({ nav: 'projects' });
     // Drilling into a project focuses it and resets its mode to Agents, so set
     // the Library mode AFTER entering focus (mirrors revealSchedule ordering).
-    // The deep-link id is set alongside so LibraryView selects the doc as soon
-    // as it renders in the project's Library.
     get().enterProjectFocus(projectId);
     // `'library'` is the pre-plugin persisted alias; Workspace remaps it onto
     // the Docs plugin's project tab without naming that plugin's id here.
@@ -1034,7 +1085,7 @@ export const useUi = create<UiState>((set, get) => ({
     // shows every project's follow-ups, and a stale focus would otherwise
     // leave the rail on the scoped nav while `nav` flips to 'followups'.
     get().exitProjectFocus();
-    set({ nav: 'followups', revealFollowUpId: id });
+    applyDestination(set, getFollowUpsRoutePath(), { revealFollowUpId: id });
   },
   clearRevealFollowUp: () => set({ revealFollowUpId: null }),
   pushToast: (message, kind = 'info') => {
@@ -1134,24 +1185,24 @@ export const useUi = create<UiState>((set, get) => ({
       return { unread: next };
     }),
   setWorkspaceMode: (projectId, mode) => {
-    set((s) => ({ workspaceMode: { ...s.workspaceMode, [projectId]: mode } }));
+    set((s) => ({
+      nav: 'projects',
+      focusedProjectId: s.focusedProjectId ?? projectId,
+      workspaceMode: { ...s.workspaceMode, [projectId]: mode }
+    }));
     persistWorkspaceModes();
+    applyDestination(set, getProjectWorkspaceRoutePath(projectId, mode), {
+      nav: 'projects',
+      focusedProjectId: projectId
+    });
   },
   setAgentsBoardView: (view) => {
     set({ agentsBoardView: view });
     persistAgentsBoardView(view);
   },
   toggleWorkspaceMode: (projectId) => {
-    set((s) => {
-      const cur = s.workspaceMode[projectId] ?? 'terminals';
-      return {
-        workspaceMode: {
-          ...s.workspaceMode,
-          [projectId]: cur === 'terminals' ? 'explorer' : 'terminals'
-        }
-      };
-    });
-    persistWorkspaceModes();
+    const cur = get().workspaceMode[projectId] ?? 'terminals';
+    get().setWorkspaceMode(projectId, cur === 'terminals' ? 'explorer' : 'terminals');
   },
   setExplorerFile: (projectId, path) =>
     set((s) => {
@@ -1907,6 +1958,9 @@ export const useData = create<DataState>((set, get) => ({
       if (typeof config.listPaneWidth === 'number') {
         applyListPaneWidth(config.listPaneWidth);
       }
+      if (typeof config.sidebarWidth === 'number') {
+        applySidebarWidth(config.sidebarWidth);
+      }
       // Live config sync across windows: main broadcasts `config:onChanged` to
       // EVERY window after any `config:set`, so a feature toggled off in one
       // window (e.g. Follow-ups) flips this window's mirrored gate at once
@@ -1915,6 +1969,12 @@ export const useData = create<DataState>((set, get) => ({
       window.cc.config.onChanged((next) => {
         set(mirroredConfigFlags(next));
         applyTheme(next.theme);
+        if (typeof next.listPaneWidth === 'number') {
+          applyListPaneWidth(next.listPaneWidth);
+        }
+        if (typeof next.sidebarWidth === 'number') {
+          applySidebarWidth(next.sidebarWidth);
+        }
       });
       if (config.workspaceModes) {
         useUi.setState({ workspaceMode: config.workspaceModes });

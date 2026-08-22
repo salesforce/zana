@@ -43,7 +43,7 @@ test('config: toggling Follow-ups in one window flips the tab in another live', 
   try {
     // Teach the main window's renderer store about the project (raw projects.add
     // persists in main but doesn't broadcast projects:onChanged).
-    const projectsNav = window.locator('button.nav-item').filter({ hasText: 'Projects' });
+    const projectsNav = window.locator('.nav-item').filter({ hasText: 'Projects' });
     await projectsNav.first().click();
     await window.locator('button[aria-label="Reload project list"]').click();
     const filter = window.locator('.list-filter input');

@@ -970,8 +970,9 @@ export interface CcApi {
      */
     checkUpdates(): Promise<Result<ExtensionUpdateOutcome[]>>;
     /**
-     * Fetch the opt-in marketplace index and return browsable entries, each
-     * stamped with installed / hasUpdate / compatible. Returns [] when no
+     * Fetch the marketplace catalog: first-party bundled plugins (offline) unioned
+     * with the opt-in remote registry. Each row is stamped with installed /
+     * hasUpdate / compatible. Returns [] only when nothing is bundled and no
      * registry is configured — the host never reaches the network by default.
      */
     marketplaceList(): Promise<Result<MarketplaceEntry[]>>;

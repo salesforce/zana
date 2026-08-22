@@ -18,6 +18,9 @@ describe('startStaticHost', () => {
     host = await startStaticHost({ rootDir: root });
 
     await expect(fetch(host.url).then((response) => response.text())).resolves.toContain('zana');
+    await expect(fetch(host.url).then((response) => response.headers.get('cache-control'))).resolves.toBe(
+      'no-store'
+    );
     await expect(fetch(`${host.url}_zcc/health`).then((response) => response.json())).resolves.toEqual({ ok: true });
     await expect(fetch(`${host.url}../package.json`).then((response) => response.status)).resolves.toBe(404);
 
@@ -77,5 +80,25 @@ describe('startStaticHost', () => {
     await expect(
       fetch(`${host.url}plugins/tasks/assets/../package.json`).then((response) => response.status)
     ).resolves.toBe(404);
+  });
+
+  it('falls back to index.html for unknown extensionless paths so client routes load', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'zcc-static-host-'));
+    writeFileSync(join(root, 'index.html'), '<main>zana</main>');
+    host = await startStaticHost({ rootDir: root });
+
+    const inbox = await fetch(`${host.url}inbox`);
+    expect(inbox.status).toBe(200);
+    expect(inbox.headers.get('cache-control')).toBe('no-store');
+    await expect(inbox.text()).resolves.toContain('zana');
+
+    const project = await fetch(`${host.url}projects/proj-1/terminals`);
+    expect(project.status).toBe(200);
+    await expect(project.text()).resolves.toContain('zana');
+
+    await expect(fetch(`${host.url}missing.js`).then((response) => response.status)).resolves.toBe(404);
+    await expect(fetch(`${host.url}_zcc/health`).then((response) => response.json())).resolves.toEqual({
+      ok: true
+    });
   });
 });

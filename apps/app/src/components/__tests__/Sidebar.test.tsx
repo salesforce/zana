@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import type { AppModule } from '@zana-ai/zcc-extension-sdk/renderer';
@@ -36,7 +37,10 @@ vi.mock('../../store', () => ({
   useUnreadInboxCount: () => 0,
   useEnabledSchedulerCount: () => 0,
   useRunningSchedulerCount: () => 0,
-  useAgentNavCounts: () => ({ active: 0, blocked: 0 })
+  useAgentNavCounts: () => ({ active: 0, blocked: 0 }),
+  applySidebarWidth: vi.fn(),
+  SIDEBAR_MIN: 256,
+  SIDEBAR_MAX: 480
 }));
 vi.mock('../../modules', () => ({ useMergedModules: () => h.modules }));
 vi.mock('../AgentTray', () => ({
@@ -55,12 +59,20 @@ vi.mock('../../plugins/plugin-slots', () => ({
 
 import { Sidebar } from '../Sidebar.js';
 
+function renderSidebar() {
+  return renderToStaticMarkup(
+    <MemoryRouter>
+      <Sidebar />
+    </MemoryRouter>
+  );
+}
+
 describe('Sidebar structure and compact accessibility', () => {
   it('renders a labelled navigation region that owns the scrollable destinations', () => {
     h.state.sidebarCollapsed = false;
     h.modules = [];
 
-    const markup = renderToStaticMarkup(<Sidebar />);
+    const markup = renderSidebar();
 
     expect(markup).toContain('class="sidebar sidebar--global"');
     expect(markup).toContain('data-testid="sidebar-navigation"');
@@ -84,16 +96,24 @@ describe('Sidebar structure and compact accessibility', () => {
     expect(markup).not.toContain('Command center');
     expect(markup).toContain('aria-label="Go back"');
     expect(markup).toContain('aria-label="Go forward"');
+    expect(markup).toContain('href="/inbox"');
+    expect(markup).toContain('href="/scheduler"');
+    expect(markup).toContain('href="/settings"');
     expect(markup).toContain('data-sortable-nav-id="scheduler"');
     expect(markup).not.toContain('data-sortable-nav-id="personas"');
     expect(markup).not.toContain('data-sortable-nav-id="squads"');
     expect(markup).not.toContain('data-sortable-nav-id="usage"');
     expect(markup).not.toContain('data-sortable-nav-id="settings"');
     expect(markup).toContain('class="sidebar-utility-bar"');
+    expect(markup).toContain('class="sidebar-resizer"');
+    expect(markup).toContain('aria-orientation="vertical"');
     expect(markup).toContain('aria-label="Settings"');
     expect(markup).not.toContain('>Settings<');
     expect(markup).toContain('aria-label="New quick agent"');
     expect(markup).toContain('aria-label="Open Agents dashboard"');
+    expect(markup).toContain('data-testid="sidebar-agents-heading"');
+    expect(markup).toContain('href="/agents"');
+    expect(markup).toContain('data-testid="sidebar-agents-toggle"');
     expect(markup).toContain('class="sidebar-agents-resizer"');
     expect(markup).toContain('aria-orientation="horizontal"');
     expect(markup).toContain('data-agent-tray-placement="inline"');
@@ -111,7 +131,7 @@ describe('Sidebar structure and compact accessibility', () => {
       }
     ];
 
-    const markup = renderToStaticMarkup(<Sidebar />);
+    const markup = renderSidebar();
     expect(markup).toContain('data-testid="nav-extensions"');
     expect(markup).toContain('>Extensions<');
     expect(markup).toContain('data-testid="nav-library-surface"');
@@ -127,9 +147,16 @@ describe('Sidebar structure and compact accessibility', () => {
     h.state.sidebarCollapsed = true;
     h.modules = [];
 
-    const markup = renderToStaticMarkup(<Sidebar />);
+    const markup = renderSidebar();
 
     expect(markup).toBe('');
+  });
+
+  it('does not underline destination Links — they are chrome, not hyperlinks', () => {
+    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+
+    expect(css).toMatch(/\.sidebar a\s*\{[^}]*text-decoration:\s*none/);
+    expect(css).toMatch(/\.nav-item\s*\{[^}]*text-decoration:\s*none/);
   });
 
   it('uses translation-only transforms when compact rows cross collection sections', () => {

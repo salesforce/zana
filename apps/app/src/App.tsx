@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import { Bell, Star } from 'lucide-react';
 import { Sidebar } from './components/Sidebar.js';
 import { SidebarTriggerOverlay } from './components/SidebarTriggerOverlay.js';
@@ -16,6 +17,7 @@ import { InboxView } from '@/views/inbox/InboxView';
 import { HomeView } from '@/views/home/HomeView';
 import { FollowUpsView } from '@/views/follow-ups/FollowUpsView';
 import { SuggestionsView } from '@/views/suggestions/SuggestionsView';
+import { GoalsPanel } from '@/views/project/GoalsPanel';
 import { CommandPalette } from './components/CommandPalette.js';
 import { QuickOpen } from './components/QuickOpen.js';
 import { ResumePicker } from './components/ResumePicker.js';
@@ -64,12 +66,101 @@ import { keepsProjectFocusRail, resolveShellLayout, shellTitlebarLabel } from '.
 import { installShortcuts } from './shortcuts.js';
 import { isLibraryPluginModule } from './lib/libraryPlugin.js';
 import { useShellChromeState } from './hooks/useShellChromeState.js';
+import { useRouteSync } from './hooks/useRouteSync.js';
+import { useRouteState } from './hooks/useRouteState.js';
+import { HashNavigationScroll } from './components/HashNavigationScroll.js';
+import {
+  AGENTS_ROUTE_PATH,
+  APP_ROOT_ROUTE_PATH,
+  FOLLOWUPS_ROUTE_PATH,
+  GOALS_ROUTE_PATH,
+  INBOX_ROUTE_PATH,
+  PLUGIN_PANEL_ROUTE_PATH,
+  PLUGIN_PANEL_ROOT_ROUTE_PATH,
+  PROJECT_ROUTE_PATH,
+  PROJECT_SETTINGS_ROUTE_PATH,
+  PROJECT_WORKSPACE_ROUTE_PATH,
+  SCHEDULER_ROUTE_PATH,
+  SETTINGS_PROJECT_ALIAS_ROUTE_PATH,
+  SETTINGS_ROUTE_PATH,
+  SETTINGS_SECTION_ROUTE_PATH,
+  SUGGESTIONS_ROUTE_PATH,
+  TOOLS_MCP_ROUTE_PATH,
+  TOOLS_PLUGIN_BROWSE_ROUTE_PATH,
+  TOOLS_PLUGIN_DETAIL_ROUTE_PATH,
+  TOOLS_PLUGINS_ROUTE_PATH,
+  TOOLS_ROUTE_PATH,
+  TOOLS_SKILLS_ROUTE_PATH,
+  getProjectSettingsRoutePath
+} from './lib/route-paths.js';
+
+function stayOnAgentsBoard(session: { id: string }, projectId: string) {
+  useUi.getState().openAgentModal(session.id, projectId);
+}
+
+function ExtensionsLandingRedirect() {
+  return <Navigate to={TOOLS_PLUGINS_ROUTE_PATH} replace />;
+}
+
+function SettingsProjectAliasRedirect() {
+  const projectId = useUi((s) => s.focusedProjectId ?? s.selectedProjectId);
+  if (projectId) return <Navigate to={getProjectSettingsRoutePath(projectId)} replace />;
+  return <SettingsView />;
+}
+
+function AppRoutes({ suggestionsEnabled }: { suggestionsEnabled: boolean }) {
+  const route = useRouteState();
+  return (
+    <>
+      <Routes>
+        <Route path={APP_ROOT_ROUTE_PATH} element={<HomeView />} />
+        <Route path={INBOX_ROUTE_PATH} element={<InboxView />} />
+        <Route path={AGENTS_ROUTE_PATH} element={<AgentsView />} />
+        <Route path={FOLLOWUPS_ROUTE_PATH} element={<FollowUpsView />} />
+        <Route
+          path={SUGGESTIONS_ROUTE_PATH}
+          element={suggestionsEnabled ? <SuggestionsView /> : <Navigate to={APP_ROOT_ROUTE_PATH} replace />}
+        />
+        <Route path={SCHEDULER_ROUTE_PATH} element={<SchedulerView />} />
+        <Route path={GOALS_ROUTE_PATH} element={<GoalsPanel />} />
+        <Route path={TOOLS_ROUTE_PATH} element={<ExtensionsLandingRedirect />} />
+        <Route path={TOOLS_PLUGINS_ROUTE_PATH} element={<ExtensionsView />} />
+        <Route path={TOOLS_PLUGIN_BROWSE_ROUTE_PATH} element={<ExtensionsView />} />
+        <Route path={TOOLS_PLUGIN_DETAIL_ROUTE_PATH} element={<ExtensionsView />} />
+        <Route path={TOOLS_SKILLS_ROUTE_PATH} element={<ExtensionsView />} />
+        <Route path={TOOLS_MCP_ROUTE_PATH} element={<ExtensionsView />} />
+        <Route path={SETTINGS_ROUTE_PATH} element={<SettingsView />} />
+        <Route path={SETTINGS_PROJECT_ALIAS_ROUTE_PATH} element={<SettingsProjectAliasRedirect />} />
+        <Route path={SETTINGS_SECTION_ROUTE_PATH} element={<SettingsView />} />
+        <Route path={PROJECT_SETTINGS_ROUTE_PATH} element={<SettingsView />} />
+        <Route path={PROJECT_ROUTE_PATH} element={null} />
+        <Route path={PROJECT_WORKSPACE_ROUTE_PATH} element={null} />
+        <Route path={PLUGIN_PANEL_ROOT_ROUTE_PATH} element={null} />
+        <Route path={PLUGIN_PANEL_ROUTE_PATH} element={null} />
+        <Route path="*" element={<Navigate to={APP_ROOT_ROUTE_PATH} replace />} />
+      </Routes>
+      <ModulePanelHost />
+      <div
+        className={`workspace-slot ${route.nav === 'projects' && route.focusedProjectId ? 'show' : 'hide'}`}
+      >
+        <WorkspaceView />
+      </div>
+      <TerminalSurface />
+    </>
+  );
+}
 
 export function App() {
+  useRouteSync();
   const init = useData((s) => s.init);
-  const nav = useUi((s) => s.nav);
+  const route = useRouteState();
+  const nav = route.nav;
   const sidebarCollapsed = useUi((s) => s.sidebarCollapsed);
-  const focusedProjectId = useUi((s) => s.focusedProjectId);
+  const storeFocusedProjectId = useUi((s) => s.focusedProjectId);
+  // URL project wins; the store keeps sticky focus for Inbox / Next Steps /
+  // Settings so the project rail stays while those destinations have no
+  // `/projects/:id` segment.
+  const focusedProjectId = route.focusedProjectId ?? storeFocusedProjectId;
   const launcherOpen = useUi((s) => s.launcherOpen);
   const selectedProjectId = useUi((s) => s.selectedProjectId);
   const selectedTabId = useUi((s) => s.selectedTabId);
@@ -99,9 +190,8 @@ export function App() {
   // registry) while its panel was focused, ModulePanelHost renders null and no
   // core panel matches — the content area goes blank with no way back except
   // the sidebar. Bounce home whenever `nav` is neither a core id nor a live
-  // module id. (Core ids like 'goals' are project-scoped workspace modes, not
-  // top-level panels, but are still valid nav and must NOT bounce. 'followups'
-  // is BOTH — a project-scoped mode AND now a top-level panel, above.)
+  // module id. 'goals' and 'followups' are BOTH project-scoped workspace modes
+  // AND top-level panels, so they must not bounce.
   useEffect(() => {
     if (nav === 'library') {
       const libraryModule = modules.find(isLibraryPluginModule);
@@ -593,10 +683,6 @@ export function App() {
         <ProjectScopedNav
           project={focusedProject}
           variant="focus"
-          onBack={() => {
-            useUi.getState().exitProjectFocus();
-            useUi.getState().setNav('home');
-          }}
         />
       ) : shellLayout.rail === 'settings' ? (
         <SettingsPane />
@@ -611,27 +697,17 @@ export function App() {
           anchor. TerminalSurface must stay mounted across nav — this landmark
           already does that; it must not sit beside the shell as a host node. */}
       <main className="shell-main">
-        {nav === 'home' && <HomeView />}
-        {nav === 'agents' && <AgentsView />}
-        {nav === 'followups' && <FollowUpsView />}
-        {nav === 'inbox' && <InboxView />}
-        {nav === 'suggestions' && suggestionsEnabled && <SuggestionsView />}
-        {nav === 'scheduler' && <SchedulerView />}
-        {nav === 'extensions' && <ExtensionsView />}
-        {nav === 'settings' && <SettingsView />}
-        <ModulePanelHost />
-        <div
-          className={`workspace-slot ${nav === 'projects' && focusedProjectId ? 'show' : 'hide'}`}
-        >
-          <WorkspaceView />
-        </div>
-        <TerminalSurface />
+        <HashNavigationScroll />
+        <AppRoutes suggestionsEnabled={suggestionsEnabled} />
       </main>
       {/* The global Agents sidebar can open the shared launcher while no project
           workspace is mounted. Keep one host here for every non-project route;
           Workspace continues to own project-scoped launches. */}
       {launcherOpen && (nav !== 'projects' || !focusedProjectId) && (
-        <AgentLauncher onClose={() => useUi.getState().setLauncherOpen(false)} />
+        <AgentLauncher
+          onClose={() => useUi.getState().setLauncherOpen(false)}
+          onLaunched={nav === 'agents' ? stayOnAgentsBoard : undefined}
+        />
       )}
       <SidebarTriggerOverlay />
       {/* Headless, always-mounted module backgrounds. Runtime activation results

@@ -24,7 +24,7 @@
   --sidebar-border: var(--border);
   --focus-ring: var(--accent-blue);
 
-  --col-nav: 256px;
+  --col-nav: 256px; /* default and minimum; drag-resized via --col-nav inline */
   --col-list: 280px;
   --tab-h: 36px;
   --status-h: 24px;
@@ -195,8 +195,10 @@ input {
 }
 
 /* A collapsed sidebar is removed from the grid. Full-content destinations
- * take the remaining shell as one track. */
-.app-shell.sidebar-is-collapsed {
+ * take the remaining shell as one track. `.scoped-no-list` is on the selector
+ * so this beats a later duplicate `.app-shell.scoped-no-list { 2-col }` rule. */
+.app-shell.sidebar-is-collapsed,
+.app-shell.sidebar-is-collapsed.scoped-no-list {
   grid-template-columns: minmax(0, 1fr);
 }
 
@@ -219,6 +221,14 @@ input {
 }
 
 .app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .module-panel-host {
+  grid-column: 1 / -1;
+}
+
+/* Workspace is wrapped in `.workspace-slot` (display:contents), so it is not a
+ * `.shell-main >` child even though it participates in the shell grid. Without
+ * this reset it auto-places into the leftover nav column and the Agents board
+ * (header + empty state) squeezes into a left strip. */
+.app-shell.sidebar-is-collapsed.scoped-no-list .workspace {
   grid-column: 1 / -1;
 }
 
@@ -283,15 +293,8 @@ input {
   padding-left: var(--shell-leading-reserve);
 }
 
-.app-page-header-title {
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.app-page-header-title h1 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
+.app-page-header-content-row > * {
+  -webkit-app-region: no-drag;
 }
 
 .app-page-header-actions {
@@ -299,6 +302,7 @@ input {
   flex: 0 0 auto;
   align-items: center;
   gap: 8px;
+  margin-left: auto;
   -webkit-app-region: no-drag;
 }
 
@@ -739,8 +743,40 @@ button.statusbar-update {
   border-right: 1px solid var(--sidebar-border);
   display: flex;
   flex-direction: column;
-  padding: 0 10px 10px;
-  overflow: hidden;
+  padding: 8px 12px 10px;
+  /* Visible so the resize handle can sit on the column edge (it overhangs the
+     right padding). Inner `.sidebar-sections` still clips the scrollable list. */
+  overflow: visible;
+  position: relative;
+  /* Lift above the content track so the overhanging handle stays grabbable. */
+  z-index: 1;
+}
+
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  /* `.sidebar` has 12px horizontal padding; `right: -12px` lands the handle on
+     the column border. Width 11px straddles that edge like `.list-pane-resizer`. */
+  right: -12px;
+  width: 11px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+}
+
+.sidebar-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 4px;
+  width: 3px;
+  height: 100%;
+}
+
+.sidebar-resizer:hover::after,
+body.resizing-col .sidebar-resizer::after {
+  background: var(--accent-blue);
+  opacity: 0.5;
 }
 
 .sidebar-chrome {
@@ -1313,6 +1349,14 @@ button.statusbar-update {
   border-top: 1px solid var(--sidebar-border);
 }
 
+/* Destination rows are <Link>s (real <a>s) so the URL is the source of
+   truth. Strip the browser's hyperlink underline — these are chrome
+   controls, not body-copy links. The .sidebar a rule also covers Settings /
+   Extensions picker rows and the utility-bar Settings icon. */
+.sidebar a {
+  text-decoration: none;
+}
+
 .nav-item {
   display: flex;
   align-items: center;
@@ -1325,6 +1369,7 @@ button.statusbar-update {
   width: 100%;
   text-align: left;
   font-size: 13px;
+  text-decoration: none;
 }
 
 .nav-item:hover {
@@ -1499,10 +1544,16 @@ button.statusbar-update {
   padding: 0 8px 6px;
 }
 
+.sidebar-agents-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
 .sidebar-agents-heading {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
   padding: 0;
   border: 0;
   color: var(--text-muted);
@@ -1512,11 +1563,33 @@ button.statusbar-update {
   font-weight: 500;
 }
 
-.sidebar-agents-heading:hover {
+.sidebar-agents-heading:hover,
+.sidebar-agents-heading.active {
   color: var(--text-primary);
 }
 
 .sidebar-agents-heading:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.sidebar-agents-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: 0;
+  border-radius: 4px;
+  color: var(--text-muted);
+  background: transparent;
+}
+
+.sidebar-agents-toggle:hover {
+  color: var(--text-primary);
+  background: var(--sidebar-hover);
+}
+
+.sidebar-agents-toggle:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
@@ -1663,6 +1736,10 @@ body.resizing-sidebar-section .sidebar-agents-resizer::after {
 
 .sidebar-projects-add-row {
   display: none;
+}
+
+.sidebar-projects-menu-wrap {
+  display: flex;
 }
 
 .sidebar-projects-add-menu {
@@ -4444,6 +4521,10 @@ body.resizing-col {
 
 .workspace {
   display: grid;
+  /* Same content-track placement as .home-panel / .inbox-view. Auto-placement
+     only works while the sidebar occupies column 1; collapsing unmounts that
+     rail and would otherwise drop the workspace into the leftover nav column. */
+  grid-column: 2 / -1;
   /* Topbar row is `auto`, not a fixed --tab-h: it now stacks two rows (the
      mode switcher above the tab strip), so it must size to its own content. */
   grid-template-rows: auto 1fr var(--status-h);
@@ -10475,61 +10556,6 @@ body.resizing-col .explorer-resizer::after {
   overflow: hidden;
 }
 
-/* Project-row chat actions open this composer in the central Agents workspace,
-   not in a global backdrop that obscures the board. */
-.workspace-body > .launch-inline {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-}
-
-.launch-inline {
-  display: flex;
-  justify-content: center;
-  overflow: auto;
-  padding: 28px;
-  background: var(--bg-panel);
-}
-
-.launch-inline > .launch-panel {
-  width: min(680px, 100%);
-  height: min(100%, 820px);
-  min-height: 0;
-  padding: 20px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg-elevated);
-}
-
-.launch-inline .launch-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.launch-inline-close {
-  display: grid;
-  width: 30px;
-  height: 30px;
-  flex: 0 0 auto;
-  place-items: center;
-  padding: 0;
-  border-radius: 6px;
-  color: var(--text-muted);
-}
-
-.launch-inline-close:hover,
-.launch-inline-close:focus-visible {
-  color: var(--text-primary);
-  background: var(--bg-hover);
-}
-
-.launch-inline-close:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-
 .agents-board-header {
   display: flex;
   align-items: center;
@@ -10848,6 +10874,35 @@ body.resizing-col .explorer-resizer::after {
   margin: 0 0 10px;
   font-size: 12px;
   max-width: 340px;
+}
+
+/* Empty fleet board: Home's launch composer sits on the same AuroraGrid. */
+.agents-board-empty--launch {
+  overflow: auto;
+  gap: 20px;
+  justify-content: center;
+  padding: 48px 24px 56px;
+  background: var(--bg-base);
+}
+
+.agents-board-empty--launch .home-agent-composer {
+  position: relative;
+  z-index: 1;
+  width: min(820px, 100%);
+  margin: 0;
+}
+
+.agents-board-empty--launch .agents-board-empty-copy {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.agents-board-empty--launch .agents-board-empty-copy p {
+  margin-bottom: 0;
 }
 
 /* The lanes row: four equal columns that scroll horizontally if the pane is
@@ -26929,15 +26984,16 @@ body.resizing-col .library-split-resizer::after {
 
 /* Home mirrors the above: ListPane returns null for the 'home' nav, so
  * without an explicit span the .settings-panel auto-flows into the narrow
- * list column (col 2) — collapsing the dashboard into a sliver. `position:
- * relative` + `isolation: isolate` makes it a valid host for AuroraGrid (the
- * ambient background ChatPanel's empty states use) — see .home-panel
- * .settings-inner below for the z-index:1 lift that keeps real content above
- * the grid's z-index:0 paint. */
-.home-panel {
-  grid-column: 2 / -1;
+ * list column (col 2) — collapsing the dashboard into a sliver. `aurora-host`
+ * makes it a valid host for AuroraGrid (also used by the empty Agents board).
+ * `.home-panel .settings-inner` lifts real content above the grid's z-index:0. */
+.aurora-host {
   position: relative;
   isolation: isolate;
+}
+
+.home-panel {
+  grid-column: 2 / -1;
 }
 
 .home-panel .settings-inner {
@@ -26945,10 +27001,10 @@ body.resizing-col .library-split-resizer::after {
   z-index: 1;
 }
 
-/* AuroraGrid came from the former chat experience. Home owns the same ambient
- * surface now: a low-contrast grid, slow blue/gold drift, and occasional circuit
- * traces. It remains decorative and respects reduced-motion preferences. */
-.home-panel .aurora-grid {
+/* AuroraGrid: a low-contrast grid, slow blue/gold drift, and occasional circuit
+ * traces. Hosts (Home, empty Agents) add `.aurora-host`. Decorative; respects
+ * reduced-motion. */
+.aurora-host .aurora-grid {
   position: absolute;
   inset: 0;
   z-index: 0;
@@ -26962,7 +27018,7 @@ body.resizing-col .library-split-resizer::after {
   opacity: 0.5;
 }
 
-.home-panel .aurora-grid::before {
+.aurora-host .aurora-grid::before {
   content: '';
   position: absolute;
   inset: -30%;
@@ -26976,7 +27032,7 @@ body.resizing-col .library-split-resizer::after {
   animation: home-aurora-drift 42s ease-in-out infinite;
 }
 
-.home-panel .aurora-grid::after {
+.aurora-host .aurora-grid::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -26989,7 +27045,7 @@ body.resizing-col .library-split-resizer::after {
   100% { transform: translate3d(-6%, -4%, 0) scale(1); }
 }
 
-.home-panel .aurora-grid-beam {
+.aurora-host .aurora-grid-beam {
   position: absolute;
   pointer-events: none;
   mix-blend-mode: plus-lighter;
@@ -26997,7 +27053,7 @@ body.resizing-col .library-split-resizer::after {
   --home-beam: var(--accent-blue);
 }
 
-.home-panel .aurora-grid-beam--v {
+.aurora-host .aurora-grid-beam--v {
   top: 0;
   width: 2px;
   height: 180px;
@@ -27006,7 +27062,7 @@ body.resizing-col .library-split-resizer::after {
   animation: home-aurora-beam-v linear infinite;
 }
 
-.home-panel .aurora-grid-beam--h {
+.aurora-host .aurora-grid-beam--h {
   left: 0;
   width: 180px;
   height: 2px;
@@ -27015,11 +27071,11 @@ body.resizing-col .library-split-resizer::after {
   animation: home-aurora-beam-h linear infinite;
 }
 
-.home-panel .aurora-grid-beam.b1 { left: calc(50% - 340px); --home-beam: var(--accent-blue); animation-duration: 340s; animation-delay: 0s; }
-.home-panel .aurora-grid-beam.b2 { left: calc(50% + 100px); --home-beam: #d6409f; animation-duration: 372s; animation-delay: -70s; }
-.home-panel .aurora-grid-beam.b3 { left: calc(50% + 420px); --home-beam: var(--accent-gold); animation-duration: 356s; animation-delay: -150s; }
-.home-panel .aurora-grid-beam.b4 { top: calc(50% - 180px); --home-beam: #d6409f; animation-duration: 388s; animation-delay: -220s; }
-.home-panel .aurora-grid-beam.b5 { top: calc(50% + 140px); --home-beam: var(--accent-blue); animation-duration: 364s; animation-delay: -300s; }
+.aurora-host .aurora-grid-beam.b1 { left: calc(50% - 340px); --home-beam: var(--accent-blue); animation-duration: 340s; animation-delay: 0s; }
+.aurora-host .aurora-grid-beam.b2 { left: calc(50% + 100px); --home-beam: #d6409f; animation-duration: 372s; animation-delay: -70s; }
+.aurora-host .aurora-grid-beam.b3 { left: calc(50% + 420px); --home-beam: var(--accent-gold); animation-duration: 356s; animation-delay: -150s; }
+.aurora-host .aurora-grid-beam.b4 { top: calc(50% - 180px); --home-beam: #d6409f; animation-duration: 388s; animation-delay: -220s; }
+.aurora-host .aurora-grid-beam.b5 { top: calc(50% + 140px); --home-beam: var(--accent-blue); animation-duration: 364s; animation-delay: -300s; }
 
 @keyframes home-aurora-beam-v {
   0% { transform: translateY(-180px); opacity: 0; }
@@ -27033,28 +27089,28 @@ body.resizing-col .library-split-resizer::after {
   8.5%, 100% { transform: translateX(115vw); opacity: 0; }
 }
 
-:root[data-theme='light'] .home-panel .aurora-grid {
+:root[data-theme='light'] .aurora-host .aurora-grid {
   opacity: 0.6;
 }
 
-:root[data-theme='light'] .home-panel .aurora-grid::before {
+:root[data-theme='light'] .aurora-host .aurora-grid::before {
   mix-blend-mode: multiply;
   opacity: 0.16;
 }
 
-:root[data-theme='light'] .home-panel .aurora-grid-beam {
+:root[data-theme='light'] .aurora-host .aurora-grid-beam {
   mix-blend-mode: normal;
   opacity: 0.7;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .home-panel .aurora-grid::before {
+  .aurora-host .aurora-grid::before {
     animation: none;
     transform: translate3d(2%, 1%, 0) scale(1.06);
     will-change: auto;
   }
 
-  .home-panel .aurora-grid-beam {
+  .aurora-host .aurora-grid-beam {
     display: none;
   }
 }
