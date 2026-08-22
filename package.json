@@ -64,7 +64,7 @@
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1",
-    "smol-toml": "^1.7.0",
+    "smol-toml": "^1.8.0",
     "zustand": "^5.0.0"
   },
   "optionalDependencies": {
