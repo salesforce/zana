@@ -8,9 +8,14 @@ const GH_VIEW_TIMEOUT_MS = 10_000;
 const GH_ACTION_TIMEOUT_MS = 60_000;
 const GH_MAX_BUFFER = 16 * 1024 * 1024;
 
+function ghCommand(env: NodeJS.ProcessEnv = process.env): string {
+  const override = env.ZCC_GH_BINARY?.trim();
+  return override && override.length > 0 ? override : 'gh';
+}
+
 function runGh(cwd: string, args: string[], timeoutMs: number): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve, reject) => {
-    const child = spawn('gh', args, {
+    const child = spawn(ghCommand(), args, {
       cwd,
       env: gitChildEnv(),
       stdio: ['ignore', 'pipe', 'pipe']
@@ -85,6 +90,27 @@ export async function getPullRequestForCurrentBranch(cwd: string): Promise<GitHo
     mergeStateStatus: typeof row.mergeStateStatus === 'string' ? row.mergeStateStatus : null,
     mergeable: typeof row.mergeable === 'string' ? row.mergeable : null
   };
+}
+
+export async function createPullRequest(
+  cwd: string,
+  opts?: { title?: string; body?: string; base?: string; draft?: boolean }
+): Promise<GitHostPullRequest> {
+  const args = ['pr', 'create'];
+  if (opts?.title?.trim()) args.push('--title', opts.title.trim());
+  else args.push('--fill');
+  if (opts?.body?.trim()) args.push('--body', opts.body.trim());
+  if (opts?.base?.trim()) args.push('--base', opts.base.trim());
+  if (opts?.draft) args.push('--draft');
+  const result = await runGh(cwd, args, GH_ACTION_TIMEOUT_MS);
+  if (result.code !== 0) {
+    throw new WorkspaceError('gh_failed', result.stderr.trim() || 'gh pr create failed');
+  }
+  const pr = await getPullRequestForCurrentBranch(cwd);
+  if (!pr) {
+    throw new WorkspaceError('gh_failed', 'pull request was created but could not be read');
+  }
+  return pr;
 }
 
 export async function runPullRequestAction(

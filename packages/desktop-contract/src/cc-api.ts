@@ -266,9 +266,28 @@ export interface CcApi {
     spawn(input: {
       projectId: string;
       providerId: string;
-      input: string | string[];
+      input?: string | string[];
       hostId?: string;
       environment?: SpawnEnvironmentChoice;
+      cwd?: string;
+      title?: string;
+      extraArgs?: string[];
+      harnessRouting?: import('@zana-ai/zcc-domain/product').HarnessModelRoutingV1;
+      personaId?: string;
+      headless?: boolean;
+      scheduled?: boolean;
+      autoCloseOnFinish?: boolean;
+      inboxLevel?: 'silent' | 'quiet' | 'loud';
+      autonomous?: boolean;
+      resumeSessionId?: string;
+      executionEnvironment?: 'local' | 'sandbox' | 'microvm';
+      sandboxDenyNetwork?: boolean;
+      microVmImage?: string;
+      microVmCpus?: number;
+      microVmMemoryMib?: number;
+      reconnectTmuxId?: string;
+      resume?: boolean;
+      cohort?: import('@zana-ai/zcc-domain/product').SessionCohort;
     }): Promise<Result<{
       id: string;
       projectId: string;
@@ -304,6 +323,7 @@ export interface CcApi {
     diff(environmentId: string, target?: unknown): Promise<WorkspaceDiffResponse>;
     pullRequest(environmentId: string): Promise<{ pullRequest: GitHostPullRequest | null }>;
     action(environmentId: string, action: EnvironmentAction): Promise<Record<string, unknown>>;
+    cancelProvision(environmentId: string): Promise<{ ok: boolean; cancelled?: boolean }>;
     destroy(environmentId: string): Promise<{ ok: boolean }>;
   };
   terminals: {

@@ -13,6 +13,7 @@ import {
   listedTerminals
 } from '@/store';
 import { AgentBoardLanes, isReclaimableIdle, type AgentCard } from '@/components/AgentBoard';
+import { hostThreadAgentState } from '@/lib/host-thread-session';
 import { AgentViewToggle } from '@/components/AgentViewToggle';
 import { SquadFlowView } from '@/views/agents/SquadFlowView';
 import { AutonomousRunBanner } from '@/components/AutonomousRunBanner';
@@ -57,7 +58,9 @@ function toCard(
 ): AgentCard {
   return {
     session,
-    state: byId[session.id] ?? 'unknown',
+    state: session.workspaceEnvironmentId
+      ? hostThreadAgentState(session.status === 'exited' ? 'completed' : session.status)
+      : (byId[session.id] ?? 'unknown'),
     stateSince: sinceById[session.id],
     projectId: project.id,
     projectName: project.name,

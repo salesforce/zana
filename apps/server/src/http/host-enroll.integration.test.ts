@@ -365,4 +365,20 @@ describe('host enroll hub and thread create', () => {
       }).then((response) => response.status)
     ).resolves.toBe(403);
   });
+
+  it('enrolls the host-daemon runtime against the product hub', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-proj-'));
+    const { enrollToken, dataDir } = await startServer(projectRoot);
+    const { startEnrolledHostDaemon } = await import('@zana-ai/zcc-host-daemon/enroll-runtime');
+    const daemon = await startEnrolledHostDaemon({
+      dataDir,
+      serverUrl: server!.url,
+      token: enrollToken
+    });
+    try {
+      expect(server!.ctx.hostHub.connectedHostIds()).toContain(daemon.hostId);
+    } finally {
+      await daemon.close();
+    }
+  });
 });

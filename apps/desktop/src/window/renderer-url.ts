@@ -13,6 +13,17 @@ export function setProductionRendererOrigin(value: string): void {
   productionOrigin = parsed.origin;
 }
 
+/**
+ * Loopback product HTTP origin for Electron-main fetch (thread spawn, clone).
+ * Packaged/E2E builds serve `/api/v1` on the supervised static host, not :8780.
+ */
+export function productServerUrl(): string {
+  const override = process.env.ZCC_SERVER_URL?.trim();
+  if (override) return override.endsWith('/') ? override : `${override}/`;
+  if (productionOrigin) return `${productionOrigin}/`;
+  return 'http://127.0.0.1:8780/';
+}
+
 export function rendererUrl(params: Record<string, string | undefined> = {}): string | null {
   const devUrl = process.env.ZCC_DESKTOP_APP_URL || process.env.ELECTRON_RENDERER_URL;
   if (devUrl) {

@@ -5,6 +5,7 @@ import { extname, resolve, sep } from 'node:path';
 import { handleProductHttp } from './http/product-api.js';
 import type { ProductHttpContext } from './http/product-context.js';
 import { createProductWebSocketServer, handleProductUpgrade } from './http/product-ws.js';
+import { createHostDaemonWebSocketServer, handleHostInternalHttp, handleHostInternalUpgrade } from './http/host-internal.js';
 
 export interface BrowserProjectSummary {
   id: string;
@@ -41,7 +42,10 @@ export interface StartStaticHostOptions {
    * and serves a contained file from that tree (never the host-daemon).
    */
   pluginAssetRoot?: (pluginId: string) => string | null;
-  /** Loopback product API + `/ws`. Origin-guarded; no host-daemon tokens. */
+  /**
+   * Loopback product API + `/ws` (renderer) and `/internal/hosts` (daemon enroll).
+   * Origin-guarded; host-daemon tokens never reach the renderer.
+   */
   product?: ProductHttpContext;
 }
 
@@ -95,8 +99,12 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
   const hostName = options.host ?? '127.0.0.1';
   let expectedOrigin = '';
   const productWss = options.product ? createProductWebSocketServer(options.product) : null;
+  const hostWss = options.product ? createHostDaemonWebSocketServer() : null;
   const server = createServer(async (request, response) => {
     const requestUrl = new URL(request.url ?? '/', 'http://zcc.local');
+    if (options.product && await handleHostInternalHttp(request, response, options.product)) {
+      return;
+    }
     if (options.product && requestUrl.pathname.startsWith('/api/')) {
       await handleProductHttp(request, response, options.product);
       return;
@@ -218,11 +226,15 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
     createReadStream(file).on('error', () => response.destroy()).pipe(response);
   });
 
-  if (options.product && productWss) {
+  if (options.product && (productWss || hostWss)) {
     server.on('upgrade', (request, socket, head) => {
-      if (!handleProductUpgrade(request, socket, head, options.product!, productWss)) {
-        socket.destroy();
+      if (hostWss && handleHostInternalUpgrade(request, socket, head, options.product!, hostWss)) {
+        return;
       }
+      if (productWss && handleProductUpgrade(request, socket, head, options.product!, productWss)) {
+        return;
+      }
+      socket.destroy();
     });
   }
 
@@ -253,6 +265,7 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
   return {
     url,
     close: () => new Promise<void>((resolveClose, rejectClose) => {
+      hostWss?.close();
       productWss?.close();
       server.close((error) => (error ? rejectClose(error) : resolveClose()));
     })

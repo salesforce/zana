@@ -417,9 +417,10 @@ describe('worktree launch intent', () => {
   });
 
   it('maps the workspace picker onto a spawn environment choice', () => {
-    expect(workspaceForSubmission(true, { kind: 'worktree' }, true, 'login_fix')).toEqual({
+    expect(workspaceForSubmission(true, { kind: 'worktree', baseBranch: 'develop' }, true, 'login_fix')).toEqual({
       kind: 'worktree',
-      branchSlug: 'login_fix'
+      branchSlug: 'login_fix',
+      baseBranch: 'develop'
     });
     expect(workspaceForSubmission(false, { kind: 'worktree' }, true, 'login_fix')).toEqual({ kind: 'unmanaged' });
     expect(workspaceForSubmission(true, { kind: 'unmanaged' }, true, 'login_fix')).toEqual({ kind: 'unmanaged' });

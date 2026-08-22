@@ -28,6 +28,38 @@ From the board you can:
 Each tab is a real harness PTY, so the native Claude Code, OpenCode, Codex, or
 Pi workflow remains available inside Zana.
 
+### Environments
+
+A launch picks a **workspace** — the directory the agent actually writes in.
+The composer picker on a local git project offers:
+
+- **This checkout** — the registered project folder. Palette, Inbox, scheduler,
+  shell, team, and remote launches always use this default.
+- **New worktree** — a managed git worktree on `zcc/<name>-<id>`, created under
+  `~/.zcc/worktrees/<environmentId>/<repoName>`. Optional **Base branch**
+  defaults to the server's policy (usually `main`/`master`). The main checkout
+  is left untouched.
+- **Reuse** — attach another agent to an existing ready worktree.
+- **Personal scratch** — a non-git folder under
+  `~/.zcc/personal-workspaces/<environmentId>`.
+
+Remote SSH projects can only use **This checkout**. This slice does not create
+managed worktrees over SSH.
+
+Leftover folders under `~/zcc-worktrees` (the previous desktop mint path) stay
+on disk as unmanaged checkouts. New worktrees are not created there.
+
+Two optional files in the source repo customize a new worktree:
+
+- **`.worktreeinclude`** — gitignore syntax. Matching untracked files (for
+  example `.env`) are copied into the new worktree. Symlinks are not followed
+  and tracked files are never overwritten.
+- **`.zcc-env-setup.sh`** — runs after the worktree is created. A non-zero exit
+  rolls the worktree back and the thread does not start.
+
+From the agent detail panel you can commit, squash into the local default
+branch, and open a PR against `gh` on the host.
+
 ### Keeping the fleet tidy
 
 Two optional automations (both **off by default**, toggled under the Agents

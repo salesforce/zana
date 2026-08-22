@@ -38,6 +38,7 @@ describe('host command dispatch', () => {
     const project = mkdtempSync(join(tmpdir(), 'zcc-thread-proj-'));
     const startedWork: Array<{ cwd: string; input: string[]; providerId: string }> = [];
     const resizedWork: Array<{ threadId: string; cols: number; rows: number }> = [];
+    const writtenWork: Array<{ threadId: string; data: string }> = [];
     const runtime = createCommandRuntime({
       verifyProviders: async () => installedClaude,
       startWork: async (input) => {
@@ -45,6 +46,9 @@ describe('host command dispatch', () => {
       },
       resizeWork: async (input) => {
         resizedWork.push(input);
+      },
+      writeWork: async (input) => {
+        writtenWork.push(input);
       }
     });
     const environmentId = randomUUID();
@@ -81,11 +85,82 @@ describe('host command dispatch', () => {
     expect(resized.resized).toBe(true);
     expect(resizedWork).toEqual([{ threadId, cols: 120, rows: 40 }]);
     await expect(dispatchHostCommand(runtime, {
+      type: 'thread.input',
+      threadId,
+      data: '\x03'
+    })).resolves.toMatchObject({ accepted: true });
+    expect(writtenWork).toEqual([{ threadId, data: '\x03' }]);
+    await expect(dispatchHostCommand(runtime, {
+      type: 'thread.stop',
+      threadId
+    })).resolves.toMatchObject({ stopped: true });
+    await expect(dispatchHostCommand(runtime, {
       type: 'thread.resize',
       threadId: randomUUID(),
       cols: 80,
       rows: 24
     })).rejects.toMatchObject({ code: 'unknown_thread' });
+  });
+
+  it('starts a shell thread with an empty prompt', async () => {
+    const project = mkdtempSync(join(tmpdir(), 'zcc-thread-shell-'));
+    const startedWork: Array<{ providerId: string; input: string[] }> = [];
+    const runtime = createCommandRuntime({
+      verifyProviders: async () => installedClaude,
+      startWork: async (input) => {
+        startedWork.push({ providerId: input.providerId, input: input.input });
+      }
+    });
+    const environmentId = randomUUID();
+    await dispatchHostCommand(runtime, {
+      type: 'environment.provision',
+      environmentId,
+      workspaceProvisionType: 'unmanaged',
+      path: project
+    });
+    await expect(dispatchHostCommand(runtime, {
+      type: 'thread.start',
+      threadId: randomUUID(),
+      environmentId,
+      projectId: 'proj-1',
+      providerId: 'shell',
+      input: []
+    })).resolves.toMatchObject({ started: true });
+    expect(startedWork).toEqual([{ providerId: 'shell', input: [] }]);
+  });
+
+  it('forwards remote reconnect fields into startWork', async () => {
+    const project = mkdtempSync(join(tmpdir(), 'zcc-thread-remote-'));
+    const started: Array<{ remote?: unknown; reconnectTmuxId?: string }> = [];
+    const runtime = createCommandRuntime({
+      verifyProviders: async () => installedClaude,
+      startWork: async (input) => {
+        started.push({ remote: input.remote, reconnectTmuxId: input.reconnectTmuxId });
+      }
+    });
+    const environmentId = randomUUID();
+    const threadId = randomUUID();
+    await dispatchHostCommand(runtime, {
+      type: 'environment.provision',
+      environmentId,
+      workspaceProvisionType: 'unmanaged',
+      path: project
+    });
+    await dispatchHostCommand(runtime, {
+      type: 'thread.start',
+      threadId,
+      environmentId,
+      projectId: 'proj-1',
+      providerId: 'claude',
+      input: [],
+      remote: { host: 'box.example', user: 'me', remotePath: '/src' },
+      reconnectTmuxId: threadId,
+      resume: true
+    });
+    expect(started).toEqual([{
+      remote: { host: 'box.example', user: 'me', remotePath: '/src' },
+      reconnectTmuxId: threadId
+    }]);
   });
 
   it('lists a seeded library file and rejects a path escape', async () => {

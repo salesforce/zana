@@ -5,10 +5,10 @@ import {
   HostHelloMessageSchema,
   type HostEventEnvelope
 } from '@zana-ai/zcc-contracts/host-rpc';
-import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { createEventSink, type EventSink } from './event-sink.js';
 import { createCommandRuntime, type CommandRuntime } from './command-dispatch.js';
 import { handleHostRpcRequest } from './command-router.js';
+import { loadHostAppConfig } from './host-config.js';
 import { createPtyThreadAdapter, type ThreadRuntimeAdapter } from './thread-runtime.js';
 
 const BACKOFF_MS = [250, 500, 1_000, 2_000, 5_000];
@@ -17,6 +17,8 @@ const HEARTBEAT_MS = 15_000;
 export interface EnrolledHostConnection {
   runtime: CommandRuntime;
   sink: EventSink;
+  /** Resolves after the host websocket opens and `host.hello` is sent. */
+  ready: Promise<void>;
   close(): Promise<void>;
 }
 
@@ -38,6 +40,20 @@ export function startEnrolledHostConnection(options: {
   let attempt = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  let settleReady: ((error?: Error) => void) | null = null;
+  let readySettled = false;
+  const ready = new Promise<void>((resolve, reject) => {
+    settleReady = (error) => {
+      if (error) reject(error);
+      else resolve();
+    };
+  });
+
+  function markReady(): void {
+    if (readySettled) return;
+    readySettled = true;
+    settleReady?.();
+  }
 
   const sink: EventSink = createEventSink({
     isSessionOpen: () => socket?.readyState === WebSocket.OPEN,
@@ -55,23 +71,20 @@ export function startEnrolledHostConnection(options: {
 
   let adapter: ThreadRuntimeAdapter | null = null;
   const runtime = options.runtime ?? (() => {
+    const loadConfig = () => loadHostAppConfig(options.dataDir);
     adapter = createPtyThreadAdapter({
       emit: (event) => sink.emit(event),
-      loadConfig: () => ({
-        version: 1,
-        theme: 'dark',
-        shell: '/bin/zsh',
-        claudeBinary: 'claude',
-        fontSize: 13,
-        lastProjectId: null
-      } as AppConfig)
+      loadConfig
     });
     return createCommandRuntime({
       dataDir: options.dataDir,
       emit: (event) => sink.emit(event),
+      loadConfig,
       startWork: (input) => adapter!.startWork(input),
       submitTurn: (input) => adapter!.submitTurn(input),
-      resizeWork: (input) => adapter!.resizeWork(input)
+      resizeWork: (input) => adapter!.resizeWork(input),
+      writeWork: (input) => adapter!.writeWork(input),
+      stopWork: (input) => adapter!.stopWork(input)
     });
   })();
   runtime.emit = (event: HostEventEnvelope) => sink.emit(event);
@@ -95,6 +108,7 @@ export function startEnrolledHostConnection(options: {
         }
       }, HEARTBEAT_MS);
       void sink.flush();
+      markReady();
     });
     next.addEventListener('message', (event) => {
       let parsed: unknown;
@@ -130,8 +144,13 @@ export function startEnrolledHostConnection(options: {
   return {
     runtime,
     sink,
+    ready,
     async close() {
       closed = true;
+      if (!readySettled) {
+        readySettled = true;
+        settleReady?.(new Error('host connection closed before hello'));
+      }
       if (reconnectTimer) clearTimeout(reconnectTimer);
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       adapter?.dispose();

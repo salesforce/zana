@@ -36,6 +36,13 @@ describe('project-row workspace actions', () => {
     expect(css).toContain('.project-terminal-row {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  width: 100%;');
   });
 
+  it('keeps nested session rows on a short tree indent in the sidebar', () => {
+    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    expect(css).toContain('.sidebar-projects .project-terminals {\n  /* Sit just past the project color-dot, not under the name. The old 38px\n     inset plus the nested-panel padding ate a full icon column in the rail. */\n  margin: 1px 0 4px 8px;');
+    expect(css).not.toContain('margin: 3px 3px 6px 38px');
+    expect(css).not.toContain('margin: 3px 6px 8px 34px');
+  });
+
   it('places the session disclosure chevron after the project name so row dots stay aligned', () => {
     const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
     const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');

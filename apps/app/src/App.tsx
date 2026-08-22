@@ -710,7 +710,7 @@ export function App() {
       {launcherOpen && (nav !== 'projects' || !focusedProjectId) && (
         <AgentLauncher
           onClose={() => useUi.getState().setLauncherOpen(false)}
-          onLaunched={nav === 'agents' ? stayOnAgentsBoard : undefined}
+          onLaunched={stayOnAgentsBoard}
         />
       )}
       <SidebarTriggerOverlay />

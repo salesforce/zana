@@ -7,8 +7,11 @@ import type {
   HostEventEnvelope,
   HostListedFile,
   HostRpcCommand,
-  ProviderStatusResult
+  ProviderStatusResult,
+  ThreadStartCommandSchema
 } from '@zana-ai/zcc-contracts/host-rpc';
+import type { z } from 'zod';
+import { harnessFamilyOf, parseProfile } from '@zana-ai/zcc-domain/launch-provider';
 import type { AppConfig, HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
 import {
   WorkspaceError,
@@ -21,6 +24,7 @@ import {
   workspaceDiff,
   workspacePullRequest,
   workspacePullRequestAction,
+  workspacePullRequestCreate,
   workspaceSquashMerge,
   workspaceStatus
 } from '@zana-ai/zcc-host-workspace';
@@ -40,13 +44,11 @@ const LIST_DIR_DENY = new Set([
   '.DS_Store'
 ]);
 
-export interface ThreadWorkInput {
-  threadId: string;
-  projectId: string;
-  providerId: string;
+export type ThreadStartFields = z.infer<typeof ThreadStartCommandSchema>;
+
+export type ThreadWorkInput = Omit<ThreadStartFields, 'type' | 'environmentId' | 'cwd'> & {
   cwd: string;
-  input: string[];
-}
+};
 
 export interface CommandRuntime {
   dataDir: string;
@@ -59,6 +61,8 @@ export interface CommandRuntime {
   startWork?: (input: ThreadWorkInput) => Promise<void>;
   submitTurn?: (input: { threadId: string; input: string[] }) => Promise<void>;
   resizeWork?: (input: { threadId: string; cols: number; rows: number }) => Promise<void>;
+  writeWork?: (input: { threadId: string; data: string }) => Promise<void>;
+  stopWork?: (input: { threadId: string }) => Promise<void>;
 }
 
 export function createCommandRuntime(options: {
@@ -69,6 +73,8 @@ export function createCommandRuntime(options: {
   startWork?: (input: ThreadWorkInput) => Promise<void>;
   submitTurn?: (input: { threadId: string; input: string[] }) => Promise<void>;
   resizeWork?: (input: { threadId: string; cols: number; rows: number }) => Promise<void>;
+  writeWork?: (input: { threadId: string; data: string }) => Promise<void>;
+  stopWork?: (input: { threadId: string }) => Promise<void>;
 }): CommandRuntime {
   const loadConfig = options.loadConfig ?? (() => ({ version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null }) as AppConfig);
   return {
@@ -81,6 +87,8 @@ export function createCommandRuntime(options: {
     startWork: options.startWork,
     submitTurn: options.submitTurn,
     resizeWork: options.resizeWork,
+    writeWork: options.writeWork,
+    stopWork: options.stopWork,
     verifyProviders: options.verifyProviders ?? (async () => {
       const results: HarnessVerifyResult[] = await verifyHarnesses(loadConfig());
       return { providers: results };
@@ -110,6 +118,37 @@ function mapWorkspaceError(error: unknown): never {
   }
   if (error instanceof HostCommandError) throw error;
   throw new HostCommandError('internal', error instanceof Error ? error.message : String(error));
+}
+
+function providerFamily(providerId: string): string | null {
+  const profile = parseProfile(providerId);
+  if (!profile) return null;
+  if (profile === 'shell') return 'shell';
+  return harnessFamilyOf(profile);
+}
+
+function providerAvailable(status: ProviderStatusResult, providerId: string): boolean {
+  const family = providerFamily(providerId);
+  if (!family) return false;
+  if (family === 'shell') return true;
+  const provider = status.providers.find((entry) => entry.family === family);
+  return Boolean(provider?.installed && provider.enabled);
+}
+
+function confineThreadCwd(environmentPath: string, requested?: string): string {
+  if (!requested) return environmentPath;
+  let realEnv: string;
+  let realRequested: string;
+  try {
+    realEnv = realpathSync(environmentPath);
+    realRequested = realpathSync(requested);
+  } catch {
+    throw new HostCommandError('cwd-escape', 'cwd is outside the environment');
+  }
+  if (!isWithin(realRequested, realEnv)) {
+    throw new HostCommandError('cwd-escape', 'cwd is outside the environment');
+  }
+  return realRequested;
 }
 
 function listRoot(root: string): HostListedFile[] {
@@ -285,19 +324,13 @@ export async function dispatchHostCommand(
       if (!environment) {
         throw new HostCommandError('environment_not_ready', 'environment is not provisioned');
       }
-      const status = await runtime.verifyProviders();
-      const provider = status.providers.find((entry) => entry.family === command.providerId);
-      if (!provider?.installed || !provider.enabled) {
+      if (!providerAvailable(await runtime.verifyProviders(), command.providerId)) {
         throw new HostCommandError('provider_unavailable', `provider CLI is not available: ${command.providerId}`);
       }
+      const cwd = confineThreadCwd(environment.path, command.cwd);
       if (runtime.startWork) {
-        await runtime.startWork({
-          threadId: command.threadId,
-          projectId: command.projectId,
-          providerId: command.providerId,
-          cwd: environment.path,
-          input: command.input
-        });
+        const { type: _type, environmentId: _environmentId, cwd: _cwd, ...rest } = command;
+        await runtime.startWork({ ...rest, cwd });
       }
       runtime.threads.set(command.threadId, {
         environmentId: command.environmentId,
@@ -318,6 +351,22 @@ export async function dispatchHostCommand(
         });
       }
       return { threadId: command.threadId, resized: true as const };
+    }
+    case 'thread.input': {
+      if (!runtime.threads.has(command.threadId)) {
+        throw new HostCommandError('unknown_thread', 'thread is not running on this host');
+      }
+      if (runtime.writeWork) {
+        await runtime.writeWork({ threadId: command.threadId, data: command.data });
+      }
+      return { threadId: command.threadId, accepted: true as const };
+    }
+    case 'thread.stop': {
+      if (runtime.stopWork) {
+        await runtime.stopWork({ threadId: command.threadId });
+      }
+      runtime.threads.delete(command.threadId);
+      return { threadId: command.threadId, stopped: true as const };
     }
     case 'turn.submit': {
       if (!runtime.threads.has(command.threadId)) {
@@ -440,6 +489,19 @@ export async function dispatchHostCommand(
       } catch (error) {
         mapWorkspaceError(error);
       }
+    case 'workspace.pull_request_create':
+      try {
+        return {
+          pullRequest: await workspacePullRequestCreate(command.workspacePath, {
+            title: command.title,
+            body: command.body,
+            base: command.base,
+            draft: command.draft
+          })
+        };
+      } catch (error) {
+        mapWorkspaceError(error);
+      }
     case 'project.clone_default_path':
       return { path: await resolveCloneDefaultPath(runtime.dataDir, command.projectSlug) };
     case 'project.clone':
@@ -448,7 +510,10 @@ export async function dispatchHostCommand(
           dataDir: runtime.dataDir,
           projectSlug: command.projectSlug,
           remoteUrl: command.remoteUrl,
-          targetPath: command.targetPath
+          targetPath: command.targetPath,
+          onProgress: (text) => {
+            runtime.emit({ kind: 'project.clone.progress', payload: { text } });
+          }
         });
       } catch (error) {
         mapWorkspaceError(error);

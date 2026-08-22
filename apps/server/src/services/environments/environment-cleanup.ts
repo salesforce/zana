@@ -54,6 +54,14 @@ export async function destroyEnvironment(ctx: ProductHttpContext, environmentId:
 export async function archiveThread(ctx: ProductHttpContext, threadId: string): Promise<boolean> {
   const thread = getThread(ctx.db as ZccDatabase, threadId);
   if (!thread) return false;
+  try {
+    await ctx.hostHub.callHostOnlineRpc({
+      hostId: thread.hostId,
+      command: { type: 'thread.stop', threadId }
+    });
+  } catch {
+    // Host may already have dropped the PTY (exit, disconnect). Archive anyway.
+  }
   updateThreadStatus(ctx.db, threadId, 'completed');
   if (thread.environmentId) await destroyEnvironmentIfIdle(ctx, thread.environmentId);
   return true;

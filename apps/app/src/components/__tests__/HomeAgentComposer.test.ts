@@ -55,16 +55,23 @@ describe('browser product client scheduler stubs', () => {
     expect(source).toContain('threadEventToTerminalData');
     expect(source).toContain('/threads/${encodeURIComponent(sessionId)}/output');
     expect(source).toContain('/threads/${encodeURIComponent(sessionId)}/resize');
+    expect(source).toContain('/threads/${encodeURIComponent(sessionId)}/input');
+    expect(source).toContain('/threads/${encodeURIComponent(sessionId)}/archive');
+    expect(source).toContain('response.status === 404');
+    expect(source).toContain('cancelProvision');
+    expect(source).toContain('isHostThread(sessionId)');
     expect(source).toContain('/fs/list-dir');
     expect(source).toContain('/fs/read');
   });
 });
 
-describe('browser createTerminal uses host threads', () => {
-  it('spawns a thread instead of POST /terminals', () => {
+describe('createTerminal uses host threads', () => {
+  it('spawns a thread instead of POST /terminals or Electron worktree minting', () => {
     const source = readFileSync(new URL('../../store.ts', import.meta.url), 'utf8');
-    expect(source).toContain('if (!hasDesktopBridge())');
     expect(source).toContain('product.threads.spawn');
     expect(source).toContain('adoptHostThread(spawned.value)');
+    expect(source).not.toContain('worktree: opts?.worktree');
+    expect(source).not.toContain("if (!hasDesktopBridge()) {\n        const family = harnessFamilyOf");
+    expect(source).not.toContain("worktree: item.worktree");
   });
 });

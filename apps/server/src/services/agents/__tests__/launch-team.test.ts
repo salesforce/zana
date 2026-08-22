@@ -46,7 +46,7 @@ let closeCalls: string[] = [];
 let readyGate: Promise<void> | undefined;
 let failTeamLifecycleWorkerWrite = false;
 
-vi.mock('../harness-routing-migration/storage.js', async (importOriginal) => {
+vi.mock('@zana-ai/zcc-server/services/harness-routing/storage', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../harness-routing/storage.js')>();
   return {
     ...actual,
@@ -62,7 +62,7 @@ vi.mock('../harness-routing-migration/storage.js', async (importOriginal) => {
   };
 });
 
-vi.mock('../pty.js', () => {
+vi.mock('@zana-ai/zcc-host-daemon/pty', () => {
   class PtyManager {
     setMcpBaseUrl() {}
     setProjectRoots() {}
@@ -97,7 +97,7 @@ vi.mock('../pty.js', () => {
   return { PtyManager, isClaudeProfile: (p: string) => p === 'claude' };
 });
 
-vi.mock('../store.js', () => ({
+vi.mock('@zana-ai/zcc-server/services/projects/store', () => ({
   store: {
     listProjects: () => [PROJECT],
     getConfig: () => CONFIG,
@@ -109,7 +109,7 @@ vi.mock('../store.js', () => ({
   worktreeTargetDir: (_p: unknown, slug: string) => `/tmp/zcc-worktrees/${slug}`
 }));
 
-vi.mock('../persona-store.js', async (importOriginal) => {
+vi.mock('@zana-ai/zcc-server/services/agents/persona-store', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../persona-store.js')>();
   return {
     ...actual,
@@ -125,7 +125,7 @@ vi.mock('../persona-store.js', async (importOriginal) => {
   };
 });
 
-vi.mock('../team-store.js', async (importOriginal) => {
+vi.mock('@zana-ai/zcc-server/services/agents/team-store', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../team-store.js')>();
   return {
     ...actual,
@@ -172,7 +172,7 @@ vi.mock('electron', () => ({
 }));
 
 vi.mock('../../../../../desktop/src/updater.js', () => ({ createUpdater: () => ({}) }));
-vi.mock('-ai/zcc-host-daemon/mcp-config', () => ({
+vi.mock('@zana-ai/zcc-host-daemon/mcp-config', () => ({
   ensureMcpConfigForProject: () => '/tmp/p1/.mcp.json',
   ensureMcpConfigForProjectSync: () => '/tmp/p1/.mcp.json'
 }));
@@ -182,7 +182,7 @@ vi.mock('-ai/zcc-host-daemon/mcp-config', () => ({
 // evidence-registry's approved versions so structured-routing assertions are
 // deterministic regardless of what's actually installed on the machine
 // running the suite (see evidence-registry.ts's per-family cliVersion pins).
-vi.mock('../harness/harness-verify.js', () => ({
+vi.mock('@zana-ai/zcc-host-daemon/harness/harness-verify', () => ({
   verifyHarnesses: async () => ([
     { family: 'claude', label: 'Claude Code', binary: 'claude', enabled: true, alwaysEnabled: true, installed: true, normalizedVersion: '2.1.220' },
     { family: 'cursor', label: 'Cursor', binary: 'cursor', enabled: true, alwaysEnabled: false, installed: true, normalizedVersion: '2026.01.23' },
@@ -205,6 +205,48 @@ describe('launchTeam', () => {
     readyGate = undefined;
     failTeamLifecycleWorkerWrite = false;
     TEAMS = [];
+    vi.stubGlobal('fetch', async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+      const prompt = Array.isArray(body.input) ? String(body.input[0] ?? '') : '';
+      const extraArgs = Array.isArray(body.extraArgs) ? body.extraArgs as string[] : [];
+      if (prompt.includes('FAIL-SPAWN') || extraArgs.includes('FAIL-SPAWN')) {
+        return new Response(JSON.stringify({
+          ok: false,
+          code: 'PTY_SPAWN_FAILED',
+          message: 'test spawn failed'
+        }), { status: 502, headers: { 'content-type': 'application/json' } });
+      }
+      createCount += 1;
+      const id = typeof body.id === 'string' && body.id.length > 0 ? body.id : `s${createCount}`;
+      createCalls.push({
+        id,
+        opts: {
+          profile: body.providerId,
+          extraArgs,
+          prompt,
+          personaId: body.personaId,
+          headless: body.headless,
+          autonomous: body.autonomous,
+          cohort: body.cohort,
+          title: body.title
+        }
+      });
+      if (readyGate) await readyGate;
+      return new Response(JSON.stringify({
+        ok: true,
+        value: {
+          id,
+          projectId: body.projectId,
+          providerId: body.providerId,
+          title: body.title ?? null,
+          createdAt: Date.now(),
+          cwd: '/tmp/proj',
+          environmentId: '11111111-1111-4111-8111-111111111111',
+          branchName: null,
+          isWorktree: false
+        }
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
   });
 
   // Pull the cohort stamp off each recorded create() call.
@@ -217,6 +259,7 @@ describe('launchTeam', () => {
   // of extraArgs (the claude `[prompt]` convention), so that's where a launched
   // tab's prompt lands by the time ptys.create sees it.
   const promptOf = (call?: { opts: Record<string, unknown> }): string | undefined => {
+    if (typeof call?.opts.prompt === 'string' && call.opts.prompt.length > 0) return call.opts.prompt;
     const extra = call?.opts.extraArgs as string[] | undefined;
     return extra && extra.length > 0 ? extra[extra.length - 1] : undefined;
   };
@@ -376,7 +419,7 @@ describe('launchTeam', () => {
       expect(result).toMatchObject({ ok: true, value: { launched: 1 } });
       expect(createCalls[0]?.opts).toMatchObject({
         profile: 'opencode',
-        extraArgs: ['--prompt', 'Inspect this project.']
+        prompt: 'Inspect this project.'
       });
     } finally {
       delete CONFIG.harnessOpenCodeEnabled;
@@ -879,23 +922,23 @@ describe('launchTeam', () => {
     expect((await first).ok).toBe(true);
   });
 
-  it('closes a spawned session when the Team deadline elapses before readiness', async () => {
+  it('refuses spawn when the Team deadline elapsed before start', async () => {
     TEAMS = [{ id: 'deadline-worker', name: 'Deadline', slots: [{ personaId: 'builtin:reviewer' }] }];
-    readyGate = new Promise<void>(() => {});
     const authorized = authorizeTeamLaunch(
-      'caller-deadline', 'deadline-worker', 'p1', 'deadline-request', { deadlineMs: 500 }, [{ initialTask: 'review' }]
+      'caller-deadline', 'deadline-worker', 'p1', 'deadline-request', { deadlineMs: 1 }, [{ initialTask: 'review' }]
     );
     expect(authorized.ok).toBe(true);
     if (!authorized.ok) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
 
     const result = await launchTeam('deadline-worker', 'p1', {
       callerPrincipalId: 'caller-deadline', launchRequestId: 'deadline-request', requirePreauthorization: true,
-      policy: { deadlineMs: 500 },
+      policy: { deadlineMs: 1 },
       slots: authorized.value.slots.map(({ slotId, initialTask, authorizationId }) => ({ slotId, initialTask, authorizationId }))
     });
 
-    expect(result).toMatchObject({ ok: false, code: 'TEAM_LAUNCH_FAILED' });
-    expect(closeCalls).toEqual([createCalls[0].id]);
+    expect(result).toMatchObject({ ok: false, code: 'DEADLINE_EXCEEDED' });
+    expect(createCalls).toHaveLength(0);
   });
 
   it('replays a no-worker failure as the same error', async () => {

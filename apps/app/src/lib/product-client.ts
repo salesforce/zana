@@ -23,6 +23,9 @@ import { hasDesktopBridge } from './app-surface.js';
 import { apiJson, fetchWithAppSurface } from './fetch-with-app-surface.js';
 import { subscribeProductEvent } from './product-ws.js';
 import {
+  forgetHostThread,
+  isHostThread,
+  rememberHostThread,
   threadEventToTerminalData,
   threadEventToTerminalExit
 } from './host-thread-session.js';
@@ -89,20 +92,22 @@ function httpProduct(): Pick<
       addRemote: async () => ({ ok: false, code: 'unavailable', message: 'remote projects require the desktop app' }),
       clone: async (input) => {
         try {
-          const body = await apiJson<{
-            ok: boolean;
+          const response = await fetchWithAppSurface('/api/v1/projects/clone', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ url: input.url, name: input.name })
+          });
+          const body = await response.json() as {
+            ok?: boolean;
             project?: Project;
             path?: string;
             code?: string;
             message?: string;
-          }>('/projects/clone', {
-            method: 'POST',
-            body: JSON.stringify({ url: input.url, name: input.name })
-          });
-          if (!body.ok || !body.project) {
+          };
+          if (!response.ok || !body.ok || !body.project) {
             return {
               ok: false as const,
-              code: (body.code === 'clone_target_exists' ? 'DEST_EXISTS' : 'CLONE_FAILED') as 'DEST_EXISTS' | 'CLONE_FAILED',
+              code: (body.code === 'DEST_EXISTS' || body.code === 'clone_target_exists' ? 'DEST_EXISTS' : 'CLONE_FAILED') as 'DEST_EXISTS' | 'CLONE_FAILED',
               message: body.message ?? 'clone failed',
               path: body.path
             };
@@ -116,8 +121,20 @@ function httpProduct(): Pick<
           };
         }
       },
-      onCloneProgress: noopSubscribe,
-      cloneRoot: async () => '',
+      onCloneProgress: (cb) => subscribeProductEvent('projects:cloneProgress', (payload) => {
+        const text = payload && typeof payload === 'object' && 'text' in payload
+          ? (payload as { text: unknown }).text
+          : payload;
+        if (typeof text === 'string') cb(text);
+      }),
+      cloneRoot: async () => {
+        try {
+          const body = await apiJson<{ path: string }>('/projects/clone-root');
+          return body.path;
+        } catch {
+          return '';
+        }
+      },
       ensureQuickAgent: async () => ({
         ok: false,
         code: 'unavailable',
@@ -334,6 +351,44 @@ function httpProduct(): Pick<
           method: 'POST',
           body: JSON.stringify({ cols, rows })
         });
+      },
+      write: async (sessionId, data) => {
+        await apiJson(`/threads/${encodeURIComponent(sessionId)}/input`, {
+          method: 'POST',
+          body: JSON.stringify({ data })
+        });
+      },
+      reply: async (sessionId, text) => {
+        try {
+          await apiJson(`/threads/${encodeURIComponent(sessionId)}/reply`, {
+            method: 'POST',
+            body: JSON.stringify({ text })
+          });
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      close: async (sessionId) => {
+        try {
+          const response = await fetchWithAppSurface(
+            `/api/v1/threads/${encodeURIComponent(sessionId)}/archive`,
+            {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: '{}'
+            }
+          );
+          // Unknown thread = already gone. Treat as closed so a stale board
+          // card can drop without looking like a live remote session.
+          if (response.ok || response.status === 404) {
+            forgetHostThread(sessionId);
+            return true;
+          }
+          return false;
+        } catch {
+          return false;
+        }
       }
     } as CcApi['terminals'],
     threads: {
@@ -344,9 +399,28 @@ function httpProduct(): Pick<
           body: JSON.stringify({
             projectId: input.projectId,
             providerId: input.providerId,
-            input: Array.isArray(input.input) ? input.input : [input.input],
+            input: input.input == null ? [] : Array.isArray(input.input) ? input.input : [input.input],
             hostId: input.hostId,
-            environment: input.environment
+            environment: input.environment,
+            cwd: input.cwd,
+            title: input.title,
+            extraArgs: input.extraArgs,
+            harnessRouting: input.harnessRouting,
+            personaId: input.personaId,
+            headless: input.headless,
+            scheduled: input.scheduled,
+            autoCloseOnFinish: input.autoCloseOnFinish,
+            inboxLevel: input.inboxLevel,
+            autonomous: input.autonomous,
+            resumeSessionId: input.resumeSessionId,
+            executionEnvironment: input.executionEnvironment,
+            sandboxDenyNetwork: input.sandboxDenyNetwork,
+            microVmImage: input.microVmImage,
+            microVmCpus: input.microVmCpus,
+            microVmMemoryMib: input.microVmMemoryMib,
+            reconnectTmuxId: input.reconnectTmuxId,
+            resume: input.resume,
+            cohort: input.cohort
           })
         });
         const body = (await response.json()) as Awaited<ReturnType<CcApi['threads']['spawn']>> & {
@@ -396,6 +470,12 @@ function httpProduct(): Pick<
         return apiJson(`/environments/${encodeURIComponent(environmentId)}/actions`, {
           method: 'POST',
           body: JSON.stringify(action)
+        });
+      },
+      cancelProvision: async (environmentId) => {
+        return apiJson(`/environments/${encodeURIComponent(environmentId)}/provision/cancel`, {
+          method: 'POST',
+          body: '{}'
         });
       },
       destroy: async (environmentId) => {
@@ -525,10 +605,74 @@ export const product: CcApi = new Proxy({} as CcApi, {
       return withStubs(name, http[name] as object);
     }
     if (hasDesktopBridge()) {
-      return (window.cc as unknown as Record<string, unknown>)[name];
+      const desktop = (window.cc as unknown as Record<string, unknown>)[name];
+      if (name === 'terminals') {
+        return wrapDesktopTerminals(desktop as CcApi['terminals']);
+      }
+      if (name === 'projects') {
+        return wrapDesktopProjects(desktop as CcApi['projects']);
+      }
+      return desktop;
     }
     const http = httpProduct() as unknown as Record<string, unknown>;
     const impl = http[String(family)];
     return impl ? withStubs(String(family), impl as object) : stubFamily(String(family));
   }
 });
+
+function wrapDesktopProjects(desktop: CcApi['projects']): CcApi['projects'] {
+  const http = httpProduct().projects;
+  return {
+    ...desktop,
+    clone: http.clone,
+    onCloneProgress: http.onCloneProgress,
+    cloneRoot: async () => {
+      const fromDesktop = await desktop.cloneRoot().catch(() => '');
+      if (fromDesktop) return fromDesktop;
+      return http.cloneRoot();
+    }
+  };
+}
+
+function wrapDesktopTerminals(desktop: CcApi['terminals']): CcApi['terminals'] {
+  const http = httpProduct().terminals;
+  return {
+    ...desktop,
+    write: async (sessionId, data) => {
+      if (isHostThread(sessionId)) return http.write(sessionId, data);
+      return desktop.write(sessionId, data);
+    },
+    reply: async (sessionId, text) => {
+      if (isHostThread(sessionId)) return http.reply(sessionId, text);
+      return desktop.reply(sessionId, text);
+    },
+    resize: async (sessionId, cols, rows) => {
+      if (isHostThread(sessionId)) return http.resize(sessionId, cols, rows);
+      return desktop.resize(sessionId, cols, rows);
+    },
+    backlog: async (sessionId) => {
+      if (isHostThread(sessionId)) return http.backlog(sessionId);
+      return desktop.backlog(sessionId);
+    },
+    close: async (sessionId) => {
+      if (isHostThread(sessionId)) return http.close(sessionId);
+      return desktop.close(sessionId);
+    },
+    onData: (cb) => {
+      const offDesktop = desktop.onData(cb);
+      const offHttp = http.onData(cb);
+      return () => {
+        offDesktop();
+        offHttp();
+      };
+    },
+    onExit: (cb) => {
+      const offDesktop = desktop.onExit(cb);
+      const offHttp = http.onExit(cb);
+      return () => {
+        offDesktop();
+        offHttp();
+      };
+    }
+  };
+}

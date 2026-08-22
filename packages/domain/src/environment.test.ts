@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { isValidGitBranchName } from './git-checkout.js';
 import {
   buildManagedBranchName,
+  environmentActionSchema,
   resolveEnvironmentMergeBaseBranch,
   resolveEnvironmentWorkspaceDisplayKind,
   spawnEnvironmentChoiceSchema,
@@ -48,6 +49,6 @@ describe('environment helpers', () => {
   it('parses spawn environment choices and provision types', () => {
     expect(workspaceProvisionTypeSchema.parse('personal')).toBe('personal');
     expect(spawnEnvironmentChoiceSchema.parse({ kind: 'reuse', environmentId: '11111111-1111-4111-8111-111111111111' }).kind).toBe('reuse');
-    expect(workspaceDiffTargetSchema.parse({ type: 'uncommitted' }).type).toBe('uncommitted');
+    expect(environmentActionSchema.parse({ action: 'pull_request_create', title: 'Ship' }).action).toBe('pull_request_create');
   });
 });

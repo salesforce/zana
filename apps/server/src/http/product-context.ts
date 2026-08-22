@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { AppConfig, Project } from '@zana-ai/zcc-domain/product';
@@ -62,9 +63,12 @@ export function createProductHttpContext(
   const hub = createProductHub();
   const db = openDatabase(join(dataDir, 'zcc.sqlite'));
   const hostHub = createHostHub(db, hub);
+  const envToken = process.env.ZCC_HOST_ENROLL_TOKEN;
   const enrollToken = options.enrollToken
-    ?? process.env.ZCC_HOST_ENROLL_TOKEN
+    ?? (envToken && envToken.length >= 16 ? envToken : undefined)
     ?? randomBytes(32).toString('hex');
+  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  writeFileSync(join(dataDir, 'host-enroll.token'), enrollToken, { encoding: 'utf8', mode: 0o600 });
 
   inbox.onAppended((entry) => hub.emit('inbox:appended', entry));
   inbox.onRemoved((id) => hub.emit('inbox:removed', id));

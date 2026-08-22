@@ -6,6 +6,10 @@
  * Isolation model (why the suite never touches your real machine state):
  *   - HOME is a throwaway tmp dir, so every `~/.zcc/*` path the app resolves
  *     (extensions, registry config, inbox, personas, …) lands in the sandbox.
+ *   - ZCC_DATA_DIR is pinned under that HOME so host-daemon enroll/lock does
+ *     not collide with a live developer daemon on `~/.zcc`.
+ *   - `--user-data-dir` is a throwaway dir so a running Zana instance cannot
+ *     steal Electron's single-instance lock and leave Playwright without a window.
  *   - ZCC_EXTENSIONS_DIR is pinned under that HOME for belt-and-suspenders.
  *   - The app runs against the BUILT bundle (out/main/index.js) — the same code
  *     a packaged build runs, minus code-signing.
@@ -188,10 +192,15 @@ export interface LaunchOptions {
 export async function launchApp(home: string, opts: LaunchOptions = {}): Promise<AppHandle> {
   writeAppConfig(home, opts.initialConfig);
   const preserveHome = opts.env?.ZCC_E2E_PRESERVE_HOME === '1';
+  const dataDir = join(home, '.zcc');
+  mkdirSync(dataDir, { recursive: true });
+  const userDataDir = join(home, 'electron-user-data');
+  mkdirSync(userDataDir, { recursive: true });
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
     HOME: preserveHome ? homedir() : home,
     ZCC_E2E_HOME: home,
+    ZCC_DATA_DIR: dataDir,
     ZCC_EXTENSIONS_DIR: join(home, '.zcc', 'extensions'),
     // Electron's unpackaged default is "0.0". The main process uses this only
     // in E2E so the smoke test observes the same version as package.json.
@@ -199,9 +208,19 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
     ...(opts.e2e ? { ZCC_E2E: '1' } : {}),
     ...opts.env,
   };
+  // A parent `electron-vite dev` / leftover diagnostic must not steal this
+  // unpackaged E2E boot onto the live renderer or product server.
+  if (!opts.env?.ELECTRON_RENDERER_URL) delete env.ELECTRON_RENDERER_URL;
+  if (!opts.env?.ZCC_DESKTOP_APP_URL) delete env.ZCC_DESKTOP_APP_URL;
+  if (!opts.env?.ZCC_SERVER_URL) delete env.ZCC_SERVER_URL;
+  if (!opts.env?.ZCC_HOST_ENROLL_TOKEN) delete env.ZCC_HOST_ENROLL_TOKEN;
   if (opts.caCertPath) env.NODE_EXTRA_CA_CERTS = opts.caCertPath;
 
-  const app = await electron.launch({ args: [MAIN_ENTRY], env, timeout: 60_000 });
+  const app = await electron.launch({
+    args: [`--user-data-dir=${userDataDir}`, MAIN_ENTRY],
+    env,
+    timeout: 60_000
+  });
   const window = await appWindow(app);
   await window.waitForSelector('#root', { timeout: 30_000 });
   await dismissConsentOverlays(window);

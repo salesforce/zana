@@ -112,6 +112,20 @@ export async function runEnvironmentAction(ctx: ProductHttpContext, id: string, 
         command: { type: 'workspace.pull_request_merge', ...ctxArgs, method: parsed.data.method }
       });
       return { ok: true as const, action: 'pull_request_merge' as const, method: parsed.data.method, message: 'pull request merged' };
+    case 'pull_request_create': {
+      const result = await ctx.hostHub.callHostOnlineRpc({
+        hostId: environment.hostId,
+        command: {
+          type: 'workspace.pull_request_create',
+          ...ctxArgs,
+          title: parsed.data.title,
+          body: parsed.data.body,
+          base: parsed.data.base,
+          draft: parsed.data.draft
+        }
+      });
+      return { ok: true as const, action: 'pull_request_create' as const, ...(result as object) };
+    }
   }
 }
 

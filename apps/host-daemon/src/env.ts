@@ -278,15 +278,25 @@ function loginShellPath(): string | null {
  * Repair this process's PATH so every downstream spawn (local pty, file
  * openers, scheduler fires) can resolve user-installed CLIs. Idempotent —
  * re-running only re-dedupes. Call once at app startup, before any pty is
- * created. Order: real login-shell PATH first (authoritative), then whatever
- * PATH we were launched with, then the guessed fallback dirs as a backstop, and
- * finally the bundled `zcc` CLI bin dir as the LOWEST-precedence entry.
+ * created.
+ *
+ * Order: launch-only PATH dirs first (E2E fakes such as a stub `gh`), then the
+ * real login-shell PATH (authoritative for Finder/Dock launches), then the
+ * PATH we were launched with, then the guessed fallback dirs, and finally the
+ * bundled `zcc` CLI bin dir as the LOWEST-precedence entry.
  *
  * The `zcc` dir is appended HERE, not in fallbackDirs(): fallbackDirs() also
  * feeds augmentPath(), which composes the REMOTE SSH path, and a local
  * repo/resources path must never leak into a remote session.
  */
+export function launchedPathOverrides(loginPath: string | null | undefined, launchedPath: string | undefined): string {
+  const login = new Set((loginPath ?? '').split(':').filter(Boolean));
+  return (launchedPath ?? '').split(':').filter((dir) => dir.length > 0 && !login.has(dir)).join(':');
+}
+
 export function ensureProcessPath(): void {
-  const base = composePath(loginShellPath(), process.env.PATH, ...fallbackDirs());
+  const login = loginShellPath();
+  const launched = process.env.PATH;
+  const base = composePath(launchedPathOverrides(login, launched), login, launched, ...fallbackDirs());
   process.env.PATH = augmentPathWithZcc(base);
 }

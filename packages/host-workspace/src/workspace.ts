@@ -26,7 +26,7 @@ import {
   ensurePersonalWorkspace,
   removeWorktree
 } from './provisioning.js';
-import { getPullRequestForCurrentBranch, runPullRequestAction } from './git-host.js';
+import { createPullRequest, getPullRequestForCurrentBranch, runPullRequestAction } from './git-host.js';
 import { resolveAdditionalWorkspaceWriteRoots } from './workspace-write-roots.js';
 import { PROJECT_CHECKOUTS_DIR_NAME } from '@zana-ai/zcc-domain';
 import { join } from 'node:path';
@@ -153,6 +153,13 @@ export async function workspacePullRequestAction(
   return runPullRequestAction(path, action);
 }
 
+export async function workspacePullRequestCreate(
+  path: string,
+  opts?: { title?: string; body?: string; base?: string; draft?: boolean }
+) {
+  return createPullRequest(path, opts);
+}
+
 export async function resolveCloneDefaultPath(dataDir: string, projectSlug: string): Promise<string> {
   return join(dataDir, PROJECT_CHECKOUTS_DIR_NAME, projectSlug);
 }
@@ -162,12 +169,13 @@ export async function cloneProject(args: {
   projectSlug: string;
   remoteUrl: string;
   targetPath?: string;
+  onProgress?: (line: string) => void;
 }): Promise<{ path: string; gitRemoteUrl: string | null }> {
   const target = args.targetPath ?? await resolveCloneDefaultPath(args.dataDir, args.projectSlug);
   if (await pathExists(target)) {
     throw new WorkspaceError('clone_target_exists', `clone target already exists: ${target}`);
   }
-  const path = await cloneRepository(args.remoteUrl, target);
+  const path = await cloneRepository(args.remoteUrl, target, args.onProgress);
   return { path, gitRemoteUrl: await inspectOriginUrl(path) };
 }
 

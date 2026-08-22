@@ -20,20 +20,48 @@ import {
   buildManagedBranchName,
   type SpawnEnvironmentChoice
 } from '@zana-ai/zcc-domain';
-import type { Project } from '@zana-ai/zcc-domain/product';
+import type {
+  HarnessModelRoutingV1,
+  Persona,
+  Project,
+  ProjectRemote,
+  SessionCohort
+} from '@zana-ai/zcc-domain/product';
 import { harnessFamilyOf, parseProfile } from '@zana-ai/zcc-domain/launch-provider';
 import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
 import type { ProductHttpContext } from './product-context.js';
 import { unmanagedAttachRefusal } from '../services/threads/workspace-path-claims.js';
 import { resolveManagedTargetPath, resolvePersonalTargetPath } from '../services/threads/worktree-paths.js';
+import { listJsonFiles } from './disk-json.js';
+import { join } from 'node:path';
 
 export interface SpawnThreadInput {
   projectId: string;
   providerId: string;
   input: string[];
   hostId?: string;
+  id?: string;
   environment?: SpawnEnvironmentChoice;
   checkout?: { kind: 'existing'; name: string } | { kind: 'new'; name: string; baseBranch: string };
+  cwd?: string;
+  title?: string;
+  extraArgs?: string[];
+  harnessRouting?: HarnessModelRoutingV1;
+  personaId?: string;
+  headless?: boolean;
+  scheduled?: boolean;
+  autoCloseOnFinish?: boolean;
+  inboxLevel?: 'silent' | 'quiet' | 'loud';
+  autonomous?: boolean;
+  resumeSessionId?: string;
+  executionEnvironment?: 'local' | 'sandbox' | 'microvm';
+  sandboxDenyNetwork?: boolean;
+  microVmImage?: string;
+  microVmCpus?: number;
+  microVmMemoryMib?: number;
+  reconnectTmuxId?: string;
+  resume?: boolean;
+  cohort?: SessionCohort;
 }
 
 export class ThreadCreateError extends Error {
@@ -47,13 +75,10 @@ export class ThreadCreateError extends Error {
   }
 }
 
-function requireLocalProject(ctx: ProductHttpContext, projectId: string): Project {
+function requireProject(ctx: ProductHttpContext, projectId: string): Project {
   const project = ctx.toProjects().find((row) => row.id === projectId);
   if (!project) {
     throw new ThreadCreateError(404, 'unknown-project', 'project is not registered');
-  }
-  if (project.remote) {
-    throw new ThreadCreateError(403, 'remote-unsupported', 'remote projects cannot spawn loopback threads');
   }
   if (!project.path || project.path.length === 0) {
     throw new ThreadCreateError(403, 'cwd-escape', 'project path is not a confined directory');
@@ -61,9 +86,48 @@ function requireLocalProject(ctx: ProductHttpContext, projectId: string): Projec
   return project;
 }
 
-export function resolveProviderFamily(providerId: string): ReturnType<typeof harnessFamilyOf> {
+export function resolveProviderFamily(providerId: string): ReturnType<typeof harnessFamilyOf> | 'shell' {
   const profile = parseProfile(providerId);
-  return profile ? harnessFamilyOf(profile) : null;
+  if (!profile) return null;
+  if (profile === 'shell') return 'shell';
+  return harnessFamilyOf(profile);
+}
+
+type CompactPersona = {
+  id: string;
+  name: string;
+  baseProfile?: string;
+  model?: string;
+  permissionMode?: Persona['permissionMode'];
+  appendSystemPrompt?: string;
+  allowedTools?: string[];
+  deniedTools?: string[];
+  addDirs?: string[];
+  mcpServers?: string[];
+  initialPrompt?: string;
+};
+
+function compactPersona(persona: Persona): CompactPersona {
+  return {
+    id: persona.id,
+    name: persona.name,
+    baseProfile: persona.baseProfile,
+    model: persona.model,
+    permissionMode: persona.permissionMode,
+    appendSystemPrompt: persona.appendSystemPrompt,
+    allowedTools: persona.allowedTools,
+    deniedTools: persona.deniedTools,
+    addDirs: persona.addDirs,
+    mcpServers: persona.mcpServers,
+    initialPrompt: persona.initialPrompt
+  };
+}
+
+function resolvePersona(ctx: ProductHttpContext, personaId?: string): ReturnType<typeof compactPersona> | undefined {
+  if (!personaId) return undefined;
+  const personas = listJsonFiles(join(ctx.dataDir, 'personas')) as Persona[];
+  const persona = personas.find((row) => row.id === personaId);
+  return persona ? compactPersona(persona) : undefined;
 }
 
 function mapHostError(error: unknown): ThreadCreateError {
@@ -78,6 +142,7 @@ function mapHostError(error: unknown): ThreadCreateError {
     const message = error instanceof Error ? error.message : String(error);
     if (code === 'path_not_found') return new ThreadCreateError(400, code, message);
     if (code === 'provider_unavailable') return new ThreadCreateError(503, code, message);
+    if (code === 'cwd-escape') return new ThreadCreateError(403, code, message);
     return new ThreadCreateError(502, code, message);
   }
   return new ThreadCreateError(500, 'thread-create-failed', error instanceof Error ? error.message : String(error));
@@ -118,6 +183,18 @@ function provisionCommandFor(
   };
 }
 
+function threadTitle(input: SpawnThreadInput, prompt: string[]): string {
+  if (input.title?.trim()) return input.title.trim().slice(0, 120);
+  if (prompt[0]) return prompt[0].slice(0, 120);
+  return parseProfile(input.providerId) === 'shell' ? 'Shell' : 'Agent';
+}
+
+const THREAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function requestedThreadId(input: SpawnThreadInput): string | undefined {
+  return input.id && THREAD_ID_RE.test(input.id) ? input.id : undefined;
+}
+
 export async function createThreadFromRequest(
   ctx: ProductHttpContext,
   input: SpawnThreadInput
@@ -129,11 +206,8 @@ export async function createThreadFromRequest(
     throw new ThreadCreateError(400, 'invalid-provider', 'providerId is required');
   }
   const prompt = input.input.map((part) => part.trim()).filter((part) => part.length > 0);
-  if (prompt.length === 0) {
-    throw new ThreadCreateError(400, 'invalid-input', 'input is required');
-  }
 
-  const project = requireLocalProject(ctx, input.projectId);
+  const project = requireProject(ctx, input.projectId);
   let hostId: string;
   try {
     hostId = ctx.hostHub.resolveHostId(input.hostId);
@@ -142,7 +216,14 @@ export async function createThreadFromRequest(
     throw mapHostError(error);
   }
 
-  const choice: SpawnEnvironmentChoice = input.environment ?? { kind: 'unmanaged' };
+  let choice: SpawnEnvironmentChoice = input.environment ?? { kind: 'unmanaged' };
+  if (project.remote) {
+    if (choice.kind !== 'unmanaged') {
+      throw new ThreadCreateError(403, 'remote-unsupported', 'remote projects can only use this checkout');
+    }
+    choice = { kind: 'unmanaged' };
+  }
+
   if (choice.kind === 'unmanaged' || input.checkout) {
     const refusal = unmanagedAttachRefusal(ctx.db, {
       dataDir: ctx.dataDir,
@@ -165,15 +246,16 @@ export async function createThreadFromRequest(
       throw new ThreadCreateError(409, 'environment_not_ready', 'environment is not ready');
     }
     const thread = createThread(ctx.db, {
+      id: requestedThreadId(input),
       projectId: project.id,
       hostId,
       environmentId: existing.id,
       providerId: input.providerId,
-      title: prompt[0]!.slice(0, 120),
+      title: threadTitle(input, prompt),
       status: 'starting'
     });
     try {
-      await startThreadOnHost(ctx, { hostId, project, thread, prompt, environmentId: existing.id, providerId: input.providerId });
+      await startThreadOnHost(ctx, { hostId, project, thread, prompt, environmentId: existing.id, input });
       const running = updateThreadStatus(ctx.db, thread.id, 'running') ?? thread;
       ctx.hub.emit('threads:updated', running);
       return running;
@@ -204,11 +286,12 @@ export async function createThreadFromRequest(
       status: 'provisioning'
     });
     const thread = createThread(ctx.db, {
+      id: requestedThreadId(input),
       projectId: project.id,
       hostId,
       environmentId: environment.id,
       providerId: input.providerId,
-      title: prompt[0]!.slice(0, 120),
+      title: threadTitle(input, prompt),
       status: 'starting'
     });
     return { environment, thread };
@@ -238,7 +321,7 @@ export async function createThreadFromRequest(
       thread: created.thread,
       prompt,
       environmentId: created.environment.id,
-      providerId: input.providerId
+      input
     });
     const running = updateThreadStatus(ctx.db, created.thread.id, 'running') ?? created.thread;
     ctx.hub.emit('threads:updated', running);
@@ -259,18 +342,28 @@ async function startThreadOnHost(
     thread: ThreadRow;
     prompt: string[];
     environmentId: string;
-    providerId: string;
+    input: SpawnThreadInput;
   }
 ): Promise<void> {
   const status = await ctx.hostHub.callHostOnlineRpc<ProviderStatusResult>({
     hostId: args.hostId,
     command: { type: 'provider.status' }
   });
-  const family = resolveProviderFamily(args.providerId);
-  const provider = status.providers.find((entry) => entry.family === family);
-  if (!family || !provider?.installed || !provider.enabled) {
-    throw new ThreadCreateError(503, 'provider_unavailable', `provider ${args.providerId} is not available on that host`);
+  const family = resolveProviderFamily(args.input.providerId);
+  if (family !== 'shell') {
+    const provider = status.providers.find((entry) => entry.family === family);
+    if (!family || !provider?.installed || !provider.enabled) {
+      throw new ThreadCreateError(503, 'provider_unavailable', `provider ${args.input.providerId} is not available on that host`);
+    }
   }
+  const remote: ProjectRemote | undefined = args.project.remote
+    ? {
+        host: args.project.remote.host,
+        user: args.project.remote.user,
+        remotePath: args.project.remote.remotePath,
+        proxyJump: args.project.remote.proxyJump
+      }
+    : undefined;
   await ctx.hostHub.callHostOnlineRpc<ThreadStartResult>({
     hostId: args.hostId,
     command: {
@@ -278,8 +371,28 @@ async function startThreadOnHost(
       threadId: args.thread.id,
       environmentId: args.environmentId,
       projectId: args.project.id,
-      providerId: args.providerId,
-      input: args.prompt
+      providerId: args.input.providerId,
+      input: args.prompt,
+      cwd: remote ? undefined : args.input.cwd,
+      title: args.thread.title ?? undefined,
+      extraArgs: args.input.extraArgs,
+      harnessRouting: args.input.harnessRouting,
+      persona: resolvePersona(ctx, args.input.personaId),
+      headless: args.input.headless,
+      scheduled: args.input.scheduled,
+      autoCloseOnFinish: args.input.autoCloseOnFinish,
+      inboxLevel: args.input.inboxLevel,
+      autonomous: args.input.autonomous,
+      resumeSessionId: args.input.resumeSessionId,
+      environment: remote ? undefined : args.input.executionEnvironment,
+      sandboxDenyNetwork: args.input.sandboxDenyNetwork,
+      microVmImage: args.input.microVmImage,
+      microVmCpus: args.input.microVmCpus,
+      microVmMemoryMib: args.input.microVmMemoryMib,
+      remote,
+      reconnectTmuxId: args.input.reconnectTmuxId,
+      resume: args.input.resume,
+      cohort: args.input.cohort
     }
   });
 }

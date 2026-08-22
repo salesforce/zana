@@ -14,6 +14,30 @@ export interface HostThreadView {
   isWorktree?: boolean;
 }
 
+const hostThreadIds = new Set<string>();
+
+export function rememberHostThread(id: string): void {
+  hostThreadIds.add(id);
+}
+
+export function forgetHostThread(id: string): void {
+  hostThreadIds.delete(id);
+}
+
+export function isHostThread(id: string): boolean {
+  return hostThreadIds.has(id);
+}
+
+export function hostThreadAgentState(
+  threadStatus: string
+): 'working' | 'done' | 'unknown' {
+  if (threadStatus === 'completed' || threadStatus === 'failed' || threadStatus === 'disconnected') {
+    return 'done';
+  }
+  if (threadStatus === 'starting' || threadStatus === 'running') return 'working';
+  return 'unknown';
+}
+
 export function sessionFromHostThread(
   thread: HostThreadView,
   project?: { path?: string }
@@ -23,6 +47,7 @@ export function sessionFromHostThread(
     || thread.status === 'completed'
     || thread.status === 'disconnected';
   const cwd = thread.cwd ?? project?.path ?? '';
+  rememberHostThread(thread.id);
   return {
     id: thread.id,
     projectId: thread.projectId,

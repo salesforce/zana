@@ -12,7 +12,7 @@ describe('AgentsBoard', () => {
     expect(workspace).toContain('<AgentsBoard scope={{ kind: \'project\', project }} />');
     expect(board).not.toContain('<AgentLauncher');
     expect(board).toContain('setLauncherOpen(true)');
-    expect(app).toContain('onLaunched={nav === \'agents\' ? stayOnAgentsBoard : undefined}');
+    expect(app).toContain('onLaunched={stayOnAgentsBoard}');
     expect(app).toContain('{launcherOpen && (nav !== \'projects\' || !focusedProjectId) && (');
     expect(app).not.toContain("nav !== 'home'");
   });

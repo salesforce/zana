@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { startStaticHost, type StaticHost } from '@zana-ai/zcc-server/static-host';
 import { startHostDaemon, type HostDaemon } from '@zana-ai/zcc-host-daemon';
 import { createLocalPtyTerminalManager } from '@zana-ai/zcc-host-daemon';
+import { readEnrollToken } from '@zana-ai/zcc-host-daemon/enroll-runtime';
 import { createTerminalExecutionService } from '@zana-ai/zcc-server/terminal-execution-service';
 import { TerminalSessionService } from '@zana-ai/zcc-server/terminal-session-service';
 import { defaultBundledRoot } from '@zana-ai/zcc-server/plugins/plugin-service';
@@ -166,6 +167,7 @@ export async function startRuntimeSupervisor(options: StartRuntimeSupervisorOpti
 interface UtilityChild {
   postMessage(message: unknown): void;
   on(event: 'message', listener: (message: unknown) => void): void;
+  on(event: 'error', listener: (error: Error) => void): void;
   once(event: 'exit', listener: () => void): void;
   once(event: 'spawn', listener: () => void): void;
   kill(): void;
@@ -189,44 +191,113 @@ interface UtilityRuntime {
   stop(): Promise<void>;
 }
 
+function processEnvRecord(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value === 'string') env[key] = value;
+  }
+  return env;
+}
+
 function startUtility(
   entry: string,
   startMessage: unknown
 ): Promise<{ child: UtilityChild; url: string; hostId?: string; instanceId?: string }> {
   return new Promise((resolveReady, rejectReady) => {
-    const child = utilityProcess.fork(entry, [], { serviceName: `zcc-${entry}` });
+    const child = utilityProcess.fork(entry, [], {
+      serviceName: `zcc-${entry}`,
+      env: processEnvRecord()
+    });
     let ready = false;
-    const timer = setTimeout(() => reject(new Error('runtime child start timed out')), 15_000);
-    const reject = (error: Error) => {
+    let settled = false;
+    const finish = (
+      error?: Error,
+      value?: { child: UtilityChild; url: string; hostId?: string; instanceId?: string }
+    ) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      child.kill();
-      rejectReady(error);
+      if (error) {
+        child.kill();
+        rejectReady(error);
+        return;
+      }
+      ready = true;
+      resolveReady(value!);
     };
+    const timer = setTimeout(() => finish(new Error('runtime child start timed out')), 15_000);
     child.once('exit', () => {
-      if (!ready) reject(new Error('runtime child exited before ready'));
+      if (!ready) finish(new Error('runtime child exited before ready'));
+    });
+    child.on('error', (error) => {
+      finish(error instanceof Error ? error : new Error(String(error)));
     });
     child.on('message', (message: unknown) => {
+      if (ready || settled) return;
       const data = message as { type?: string; protocolVersion?: number; url?: string; message?: string; hostId?: string; instanceId?: string };
+      if (data.type === 'error') {
+        finish(new Error(data.message ?? 'runtime child failed'));
+        return;
+      }
       if (data.protocolVersion !== SERVER_RUNTIME_PROTOCOL_VERSION) {
-        reject(new Error('runtime child protocol version mismatch'));
+        finish(new Error('runtime child protocol version mismatch'));
         return;
       }
       if (data.type === 'ready' && data.url) {
-        ready = true;
-        clearTimeout(timer);
-        resolveReady({ child, url: data.url, hostId: data.hostId, instanceId: data.instanceId });
-      } else if (data.type === 'error') {
-        reject(new Error(data.message ?? 'runtime child failed'));
+        finish(undefined, { child, url: data.url, hostId: data.hostId, instanceId: data.instanceId });
       }
     });
     child.once('spawn', () => child.postMessage(startMessage));
   });
 }
 
+function enrollHostUtility(
+  child: UtilityChild,
+  input: { serverUrl: string; token: string; dataDir: string }
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve();
+    };
+    const timer = setTimeout(() => finish(new Error('host enroll timed out')), 15_000);
+    const onMessage = (message: unknown) => {
+      const data = message as { type?: string; message?: string };
+      if (data.type === 'enrolled') {
+        finish();
+        return;
+      }
+      if (data.type === 'error') {
+        finish(new Error(data.message ?? 'host enroll failed'));
+      }
+    };
+    child.on('message', onMessage);
+    child.postMessage({
+      type: 'enroll',
+      protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+      serverUrl: input.serverUrl,
+      token: input.token,
+      dataDir: input.dataDir,
+      path: process.env.PATH,
+      ghBinary: process.env.ZCC_GH_BINARY
+    });
+  });
+}
+
 async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { token: string; signingKey: string; hostId: string }): Promise<RuntimeSupervisor> {
   const runtimeDir = options.runtimeDir!;
   const host = await startUtility(join(runtimeDir, 'host-runtime.js'), {
-    type: 'start', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, token: options.token, signingKey: options.signingKey, hostId: options.hostId
+    type: 'start',
+    protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+    token: options.token,
+    signingKey: options.signingKey,
+    hostId: options.hostId,
+    path: process.env.PATH,
+    ghBinary: process.env.ZCC_GH_BINARY
   });
   let renderer: { child: UtilityChild; url: string; hostId?: string; instanceId?: string };
   try {
@@ -246,6 +317,23 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
   } catch (error) {
     host.child.kill();
     throw error;
+  }
+  if (!options.dataDir) {
+    host.child.kill();
+    renderer.child.kill();
+    throw new Error('runtime dataDir is required to enroll the host daemon');
+  }
+  try {
+    await enrollHostUtility(host.child, {
+      serverUrl: renderer.url,
+      token: readEnrollToken(options.dataDir),
+      dataDir: options.dataDir
+    });
+  } catch (error) {
+    // The renderer can still boot; thread spawn surfaces host-unavailable if
+    // the handshake never completes. Blocking the window here makes Electron
+    // E2E hang in firstWindow() with no diagnostic.
+    console.error('host daemon enroll failed', error);
   }
   const server = createUtilityRuntime(renderer);
   const hostRuntime = createUtilityRuntime(host);
@@ -385,10 +473,10 @@ function createUtilityRuntime(runtime: { child: UtilityChild; url: string }): Ut
         const timer = setTimeout(() => {
           pending.delete(id);
           rejectResult(new Error(`server ${operation} request timed out`));
-        }, 5_000);
+        }, 20_000);
         pending.set(id, { resolve: resolveResult, reject: rejectResult, timer });
         runtime.child.postMessage({
-          type: 'request', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id, operation, deadlineAt: new Date(Date.now() + 5_000).toISOString(),
+          type: 'request', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id, operation, deadlineAt: new Date(Date.now() + 20_000).toISOString(),
           ...(operation === 'terminal-execute' ? { command: args[0] as TerminalRequestCommand } : {}),
           ...(operation === 'terminal-record' ? { event: args[0] as TerminalHostEvent } : {}),
           ...(operation === 'terminal-events-since' ? {

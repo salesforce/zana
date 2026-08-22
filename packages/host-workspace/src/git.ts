@@ -380,12 +380,48 @@ export async function squashMergeInto(
   return { merged: true, ...committed };
 }
 
-export async function cloneRepository(remoteUrl: string, targetPath: string): Promise<string> {
+export async function cloneRepository(
+  remoteUrl: string,
+  targetPath: string,
+  onProgress?: (line: string) => void
+): Promise<string> {
   if (await pathExists(targetPath)) {
     throw new WorkspaceError('clone_target_exists', `clone target already exists: ${targetPath}`);
   }
   await mkdir(dirname(targetPath), { recursive: true, mode: 0o700 });
-  await runGit(dirname(targetPath), ['clone', remoteUrl, targetPath], { timeoutMs: 20 * 60 * 1000 });
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn('git', ['clone', '--progress', remoteUrl, targetPath], {
+      cwd: dirname(targetPath),
+      env: gitChildEnv(),
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let leftover = '';
+    const onChunk = (buf: Buffer) => {
+      leftover += buf.toString('utf8');
+      const parts = leftover.split(/\r|\n/);
+      leftover = parts.pop() ?? '';
+      for (const line of parts) {
+        const trimmed = line.trim();
+        if (trimmed) onProgress?.(trimmed);
+      }
+    };
+    child.stdout.on('data', onChunk);
+    child.stderr.on('data', onChunk);
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new WorkspaceError('git_failed', 'git clone timed out'));
+    }, 20 * 60 * 1000);
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      reject(new WorkspaceError('git_failed', error instanceof Error ? error.message : String(error)));
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (leftover.trim()) onProgress?.(leftover.trim());
+      if (code === 0) resolve();
+      else reject(new WorkspaceError('git_failed', `git clone exited ${code ?? 'null'}`));
+    });
+  });
   return targetPath;
 }
 

@@ -19,6 +19,7 @@ export type ProductEventType =
   | 'personas:changed'
   | 'threads:updated'
   | 'threads:event'
+  | 'projects:cloneProgress'
   | 'library:changed';
 
 export interface ProductEvent {

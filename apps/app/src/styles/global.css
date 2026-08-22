@@ -1936,7 +1936,13 @@ body.resizing-sidebar-section .sidebar-agents-resizer::after {
 }
 
 .sidebar-projects .project-terminals {
-  margin: 3px 3px 6px 38px;
+  /* Sit just past the project color-dot, not under the name. The old 38px
+     inset plus the nested-panel padding ate a full icon column in the rail. */
+  margin: 1px 0 4px 8px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 0;
 }
 
 .project-actions {
@@ -2450,24 +2456,11 @@ body.resizing-col {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  /* Inset panel under the parent project: deeply indented and rounded so the
-     agent rows read as a distinct nested group. A faint diagonal stripe
-     ("rayé") fill distinguishes the panel from a solid selection highlight —
-     it reads as a container, not a selected row. The left margin clears the
-     project dot, aligning the panel under the name. */
-  margin: 3px 6px 8px 34px;
-  padding: 5px;
+  /* Short tree indent under the parent project — enough to read as nested,
+     not a second padded panel. */
+  margin: 1px 0 4px 12px;
+  padding: 0;
   position: relative;
-  background-color: rgba(255, 255, 255, 0.015);
-  background-image: repeating-linear-gradient(
-    -45deg,
-    rgba(255, 255, 255, 0.035) 0,
-    rgba(255, 255, 255, 0.035) 1px,
-    transparent 1px,
-    transparent 7px
-  );
-  border-radius: 6px;
-  border: 1px solid var(--border-subtle);
 }
 
 .project-terminal-row {
@@ -21025,48 +21018,220 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
   gap: 8px;
 }
 
+/* Workspace git strip in the agent detail panel. Echoes .agent-detail-insights
+   (uppercase label + hairline) and reuses .agent-monitor-action so the buttons
+   match Stop / Restart below. */
 .environment-actions {
-  display: grid;
-  gap: 8px;
-  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 12px;
   border-top: 1px solid var(--border);
-  font-size: 12px;
 }
 
-.environment-actions header {
+.environment-actions-head {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.environment-actions-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.environment-actions-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
   color: var(--text-muted);
 }
 
+.environment-actions-status::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.environment-actions-status.is-clean {
+  color: var(--success);
+}
+
+.environment-actions-status.is-clean::before {
+  background: var(--success);
+}
+
+.environment-actions-status.is-dirty {
+  color: var(--accent-gold);
+}
+
+.environment-actions-status.is-dirty::before {
+  background: var(--accent-gold);
+}
+
+.environment-actions-status.is-pending {
+  color: var(--text-dim);
+}
+
+.environment-actions-branch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.environment-actions-branch svg {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+.environment-actions-branch-name {
+  font-family: var(--font-mono, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.environment-actions-ab {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
 .environment-changes {
+  list-style: none;
   margin: 0;
-  padding-left: 16px;
-  color: var(--text-secondary);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.environment-change {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.environment-change-name {
+  font-family: var(--font-mono, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.environment-change-kind {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+
+.environment-change.is-modified .environment-change-name,
+.environment-change.is-modified .environment-change-kind {
+  color: var(--accent-gold);
+}
+
+.environment-change.is-added .environment-change-name,
+.environment-change.is-added .environment-change-kind,
+.environment-change.is-untracked .environment-change-name,
+.environment-change.is-untracked .environment-change-kind,
+.environment-change.is-copied .environment-change-name,
+.environment-change.is-copied .environment-change-kind {
+  color: var(--success);
+}
+
+.environment-change.is-deleted .environment-change-name,
+.environment-change.is-deleted .environment-change-kind {
+  color: var(--danger);
+  text-decoration: line-through;
+}
+
+.environment-change.is-renamed .environment-change-name,
+.environment-change.is-renamed .environment-change-kind {
+  color: var(--accent-blue);
+}
+
+.environment-change-more {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding-left: 0;
 }
 
 .environment-action-row {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 6px;
-  align-items: center;
 }
 
-.environment-action-row button {
-  font: inherit;
-  font-size: 11px;
-  padding: 4px 8px;
-  border-radius: 5px;
-  border: 1px solid var(--border-strong);
-  background: var(--bg-panel);
+.environment-action-row .agent-monitor-action {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.environment-pr-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 2px 4px;
+  font-size: 12px;
   color: var(--text-primary);
+  text-decoration: none;
+}
+
+.environment-pr-link:hover {
+  color: var(--accent-blue);
+}
+
+.environment-pr-link svg {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+.environment-pr-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.environment-pr-state {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.environment-pr-state.is-draft {
+  color: var(--accent-gold);
 }
 
 .environment-transcript {
   margin: 0;
   max-height: 120px;
   overflow: auto;
+  padding: 8px 9px;
+  border-radius: 6px;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
   font-size: 11px;
   white-space: pre-wrap;
   color: var(--text-muted);
@@ -21074,6 +21239,7 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
 
 .environment-action-message {
   margin: 0;
+  font-size: 11px;
   color: var(--text-muted);
 }
 

@@ -46,7 +46,7 @@ const createScratchSubfolder = vi.fn(() => '/tmp/proj/scratch');
 // Capture every ptys.create() call so we can assert what reaches the pty layer.
 const createCalls: Array<{ cwd: string; extraArgs?: string[]; profile: string; persona: unknown }> = [];
 
-vi.mock('../pty.js', () => {
+vi.mock('@zana-ai/zcc-host-daemon/pty', () => {
   class PtyManager {
     setMcpBaseUrl() {}
     setProjectRoots() {}
@@ -73,7 +73,7 @@ vi.mock('../pty.js', () => {
   };
 });
 
-vi.mock('../store.js', () => ({
+vi.mock('@zana-ai/zcc-server/services/projects/store', () => ({
   store: {
     listProjects: () => projects,
     getConfig: () => CONFIG,
@@ -123,7 +123,7 @@ vi.mock('../updater.js', () => ({
 }));
 
 // Avoid writing a real ~/.zcc/mcp file if any claude-profile path touches it.
-vi.mock('-ai/zcc-host-daemon/mcp-config', () => ({
+vi.mock('@zana-ai/zcc-host-daemon/mcp-config', () => ({
   ensureMcpConfigForProject: () => '/tmp/p1/.mcp.json',
   ensureMcpConfigForProjectSync: () => '/tmp/p1/.mcp.json'
 }));
@@ -148,29 +148,28 @@ describe('sanitizeRendererTerminalRequest', () => {
 });
 
 describe('resolveWorktreeForRequest', () => {
-  it('fails closed for an explicit unusable name', async () => {
+  it('strips leftover Electron worktree mint intent', async () => {
     const result = await resolveWorktreeForRequest({
-      projectId: 'p1', profile: 'claude', cols: 80, rows: 24, worktree: { branch: '///' }
-    });
-    expect(result).toEqual({ ok: false, code: 'INVALID', message: 'Worktree name required.' });
-  });
-
-  it('keeps legacy boolean intent compatible when project is not a git repo', async () => {
-    const request = {
-      projectId: 'p1', profile: 'claude' as const, cols: 80, rows: 24, worktree: true
-    };
-    expect(await resolveWorktreeForRequest(request)).toEqual({ ok: true, value: request });
-  });
-
-  it('fails visibly for named intent when project is not a git repo', async () => {
-    const result = await resolveWorktreeForRequest({
-      projectId: 'p1', profile: 'claude', cols: 80, rows: 24,
-      worktree: { branch: 'task' }
+      projectId: 'p1', profile: 'claude', cols: 80, rows: 24, worktree: { branch: 'task' }
     });
     expect(result).toEqual({
-      ok: false,
-      code: 'WORKTREE_UNAVAILABLE',
-      message: 'Worktree isolation requires a Git repository.'
+      ok: true,
+      value: { projectId: 'p1', profile: 'claude', cols: 80, rows: 24 }
+    });
+  });
+
+  it('strips boolean worktree intent and any smuggled worktreeInfo', async () => {
+    const result = await resolveWorktreeForRequest({
+      projectId: 'p1',
+      profile: 'claude',
+      cols: 80,
+      rows: 24,
+      worktree: true,
+      worktreeInfo: { path: '/tmp/zcc-worktrees/task', branch: 'zcc/task' }
+    });
+    expect(result).toEqual({
+      ok: true,
+      value: { projectId: 'p1', profile: 'claude', cols: 80, rows: 24 }
     });
   });
 });

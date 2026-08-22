@@ -57,6 +57,8 @@ selected harness** with its native behavior, tools, and permissions.
   current project.
 - The session starts in the project's directory, so the selected harness sees
   the right files immediately.
+- On a local git project the composer can also open a **New worktree** instead
+  of sharing the checkout. See [Environments](/docs/using-zana/#environments).
 - Type your task and let it work — exactly as you would in a standalone
   terminal.
 

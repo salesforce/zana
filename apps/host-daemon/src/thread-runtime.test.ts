@@ -15,6 +15,9 @@ const creates: Array<{
 const replies: Array<{ id: string; text: string }> = [];
 const resizes: Array<{ id: string; cols: number; rows: number }> = [];
 
+const writes: Array<{ id: string; data: string }> = [];
+const closes: string[] = [];
+
 vi.mock('./pty.js', () => ({
   PtyManager: class {
     setProjectRoots(): void {}
@@ -25,6 +28,9 @@ vi.mock('./pty.js', () => ({
       profile: string;
       cwd: string;
       extraArgs?: string[];
+      remote?: unknown;
+      reconnectTmuxId?: string;
+      title?: string;
     }) {
       creates.push(opts);
       return { id: opts.preallocatedSessionId ?? 'sid' };
@@ -35,6 +41,12 @@ vi.mock('./pty.js', () => ({
     }
     resize(id: string, cols: number, rows: number): void {
       resizes.push({ id, cols, rows });
+    }
+    write(id: string, data: string): void {
+      writes.push({ id, data });
+    }
+    close(id: string): void {
+      closes.push(id);
     }
     killAll(): void {}
   }
@@ -56,6 +68,8 @@ describe('pty thread adapter', () => {
     creates.length = 0;
     replies.length = 0;
     resizes.length = 0;
+    writes.length = 0;
+    closes.length = 0;
     const cwd = mkdtempSync(join(tmpdir(), 'zcc-thread-rt-'));
     const threadId = randomUUID();
     const adapter = createPtyThreadAdapter({
@@ -79,6 +93,10 @@ describe('pty thread adapter', () => {
     expect(replies).toEqual([{ id: threadId, text: 'continue' }]);
     await adapter.resizeWork({ threadId, cols: 120, rows: 40 });
     expect(resizes).toEqual([{ id: threadId, cols: 120, rows: 40 }]);
+    await adapter.writeWork({ threadId, data: '\x03' });
+    expect(writes).toEqual([{ id: threadId, data: '\x03' }]);
+    await adapter.stopWork({ threadId });
+    expect(closes).toEqual([threadId]);
     adapter.dispose();
   });
 
@@ -94,6 +112,74 @@ describe('pty thread adapter', () => {
       cwd: mkdtempSync(join(tmpdir(), 'zcc-thread-rt-')),
       input: ['hello']
     })).rejects.toMatchObject({ code: 'provider_unavailable' });
+    adapter.dispose();
+  });
+
+  it('starts a remote reconnect through PtyManager.create', async () => {
+    creates.length = 0;
+    const cwd = mkdtempSync(join(tmpdir(), 'zcc-thread-rt-remote-'));
+    const threadId = randomUUID();
+    const adapter = createPtyThreadAdapter({
+      loadConfig: () => config,
+      emit: () => {}
+    });
+    await adapter.startWork({
+      threadId,
+      projectId: 'proj-1',
+      providerId: 'claude',
+      cwd,
+      input: [],
+      remote: { host: 'box.example', user: 'me', remotePath: '/src' },
+      reconnectTmuxId: threadId,
+      resume: true
+    });
+    expect(creates).toEqual([expect.objectContaining({
+      preallocatedSessionId: threadId,
+      remote: { host: 'box.example', user: 'me', remotePath: '/src' },
+      reconnectTmuxId: threadId
+    })]);
+    adapter.dispose();
+  });
+
+  it('starts a shell with an empty prompt and writes raw bytes', async () => {
+    creates.length = 0;
+    writes.length = 0;
+    const cwd = mkdtempSync(join(tmpdir(), 'zcc-thread-rt-shell-'));
+    const threadId = randomUUID();
+    const adapter = createPtyThreadAdapter({
+      loadConfig: () => config,
+      emit: () => {}
+    });
+    await adapter.startWork({
+      threadId,
+      projectId: 'proj-1',
+      providerId: 'shell',
+      cwd,
+      input: []
+    });
+    expect(creates[0]).toMatchObject({
+      profile: 'shell',
+      extraArgs: []
+    });
+    adapter.dispose();
+  });
+
+  it('strips denied extraArgs before they reach PtyManager.create', async () => {
+    creates.length = 0;
+    const cwd = mkdtempSync(join(tmpdir(), 'zcc-thread-rt-deny-'));
+    const adapter = createPtyThreadAdapter({
+      loadConfig: () => config,
+      emit: () => {}
+    });
+    await adapter.startWork({
+      threadId: randomUUID(),
+      projectId: 'proj-1',
+      providerId: 'claude',
+      cwd,
+      input: ['do work'],
+      extraArgs: ['--model', 'opus', '--dangerously-skip-permissions', '--mcp-config', '/tmp/evil.json']
+    });
+    expect(creates[0]?.extraArgs).toEqual(['--model', 'opus', 'do work']);
     adapter.dispose();
   });
 

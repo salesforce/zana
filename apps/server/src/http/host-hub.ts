@@ -192,6 +192,15 @@ export function createHostHub(db: ZccDatabase, hub: ProductHub) {
     let accepted = 0;
     db.transaction(() => {
       batch.events.forEach((event, index) => {
+        if (event.kind === 'project.clone.progress') {
+          accepted += 1;
+          hub.emit('projects:cloneProgress', event.payload);
+          return;
+        }
+        if (!event.threadId) {
+          rejected.push({ index, reason: 'unknown_thread' });
+          return;
+        }
         const thread = getThread(db, event.threadId);
         if (!thread || thread.hostId !== session.hostId) {
           rejected.push({ index, reason: 'unknown_thread' });
@@ -224,7 +233,9 @@ export function createHostHub(db: ZccDatabase, hub: ProductHub) {
     }
     if (accepted > 0) {
       const statusChanged = batch.events.some((event, index) => (
-        event.kind !== 'terminal.output' && !rejected.some((row) => row.index === index)
+        event.kind !== 'terminal.output'
+        && event.kind !== 'project.clone.progress'
+        && !rejected.some((row) => row.index === index)
       ));
       if (statusChanged) hub.emit('threads:updated', { hostId: session.hostId });
     }

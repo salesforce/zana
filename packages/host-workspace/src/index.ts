@@ -9,6 +9,7 @@ export {
   workspaceBranches,
   workspacePullRequest,
   workspacePullRequestAction,
+  workspacePullRequestCreate,
   resolveCloneDefaultPath,
   cloneProject,
   resolveAdditionalWorkspaceWriteRoots

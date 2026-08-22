@@ -20,32 +20,57 @@ export async function startEnrolledHostDaemon(options: {
   hostName?: string;
 }): Promise<EnrolledHostDaemon> {
   const releaseLock = acquireDaemonLock(options.dataDir);
-  const instanceId = randomUUID();
-  const requestedHostId = resolveHostId(options.dataDir);
-  const enrolled = await enrollDaemonHost({
-    serverUrl: options.serverUrl,
-    token: options.token,
-    hostName: options.hostName ?? detectHostName(),
-    instanceId,
-    hostId: requestedHostId
-  });
-  persistHostId(options.dataDir, enrolled.hostId);
-  const connection = startEnrolledHostConnection({
-    serverUrl: options.serverUrl,
-    hostId: enrolled.hostId,
-    hostKey: enrolled.hostKey,
-    instanceId,
-    dataDir: options.dataDir
-  });
-  return {
-    hostId: enrolled.hostId,
-    instanceId,
-    connection,
-    async close() {
+  try {
+    const instanceId = randomUUID();
+    const requestedHostId = resolveHostId(options.dataDir);
+    const enrolled = await enrollDaemonHost({
+      serverUrl: options.serverUrl,
+      token: options.token,
+      hostName: options.hostName ?? detectHostName(),
+      instanceId,
+      hostId: requestedHostId
+    });
+    persistHostId(options.dataDir, enrolled.hostId);
+    const connection = startEnrolledHostConnection({
+      serverUrl: options.serverUrl,
+      hostId: enrolled.hostId,
+      hostKey: enrolled.hostKey,
+      instanceId,
+      dataDir: options.dataDir
+    });
+    void connection.ready.catch(() => {
+      /* close() may reject after a timeout wins the race */
+    });
+    let openTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        connection.ready,
+        new Promise<never>((_, reject) => {
+          openTimer = setTimeout(() => reject(new Error('host websocket did not open')), 10_000);
+        })
+      ]);
+      // Hello is processed on the server in another process; wait one local RTT
+      // so hostHub.sessions is populated before the first thread.create.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    } catch (error) {
       await connection.close();
-      releaseLock();
+      throw error;
+    } finally {
+      if (openTimer) clearTimeout(openTimer);
     }
-  };
+    return {
+      hostId: enrolled.hostId,
+      instanceId,
+      connection,
+      async close() {
+        await connection.close();
+        releaseLock();
+      }
+    };
+  } catch (error) {
+    releaseLock();
+    throw error;
+  }
 }
 
 export function readEnrollToken(dataDir: string, env: NodeJS.ProcessEnv = process.env): string {

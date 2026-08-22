@@ -146,6 +146,13 @@ export const environmentActionSchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('pull_request_merge'),
     method: gitHostPullRequestMergeMethodSchema
+  }).strict(),
+  z.object({
+    action: z.literal('pull_request_create'),
+    title: z.string().min(1).max(200).optional(),
+    body: z.string().max(4000).optional(),
+    base: z.string().min(1).optional(),
+    draft: z.boolean().optional()
   }).strict()
 ]);
 export type EnvironmentAction = z.infer<typeof environmentActionSchema>;

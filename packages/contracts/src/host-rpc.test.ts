@@ -69,6 +69,12 @@ describe('host-rpc contract', () => {
       method: 'squash'
     }).type).toBe('workspace.pull_request_merge');
     expect(HostRpcCommandSchema.parse({
+      type: 'workspace.pull_request_create',
+      workspacePath: '/tmp/proj',
+      workspaceProvisionType: 'managed-worktree',
+      title: 'Ship it'
+    }).type).toBe('workspace.pull_request_create');
+    expect(HostRpcCommandSchema.parse({
       type: 'thread.start',
       threadId,
       environmentId,
@@ -77,11 +83,28 @@ describe('host-rpc contract', () => {
       input: ['hello']
     }).type).toBe('thread.start');
     expect(HostRpcCommandSchema.parse({
+      type: 'thread.start',
+      threadId,
+      environmentId,
+      projectId: 'p1',
+      providerId: 'shell',
+      input: []
+    }).input).toEqual([]);
+    expect(HostRpcCommandSchema.parse({
       type: 'thread.resize',
       threadId,
       cols: 120,
       rows: 40
     }).type).toBe('thread.resize');
+    expect(HostRpcCommandSchema.parse({
+      type: 'thread.input',
+      threadId,
+      data: '\x03'
+    }).type).toBe('thread.input');
+    expect(HostRpcCommandSchema.parse({
+      type: 'thread.stop',
+      threadId
+    }).type).toBe('thread.stop');
     expect(HostRpcCommandSchema.parse({
       type: 'host.list_dir',
       root: '/tmp/proj',
@@ -135,9 +158,13 @@ describe('host-rpc contract', () => {
       protocolVersion: HOST_RPC_PROTOCOL_VERSION,
       hostId,
       instanceId,
-      events: [{ threadId, kind: 'thread.started' }]
+      events: [
+        { threadId, kind: 'thread.started' },
+        { kind: 'project.clone.progress', payload: { text: 'Cloning into repo...' } }
+      ]
     });
     expect(batch.events[0]).not.toHaveProperty('sequence');
+    expect(batch.events[1]?.kind).toBe('project.clone.progress');
   });
 
   it('parses provider.status results by command type', () => {

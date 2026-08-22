@@ -1,7 +1,10 @@
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
+import WebSocket from 'ws';
+import { HOST_RPC_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/host-rpc';
 import { startStaticHost, type StaticHost } from './static-host.js';
 
 let host: StaticHost | null = null;
@@ -117,5 +120,71 @@ describe('startStaticHost', () => {
       ok: true
     });
     await expect(fetch(host.url).then((response) => response.text())).resolves.toContain('zana');
+    expect(readFileSync(join(dataDir, 'host-enroll.token'), 'utf8').trim()).toBe(product.enrollToken);
+    product.hostHub.close();
+    product.db.close();
+  });
+
+  it('accepts daemon host enroll and websocket hello beside renderer assets', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'zcc-static-host-'));
+    writeFileSync(join(root, 'index.html'), '<main>zana</main>');
+    const { createProductHttpContext } = await import('./http/product-context.js');
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-static-enroll-'));
+    const enrollToken = 'enroll-token-enroll-token-enroll';
+    const product = createProductHttpContext({
+      dataDir,
+      enrollToken,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    host = await startStaticHost({ rootDir: root, product });
+
+    const instanceId = randomUUID();
+    await expect(fetch(`${host.url}internal/hosts/enroll`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${enrollToken}`,
+        origin: 'http://untrusted.example',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+        hostName: 'static-host-test',
+        instanceId
+      })
+    }).then((response) => response.status)).resolves.toBe(403);
+
+    const response = await fetch(`${host.url}internal/hosts/enroll`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${enrollToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+        hostName: 'static-host-test',
+        instanceId
+      })
+    });
+    expect(response.status).toBe(201);
+    const enrolled = await response.json() as { hostId: string; hostKey: string };
+
+    const url = new URL('internal/hosts/ws', host.url.replace(/^http/, 'ws'));
+    url.searchParams.set('hostId', enrolled.hostId);
+    url.searchParams.set('hostKey', enrolled.hostKey);
+    const socket = new WebSocket(url);
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', () => resolve());
+      socket.once('error', reject);
+    });
+    socket.send(JSON.stringify({
+      type: 'host.hello',
+      protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+      hostId: enrolled.hostId,
+      instanceId
+    }));
+    await expect.poll(() => product.hostHub.connectedHostIds()).toContain(enrolled.hostId);
+    socket.close();
+    product.hostHub.close();
+    product.db.close();
   });
 });

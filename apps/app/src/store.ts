@@ -55,7 +55,12 @@ import {
 import { getScopedProjectId, isScopedWindow } from './lib/windowScope.js';
 import { appNavigate } from './lib/app-navigate.js';
 import { hasDesktopBridge } from './lib/app-surface.js';
-import { sessionFromHostThread, type HostThreadView } from './lib/host-thread-session.js';
+import {
+  forgetHostThread,
+  isHostThread,
+  sessionFromHostThread,
+  type HostThreadView
+} from './lib/host-thread-session.js';
 import { product } from './lib/product-client.js';
 import { decodeRoutePath } from './lib/decode-route.js';
 import {
@@ -1566,6 +1571,14 @@ interface DataState {
        *  `extraArgs`. Selects WHICH session the CLI reopens; never a path
        *  (Rule 1). See {@link CreateTerminalRequest.resumeSessionId}. */
       resumeSessionId?: string;
+      headless?: boolean;
+      scheduled?: boolean;
+      autoCloseOnFinish?: boolean;
+      inboxLevel?: 'silent' | 'quiet' | 'loud';
+      autonomous?: boolean;
+      cohort?: import('@zana-ai/zcc-domain/product').SessionCohort;
+      reconnectTmuxId?: string;
+      resume?: boolean;
       /** Receives a launch failure for callers needing retained inline feedback
        *  in addition to the global error toast. */
       onError?: (message: string) => void;
@@ -1579,10 +1592,13 @@ interface DataState {
   /** Reload live host threads into `terminals` (browser only). */
   hydrateHostThreads: () => Promise<void>;
   /**
-   * Terminate a session: kills the pty and removes the tab. Pushes a
-   * restorable snapshot onto closedTabs so ⌘⇧T can reopen a fresh tab
-   * with the same profile/cwd/pinned/extraArgs. Wired to the tab's X
-   * button, ⌘W, middle-click, and the sidebar row X.
+   * Terminate a session: kills the pty and removes the tab. Always drops the
+   * card even when stop/archive cannot be confirmed (stale host threads, a
+   * remote tmux that did not die) so the board cannot keep ghosts. A toast
+   * still warns when the process may be alive. Pushes a restorable snapshot
+   * onto closedTabs so ⌘⇧T can reopen a fresh tab with the same
+   * profile/cwd/pinned/extraArgs. Wired to the tab's X button, ⌘⇧W,
+   * middle-click, and the sidebar row X.
    */
   closeTerminal: (sessionId: string, projectId: string) => Promise<void>;
   /**
@@ -2066,11 +2082,11 @@ export const useData = create<DataState>((set, get) => ({
       // window over the same snapshot. The scoped window already hydrated its
       // own live ptys above (display only); spawning + snapshot ownership belong
       // to the unscoped main window. (persistOpenSessions is likewise gated.)
+      if (!isScopedWindow()) {
+        await get().hydrateHostThreads();
+      }
       if (!isScopedWindow() && hasDesktopBridge()) {
         await get().restoreSessions(hydrationFailed);
-      }
-      if (!hasDesktopBridge()) {
-        await get().hydrateHostThreads();
       }
     } catch (err) {
       pushErrorToast(errorMessage(err, 'Failed to initialize app state'));
@@ -2470,17 +2486,15 @@ export const useData = create<DataState>((set, get) => ({
       get().persistOpenSessions();
     });
 
-    if (!hasDesktopBridge()) {
-      product.threads.onUpdated((payload) => {
-        if (payload && typeof payload === 'object' && 'id' in payload && 'projectId' in payload && 'providerId' in payload) {
-          get().adoptHostThread(payload as HostThreadView);
-          return;
-        }
-        window.setTimeout(() => {
-          void get().hydrateHostThreads();
-        }, 250);
-      });
-    }
+    product.threads.onUpdated((payload) => {
+      if (payload && typeof payload === 'object' && 'id' in payload && 'projectId' in payload && 'providerId' in payload) {
+        get().adoptHostThread(payload as HostThreadView);
+        return;
+      }
+      window.setTimeout(() => {
+        void get().hydrateHostThreads();
+      }, 250);
+    });
 
     // Live agent-state pushes land in their own store (useAgentStatus), keyed
     // by session id, with a precomputed per-project rollup. We resolve the
@@ -2833,80 +2847,58 @@ export const useData = create<DataState>((set, get) => ({
 
   async createTerminal(projectId, profile, cols, rows, opts) {
     try {
-      if (!hasDesktopBridge()) {
-        const family = harnessFamilyOf(profile);
-        const prompt = opts?.prompt?.trim() ?? '';
-        if (!family) {
-          const message = 'that launch profile is not available in the browser';
-          opts?.onError?.(message);
-          pushErrorToast(message);
-          return null;
-        }
-        if (!prompt) {
-          const message = 'a prompt is required to launch an agent in the browser';
-          opts?.onError?.(message);
-          pushErrorToast(message);
-          return null;
-        }
-        const spawned = await product.threads.spawn({
-          projectId,
-          providerId: profile,
-          input: [prompt],
-          environment: opts?.workspace
-        });
-        if (!spawned.ok) {
-          opts?.onError?.(spawned.message);
-          pushErrorToast(spawned.message);
-          console.error('thread spawn failed', spawned);
-          return null;
-        }
-        return get().adoptHostThread(spawned.value);
+      const family = harnessFamilyOf(profile);
+      const prompt = opts?.prompt?.trim() ?? '';
+      if (profile !== 'shell' && !family) {
+        const message = 'that launch profile is not available';
+        opts?.onError?.(message);
+        pushErrorToast(message);
+        return null;
       }
-      const result = await product.terminals.create({
+      const spawned = await product.threads.spawn({
         projectId,
-        profile,
-        profileSource: opts?.profileSource,
-        personaId: opts?.personaId,
-        frameworkIds: opts?.frameworkIds,
-        cols,
-        rows,
+        providerId: profile,
+        input: prompt ? [prompt] : [],
+        environment: opts?.workspace ?? { kind: 'unmanaged' },
+        cwd: opts?.cwd,
+        title: opts?.title,
         extraArgs: opts?.extraArgs,
         harnessRouting: opts?.harnessRouting,
-        title: opts?.title,
-        cwd: opts?.cwd,
-        isolateScratch: opts?.isolateScratch,
-        worktree: opts?.worktree ?? (
-          opts?.workspace?.kind === 'worktree'
-            ? { branch: opts.workspace.branchSlug }
-            : undefined
-        ),
-        prompt: opts?.prompt,
-        environment: opts?.environment,
+        personaId: opts?.personaId,
+        headless: opts?.headless,
+        scheduled: opts?.scheduled,
+        autoCloseOnFinish: opts?.autoCloseOnFinish,
+        inboxLevel: opts?.inboxLevel,
+        autonomous: opts?.autonomous,
+        resumeSessionId: opts?.resumeSessionId,
+        executionEnvironment: opts?.environment,
         sandboxDenyNetwork: opts?.sandboxDenyNetwork,
         microVmImage: opts?.microVmImage,
         microVmCpus: opts?.microVmCpus,
         microVmMemoryMib: opts?.microVmMemoryMib,
-        resumeSessionId: opts?.resumeSessionId
+        reconnectTmuxId: opts?.reconnectTmuxId,
+        resume: opts?.resume,
+        cohort: opts?.cohort
       });
-      if (!result.ok) {
-        opts?.onError?.(result.message);
-        pushErrorToast(result.message);
-        console.error('terminal create failed', result);
+      if (!spawned.ok) {
+        opts?.onError?.(spawned.message);
+        pushErrorToast(spawned.message);
+        console.error('thread spawn failed', spawned);
         return null;
       }
-      // Idempotent append: ptys.create() emits `sessionUpdated` synchronously,
-      // which the onUpdated handler may have already appended before this IPC
-      // promise resolves (the two messages race). Dedupe by id so a click
-      // never yields two tabs for the same session.
-      set((s) => {
-        const list = s.terminals[projectId] || [];
-        if (list.some((t) => t.id === result.value.id)) return s;
-        return {
-          terminals: { ...s.terminals, [projectId]: [...list, result.value] }
-        };
-      });
+      const session = get().adoptHostThread(spawned.value);
+      if (opts?.headless) {
+        set((s) => ({
+          terminals: {
+            ...s.terminals,
+            [projectId]: (s.terminals[projectId] ?? []).map((row) =>
+              row.id === session.id ? { ...row, headless: true, scheduled: opts.scheduled } : row
+            )
+          }
+        }));
+      }
       get().persistOpenSessions();
-      return result.value;
+      return get().terminals[projectId]?.find((row) => row.id === session.id) ?? session;
     } catch (err) {
       const message = errorMessage(err, 'Failed to create terminal');
       opts?.onError?.(message);
@@ -2932,7 +2924,6 @@ export const useData = create<DataState>((set, get) => ({
   },
 
   async hydrateHostThreads() {
-    if (hasDesktopBridge()) return;
     try {
       const threads = await product.threads.list();
       const projects = get().projects;
@@ -3034,9 +3025,6 @@ export const useData = create<DataState>((set, get) => ({
             extraArgs: item.extraArgs,
             title: item.title,
             cwd: item.worktree ? undefined : item.cwd,
-            worktree: item.worktree
-              ? { branch: item.worktree.branch.replace(/^zcc\//, '') }
-              : undefined,
             resumeSessionId: item.resumeSessionId
           }
         });
@@ -3088,17 +3076,18 @@ export const useData = create<DataState>((set, get) => ({
     // Index within the VISIBLE strip so selection advances to the visual
     // neighbor, not a hidden background session. Matches hideTerminal.
     const closingIdx = visibleTerminals(list).findIndex((t) => t.id === sessionId);
+    let closeFailed = false;
     try {
-      if (!await product.terminals.close(sessionId)) {
-        pushErrorToast('Failed to close terminal; its remote session may still be running');
-        return;
-      }
-      if (closing?.workspaceEnvironmentId) {
+      if (!await product.terminals.close(sessionId)) closeFailed = true;
+      else if (closing?.workspaceEnvironmentId && !isHostThread(sessionId)) {
         await product.threads.archive(sessionId).catch(() => {});
       }
-    } catch (err) {
-      pushErrorToast(errorMessage(err, 'Failed to close terminal'));
-      return;
+    } catch {
+      closeFailed = true;
+    }
+    forgetHostThread(sessionId);
+    if (closeFailed) {
+      pushErrorToast("Removed from the board. Couldn't confirm the process stopped.");
     }
     useUi.getState().clearUnread(sessionId);
     // If the closed tab occupied any split slot, drop it from the slots.
@@ -3486,26 +3475,42 @@ export const useData = create<DataState>((set, get) => ({
       autoTitledByLlm: src.autoTitledByLlm,
       autoTitledByOsc: src.autoTitledByOsc
     };
-    let result: Result<TerminalSession>;
+    let created: TerminalSession | null;
     try {
-      result = await product.terminals.reconnectRemote({
-        capabilityId: src.restoreCapabilityId,
-        legacy: src.restoreCapabilityId ? undefined : {
-          projectId,
-          profile: snapshot.profile,
-          sessionId: src.id
+      created = src.workspaceEnvironmentId || isHostThread(src.id)
+        ? await get().createTerminal(projectId, snapshot.profile, 80, 24, {
+            title: snapshot.title,
+            extraArgs: snapshot.extraArgs,
+            cwd: snapshot.cwd,
+            reconnectTmuxId: src.id,
+            resume: true,
+            workspace: { kind: 'unmanaged' }
+          })
+        : null;
+      if (!created && !src.workspaceEnvironmentId && !isHostThread(src.id)) {
+        const result = await product.terminals.reconnectRemote({
+          capabilityId: src.restoreCapabilityId,
+          legacy: src.restoreCapabilityId ? undefined : {
+            projectId,
+            profile: snapshot.profile,
+            sessionId: src.id
+          }
+        });
+        if (!result.ok) {
+          pushErrorToast(result.message);
+          console.error('remote reconnect failed', result);
+          return null;
         }
-      });
+        created = result.value;
+      }
     } catch (err) {
       pushErrorToast(errorMessage(err, 'Failed to reconnect remote session'));
       return null;
     }
-    if (!result.ok) {
-      pushErrorToast(result.message);
-      console.error('remote reconnect failed', result);
+    if (!created) {
+      pushErrorToast('Failed to reconnect remote session');
       return null;
     }
-    const created = result.value;
     // Swap the tombstone out and drop the freshly-appended live session into the
     // tombstone's original slot, preserving pin + rename guards + selection.
     // The new pty carries a FRESH id (main mints one so a late `onExit` from the

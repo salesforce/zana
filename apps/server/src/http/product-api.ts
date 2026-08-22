@@ -1,7 +1,8 @@
 import { isAbsolute, join, relative, sep } from 'node:path';
+import { homedir } from 'node:os';
 import { realpathSync, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { AppConfig, CreateTerminalRequest, FollowUpStatus, LibraryScope, Persona } from '@zana-ai/zcc-domain/product';
+import type { AppConfig, CreateTerminalRequest, FollowUpStatus, LibraryScope, Persona, SessionCohort } from '@zana-ai/zcc-domain/product';
 import { browserRequestProblem, headerValue } from './browser-request-guard.js';
 import { listJsonFiles, readJsonFile, writeJsonFile } from './disk-json.js';
 import { readJsonBody, sendJson } from './json.js';
@@ -20,7 +21,7 @@ import { normalizeRepoUrl } from '../services/projects/git-clone.js';
 import { harnessDescriptors, harnessEffectiveDefault, harnessVerify } from './harness-via-rpc.js';
 import { isSafeRelPath, listLibraryDocs, listQuickPrompts, readLibraryDoc } from './library-via-host.js';
 import { listProjectDir, readProjectFile } from './project-fs-via-host.js';
-import { getThread, listLiveThreads, listThreadsByProject, threadOutputTail } from '@zana-ai/zcc-db';
+import { getEnvironment, getThread, listLiveThreads, listThreadsByProject, threadOutputTail } from '@zana-ai/zcc-db';
 import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
 
 const VALID_FOLLOW_UP_STATUS: FollowUpStatus[] = ['open', 'resolved', 'dismissed'];
@@ -40,6 +41,12 @@ function confineCwd(projectPath: string, cwd: string | undefined): string | null
     return null;
   }
   return isContained(root, resolved) ? resolved : null;
+}
+
+function resolveCloneRoot(ctx: ProductHttpContext): string {
+  const configured = ctx.config.getConfig().cloneRoot?.trim();
+  if (configured && isAbsolute(configured)) return configured;
+  return join(homedir(), 'zcc-workspace');
 }
 
 const COLS_MIN = 20;
@@ -465,15 +472,84 @@ export async function handleProductHttp(
       return true;
     }
 
+    const threadInput = routeParams(path, '/api/v1/threads/:id/input');
+    if (threadInput && method === 'POST') {
+      const thread = getThread(ctx.db, threadInput.id);
+      if (!thread) {
+        sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
+        return true;
+      }
+      const body = (await readJsonBody(request)) as { data?: unknown };
+      if (typeof body.data !== 'string') {
+        sendJson(response, 400, { error: 'bad-input', message: 'data must be a string' });
+        return true;
+      }
+      try {
+        await ctx.hostHub.callHostOnlineRpc({
+          hostId: thread.hostId,
+          command: { type: 'thread.input', threadId: thread.id, data: body.data }
+        });
+        sendJson(response, 200, { ok: true, threadId: thread.id });
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadStop = routeParams(path, '/api/v1/threads/:id/stop');
+    if (threadStop && method === 'POST') {
+      const thread = getThread(ctx.db, threadStop.id);
+      if (!thread) {
+        sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
+        return true;
+      }
+      try {
+        await ctx.hostHub.callHostOnlineRpc({
+          hostId: thread.hostId,
+          command: { type: 'thread.stop', threadId: thread.id }
+        });
+        sendJson(response, 200, { ok: true, threadId: thread.id });
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadReply = routeParams(path, '/api/v1/threads/:id/reply');
+    if (threadReply && method === 'POST') {
+      const thread = getThread(ctx.db, threadReply.id);
+      if (!thread) {
+        sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
+        return true;
+      }
+      const body = (await readJsonBody(request)) as { text?: unknown };
+      if (typeof body.text !== 'string' || body.text.trim().length === 0) {
+        sendJson(response, 400, { error: 'invalid-input', message: 'text is required' });
+        return true;
+      }
+      if (!thread.environmentId) {
+        sendJson(response, 409, { error: 'environment_not_ready', message: 'thread has no environment' });
+        return true;
+      }
+      try {
+        await ctx.hostHub.callHostOnlineRpc({
+          hostId: thread.hostId,
+          command: {
+            type: 'turn.submit',
+            threadId: thread.id,
+            environmentId: thread.environmentId,
+            input: [body.text]
+          }
+        });
+        sendJson(response, 200, { ok: true, threadId: thread.id });
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
     if (path === '/api/v1/threads' && method === 'POST') {
-      const body = (await readJsonBody(request)) as {
-        projectId?: unknown;
-        providerId?: unknown;
-        input?: unknown;
-        hostId?: unknown;
-        environment?: unknown;
-        checkout?: unknown;
-      };
+      const body = (await readJsonBody(request)) as Record<string, unknown>;
       const input = Array.isArray(body.input)
         ? body.input.filter((part): part is string => typeof part === 'string')
         : typeof body.input === 'string' ? [body.input] : [];
@@ -490,10 +566,40 @@ export async function handleProductHttp(
           providerId: typeof body.providerId === 'string' ? body.providerId : '',
           input,
           hostId: typeof body.hostId === 'string' ? body.hostId : undefined,
+          id: typeof body.id === 'string' ? body.id : undefined,
           environment: environmentChoice?.data,
           checkout: body.checkout && typeof body.checkout === 'object'
             ? body.checkout as SpawnThreadInput['checkout']
-            : undefined
+            : undefined,
+          cwd: typeof body.cwd === 'string' ? body.cwd : undefined,
+          title: typeof body.title === 'string' ? body.title : undefined,
+          extraArgs: Array.isArray(body.extraArgs)
+            ? body.extraArgs.filter((part): part is string => typeof part === 'string')
+            : undefined,
+          harnessRouting: body.harnessRouting && typeof body.harnessRouting === 'object'
+            ? body.harnessRouting as SpawnThreadInput['harnessRouting']
+            : undefined,
+          personaId: typeof body.personaId === 'string' ? body.personaId : undefined,
+          headless: body.headless === true,
+          scheduled: body.scheduled === true,
+          autoCloseOnFinish: body.autoCloseOnFinish === true,
+          inboxLevel: body.inboxLevel === 'silent' || body.inboxLevel === 'quiet' || body.inboxLevel === 'loud'
+            ? body.inboxLevel
+            : undefined,
+          autonomous: body.autonomous === true,
+          resumeSessionId: typeof body.resumeSessionId === 'string' ? body.resumeSessionId : undefined,
+          executionEnvironment: body.environmentKind === 'local' || body.environmentKind === 'sandbox' || body.environmentKind === 'microvm'
+            ? body.environmentKind
+            : body.executionEnvironment === 'local' || body.executionEnvironment === 'sandbox' || body.executionEnvironment === 'microvm'
+              ? body.executionEnvironment
+              : undefined,
+          sandboxDenyNetwork: body.sandboxDenyNetwork === true,
+          microVmImage: typeof body.microVmImage === 'string' ? body.microVmImage : undefined,
+          microVmCpus: typeof body.microVmCpus === 'number' ? body.microVmCpus : undefined,
+          microVmMemoryMib: typeof body.microVmMemoryMib === 'number' ? body.microVmMemoryMib : undefined,
+          reconnectTmuxId: typeof body.reconnectTmuxId === 'string' ? body.reconnectTmuxId : undefined,
+          resume: body.resume === true,
+          cohort: body.cohort && typeof body.cohort === 'object' ? body.cohort as SessionCohort : undefined
         });
         sendJson(response, 201, { ok: true, value: threadView(ctx, thread) });
       } catch (error) {
@@ -603,6 +709,29 @@ export async function handleProductHttp(
       return true;
     }
 
+    const envCancel = routeParams(path, '/api/v1/environments/:id/provision/cancel');
+    if (envCancel && method === 'POST') {
+      const environment = getEnvironment(ctx.db, envCancel.id);
+      if (!environment) {
+        sendJson(response, 404, { ok: false, code: 'unknown-environment', message: 'environment is not registered' });
+        return true;
+      }
+      if (environment.status !== 'provisioning') {
+        sendJson(response, 409, { ok: false, code: 'not-provisioning', message: 'environment is not provisioning' });
+        return true;
+      }
+      try {
+        await ctx.hostHub.callHostOnlineRpc({
+          hostId: environment.hostId,
+          command: { type: 'environment.provision.cancel', environmentId: environment.id }
+        });
+        sendJson(response, 200, { ok: true, environmentId: environment.id, cancelled: true });
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
     const projectBranches = routeParams(path, '/api/v1/projects/:id/branches');
     if (projectBranches && method === 'GET') {
       const project = ctx.toProjects().find((row) => row.id === projectBranches.id);
@@ -628,8 +757,18 @@ export async function handleProductHttp(
       return true;
     }
 
+    if (path === '/api/v1/projects/clone-root' && method === 'GET') {
+      sendJson(response, 200, { path: resolveCloneRoot(ctx) });
+      return true;
+    }
+
     if (path === '/api/v1/projects/clone' && method === 'POST') {
-      const body = (await readJsonBody(request)) as { url?: unknown; name?: unknown; hostId?: unknown };
+      const body = (await readJsonBody(request)) as {
+        url?: unknown;
+        name?: unknown;
+        hostId?: unknown;
+        targetPath?: unknown;
+      };
       if (typeof body.url !== 'string' || body.url.trim().length === 0) {
         sendJson(response, 400, { ok: false, code: 'invalid-url', message: 'url is required' });
         return true;
@@ -640,13 +779,18 @@ export async function handleProductHttp(
           ? body.name.trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || normalized.repoName
           : normalized.repoName;
         const hostId = ctx.hostHub.resolveHostId(typeof body.hostId === 'string' ? body.hostId : undefined);
+        const targetPath = typeof body.targetPath === 'string' && isAbsolute(body.targetPath)
+          ? body.targetPath
+          : join(resolveCloneRoot(ctx), slug);
         const cloned = await ctx.hostHub.callHostOnlineRpc<{ path: string; gitRemoteUrl: string | null }>({
           hostId,
           command: {
             type: 'project.clone',
             remoteUrl: normalized.cloneUrl,
-            projectSlug: slug
-          }
+            projectSlug: slug,
+            targetPath
+          },
+          timeoutMs: 20 * 60 * 1000
         });
         const project = await ctx.projects.add(cloned.path);
         ctx.hub.emit('projects:changed', ctx.projects.list());
@@ -654,6 +798,15 @@ export async function handleProductHttp(
       } catch (error) {
         if (error instanceof Error && /Enter a repository URL|Invalid repository URL|URL too long/.test(error.message)) {
           sendJson(response, 400, { ok: false, code: 'invalid-url', message: error.message });
+          return true;
+        }
+        if (error && typeof error === 'object' && 'code' in error && (error as { code: string }).code === 'clone_target_exists') {
+          sendJson(response, 409, {
+            ok: false,
+            code: 'DEST_EXISTS',
+            message: error instanceof Error ? error.message : 'clone target already exists',
+            path: typeof (error as { path?: unknown }).path === 'string' ? (error as { path: string }).path : undefined
+          });
           return true;
         }
         sendHostFailure(response, error);
@@ -765,6 +918,14 @@ function sendHostFailure(response: ServerResponse, error: unknown): void {
       ok: false,
       code: status.code ?? 'host-error',
       message: status.message ?? (error instanceof Error ? error.message : String(error))
+    });
+    return;
+  }
+  if (error && typeof error === 'object' && 'code' in error && (error as { code: string }).code === 'clone_target_exists') {
+    sendJson(response, 409, {
+      ok: false,
+      code: 'DEST_EXISTS',
+      message: error instanceof Error ? error.message : 'clone target already exists'
     });
     return;
   }

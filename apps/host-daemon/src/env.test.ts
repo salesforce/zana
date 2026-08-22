@@ -8,10 +8,25 @@ import {
   augmentPathWithZcc,
   resolveZccCliBinDir,
   ensureProcessPath,
+  launchedPathOverrides,
   stripInheritedClaudeSession,
   ensureInteractiveTerminalEnv,
   INHERITED_CLAUDE_SESSION_VARS
 } from './env.js';
+
+describe('launchedPathOverrides', () => {
+  it('prepends launch-only dirs so a fake gh wins over the login-shell gh', () => {
+    const overrides = launchedPathOverrides(
+      '/opt/homebrew/bin:/usr/bin:/bin',
+      '/tmp/zcc-e2e-gh:/opt/homebrew/bin:/usr/bin:/bin'
+    );
+    expect(overrides).toBe('/tmp/zcc-e2e-gh');
+  });
+
+  it('is empty when the launch PATH is a subset of the login shell (Finder)', () => {
+    expect(launchedPathOverrides('/opt/homebrew/bin:/usr/bin:/bin', '/usr/bin:/bin')).toBe('');
+  });
+});
 
 describe('augmentPath', () => {
   const local = join(homedir(), '.local', 'bin');

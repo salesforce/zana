@@ -128,7 +128,9 @@ export function workspaceForSubmission(
   if (choice.kind === 'personal') return choice;
   if (!applyAdvanced) return { kind: 'unmanaged' };
   if (choice.kind === 'worktree' && eligible) {
-    return { kind: 'worktree', branchSlug: name || undefined };
+    return choice.baseBranch
+      ? { kind: 'worktree', branchSlug: name || undefined, baseBranch: choice.baseBranch }
+      : { kind: 'worktree', branchSlug: name || undefined };
   }
   return { kind: 'unmanaged' };
 }
@@ -1446,6 +1448,7 @@ export const AgentLauncher = memo(function AgentLauncher({
   // display fields + the extension id it later passes back to main (Rule 1).
   useEffect(() => {
     let cancelled = false;
+    void loadProjects();
     (async () => {
       const [prompts, entries, anchorRes] = await Promise.all([
         product.quickPrompts.list().catch(() => []),

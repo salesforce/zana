@@ -17,7 +17,7 @@ import { gitBranchNameSchema } from '@zana-ai/zcc-domain/git-checkout';
  * Bump when any enroll payload, daemon WS message, host-rpc command, or host
  * event envelope changes shape or meaning. Mismatch fails before dispatch.
  */
-export const HOST_RPC_PROTOCOL_VERSION = 2;
+export const HOST_RPC_PROTOCOL_VERSION = 3;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
 
 const UuidSchema = z.string().uuid();
@@ -33,6 +33,8 @@ export const HostRpcCommandTypeSchema = z.enum([
   'environment.destroy',
   'thread.start',
   'thread.resize',
+  'thread.input',
+  'thread.stop',
   'turn.submit',
   'host.list_files',
   'host.list_dir',
@@ -48,6 +50,7 @@ export const HostRpcCommandTypeSchema = z.enum([
   'workspace.pull_request_ready',
   'workspace.pull_request_draft',
   'workspace.pull_request_merge',
+  'workspace.pull_request_create',
   'project.clone',
   'project.clone_default_path'
 ]);
@@ -117,13 +120,63 @@ export const EnvironmentDestroyCommandSchema = workspaceContextSchema.extend({
   environmentId: UuidSchema
 }).strict();
 
+const threadLaunchPersonaSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  baseProfile: z.string().min(1).optional(),
+  model: z.string().optional(),
+  permissionMode: z.enum(['default', 'acceptEdits', 'plan', 'bypassPermissions']).optional(),
+  appendSystemPrompt: z.string().optional(),
+  allowedTools: z.array(z.string()).optional(),
+  deniedTools: z.array(z.string()).optional(),
+  addDirs: z.array(z.string()).optional(),
+  mcpServers: z.array(z.string()).optional(),
+  initialPrompt: z.string().optional()
+}).strict();
+
+const threadLaunchRemoteSchema = z.object({
+  host: z.string().min(1).max(200),
+  user: z.string().min(1).max(200).optional(),
+  remotePath: PathSchema.optional(),
+  proxyJump: z.string().min(1).max(500).optional()
+}).strict();
+
+const threadLaunchCohortSchema = z.object({
+  cohortId: z.string().min(1),
+  teamId: z.string().min(1),
+  teamName: z.string().min(1),
+  role: z.enum(['orchestrator', 'worker']),
+  slotLabel: z.string().max(120).optional(),
+  slotId: z.string().max(120).optional()
+}).strict();
+
 export const ThreadStartCommandSchema = z.object({
   type: z.literal('thread.start'),
   threadId: UuidSchema,
   environmentId: UuidSchema,
   projectId: z.string().min(1),
   providerId: z.string().min(1),
-  input: z.array(z.string().min(1)).min(1)
+  input: z.array(z.string()).default([]),
+  cwd: PathSchema.optional(),
+  title: z.string().max(200).optional(),
+  extraArgs: z.array(z.string().max(4000)).max(64).optional(),
+  harnessRouting: z.unknown().optional(),
+  persona: threadLaunchPersonaSchema.optional(),
+  headless: z.boolean().optional(),
+  scheduled: z.boolean().optional(),
+  autoCloseOnFinish: z.boolean().optional(),
+  inboxLevel: z.enum(['silent', 'quiet', 'loud']).optional(),
+  autonomous: z.boolean().optional(),
+  resumeSessionId: z.string().min(1).optional(),
+  environment: z.enum(['local', 'sandbox', 'microvm']).optional(),
+  sandboxDenyNetwork: z.boolean().optional(),
+  microVmImage: z.string().max(200).optional(),
+  microVmCpus: z.number().int().positive().max(32).optional(),
+  microVmMemoryMib: z.number().int().positive().max(65536).optional(),
+  remote: threadLaunchRemoteSchema.optional(),
+  reconnectTmuxId: UuidSchema.optional(),
+  resume: z.boolean().optional(),
+  cohort: threadLaunchCohortSchema.optional()
 }).strict();
 
 export const ThreadResizeCommandSchema = z.object({
@@ -131,6 +184,17 @@ export const ThreadResizeCommandSchema = z.object({
   threadId: UuidSchema,
   cols: z.number().int().min(20).max(300),
   rows: z.number().int().min(8).max(100)
+}).strict();
+
+export const ThreadInputCommandSchema = z.object({
+  type: z.literal('thread.input'),
+  threadId: UuidSchema,
+  data: z.string().max(64 * 1024)
+}).strict();
+
+export const ThreadStopCommandSchema = z.object({
+  type: z.literal('thread.stop'),
+  threadId: UuidSchema
 }).strict();
 
 export const TurnSubmitCommandSchema = z.object({
@@ -221,6 +285,14 @@ export const WorkspacePullRequestMergeCommandSchema = workspaceContextSchema.ext
   method: gitHostPullRequestMergeMethodSchema
 }).strict();
 
+export const WorkspacePullRequestCreateCommandSchema = workspaceContextSchema.extend({
+  type: z.literal('workspace.pull_request_create'),
+  title: z.string().min(1).max(200).optional(),
+  body: z.string().max(4000).optional(),
+  base: gitBranchNameSchema.optional(),
+  draft: z.boolean().optional()
+}).strict();
+
 export const ProjectCloneCommandSchema = z.object({
   type: z.literal('project.clone'),
   remoteUrl: z.string().min(1).max(2048),
@@ -240,6 +312,8 @@ export const HostRpcCommandSchema = z.union([
   EnvironmentDestroyCommandSchema,
   ThreadStartCommandSchema,
   ThreadResizeCommandSchema,
+  ThreadInputCommandSchema,
+  ThreadStopCommandSchema,
   TurnSubmitCommandSchema,
   HostListFilesCommandSchema,
   HostListDirCommandSchema,
@@ -255,6 +329,7 @@ export const HostRpcCommandSchema = z.union([
   WorkspacePullRequestReadyCommandSchema,
   WorkspacePullRequestDraftCommandSchema,
   WorkspacePullRequestMergeCommandSchema,
+  WorkspacePullRequestCreateCommandSchema,
   ProjectCloneCommandSchema,
   ProjectCloneDefaultPathCommandSchema
 ]);
@@ -306,6 +381,18 @@ export const ThreadResizeResultSchema = z.object({
   resized: z.literal(true)
 }).strict();
 export type ThreadResizeResult = z.infer<typeof ThreadResizeResultSchema>;
+
+export const ThreadInputResultSchema = z.object({
+  threadId: UuidSchema,
+  accepted: z.literal(true)
+}).strict();
+export type ThreadInputResult = z.infer<typeof ThreadInputResultSchema>;
+
+export const ThreadStopResultSchema = z.object({
+  threadId: UuidSchema,
+  stopped: z.literal(true)
+}).strict();
+export type ThreadStopResult = z.infer<typeof ThreadStopResultSchema>;
 
 export const TurnSubmitResultSchema = z.object({
   threadId: UuidSchema,
@@ -393,6 +480,8 @@ export const HostRpcResultSchemaByType = {
   'environment.destroy': EnvironmentDestroyResultSchema,
   'thread.start': ThreadStartResultSchema,
   'thread.resize': ThreadResizeResultSchema,
+  'thread.input': ThreadInputResultSchema,
+  'thread.stop': ThreadStopResultSchema,
   'turn.submit': TurnSubmitResultSchema,
   'host.list_files': HostListFilesResultSchema,
   'host.list_dir': HostListDirResultSchema,
@@ -408,6 +497,7 @@ export const HostRpcResultSchemaByType = {
   'workspace.pull_request_ready': WorkspacePullRequestActionResultSchema,
   'workspace.pull_request_draft': WorkspacePullRequestActionResultSchema,
   'workspace.pull_request_merge': WorkspacePullRequestActionResultSchema,
+  'workspace.pull_request_create': WorkspacePullRequestResultSchema,
   'project.clone': ProjectCloneResultSchema,
   'project.clone_default_path': ProjectCloneDefaultPathResultSchema
 } as const;
@@ -478,13 +568,14 @@ export const HostEventKindSchema = z.enum([
   'turn.completed',
   'turn.failed',
   'terminal.output',
-  'environment.provision.progress'
+  'environment.provision.progress',
+  'project.clone.progress'
 ]);
 export type HostEventKind = z.infer<typeof HostEventKindSchema>;
 
 /** Host-emitted work evidence. Sequence is assigned by the server, never the host. */
 export const HostEventEnvelopeSchema = z.object({
-  threadId: UuidSchema,
+  threadId: UuidSchema.optional(),
   kind: HostEventKindSchema,
   payload: z.unknown().optional()
 }).strict();

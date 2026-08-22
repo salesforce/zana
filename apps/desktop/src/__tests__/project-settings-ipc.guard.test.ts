@@ -1,13 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const source = readFileSync(new URL('../index.ts', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../host.ts', import.meta.url), 'utf8');
+const configIpc = readFileSync(new URL('../ipc/config.ts', import.meta.url), 'utf8');
 
 describe('project settings IPC failure handling', () => {
   it('keeps reads safe but lets mutation failures reject', () => {
-    expect(source).toMatch(/safeHandle\(\s*IPC\.projectSettings\.get,[\s\S]*?\(\) => \(\{\} as ProjectSettings\)\s*\);/);
-    expect(source).toMatch(/ipcMain\.handle\(IPC\.projectSettings\.set,[\s\S]*?runtimeSupervisor\s*\? runtimeSupervisor\.setProjectSettings\(id, patch\)[\s\S]*?: \(\(\) => \{[\s\S]*?store\.setProjectSettings\(id, patch\)[\s\S]*?safeSend\(IPC\.projectSettings\.onChanged, id\)[\s\S]*?\}\)\(\)\s*\);/);
-    expect(source).not.toMatch(/safeHandle[^;]*IPC\.projectSettings\.set/);
+    expect(configIpc).toMatch(/safeHandle\(\s*IPC\.projectSettings\.get,[\s\S]*?\(\) => \(\{\} as ProjectSettings\)\s*\);/);
+    expect(configIpc).toMatch(/ipcMain\.handle\(IPC\.projectSettings\.set,[\s\S]*?ctx\.runtimeSupervisor\s*\?\s*ctx\.runtimeSupervisor\.setProjectSettings\(id, patch\)[\s\S]*?: \(\(\) => \{[\s\S]*?store\.setProjectSettings\(id, patch\)[\s\S]*?safeSend\(IPC\.projectSettings\.onChanged, id\)[\s\S]*?\}\)\(\)\s*\);/);
+    expect(configIpc).not.toMatch(/safeHandle[^;]*IPC\.projectSettings\.set/);
   });
 
   it('reads server-owned settings for launch preflight and commit revalidation', () => {
@@ -17,8 +18,9 @@ describe('project settings IPC failure handling', () => {
     expect(source).toMatch(/async function launchBackgroundTerminal[\s\S]*?await getAuthoritativeProjectSettings\(project\.id\)/);
   });
 
-  it('registers cloned directories through the server project authority', () => {
-    expect(source).toMatch(/async function cloneAndRegisterProject[\s\S]*?runtimeSupervisor\s*\? await runtimeSupervisor\.addProject\(res\.path!\)[\s\S]*?: store\.addProject\(res\.path!\)/);
+  it('registers cloned directories through the product HTTP clone path', () => {
+    expect(source).toMatch(/async function spawnHostThreadFromMain[\s\S]*?productServerUrl\(\)/);
+    expect(source).toMatch(/async function cloneAndRegisterProject[\s\S]*?api\/v1\/projects\/clone/);
     expect(source).toMatch(/cloneAndRegisterProject[\s\S]*?runtimeSupervisor \? await runtimeSupervisor\.listProjects\(\) as Project\[\] : store\.listProjects\(\)/);
   });
 
