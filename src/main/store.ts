@@ -942,6 +942,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.teamLaunchEnabled === 'boolean') {
     normalized.teamLaunchEnabled = input.teamLaunchEnabled;
   }
+  if (typeof input.teamJobLaunchEnabled === 'boolean') {
+    normalized.teamJobLaunchEnabled = input.teamJobLaunchEnabled;
+  }
   if (typeof input.goalsEnabled === 'boolean') {
     normalized.goalsEnabled = input.goalsEnabled;
   }

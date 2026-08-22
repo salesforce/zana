@@ -101,6 +101,7 @@ export interface ExecutionStoreOptions {
 
 const MAX_RECORDS = 2_000;
 const MAX_EVENTS = 10_000;
+export const EXECUTION_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 const MAX_STRING = 2_048;
 const storeQueue = createSerializedTransactionQueue();
 const terminalStates = new Set<ExecutionState>(['COMPLETED', 'BLOCKED', 'STOPPED', 'FAILED']);
@@ -259,13 +260,25 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
 
   function persist(state: ExecutionStateFile, expectedHash: string | null): void {
     const active = state.records.filter((record) => !terminalStates.has(record.state));
+    const protectedTerminalIds = new Set(state.records
+      .filter((record) => terminalStates.has(record.state) && now() - record.updatedAt < EXECUTION_RETENTION_MS)
+      .map((record) => record.id));
     const retainedTerminalIds = new Set(state.records
-      .filter((record) => terminalStates.has(record.state))
+      .filter((record) => terminalStates.has(record.state) && !protectedTerminalIds.has(record.id))
       .sort((left, right) => right.updatedAt - left.updatedAt)
       .slice(0, maxRecords)
       .map((record) => record.id));
-    state.records = state.records.filter((record) => !terminalStates.has(record.state) || retainedTerminalIds.has(record.id));
-    state.events = state.events.slice(-maxEvents);
+    const retainedIds = new Set([...protectedTerminalIds, ...retainedTerminalIds, ...active.map((record) => record.id)]);
+    if (maxRecords === MAX_RECORDS && protectedTerminalIds.size > maxRecords) {
+      throw new Error('execution retention pressure: protected history exceeds storage limit');
+    }
+    state.records = state.records.filter((record) => retainedIds.has(record.id));
+    const protectedEvents = state.events.filter((event) => now() - event.createdAt < EXECUTION_RETENTION_MS);
+    if (maxEvents === MAX_EVENTS && protectedEvents.length > maxEvents) {
+      throw new Error('execution retention pressure: protected events exceed storage limit');
+    }
+    const oldEvents = state.events.filter((event) => !protectedEvents.includes(event)).slice(-maxEvents);
+    state.events = [...protectedEvents, ...oldEvents].sort((left, right) => left.createdAt - right.createdAt);
     state.revision += 1;
     mkdirSync(dirname(options.filePath), { recursive: true });
     atomicDurableWrite(options.filePath, Buffer.from(JSON.stringify(state)), { expectedHash });

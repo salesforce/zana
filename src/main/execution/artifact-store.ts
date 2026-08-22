@@ -34,6 +34,7 @@ export interface ArtifactStoreOptions {
 }
 
 const MAX_RECORDS = 5_000;
+export const EXECUTION_ARTIFACT_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 const MAX_CONTENT_BYTES = 64 * 1024;
 const MAX_STRING = 512;
 const queue = createSerializedTransactionQueue();
@@ -82,7 +83,12 @@ export function createExecutionArtifactStore(options: ArtifactStoreOptions) {
   }
 
   function persist(state: ArtifactStateFile, expectedHash: string | null): void {
-    state.records = state.records.slice(-maxRecords);
+    const protectedRecords = state.records.filter((record) => now() - record.createdAt < EXECUTION_ARTIFACT_RETENTION_MS);
+    if (maxRecords === MAX_RECORDS && protectedRecords.length > maxRecords) {
+      throw new Error('execution retention pressure: protected artifacts exceed storage limit');
+    }
+    const oldRecords = state.records.filter((record) => now() - record.createdAt >= EXECUTION_ARTIFACT_RETENTION_MS).slice(-maxRecords);
+    state.records = [...protectedRecords, ...oldRecords].sort((left, right) => left.createdAt - right.createdAt);
     state.revision += 1;
     mkdirSync(dirname(options.filePath), { recursive: true });
     atomicDurableWrite(options.filePath, Buffer.from(JSON.stringify(state)), { expectedHash });

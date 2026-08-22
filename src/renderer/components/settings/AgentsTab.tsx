@@ -270,6 +270,12 @@ export function AgentsTab({
           checked={config.teamLaunchEnabled ?? false}
           onChange={(v) => onUpdate({ teamLaunchEnabled: v })}
         />
+        <CheckboxField
+          label="Launch Team jobs"
+          help="Show durable Launch as job in New agent. Jobs persist on Agents board and can be monitored after closing the launcher. Off by default."
+          checked={config.teamJobLaunchEnabled ?? false}
+          onChange={(v) => onUpdate({ teamJobLaunchEnabled: v })}
+        />
       </Section>
 
       {/* Agent heartbeat — auto-nudge a stalled agent. Its tuning sub-fields
@@ -345,8 +351,8 @@ export function AgentsTab({
           </>
         )}
         <Field
-          label="Autonomous run timeout (minutes, 0 = no timeout)"
-          help="How long an autonomous squad can run before timing out. Set to 0 to disable timeout completely. Default is 45 minutes. Range 0 (disabled) or 1–1440 (1 minute to 24 hours)."
+          label="Team timeout (minutes, 0 = no timeout)"
+          help="How long Autonomous Team runs and Team jobs can run before timing out. Set to 0 to disable timeout completely. Default is 45 minutes. Range 0 (disabled) or 1–1440 (1 minute to 24 hours)."
         >
           <input
             type="number"

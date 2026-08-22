@@ -4,7 +4,7 @@ import type { AgentState, ExecutionBoardProjection, IdleResolution, IdleTriageRe
 import { scheduleSummary } from '@shared/schedule-spec';
 import { profileIcon, personaIcon } from '../util/profileIcon';
 import { isRecentlyFinished } from '../util/sessionBuckets';
-import { usePersonas, useData, useScheduler } from '../store';
+import { usePersonas, useData, useScheduler, useUi } from '../store';
 import { useSessionGit } from '../util/gitInfo';
 import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from './agentCardActions';
 import { FavoriteStar } from './FavoriteStar';
@@ -645,9 +645,10 @@ interface AgentBoardLanesProps {
   onInspect: (c: AgentCard) => void;
   /** Navigate to the agent's workspace tab (context-menu "Open"/"View"). */
   onPick: (c: AgentCard) => void;
-  /** Show a per-card project chip (the global, cross-project board). */
   showProject?: boolean;
-  executions?: readonly ExecutionBoardProjection[];
+  executions?: ExecutionBoardProjection[];
+  hasMoreExecutions?: boolean;
+  onLoadMoreExecutions?: () => void;
 }
 
 /**
@@ -655,7 +656,7 @@ interface AgentBoardLanesProps {
  * "running for X" timers. Caller computes `cards` behind a memo so a status
  * tick doesn't rebuild the world (render-storm guard).
  */
-export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProject, executions }: AgentBoardLanesProps) {
+export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProject, executions, hasMoreExecutions, onLoadMoreExecutions }: AgentBoardLanesProps) {
   const personas = usePersonas((s) => s.personas);
   // Idle-attention sensitivity (mirror of AppConfig, hydrated in the data
   // store): governs which triaged idle agents the "Needs you" lane pulls up.
@@ -670,6 +671,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
   // both layouts drive the same pty and expose the same menu.
   const { menu, setMenu, actions, rename, closeRename, submitRename } = useAgentCardActions();
   const [relaunchingExecutionId, setRelaunchingExecutionId] = useState<string | null>(null);
+  const [controllingExecutionId, setControllingExecutionId] = useState<string | null>(null);
 
   // One timer drives every live "running for X". Recomputed at render from
   // createdAt vs. now; only mounted while a board is shown.
@@ -734,7 +736,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
     // the card disappears ~60s after it ends rather than piling up forever).
     // This filter reads `now`, so it stays OUT of the memo above.
     if (lane.key === 'done') {
-      return { ...lane, cards: laneCards.filter((c) => isRecentlyFinished(c.session, now)) };
+      return { ...lane, cards: laneCards.filter((c) => c.isSyntheticExecutionHost || isRecentlyFinished(c.session, now)) };
     }
     return { ...lane, cards: laneCards };
   });
@@ -952,24 +954,50 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
     // A solo agent (or a worker whose orchestrator is gone) renders as the bare
     // card. An orchestrator with live workers wraps its card in a squad shell and
     // nests compact worker rows beneath it, so the whole team is one board unit.
-    const monitorAction = execution && c.isSyntheticExecutionHost ? (
+    const controlAction = execution && c.isSyntheticExecutionHost && !exited ? (
+      <span className="agent-squad-worker">
+        <button
+          type="button"
+          disabled={controllingExecutionId === execution.executionId}
+          onClick={async () => {
+            setControllingExecutionId(execution.executionId);
+            try {
+              if (execution.stateVersion === undefined) return;
+            const retryable = execution.state === 'BLOCKED' && !execution.orchestratorSessionId;
+            const result = retryable
+                ? await window.cc.executionBoard.retry(execution.projectId, execution.executionId, execution.stateVersion)
+                : await window.cc.executionBoard.stop(execution.projectId, execution.executionId, execution.stateVersion);
+              if (!result.ok) useUi.getState().pushToast(`Job control failed: ${result.message ?? result.code}`, 'error');
+            } finally { setControllingExecutionId(null); }
+          }}
+        >
+          {controllingExecutionId === execution.executionId
+            ? 'Updating job...'
+            : execution.state === 'BLOCKED' && !execution.orchestratorSessionId ? 'Retry job' : 'Stop job'}
+        </button>
+      </span>
+    ) : null;
+    const monitorAction = execution && c.isSyntheticExecutionHost && execution.hasResumeToken && !exited ? (
       <button
         type="button"
         className="agent-squad-worker"
         disabled={relaunchingExecutionId === execution.executionId}
         onClick={async () => {
           setRelaunchingExecutionId(execution.executionId);
-          try { await window.cc.executionBoard.relaunchMonitor(execution.projectId, execution.executionId); }
-          finally { setRelaunchingExecutionId(null); }
+          try {
+            const result = await window.cc.executionBoard.relaunchMonitor(execution.projectId, execution.executionId);
+            if (!result.ok) useUi.getState().pushToast(`Monitor relaunch failed: ${result.message ?? result.code}`, 'error');
+          } finally { setRelaunchingExecutionId(null); }
         }}
       >
         {relaunchingExecutionId === execution.executionId ? 'Launching monitor...' : 'Relaunch monitor'}
       </button>
     ) : null;
-    if (nestedWorkers.length === 0 && !monitorAction) return cardButton;
+    if (nestedWorkers.length === 0 && !monitorAction && !controlAction) return cardButton;
     return (
       <div key={t.id} className="agent-squad">
         {cardButton}
+        {controlAction}
         {monitorAction}
         <SquadWorkers workers={nestedWorkers} now={now} onInspect={onInspect} personas={personas} />
       </div>
@@ -1029,6 +1057,13 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
           onSubmit={(v) => submitRename(rename.card, v)}
           onClose={closeRename}
         />
+      )}
+      {hasMoreExecutions && onLoadMoreExecutions && (
+        <div style={{ padding: '1rem', textAlign: 'center' }}>
+          <button className="btn outline" onClick={onLoadMoreExecutions}>
+            Load older history
+          </button>
+        </div>
       )}
     </div>
   );

@@ -44,6 +44,7 @@ export interface ExecutionServiceDeps {
   clearResumeToken?: (projectId: string, executionId: string) => void | Promise<void>;
   cacheResumeToken?: (projectId: string, executionId: string, token: string, expiresAt: number) => void | Promise<void>;
   monotonicNow?: () => number;
+  now?: () => number;
 }
 
 export class ExecutionSnapshotTimeoutError extends Error {
@@ -355,6 +356,49 @@ export class SquadExecutionService {
     return this.deliver(callerPrincipalId, projectId, executionId, expectedStateVersion, slotId, message, true);
   }
 
+  /** Only the live Team coordinator can declare a durable job complete. */
+  async completeByCoordinator(callerPrincipalId: string, projectId: string, executionId: string, summary: string) {
+    if (!summary.trim() || summary.length > 64 * 1024) {
+      return { ok: false as const, code: 'INVALID', message: 'invalid execution completion summary' };
+    }
+    const record = await this.deps.store.getInProject(projectId, executionId);
+    if (!record || record.state === 'COMPLETED' || record.state === 'FAILED' || record.state === 'STOPPED') {
+      return { ok: false as const, code: 'NOT_FOUND', message: 'execution is not active' };
+    }
+    const lifecycle = await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId) as {
+      orchestratorSessionId?: string;
+    } | undefined;
+    if (lifecycle?.orchestratorSessionId !== callerPrincipalId) {
+      return { ok: false as const, code: 'DENIED', message: 'only the Team coordinator can complete this execution' };
+    }
+    try {
+      const completed = await this.transitionOrCurrent(record, 'COMPLETED', 'info', 'Coordinator completed execution');
+      if (completed.state !== 'COMPLETED') {
+        return { ok: false as const, code: 'CONFLICT', message: 'execution changed before completion could be recorded' };
+      }
+      await this.deps.store.producerEvent(completed.id, {
+        id: `coordinator-complete:${completed.attempt}:${completed.stateVersion}`,
+        producerRole: 'orchestrator', type: 'outcome', severity: 'info', summary: summary.trim().slice(0, 2_048)
+      });
+      await this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
+      return { ok: true as const, value: completed };
+    } catch (error) {
+      return { ok: false as const, code: 'CONFLICT', message: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /** Main-only PTY-exit hook. Worker exits are deliberately non-terminal. */
+  async failCoordinatorExit(projectId: string, executionId: string, sessionId: string) {
+    const record = await this.deps.store.getInProject(projectId, executionId);
+    if (!record || record.state === 'COMPLETED' || record.state === 'FAILED' || record.state === 'STOPPED') return;
+    const lifecycle = await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId) as {
+      orchestratorSessionId?: string;
+    } | undefined;
+    if (lifecycle?.orchestratorSessionId !== sessionId) return;
+    const failed = await this.transitionOrCurrent(record, 'FAILED', 'error', 'Coordinator exited before explicit completion');
+    await this.deps.cancelTeamLaunch(failed.callerPrincipalId, failed.teamLaunchRequestId);
+  }
+
   /** Caller validated a consumed handoff; source owner remains bound for lifecycle work. */
   async controlWithHandoff(
     authority: { sourceOwnerSessionId: string; projectId: string; executionId: string },
@@ -459,7 +503,7 @@ export class SquadExecutionService {
     }
     const fenced = await this.fenceCommand(record, expectedStateVersion, resume ? 'Execution resume requested' : 'Execution response requested', slotId);
     if (!fenced.ok) return fenced;
-    const lifecycle = await this.deps.getTeamLaunch(record.callerPrincipalId, fenced.value.launchRequestId) as {
+    const lifecycle = await this.deps.getTeamLaunch(record.callerPrincipalId, fenced.value.teamLaunchRequestId) as {
       workers?: Array<{ slotId?: string; sessionId?: string; projectId?: string }>;
     } | undefined;
     const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === slotId && candidate.projectId === record.projectId);
@@ -483,7 +527,7 @@ export class SquadExecutionService {
     }
     const fenced = await this.fenceCommand(record, expectedStateVersion, 'Execution stop requested');
     if (!fenced.ok) return fenced;
-    const canceled = await this.deps.cancelTeamLaunch(record.callerPrincipalId, fenced.value.launchRequestId);
+    const canceled = await this.deps.cancelTeamLaunch(record.callerPrincipalId, fenced.value.teamLaunchRequestId);
     if (!canceled.ok) return { ok: false as const, code: canceled.code ?? 'CANCEL_FAILED', message: canceled.message ?? 'Team cancellation failed' };
     if (fenced.value.state === 'FAILED') {
       const current = await this.emitOrCurrent(fenced.value, 'info', 'Stop requested for surviving partial-launch slots');
@@ -507,8 +551,16 @@ export class SquadExecutionService {
 
   private async reconcile(callerPrincipalId: string, projectId: string, record: ExecutionRecord): Promise<ExecutionRecord> {
     if (record.state === 'READY') return record;
+    const deadlineMs = record.request.policy?.deadlineMs;
+    if (deadlineMs && (this.deps.now ?? Date.now)() >= record.createdAt + deadlineMs
+      && record.state !== 'COMPLETED' && record.state !== 'FAILED' && record.state !== 'STOPPED') {
+      const stopped = await this.transitionOrCurrent(record, 'STOPPED', 'warning', 'Execution timed out');
+      await this.deps.cancelTeamLaunch(stopped.callerPrincipalId, stopped.teamLaunchRequestId);
+      return stopped;
+    }
     let lifecycle: {
       workers?: Array<{ projectId?: string; task?: string; process?: string }>;
+      orchestratorSessionId?: string;
       launchResult?: { failedSlots?: unknown[] };
       outcome?: { status?: string; result?: { ok?: boolean; message?: string } };
     } | undefined;
@@ -531,8 +583,12 @@ export class SquadExecutionService {
     if (lifecycle.outcome?.status === 'completed' && lifecycle.outcome.result?.ok === false) {
       return this.transitionOrCurrent(record, 'FAILED', 'error', lifecycle.outcome.result.message ?? 'Team launch failed');
     }
-    if (lifecycle.workers.length > 0 && lifecycle.workers.every((worker) => worker.task === 'caller-reported-complete')) {
-      return this.transitionOrCurrent(record, 'COMPLETED', 'info', 'All Team slots reported complete');
+    // Worker-only Teams have no coordinator capable of explicit completion. Keep
+    // their established all-worker completion contract; orchestrated jobs require
+    // the coordinator's execution.complete call instead.
+    if (!lifecycle.orchestratorSessionId && lifecycle.workers.length > 0
+      && lifecycle.workers.every((worker) => worker.task === 'caller-reported-complete')) {
+      return this.transitionOrCurrent(record, 'COMPLETED', 'info', 'All worker-only Team slots reported complete');
     }
     if (lifecycle.workers.some((worker) => worker.task === 'caller-reported-failed')) {
       return this.transitionOrCurrent(record, 'FAILED', 'error', 'A Team slot reported failure');

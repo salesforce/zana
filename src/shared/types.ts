@@ -2038,6 +2038,12 @@ export interface AppConfig {
    */
   teamLaunchEnabled?: boolean;
   /**
+   * Enable operator-launched durable Team jobs. Unlike autonomous Teams, jobs
+   * are owned by SquadExecutionService and remain monitorable after UI closes.
+   * Default off.
+   */
+  teamJobLaunchEnabled?: boolean;
+  /**
    * Master switch for the EXPERIMENTAL Goals feature: when ON, the "Goals"
    * project-scoped nav tab appears (persistent objectives with falsifiable
    * success criteria that spawn worker sessions and self-evaluate). Under
@@ -4934,10 +4940,44 @@ export interface ExecutionBoardProjection {
   jobTitle: string;
   state: 'READY' | 'STARTING' | 'RUNNING' | 'COMPLETED' | 'BLOCKED' | 'STOPPED' | 'FAILED';
   attempt: number;
+  stateVersion?: number;
   updatedAt: number;
   orchestratorSessionId?: string;
   hasResumeToken?: boolean;
   teamName?: string;
+}
+
+/** Renderer advisory input for a durable Team job. Main owns project and slot expansion. */
+export interface TeamJobLaunchInput {
+  teamId: string;
+  projectId: string;
+  goal: string;
+  title?: string;
+  summary?: string;
+}
+
+export interface TeamJobLaunchResult {
+  executionId: string;
+  state: ExecutionBoardProjection['state'];
+}
+
+export interface ExecutionBoardSnapshot {
+  execution: ExecutionBoardProjection;
+  events: Array<{
+    id: string;
+    sequence: number;
+    severity: 'info' | 'warning' | 'error';
+    summary: string;
+    createdAt: number;
+    detail?: string;
+    blocker?: { question: string; options?: string[] };
+    progress?: { completed: number; total: number };
+    slotId?: string;
+  }>;
+  nextAfter: number;
+  truncated: boolean;
+  artifacts: Array<{ id: string; name: string; mediaType: string; contentDigest: string; attempt: number; createdAt: number }>;
+  artifactsTruncated: boolean;
 }
 
 export interface CcApi {
@@ -4956,7 +4996,12 @@ export interface CcApi {
     revokeProject(projectId: string, grantId: string): Promise<ProjectExecutionConsentGrant[]>;
   };
   executionBoard: {
-    listProject(projectId: string): Promise<ExecutionBoardProjection[]>;
+    listProject(projectId: string, before?: number, limit?: number): Promise<{ executions: ExecutionBoardProjection[]; hasMore: boolean }>;
+    snapshot(projectId: string, executionId: string, after?: number): Promise<ExecutionBoardSnapshot | undefined>;
+    stop(projectId: string, executionId: string, expectedStateVersion: number): Promise<Result<ExecutionBoardProjection>>;
+    retry(projectId: string, executionId: string, expectedStateVersion: number): Promise<Result<ExecutionBoardProjection>>;
+    respond(projectId: string, executionId: string, expectedStateVersion: number, slotId: string, message: string): Promise<Result<ExecutionBoardProjection>>;
+    resume(projectId: string, executionId: string, expectedStateVersion: number, slotId: string, message: string): Promise<Result<ExecutionBoardProjection>>;
     clearResumeToken(projectId: string, executionId: string): Promise<Result<true>>;
     relaunchMonitor(projectId: string, executionId: string): Promise<Result<{ sessionId: string }>>;
   };
@@ -5991,6 +6036,8 @@ export interface CcApi {
     ): Promise<Result<LaunchTeamResult>>;
     /** Cancel sessions from a renderer-owned interactive Team launch. */
     cancel(launchRequestId: string): Promise<Result<CancelTeamLaunchResult>>;
+    /** Start a durable Team job. Main re-authorizes Team/project and maps slots. */
+    startJob(input: TeamJobLaunchInput): Promise<Result<TeamJobLaunchResult>>;
     /**
      * Launch a team as an AUTONOMOUS run into a project: opens orchestrator +
      * worker tabs, the orchestrator seeded with `goal`, and a main-side

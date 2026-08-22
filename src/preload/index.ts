@@ -34,6 +34,7 @@ import type {
   SavedRecord,
   Suggestion,
   Team,
+  TeamJobLaunchInput,
   TerminalSession,
   UpdateProgress,
   UpdateStatus,
@@ -61,6 +62,15 @@ const api: CcApi = {
   },
   executionBoard: {
     listProject: (projectId) => ipcRenderer.invoke(IPC.executionBoard.listProject, projectId),
+    snapshot: (projectId, executionId, after) => ipcRenderer.invoke(IPC.executionBoard.snapshot, projectId, executionId, after),
+    stop: (projectId, executionId, expectedStateVersion) =>
+      ipcRenderer.invoke(IPC.executionBoard.stop, projectId, executionId, expectedStateVersion),
+    retry: (projectId, executionId, expectedStateVersion) =>
+      ipcRenderer.invoke(IPC.executionBoard.retry, projectId, executionId, expectedStateVersion),
+    respond: (projectId, executionId, expectedStateVersion, slotId, message) =>
+      ipcRenderer.invoke(IPC.executionBoard.respond, projectId, executionId, expectedStateVersion, slotId, message),
+    resume: (projectId, executionId, expectedStateVersion, slotId, message) =>
+      ipcRenderer.invoke(IPC.executionBoard.resume, projectId, executionId, expectedStateVersion, slotId, message),
     clearResumeToken: (projectId, executionId) => ipcRenderer.invoke(IPC.executionBoard.clearResumeToken, projectId, executionId),
     relaunchMonitor: (projectId, executionId) => ipcRenderer.invoke(IPC.executionBoard.relaunchMonitor, projectId, executionId)
   },
@@ -382,6 +392,7 @@ const api: CcApi = {
     delete: (id) => ipcRenderer.invoke(IPC.teams.delete, id),
     launch: (teamId, projectId) => ipcRenderer.invoke(IPC.teams.launch, teamId, projectId),
     cancel: (launchRequestId) => ipcRenderer.invoke(IPC.teams.cancel, launchRequestId),
+    startJob: (input: TeamJobLaunchInput) => ipcRenderer.invoke(IPC.teams.startJob, input),
     launchAutonomous: (teamId, projectId, goal) =>
       ipcRenderer.invoke(IPC.teams.launchAutonomous, teamId, projectId, goal),
     stopAutonomous: (runId) => ipcRenderer.invoke(IPC.teams.stopAutonomous, runId),

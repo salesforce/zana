@@ -1011,6 +1011,7 @@ export const AgentLauncher = memo(function AgentLauncher({
   // (PI) ignores it (the toggle is disabled).
   const [yolo, setYolo] = useState(false);
   const globalDefaultHarness = useData((s) => s.defaultHarness);
+  const teamJobLaunchEnabled = useData((s) => s.teamJobLaunchEnabled);
   const configLoaded = useData((s) => s.configLoaded);
   const harnessCursorEnabled = useData((s) => s.harnessCursorEnabled);
   const harnessCodexEnabled = useData((s) => s.harnessCodexEnabled);
@@ -1112,11 +1113,8 @@ export const AgentLauncher = memo(function AgentLauncher({
    * registered project instead. Unused in project mode (the target is fixed).
    */
   const [targetProjectId, setTargetProjectId] = useState<string | null>(null);
-  // Launch mode: a single agent (default, the flow above) or an autonomous team
-  // run (orchestrator + workers driven toward a goal). Autonomous mode swaps the
-  // profile/persona/framework pickers for a Team picker and launches via
-  // `teams.launchAutonomous` instead of `createTerminal`.
-  const [mode, setMode] = useState<'agent' | 'autonomous'>('agent');
+  // Team modes replace individual harness choices with host-authorized Team work.
+  const [mode, setMode] = useState<'agent' | 'autonomous' | 'job'>('agent');
   const [teamId, setTeamId] = useState<string | null>(null);
   const [harnessDescriptors, setHarnessDescriptors] = useState<HarnessAdapterDescriptor[]>([]);
   const [openCodeAgentDiscoverySnapshot, setOpenCodeAgentDiscoverySnapshot] = useState<OpenCodeAgentDiscoverySnapshot | null>(null);
@@ -1685,6 +1683,40 @@ export const AgentLauncher = memo(function AgentLauncher({
     }
   };
 
+  const launchJob = async () => {
+    const goal = prompt.trim();
+    if (!teamId || !goal || !target) return;
+    setLaunching(true);
+    try {
+      const attachmentPaths = await resolveAttachmentPaths();
+      if (attachmentPaths === null) return;
+      const res = await window.cc.teams.startJob({
+        teamId,
+        projectId: target.id,
+        goal: appendAttachmentContext(goal, attachmentPaths),
+        title: titleFromPrompt(goal)
+      });
+      if (!res.ok) {
+        const message = `Job launch failed: ${res.message ?? res.code}`;
+        setLaunchError(message);
+        pushToast(message, 'error');
+        return;
+      }
+      clearDraft();
+      setAttachments([]);
+      setLaunchError(null);
+      pushToast('Job launched. Open Agents board to monitor it.');
+      onClose();
+      
+    } catch (err) {
+      const message = `Job launch failed: ${err instanceof Error ? err.message : String(err)}`;
+      setLaunchError(message);
+      pushToast(message, 'error');
+    } finally {
+      setLaunching(false);
+    }
+  };
+
   // "Fix with AI" — spawns a narrowly-scoped repair agent seeded with the raw
   // launch-failure text (mirrors Settings → Doctor's spawn path: claude-yolo so
   // it can inspect/repair local tooling without a permission prompt per step).
@@ -1885,6 +1917,16 @@ export const AgentLauncher = memo(function AgentLauncher({
                 >
                   <Zap size={13} /> Autonomous team
                 </button>
+                {teamJobLaunchEnabled && (
+                  <button
+                    type="button"
+                    className={mode === 'job' ? 'active' : ''}
+                    onClick={() => setMode('job')}
+                    aria-pressed={mode === 'job'}
+                  >
+                    <Users size={13} /> Launch as job
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -1899,14 +1941,14 @@ export const AgentLauncher = memo(function AgentLauncher({
             onRemoveAttachment={(path) => {
               setAttachments((current) => current.filter((item) => item !== path));
             }}
-            onSubmit={mode === 'autonomous' ? launchAutonomous : launch}
+            onSubmit={mode === 'autonomous' ? launchAutonomous : mode === 'job' ? launchJob : launch}
             variant={useQuickAgentHomeComposer ? 'home' : 'default'}
-            submitLabel={mode === 'autonomous' ? 'Launch autonomous team' : 'Launch agent'}
-            submitDisabled={mode === 'autonomous'
+            submitLabel={mode === 'autonomous' ? 'Launch autonomous team' : mode === 'job' ? 'Launch job' : 'Launch agent'}
+            submitDisabled={mode === 'autonomous' || mode === 'job'
               ? !teamId || !prompt.trim() || !target || launching
               : !target || !descriptor || !configLoaded || !worktreeDefaultLoaded || personaProfileConflict || launching}
             placeholder={
-              mode === 'autonomous'
+              mode === 'autonomous' || mode === 'job'
                 ? 'Describe the GOAL for the team to reach (⌘↵ to launch). Attach or drop supporting files.'
                 : 'Describe the task… (⌘↵ to launch). Attach or drop files. Leave empty to open an interactive session.'
             }
@@ -2009,7 +2051,7 @@ export const AgentLauncher = memo(function AgentLauncher({
           {/* Autonomous mode: pick the Team to launch. The goal comes from the
               prompt box above. Replaces the profile/persona/framework pickers —
               those are per-agent and don't apply to a whole-team run. */}
-          {mode === 'autonomous' && (
+          {(mode === 'autonomous' || mode === 'job') && (
             <div className="launch-row">
               <span className="launch-row-label">Team</span>
               <div className="launch-personas" role="group" aria-label="Team">
@@ -2530,6 +2572,16 @@ export const AgentLauncher = memo(function AgentLauncher({
                 >
                   <Zap size={14} />
                   Launch autonomous team
+                </button>
+              ) : mode === 'job' ? (
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={!teamId || !prompt.trim() || !target || launching}
+                  onClick={launchJob}
+                  title="Launch durable Team job (⌘↵)"
+                >
+                  Launch job
                 </button>
               ) : (
                 <button

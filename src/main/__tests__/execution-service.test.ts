@@ -34,6 +34,42 @@ function deps(filePath: string, over: Partial<ConstructorParameters<typeof Squad
 }
 
 describe('SquadExecutionService', () => {
+  it('requires the live coordinator for explicit completion', async () => fixture(async (filePath) => {
+    const getTeamLaunch = vi.fn(async () => ({ orchestratorSessionId: 'coordinator', workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'running' }] }));
+    const cancelTeamLaunch = vi.fn(async () => ({ ok: true, value: { canceledSessionIds: ['worker-1'], pendingSessionIds: [] } }));
+    const service = new SquadExecutionService(deps(filePath, { getTeamLaunch, cancelTeamLaunch }));
+    await service.start('session-1', 'project-1', request);
+    await expect(service.completeByCoordinator('worker-1', 'project-1', 'execution-1', 'done')).resolves.toMatchObject({ ok: false, code: 'DENIED' });
+    await expect(service.completeByCoordinator('coordinator', 'project-1', 'execution-1', 'done')).resolves.toMatchObject({ ok: true, value: { state: 'COMPLETED' } });
+    expect(cancelTeamLaunch).toHaveBeenCalledWith('session-1', 'request-1');
+  }));
+
+  it('fails only the original coordinator exit, not a replacement monitor', async () => fixture(async (filePath) => {
+    const getTeamLaunch = vi.fn(async () => ({ orchestratorSessionId: 'coordinator', workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'running' }] }));
+    const cancelTeamLaunch = vi.fn(async () => ({ ok: true, value: { canceledSessionIds: ['worker-1'], pendingSessionIds: [] } }));
+    const service = new SquadExecutionService(deps(filePath, { getTeamLaunch, cancelTeamLaunch }));
+    await service.start('session-1', 'project-1', request);
+    await service.failCoordinatorExit('project-1', 'execution-1', 'monitor');
+    expect((await service.status('session-1', 'project-1', 'execution-1'))?.state).toBe('RUNNING');
+    await service.failCoordinatorExit('project-1', 'execution-1', 'coordinator');
+    expect((await service.status('session-1', 'project-1', 'execution-1'))?.state).toBe('FAILED');
+    expect(cancelTeamLaunch).toHaveBeenCalledWith('session-1', 'request-1');
+  }));
+
+  it('stops an overdue execution and cancels its Team lifecycle', async () => fixture(async (filePath) => {
+    let now = Date.now();
+    const cancelTeamLaunch = vi.fn(async () => ({ ok: true, value: { canceledSessionIds: ['worker-1'], pendingSessionIds: [] } }));
+    const service = new SquadExecutionService(deps(filePath, {
+      now: () => now,
+      cancelTeamLaunch,
+      getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'running' }] })
+    }));
+    await service.start('session-1', 'project-1', { ...request, policy: { deadlineMs: 100 } });
+    now += 101;
+    await expect(service.status('session-1', 'project-1', 'execution-1')).resolves.toMatchObject({ state: 'STOPPED' });
+    expect(cancelTeamLaunch).toHaveBeenCalledWith('session-1', 'request-1');
+  }));
+
   it('prefers caller job title and launches only after durable reservation and authorization', async () => fixture(async (filePath) => {
     const authorizeTeamLaunch = vi.fn(() => ({ ok: true as const, value: {
       teamId: 'team-1', projectId: 'project-1', slots: [{ slotId: 'slot-1', personaId: 'persona-1', initialTask: 'Run tests', authorizationId: 'auth-1' }],
@@ -276,7 +312,7 @@ describe('SquadExecutionService', () => {
   }));
 
 
-  it('reconciles completed and failed Team task reports into terminal execution state', async () => fixture(async (filePath) => {
+  it('completes worker-only Teams from worker task reports', async () => fixture(async (filePath) => {
     const getTeamLaunch = vi.fn(async () => ({ workers: [{ projectId: 'project-1', task: 'caller-reported-complete' }] }));
     const service = new SquadExecutionService(deps(filePath, { getTeamLaunch }));
     await service.start('session-1', 'project-1', request);

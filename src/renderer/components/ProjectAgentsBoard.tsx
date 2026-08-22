@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Bot, Moon, Plus, Loader2 } from 'lucide-react';
-import type { ExecutionBoardProjection, Project } from '@shared/types';
+import type { ExecutionBoardProjection, ExecutionBoardSnapshot, Project } from '@shared/types';
 import { useData, useUi, useAgentStatus, useIdleTriage, useOverseerActivity, useSubagents, useFavoriteAgents, favoriteKey, listedTerminals } from '../store';
 import { AgentBoardLanes, isReclaimableIdle, type AgentCard } from './AgentBoard';
 import { AgentViewToggle } from './AgentViewToggle';
@@ -46,11 +46,42 @@ export function ProjectAgentsBoard({ project, onNewAgent }: Props) {
   const [closeIdleTarget, setCloseIdleTarget] = useState<AgentCard[] | null>(null);
   const [busyAction, setBusyAction] = useState<null | 'close'>(null);
   const [executions, setExecutions] = useState<ExecutionBoardProjection[]>([]);
+  const [hasMoreExecutions, setHasMoreExecutions] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [executionSnapshot, setExecutionSnapshot] = useState<ExecutionBoardSnapshot | null>(null);
+  const [snapshotLoading, setSnapshotLoading] = useState(false);
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+
+  const loadMoreExecutions = async () => {
+    if (loadingMore || !hasMoreExecutions || executions.length === 0) return;
+    setLoadingMore(true);
+    try {
+      const oldest = executions[executions.length - 1].createdAt;
+      const next = await window.cc.executionBoard.listProject(project.id, oldest);
+      setExecutions((prev) => {
+        const existing = new Set(prev.map(e => e.executionId));
+        const added = next.executions.filter(e => !existing.has(e.executionId));
+        return [...prev, ...added];
+      });
+      setHasMoreExecutions(next.hasMore);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
     const refresh = () => void window.cc.executionBoard.listProject(project.id).then((next) => {
-      if (!cancelled) setExecutions(next);
+      if (!cancelled) {
+        setExecutions((prev) => {
+          if (prev.length > next.executions.length) {
+            const nextMap = new Map(next.executions.map(e => [e.executionId, e]));
+            return prev.map(e => nextMap.get(e.executionId) ?? e);
+          }
+          return next.executions;
+        });
+        setHasMoreExecutions(next.hasMore);
+      }
     });
     refresh();
     const timer = setInterval(refresh, 5_000);
@@ -90,7 +121,27 @@ export function ProjectAgentsBoard({ project, onNewAgent }: Props) {
 
   // Card click → peek at the agent in the inspector modal (no nav change).
   const inspect = (c: AgentCard) => {
+    const executionId = c.session.cohort?.executionId;
+    if (executionId) {
+      setSnapshotLoading(true);
+      void window.cc.executionBoard.snapshot(project.id, executionId).then((snapshot) => setExecutionSnapshot(snapshot ?? null)).finally(() => setSnapshotLoading(false));
+      return;
+    }
     useUi.getState().openAgentModal(c.session.id, project.id);
+  };
+
+  const loadOlderExecutionEvents = () => {
+    if (!executionSnapshot?.truncated) return;
+    setSnapshotLoading(true);
+    void window.cc.executionBoard.snapshot(project.id, executionSnapshot.execution.executionId, executionSnapshot.nextAfter)
+      .then((next) => {
+        if (!next) return;
+        setExecutionSnapshot((current) => current ? {
+          ...next,
+          events: [...current.events, ...next.events]
+        } : next);
+      })
+      .finally(() => setSnapshotLoading(false));
   };
 
   // Context-menu "Open"/"View" → the heavier navigate-to-workspace path.
@@ -148,6 +199,59 @@ export function ProjectAgentsBoard({ project, onNewAgent }: Props) {
       </div>
 
       <AutonomousRunBanner projectId={project.id} />
+      {executionSnapshot && (
+        <section className="execution-details" aria-label="Job details">
+          <header>
+            <strong>{executionSnapshot.execution.jobTitle}</strong>
+            <button type="button" onClick={() => setExecutionSnapshot(null)}>Close details</button>
+          </header>
+          <div className="execution-details-events">
+            {executionSnapshot.events.map((event) => (
+              <details key={event.id}>
+                <summary>{event.severity}: {event.summary}</summary>
+                {event.detail && <p>{event.detail}</p>}
+                {event.blocker && <p>Blocker: {event.blocker.question}</p>}
+                {event.progress && <p>Progress: {event.progress.completed}/{event.progress.total}</p>}
+                {event.blocker && event.slotId && (
+                  <form onSubmit={(e) => {
+                    e.preventDefault();
+                    const message = replyDrafts[event.id]?.trim();
+                    if (!message) return;
+                    setSnapshotLoading(true);
+                    const action = executionSnapshot.execution.state === 'BLOCKED'
+                      ? window.cc.executionBoard.resume
+                      : window.cc.executionBoard.respond;
+                    void action(project.id, executionSnapshot.execution.executionId, executionSnapshot.execution.stateVersion ?? 0, event.slotId!, message)
+                      .then((result) => {
+                        if (!result.ok) useUi.getState().pushToast(`Job response failed: ${result.message ?? result.code}`, 'error');
+                      })
+                      .finally(() => setSnapshotLoading(false));
+                  }}>
+                    <input
+                      value={replyDrafts[event.id] ?? ''}
+                      onChange={(e) => setReplyDrafts((current) => ({ ...current, [event.id]: e.target.value }))}
+                      placeholder="Respond to blocker"
+                    />
+                    <button type="submit" disabled={snapshotLoading}>Send</button>
+                  </form>
+                )}
+              </details>
+            ))}
+          </div>
+          {executionSnapshot.truncated && (
+            <button type="button" disabled={snapshotLoading} onClick={loadOlderExecutionEvents}>
+              {snapshotLoading ? 'Loading...' : 'Load older events'}
+            </button>
+          )}
+          {executionSnapshot.artifacts.length > 0 && (
+            <div className="execution-details-artifacts">
+              {executionSnapshot.artifacts.map((artifact) => (
+                <div key={artifact.id}>{artifact.name} ({artifact.mediaType})</div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
       {/* Live Team cohorts launched into this project — one chip per launch, with
           a per-team Close scoped to that cohort (same reclaimable filter as the
           board buttons: skips question-parked, background, and starred members).
@@ -181,7 +285,7 @@ export function ProjectAgentsBoard({ project, onNewAgent }: Props) {
           </button>
         </div>
       ) : (
-        <AgentBoardLanes cards={cards} activeId={activeTabId} onInspect={inspect} onPick={pick} executions={executions} />
+        <AgentBoardLanes cards={cards} activeId={activeTabId} onInspect={inspect} onPick={pick} executions={executions} hasMoreExecutions={hasMoreExecutions} onLoadMoreExecutions={loadMoreExecutions} />
       )}
 
       {closeIdleTarget && (

@@ -45,6 +45,7 @@ import { createResumeGrantStore } from './execution/resume-grant-store.js';
 import { createResumeTokenStore } from './execution/resume-token-store.js';
 import { relaunchExecutionMonitor } from './execution/relaunch-monitor.js';
 import { preflightWorkflowProfile } from './squad-bundle.js';
+import { expandTeamSlots } from './team-slot-expansion.js';
 import { bindLaunchPrincipal, type LaunchAuthorizationBinding, type LaunchPrincipal, type LaunchPrincipalRef } from './launch/types.js';
 import type { TerminalLaunchOptions } from './launch/terminal-launcher.js';
 import * as testTap from './test-tap.js';
@@ -119,6 +120,7 @@ import { createSavedStore, type ISavedStore } from './saved-store.js';
 import type { SavedRecord, SavedRecordInput } from '../shared/types.js';
 import type { ConversationHistorySnapshot } from '../shared/types.js';
 import type { CancelTeamLaunchResult, LaunchTeamResult, TeamLaunchAuthorizationInputSlot, TeamLaunchAuthorizationResult, TeamLaunchRequestInput, TeamFailedWorkerSlot, TeamLaunchedWorker } from '../shared/types.js';
+import type { TeamJobLaunchInput, TeamJobLaunchResult } from '../shared/types.js';
 import type { SubagentChild } from '../shared/types.js';
 import type { FeedEvent, FeedEventInput, FeedDigestResult } from '../shared/types.js';
 import type { LlmPromptEntry, LlmRunResult } from '../shared/types.js';
@@ -4286,6 +4288,7 @@ const squadExecutionService = new SquadExecutionService({
     const team = teams.list().find((candidate) => candidate.id === teamId);
     return team ? preflightWorkflowProfile(workflow, team, personas.list()) : { ok: false, code: 'INVALID_WORKFLOW_PROFILE', message: 'workflow profile Team is unavailable' };
   }
+  , now: Date.now
 });
 
 export async function reportTeamTask(
@@ -4303,6 +4306,70 @@ export async function reportTeamTask(
     task: outcome === 'complete' ? 'caller-reported-complete' : 'caller-reported-failed'
   });
   return { ok: true, value: updated.record };
+}
+
+/**
+ * Starts a UI-owned Team job without accepting renderer-provided slot topology,
+ * execution principal, or resume capability. The durable execution service owns
+ * every lifecycle transition after this boundary.
+ */
+export async function startTeamJobFromUi(input: TeamJobLaunchInput): Promise<Result<TeamJobLaunchResult>> {
+  if (!store.getConfig().teamJobLaunchEnabled) {
+    return { ok: false, code: 'DISABLED', message: 'Team jobs are disabled' };
+  }
+  if (!input || typeof input !== 'object') {
+    return { ok: false, code: 'INVALID', message: 'invalid Team job request' };
+  }
+  const teamId = typeof input.teamId === 'string' ? input.teamId.trim() : '';
+  const projectId = typeof input.projectId === 'string' ? input.projectId.trim() : '';
+  const goal = typeof input.goal === 'string' ? input.goal.trim().slice(0, 4_000) : '';
+  const jobTitle = typeof input.title === 'string' ? input.title.trim().slice(0, 256) || undefined : undefined;
+  const summary = typeof input.summary === 'string' ? input.summary.trim().slice(0, 4_000) || undefined : undefined;
+  if (!teamId || !projectId || !goal) {
+    return { ok: false, code: 'INVALID', message: 'team, project, and goal are required' };
+  }
+  const team = teams.list().find((candidate) => candidate.id === teamId);
+  if (!team) return { ok: false, code: 'NOT_FOUND', message: 'team not found' };
+  if (!store.listProjects().some((candidate) => candidate.id === projectId)) {
+    return { ok: false, code: 'NOT_FOUND', message: 'project not found' };
+  }
+  const orchestratorKnown = !team.orchestratorPersonaId || personas.list().some((persona) => persona.id === team.orchestratorPersonaId);
+  const slots = expandTeamSlots({
+    ...team,
+    ...(orchestratorKnown ? {} : { orchestratorPersonaId: undefined })
+  });
+  if (slots.length === 0 || slots.length > 32) {
+    return { ok: false, code: 'INVALID', message: 'Team has no launchable slots' };
+  }
+  const sharedTask = [
+    `Shared job goal: ${goal}`,
+    summary ? `Context: ${summary}` : '',
+    'Work toward this goal. Coordinate through the Team orchestrator when one is present.'
+  ].filter(Boolean).join('\n\n');
+  const initialTask = slots.map((slot) => ({
+    initialTask: slot.role === 'orchestrator'
+      ? `${sharedTask}\n\nCoordinate workers, delegate role-specific work, and explicitly report execution completion with a summary when goal is met.`
+      : `${sharedTask}\n\nCheck orchestrator instructions and report progress or blockers to it.`
+  }));
+  // Main generates a unique request identity for every explicit UI submission.
+  // Service-level idempotency still protects retries of this request identity.
+  const launchRequestId = `ui:${randomUUID()}`;
+  const result = await squadExecutionService.start('interactive:local', projectId, {
+    version: 1,
+    teamId,
+    launchRequestId,
+    jobTitle,
+    summary,
+    slots: initialTask,
+    policy: {
+      ...(store.getConfig().autonomousTimeoutMs === 0
+        ? {}
+        : { deadlineMs: store.getConfig().autonomousTimeoutMs ?? AUTONOMOUS_DEFAULTS.timeoutMs })
+    }
+  });
+  return result.ok
+    ? { ok: true, value: { executionId: result.value.id, state: result.value.state } }
+    : { ok: false, code: result.code, message: result.message };
 }
 
 /**
@@ -4578,6 +4645,11 @@ function wireBridgeListeners() {
       );
     }
     const exitedSession = ptys.getSession(sessionId);
+    if (exitedSession?.cohort?.executionId && exitedSession.cohort.role === 'orchestrator') {
+      void squadExecutionService.failCoordinatorExit(exitedSession.projectId, exitedSession.cohort.executionId, sessionId).catch((error) =>
+        logMainError(`execution coordinator exit ${sessionId}`, error)
+      );
+    }
     if (exitedSession) {
       const finalRead = readLiveSessionStats(exitedSession);
       const liveStats = liveSessionStats.get(sessionId);
@@ -7895,23 +7967,129 @@ function registerIpc() {
       launchAutonomousTeam(teamId, projectId, goal)
   );
   ipcMain.handle(
+    IPC.teams.startJob,
+    async (_e, input: TeamJobLaunchInput): Promise<Result<TeamJobLaunchResult>> => startTeamJobFromUi(input)
+  );
+  ipcMain.handle(
     IPC.teams.stopAutonomous,
     async (_e, runId: string): Promise<Result<true>> => stopAutonomousRun(runId)
   );
   safeHandle(IPC.autonomousRuns.list, () => autonomousRuns.list(), () => []);
-  safeHandle(
+  const isExecutionProjectAllowed = (win: BrowserWindow, projectId: string) => {
+    const scopedProjectId = windows.get(win.id)?.projectId;
+    return !scopedProjectId || scopedProjectId === projectId;
+  };
+  safeHandleFromWindow(
     IPC.executionBoard.listProject,
-    async (projectId: string) => {
-      if (typeof projectId !== 'string' || !projectId.trim()) return [];
+    async (win, projectId: string, before?: number, limit = 50) => {
+      if (typeof projectId !== 'string' || !projectId.trim()) return { executions: [], hasMore: false };
+      if (!isExecutionProjectAllowed(win, projectId)) return { executions: [], hasMore: false };
       const project = store.listProjects().find((candidate) => candidate.id === projectId);
-      if (!project) return [];
-      return projectExecutionProjection(await executionStore.listInProject(project.id), ptys.list(project.id)).map((execution) => ({
+      if (!project) return { executions: [], hasMore: false };
+      const owned = await squadExecutionService.list('interactive:local', project.id);
+      
+      const filtered = owned.filter((r) => !before || r.createdAt < before);
+      filtered.sort((a, b) => b.createdAt - a.createdAt);
+      const page = filtered.slice(0, limit);
+      const hasMore = filtered.length > limit;
+
+      const executions = projectExecutionProjection(page, ptys.list(project.id)).map((execution) => ({
         ...execution,
         hasResumeToken: executionResumeTokens.status(project.id, execution.executionId).configured,
         teamName: teams.list().find((team) => team.id === execution.teamId)?.name ?? execution.teamId
       }));
+      return { executions, hasMore };
     },
-    () => []
+    () => ({ executions: [], hasMore: false })
+  );
+  safeHandleFromWindow(
+    IPC.executionBoard.snapshot,
+    async (win, projectId: string, executionId: string, after?: number) => {
+      if (typeof projectId !== 'string' || typeof executionId !== 'string'
+        || !isExecutionProjectAllowed(win, projectId)
+        || !store.listProjects().some((project) => project.id === projectId)) return undefined;
+      const snapshot = await squadExecutionService.snapshot('interactive:local', projectId, executionId,
+        typeof after === 'number' && Number.isInteger(after) && after >= 0 ? after : 0);
+      if (!snapshot) return undefined;
+      const execution = executionProjection(snapshot.execution);
+      return {
+        execution,
+        events: snapshot.events.map(({ id, sequence, severity, summary, createdAt, detail, blocker, progress, slotId }) =>
+          ({ id, sequence, severity, summary, createdAt, ...(detail ? { detail } : {}), ...(blocker ? { blocker } : {}), ...(progress ? { progress } : {}), ...(slotId ? { slotId } : {}) })),
+        nextAfter: snapshot.nextAfter,
+        truncated: snapshot.truncated,
+        artifacts: snapshot.artifacts.map(({ id, name, mediaType, contentDigest, attempt, createdAt }) =>
+          ({ id, name, mediaType, contentDigest, attempt, createdAt })),
+        artifactsTruncated: snapshot.artifactsTruncated
+      };
+    },
+    () => undefined
+  );
+  const executionProjection = (record: import('./execution/store.js').ExecutionRecord) => ({
+    executionId: record.id,
+    projectId: record.projectId,
+    teamId: record.teamId,
+    jobTitle: record.jobTitle,
+    state: record.state,
+    attempt: record.attempt,
+    stateVersion: record.stateVersion,
+    updatedAt: record.updatedAt
+  });
+  safeHandleFromWindow(
+    IPC.executionBoard.stop,
+    async (win, projectId: string, executionId: string, expectedStateVersion: number) => {
+      if (!isExecutionProjectAllowed(win, projectId)) return { ok: false, code: 'NOT_FOUND', message: 'execution not found' };
+      if (!Number.isInteger(expectedStateVersion)) {
+        return { ok: false, code: 'INVALID', message: 'invalid execution control request' };
+      }
+      const result = await squadExecutionService.stop('interactive:local', projectId, executionId, expectedStateVersion);
+      return result.ok
+        ? { ok: true, value: executionProjection(result.value) }
+        : { ok: false, code: result.code, message: result.message };
+    },
+    () => ({ ok: false, code: 'UNAVAILABLE', message: 'execution control unavailable' })
+  );
+  const executionMessageControl = async (
+    action: 'respond' | 'resume', projectId: string, executionId: string,
+    expectedStateVersion: number, slotId: string, message: string
+  ) => {
+    if (!Number.isInteger(expectedStateVersion) || typeof slotId !== 'string' || typeof message !== 'string') {
+      return { ok: false, code: 'INVALID', message: 'invalid execution message request' };
+    }
+    const result = action === 'respond'
+      ? await squadExecutionService.respond('interactive:local', projectId, executionId, expectedStateVersion, slotId, message)
+      : await squadExecutionService.resume('interactive:local', projectId, executionId, expectedStateVersion, slotId, message);
+    return result.ok
+      ? { ok: true, value: executionProjection(result.value) }
+      : { ok: false, code: result.code, message: result.message };
+  };
+  safeHandleFromWindow(IPC.executionBoard.respond,
+    (win, projectId: string, executionId: string, expectedStateVersion: number, slotId: string, message: string) =>
+      isExecutionProjectAllowed(win, projectId)
+        ? executionMessageControl('respond', projectId, executionId, expectedStateVersion, slotId, message)
+        : { ok: false, code: 'NOT_FOUND', message: 'execution not found' },
+    () => ({ ok: false, code: 'UNAVAILABLE', message: 'execution control unavailable' })
+  );
+  safeHandleFromWindow(IPC.executionBoard.resume,
+    (win, projectId: string, executionId: string, expectedStateVersion: number, slotId: string, message: string) =>
+      isExecutionProjectAllowed(win, projectId)
+        ? executionMessageControl('resume', projectId, executionId, expectedStateVersion, slotId, message)
+        : { ok: false, code: 'NOT_FOUND', message: 'execution not found' },
+    () => ({ ok: false, code: 'UNAVAILABLE', message: 'execution control unavailable' })
+  );
+  safeHandleFromWindow(
+    IPC.executionBoard.retry,
+    async (win, projectId: string, executionId: string, expectedStateVersion: number) => {
+      if (!isExecutionProjectAllowed(win, projectId)) return { ok: false, code: 'NOT_FOUND', message: 'execution not found' };
+      if (!Number.isInteger(expectedStateVersion)) {
+        return { ok: false, code: 'INVALID', message: 'invalid execution control request' };
+      }
+      const result = await squadExecutionService.retry('interactive:local', projectId, executionId, expectedStateVersion);
+      return result.ok
+        ? { ok: true, value: executionProjection(result.value) }
+        : { ok: false, code: result.code, message: result.message };
+    },
+    () => ({ ok: false, code: 'UNAVAILABLE', message: 'execution control unavailable' })
   );
   // Export a team + its referenced personas as one bundle file. Main owns the
   // save dialog (Rule 1 — never a renderer-supplied path); a dismissed dialog
@@ -9206,12 +9384,12 @@ async function bootstrapNormal() {
     // `closeIdlePeersEnabled` pattern. main authorizes the whole launch.
     launchTeam: store.getConfig().teamLaunchEnabled ? launchTeam : undefined,
     authorizeTeamLaunch: store.getConfig().teamLaunchEnabled ? authorizeTeamLaunch : undefined,
-    cancelTeamLaunch: store.getConfig().teamLaunchEnabled ? cancelTeamLaunch : undefined,
-    getTeamLaunch: store.getConfig().teamLaunchEnabled ? getTeamLaunch : undefined,
-    reportTeamTask: store.getConfig().teamLaunchEnabled ? reportTeamTask : undefined,
-    executionService: store.getConfig().teamLaunchEnabled ? squadExecutionService : undefined,
-    executionHandoffs: store.getConfig().teamLaunchEnabled ? executionHandoffs : undefined,
-    validateExecutionHandoffTarget: store.getConfig().teamLaunchEnabled
+    cancelTeamLaunch: (store.getConfig().teamLaunchEnabled || store.getConfig().teamJobLaunchEnabled) ? cancelTeamLaunch : undefined,
+    getTeamLaunch: (store.getConfig().teamLaunchEnabled || store.getConfig().teamJobLaunchEnabled) ? getTeamLaunch : undefined,
+    reportTeamTask: (store.getConfig().teamLaunchEnabled || store.getConfig().teamJobLaunchEnabled) ? reportTeamTask : undefined,
+    executionService: (store.getConfig().teamLaunchEnabled || store.getConfig().teamJobLaunchEnabled) ? squadExecutionService : undefined,
+    executionHandoffs: (store.getConfig().teamLaunchEnabled || store.getConfig().teamJobLaunchEnabled) ? executionHandoffs : undefined,
+    validateExecutionHandoffTarget: (store.getConfig().teamLaunchEnabled || store.getConfig().teamJobLaunchEnabled)
       ? (sourceSessionId, targetSessionId, projectId) => {
           const source = ptys.getSession(sourceSessionId);
           const target = ptys.getSession(targetSessionId);
@@ -9219,7 +9397,7 @@ async function bootstrapNormal() {
             && !!target && target.status !== 'exited' && target.projectId === projectId;
         }
       : undefined,
-    approveExecutionHandoff: store.getConfig().teamLaunchEnabled
+    approveExecutionHandoff: (store.getConfig().teamLaunchEnabled || store.getConfig().teamJobLaunchEnabled)
       ? async (sourceSessionId, targetSessionId, projectId, executionId, operation) => {
           const source = ptys.getSession(sourceSessionId);
           const target = ptys.getSession(targetSessionId);

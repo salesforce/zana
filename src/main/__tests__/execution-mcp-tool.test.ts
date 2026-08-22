@@ -51,7 +51,7 @@ describe('execution MCP tools', () => {
   it('registers only route-scoped execution controls', () => {
     const { server, tools } = fakeServer();
     registerExecutionTools(server as never, { sessionId: 'session-1', projectId: 'project-1', service: service() as never, validateRouteIdentity: () => true });
-    expect([...tools.keys()]).toEqual(['execution.start', 'execution.status', 'execution.resume_binding', 'execution.mint_resume_grant', 'execution.revoke_resume_grant', 'execution.list', 'execution.events', 'execution.snapshot', 'execution.event', 'execution.stop', 'execution.retry', 'execution.respond', 'execution.resume', 'execution.artifact.put', 'execution.artifact.list']);
+    expect([...tools.keys()]).toEqual(['execution.start', 'execution.status', 'execution.resume_binding', 'execution.mint_resume_grant', 'execution.revoke_resume_grant', 'execution.list', 'execution.events', 'execution.snapshot', 'execution.event', 'execution.stop', 'execution.complete', 'execution.retry', 'execution.respond', 'execution.resume', 'execution.artifact.put', 'execution.artifact.list']);
   });
 
   it('uses route identity and project, never caller-supplied authority', async () => {

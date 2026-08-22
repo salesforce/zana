@@ -58,31 +58,29 @@ describe('execution store', () => {
     expect(await store.get(running.id)).toMatchObject({ state: 'RUNNING' });
   }));
 
-  it('requires event resync when retention removed requested cursor history', async () => fixture(async (filePath) => {
+  it('does not evict event history younger than minimum retention under count pressure', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1', maxEvents: 2 });
     const claimed = await store.claim(request());
     if (claimed.outcome !== 'claimed') throw new Error('expected claim');
     const starting = await store.transition(claimed.record.id, 0, 'STARTING', 'info', 'Starting');
     const running = await store.transition(starting.id, 1, 'RUNNING', 'info', 'Running');
     expect(await store.events('session-1', 'project-1', running.id, 0)).toMatchObject({
-      events: [{ sequence: 2 }, { sequence: 3 }],
-      resyncRequired: true
+      events: [{ sequence: 1 }, { sequence: 2 }, { sequence: 3 }]
     });
   }));
 
-  it('requires event resync after retention removed every prior event', async () => fixture(async (filePath) => {
+  it('keeps recent history even when configured event capacity is one', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1', maxEvents: 1 });
     const claimed = await store.claim(request());
     if (claimed.outcome !== 'claimed') throw new Error('expected claim');
     const starting = await store.transition(claimed.record.id, 0, 'STARTING', 'info', 'Starting');
     await store.transition(starting.id, 1, 'RUNNING', 'info', 'Running');
     expect(await store.events('session-1', 'project-1', claimed.record.id, 1)).toMatchObject({
-      events: [{ sequence: 3 }],
-      resyncRequired: true
+      events: [{ sequence: 2 }, { sequence: 3 }]
     });
   }));
 
-  it('keeps producer and lifecycle event sequences monotonic across retention', async () => fixture(async (filePath) => {
+  it('keeps producer and lifecycle event sequences monotonic under retention protection', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1', maxEvents: 2 });
     const claimed = await store.claim(request());
     if (claimed.outcome !== 'claimed') throw new Error('expected claim');
@@ -90,7 +88,7 @@ describe('execution store', () => {
     await store.producerEvent(starting.id, { id: 'producer-1', type: 'progress', severity: 'info', summary: 'Progress' });
     const running = await store.transition(starting.id, 1, 'RUNNING', 'info', 'Running');
     await store.producerEvent(running.id, { id: 'producer-2', type: 'outcome', severity: 'info', summary: 'Done' });
-    expect((await store.events('session-1', 'project-1', running.id)).events.map((event) => event.sequence)).toEqual([4, 5]);
+    expect((await store.events('session-1', 'project-1', running.id)).events.map((event) => event.sequence)).toEqual([1, 2, 3, 4, 5]);
   }));
 
   it('persists replayable producer role, attention, progress, and references', async () => fixture(async (filePath) => {
@@ -106,12 +104,12 @@ describe('execution store', () => {
     ] });
   }));
 
-  it('requires resync for an old cursor when global retention removed this execution events', async () => fixture(async (filePath) => {
+  it('does not allow another execution to evict protected recent events', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: (() => { let index = 0; return () => `execution-${++index}`; })(), maxEvents: 1 });
     const first = await store.claim(request());
     const second = await store.claim({ ...request(), launchRequestId: 'request-2', requestDigest: 'digest-2' });
     if (first.outcome !== 'claimed' || second.outcome !== 'claimed') throw new Error('expected claims');
-    expect(await store.events('session-1', 'project-1', first.record.id, 1)).toEqual({ events: [], resyncRequired: true });
+    expect(await store.events('session-1', 'project-1', first.record.id, 1)).toMatchObject({ events: [] });
   }));
 
   it('requires resync for a future event cursor', async () => fixture(async (filePath) => {

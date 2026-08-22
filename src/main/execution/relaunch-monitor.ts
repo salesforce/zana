@@ -60,6 +60,9 @@ export async function relaunchExecutionMonitor(
     const project = deps.findProject(projectId);
     const record = project ? await deps.getExecution(project.id, executionId) : undefined;
     if (!project || !record) return { ok: false, code: 'NOT_FOUND', message: 'execution not found for project' };
+    if (record.state === 'COMPLETED' || record.state === 'FAILED' || record.state === 'STOPPED') {
+      return { ok: false, code: 'TERMINAL', message: 'execution is terminal' };
+    }
 
     if (!await deps.confirm(record)) return { ok: false, code: 'CANCELED', message: 'monitor relaunch canceled' };
 

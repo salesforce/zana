@@ -9788,6 +9788,16 @@ body.resizing-col .explorer-resizer::after {
   height: 0;
 }
 
+.execution-details {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.execution-details > header { display: flex; justify-content: space-between; gap: 12px; }
+.execution-details-events, .execution-details-artifacts { display: grid; gap: 6px; margin-top: 8px; }
+
 /* Cards keep their natural height — overflow the lane (which scrolls) rather
    than compressing to fit. */
 .agents-lane .agent-card {

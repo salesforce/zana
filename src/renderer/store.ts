@@ -685,6 +685,7 @@ function mirroredConfigFlags(config: AppConfig) {
     harnessPiEnabled: config.harnessPiEnabled ?? false,
     harnessOpenCodeEnabled: config.harnessOpenCodeEnabled ?? false,
     microVmEnabled: config.microVmEnabled ?? false,
+    teamJobLaunchEnabled: config.teamJobLaunchEnabled ?? false,
     openerHiddenTargets: config.openerHiddenTargets ?? []
   };
 }
@@ -1351,6 +1352,8 @@ interface DataState {
   setOpenerHiddenTargets: (targets: OpenTarget[]) => void;
   /** Mirror of AppConfig.microVmEnabled — gates the microVM env in launch UI. */
   microVmEnabled: boolean;
+  /** Mirror of AppConfig.teamJobLaunchEnabled — gates durable Team job launch. */
+  teamJobLaunchEnabled: boolean;
   /** Mirror of AppConfig.worktreeIsolationDefault — the global default for the
    *  agent launcher's "Isolate in a git worktree" toggle. A per-project
    *  ProjectSettings.worktreeIsolation overrides it. Hydrated on init, kept live
@@ -1682,6 +1685,7 @@ export const useData = create<DataState>((set, get) => ({
   editorStatus: [],
   openerHiddenTargets: [],
   microVmEnabled: false,
+  teamJobLaunchEnabled: false,
   worktreeIsolationDefault: false,
 
   setFontSize(n) {

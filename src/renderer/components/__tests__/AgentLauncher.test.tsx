@@ -83,7 +83,7 @@ describe('Quick Agent composer', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
     expect(source).toContain('const useQuickAgentHomeComposer = scratchIsTarget;');
     expect(source).toContain("variant={useQuickAgentHomeComposer ? 'home' : 'default'}");
-    expect(source).toContain("submitLabel={mode === 'autonomous' ? 'Launch autonomous team' : 'Launch agent'}");
+    expect(source).toContain("submitLabel={mode === 'autonomous' ? 'Launch autonomous team' : mode === 'job' ? 'Launch job' : 'Launch agent'}");
     expect(source).toContain('{!useQuickAgentHomeComposer && (');
     expect(source).toContain("mode === 'autonomous'");
   });

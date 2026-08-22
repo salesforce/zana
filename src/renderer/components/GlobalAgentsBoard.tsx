@@ -55,7 +55,7 @@ export function GlobalAgentsBoard() {
   useEffect(() => {
     let cancelled = false;
     const refresh = () => void Promise.all(projects.map((project) => window.cc.executionBoard.listProject(project.id))).then((lists) => {
-      if (!cancelled) setExecutions(lists.flat());
+      if (!cancelled) setExecutions(lists.flatMap((list) => list.executions));
     });
     refresh();
     const timer = setInterval(refresh, 5_000);

@@ -38,6 +38,7 @@ const executionProducerEventSchema = {
   references: z.array(z.object({ label: z.string().min(1).max(2048), uri: z.string().min(1).max(2048) })).max(20).optional()
 };
 const executionMessageSchema = { ...executionControlSchema, slotId: z.string().min(1).max(2048), message: z.string().min(1).max(64 * 1024) };
+const executionCompleteSchema = { ...executionIdSchema, summary: z.string().min(1).max(64 * 1024) };
 const executionArtifactSchema = { ...executionIdSchema, name: z.string().min(1).max(512), mediaType: z.string().min(1).max(512), content: z.string().min(1).max(64 * 1024) };
 const handoffRequestSchema = {
   targetSessionId: z.string().min(1).max(2048), ...executionIdSchema,
@@ -195,6 +196,16 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     return result.ok
       ? { content: [{ type: 'text' as const, text: JSON.stringify(result) }] }
       : { isError: true, content: [{ type: 'text' as const, text: `execution.stop failed: ${result.message}` }] };
+  });
+
+  server.registerTool('execution.complete', {
+    description: 'Coordinator-only durable completion for one Team job, with a final summary.', inputSchema: executionCompleteSchema
+  }, async ({ executionId, summary }) => {
+    if (!authorized()) return denied('execution.complete');
+    const result = await options.service.completeByCoordinator(options.sessionId!, options.projectId, executionId, summary);
+    return result.ok
+      ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
+      : { isError: true, content: [{ type: 'text' as const, text: `execution.complete failed: ${result.message}` }] };
   });
 
   server.registerTool('execution.retry', {

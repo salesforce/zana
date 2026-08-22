@@ -26,6 +26,11 @@ export const IPC = {
   },
   executionBoard: {
     listProject: 'executionBoard:listProject',
+    snapshot: 'executionBoard:snapshot',
+    stop: 'executionBoard:stop',
+    retry: 'executionBoard:retry',
+    respond: 'executionBoard:respond',
+    resume: 'executionBoard:resume',
     clearResumeToken: 'executionBoard:clearResumeToken',
     relaunchMonitor: 'executionBoard:relaunchMonitor'
   },
@@ -637,6 +642,7 @@ export const IPC = {
     delete: 'teams:delete',
     launch: 'teams:launch',
     cancel: 'teams:cancel',
+    startJob: 'teams:startJob',
     launchAutonomous: 'teams:launchAutonomous',
     stopAutonomous: 'teams:stopAutonomous',
     exportBundle: 'teams:exportBundle',
