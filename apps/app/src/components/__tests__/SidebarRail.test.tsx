@@ -68,7 +68,7 @@ function renderRail(node: ReactElement) {
 }
 
 describe('SidebarRail', () => {
-  it('renders shared chrome: history, sortable nav, utility dock, resizer', () => {
+  it('renders shared chrome: sortable nav, utility dock, resizer', () => {
     const markup = renderRail(
       <SidebarRail
         className="sidebar sidebar--global"
@@ -80,9 +80,8 @@ describe('SidebarRail', () => {
     );
 
     expect(markup).toContain('class="sidebar sidebar--global"');
-    expect(markup).toContain('class="sidebar-chrome"');
-    expect(markup).toContain('aria-label="Go back"');
-    expect(markup).toContain('aria-label="Go forward"');
+    expect(markup).not.toContain('class="sidebar-chrome"');
+    expect(markup).not.toContain('aria-label="Go back"');
     expect(markup).toContain('data-testid="sidebar-navigation"');
     expect(markup).toContain('aria-label="Main navigation"');
     expect(markup).toContain('class="sidebar-nav sidebar-nav--sortable"');

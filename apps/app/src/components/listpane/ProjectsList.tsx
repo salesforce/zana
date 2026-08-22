@@ -7,7 +7,8 @@ import {
   closestCenter,
   useSensor,
   useSensors,
-  type DragEndEvent
+  type DragEndEvent,
+  type DragStartEvent
 } from '@dnd-kit/core';
 import {
   SortableContext,
@@ -16,7 +17,7 @@ import {
   verticalListSortingStrategy
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Plus, Search, Trash2, X, Check, Pencil, Code2, FolderOpen, TerminalSquare, LayoutDashboard, Settings2, Network, GitBranch, ClipboardCopy, Star, AppWindow, RefreshCw, Activity, ChevronRight, GripVertical, MoreHorizontal, ChevronUp, ChevronDown, ListFilter, MessageCirclePlus } from 'lucide-react';
+import { Plus, Search, Trash2, X, Check, Pencil, Code2, FolderOpen, TerminalSquare, LayoutDashboard, Settings2, Network, GitBranch, ClipboardCopy, Star, AppWindow, RefreshCw, Activity, ChevronRight, MoreHorizontal, ChevronUp, ChevronDown, ListFilter, MessageCirclePlus } from 'lucide-react';
 import { CursorIcon } from '../icons/CursorIcon.js';
 import {
   useData,
@@ -43,8 +44,39 @@ interface MenuState {
   projectId: string;
   x: number;
   y: number;
-  /** Open above the anchor (collapsed Workspaces has no room below the heading). */
-  preferAbove?: boolean;
+  /** Trigger top; when set, place below the control and flip above only if needed. */
+  anchorTop?: number;
+}
+
+const MENU_PAD = 8;
+const MENU_GAP = 4;
+const POST_DRAG_CLICK_SUPPRESS_MS = 80;
+
+/** Prefer below the trigger; flip above when the viewport has more room there. */
+function placeFixedMenu(
+  el: HTMLElement,
+  anchor: Pick<DOMRect, 'top' | 'bottom' | 'right'>
+) {
+  const menu = el.getBoundingClientRect();
+  const spaceBelow = window.innerHeight - anchor.bottom - MENU_PAD;
+  const spaceAbove = anchor.top - MENU_PAD;
+  const openAbove = spaceBelow < menu.height + MENU_GAP && spaceAbove > spaceBelow;
+  let left = anchor.right - menu.width;
+  let top = openAbove ? anchor.top - menu.height - MENU_GAP : anchor.bottom + MENU_GAP;
+  if (left < MENU_PAD) left = MENU_PAD;
+  if (left + menu.width > window.innerWidth - MENU_PAD) {
+    left = Math.max(MENU_PAD, window.innerWidth - menu.width - MENU_PAD);
+  }
+  if (top < MENU_PAD) top = MENU_PAD;
+  if (top + menu.height > window.innerHeight - MENU_PAD) {
+    top = Math.max(MENU_PAD, window.innerHeight - menu.height - MENU_PAD);
+  }
+  el.style.position = 'fixed';
+  el.style.top = `${top}px`;
+  el.style.left = `${left}px`;
+  el.style.right = 'auto';
+  el.style.bottom = 'auto';
+  el.style.zIndex = '20';
 }
 
 interface RailGroup {
@@ -164,6 +196,20 @@ export function ProjectsList({
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
+  const suppressClickRef = useRef(false);
+  const consumeProjectClick = () => {
+    if (!suppressClickRef.current) return false;
+    suppressClickRef.current = false;
+    return true;
+  };
+  const releaseProjectClick = () => {
+    window.setTimeout(() => {
+      suppressClickRef.current = false;
+    }, POST_DRAG_CLICK_SUPPRESS_MS);
+  };
+  const onProjectDragStart = ({ activatorEvent }: DragStartEvent) => {
+    suppressClickRef.current = activatorEvent.type === 'pointerdown';
+  };
 
   // Manual reload of the project list — covers out-of-band edits to
   // projects.json that the live `projects:onChanged` push didn't originate
@@ -274,12 +320,16 @@ export function ProjectsList({
     reorderWithinGroup(group, projectId, group.projects[nextIndex].id);
   };
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    releaseProjectClick();
     if (!over || active.id === over.id) return;
     const group = railGroups.find((candidate) => {
       const ids = new Set(candidate.projects.map((project) => project.id));
       return ids.has(String(active.id)) && ids.has(String(over.id));
     });
     if (group) reorderWithinGroup(group, String(active.id), String(over.id));
+  };
+  const handleDragCancel = () => {
+    releaseProjectClick();
   };
 
   useEffect(() => {
@@ -319,24 +369,36 @@ export function ProjectsList({
     };
   }, [sidebarAddOpen, sidebarOrganizeOpen]);
 
-  // Clamp the context menu into the viewport. It's positioned at the raw click
-  // coordinates, so right-clicking low in the list would otherwise push the
-  // bottom items (Rename, Remove project) off-screen and out of reach.
+  useLayoutEffect(() => {
+    if (!sidebarAddOpen && !sidebarOrganizeOpen) return;
+    const wrap = sidebarAddOpen ? sidebarAddRef.current : sidebarOrganizeRef.current;
+    const menuEl = wrap?.querySelector(
+      sidebarAddOpen ? '.sidebar-projects-add-menu' : '.sidebar-projects-organize-menu'
+    );
+    const button = wrap?.querySelector('.icon-btn');
+    if (!(menuEl instanceof HTMLElement) || !(button instanceof HTMLElement)) return;
+    placeFixedMenu(menuEl, button.getBoundingClientRect());
+  }, [sidebarAddOpen, sidebarOrganizeOpen]);
+
+  // Clamp the context menu into the viewport. Header controls place below first
+  // and flip above only when there is more room there; row clicks stay at the
+  // pointer so right-clicking low in the list cannot push Rename/Remove off-screen.
   useLayoutEffect(() => {
     if (!menu) return;
     const el = menuRef.current;
     if (!el) return;
-    const PAD = 8;
-    const rect = el.getBoundingClientRect();
-    let left = menu.preferAbove ? menu.x - rect.width : menu.x;
-    let top = menu.preferAbove ? menu.y - rect.height - 4 : menu.y;
-    if (left < PAD) left = PAD;
-    if (left + rect.width > window.innerWidth - PAD) {
-      left = Math.max(PAD, window.innerWidth - rect.width - PAD);
+    if (menu.anchorTop != null) {
+      placeFixedMenu(el, { top: menu.anchorTop, bottom: menu.y, right: menu.x });
+      return;
     }
-    if (top < PAD) top = menu.preferAbove ? menu.y + 4 : PAD;
-    if (top + rect.height > window.innerHeight - PAD) {
-      top = Math.max(PAD, window.innerHeight - rect.height - PAD);
+    const rect = el.getBoundingClientRect();
+    let left = menu.x;
+    let top = menu.y;
+    if (left + rect.width > window.innerWidth - MENU_PAD) {
+      left = Math.max(MENU_PAD, window.innerWidth - rect.width - MENU_PAD);
+    }
+    if (top + rect.height > window.innerHeight - MENU_PAD) {
+      top = Math.max(MENU_PAD, window.innerHeight - rect.height - MENU_PAD);
     }
     el.style.left = `${left}px`;
     el.style.top = `${top}px`;
@@ -388,8 +450,11 @@ export function ProjectsList({
     if (lastAdded) selectProject(lastAdded.id);
   };
 
-  const renderProject = (group: RailGroup, p: Project) => (
-    <SortableProject key={p.id} project={p} disabled={!canReorder || renamingId === p.id}>
+  const renderProject = (group: RailGroup, p: Project) => {
+    const sortable = canReorder && renamingId !== p.id;
+    const labelClass = sortable ? 'project-label project-label--sortable' : 'project-label';
+    return (
+    <SortableProject key={p.id} project={p} disabled={!sortable}>
       {({ attributes, listeners }) => (
         <>
           <div
@@ -399,39 +464,6 @@ export function ProjectsList({
               setMenu({ projectId: p.id, x: e.clientX, y: e.clientY });
             }}
           >
-            <button
-              type="button"
-              className="project-reorder-handle"
-              aria-label={`Reorder ${p.name}`}
-              title="Drag to reorder"
-              disabled={!canReorder || renamingId === p.id}
-              onClick={(e) => e.stopPropagation()}
-              {...attributes}
-              {...listeners}
-            >
-              <GripVertical size={14} />
-            </button>
-            {(() => {
-              const list = liveTerminals(terminals[p.id]);
-              if (list.length === 0) {
-                return null;
-              }
-              const expanded = isProjectExpanded(p);
-              return (
-                <button
-                  type="button"
-                  className={`project-tree-chevron ${expanded ? 'expanded' : ''}`}
-                  aria-label={`${expanded ? 'Collapse' : 'Expand'} sessions for ${p.name}`}
-                  aria-expanded={expanded}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setProjectExpanded(p.id, !expanded);
-                  }}
-                >
-                  <ChevronRight size={14} />
-                </button>
-              );
-            })()}
             {(() => {
               const g = gitStatus[p.id];
               const tooltip = [
@@ -463,9 +495,26 @@ export function ProjectsList({
                   )}
                 </span>
               );
+              const liveList = liveTerminals(terminals[p.id]);
+              const expanded = isProjectExpanded(p);
+              const treeChevron =
+                liveList.length === 0 ? null : (
+                  <button
+                    type="button"
+                    className={`project-tree-chevron ${expanded ? 'expanded' : ''}`}
+                    aria-label={`${expanded ? 'Collapse' : 'Expand'} sessions for ${p.name}`}
+                    aria-expanded={expanded}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setProjectExpanded(p.id, !expanded);
+                    }}
+                  >
+                    <ChevronRight size={14} />
+                  </button>
+                );
               if (renamingId === p.id) {
                 return (
-                  <>
+                  <div className={labelClass}>
                     {projectDot}
                     <input
                       className="project-rename"
@@ -484,19 +533,27 @@ export function ProjectsList({
                         }
                       }}
                     />
-                  </>
+                    {treeChevron}
+                  </div>
                 );
               }
               return (
-                <button
-                  type="button"
-                  className="project-select"
-                  aria-label={`Open ${p.name}`}
-                  onClick={() => enterProjectFocus(p.id)}
-                >
-                  {projectDot}
-                  {projectMeta}
-                </button>
+                <div className={labelClass} {...listeners}>
+                  <button
+                    type="button"
+                    className="project-select"
+                    aria-label={`Open ${p.name}`}
+                    onClick={() => {
+                      if (consumeProjectClick()) return;
+                      enterProjectFocus(p.id);
+                    }}
+                    {...attributes}
+                  >
+                    {projectDot}
+                    {projectMeta}
+                  </button>
+                  {treeChevron}
+                </div>
               );
             })()}
             {!isProjectExpanded(p) && <ProjectRollupDot projectId={p.id} />}
@@ -518,18 +575,6 @@ export function ProjectsList({
             })()}
             <button
               type="button"
-              className="project-spawn"
-              aria-label={`New agent in ${p.name}`}
-              title="New agent"
-              onClick={(e) => {
-                e.stopPropagation();
-                spawnDefaultAgent(p);
-              }}
-            >
-              <MessageCirclePlus size={14} />
-            </button>
-            <button
-              type="button"
               className="project-actions"
               aria-label={`Project actions for ${p.name}`}
               title="Project actions"
@@ -540,6 +585,18 @@ export function ProjectsList({
               }}
             >
               <MoreHorizontal size={15} />
+            </button>
+            <button
+              type="button"
+              className="project-spawn"
+              aria-label={`New agent in ${p.name}`}
+              title="New agent"
+              onClick={(e) => {
+                e.stopPropagation();
+                spawnDefaultAgent(p);
+              }}
+            >
+              <MessageCirclePlus size={14} />
             </button>
           </div>
           {(() => {
@@ -578,7 +635,8 @@ export function ProjectsList({
         </>
       )}
     </SortableProject>
-  );
+    );
+  };
 
   return (
     <section
@@ -664,8 +722,8 @@ export function ProjectsList({
                   setMenu({
                     projectId: '',
                     x: rect.right,
-                    y: sidebarProjectsCollapsed ? rect.top : rect.bottom,
-                    preferAbove: sidebarProjectsCollapsed
+                    y: rect.bottom,
+                    anchorTop: rect.top
                   });
                 }}
               >
@@ -820,7 +878,13 @@ export function ProjectsList({
             </div>
           )
         ) : (
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={onProjectDragStart}
+            onDragCancel={handleDragCancel}
+            onDragEnd={handleDragEnd}
+          >
             {railGroups.map((group) => (
               <div key="projects" className="project-rail-group">
                 <SortableContext items={group.projects.map((project) => project.id)} strategy={verticalListSortingStrategy}>

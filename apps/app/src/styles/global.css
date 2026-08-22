@@ -30,10 +30,11 @@
   --status-h: 24px;
   --titlebar-h: 38px;
   /* The trigger and global back/forward controls share Electron's native title
-     bar. Collapsed route headers clear the trigger's final edge. */
+     bar (trigger + 8px gap + two 28px chevrons). Collapsed route headers clear
+     that cluster's final edge. */
   --shell-trigger-size: 28px;
   --shell-trigger-left: 12px;
-  --shell-leading-reserve: 32px;
+  --shell-leading-reserve: 112px;
 }
 
 :root[data-theme='light'] {
@@ -149,8 +150,9 @@ input {
 
 .app-shell[data-traffic-lights='true'] {
   --shell-trigger-left: 84px;
-  /* 120px target edge minus the header's regular 16px leading inset. */
-  --shell-leading-reserve: 104px;
+  /* Overlay ends ~190px (84 + 28 trigger + 8 gap + 70 chevrons); 200px target
+     edge minus the header's regular 16px leading inset. */
+  --shell-leading-reserve: 184px;
 }
 
 /* Always-on status strip: add a fixed bottom row for it. Composes with the
@@ -232,9 +234,9 @@ input {
   grid-column: 1 / -1;
 }
 
-/* One persistent title-bar control. It is a sibling of the rail and route
- * content, so the rail slides below it rather than moving the control between
- * headers. The global rail's history controls share this same native row. */
+/* Persistent title-bar chrome (sidebar trigger + back/forward). It is a
+ * sibling of the rail and route content, so the rail slides below it rather
+ * than unmounting these controls. */
 .sidebar-trigger-overlay {
   position: fixed;
   top: 0;
@@ -242,6 +244,7 @@ input {
   z-index: 50;
   display: flex;
   align-items: center;
+  gap: 8px;
   height: var(--titlebar-h);
   -webkit-app-region: drag;
 }
@@ -451,7 +454,6 @@ input {
 }
 .statusbar-stat--running { color: var(--accent-green, #46b450); }
 .statusbar-stat--blocked { color: var(--accent-amber, #e0a030); }
-.statusbar-stat--delegating { color: var(--accent-blue, #4f8cff); }
 .statusbar-stat--idle { color: var(--text-muted); }
 .statusbar-next {
   margin-left: 4px;
@@ -779,41 +781,11 @@ body.resizing-col .sidebar-resizer::after {
   opacity: 0.5;
 }
 
-.sidebar-chrome {
-  display: flex;
-  align-items: center;
-  min-height: var(--titlebar-h);
-  padding: 0 8px;
-  flex-shrink: 0;
-  -webkit-app-region: drag;
-}
-
-/* Back/forward pairs belong beside the persistent sidebar trigger in the title
- * bar, not in a redundant second chrome row below it. A focused rail can opt
- * in while retaining its own routing behavior (for example, Settings returns
- * to the app rather than navigating global history). */
-.sidebar--global .sidebar-chrome,
-.sidebar--titlebar-controls .sidebar-chrome {
-  min-height: 0;
-  height: 0;
-  padding: 0;
-}
-
-.sidebar--global .sidebar-history-controls,
-.sidebar--titlebar-controls .sidebar-history-controls {
-  position: fixed;
-  top: 0;
-  left: calc(var(--col-nav) - 64px);
-  z-index: 50;
-  height: var(--titlebar-h);
-  gap: 8px;
-  align-items: center;
-}
-
 .sidebar-history-controls {
   display: flex;
   gap: 14px;
-  margin-left: auto;
+  height: var(--titlebar-h);
+  align-items: center;
 }
 
 .sidebar-history-controls button {
@@ -1546,7 +1518,7 @@ body.resizing-col .sidebar-resizer::after {
   align-items: center;
   justify-content: space-between;
   min-height: 30px;
-  padding: 0 8px 6px;
+  padding: 0 0 6px 8px;
 }
 
 .sidebar-agents-title {
@@ -1685,7 +1657,7 @@ body.resizing-sidebar-section .sidebar-agents-resizer::after {
   align-items: center;
   justify-content: space-between;
   min-height: 30px;
-  padding: 0 8px 6px;
+  padding: 0 0 6px 8px;
 }
 
 .sidebar-projects-header h2 {
@@ -1735,16 +1707,6 @@ body.resizing-sidebar-section .sidebar-agents-resizer::after {
   /* An open workspace tree belongs at the rail bottom; a collapsed heading is
    * another sidebar section and should stay directly below Agents. */
   margin-top: 12px;
-  /* Header menus (+, organize) are absolutely positioned; they must paint
-   * outside this heading instead of being clipped to its 30px box. */
-  overflow: visible;
-}
-
-.sidebar-projects--collapsed .sidebar-projects-add-menu,
-.sidebar-projects--collapsed .sidebar-projects-organize-menu {
-  top: auto;
-  bottom: calc(100% + 4px);
-  z-index: 20;
 }
 
 /* Two collapsed headings are sibling nav rows, not two collections. Drop the
@@ -1795,8 +1757,8 @@ body.resizing-sidebar-section .sidebar-agents-resizer::after {
 }
 
 .sidebar-projects-add-menu {
-  position: absolute;
-  z-index: 5;
+  position: fixed;
+  z-index: 20;
   top: 36px;
   right: 8px;
   display: flex;
@@ -1829,8 +1791,8 @@ body.resizing-sidebar-section .sidebar-agents-resizer::after {
 }
 
 .sidebar-projects-organize-menu {
-  position: absolute;
-  z-index: 5;
+  position: fixed;
+  z-index: 20;
   top: 36px;
   right: 40px;
   display: flex;
@@ -1922,7 +1884,7 @@ body.resizing-sidebar-section .sidebar-agents-resizer::after {
 
 .sidebar-projects .project-item {
   min-width: 0;
-  padding: 5px 6px;
+  padding: 5px 2px 5px 6px;
   border-radius: 7px;
 }
 
@@ -1939,6 +1901,34 @@ body.resizing-sidebar-section .sidebar-agents-resizer::after {
   text-align: left;
 }
 
+/* Dot + name + trailing disclosure chevron. The chevron sits AFTER the name so
+   every row's colored dot stays in one column — only some projects have live
+   sessions to expand, and a leading chevron shoved those dots out of line. */
+.project-label {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.project-label .project-select {
+  flex: 0 1 auto;
+}
+.project-label .project-rename {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.project-label--sortable {
+  cursor: grab;
+  touch-action: none;
+}
+
+.project-group.is-dragging .project-label--sortable {
+  cursor: grabbing;
+}
+
 .project-select:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
@@ -1949,7 +1939,6 @@ body.resizing-sidebar-section .sidebar-agents-resizer::after {
   margin: 3px 3px 6px 38px;
 }
 
-.project-reorder-handle,
 .project-actions {
   display: inline-flex;
   align-items: center;
@@ -1962,42 +1951,20 @@ body.resizing-sidebar-section .sidebar-agents-resizer::after {
   border-radius: 4px;
   color: var(--text-dim);
   background: transparent;
-}
-
-.project-reorder-handle {
-  cursor: grab;
-  opacity: 0;
-  touch-action: none;
-}
-
-.project-reorder-handle:active {
-  cursor: grabbing;
-}
-
-.project-reorder-handle:disabled {
-  cursor: default;
-}
-
-.project-actions {
   opacity: 0;
 }
 
-.project-item:hover .project-reorder-handle:not(:disabled),
 .project-item:hover .project-actions,
-.project-item.active .project-reorder-handle:not(:disabled),
 .project-item.active .project-actions,
-.project-reorder-handle:focus-visible,
 .project-actions:focus-visible {
   opacity: 1;
 }
 
-.project-reorder-handle:hover:not(:disabled),
 .project-actions:hover {
   color: var(--text-primary);
   background: var(--sidebar-hover);
 }
 
-.project-reorder-handle:focus-visible,
 .project-actions:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
@@ -2320,7 +2287,7 @@ body.resizing-col {
 
 /* Divider-style section header (Projects rail Remote/Local groups): a hairline
    rule + uppercase label with the collapse chevron at the TRAILING edge, so no
-   chevron ever lands in the same column as a project row's disclosure chevron.
+   chevron ever lands in the same column as a project row's colored dot.
    Reads as a separator between groups rather than a tree node. */
 .list-section-divider {
   display: flex;
@@ -2372,7 +2339,7 @@ body.resizing-col {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 8px;
+  padding: 5px 2px 5px 8px;
   border-radius: 5px;
   cursor: pointer;
   margin-bottom: 1px;
@@ -2394,7 +2361,7 @@ body.resizing-col {
   box-shadow: inset 0 2px 0 0 var(--accent-blue);
 }
 
-/* Tree chevron disclosure button */
+/* Tree chevron disclosure button — trailing, after the project name. */
 .project-tree-chevron {
   display: inline-flex;
   align-items: center;
@@ -2507,6 +2474,7 @@ body.resizing-col {
   display: flex;
   align-items: center;
   gap: 6px;
+  width: 100%;
   padding: 3px 8px;
   border-radius: 4px;
   font-size: 11.5px;
@@ -2514,6 +2482,7 @@ body.resizing-col {
   cursor: pointer;
   min-width: 0;
   position: relative;
+  text-align: left;
 }
 
 .project-terminal-row:hover {
@@ -9367,6 +9336,11 @@ body.resizing-col .explorer-resizer::after {
   letter-spacing: 0.02em;
 }
 
+.inbox-list-pane {
+  container-type: inline-size;
+  min-width: var(--inbox-list-min, 345px);
+}
+
 .inbox-list-pane .list-body {
   padding: 0;
 }
@@ -9440,16 +9414,22 @@ body.resizing-col .explorer-resizer::after {
   pointer-events: none;
 }
 
-/* Inbox tab strip — Feed vs. Saved. Sits above the filter row. Tabs share the
-   row width and truncate their label with an ellipsis rather than wrapping: a
-   wrapped label grows the button taller than the row and, combined with
-   .list-pane's raised z-index, paints over the pane content below it instead
-   of just looking cramped. */
-.inbox-tabs {
+/* Inbox tab strip — Feed / Reports / Saved. Sits above the filter row.
+   Tabs size to their label so a large unread badge cannot steal space from
+   siblings. Feed actions always live in the ⋯ overflow beside the tabs. */
+.inbox-tabs-row {
   display: flex;
   align-items: stretch;
   gap: 2px;
   padding: 4px 8px 0;
+  min-width: 0;
+}
+
+.inbox-tabs {
+  display: flex;
+  align-items: stretch;
+  flex: 1 1 auto;
+  gap: 2px;
   min-width: 0;
 }
 
@@ -9464,21 +9444,90 @@ body.resizing-col .explorer-resizer::after {
   font-family: inherit;
   font-size: 12px;
   font-weight: 600;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   cursor: pointer;
   border-radius: 6px 6px 0 0;
   border-bottom: 2px solid transparent;
 }
 
+.inbox-tab svg {
+  flex-shrink: 0;
+}
+
 /* The label text, not the button itself, truncates — a flex container can't
    ellipsize its children directly, and the icon/count badge siblings must
    stay full-size. */
-.inbox-tab > span:not(.inbox-tab-count) {
+.inbox-tab-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+}
+
+/* Always visible — grouping / unread / clear live in this menu at every
+   pane width rather than as a second icon row. */
+.inbox-actions-more {
+  display: flex;
+  position: relative;
+  flex: 0 0 auto;
+  align-self: center;
+  margin-left: auto;
+}
+
+.inbox-actions-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  min-width: 180px;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.inbox-actions-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.inbox-actions-menu-item > span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.inbox-actions-menu-item:hover,
+.inbox-actions-menu-item:focus-visible {
+  background: var(--bg-hover);
+}
+
+.inbox-actions-menu-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.inbox-actions-menu-item--danger {
+  color: var(--danger);
+}
+
+.inbox-actions-menu-item--danger:hover:not(:disabled) {
+  background: rgba(248, 81, 73, 0.12);
 }
 
 .inbox-tab:hover {
@@ -10397,13 +10446,14 @@ body.resizing-col .explorer-resizer::after {
 }
 
 .inbox-view {
+  --inbox-list-min: 345px;
   grid-column: 2 / -1;
   background: var(--bg-base);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   display: grid;
-  grid-template-columns: var(--col-list) minmax(0, 1fr);
+  grid-template-columns: max(var(--inbox-list-min), var(--col-list)) minmax(0, 1fr);
 }
 
 .inbox-view-detail {
@@ -10604,6 +10654,11 @@ body.resizing-col .explorer-resizer::after {
   display: flex;
   flex-direction: column;
   background: var(--bg-panel);
+  /* Compact chrome is keyed off the board pane, not the window — the Agents
+     view sits beside the nav + list columns, so a "bit small" screen is a
+     narrow board, not necessarily a narrow viewport. */
+  container-type: inline-size;
+  container-name: agents-board;
 }
 
 /* The cross-project board is a grid item of the app shell's column-3 track
@@ -10618,12 +10673,17 @@ body.resizing-col .explorer-resizer::after {
 .agents-board-header {
   display: flex;
   align-items: center;
-  flex: 0 0 var(--titlebar-h);
+  flex: 0 0 auto;
   min-height: var(--titlebar-h);
   gap: 10px;
   padding: 0 16px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-panel);
+  transition: padding-left 200ms linear;
+}
+
+.app-shell.sidebar-is-collapsed .agents-board-header {
+  padding-left: var(--shell-leading-reserve);
 }
 
 .agents-board-header-actions {
@@ -10632,7 +10692,8 @@ body.resizing-col .explorer-resizer::after {
   flex: 1 1 auto;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .agents-board-header h1 {
@@ -10640,6 +10701,7 @@ body.resizing-col .explorer-resizer::after {
   font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
+  flex: 0 0 auto;
 }
 
 .agents-board-count {
@@ -10648,6 +10710,11 @@ body.resizing-col .explorer-resizer::after {
   background: var(--bg-elevated);
   border-radius: 10px;
   padding: 1px 8px;
+  flex: 0 1 auto;
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Filter box in the global board header — mirrors .list-filter. */
@@ -10655,8 +10722,10 @@ body.resizing-col .explorer-resizer::after {
   position: relative;
   display: flex;
   align-items: center;
-  width: 240px;
-  max-width: 40%;
+  flex: 1 1 140px;
+  width: 140px;
+  max-width: 240px;
+  min-width: 0;
   background: var(--bg-base);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -10736,17 +10805,61 @@ body.resizing-col .explorer-resizer::after {
   background: var(--bg-elevated);
 }
 
-.agents-board-new {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
+.agents-board-new,
 .agents-board-close-idle {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  margin-right: 8px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* Compact Agents chrome: drop verbose labels, shrink the filter, then wrap
+   the filter onto its own row before the header overflows. Named container
+   so a nested inbox/list container query can't steal these rules. */
+@container agents-board (max-width: 820px) {
+  .agents-board-header {
+    gap: 8px;
+    padding: 0 12px;
+  }
+
+  .agents-board-header-actions {
+    gap: 6px;
+  }
+
+  .agents-board-count-extra {
+    display: none;
+  }
+
+  .agents-board-btn-label {
+    display: none;
+  }
+
+  .agents-board-new,
+  .agents-board-close-idle {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  .agents-board-filter {
+    flex: 1 1 120px;
+    max-width: none;
+  }
+}
+
+@container agents-board (max-width: 560px) {
+  .agents-board-header {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    padding: 6px 12px;
+  }
+
+  .agents-board-filter {
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+    order: 1;
+  }
 }
 
 /* ---- Live Team cohorts bar (above the lanes) ------------------------------ */
@@ -11032,17 +11145,15 @@ body.resizing-col .explorer-resizer::after {
 /* Lane accent stripes on the header bottom border. */
 .agents-lane.lane-blocked .agents-lane-head { border-bottom-color: var(--danger); }
 .agents-lane.lane-working .agents-lane-head { border-bottom-color: var(--accent-gold); }
-.agents-lane.lane-delegating .agents-lane-head { border-bottom-color: var(--accent-blue); }
 .agents-lane.lane-idle .agents-lane-head { border-bottom-color: var(--border-strong); }
 .agents-lane.lane-done .agents-lane-head { border-bottom-color: var(--success); }
 
 .agents-lane.lane-blocked .agents-lane-icon { color: var(--danger); }
 .agents-lane.lane-working .agents-lane-icon { color: var(--accent-gold); }
-.agents-lane.lane-delegating .agents-lane-icon { color: var(--accent-blue); }
 .agents-lane.lane-done .agents-lane-icon { color: var(--success); }
 
-/* Sub-agent count badge on a card (parent with live Task spawns). Blue, to
-   echo the Delegating lane. Inline icon + count. */
+/* Sub-agent count badge on a card (parent with live Task spawns). Blue so
+   in-flight children stay glanceable on an Idle or Working card. Inline icon + count. */
 .agent-card-subagents {
   display: inline-flex;
   align-items: center;
@@ -11232,12 +11343,6 @@ body.resizing-col .explorer-resizer::after {
 .agent-card.lane-blocked {
   border-color: color-mix(in srgb, var(--danger) 50%, var(--border));
   animation: agent-card-pulse-danger 2s ease-in-out infinite;
-}
-
-/* Delegating cards: a calm blue edge — active (children running) but not
-   demanding attention, so no pulse. */
-.agent-card.lane-delegating {
-  border-color: color-mix(in srgb, var(--accent-blue) 40%, var(--border));
 }
 
 .agent-card.bad {
@@ -20195,8 +20300,8 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
   z-index: 1;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px;
+  gap: 7px;
+  padding: 9px 10px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-elevated);
   color: var(--text-muted);
@@ -20210,7 +20315,7 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
   background: transparent;
   color: var(--text-primary);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .launch-model-picker-option {
@@ -20219,12 +20324,12 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
   justify-content: space-between;
   width: 100%;
   gap: 8px;
-  padding: 7px 9px;
+  padding: 8px 11px;
   border: none;
   background: transparent;
   color: var(--text-primary);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   text-align: left;
   cursor: pointer;
 }
@@ -20240,9 +20345,9 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
 }
 
 .launch-model-picker-hint {
-  padding: 7px 9px;
+  padding: 8px 11px;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 12px;
   text-align: center;
 }
 
@@ -20363,15 +20468,15 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
 }
 
 .launch-command .launch-model-picker-trigger {
-  min-height: 30px;
-  max-width: 220px;
-  padding: 5px 7px;
+  min-height: 34px;
+  max-width: 248px;
+  padding: 6px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-panel);
   color: var(--text-primary);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .launch-instruction {
@@ -20905,6 +21010,71 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
 
 .launch-worktree-name.invalid .launch-worktree-name-hint {
   color: var(--danger);
+}
+
+.environment-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.environment-picker-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.environment-actions {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.environment-actions header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-muted);
+}
+
+.environment-changes {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--text-secondary);
+}
+
+.environment-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.environment-action-row button {
+  font: inherit;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+}
+
+.environment-transcript {
+  margin: 0;
+  max-height: 120px;
+  overflow: auto;
+  font-size: 11px;
+  white-space: pre-wrap;
+  color: var(--text-muted);
+}
+
+.environment-action-message {
+  margin: 0;
+  color: var(--text-muted);
 }
 
 .launch-advanced-hint code {
@@ -21481,8 +21651,12 @@ button.launch-persona {
 .library-view {
   /* inherits .explorer-view grid; positioned so the absolute splitter (which
      sits at the column boundary) anchors to this box. grid-template-columns is
-     driven by an inline style from the component so the column is resizable. */
+     driven by an inline style from the component so the column is resizable.
+     Fill the module-panel-slot and clip — otherwise the markdown body grows the
+     grid row and #root's overflow:hidden swallows the document with no scroller. */
   position: relative;
+  height: 100%;
+  overflow: hidden;
 }
 
 /* Splitter between the doc list and the preview. Mirrors .list-pane-resizer:
@@ -21704,6 +21878,10 @@ body.resizing-col .library-resizer::after {
 /* The shared .explorer-viewer-header uses 11px monospace — right for file
    paths, wrong for a document title. Give the library viewer a larger,
    proportional title and a touch more breathing room. */
+.library-viewer {
+  overflow: hidden;
+}
+
 .library-viewer .explorer-viewer-header {
   padding: 12px 16px;
   font-family: inherit;
@@ -21814,6 +21992,17 @@ body.resizing-col .library-resizer::after {
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
+}
+
+/* Override .explorer-md-preview's height:100% — that percentage does not
+   resolve inside this flex column (edit bar sibling + no explicit parent
+   height), so the preview grew with the doc and never became a scroll box. */
+.library-md-pane > .explorer-md-preview {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  overflow: auto;
 }
 
 .library-edit-bar {
@@ -23561,7 +23750,6 @@ body.resizing-col .library-split-resizer::after {
 }
 .agent-monitor-group-head.group-blocked { color: var(--danger); }
 .agent-monitor-group-head.group-working { color: var(--accent-gold); }
-.agent-monitor-group-head.group-delegating { color: var(--accent-blue); }
 .agent-monitor-group-head.group-done { color: var(--success); }
 .agent-monitor-group-count {
   margin-left: auto;
@@ -26329,7 +26517,7 @@ body.resizing-col .library-split-resizer::after {
 
 /* Divider-style section header (Projects rail Remote/Local groups): a hairline
    rule + uppercase label with the collapse chevron at the TRAILING edge, so no
-   chevron ever lands in the same column as a project row's disclosure chevron.
+   chevron ever lands in the same column as a project row's colored dot.
    Reads as a separator between groups rather than a tree node. */
 .list-section-divider {
   display: flex;
@@ -26800,6 +26988,11 @@ body.resizing-col .library-split-resizer::after {
   display: flex;
   flex-direction: column;
   background: var(--bg-panel);
+  /* Compact chrome is keyed off the board pane, not the window — the Agents
+     view sits beside the nav + list columns, so a "bit small" screen is a
+     narrow board, not necessarily a narrow viewport. */
+  container-type: inline-size;
+  container-name: agents-board;
 }
 
 /* The cross-project board is a grid item of the app shell's column-3 track
@@ -26859,8 +27052,8 @@ body.resizing-col .library-split-resizer::after {
   overflow-x: auto;
 }
 
-/* Sub-agent count badge on a card (parent with live Task spawns). Blue, to
-   echo the Delegating lane. Inline icon + count. */
+/* Sub-agent count badge on a card (parent with live Task spawns). Blue so
+   in-flight children stay glanceable on an Idle or Working card. Inline icon + count. */
 .agent-card-subagents {
   display: inline-flex;
   align-items: center;
@@ -26899,12 +27092,6 @@ body.resizing-col .library-split-resizer::after {
   display: flex;
   flex-direction: column;
   gap: 6px;
-}
-
-/* Delegating cards: a calm blue edge — active (children running) but not
-   demanding attention, so no pulse. */
-.agent-card.lane-delegating {
-  border-color: color-mix(in srgb, var(--accent-blue) 40%, var(--border));
 }
 
 /* Next-scheduled-fire chip — the Scheduler panel's countdown, mirrored onto a
@@ -27480,10 +27667,11 @@ body.resizing-col .library-split-resizer::after {
 
 .home-agent-composer .launch-model-picker-trigger {
   width: auto;
-  max-width: 210px;
-  min-height: 30px;
-  padding: 5px 7px;
+  max-width: 244px;
+  min-height: 34px;
+  padding: 6px 10px;
   border-radius: 8px;
+  font-size: 13px;
 }
 
 .home-agent-composer .launch-model-picker-trigger span {
@@ -28628,6 +28816,15 @@ body.resizing-col .library-split-resizer::after {
    width to the live terminal (center column). */
 .agent-monitor.panel-collapsed {
   grid-template-columns: 260px minmax(0, 1fr) 40px;
+}
+
+@container agents-board (max-width: 920px) {
+  .agent-monitor {
+    grid-template-columns: minmax(160px, 28%) minmax(0, 1fr) minmax(180px, 26%);
+  }
+  .agent-monitor.panel-collapsed {
+    grid-template-columns: minmax(160px, 28%) minmax(0, 1fr) 40px;
+  }
 }
 
 /* Left pane — the agent list, grouped by lane. */

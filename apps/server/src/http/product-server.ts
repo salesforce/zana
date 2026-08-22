@@ -4,6 +4,7 @@ import type { WebSocketServer } from 'ws';
 import { handleProductHttp } from './product-api.js';
 import { createProductHttpContext, type ProductHttpContext } from './product-context.js';
 import { createProductWebSocketServer, handleProductUpgrade } from './product-ws.js';
+import { createHostDaemonWebSocketServer, handleHostInternalHttp, handleHostInternalUpgrade } from './host-internal.js';
 import type { LocalAppOriginArgs } from './local-app-origins.js';
 
 export interface ProductServer {
@@ -18,6 +19,7 @@ export interface StartProductServerOptions {
   port?: number;
   dataDir?: string;
   origins: LocalAppOriginArgs;
+  enrollToken?: string;
   /**
    * Optional extra handler used when this listener also serves renderer
    * assets. Return true when the request was fully handled.
@@ -33,17 +35,20 @@ export async function startProductServer(options: StartProductServerOptions): Pr
 
   const ctx = createProductHttpContext({
     dataDir: options.dataDir,
-    origins: { ...options.origins, serverPort: options.port ?? options.origins.serverPort }
+    origins: { ...options.origins, serverPort: options.port ?? options.origins.serverPort },
+    enrollToken: options.enrollToken
   });
   const wss = createProductWebSocketServer(ctx);
+  const hostWss = createHostDaemonWebSocketServer();
 
   const server = createServer(async (request, response) => {
+    if (await handleHostInternalHttp(request, response, ctx)) return;
     if (await handleProductHttp(request, response, ctx)) return;
     if (options.fallback && (await options.fallback(request, response))) return;
     response.writeHead(404).end();
   });
 
-  attachProductUpgrade(server, ctx, wss);
+  attachProductUpgrade(server, ctx, wss, hostWss);
 
   await new Promise<void>((resolveListen, rejectListen) => {
     server.once('error', rejectListen);
@@ -68,7 +73,10 @@ export async function startProductServer(options: StartProductServerOptions): Pr
     ctx,
     close: () =>
       new Promise<void>((resolveClose, rejectClose) => {
+        ctx.hostHub.close();
+        hostWss.close();
         wss.close();
+        ctx.db.close();
         server.close((error) => (error ? rejectClose(error) : resolveClose()));
       })
   };
@@ -77,9 +85,13 @@ export async function startProductServer(options: StartProductServerOptions): Pr
 export function attachProductUpgrade(
   server: Server,
   ctx: ProductHttpContext,
-  wss: WebSocketServer
+  wss: WebSocketServer,
+  hostWss?: WebSocketServer
 ): void {
   server.on('upgrade', (request: IncomingMessage, socket: Duplex, head: Buffer) => {
+    if (hostWss && handleHostInternalUpgrade(request, socket, head, ctx, hostWss)) return;
     if (handleProductUpgrade(request, socket, head, ctx, wss)) return;
+    socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
+    socket.destroy();
   });
 }

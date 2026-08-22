@@ -95,3 +95,6 @@ export * from './telemetry-events.js';
 export * from './harness-adapter.js';
 export * from './launch-provider.js';
 export * from './launch-sanitize.js';
+export * from './git-checkout.js';
+export * from './workspace-diff.js';
+export * from './environment.js';

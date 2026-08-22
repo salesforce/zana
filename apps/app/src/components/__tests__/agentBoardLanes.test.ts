@@ -46,6 +46,12 @@ describe('AgentBoard LANES classification', () => {
     expect(laneFor(card('idle', 'starting'))).toBe('idle');
   });
 
+  it('routes an at-rest parent with live sub-agents to Idle', () => {
+    const c = card('idle', 'running');
+    c.liveSubagents = 2;
+    expect(laneFor(c)).toBe('idle');
+  });
+
   it('routes any exited agent to Done regardless of last state', () => {
     expect(laneFor(card('working', 'exited', 0))).toBe('done');
     expect(laneFor(card('blocked', 'exited', 1))).toBe('done');

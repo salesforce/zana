@@ -1,0 +1,461 @@
+import { homedir } from 'node:os';
+import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
+import { isWithin, resolveContainedReal } from '@zana-ai/zcc-path-confine';
+import type {
+  HostDirEntry,
+  HostEventEnvelope,
+  HostListedFile,
+  HostRpcCommand,
+  ProviderStatusResult
+} from '@zana-ai/zcc-contracts/host-rpc';
+import type { AppConfig, HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
+import {
+  WorkspaceError,
+  cloneProject,
+  destroyWorkspace,
+  provisionWorkspace,
+  resolveCloneDefaultPath,
+  workspaceBranches,
+  workspaceCommit,
+  workspaceDiff,
+  workspacePullRequest,
+  workspacePullRequestAction,
+  workspaceSquashMerge,
+  workspaceStatus
+} from '@zana-ai/zcc-host-workspace';
+import { verifyHarnesses } from './harness/harness-verify.js';
+import { HostCommandError } from './host-command-error.js';
+
+const MAX_LISTED_FILES = 500;
+const MAX_DIR_ENTRIES = 2000;
+const MAX_READ_BYTES = 1_000_000;
+const LIST_DIR_DENY = new Set([
+  'node_modules',
+  '.git',
+  'dist',
+  'build',
+  '.next',
+  '.turbo',
+  '.DS_Store'
+]);
+
+export interface ThreadWorkInput {
+  threadId: string;
+  projectId: string;
+  providerId: string;
+  cwd: string;
+  input: string[];
+}
+
+export interface CommandRuntime {
+  dataDir: string;
+  environments: Map<string, { path: string; workspaceProvisionType: 'unmanaged' | 'managed-worktree' | 'personal' }>;
+  threads: Map<string, { environmentId: string; providerId: string }>;
+  provisionSignals: Map<string, AbortController>;
+  lanes: Map<string, Promise<void>>;
+  verifyProviders: () => Promise<ProviderStatusResult>;
+  emit: (event: HostEventEnvelope) => void;
+  startWork?: (input: ThreadWorkInput) => Promise<void>;
+  submitTurn?: (input: { threadId: string; input: string[] }) => Promise<void>;
+  resizeWork?: (input: { threadId: string; cols: number; rows: number }) => Promise<void>;
+}
+
+export function createCommandRuntime(options: {
+  dataDir?: string;
+  loadConfig?: () => AppConfig;
+  verifyProviders?: () => Promise<ProviderStatusResult>;
+  emit?: (event: HostEventEnvelope) => void;
+  startWork?: (input: ThreadWorkInput) => Promise<void>;
+  submitTurn?: (input: { threadId: string; input: string[] }) => Promise<void>;
+  resizeWork?: (input: { threadId: string; cols: number; rows: number }) => Promise<void>;
+}): CommandRuntime {
+  const loadConfig = options.loadConfig ?? (() => ({ version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null }) as AppConfig);
+  return {
+    dataDir: options.dataDir ?? join(homedir(), '.zcc'),
+    environments: new Map(),
+    threads: new Map(),
+    provisionSignals: new Map(),
+    lanes: new Map(),
+    emit: options.emit ?? (() => {}),
+    startWork: options.startWork,
+    submitTurn: options.submitTurn,
+    resizeWork: options.resizeWork,
+    verifyProviders: options.verifyProviders ?? (async () => {
+      const results: HarnessVerifyResult[] = await verifyHarnesses(loadConfig());
+      return { providers: results };
+    })
+  };
+}
+
+async function withEnvironmentLane<T>(runtime: CommandRuntime, environmentId: string, run: () => Promise<T>): Promise<T> {
+  const previous = runtime.lanes.get(environmentId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  runtime.lanes.set(environmentId, previous.then(() => current));
+  await previous;
+  try {
+    return await run();
+  } finally {
+    release();
+    if (runtime.lanes.get(environmentId) === current) runtime.lanes.delete(environmentId);
+  }
+}
+
+function mapWorkspaceError(error: unknown): never {
+  if (error instanceof WorkspaceError) {
+    throw new HostCommandError(error.code, error.message);
+  }
+  if (error instanceof HostCommandError) throw error;
+  throw new HostCommandError('internal', error instanceof Error ? error.message : String(error));
+}
+
+function listRoot(root: string): HostListedFile[] {
+  let realRoot: string;
+  try {
+    realRoot = realpathSync(root);
+    if (!statSync(realRoot).isDirectory()) return [];
+  } catch {
+    return [];
+  }
+  const files: HostListedFile[] = [];
+  const stack = [realRoot];
+  while (stack.length > 0 && files.length < MAX_LISTED_FILES) {
+    const dir = stack.pop()!;
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      if (files.length >= MAX_LISTED_FILES) break;
+      const abs = join(dir, name);
+      let real: string;
+      let stat;
+      try {
+        real = realpathSync(abs);
+        stat = statSync(real);
+      } catch {
+        continue;
+      }
+      if (!isWithin(real, realRoot)) continue;
+      const relPath = relative(realRoot, real).split(sep).join('/');
+      if (!relPath || relPath === 'index.json') continue;
+      files.push({
+        root,
+        relPath,
+        bytes: stat.isFile() ? stat.size : 0,
+        kind: stat.isDirectory() ? 'dir' : 'file'
+      });
+      if (stat.isDirectory()) stack.push(real);
+    }
+  }
+  return files;
+}
+
+async function resolveListDirTarget(root: string, relPath: string): Promise<string | null> {
+  const trimmed = relPath.trim();
+  if (!trimmed || trimmed === '.') {
+    try {
+      const realRoot = realpathSync(root);
+      return statSync(realRoot).isDirectory() ? realRoot : null;
+    } catch {
+      return null;
+    }
+  }
+  return resolveContainedReal(root, trimmed);
+}
+
+function listDirShallow(absDir: string): HostDirEntry[] {
+  let dirents;
+  try {
+    dirents = readdirSync(absDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const out: HostDirEntry[] = [];
+  for (const entry of dirents) {
+    if (LIST_DIR_DENY.has(entry.name)) continue;
+    const full = join(absDir, entry.name);
+    let kind: 'file' | 'dir';
+    if (entry.isSymbolicLink()) {
+      try {
+        kind = statSync(full).isDirectory() ? 'dir' : 'file';
+      } catch {
+        continue;
+      }
+    } else {
+      kind = entry.isDirectory() ? 'dir' : 'file';
+    }
+    out.push({ name: entry.name, kind, path: full });
+    if (out.length >= MAX_DIR_ENTRIES) break;
+  }
+  out.sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === 'dir' ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  return out;
+}
+
+export async function dispatchHostCommand(
+  runtime: CommandRuntime,
+  command: HostRpcCommand
+): Promise<unknown> {
+  switch (command.type) {
+    case 'provider.status':
+      return runtime.verifyProviders();
+    case 'environment.provision': {
+      return withEnvironmentLane(runtime, command.environmentId, async () => {
+        try {
+          const controller = new AbortController();
+          runtime.provisionSignals.set(command.environmentId, controller);
+          const onProgress = command.initiator
+            ? (entry: { type: string; key: string; text: string }) => {
+              runtime.emit({
+                threadId: command.initiator!.threadId,
+                kind: 'environment.provision.progress',
+                payload: entry
+              });
+            }
+            : undefined;
+          const provisioned = command.workspaceProvisionType === 'unmanaged'
+            ? await provisionWorkspace({
+                workspaceProvisionType: 'unmanaged',
+                path: command.path,
+                checkout: command.checkout,
+                onProgress,
+                signal: controller.signal
+              })
+            : command.workspaceProvisionType === 'personal'
+              ? await provisionWorkspace({
+                  workspaceProvisionType: 'personal',
+                  targetPath: command.targetPath,
+                  onProgress,
+                  signal: controller.signal
+                })
+              : await provisionWorkspace({
+                  workspaceProvisionType: 'managed-worktree',
+                  sourcePath: command.sourcePath,
+                  targetPath: command.targetPath,
+                  branchName: command.branchName,
+                  baseBranch: command.baseBranch,
+                  setupTimeoutMs: command.setupTimeoutMs,
+                  onProgress,
+                  signal: controller.signal
+                });
+          runtime.environments.set(command.environmentId, {
+            path: provisioned.discovered.path,
+            workspaceProvisionType: command.workspaceProvisionType
+          });
+          return {
+            environmentId: command.environmentId,
+            ...provisioned.discovered,
+            transcript: provisioned.transcript
+          };
+        } catch (error) {
+          mapWorkspaceError(error);
+        } finally {
+          runtime.provisionSignals.delete(command.environmentId);
+        }
+      });
+    }
+    case 'environment.provision.cancel': {
+      runtime.provisionSignals.get(command.environmentId)?.abort();
+      return { environmentId: command.environmentId, cancelled: true as const };
+    }
+    case 'environment.destroy': {
+      return withEnvironmentLane(runtime, command.environmentId, async () => {
+        try {
+          await destroyWorkspace({
+            path: command.workspacePath,
+            workspaceProvisionType: command.workspaceProvisionType
+          });
+          runtime.environments.delete(command.environmentId);
+          return { environmentId: command.environmentId, destroyed: true as const };
+        } catch (error) {
+          mapWorkspaceError(error);
+        }
+      });
+    }
+    case 'thread.start': {
+      const environment = runtime.environments.get(command.environmentId);
+      if (!environment) {
+        throw new HostCommandError('environment_not_ready', 'environment is not provisioned');
+      }
+      const status = await runtime.verifyProviders();
+      const provider = status.providers.find((entry) => entry.family === command.providerId);
+      if (!provider?.installed || !provider.enabled) {
+        throw new HostCommandError('provider_unavailable', `provider CLI is not available: ${command.providerId}`);
+      }
+      if (runtime.startWork) {
+        await runtime.startWork({
+          threadId: command.threadId,
+          projectId: command.projectId,
+          providerId: command.providerId,
+          cwd: environment.path,
+          input: command.input
+        });
+      }
+      runtime.threads.set(command.threadId, {
+        environmentId: command.environmentId,
+        providerId: command.providerId
+      });
+      runtime.emit({ threadId: command.threadId, kind: 'thread.started' });
+      return { threadId: command.threadId, started: true as const };
+    }
+    case 'thread.resize': {
+      if (!runtime.threads.has(command.threadId)) {
+        throw new HostCommandError('unknown_thread', 'thread is not running on this host');
+      }
+      if (runtime.resizeWork) {
+        await runtime.resizeWork({
+          threadId: command.threadId,
+          cols: command.cols,
+          rows: command.rows
+        });
+      }
+      return { threadId: command.threadId, resized: true as const };
+    }
+    case 'turn.submit': {
+      if (!runtime.threads.has(command.threadId)) {
+        throw new HostCommandError('unknown_thread', 'thread is not running on this host');
+      }
+      if (runtime.submitTurn) {
+        await runtime.submitTurn({ threadId: command.threadId, input: command.input });
+      } else {
+        runtime.emit({ threadId: command.threadId, kind: 'turn.completed' });
+      }
+      return { threadId: command.threadId, accepted: true as const };
+    }
+    case 'host.list_files':
+      return { files: command.roots.flatMap(listRoot) };
+    case 'host.list_dir': {
+      const contained = await resolveListDirTarget(command.root, command.relPath);
+      if (!contained) {
+        throw new HostCommandError('path_not_found', 'path is outside the authorized root');
+      }
+      let stat;
+      try {
+        stat = statSync(contained);
+      } catch {
+        throw new HostCommandError('path_not_found', 'directory not found');
+      }
+      if (!stat.isDirectory()) {
+        throw new HostCommandError('path_not_found', 'not a directory');
+      }
+      return { entries: listDirShallow(contained) };
+    }
+    case 'host.read_file': {
+      const contained = await resolveContainedReal(command.root, command.relPath);
+      if (!contained) {
+        throw new HostCommandError('path_not_found', 'path is outside the authorized root');
+      }
+      let stat;
+      try {
+        stat = statSync(contained);
+      } catch {
+        throw new HostCommandError('path_not_found', 'file not found');
+      }
+      if (!stat.isFile()) throw new HostCommandError('path_not_found', 'not a file');
+      if (stat.size > MAX_READ_BYTES) {
+        throw new HostCommandError('too_large', 'file exceeds the read cap');
+      }
+      return { content: readFileSync(contained, 'utf8'), encoding: 'utf8' as const };
+    }
+    case 'host.list_branches':
+      try {
+        return await workspaceBranches(command.workspacePath, command.limit);
+      } catch (error) {
+        mapWorkspaceError(error);
+      }
+    case 'workspace.status':
+      try {
+        return await workspaceStatus(command.workspacePath);
+      } catch (error) {
+        mapWorkspaceError(error);
+      }
+    case 'workspace.diff':
+      try {
+        return await workspaceDiff(command.workspacePath, command.target);
+      } catch (error) {
+        mapWorkspaceError(error);
+      }
+    case 'workspace.diffFiles':
+      try {
+        const status = await workspaceStatus(command.workspacePath);
+        const maxFiles = command.maxFiles ?? 400;
+        return { files: status.files.slice(0, maxFiles), truncated: status.files.length > maxFiles };
+      } catch (error) {
+        mapWorkspaceError(error);
+      }
+    case 'workspace.diffPatch':
+      try {
+        const diff = await workspaceDiff(command.workspacePath, command.target);
+        return {
+          patches: command.paths.map((path) => ({
+            path,
+            patch: diff.diff,
+            truncated: diff.truncated
+          }))
+        };
+      } catch (error) {
+        mapWorkspaceError(error);
+      }
+    case 'workspace.commit':
+      try {
+        return await workspaceCommit(command.workspacePath, command.message, command.noVerify);
+      } catch (error) {
+        mapWorkspaceError(error);
+      }
+    case 'workspace.squash_merge':
+      try {
+        return await workspaceSquashMerge(command.workspacePath, command.targetBranch, command.message);
+      } catch (error) {
+        mapWorkspaceError(error);
+      }
+    case 'workspace.pull_request':
+      try {
+        return { pullRequest: await workspacePullRequest(command.workspacePath) };
+      } catch (error) {
+        mapWorkspaceError(error);
+      }
+    case 'workspace.pull_request_ready':
+      try {
+        return await workspacePullRequestAction(command.workspacePath, { operation: 'ready' });
+      } catch (error) {
+        mapWorkspaceError(error);
+      }
+    case 'workspace.pull_request_draft':
+      try {
+        return await workspacePullRequestAction(command.workspacePath, { operation: 'draft' });
+      } catch (error) {
+        mapWorkspaceError(error);
+      }
+    case 'workspace.pull_request_merge':
+      try {
+        return await workspacePullRequestAction(command.workspacePath, { operation: 'merge', method: command.method });
+      } catch (error) {
+        mapWorkspaceError(error);
+      }
+    case 'project.clone_default_path':
+      return { path: await resolveCloneDefaultPath(runtime.dataDir, command.projectSlug) };
+    case 'project.clone':
+      try {
+        return await cloneProject({
+          dataDir: runtime.dataDir,
+          projectSlug: command.projectSlug,
+          remoteUrl: command.remoteUrl,
+          targetPath: command.targetPath
+        });
+      } catch (error) {
+        mapWorkspaceError(error);
+      }
+    default: {
+      const exhaustive: never = command;
+      throw new HostCommandError('unknown_command', `unsupported command ${(exhaustive as { type: string }).type}`);
+    }
+  }
+}

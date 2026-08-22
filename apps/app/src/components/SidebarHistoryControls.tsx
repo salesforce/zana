@@ -2,8 +2,9 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useRouteStateHistoryNavigation } from '../lib/app-route-history.js';
 
 /**
- * Back/Forward controls for the left rail, moving through the app-owned
- * route history like browser navigation.
+ * Back/Forward controls for the window title bar, moving through the
+ * app-owned route history like browser navigation. Always mounted — the
+ * shell overlay owns these so a collapsed rail cannot hide them.
  */
 export function SidebarHistoryControls({
   label = 'Navigation history'
@@ -12,7 +13,7 @@ export function SidebarHistoryControls({
 }) {
   const { canGoBack, canGoForward, goBack, goForward } = useRouteStateHistoryNavigation();
   return (
-    <div className="sidebar-history-controls" aria-label={label}>
+    <div className="sidebar-history-controls" data-testid="sidebar-history-controls" aria-label={label}>
       <button
         type="button"
         aria-label="Go back"

@@ -57,6 +57,15 @@ describe('sandbox environment — kernel sandbox available', () => {
     expect(profile).not.toContain('(deny network*)');
   });
 
+  it('allows extra linked-worktree git write roots', () => {
+    const profile = sandbox.wrap(INNER, ctx({
+      cwd: '/tmp/ws',
+      extraWriteRoots: ['/tmp/repo/.git/objects'],
+      isAvailable: () => true
+    })).args[1];
+    expect(profile).toContain('(allow file-write* (subpath "/tmp/repo/.git/objects"))');
+  });
+
   it('denies egress when allowNetwork is false (untrusted work)', () => {
     const profile = sandbox
       .wrap(INNER, ctx({ allowNetwork: false, isAvailable: () => true }))

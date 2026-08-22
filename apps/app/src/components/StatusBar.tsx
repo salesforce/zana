@@ -1,9 +1,9 @@
 import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useState } from 'react';
-import { Bot, Clock, Zap, Moon, AlertCircle, Network, Sparkles, Loader2, CheckCircle2, Heart, X } from 'lucide-react';
+import { Bot, Clock, Zap, Moon, AlertCircle, Sparkles, Loader2, CheckCircle2, Heart, X } from 'lucide-react';
 import { useScheduler, useUpdates } from '../store.js';
 import { useAllAgentCards } from '../hooks/useAgentCards.js';
-import { isDelegatingAgent, isIdleAgent, type AgentCard } from './AgentBoard.js';
+import { isIdleAgent, type AgentCard } from './AgentBoard.js';
 import type { ScheduledTask } from '@zana-ai/zcc-domain/product';
 
 /** Where the ♥ Star button and the first-run nudge point; opened via the
@@ -22,11 +22,10 @@ const SPONSOR_URL = 'https://github.com/salesforce/zana';
 /** Tally an agent card into one fleet bucket. Mirrors the board's lane rules so
  *  the footer can never disagree with the Agents board. `exited` cards (the Done
  *  lane) aren't counted as live. */
-function bucketOf(c: AgentCard): 'running' | 'blocked' | 'delegating' | 'idle' | null {
+function bucketOf(c: AgentCard): 'running' | 'blocked' | 'idle' | null {
   if (c.session.status === 'exited') return null;
   if (c.state === 'working') return 'running';
   if (c.state === 'blocked') return 'blocked';
-  if (isDelegatingAgent(c)) return 'delegating';
   if (isIdleAgent(c)) return 'idle';
   return null;
 }
@@ -100,7 +99,7 @@ export function StatusBar() {
   }, [hasUpcoming]);
 
   const counts = useMemo(() => {
-    const c = { running: 0, blocked: 0, delegating: 0, idle: 0, live: 0 };
+    const c = { running: 0, blocked: 0, idle: 0, live: 0 };
     for (const card of cards) {
       const b = bucketOf(card);
       if (!b) continue;
@@ -161,9 +160,6 @@ export function StatusBar() {
         </span>
         <span className="statusbar-stat statusbar-stat--blocked" title="Blocked — needs you">
           <AlertCircle size={11} aria-hidden /> {counts.blocked}
-        </span>
-        <span className="statusbar-stat statusbar-stat--delegating" title="Delegating to sub-agents">
-          <Network size={11} aria-hidden /> {counts.delegating}
         </span>
         <span className="statusbar-stat statusbar-stat--idle" title="Idle / at rest">
           <Moon size={11} aria-hidden /> {counts.idle}

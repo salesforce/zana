@@ -46,8 +46,8 @@ export interface AgentCard {
    *  most-recently-idle first. */
   stateSince?: number;
   /** Live sub-agent (Task spawn) count, from the `useSubagents` slice (0 when
-   *  none / untracked). Drives the Delegating lane: an at-rest-looking agent
-   *  with children still running is parked awaiting them, not truly idle. */
+   *  none / untracked). Shown as a badge on the card; an at-rest parent with
+   *  children still running stays Idle but is not a Close-idle target. */
   liveSubagents?: number;
 }
 
@@ -125,10 +125,10 @@ export function isBackgroundAgent(c: AgentCard): boolean {
 
 /**
  * Whether an at-rest idle card should jump to the "Needs you" lane: it must be a
- * genuine idle agent (not delegating/working/exited/background) carrying a
- * triage verdict that {@link idleSurfacesToNeedsYou} promotes at the current
- * sensitivity. Pure; shared by the blocked lane (include) and the idle lane
- * (exclude) so a promoted card can't appear in both.
+ * genuine idle agent (not working/exited/background) carrying a triage verdict
+ * that {@link idleSurfacesToNeedsYou} promotes at the current sensitivity. Pure;
+ * shared by the blocked lane (include) and the idle lane (exclude) so a promoted
+ * card can't appear in both.
  */
 export function cardNeedsAttention(
   c: AgentCard,
@@ -142,58 +142,44 @@ export function cardNeedsAttention(
   );
 }
 
-export type LaneKey = 'blocked' | 'working' | 'delegating' | 'idle' | 'done';
-
-/**
- * A delegating agent: live, not working/blocked itself, but with sub-agents
- * (Task spawns) still running under it. It LOOKS at-rest but is parked awaiting
- * the work it dispatched, so it's surfaced in its own lane and — crucially —
- * kept OUT of {@link isIdleAgent} so the bulk-close action never kills a parent
- * whose children are still live (that mirrors the main-side close-idle gate).
- * "has live sub-agents" is an orthogonal attribute, not an AgentState, so an
- * agent can be `working` and delegating too — this only fires when it would
- * otherwise fall into the Idle lane.
- */
-export function isDelegatingAgent(c: AgentCard): boolean {
-  return (
-    c.session.status !== 'exited' &&
-    c.state !== 'blocked' &&
-    c.state !== 'working' &&
-    (c.liveSubagents ?? 0) > 0
-  );
-}
+export type LaneKey = 'blocked' | 'working' | 'idle' | 'done';
 
 /**
  * An at-rest agent: a live (non-exited) session that is neither working nor
- * blocked AND has no live sub-agents — i.e. it's sitting in the Idle lane (state
- * `idle`/`unknown`). This is the exact target set of the "Close idle" action,
- * kept here so the board's idle lane and the bulk-close button can't drift
- * apart. Note live agents never reach the `done` AgentState (it's vestigial);
- * the Done lane is exited ptys.
+ * blocked — i.e. it's sitting in the Idle lane (state `idle`/`unknown`),
+ * including a parent still waiting on live sub-agents. Close-idle uses
+ * {@link isReclaimableIdle}, which additionally spares parents with children.
+ * Note live agents never reach the `done` AgentState (it's vestigial); the Done
+ * lane is exited ptys.
  */
 export function isIdleAgent(c: AgentCard): boolean {
   return (
     c.session.status !== 'exited' &&
     c.state !== 'blocked' &&
-    c.state !== 'working' &&
-    !isDelegatingAgent(c)
+    c.state !== 'working'
   );
 }
 
 /**
  * An idle agent the "Close & follow up" action may reclaim: a genuine
- * {@link isIdleAgent} that is NOT parked on a question. An agent whose triage
- * verdict is `awaiting-reply` asked the user something and is waiting — closing
- * it would drop a live question on the floor, so it's excluded (the durable
- * idle-triage follow-up already tracks that thread). Background agents are
- * excluded too: they must never surface for attention and shouldn't be swept by
- * a manual reclaim. Pure; shared by the board button and its target-count so the
- * two can't drift. Note this deliberately does NOT consult favorites — the
- * button is a deliberate, confirmed operator action, not the idle timer.
+ * {@link isIdleAgent} that is NOT parked on a question and has no live
+ * sub-agents. An agent whose triage verdict is `awaiting-reply` asked the user
+ * something and is waiting — closing it would drop a live question on the floor,
+ * so it's excluded (the durable idle-triage follow-up already tracks that
+ * thread). A parent with live Task spawns is excluded too: closing it would
+ * orphan the children (mirrors the main-side auto-close-idle spare). Background
+ * agents are excluded: they must never surface for attention and shouldn't be
+ * swept by a manual reclaim. Pure; shared by the board button and its
+ * target-count so the two can't drift. Note this deliberately does NOT consult
+ * favorites — the button is a deliberate, confirmed operator action, not the
+ * idle timer.
  */
 export function isReclaimableIdle(c: AgentCard): boolean {
   return (
-    isIdleAgent(c) && !isBackgroundAgent(c) && c.triage?.resolution !== 'awaiting-reply'
+    isIdleAgent(c) &&
+    !isBackgroundAgent(c) &&
+    c.triage?.resolution !== 'awaiting-reply' &&
+    (c.liveSubagents ?? 0) === 0
   );
 }
 
@@ -238,12 +224,6 @@ export const LANES: LaneDef[] = [
     match: (c) =>
       c.session.status !== 'exited' &&
       (c.state === 'working' || (isBackgroundAgent(c) && c.state === 'blocked'))
-  },
-  {
-    key: 'delegating',
-    label: 'Delegating',
-    icon: Network,
-    match: isDelegatingAgent
   },
   {
     key: 'idle',
@@ -605,21 +585,19 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
     [cards]
   );
   // The expensive part — filtering every card into its lane and sorting the
-  // idle/delegating lanes — depends ONLY on `boardCards` + `sensitivity`, not on
-  // the 1s tick. Memoize it so a bare tick (which fires purely to advance the
-  // live "running for X" labels) doesn't re-filter+re-sort the whole board every
+  // idle lane — depends ONLY on `boardCards` + `sensitivity`, not on the 1s
+  // tick. Memoize it so a bare tick (which fires purely to advance the live
+  // "running for X" labels) doesn't re-filter+re-sort the whole board every
   // second. The `done` lane's time-based auto-dismiss is applied fresh below,
   // outside the memo, because it genuinely needs `now`.
   const sortedLanes = useMemo(
     () =>
       LANES.map((lane) => {
         const laneCards = boardCards.filter((c) => lane.match(c, sensitivity));
-        // In the Idle/Delegating lanes, order most-recent first — the agent that
-        // just settled leads, so the latest is easiest to find. Cards missing a
+        // In the Idle lane, order most-recent first — the agent that just
+        // settled leads, so the latest is easiest to find. Cards missing a
         // `stateSince` (never transitioned this session) sort last.
-        if (lane.key === 'delegating') {
-          laneCards.sort((a, b) => (b.stateSince ?? 0) - (a.stateSince ?? 0));
-        } else if (lane.key === 'idle') {
+        if (lane.key === 'idle') {
           // Idle, plus: `done`-verdict cards ("Ready to close") sink to the
           // bottom — they're the lowest-urgency thing in the lane. Within each
           // band, keep the most-recently-idle-first ordering.
@@ -657,9 +635,8 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
     // when scanning idle agents ("which one just finished?"). Falls back to the
     // run duration if we never saw the transition (no `stateSince`).
     const idleDur = laneKey === 'idle' && c.stateSince ? formatDuration(now - c.stateSince) : null;
-    // Live sub-agent count: badge it on any live card carrying one (whether it
-    // landed in Delegating or is still Working with children), so the parent
-    // never reads as plain at-rest.
+    // Live sub-agent count: badge it on any live card carrying one (Idle waiting
+    // on children, or still Working), so the parent never reads as plain at-rest.
     const subagents = !exited ? c.liveSubagents ?? 0 : 0;
     const persona = t.personaId ? personas.find((p) => p.id === t.personaId) : undefined;
     const subtitle = persona?.name ?? t.profile;

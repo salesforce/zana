@@ -123,6 +123,21 @@
       "types": "./src/inbox-grouping.ts",
       "source": "./src/inbox-grouping.ts",
       "default": "./src/inbox-grouping.ts"
+    },
+    "./environment": {
+      "types": "./src/environment.ts",
+      "source": "./src/environment.ts",
+      "default": "./src/environment.ts"
+    },
+    "./git-checkout": {
+      "types": "./src/git-checkout.ts",
+      "source": "./src/git-checkout.ts",
+      "default": "./src/git-checkout.ts"
+    },
+    "./workspace-diff": {
+      "types": "./src/workspace-diff.ts",
+      "source": "./src/workspace-diff.ts",
+      "default": "./src/workspace-diff.ts"
     }
   },
   "scripts": {

@@ -65,7 +65,14 @@ if (!root) {
       const message = error instanceof Error ? error.message : String(error);
       appRoot.render(
         <ErrorBoundary>
-          <StartupError error={message} onRetry={() => void start()} />
+          <StartupError
+            error={message}
+            // A failed ESM import stays failed in the module map — calling
+            // start() again would rethrow the same error. Reload the window
+            // so Vite re-transforms from disk (e.g. after a hot-reload dropped
+            // an export another module still referenced).
+            onRetry={() => window.location.reload()}
+          />
         </ErrorBoundary>
       );
     }

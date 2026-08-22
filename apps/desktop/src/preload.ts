@@ -106,6 +106,31 @@ const api: CcApi = {
     listHosts: () => ipcRenderer.invoke(IPC.ssh.listHosts),
     syncHosts: () => ipcRenderer.invoke(IPC.ssh.syncHosts)
   },
+  threads: {
+    spawn: async () => ({
+      ok: false as const,
+      code: 'desktop-use-terminals',
+      message: 'desktop launches use terminals.create'
+    }),
+    list: async () => [],
+      onUpdated: (cb) => {
+        void cb;
+        return () => {};
+      },
+      archive: async () => ({ ok: false })
+    },
+    environments: {
+      list: async () => [],
+      status: async () => {
+        throw new Error('environments require the product server');
+      },
+      diff: async () => {
+        throw new Error('environments require the product server');
+      },
+      pullRequest: async () => ({ pullRequest: null }),
+      action: async () => ({ ok: false }),
+      destroy: async () => ({ ok: false })
+    },
   terminals: {
     list: (projectId) => ipcRenderer.invoke(IPC.terminals.list, projectId),
     verifyTmux: () => ipcRenderer.invoke(IPC.terminals.verifyTmux),

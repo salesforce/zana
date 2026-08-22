@@ -15,7 +15,6 @@ import { useRouteState } from '../hooks/useRouteState.js';
 import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
 import { listSidebarFooterActions, subscribePluginSlots } from '../plugins/plugin-slots.js';
-import { SidebarHistoryControls } from './SidebarHistoryControls.js';
 import { SidebarResizer } from './SidebarResizer.js';
 import {
   SortableNavItem,
@@ -47,13 +46,13 @@ export type SidebarRailItem = SidebarRailRow | SidebarRailSection;
 
 /**
  * Shared sortable rail chrome for the global Sidebar and the project rail.
- * Catalogs pass destinations; this component owns history controls, drag-and-
- * drop, the Settings/plugin utility dock, and the column resizer.
+ * Catalogs pass destinations; this component owns drag-and-drop, the
+ * Settings/plugin utility dock, and the column resizer. Back/forward live on
+ * the persistent title-bar overlay so they survive rail collapse.
  */
 export function SidebarRail({
   className,
   navAriaLabel,
-  historyLabel,
   storageKey,
   pinnedIds,
   items,
@@ -62,7 +61,6 @@ export function SidebarRail({
 }: {
   className: string;
   navAriaLabel: string;
-  historyLabel?: string;
   storageKey: string;
   pinnedIds: readonly string[];
   items: readonly SidebarRailItem[];
@@ -144,9 +142,6 @@ export function SidebarRail({
 
   return (
     <aside className={className}>
-      <div className="sidebar-chrome">
-        <SidebarHistoryControls label={historyLabel} />
-      </div>
       {header}
       <DndContext
         sensors={sensors}

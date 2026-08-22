@@ -52,8 +52,16 @@ export default defineConfig({
         replacement: resolve(__dirname, 'packages/domain/src/$1.ts')
       },
       {
-        find: /^@zana-ai\/zcc-contracts\/canonical-json$/,
-        replacement: resolve(__dirname, 'packages/contracts/src/canonical-json.ts')
+        find: /^@zana-ai\/zcc-contracts\/host-rpc$/,
+        replacement: resolve(__dirname, 'packages/contracts/src/host-rpc.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-db$/,
+        replacement: resolve(__dirname, 'packages/db/src/index.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-host-workspace$/,
+        replacement: resolve(__dirname, 'packages/host-workspace/src/index.ts')
       },
       {
         find: /^@zana-ai\/zcc-contracts\/terminal-execution$/,

@@ -37,6 +37,8 @@ import type {
   TerminalSession,
   WorkflowArgument
 } from '@zana-ai/zcc-domain/product';
+import type { SpawnEnvironmentChoice } from '@zana-ai/zcc-domain';
+import { EnvironmentPicker, defaultWorkspaceChoice, type WorkspacePickerValue } from './EnvironmentPicker.js';
 import { executionMappingOptions } from '@zana-ai/zcc-domain/harness-adapter';
 import type {
   HarnessAdapterDescriptor,
@@ -114,6 +116,21 @@ export function worktreeForSubmission(
   name: string
 ): { branch: string } | undefined {
   return applyAdvanced && worktree && eligible && name ? { branch: name } : undefined;
+}
+
+export function workspaceForSubmission(
+  applyAdvanced: boolean,
+  choice: WorkspacePickerValue,
+  eligible: boolean,
+  name: string
+): SpawnEnvironmentChoice {
+  if (choice.kind === 'reuse') return choice;
+  if (choice.kind === 'personal') return choice;
+  if (!applyAdvanced) return { kind: 'unmanaged' };
+  if (choice.kind === 'worktree' && eligible) {
+    return { kind: 'worktree', branchSlug: name || undefined };
+  }
+  return { kind: 'unmanaged' };
 }
 
 export function normalizeWorktreeName(label: string): string {
@@ -1041,7 +1058,7 @@ export const AgentLauncher = memo(function AgentLauncher({
   // NOTE: the legacy OS kernel sandbox ('sandbox' / Seatbelt) is no longer
   // offered in the picker — the microVM is its hard replacement.
   const [envChoice, setEnvChoice] = useState<'off' | 'microvm'>('off');
-  const [worktree, setWorktree] = useState(false);
+  const [workspace, setWorkspace] = useState<WorkspacePickerValue>({ kind: 'unmanaged' });
   const [worktreeName, setWorktreeName] = useState(() => normalizeWorktreeName(titleFromPrompt(prompt)));
   const [worktreeNameInvalid, setWorktreeNameInvalid] = useState(false);
   const [worktreeDefaultLoaded, setWorktreeDefaultLoaded] = useState(false);
@@ -1282,7 +1299,7 @@ export const AgentLauncher = memo(function AgentLauncher({
     (personaId ? 1 : 0) +
     frameworkIds.length +
     (envChoice === 'microvm' ? 1 : 0) +
-    (worktree && worktreeEligible ? 1 : 0);
+    (workspace.kind === 'worktree' && worktreeEligible ? 1 : 0);
 
   const updateNativeRouting = (familyId: HarnessFamily, patch: Partial<LauncherRouting>) => {
     setAgentRoutingDirty(true);
@@ -1348,7 +1365,7 @@ export const AgentLauncher = memo(function AgentLauncher({
       return;
     }
     if (!targetIsGitRepo) {
-      setWorktree(false);
+      setWorkspace({ kind: 'unmanaged' });
       setWorktreeDefaultLoaded(true);
       return;
     }
@@ -1366,13 +1383,13 @@ export const AgentLauncher = memo(function AgentLauncher({
           worktreeIsolationDefault
         );
         if (!cancelled) {
-          if (!worktreeTouched.current) setWorktree(effective);
+          if (!worktreeTouched.current) setWorkspace(effective ? { kind: 'worktree' } : { kind: 'unmanaged' });
           setWorktreeDefaultLoaded(true);
         }
       })
       .catch(() => {
         if (!cancelled) {
-          if (!worktreeTouched.current) setWorktree(worktreeIsolationDefault);
+          if (!worktreeTouched.current) setWorkspace(defaultWorkspaceChoice(worktreeIsolationDefault));
           setWorktreeDefaultLoaded(true);
         }
       });
@@ -1599,7 +1616,8 @@ export const AgentLauncher = memo(function AgentLauncher({
         // session into the flat workspace root. Only applies to the scratch
         // workspace — a real project always launches at its own root.
         isolateScratch: scratchIsTarget ? opts.title || true : undefined,
-        worktree: worktreeForSubmission(applyAdvanced, worktree, worktreeEligible, worktreeName),
+        worktree: worktreeForSubmission(applyAdvanced, workspace.kind === 'worktree', worktreeEligible, worktreeName),
+        workspace: workspaceForSubmission(applyAdvanced, workspace, worktreeEligible || workspace.kind === 'personal' || workspace.kind === 'reuse', worktreeName),
         // Execution environment (Advanced opt-in). Only sent when a non-default
         // choice is active, so a normal launch stays byte-identical. Main
         // re-resolves + re-authorizes the environment (Rule 1). 'microvm' is only
@@ -1619,7 +1637,7 @@ export const AgentLauncher = memo(function AgentLauncher({
   const launch = async () => {
     if (!descriptor || !target || launching) return;
     const normalizedWorktreeName = normalizeWorktreeName(worktreeName);
-    if (worktree && worktreeEligible && !normalizedWorktreeName) {
+    if (workspace.kind === 'worktree' && worktreeEligible && !normalizedWorktreeName) {
       setAdvanced(true);
       setWorktreeNameInvalid(true);
       requestAnimationFrame(() => {
@@ -2270,25 +2288,19 @@ export const AgentLauncher = memo(function AgentLauncher({
               {worktreeEligible && (
                 <div className="launch-row launch-row-top">
                   <span className="launch-row-label">
-                    <GitBranch size={12} aria-hidden="true" /> Worktree
+                    <GitBranch size={12} aria-hidden="true" /> Workspace
                   </span>
                   <div className="launch-worktree-control">
-                    <label
-                      className="launch-worktree-toggle"
-                      title="Run this agent on a dedicated branch and checkout so parallel agents cannot overwrite each other's files."
-                    >
-                      <input
-                        type="checkbox"
-                        checked={worktree}
-                        onChange={(event) => {
-                          worktreeTouched.current = true;
-                          setWorktree(event.target.checked);
-                          if (!event.target.checked) setWorktreeNameInvalid(false);
-                        }}
-                      />
-                      <span>Isolate in a git worktree</span>
-                    </label>
-                    {worktree && (
+                    <EnvironmentPicker
+                      projectId={target!.id}
+                      value={workspace}
+                      onChange={(next) => {
+                        worktreeTouched.current = true;
+                        setWorkspace(next);
+                        if (next.kind !== 'worktree') setWorktreeNameInvalid(false);
+                      }}
+                    />
+                    {workspace.kind === 'worktree' && (
                       <label className={`launch-worktree-name${worktreeNameInvalid ? ' invalid' : ''}`}>
                         <span>Name</span>
                         <input

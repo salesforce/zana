@@ -5,6 +5,7 @@ import type { HarnessAdapterDescriptor, HarnessModelTarget } from '@zana-ai/zcc-
 import type { EffectiveHarnessDefaultResult, HarnessFamily, HarnessModelRoutingV1, LaunchProfileId, Project } from '@zana-ai/zcc-domain/product';
 import { buildLaunchArgs } from './AgentLauncher.js';
 import { LauncherModelPicker } from './LauncherModelPicker.js';
+import { EnvironmentPicker, defaultWorkspaceChoice, type WorkspacePickerValue } from './EnvironmentPicker.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import {
   AutoGrowTextarea,
@@ -76,6 +77,7 @@ export function HomeAgentComposer({ project: pinnedProject }: { project?: Projec
   const projects = useData((s) => s.projects);
   const loadProjects = useData((s) => s.loadProjects);
   const createTerminal = useData((s) => s.createTerminal);
+  const worktreeIsolationDefault = useData((s) => s.worktreeIsolationDefault);
   const personas = usePersonas(useShallow((s) => s.personas));
   const defaultHarness = useData((s) => s.defaultHarness);
   const harnessCursorEnabled = useData((s) => s.harnessCursorEnabled);
@@ -97,8 +99,9 @@ export function HomeAgentComposer({ project: pinnedProject }: { project?: Projec
   const [descriptors, setDescriptors] = useState<HarnessAdapterDescriptor[]>([]);
   const [launching, setLaunching] = useState(false);
   const [attachments, setAttachments] = useState<string[]>([]);
+  const [workspace, setWorkspace] = useState<WorkspacePickerValue>(() => defaultWorkspaceChoice(false));
   const [quickWorkspaceReady, setQuickWorkspaceReady] = useState(false);
-  const canLaunch = hasDesktopBridge();
+  const canAttach = hasDesktopBridge();
   const selectionGeneration = useRef(0);
   const descriptorGeneration = useRef(0);
 
@@ -142,6 +145,15 @@ export function HomeAgentComposer({ project: pinnedProject }: { project?: Projec
       .finally(() => { if (!cancelled) setQuickWorkspaceReady(true); });
     return () => { cancelled = true; };
   }, [loadProjects, pinnedProject, projects]);
+
+  useEffect(() => {
+    if (!project) return;
+    setWorkspace(
+      project.quickAgent || project.remote
+        ? { kind: 'personal' }
+        : defaultWorkspaceChoice(worktreeIsolationDefault)
+    );
+  }, [project?.id, project?.quickAgent, project?.remote, worktreeIsolationDefault]);
 
   useEffect(() => {
     if (pinnedProject) return;
@@ -199,7 +211,6 @@ export function HomeAgentComposer({ project: pinnedProject }: { project?: Projec
   ]);
 
   const launch = async () => {
-    if (!canLaunch) return;
     if (!project || !familyId || !prompt.trim() || launching || selectionState !== 'resolved' || resolvedProjectId !== projectId) return;
     if (selectionProvenance === 'explicit' && !selectedHarness) return;
     const profile = selectionProvenance === 'automatic'
@@ -222,8 +233,9 @@ export function HomeAgentComposer({ project: pinnedProject }: { project?: Projec
         }
         attachmentPaths = uploaded.map(posixQuote);
       }
+      const launchedPrompt = appendAttachmentContext(prompt, attachmentPaths);
       const args = buildLaunchArgs(
-        appendAttachmentContext(prompt, attachmentPaths),
+        launchedPrompt,
         selectedHarness?.label ?? familyId
       );
       const validModelId = models.some((model) => model.id === modelId) ? modelId : '';
@@ -234,7 +246,8 @@ export function HomeAgentComposer({ project: pinnedProject }: { project?: Projec
       const session = await createTerminal(project.id, profile, 80, 24, {
         ...args,
         harnessRouting,
-        profileSource: selectionProvenance === 'automatic' ? 'seeded-default' : 'explicit'
+        profileSource: selectionProvenance === 'automatic' ? 'seeded-default' : 'explicit',
+        workspace: project.quickAgent ? { kind: 'personal' } : workspace
       });
       if (!session) return;
       setPrompt('');
@@ -278,9 +291,9 @@ export function HomeAgentComposer({ project: pinnedProject }: { project?: Projec
 
         <ComposerToolbar>
           <ComposerIconButton
-            onClick={() => { if (!canLaunch) return; void product.fs.pickFiles().then(addAttachments); }}
-            disabled={!canLaunch}
-            title={canLaunch ? 'Attach files' : 'File attachments require the desktop app'}
+            onClick={() => { if (!canAttach) return; void product.fs.pickFiles().then(addAttachments); }}
+            disabled={!canAttach}
+            title={canAttach ? 'Attach files' : 'File attachments require the desktop app'}
             aria-label="Attach files"
           >
             <Paperclip size={16} aria-hidden="true" />
@@ -328,6 +341,16 @@ export function HomeAgentComposer({ project: pinnedProject }: { project?: Projec
           </div>
           )}
 
+          {project && !project.remote && (
+            <EnvironmentPicker
+              projectId={project.id}
+              value={workspace}
+              onChange={setWorkspace}
+              allowPersonal={Boolean(project.quickAgent)}
+              disabled={launching}
+            />
+          )}
+
           <PopoverPicklist
             ariaLabel="Agent harness"
             value={familyId}
@@ -371,14 +394,12 @@ export function HomeAgentComposer({ project: pinnedProject }: { project?: Projec
             <ComposerIconButton
               className="home-agent-launch"
               onClick={() => { void launch(); }}
-              disabled={!canLaunch || !project || !familyId || !prompt.trim() || launching || selectionState !== 'resolved' || resolvedProjectId !== projectId || (selectionProvenance === 'explicit' && !selectedHarness)}
+              disabled={!project || !familyId || !prompt.trim() || launching || selectionState !== 'resolved' || resolvedProjectId !== projectId || (selectionProvenance === 'explicit' && !selectedHarness)}
               aria-label={launching ? 'Launching agent' : 'Launch agent'}
               title={
-                !canLaunch
-                  ? 'Launching agents requires the desktop app'
-                  : launching
-                    ? 'Launching agent'
-                    : 'Launch agent'
+                launching
+                  ? 'Launching agent'
+                  : 'Launch agent'
               }
             >
               <ArrowUp size={17} aria-hidden="true" />

@@ -23,7 +23,7 @@ describe('AgentsTab worktree isolation', () => {
       />
     );
     expect(html).toContain('Git worktrees');
-    expect(html).toContain('Isolate new agents in a git worktree by default');
+    expect(html).toContain('Prefer a new git worktree by default');
     expect(html).toContain('type="checkbox" checked=""');
   });
 });

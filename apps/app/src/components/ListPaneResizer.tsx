@@ -12,11 +12,18 @@ import { applyListPaneWidth, LIST_PANE_MIN, LIST_PANE_MAX } from '../store.js';
  * list column resizes uniformly everywhere it appears.
  *
  * Width state is global: the drag writes `--col-list` live (clamped) and
- * persists the final value to AppConfig on mouse-up; double-click resets to the
- * 280px default. All panes read the same `--col-list`, so resizing in one rail
- * carries to the others.
+ * persists the final value to AppConfig on mouse-up; double-click resets to
+ * `resetWidth`. All panes read the same `--col-list`, so resizing in one rail
+ * carries to the others. Inbox passes a higher `minWidth` so its Feed / Reports
+ * / Saved + ⋯ row cannot be crushed.
  */
-export function ListPaneResizer() {
+export function ListPaneResizer({
+  minWidth = LIST_PANE_MIN,
+  resetWidth = 280
+}: {
+  minWidth?: number;
+  resetWidth?: number;
+} = {}) {
   const onResizeMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     document.body.classList.add('resizing-col');
@@ -26,7 +33,7 @@ export function ListPaneResizer() {
         getComputedStyle(document.documentElement).getPropertyValue('--col-nav')
       );
       const next = ev.clientX - (Number.isFinite(navW) ? navW : 0);
-      applyListPaneWidth(next);
+      applyListPaneWidth(Math.max(minWidth, next));
     };
     const onUp = () => {
       document.body.classList.remove('resizing-col');
@@ -44,8 +51,8 @@ export function ListPaneResizer() {
   };
 
   const onResizeDoubleClick = () => {
-    applyListPaneWidth(280);
-    product.config.set({ listPaneWidth: 280 }).catch(() => {});
+    applyListPaneWidth(resetWidth);
+    product.config.set({ listPaneWidth: resetWidth }).catch(() => {});
   };
 
   return (
@@ -53,7 +60,7 @@ export function ListPaneResizer() {
       className="list-pane-resizer"
       role="separator"
       aria-orientation="vertical"
-      aria-valuemin={LIST_PANE_MIN}
+      aria-valuemin={minWidth}
       aria-valuemax={LIST_PANE_MAX}
       title="Drag to resize · double-click to reset"
       onMouseDown={onResizeMouseDown}

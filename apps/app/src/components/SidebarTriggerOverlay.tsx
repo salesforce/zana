@@ -1,10 +1,12 @@
 import { PanelLeft, PanelLeftClose } from 'lucide-react';
 import { useUi } from '../store.js';
+import { SidebarHistoryControls } from './SidebarHistoryControls.js';
 
 /**
- * The one sidebar control for the window. It is deliberately a shell sibling
- * of both rail and content so the rail slides below a fixed target instead of
- * moving the target between independent route headers.
+ * Persistent title-bar chrome: sidebar restore + back/forward. It is a shell
+ * sibling of both rail and content so collapsing the rail cannot unmount the
+ * arrows, and the rail slides below a fixed target instead of moving these
+ * controls between independent route headers.
  */
 export function SidebarTriggerOverlay() {
   const collapsed = useUi((s) => s.sidebarCollapsed);
@@ -23,6 +25,7 @@ export function SidebarTriggerOverlay() {
       >
         {collapsed ? <PanelLeft size={18} aria-hidden="true" /> : <PanelLeftClose size={18} aria-hidden="true" />}
       </button>
+      <SidebarHistoryControls />
     </div>
   );
 }

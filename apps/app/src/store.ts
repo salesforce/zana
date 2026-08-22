@@ -42,7 +42,7 @@ import type {
   OpenTarget
 } from '@zana-ai/zcc-domain/product';
 import { DEFAULT_TERMINAL_THEME, type TerminalThemeId } from '@zana-ai/zcc-domain/terminal-themes';
-import { seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
+import { seedPromptArgs, harnessFamilyOf } from '@zana-ai/zcc-domain/launch-provider';
 import type { UsageSummary } from '@zana-ai/zcc-domain/telemetry-events';
 import {
   snapshotTabs,
@@ -55,6 +55,7 @@ import {
 import { getScopedProjectId, isScopedWindow } from './lib/windowScope.js';
 import { appNavigate } from './lib/app-navigate.js';
 import { hasDesktopBridge } from './lib/app-surface.js';
+import { sessionFromHostThread, type HostThreadView } from './lib/host-thread-session.js';
 import { product } from './lib/product-client.js';
 import { decodeRoutePath } from './lib/decode-route.js';
 import {
@@ -627,6 +628,9 @@ interface UiState {
 
 export const LIST_PANE_MIN = 200;
 export const LIST_PANE_MAX = 600;
+/** Inbox list column floor. Wider than the shared list min so Feed / Reports /
+ *  Saved + the ⋯ action menu stay on one row. */
+export const INBOX_LIST_MIN = 345;
 
 export function applyListPaneWidth(px: number) {
   const clamped = Math.max(LIST_PANE_MIN, Math.min(LIST_PANE_MAX, Math.round(px)));
@@ -1437,10 +1441,9 @@ interface DataState {
   setOpenerHiddenTargets: (targets: OpenTarget[]) => void;
   /** Mirror of AppConfig.microVmEnabled — gates the microVM env in launch UI. */
   microVmEnabled: boolean;
-  /** Mirror of AppConfig.worktreeIsolationDefault — the global default for the
-   *  agent launcher's "Isolate in a git worktree" toggle. A per-project
-   *  ProjectSettings.worktreeIsolation overrides it. Hydrated on init, kept live
-   *  by the Settings toggle. Default off. */
+  /** Mirror of AppConfig.worktreeIsolationDefault — the default workspace
+   *  picker selection (new worktree vs this checkout), not a hidden mode.
+   *  A per-project ProjectSettings.worktreeIsolation overrides it. */
   worktreeIsolationDefault: boolean;
   init: () => Promise<void>;
   loadGitStatus: (projectId: string) => Promise<void>;
@@ -1533,6 +1536,8 @@ interface DataState {
        *  project and launches the agent there. Ignored for remote/scratch/non-repo
        *  projects. See {@link CreateTerminalRequest.worktree}. */
       worktree?: boolean | { branch?: string };
+      /** Workspace provision choice for host-thread spawn (browser / product API). */
+      workspace?: import('@zana-ai/zcc-domain').SpawnEnvironmentChoice;
       prompt?: string;
       personaId?: string;
       /** Marks a renderer-derived project/global default; main resolves it again. */
@@ -1566,6 +1571,13 @@ interface DataState {
       onError?: (message: string) => void;
     }
   ) => Promise<TerminalSession | null>;
+  /**
+   * Browser local-dev: project a host thread into the Agents board's
+   * `terminals` map. Desktop launches still go through `createTerminal`.
+   */
+  adoptHostThread: (thread: HostThreadView) => TerminalSession;
+  /** Reload live host threads into `terminals` (browser only). */
+  hydrateHostThreads: () => Promise<void>;
   /**
    * Terminate a session: kills the pty and removes the tab. Pushes a
    * restorable snapshot onto closedTabs so ⌘⇧T can reopen a fresh tab
@@ -2057,6 +2069,9 @@ export const useData = create<DataState>((set, get) => ({
       if (!isScopedWindow() && hasDesktopBridge()) {
         await get().restoreSessions(hydrationFailed);
       }
+      if (!hasDesktopBridge()) {
+        await get().hydrateHostThreads();
+      }
     } catch (err) {
       pushErrorToast(errorMessage(err, 'Failed to initialize app state'));
     }
@@ -2455,6 +2470,18 @@ export const useData = create<DataState>((set, get) => ({
       get().persistOpenSessions();
     });
 
+    if (!hasDesktopBridge()) {
+      product.threads.onUpdated((payload) => {
+        if (payload && typeof payload === 'object' && 'id' in payload && 'projectId' in payload && 'providerId' in payload) {
+          get().adoptHostThread(payload as HostThreadView);
+          return;
+        }
+        window.setTimeout(() => {
+          void get().hydrateHostThreads();
+        }, 250);
+      });
+    }
+
     // Live agent-state pushes land in their own store (useAgentStatus), keyed
     // by session id, with a precomputed per-project rollup. We resolve the
     // owning project from useData here so the status event itself stays a
@@ -2806,6 +2833,35 @@ export const useData = create<DataState>((set, get) => ({
 
   async createTerminal(projectId, profile, cols, rows, opts) {
     try {
+      if (!hasDesktopBridge()) {
+        const family = harnessFamilyOf(profile);
+        const prompt = opts?.prompt?.trim() ?? '';
+        if (!family) {
+          const message = 'that launch profile is not available in the browser';
+          opts?.onError?.(message);
+          pushErrorToast(message);
+          return null;
+        }
+        if (!prompt) {
+          const message = 'a prompt is required to launch an agent in the browser';
+          opts?.onError?.(message);
+          pushErrorToast(message);
+          return null;
+        }
+        const spawned = await product.threads.spawn({
+          projectId,
+          providerId: profile,
+          input: [prompt],
+          environment: opts?.workspace
+        });
+        if (!spawned.ok) {
+          opts?.onError?.(spawned.message);
+          pushErrorToast(spawned.message);
+          console.error('thread spawn failed', spawned);
+          return null;
+        }
+        return get().adoptHostThread(spawned.value);
+      }
       const result = await product.terminals.create({
         projectId,
         profile,
@@ -2819,7 +2875,11 @@ export const useData = create<DataState>((set, get) => ({
         title: opts?.title,
         cwd: opts?.cwd,
         isolateScratch: opts?.isolateScratch,
-        worktree: opts?.worktree,
+        worktree: opts?.worktree ?? (
+          opts?.workspace?.kind === 'worktree'
+            ? { branch: opts.workspace.branchSlug }
+            : undefined
+        ),
         prompt: opts?.prompt,
         environment: opts?.environment,
         sandboxDenyNetwork: opts?.sandboxDenyNetwork,
@@ -2852,6 +2912,62 @@ export const useData = create<DataState>((set, get) => ({
       opts?.onError?.(message);
       pushErrorToast(message);
       return null;
+    }
+  },
+
+  adoptHostThread(thread) {
+    const project = get().projects.find((row) => row.id === thread.projectId);
+    const session = sessionFromHostThread(thread, project);
+    set((s) => {
+      const list = s.terminals[thread.projectId] || [];
+      const idx = list.findIndex((row) => row.id === session.id);
+      if (idx === -1) {
+        return { terminals: { ...s.terminals, [thread.projectId]: [...list, session] } };
+      }
+      const next = list.slice();
+      next[idx] = { ...list[idx], ...session };
+      return { terminals: { ...s.terminals, [thread.projectId]: next } };
+    });
+    return session;
+  },
+
+  async hydrateHostThreads() {
+    if (hasDesktopBridge()) return;
+    try {
+      const threads = await product.threads.list();
+      const projects = get().projects;
+      const liveIds = new Set(threads.map((thread) => thread.id));
+      set((s) => {
+        const terminals: Record<string, TerminalSession[]> = {};
+        for (const [projectId, list] of Object.entries(s.terminals)) {
+          terminals[projectId] = list.slice();
+        }
+        for (const thread of threads) {
+          const project = projects.find((row) => row.id === thread.projectId);
+          const session = sessionFromHostThread(thread, project);
+          const list = terminals[thread.projectId] ?? [];
+          const idx = list.findIndex((row) => row.id === session.id);
+          if (idx === -1) {
+            terminals[thread.projectId] = [...list, session];
+          } else {
+            const next = list.slice();
+            next[idx] = { ...list[idx], ...session };
+            terminals[thread.projectId] = next;
+          }
+        }
+        // An empty live list must not wipe a just-adopted spawn (the GET can
+        // race the insert, and a stale server used to always return []).
+        if (liveIds.size > 0) {
+          for (const [projectId, list] of Object.entries(terminals)) {
+            terminals[projectId] = list.filter(
+              (row) => liveIds.has(row.id) || row.status === 'exited'
+            );
+          }
+        }
+        return { terminals };
+      });
+    } catch {
+      /* browser hydrate is best-effort — a missing host leaves Home launchable */
     }
   },
 
@@ -2976,6 +3092,9 @@ export const useData = create<DataState>((set, get) => ({
       if (!await product.terminals.close(sessionId)) {
         pushErrorToast('Failed to close terminal; its remote session may still be running');
         return;
+      }
+      if (closing?.workspaceEnvironmentId) {
+        await product.threads.archive(sessionId).catch(() => {});
       }
     } catch (err) {
       pushErrorToast(errorMessage(err, 'Failed to close terminal'));

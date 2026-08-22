@@ -16,7 +16,10 @@ export type ProductEventType =
   | 'agent-status:changed'
   | 'goals:changed'
   | 'scheduler:changed'
-  | 'personas:changed';
+  | 'personas:changed'
+  | 'threads:updated'
+  | 'threads:event'
+  | 'library:changed';
 
 export interface ProductEvent {
   type: ProductEventType;

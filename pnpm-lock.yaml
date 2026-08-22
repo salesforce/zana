@@ -284,6 +284,9 @@ importers:
       '@zana-ai/zcc-domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@zana-ai/zcc-host-workspace':
+        specifier: workspace:*
+        version: link:../../packages/host-workspace
       '@zana-ai/zcc-path-confine':
         specifier: workspace:*
         version: link:../../packages/path-confine
@@ -312,6 +315,9 @@ importers:
       '@zana-ai/zcc-contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@zana-ai/zcc-db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@zana-ai/zcc-domain':
         specifier: workspace:*
         version: link:../../packages/domain
@@ -366,6 +372,28 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
+  packages/db:
+    dependencies:
+      better-sqlite3:
+        specifier: ^12.11.1
+        version: 12.11.1
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.13
+        version: 7.6.13
+      '@types/node':
+        specifier: ^22.7.0
+        version: 22.20.1
+      '@zana-ai/zcc-tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.10)(vite@8.2.1(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
+
   packages/desktop-contract:
     dependencies:
       '@zana-ai/zcc-contracts':
@@ -414,6 +442,28 @@ importers:
         version: 19.2.8(react@19.2.8)
 
   packages/harness-sdk: {}
+
+  packages/host-workspace:
+    dependencies:
+      '@zana-ai/zcc-domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@zana-ai/zcc-path-confine':
+        specifier: workspace:*
+        version: link:../path-confine
+    devDependencies:
+      '@types/node':
+        specifier: ^22.7.0
+        version: 22.20.1
+      '@zana-ai/zcc-tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.10)(vite@8.2.1(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
 
   packages/llm:
     dependencies:
@@ -2449,6 +2499,7 @@ packages:
   '@xmldom/xmldom@0.8.14':
     resolution: {integrity: sha512-T4EDRUBVZYRldYApjEJiU0e1stYWaRAX7CuSnKzrpwdZKo53zGV8/pqfzV6FfwNl9YThD2OumQYvqtvjvgG7aQ==}
     engines: {node: '>=10.0.0'}
+    deprecated: this version has critical issues, please update to the latest version
 
   '@xterm/addon-fit@0.11.0':
     resolution: {integrity: sha512-jYcgT6xtVYhnhgxh3QgYDnnNMYTcf8ElbxxFzX0IZo+vabQqSPAjC3c1wJrKB5E19VwQei89QCiZZP86DCPF7g==}

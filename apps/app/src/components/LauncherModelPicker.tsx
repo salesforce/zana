@@ -44,7 +44,7 @@ export function LauncherModelPicker({
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
-    setPosition({ left: rect.left, top: rect.bottom + 4, width: rect.width });
+    setPosition({ left: rect.left, top: rect.bottom + 4, width: Math.max(rect.width, 240) });
   }, [open]);
 
   useEffect(() => {
@@ -88,7 +88,7 @@ export function LauncherModelPicker({
         aria-expanded={open}
       >
         <span>{selected?.label ?? 'Default Model'}</span>
-        <ChevronDown size={15} aria-hidden="true" />
+        <ChevronDown size={16} aria-hidden="true" />
       </button>
       {open && createPortal(
         <div
@@ -99,7 +99,7 @@ export function LauncherModelPicker({
           style={position ? { left: position.left, top: position.top, width: position.width } : { visibility: 'hidden' }}
         >
           <div className="launch-model-picker-search">
-            <Search size={13} aria-hidden="true" />
+            <Search size={14} aria-hidden="true" />
             <input
               ref={searchRef}
               value={query}
@@ -116,7 +116,7 @@ export function LauncherModelPicker({
             onClick={() => { onChange(''); setOpen(false); }}
           >
             <span>Default Model</span>
-            {!value && <Check size={14} aria-hidden="true" />}
+            {!value && <Check size={15} aria-hidden="true" />}
           </button>
           {visibleModels.map((model) => (
             <button
@@ -129,7 +129,7 @@ export function LauncherModelPicker({
               title={model.id}
             >
               <span>{model.label}</span>
-              {value === model.id && <Check size={14} aria-hidden="true" />}
+              {value === model.id && <Check size={15} aria-hidden="true" />}
             </button>
           ))}
           {hasMore && <div className="launch-model-picker-hint">Search all {models.length} models</div>}

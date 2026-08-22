@@ -27,12 +27,63 @@ describe('project-row workspace actions', () => {
 
   it('opens a workspace directly from its project row', () => {
     const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('onClick={() => enterProjectFocus(p.id)}');
+    expect(source).toContain('if (consumeProjectClick()) return;');
+    expect(source).toContain('enterProjectFocus(p.id);');
+  });
+
+  it('lets nested agent rows fill the workspace panel on hover', () => {
+    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    expect(css).toContain('.project-terminal-row {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  width: 100%;');
+  });
+
+  it('places the session disclosure chevron after the project name so row dots stay aligned', () => {
+    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    expect(source).toContain(
+      '{projectDot}\n                    {projectMeta}\n                  </button>\n                  {treeChevron}'
+    );
+    expect(source).toContain('className="project-rename"');
+    const renameIdx = source.indexOf('className="project-rename"');
+    const renameChevronIdx = source.indexOf('{treeChevron}', renameIdx);
+    expect(renameChevronIdx).toBeGreaterThan(renameIdx);
+    expect(css).toContain('.project-label {\n  display: flex;\n  align-items: center;\n  gap: 2px;\n  min-width: 0;\n  flex: 1 1 auto;\n}');
+    expect(css).toContain('.project-label .project-select {\n  flex: 0 1 auto;\n}');
   });
 
   it('Overview opens the Agents dashboard instead of an unfocused Projects home', () => {
     const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
     expect(source).toContain("setNav('agents')");
+  });
+});
+
+describe('project-row compact chrome', () => {
+  it('drags from the name/chevron label instead of a 6-dot grip', () => {
+    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    expect(source).not.toContain('GripVertical');
+    expect(source).not.toContain('project-reorder-handle');
+    expect(source).toContain('<div className={labelClass} {...listeners}>');
+    expect(source).toContain('{...attributes}');
+    expect(source).toContain('project-label--sortable');
+    expect(source).toContain('consumeProjectClick()');
+    expect(source).toContain('POST_DRAG_CLICK_SUPPRESS_MS');
+    expect(source).toContain('onDragStart={onProjectDragStart}');
+  });
+
+  it('renders project actions before the new-agent control', () => {
+    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    const actionsIdx = source.indexOf('className="project-actions"');
+    const spawnIdx = source.indexOf('className="project-spawn"');
+    expect(actionsIdx).toBeGreaterThan(-1);
+    expect(spawnIdx).toBeGreaterThan(actionsIdx);
+  });
+
+  it('flushes row actions to the trailing edge and uses a grab cursor when sortable', () => {
+    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    expect(css).not.toContain('.project-reorder-handle');
+    expect(css).toContain('.project-item {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  padding: 5px 2px 5px 8px;');
+    expect(css).toContain('.sidebar-projects .project-item {\n  min-width: 0;\n  padding: 5px 2px 5px 6px;');
+    expect(css).toContain('.project-label--sortable {\n  cursor: grab;\n  touch-action: none;');
+    expect(css).toContain('.project-group.is-dragging .project-label--sortable {\n  cursor: grabbing;');
   });
 });
 
@@ -67,6 +118,8 @@ describe('sidebar workspace scrolling', () => {
       'utf8'
     );
     const tsx = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    expect(css).toContain('.sidebar-agents-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  min-height: 30px;\n  padding: 0 0 6px 8px;\n}');
+    expect(css).toContain('.sidebar-projects-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  min-height: 30px;\n  padding: 0 0 6px 8px;\n}');
     expect(css).toContain('.sidebar-projects .icon-btn {\n  width: 22px;\n  height: 22px;\n  padding: 0;\n  border: 0;');
     expect(css).toContain('.sidebar-agents-actions .icon-btn {\n  width: 22px;\n  height: 22px;\n  padding: 0;\n  border: 0;');
     expect(css).toContain('.icon-btn {\n  display: grid;\n  place-items: center;');
@@ -84,17 +137,17 @@ describe('sidebar workspace header menus', () => {
     expect(source).toContain('sidebarAddRef.current?.contains(t) || sidebarOrganizeRef.current?.contains(t)');
     expect(source).toContain("if (e.key === 'Escape')");
     expect(source).toContain('setSidebarAddOpen(false);\n        setSidebarOrganizeOpen(false);');
-    expect(source).toContain('preferAbove: sidebarProjectsCollapsed');
-    expect(source).toContain('y: sidebarProjectsCollapsed ? rect.top : rect.bottom');
+    expect(source).toContain('anchorTop: rect.top');
+    expect(source).toContain('const openAbove = spaceBelow < menu.height + MENU_GAP && spaceAbove > spaceBelow');
+    expect(source).toContain('placeFixedMenu(menuEl, button.getBoundingClientRect())');
   });
 
-  it('opens collapsed Workspaces header menus above the heading', () => {
+  it('keeps header menus in a fixed layer so a collapsed heading cannot clip them', () => {
     const css = readFileSync(
       new URL('../../styles/global.css', import.meta.url),
       'utf8'
     );
-    expect(css).toContain('.sidebar-projects--collapsed {\n  flex: 0 0 auto;\n  min-height: 0;');
-    expect(css).toContain('overflow: visible;');
-    expect(css).toContain('.sidebar-projects--collapsed .sidebar-projects-add-menu,\n.sidebar-projects--collapsed .sidebar-projects-organize-menu {\n  top: auto;\n  bottom: calc(100% + 4px);\n  z-index: 20;\n}');
+    expect(css).toContain('.sidebar-projects-add-menu {\n  position: fixed;\n  z-index: 20;');
+    expect(css).toContain('.sidebar-projects-organize-menu {\n  position: fixed;\n  z-index: 20;');
   });
 });

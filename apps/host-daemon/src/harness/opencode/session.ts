@@ -1,4 +1,4 @@
-import { app } from 'electron';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { HarnessTranscriptAdapter, TranscriptSessionRef } from '../session-adapter.js';
 import { OpenCodeSessionResolver } from './session-resolver.js';
@@ -37,7 +37,7 @@ export class OpenCodeTranscriptAdapter implements HarnessTranscriptAdapter {
   async readStats(session: TranscriptSessionRef, reference?: { nativeId?: string }) {
     const nativeId = reference?.nativeId ?? (await this.resolve(session))?.nativeId;
     if (!nativeId) return null;
-    const dbPath = join(process.env.XDG_DATA_HOME || join(app.getPath('home'), '.local', 'share'), 'opencode', 'opencode.db');
+    const dbPath = join(process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), 'opencode', 'opencode.db');
     return (await readSessionStatsOpenCode(nativeId, { dbPath, cwd: session.cwd }))
       ?? readSessionStatsOpenCodeExport(nativeId, { binary: this.binary(), cwd: session.cwd });
   }

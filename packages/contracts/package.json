@@ -33,6 +33,11 @@
       "types": "./src/canonical-json.ts",
       "source": "./src/canonical-json.ts",
       "default": "./src/canonical-json.ts"
+    },
+    "./host-rpc": {
+      "types": "./src/host-rpc.ts",
+      "source": "./src/host-rpc.ts",
+      "default": "./src/host-rpc.ts"
     }
   },
   "scripts": {

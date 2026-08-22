@@ -216,6 +216,25 @@ export function stripInheritedClaudeSession(env: Record<string, string>): void {
 }
 
 /**
+ * Advertise a color-capable interactive TTY to agent CLIs.
+ *
+ * The host daemon inherits whatever launched it (`pnpm dev:web` from Cursor
+ * often sets `CI=1` / `NO_COLOR`). Ink and Claude Code treat those as "dumb
+ * terminal" and drop 256-color / truecolor SGR — the status-line chips render
+ * in default foreground. Finder-launched Electron is unaffected. Always force
+ * `TERM` + `COLORTERM` and drop the disable flags at the same choke point as
+ * {@link stripInheritedClaudeSession}.
+ */
+export function ensureInteractiveTerminalEnv(env: Record<string, string>): void {
+  env.TERM = 'xterm-256color';
+  env.COLORTERM = 'truecolor';
+  delete env.CI;
+  delete env.NO_COLOR;
+  const forceColor = env.FORCE_COLOR?.trim().toLowerCase();
+  if (forceColor === '0' || forceColor === 'false') delete env.FORCE_COLOR;
+}
+
+/**
  * Resolve the PATH a real interactive login shell would have, by running it
  * once and printing `$PATH`. Returns null when it can't be determined (Windows,
  * missing shell, timeout) so the caller can fall back to the guessed dirs.

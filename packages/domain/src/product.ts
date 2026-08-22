@@ -9,6 +9,14 @@ import type { WorkflowArgument } from './workflow-args.js';
 export type { WorkflowArgument } from './workflow-args.js';
 export type { ApplyAuthorizationInput, AuthorizationApplyResult } from './authorizations.js';
 export type { TerminalThemeId } from './terminal-themes.js';
+export type {
+  Environment,
+  EnvironmentAction,
+  GitHostPullRequest,
+  SpawnEnvironmentChoice,
+  WorkspaceStatus
+} from './environment.js';
+export type { WorkspaceDiffResponse } from './workspace-diff.js';
 
 export type LaunchProfileId =
   | 'shell'
@@ -1233,6 +1241,12 @@ export interface TerminalSession {
    * {@link CreateTerminalRequest.worktree}.
    */
   worktree?: SessionWorktree;
+  /**
+   * Host-owned Environment this session runs in (thread-create / worktree picker).
+   * Distinct from {@link environment} (sandbox/microvm). Used for git actions
+   * and destroy-on-last-thread. Absent on a legacy Electron `terminals.create`.
+   */
+  workspaceEnvironmentId?: string;
   /**
    * Execution environment this session runs in — WHERE it runs, orthogonal to
    * {@link profile} (WHAT agent runs). Absent ⇒ a plain local spawn (the common

@@ -54,6 +54,8 @@ export interface SandboxWrap {
 export interface SandboxOptions {
   /** The canonical (realpath'd) workspace root writes are confined to. */
   root: string;
+  /** Extra write roots (linked-worktree git-dir / common-dir objects|refs|logs). */
+  extraWriteRoots?: readonly string[];
   /** Sensitive roots to hard-deny reads of (defaults to the broker's list at the call site). */
   denyReadRoots?: readonly string[];
   /** Allow outbound network from the command (default: false — egress denied). */
@@ -98,7 +100,7 @@ export function sandboxAvailable(): boolean {
  * guarantees this) or in-root writes would be wrongly denied.
  */
 export function buildSeatbeltProfile(opts: SandboxOptions): string {
-  const writable = [opts.root, ...DEFAULT_WRITABLE_EXTRAS];
+  const writable = [opts.root, ...(opts.extraWriteRoots ?? []), ...DEFAULT_WRITABLE_EXTRAS];
   const lines: string[] = [
     '(version 1)',
     '(allow default)',

@@ -94,8 +94,7 @@ describe('Sidebar structure and compact accessibility', () => {
     expect(markup).not.toContain('>New thread<');
     expect(markup).not.toContain('aria-label="Search commands"');
     expect(markup).not.toContain('Command center');
-    expect(markup).toContain('aria-label="Go back"');
-    expect(markup).toContain('aria-label="Go forward"');
+    expect(markup).not.toContain('aria-label="Go back"');
     expect(markup).toContain('href="/inbox"');
     expect(markup).toContain('href="/scheduler"');
     expect(markup).toContain('href="/settings"');

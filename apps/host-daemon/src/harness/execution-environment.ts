@@ -71,6 +71,8 @@ export interface ExecEnvContext {
   projectId: string;
   /** The canonical (realpath'd) workspace root — writes are confined here. */
   cwd: string;
+  /** Extra Seatbelt write roots for a linked worktree's git objects/refs/logs. */
+  extraWriteRoots?: readonly string[];
   /** Sensitive roots to hard-deny reads of (defaults to the broker's list). */
   denyReadRoots?: readonly string[];
   /** Allow outbound network (default: true for pty agents — they need the LLM API). */
@@ -182,6 +184,7 @@ const localEnvironment: ExecutionEnvironment = {
 function sandboxOptionsFor(ctx: ExecEnvContext): SandboxOptions {
   return {
     root: ctx.cwd,
+    extraWriteRoots: ctx.extraWriteRoots,
     denyReadRoots: ctx.denyReadRoots ?? defaultSensitiveRoots(),
     // pty agents need the network (LLM API + local MCP callbacks). Default ON,
     // overridable per launch for untrusted/no-egress work.

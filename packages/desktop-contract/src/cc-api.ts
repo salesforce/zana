@@ -25,6 +25,12 @@ import type {
   DetailedInboxSummaryResult,
   EditorVerifyResult,
   EffectiveHarnessDefaultResult,
+  Environment,
+  EnvironmentAction,
+  GitHostPullRequest,
+  SpawnEnvironmentChoice,
+  WorkspaceDiffResponse,
+  WorkspaceStatus,
   ExtensionEntry,
   ExtensionInstallSource,
   ExtensionUpdateOutcome,
@@ -251,6 +257,54 @@ export interface CcApi {
     listHosts(): Promise<SshHostEntry[]>;
     /** Re-read the user's SSH configuration and return discovered hosts. */
     syncHosts(): Promise<SshSyncResult>;
+  };
+  /**
+   * Browser local-dev spawn path. The product server inserts a durable thread,
+   * then RPCs the enrolled host. Desktop keeps `terminals.create`.
+   */
+  threads: {
+    spawn(input: {
+      projectId: string;
+      providerId: string;
+      input: string | string[];
+      hostId?: string;
+      environment?: SpawnEnvironmentChoice;
+    }): Promise<Result<{
+      id: string;
+      projectId: string;
+      hostId: string;
+      environmentId: string | null;
+      providerId: string;
+      status: string;
+      title: string | null;
+      createdAt: number;
+      cwd: string | null;
+      branchName: string | null;
+      isWorktree: boolean;
+    }>>;
+    list(projectId?: string): Promise<Array<{
+      id: string;
+      projectId: string;
+      hostId: string;
+      environmentId: string | null;
+      providerId: string;
+      status: string;
+      title: string | null;
+      createdAt: number;
+      cwd: string | null;
+      branchName: string | null;
+      isWorktree: boolean;
+    }>>;
+    onUpdated(cb: (payload: unknown) => void): () => void;
+    archive(threadId: string): Promise<{ ok: boolean }>;
+  };
+  environments: {
+    list(projectId: string, hostId?: string): Promise<Environment[]>;
+    status(environmentId: string): Promise<WorkspaceStatus>;
+    diff(environmentId: string, target?: unknown): Promise<WorkspaceDiffResponse>;
+    pullRequest(environmentId: string): Promise<{ pullRequest: GitHostPullRequest | null }>;
+    action(environmentId: string, action: EnvironmentAction): Promise<Record<string, unknown>>;
+    destroy(environmentId: string): Promise<{ ok: boolean }>;
   };
   terminals: {
     verifyTmux(): Promise<TmuxVerifyResult>;

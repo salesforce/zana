@@ -258,7 +258,6 @@ export function ProjectScopedNav({
         isFocus ? 'project-focused-nav' : ''
       }`}
       navAriaLabel={`${project.name} navigation`}
-      historyLabel={`${project.name} navigation history`}
       storageKey={PROJECT_NAV_ORDER_KEY}
       pinnedIds={PINNED_PROJECT_NAV_IDS}
       items={items}

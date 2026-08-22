@@ -15,11 +15,17 @@ import type {
   ScheduledTask,
   Suggestion,
   Team,
-  TerminalSession
+  TerminalSession,
+  FsEntry,
+  FsReadResult
 } from '@zana-ai/zcc-domain/product';
 import { hasDesktopBridge } from './app-surface.js';
 import { apiJson, fetchWithAppSurface } from './fetch-with-app-surface.js';
 import { subscribeProductEvent } from './product-ws.js';
+import {
+  threadEventToTerminalData,
+  threadEventToTerminalExit
+} from './host-thread-session.js';
 
 function noopSubscribe(_cb: unknown): () => void {
   return () => {};
@@ -39,6 +45,12 @@ function httpProduct(): Pick<
   | 'teams'
   | 'agents'
   | 'terminals'
+  | 'threads'
+  | 'environments'
+  | 'harness'
+  | 'library'
+  | 'quickPrompts'
+  | 'fs'
   | 'pluginApps'
   | 'extensions'
   | 'updates'
@@ -75,7 +87,35 @@ function httpProduct(): Pick<
       reorder: async () => httpProduct().projects.list(),
       pickDirectory: async () => null,
       addRemote: async () => ({ ok: false, code: 'unavailable', message: 'remote projects require the desktop app' }),
-      clone: async () => ({ ok: false, code: 'unavailable', message: 'clone requires the desktop app' }),
+      clone: async (input) => {
+        try {
+          const body = await apiJson<{
+            ok: boolean;
+            project?: Project;
+            path?: string;
+            code?: string;
+            message?: string;
+          }>('/projects/clone', {
+            method: 'POST',
+            body: JSON.stringify({ url: input.url, name: input.name })
+          });
+          if (!body.ok || !body.project) {
+            return {
+              ok: false as const,
+              code: (body.code === 'clone_target_exists' ? 'DEST_EXISTS' : 'CLONE_FAILED') as 'DEST_EXISTS' | 'CLONE_FAILED',
+              message: body.message ?? 'clone failed',
+              path: body.path
+            };
+          }
+          return { ok: true as const, project: body.project };
+        } catch (error) {
+          return {
+            ok: false as const,
+            code: 'CLONE_FAILED' as const,
+            message: error instanceof Error ? error.message : String(error)
+          };
+        }
+      },
       onCloneProgress: noopSubscribe,
       cloneRoot: async () => '',
       ensureQuickAgent: async () => ({
@@ -204,7 +244,17 @@ function httpProduct(): Pick<
         return body.tasks;
       },
       onChanged: (cb: (tasks: ScheduledTask[]) => void) =>
-        subscribeProductEvent<ScheduledTask[]>('scheduler:changed', cb)
+        subscribeProductEvent<ScheduledTask[]>('scheduler:changed', cb),
+      listTemplates: async () => [],
+      onTemplatesChanged: noopSubscribe,
+      groups: {
+        list: async () => [],
+        create: async () => ({ ok: false, code: 'unavailable', message: 'schedule groups require the desktop app' }),
+        update: async () => ({ ok: false, code: 'unavailable', message: 'schedule groups require the desktop app' }),
+        delete: async () => ({ ok: false, code: 'unavailable', message: 'schedule groups require the desktop app' }),
+        reorder: async () => [],
+        onChanged: noopSubscribe
+      }
     } as CcApi['scheduler'],
     personas: {
       list: async () => {
@@ -260,10 +310,155 @@ function httpProduct(): Pick<
       setActiveSession: async () => {},
       setFavorites: async () => {},
       setHeartbeat: async () => {},
-      onData: noopSubscribe,
+      backlog: async (sessionId) => {
+        try {
+          const body = await apiJson<{ output: string }>(
+            `/threads/${encodeURIComponent(sessionId)}/output`
+          );
+          return body.output;
+        } catch {
+          return '';
+        }
+      },
+      onData: (cb) => subscribeProductEvent('threads:event', (payload) => {
+        const chunk = threadEventToTerminalData(payload);
+        if (chunk) cb(chunk.sessionId, chunk.data);
+      }),
       onUpdated: noopSubscribe,
-      onExit: noopSubscribe
+      onExit: (cb) => subscribeProductEvent('threads:event', (payload) => {
+        const exit = threadEventToTerminalExit(payload);
+        if (exit) cb(exit.sessionId, exit.code);
+      }),
+      resize: async (sessionId, cols, rows) => {
+        await apiJson(`/threads/${encodeURIComponent(sessionId)}/resize`, {
+          method: 'POST',
+          body: JSON.stringify({ cols, rows })
+        });
+      }
     } as CcApi['terminals'],
+    threads: {
+      spawn: async (input) => {
+        const response = await fetchWithAppSurface('/api/v1/threads', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            projectId: input.projectId,
+            providerId: input.providerId,
+            input: Array.isArray(input.input) ? input.input : [input.input],
+            hostId: input.hostId,
+            environment: input.environment
+          })
+        });
+        const body = (await response.json()) as Awaited<ReturnType<CcApi['threads']['spawn']>> & {
+          code?: string;
+          message?: string;
+        };
+        if (response.ok && body.ok) return body;
+        return {
+          ok: false,
+          code: body.code ?? 'thread-create-failed',
+          message: body.message ?? 'thread spawn is not available'
+        };
+      },
+      list: async (projectId) => {
+        const suffix = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
+        const body = await apiJson<{ threads: Awaited<ReturnType<CcApi['threads']['list']>> }>(`/threads${suffix}`);
+        return body.threads;
+      },
+      onUpdated: (cb) => subscribeProductEvent('threads:updated', cb),
+      archive: async (threadId) => {
+        const body = await apiJson<{ ok: boolean }>(`/threads/${encodeURIComponent(threadId)}/archive`, {
+          method: 'POST',
+          body: '{}'
+        });
+        return body;
+      }
+    } as CcApi['threads'],
+    environments: {
+      list: async (projectId, hostId) => {
+        const params = hostId ? `?hostId=${encodeURIComponent(hostId)}` : '';
+        const body = await apiJson<{ environments: Awaited<ReturnType<CcApi['environments']['list']>> }>(
+          `/projects/${encodeURIComponent(projectId)}/environments${params}`
+        );
+        return body.environments;
+      },
+      status: async (environmentId) => {
+        return apiJson(`/environments/${encodeURIComponent(environmentId)}/status`);
+      },
+      diff: async (environmentId, target) => {
+        const suffix = target ? `?target=${encodeURIComponent(JSON.stringify(target))}` : '';
+        return apiJson(`/environments/${encodeURIComponent(environmentId)}/diff${suffix}`);
+      },
+      pullRequest: async (environmentId) => {
+        return apiJson(`/environments/${encodeURIComponent(environmentId)}/pull-request`);
+      },
+      action: async (environmentId, action) => {
+        return apiJson(`/environments/${encodeURIComponent(environmentId)}/actions`, {
+          method: 'POST',
+          body: JSON.stringify(action)
+        });
+      },
+      destroy: async (environmentId) => {
+        return apiJson(`/environments/${encodeURIComponent(environmentId)}`, {
+          method: 'DELETE'
+        });
+      }
+    } as CcApi['environments'],
+    harness: {
+      verify: async () => {
+        const body = await apiJson<{ results: Awaited<ReturnType<CcApi['harness']['verify']>> }>('/harness/verify');
+        return body.results;
+      },
+      descriptors: async () => {
+        const body = await apiJson<{ descriptors: Awaited<ReturnType<CcApi['harness']['descriptors']>> }>(
+          '/harness/descriptors'
+        );
+        return body.descriptors;
+      },
+      agentDescriptors: async () => ({ agents: [], unsupportedReason: 'unavailable in the browser' }),
+      effectiveDefault: async (projectId: string) =>
+        apiJson<Awaited<ReturnType<CcApi['harness']['effectiveDefault']>>>(
+          `/harness/effective-default?projectId=${encodeURIComponent(projectId)}`
+        )
+    } as CcApi['harness'],
+    library: {
+      list: async () => {
+        const body = await apiJson<{ docs: Awaited<ReturnType<CcApi['library']['list']>> }>('/library');
+        return body.docs;
+      },
+      read: async (scope, relPath, projectId) => {
+        const params = new URLSearchParams({ scope, relPath });
+        if (projectId) params.set('projectId', projectId);
+        return apiJson<Awaited<ReturnType<CcApi['library']['read']>>>(`/library/content?${params.toString()}`);
+      },
+      onChanged: (cb) => subscribeProductEvent('library:changed', cb)
+    } as CcApi['library'],
+    quickPrompts: {
+      list: async () => {
+        const body = await apiJson<{ prompts: Awaited<ReturnType<CcApi['quickPrompts']['list']>> }>('/quick-prompts');
+        return body.prompts;
+      },
+      onChanged: noopSubscribe
+    } as CcApi['quickPrompts'],
+    fs: {
+      listDir: async (path) => {
+        const body = await apiJson<{ entries: FsEntry[] }>('/fs/list-dir', {
+          method: 'POST',
+          body: JSON.stringify({ path })
+        });
+        return body.entries;
+      },
+      readFile: async (path) => {
+        try {
+          return await apiJson<FsReadResult>('/fs/read', {
+            method: 'POST',
+            body: JSON.stringify({ path })
+          });
+        } catch (error) {
+          return { ok: false, message: error instanceof Error ? error.message : String(error) };
+        }
+      }
+    } as CcApi['fs'],
     pluginApps: {
       list: async () => [],
       onChanged: noopSubscribe
@@ -324,8 +519,13 @@ function stubFamily(family: string): unknown {
  */
 export const product: CcApi = new Proxy({} as CcApi, {
   get(_target, family: string | symbol) {
+    const name = String(family);
+    if (name === 'threads' || name === 'environments') {
+      const http = httpProduct() as unknown as Record<string, unknown>;
+      return withStubs(name, http[name] as object);
+    }
     if (hasDesktopBridge()) {
-      return (window.cc as unknown as Record<string, unknown>)[String(family)];
+      return (window.cc as unknown as Record<string, unknown>)[name];
     }
     const http = httpProduct() as unknown as Record<string, unknown>;
     const impl = http[String(family)];

@@ -7,6 +7,10 @@ test('the shell keeps its sidebar trigger and history controls in Electron title
 
   await expect(sidebar).toBeVisible();
   await expect(sidebarTrigger).toBeVisible();
+  const historyControls = window.getByTestId('sidebar-history-controls');
+  await expect(historyControls).toBeVisible();
+  await expect(historyControls.getByRole('button', { name: 'Go back' })).toBeVisible();
+  await expect(historyControls.getByRole('button', { name: 'Go forward' })).toBeVisible();
   const triggerBeforeCollapse = await sidebarTrigger.boundingBox();
   expect(triggerBeforeCollapse).not.toBeNull();
   expect(triggerBeforeCollapse?.y).toBe(0);
@@ -19,6 +23,8 @@ test('the shell keeps its sidebar trigger and history controls in Electron title
   // Collapse removes the rail entirely, but the root trigger stays at its fixed
   // top-left position rather than being reparented into page content.
   await expect(window.locator('aside.sidebar')).toHaveCount(0);
+  await expect(historyControls).toBeVisible();
+  await expect(historyControls.getByRole('button', { name: 'Go back' })).toBeVisible();
 
   const expandSidebar = sidebarTrigger.getByRole('button', { name: 'Expand sidebar' });
   await expect(expandSidebar).toBeVisible();

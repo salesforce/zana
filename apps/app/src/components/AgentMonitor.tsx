@@ -82,7 +82,7 @@ export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) 
 
   // Group cards into the board's lanes, then flatten into a single ordered list
   // with lane headers — the list reads top-to-bottom by urgency (Needs you →
-  // Working → Delegating → Idle → Done), mirroring the Kanban's lane order.
+  // Working → Idle → Done), mirroring the Kanban's lane order.
   const grouped = useMemo(() => {
     const byLane = new Map<LaneKey, AgentCard[]>();
     for (const c of cards) {

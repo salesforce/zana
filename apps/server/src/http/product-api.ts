@@ -1,11 +1,27 @@
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { realpathSync, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { AppConfig, CreateTerminalRequest, FollowUpStatus } from '@zana-ai/zcc-domain/product';
+import type { AppConfig, CreateTerminalRequest, FollowUpStatus, LibraryScope, Persona } from '@zana-ai/zcc-domain/product';
 import { browserRequestProblem, headerValue } from './browser-request-guard.js';
 import { listJsonFiles, readJsonFile, writeJsonFile } from './disk-json.js';
 import { readJsonBody, sendJson } from './json.js';
 import type { ProductHttpContext } from './product-context.js';
+import { createThreadFromRequest, ThreadCreateError, threadView, type SpawnThreadInput } from './thread-create.js';
+import { archiveThread, destroyEnvironment } from '../services/environments/environment-cleanup.js';
+import {
+  environmentDiff,
+  environmentPullRequest,
+  environmentStatus,
+  listProjectEnvironments,
+  runEnvironmentAction
+} from '../services/environments/environment-actions.js';
+import { spawnEnvironmentChoiceSchema } from '@zana-ai/zcc-domain';
+import { normalizeRepoUrl } from '../services/projects/git-clone.js';
+import { harnessDescriptors, harnessEffectiveDefault, harnessVerify } from './harness-via-rpc.js';
+import { isSafeRelPath, listLibraryDocs, listQuickPrompts, readLibraryDoc } from './library-via-host.js';
+import { listProjectDir, readProjectFile } from './project-fs-via-host.js';
+import { getThread, listLiveThreads, listThreadsByProject, threadOutputTail } from '@zana-ai/zcc-db';
+import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
 
 const VALID_FOLLOW_UP_STATUS: FollowUpStatus[] = ['open', 'resolved', 'dismissed'];
 
@@ -24,6 +40,21 @@ function confineCwd(projectPath: string, cwd: string | undefined): string | null
     return null;
   }
   return isContained(root, resolved) ? resolved : null;
+}
+
+const COLS_MIN = 20;
+const COLS_MAX = 300;
+const ROWS_MIN = 8;
+const ROWS_MAX = 100;
+
+function parseTerminalGeometry(body: { cols?: unknown; rows?: unknown }): { cols: number; rows: number } | null {
+  const cols = typeof body.cols === 'number' && Number.isInteger(body.cols) ? body.cols : NaN;
+  const rows = typeof body.rows === 'number' && Number.isInteger(body.rows) ? body.rows : NaN;
+  if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols < 1 || rows < 1) return null;
+  return {
+    cols: Math.min(COLS_MAX, Math.max(COLS_MIN, cols)),
+    rows: Math.min(ROWS_MAX, Math.max(ROWS_MIN, rows))
+  };
 }
 
 function routeParams(pathname: string, pattern: string): Record<string, string> | null {
@@ -289,7 +320,344 @@ export async function handleProductHttp(
     }
 
     if (path === '/api/v1/library' && method === 'GET') {
-      sendJson(response, 200, { docs: [] });
+      try {
+        const docs = await listLibraryDocs(ctx);
+        sendJson(response, 200, { docs });
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    if (path === '/api/v1/library/content' && method === 'GET') {
+      const scope = requestUrl.searchParams.get('scope');
+      const relPath = requestUrl.searchParams.get('relPath') ?? '';
+      const projectId = requestUrl.searchParams.get('projectId') ?? undefined;
+      if (scope !== 'global' && scope !== 'project') {
+        sendJson(response, 400, { error: 'scope is required' });
+        return true;
+      }
+      if (!isSafeRelPath(relPath)) {
+        sendJson(response, 403, { ok: false, message: 'path escapes library root' });
+        return true;
+      }
+      try {
+        const result = await readLibraryDoc(ctx, scope as LibraryScope, relPath, projectId);
+        sendJson(response, result.ok ? 200 : 404, result);
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    if (path === '/api/v1/quick-prompts' && method === 'GET') {
+      try {
+        const prompts = await listQuickPrompts(ctx);
+        sendJson(response, 200, { prompts });
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    if (path === '/api/v1/fs/list-dir' && method === 'POST') {
+      const body = (await readJsonBody(request)) as { path?: unknown };
+      try {
+        const entries = await listProjectDir(ctx, typeof body.path === 'string' ? body.path : '');
+        sendJson(response, 200, { entries });
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    if (path === '/api/v1/fs/read' && method === 'POST') {
+      const body = (await readJsonBody(request)) as { path?: unknown };
+      try {
+        const result = await readProjectFile(ctx, typeof body.path === 'string' ? body.path : '');
+        sendJson(response, result.ok ? 200 : 404, result);
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    if (path === '/api/v1/harness/verify' && method === 'GET') {
+      try {
+        sendJson(response, 200, { results: await harnessVerify(ctx.hostHub) });
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    if (path === '/api/v1/harness/descriptors' && method === 'GET') {
+      try {
+        sendJson(response, 200, { descriptors: await harnessDescriptors(ctx.hostHub) });
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    if (path === '/api/v1/harness/effective-default' && method === 'GET') {
+      const projectId = requestUrl.searchParams.get('projectId') ?? '';
+      const project = ctx.toProjects().find((row) => row.id === projectId);
+      try {
+        const result = await harnessEffectiveDefault({
+          hub: ctx.hostHub,
+          project,
+          config: ctx.config.getConfig(),
+          personas: listJsonFiles(join(ctx.dataDir, 'personas')) as Persona[]
+        });
+        sendJson(response, 200, result);
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    if (path === '/api/v1/threads' && method === 'GET') {
+      const projectId = requestUrl.searchParams.get('projectId');
+      const threads = projectId ? listThreadsByProject(ctx.db, projectId) : listLiveThreads(ctx.db);
+      sendJson(response, 200, { threads: threads.map((thread) => threadView(ctx, thread)) });
+      return true;
+    }
+
+    const threadOutput = routeParams(path, '/api/v1/threads/:id/output');
+    if (threadOutput && method === 'GET') {
+      const thread = getThread(ctx.db, threadOutput.id);
+      if (!thread) {
+        sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
+        return true;
+      }
+      sendJson(response, 200, { output: threadOutputTail(ctx.db, thread.id) });
+      return true;
+    }
+
+    const threadResize = routeParams(path, '/api/v1/threads/:id/resize');
+    if (threadResize && method === 'POST') {
+      const thread = getThread(ctx.db, threadResize.id);
+      if (!thread) {
+        sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
+        return true;
+      }
+      const body = (await readJsonBody(request)) as { cols?: unknown; rows?: unknown };
+      const geometry = parseTerminalGeometry(body);
+      if (!geometry) {
+        sendJson(response, 400, { error: 'bad-geometry', message: 'cols and rows must be positive integers' });
+        return true;
+      }
+      try {
+        await ctx.hostHub.callHostOnlineRpc({
+          hostId: thread.hostId,
+          command: {
+            type: 'thread.resize',
+            threadId: thread.id,
+            cols: geometry.cols,
+            rows: geometry.rows
+          }
+        });
+        sendJson(response, 200, { ok: true, threadId: thread.id, ...geometry });
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    if (path === '/api/v1/threads' && method === 'POST') {
+      const body = (await readJsonBody(request)) as {
+        projectId?: unknown;
+        providerId?: unknown;
+        input?: unknown;
+        hostId?: unknown;
+        environment?: unknown;
+        checkout?: unknown;
+      };
+      const input = Array.isArray(body.input)
+        ? body.input.filter((part): part is string => typeof part === 'string')
+        : typeof body.input === 'string' ? [body.input] : [];
+      const environmentChoice = body.environment === undefined
+        ? undefined
+        : spawnEnvironmentChoiceSchema.safeParse(body.environment);
+      if (environmentChoice && !environmentChoice.success) {
+        sendJson(response, 400, { ok: false, code: 'invalid-environment', message: 'environment choice is invalid' });
+        return true;
+      }
+      try {
+        const thread = await createThreadFromRequest(ctx, {
+          projectId: typeof body.projectId === 'string' ? body.projectId : '',
+          providerId: typeof body.providerId === 'string' ? body.providerId : '',
+          input,
+          hostId: typeof body.hostId === 'string' ? body.hostId : undefined,
+          environment: environmentChoice?.data,
+          checkout: body.checkout && typeof body.checkout === 'object'
+            ? body.checkout as SpawnThreadInput['checkout']
+            : undefined
+        });
+        sendJson(response, 201, { ok: true, value: threadView(ctx, thread) });
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { ok: false, code: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadArchive = routeParams(path, '/api/v1/threads/:id/archive');
+    if (threadArchive && method === 'POST') {
+      try {
+        const ok = await archiveThread(ctx, threadArchive.id);
+        if (!ok) {
+          sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
+          return true;
+        }
+        sendJson(response, 200, { ok: true, threadId: threadArchive.id });
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const projectEnvironments = routeParams(path, '/api/v1/projects/:id/environments');
+    if (projectEnvironments && method === 'GET') {
+      sendJson(response, 200, {
+        environments: listProjectEnvironments(ctx, projectEnvironments.id, requestUrl.searchParams.get('hostId') ?? undefined)
+      });
+      return true;
+    }
+
+    const envStatus = routeParams(path, '/api/v1/environments/:id/status');
+    if (envStatus && method === 'GET') {
+      try {
+        sendJson(response, 200, await environmentStatus(ctx, envStatus.id));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { ok: false, code: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const envDiff = routeParams(path, '/api/v1/environments/:id/diff');
+    if (envDiff && method === 'GET') {
+      try {
+        const raw = requestUrl.searchParams.get('target');
+        const target = raw ? JSON.parse(raw) : undefined;
+        sendJson(response, 200, await environmentDiff(ctx, envDiff.id, target));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { ok: false, code: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const envPr = routeParams(path, '/api/v1/environments/:id/pull-request');
+    if (envPr && method === 'GET') {
+      try {
+        sendJson(response, 200, await environmentPullRequest(ctx, envPr.id));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { ok: false, code: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const envActions = routeParams(path, '/api/v1/environments/:id/actions');
+    if (envActions && method === 'POST') {
+      try {
+        const body = await readJsonBody(request);
+        sendJson(response, 200, await runEnvironmentAction(ctx, envActions.id, body));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { ok: false, code: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const envDestroy = routeParams(path, '/api/v1/environments/:id');
+    if (envDestroy && method === 'DELETE') {
+      try {
+        await destroyEnvironment(ctx, envDestroy.id);
+        sendJson(response, 200, { ok: true, environmentId: envDestroy.id });
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { ok: false, code: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const projectBranches = routeParams(path, '/api/v1/projects/:id/branches');
+    if (projectBranches && method === 'GET') {
+      const project = ctx.toProjects().find((row) => row.id === projectBranches.id);
+      if (!project || !project.path) {
+        sendJson(response, 404, { error: 'unknown-project', message: 'project is not registered' });
+        return true;
+      }
+      try {
+        const hostId = ctx.hostHub.resolveHostId(requestUrl.searchParams.get('hostId') ?? undefined);
+        const result = await ctx.hostHub.callHostOnlineRpc<{ branches: string[]; truncated: boolean }>({
+          hostId,
+          command: {
+            type: 'host.list_branches',
+            workspacePath: project.path,
+            workspaceProvisionType: 'unmanaged',
+            limit: 200
+          }
+        });
+        sendJson(response, 200, result);
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    if (path === '/api/v1/projects/clone' && method === 'POST') {
+      const body = (await readJsonBody(request)) as { url?: unknown; name?: unknown; hostId?: unknown };
+      if (typeof body.url !== 'string' || body.url.trim().length === 0) {
+        sendJson(response, 400, { ok: false, code: 'invalid-url', message: 'url is required' });
+        return true;
+      }
+      try {
+        const normalized = normalizeRepoUrl(body.url);
+        const slug = typeof body.name === 'string' && body.name.trim()
+          ? body.name.trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || normalized.repoName
+          : normalized.repoName;
+        const hostId = ctx.hostHub.resolveHostId(typeof body.hostId === 'string' ? body.hostId : undefined);
+        const cloned = await ctx.hostHub.callHostOnlineRpc<{ path: string; gitRemoteUrl: string | null }>({
+          hostId,
+          command: {
+            type: 'project.clone',
+            remoteUrl: normalized.cloneUrl,
+            projectSlug: slug
+          }
+        });
+        const project = await ctx.projects.add(cloned.path);
+        ctx.hub.emit('projects:changed', ctx.projects.list());
+        sendJson(response, 201, { ok: true, project, path: cloned.path, gitRemoteUrl: cloned.gitRemoteUrl });
+      } catch (error) {
+        if (error instanceof Error && /Enter a repository URL|Invalid repository URL|URL too long/.test(error.message)) {
+          sendJson(response, 400, { ok: false, code: 'invalid-url', message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
       return true;
     }
 
@@ -380,6 +748,29 @@ export async function handleProductHttp(
     });
     return true;
   }
+}
+
+function sendHostFailure(response: ServerResponse, error: unknown): void {
+  if (error instanceof HostUnavailableError) {
+    sendJson(response, 503, { ok: false, code: error.code, message: error.message });
+    return;
+  }
+  if (error instanceof AmbiguousHostError) {
+    sendJson(response, 409, { ok: false, code: error.code, message: error.message });
+    return;
+  }
+  if (error && typeof error === 'object' && 'status' in error && typeof (error as { status: unknown }).status === 'number') {
+    const status = (error as { status: number; code?: string; message?: string });
+    sendJson(response, status.status, {
+      ok: false,
+      code: status.code ?? 'host-error',
+      message: status.message ?? (error instanceof Error ? error.message : String(error))
+    });
+    return;
+  }
+  sendJson(response, 500, {
+    error: error instanceof Error ? error.message : String(error)
+  });
 }
 
 export function isProductApiPath(pathname: string): boolean {

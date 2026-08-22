@@ -18,7 +18,8 @@ import {
   resolveOpenCodeRoleOptions,
   reconcileOpenCodeRole,
   selectedAvailableFamily,
-  worktreeForSubmission
+  worktreeForSubmission,
+  workspaceForSubmission
 } from '../AgentLauncher.js';
 
 /**
@@ -413,6 +414,28 @@ describe('worktree launch intent', () => {
     expect(worktreeForSubmission(true, false, true, 'login_fix')).toBeUndefined();
     expect(worktreeForSubmission(true, true, false, 'login_fix')).toBeUndefined();
     expect(worktreeForSubmission(true, true, true, '')).toBeUndefined();
+  });
+
+  it('maps the workspace picker onto a spawn environment choice', () => {
+    expect(workspaceForSubmission(true, { kind: 'worktree' }, true, 'login_fix')).toEqual({
+      kind: 'worktree',
+      branchSlug: 'login_fix'
+    });
+    expect(workspaceForSubmission(false, { kind: 'worktree' }, true, 'login_fix')).toEqual({ kind: 'unmanaged' });
+    expect(workspaceForSubmission(true, { kind: 'unmanaged' }, true, 'login_fix')).toEqual({ kind: 'unmanaged' });
+    expect(workspaceForSubmission(true, {
+      kind: 'reuse',
+      environmentId: '11111111-1111-4111-8111-111111111111'
+    }, false, '')).toEqual({
+      kind: 'reuse',
+      environmentId: '11111111-1111-4111-8111-111111111111'
+    });
+  });
+
+  it('replaces the isolation checkbox with a workspace picker', () => {
+    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('EnvironmentPicker');
+    expect(source).not.toContain('Isolate in a git worktree');
   });
 
   it('normalizes names for one branch and checkout segment', () => {

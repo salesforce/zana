@@ -108,27 +108,46 @@ export function ExplorerView({ project }: Props) {
   const reloadWorktrees = useCallback(() => {
     if (isRemote) return;
     product.git.listWorktrees(project.path)
-      .then((list) => setWorktrees(list))
+      .then(async (list) => {
+        const environments = await product.environments.list(project.id).catch(() => []);
+        const extras: Worktree[] = environments
+          .filter((row) => row.path && row.status === 'ready' && row.workspaceProvisionType === 'managed-worktree')
+          .filter((row) => !list.some((wt) => wt.path === row.path))
+          .map((row) => ({
+            path: row.path!,
+            head: null,
+            branch: row.branchName,
+            detached: false,
+            bare: false,
+            isMain: false
+          }));
+        setWorktrees([...list, ...extras]);
+      })
       .catch(() => setWorktrees([]));
     product.git.listBranches(project.path)
       .then((list) => setBranches(list))
       .catch(() => setBranches([]));
-  }, [project.path, isRemote]);
+  }, [project.path, project.id, isRemote]);
 
-  // Manually remove a linked worktree (the switcher's per-worktree "Remove"
-  // action). main authorizes: it only removes a checkout under the app-managed
-  // `~/zcc-worktrees` root and returns a shaped failure otherwise, which we
-  // surface as a toast. A clean worktree removes without `--force`; a dirty one
-  // fails first, then we re-confirm and retry with force so the user can't nuke
-  // uncommitted work by a single mis-click.
   const handleRemoveWorktree = useCallback(
     async (wt: Worktree) => {
       if (!window.confirm(`Remove worktree for “${wt.branch ?? wt.path.split('/').pop()}”?\n\n${wt.path}\n\nThe branch itself is kept; only the checkout directory is removed.`)) {
         return;
       }
-      // If we're currently viewing the worktree being removed, fall back to the
-      // main checkout first so the tree isn't left rooted at a deleted dir.
       if (viewRoot === wt.path) setViewRoot(project.path);
+      const environments = await product.environments.list(project.id).catch(() => []);
+      const managed = environments.find((row) => row.path === wt.path && row.workspaceProvisionType === 'managed-worktree');
+      if (managed) {
+        try {
+          await product.environments.destroy(managed.id);
+          pushToast('Worktree removed');
+          setWorktreeMenu(false);
+          reloadWorktrees();
+        } catch (error) {
+          pushToast(`Remove failed: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        }
+        return;
+      }
       let res = await product.git.removeWorktree(project.path, wt.path, false);
       if (!res.ok && /dirty|contains modified|use --force|locked working tree/i.test(res.message ?? '')) {
         if (window.confirm(`“${wt.branch ?? wt.path}” has uncommitted changes.\n\nForce-remove and discard them?`)) {
@@ -145,7 +164,7 @@ export function ExplorerView({ project }: Props) {
         pushToast(`Remove failed: ${res.message ?? 'unknown error'}`, 'error');
       }
     },
-    [project.path, viewRoot, pushToast, reloadWorktrees]
+    [project.path, project.id, viewRoot, pushToast, reloadWorktrees]
   );
 
   const { sendPathToTerminal, copyPath, openInExternal, downloadRemoteFile, uploadLocalFiles } = useFileOperations({

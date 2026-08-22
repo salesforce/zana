@@ -21,8 +21,9 @@
  * Rule 4 (atomic, serialized writes): tmp + rename, single-process store.
  */
 
-import { app, safeStorage } from 'electron';
+import * as electron from 'electron';
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 /** The harness families that can carry a per-harness credential. */
@@ -58,14 +59,39 @@ export interface HarnessAuthStatus {
   hasToken: boolean;
 }
 
+type ElectronSafeStorage = {
+  isEncryptionAvailable: () => boolean;
+  encryptString: (value: string) => Buffer;
+  decryptString: (value: Buffer) => string;
+};
+
+function electronApi(): {
+  app?: { getPath: (name: string) => string };
+  safeStorage?: ElectronSafeStorage;
+} {
+  const ns = electron as {
+    app?: { getPath: (name: string) => string };
+    safeStorage?: ElectronSafeStorage;
+    default?: {
+      app?: { getPath: (name: string) => string };
+      safeStorage?: ElectronSafeStorage;
+    };
+  };
+  if (ns.app || ns.safeStorage) return ns;
+  if (ns.default && typeof ns.default === 'object') return ns.default;
+  return {};
+}
+
 /**
  * Resolve the store path LAZILY (not at module load): `app.getPath` throws before
  * electron's app is ready, and importing this module transitively (via pty.ts)
  * from a unit test must not require a full electron-app mock. Every accessor
- * computes it on demand.
+ * computes it on demand. Node enroll (no Electron) falls back to HOME / ZCC_DATA_DIR.
  */
 function dataDir(): string {
-  return join(app.getPath('home'), '.zcc');
+  if (process.env.ZCC_DATA_DIR) return process.env.ZCC_DATA_DIR;
+  const home = electronApi().app?.getPath?.('home') ?? homedir();
+  return join(home, '.zcc');
 }
 function authFilePath(): string {
   return join(dataDir(), 'harness-auth.enc');
@@ -169,10 +195,11 @@ export function setHarnessAuth(
   if (patch.token !== undefined) {
     const v = patch.token?.trim();
     if (v) {
-      if (!safeStorage.isEncryptionAvailable()) {
+      const storage = electronApi().safeStorage;
+      if (!storage?.isEncryptionAvailable()) {
         throw new Error('Encryption unavailable — safeStorage not ready');
       }
-      entry.tokenEnc = safeStorage.encryptString(v).toString('base64');
+      entry.tokenEnc = storage.encryptString(v).toString('base64');
     } else {
       delete entry.tokenEnc;
     }
@@ -204,9 +231,10 @@ export function getHarnessAuth(key: HarnessAuthKey): HarnessAuthCredential {
   const cred: HarnessAuthCredential = {};
   if (entry.baseUrl) cred.baseUrl = entry.baseUrl;
 
-  if (entry.tokenEnc && safeStorage.isEncryptionAvailable()) {
+  const storage = electronApi().safeStorage;
+  if (entry.tokenEnc && storage?.isEncryptionAvailable()) {
     try {
-      cred.token = safeStorage.decryptString(Buffer.from(entry.tokenEnc, 'base64'));
+      cred.token = storage.decryptString(Buffer.from(entry.tokenEnc, 'base64'));
     } catch {
       /* no token */
     }

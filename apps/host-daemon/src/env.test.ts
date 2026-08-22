@@ -9,6 +9,7 @@ import {
   resolveZccCliBinDir,
   ensureProcessPath,
   stripInheritedClaudeSession,
+  ensureInteractiveTerminalEnv,
   INHERITED_CLAUDE_SESSION_VARS
 } from './env.js';
 
@@ -205,5 +206,37 @@ describe('stripInheritedClaudeSession', () => {
     const env: Record<string, string> = { PATH: '/usr/bin', TERM: 'xterm-256color' };
     stripInheritedClaudeSession(env);
     expect(env).toEqual({ PATH: '/usr/bin', TERM: 'xterm-256color' });
+  });
+});
+
+describe('ensureInteractiveTerminalEnv', () => {
+  it('forces a color-capable TTY even when CI/NO_COLOR were inherited', () => {
+    const env: Record<string, string> = {
+      PATH: '/usr/bin',
+      TERM: 'dumb',
+      CI: '1',
+      NO_COLOR: '1',
+      FORCE_COLOR: '0'
+    };
+    ensureInteractiveTerminalEnv(env);
+    expect(env.TERM).toBe('xterm-256color');
+    expect(env.COLORTERM).toBe('truecolor');
+    expect(env.CI).toBeUndefined();
+    expect(env.NO_COLOR).toBeUndefined();
+    expect(env.FORCE_COLOR).toBeUndefined();
+  });
+
+  it('deletes FORCE_COLOR=false the same way as 0', () => {
+    const env: Record<string, string> = { FORCE_COLOR: 'false' };
+    ensureInteractiveTerminalEnv(env);
+    expect(env.FORCE_COLOR).toBeUndefined();
+    expect(env.COLORTERM).toBe('truecolor');
+  });
+
+  it('leaves a non-disabling FORCE_COLOR intact', () => {
+    const env: Record<string, string> = { PATH: '/usr/bin', FORCE_COLOR: '3' };
+    ensureInteractiveTerminalEnv(env);
+    expect(env.FORCE_COLOR).toBe('3');
+    expect(env.COLORTERM).toBe('truecolor');
   });
 });

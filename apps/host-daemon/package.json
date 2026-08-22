@@ -10,6 +10,21 @@
       "source": "./src/index.ts",
       "default": "./src/index.ts"
     },
+    "./harness/registry": {
+      "types": "./src/harness/registry.ts",
+      "source": "./src/harness/registry.ts",
+      "default": "./src/harness/registry.ts"
+    },
+    "./harness/effective-default": {
+      "types": "./src/harness/effective-default.ts",
+      "source": "./src/harness/effective-default.ts",
+      "default": "./src/harness/effective-default.ts"
+    },
+    "./harness/harness-verify": {
+      "types": "./src/harness/harness-verify.ts",
+      "source": "./src/harness/harness-verify.ts",
+      "default": "./src/harness/harness-verify.ts"
+    },
     "./*": {
       "types": "./src/*.ts",
       "source": "./src/*.ts",
@@ -24,6 +39,7 @@
   "dependencies": {
     "@zana-ai/zcc-contracts": "workspace:*",
     "@zana-ai/zcc-domain": "workspace:*",
+    "@zana-ai/zcc-host-workspace": "workspace:*",
     "@zana-ai/zcc-path-confine": "workspace:*",
     "@zana-ai/zcc-process-utils": "workspace:*",
     "@zana-ai/zcc-spawn-plan": "workspace:*",

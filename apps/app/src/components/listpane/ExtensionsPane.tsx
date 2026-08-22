@@ -8,7 +8,6 @@ import {
 import { Link } from 'react-router-dom';
 import { type ExtensionsTab } from '../../store.js';
 import { SidebarResizer } from '../SidebarResizer.js';
-import { SidebarHistoryControls } from '../SidebarHistoryControls.js';
 import { useAppSettingsRouteMemory } from '../../hooks/useAppSettingsRouteMemory.js';
 import { useRouteState } from '../../hooks/useRouteState.js';
 import { getExtensionsTabRoutePath } from '../../lib/route-paths.js';
@@ -44,9 +43,6 @@ export function ExtensionsPane() {
   const routeMemory = useAppSettingsRouteMemory();
   return (
     <aside className="sidebar sidebar--titlebar-controls extensions-pane">
-      <div className="sidebar-chrome">
-        <SidebarHistoryControls label="Extensions navigation history" />
-      </div>
       <Link
             to={routeMemory.toolsBackRoutePath}
             className="extensions-pane-back"

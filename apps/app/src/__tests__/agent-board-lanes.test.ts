@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import type { ScheduledTask, TerminalSession } from '@zana-ai/zcc-domain/product';
 import {
   isIdleAgent,
-  isDelegatingAgent,
   isBackgroundAgent,
   isReclaimableIdle,
   cardNeedsAttention,
@@ -15,11 +14,9 @@ import {
 } from '../components/AgentBoard.js';
 
 /**
- * The Idle / Delegating partition is safety-critical: the "Close idle" action
- * (button + close_idle_agents MCP tool) targets exactly {@link isIdleAgent}, so
- * a parent with live sub-agents must fall into Delegating and NOT Idle — closing
- * it would orphan the children. These guard that the two predicates never
- * overlap and that the sub-agent count is what splits them.
+ * The Idle lane collects every at-rest live agent. Close-idle is narrower:
+ * {@link isReclaimableIdle} spares parents with live sub-agents so bulk-close
+ * never orphans Task spawns (mirrors the main-side auto-close-idle spare).
  */
 
 function card(over: Partial<AgentCard> & { state: AgentCard['state'] }): AgentCard {
@@ -37,49 +34,42 @@ function card(over: Partial<AgentCard> & { state: AgentCard['state'] }): AgentCa
   };
 }
 
-describe('Idle / Delegating lane predicates', () => {
-  it('an at-rest agent with no sub-agents is Idle, not Delegating', () => {
+describe('Idle lane predicates', () => {
+  it('an at-rest agent with no sub-agents is Idle', () => {
     const c = card({ state: 'idle' });
     expect(isIdleAgent(c)).toBe(true);
-    expect(isDelegatingAgent(c)).toBe(false);
   });
 
-  it('an at-rest agent with live sub-agents is Delegating, not Idle', () => {
+  it('an at-rest agent with live sub-agents is still Idle (no Delegating lane)', () => {
     const c = card({ state: 'idle', liveSubagents: 3 });
-    expect(isDelegatingAgent(c)).toBe(true);
-    expect(isIdleAgent(c)).toBe(false); // never a close-idle target
+    expect(isIdleAgent(c)).toBe(true);
+    expect(isReclaimableIdle(c)).toBe(false); // never a close-idle target
   });
 
-  it('an unknown-state agent with sub-agents is Delegating too', () => {
+  it('an unknown-state agent with sub-agents is Idle too', () => {
     const c = card({ state: 'unknown', liveSubagents: 1 });
-    expect(isDelegatingAgent(c)).toBe(true);
-    expect(isIdleAgent(c)).toBe(false);
+    expect(isIdleAgent(c)).toBe(true);
+    expect(isReclaimableIdle(c)).toBe(false);
   });
 
-  it('a working agent is neither (it has its own lane) even with sub-agents', () => {
+  it('a working agent is not Idle even with sub-agents', () => {
     const c = card({ state: 'working', liveSubagents: 2 });
-    expect(isDelegatingAgent(c)).toBe(false);
     expect(isIdleAgent(c)).toBe(false);
   });
 
-  it('a blocked agent is neither, even with sub-agents', () => {
+  it('a blocked agent is not Idle, even with sub-agents', () => {
     const c = card({ state: 'blocked', liveSubagents: 2 });
-    expect(isDelegatingAgent(c)).toBe(false);
     expect(isIdleAgent(c)).toBe(false);
   });
 
-  it('an exited session is neither, regardless of stale sub-agent count', () => {
+  it('an exited session is not Idle, regardless of stale sub-agent count', () => {
     const session = { id: 's1', status: 'exited', profile: 'claude' } as unknown as TerminalSession;
     const c: AgentCard = { session, state: 'idle', projectId: 'p1', projectName: 'P1', liveSubagents: 2 };
-    expect(isDelegatingAgent(c)).toBe(false);
     expect(isIdleAgent(c)).toBe(false);
   });
 
-  it('Idle and Delegating are mutually exclusive across the at-rest range', () => {
-    for (const liveSubagents of [0, 1, 5]) {
-      const c = card({ state: 'idle', liveSubagents });
-      expect(isIdleAgent(c) && isDelegatingAgent(c)).toBe(false);
-    }
+  it('LANES has no Delegating column', () => {
+    expect(LANES.map((l) => l.key)).toEqual(['blocked', 'working', 'idle', 'done']);
   });
 });
 
@@ -111,7 +101,7 @@ describe('isReclaimableIdle (Close & follow-up target)', () => {
     }
   });
 
-  it('working, blocked, and delegating agents are never reclaimable', () => {
+  it('working, blocked, and parents with live sub-agents are never reclaimable', () => {
     expect(isReclaimableIdle(card({ state: 'working' }))).toBe(false);
     expect(isReclaimableIdle(card({ state: 'blocked' }))).toBe(false);
     expect(isReclaimableIdle(card({ state: 'idle', liveSubagents: 2 }))).toBe(false);

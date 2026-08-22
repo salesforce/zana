@@ -7,6 +7,7 @@ import { providerCapabilities } from '@zana-ai/zcc-domain/launch-provider';
 import { useSessionGit } from '../lib/gitInfo.js';
 import { AgentInsights, useSessionStats } from './AgentInsights.js';
 import { AgentMetadata } from './AgentMetadata.js';
+import { EnvironmentActions } from './EnvironmentActions.js';
 import { FavoriteStar } from './FavoriteStar.js';
 import { OpenerButtons } from './OpenerButtons.js';
 import { formatDuration } from './AgentBoard.js';
@@ -318,6 +319,8 @@ export function AgentDetailPanel({
       )}
 
       <AgentMetadata metadata={t.metadata} />
+
+      <EnvironmentActions environmentId={t.workspaceEnvironmentId} />
 
       {actions && <div className="agent-detail-actions">{actions}</div>}
     </aside>

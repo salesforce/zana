@@ -34,3 +34,35 @@ describe('AgentsBoard', () => {
     expect(filterBranch).not.toContain('<HomeAgentComposer');
   });
 });
+
+const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+
+describe('AgentsBoard compact chrome contract', () => {
+  it('wraps button labels and the project count so CSS can drop them', () => {
+    expect(board).toContain('className="agents-board-header-actions"');
+    expect(board).toContain('className="agents-board-btn-label"');
+    expect(board).toContain('className="agents-board-count-extra"');
+    expect(board).toContain('aria-label="New agent"');
+    expect(board).toContain('Close ${reclaimableAgents.length} idle agents');
+  });
+
+  it('uses a named board container to compact the header then wrap the filter', () => {
+    expect(css).toContain('container-name: agents-board;');
+    expect(css).toContain('@container agents-board (max-width: 820px)');
+    expect(css).toContain('.agents-board-btn-label {\n    display: none;');
+    expect(css).toContain('.agents-board-count-extra {\n    display: none;');
+    expect(css).toContain('@container agents-board (max-width: 560px)');
+    expect(css).toContain('.agents-board-filter {\n    flex: 1 1 100%;');
+  });
+
+  it('clears the collapsed-sidebar trigger on the full-width board header', () => {
+    expect(css).toContain('.app-shell.sidebar-is-collapsed .agents-board-header {\n  padding-left: var(--shell-leading-reserve);\n}');
+  });
+
+  it('narrows the list-view monitor columns on a compact board', () => {
+    expect(css).toContain('@container agents-board (max-width: 920px)');
+    expect(css).toContain(
+      'grid-template-columns: minmax(160px, 28%) minmax(0, 1fr) minmax(180px, 26%);'
+    );
+  });
+});

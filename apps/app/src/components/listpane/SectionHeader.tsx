@@ -12,9 +12,8 @@ import { useUi } from '../../store.js';
  *    the only chevron in its column (scheduler, settings, focus buckets).
  *  - `'divider'` — a hairline rule + label with the collapse chevron at the
  *    TRAILING edge. Used for the Projects rail's Remote/Local groups, where a
- *    leading chevron would stack in the same column as each project row's own
- *    disclosure chevron and read as the same tree level. The divider reads as a
- *    separator, not a tree node, so there's only one kind of chevron per column.
+ *    leading chevron would sit in the same column as each project row's colored
+ *    dot. The divider reads as a separator, not a tree node.
  */
 export function SectionHeader({
   label,

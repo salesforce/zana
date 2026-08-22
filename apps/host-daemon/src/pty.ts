@@ -13,7 +13,7 @@ import { computeMaxLiveSessions, resolveMaxLiveSessions } from './capacity.js';
 export { computeMaxLiveSessions, resolveMaxLiveSessions } from './capacity.js';
 import { isClaudeProfile } from '@zana-ai/zcc-domain/launch-provider';
 import { ensureMcpConfigForProjectSync } from './mcp-config.js';
-import { stripInheritedClaudeSession } from './env.js';
+import { stripInheritedClaudeSession, ensureInteractiveTerminalEnv } from './env.js';
 import { isTmuxAvailable, buildLocalTmuxCommand, wrapRemoteTmux, tmuxSessionName } from './tmux.js';
 import { providerFor, registrationFor, renderRemoteCommand } from './harness/registry.js';
 import type { HarnessAuthInjection, ProviderHookUrls } from './harness/launch-provider.js';
@@ -36,6 +36,7 @@ import {
 } from '@zana-ai/zcc-spawn-plan';
 export { applyHeapCeiling, extractPinnedSessionId };
 import { nativeSessionFields } from './harness/session-adapter.js';
+import { resolveAdditionalWorkspaceWriteRootsSync } from '@zana-ai/zcc-host-workspace';
 
 // Electron-Vite emits an ESM `require` shim for the main bundle. Keep this
 // module-local resolver distinct so the bundled declarations cannot collide.
@@ -1191,6 +1192,7 @@ export class PtyManager extends EventEmitter {
     // dev, but sanitizing at the source removes the footgun for good. See
     // stripInheritedClaudeSession.
     stripInheritedClaudeSession(env);
+    ensureInteractiveTerminalEnv(env);
     // Per-harness auth env override: merge AFTER stripInheritedClaudeSession (it
     // touches only CLAUDE* session markers, never our auth vars) and AFTER the
     // ambient `...process.env` copy, so a stored gateway/token deliberately WINS
@@ -1298,6 +1300,7 @@ export class PtyManager extends EventEmitter {
       sessionId,
       projectId: opts.projectId,
       cwd: opts.cwd,
+      extraWriteRoots: resolveAdditionalWorkspaceWriteRootsSync(opts.cwd),
       allowNetwork: !opts.sandboxDenyNetwork,
       // microVM advisory hints (re-authorized in the microVM builder — Rule 1);
       // ignored by local/sandbox.
@@ -1929,6 +1932,7 @@ export class PtyManager extends EventEmitter {
       ZCC_SESSION_TOKEN: controlCredentialForSession(sessionId),
       TERM: 'xterm-256color'
     };
+    ensureInteractiveTerminalEnv(spawnEnv);
 
     ensureNodePtySpawnHelperExecutable();
     const proc = pty.spawn('ssh', sshArgs, {

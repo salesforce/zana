@@ -55,7 +55,7 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProp
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
-  const editable = doc.kind === 'md' && doc.id !== '' && !!doc.absPath;
+  const editable = doc.kind === 'md' && doc.id !== '' && !!doc.relPath;
   const { registerEditor, modal: aiEnhanceModal } = useAiEnhanceSelection();
 
   // Drag-to-resize the editor/preview split, persisted as a renderer-only UI
@@ -97,11 +97,6 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProp
   };
 
   useEffect(() => {
-    if (!doc.absPath) {
-      setError('No absolute path available');
-      return;
-    }
-
     setLoading(true);
     setError(null);
     setContent(null);
@@ -113,6 +108,11 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProp
       // doc lives in ~/.zcc/library, outside any registered project, so the
       // generic project-confined fs.readFile would reject it. Pass scope +
       // relPath (never the absPath) so main resolves the trusted dir itself.
+      if (!doc.relPath) {
+        setError('No path available');
+        setLoading(false);
+        return;
+      }
       product.library
         .read(doc.scope ?? 'global', doc.relPath, doc.projectId)
         .then((result) => {
@@ -124,6 +124,9 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProp
         })
         .catch((err) => setError(String(err)))
         .finally(() => setLoading(false));
+    } else if (!doc.absPath) {
+      setError('No absolute path available');
+      setLoading(false);
     } else if (doc.kind === 'image') {
       // Read as data URL
       product.fs
@@ -141,7 +144,7 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProp
       // PDF or other
       setLoading(false);
     }
-  }, [doc.absPath, doc.kind]);
+  }, [doc.absPath, doc.kind, doc.relPath, doc.scope, doc.projectId]);
 
   // Honor "open in edit mode" once the content has loaded (new idea flow).
   useEffect(() => {
@@ -158,7 +161,7 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProp
   };
 
   const saveEdit = async () => {
-    if (!doc.absPath) return;
+    if (!doc.relPath) return;
     setSaving(true);
     try {
       // Save through the scope-confined library seam (twin of the read above) so
