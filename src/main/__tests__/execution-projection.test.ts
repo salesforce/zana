@@ -13,7 +13,7 @@ describe('projectExecutionProjection', () => {
   it('projects non-secret project execution state and finds only a live orchestrator', () => {
     const session = { id: 'orch', status: 'running', cohort: { executionId: 'execution-1', role: 'orchestrator' } } as TerminalSession;
     expect(projectExecutionProjection([record()], [session])).toEqual([{
-      executionId: 'execution-1', projectId: 'project-1', teamId: 'team-1', jobTitle: 'Release train', state: 'RUNNING', attempt: 2, stateVersion: 3, updatedAt: 2, orchestratorSessionId: 'orch'
+      executionId: 'execution-1', projectId: 'project-1', teamId: 'team-1', jobTitle: 'Release train', state: 'RUNNING', attempt: 2, stateVersion: 3, createdAt: 1, updatedAt: 2, orchestratorSessionId: 'orch'
     }]);
   });
 

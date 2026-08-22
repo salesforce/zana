@@ -4941,6 +4941,7 @@ export interface ExecutionBoardProjection {
   state: 'READY' | 'STARTING' | 'RUNNING' | 'COMPLETED' | 'BLOCKED' | 'STOPPED' | 'FAILED';
   attempt: number;
   stateVersion?: number;
+  createdAt: number;
   updatedAt: number;
   orchestratorSessionId?: string;
   hasResumeToken?: boolean;

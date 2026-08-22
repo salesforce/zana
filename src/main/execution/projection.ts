@@ -26,6 +26,7 @@ export function projectExecutionProjection(
     state: record.state,
     attempt: record.attempt,
     stateVersion: record.stateVersion,
+    createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     ...(liveOrchestrators.has(record.id)
       ? { orchestratorSessionId: liveOrchestrators.get(record.id) }

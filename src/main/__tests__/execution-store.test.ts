@@ -46,6 +46,13 @@ describe('execution store', () => {
     expect(await store.events('other-session', 'project-1', claimed.record.id)).toEqual({ events: [] });
   }));
 
+  it('lists every execution in a project for main-owned projections', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    await store.claim(request());
+    expect((await store.listInProject('project-1')).records).toMatchObject([{ id: 'execution-1', callerPrincipalId: 'session-1' }]);
+    expect((await store.listInProject('other-project')).records).toEqual([]);
+  }));
+
   it('keeps active records and paginates bounded event reads', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1', maxRecords: 1 });
     const claimed = await store.claim(request());

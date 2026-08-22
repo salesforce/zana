@@ -428,7 +428,7 @@ describe('partitionExecutionMembers', () => {
     const worker = memberCard('worker', 'co1', 'worker');
     worker.session.cohort!.executionId = 'execution-1';
     const { top, workersByHost } = partitionExecutionMembers([worker], [{
-      executionId: 'execution-1', projectId: 'p1', jobTitle: 'Release train', state: 'RUNNING', attempt: 2, updatedAt: 50
+      executionId: 'execution-1', projectId: 'p1', jobTitle: 'Release train', state: 'RUNNING', attempt: 2, createdAt: 40, updatedAt: 50
     }]);
     expect(top.map((card) => card.session.id)).toEqual(['execution:execution-1']);
     expect(top[0].session.title).toBe('Release train');
@@ -438,7 +438,7 @@ describe('partitionExecutionMembers', () => {
 
   it('retains a projection-only execution when no terminal card remains', () => {
     const { top } = partitionExecutionMembers([], [{
-      executionId: 'execution-1', projectId: 'p1', jobTitle: 'Release train', state: 'BLOCKED', attempt: 2, updatedAt: 50
+      executionId: 'execution-1', projectId: 'p1', jobTitle: 'Release train', state: 'BLOCKED', attempt: 2, createdAt: 40, updatedAt: 50
     }]);
     expect(top).toMatchObject([{ projectId: 'p1', isSyntheticExecutionHost: true, session: { id: 'execution:execution-1', status: 'running' } }]);
   });

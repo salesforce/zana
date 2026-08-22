@@ -191,6 +191,15 @@ export class SquadExecutionService {
     return Promise.all(records.map((record) => this.reconcile(callerPrincipalId, projectId, record)));
   }
 
+  /** Main-only project projection. Never expose through owner-scoped MCP routes. */
+  async listProject(projectId: string, before?: number, limit = 50) {
+    const page = await this.deps.store.listInProject(projectId, before, limit);
+    return {
+      records: await Promise.all(page.records.map((record) => this.reconcile(record.callerPrincipalId, projectId, record))),
+      hasMore: page.hasMore
+    };
+  }
+
   async events(callerPrincipalId: string, projectId: string, executionId: string, after = 0, limit = 100) {
     const record = await this.getAuthorizedForControl(callerPrincipalId, projectId, executionId);
     return record ? this.deps.store.eventsInProject(projectId, executionId, after, limit) : { events: [] };
@@ -368,7 +377,9 @@ export class SquadExecutionService {
     const lifecycle = await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId) as {
       orchestratorSessionId?: string;
     } | undefined;
-    if (lifecycle?.orchestratorSessionId !== callerPrincipalId) {
+    const isOriginalCoordinator = lifecycle?.orchestratorSessionId === callerPrincipalId;
+    const isBoundMonitor = record.effectiveOwnerPrincipalIds?.includes(callerPrincipalId) ?? false;
+    if (!isOriginalCoordinator && !isBoundMonitor) {
       return { ok: false as const, code: 'DENIED', message: 'only the Team coordinator can complete this execution' };
     }
     try {
@@ -387,16 +398,15 @@ export class SquadExecutionService {
     }
   }
 
-  /** Main-only PTY-exit hook. Worker exits are deliberately non-terminal. */
-  async failCoordinatorExit(projectId: string, executionId: string, sessionId: string) {
+  /** Main-only PTY-exit hook. Jobs survive a lost coordinator for monitor recovery. */
+  async handleCoordinatorExit(projectId: string, executionId: string, sessionId: string) {
     const record = await this.deps.store.getInProject(projectId, executionId);
     if (!record || record.state === 'COMPLETED' || record.state === 'FAILED' || record.state === 'STOPPED') return;
     const lifecycle = await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId) as {
       orchestratorSessionId?: string;
     } | undefined;
     if (lifecycle?.orchestratorSessionId !== sessionId) return;
-    const failed = await this.transitionOrCurrent(record, 'FAILED', 'error', 'Coordinator exited before explicit completion');
-    await this.deps.cancelTeamLaunch(failed.callerPrincipalId, failed.teamLaunchRequestId);
+    await this.emitOrCurrent(record, 'warning', 'Coordinator exited; execution remains available for monitor recovery');
   }
 
   /** Caller validated a consumed handoff; source owner remains bound for lifecycle work. */

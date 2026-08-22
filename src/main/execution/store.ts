@@ -566,11 +566,15 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       .slice(-safeLimit).reverse()));
   }
 
-  async function listInProject(projectId: string, limit = 100): Promise<ExecutionRecord[]> {
+  async function listInProject(projectId: string, before?: number, limit = 100): Promise<{ records: ExecutionRecord[]; hasMore: boolean }> {
     const safeLimit = Math.max(1, Math.min(limit, 100));
-    return storeQueue.run(async () => clone(read().state.records
+    return storeQueue.run(async () => {
+      const candidates = read().state.records
       .filter((record) => record.projectId === string(projectId, 'project id'))
-      .slice(-safeLimit).reverse()));
+        .filter((record) => before === undefined || record.createdAt < before)
+        .sort((left, right) => right.createdAt - left.createdAt);
+      return { records: clone(candidates.slice(0, safeLimit)), hasMore: candidates.length > safeLimit };
+    });
   }
 
   async function events(

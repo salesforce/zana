@@ -77,16 +77,9 @@ test('launching a team job through the UI', async ({ app }) => {
     // Launch
     await modal.getByRole('button', { name: 'Launch job' }).click();
 
-    const err = modal.locator('.launch-error-text');
-    if (await err.count() > 0) {
-      console.log('Error:', await err.textContent());
-    }
-
-    // Modal should close
     await expect(modal).toBeHidden();
-    
-    // Agents board should appear and have our job card (which is rendered in Working lane)
-    await expect(window.locator('.lane-working').first()).toBeVisible();
+    await expect(window.getByText('run some job test', { exact: true })).toBeVisible();
+    await expect(window.locator('.agent-card-badge', { hasText: 'RUNNING' }).first()).toBeVisible();
 
   } finally {
     if (projectId) {

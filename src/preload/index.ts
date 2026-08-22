@@ -61,7 +61,7 @@ const api: CcApi = {
       ipcRenderer.invoke(IPC.executionConsent.revokeProject, projectId, grantId)
   },
   executionBoard: {
-    listProject: (projectId) => ipcRenderer.invoke(IPC.executionBoard.listProject, projectId),
+    listProject: (projectId, before, limit) => ipcRenderer.invoke(IPC.executionBoard.listProject, projectId, before, limit),
     snapshot: (projectId, executionId, after) => ipcRenderer.invoke(IPC.executionBoard.snapshot, projectId, executionId, after),
     stop: (projectId, executionId, expectedStateVersion) =>
       ipcRenderer.invoke(IPC.executionBoard.stop, projectId, executionId, expectedStateVersion),

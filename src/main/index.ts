@@ -19,7 +19,7 @@ import {
 import { join, isAbsolute, resolve, sep, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { existsSync, realpathSync, readFileSync, writeFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, relative } from 'node:path';
 import { IPC } from '../shared/ipc.js';
 import { sanitizeExtraArgs } from '../shared/launch-sanitize.js';
@@ -117,7 +117,7 @@ import { createAgentMessageLog, type IAgentMessageLog } from './agent-message-lo
 import { killLocalTmuxSession, listLocalTmuxSessionIds, reapOrphanTmuxSessions, verifyTmux } from './tmux.js';
 import { exportInboxPdf } from './inbox-pdf.js';
 import { createSavedStore, type ISavedStore } from './saved-store.js';
-import type { SavedRecord, SavedRecordInput } from '../shared/types.js';
+import type { ExecutionBoardProjection, ExecutionBoardSnapshot, SavedRecord, SavedRecordInput } from '../shared/types.js';
 import type { ConversationHistorySnapshot } from '../shared/types.js';
 import type { CancelTeamLaunchResult, LaunchTeamResult, TeamLaunchAuthorizationInputSlot, TeamLaunchAuthorizationResult, TeamLaunchRequestInput, TeamFailedWorkerSlot, TeamLaunchedWorker } from '../shared/types.js';
 import type { TeamJobLaunchInput, TeamJobLaunchResult } from '../shared/types.js';
@@ -2616,12 +2616,25 @@ function safeHandleFromWindow<TArgs extends unknown[], TResult>(
     try {
       const win = BrowserWindow.fromWebContents(event.sender);
       if (!win || !windows.has(win.id)) throw new Error('calling window is unavailable');
+      if (event.senderFrame !== event.sender.mainFrame || !isTrustedMainFrame(event.sender.getURL())) {
+        throw new Error('calling renderer is unavailable');
+      }
       return await handler(win, ...args);
     } catch (err) {
       logMainError(`ipc ${channel}`, err);
       return onError(err, ...args);
     }
   });
+}
+
+function isTrustedMainFrame(value: string): boolean {
+  const devUrl = process.env.ELECTRON_RENDERER_URL;
+  try {
+    if (devUrl) return new URL(value).origin === new URL(devUrl).origin;
+    return new URL(value).pathname === new URL(pathToFileURL(join(__dirname, '../renderer/index.html')).href).pathname;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -4333,11 +4346,10 @@ export async function startTeamJobFromUi(input: TeamJobLaunchInput): Promise<Res
   if (!store.listProjects().some((candidate) => candidate.id === projectId)) {
     return { ok: false, code: 'NOT_FOUND', message: 'project not found' };
   }
-  const orchestratorKnown = !team.orchestratorPersonaId || personas.list().some((persona) => persona.id === team.orchestratorPersonaId);
-  const slots = expandTeamSlots({
-    ...team,
-    ...(orchestratorKnown ? {} : { orchestratorPersonaId: undefined })
-  });
+  if (team.orchestratorPersonaId && !personas.list().some((persona) => persona.id === team.orchestratorPersonaId)) {
+    return { ok: false, code: 'DENIED', message: `unknown persona: ${team.orchestratorPersonaId}` };
+  }
+  const slots = expandTeamSlots(team);
   if (slots.length === 0 || slots.length > 32) {
     return { ok: false, code: 'INVALID', message: 'Team has no launchable slots' };
   }
@@ -4646,7 +4658,7 @@ function wireBridgeListeners() {
     }
     const exitedSession = ptys.getSession(sessionId);
     if (exitedSession?.cohort?.executionId && exitedSession.cohort.role === 'orchestrator') {
-      void squadExecutionService.failCoordinatorExit(exitedSession.projectId, exitedSession.cohort.executionId, sessionId).catch((error) =>
+      void squadExecutionService.handleCoordinatorExit(exitedSession.projectId, exitedSession.cohort.executionId, sessionId).catch((error) =>
         logMainError(`execution coordinator exit ${sessionId}`, error)
       );
     }
@@ -5035,9 +5047,10 @@ function registerIpc() {
     },
     () => []
   );
-  ipcMain.handle(
+  safeHandleFromWindow<[string, string], Result<true>>(
     IPC.executionBoard.clearResumeToken,
-    async (_e, projectId: string, executionId: string): Promise<Result<true>> => {
+    async (win, projectId, executionId) => {
+      if (!isExecutionProjectAllowed(win, projectId)) return { ok: false, code: 'NOT_FOUND', message: 'execution not found for project' };
       const project = store.listProjects().find((candidate) => candidate.id === projectId);
       const record = project ? await executionStore.getInProject(project.id, executionId) : undefined;
       if (!project || !record) return { ok: false, code: 'NOT_FOUND', message: 'execution not found for project' };
@@ -5047,12 +5060,14 @@ function registerIpc() {
       } catch (error) {
         return { ok: false, code: 'INVALID', message: error instanceof Error ? error.message : String(error) };
       }
-    }
+    },
+    () => ({ ok: false, code: 'UNAVAILABLE', message: 'execution token unavailable' })
   );
-  ipcMain.handle(
+  safeHandleFromWindow<[string, string], Result<{ sessionId: string }>>(
     IPC.executionBoard.relaunchMonitor,
-    async (_e, projectId: string, executionId: string): Promise<Result<{ sessionId: string }>> =>
-      relaunchExecutionMonitor({
+    async (win, projectId, executionId) => {
+      if (!isExecutionProjectAllowed(win, projectId)) return { ok: false, code: 'NOT_FOUND', message: 'execution not found for project' };
+      return relaunchExecutionMonitor({
         findProject: (id) => store.listProjects().find((candidate) => candidate.id === id),
         getExecution: (id, execution) => executionStore.getInProject(id, execution),
         confirm: async (record) => (await dialog.showMessageBox({
@@ -5066,7 +5081,9 @@ function registerIpc() {
         bindMonitor: (sessionId, id, execution, token) => squadExecutionService.resumeBinding(sessionId, id, execution, token),
         closeMonitor: (sessionId) => ptys.close(sessionId),
         clearToken: (id, execution) => executionResumeTokens.clear(id, execution)
-      }, projectId, executionId)
+      }, projectId, executionId);
+    },
+    () => ({ ok: false, code: 'UNAVAILABLE', message: 'monitor relaunch unavailable' })
   );
   safeHandle(
     IPC.ssh.syncHosts,
@@ -7966,9 +7983,12 @@ function registerIpc() {
     async (_e, teamId: string, projectId: string, goal: string): Promise<Result<{ runId: string }>> =>
       launchAutonomousTeam(teamId, projectId, goal)
   );
-  ipcMain.handle(
+  safeHandleFromWindow<[TeamJobLaunchInput], Result<TeamJobLaunchResult>>(
     IPC.teams.startJob,
-    async (_e, input: TeamJobLaunchInput): Promise<Result<TeamJobLaunchResult>> => startTeamJobFromUi(input)
+    (win, input) => !isExecutionProjectAllowed(win, input?.projectId)
+      ? { ok: false, code: 'NOT_FOUND', message: 'project not found' }
+      : startTeamJobFromUi(input),
+    () => ({ ok: false, code: 'UNAVAILABLE', message: 'Team job launch unavailable' })
   );
   ipcMain.handle(
     IPC.teams.stopAutonomous,
@@ -7979,32 +7999,27 @@ function registerIpc() {
     const scopedProjectId = windows.get(win.id)?.projectId;
     return !scopedProjectId || scopedProjectId === projectId;
   };
-  safeHandleFromWindow(
+  safeHandleFromWindow<[string, number | undefined, number | undefined], { executions: ExecutionBoardProjection[]; hasMore: boolean }>(
     IPC.executionBoard.listProject,
-    async (win, projectId: string, before?: number, limit = 50) => {
+    async (win, projectId, before, limit = 50) => {
       if (typeof projectId !== 'string' || !projectId.trim()) return { executions: [], hasMore: false };
       if (!isExecutionProjectAllowed(win, projectId)) return { executions: [], hasMore: false };
       const project = store.listProjects().find((candidate) => candidate.id === projectId);
       if (!project) return { executions: [], hasMore: false };
-      const owned = await squadExecutionService.list('interactive:local', project.id);
-      
-      const filtered = owned.filter((r) => !before || r.createdAt < before);
-      filtered.sort((a, b) => b.createdAt - a.createdAt);
-      const page = filtered.slice(0, limit);
-      const hasMore = filtered.length > limit;
+      const page = await squadExecutionService.listProject(project.id, before, limit);
 
-      const executions = projectExecutionProjection(page, ptys.list(project.id)).map((execution) => ({
+      const executions = projectExecutionProjection(page.records, ptys.list(project.id)).map((execution) => ({
         ...execution,
         hasResumeToken: executionResumeTokens.status(project.id, execution.executionId).configured,
         teamName: teams.list().find((team) => team.id === execution.teamId)?.name ?? execution.teamId
       }));
-      return { executions, hasMore };
+      return { executions, hasMore: page.hasMore };
     },
     () => ({ executions: [], hasMore: false })
   );
-  safeHandleFromWindow(
+  safeHandleFromWindow<[string, string, number | undefined], ExecutionBoardSnapshot | undefined>(
     IPC.executionBoard.snapshot,
-    async (win, projectId: string, executionId: string, after?: number) => {
+    async (win, projectId, executionId, after) => {
       if (typeof projectId !== 'string' || typeof executionId !== 'string'
         || !isExecutionProjectAllowed(win, projectId)
         || !store.listProjects().some((project) => project.id === projectId)) return undefined;
@@ -8025,7 +8040,7 @@ function registerIpc() {
     },
     () => undefined
   );
-  const executionProjection = (record: import('./execution/store.js').ExecutionRecord) => ({
+  const executionProjection = (record: import('./execution/store.js').ExecutionRecord): ExecutionBoardProjection => ({
     executionId: record.id,
     projectId: record.projectId,
     teamId: record.teamId,
@@ -8033,11 +8048,12 @@ function registerIpc() {
     state: record.state,
     attempt: record.attempt,
     stateVersion: record.stateVersion,
+    createdAt: record.createdAt,
     updatedAt: record.updatedAt
   });
-  safeHandleFromWindow(
+  safeHandleFromWindow<[string, string, number], Result<ExecutionBoardProjection>>(
     IPC.executionBoard.stop,
-    async (win, projectId: string, executionId: string, expectedStateVersion: number) => {
+    async (win, projectId, executionId, expectedStateVersion) => {
       if (!isExecutionProjectAllowed(win, projectId)) return { ok: false, code: 'NOT_FOUND', message: 'execution not found' };
       if (!Number.isInteger(expectedStateVersion)) {
         return { ok: false, code: 'INVALID', message: 'invalid execution control request' };
@@ -8052,7 +8068,7 @@ function registerIpc() {
   const executionMessageControl = async (
     action: 'respond' | 'resume', projectId: string, executionId: string,
     expectedStateVersion: number, slotId: string, message: string
-  ) => {
+  ): Promise<Result<ExecutionBoardProjection>> => {
     if (!Number.isInteger(expectedStateVersion) || typeof slotId !== 'string' || typeof message !== 'string') {
       return { ok: false, code: 'INVALID', message: 'invalid execution message request' };
     }
@@ -8063,23 +8079,23 @@ function registerIpc() {
       ? { ok: true, value: executionProjection(result.value) }
       : { ok: false, code: result.code, message: result.message };
   };
-  safeHandleFromWindow(IPC.executionBoard.respond,
-    (win, projectId: string, executionId: string, expectedStateVersion: number, slotId: string, message: string) =>
+  safeHandleFromWindow<[string, string, number, string, string], Result<ExecutionBoardProjection>>(IPC.executionBoard.respond,
+    (win, projectId, executionId, expectedStateVersion, slotId, message) =>
       isExecutionProjectAllowed(win, projectId)
         ? executionMessageControl('respond', projectId, executionId, expectedStateVersion, slotId, message)
-        : { ok: false, code: 'NOT_FOUND', message: 'execution not found' },
+        : { ok: false as const, code: 'NOT_FOUND', message: 'execution not found' },
     () => ({ ok: false, code: 'UNAVAILABLE', message: 'execution control unavailable' })
   );
-  safeHandleFromWindow(IPC.executionBoard.resume,
-    (win, projectId: string, executionId: string, expectedStateVersion: number, slotId: string, message: string) =>
+  safeHandleFromWindow<[string, string, number, string, string], Result<ExecutionBoardProjection>>(IPC.executionBoard.resume,
+    (win, projectId, executionId, expectedStateVersion, slotId, message) =>
       isExecutionProjectAllowed(win, projectId)
         ? executionMessageControl('resume', projectId, executionId, expectedStateVersion, slotId, message)
-        : { ok: false, code: 'NOT_FOUND', message: 'execution not found' },
+        : { ok: false as const, code: 'NOT_FOUND', message: 'execution not found' },
     () => ({ ok: false, code: 'UNAVAILABLE', message: 'execution control unavailable' })
   );
-  safeHandleFromWindow(
+  safeHandleFromWindow<[string, string, number], Result<ExecutionBoardProjection>>(
     IPC.executionBoard.retry,
-    async (win, projectId: string, executionId: string, expectedStateVersion: number) => {
+    async (win, projectId, executionId, expectedStateVersion) => {
       if (!isExecutionProjectAllowed(win, projectId)) return { ok: false, code: 'NOT_FOUND', message: 'execution not found' };
       if (!Number.isInteger(expectedStateVersion)) {
         return { ok: false, code: 'INVALID', message: 'invalid execution control request' };

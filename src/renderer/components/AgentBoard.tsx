@@ -800,7 +800,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
           cohort ? `has-cohort ${isOrchestrator ? 'cohort-orch' : 'cohort-worker'}` : ''
         }`}
         onClick={() => {
-          if (!c.isSyntheticExecutionHost) onInspect(c);
+          onInspect(c);
         }}
         onContextMenu={(e) => {
           if (c.isSyntheticExecutionHost) return;
@@ -904,12 +904,14 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
             <span
               className={`agent-card-badge cohort ${isOrchestrator ? 'orch' : 'worker'}`}
               title={
-                isOrchestrator
+                c.isSyntheticExecutionHost
+                  ? `${cohort.teamName} — retained job host`
+                  : isOrchestrator
                   ? `${cohort.teamName} — team lead (you talk to this one; closing it ends the whole team)`
                   : `${cohort.teamName} — worker${cohort.slotLabel ? ` · ${cohort.slotLabel}` : ''}`
               }
             >
-              {isOrchestrator ? <Crown size={9} aria-hidden="true" /> : <Users size={9} aria-hidden="true" />}
+              {isOrchestrator && !c.isSyntheticExecutionHost ? <Crown size={9} aria-hidden="true" /> : <Users size={9} aria-hidden="true" />}
               {cohort.teamName}
             </span>
           )}

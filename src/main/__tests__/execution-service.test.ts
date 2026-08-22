@@ -44,16 +44,25 @@ describe('SquadExecutionService', () => {
     expect(cancelTeamLaunch).toHaveBeenCalledWith('session-1', 'request-1');
   }));
 
-  it('fails only the original coordinator exit, not a replacement monitor', async () => fixture(async (filePath) => {
+  it('allows a bound monitor to complete after its coordinator exits', async () => fixture(async (filePath) => {
+    const getTeamLaunch = vi.fn(async () => ({ orchestratorSessionId: 'coordinator', workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'running' }] }));
+    const input = deps(filePath, { getTeamLaunch });
+    const service = new SquadExecutionService(input);
+    await service.start('session-1', 'project-1', request);
+    await input.store.addEffectiveOwner('execution-1', 'monitor');
+    await expect(service.completeByCoordinator('monitor', 'project-1', 'execution-1', 'done')).resolves.toMatchObject({ ok: true, value: { state: 'COMPLETED' } });
+  }));
+
+  it('keeps an execution running when its coordinator exits for monitor recovery', async () => fixture(async (filePath) => {
     const getTeamLaunch = vi.fn(async () => ({ orchestratorSessionId: 'coordinator', workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'running' }] }));
     const cancelTeamLaunch = vi.fn(async () => ({ ok: true, value: { canceledSessionIds: ['worker-1'], pendingSessionIds: [] } }));
     const service = new SquadExecutionService(deps(filePath, { getTeamLaunch, cancelTeamLaunch }));
     await service.start('session-1', 'project-1', request);
-    await service.failCoordinatorExit('project-1', 'execution-1', 'monitor');
+    await service.handleCoordinatorExit('project-1', 'execution-1', 'monitor');
     expect((await service.status('session-1', 'project-1', 'execution-1'))?.state).toBe('RUNNING');
-    await service.failCoordinatorExit('project-1', 'execution-1', 'coordinator');
-    expect((await service.status('session-1', 'project-1', 'execution-1'))?.state).toBe('FAILED');
-    expect(cancelTeamLaunch).toHaveBeenCalledWith('session-1', 'request-1');
+    await service.handleCoordinatorExit('project-1', 'execution-1', 'coordinator');
+    expect((await service.status('session-1', 'project-1', 'execution-1'))?.state).toBe('RUNNING');
+    expect(cancelTeamLaunch).not.toHaveBeenCalled();
   }));
 
   it('stops an overdue execution and cancels its Team lifecycle', async () => fixture(async (filePath) => {
