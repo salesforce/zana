@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { storedEventsToMeta, conversationTimeline } from './conversation-timeline.js';
+import { storedEventsToMeta, conversationOutline, conversationTimeline } from './conversation-timeline.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 
 vi.mock('@zana-ai/zcc-db', () => ({
@@ -13,10 +13,12 @@ vi.mock('@zana-ai/zcc-db', () => ({
     title: 'Hello'
   })),
   getEnvironment: vi.fn(() => null),
-  listConversationThreadEvents: vi.fn(() => [])
+  listConversationThreadEvents: vi.fn(() => []),
+  listConversationThreadEventsWindow: vi.fn(() => []),
+  countConversationThreadEvents: vi.fn(() => 0)
 }));
 
-import { getConversationThread, listConversationThreadEvents } from '@zana-ai/zcc-db';
+import { getConversationThread, listConversationThreadEvents, listConversationThreadEventsWindow, countConversationThreadEvents } from '@zana-ai/zcc-db';
 
 describe('storedEventsToMeta', () => {
   it('unwraps nested event payloads and skips junk', () => {
@@ -57,10 +59,70 @@ describe('conversationTimeline', () => {
   });
 
   it('returns an empty projection for a thread with no events', () => {
-    vi.mocked(listConversationThreadEvents).mockReturnValueOnce([]);
-    const timeline = conversationTimeline({ db: {} } as ProductHttpContext, '11111111-1111-4111-8111-111111111111');
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValueOnce([]);
+    const timeline = conversationTimeline({ db: {}, dataDir: '/tmp' } as ProductHttpContext, '11111111-1111-4111-8111-111111111111');
     expect(timeline.rows).toEqual([]);
     expect(timeline.activeThinking).toBeNull();
     expect(timeline.activeWorkflows).toEqual([]);
+    expect(timeline.timelinePage.hasOlderRows).toBe(false);
+    expect(timeline.maxSeq).toBe(0);
+  });
+
+  it('caps the latest window and reports an older cursor', () => {
+    vi.mocked(countConversationThreadEvents).mockReturnValueOnce(3);
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValueOnce([{
+      id: 'evt-2',
+      threadId: '11111111-1111-4111-8111-111111111111',
+      sequence: 2,
+      type: 'noise',
+      payload: {},
+      createdAt: 2
+    }]);
+    const timeline = conversationTimeline(
+      { db: {}, dataDir: '/tmp' } as ProductHttpContext,
+      '11111111-1111-4111-8111-111111111111',
+      { segmentLimit: '1' }
+    );
+    expect(timeline.timelinePage.hasOlderRows).toBe(true);
+    expect(timeline.timelinePage.olderCursor).toEqual({ anchorSeq: 2, anchorId: 'evt-2' });
+    expect(timeline.maxSeq).toBe(2);
+  });
+});
+
+describe('conversationOutline', () => {
+  it('returns an empty outline when there are no conversation rows', () => {
+    vi.mocked(listConversationThreadEvents).mockReturnValueOnce([]);
+    const outline = conversationOutline({ db: {}, dataDir: '/tmp' } as ProductHttpContext, '11111111-1111-4111-8111-111111111111');
+    expect(outline.items).toEqual([]);
+    expect(outline.maxSeq).toBe(0);
+  });
+});
+
+describe('conversationItemsFromRows', () => {
+  it('collects conversation rows including turn children', async () => {
+    const { conversationItemsFromRows } = await import('./conversation-timeline.js');
+    expect(conversationItemsFromRows([
+      { kind: 'system', id: 's' },
+      {
+        kind: 'turn',
+        id: 't',
+        children: [{
+          kind: 'conversation',
+          id: 'u1',
+          role: 'user',
+          text: '  hello\nworld  ',
+          attachments: { webImages: 1, localImages: 1, localFiles: 2 }
+        }]
+      },
+      { kind: 'conversation', id: 'a1', role: 'assistant', text: 'Done', attachments: null }
+    ])).toEqual([
+      {
+        id: 'u1',
+        role: 'user',
+        preview: 'hello world',
+        attachmentSummary: { imageCount: 2, fileCount: 2 }
+      },
+      { id: 'a1', role: 'assistant', preview: 'Done', attachmentSummary: null }
+    ]);
   });
 });

@@ -21,7 +21,9 @@ import {
   stopConversation,
   type ThreadSendMode
 } from '../services/threads/conversation-lifecycle.js';
-import { conversationTimeline } from '../services/threads/conversation-timeline.js';
+import { conversationOutline, conversationTimeline } from '../services/threads/conversation-timeline.js';
+import { markThreadRead } from '../services/threads/thread-reads.js';
+import { readThreadHostFile } from '../services/threads/thread-host-file.js';
 import { listThreadProviders } from '../services/threads/thread-provider-catalog.js';
 import { archiveThread, destroyEnvironment } from '../services/environments/environment-cleanup.js';
 import {
@@ -36,8 +38,14 @@ import { normalizeRepoUrl } from '../services/projects/git-clone.js';
 import { harnessDescriptors, harnessEffectiveDefault, harnessVerify } from './harness-via-rpc.js';
 import { isSafeRelPath, listLibraryDocs, listQuickPrompts, readLibraryDoc } from './library-via-host.js';
 import { listProjectDir, listProjectPaths, readProjectFile } from './project-fs-via-host.js';
-import { getConversationThread, getEnvironment, listConversationThreadEvents, listConversationThreadsByProject, listLiveConversationThreads } from '@zana-ai/zcc-db';
+import { getConversationThread, getEnvironment, listConversationThreadEvents, listConversationThreadsByProject, listLiveConversationThreads, nextConversationEventSequence } from '@zana-ai/zcc-db';
 import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
+import { parseMultipartVoiceForm, readVoiceBody } from './multipart-voice.js';
+import {
+  transcribeVoiceOnHost,
+  VoiceTranscriptionError,
+  voiceTranscriptionEnabled
+} from '../services/threads/voice-transcription.js';
 
 const VALID_FOLLOW_UP_STATUS: FollowUpStatus[] = ['open', 'resolved', 'dismissed'];
 
@@ -92,6 +100,9 @@ export async function handleProductHttp(
   const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
   if (!requestUrl.pathname.startsWith('/api/')) return false;
 
+  const method = (request.method ?? 'GET').toUpperCase();
+  const path = requestUrl.pathname;
+  const isVoiceTranscription = path === '/api/v1/system/voice-transcription' && method === 'POST';
   const problem = browserRequestProblem(
     {
       req: {
@@ -101,7 +112,7 @@ export async function handleProductHttp(
       }
     },
     { config: ctx.origins },
-    { requireJsonForMutation: request.method !== 'OPTIONS' }
+    { requireJsonForMutation: request.method !== 'OPTIONS' && !isVoiceTranscription }
   );
   if (problem) {
     sendJson(response, problem.status, { error: problem.error });
@@ -126,9 +137,6 @@ export async function handleProductHttp(
     }).end();
     return true;
   }
-
-  const method = (request.method ?? 'GET').toUpperCase();
-  const path = requestUrl.pathname;
 
   try {
     if (path === '/api/v1/health' && (method === 'GET' || method === 'HEAD')) {
@@ -498,7 +506,53 @@ export async function handleProductHttp(
     const threadTimeline = routeParams(path, '/api/v1/threads/:id/timeline');
     if (threadTimeline && method === 'GET') {
       try {
-        sendJson(response, 200, conversationTimeline(ctx, threadTimeline.id));
+        sendJson(response, 200, conversationTimeline(ctx, threadTimeline.id, {
+          segmentLimit: requestUrl.searchParams.get('segmentLimit'),
+          beforeAnchorSeq: requestUrl.searchParams.get('beforeAnchorSeq'),
+          beforeAnchorId: requestUrl.searchParams.get('beforeAnchorId')
+        }));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadRead = routeParams(path, '/api/v1/threads/:id/read');
+    if (threadRead && method === 'POST') {
+      const thread = getConversationThread(ctx.db, threadRead.id);
+      if (!thread) {
+        sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
+        return true;
+      }
+      const maxSeq = Math.max(0, nextConversationEventSequence(ctx.db, thread.id) - 1);
+      const lastReadSeq = markThreadRead(ctx.dataDir, thread.id, maxSeq);
+      sendJson(response, 200, { thread: { ...conversationThreadView(ctx, thread), lastReadSeq } });
+      return true;
+    }
+
+    const threadOutline = routeParams(path, '/api/v1/threads/:id/conversation-outline');
+    if (threadOutline && method === 'GET') {
+      try {
+        sendJson(response, 200, conversationOutline(ctx, threadOutline.id));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadHostFile = routeParams(path, '/api/v1/threads/:id/host-files/content');
+    if (threadHostFile && method === 'GET') {
+      try {
+        const pathParam = requestUrl.searchParams.get('path') ?? '';
+        sendJson(response, 200, await readThreadHostFile(ctx, threadHostFile.id, pathParam));
       } catch (error) {
         if (error instanceof ThreadCreateError) {
           sendJson(response, error.status, { error: error.code, message: error.message });
@@ -942,6 +996,49 @@ export async function handleProductHttp(
         code: 'launch-unavailable',
         message: 'terminal launch is authorized but the host session runtime is not attached'
       });
+      return true;
+    }
+
+    if (path === '/api/v1/system/voice-status' && method === 'GET') {
+      sendJson(response, 200, { enabled: voiceTranscriptionEnabled(ctx) });
+      return true;
+    }
+
+    if (path === '/api/v1/system/voice-transcription' && method === 'POST') {
+      const contentType = headerValue(request.headers, 'content-type') ?? '';
+      if (!contentType.toLowerCase().startsWith('multipart/form-data')) {
+        sendJson(response, 415, { error: 'content-type must be multipart/form-data' });
+        return true;
+      }
+      try {
+        const body = await readVoiceBody(request);
+        const form = parseMultipartVoiceForm(body, contentType);
+        if (!form.file) {
+          sendJson(response, 400, { error: 'invalid_request', message: 'Audio file is required' });
+          return true;
+        }
+        const text = await transcribeVoiceOnHost(ctx, {
+          bytes: form.file.bytes,
+          mimeType: form.file.mimeType,
+          filename: form.file.filename,
+          prompt: form.prompt
+        });
+        sendJson(response, 200, { text });
+      } catch (error) {
+        if (error instanceof VoiceTranscriptionError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        if (error && typeof error === 'object' && 'status' in error && typeof (error as { status: unknown }).status === 'number') {
+          const status = error as { status: number; code?: string; message?: string };
+          sendJson(response, status.status, {
+            error: status.code ?? 'invalid_request',
+            message: status.message ?? (error instanceof Error ? error.message : String(error))
+          });
+          return true;
+        }
+        throw error;
+      }
       return true;
     }
 

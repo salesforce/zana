@@ -5450,6 +5450,28 @@ body.resizing-col {
   border-top: 1px solid var(--border);
   background: var(--bg-base, rgba(0, 0, 0, 0.15));
 }
+/* Settings → Code Harness: registered thread-provider plugins. */
+.thread-provider-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.thread-provider-id {
+  flex: none;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--text-dim);
+  background: var(--bg-input, var(--bg-base));
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 9px;
+}
 .harness-settings-group {
   display: flex;
   flex-direction: column;
@@ -10819,6 +10841,10 @@ body.resizing-col .explorer-resizer::after {
     padding: 0 12px;
   }
 
+  .home-agent-composer {
+    padding: 10px 12px 8px;
+  }
+
   .agents-board-header-actions {
     gap: 6px;
   }
@@ -11044,7 +11070,9 @@ body.resizing-col .explorer-resizer::after {
   max-width: 340px;
 }
 
-/* Empty fleet board: Home's launch composer sits on the same AuroraGrid. */
+/* Empty fleet board: the AuroraGrid fills this pane. The launch composer is a
+   sibling of this empty state (always mounted), so its inset lives on the
+   direct-child rule below — not here. */
 .agents-board-empty--launch {
   overflow: auto;
   gap: 20px;
@@ -11053,11 +11081,17 @@ body.resizing-col .explorer-resizer::after {
   background: var(--bg-base);
 }
 
-.agents-board-empty--launch .home-agent-composer {
+/* Workbench chrome is padding:0. Don't inherit Home's centered 820px cap —
+   span the pane and match the header gutters so the composer isn't flush
+   and isn't a floating dashboard island. */
+.agents-board > .home-agent-composer {
   position: relative;
   z-index: 1;
-  width: min(820px, 100%);
+  box-sizing: border-box;
+  width: 100%;
+  max-width: none;
   margin: 0;
+  padding: 12px 16px 8px;
 }
 
 .agents-board-empty--launch .agents-board-empty-copy {
@@ -27710,7 +27744,21 @@ textarea.ui-command-composer-input {
 }
 
 .thread-command-editor-slot {
+  position: relative;
   padding: 12px 56px 4px 16px;
+}
+
+.thread-command-expand {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  color: var(--text-muted, var(--ink-muted));
+}
+
+.thread-command-composer.is-expanded .thread-command-editor.ProseMirror,
+.thread-command-composer.is-expanded .thread-command-editor {
+  min-height: min(40dvh, 320px);
 }
 
 .thread-command-composer .ui-command-composer-toolbar {
@@ -27737,8 +27785,81 @@ textarea.ui-command-composer-input {
 
 .thread-command-footer-end {
   flex: 0 0 auto;
-  gap: 4px;
+  gap: 2px;
   margin-left: auto;
+}
+
+.thread-command-footer-end .voice-input-btn {
+  width: 28px;
+  height: 28px;
+  margin-left: 0;
+  padding: 0;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+.thread-voice-bar {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.thread-voice-bar-wave {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  color: var(--text-muted, var(--ink-muted));
+}
+
+.thread-voice-bar-wave.is-transcribing {
+  opacity: 0.55;
+}
+
+.thread-voice-wave {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.thread-voice-bar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted, var(--ink-muted));
+  cursor: pointer;
+}
+
+.thread-voice-bar-btn.is-confirm {
+  background: var(--accent-blue, #007aff);
+  color: #fff;
+}
+
+.thread-voice-bar-btn:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .thread-command-composer-meta {
@@ -28105,33 +28226,75 @@ textarea.ui-command-composer-input {
   gap: 4px;
 }
 
+.thread-detail-timeline-shell {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .thread-detail-timeline {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
+  width: 100%;
+  max-width: 46rem;
+  margin-inline: auto;
+}
+
+.thread-timeline-item {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.thread-timeline-item.is-user {
+  align-items: flex-end;
 }
 
 .thread-timeline-row {
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: var(--bg-elevated, var(--bg-2));
-  white-space: pre-wrap;
+  display: flex;
+  flex-direction: column;
 }
 
 .thread-timeline-row.is-user {
-  align-self: flex-end;
-  max-width: 42rem;
+  position: relative;
+  width: fit-content;
+  max-width: 70%;
 }
 
 .thread-timeline-row.is-assistant {
-  max-width: 46rem;
+  width: 100%;
 }
 
-.thread-timeline-row .inbox-md {
+.thread-timeline-bubble {
+  min-width: 0;
+}
+
+.thread-timeline-row.is-user .thread-timeline-bubble {
+  padding: 8px 14px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--bg-hover);
+}
+
+.thread-timeline-row.is-assistant .thread-timeline-bubble {
+  padding: 2px 2px 0;
+}
+
+.thread-timeline-row .inbox-md,
+.thread-timeline-row .inbox-md p:last-child {
   margin: 0;
+}
+
+.thread-timeline-row.is-user .inbox-md {
+  font-size: 14px;
+  line-height: 1.45;
 }
 
 .thread-timeline-work {
@@ -28164,6 +28327,37 @@ textarea.ui-command-composer-input {
 
 .thread-timeline-title .accent-file {
   color: var(--accent-blue, #4c8dff);
+}
+
+.thread-timeline-title .accent-muted {
+  color: var(--ink-muted);
+}
+
+.thread-timeline-title .accent-subtle {
+  color: color-mix(in srgb, var(--ink-muted) 80%, transparent);
+}
+
+.thread-timeline-title .is-truncate {
+  min-width: 0;
+  max-width: 28rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-timeline-title-action,
+.thread-timeline-title-link {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 2px;
 }
 
 .thread-timeline-title-deco {
@@ -28234,6 +28428,314 @@ textarea.ui-command-composer-input {
 .thread-todo-card li[data-status="completed"] {
   color: var(--ink-muted);
   text-decoration: line-through;
+}
+
+.thread-timeline-work.is-dim,
+.thread-timeline-system.is-dim {
+  opacity: 0.4;
+}
+
+.thread-timeline-work-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.thread-timeline-work-chevron {
+  flex: 0 0 auto;
+  color: var(--ink-muted);
+  transition: transform 0.12s ease;
+}
+
+.thread-timeline-work.is-open .thread-timeline-work-chevron,
+.thread-timeline-work[open] .thread-timeline-work-chevron {
+  transform: rotate(90deg);
+}
+
+.thread-timeline-work-detail {
+  margin-top: 6px;
+}
+
+.thread-banner-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.thread-banner-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.thread-banner,
+.thread-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--bg-elevated, var(--bg-2));
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.thread-goal-banner {
+  border-radius: 8px;
+  max-width: 100%;
+}
+
+.thread-banner-meta {
+  margin-left: auto;
+}
+
+.thread-mention-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.thread-mention-pill {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-blue) 16%, var(--bg-elevated, var(--bg-2)));
+  font-size: 12px;
+}
+
+.thread-message-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+  opacity: 0;
+}
+
+.thread-timeline-row.is-user .thread-message-actions {
+  position: absolute;
+  top: calc(100% - 2px);
+  right: 0;
+  margin: 0;
+}
+
+.thread-timeline-row.is-assistant .thread-message-actions {
+  justify-content: flex-start;
+}
+
+.thread-timeline-row:hover .thread-message-actions,
+.thread-timeline-row:focus-within .thread-message-actions {
+  opacity: 1;
+}
+
+.thread-message-action {
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  padding: 2px;
+}
+
+.thread-unread-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  color: var(--accent-blue, #4c8dff);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.thread-unread-divider::before,
+.thread-unread-divider::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: color-mix(in srgb, var(--accent-blue, #4c8dff) 50%, transparent);
+}
+
+.thread-load-older,
+.thread-scroll-bottom,
+.thread-question-submit {
+  border: 1px solid var(--border);
+  background: var(--bg-elevated, var(--bg-2));
+  color: inherit;
+  cursor: pointer;
+}
+
+.thread-load-older {
+  align-self: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.thread-scroll-bottom {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.thread-thinking-details,
+.thread-file-hunk,
+.thread-timeline-work-body.is-danger {
+  margin: 6px 0 0;
+  max-height: 16rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 12px;
+}
+
+.thread-timeline-work-body.is-danger {
+  color: var(--danger, #d14);
+}
+
+.thread-file-change-meta,
+.thread-terminal-meta {
+  display: flex;
+  gap: 8px;
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.thread-file-change-path {
+  border: 0;
+  background: none;
+  color: var(--accent-blue, #4c8dff);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+
+.thread-question-form {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.thread-question-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.thread-image-thumb {
+  display: block;
+  max-width: 20rem;
+  max-height: 16rem;
+  border-radius: 8px;
+}
+
+.thread-image-stub {
+  margin: 0;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.thread-workflow-phases,
+.thread-workflow-agents {
+  margin: 4px 0 0;
+  padding-left: 1.1rem;
+  font-size: 12px;
+}
+
+.thread-workspace-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--bg-elevated, var(--bg-2));
+  font-size: 12px;
+}
+
+.thread-workspace-banner button {
+  border: 0;
+  background: none;
+  color: var(--accent-blue, #4c8dff);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+
+.thread-detail-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.thread-detail-body:has(.thread-toc),
+.thread-detail-body.is-diff {
+  grid-template-columns: minmax(0, 1fr) minmax(11rem, 16rem);
+}
+
+.thread-toc {
+  min-width: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-left: 1px solid var(--border);
+  padding-left: 10px;
+}
+
+.thread-toc-heading {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.thread-toc-item {
+  text-align: left;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-toc-item.is-user {
+  opacity: 0.75;
+}
+
+@media (max-width: 1100px) {
+  .thread-detail-body:has(.thread-toc),
+  .thread-detail-body.is-diff {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .thread-toc {
+    display: none;
+  }
+}
+
+.thread-diff-panel {
+  min-width: 0;
+  overflow: auto;
+  border-left: 1px solid var(--border);
+  padding-left: 12px;
+}
+
+.thread-diff-panel h2 {
+  margin: 0 0 8px;
+  font-size: 13px;
 }
 
 .thread-list-entry-working {

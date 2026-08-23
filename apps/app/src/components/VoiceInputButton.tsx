@@ -11,6 +11,8 @@ interface Props {
   textareaRef?: React.RefObject<AutoGrowTextareaHandle | null>;
   /** Render just the mic glyph (no text label) — for tight composer toolbars. */
   iconOnly?: boolean;
+  /** Insert transcript without replacing the whole draft (TipTap composers). */
+  onTranscript?: (text: string) => void;
 }
 
 /** Number of bars in the live "voice vibration" meter shown while recording. */
@@ -38,7 +40,7 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-export function VoiceInputButton({ value, onChange, className, textareaRef, iconOnly }: Props) {
+export function VoiceInputButton({ value, onChange, className, textareaRef, iconOnly, onTranscript }: Props) {
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const [hasKey, setHasKey] = useState(false);
@@ -126,7 +128,7 @@ export function VoiceInputButton({ value, onChange, className, textareaRef, icon
 
   const startRecording = async () => {
     if (!hasKey) {
-      pushToast('No OpenAI API key configured. Add one in Settings.', 'error');
+      pushToast('Host daemon is not connected', 'error');
       return;
     }
 
@@ -187,14 +189,19 @@ export function VoiceInputButton({ value, onChange, className, textareaRef, icon
             return;
           }
 
-      const el = textareaRef?.current?.element();
+          const transcript = result.text.trim();
+          if (onTranscript) {
+            onTranscript(transcript);
+            return;
+          }
+
+          const el = textareaRef?.current?.element();
           const start = el?.selectionStart ?? value.length;
           const end = el?.selectionEnd ?? value.length;
           const before = value.slice(0, start);
           const after = value.slice(end);
           const lead = before && !/\s$/.test(before) ? ' ' : '';
           const trail = after && !/^\s/.test(after) ? ' ' : '';
-          const transcript = result.text.trim();
           const caret = (before + lead + transcript).length;
 
           onChange(before + lead + transcript + trail + after);
@@ -249,7 +256,7 @@ export function VoiceInputButton({ value, onChange, className, textareaRef, icon
   const label = transcribing ? 'Transcribing…' : recording ? 'Stop recording' : 'Dictate';
 
   const title = !hasKey
-    ? 'No API key configured (add one in Settings)'
+    ? 'Host daemon is not connected'
     : transcribing
       ? 'Transcribing your voice…'
       : recording

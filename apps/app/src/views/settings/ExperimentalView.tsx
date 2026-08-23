@@ -72,28 +72,29 @@ export function ExperimentalView({
       <Section
         anchorId="voice-input"
         title="Voice input (dictation)"
-        help="Push-to-talk dictation powered by OpenAI's transcription API. Off by default — each recording is sent to OpenAI, billed per audio-minute on your own API key."
+        help="Push-to-talk dictation. Audio is transcribed through Codex ChatGPT login on this machine (`codex login`). An OpenAI API key is only an optional fallback."
       >
         <CheckboxField
           label="Enable voice input (dictation)"
-          help="Shows the mic button in the prompt composer so you can dictate instead of type."
+          help="Shows the mic button in the prompt composer so you can dictate instead of type. The thread composer already includes a mic."
           checked={config.voiceInputEnabled ?? false}
           onChange={(v) => onUpdate({ voiceInputEnabled: v })}
         />
         {config.voiceInputEnabled && (
           <>
             <p className="settings-note">
-              Voice uses the <strong>OpenAI</strong> key you configure under{' '}
-              <strong>Settings → LLM Providers</strong> — set an OpenAI key there to enable
-              dictation. No separate voice key is needed.
+              Voice uses Codex credentials from <strong>~/.codex/auth.json</strong> when present.
+              If Codex is not signed in, it can fall back to <strong>OPENAI_API_KEY</strong> or the
+              OpenAI key under Settings → LLM Providers.
             </p>
-            <Field label="Transcription model">
+            <Field label="Fallback transcription model">
               <PopoverPicklist
-                value={config.voiceModel ?? 'whisper-1'}
+                value={config.voiceModel ?? 'gpt-transcribe'}
                 ariaLabel="Transcription model"
                 searchable={false}
                 onChange={(voiceModel) => onUpdate({ voiceModel })}
                 options={[
+                  { value: 'gpt-transcribe', label: 'gpt-transcribe (Codex)' },
                   { value: 'whisper-1', label: 'whisper-1' },
                   { value: 'gpt-4o-transcribe', label: 'gpt-4o-transcribe' },
                   { value: 'gpt-4o-mini-transcribe', label: 'gpt-4o-mini-transcribe' }

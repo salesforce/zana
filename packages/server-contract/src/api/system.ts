@@ -123,6 +123,13 @@ export type SystemVoiceTranscriptionResponse = z.infer<
   typeof systemVoiceTranscriptionResponseSchema
 >;
 
+export const systemVoiceStatusResponseSchema = z.object({
+  enabled: z.boolean(),
+});
+export type SystemVoiceStatusResponse = z.infer<
+  typeof systemVoiceStatusResponseSchema
+>;
+
 /**
  * One agent row in onboarding. `planLabel` and `accountEmail` are populated
  * only for the three providers `provider.usage` covers; ACP agents report

@@ -17,7 +17,7 @@ import { gitBranchNameSchema } from '@zana-ai/zcc-domain/git-checkout';
  * Bump when any enroll payload, daemon WS message, host-rpc command, or host
  * event envelope changes shape or meaning. Mismatch fails before dispatch.
  */
-export const HOST_RPC_PROTOCOL_VERSION = 4;
+export const HOST_RPC_PROTOCOL_VERSION = 5;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
 
 const UuidSchema = z.string().uuid();
@@ -53,7 +53,8 @@ export const HostRpcCommandTypeSchema = z.enum([
   'workspace.pull_request_merge',
   'workspace.pull_request_create',
   'project.clone',
-  'project.clone_default_path'
+  'project.clone_default_path',
+  'codex.voice.transcribe'
 ]);
 export type HostRpcCommandType = z.infer<typeof HostRpcCommandTypeSchema>;
 
@@ -349,6 +350,17 @@ export const ProjectCloneDefaultPathCommandSchema = z.object({
   projectSlug: z.string().min(1).max(120)
 }).strict();
 
+export const CodexVoiceTranscribeCommandSchema = z.object({
+  type: z.literal('codex.voice.transcribe'),
+  model: z.string().min(1).max(120),
+  audioBase64: z.string().min(1),
+  mimeType: z.string().min(1).max(200),
+  filename: z.string().min(1).max(200),
+  prompt: z.string().max(4000).nullable(),
+  timeoutMs: z.number().int().positive().max(60_000)
+}).strict();
+export type CodexVoiceTranscribeCommand = z.infer<typeof CodexVoiceTranscribeCommandSchema>;
+
 export const HostRpcCommandSchema = z.union([
   ProviderStatusCommandSchema,
   EnvironmentProvisionCommandSchema,
@@ -376,7 +388,8 @@ export const HostRpcCommandSchema = z.union([
   WorkspacePullRequestMergeCommandSchema,
   WorkspacePullRequestCreateCommandSchema,
   ProjectCloneCommandSchema,
-  ProjectCloneDefaultPathCommandSchema
+  ProjectCloneDefaultPathCommandSchema,
+  CodexVoiceTranscribeCommandSchema
 ]);
 export type HostRpcCommand = z.infer<typeof HostRpcCommandSchema>;
 
@@ -525,6 +538,11 @@ export const ProjectCloneResultSchema = z.object({
 export const ProjectCloneDefaultPathResultSchema = z.object({
   path: PathSchema
 }).strict();
+export const CodexVoiceTranscribeResultSchema = z.object({
+  model: z.string().min(1),
+  text: z.string()
+}).strict();
+export type CodexVoiceTranscribeResult = z.infer<typeof CodexVoiceTranscribeResultSchema>;
 
 export const HostRpcResultSchemaByType = {
   'provider.status': ProviderStatusResultSchema,
@@ -553,7 +571,8 @@ export const HostRpcResultSchemaByType = {
   'workspace.pull_request_merge': WorkspacePullRequestActionResultSchema,
   'workspace.pull_request_create': WorkspacePullRequestResultSchema,
   'project.clone': ProjectCloneResultSchema,
-  'project.clone_default_path': ProjectCloneDefaultPathResultSchema
+  'project.clone_default_path': ProjectCloneDefaultPathResultSchema,
+  'codex.voice.transcribe': CodexVoiceTranscribeResultSchema
 } as const;
 
 export const HostRpcErrorSchema = z.object({

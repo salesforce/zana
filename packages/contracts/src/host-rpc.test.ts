@@ -115,6 +115,15 @@ describe('host-rpc contract', () => {
       root: '/tmp/proj',
       relPath: ''
     }).type).toBe('host.list_dir');
+    expect(HostRpcCommandSchema.parse({
+      type: 'codex.voice.transcribe',
+      model: 'gpt-transcribe',
+      audioBase64: 'YQ==',
+      mimeType: 'audio/webm',
+      filename: 'recording.webm',
+      prompt: null,
+      timeoutMs: 10_000
+    }).type).toBe('codex.voice.transcribe');
     expect(HostRpcCommandSchema.safeParse({
       type: 'thread.resize',
       threadId,

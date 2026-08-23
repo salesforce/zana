@@ -164,6 +164,7 @@ import type {
   SystemVersionResponse,
   SystemVoiceTranscriptionForm,
   SystemVoiceTranscriptionResponse,
+  SystemVoiceStatusResponse,
   TerminalListResponse,
   ThemeCatalogResponse,
   TerminalSession,
@@ -1455,6 +1456,12 @@ export const publicApiRoutes = {
         systemUsageLimitsQuerySchema,
       ),
       response: jsonResponse<ProviderUsageResponse>(),
+    }),
+    voiceStatus: defineRoute({
+      path: "/system/voice-status",
+      method: "get",
+      request: noRequest(),
+      response: jsonResponse<SystemVoiceStatusResponse>(),
     }),
     voiceTranscription: defineRoute({
       path: "/system/voice-transcription",

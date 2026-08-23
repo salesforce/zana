@@ -51,6 +51,7 @@ function httpProduct(): Pick<
   | 'extensions'
   | 'updates'
   | 'app'
+  | 'voice'
 > {
   return {
     projects: {
@@ -394,7 +395,20 @@ function httpProduct(): Pick<
         apiJson(`/threads/${encodeURIComponent(threadId)}/stop`, { method: 'POST', body: '{}' }),
       resume: async (threadId) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/resume`, { method: 'POST', body: '{}' }),
-      timeline: async (threadId) => apiJson(`/threads/${encodeURIComponent(threadId)}/timeline`),
+      timeline: async (threadId, query) => {
+        const params = new URLSearchParams();
+        if (query?.segmentLimit) params.set('segmentLimit', String(query.segmentLimit));
+        if (query?.beforeAnchorSeq) params.set('beforeAnchorSeq', String(query.beforeAnchorSeq));
+        if (query?.beforeAnchorId) params.set('beforeAnchorId', query.beforeAnchorId);
+        const suffix = params.size ? `?${params.toString()}` : '';
+        return apiJson(`/threads/${encodeURIComponent(threadId)}/timeline${suffix}`);
+      },
+      read: async (threadId) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/read`, { method: 'POST', body: '{}' }),
+      conversationOutline: async (threadId) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/conversation-outline`),
+      hostFileContent: async (threadId, path) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/host-files/content?path=${encodeURIComponent(path)}`),
       events: async (threadId) => apiJson(`/threads/${encodeURIComponent(threadId)}/events`),
       providers: async () => apiJson('/threads/providers'),
       commands: async (projectId) =>
@@ -512,6 +526,46 @@ function httpProduct(): Pick<
       list: async () => [],
       onChanged: noopSubscribe
     } as CcApi['pluginApps'],
+    voice: {
+      hasApiKey: async () => {
+        const body = await apiJson<{ enabled: boolean }>('/system/voice-status');
+        return body.enabled;
+      },
+      ensureMicAccess: async () => true,
+      transcribe: async (audio, mimeType) => {
+        const started = Date.now();
+        try {
+          const binary = atob(audio);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+          const form = new FormData();
+          form.set('file', new Blob([bytes], { type: mimeType }), 'recording.webm');
+          const response = await fetchWithAppSurface('/api/v1/system/voice-transcription', {
+            method: 'POST',
+            body: form
+          });
+          if (!response.ok) {
+            let detail = `${response.status}`;
+            try {
+              const body = (await response.json()) as { error?: string; message?: string };
+              detail = body.message ?? body.error ?? detail;
+            } catch {
+              /* keep status */
+            }
+            return { ok: false, text: '', error: detail, ms: Date.now() - started };
+          }
+          const body = (await response.json()) as { text?: string };
+          return { ok: true, text: (body.text ?? '').trim(), ms: Date.now() - started };
+        } catch (error) {
+          return {
+            ok: false,
+            text: '',
+            error: error instanceof Error ? error.message : String(error),
+            ms: Date.now() - started
+          };
+        }
+      }
+    },
     extensions: {
       list: async () => {
         const body = await apiJson<{ extensions: unknown[] }>('/extensions');
@@ -572,6 +626,18 @@ export const product: CcApi = new Proxy({} as CcApi, {
     if (name === 'threads' || name === 'environments') {
       const http = httpProduct() as unknown as Record<string, unknown>;
       return withStubs(name, http[name] as object);
+    }
+    if (name === 'voice') {
+      const http = httpProduct().voice;
+      if (hasDesktopBridge()) {
+        const desktop = (window.cc as unknown as CcApi).voice;
+        return {
+          transcribe: http.transcribe,
+          hasApiKey: http.hasApiKey,
+          ensureMicAccess: desktop?.ensureMicAccess ?? http.ensureMicAccess
+        };
+      }
+      return http;
     }
     if (hasDesktopBridge()) {
       const desktop = (window.cc as unknown as Record<string, unknown>)[name];

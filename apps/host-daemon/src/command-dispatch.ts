@@ -30,6 +30,7 @@ import {
 } from '@zana-ai/zcc-host-workspace';
 import { verifyHarnesses } from './harness/harness-verify.js';
 import { HostCommandError } from './host-command-error.js';
+import { transcribeCodexVoice } from './codex-voice-transcribe.js';
 
 const MAX_LISTED_FILES = 500;
 const MAX_DIR_ENTRIES = 2000;
@@ -581,6 +582,8 @@ export async function dispatchHostCommand(
       } catch (error) {
         mapWorkspaceError(error);
       }
+    case 'codex.voice.transcribe':
+      return transcribeCodexVoice(command);
     default: {
       const exhaustive: never = command;
       throw new HostCommandError('unknown_command', `unsupported command ${(exhaustive as { type: string }).type}`);

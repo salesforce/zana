@@ -60,3 +60,36 @@ export function listConversationThreadEvents(
     'SELECT * FROM thread_events WHERE thread_id = ? ORDER BY sequence'
   ).all(threadId) as ConversationThreadEventSqlRow[]).map(toEvent);
 }
+
+export function countConversationThreadEvents(db: ZccDatabase, threadId: string): number {
+  const row = db.sqlite.prepare(
+    'SELECT COUNT(*) AS count FROM thread_events WHERE thread_id = ?'
+  ).get(threadId) as { count: number };
+  return row.count;
+}
+
+export function listConversationThreadEventsWindow(
+  db: ZccDatabase,
+  threadId: string,
+  opts: { limit: number; beforeSeq?: number }
+): ConversationThreadEventRow[] {
+  const limit = Math.max(1, Math.floor(opts.limit));
+  if (opts.beforeSeq != null) {
+    return (db.sqlite.prepare(
+      `SELECT * FROM thread_events
+        WHERE thread_id = ? AND sequence < ?
+        ORDER BY sequence DESC
+        LIMIT ?`
+    ).all(threadId, opts.beforeSeq, limit) as ConversationThreadEventSqlRow[])
+      .map(toEvent)
+      .reverse();
+  }
+  return (db.sqlite.prepare(
+    `SELECT * FROM thread_events
+      WHERE thread_id = ?
+      ORDER BY sequence DESC
+      LIMIT ?`
+  ).all(threadId, limit) as ConversationThreadEventSqlRow[])
+    .map(toEvent)
+    .reverse();
+}

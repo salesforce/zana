@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 're
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
-import { ArrowUp, Folder, Square } from 'lucide-react';
+import { ArrowUp, Folder, Laptop, Maximize2, Mic, Minimize2, Square } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { Project } from '@zana-ai/zcc-domain/product';
 import { product } from '../lib/product-client.js';
@@ -17,6 +17,8 @@ import {
 import { EnvironmentPicker, defaultWorkspaceChoice, type WorkspacePickerValue } from './EnvironmentPicker.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import { ComposerTypeaheadMenu } from './composer/ComposerTypeaheadMenu.js';
+import { VoiceRecordingBar } from './thread/voice/VoiceRecordingBar.js';
+import { useVoiceInput } from './thread/voice/useVoiceInput.js';
 import { findActiveTrigger } from './composer/find-active-trigger.js';
 import { mentionAttrsForSuggestion } from './composer/mention-attrs.js';
 import { serializePromptEditor } from './composer/serialize-prompt-editor.js';
@@ -41,7 +43,9 @@ export interface ThreadProviderOption {
 export interface ThreadCommandComposerProps {
   project?: Project;
   threadId?: string;
+  environmentLabel?: string;
   onCreated?: (threadId: string) => void;
+  onOpenExplorer?: () => void;
 }
 
 function permissionChipLabel(id: string): string {
@@ -54,7 +58,9 @@ function permissionChipLabel(id: string): string {
 export function ThreadCommandComposer({
   project: pinnedProject,
   threadId,
-  onCreated
+  environmentLabel,
+  onCreated,
+  onOpenExplorer
 }: ThreadCommandComposerProps) {
   const navigate = useNavigate();
   const projects = useData((s) => s.projects);
@@ -66,7 +72,8 @@ export function ThreadCommandComposer({
   const [providerId, setProviderId] = useState('claude-code');
   const [permissionMode, setPermissionMode] = useState('accept-edits');
   const [model, setModel] = useState('default');
-  const [sendMode, setSendMode] = useState<ThreadSendMode>('auto');
+  const sendMode: ThreadSendMode = 'auto';
+  const [expanded, setExpanded] = useState(false);
   const [workspace, setWorkspace] = useState<WorkspacePickerValue>(() => defaultWorkspaceChoice(false));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -190,6 +197,12 @@ export function ThreadCommandComposer({
     onUpdate: ({ editor: next }) => syncTrigger(next),
     onSelectionUpdate: ({ editor: next }) => syncTrigger(next)
   });
+
+  const insertVoiceTranscript = useCallback((text: string) => {
+    editor?.chain().focus().insertContent(text.endsWith(' ') ? text : `${text} `).run();
+  }, [editor]);
+  const voice = useVoiceInput({ onTranscript: insertVoiceTranscript });
+  const voiceBusy = voice.state === 'recording' || voice.state === 'transcribing';
 
   const { suggestions, menuOpen } = useComposerSuggestions({
     trigger,
@@ -345,13 +358,22 @@ export function ThreadCommandComposer({
   );
 
   return (
-    <div className="thread-command-composer">
+    <div className={`thread-command-composer${expanded ? ' is-expanded' : ''}`}>
       <span id="thread-command-label" className="thread-command-label">Thread composer</span>
       {error ? (
         <p className="thread-command-error" data-testid="thread-command-error">{error}</p>
       ) : null}
       <CommandComposer className="home-agent-command thread-command-card" labelledBy="thread-command-label">
         <div className="thread-command-editor-slot" onKeyDown={onKeyDown}>
+          <ComposerIconButton
+            className="thread-command-expand"
+            aria-label={expanded ? 'Make prompt box smaller' : 'Make prompt box larger'}
+            title={expanded ? 'Make prompt box smaller' : 'Make prompt box larger'}
+            data-testid="thread-command-expand"
+            onClick={() => setExpanded((current) => !current)}
+          >
+            {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+          </ComposerIconButton>
           <EditorContent editor={editor} />
           {menuOpen && (
             <ComposerTypeaheadMenu
@@ -363,77 +385,106 @@ export function ThreadCommandComposer({
           )}
         </div>
         <ComposerToolbar>
-          <div className="thread-command-footer-start">
-            {!threadId && (
-              <>
-                <PopoverPicklist
-                  value={providerId}
-                  options={providers.map((row) => ({ value: row.id, label: row.displayName }))}
-                  onChange={setProviderId}
-                  ariaLabel="Provider"
-                />
+          {voiceBusy ? (
+            <VoiceRecordingBar
+              state={voice.state}
+              stream={voice.stream}
+              onConfirm={voice.stop}
+              onCancel={voice.cancel}
+            />
+          ) : (
+            <>
+              <div className="thread-command-footer-start">
+                {!threadId && (
+                  <PopoverPicklist
+                    value={providerId}
+                    options={providers.map((row) => ({ value: row.id, label: row.displayName }))}
+                    onChange={setProviderId}
+                    ariaLabel="Provider"
+                  />
+                )}
                 <PopoverPicklist
                   value={model}
                   options={modelOptions.map((row) => ({ value: row.id, label: row.label }))}
                   onChange={setModel}
                   ariaLabel="Model"
                 />
-              </>
-            )}
-            {threadId && (
-              <PopoverPicklist
-                value={sendMode}
-                options={[
-                  { value: 'auto', label: 'Auto' },
-                  { value: 'steer', label: 'Steer' },
-                  { value: 'queue-if-active', label: 'Queue if active' },
-                  { value: 'steer-if-active', label: 'Steer if active' }
-                ]}
-                onChange={(id) => setSendMode(id as ThreadSendMode)}
-                ariaLabel="Send mode"
-              />
-            )}
-          </div>
-          <div className="thread-command-footer-end">
-            {threadId && (
-              <ComposerIconButton
-                aria-label="Stop"
-                title="Stop"
-                onClick={() => void product.threads.stop(threadId)}
-              >
-                <Square size={14} />
-              </ComposerIconButton>
-            )}
-            {sendButton}
-          </div>
+              </div>
+              <div className="thread-command-footer-end">
+                <ComposerIconButton
+                  className="voice-input-btn voice-input-btn--icon"
+                  aria-label={
+                    !voice.isSupported
+                      ? 'Voice input is not supported in this browser'
+                      : !voice.available
+                        ? 'Host daemon is not connected'
+                        : 'Start voice input'
+                  }
+                  title={
+                    !voice.isSupported
+                      ? 'Voice input is not supported in this browser'
+                      : !voice.available
+                        ? 'Host daemon is not connected'
+                        : 'Start voice input'
+                  }
+                  disabled={!voice.canStart}
+                  onClick={() => void voice.start()}
+                >
+                  <Mic size={14} />
+                </ComposerIconButton>
+                {threadId && (
+                  <ComposerIconButton
+                    aria-label="Stop"
+                    title="Stop"
+                    onClick={() => void product.threads.stop(threadId)}
+                  >
+                    <Square size={14} />
+                  </ComposerIconButton>
+                )}
+                {sendButton}
+              </div>
+            </>
+          )}
         </ComposerToolbar>
       </CommandComposer>
-      {!threadId && (
-        <div className="thread-command-composer-meta">
-          <div className="thread-command-composer-meta-start">
-            {!threadId && !pinnedProject && (
-              <div className="thread-command-chip">
-                <Folder size={14} aria-hidden="true" />
-                <PopoverPicklist
-                  value={projectId}
-                  options={projects.map((row) => ({ value: row.id, label: row.name }))}
-                  onChange={setProjectId}
-                  ariaLabel="Project"
-                />
-              </div>
-            )}
-            <EnvironmentPicker projectId={projectId} value={workspace} onChange={setWorkspace} />
-          </div>
-          <div className="thread-command-composer-meta-end">
-            <PopoverPicklist
-              value={permissionMode}
-              options={permissionOptions.map((row) => ({ value: row.id, label: row.label }))}
-              onChange={setPermissionMode}
-              ariaLabel="Permission mode"
-            />
-          </div>
+      <div className="thread-command-composer-meta">
+        <div className="thread-command-composer-meta-start">
+          {threadId ? (
+            <button
+              type="button"
+              className="thread-command-chip"
+              data-testid="thread-env-label"
+              onClick={onOpenExplorer}
+            >
+              <Laptop size={14} aria-hidden="true" />
+              {environmentLabel ?? 'Local'}
+            </button>
+          ) : (
+            <>
+              {!pinnedProject && (
+                <div className="thread-command-chip">
+                  <Folder size={14} aria-hidden="true" />
+                  <PopoverPicklist
+                    value={projectId}
+                    options={projects.map((row) => ({ value: row.id, label: row.name }))}
+                    onChange={setProjectId}
+                    ariaLabel="Project"
+                  />
+                </div>
+              )}
+              <EnvironmentPicker projectId={projectId} value={workspace} onChange={setWorkspace} />
+            </>
+          )}
         </div>
-      )}
+        <div className="thread-command-composer-meta-end">
+          <PopoverPicklist
+            value={permissionMode}
+            options={permissionOptions.map((row) => ({ value: row.id, label: row.label }))}
+            onChange={setPermissionMode}
+            ariaLabel="Permission mode"
+          />
+        </div>
+      </div>
     </div>
   );
 }

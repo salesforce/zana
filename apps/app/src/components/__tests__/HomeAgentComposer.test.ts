@@ -30,7 +30,7 @@ describe('ThreadCommandComposer pinning', () => {
     const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
     expect(source).toContain('project: pinnedProject');
     expect(source).toContain('if (pinnedProject) setProjectId(pinnedProject.id)');
-    expect(source).toContain('{!threadId && !pinnedProject && (');
+    expect(source).toContain('{!pinnedProject && (');
   });
 });
 
@@ -48,6 +48,27 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain('EnvironmentPicker');
     expect(source).not.toContain('createTerminal(');
     expect(source).not.toContain('openAgentModal');
+  });
+
+  it('shows follow-up model inside the card and Local/Edits under it', () => {
+    const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('environmentLabel');
+    expect(source).toContain('thread-env-label');
+    expect(source).toContain('thread-command-composer-meta');
+    expect(source).toContain("<Laptop size={14}");
+    expect(source).toContain("{threadId && (");
+    expect(source).toContain('ariaLabel="Permission mode"');
+    expect(source).toContain('VoiceRecordingBar');
+    expect(source).toContain('Start voice input');
+    expect(source).toContain('thread-command-expand');
+    expect(source).toContain('Make prompt box larger');
+    expect(source).toContain('onTranscript');
+    expect(source).not.toContain('Queue if active');
+    expect(source).not.toContain('VoiceInputButton');
+    const metaIdx = source.indexOf('thread-command-composer-meta');
+    expect(source.indexOf('ariaLabel="Model"')).toBeLessThan(metaIdx);
+    expect(source.indexOf('<EnvironmentPicker')).toBeGreaterThan(metaIdx);
+    expect(source.indexOf('ariaLabel="Permission mode"')).toBeGreaterThan(metaIdx);
   });
 
   it('steals typeahead keys while the menu is open and inserts mention pills', () => {
@@ -90,6 +111,13 @@ describe('browser product client thread API', () => {
     expect(source).toContain("subscribeProductEvent('threads:event'");
     expect(source).toContain('/threads/${encodeURIComponent(threadId)}/send');
     expect(source).toContain('/threads/${encodeURIComponent(threadId)}/timeline');
+    expect(source).toContain('/threads/${encodeURIComponent(threadId)}/read');
+    expect(source).toContain('/conversation-outline');
+    expect(source).toContain('/host-files/content');
+    expect(source).toContain('voice: {');
+    expect(source).toContain('/system/voice-status');
+    expect(source).toContain('/system/voice-transcription');
+    expect(source).toContain('ensureMicAccess: desktop?.ensureMicAccess');
     expect(source).toContain('/threads/${encodeURIComponent(threadId)}/archive');
     expect(source).not.toContain('/threads/${encodeURIComponent(sessionId)}/output');
     expect(source).not.toContain('/threads/${encodeURIComponent(sessionId)}/resize');

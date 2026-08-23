@@ -57,4 +57,17 @@ describe('browserRequestProblem', () => {
     );
     expect(problem?.status).toBe(415);
   });
+
+  it('allows multipart when JSON is not required', () => {
+    expect(browserRequestProblem(
+      context({
+        method: 'POST',
+        url: 'http://127.0.0.1:8780/api/v1/system/voice-transcription',
+        contentType: 'multipart/form-data; boundary=abc',
+        origin: 'http://127.0.0.1:5173'
+      }),
+      deps,
+      { requireJsonForMutation: false }
+    )).toBeNull();
+  });
 });

@@ -67,7 +67,9 @@ export {
 } from './data/events.js';
 export {
   appendConversationThreadEvent,
+  countConversationThreadEvents,
   listConversationThreadEvents,
+  listConversationThreadEventsWindow,
   nextConversationEventSequence,
   type ConversationThreadEventRow
 } from './data/conversation-events.js';

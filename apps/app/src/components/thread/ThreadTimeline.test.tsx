@@ -85,8 +85,10 @@ describe('ThreadTimeline', () => {
       <ThreadTimeline rows={rows} status="idle" thinking={null} todos={null} />
     );
     expect(html).toContain('data-testid="thread-user-text"');
+    expect(html).toContain('thread-timeline-item is-user');
     expect(html).toContain('Read README.md');
     expect(html).toContain('data-testid="thread-assistant-text"');
+    expect(html).toContain('thread-timeline-item is-assistant');
     expect(html).toContain('<strong>world</strong>');
   });
 
@@ -252,5 +254,48 @@ describe('ThreadTimeline', () => {
     );
     expect(html).toContain('data-testid="thread-work-row"');
     expect(html).toContain('Working…');
+  });
+
+  it('renders goal, context, unread divider, and load-older', () => {
+    const rows: TimelineRow[] = [{
+      ...base,
+      id: 'u1',
+      kind: 'conversation',
+      role: 'user',
+      text: 'Hello',
+      attachments: null,
+      initiator: 'user',
+      senderThreadId: null,
+      systemMessageKind: 'unlabeled',
+      systemMessageSubject: null,
+      turnRequest: { isGrouped: false, kind: 'message', status: 'accepted' },
+      mentions: [],
+      sourceSeqStart: 4,
+      sourceSeqEnd: 4
+    }];
+    const html = renderToStaticMarkup(
+      <ThreadTimeline
+        rows={rows}
+        status="idle"
+        thinking={null}
+        todos={null}
+        goal={{
+          sourceSeq: 1,
+          updatedAt: 1,
+          objective: 'Ship UI',
+          status: 'active',
+          tokenBudget: null,
+          tokensUsed: 0,
+          timeUsedSeconds: 0
+        }}
+        contextWindowUsage={{ usedTokens: 20, modelContextWindow: 100, estimated: false }}
+        lastReadSeq={1}
+        hasOlderRows
+      />
+    );
+    expect(html).toContain('Ship UI');
+    expect(html).toContain('20% context');
+    expect(html).toContain('thread-unread-divider');
+    expect(html).toContain('thread-load-older');
   });
 });

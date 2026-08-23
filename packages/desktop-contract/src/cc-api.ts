@@ -348,7 +348,42 @@ export interface CcApi {
     send(threadId: string, input: string | unknown[], mode?: string): Promise<{ ok: boolean }>;
     stop(threadId: string): Promise<{ ok: boolean }>;
     resume(threadId: string): Promise<{ ok: boolean }>;
-    timeline(threadId: string): Promise<{ rows: unknown[]; events: unknown[]; status: string }>;
+    timeline(threadId: string, query?: {
+      segmentLimit?: number;
+      beforeAnchorSeq?: number;
+      beforeAnchorId?: string;
+    }): Promise<{
+      rows: unknown[];
+      events: unknown[];
+      status: string;
+      goal?: unknown;
+      pendingTodos?: unknown;
+      activeThinking?: unknown;
+      activePromptMode?: unknown;
+      activeWorkflows?: unknown;
+      contextWindowUsage?: unknown;
+      lastReadSeq?: number;
+      maxSeq?: number;
+      timelinePage?: {
+        kind: 'latest' | 'older';
+        segmentLimit: number;
+        returnedSegmentCount: number;
+        hasOlderRows: boolean;
+        olderCursor: { anchorSeq: number; anchorId: string } | null;
+      };
+    }>;
+    read(threadId: string): Promise<{ thread: Record<string, unknown> }>;
+    conversationOutline(threadId: string): Promise<{
+      items: Array<{ id: string; role: 'user' | 'assistant'; preview: string; attachmentSummary: unknown }>;
+      maxSeq: number;
+    }>;
+    hostFileContent(threadId: string, path: string): Promise<{
+      path: string;
+      relPath: string;
+      content: string;
+      encoding: 'utf8';
+      contentType: string | null;
+    }>;
     events(threadId: string): Promise<{ events: unknown[] }>;
     providers(): Promise<{ providers: Array<{
       id: string;
@@ -1385,7 +1420,7 @@ export interface CcApi {
   };
   voice: {
     transcribe(audio: string, mimeType: string): Promise<VoiceTranscribeResult>;
-    /** Whether an OpenAI key is available (shared from Settings → LLM Providers). */
+    /** Whether the host can transcribe (a host daemon is connected). */
     hasApiKey(): Promise<boolean>;
     /** Ensure the OS-level (macOS TCC) microphone permission is granted.
      *  Resolves true if access is available, false if the user denied it.

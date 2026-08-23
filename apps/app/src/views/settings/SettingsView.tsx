@@ -109,6 +109,7 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
     { id: 'terminal-tmux', label: 'tmux' }
   ],
   harness: [
+    { id: 'thread-providers', label: 'Thread providers' },
     { id: 'harness-status', label: 'Code harnesses' },
     { id: 'harness-claude', label: 'Claude Code' },
     { id: 'harness-cursor', label: 'Cursor' },

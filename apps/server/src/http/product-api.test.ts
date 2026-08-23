@@ -1,9 +1,10 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createConversationThread, createEnvironment, upsertHost } from '@zana-ai/zcc-db';
 import { startProductServer, type ProductServer } from './product-server.js';
+import { HostUnavailableError } from './host-hub.js';
 
 let server: ProductServer | null = null;
 
@@ -258,5 +259,85 @@ describe('product HTTP', () => {
 
     const again = await fetch(`${server.url}api/v1/projects`).then((response) => response.json());
     expect(again.projects.map((project: { id: string }) => project.id)).toEqual(['proj-b', 'proj-a']);
+  });
+
+  it('transcribes voice over multipart when a host is connected', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-voice-'));
+    writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [] }));
+    writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ version: 1, theme: 'dark' }));
+    server = await startProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+
+    const disabled = await fetch(`${server.url}api/v1/system/voice-status`).then((response) => response.json());
+    expect(disabled).toEqual({ enabled: false });
+
+    const rpc = vi.fn(async () => ({ model: 'gpt-transcribe', text: 'hello from voice' }));
+    server.ctx.hostHub.connectedHostIds = () => ['host-1'];
+    server.ctx.hostHub.resolveHostId = () => 'host-1';
+    server.ctx.hostHub.callHostOnlineRpc = rpc;
+
+    const enabled = await fetch(`${server.url}api/v1/system/voice-status`).then((response) => response.json());
+    expect(enabled).toEqual({ enabled: true });
+
+    const form = new FormData();
+    form.set('file', new Blob([new Uint8Array([1, 2, 3])], { type: 'audio/webm' }), 'recording.webm');
+    const transcribed = await fetch(`${server.url}api/v1/system/voice-transcription`, {
+      method: 'POST',
+      body: form
+    });
+    expect(transcribed.status).toBe(200);
+    await expect(transcribed.json()).resolves.toEqual({ text: 'hello from voice' });
+    expect(rpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({ type: 'codex.voice.transcribe' })
+    }));
+
+    const jsonRejected = await fetch(`${server.url}api/v1/system/voice-transcription`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    });
+    expect(jsonRejected.status).toBe(415);
+
+    const missingFile = new FormData();
+    missingFile.set('prompt', 'hello');
+    const missing = await fetch(`${server.url}api/v1/system/voice-transcription`, {
+      method: 'POST',
+      body: missingFile
+    });
+    expect(missing.status).toBe(400);
+
+    server.ctx.hostHub.callHostOnlineRpc = vi.fn(async () => {
+      throw Object.assign(new Error('missing'), { code: 'codex_auth_missing' });
+    });
+    const formAuth = new FormData();
+    formAuth.set('file', new Blob([new Uint8Array([1])], { type: 'audio/webm' }), 'recording.webm');
+    const authMissing = await fetch(`${server.url}api/v1/system/voice-transcription`, {
+      method: 'POST',
+      body: formAuth
+    });
+    expect(authMissing.status).toBe(501);
+
+    server.ctx.hostHub.connectedHostIds = () => [];
+    server.ctx.hostHub.resolveHostId = () => {
+      throw new HostUnavailableError();
+    };
+    const formDown = new FormData();
+    formDown.set('file', new Blob([new Uint8Array([1])], { type: 'audio/webm' }), 'recording.webm');
+    const down = await fetch(`${server.url}api/v1/system/voice-transcription`, {
+      method: 'POST',
+      body: formDown
+    });
+    expect(down.status).toBe(503);
+
+    const originForm = new FormData();
+    originForm.set('file', new Blob([new Uint8Array([1])], { type: 'audio/webm' }), 'recording.webm');
+    const originDenied = await fetch(`${server.url}api/v1/system/voice-transcription`, {
+      method: 'POST',
+      headers: { Origin: 'https://evil.example' },
+      body: originForm
+    });
+    expect(originDenied.status).toBe(403);
   });
 });

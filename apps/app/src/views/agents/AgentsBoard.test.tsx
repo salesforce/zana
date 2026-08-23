@@ -66,4 +66,15 @@ describe('AgentsBoard compact chrome contract', () => {
       'grid-template-columns: minmax(160px, 28%) minmax(0, 1fr) minmax(180px, 26%);'
     );
   });
+
+  it('spans the launch composer across the workbench with header gutters', () => {
+    expect(board).toContain('<HomeAgentComposer project={scopedProject} />');
+    const start = css.indexOf('.agents-board > .home-agent-composer {');
+    expect(start).toBeGreaterThan(-1);
+    const block = css.slice(start, css.indexOf('}', start));
+    expect(block).toContain('width: 100%;');
+    expect(block).toContain('max-width: none;');
+    expect(block).toContain('padding: 12px 16px 8px;');
+    expect(block).toContain('margin: 0;');
+  });
 });

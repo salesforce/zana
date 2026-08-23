@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { product } from '../../lib/product-client.js';
-import { CheckCircle2, XCircle, RefreshCw, ChevronRight } from 'lucide-react';
+import { Bot, CheckCircle2, ChevronRight, RefreshCw, XCircle } from 'lucide-react';
 import type { AppConfig, HarnessFamily, HarnessVerifyResult, LaunchProfileId } from '@zana-ai/zcc-domain/product';
 import type { HarnessAdapterDescriptor } from '@zana-ai/zcc-domain/harness-adapter';
 import { useData } from '@/store';
@@ -327,13 +327,43 @@ function HarnessRow({
   );
 }
 
-function ThreadProvidersPanel() {
-  const [providers, setProviders] = useState<Array<{ id: string; displayName: string; pluginId: string }>>([]);
-  useEffect(() => {
-    void product.threads.providers()
-      .then((body) => setProviders(body.providers))
-      .catch(() => setProviders([]));
-  }, []);
+type ThreadProviderListItem = {
+  id: string;
+  displayName: string;
+  pluginId: string;
+};
+
+const THREAD_PROVIDER_PROFILE: Record<string, LaunchProfileId> = {
+  'claude-code': 'claude',
+  'acp-cursor': 'cursor',
+  cursor: 'cursor',
+  codex: 'codex',
+  pi: 'pi'
+};
+
+const THREAD_PROVIDER_BLURB: Record<string, string> = {
+  'claude-code': 'Anthropic’s Claude Code — the default thread provider.',
+  'acp-cursor': 'Cursor via the Agent Client Protocol (ACP).',
+  cursor: 'Cursor via the Agent Client Protocol (ACP).',
+  codex: 'OpenAI’s Codex coding CLI.',
+  pi: 'The multi-provider Pi coding-agent CLI.',
+  fake: 'Test-only provider used by AgentRuntime.'
+};
+
+function threadProviderGlyph(providerId: string) {
+  const profile = THREAD_PROVIDER_PROFILE[providerId];
+  return profile ? profileIcon(profile, 17) : <Bot size={17} />;
+}
+
+function threadProviderBlurb(providerId: string): string {
+  return THREAD_PROVIDER_BLURB[providerId] ?? 'Registered thread provider plugin.';
+}
+
+export function ThreadProviderCatalog({
+  providers
+}: {
+  providers: ThreadProviderListItem[];
+}) {
   if (providers.length === 0) {
     return <p className="settings-help">No thread providers registered.</p>;
   }
@@ -341,12 +371,43 @@ function ThreadProvidersPanel() {
     <ul className="opener-list thread-provider-list" data-testid="thread-provider-catalog">
       {providers.map((provider) => (
         <li key={provider.id} className="opener-row">
-          <span className="opener-row-name">{provider.displayName}</span>
-          <span className="settings-help">{provider.pluginId}</span>
+          <div className="opener-row-head">
+            <span className="opener-row-glyph" aria-hidden>
+              {threadProviderGlyph(provider.id)}
+            </span>
+            <div className="opener-row-text">
+              <span className="opener-row-name">{provider.displayName}</span>
+              <span className="opener-row-blurb">{threadProviderBlurb(provider.id)}</span>
+            </div>
+            <code className="thread-provider-id" title={provider.pluginId}>
+              {provider.pluginId}
+            </code>
+          </div>
         </li>
       ))}
     </ul>
   );
+}
+
+function ThreadProvidersPanel() {
+  const [providers, setProviders] = useState<ThreadProviderListItem[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void product.threads.providers()
+      .then((body) => {
+        if (!cancelled) setProviders(body.providers);
+      })
+      .catch(() => {
+        if (!cancelled) setProviders([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  if (providers === null) {
+    return <p className="settings-help" role="status">Loading thread providers…</p>;
+  }
+  return <ThreadProviderCatalog providers={providers} />;
 }
 
 export function HarnessView({
@@ -547,7 +608,13 @@ export function HarnessView({
     <Section
       anchorId="thread-providers"
       title="Thread providers"
-      help="Thread Code Harnesses are provider plugins (Claude Code, Codex, Pi, ACP). They register through experimental_registerProvider and launch via AgentRuntime — not the PTY harness SDK."
+      help={
+        <>
+          These plugins power Threads. They register through{' '}
+          <code>experimental_registerProvider</code> and launch via AgentRuntime
+          — not the legacy PTY harness.
+        </>
+      }
     >
       <ThreadProvidersPanel />
     </Section>
