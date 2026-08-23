@@ -120,6 +120,23 @@ export function listLiveConversationThreads(db: ZccDatabase): ConversationThread
   ).all() as ConversationThreadSqlRow[]).map(toThread);
 }
 
+/** Cap for the unscoped visible-thread list (idle + error included). */
+export const VISIBLE_CONVERSATION_THREAD_LIMIT = 200;
+
+export function listVisibleConversationThreads(
+  db: ZccDatabase,
+  opts?: { limit?: number }
+): ConversationThreadRow[] {
+  const requested = opts?.limit ?? VISIBLE_CONVERSATION_THREAD_LIMIT;
+  const limit = Math.max(1, Math.min(requested, VISIBLE_CONVERSATION_THREAD_LIMIT));
+  return (db.sqlite.prepare(
+    `SELECT * FROM threads
+     WHERE archived_at IS NULL
+     ORDER BY updated_at DESC
+     LIMIT ?`
+  ).all(limit) as ConversationThreadSqlRow[]).map(toThread);
+}
+
 export function updateConversationThreadStatus(
   db: ZccDatabase,
   id: string,

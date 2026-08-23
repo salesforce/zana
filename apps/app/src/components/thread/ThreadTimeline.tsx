@@ -8,12 +8,11 @@ import {
   type TimelineViewWorkflowWorkRow
 } from '@zana-ai/zcc-thread-view';
 import type { ActiveThinking, ThreadTimelineGoal, ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
-import type { ThreadContextWindowUsage, TimelineRow } from '@zana-ai/zcc-server-contract';
+import type { TimelineRow } from '@zana-ai/zcc-server-contract';
 import { isBusyThreadStatus } from './thread-timeline-model.js';
 import { collectTimelineAutoExpansionRowIds } from './timeline/timeline-auto-expand.js';
 import { firstUnreadRowId, isNearBottom, shouldStickToBottom } from './timeline/timeline-scroll.js';
 import {
-  ThreadContextChip,
   ThreadGoalBanner,
   ThreadPromptModeChip,
   ThreadTodoCard,
@@ -30,7 +29,6 @@ export interface ThreadTimelineProps {
   goal?: ThreadTimelineGoal | null;
   activeWorkflows?: TimelineViewWorkflowWorkRow[] | null;
   activePromptMode?: { mode: string; prompt?: string } | null;
-  contextWindowUsage?: ThreadContextWindowUsage | null;
   lastReadSeq?: number | null;
   hasOlderRows?: boolean;
   loadingOlder?: boolean;
@@ -69,7 +67,6 @@ export function ThreadTimeline({
   goal,
   activeWorkflows,
   activePromptMode,
-  contextWindowUsage,
   lastReadSeq,
   hasOlderRows,
   loadingOlder,
@@ -130,7 +127,6 @@ export function ThreadTimeline({
         <ThreadGoalBanner goal={goal} />
         <div className="thread-banner-row">
           <ThreadPromptModeChip mode={activePromptMode} />
-          <ThreadContextChip usage={contextWindowUsage} />
         </div>
         <ThreadWorkflowChips workflows={activeWorkflows} />
       </div>

@@ -1,11 +1,18 @@
 import { useMemo, type CSSProperties, type MouseEvent } from 'react';
-import { Activity, Clock } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Activity, Clock, MessageSquare } from 'lucide-react';
 import type { AgentState, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { useData, useUi, useAgentStatus, useIdleTriage } from '../store.js';
+import { useThreads } from '../thread-store.js';
+import { useEnsureThreads } from '../hooks/useEnsureThreads.js';
+import { getThreadRoutePath } from '../lib/route-paths.js';
 import { FavoriteStar } from './FavoriteStar.js';
 import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from './agentCardActions.js';
 import { PromptModal } from './PromptModal.js';
 import type { AgentCard } from './AgentBoard.js';
+import { FleetKindChip } from './FleetKindChip.js';
+import { isVisibleThread, threadTitle } from './fleet-item.js';
+import { threadStatusToAgentState } from './thread/thread-timeline-model.js';
 
 /**
  * Which agent states the tray surfaces, in display-priority order.
@@ -42,12 +49,25 @@ export function isScheduledWaiting(
 }
 
 interface TrayAgent {
+  kind: 'agent';
   session: TerminalSession;
   projectId: string;
   projectName: string;
   projectColor?: string;
   state: AgentState;
 }
+
+interface TrayThread {
+  kind: 'thread';
+  id: string;
+  title: string;
+  projectId: string;
+  projectName: string;
+  projectColor?: string;
+  state: AgentState;
+}
+
+type TrayItem = TrayAgent | TrayThread;
 
 /**
  * Bottom-of-sidebar tray listing every agent that is currently running or
@@ -73,6 +93,9 @@ export function AgentTray({
   const terminals = useData((s) => s.terminals);
   const projects = useData((s) => s.projects);
   const byId = useAgentStatus((s) => s.byId);
+  const threads = useThreads((s) => s.threads);
+  useEnsureThreads();
+  const navigate = useNavigate();
   const collapsed = useUi((s) => s.sidebarCollapsed);
   const toggleSidebar = useUi((s) => s.toggleSidebar);
   const { menu, setMenu, actions, rename, closeRename, submitRename } = useAgentCardActions();
@@ -105,15 +128,11 @@ export function AgentTray({
     });
   };
 
-  // Derive the flat, sorted list once per relevant change. Selectors above
-  // return raw store slices (stable refs); the fresh array lives behind useMemo
-  // so we don't trip zustand's re-render loop (see MEMORY zustand-selector-stable-ref).
-  const agents = useMemo<TrayAgent[]>(() => {
+  const items = useMemo<TrayItem[]>(() => {
     const allowed = trayStatesFor(projectId);
     const byProjectId = new Map(projects.map((p) => [p.id, p]));
-    const out: TrayAgent[] = [];
+    const out: TrayItem[] = [];
     for (const [pid, list] of Object.entries(terminals)) {
-      // Project scope (focused rail): only this project's sessions.
       if (projectId && pid !== projectId) continue;
       for (const session of list) {
         if (session.profile === 'shell' || session.status === 'exited') continue;
@@ -121,6 +140,7 @@ export function AgentTray({
         if (!allowed.includes(state) || isScheduledWaiting(session, state)) continue;
         const project = byProjectId.get(pid);
         out.push({
+          kind: 'agent',
           session,
           projectId: pid,
           projectName: project?.name ?? 'Unknown',
@@ -129,44 +149,51 @@ export function AgentTray({
         });
       }
     }
+    for (const thread of threads) {
+      if (!isVisibleThread(thread)) continue;
+      if (projectId && thread.projectId !== projectId) continue;
+      const state = threadStatusToAgentState(thread.status);
+      if (!allowed.includes(state)) continue;
+      const project = byProjectId.get(thread.projectId);
+      out.push({
+        kind: 'thread',
+        id: thread.id,
+        title: threadTitle(thread),
+        projectId: thread.projectId,
+        projectName: project?.name ?? 'Unknown',
+        projectColor: project?.color,
+        state
+      });
+    }
     out.sort((a, b) => {
       const r = (STATE_RANK[a.state] ?? 9) - (STATE_RANK[b.state] ?? 9);
       if (r !== 0) return r;
-      return a.session.title.localeCompare(b.session.title);
+      const titleA = a.kind === 'thread' ? a.title : a.session.title;
+      const titleB = b.kind === 'thread' ? b.title : b.session.title;
+      return titleA.localeCompare(titleB);
     });
     return out;
-  }, [terminals, projects, byId, projectId]);
+  }, [terminals, projects, byId, projectId, threads]);
 
-  const blockedCount = agents.reduce((n, a) => n + (a.state === 'blocked' ? 1 : 0), 0);
+  const blockedCount = items.reduce((n, item) => n + (item.state === 'blocked' ? 1 : 0), 0);
 
-  // Clicking a tray row opens the agent-inspector modal — a peek at the live
-  // terminal + metadata without leaving the current view. The modal's "Open in
-  // workspace" button is the path to the full split-pane view (the old focus
-  // behaviour); keeping the row click lightweight means a glance doesn't yank
-  // you out of whatever you were doing.
-  const inspect = (a: TrayAgent) => {
+  const inspectAgent = (a: TrayAgent) => {
     useUi.getState().openAgentModal(a.session.id, a.projectId);
   };
 
-  // The sidebar collection stays visible even when it has no live work. A small
-  // empty state makes the intentional space clear without adding a second CTA
-  // beside the section header's New quick agent control.
-  if (agents.length === 0) {
+  if (items.length === 0) {
     return placement === 'inline' ? (
       <p className="agent-tray-empty" role="status">
-        {projectId ? 'No agents' : 'No active agents'}
+        {projectId ? 'No agents or threads' : 'No active agents or threads'}
       </p>
     ) : null;
   }
 
-  // Collapsed rail: a single activity icon carrying the count. Red when any
-  // agent is blocked (needs you), otherwise muted. Clicking expands the rail so
-  // the full list is reachable.
   if (collapsed) {
     const title =
       blockedCount > 0
-        ? `${agents.length} ${projectId ? 'agents' : 'active'} · ${blockedCount} need you`
-        : `${agents.length} ${projectId ? 'agents' : 'active'}`;
+        ? `${items.length} ${projectId ? 'agents' : 'active'} · ${blockedCount} need you`
+        : `${items.length} ${projectId ? 'agents' : 'active'}`;
     return (
       <div className={`agent-tray ${placement === 'inline' ? 'agent-tray--inline' : ''} collapsed`}>
         <button
@@ -182,7 +209,7 @@ export function AgentTray({
             className={`nav-badge ${blockedCount > 0 ? 'nav-badge--blocked' : 'nav-badge--running'}`}
             aria-hidden="true"
           >
-            {agents.length > 99 ? '99+' : agents.length}
+            {items.length > 99 ? '99+' : items.length}
           </span>
         </button>
       </div>
@@ -194,49 +221,70 @@ export function AgentTray({
       {!(placement === 'inline' && projectId) && (
       <div className="agent-tray-header">
         <span className="nav-section-label agent-tray-label">Active agents</span>
-        <span className="agent-tray-count">{agents.length}</span>
+        <span className="agent-tray-count">{items.length}</span>
       </div>
       )}
       <div className="agent-tray-list">
-        {agents.map((a) => {
-          // A scheduler-spawned (or otherwise headless/background) run isn't a
-          // tab the user is driving — flag it so it doesn't read like an
-          // interactive agent. `scheduled` is the specific "cron job" case;
-          // `headless` covers detached background work generally.
-          const background = a.session.scheduled || a.session.headless;
-          const bgTitle = a.session.scheduled ? 'Scheduled run' : 'Background run';
+        {items.map((item) => {
+          if (item.kind === 'thread') {
+            return (
+              <button
+                key={item.id}
+                type="button"
+                className={`agent-tray-row is-thread ${item.projectColor ? 'project-tinted' : ''}`}
+                data-kind="thread"
+                onClick={() => navigate(getThreadRoutePath(item.id))}
+                title={`${item.title} — ${item.projectName} · ${STATE_LABEL[item.state]}`}
+                style={item.projectColor ? ({ '--project-color': item.projectColor } as CSSProperties) : undefined}
+              >
+                <span className={`tab-agent-dot agent-${item.state}`} aria-hidden="true" />
+                <MessageSquare size={13} aria-hidden="true" />
+                <span className="agent-tray-row-text">
+                  <span className="agent-tray-row-title-line">
+                    <span className="agent-tray-row-title">{item.title}</span>
+                    <FleetKindChip kind="thread" />
+                  </span>
+                  {!projectId && <span className="agent-tray-row-meta">{item.projectName}</span>}
+                </span>
+                {item.state === 'blocked' && (
+                  <span className="agent-tray-needs-you">{STATE_LABEL[item.state]}</span>
+                )}
+              </button>
+            );
+          }
+          const background = item.session.scheduled || item.session.headless;
+          const bgTitle = item.session.scheduled ? 'Scheduled run' : 'Background run';
           return (
             <button
-              key={a.session.id}
-              className={`agent-tray-row ${a.projectColor ? 'project-tinted' : ''} ${
+              key={item.session.id}
+              className={`agent-tray-row ${item.projectColor ? 'project-tinted' : ''} ${
                 background ? 'is-background' : ''
               }`}
-              onClick={() => inspect(a)}
-              onContextMenu={(e) => openAgentMenu(e, a)}
-              title={`${a.session.title} — ${a.projectName} · ${STATE_LABEL[a.state]}${
+              onClick={() => inspectAgent(item)}
+              onContextMenu={(e) => openAgentMenu(e, item)}
+              title={`${item.session.title} — ${item.projectName} · ${STATE_LABEL[item.state]}${
                 background ? ` · ${bgTitle}` : ''
               }`}
-              style={a.projectColor ? ({ '--project-color': a.projectColor } as CSSProperties) : undefined}
+              style={item.projectColor ? ({ '--project-color': item.projectColor } as CSSProperties) : undefined}
             >
-              <span className={`tab-agent-dot agent-${a.state}`} aria-hidden="true" />
+              <span className={`tab-agent-dot agent-${item.state}`} aria-hidden="true" />
               <span className="agent-tray-row-text">
                 <span className="agent-tray-row-title-line">
-                  <span className="agent-tray-row-title">{a.session.title}</span>
+                  <span className="agent-tray-row-title">{item.session.title}</span>
+                  <FleetKindChip kind="agent" />
                   {background && (
                     <span className="agent-tray-bg-chip" title={bgTitle}>
                       <Clock size={9} aria-hidden="true" />
-                      {a.session.scheduled ? 'Scheduled' : 'Background'}
+                      {item.session.scheduled ? 'Scheduled' : 'Background'}
                     </span>
                   )}
                 </span>
-                {/* Project name is redundant when the tray is already scoped to
-                    one project (focused rail) — show it only in the global tray. */}
-                {!projectId && <span className="agent-tray-row-meta">{a.projectName}</span>}
+                {!projectId && <span className="agent-tray-row-meta">{item.projectName}</span>}
               </span>
-              {a.state === 'blocked' && (
-                <span className="agent-tray-needs-you">{STATE_LABEL[a.state]}</span>
+              {item.state === 'blocked' && (
+                <span className="agent-tray-needs-you">{STATE_LABEL[item.state]}</span>
               )}
-              <FavoriteStar session={a.session} className="agent-tray-fav" />
+              <FavoriteStar session={item.session} className="agent-tray-fav" />
             </button>
           );
         })}

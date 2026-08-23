@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { matchPath, useLocation, useNavigate } from 'react-router-dom';
 import { Bot, PanelRight, Plus, Sparkles, Terminal } from 'lucide-react';
 import type { AgentState, IdleTriageResult, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { useData, useUi, useAgentStatus, useIdleTriage, openWhatsNewAll } from '@/store';
-import { useThreads } from '@/thread-store';
-import { getRootRoutePath } from '@/lib/route-paths';
+import { useThreads, type ThreadListItem } from '@/thread-store';
+import { useEnsureThreads } from '@/hooks/useEnsureThreads';
+import { getRootRoutePath, THREAD_ROUTE_PATH } from '@/lib/route-paths';
 import { getScopedProjectId } from '@/lib/windowScope';
 import { profileIcon } from '@/lib/profileIcon';
 import { isRecentlyFinished } from '@/lib/sessionBuckets';
 import { idleSurfacesToNeedsYou, partitionSquadMembers, type AgentCard } from '@/components/AgentBoard';
 import { AgentLauncher } from '@/components/AgentLauncher';
 import { ThreadListEntry } from '@/components/ThreadListEntry';
+import { FleetKindChip } from '@/components/FleetKindChip';
+import { isVisibleThread } from '@/components/fleet-item';
+import { threadStatusToAgentState } from '@/components/thread/thread-timeline-model';
 import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from '@/components/agentCardActions';
 import { PromptModal } from '@/components/PromptModal';
 import { ListPaneResizer } from '@/components/ListPaneResizer';
@@ -149,11 +153,12 @@ export function AgentsListPane() {
   const sensitivity = useData((s) => s.idleAttentionSensitivity);
   const [launcherOpen, setLauncherOpen] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
   const threads = useThreads((s) => s.threads);
-  const loadThreads = useThreads((s) => s.load);
-  useEffect(() => {
-    void loadThreads();
-  }, [loadThreads]);
+  const projects = useData((s) => s.projects);
+  useEnsureThreads();
+  const scopedProjectId = getScopedProjectId();
+  const activeThreadId = matchPath(THREAD_ROUTE_PATH, location.pathname)?.params.threadId;
   const openComposer = () => navigate(getRootRoutePath());
   const openBoard = () => {
     // List mode consumes the full content area, avoiding a duplicate fleet list
@@ -245,19 +250,50 @@ export function AgentsListPane() {
 
   const needsYou = (r: AgentRow): boolean => sideListNeedsYou(r, promoteTriage, sensitivity);
 
-  // Group live foreground agents by what they need from you. `done` and
+  type LiveEntry =
+    | { kind: 'agent'; row: AgentRow }
+    | { kind: 'thread'; thread: ThreadListItem; projectName: string; state: AgentState };
+
+  const visibleThreads = useMemo(
+    () =>
+      threads.filter(
+        (thread) => isVisibleThread(thread) && (!scopedProjectId || thread.projectId === scopedProjectId)
+      ),
+    [threads, scopedProjectId]
+  );
+
+  const liveEntries = useMemo<LiveEntry[]>(() => {
+    const nameById = new Map(projects.map((p) => [p.id, p.name]));
+    const agents: LiveEntry[] = live.map((row) => ({ kind: 'agent', row }));
+    const threadEntries: LiveEntry[] = visibleThreads.map((thread) => ({
+      kind: 'thread',
+      thread,
+      projectName: nameById.get(thread.projectId) ?? 'Unknown',
+      state: threadStatusToAgentState(thread.status)
+    }));
+    return [...agents, ...threadEntries];
+  }, [live, visibleThreads, projects]);
+
+  const entryNeedsYou = (entry: LiveEntry): boolean => {
+    if (entry.kind === 'thread') return entry.state === 'blocked';
+    return needsYou(entry.row);
+  };
+  const entryState = (entry: LiveEntry): AgentState =>
+    entry.kind === 'thread' ? entry.state : entry.row.state;
+
+  // Group live foreground agents + threads by what they need from you. `done` and
   // `unknown` collapse into the Idle bucket — neither is actively running nor
   // waiting, so they read as "at rest" alongside idle. Order: most-urgent first.
   // Each group is mutually exclusive: a promoted card is in "Needs you", not Idle.
-  const liveGroups: Array<{ key: string; label: string; rows: AgentRow[] }> = [
-    { key: 'blocked', label: 'Needs you', rows: live.filter(needsYou) },
-    { key: 'working', label: 'Working', rows: live.filter((r) => r.state === 'working') },
+  const liveGroups: Array<{ key: string; label: string; entries: LiveEntry[] }> = [
+    { key: 'blocked', label: 'Needs you', entries: liveEntries.filter(entryNeedsYou) },
+    { key: 'working', label: 'Working', entries: liveEntries.filter((entry) => entryState(entry) === 'working') },
     {
       key: 'idle',
       label: 'Idle',
-      rows: live.filter((r) => r.state !== 'working' && !needsYou(r))
+      entries: liveEntries.filter((entry) => entryState(entry) !== 'working' && !entryNeedsYou(entry))
     }
-  ].filter((g) => g.rows.length > 0);
+  ].filter((g) => g.entries.length > 0);
 
   // A compact worker row nested under its squad's orchestrator: a status dot +
   // title + duration, no icon/project/badges — smaller than a top-level row so a
@@ -315,6 +351,7 @@ export function AgentsListPane() {
           <span className="agents-row-title-line">
             {!exited && <span className={`tab-agent-dot agent-${r.state}`} aria-hidden="true" />}
             <span className="agents-row-title">{t.title}</span>
+            <FleetKindChip kind="agent" />
           </span>
           <span className="agents-row-meta">
             <span className="agents-row-project">{r.projectName}</span>
@@ -357,8 +394,8 @@ export function AgentsListPane() {
     <section className="list-pane agents-list-pane">
       <header className="list-header">
         <h2>Agents</h2>
-        {live.length + background.length > 0 && (
-          <span className="agents-count">{live.length + background.length}</span>
+        {live.length + background.length + visibleThreads.length > 0 && (
+          <span className="agents-count">{live.length + background.length + visibleThreads.length}</span>
         )}
         <button
           type="button"
@@ -391,18 +428,7 @@ export function AgentsListPane() {
         </button>
       </header>
       <div className="list-body">
-        {threads.length > 0 && (
-          <div className="agents-group" data-testid="thread-list">
-            <div className="agents-group-label">
-              <span>Threads</span>
-              <span className="agents-group-count">{threads.length}</span>
-            </div>
-            {threads.map((thread) => (
-              <ThreadListEntry key={thread.id} thread={thread} />
-            ))}
-          </div>
-        )}
-        {rows.length === 0 && threads.length === 0 ? (
+        {rows.length === 0 && visibleThreads.length === 0 ? (
           <div className="agents-list-empty">
             <Bot size={20} aria-hidden="true" />
             <p>No threads yet</p>
@@ -442,9 +468,20 @@ export function AgentsListPane() {
               <div key={g.key} className="agents-group">
                 <div className={`agents-group-label group-${g.key}`}>
                   <span>{g.label}</span>
-                  <span className="agents-group-count">{g.rows.length}</span>
+                  <span className="agents-group-count">{g.entries.length}</span>
                 </div>
-                {g.rows.map(renderRow)}
+                {g.entries.map((entry) =>
+                  entry.kind === 'thread' ? (
+                    <ThreadListEntry
+                      key={entry.thread.id}
+                      thread={entry.thread}
+                      projectName={entry.projectName}
+                      active={entry.thread.id === activeThreadId}
+                    />
+                  ) : (
+                    renderRow(entry.row)
+                  )
+                )}
               </div>
             ))}
             {(background.length > 0 || finished.length > 0) && (

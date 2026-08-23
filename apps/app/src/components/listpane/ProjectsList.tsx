@@ -1,5 +1,6 @@
 import { product } from '../../lib/product-client.js';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   DndContext,
   KeyboardSensor,
@@ -17,7 +18,7 @@ import {
   verticalListSortingStrategy
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Plus, Search, Trash2, X, Check, Pencil, Code2, FolderOpen, TerminalSquare, LayoutDashboard, Settings2, Network, GitBranch, ClipboardCopy, Star, AppWindow, RefreshCw, Activity, ChevronRight, MoreHorizontal, ChevronUp, ChevronDown, ListFilter, MessageCirclePlus } from 'lucide-react';
+import { Plus, Search, Trash2, X, Check, Pencil, Code2, FolderOpen, TerminalSquare, LayoutDashboard, Settings2, Network, GitBranch, ClipboardCopy, Star, AppWindow, RefreshCw, Activity, ChevronRight, MoreHorizontal, ChevronUp, ChevronDown, ListFilter, MessageCirclePlus, MessageSquare } from 'lucide-react';
 import { CursorIcon } from '../icons/CursorIcon.js';
 import {
   useData,
@@ -44,6 +45,12 @@ import { reorderProjectIds } from './projectReordering.js';
 import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from '../agentCardActions.js';
 import { PromptModal } from '../PromptModal.js';
 import type { AgentCard } from '../AgentBoard.js';
+import { useThreads } from '../../thread-store.js';
+import { useEnsureThreads } from '../../hooks/useEnsureThreads.js';
+import { getThreadRoutePath } from '../../lib/route-paths.js';
+import { FleetKindChip } from '../FleetKindChip.js';
+import { threadIsLiveForRail, threadTitle } from '../fleet-item.js';
+import { threadStatusToAgentState } from '../thread/thread-timeline-model.js';
 
 interface MenuState {
   projectId: string;
@@ -172,6 +179,19 @@ export function ProjectsList({
   const toggleSection = useUi((s) => s.toggleSection);
   // Non-null in a per-project window: the rail is locked to this one project.
   const scopedProjectId = getScopedProjectId();
+  const threads = useThreads((s) => s.threads);
+  useEnsureThreads();
+  const navigate = useNavigate();
+  const liveThreadsByProject = useMemo(() => {
+    const map = new Map<string, typeof threads>();
+    for (const thread of threads) {
+      if (!threadIsLiveForRail(thread)) continue;
+      const list = map.get(thread.projectId) ?? [];
+      list.push(thread);
+      map.set(thread.projectId, list);
+    }
+    return map;
+  }, [threads]);
 
   const openIn = async (target: OpenTarget, path: string) => {
     try {
@@ -309,7 +329,8 @@ export function ProjectsList({
   // selected project visible regardless, so toggling the filter never hides the
   // row the user is currently in.
   const projectHasRunningAgents = (p: Project) =>
-    listedTerminals(terminals[p.id]).some((t) => t.status !== 'exited');
+    listedTerminals(terminals[p.id]).some((t) => t.status !== 'exited') ||
+    (liveThreadsByProject.get(p.id)?.length ?? 0) > 0;
 
   // Whether a project's agent sub-list is shown. The rail auto-expands any
   // project with a live agent so its running agents are visible at a glance
@@ -333,7 +354,7 @@ export function ProjectsList({
     return list.filter(
       (p) => p.name.toLowerCase().includes(q) || p.path.toLowerCase().includes(q)
     );
-  }, [sortedProjects, scopedProjectId, hideIdleProjects, selectedId, filter, projectHasRunningAgents]);
+  }, [sortedProjects, scopedProjectId, hideIdleProjects, selectedId, filter, terminals, liveThreadsByProject]);
 
   // Keep every project in one uninterrupted tree. Display order stays stable
   // from the persisted project ordering or the selected sort preference.
@@ -553,9 +574,10 @@ export function ProjectsList({
                 </span>
               );
               const liveList = liveTerminals(terminals[p.id]);
+              const liveThreads = liveThreadsByProject.get(p.id) ?? [];
               const expanded = isProjectExpanded(p);
               const treeChevron =
-                liveList.length === 0 ? null : (
+                liveList.length === 0 && liveThreads.length === 0 ? null : (
                   <button
                     type="button"
                     className={`project-tree-chevron ${expanded ? 'expanded' : ''}`}
@@ -617,14 +639,16 @@ export function ProjectsList({
             {(() => {
               const list = listedTerminals(terminals[p.id]);
               const running = list.filter((t) => t.status !== 'exited').length;
+              const liveThreadCount = liveThreadsByProject.get(p.id)?.length ?? 0;
+              const liveCount = running + liveThreadCount;
               const exited = list.filter((t) => t.status === 'exited').length;
               const crashed = list.filter((t) => t.status === 'exited' && (t.exitCode ?? 0) !== 0).length;
-              if (!list.length) return null;
-              const titleParts = [`${running} running`, `${exited} exited`];
+              if (!list.length && !liveThreadCount) return null;
+              const titleParts = [`${liveCount} running`, `${exited} exited`];
               if (crashed) titleParts.push(`${crashed} crashed`);
               return (
                 <span className={`project-badge ${crashed ? 'has-crashed' : ''}`} title={titleParts.join(', ')}>
-                  {running}
+                  {liveCount}
                   {exited > 0 && <span className="project-badge-exited">·{exited}</span>}
                   {crashed > 0 && <span className="project-badge-crashed" aria-hidden="true" />}
                 </span>
@@ -658,11 +682,40 @@ export function ProjectsList({
           </div>
           {(() => {
             const list = liveTerminals(terminals[p.id]);
-            if (!list.length) return null;
+            const liveThreads = liveThreadsByProject.get(p.id) ?? [];
+            if (!list.length && !liveThreads.length) return null;
             if (!isProjectExpanded(p)) return null;
             const activeTab = selectedId === p.id ? selectedTabId[p.id] : undefined;
             return (
               <div className="project-terminals" role="list" aria-label={`Live sessions in ${p.name}`}>
+                {liveThreads.map((thread) => {
+                  const title = threadTitle(thread);
+                  const state = threadStatusToAgentState(thread.status);
+                  return (
+                    <div key={thread.id} role="listitem">
+                      <button
+                        type="button"
+                        className="project-terminal-row is-thread"
+                        data-kind="thread"
+                        data-testid="project-thread-row"
+                        onClick={() => navigate(getThreadRoutePath(thread.id))}
+                        aria-label={title}
+                        title={`${title} · ${thread.status}`}
+                      >
+                        <span className="tab-profile-icon" aria-hidden="true">
+                          <MessageSquare size={14} />
+                        </span>
+                        <span className="project-terminal-text">
+                          <span className="project-terminal-name">{title}</span>
+                          <span className="project-terminal-detail">
+                            {state === 'blocked' ? 'Needs you' : 'Working'} · Thread
+                          </span>
+                        </span>
+                        <FleetKindChip kind="thread" />
+                      </button>
+                    </div>
+                  );
+                })}
                 {list.map((t) => {
                   const isUnread = !!unread[t.id] && activeTab !== t.id;
                   return (
@@ -683,6 +736,7 @@ export function ProjectsList({
                           <AgentRowDetail session={t} />
                         </span>
                         <AgentStatusDot sessionId={t.id} />
+                        <FleetKindChip kind="agent" />
                       </button>
                     </div>
                   );

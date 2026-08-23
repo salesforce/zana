@@ -25,6 +25,36 @@ describe('HomeAgentComposer layout', () => {
   });
 });
 
+describe('ThreadCommandComposer chrome', () => {
+  it('keeps the follow-up box compact and aligned to the conversation column', () => {
+    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const editor = css.slice(
+      css.indexOf('.thread-command-editor.ProseMirror,\n.thread-command-editor {'),
+      css.indexOf('.thread-command-editor.ProseMirror p.is-editor-empty:first-child::before')
+    );
+    expect(editor).toContain('min-height: 40px;');
+    expect(editor).toContain('max-height: 12rem;');
+    expect(editor).not.toContain('min-height: 80px;');
+    expect(editor).not.toContain('max-height: 70dvh;');
+
+    const threadComposer = css.slice(
+      css.indexOf('.thread-detail-view > .thread-command-composer {'),
+      css.indexOf('.thread-detail-header {')
+    );
+    expect(threadComposer).toContain('max-width: 46rem;');
+    expect(threadComposer).toContain('margin-inline: auto;');
+    expect(threadComposer).toContain('flex: 0 0 auto;');
+
+    const wide = css.slice(
+      css.indexOf('@media (min-width: 1280px) {'),
+      css.indexOf('.thread-detail-header {')
+    );
+    expect(wide).toContain('max-width: 52rem;');
+    expect(wide).toContain('min-height: 52px;');
+    expect(wide).toContain('max-height: 16rem;');
+  });
+});
+
 describe('ThreadCommandComposer pinning', () => {
   it('locks to a passed project and skips the scratch default', () => {
     const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
@@ -56,12 +86,16 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain('thread-env-label');
     expect(source).toContain('thread-command-composer-meta');
     expect(source).toContain("<Laptop size={14}");
-    expect(source).toContain("{threadId && (");
+    expect(source).toContain("{threadId ? (");
+    expect(source).toContain('threadId && shouldShowThreadStop(threadId, status)');
+    expect(source).toContain('data-testid="thread-command-stop"');
     expect(source).toContain('ariaLabel="Permission mode"');
     expect(source).toContain('VoiceRecordingBar');
     expect(source).toContain('Start voice input');
     expect(source).toContain('thread-command-expand');
     expect(source).toContain('Make prompt box larger');
+    expect(source).toContain('<ThreadContextMeter');
+    expect(source).toContain('contextWindowUsage');
     expect(source).toContain('onTranscript');
     expect(source).not.toContain('Queue if active');
     expect(source).not.toContain('VoiceInputButton');

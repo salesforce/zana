@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
+import type { WorkspaceFileStatus } from '@zana-ai/zcc-domain';
 import { ThreadConversationToc } from './ThreadConversationToc.js';
-import { ThreadWorkspaceBanner } from './ThreadWorkspaceBanner.js';
+import {
+  ThreadWorkspaceBanner,
+  ThreadWorkspaceBannerView,
+  workspaceFileCountLabel,
+  workspaceFileStatText
+} from './ThreadWorkspaceBanner.js';
 import { hunkForPath } from './thread-diff.js';
 import { ExpandableTimelineRow } from './timeline/ExpandableTimelineRow.js';
-import { ThreadWorkflowChips, ThreadPromptModeChip } from './timeline/ThreadBanners.js';
+import { ThreadWorkflowChips, ThreadPromptModeChip, ThreadStatusBadge } from './timeline/ThreadBanners.js';
 
 describe('thread TOC', () => {
   it('renders outline items that jump by id', () => {
@@ -53,11 +59,100 @@ describe('thread TOC', () => {
   });
 });
 
+function file(overrides: Partial<WorkspaceFileStatus> & Pick<WorkspaceFileStatus, 'path'>): WorkspaceFileStatus {
+  return {
+    kind: 'modified',
+    staged: false,
+    additions: null,
+    deletions: null,
+    ...overrides
+  };
+}
+
 describe('workspace banner', () => {
   it('renders nothing until environment status arrives', () => {
     expect(renderToStaticMarkup(
       <ThreadWorkspaceBanner environmentId={null} onOpenDiff={() => undefined} />
     )).toBe('');
+  });
+
+  it('collapses dirty files into a count plus Review, listing basenames inside', () => {
+    const html = renderToStaticMarkup(
+      <ThreadWorkspaceBannerView
+        files={[
+          file({ path: 'apps/app/src/components/AgentBoard.tsx', additions: 84, deletions: 22 }),
+          file({ path: 'apps/app/src/styles/global.css', kind: 'added', additions: 52, deletions: 0 }),
+          file({ path: 'gone.ts', kind: 'deleted', additions: 0, deletions: 9 }),
+          file({ path: 'notes.md', kind: 'modified' }),
+          file({ path: 'README.md', kind: 'untracked' })
+        ]}
+        onOpenDiff={() => undefined}
+      />
+    );
+    expect(html).toContain('data-testid="thread-workspace-banner"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain('5 Files');
+    expect(html).toContain('data-testid="thread-workspace-review"');
+    expect(html).toContain('Review');
+    expect(html).toContain('AgentBoard.tsx');
+    expect(html).toContain('global.css');
+    expect(html).toContain('gone.ts');
+    expect(html).toContain('notes.md');
+    expect(html).toContain('README.md');
+    expect(html).toContain('+84');
+    expect(html).toContain('-22');
+    expect(html).toContain('+52');
+    expect(html).toContain('-9');
+    expect(html).toContain('title="apps/app/src/components/AgentBoard.tsx"');
+    expect(html).not.toContain('Workspace changed');
+    expect(html).not.toContain('View all');
+  });
+
+  it('marks a truncated list as a lower bound and keeps the more-changes hint', () => {
+    const html = renderToStaticMarkup(
+      <ThreadWorkspaceBannerView
+        files={[file({ path: 'src/a.ts' })]}
+        filesTruncated
+        onOpenDiff={() => undefined}
+      />
+    );
+    expect(html).toContain('1+ Files');
+    expect(html).toContain('More changes…');
+  });
+
+  it('renders nothing when there are no files', () => {
+    expect(renderToStaticMarkup(
+      <ThreadWorkspaceBannerView files={[]} onOpenDiff={() => undefined} />
+    )).toBe('');
+  });
+});
+
+describe('workspace file presentation', () => {
+  it('pluralizes the collapsed count and marks truncated totals', () => {
+    expect(workspaceFileCountLabel(1)).toBe('1 File');
+    expect(workspaceFileCountLabel(27)).toBe('27 Files');
+    expect(workspaceFileCountLabel(8, true)).toBe('8+ Files');
+  });
+
+  it('prefers diff stats and falls back to the git kind letter', () => {
+    expect(workspaceFileStatText(file({
+      path: 'a.ts',
+      additions: 66,
+      deletions: 24
+    }))).toBe('+66 -24');
+    expect(workspaceFileStatText(file({
+      path: 'b.ts',
+      kind: 'added',
+      additions: 12,
+      deletions: 0
+    }))).toBe('+12');
+    expect(workspaceFileStatText(file({
+      path: 'c.ts',
+      kind: 'deleted',
+      additions: 0,
+      deletions: 0
+    }))).toBe('D');
+    expect(workspaceFileStatText(file({ path: 'd.ts', kind: 'modified' }))).toBe('M');
   });
 });
 
@@ -108,5 +203,11 @@ describe('expandable row and chips', () => {
         completedAt: null
       }]} />
     )).toContain('Build');
+    expect(renderToStaticMarkup(<ThreadStatusBadge status="active" />)).toContain('Active');
+    expect(renderToStaticMarkup(<ThreadStatusBadge status="active" />)).toContain('thread-status-badge is-working');
+    expect(renderToStaticMarkup(<ThreadStatusBadge status="idle" />)).toContain('is-idle');
+    expect(renderToStaticMarkup(<ThreadStatusBadge status="error" />)).toContain('is-blocked');
+    expect(renderToStaticMarkup(<ThreadStatusBadge status="error" />)).toContain('Error');
+    expect(renderToStaticMarkup(<ThreadStatusBadge status="" />)).toBe('');
   });
 });

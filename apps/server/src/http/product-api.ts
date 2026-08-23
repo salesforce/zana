@@ -38,7 +38,7 @@ import { normalizeRepoUrl } from '../services/projects/git-clone.js';
 import { harnessDescriptors, harnessEffectiveDefault, harnessVerify } from './harness-via-rpc.js';
 import { isSafeRelPath, listLibraryDocs, listQuickPrompts, readLibraryDoc } from './library-via-host.js';
 import { listProjectDir, listProjectPaths, readProjectFile } from './project-fs-via-host.js';
-import { getConversationThread, getEnvironment, listConversationThreadEvents, listConversationThreadsByProject, listLiveConversationThreads, nextConversationEventSequence } from '@zana-ai/zcc-db';
+import { getConversationThread, getEnvironment, listConversationThreadEvents, listConversationThreadsByProject, listVisibleConversationThreads, nextConversationEventSequence } from '@zana-ai/zcc-db';
 import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
 import { parseMultipartVoiceForm, readVoiceBody } from './multipart-voice.js';
 import {
@@ -476,7 +476,7 @@ export async function handleProductHttp(
       const projectId = requestUrl.searchParams.get('projectId');
       const threads = projectId
         ? listConversationThreadsByProject(ctx.db, projectId)
-        : listLiveConversationThreads(ctx.db);
+        : listVisibleConversationThreads(ctx.db);
       sendJson(response, 200, { threads: threads.map((thread) => conversationThreadView(ctx, thread)) });
       return true;
     }

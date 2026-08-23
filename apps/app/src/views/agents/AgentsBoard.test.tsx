@@ -19,20 +19,28 @@ describe('AgentsBoard', () => {
   });
 
   it('embeds the Home composer and AuroraGrid on both empty scopes', () => {
-    const emptyStart = board.indexOf('cards.length === 0 ? (');
-    const filterStart = board.indexOf('isGlobal && visibleCards.length === 0');
+    const emptyStart = board.indexOf('fleet.length === 0 ? (');
+    const filterStart = board.indexOf('isGlobal && visibleFleet.length === 0');
     expect(emptyStart).toBeGreaterThan(-1);
     expect(filterStart).toBeGreaterThan(emptyStart);
     const emptyBranch = board.slice(emptyStart, filterStart);
     expect(emptyBranch).toContain('<AuroraGrid />');
     expect(emptyBranch).not.toContain('<HomeAgentComposer');
-    expect(emptyBranch).toContain('No agents running');
-    expect(emptyBranch).toContain('No agents yet');
+    expect(emptyBranch).toContain('No agents or threads');
+    expect(emptyBranch).toContain('No agents or threads yet');
     expect(board).toContain('<HomeAgentComposer project={scopedProject} />');
 
     const filterBranch = board.slice(filterStart, board.indexOf('<AgentBoardLanes', filterStart));
     expect(filterBranch).not.toContain('<AuroraGrid');
     expect(filterBranch).not.toContain('<HomeAgentComposer');
+  });
+
+  it('merges visible threads into lanes while keeping close-idle PTY-only', () => {
+    expect(board).toContain('threadFleetItem');
+    expect(board).toContain('fleetAgentCards(visibleFleet)');
+    expect(board).toContain('item.kind === \'thread\'');
+    expect(board).toContain('setCloseIdleTarget(reclaimableAgents)');
+    expect(board).toContain('<AgentMonitor cards={visibleFleet}');
   });
 });
 

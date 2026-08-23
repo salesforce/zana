@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
+import { readFileSync } from 'node:fs';
 
 const setAgentsBoardView = vi.fn();
 
@@ -21,6 +22,7 @@ vi.mock('@/thread-store', () => ({
     selector({ threads: [], load: () => undefined })
 }));
 
+vi.mock('@/hooks/useEnsureThreads', () => ({ useEnsureThreads: () => undefined }));
 vi.mock('@/lib/windowScope', () => ({ getScopedProjectId: () => null }));
 vi.mock('@/lib/profileIcon', () => ({ profileIcon: () => null }));
 vi.mock('@/lib/sessionBuckets', () => ({ isRecentlyFinished: () => false }));
@@ -44,5 +46,12 @@ describe('AgentsListPane', () => {
     openFullAgentsList(setAgentsBoardView);
 
     expect(setAgentsBoardView).toHaveBeenCalledWith('list');
+  });
+
+  it('mixes threads into status groups instead of a dedicated Threads section', () => {
+    const source = readFileSync(new URL('./AgentsList.tsx', import.meta.url), 'utf8');
+    expect(source).not.toContain('data-testid="thread-list"');
+    expect(source).toContain("entry.kind === 'thread'");
+    expect(source).toContain('<FleetKindChip kind="agent" />');
   });
 });

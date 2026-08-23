@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { WorkRowBody } from './WorkRowBody.js';
-import { ThreadContextChip, ThreadGoalBanner, ThreadWorkingIndicator } from './ThreadBanners.js';
+import { ThreadGoalBanner, ThreadWorkingIndicator } from './ThreadBanners.js';
 import { ConversationRow } from './ConversationRow.js';
 import { TimelineTitleView, stopTitleEvent } from './TimelineTitleView.js';
 import { mentionPillLabel } from './mention-pills.js';
@@ -309,7 +309,7 @@ describe('conversation and banners', () => {
     expect(resolveQuestionAnswer('  ', ['Continue?'])).toBe('Continue?');
   });
 
-  it('shows thinking, goal, and context chips', () => {
+  it('shows thinking and goal chips', () => {
     expect(renderToStaticMarkup(
       <ThreadWorkingIndicator status="active" thinking={{ id: 'th', text: 'Planning', startedAt: 1, updatedAt: 1 }} />
     )).toContain('Planning');
@@ -324,9 +324,6 @@ describe('conversation and banners', () => {
         timeUsedSeconds: 0
       }} />
     )).toContain('Ship the UI');
-    expect(renderToStaticMarkup(
-      <ThreadContextChip usage={{ usedTokens: 50, modelContextWindow: 100, estimated: true }} />
-    )).toContain('~50% context');
   });
 });
 

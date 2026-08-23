@@ -19,7 +19,7 @@ export interface ThreadListItem {
 interface ThreadStore {
   threads: ThreadListItem[];
   loading: boolean;
-  load(projectId?: string): Promise<void>;
+  load(): Promise<void>;
   upsert(thread: ThreadListItem): void;
   remove(id: string): void;
 }
@@ -42,14 +42,18 @@ function ensureThreadUpdates(): void {
   });
 }
 
+function withoutArchived(threads: ThreadListItem[]): ThreadListItem[] {
+  return threads.filter((row) => !row.archivedAt);
+}
+
 export const useThreads = create<ThreadStore>((set, get) => ({
   threads: [],
   loading: false,
-  async load(projectId) {
+  async load() {
     ensureThreadUpdates();
     set({ loading: true });
     try {
-      const threads = await product.threads.list(projectId);
+      const threads = withoutArchived(await product.threads.list());
       set({ threads, loading: false });
     } catch {
       set({ loading: false });
@@ -58,6 +62,10 @@ export const useThreads = create<ThreadStore>((set, get) => ({
   upsert(thread) {
     ensureThreadUpdates();
     const threads = get().threads.filter((row) => row.id !== thread.id);
+    if (thread.archivedAt) {
+      set({ threads });
+      return;
+    }
     set({ threads: [thread, ...threads] });
   },
   remove(id) {

@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
@@ -20,7 +21,14 @@ const h = vi.hoisted(() => ({
     toggleSidebar: vi.fn(),
     openAgentModal: vi.fn()
   },
-  status: { byId: { 'agent-1': 'working' } }
+  status: { byId: { 'agent-1': 'working' } },
+  threads: [] as Array<{
+    id: string;
+    projectId: string;
+    status: string;
+    title: string;
+    archivedAt?: number | null;
+  }>
 }));
 
 vi.mock('../../store', () => ({
@@ -35,6 +43,10 @@ vi.mock('../../store', () => ({
     getState: () => ({ byId: {} })
   })
 }));
+vi.mock('../../thread-store', () => ({
+  useThreads: (selector: (state: { threads: typeof h.threads }) => unknown) => selector({ threads: h.threads })
+}));
+vi.mock('../../hooks/useEnsureThreads', () => ({ useEnsureThreads: () => undefined }));
 vi.mock('../FavoriteStar', () => ({ FavoriteStar: () => null }));
 vi.mock('../agentCardActions', () => ({
   useAgentCardActions: () => ({
@@ -54,20 +66,51 @@ import { AgentTray } from '../AgentTray.js';
 
 describe('AgentTray', () => {
   it('keeps a working agent visible beneath the Agents destination', () => {
-    const markup = renderToStaticMarkup(<AgentTray placement="inline" />);
+    h.threads = [];
+    const markup = renderToStaticMarkup(<MemoryRouter><AgentTray placement="inline" /></MemoryRouter>);
 
     expect(markup).toContain('class="agent-tray agent-tray--inline"');
     expect(markup).toContain('Review the sidebar');
     expect(markup).toContain('Command Center');
   });
 
-  it('keeps an inline empty state visible when no agents are active', () => {
+  it('keeps an inline empty state visible when no agents or threads are active', () => {
     h.data.terminals = {} as typeof h.data.terminals;
     h.status.byId = {} as typeof h.status.byId;
+    h.threads = [];
 
-    const markup = renderToStaticMarkup(<AgentTray placement="inline" />);
+    const markup = renderToStaticMarkup(<MemoryRouter><AgentTray placement="inline" /></MemoryRouter>);
 
     expect(markup).toContain('class="agent-tray-empty"');
-    expect(markup).toContain('No active agents');
+    expect(markup).toContain('No active agents or threads');
+  });
+
+  it('shows a project-scoped idle thread in the workspace tray but not the global tray', () => {
+    h.data.terminals = {} as typeof h.data.terminals;
+    h.status.byId = {} as typeof h.status.byId;
+    h.threads = [
+      {
+        id: 'thread-1',
+        projectId: 'project-1',
+        status: 'idle',
+        title: 'Idle review'
+      }
+    ];
+
+    const workspace = renderToStaticMarkup(
+      <MemoryRouter>
+        <AgentTray placement="inline" projectId="project-1" />
+      </MemoryRouter>
+    );
+    expect(workspace).toContain('Idle review');
+    expect(workspace).toContain('data-kind="thread"');
+
+    const global = renderToStaticMarkup(
+      <MemoryRouter>
+        <AgentTray placement="inline" />
+      </MemoryRouter>
+    );
+    expect(global).not.toContain('Idle review');
+    expect(global).toContain('No active agents or threads');
   });
 });

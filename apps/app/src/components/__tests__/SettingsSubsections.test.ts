@@ -4,6 +4,14 @@ import { fileURLToPath } from 'node:url';
 import { SETTINGS_SECTIONS, SETTINGS_SUBSECTIONS } from '@/views/settings/SettingsView';
 
 describe('Settings subsection navigation', () => {
+  it('lists Install status, then Thread and Legacy Agent', () => {
+    expect(SETTINGS_SUBSECTIONS.harness?.slice(0, 3)).toEqual([
+      { id: 'harness-status', label: 'Install status' },
+      { id: 'harness-thread', label: 'Thread' },
+      { id: 'harness-legacy', label: 'Legacy Agent' }
+    ]);
+  });
+
   it('lists Git worktrees under global Agent settings', () => {
     expect(SETTINGS_SUBSECTIONS.agents).toContainEqual({
       id: 'git-worktrees',

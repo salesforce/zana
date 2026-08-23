@@ -56,4 +56,24 @@ describe('SidebarResizer', () => {
     expect(store).toContain('if (typeof config.sidebarWidth === \'number\')');
     expect(store).toContain('if (typeof next.sidebarWidth === \'number\')');
   });
+
+  it('keeps the grab zone inside the sidebar box, not overhanging into content', () => {
+    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const source = readFileSync(new URL('../SidebarResizer.tsx', import.meta.url), 'utf8');
+    const resizerBlock = css.slice(
+      css.indexOf('.sidebar-resizer {'),
+      css.indexOf('.sidebar-resizer::after {')
+    );
+    const afterBlock = css.slice(
+      css.indexOf('.sidebar-resizer::after {'),
+      css.indexOf('.sidebar-resizer:hover::after')
+    );
+
+    expect(resizerBlock).toContain('right: 0;');
+    expect(resizerBlock).not.toContain('right: -12px');
+    expect(afterBlock).toContain('right: 0;');
+    expect(source).toContain('right: 0');
+    expect(source).not.toContain('right: -12px');
+    expect(source).not.toContain('Straddles the shared');
+  });
 });

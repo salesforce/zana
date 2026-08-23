@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { Bot, AlertCircle, Zap, Moon, CheckCircle2, HelpCircle, CheckCheck, PauseCircle, Network, Crown, Users, Clock, GitBranch, ShieldCheck, ShieldAlert, Boxes, Unplug } from 'lucide-react';
+import { Bot, AlertCircle, Zap, Moon, CheckCircle2, HelpCircle, CheckCheck, PauseCircle, Network, Crown, Users, Clock, GitBranch, ShieldCheck, ShieldAlert, Boxes, Unplug, MessageSquare } from 'lucide-react';
 import type { AgentState, IdleResolution, IdleTriageResult, OverseerActivity, Persona, ScheduledTask, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { scheduleSummary } from '@zana-ai/zcc-domain/schedule-spec';
 import { profileIcon, personaIcon } from '../lib/profileIcon.js';
@@ -9,6 +9,14 @@ import { useSessionGit } from '../lib/gitInfo.js';
 import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from './agentCardActions.js';
 import { FavoriteStar } from './FavoriteStar.js';
 import { PromptModal } from './PromptModal.js';
+import { FleetKindChip } from './FleetKindChip.js';
+import {
+  agentFleetItem,
+  fleetAgentCards,
+  fleetMatchesLane,
+  groupFleetByProject,
+  type FleetItem
+} from './fleet-item.js';
 
 /**
  * Shared, presentational Kanban-style Agents board. {@link AgentsBoard} feeds
@@ -531,17 +539,17 @@ function SquadWorkers({
 }
 
 interface AgentBoardLanesProps {
-  cards: AgentCard[];
-  /** Which session id is the active tab (highlighted). */
+  cards: FleetItem[];
+  /** Which session or thread id is the active tab (highlighted). */
   activeId?: string;
   /**
-   * Card click — peek at the agent (opens the inspector modal). The
-   * context-menu "Open"/"View" item uses {@link onPick} for the heavier
+   * Card click — peek at an agent (inspector modal) or open a thread.
+   * The context-menu "Open"/"View" item uses {@link onPick} for the heavier
    * navigate-to-workspace path instead, so a glance and a jump stay distinct.
    */
-  onInspect: (c: AgentCard) => void;
+  onInspect: (c: FleetItem) => void;
   /** Navigate to the agent's workspace tab (context-menu "Open"/"View"). */
-  onPick: (c: AgentCard) => void;
+  onPick: (c: FleetItem) => void;
   /** Show a per-card project chip (the global, cross-project board). */
   showProject?: boolean;
 }
@@ -575,14 +583,21 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
   }, []);
 
   const now = Date.now();
+  const agentCards = useMemo(() => fleetAgentCards(cards), [cards]);
+  const threadItems = useMemo(() => cards.filter((item) => item.kind === 'thread'), [cards]);
   // Collapse each launched squad into a single board card: a cohort with a live
   // orchestrator keeps only that card in the lanes, with its workers nested
   // underneath — so a team reads as one unit instead of spraying worker cards
   // across every lane. Solo agents + driverless worker fleets are untouched.
-  // Memoized on `cards` alone; the nested rows re-render with the parent.
-  const { laneCards: boardCards, workersByOrchestrator } = useMemo(
-    () => partitionSquads(cards),
-    [cards]
+  // Threads skip squad partitioning. Memoized on `cards` alone; nested rows
+  // re-render with the parent.
+  const { laneCards: squadCards, workersByOrchestrator } = useMemo(
+    () => partitionSquads(agentCards),
+    [agentCards]
+  );
+  const boardCards = useMemo<FleetItem[]>(
+    () => [...squadCards.map(agentFleetItem), ...threadItems],
+    [squadCards, threadItems]
   );
   // The expensive part — filtering every card into its lane and sorting the
   // idle lane — depends ONLY on `boardCards` + `sensitivity`, not on the 1s
@@ -593,7 +608,9 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
   const sortedLanes = useMemo(
     () =>
       LANES.map((lane) => {
-        const laneCards = boardCards.filter((c) => lane.match(c, sensitivity));
+        const laneCards = boardCards.filter((item) =>
+          fleetMatchesLane(item, lane.key, (card) => lane.match(card, sensitivity))
+        );
         // In the Idle lane, order most-recent first — the agent that just
         // settled leads, so the latest is easiest to find. Cards missing a
         // `stateSince` (never transitioned this session) sort last.
@@ -602,10 +619,12 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
           // bottom — they're the lowest-urgency thing in the lane. Within each
           // band, keep the most-recently-idle-first ordering.
           laneCards.sort((a, b) => {
-            const aDone = a.triage?.resolution === 'done' ? 1 : 0;
-            const bDone = b.triage?.resolution === 'done' ? 1 : 0;
+            const aDone = a.kind === 'agent' && a.card.triage?.resolution === 'done' ? 1 : 0;
+            const bDone = b.kind === 'agent' && b.card.triage?.resolution === 'done' ? 1 : 0;
             if (aDone !== bDone) return aDone - bDone;
-            return (b.stateSince ?? 0) - (a.stateSince ?? 0);
+            const aSince = a.kind === 'agent' ? (a.card.stateSince ?? 0) : a.thread.createdAt;
+            const bSince = b.kind === 'agent' ? (b.card.stateSince ?? 0) : b.thread.createdAt;
+            return bSince - aSince;
           });
         }
         return { lane, cards: laneCards };
@@ -619,7 +638,12 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
     // the card disappears ~60s after it ends rather than piling up forever).
     // This filter reads `now`, so it stays OUT of the memo above.
     if (lane.key === 'done') {
-      return { ...lane, cards: laneCards.filter((c) => isRecentlyFinished(c.session, now)) };
+      return {
+        ...lane,
+        cards: laneCards.filter(
+          (item) => item.kind === 'agent' && isRecentlyFinished(item.card.session, now)
+        )
+      };
     }
     return { ...lane, cards: laneCards };
   });
@@ -680,7 +704,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
         className={`agent-card lane-${laneKey} ${active ? 'active' : ''} ${bad ? 'bad' : ''} ${
           cohort ? `has-cohort ${isOrchestrator ? 'cohort-orch' : 'cohort-worker'}` : ''
         }`}
-        onClick={() => onInspect(c)}
+        onClick={() => onInspect(agentFleetItem(c))}
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -704,6 +728,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
             {persona ? personaIcon(persona, 14) : profileIcon(t.profile, 14)}
           </span>
           <span className="agent-card-title">{t.title}</span>
+          <FleetKindChip kind="agent" />
           {!exited && <span className={`tab-agent-dot agent-${c.state}`} aria-hidden="true" />}
           <FavoriteStar session={t} className="agent-card-fav" />
         </span>
@@ -831,10 +856,47 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
     return (
       <div key={t.id} className="agent-squad">
         {cardButton}
-        <SquadWorkers workers={nestedWorkers} now={now} onInspect={onInspect} personas={personas} />
+        <SquadWorkers workers={nestedWorkers} now={now} onInspect={(card) => onInspect(agentFleetItem(card))} personas={personas} />
       </div>
     );
   };
+
+  const renderThreadCard = (item: Extract<FleetItem, { kind: 'thread' }>, laneKey: LaneKey) => (
+    <button
+      key={item.id}
+      type="button"
+      className={`agent-card is-thread lane-${laneKey} ${item.id === activeId ? 'active' : ''}`}
+      data-kind="thread"
+      onClick={() => onInspect(item)}
+      aria-current={item.id === activeId ? 'true' : undefined}
+      title={`${item.title} · ${item.projectName} · ${item.thread.status}`}
+    >
+      {laneKey === 'working' && (
+        <span className="agent-card-activity" aria-hidden="true">
+          <span className="agent-card-activity-bar" />
+        </span>
+      )}
+      <span className="agent-card-head">
+        <span className="agent-card-icon">
+          <MessageSquare size={14} aria-hidden="true" />
+        </span>
+        <span className="agent-card-title">{item.title}</span>
+        <span className={`tab-agent-dot agent-${item.state}`} aria-hidden="true" />
+        <FleetKindChip kind="thread" />
+      </span>
+      <span className="agent-card-meta">
+        {showProject && (
+          <span className="agent-card-project" title={item.projectName}>
+            <span className="agent-card-project-name">{item.projectName}</span>
+          </span>
+        )}
+        <span className="agent-card-sub">{item.thread.status}</span>
+      </span>
+    </button>
+  );
+
+  const renderItem = (item: FleetItem, laneKey: LaneKey, grouped = false) =>
+    item.kind === 'thread' ? renderThreadCard(item, laneKey) : renderCard(item.card, laneKey, grouped);
 
   return (
     <div className="agents-board-lanes">
@@ -855,7 +917,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
                 // reads project-by-project. Preserve the lane's card order
                 // (e.g. idle's most-recent-first) when forming groups — the
                 // first card seen for a project fixes that project's position.
-                groupCardsByProject(lane.cards).map((group) => (
+                groupFleetByProject(lane.cards).map((group) => (
                   <div key={group.projectId} className="agents-lane-group">
                     <div className="agents-lane-group-head" title={group.projectName}>
                       <span
@@ -866,11 +928,11 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
                       <span className="agents-lane-group-name">{group.projectName}</span>
                       <span className="agents-lane-group-count">{group.cards.length}</span>
                     </div>
-                    {group.cards.map((c) => renderCard(c, lane.key, true))}
+                    {group.cards.map((item) => renderItem(item, lane.key, true))}
                   </div>
                 ))
               ) : (
-                lane.cards.map((c) => renderCard(c, lane.key))
+                lane.cards.map((item) => renderItem(item, lane.key))
               )}
             </div>
           </section>
@@ -878,7 +940,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
       })}
 
       {menu && (
-        <AgentCardMenu menu={menu} setMenu={setMenu} actions={actions} onPick={onPick} />
+        <AgentCardMenu menu={menu} setMenu={setMenu} actions={actions} onPick={(card) => onPick(agentFleetItem(card))} />
       )}
       {rename && (
         <PromptModal

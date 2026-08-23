@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { product } from '../../lib/product-client.js';
-import { Bot, CheckCircle2, ChevronRight, RefreshCw, XCircle } from 'lucide-react';
+import { AlertTriangle, Bot, CheckCircle2, ChevronRight, RefreshCw, XCircle } from 'lucide-react';
 import type { AppConfig, HarnessFamily, HarnessVerifyResult, LaunchProfileId } from '@zana-ai/zcc-domain/product';
 import type { HarnessAdapterDescriptor } from '@zana-ai/zcc-domain/harness-adapter';
-import { useData } from '@/store';
+import { useData, useUi } from '@/store';
 import { profileIcon } from '@/lib/profileIcon';
 import { Section, Field, ToggleSwitch, ChipField, TextArgsField } from '@/components/settings/FormFields';
 import { HarnessOptionSelect } from '@/components/HarnessOptionSelect';
@@ -15,15 +15,13 @@ const USE_HARNESS_DEFAULT = { id: '', label: 'Use harness default' } as const;
 const CODEX_UI = providerUiSchema('codex');
 
 /**
- * Settings → Code Harness. Each harness FAMILY is a COMPACT ROW — glyph + name +
- * live install status + a show/hide switch — with the binary path (and PI's
- * launcher-wide provider/model/thinking defaults) tucked behind an inline
- * "Advanced" disclosure. This mirrors the Editor tab's `OpenerRow` layout so the
- * two "which tools are available" surfaces read the same.
+ * Settings → Code Harness. The page leads with a verification list (install
+ * probe + enable switch for each coding CLI), then Thread / Legacy Agent tabs
+ * for the settings that belong to each launch path.
  *
- * The install probe (`<binary> --version`) is folded into each row so the
- * operator sees WHY an enabled harness might be greyed-out in the New Agent modal
- * (its CLI isn't on PATH) right where they toggle it. Claude Code is
+ * The install probe (`<binary> --version`) is folded into the status rows so
+ * the operator sees WHY an enabled harness might be greyed-out in the New Agent
+ * modal (its CLI isn't on PATH) right where they toggle it. Claude Code is
  * `alwaysEnabled` — it has no switch (like Finder in the opener bar), only a
  * status badge. Optional families auto-activate when the CLI is found; the
  * switch is an explicit hide, not a required opt-in.
@@ -60,6 +58,36 @@ const ENABLE_KEY: Partial<Record<HarnessFamily, keyof AppConfig>> = {
   pi: 'harnessPiEnabled',
   opencode: 'harnessOpenCodeEnabled'
 };
+
+export function familyEnabled(family: HarnessFamily, config: AppConfig, fallback: boolean): boolean {
+  const key = ENABLE_KEY[family];
+  if (!key) return true;
+  return (config[key] as boolean | undefined) ?? fallback;
+}
+
+export function summarizeHarnessHealth(
+  status: HarnessVerifyResult[],
+  config: AppConfig
+): { ok: boolean; message: string; installed: number; enabled: number; total: number } {
+  const total = status.length;
+  if (total === 0) {
+    return { ok: false, message: 'Checking…', installed: 0, enabled: 0, total: 0 };
+  }
+  const enabledFlags = status.map((row) => familyEnabled(row.family, config, row.enabled));
+  const installed = status.filter((row) => row.installed).length;
+  const enabled = enabledFlags.filter(Boolean).length;
+  if (installed === total && enabled === total) {
+    return { ok: true, message: `All ${total} installed and enabled`, installed, enabled, total };
+  }
+  const parts: string[] = [];
+  if (installed !== total) parts.push(`${installed} of ${total} installed`);
+  const disabled = status.filter((_, index) => !enabledFlags[index]);
+  if (disabled.length) {
+    const names = disabled.map((row) => row.label).join(', ');
+    parts.push(`${names} ${disabled.length === 1 ? 'is' : 'are'} off`);
+  }
+  return { ok: false, message: parts.join(' · '), installed, enabled, total };
+}
 
 /** The `AppConfig` binary-override key per family. */
 const BINARY_KEY: Record<HarnessFamily, keyof AppConfig> = {
@@ -98,9 +126,9 @@ function StatusBadge({ h, enabled }: { h: HarnessVerifyResult; enabled: boolean 
 }
 
 /**
- * One harness family as a compact row: glyph + name + blurb + install badge +
- * show/hide switch (absent for the always-on Claude family), with binary + extra
- * defaults behind an "Advanced" disclosure.
+ * One harness family as a compact row. `status` mode is install + enable only
+ * (the verification list). `settings` mode is the Legacy Agent advanced
+ * disclosure (binary / routing) without a second enable switch.
  */
 function HarnessRow({
   h,
@@ -108,7 +136,8 @@ function HarnessRow({
   onConfigDraft,
   onUpdate,
   descriptor,
-  advanced
+  advanced,
+  mode
 }: {
   h: HarnessVerifyResult;
   config: AppConfig;
@@ -116,6 +145,7 @@ function HarnessRow({
   onUpdate: (patch: Partial<AppConfig>) => Promise<void>;
   descriptor?: HarnessAdapterDescriptor;
   advanced?: React.ReactNode;
+  mode: 'status' | 'settings';
 }) {
   const [open, setOpen] = useState(false);
   const enableKey = ENABLE_KEY[h.family];
@@ -266,22 +296,24 @@ function HarnessRow({
   return (
     <div
       className={`opener-row${shown ? '' : ' opener-row--off'}`}
-      id={`settings-anchor-harness-${h.family}`}
+      id={mode === 'status' ? `settings-anchor-harness-${h.family}` : undefined}
     >
       <div className="opener-row-head">
-        <button
-          type="button"
-          className="opener-row-expand"
-          aria-expanded={open}
-          aria-label={`Advanced settings for ${h.label}`}
-          onClick={() => setOpen((v) => !v)}
-        >
-          <ChevronRight
-            size={14}
-            className={`opener-row-chevron${open ? ' opener-row-chevron--open' : ''}`}
-            aria-hidden
-          />
-        </button>
+        {mode === 'settings' ? (
+          <button
+            type="button"
+            className="opener-row-expand"
+            aria-expanded={open}
+            aria-label={`Advanced settings for ${h.label}`}
+            onClick={() => setOpen((v) => !v)}
+          >
+            <ChevronRight
+              size={14}
+              className={`opener-row-chevron${open ? ' opener-row-chevron--open' : ''}`}
+              aria-hidden
+            />
+          </button>
+        ) : null}
 
         <span className="opener-row-glyph" aria-hidden>
           {profileIcon(FAMILY_PROFILE[h.family], 17)}
@@ -292,27 +324,28 @@ function HarnessRow({
           <span className="opener-row-blurb">{FAMILY_BLURB[h.family]}</span>
         </div>
 
-        <StatusBadge h={h} enabled={enabled} />
+        {mode === 'status' ? <StatusBadge h={h} enabled={enabled} /> : null}
 
-        {enableKey ? (
-          <ToggleSwitch
-            checked={enabled}
-            onChange={(on) => {
-              const patch = harnessEnablePatch(h.family, on);
-              onConfigDraft({ ...config, ...patch });
-              void onUpdate(patch);
-            }}
-            label={`Show ${h.label} in the New Agent modal`}
-          />
-        ) : (
-          // Claude Code is always on — no switch, matching Finder in the opener bar.
-          <span className="opener-row-always" title="Always available">
-            default
-          </span>
-        )}
+        {mode === 'status' ? (
+          enableKey ? (
+            <ToggleSwitch
+              checked={enabled}
+              onChange={(on) => {
+                const patch = harnessEnablePatch(h.family, on);
+                onConfigDraft({ ...config, ...patch });
+                void onUpdate(patch);
+              }}
+              label={`Show ${h.label} in the New Agent modal`}
+            />
+          ) : (
+            <span className="opener-row-always" title="Always available">
+              default
+            </span>
+          )
+        ) : null}
       </div>
 
-      {open ? (
+      {mode === 'settings' && open ? (
         <div className="opener-row-advanced">
           {binaryField}
           <fieldset disabled={!shown || !h.installed} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
@@ -424,7 +457,14 @@ export function HarnessView({
   // Track the in-flight probe so the button can show it's actively re-checking —
   // the row list stays populated during a re-check (each probe runs `--version`).
   const [checking, setChecking] = useState(false);
+  const [pane, setPane] = useState<'thread' | 'legacy'>('thread');
   const [descriptors, setDescriptors] = useState<HarnessAdapterDescriptor[] | null>(null);
+  const settingsAnchor = useUi((s) => s.settingsAnchor);
+
+  useLayoutEffect(() => {
+    if (settingsAnchor === 'harness-legacy') setPane('legacy');
+    if (settingsAnchor === 'harness-thread') setPane('thread');
+  }, [settingsAnchor]);
 
   const runCheck = () => {
     setChecking(true);
@@ -603,107 +643,173 @@ export function HarnessView({
     selectedDefaultStatus?.installed === false
   );
   const optionAvailability = new Map(status.map((entry) => [entry.family, entry]));
+  const health = summarizeHarnessHealth(status, config);
+
+  const settingsRows = status.length === 0 ? (
+    <p className="settings-help">Checking…</p>
+  ) : (
+    status.map((h) => {
+      const descriptor = descriptorsById.get(h.family);
+      const contributionIds = descriptor?.settingsContributionIds ?? (descriptors === null
+        ? h.family === 'claude'
+          ? ['claude-global-defaults']
+          : h.family === 'pi'
+            ? ['pi-global-defaults']
+            : []
+        : []);
+      const advanced = contributionIds
+        .map((id) => contributionNodes[id])
+        .filter(Boolean);
+      return (
+        <HarnessRow
+          key={h.family}
+          h={h}
+          config={config}
+          onConfigDraft={onConfigDraft}
+          onUpdate={onUpdate}
+          descriptor={descriptor}
+          advanced={advanced.length ? <>{advanced}</> : undefined}
+          mode="settings"
+        />
+      );
+    })
+  );
+
   return (
     <>
     <Section
-      anchorId="thread-providers"
-      title="Thread providers"
-      help={
-        <>
-          These plugins power Threads. They register through{' '}
-          <code>experimental_registerProvider</code> and launch via AgentRuntime
-          — not the legacy PTY harness.
-        </>
-      }
-    >
-      <ThreadProvidersPanel />
-    </Section>
-    <Section
       anchorId="harness-status"
-      title="Legacy PTY harnesses"
-      help="PTY coding-agent CLIs used only by legacyAgentSession. Global defaults apply first. Launch settings then apply in this order: Global → Project → Persona → Agent."
+      title="Install status"
+      help="Coding CLIs used by Threads and legacy agents. Enable a family here to show it in launch UIs. Check, Install or Fix re-probes each binary on your PATH."
     >
-      <Field
-        label="Default harness"
-        help="Used for defaulted new-agent launches. Explicit profile selections and pinned personas keep their profile."
-      >
-        {descriptors === null ? (
-          <span className="settings-help" role="status">Loading harness default…</span>
-        ) : (
-          <PopoverPicklist
-            value={config.defaultHarness ?? 'claude'}
-            ariaLabel="Default harness"
-            onChange={(nextHarness) => {
-              const defaultHarness = nextHarness as AppConfig['defaultHarness'];
-              onConfigDraft({ ...config, defaultHarness });
-              void onUpdate({ defaultHarness });
-            }}
-            options={defaultHarnessOptions.map((descriptor) => ({
-              value: descriptor.id,
-              label: `${descriptor.label}${descriptor.availability.installed ? '' : ' (not installed)'}`,
-              disabled: (descriptor.id !== 'shell' && optionAvailability.get(descriptor.id)?.installed === false) ||
-                (descriptor.id !== 'shell' && !!ENABLE_KEY[descriptor.id] && config[ENABLE_KEY[descriptor.id]!] === false)
-            }))}
-          />
-        )}
-      </Field>
-      {defaultUnavailable && (
-        <p className="settings-help" role="alert">
-          {unavailableDefaultMessage(config.defaultHarness!)}
-          {' '}
-          <button
-            type="button"
-            className="settings-btn"
-            onClick={() => {
-              onConfigDraft({ ...config, defaultHarness: undefined });
-              void onUpdate({ defaultHarness: undefined });
-            }}
-          >
-            Clear default
-          </button>
-        </p>
-      )}
-      <div className="opener-list">
-        {status.length === 0 ? (
-          <p className="settings-help">Checking…</p>
-        ) : (
-          status.map((h) => {
-            const descriptor = descriptorsById.get(h.family);
-            // Older preload after hot reload may not expose descriptors yet; keep
-            // existing controls available until the fresh preload is loaded.
-            const contributionIds = descriptor?.settingsContributionIds ?? (descriptors === null
-              ? h.family === 'claude'
-                ? ['claude-global-defaults']
-                : h.family === 'pi'
-                  ? ['pi-global-defaults']
-                  : []
-              : []);
-            const advanced = contributionIds
-              .map((id) => contributionNodes[id])
-              .filter(Boolean);
-            return (
-              <HarnessRow
-                key={h.family}
-                h={h}
-                config={config}
-                onConfigDraft={onConfigDraft}
-                onUpdate={onUpdate}
-                descriptor={descriptor}
-                advanced={advanced.length ? <>{advanced}</> : undefined}
-              />
-            );
-          })
-        )}
-      </div>
-
-      <div className="cred-actions">
+      <div className={`harness-health harness-health--${health.ok ? 'ok' : 'warn'}`} role="status">
+        {health.ok ? <CheckCircle2 size={16} aria-hidden /> : <AlertTriangle size={16} aria-hidden />}
+        <span className="harness-health-msg">{health.message}</span>
         <button type="button" className="cred-btn" onClick={runCheck} disabled={checking}>
           <RefreshCw size={14} className={checking ? 'harness-recheck-spin' : undefined} aria-hidden />
           {checking ? 'Checking…' : 'Check, Install or Fix'}
         </button>
       </div>
+      <div className="opener-list" data-testid="harness-status-list">
+        {status.length === 0 ? (
+          <p className="settings-help">Checking…</p>
+        ) : (
+          status.map((h) => (
+            <HarnessRow
+              key={h.family}
+              h={h}
+              config={config}
+              onConfigDraft={onConfigDraft}
+              onUpdate={onUpdate}
+              mode="status"
+            />
+          ))
+        )}
+      </div>
     </Section>
+
+    <div className="settings-section settings-section--flush">
+      <HarnessSettingsTabs pane={pane} onPaneChange={setPane} />
+      <div
+        role="tabpanel"
+        id="settings-anchor-harness-thread"
+        hidden={pane !== 'thread'}
+        data-testid="harness-thread-pane"
+      >
+        <p className="settings-help settings-section-help">
+          These plugins power Threads. They register through{' '}
+          <code>experimental_registerProvider</code> and launch via AgentRuntime
+          — not the legacy PTY harness.
+        </p>
+        <ThreadProvidersPanel />
+      </div>
+      <div
+        role="tabpanel"
+        id="settings-anchor-harness-legacy"
+        hidden={pane !== 'legacy'}
+        data-testid="harness-legacy-pane"
+      >
+        <p className="settings-help settings-section-help">
+          PTY coding-agent CLIs used only by legacyAgentSession. Global defaults apply first.
+          Launch settings then apply in this order: Global → Project → Persona → Agent.
+        </p>
+        <Field
+          label="Default harness"
+          help="Used for defaulted new-agent launches. Explicit profile selections and pinned personas keep their profile."
+        >
+          {descriptors === null ? (
+            <span className="settings-help" role="status">Loading harness default…</span>
+          ) : (
+            <PopoverPicklist
+              value={config.defaultHarness ?? 'claude'}
+              ariaLabel="Default harness"
+              onChange={(nextHarness) => {
+                const defaultHarness = nextHarness as AppConfig['defaultHarness'];
+                onConfigDraft({ ...config, defaultHarness });
+                void onUpdate({ defaultHarness });
+              }}
+              options={defaultHarnessOptions.map((descriptor) => ({
+                value: descriptor.id,
+                label: `${descriptor.label}${descriptor.availability.installed ? '' : ' (not installed)'}`,
+                disabled: (descriptor.id !== 'shell' && optionAvailability.get(descriptor.id)?.installed === false) ||
+                  (descriptor.id !== 'shell' && !!ENABLE_KEY[descriptor.id] && config[ENABLE_KEY[descriptor.id]!] === false)
+              }))}
+            />
+          )}
+        </Field>
+        {defaultUnavailable && (
+          <p className="settings-help" role="alert">
+            {unavailableDefaultMessage(config.defaultHarness!)}
+            {' '}
+            <button
+              type="button"
+              className="settings-btn"
+              onClick={() => {
+                onConfigDraft({ ...config, defaultHarness: undefined });
+                void onUpdate({ defaultHarness: undefined });
+              }}
+            >
+              Clear default
+            </button>
+          </p>
+        )}
+        <div className="opener-list" data-testid="harness-legacy-list">
+          {settingsRows}
+        </div>
+      </div>
+    </div>
     </>
+  );
+}
+
+export function HarnessSettingsTabs({
+  pane,
+  onPaneChange
+}: {
+  pane: 'thread' | 'legacy';
+  onPaneChange: (next: 'thread' | 'legacy') => void;
+}) {
+  return (
+    <div className="settings-tabs" role="tablist" aria-label="Harness settings">
+      <button
+        type="button"
+        role="tab"
+        aria-selected={pane === 'thread'}
+        className={`settings-tab${pane === 'thread' ? ' is-active' : ''}`}
+        onClick={() => onPaneChange('thread')}
+      >
+        Thread
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={pane === 'legacy'}
+        className={`settings-tab${pane === 'legacy' ? ' is-active' : ''}`}
+        onClick={() => onPaneChange('legacy')}
+      >
+        Legacy Agent
+      </button>
+    </div>
   );
 }
 

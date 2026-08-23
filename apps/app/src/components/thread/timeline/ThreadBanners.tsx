@@ -1,7 +1,6 @@
 import type { ActiveThinking, ThreadTimelineGoal, ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
-import type { ThreadContextWindowUsage } from '@zana-ai/zcc-server-contract';
 import type { TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
-import { isBusyThreadStatus, visiblePendingTodos } from '../thread-timeline-model.js';
+import { isBusyThreadStatus, threadStatusLabel, threadStatusToAgentState, visiblePendingTodos } from '../thread-timeline-model.js';
 
 export function ThreadTodoCard({ todos }: { todos: ThreadTimelinePendingTodos | null }) {
   const visible = visiblePendingTodos(todos);
@@ -88,16 +87,18 @@ export function ThreadPromptModeChip({
   );
 }
 
-export function ThreadContextChip({
-  usage
-}: {
-  usage: ThreadContextWindowUsage | null | undefined;
-}) {
-  if (!usage || usage.modelContextWindow <= 0) return null;
-  const pct = Math.min(100, Math.round((usage.usedTokens / usage.modelContextWindow) * 100));
+export function ThreadStatusBadge({ status }: { status: string }) {
+  const label = threadStatusLabel(status);
+  if (!label) return null;
+  const state = threadStatusToAgentState(status);
   return (
-    <span className="thread-chip" data-testid="thread-context-window">
-      {usage.estimated ? '~' : ''}{pct}% context
+    <span
+      className={`thread-chip thread-status-badge is-${state}`}
+      data-testid="thread-detail-status"
+      data-status={status}
+    >
+      <span className={`tab-agent-dot agent-${state}`} aria-hidden="true" />
+      {label}
     </span>
   );
 }

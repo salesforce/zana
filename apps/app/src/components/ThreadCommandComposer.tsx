@@ -5,6 +5,7 @@ import Placeholder from '@tiptap/extension-placeholder';
 import { ArrowUp, Folder, Laptop, Maximize2, Mic, Minimize2, Square } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { Project } from '@zana-ai/zcc-domain/product';
+import type { ThreadContextWindowUsage } from '@zana-ai/zcc-server-contract';
 import { product } from '../lib/product-client.js';
 import { useData } from '../store.js';
 import { useThreads } from '../thread-store.js';
@@ -29,6 +30,8 @@ import {
 import { PromptMentionExtension } from './composer/prompt-mention-extension.js';
 import { COMPOSER_TRIGGERS, type ActiveTrigger, type TypeaheadSuggestion } from './composer/types.js';
 import { useComposerSuggestions } from './composer/use-composer-suggestions.js';
+import { shouldShowThreadStop } from './thread/thread-timeline-model.js';
+import { ThreadContextMeter } from './thread/ThreadContextMeter.js';
 
 export type ThreadSendMode = 'start' | 'auto' | 'steer' | 'queue-if-active' | 'steer-if-active';
 
@@ -43,7 +46,9 @@ export interface ThreadProviderOption {
 export interface ThreadCommandComposerProps {
   project?: Project;
   threadId?: string;
+  status?: string;
   environmentLabel?: string;
+  contextWindowUsage?: ThreadContextWindowUsage | null;
   onCreated?: (threadId: string) => void;
   onOpenExplorer?: () => void;
 }
@@ -58,7 +63,9 @@ function permissionChipLabel(id: string): string {
 export function ThreadCommandComposer({
   project: pinnedProject,
   threadId,
+  status,
   environmentLabel,
+  contextWindowUsage,
   onCreated,
   onOpenExplorer
 }: ThreadCommandComposerProps) {
@@ -411,6 +418,7 @@ export function ThreadCommandComposer({
                 />
               </div>
               <div className="thread-command-footer-end">
+                <ThreadContextMeter usage={contextWindowUsage} />
                 <ComposerIconButton
                   className="voice-input-btn voice-input-btn--icon"
                   aria-label={
@@ -432,10 +440,11 @@ export function ThreadCommandComposer({
                 >
                   <Mic size={14} />
                 </ComposerIconButton>
-                {threadId && (
+                {threadId && shouldShowThreadStop(threadId, status) && (
                   <ComposerIconButton
                     aria-label="Stop"
                     title="Stop"
+                    data-testid="thread-command-stop"
                     onClick={() => void product.threads.stop(threadId)}
                   >
                     <Square size={14} />

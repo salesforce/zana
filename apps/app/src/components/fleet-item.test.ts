@@ -1,0 +1,69 @@
+import { describe, expect, it } from 'vitest';
+import type { TerminalSession } from '@zana-ai/zcc-domain/product';
+import type { AgentCard } from './AgentBoard.js';
+import type { ThreadListItem } from '../thread-store.js';
+import {
+  agentFleetItem,
+  fleetMatchesLane,
+  fleetThreadLane,
+  resolveMonitorSelection,
+  threadFleetItem,
+  threadIsLiveForRail
+} from './fleet-item.js';
+
+function thread(over: Partial<ThreadListItem> & Pick<ThreadListItem, 'id' | 'status'>): ThreadListItem {
+  return {
+    projectId: 'p1',
+    hostId: 'h1',
+    environmentId: null,
+    providerId: 'claude-code',
+    title: 'Read README',
+    createdAt: 1,
+    cwd: null,
+    branchName: null,
+    isWorktree: false,
+    ...over
+  };
+}
+
+function card(): AgentCard {
+  return {
+    session: { id: 's1', title: 'PTY agent', status: 'running', profile: 'claude' } as unknown as TerminalSession,
+    state: 'working',
+    projectId: 'p1',
+    projectName: 'Alpha'
+  };
+}
+
+describe('fleet items', () => {
+  it('maps an active thread into the Working lane', () => {
+    const item = threadFleetItem(thread({ id: 't1', status: 'active' }), { name: 'Alpha' });
+    expect(item.kind).toBe('thread');
+    expect(item.state).toBe('working');
+    expect(fleetThreadLane(item)).toBe('working');
+    expect(fleetMatchesLane(item, 'working', () => false)).toBe(true);
+    expect(fleetMatchesLane(item, 'idle', () => false)).toBe(false);
+  });
+
+  it('maps idle and error threads onto Idle and Needs you', () => {
+    expect(fleetThreadLane(threadFleetItem(thread({ id: 't1', status: 'idle' })))).toBe('idle');
+    expect(fleetThreadLane(threadFleetItem(thread({ id: 't1', status: 'error' })))).toBe('blocked');
+  });
+
+  it('treats busy and failed threads as live for the Projects rail', () => {
+    expect(threadIsLiveForRail(thread({ id: 't1', status: 'active' }))).toBe(true);
+    expect(threadIsLiveForRail(thread({ id: 't1', status: 'error' }))).toBe(true);
+    expect(threadIsLiveForRail(thread({ id: 't1', status: 'idle' }))).toBe(false);
+    expect(threadIsLiveForRail(thread({ id: 't1', status: 'active', archivedAt: 9 }))).toBe(false);
+  });
+
+  it('never feeds a thread id to the PTY monitor selection store', () => {
+    const items = [
+      threadFleetItem(thread({ id: 't1', status: 'active' })),
+      agentFleetItem(card())
+    ];
+    expect(resolveMonitorSelection(items, { sessionId: 's1', projectId: 'p1' }, null)?.kind).toBe('agent');
+    expect(resolveMonitorSelection(items, null, 't1')?.kind).toBe('thread');
+    expect(resolveMonitorSelection(items, { sessionId: 's1', projectId: 'p1' }, 't1')?.id).toBe('t1');
+  });
+});

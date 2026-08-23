@@ -43,16 +43,13 @@ export async function sendConversationTurn(
     kind: 'new-turn'
   });
   updateConversationThreadStatus(ctx.db, thread.id, 'active');
-  await ctx.hostHub.callHostOnlineRpc({
-    hostId: thread.hostId,
-    command: {
-      type: 'turn.submit',
-      threadId: thread.id,
-      environmentId: thread.environmentId,
-      input: prompt,
-      mode
-    }
-  });
+  try {
+    await submitTurnOnHost(ctx, thread, prompt, mode);
+  } catch (error) {
+    if (!isUnknownThreadHostError(error)) throw error;
+    await resumeConversationOnHost(ctx, getConversationThread(ctx.db, thread.id) ?? thread);
+    await submitTurnOnHost(ctx, thread, prompt, mode);
+  }
   const next = getConversationThread(ctx.db, thread.id) ?? thread;
   ctx.hub.emit('threads:updated', conversationThreadView(ctx, next));
   return next;
@@ -91,23 +88,7 @@ export async function resumeConversation(
   if (!thread.environmentId || !thread.providerThreadId) {
     throw new ThreadCreateError(409, 'not_resumable', 'thread has no provider session to resume');
   }
-  const environment = getEnvironment(ctx.db, thread.environmentId);
-  const dataDir = join(ctx.dataDir, 'thread-bridges', thread.providerId);
-  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-  await ctx.hostHub.callHostOnlineRpc({
-    hostId: thread.hostId,
-    command: {
-      type: 'thread.resume',
-      threadId: thread.id,
-      environmentId: thread.environmentId,
-      projectId: thread.projectId,
-      providerId: thread.providerId,
-      providerThreadId: thread.providerThreadId,
-      cwd: environment?.path ?? undefined,
-      bridgeLaunch: bridgeLaunchForProvider(thread.providerId, dataDir),
-      permissionMode: permissionModeForLaunchProfile(thread.providerId)
-    }
-  });
+  await resumeConversationOnHost(ctx, thread);
   const next = updateConversationThreadStatus(ctx.db, thread.id, 'idle') ?? thread;
   ctx.hub.emit('threads:updated', conversationThreadView(ctx, next));
   return next;
@@ -156,4 +137,60 @@ export async function forkConversation(
   });
   ctx.hub.emit('threads:updated', conversationThreadView(ctx, forked));
   return forked;
+}
+
+function isUnknownThreadHostError(error: unknown): boolean {
+  return Boolean(
+    error
+    && typeof error === 'object'
+    && 'code' in error
+    && (error as { code: unknown }).code === 'unknown_thread'
+  );
+}
+
+async function submitTurnOnHost(
+  ctx: ProductHttpContext,
+  thread: ConversationThreadRow,
+  prompt: string[],
+  mode: ThreadSendMode
+): Promise<void> {
+  if (!thread.environmentId) {
+    throw new ThreadCreateError(409, 'environment_not_ready', 'thread has no environment');
+  }
+  await ctx.hostHub.callHostOnlineRpc({
+    hostId: thread.hostId,
+    command: {
+      type: 'turn.submit',
+      threadId: thread.id,
+      environmentId: thread.environmentId,
+      input: prompt,
+      mode
+    }
+  });
+}
+
+async function resumeConversationOnHost(
+  ctx: ProductHttpContext,
+  thread: ConversationThreadRow
+): Promise<void> {
+  if (!thread.environmentId || !thread.providerThreadId) {
+    throw new ThreadCreateError(409, 'not_resumable', 'thread has no provider session to resume');
+  }
+  const environment = getEnvironment(ctx.db, thread.environmentId);
+  const dataDir = join(ctx.dataDir, 'thread-bridges', thread.providerId);
+  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  await ctx.hostHub.callHostOnlineRpc({
+    hostId: thread.hostId,
+    command: {
+      type: 'thread.resume',
+      threadId: thread.id,
+      environmentId: thread.environmentId,
+      projectId: thread.projectId,
+      providerId: thread.providerId,
+      providerThreadId: thread.providerThreadId,
+      cwd: environment?.path ?? undefined,
+      bridgeLaunch: bridgeLaunchForProvider(thread.providerId, dataDir),
+      permissionMode: permissionModeForLaunchProfile(thread.providerId)
+    }
+  });
 }

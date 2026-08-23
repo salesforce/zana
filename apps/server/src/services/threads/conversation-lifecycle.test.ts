@@ -99,6 +99,43 @@ describe('conversation lifecycle', () => {
     }));
   });
 
+  it('resumes then resubmits when the host no longer has the thread', async () => {
+    let submits = 0;
+    const callHostOnlineRpc = vi.fn(async (input: { command: { type: string } }) => {
+      if (input.command.type === 'turn.submit') {
+        submits += 1;
+        if (submits === 1) {
+          throw Object.assign(new Error('thread is not running on this host'), { code: 'unknown_thread' });
+        }
+        return { threadId: thread.id, accepted: true };
+      }
+      return { threadId: thread.id, resumed: true, providerThreadId: 'prov-1' };
+    });
+    await sendConversationTurn(ctx(callHostOnlineRpc), thread.id, [{ type: 'text', text: 'follow up' }]);
+    expect(callHostOnlineRpc.mock.calls.map((call) => call[0].command.type)).toEqual([
+      'turn.submit',
+      'thread.resume',
+      'turn.submit'
+    ]);
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({
+        type: 'thread.resume',
+        providerThreadId: 'prov-1'
+      })
+    }));
+  });
+
+  it('does not resume a follow-up when the host has no provider session to restore', async () => {
+    vi.mocked(getConversationThread).mockReturnValue({ ...thread, providerThreadId: null });
+    const callHostOnlineRpc = vi.fn(async () => {
+      throw Object.assign(new Error('thread is not running on this host'), { code: 'unknown_thread' });
+    });
+    await expect(
+      sendConversationTurn(ctx(callHostOnlineRpc), thread.id, [{ type: 'text', text: 'follow up' }])
+    ).rejects.toMatchObject({ code: 'not_resumable' });
+    expect(callHostOnlineRpc).toHaveBeenCalledTimes(1);
+  });
+
   it('resumes with the stored providerThreadId', async () => {
     const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, resumed: true, providerThreadId: 'prov-1' }));
     await resumeConversation(ctx(callHostOnlineRpc), thread.id);

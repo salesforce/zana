@@ -10,11 +10,14 @@ import {
   createThread,
   getConversationThread,
   getThread,
+  listLiveConversationThreads,
   listLiveThreads,
   listThreadEvents,
+  listVisibleConversationThreads,
   openDatabase,
   completeThread,
   threadOutputTail,
+  updateConversationThreadStatus,
   upsertHost,
   type ZccDatabase
 } from './index.js';
@@ -111,6 +114,48 @@ describe('packages/db', () => {
     expect(getThread(db, conversation.id)).toBeNull();
     expect(getConversationThread(db, conversation.id)?.providerId).toBe('claude-code');
     expect(getConversationThread(db, legacy.id)).toBeNull();
+  });
+
+  it('lists idle and error conversation threads in the visible roster', () => {
+    dir = mkdtempSync(join(tmpdir(), 'zcc-db-visible-threads-'));
+    db = openDatabase(join(dir, 'zcc.sqlite'));
+    const host = upsertHost(db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: '/tmp/proj'
+    });
+    const live = createConversationThread(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code',
+      status: 'active',
+      title: 'Live'
+    });
+    const idle = createConversationThread(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code',
+      status: 'idle',
+      title: 'Idle'
+    });
+    const failed = createConversationThread(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code',
+      status: 'error',
+      title: 'Failed'
+    });
+    updateConversationThreadStatus(db, live.id, 'active');
+    const liveIds = listLiveConversationThreads(db).map((row) => row.id);
+    const visibleIds = listVisibleConversationThreads(db).map((row) => row.id);
+    expect(liveIds).toContain(live.id);
+    expect(liveIds).not.toContain(idle.id);
+    expect(visibleIds).toEqual(expect.arrayContaining([live.id, idle.id, failed.id]));
+    expect(listVisibleConversationThreads(db, { limit: 1 })).toHaveLength(1);
   });
 
   it('lists only starting and running threads as live', () => {

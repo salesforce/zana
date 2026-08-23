@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { matchPath, useLocation, useNavigate } from 'react-router-dom';
 import { Bot, Moon, Plus, Search, X, Loader2 } from 'lucide-react';
 import type { Project, TerminalSession } from '@zana-ai/zcc-domain/product';
 import {
@@ -12,6 +13,9 @@ import {
   favoriteKey,
   listedTerminals
 } from '@/store';
+import { useThreads } from '@/thread-store';
+import { useEnsureThreads } from '@/hooks/useEnsureThreads';
+import { getThreadRoutePath, THREAD_ROUTE_PATH } from '@/lib/route-paths';
 import { AgentBoardLanes, isReclaimableIdle, type AgentCard } from '@/components/AgentBoard';
 import { AgentViewToggle } from '@/components/AgentViewToggle';
 import { SquadFlowView } from '@/views/agents/SquadFlowView';
@@ -21,6 +25,13 @@ import { CloseIdleAgentsDialog } from '@/components/CloseIdleAgentsDialog';
 import { CohortBar, type LiveCohort } from '@/components/CohortBar';
 import { AuroraGrid } from '@/components/AuroraGrid';
 import { HomeAgentComposer } from '@/components/HomeAgentComposer';
+import {
+  agentFleetItem,
+  fleetAgentCards,
+  isVisibleThread,
+  threadFleetItem,
+  type FleetItem
+} from '@/components/fleet-item';
 
 /**
  * One Agents Kanban, two scopes. Global (`kind: 'global'`) flattens every
@@ -89,6 +100,10 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const closeIdleAgents = useData((s) => s.closeIdleAgents);
   const favoriteIds = useFavoriteAgents((s) => s.favoriteIds);
   const boardView = useUi((s) => s.agentsBoardView);
+  const threads = useThreads((s) => s.threads);
+  useEnsureThreads();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [filter, setFilter] = useState('');
   const [closeIdleTarget, setCloseIdleTarget] = useState<AgentCard[] | null>(null);
   const [busyAction, setBusyAction] = useState<null | 'close'>(null);
@@ -123,29 +138,56 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
     subagentsById
   ]);
 
-  const q = isGlobal ? filter.trim().toLowerCase() : '';
-  const visibleCards = q
-    ? cards.filter(
-        (c) =>
-          c.projectName.toLowerCase().includes(q) || c.session.title.toLowerCase().includes(q)
-      )
-    : cards;
+  const fleet = useMemo<FleetItem[]>(() => {
+    const byProjectId = new Map(projects.map((p) => [p.id, p]));
+    const items: FleetItem[] = cards.map(agentFleetItem);
+    for (const thread of threads) {
+      if (!isVisibleThread(thread)) continue;
+      if (scopedProject && thread.projectId !== scopedProject.id) continue;
+      items.push(threadFleetItem(thread, byProjectId.get(thread.projectId)));
+    }
+    return items;
+  }, [cards, threads, projects, scopedProject]);
 
-  const liveCount = visibleCards.filter((c) => c.session.status !== 'exited').length;
+  const q = isGlobal ? filter.trim().toLowerCase() : '';
+  const visibleFleet = q
+    ? fleet.filter(
+        (item) =>
+          item.projectName.toLowerCase().includes(q) || item.title.toLowerCase().includes(q)
+      )
+    : fleet;
+  const visibleCards = fleetAgentCards(visibleFleet);
+
+  const liveCount = visibleFleet.filter(
+    (item) => item.kind === 'thread' || item.card.session.status !== 'exited'
+  ).length;
   const projectsWithAgents = new Set(
-    visibleCards.filter((c) => c.session.status !== 'exited').map((c) => c.projectId)
+    visibleFleet
+      .filter((item) => item.kind === 'thread' || item.card.session.status !== 'exited')
+      .map((item) => item.projectId)
   ).size;
   const reclaimableAgents = useMemo(
     () => visibleCards.filter((c) => isReclaimableIdle(c) && !favoriteIds[favoriteKey(c.session)]),
     [visibleCards, favoriteIds]
   );
   const activeTabId = scopedProject ? selectedTabId[scopedProject.id] : undefined;
+  const activeThreadId = matchPath(THREAD_ROUTE_PATH, location.pathname)?.params.threadId;
+  const activeId = activeThreadId ?? activeTabId;
 
-  const inspect = (c: AgentCard) => {
-    useUi.getState().openAgentModal(c.session.id, c.projectId);
+  const inspect = (item: FleetItem) => {
+    if (item.kind === 'thread') {
+      navigate(getThreadRoutePath(item.id));
+      return;
+    }
+    useUi.getState().openAgentModal(item.card.session.id, item.projectId);
   };
 
-  const pick = (c: AgentCard) => {
+  const pick = (item: FleetItem) => {
+    if (item.kind === 'thread') {
+      navigate(getThreadRoutePath(item.id));
+      return;
+    }
+    const c = item.card;
     if (isGlobal) {
       setNav('projects');
       enterProjectFocus(c.projectId);
@@ -177,7 +219,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
       <header className="agents-board-header">
         {isGlobal ? <h1>Agents</h1> : (
           <span className="agents-board-count">
-            {liveCount} {liveCount === 1 ? 'agent' : 'agents'} live
+            {liveCount} {liveCount === 1 ? 'item' : 'items'} live
           </span>
         )}
         <div className="agents-board-header-actions">
@@ -191,7 +233,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
               )}
             </span>
           )}
-          {(cards.length > 0 || boardView === 'list' || boardView === 'flow') && <AgentViewToggle />}
+          {(fleet.length > 0 || boardView === 'list' || boardView === 'flow') && <AgentViewToggle />}
           {reclaimableAgents.length > 0 && (
             <button
               type="button"
@@ -218,7 +260,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
               </span>
             </button>
           )}
-          {isGlobal && cards.length > 0 && (
+          {isGlobal && fleet.length > 0 && (
             <div className="agents-board-filter">
               <Search size={12} className="agents-board-filter-icon" aria-hidden="true" />
               <input
@@ -272,34 +314,34 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
       {boardView === 'flow' ? (
         <SquadFlowView projectId={scopedProject?.id} />
       ) : boardView === 'list' ? (
-        <AgentMonitor cards={visibleCards} showProject={isGlobal} />
-      ) : cards.length === 0 ? (
+        <AgentMonitor cards={visibleFleet} showProject={isGlobal} />
+      ) : fleet.length === 0 ? (
         <div className="agents-board-empty agents-board-empty--launch aurora-host">
           <AuroraGrid />
           <div className="agents-board-empty-copy">
             <Bot size={28} aria-hidden="true" />
             {isGlobal ? (
               <>
-                <h4>No agents running</h4>
+                <h4>No agents or threads</h4>
                 <p>
-                  Open a project on the left and start a Claude session — it&rsquo;ll appear here, across
+                  Open a project on the left and start a thread — it&rsquo;ll appear here, across
                   every project.
                 </p>
               </>
             ) : (
               <>
-                <h4>No agents yet</h4>
-                <p>Start a Claude session in this project and watch it move across the board.</p>
+                <h4>No agents or threads yet</h4>
+                <p>Start a thread in this project and watch it move across the board.</p>
               </>
             )}
           </div>
         </div>
-      ) : isGlobal && visibleCards.length === 0 ? (
+      ) : isGlobal && visibleFleet.length === 0 ? (
         <div className="agents-board-empty">
           <Bot size={28} aria-hidden="true" />
           <h4>No matches</h4>
           <p>
-            No agents match &ldquo;{filter.trim()}&rdquo;.{' '}
+            No agents or threads match &ldquo;{filter.trim()}&rdquo;.{' '}
             <button type="button" className="list-empty-link" onClick={() => setFilter('')}>
               Clear filter
             </button>
@@ -307,8 +349,8 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
         </div>
       ) : (
         <AgentBoardLanes
-          cards={visibleCards}
-          activeId={activeTabId}
+          cards={visibleFleet}
+          activeId={activeId}
           onInspect={inspect}
           onPick={pick}
           showProject={isGlobal}

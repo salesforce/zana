@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { TimelineRow } from '@zana-ai/zcc-server-contract';
 import { ThreadTimeline } from './ThreadTimeline.js';
-import { isBusyThreadStatus, visiblePendingTodos, workRowBody } from './thread-timeline-model.js';
+import {
+  isBusyThreadStatus,
+  shouldShowThreadStop,
+  threadStatusLabel,
+  threadStatusToAgentState,
+  visiblePendingTodos,
+  workRowBody
+} from './thread-timeline-model.js';
 
 const base = {
   threadId: 't1',
@@ -17,6 +24,29 @@ describe('thread timeline model', () => {
   it('treats starting/active/stopping as busy', () => {
     expect(isBusyThreadStatus('active')).toBe(true);
     expect(isBusyThreadStatus('idle')).toBe(false);
+  });
+
+  it('shows Stop only while a thread round is in flight', () => {
+    expect(shouldShowThreadStop('t1', 'active')).toBe(true);
+    expect(shouldShowThreadStop('t1', 'starting')).toBe(true);
+    expect(shouldShowThreadStop('t1', 'stopping')).toBe(true);
+    expect(shouldShowThreadStop('t1', 'idle')).toBe(false);
+    expect(shouldShowThreadStop('t1', 'error')).toBe(false);
+    expect(shouldShowThreadStop(undefined, 'active')).toBe(false);
+  });
+
+  it('maps conversation status onto agent lanes', () => {
+    expect(threadStatusToAgentState('starting')).toBe('working');
+    expect(threadStatusToAgentState('active')).toBe('working');
+    expect(threadStatusToAgentState('stopping')).toBe('working');
+    expect(threadStatusToAgentState('idle')).toBe('idle');
+    expect(threadStatusToAgentState('error')).toBe('blocked');
+  });
+
+  it('titles status badges with a readable label', () => {
+    expect(threadStatusLabel('active')).toBe('Active');
+    expect(threadStatusLabel('idle')).toBe('Idle');
+    expect(threadStatusLabel('')).toBe('');
   });
 
   it('hides todos when every item is completed', () => {
@@ -288,13 +318,11 @@ describe('ThreadTimeline', () => {
           tokensUsed: 0,
           timeUsedSeconds: 0
         }}
-        contextWindowUsage={{ usedTokens: 20, modelContextWindow: 100, estimated: false }}
         lastReadSeq={1}
         hasOlderRows
       />
     );
     expect(html).toContain('Ship UI');
-    expect(html).toContain('20% context');
     expect(html).toContain('thread-unread-divider');
     expect(html).toContain('thread-load-older');
   });

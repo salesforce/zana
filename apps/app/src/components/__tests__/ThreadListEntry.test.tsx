@@ -25,6 +25,8 @@ describe('ThreadListEntry', () => {
     );
     expect(html).toContain('data-testid="thread-list-entry-working"');
     expect(html).toContain('Working');
+    expect(html).toContain('data-kind="thread"');
+    expect(html).toContain('Thread');
   });
 
   it('shows the raw status when idle', () => {

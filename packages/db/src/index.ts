@@ -51,6 +51,7 @@ export {
   getConversationThread,
   listConversationThreadsByProject,
   listLiveConversationThreads,
+  listVisibleConversationThreads,
   updateConversationThreadStatus,
   setConversationProviderThreadId,
   archiveConversationThread,

@@ -5553,6 +5553,34 @@ body.resizing-col {
   animation: spin 1s linear infinite;
 }
 
+.harness-health {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  font-size: 12px;
+}
+.harness-health--ok {
+  border-color: color-mix(in srgb, var(--accent-green, #3fb950) 45%, var(--border));
+  color: var(--accent-green, #3fb950);
+}
+.harness-health--warn {
+  border-color: color-mix(in srgb, var(--accent-amber, #d29922) 45%, var(--border));
+  color: var(--accent-amber, #d29922);
+}
+.harness-health-msg {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-secondary);
+}
+.harness-health .cred-btn {
+  margin-left: auto;
+}
+
 .cred-btn {
   display: inline-flex;
   align-items: center;
@@ -11363,6 +11391,10 @@ body.resizing-col .explorer-resizer::after {
   box-shadow: inset 0 0 0 1px var(--accent-gold);
 }
 
+.agent-card.is-thread {
+  border-style: dashed;
+}
+
 /* Working cards glow gold and pulse — the "alive" cue. */
 .agent-card.lane-working {
   border-color: color-mix(in srgb, var(--accent-gold) 45%, var(--border));
@@ -11811,6 +11843,48 @@ body.resizing-col .explorer-resizer::after {
 
 .agents-row.exited {
   opacity: 0.6;
+}
+
+.fleet-kind-chip {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+}
+
+.fleet-kind-chip.fleet-kind-thread {
+  color: var(--accent-blue, #4d8dff);
+  background: color-mix(in srgb, var(--accent-blue, #4d8dff) 16%, transparent);
+}
+
+.agent-monitor-thread-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 100%;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 16px;
+}
+
+.agent-monitor-thread-placeholder p {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.agent-monitor-status.is-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
 }
 
 .agents-row-icon {
@@ -27745,26 +27819,28 @@ textarea.ui-command-composer-input {
 
 .thread-command-editor-slot {
   position: relative;
-  padding: 12px 56px 4px 16px;
+  padding: 8px 40px 2px 12px;
 }
 
 .thread-command-expand {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 6px;
+  right: 6px;
   z-index: 2;
   color: var(--text-muted, var(--ink-muted));
 }
 
 .thread-command-composer.is-expanded .thread-command-editor.ProseMirror,
 .thread-command-composer.is-expanded .thread-command-editor {
-  min-height: min(40dvh, 320px);
+  min-height: min(28dvh, 200px);
+  max-height: min(40dvh, 280px);
 }
 
 .thread-command-composer .ui-command-composer-toolbar {
   flex-wrap: nowrap;
-  gap: 12px;
-  padding: 6px 8px 8px 14px;
+  gap: 8px;
+  padding: 2px 8px 6px 12px;
+  overflow: visible;
 }
 
 .thread-command-footer-start,
@@ -27787,6 +27863,7 @@ textarea.ui-command-composer-input {
   flex: 0 0 auto;
   gap: 2px;
   margin-left: auto;
+  overflow: visible;
 }
 
 .thread-command-footer-end .voice-input-btn {
@@ -27796,6 +27873,106 @@ textarea.ui-command-composer-input {
   padding: 0;
   justify-content: center;
   border-radius: 50%;
+}
+
+.thread-context-meter {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.thread-context-meter-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: auto;
+  height: 28px;
+  padding: 0 6px 0 4px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted, var(--ink-muted));
+  cursor: pointer;
+}
+
+.thread-context-meter-pct {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.thread-context-meter-trigger:hover,
+.thread-context-meter-trigger:focus-visible {
+  background: color-mix(in srgb, var(--bg-hover, var(--bg-2)) 80%, transparent);
+}
+
+.thread-context-meter-ring {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: conic-gradient(
+    var(--text-primary, #1d1d1f) calc(var(--thread-context-pct, 0) * 1%),
+    color-mix(in srgb, var(--border) 70%, transparent) 0
+  );
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px));
+}
+
+.thread-context-meter-card {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  box-sizing: border-box;
+  width: 232px;
+  padding: 10px 12px 9px;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  border-radius: 10px;
+  background: var(--bg-elevated, var(--bg-2, #fff));
+  box-shadow: 0 10px 28px rgb(0 0 0 / 12%);
+  color: var(--text-muted, var(--ink-muted));
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.thread-context-meter:hover .thread-context-meter-card,
+.thread-context-meter:focus-within .thread-context-meter-card {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+
+.thread-context-meter-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.thread-context-meter-row-sub {
+  font-size: 11px;
+  color: var(--text-dim, var(--ink-muted));
+}
+
+.thread-context-meter-track {
+  height: 4px;
+  margin: 8px 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border) 78%, var(--bg-panel, var(--bg-2)));
+}
+
+.thread-context-meter-fill {
+  width: calc(var(--thread-context-pct, 0) * 1%);
+  height: 100%;
+  border-radius: inherit;
+  background: var(--text-primary, #1d1d1f);
 }
 
 .thread-voice-bar {
@@ -27958,13 +28135,18 @@ textarea.ui-command-composer-input {
 .thread-command-editor.ProseMirror,
 .thread-command-editor {
   width: 100%;
-  min-height: 80px;
-  max-height: 70dvh;
+  min-height: 40px;
+  max-height: 12rem;
   overflow-y: auto;
   box-sizing: border-box;
   outline: none;
   font-size: 14px;
-  line-height: 1.625;
+  line-height: 1.45;
+}
+
+.thread-command-editor.ProseMirror p,
+.thread-command-editor p {
+  margin: 0;
 }
 
 .thread-command-editor.ProseMirror p.is-editor-empty:first-child::before,
@@ -28203,6 +28385,30 @@ textarea.ui-command-composer-input {
   gap: 12px;
 }
 
+.thread-detail-view > .thread-command-composer {
+  width: 100%;
+  max-width: 46rem;
+  margin-inline: auto;
+  flex: 0 0 auto;
+}
+
+@media (min-width: 1280px) {
+  .thread-detail-view > .thread-command-composer,
+  .thread-detail-view > .thread-workspace-banner {
+    max-width: 52rem;
+  }
+
+  .thread-detail-view .thread-command-editor-slot {
+    padding: 10px 44px 4px 14px;
+  }
+
+  .thread-detail-view .thread-command-editor.ProseMirror,
+  .thread-detail-view .thread-command-editor {
+    min-height: 52px;
+    max-height: 16rem;
+  }
+}
+
 .thread-detail-header {
   display: flex;
   align-items: flex-start;
@@ -28210,15 +28416,40 @@ textarea.ui-command-composer-input {
   gap: 12px;
 }
 
+.thread-detail-heading {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
 .thread-detail-header h1 {
   margin: 0;
   font-size: 18px;
 }
 
-.thread-detail-status {
-  margin: 4px 0 0;
-  color: var(--ink-muted);
-  font-size: 12px;
+.thread-status-badge {
+  margin: 0;
+  gap: 6px;
+}
+
+.thread-status-badge .tab-agent-dot {
+  margin-right: 0;
+}
+
+.thread-status-badge.is-working {
+  background: color-mix(in srgb, var(--accent-gold) 18%, var(--bg-elevated, var(--bg-2)));
+  color: var(--text-primary);
+}
+
+.thread-status-badge.is-idle {
+  background: color-mix(in srgb, var(--success) 14%, var(--bg-elevated, var(--bg-2)));
+}
+
+.thread-status-badge.is-blocked {
+  background: color-mix(in srgb, var(--danger) 16%, var(--bg-elevated, var(--bg-2)));
+  color: var(--text-primary);
 }
 
 .thread-detail-actions {
@@ -28646,23 +28877,159 @@ textarea.ui-command-composer-input {
 }
 
 .thread-workspace-banner {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  padding: 6px 8px;
-  border-radius: 8px;
-  background: var(--bg-elevated, var(--bg-2));
-  font-size: 12px;
+  width: 100%;
+  max-width: 46rem;
+  margin-inline: auto;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  font-size: 13px;
+  color: var(--text-muted);
 }
 
-.thread-workspace-banner button {
+.thread-workspace-banner.is-open {
+  padding: 8px 10px 6px;
+  border-color: var(--border);
+  background: var(--bg-elevated);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 6%);
+}
+
+.thread-workspace-banner-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.thread-workspace-banner-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 0;
   border: 0;
   background: none;
-  color: var(--accent-blue, #4c8dff);
-  cursor: pointer;
+  color: inherit;
   font: inherit;
-  padding: 0;
+  cursor: pointer;
+}
+
+.thread-workspace-banner-toggle:hover {
+  color: var(--text-primary);
+}
+
+.thread-workspace-banner-chevron {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  transition: transform 0.12s ease;
+}
+
+.thread-workspace-banner.is-open .thread-workspace-banner-chevron {
+  transform: rotate(90deg);
+}
+
+.thread-workspace-banner-count {
+  min-width: 0;
+}
+
+.thread-workspace-review {
+  margin-left: auto;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-elevated, var(--bg-2));
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.thread-workspace-review:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.thread-workspace-files {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0 0 4px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 16rem;
+  overflow: auto;
+}
+
+.thread-workspace-files[hidden] {
+  display: none;
+}
+
+.thread-workspace-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 3px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.thread-workspace-file:hover {
+  background: var(--bg-hover);
+}
+
+.thread-workspace-file-glyph {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--text-dim);
+}
+
+.thread-workspace-file.is-added .thread-workspace-file-glyph,
+.thread-workspace-file.is-untracked .thread-workspace-file-glyph {
+  color: var(--success, #3fb950);
+}
+
+.thread-workspace-file.is-deleted .thread-workspace-file-glyph {
+  color: var(--danger, #f85149);
+}
+
+.thread-workspace-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-workspace-file-stat {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: inline-flex;
+  gap: 6px;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.thread-workspace-file-stat .is-add {
+  color: var(--success, #3fb950);
+}
+
+.thread-workspace-file-stat .is-del {
+  color: var(--danger, #f85149);
+}
+
+.thread-workspace-file-more {
+  padding: 3px 4px 3px 21px;
+  font-size: 11px;
+  color: var(--text-dim);
 }
 
 .thread-detail-body {
@@ -28741,10 +29108,6 @@ textarea.ui-command-composer-input {
 .thread-list-entry-working {
   margin-left: auto;
   font-size: 11px;
-}
-
-.thread-command-editor {
-  min-height: 80px;
 }
 
 .thread-command-editor-slot {

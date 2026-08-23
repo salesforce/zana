@@ -1,7 +1,25 @@
+import type { AgentState } from '@zana-ai/zcc-domain/product';
 import type { ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
 
 export function isBusyThreadStatus(status: string): boolean {
   return status === 'starting' || status === 'active' || status === 'stopping';
+}
+
+export function shouldShowThreadStop(threadId: string | undefined, status: string | undefined): boolean {
+  return Boolean(threadId) && isBusyThreadStatus(status ?? '');
+}
+
+/** Map a conversation-thread status onto the agent-board lanes. */
+export function threadStatusToAgentState(status: string): AgentState {
+  if (isBusyThreadStatus(status)) return 'working';
+  if (status === 'error') return 'blocked';
+  return 'idle';
+}
+
+export function threadStatusLabel(status: string): string {
+  const trimmed = status.trim();
+  if (!trimmed) return '';
+  return trimmed.replace(/-/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 export function visiblePendingTodos(

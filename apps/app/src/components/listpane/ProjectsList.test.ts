@@ -182,3 +182,14 @@ describe('workspace move up/down', () => {
     expect(source).not.toContain('const close = () => setMenu(null);');
   });
 });
+
+describe('nested live threads', () => {
+  it('mixes busy/error threads under the owning project and treats them as running work', () => {
+    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('threadIsLiveForRail');
+    expect(source).toContain('data-testid="project-thread-row"');
+    expect(source).toContain('navigate(getThreadRoutePath(thread.id))');
+    expect(source).toContain('liveThreadsByProject.get(p.id)');
+    expect(source).toContain('liveList.length === 0 && liveThreads.length === 0');
+  });
+});

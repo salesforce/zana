@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createConversationThread, createEnvironment, upsertHost } from '@zana-ai/zcc-db';
+import { createConversationThread, createEnvironment, updateConversationThreadStatus, upsertHost } from '@zana-ai/zcc-db';
 import { startProductServer, type ProductServer } from './product-server.js';
 import { HostUnavailableError } from './host-hub.js';
 
@@ -186,6 +186,32 @@ describe('product HTTP', () => {
       activePromptMode: null,
       activeWorkflows: []
     });
+  });
+
+  it('includes idle conversation threads in the unscoped list', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-threads-'));
+    server = await startProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: '/tmp/proj'
+    });
+    const thread = createConversationThread(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code',
+      title: 'Idle work'
+    });
+    updateConversationThreadStatus(server.ctx.db, thread.id, 'idle');
+    const body = await fetch(`${server.url}api/v1/threads`).then((response) => response.json()) as {
+      threads: Array<{ id: string; status: string }>;
+    };
+    expect(body.threads).toEqual([expect.objectContaining({ id: thread.id, status: 'idle' })]);
   });
 
   it('rejects explorer list-dir outside a registered project', async () => {

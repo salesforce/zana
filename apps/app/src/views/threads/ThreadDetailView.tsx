@@ -12,6 +12,7 @@ import { ThreadConversationToc } from '../../components/thread/ThreadConversatio
 import { ThreadDiffPanel } from '../../components/thread/ThreadDiffPanel.js';
 import { ThreadWorkspaceBanner } from '../../components/thread/ThreadWorkspaceBanner.js';
 import { isBusyThreadStatus } from '../../components/thread/thread-timeline-model.js';
+import { ThreadStatusBadge } from '../../components/thread/timeline/ThreadBanners.js';
 import { getProjectWorkspaceRoutePath, getThreadRoutePath } from '../../lib/route-paths.js';
 import { useThreads } from '../../thread-store.js';
 
@@ -161,9 +162,9 @@ export function ThreadDetailView() {
   return (
     <section className="thread-detail-view" data-testid="thread-detail">
       <header className="thread-detail-header">
-        <div>
+        <div className="thread-detail-heading">
           <h1>{title}</h1>
-          <p className="thread-detail-status">{status}</p>
+          <ThreadStatusBadge status={status} />
         </div>
         <div className="thread-detail-actions">
           <button
@@ -222,7 +223,6 @@ export function ThreadDetailView() {
           goal={goal}
           activeWorkflows={workflows}
           activePromptMode={promptMode}
-          contextWindowUsage={contextWindow}
           lastReadSeq={lastReadSeq}
           hasOlderRows={hasOlderRows}
           loadingOlder={loadingOlder}
@@ -270,7 +270,9 @@ export function ThreadDetailView() {
       />
       <ThreadCommandComposer
         threadId={threadId}
+        status={status}
         environmentLabel={isWorktree ? 'This checkout' : 'Local'}
+        contextWindowUsage={contextWindow}
         onOpenExplorer={projectId ? () => navigate(getProjectWorkspaceRoutePath(projectId, 'explorer')) : undefined}
       />
     </section>

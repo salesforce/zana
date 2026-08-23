@@ -32,7 +32,7 @@ describe('isScheduledWaiting', () => {
 describe('AgentTray context menu', () => {
   it('opens the shared agent lifecycle menu from a tray row', () => {
     const source = readFileSync(new URL('../AgentTray.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('onContextMenu={(e) => openAgentMenu(e, a)}');
+    expect(source).toContain('onContextMenu={(e) => openAgentMenu(e, item)}');
     expect(source).toContain('useAgentCardActions()');
     expect(source).toContain('<AgentCardMenu menu={menu}');
   });
