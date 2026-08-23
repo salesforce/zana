@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { createElement as h } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { Modal } from '../components/Modal.js';
@@ -57,5 +58,11 @@ describe('Modal', () => {
     expect(html).not.toContain('<h3>My Dialog</h3>');
     // aria-label still comes from title even with a custom header.
     expect(html).toContain('aria-label="My Dialog"');
+  });
+
+  it('portals to document.body so shell stacking contexts cannot cover it', () => {
+    const source = readFileSync(new URL('../components/Modal.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('createPortal');
+    expect(source).toContain('document.body');
   });
 });

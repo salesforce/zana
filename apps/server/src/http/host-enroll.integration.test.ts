@@ -8,7 +8,7 @@ import {
   HOST_RPC_PROTOCOL_VERSION,
   type HostRpcRequestMessage
 } from '@zana-ai/zcc-contracts/host-rpc';
-import { listThreadEvents } from '@zana-ai/zcc-db';
+import { listConversationThreadEvents } from '@zana-ai/zcc-db';
 import { startProductServer, type ProductServer } from './product-server.js';
 
 let server: ProductServer | null = null;
@@ -148,10 +148,16 @@ function defaultRpcHandler(projectRoot: string) {
         return;
       }
       case 'thread.start':
-        reply(true, { threadId: request.command.threadId, started: true });
+        reply(true, { threadId: request.command.threadId, started: true, providerThreadId: `prov-${request.command.threadId}` });
         return;
-      case 'thread.resize':
-        reply(true, { threadId: request.command.threadId, resized: true });
+      case 'turn.submit':
+        reply(true, { threadId: request.command.threadId, accepted: true });
+        return;
+      case 'thread.resume':
+        reply(true, { threadId: request.command.threadId, resumed: true, providerThreadId: request.command.providerThreadId });
+        return;
+      case 'thread.stop':
+        reply(true, { threadId: request.command.threadId, stopped: true });
         return;
       case 'environment.destroy':
         reply(true, { environmentId: request.command.environmentId, destroyed: true });
@@ -238,13 +244,20 @@ describe('host enroll hub and thread create', () => {
     expect(spawned.body.ok).toBe(true);
     expect(spawned.body.value.hostId).toBe(hostA.hostId);
 
-    const resized = await fetch(`${server!.url}api/v1/threads/${spawned.body.value.id}/resize`, {
+    const sent = await fetch(`${server!.url}api/v1/threads/${spawned.body.value.id}/send`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ cols: 120, rows: 40 })
+      body: JSON.stringify({ input: ['follow up'], mode: 'auto' })
     }).then(async (response) => ({ status: response.status, body: await response.json() }));
-    expect(resized.status).toBe(200);
-    expect(resized.body).toMatchObject({ ok: true, cols: 120, rows: 40 });
+    expect(sent.status).toBe(200);
+    expect(sent.body.ok).toBe(true);
+
+    const resumed = await fetch(`${server!.url}api/v1/threads/${spawned.body.value.id}/resume`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    }).then(async (response) => ({ status: response.status, body: await response.json() }));
+    expect(resumed.status).toBe(200);
 
     const hostB = await enrollHost(enrollToken, 'beta', instanceB);
     await openHostSocket(hostB, instanceB, defaultRpcHandler(projectRoot));
@@ -312,7 +325,7 @@ describe('host enroll hub and thread create', () => {
       events: [{ threadId: spawned.value.id, kind: 'thread.started' }]
     }));
     await new Promise((resolve) => setTimeout(resolve, 50));
-    const first = listThreadEvents(server!.ctx.db, spawned.value.id);
+    const first = listConversationThreadEvents(server!.ctx.db, spawned.value.id);
     expect(first.map((event) => event.sequence)).toEqual([1]);
 
     socket.send(JSON.stringify({
@@ -323,7 +336,7 @@ describe('host enroll hub and thread create', () => {
       events: [{ threadId: spawned.value.id, kind: 'turn.completed' }]
     }));
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(listThreadEvents(server!.ctx.db, spawned.value.id).map((event) => event.sequence)).toEqual([1]);
+    expect(listConversationThreadEvents(server!.ctx.db, spawned.value.id).map((event) => event.sequence)).toEqual([1]);
   });
 
   it('lists library files through host rpc and rejects a path escape on the server', async () => {

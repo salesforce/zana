@@ -9,6 +9,8 @@
       "@zana-ai/zcc-ui/*": ["../../packages/ui/src/*"],
       "@zana-ai/zcc-plugin-sdk": ["../../packages/plugin-sdk/src/index.ts"],
       "@zana-ai/zcc-plugin-sdk/*": ["../../packages/plugin-sdk/src/*"],
+      "@zana-ai/zcc-server-contract": ["../../packages/server-contract/src/index.ts"],
+      "@zana-ai/zcc-thread-view": ["../../packages/thread-view/src/index.ts"],
       "@zana-ai/zcc-extension-sdk": ["../../packages/extension-sdk/src/index.ts"],
       "@zana-ai/zcc-extension-sdk/*": ["../../packages/extension-sdk/src/*"],
       "@zcc/harness-sdk": ["../../packages/harness-sdk/src/index.ts"],

@@ -43,7 +43,7 @@ describe('AgentsSidebarSection', () => {
     expect(markup).toContain('aria-label="Collapse Agents section"');
     expect(markup).toContain('aria-expanded="true"');
     expect(markup).toContain('aria-label="Open Agents dashboard"');
-    expect(markup).toContain('aria-label="New quick agent"');
+    expect(markup).toContain('aria-label="New thread"');
     expect(markup).toContain('class="sidebar-agents-resizer"');
     expect(markup).toContain('--sidebar-agents-height');
     expect(markup).toContain('data-agent-tray-project="proj-1"');
@@ -88,7 +88,8 @@ describe('AgentsSidebarSection', () => {
 
     expect(source).toContain('if (onOpenDashboard)');
     expect(source).toContain("setNav('agents')");
-    expect(source).toContain('setLauncherOpen(true)');
+    expect(source).not.toContain('setLauncherOpen(true)');
+    expect(source).toContain('navigate(getRootRoutePath())');
     expect(source).toContain('placement="inline"');
     expect(source).toContain('projectId={projectId}');
     expect(source).toContain('getProjectWorkspaceRoutePath(projectId, \'agents\')');

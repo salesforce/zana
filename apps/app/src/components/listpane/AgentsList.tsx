@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
-import { Bot, PanelRight, Plus, Sparkles } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Bot, PanelRight, Plus, Sparkles, Terminal } from 'lucide-react';
 import type { AgentState, IdleTriageResult, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { useData, useUi, useAgentStatus, useIdleTriage, openWhatsNewAll } from '@/store';
+import { useThreads } from '@/thread-store';
+import { getRootRoutePath } from '@/lib/route-paths';
 import { getScopedProjectId } from '@/lib/windowScope';
 import { profileIcon } from '@/lib/profileIcon';
 import { isRecentlyFinished } from '@/lib/sessionBuckets';
 import { idleSurfacesToNeedsYou, partitionSquadMembers, type AgentCard } from '@/components/AgentBoard';
 import { AgentLauncher } from '@/components/AgentLauncher';
+import { ThreadListEntry } from '@/components/ThreadListEntry';
 import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from '@/components/agentCardActions';
 import { PromptModal } from '@/components/PromptModal';
 import { ListPaneResizer } from '@/components/ListPaneResizer';
@@ -144,6 +148,13 @@ export function AgentsListPane() {
   const promoteTriage = useData((s) => s.agentListNeedsYouFromTriage);
   const sensitivity = useData((s) => s.idleAttentionSensitivity);
   const [launcherOpen, setLauncherOpen] = useState(false);
+  const navigate = useNavigate();
+  const threads = useThreads((s) => s.threads);
+  const loadThreads = useThreads((s) => s.load);
+  useEffect(() => {
+    void loadThreads();
+  }, [loadThreads]);
+  const openComposer = () => navigate(getRootRoutePath());
   const openBoard = () => {
     // List mode consumes the full content area, avoiding a duplicate fleet list
     // beside the board while preserving the board/list preference in one place.
@@ -362,27 +373,57 @@ export function AgentsListPane() {
           type="button"
           data-testid="agents-new"
           className="icon-btn agents-new"
-          onClick={() => setLauncherOpen(true)}
-          aria-label="New quick agent"
-          title="New quick agent"
+          onClick={openComposer}
+          aria-label="New thread"
+          title="New thread"
         >
           <Plus size={14} />
         </button>
+        <button
+          type="button"
+          data-testid="agents-legacy-new"
+          className="icon-btn agents-legacy-new"
+          onClick={() => setLauncherOpen(true)}
+          aria-label="New legacy PTY agent"
+          title="New legacy PTY agent"
+        >
+          <Terminal size={14} />
+        </button>
       </header>
       <div className="list-body">
-        {rows.length === 0 ? (
+        {threads.length > 0 && (
+          <div className="agents-group" data-testid="thread-list">
+            <div className="agents-group-label">
+              <span>Threads</span>
+              <span className="agents-group-count">{threads.length}</span>
+            </div>
+            {threads.map((thread) => (
+              <ThreadListEntry key={thread.id} thread={thread} />
+            ))}
+          </div>
+        )}
+        {rows.length === 0 && threads.length === 0 ? (
           <div className="agents-list-empty">
             <Bot size={20} aria-hidden="true" />
-            <p>No agents yet</p>
-            <span>Launch a quick agent here, or start a Claude session in a project.</span>
+            <p>No threads yet</p>
+            <span>Start a thread from Home, or open a legacy PTY agent.</span>
             <button
               type="button"
               data-testid="agents-new-empty"
               className="btn primary"
-              onClick={() => setLauncherOpen(true)}
+              onClick={openComposer}
             >
               <Plus size={14} />
-              New quick agent
+              New thread
+            </button>
+            <button
+              type="button"
+              className="btn"
+              data-testid="agents-legacy-empty"
+              onClick={() => setLauncherOpen(true)}
+            >
+              <Terminal size={14} />
+              Legacy PTY agent
             </button>
             <button
               type="button"

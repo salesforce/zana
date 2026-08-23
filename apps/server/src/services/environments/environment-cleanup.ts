@@ -1,5 +1,7 @@
 import {
+  archiveConversationThread,
   countLiveThreadsForEnvironment,
+  getConversationThread,
   getEnvironment,
   getThread,
   updateEnvironmentStatus,
@@ -7,7 +9,8 @@ import {
   type ZccDatabase
 } from '@zana-ai/zcc-db';
 import type { ProductHttpContext } from '../../http/product-context.js';
-import { ThreadCreateError } from '../../http/thread-create.js';
+import { ThreadCreateError, threadView } from '../../http/thread-create.js';
+import { conversationThreadView } from '../threads/conversation-create.js';
 
 export async function destroyEnvironmentIfIdle(ctx: ProductHttpContext, environmentId: string): Promise<void> {
   const environment = getEnvironment(ctx.db, environmentId);
@@ -52,8 +55,26 @@ export async function destroyEnvironment(ctx: ProductHttpContext, environmentId:
 }
 
 export async function archiveThread(ctx: ProductHttpContext, threadId: string): Promise<boolean> {
+  const conversation = getConversationThread(ctx.db, threadId);
+  if (conversation) {
+    try {
+      await ctx.hostHub.callHostOnlineRpc({
+        hostId: conversation.hostId,
+        command: { type: 'thread.stop', threadId }
+      });
+    } catch {
+      /* already gone */
+    }
+    const archived = archiveConversationThread(ctx.db, threadId) ?? conversation;
+    ctx.hub.emit('threads:updated', conversationThreadView(ctx, archived));
+    if (conversation.environmentId) await destroyEnvironmentIfIdle(ctx, conversation.environmentId);
+    return true;
+  }
   const thread = getThread(ctx.db as ZccDatabase, threadId);
   if (!thread) return false;
+  // Complete first so a hydrate during stop cannot re-list this row as live.
+  const completed = updateThreadStatus(ctx.db, threadId, 'completed') ?? { ...thread, status: 'completed' as const };
+  ctx.hub.emit('threads:updated', threadView(ctx, completed));
   try {
     await ctx.hostHub.callHostOnlineRpc({
       hostId: thread.hostId,
@@ -62,7 +83,6 @@ export async function archiveThread(ctx: ProductHttpContext, threadId: string): 
   } catch {
     // Host may already have dropped the PTY (exit, disconnect). Archive anyway.
   }
-  updateThreadStatus(ctx.db, threadId, 'completed');
   if (thread.environmentId) await destroyEnvironmentIfIdle(ctx, thread.environmentId);
   return true;
 }

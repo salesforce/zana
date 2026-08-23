@@ -2,12 +2,27 @@ import { isAbsolute, join, relative, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { realpathSync, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { AppConfig, CreateTerminalRequest, FollowUpStatus, LibraryScope, Persona, SessionCohort } from '@zana-ai/zcc-domain/product';
+import type { AppConfig, CreateTerminalRequest, FollowUpStatus, LibraryScope, Persona } from '@zana-ai/zcc-domain/product';
 import { browserRequestProblem, headerValue } from './browser-request-guard.js';
 import { listJsonFiles, readJsonFile, writeJsonFile } from './disk-json.js';
-import { readJsonBody, sendJson } from './json.js';
+import { applyTrustedOriginCors, readJsonBody, sendJson } from './json.js';
 import type { ProductHttpContext } from './product-context.js';
-import { createThreadFromRequest, ThreadCreateError, threadView, type SpawnThreadInput } from './thread-create.js';
+import { ThreadCreateError } from './thread-create.js';
+import {
+  conversationThreadView,
+  createConversationFromRequest,
+  flattenThreadInput,
+  type CreateConversationInput
+} from '../services/threads/conversation-create.js';
+import {
+  forkConversation,
+  resumeConversation,
+  sendConversationTurn,
+  stopConversation,
+  type ThreadSendMode
+} from '../services/threads/conversation-lifecycle.js';
+import { conversationTimeline } from '../services/threads/conversation-timeline.js';
+import { listThreadProviders } from '../services/threads/thread-provider-catalog.js';
 import { archiveThread, destroyEnvironment } from '../services/environments/environment-cleanup.js';
 import {
   environmentDiff,
@@ -20,8 +35,8 @@ import { spawnEnvironmentChoiceSchema } from '@zana-ai/zcc-domain';
 import { normalizeRepoUrl } from '../services/projects/git-clone.js';
 import { harnessDescriptors, harnessEffectiveDefault, harnessVerify } from './harness-via-rpc.js';
 import { isSafeRelPath, listLibraryDocs, listQuickPrompts, readLibraryDoc } from './library-via-host.js';
-import { listProjectDir, readProjectFile } from './project-fs-via-host.js';
-import { getEnvironment, getThread, listLiveThreads, listThreadsByProject, threadOutputTail } from '@zana-ai/zcc-db';
+import { listProjectDir, listProjectPaths, readProjectFile } from './project-fs-via-host.js';
+import { getConversationThread, getEnvironment, listConversationThreadEvents, listConversationThreadsByProject, listLiveConversationThreads } from '@zana-ai/zcc-db';
 import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
 
 const VALID_FOLLOW_UP_STATUS: FollowUpStatus[] = ['open', 'resolved', 'dismissed'];
@@ -47,21 +62,6 @@ function resolveCloneRoot(ctx: ProductHttpContext): string {
   const configured = ctx.config.getConfig().cloneRoot?.trim();
   if (configured && isAbsolute(configured)) return configured;
   return join(homedir(), 'zcc-workspace');
-}
-
-const COLS_MIN = 20;
-const COLS_MAX = 300;
-const ROWS_MIN = 8;
-const ROWS_MAX = 100;
-
-function parseTerminalGeometry(body: { cols?: unknown; rows?: unknown }): { cols: number; rows: number } | null {
-  const cols = typeof body.cols === 'number' && Number.isInteger(body.cols) ? body.cols : NaN;
-  const rows = typeof body.rows === 'number' && Number.isInteger(body.rows) ? body.rows : NaN;
-  if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols < 1 || rows < 1) return null;
-  return {
-    cols: Math.min(COLS_MAX, Math.max(COLS_MIN, cols)),
-    rows: Math.min(ROWS_MAX, Math.max(ROWS_MIN, rows))
-  };
 }
 
 function routeParams(pathname: string, pattern: string): Record<string, string> | null {
@@ -92,14 +92,6 @@ export async function handleProductHttp(
   const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
   if (!requestUrl.pathname.startsWith('/api/')) return false;
 
-  if (request.method === 'OPTIONS') {
-    response.writeHead(204, {
-      Allow: 'GET, HEAD, POST, PATCH, DELETE, OPTIONS',
-      'Cache-Control': 'no-store'
-    }).end();
-    return true;
-  }
-
   const problem = browserRequestProblem(
     {
       req: {
@@ -109,10 +101,29 @@ export async function handleProductHttp(
       }
     },
     { config: ctx.origins },
-    { requireJsonForMutation: true }
+    { requireJsonForMutation: request.method !== 'OPTIONS' }
   );
   if (problem) {
     sendJson(response, problem.status, { error: problem.error });
+    return true;
+  }
+
+  const origin = headerValue(request.headers, 'origin');
+  if (origin) applyTrustedOriginCors(response, origin);
+
+  if (request.method === 'OPTIONS') {
+    response.writeHead(204, {
+      Allow: 'GET, HEAD, POST, PATCH, DELETE, OPTIONS',
+      'Cache-Control': 'no-store',
+      ...(origin
+        ? {
+            'Access-Control-Allow-Origin': origin,
+            'Access-Control-Allow-Headers': 'content-type, x-zcc-app-surface',
+            'Access-Control-Allow-Methods': 'GET, HEAD, POST, PATCH, DELETE, OPTIONS',
+            Vary: 'Origin'
+          }
+        : {})
+    }).end();
     return true;
   }
 
@@ -139,6 +150,21 @@ export async function handleProductHttp(
       const project = await ctx.projects.add(body.path);
       ctx.hub.emit('projects:changed', ctx.projects.list());
       sendJson(response, 200, { project });
+      return true;
+    }
+
+    if (path === '/api/v1/projects/reorder' && method === 'POST') {
+      const body = (await readJsonBody(request)) as { orderedIds?: unknown };
+      const orderedIds = Array.isArray(body.orderedIds)
+        ? body.orderedIds.filter((id): id is string => typeof id === 'string' && id.length > 0)
+        : [];
+      if (orderedIds.length === 0) {
+        sendJson(response, 400, { error: 'orderedIds is required' });
+        return true;
+      }
+      const projects = await ctx.projects.reorder(orderedIds);
+      ctx.hub.emit('projects:changed', ctx.projects.list());
+      sendJson(response, 200, { projects });
       return true;
     }
 
@@ -424,125 +450,145 @@ export async function handleProductHttp(
       return true;
     }
 
-    if (path === '/api/v1/threads' && method === 'GET') {
-      const projectId = requestUrl.searchParams.get('projectId');
-      const threads = projectId ? listThreadsByProject(ctx.db, projectId) : listLiveThreads(ctx.db);
-      sendJson(response, 200, { threads: threads.map((thread) => threadView(ctx, thread)) });
+    if (path === '/api/v1/threads/providers' && method === 'GET') {
+      sendJson(response, 200, {
+        providers: listThreadProviders().map((provider) => ({
+          id: provider.id,
+          displayName: provider.displayName,
+          pluginId: provider.pluginId,
+          permissionModes: provider.capabilities.permissionModes,
+          reasoningLevels: provider.capabilities.reasoningLevels ?? [],
+          composerActions: provider.composerActions ?? []
+        }))
+      });
       return true;
     }
 
-    const threadOutput = routeParams(path, '/api/v1/threads/:id/output');
-    if (threadOutput && method === 'GET') {
-      const thread = getThread(ctx.db, threadOutput.id);
+    if (path === '/api/v1/threads' && method === 'GET') {
+      const projectId = requestUrl.searchParams.get('projectId');
+      const threads = projectId
+        ? listConversationThreadsByProject(ctx.db, projectId)
+        : listLiveConversationThreads(ctx.db);
+      sendJson(response, 200, { threads: threads.map((thread) => conversationThreadView(ctx, thread)) });
+      return true;
+    }
+
+    const threadById = routeParams(path, '/api/v1/threads/:id');
+    if (threadById && method === 'GET') {
+      const thread = getConversationThread(ctx.db, threadById.id);
       if (!thread) {
         sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
         return true;
       }
-      sendJson(response, 200, { output: threadOutputTail(ctx.db, thread.id) });
+      sendJson(response, 200, { thread: conversationThreadView(ctx, thread) });
+      return true;
+    }
+
+    const threadEvents = routeParams(path, '/api/v1/threads/:id/events');
+    if (threadEvents && method === 'GET') {
+      const thread = getConversationThread(ctx.db, threadEvents.id);
+      if (!thread) {
+        sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
+        return true;
+      }
+      sendJson(response, 200, { events: listConversationThreadEvents(ctx.db, thread.id) });
+      return true;
+    }
+
+    const threadTimeline = routeParams(path, '/api/v1/threads/:id/timeline');
+    if (threadTimeline && method === 'GET') {
+      try {
+        sendJson(response, 200, conversationTimeline(ctx, threadTimeline.id));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadOutput = routeParams(path, '/api/v1/threads/:id/output');
+    if (threadOutput && (method === 'GET' || method === 'POST')) {
+      sendJson(response, 410, { error: 'gone', message: 'PTY thread output moved off /api/v1/threads; use /threads/:id/timeline' });
       return true;
     }
 
     const threadResize = routeParams(path, '/api/v1/threads/:id/resize');
     if (threadResize && method === 'POST') {
-      const thread = getThread(ctx.db, threadResize.id);
-      if (!thread) {
-        sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
-        return true;
-      }
-      const body = (await readJsonBody(request)) as { cols?: unknown; rows?: unknown };
-      const geometry = parseTerminalGeometry(body);
-      if (!geometry) {
-        sendJson(response, 400, { error: 'bad-geometry', message: 'cols and rows must be positive integers' });
-        return true;
-      }
-      try {
-        await ctx.hostHub.callHostOnlineRpc({
-          hostId: thread.hostId,
-          command: {
-            type: 'thread.resize',
-            threadId: thread.id,
-            cols: geometry.cols,
-            rows: geometry.rows
-          }
-        });
-        sendJson(response, 200, { ok: true, threadId: thread.id, ...geometry });
-      } catch (error) {
-        sendHostFailure(response, error);
-      }
+      sendJson(response, 410, { error: 'gone', message: 'PTY resize is not a Thread API' });
       return true;
     }
 
     const threadInput = routeParams(path, '/api/v1/threads/:id/input');
     if (threadInput && method === 'POST') {
-      const thread = getThread(ctx.db, threadInput.id);
-      if (!thread) {
-        sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
-        return true;
-      }
-      const body = (await readJsonBody(request)) as { data?: unknown };
-      if (typeof body.data !== 'string') {
-        sendJson(response, 400, { error: 'bad-input', message: 'data must be a string' });
-        return true;
-      }
-      try {
-        await ctx.hostHub.callHostOnlineRpc({
-          hostId: thread.hostId,
-          command: { type: 'thread.input', threadId: thread.id, data: body.data }
-        });
-        sendJson(response, 200, { ok: true, threadId: thread.id });
-      } catch (error) {
-        sendHostFailure(response, error);
-      }
+      sendJson(response, 410, { error: 'gone', message: 'PTY input is not a Thread API; use POST /threads/:id/send' });
       return true;
     }
 
     const threadStop = routeParams(path, '/api/v1/threads/:id/stop');
     if (threadStop && method === 'POST') {
-      const thread = getThread(ctx.db, threadStop.id);
-      if (!thread) {
-        sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
-        return true;
-      }
       try {
-        await ctx.hostHub.callHostOnlineRpc({
-          hostId: thread.hostId,
-          command: { type: 'thread.stop', threadId: thread.id }
-        });
-        sendJson(response, 200, { ok: true, threadId: thread.id });
+        const thread = await stopConversation(ctx, threadStop.id);
+        sendJson(response, 200, { ok: true, thread: conversationThreadView(ctx, thread) });
       } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
         sendHostFailure(response, error);
       }
       return true;
     }
 
-    const threadReply = routeParams(path, '/api/v1/threads/:id/reply');
-    if (threadReply && method === 'POST') {
-      const thread = getThread(ctx.db, threadReply.id);
-      if (!thread) {
-        sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
-        return true;
-      }
-      const body = (await readJsonBody(request)) as { text?: unknown };
-      if (typeof body.text !== 'string' || body.text.trim().length === 0) {
-        sendJson(response, 400, { error: 'invalid-input', message: 'text is required' });
-        return true;
-      }
-      if (!thread.environmentId) {
-        sendJson(response, 409, { error: 'environment_not_ready', message: 'thread has no environment' });
-        return true;
-      }
+    const threadResume = routeParams(path, '/api/v1/threads/:id/resume');
+    if (threadResume && method === 'POST') {
       try {
-        await ctx.hostHub.callHostOnlineRpc({
-          hostId: thread.hostId,
-          command: {
-            type: 'turn.submit',
-            threadId: thread.id,
-            environmentId: thread.environmentId,
-            input: [body.text]
-          }
-        });
-        sendJson(response, 200, { ok: true, threadId: thread.id });
+        const thread = await resumeConversation(ctx, threadResume.id);
+        sendJson(response, 200, { ok: true, thread: conversationThreadView(ctx, thread) });
       } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadFork = routeParams(path, '/api/v1/threads/:id/fork');
+    if (threadFork && method === 'POST') {
+      try {
+        const thread = await forkConversation(ctx, threadFork.id);
+        sendJson(response, 201, { ok: true, thread: conversationThreadView(ctx, thread), value: conversationThreadView(ctx, thread) });
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadSend = routeParams(path, '/api/v1/threads/:id/send');
+    const threadReply = routeParams(path, '/api/v1/threads/:id/reply');
+    if ((threadSend || threadReply) && method === 'POST') {
+      const id = threadSend?.id ?? threadReply?.id;
+      const body = (await readJsonBody(request)) as { input?: unknown; text?: unknown; mode?: unknown };
+      const mode = body.mode === 'start' || body.mode === 'auto' || body.mode === 'steer'
+        || body.mode === 'queue-if-active' || body.mode === 'steer-if-active'
+        ? body.mode as ThreadSendMode
+        : 'auto';
+      try {
+        const thread = await sendConversationTurn(ctx, id!, body.input ?? body.text, mode);
+        sendJson(response, 200, { ok: true, thread: conversationThreadView(ctx, thread) });
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
         sendHostFailure(response, error);
       }
       return true;
@@ -550,9 +596,6 @@ export async function handleProductHttp(
 
     if (path === '/api/v1/threads' && method === 'POST') {
       const body = (await readJsonBody(request)) as Record<string, unknown>;
-      const input = Array.isArray(body.input)
-        ? body.input.filter((part): part is string => typeof part === 'string')
-        : typeof body.input === 'string' ? [body.input] : [];
       const environmentChoice = body.environment === undefined
         ? undefined
         : spawnEnvironmentChoiceSchema.safeParse(body.environment);
@@ -561,47 +604,24 @@ export async function handleProductHttp(
         return true;
       }
       try {
-        const thread = await createThreadFromRequest(ctx, {
+        const thread = await createConversationFromRequest(ctx, {
           projectId: typeof body.projectId === 'string' ? body.projectId : '',
-          providerId: typeof body.providerId === 'string' ? body.providerId : '',
-          input,
+          providerId: typeof body.providerId === 'string' ? body.providerId : 'claude-code',
+          input: flattenThreadInput(body.input ?? body.prompt),
           hostId: typeof body.hostId === 'string' ? body.hostId : undefined,
           id: typeof body.id === 'string' ? body.id : undefined,
           environment: environmentChoice?.data,
           checkout: body.checkout && typeof body.checkout === 'object'
-            ? body.checkout as SpawnThreadInput['checkout']
+            ? body.checkout as CreateConversationInput['checkout']
             : undefined,
           cwd: typeof body.cwd === 'string' ? body.cwd : undefined,
           title: typeof body.title === 'string' ? body.title : undefined,
-          extraArgs: Array.isArray(body.extraArgs)
-            ? body.extraArgs.filter((part): part is string => typeof part === 'string')
+          permissionMode: body.permissionMode === 'accept-edits' || body.permissionMode === 'auto' || body.permissionMode === 'full'
+            ? body.permissionMode
             : undefined,
-          harnessRouting: body.harnessRouting && typeof body.harnessRouting === 'object'
-            ? body.harnessRouting as SpawnThreadInput['harnessRouting']
-            : undefined,
-          personaId: typeof body.personaId === 'string' ? body.personaId : undefined,
-          headless: body.headless === true,
-          scheduled: body.scheduled === true,
-          autoCloseOnFinish: body.autoCloseOnFinish === true,
-          inboxLevel: body.inboxLevel === 'silent' || body.inboxLevel === 'quiet' || body.inboxLevel === 'loud'
-            ? body.inboxLevel
-            : undefined,
-          autonomous: body.autonomous === true,
-          resumeSessionId: typeof body.resumeSessionId === 'string' ? body.resumeSessionId : undefined,
-          executionEnvironment: body.environmentKind === 'local' || body.environmentKind === 'sandbox' || body.environmentKind === 'microvm'
-            ? body.environmentKind
-            : body.executionEnvironment === 'local' || body.executionEnvironment === 'sandbox' || body.executionEnvironment === 'microvm'
-              ? body.executionEnvironment
-              : undefined,
-          sandboxDenyNetwork: body.sandboxDenyNetwork === true,
-          microVmImage: typeof body.microVmImage === 'string' ? body.microVmImage : undefined,
-          microVmCpus: typeof body.microVmCpus === 'number' ? body.microVmCpus : undefined,
-          microVmMemoryMib: typeof body.microVmMemoryMib === 'number' ? body.microVmMemoryMib : undefined,
-          reconnectTmuxId: typeof body.reconnectTmuxId === 'string' ? body.reconnectTmuxId : undefined,
-          resume: body.resume === true,
-          cohort: body.cohort && typeof body.cohort === 'object' ? body.cohort as SessionCohort : undefined
+          model: typeof body.model === 'string' ? body.model : undefined
         });
-        sendJson(response, 201, { ok: true, value: threadView(ctx, thread) });
+        sendJson(response, 201, { ok: true, value: conversationThreadView(ctx, thread), thread: conversationThreadView(ctx, thread) });
       } catch (error) {
         if (error instanceof ThreadCreateError) {
           sendJson(response, error.status, { ok: false, code: error.code, message: error.message });
@@ -621,6 +641,38 @@ export async function handleProductHttp(
           return true;
         }
         sendJson(response, 200, { ok: true, threadId: threadArchive.id });
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const projectCommands = routeParams(path, '/api/v1/projects/:id/commands');
+    if (projectCommands && method === 'GET') {
+      sendJson(response, 200, {
+        commands: listThreadProviders().flatMap((provider) =>
+          (provider.composerActions ?? []).map((name) => ({
+            id: `${provider.id}:${name}`,
+            name: `/${name}`,
+            providerId: provider.id,
+            description: `${provider.displayName} ${name}`
+          }))
+        )
+      });
+      return true;
+    }
+
+    const projectPaths = routeParams(path, '/api/v1/projects/:id/paths');
+    if (projectPaths && method === 'GET') {
+      try {
+        const limitRaw = requestUrl.searchParams.get('limit');
+        const parsedLimit = limitRaw ? Number(limitRaw) : undefined;
+        sendJson(response, 200, await listProjectPaths(ctx, projectPaths.id, {
+          query: requestUrl.searchParams.get('query') ?? requestUrl.searchParams.get('q') ?? undefined,
+          limit: Number.isFinite(parsedLimit) ? parsedLimit : undefined,
+          includeFiles: requestUrl.searchParams.get('includeFiles') !== 'false',
+          includeDirectories: requestUrl.searchParams.get('includeDirectories') !== 'false'
+        }));
       } catch (error) {
         sendHostFailure(response, error);
       }

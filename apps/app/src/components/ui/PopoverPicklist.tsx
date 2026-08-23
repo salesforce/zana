@@ -1,5 +1,7 @@
 export {
   PopoverPicklist,
+  placePopoverMenu,
+  type PopoverMenuPlacement,
   type PopoverPicklistOption,
   type PopoverPicklistProps
 } from '@zana-ai/zcc-ui/popover-picklist';

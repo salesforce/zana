@@ -138,6 +138,11 @@
       "types": "./src/workspace-diff.ts",
       "source": "./src/workspace-diff.ts",
       "default": "./src/workspace-diff.ts"
+    },
+    "./thread-runtime": {
+      "types": "./src/thread-runtime.ts",
+      "source": "./src/thread-runtime.ts",
+      "default": "./src/thread-runtime.ts"
     }
   },
   "scripts": {

@@ -1,5 +1,5 @@
-import { isAbsolute, relative, resolve, sep } from 'node:path';
-import type { HostListDirResult, HostReadFileResult } from '@zana-ai/zcc-contracts/host-rpc';
+import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
+import type { HostListDirResult, HostListFilesResult, HostReadFileResult } from '@zana-ai/zcc-contracts/host-rpc';
 import type { FsEntry, FsReadResult, Project } from '@zana-ai/zcc-domain/product';
 import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
 import { isSafeRelPath } from './library-via-host.js';
@@ -108,4 +108,87 @@ export async function readProjectFile(ctx: ProductHttpContext, path: string): Pr
     }
     mapHostError(error);
   }
+}
+
+const PATH_SEARCH_DENY = new Set([
+  'node_modules',
+  '.git',
+  'dist',
+  'build',
+  '.next',
+  '.turbo',
+  '.DS_Store'
+]);
+
+const PATH_SEARCH_DEFAULT_LIMIT = 80;
+const PATH_SEARCH_MAX_LIMIT = 200;
+
+export function isDeniedProjectRelPath(relPath: string): boolean {
+  return relPath.split('/').some((part) => PATH_SEARCH_DENY.has(part));
+}
+
+export interface ProjectPathEntry {
+  kind: 'file' | 'directory';
+  path: string;
+  name: string;
+  score: number;
+  positions: number[];
+}
+
+export async function listProjectPaths(
+  ctx: ProductHttpContext,
+  projectId: string,
+  opts: {
+    query?: string;
+    limit?: number;
+    includeFiles?: boolean;
+    includeDirectories?: boolean;
+  } = {}
+): Promise<{ paths: ProjectPathEntry[]; truncated: boolean }> {
+  const project = ctx.toProjects().find((row) => row.id === projectId);
+  if (!project) {
+    throw new ProjectFsError(404, 'unknown-project', 'project is not registered');
+  }
+  if (!project.path) {
+    throw new ProjectFsError(400, 'path-unavailable', 'project has no local path');
+  }
+
+  let result: HostListFilesResult;
+  try {
+    const hostId = ctx.hostHub.resolveHostId();
+    result = await ctx.hostHub.callHostOnlineRpc<HostListFilesResult>({
+      hostId,
+      command: { type: 'host.list_files', roots: [project.path] }
+    });
+  } catch (error) {
+    mapHostError(error);
+  }
+
+  const query = (opts.query ?? '').trim().toLowerCase();
+  const includeFiles = opts.includeFiles !== false;
+  const includeDirectories = opts.includeDirectories !== false;
+  const requested = Number.isFinite(opts.limit) ? Number(opts.limit) : PATH_SEARCH_DEFAULT_LIMIT;
+  const limit = Math.min(PATH_SEARCH_MAX_LIMIT, Math.max(1, requested));
+  const mapped: ProjectPathEntry[] = [];
+  for (const file of result.files) {
+    if (!file.relPath || isDeniedProjectRelPath(file.relPath)) continue;
+    const kind = file.kind === 'dir' ? 'directory' : 'file';
+    if (kind === 'file' && !includeFiles) continue;
+    if (kind === 'directory' && !includeDirectories) continue;
+    const name = basename(file.relPath);
+    if (query && !file.relPath.toLowerCase().includes(query) && !name.toLowerCase().includes(query)) {
+      continue;
+    }
+    mapped.push({
+      kind,
+      path: file.relPath,
+      name,
+      score: 0,
+      positions: []
+    });
+  }
+  return {
+    paths: mapped.slice(0, limit),
+    truncated: mapped.length > limit
+  };
 }

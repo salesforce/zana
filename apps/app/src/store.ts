@@ -42,25 +42,12 @@ import type {
   OpenTarget
 } from '@zana-ai/zcc-domain/product';
 import { DEFAULT_TERMINAL_THEME, type TerminalThemeId } from '@zana-ai/zcc-domain/terminal-themes';
-import { seedPromptArgs, harnessFamilyOf } from '@zana-ai/zcc-domain/launch-provider';
+import { seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
 import type { UsageSummary } from '@zana-ai/zcc-domain/telemetry-events';
-import {
-  snapshotTabs,
-  planRestore,
-  readSnapshot,
-  writeSnapshot,
-  resolveRestartProfile,
-  type SessionSnapshotMap
-} from './lib/sessionRestore.js';
+import { resolveRestartProfile } from './lib/sessionRestore.js';
 import { getScopedProjectId, isScopedWindow } from './lib/windowScope.js';
 import { appNavigate } from './lib/app-navigate.js';
 import { hasDesktopBridge } from './lib/app-surface.js';
-import {
-  forgetHostThread,
-  isHostThread,
-  sessionFromHostThread,
-  type HostThreadView
-} from './lib/host-thread-session.js';
 import { product } from './lib/product-client.js';
 import { decodeRoutePath } from './lib/decode-route.js';
 import {
@@ -1420,13 +1407,14 @@ interface DataState {
    *  picker) vs. plain markdown + free-text reply. Hydrated on init, kept live by
    *  the Settings toggle. Default ON. */
   structuredQuestionsEnabled: boolean;
-  /** Mirror of AppConfig.harnessCursorEnabled — gates Cursor in launch profile UI. */
+  /** Mirror of AppConfig.harnessCursorEnabled — explicit hide for Cursor. Unset
+   *  plus an installed CLI still offers it in launch UI. */
   harnessCursorEnabled: boolean;
-  /** Mirror of AppConfig.harnessCodexEnabled — gates Codex in launch profile UI. */
+  /** Mirror of AppConfig.harnessCodexEnabled — explicit hide for Codex. */
   harnessCodexEnabled: boolean;
-  /** Mirror of AppConfig.harnessPiEnabled — gates PI in launch profile UI. */
+  /** Mirror of AppConfig.harnessPiEnabled — explicit hide for PI. */
   harnessPiEnabled: boolean;
-  /** Mirror of AppConfig.harnessOpenCodeEnabled — gates OpenCode in launch profile UI. */
+  /** Mirror of AppConfig.harnessOpenCodeEnabled — explicit hide for OpenCode. */
   harnessOpenCodeEnabled: boolean;
   /** Last code-harness verification snapshot (Settings → Code Harness). Empty
    *  until `refreshHarnessStatus` runs; the launcher gates a harness profile on
@@ -1489,16 +1477,12 @@ interface DataState {
   setHeartbeat: (sessionId: string, projectId: string, on: boolean) => Promise<void>;
   reopenLastClosed: (projectId: string) => Promise<TerminalSession | null>;
   /**
-   * Re-spawn the visible tabs that were open last launch (claude tabs resume
-   * via `--continue`). Idempotent across the app launch: runs at most once,
-   * guarded by `sessionsRestored`. Called from init() after live hydration.
+   * Reattach tmux sessions that survived quit. Idempotent across the app
+   * launch: runs at most once, guarded by `sessionsRestored`. Called from
+   * init() after live hydration. Agent cards come from the SQLite live list,
+   * not a localStorage tab snapshot.
    */
   restoreSessions: (skipProjectIds?: Set<string>) => Promise<void>;
-  /**
-   * Persist the current per-project visible-tab layout to localStorage so the
-   * next launch can restore it. Cheap; called after any tab create/close.
-   */
-  persistOpenSessions: () => void;
   loadProjects: () => Promise<void>;
   loadClaudeSessions: (projectId: string) => Promise<void>;
   addProject: () => Promise<Project | null>;
@@ -1585,20 +1569,12 @@ interface DataState {
     }
   ) => Promise<TerminalSession | null>;
   /**
-   * Browser local-dev: project a host thread into the Agents board's
-   * `terminals` map. Desktop launches still go through `createTerminal`.
-   */
-  adoptHostThread: (thread: HostThreadView) => TerminalSession;
-  /** Reload live host threads into `terminals` (browser only). */
-  hydrateHostThreads: () => Promise<void>;
-  /**
    * Terminate a session: kills the pty and removes the tab. Always drops the
-   * card even when stop/archive cannot be confirmed (stale host threads, a
-   * remote tmux that did not die) so the board cannot keep ghosts. A toast
-   * still warns when the process may be alive. Pushes a restorable snapshot
-   * onto closedTabs so ⌘⇧T can reopen a fresh tab with the same
-   * profile/cwd/pinned/extraArgs. Wired to the tab's X button, ⌘⇧W,
-   * middle-click, and the sidebar row X.
+   * card even when close cannot be confirmed (a remote tmux that did not die)
+   * so the board cannot keep ghosts. A toast still warns when the process may
+   * be alive. Pushes a restorable snapshot onto closedTabs so ⌘⇧T can reopen
+   * a fresh tab with the same profile/cwd/pinned/extraArgs. Wired to the
+   * tab's X button, ⌘⇧W, middle-click, and the sidebar row X.
    */
   closeTerminal: (sessionId: string, projectId: string) => Promise<void>;
   /**
@@ -1681,14 +1657,6 @@ interface DataState {
  * but a genuine app relaunch (fresh module graph) resets it to false.
  */
 let sessionsRestored = false;
-/**
- * True only while `restoreSessions` is spawning its planned tabs. Suppresses
- * `persistOpenSessions` for the duration so the in-loop createTerminal /
- * markExited calls can't rewrite (and partially clobber) the snapshot before
- * the whole plan has been consumed — an interrupted restore would otherwise
- * lose the un-spawned tail. We persist once, explicitly, after the loop.
- */
-let restoringSessions = false;
 
 /**
  * Filter out hidden (headless) terminals from a project's tab strip. Hidden
@@ -2069,22 +2037,13 @@ export const useData = create<DataState>((set, get) => ({
         })
       );
 
-      // Silently restore the tabs that were open last launch. Runs once per
-      // app launch (guarded), after live ptys have hydrated above so we never
-      // double-spawn on top of a session that outlived a renderer reload.
-      // planRestore() folds each claude tab's own `--resume <session-id>` in so
-      // it resumes ITS prior conversation (legacy snapshots without an id fall
-      // back to `--continue`), and skips deleted/remote/already-live projects.
+      // Reattach surviving tmux sessions. Runs once per app launch (guarded),
+      // after live ptys have hydrated so we never double-spawn on top of a
+      // session that outlived a renderer reload.
       //
-      // SKIPPED in a per-project window. Restore reads the shared (per-origin)
-      // `zcc.openSessions` snapshot, which spans EVERY project — running it in a
-      // scoped window would spawn tabs for other projects and race the main
-      // window over the same snapshot. The scoped window already hydrated its
-      // own live ptys above (display only); spawning + snapshot ownership belong
-      // to the unscoped main window. (persistOpenSessions is likewise gated.)
-      if (!isScopedWindow()) {
-        await get().hydrateHostThreads();
-      }
+      // SKIPPED in a per-project window — tmux restore spans every project and
+      // belongs to the unscoped main window. The scoped window already hydrated
+      // its own live ptys above (display only).
       if (!isScopedWindow() && hasDesktopBridge()) {
         await get().restoreSessions(hydrationFailed);
       }
@@ -2480,20 +2439,6 @@ export const useData = create<DataState>((set, get) => ({
         next[idx] = merged;
         return { terminals: { ...s.terminals, [session.projectId]: next } };
       });
-      // Main-created sessions (including structured Team workers) arrive only
-      // through this push, not createTerminal(). Keep restore snapshot current
-      // after every metadata update so a quit can reattach them on next boot.
-      get().persistOpenSessions();
-    });
-
-    product.threads.onUpdated((payload) => {
-      if (payload && typeof payload === 'object' && 'id' in payload && 'projectId' in payload && 'providerId' in payload) {
-        get().adoptHostThread(payload as HostThreadView);
-        return;
-      }
-      window.setTimeout(() => {
-        void get().hydrateHostThreads();
-      }, 250);
     });
 
     // Live agent-state pushes land in their own store (useAgentStatus), keyed
@@ -2778,7 +2723,11 @@ export const useData = create<DataState>((set, get) => ({
     });
     try {
       const persisted = await product.projects.reorder(orderedIds);
-      set({ projects: persisted });
+      // IPC's error fallback is `[]`. Don't wipe the optimistic order (or
+      // the whole sidebar) when persist returns an empty list.
+      if (Array.isArray(persisted) && persisted.length > 0) {
+        set({ projects: persisted });
+      }
     } catch (err) {
       pushErrorToast(errorMessage(err, 'Failed to reorder projects'));
       await get().loadProjects();
@@ -2847,58 +2796,48 @@ export const useData = create<DataState>((set, get) => ({
 
   async createTerminal(projectId, profile, cols, rows, opts) {
     try {
-      const family = harnessFamilyOf(profile);
-      const prompt = opts?.prompt?.trim() ?? '';
-      if (profile !== 'shell' && !family) {
-        const message = 'that launch profile is not available';
-        opts?.onError?.(message);
-        pushErrorToast(message);
-        return null;
-      }
-      const spawned = await product.threads.spawn({
+      const result = await product.terminals.create({
         projectId,
-        providerId: profile,
-        input: prompt ? [prompt] : [],
-        environment: opts?.workspace ?? { kind: 'unmanaged' },
-        cwd: opts?.cwd,
-        title: opts?.title,
+        profile,
+        profileSource: opts?.profileSource,
+        personaId: opts?.personaId,
+        frameworkIds: opts?.frameworkIds,
+        cols,
+        rows,
         extraArgs: opts?.extraArgs,
         harnessRouting: opts?.harnessRouting,
-        personaId: opts?.personaId,
-        headless: opts?.headless,
-        scheduled: opts?.scheduled,
-        autoCloseOnFinish: opts?.autoCloseOnFinish,
-        inboxLevel: opts?.inboxLevel,
-        autonomous: opts?.autonomous,
-        resumeSessionId: opts?.resumeSessionId,
-        executionEnvironment: opts?.environment,
+        title: opts?.title,
+        cwd: opts?.cwd,
+        isolateScratch: opts?.isolateScratch,
+        worktree: opts?.worktree,
+        prompt: opts?.prompt,
+        environment: opts?.environment,
         sandboxDenyNetwork: opts?.sandboxDenyNetwork,
         microVmImage: opts?.microVmImage,
         microVmCpus: opts?.microVmCpus,
         microVmMemoryMib: opts?.microVmMemoryMib,
-        reconnectTmuxId: opts?.reconnectTmuxId,
-        resume: opts?.resume,
-        cohort: opts?.cohort
+        resumeSessionId: opts?.resumeSessionId,
+        cohort: opts?.cohort,
+        headless: opts?.headless
       });
-      if (!spawned.ok) {
-        opts?.onError?.(spawned.message);
-        pushErrorToast(spawned.message);
-        console.error('thread spawn failed', spawned);
+      if (!result.ok) {
+        opts?.onError?.(result.message);
+        pushErrorToast(result.message);
+        console.error('terminal create failed', result);
         return null;
       }
-      const session = get().adoptHostThread(spawned.value);
-      if (opts?.headless) {
-        set((s) => ({
-          terminals: {
-            ...s.terminals,
-            [projectId]: (s.terminals[projectId] ?? []).map((row) =>
-              row.id === session.id ? { ...row, headless: true, scheduled: opts.scheduled } : row
-            )
-          }
-        }));
-      }
-      get().persistOpenSessions();
-      return get().terminals[projectId]?.find((row) => row.id === session.id) ?? session;
+      // Idempotent append: ptys.create() emits `sessionUpdated` synchronously,
+      // which the onUpdated handler may have already appended before this IPC
+      // promise resolves (the two messages race). Dedupe by id so a click
+      // never yields two tabs for the same session.
+      set((s) => {
+        const list = s.terminals[projectId] || [];
+        if (list.some((t) => t.id === result.value.id)) return s;
+        return {
+          terminals: { ...s.terminals, [projectId]: [...list, result.value] }
+        };
+      });
+      return result.value;
     } catch (err) {
       const message = errorMessage(err, 'Failed to create terminal');
       opts?.onError?.(message);
@@ -2907,166 +2846,38 @@ export const useData = create<DataState>((set, get) => ({
     }
   },
 
-  adoptHostThread(thread) {
-    const project = get().projects.find((row) => row.id === thread.projectId);
-    const session = sessionFromHostThread(thread, project);
-    set((s) => {
-      const list = s.terminals[thread.projectId] || [];
-      const idx = list.findIndex((row) => row.id === session.id);
-      if (idx === -1) {
-        return { terminals: { ...s.terminals, [thread.projectId]: [...list, session] } };
-      }
-      const next = list.slice();
-      next[idx] = { ...list[idx], ...session };
-      return { terminals: { ...s.terminals, [thread.projectId]: next } };
-    });
-    return session;
-  },
-
-  async hydrateHostThreads() {
-    try {
-      const threads = await product.threads.list();
-      const projects = get().projects;
-      const liveIds = new Set(threads.map((thread) => thread.id));
-      set((s) => {
-        const terminals: Record<string, TerminalSession[]> = {};
-        for (const [projectId, list] of Object.entries(s.terminals)) {
-          terminals[projectId] = list.slice();
-        }
-        for (const thread of threads) {
-          const project = projects.find((row) => row.id === thread.projectId);
-          const session = sessionFromHostThread(thread, project);
-          const list = terminals[thread.projectId] ?? [];
-          const idx = list.findIndex((row) => row.id === session.id);
-          if (idx === -1) {
-            terminals[thread.projectId] = [...list, session];
-          } else {
-            const next = list.slice();
-            next[idx] = { ...list[idx], ...session };
-            terminals[thread.projectId] = next;
-          }
-        }
-        // An empty live list must not wipe a just-adopted spawn (the GET can
-        // race the insert, and a stale server used to always return []).
-        if (liveIds.size > 0) {
-          for (const [projectId, list] of Object.entries(terminals)) {
-            terminals[projectId] = list.filter(
-              (row) => liveIds.has(row.id) || row.status === 'exited'
-            );
-          }
-        }
-        return { terminals };
-      });
-    } catch {
-      /* browser hydrate is best-effort — a missing host leaves Home launchable */
-    }
-  },
-
-  persistOpenSessions() {
-    // A per-project window never owns the shared `zcc.openSessions` snapshot:
-    // its `terminals` map only meaningfully holds its one scoped project, so
-    // writing here would clobber the other projects' tab layout the main window
-    // restored. Snapshot ownership is the unscoped main window's, mirroring how
-    // `windowBounds` is persisted only by the unscoped window (main side).
-    if (isScopedWindow()) return;
-    // Suppressed during restore: the in-loop createTerminal/markExited calls
-    // would otherwise rewrite the snapshot from a partially-restored state and
-    // an interruption could drop the un-spawned tail. restoreSessions persists
-    // once when it finishes.
-    if (restoringSessions) return;
-    const { terminals } = get();
-    const snapshot: SessionSnapshotMap = {};
-    for (const [projectId, list] of Object.entries(terminals)) {
-      const snap = snapshotTabs(list);
-      if (snap.length > 0) snapshot[projectId] = snap;
-    }
-    writeSnapshot(snapshot);
-  },
-
   async restoreSessions(skipProjectIds) {
     if (sessionsRestored) return; // once per app launch
     sessionsRestored = true;
     const { projects, terminals } = get();
-    const plan = planRestore(readSnapshot(), projects, terminals, skipProjectIds);
-    // Main owns authoritative restore capabilities and can see surviving tmux
-    // sessions. Merge those candidates so a main-created Team worker cannot be
-    // lost when its renderer push raced listener registration/localStorage.
-    const plannedCapabilities = new Set(plan.flatMap((item) => item.restoreCapabilityId ? [item.restoreCapabilityId] : []));
+    // Main owns restore capabilities and can see surviving tmux sessions.
+    // This path only reattaches processes that outlived quit.
     const knownProjects = new Set(projects.filter((project) => !project.remote).map((project) => project.id));
     const liveProjects = new Set(Object.entries(terminals)
       .filter(([, sessions]) => sessions.some((session) => session.status !== 'exited'))
       .map(([projectId]) => projectId));
     const tmuxCandidates = await product.terminals.listTmuxRestoreCandidates();
-    for (const candidate of tmuxCandidates) {
-      if (plannedCapabilities.has(candidate.capabilityId)) continue;
-      if (!knownProjects.has(candidate.projectId) || liveProjects.has(candidate.projectId)) continue;
-      if (skipProjectIds?.has(candidate.projectId)) continue;
-      plan.push({
-        restoreCapabilityId: candidate.capabilityId,
-        projectId: candidate.projectId,
-        profile: 'shell',
-        title: ''
-      });
-    }
+    const plan = tmuxCandidates.filter((candidate) => {
+      if (!knownProjects.has(candidate.projectId) || liveProjects.has(candidate.projectId)) return false;
+      if (skipProjectIds?.has(candidate.projectId)) return false;
+      return true;
+    });
     if (plan.length === 0) return;
-    restoringSessions = true;
-    try {
-      // Spawn sequentially: a burst of concurrent claude --continue launches
-      // can race the same per-project .mcp.json write and thrash the CLI's
-      // session store. Order within a project is preserved (plan is tab order).
-      for (const item of plan) {
-        const restored = await product.terminals.restore({
-          capabilityId: item.restoreCapabilityId,
-          legacyRequest: item.restoreCapabilityId ? undefined : {
-            projectId: item.projectId,
-            profile: item.profile,
-            cols: 80,
-            rows: 24,
-            extraArgs: item.extraArgs,
-            title: item.title,
-            cwd: item.worktree ? undefined : item.cwd,
-            resumeSessionId: item.resumeSessionId
-          }
+    // Spawn sequentially: a burst of concurrent restores can race the same
+    // per-project .mcp.json write and thrash the CLI's session store.
+    for (const item of plan) {
+      const restored = await product.terminals.restore({
+        capabilityId: item.capabilityId
+      });
+      const created = restored.ok ? restored.value : null;
+      if (!restored.ok) pushErrorToast(restored.message);
+      if (created) {
+        set((state) => {
+          const list = state.terminals[item.projectId] ?? [];
+          if (list.some((terminal) => terminal.id === created.id)) return state;
+          return { terminals: { ...state.terminals, [item.projectId]: [...list, created] } };
         });
-        const created = restored.ok ? restored.value : null;
-        if (!restored.ok) pushErrorToast(restored.message);
-        if (created) {
-          set((state) => {
-            const list = state.terminals[item.projectId] ?? [];
-            if (list.some((terminal) => terminal.id === created.id)) return state;
-            return { terminals: { ...state.terminals, [item.projectId]: [...list, created] } };
-          });
-        }
-        if (created && item.pinned) {
-          get().setPinned(item.projectId, created.id, true);
-        }
-        // Re-apply the rename guards so the restored tab keeps its name:
-        //  - titleLocked: the user's manual rename stays suppressed-from-auto.
-        //  - autoTitledBy{Llm,Osc}: an auto-named tab isn't re-renamed by the
-        //    first post-restore OSC idle-title (the "renamed on restore" bug).
-        if (created && (item.titleLocked || item.autoTitledByLlm || item.autoTitledByOsc)) {
-          set((s) => ({
-            terminals: {
-              ...s.terminals,
-              [item.projectId]: (s.terminals[item.projectId] ?? []).map((t) =>
-                t.id === created.id
-                  ? {
-                      ...t,
-                      titleLocked: item.titleLocked || t.titleLocked,
-                      autoTitledByLlm: item.autoTitledByLlm || t.autoTitledByLlm,
-                      autoTitledByOsc: item.autoTitledByOsc || t.autoTitledByOsc
-                    }
-                  : t
-              )
-            }
-          }));
-        }
       }
-    } finally {
-      // Clear first, then persist once so the snapshot reflects the fully
-      // restored layout (and survives even if a spawn above threw).
-      restoringSessions = false;
-      get().persistOpenSessions();
     }
   },
 
@@ -3079,13 +2890,9 @@ export const useData = create<DataState>((set, get) => ({
     let closeFailed = false;
     try {
       if (!await product.terminals.close(sessionId)) closeFailed = true;
-      else if (closing?.workspaceEnvironmentId && !isHostThread(sessionId)) {
-        await product.threads.archive(sessionId).catch(() => {});
-      }
     } catch {
       closeFailed = true;
     }
-    forgetHostThread(sessionId);
     if (closeFailed) {
       pushErrorToast("Removed from the board. Couldn't confirm the process stopped.");
     }
@@ -3138,7 +2945,6 @@ export const useData = create<DataState>((set, get) => ({
       const target = targetIdx >= 0 ? next[targetIdx]?.id : undefined;
       ui.selectTab(projectId, target);
     }
-    get().persistOpenSessions();
   },
 
   async closeIdleAgents(projectId, sessionIds, summarize) {
@@ -3388,8 +3194,8 @@ export const useData = create<DataState>((set, get) => ({
     // Snapshot what we need before kill/reset — once we close the pty the
     // session may be removed from the live map and we lose pinned/title.
     // Also carries codex/opencode's detected session ids so a restart resumes
-    // THIS tab's own conversation, not the cwd's most-recent one (same as
-    // sessionRestore's planRestore — see resolveRestartProfile).
+    // THIS tab's own conversation, not the cwd's most-recent one
+    // (see resolveRestartProfile).
     const snapshot = {
       profile: src.profile,
       title: src.title,
@@ -3477,32 +3283,20 @@ export const useData = create<DataState>((set, get) => ({
     };
     let created: TerminalSession | null;
     try {
-      created = src.workspaceEnvironmentId || isHostThread(src.id)
-        ? await get().createTerminal(projectId, snapshot.profile, 80, 24, {
-            title: snapshot.title,
-            extraArgs: snapshot.extraArgs,
-            cwd: snapshot.cwd,
-            reconnectTmuxId: src.id,
-            resume: true,
-            workspace: { kind: 'unmanaged' }
-          })
-        : null;
-      if (!created && !src.workspaceEnvironmentId && !isHostThread(src.id)) {
-        const result = await product.terminals.reconnectRemote({
-          capabilityId: src.restoreCapabilityId,
-          legacy: src.restoreCapabilityId ? undefined : {
-            projectId,
-            profile: snapshot.profile,
-            sessionId: src.id
-          }
-        });
-        if (!result.ok) {
-          pushErrorToast(result.message);
-          console.error('remote reconnect failed', result);
-          return null;
+      const result = await product.terminals.reconnectRemote({
+        capabilityId: src.restoreCapabilityId,
+        legacy: src.restoreCapabilityId ? undefined : {
+          projectId,
+          profile: snapshot.profile,
+          sessionId: src.id
         }
-        created = result.value;
+      });
+      if (!result.ok) {
+        pushErrorToast(result.message);
+        console.error('remote reconnect failed', result);
+        return null;
       }
+      created = result.value;
     } catch (err) {
       pushErrorToast(errorMessage(err, 'Failed to reconnect remote session'));
       return null;
@@ -3541,7 +3335,6 @@ export const useData = create<DataState>((set, get) => ({
     useSubagentChildren.getState().clear(sessionId);
     useCatchUpSummary.getState().clear(sessionId);
     useUi.getState().selectTab(projectId, created.id);
-    get().persistOpenSessions();
     return created;
   },
 
@@ -3582,7 +3375,6 @@ export const useData = create<DataState>((set, get) => ({
       next.splice(toIdx, 0, moved);
       return { terminals: { ...s.terminals, [projectId]: next } };
     });
-    get().persistOpenSessions();
   },
 
   setPinned(projectId, sessionId, pinned) {
@@ -3600,7 +3392,6 @@ export const useData = create<DataState>((set, get) => ({
       const next = without.slice(0, insertAt).concat(updated, without.slice(insertAt));
       return { terminals: { ...s.terminals, [projectId]: next } };
     });
-    get().persistOpenSessions();
   },
 
   renameTerminal(projectId, sessionId, title) {
@@ -3618,7 +3409,6 @@ export const useData = create<DataState>((set, get) => ({
         }
       };
     });
-    get().persistOpenSessions();
   },
 
   autoTitleTerminal(sessionId, title, source = 'osc') {
@@ -3654,7 +3444,6 @@ export const useData = create<DataState>((set, get) => ({
         )
       }
     }));
-    get().persistOpenSessions();
   },
 
   markExited(sessionId, exitCode) {
@@ -3726,10 +3515,6 @@ export const useData = create<DataState>((set, get) => ({
       }
       return { terminals, detachedStack };
     });
-    // A tab that just exited (headless reaped, or a visible shell/claude that
-    // ended) should drop out of the restore snapshot so next launch doesn't
-    // resurrect a session the user let die. snapshotTabs filters exited tabs.
-    get().persistOpenSessions();
   },
 
   async loadGitStatus(projectId) {

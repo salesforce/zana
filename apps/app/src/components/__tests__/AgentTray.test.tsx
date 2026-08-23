@@ -24,13 +24,31 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('../../store', () => ({
-  useData: (selector: (state: typeof h.data) => unknown) => selector(h.data),
+  useData: Object.assign((selector: (state: typeof h.data) => unknown) => selector(h.data), {
+    getState: () => h.data
+  }),
   useUi: Object.assign((selector: (state: typeof h.ui) => unknown) => selector(h.ui), {
     getState: () => h.ui
   }),
-  useAgentStatus: (selector: (state: typeof h.status) => unknown) => selector(h.status)
+  useAgentStatus: (selector: (state: typeof h.status) => unknown) => selector(h.status),
+  useIdleTriage: Object.assign((selector: (state: { byId: Record<string, never> }) => unknown) => selector({ byId: {} }), {
+    getState: () => ({ byId: {} })
+  })
 }));
 vi.mock('../FavoriteStar', () => ({ FavoriteStar: () => null }));
+vi.mock('../agentCardActions', () => ({
+  useAgentCardActions: () => ({
+    menu: null,
+    setMenu: vi.fn(),
+    actions: {},
+    rename: null,
+    closeRename: vi.fn(),
+    submitRename: vi.fn()
+  }),
+  AgentCardMenu: () => null,
+  clampMenuAnchor: vi.fn()
+}));
+vi.mock('../PromptModal', () => ({ PromptModal: () => null }));
 
 import { AgentTray } from '../AgentTray.js';
 

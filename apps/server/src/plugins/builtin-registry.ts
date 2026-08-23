@@ -23,6 +23,34 @@ export const BUILTIN_PLUGINS: BundledPluginDefinition[] = [
     autoInstall: true,
     defaultEnabled: true,
     category: 'Context & knowledge'
+  },
+  {
+    name: 'provider-claude-code',
+    pluginId: 'provider-claude-code',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Agent interaction'
+  },
+  {
+    name: 'provider-codex',
+    pluginId: 'provider-codex',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Agent interaction'
+  },
+  {
+    name: 'provider-pi',
+    pluginId: 'provider-pi',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Agent interaction'
+  },
+  {
+    name: 'provider-acp',
+    pluginId: 'provider-acp',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Agent interaction'
   }
 ];
 

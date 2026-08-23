@@ -1,8 +1,11 @@
-import { useMemo, type CSSProperties } from 'react';
+import { useMemo, type CSSProperties, type MouseEvent } from 'react';
 import { Activity, Clock } from 'lucide-react';
 import type { AgentState, TerminalSession } from '@zana-ai/zcc-domain/product';
-import { useData, useUi, useAgentStatus } from '../store.js';
+import { useData, useUi, useAgentStatus, useIdleTriage } from '../store.js';
 import { FavoriteStar } from './FavoriteStar.js';
+import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from './agentCardActions.js';
+import { PromptModal } from './PromptModal.js';
+import type { AgentCard } from './AgentBoard.js';
 
 /**
  * Which agent states the tray surfaces, in display-priority order.
@@ -72,6 +75,35 @@ export function AgentTray({
   const byId = useAgentStatus((s) => s.byId);
   const collapsed = useUi((s) => s.sidebarCollapsed);
   const toggleSidebar = useUi((s) => s.toggleSidebar);
+  const { menu, setMenu, actions, rename, closeRename, submitRename } = useAgentCardActions();
+
+  const pickAgent = (card: AgentCard) => {
+    const ui = useUi.getState();
+    ui.setNav('projects');
+    ui.enterProjectFocus(card.projectId);
+    if (card.session.headless && card.session.status !== 'exited') {
+      void useData.getState().restoreTerminal(card.session.id, card.projectId);
+    } else {
+      ui.selectTab(card.projectId, card.session.id);
+    }
+    ui.setWorkspaceMode(card.projectId, 'terminals');
+  };
+
+  const openAgentMenu = (e: MouseEvent, a: TrayAgent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setMenu({
+      card: {
+        session: a.session,
+        state: a.state,
+        projectId: a.projectId,
+        projectName: a.projectName,
+        projectColor: a.projectColor,
+        triage: useIdleTriage.getState().byId[a.session.id]
+      },
+      ...clampMenuAnchor(e)
+    });
+  };
 
   // Derive the flat, sorted list once per relevant change. Selectors above
   // return raw store slices (stable refs); the fresh array lives behind useMemo
@@ -180,6 +212,7 @@ export function AgentTray({
                 background ? 'is-background' : ''
               }`}
               onClick={() => inspect(a)}
+              onContextMenu={(e) => openAgentMenu(e, a)}
               title={`${a.session.title} — ${a.projectName} · ${STATE_LABEL[a.state]}${
                 background ? ` · ${bgTitle}` : ''
               }`}
@@ -208,6 +241,19 @@ export function AgentTray({
           );
         })}
       </div>
+      {menu && (
+        <AgentCardMenu menu={menu} setMenu={setMenu} actions={actions} onPick={pickAgent} />
+      )}
+      {rename && (
+        <PromptModal
+          title="Rename agent"
+          label="Name"
+          initialValue={rename.card.session.title}
+          confirmLabel="Rename"
+          onSubmit={(v) => submitRename(rename.card, v)}
+          onClose={closeRename}
+        />
+      )}
     </div>
   );
 }

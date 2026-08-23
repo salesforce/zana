@@ -20,6 +20,23 @@ export function normalizeHarnessVersion(output: string): string | undefined {
   return output.match(/(?:^|[^0-9])v?(\d+\.\d+\.\d+)(?:[^0-9]|$)/)?.[1];
 }
 
+/**
+ * Presence is enough to activate a harness, matching BB's installed-ACP-agent
+ * rule: a found CLI is usable unless the operator explicitly hid it. Unset
+ * config + installed ⇒ on. Explicit `false` stays off. Explicit `true` keeps
+ * the enabled-but-missing Settings state.
+ */
+export function harnessEnabledFromProbe(input: {
+  alwaysEnabled?: boolean;
+  configEnabled?: boolean;
+  installed: boolean;
+}): boolean {
+  if (input.alwaysEnabled === true) return true;
+  if (input.configEnabled === false) return false;
+  if (input.configEnabled === true) return true;
+  return input.installed;
+}
+
 /** Verify every registered binary harness against its registration metadata. */
 export async function verifyHarnesses(config: AppConfig): Promise<HarnessVerifyResult[]> {
   const registrations = HARNESS_REGISTRATIONS.filter((registration) => registration.verification !== undefined);
@@ -27,9 +44,15 @@ export async function verifyHarnesses(config: AppConfig): Promise<HarnessVerifyR
     const verification = registration.verification!;
     const profile = registration.defaultProfileId ?? registration.profiles[0]!.id;
     const { command } = registration.implementation.resolveLaunch(profile, config, false);
-    const enabled = verification.alwaysEnabled === true
-      || (verification.enabledConfigKey !== undefined && config[verification.enabledConfigKey as keyof AppConfig] === true);
     const probe = await runVersion(command, verification.versionArgs);
+    const configEnabled = verification.enabledConfigKey !== undefined
+      ? config[verification.enabledConfigKey as keyof AppConfig] as boolean | undefined
+      : undefined;
+    const enabled = harnessEnabledFromProbe({
+      alwaysEnabled: verification.alwaysEnabled,
+      configEnabled,
+      installed: probe.ok
+    });
     return {
       family: registration.id as HarnessFamily,
       label: registration.label,

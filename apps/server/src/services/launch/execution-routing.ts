@@ -6,6 +6,7 @@ import type { ExecutionConsentService } from '@zana-ai/zcc-host-daemon/harness/e
 import type { ExecutionConsentScope, createExecutionConsentStore } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
 import type { LaunchProvider } from '@zana-ai/zcc-host-daemon/harness/launch-provider';
 import { providerFor, registrationFor } from '@zana-ai/zcc-host-daemon/harness/registry';
+import { harnessEnabledFromProbe } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
 import { resolveExecutionState } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
 import { resolveModelTarget, resolveRoleTarget } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
 import { evaluateFacetEvidence, evaluateTargetEvidence } from '@zana-ai/zcc-host-daemon/harness/routing-evidence';
@@ -118,8 +119,14 @@ async function preflightStructuredRouting(
   if (!installedVersion) return 'selected harness is unavailable or has no verifiable version';
   const registration = registrationFor(provider.adapter.descriptor.defaultProfileId ?? input.profile);
   const verification = registration?.verification;
-  const enabled = verification?.alwaysEnabled === true ||
-    (verification?.enabledConfigKey !== undefined && input.config[verification.enabledConfigKey as keyof AppConfig] === true);
+  const configEnabled = verification?.enabledConfigKey !== undefined
+    ? input.config[verification.enabledConfigKey as keyof AppConfig] as boolean | undefined
+    : undefined;
+  const enabled = harnessEnabledFromProbe({
+    alwaysEnabled: verification?.alwaysEnabled,
+    configEnabled,
+    installed: true
+  });
   if (!enabled) return 'selected harness is disabled';
   for (const facet of resolved.facets) {
     const evaluated = evaluateFacetEvidence(provider, facet, input.scope, installedVersion);

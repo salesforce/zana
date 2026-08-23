@@ -22,10 +22,10 @@ function isSelectableHarness(value: unknown): value is AppConfig['defaultHarness
 
 function harnessEnabled(config: AppConfig, id: NonNullable<AppConfig['defaultHarness']>): boolean {
   if (id === 'claude') return true;
-  if (id === 'cursor') return config.harnessCursorEnabled === true;
-  if (id === 'codex') return config.harnessCodexEnabled === true;
-  if (id === 'pi') return config.harnessPiEnabled === true;
-  return config.harnessOpenCodeEnabled === true;
+  if (id === 'cursor') return config.harnessCursorEnabled !== false;
+  if (id === 'codex') return config.harnessCodexEnabled !== false;
+  if (id === 'pi') return config.harnessPiEnabled !== false;
+  return config.harnessOpenCodeEnabled !== false;
 }
 
 function normalizeProjectLaunchDefault(value: unknown): ProjectLaunchDefault | undefined {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { isScheduledWaiting, trayStatesFor } from '../AgentTray.js';
 
 describe('trayStatesFor', () => {
@@ -25,5 +26,14 @@ describe('isScheduledWaiting', () => {
   it('does not hide an ordinary idle agent', () => {
     expect(isScheduledWaiting({}, 'idle')).toBe(false);
     expect(isScheduledWaiting({ scheduled: false }, 'idle')).toBe(false);
+  });
+});
+
+describe('AgentTray context menu', () => {
+  it('opens the shared agent lifecycle menu from a tray row', () => {
+    const source = readFileSync(new URL('../AgentTray.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('onContextMenu={(e) => openAgentMenu(e, a)}');
+    expect(source).toContain('useAgentCardActions()');
+    expect(source).toContain('<AgentCardMenu menu={menu}');
   });
 });

@@ -18,6 +18,7 @@ import {
   resolveOpenCodeRoleOptions,
   reconcileOpenCodeRole,
   selectedAvailableFamily,
+  optionalHarnessOffered,
   worktreeForSubmission,
   workspaceForSubmission
 } from '../AgentLauncher.js';
@@ -368,6 +369,17 @@ describe('additive launch status', () => {
     const available = [{ id: 'claude' as const, label: 'claude' }];
     expect(selectedAvailableFamily(available, 'cursor')).toBeUndefined();
     expect(selectedAvailableFamily(available, 'claude')).toBe(available[0]);
+  });
+
+  it('auto-offers an installed optional harness when the enable flag is unset', () => {
+    expect(optionalHarnessOffered({ enabled: true, installed: true }, false)).toBe(true);
+    expect(optionalHarnessOffered({ enabled: false, installed: true }, false)).toBe(false);
+    expect(optionalHarnessOffered({ enabled: true, installed: false }, true)).toBe(false);
+    expect(optionalHarnessOffered(undefined, false)).toBe(false);
+    expect(optionalHarnessOffered(undefined, true)).toBe(true);
+    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('optionalHarnessOffered(status, harnessOpenCodeEnabled)');
+    expect(source).not.toContain("if (f.id === 'opencode' && !harnessOpenCodeEnabled)");
   });
 
   it('exposes retained launch status as an assertive atomic alert described by Send', () => {

@@ -64,11 +64,18 @@ describe('resolveLaunchSelection', () => {
     })).toMatchObject({ ok: true, profile: 'codex', source: 'global-default' });
   });
 
-  it('blocks a disabled configured default instead of falling back', () => {
+  it('blocks an explicitly disabled configured default instead of falling back', () => {
+    expect(resolve({
+      config: config({ defaultHarness: 'codex', harnessCodexEnabled: false }),
+      requestedSource: 'seeded-default'
+    })).toMatchObject({ ok: false, code: 'UNAVAILABLE_DEFAULT' });
+  });
+
+  it('auto-activates a configured default when the enable flag is unset', () => {
     expect(resolve({
       config: config({ defaultHarness: 'codex' }),
       requestedSource: 'seeded-default'
-    })).toMatchObject({ ok: false, code: 'UNAVAILABLE_DEFAULT' });
+    })).toMatchObject({ ok: true, profile: 'codex', source: 'global-default' });
   });
 
   it('uses canonical project default before global default', () => {

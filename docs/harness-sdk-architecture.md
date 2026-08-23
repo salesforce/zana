@@ -1,7 +1,13 @@
 # Harness SDK Architecture
 
 `@zcc/harness-sdk` is the internal, TypeScript-only contract for describing a
-first-party coding harness. It is not a dynamic plugin loader: core imports an
+**legacy PTY** coding harness (`legacyAgentSession`). It is not used by Threads.
+Thread Code Harnesses are provider plugins (`plugins/provider-*`) that call
+`experimental_registerProvider` and ship an AgentRuntime `host` bridge. Adding
+a Thread provider must not touch `HARNESS_REGISTRATIONS`, `LaunchProvider`,
+`LaunchProfileId`, or golden argv.
+
+The PTY SDK is not a dynamic plugin loader: core imports an
 explicit static registration for each harness, so main remains the authority for
 paths, credentials, callback endpoints, PTYs, SSH, and process lifecycle.
 

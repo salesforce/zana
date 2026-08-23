@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { appendThreadEvent, createEnvironment, createThread, upsertHost } from '@zana-ai/zcc-db';
+import { createConversationThread, createEnvironment, upsertHost } from '@zana-ai/zcc-db';
 import { startProductServer, type ProductServer } from './product-server.js';
 
 let server: ProductServer | null = null;
@@ -119,9 +119,31 @@ describe('product HTTP', () => {
 
     const liveThreads = await fetch(`${server.url}api/v1/threads`).then((response) => response.json());
     expect(liveThreads).toEqual({ threads: [] });
+
+    const providers = await fetch(`${server.url}api/v1/threads/providers`).then((response) => response.json());
+    expect(providers.providers.map((row: { id: string }) => row.id)).toEqual(
+      expect.arrayContaining(['claude-code', 'codex', 'pi', 'acp-cursor'])
+    );
+
+    const fromRenderer = await fetch(`${server.url}api/v1/threads`, {
+      headers: { Origin: 'http://127.0.0.1:5173', 'x-zcc-app-surface': 'desktop' }
+    });
+    expect(fromRenderer.status).toBe(200);
+    expect(fromRenderer.headers.get('access-control-allow-origin')).toBe('http://127.0.0.1:5173');
+
+    const preflight = await fetch(`${server.url}api/v1/threads`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'http://127.0.0.1:5173',
+        'Access-Control-Request-Method': 'GET',
+        'Access-Control-Request-Headers': 'x-zcc-app-surface'
+      }
+    });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get('access-control-allow-origin')).toBe('http://127.0.0.1:5173');
   });
 
-  it('replays stored terminal output for a thread', async () => {
+  it('returns 410 for PTY I/O on the Thread API', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-output-'));
     server = await startProductServer({
       dataDir,
@@ -133,62 +155,36 @@ describe('product HTTP', () => {
       hostId: host.id,
       path: '/tmp/proj'
     });
-    const thread = createThread(server.ctx.db, {
+    const thread = createConversationThread(server.ctx.db, {
       projectId: 'proj-1',
       hostId: host.id,
       environmentId: environment.id,
-      providerId: 'claude'
+      providerId: 'claude-code'
     });
-    appendThreadEvent(server.ctx.db, {
-      threadId: thread.id,
-      kind: 'terminal.output',
-      payload: { data: 'pong\r\n' }
-    });
-    const body = await fetch(`${server.url}api/v1/threads/${thread.id}/output`).then((response) =>
-      response.json()
-    );
-    expect(body).toEqual({ output: 'pong\r\n' });
-    await expect(
-      fetch(`${server.url}api/v1/threads/00000000-0000-4000-8000-000000000000/output`).then(
-        (response) => response.status
-      )
-    ).resolves.toBe(404);
-  });
-
-  it('rejects unknown thread resize and bad geometry', async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-resize-'));
-    server = await startProductServer({
-      dataDir,
-      origins: { serverPort: 0, devAppPort: 5173 }
-    });
-    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
-    const environment = createEnvironment(server.ctx.db, {
-      projectId: 'proj-1',
-      hostId: host.id,
-      path: '/tmp/proj'
-    });
-    const thread = createThread(server.ctx.db, {
-      projectId: 'proj-1',
-      hostId: host.id,
-      environmentId: environment.id,
-      providerId: 'claude'
-    });
-    const badGeometry = await fetch(`${server.url}api/v1/threads/${thread.id}/resize`, {
+    const output = await fetch(`${server.url}api/v1/threads/${thread.id}/output`);
+    expect(output.status).toBe(410);
+    const resize = await fetch(`${server.url}api/v1/threads/${thread.id}/resize`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ cols: 0, rows: 24 })
+      body: JSON.stringify({ cols: 80, rows: 24 })
     });
-    expect(badGeometry.status).toBe(400);
-    await expect(badGeometry.json()).resolves.toMatchObject({ error: 'bad-geometry' });
-    const missing = await fetch(
-      `${server.url}api/v1/threads/00000000-0000-4000-8000-000000000000/resize`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ cols: 80, rows: 24 })
-      }
-    );
-    expect(missing.status).toBe(404);
+    expect(resize.status).toBe(410);
+    const input = await fetch(`${server.url}api/v1/threads/${thread.id}/input`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ data: 'x' })
+    });
+    expect(input.status).toBe(410);
+    const timeline = await fetch(`${server.url}api/v1/threads/${thread.id}/timeline`).then((response) => response.json());
+    expect(timeline.threadId).toBe(thread.id);
+    expect(timeline.rows).toEqual([]);
+    expect(timeline).toMatchObject({
+      activeThinking: null,
+      pendingTodos: null,
+      goal: null,
+      activePromptMode: null,
+      activeWorkflows: []
+    });
   });
 
   it('rejects explorer list-dir outside a registered project', async () => {
@@ -218,5 +214,49 @@ describe('product HTTP', () => {
     });
     expect(escaped.status).toBe(403);
     await expect(escaped.json()).resolves.toMatchObject({ code: 'path-escape' });
+
+    const unknownPaths = await fetch(`${server.url}api/v1/projects/missing/paths`);
+    expect(unknownPaths.status).toBe(404);
+    await expect(unknownPaths.json()).resolves.toMatchObject({ code: 'unknown-project' });
+  });
+
+  it('persists workspace order from POST /api/v1/projects/reorder', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-reorder-'));
+    const projectA = mkdtempSync(join(tmpdir(), 'zcc-product-reorder-a-'));
+    const projectB = mkdtempSync(join(tmpdir(), 'zcc-product-reorder-b-'));
+    writeFileSync(
+      join(dataDir, 'projects.json'),
+      JSON.stringify({
+        version: 1,
+        projects: [
+          { id: 'proj-a', name: 'Alpha', path: projectA, createdAt: 1, lastActiveAt: 1 },
+          { id: 'proj-b', name: 'Beta', path: projectB, createdAt: 2, lastActiveAt: 2 }
+        ]
+      })
+    );
+    writeFileSync(
+      join(dataDir, 'config.json'),
+      JSON.stringify({ version: 1, theme: 'dark', followUpsEnabled: true })
+    );
+    server = await startProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+
+    const listed = await fetch(`${server.url}api/v1/projects`).then((response) => response.json());
+    expect(listed.projects.map((project: { id: string }) => project.id)).toEqual(['proj-a', 'proj-b']);
+
+    const reordered = await fetch(`${server.url}api/v1/projects/reorder`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ orderedIds: ['proj-b', 'proj-a'] })
+    });
+    expect(reordered.status).toBe(200);
+    const body = await reordered.json() as { projects: Array<{ id: string; sortIndex?: number }> };
+    expect(body.projects.map((project) => project.id)).toEqual(['proj-b', 'proj-a']);
+    expect(body.projects.map((project) => project.sortIndex)).toEqual([0, 1]);
+
+    const again = await fetch(`${server.url}api/v1/projects`).then((response) => response.json());
+    expect(again.projects.map((project: { id: string }) => project.id)).toEqual(['proj-b', 'proj-a']);
   });
 });

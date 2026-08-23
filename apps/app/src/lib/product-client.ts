@@ -22,13 +22,6 @@ import type {
 import { hasDesktopBridge } from './app-surface.js';
 import { apiJson, fetchWithAppSurface } from './fetch-with-app-surface.js';
 import { subscribeProductEvent } from './product-ws.js';
-import {
-  forgetHostThread,
-  isHostThread,
-  rememberHostThread,
-  threadEventToTerminalData,
-  threadEventToTerminalExit
-} from './host-thread-session.js';
 
 function noopSubscribe(_cb: unknown): () => void {
   return () => {};
@@ -80,17 +73,23 @@ function httpProduct(): Pick<
         });
         return body.project;
       },
-      update: async (id, patch) => {
+      update: async (id: string, patch: Parameters<CcApi['projects']['update']>[1]) => {
         const body = await apiJson<{ project: Project }>(`/projects/${encodeURIComponent(id)}`, {
           method: 'PATCH',
           body: JSON.stringify(patch)
         });
         return body.project;
       },
-      reorder: async () => httpProduct().projects.list(),
+      reorder: async (orderedIds: string[]) => {
+        const body = await apiJson<{ projects: Project[] }>('/projects/reorder', {
+          method: 'POST',
+          body: JSON.stringify({ orderedIds })
+        });
+        return body.projects;
+      },
       pickDirectory: async () => null,
       addRemote: async () => ({ ok: false, code: 'unavailable', message: 'remote projects require the desktop app' }),
-      clone: async (input) => {
+      clone: async (input: { url: string; name?: string }) => {
         try {
           const response = await fetchWithAppSurface('/api/v1/projects/clone', {
             method: 'POST',
@@ -121,7 +120,7 @@ function httpProduct(): Pick<
           };
         }
       },
-      onCloneProgress: (cb) => subscribeProductEvent('projects:cloneProgress', (payload) => {
+      onCloneProgress: (cb: (line: string) => void) => subscribeProductEvent('projects:cloneProgress', (payload) => {
         const text = payload && typeof payload === 'object' && 'text' in payload
           ? (payload as { text: unknown }).text
           : payload;
@@ -142,9 +141,23 @@ function httpProduct(): Pick<
       }),
       remove: async () => false,
       gitStatus: async () => null,
+      paths: async (projectId: string, opts?: {
+        query?: string;
+        limit?: number;
+        includeFiles?: boolean;
+        includeDirectories?: boolean;
+      }) => {
+        const params = new URLSearchParams();
+        if (opts?.query) params.set('query', opts.query);
+        if (opts?.limit) params.set('limit', String(opts.limit));
+        if (opts?.includeFiles === false) params.set('includeFiles', 'false');
+        if (opts?.includeDirectories === false) params.set('includeDirectories', 'false');
+        const suffix = params.toString();
+        return apiJson(`/projects/${encodeURIComponent(projectId)}/paths${suffix ? `?${suffix}` : ''}`);
+      },
       onChanged: (cb: (projects: Project[]) => void) =>
         subscribeProductEvent<Project[]>('projects:changed', cb)
-    } as CcApi['projects'],
+    } as unknown as CcApi['projects'],
     config: {
       get: async () => {
         const body = await apiJson<{ config: AppConfig }>('/config');
@@ -327,125 +340,81 @@ function httpProduct(): Pick<
       setActiveSession: async () => {},
       setFavorites: async () => {},
       setHeartbeat: async () => {},
-      backlog: async (sessionId) => {
-        try {
-          const body = await apiJson<{ output: string }>(
-            `/threads/${encodeURIComponent(sessionId)}/output`
-          );
-          return body.output;
-        } catch {
-          return '';
-        }
-      },
-      onData: (cb) => subscribeProductEvent('threads:event', (payload) => {
-        const chunk = threadEventToTerminalData(payload);
-        if (chunk) cb(chunk.sessionId, chunk.data);
-      }),
+      backlog: async () => '',
+      onData: noopSubscribe,
       onUpdated: noopSubscribe,
-      onExit: (cb) => subscribeProductEvent('threads:event', (payload) => {
-        const exit = threadEventToTerminalExit(payload);
-        if (exit) cb(exit.sessionId, exit.code);
-      }),
-      resize: async (sessionId, cols, rows) => {
-        await apiJson(`/threads/${encodeURIComponent(sessionId)}/resize`, {
-          method: 'POST',
-          body: JSON.stringify({ cols, rows })
-        });
-      },
-      write: async (sessionId, data) => {
-        await apiJson(`/threads/${encodeURIComponent(sessionId)}/input`, {
-          method: 'POST',
-          body: JSON.stringify({ data })
-        });
-      },
-      reply: async (sessionId, text) => {
-        try {
-          await apiJson(`/threads/${encodeURIComponent(sessionId)}/reply`, {
-            method: 'POST',
-            body: JSON.stringify({ text })
-          });
-          return true;
-        } catch {
-          return false;
-        }
-      },
-      close: async (sessionId) => {
-        try {
-          const response = await fetchWithAppSurface(
-            `/api/v1/threads/${encodeURIComponent(sessionId)}/archive`,
-            {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: '{}'
-            }
-          );
-          // Unknown thread = already gone. Treat as closed so a stale board
-          // card can drop without looking like a live remote session.
-          if (response.ok || response.status === 404) {
-            forgetHostThread(sessionId);
-            return true;
-          }
-          return false;
-        } catch {
-          return false;
-        }
-      }
+      onExit: noopSubscribe,
+      resize: async () => {},
+      write: async () => {},
+      reply: async () => false,
+      close: async () => false
     } as CcApi['terminals'],
     threads: {
-      spawn: async (input) => {
+      create: async (input) => {
         const response = await fetchWithAppSurface('/api/v1/threads', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             projectId: input.projectId,
             providerId: input.providerId,
-            input: input.input == null ? [] : Array.isArray(input.input) ? input.input : [input.input],
+            input: input.input ?? [],
             hostId: input.hostId,
             environment: input.environment,
             cwd: input.cwd,
             title: input.title,
-            extraArgs: input.extraArgs,
-            harnessRouting: input.harnessRouting,
-            personaId: input.personaId,
-            headless: input.headless,
-            scheduled: input.scheduled,
-            autoCloseOnFinish: input.autoCloseOnFinish,
-            inboxLevel: input.inboxLevel,
-            autonomous: input.autonomous,
-            resumeSessionId: input.resumeSessionId,
-            executionEnvironment: input.executionEnvironment,
-            sandboxDenyNetwork: input.sandboxDenyNetwork,
-            microVmImage: input.microVmImage,
-            microVmCpus: input.microVmCpus,
-            microVmMemoryMib: input.microVmMemoryMib,
-            reconnectTmuxId: input.reconnectTmuxId,
-            resume: input.resume,
-            cohort: input.cohort
+            permissionMode: input.permissionMode,
+            model: input.model
           })
         });
-        const body = (await response.json()) as Awaited<ReturnType<CcApi['threads']['spawn']>> & {
+        const body = (await response.json()) as Awaited<ReturnType<CcApi['threads']['create']>> & {
           code?: string;
           message?: string;
+          error?: string;
         };
         if (response.ok && body.ok) return body;
         return {
           ok: false,
           code: body.code ?? 'thread-create-failed',
-          message: body.message ?? 'thread spawn is not available'
+          message: body.message ?? body.error ?? 'thread create is not available'
         };
       },
+      spawn: async (input) => httpProduct().threads.create(input),
       list: async (projectId) => {
         const suffix = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
         const body = await apiJson<{ threads: Awaited<ReturnType<CcApi['threads']['list']>> }>(`/threads${suffix}`);
         return body.threads;
       },
+      get: async (threadId) => apiJson(`/threads/${encodeURIComponent(threadId)}`),
+      send: async (threadId, input, mode) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/send`, {
+          method: 'POST',
+          body: JSON.stringify({ input, mode })
+        }),
+      stop: async (threadId) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/stop`, { method: 'POST', body: '{}' }),
+      resume: async (threadId) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/resume`, { method: 'POST', body: '{}' }),
+      timeline: async (threadId) => apiJson(`/threads/${encodeURIComponent(threadId)}/timeline`),
+      events: async (threadId) => apiJson(`/threads/${encodeURIComponent(threadId)}/events`),
+      providers: async () => apiJson('/threads/providers'),
+      commands: async (projectId) =>
+        apiJson(`/projects/${encodeURIComponent(projectId)}/commands`),
       onUpdated: (cb) => subscribeProductEvent('threads:updated', cb),
+      onEvent: (cb) => subscribeProductEvent('threads:event', cb),
       archive: async (threadId) => {
         const body = await apiJson<{ ok: boolean }>(`/threads/${encodeURIComponent(threadId)}/archive`, {
           method: 'POST',
           body: '{}'
         });
         return body;
+      },
+      fork: async (threadId) => {
+        const response = await fetchWithAppSurface(`/api/v1/threads/${encodeURIComponent(threadId)}/fork`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}'
+        });
+        return (await response.json()) as Awaited<ReturnType<CcApi['threads']['fork']>>;
       }
     } as CcApi['threads'],
     environments: {
@@ -606,9 +575,6 @@ export const product: CcApi = new Proxy({} as CcApi, {
     }
     if (hasDesktopBridge()) {
       const desktop = (window.cc as unknown as Record<string, unknown>)[name];
-      if (name === 'terminals') {
-        return wrapDesktopTerminals(desktop as CcApi['terminals']);
-      }
       if (name === 'projects') {
         return wrapDesktopProjects(desktop as CcApi['projects']);
       }
@@ -630,49 +596,7 @@ function wrapDesktopProjects(desktop: CcApi['projects']): CcApi['projects'] {
       const fromDesktop = await desktop.cloneRoot().catch(() => '');
       if (fromDesktop) return fromDesktop;
       return http.cloneRoot();
-    }
-  };
-}
-
-function wrapDesktopTerminals(desktop: CcApi['terminals']): CcApi['terminals'] {
-  const http = httpProduct().terminals;
-  return {
-    ...desktop,
-    write: async (sessionId, data) => {
-      if (isHostThread(sessionId)) return http.write(sessionId, data);
-      return desktop.write(sessionId, data);
     },
-    reply: async (sessionId, text) => {
-      if (isHostThread(sessionId)) return http.reply(sessionId, text);
-      return desktop.reply(sessionId, text);
-    },
-    resize: async (sessionId, cols, rows) => {
-      if (isHostThread(sessionId)) return http.resize(sessionId, cols, rows);
-      return desktop.resize(sessionId, cols, rows);
-    },
-    backlog: async (sessionId) => {
-      if (isHostThread(sessionId)) return http.backlog(sessionId);
-      return desktop.backlog(sessionId);
-    },
-    close: async (sessionId) => {
-      if (isHostThread(sessionId)) return http.close(sessionId);
-      return desktop.close(sessionId);
-    },
-    onData: (cb) => {
-      const offDesktop = desktop.onData(cb);
-      const offHttp = http.onData(cb);
-      return () => {
-        offDesktop();
-        offHttp();
-      };
-    },
-    onExit: (cb) => {
-      const offDesktop = desktop.onExit(cb);
-      const offHttp = http.onExit(cb);
-      return () => {
-        offDesktop();
-        offHttp();
-      };
-    }
+    paths: http.paths
   };
 }

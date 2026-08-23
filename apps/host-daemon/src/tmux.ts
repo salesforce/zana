@@ -298,14 +298,14 @@ export async function killLocalTmuxSession(sessionId: string): Promise<void> {
  *
  * ## Why conservative (the Q5 spike conclusion)
  *
- * The ideal reconcile is "kill every `cc-*` session NOT in the restore
- * snapshot". But that snapshot (`cc.openSessions`) lives in renderer
- * localStorage and is NOT readable by the main process at boot. So instead we
- * reap by LIVENESS: a `cc-*` tmux session is an orphan iff no live pty in this
- * process is bound to it. `isLive(sessionId)` is the main process's own live
- * map, which IS authoritative. The grace delay before the first sweep gives the
- * renderer's restore time to re-spawn its tabs (which re-attach via
- * `new-session -A`, making them live and thus NOT orphans). Anything still
+ * The ideal reconcile is "kill every `cc-*` session NOT claimed by a restore
+ * capability". Surviving sessions are claimed by main's restore-capabilities
+ * ledger (`restore-capabilities.json`) plus live tmux ids — not renderer
+ * localStorage. We reap by LIVENESS: a `cc-*` tmux session is an orphan iff no
+ * live pty in this process is bound to it. `isLive(sessionId)` is the main
+ * process's own live map, which IS authoritative. The grace delay before the
+ * first sweep gives restore time to re-attach surviving tmux sessions via
+ * `new-session -A`, making them live and thus NOT orphans. Anything still
  * unclaimed after the grace window is genuinely abandoned and safe to kill.
  *
  * @param isLive returns true if a live pty is currently bound to this session id

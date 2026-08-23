@@ -16,12 +16,15 @@ import {
   type HostRpcResponseMessage
 } from '@zana-ai/zcc-contracts/host-rpc';
 import {
+  appendConversationThreadEvent,
   appendThreadEvent,
   closeHostSession,
   disconnectLiveThreadsForHost,
+  getConversationThread,
   getHost,
   getThread,
   openHostSession,
+  updateConversationThreadStatus,
   updateThreadStatus,
   type ZccDatabase
 } from '@zana-ai/zcc-db';
@@ -199,6 +202,38 @@ export function createHostHub(db: ZccDatabase, hub: ProductHub) {
         }
         if (!event.threadId) {
           rejected.push({ index, reason: 'unknown_thread' });
+          return;
+        }
+        const conversation = getConversationThread(db, event.threadId);
+        if (conversation && conversation.hostId === session.hostId) {
+          const eventType = event.kind === 'thread.event'
+            && event.payload
+            && typeof event.payload === 'object'
+            && 'type' in event.payload
+            ? String((event.payload as { type: unknown }).type)
+            : event.kind;
+          const stored = appendConversationThreadEvent(db, {
+            threadId: event.threadId,
+            type: eventType,
+            payload: event.payload
+          });
+          accepted += 1;
+          if (event.kind === 'thread.started' || eventType === 'turn/started') {
+            updateConversationThreadStatus(db, event.threadId, 'active');
+          }
+          if (event.kind === 'turn.completed' || eventType === 'turn/completed') {
+            updateConversationThreadStatus(db, event.threadId, 'idle');
+          }
+          if (event.kind === 'turn.failed' || eventType === 'turn/failed') {
+            updateConversationThreadStatus(db, event.threadId, 'error');
+          }
+          hub.emit('threads:event', {
+            threadId: event.threadId,
+            sequence: stored.sequence,
+            kind: event.kind,
+            type: eventType,
+            payload: event.payload
+          });
           return;
         }
         const thread = getThread(db, event.threadId);

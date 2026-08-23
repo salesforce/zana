@@ -13,7 +13,6 @@ import {
   listedTerminals
 } from '@/store';
 import { AgentBoardLanes, isReclaimableIdle, type AgentCard } from '@/components/AgentBoard';
-import { hostThreadAgentState } from '@/lib/host-thread-session';
 import { AgentViewToggle } from '@/components/AgentViewToggle';
 import { SquadFlowView } from '@/views/agents/SquadFlowView';
 import { AutonomousRunBanner } from '@/components/AutonomousRunBanner';
@@ -58,9 +57,7 @@ function toCard(
 ): AgentCard {
   return {
     session,
-    state: session.workspaceEnvironmentId
-      ? hostThreadAgentState(session.status === 'exited' ? 'completed' : session.status)
-      : (byId[session.id] ?? 'unknown'),
+    state: byId[session.id] ?? 'unknown',
     stateSince: sinceById[session.id],
     projectId: project.id,
     projectName: project.name,
@@ -245,20 +242,18 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
           )}
           <button
             type="button"
-            className="btn primary agents-board-new"
+            className="btn agents-board-legacy"
             onClick={() => useUi.getState().setLauncherOpen(true)}
-            aria-label="New agent"
-            title={
-              isGlobal
-                ? 'Start a new agent — in any project or the scratch workspace'
-                : 'Start a new agent in this project'
-            }
+            aria-label="Legacy PTY agent"
+            title="Start a legacy PTY agent"
           >
             <Plus size={14} />
-            <span className="agents-board-btn-label">New agent</span>
+            <span className="agents-board-btn-label">Legacy PTY</span>
           </button>
         </div>
       </header>
+
+      <HomeAgentComposer project={scopedProject} />
 
       {scopedProject && <AutonomousRunBanner projectId={scopedProject.id} />}
       {boardView === 'board' && (
@@ -298,7 +293,6 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
               </>
             )}
           </div>
-          <HomeAgentComposer project={scopedProject} />
         </div>
       ) : isGlobal && visibleCards.length === 0 ? (
         <div className="agents-board-empty">

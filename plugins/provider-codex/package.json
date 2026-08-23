@@ -1,0 +1,42 @@
+{
+  "name": "@zcc-ext/provider-codex",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Run bb threads with Codex.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "scripts": {
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@zana-ai/zcc-agent-process-utils": "workspace:*",
+    "@zana-ai/zcc-provider-bridge-protocol": "workspace:*",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "react": "^19.0.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10",
+    "@zana-ai/zcc-domain": "workspace:*"
+  },
+  "dependencies": {
+    "@zana-ai/zcc-plugin-sdk": "workspace:*",
+    "zod": "^4.3.6"
+  },
+  "zcc": {
+    "name": "Codex provider",
+    "description": "Run bb threads with Codex.",
+    "branding": {
+      "icon": "./icons/codex.svg"
+    },
+    "server": "./server.mjs",
+    "app": "./app.tsx",
+    "host": "./src/bridge/bridge.ts",
+    "extra": {
+      "threadProvider": true
+    }
+  }
+}

@@ -67,9 +67,35 @@ export interface PluginBackground {
   schedule(cron: string, job: () => void | Promise<void>): void;
 }
 
+export interface PluginProviderCapabilities {
+  supportsServiceTier: boolean;
+  supportsNativeUserQuestion?: boolean;
+  fork: string;
+  supportsManualCompaction?: boolean;
+  supportsThreadArchive: boolean;
+  supportsThreadRename: boolean;
+  supportsWorkflows?: boolean;
+  permissionModes: string[];
+  reasoningLevels?: string[];
+}
+
+export interface PluginProviderDeclaration {
+  id: string;
+  displayName: string;
+  icon?: string;
+  capabilities: PluginProviderCapabilities;
+  composerActions?: string[];
+}
+
+export interface PluginProviderHandle {
+  id: string;
+  unregister(): void;
+}
+
 export interface PluginAgents {
   contributeInstructions(text: string): void;
   contributeSkills(rootPaths: string[]): void;
+  experimental_registerProvider(declaration: PluginProviderDeclaration): PluginProviderHandle;
 }
 
 export interface PluginUi {

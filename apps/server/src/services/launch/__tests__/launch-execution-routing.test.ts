@@ -24,6 +24,26 @@ describe('production execution routing preflight', () => {
     expect(services.installedVersion).not.toHaveBeenCalled();
   });
 
+  it('auto-activates structured OpenCode routing when the enable flag is unset', async () => {
+    const services = deps();
+    const unset = { version: 1, theme: 'dark' } as AppConfig;
+    await expect(preflightTerminalExecution({
+      config: unset, profile: 'opencode', projectId: 'p1', scope: 'local', mode: 'interactive',
+      idempotencyKey: 'auto-on', harnessRouting: {
+        schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'aisuite/gpt-5.6-sol' } }
+      }
+    }, services)).resolves.toEqual({ decision: 'allowed', scope: 'local' });
+  });
+
+  it('blocks structured OpenCode routing when the operator explicitly hid the harness', async () => {
+    const services = deps();
+    await expect(preflightTerminalExecution({
+      config: { ...config(), harnessOpenCodeEnabled: false }, profile: 'opencode', projectId: 'p1',
+      scope: 'local', mode: 'interactive', idempotencyKey: 'hidden',
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'aisuite/gpt-5.6-sol' } } }
+    }, services)).resolves.toEqual({ decision: 'blocked', reason: 'selected harness is disabled' });
+  });
+
   it('allows approved exact OpenCode Plan routing', async () => {
     const services = deps();
     await expect(preflightTerminalExecution({

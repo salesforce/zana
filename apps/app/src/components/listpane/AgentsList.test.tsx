@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { MemoryRouter } from 'react-router-dom';
 
 const setAgentsBoardView = vi.fn();
 
@@ -15,6 +16,10 @@ vi.mock('@/store', () => ({
   useIdleTriage: (selector: (state: object) => unknown) => selector({ byId: {} }),
   openWhatsNewAll: vi.fn()
 }));
+vi.mock('@/thread-store', () => ({
+  useThreads: (selector: (state: { threads: unknown[]; load: () => void }) => unknown) =>
+    selector({ threads: [], load: () => undefined })
+}));
 
 vi.mock('@/lib/windowScope', () => ({ getScopedProjectId: () => null }));
 vi.mock('@/lib/profileIcon', () => ({ profileIcon: () => null }));
@@ -29,7 +34,7 @@ import { AgentsListPane, openFullAgentsList } from './AgentsList.js';
 
 describe('AgentsListPane', () => {
   it('offers an accessible control to open the full-width Agents list', () => {
-    const html = renderToStaticMarkup(<AgentsListPane />);
+    const html = renderToStaticMarkup(<MemoryRouter><AgentsListPane /></MemoryRouter>);
 
     expect(html).toContain('aria-label="Open full-width Agents list"');
     expect(html).not.toContain('aria-expanded');

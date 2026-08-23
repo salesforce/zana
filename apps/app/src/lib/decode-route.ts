@@ -15,6 +15,7 @@ import {
   SETTINGS_ROUTE_PATH,
   SETTINGS_SECTION_ROUTE_PATH,
   SUGGESTIONS_ROUTE_PATH,
+  THREAD_ROUTE_PATH,
   TOOLS_MCP_ROUTE_PATH,
   TOOLS_PLUGIN_BROWSE_ROUTE_PATH,
   TOOLS_PLUGIN_DETAIL_ROUTE_PATH,
@@ -82,6 +83,10 @@ export function decodeRoutePath(pathname: string, hash = ''): DecodedRoute {
     return { ...DEFAULT_DECODED, nav: 'inbox', settingsAnchor: anchor };
   }
   if (pathname === AGENTS_ROUTE_PATH) {
+    return { ...DEFAULT_DECODED, nav: 'agents', settingsAnchor: anchor };
+  }
+  const threadMatch = matchPath(THREAD_ROUTE_PATH, pathname);
+  if (threadMatch) {
     return { ...DEFAULT_DECODED, nav: 'agents', settingsAnchor: anchor };
   }
   if (pathname === FOLLOWUPS_ROUTE_PATH) {

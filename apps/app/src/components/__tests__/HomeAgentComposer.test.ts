@@ -17,31 +17,67 @@ describe('HomeAgentComposer preferences', () => {
   });
 });
 
-describe('HomeAgentComposer pinning', () => {
+describe('HomeAgentComposer layout', () => {
+  it('wraps the thread composer so Home keeps its dashboard spacing', () => {
+    const source = readFileSync(new URL('../HomeAgentComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('className="home-agent-composer"');
+    expect(source).toContain('<ThreadCommandComposer');
+  });
+});
+
+describe('ThreadCommandComposer pinning', () => {
   it('locks to a passed project and skips the scratch default', () => {
-    const source = readFileSync(new URL('../HomeAgentComposer.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('{ project: pinnedProject }');
-    expect(source).toContain('if (pinnedProject) return;');
-    expect(source).toContain('{!pinnedProject && (');
-    expect(source).toContain('setProjectId(pinnedProject.id)');
+    const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('project: pinnedProject');
+    expect(source).toContain('if (pinnedProject) setProjectId(pinnedProject.id)');
+    expect(source).toContain('{!threadId && !pinnedProject && (');
   });
 });
 
-describe('HomeAgentComposer browser launch gate', () => {
-  it('keeps file attach on the desktop bridge and launches through createTerminal', () => {
-    const source = readFileSync(new URL('../HomeAgentComposer.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('hasDesktopBridge()');
-    expect(source).toContain('createTerminal(');
-    expect(source).toContain('openAgentModal');
+describe('ThreadCommandComposer submit path', () => {
+  it('creates and follows up through the Thread HTTP API', () => {
+    const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('product.threads.create');
+    expect(source).toContain('serializePromptEditor');
+    expect(source).toContain('mentions: serialized.mentions');
+    expect(source).toContain('Enter a message first');
+    expect(source).toContain('Could not send message');
+    expect(source).toContain('permissionMode: permissionMode as');
+    expect(source).not.toContain('permissionModes[0]');
+    expect(source).toContain('product.threads.send');
     expect(source).toContain('EnvironmentPicker');
-    expect(source).toContain('workspace:');
-    expect(source).toContain('if (!canAttach) return;');
-    expect(source).not.toContain('Launching agents requires the desktop app');
-    expect(source).not.toContain('const canLaunch = hasDesktopBridge()');
+    expect(source).not.toContain('createTerminal(');
+    expect(source).not.toContain('openAgentModal');
+  });
+
+  it('steals typeahead keys while the menu is open and inserts mention pills', () => {
+    const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('typeaheadKeyAction');
+    expect(source).toContain('ComposerTypeaheadMenu');
+    expect(source).toContain('PromptMentionExtension');
+    expect(source).toContain('deleteRange');
+    expect(source).toContain("type: 'mention'");
+    expect(source).not.toContain('thread-slash-menu');
   });
 });
 
-describe('browser product client scheduler stubs', () => {
+describe('composer mention data sources', () => {
+  it('loads confined project paths and filters commands on the client', () => {
+    const hook = readFileSync(new URL('../composer/use-composer-suggestions.ts', import.meta.url), 'utf8');
+    expect(hook).toContain('product.projects.paths');
+    expect(hook).toContain('buildMentionSuggestions');
+    expect(hook).toContain('buildCommandSuggestions');
+    expect(hook).toContain('typeaheadMenuOpen');
+  });
+});
+
+describe('browser product client thread API', () => {
+  it('persists workspace order over HTTP instead of re-listing', () => {
+    const source = readFileSync(new URL('../../lib/product-client.ts', import.meta.url), 'utf8');
+    expect(source).toContain('/projects/reorder');
+    expect(source).not.toContain('reorder: async () => httpProduct().projects.list()');
+  });
+
   it('exposes schedule-group subscribe so store init cannot throw', () => {
     const source = readFileSync(new URL('../../lib/product-client.ts', import.meta.url), 'utf8');
     expect(source).toContain('groups: {');
@@ -49,29 +85,31 @@ describe('browser product client scheduler stubs', () => {
     expect(source).toContain('listTemplates: async () => []');
   });
 
-  it('forwards host terminal.output onto terminals.onData', () => {
+  it('keeps thread I/O on HTTP create/send/timeline, not PTY output/resize/input', () => {
     const source = readFileSync(new URL('../../lib/product-client.ts', import.meta.url), 'utf8');
     expect(source).toContain("subscribeProductEvent('threads:event'");
-    expect(source).toContain('threadEventToTerminalData');
-    expect(source).toContain('/threads/${encodeURIComponent(sessionId)}/output');
-    expect(source).toContain('/threads/${encodeURIComponent(sessionId)}/resize');
-    expect(source).toContain('/threads/${encodeURIComponent(sessionId)}/input');
-    expect(source).toContain('/threads/${encodeURIComponent(sessionId)}/archive');
-    expect(source).toContain('response.status === 404');
+    expect(source).toContain('/threads/${encodeURIComponent(threadId)}/send');
+    expect(source).toContain('/threads/${encodeURIComponent(threadId)}/timeline');
+    expect(source).toContain('/threads/${encodeURIComponent(threadId)}/archive');
+    expect(source).not.toContain('/threads/${encodeURIComponent(sessionId)}/output');
+    expect(source).not.toContain('/threads/${encodeURIComponent(sessionId)}/resize');
+    expect(source).not.toContain('/threads/${encodeURIComponent(sessionId)}/input');
     expect(source).toContain('cancelProvision');
-    expect(source).toContain('isHostThread(sessionId)');
+    expect(source).not.toContain('isHostThread(sessionId)');
+    expect(source).not.toContain('wrapDesktopTerminals');
     expect(source).toContain('/fs/list-dir');
     expect(source).toContain('/fs/read');
+    expect(source).toContain('/paths');
+    expect(source).toContain('paths: http.paths');
   });
 });
 
-describe('createTerminal uses host threads', () => {
-  it('spawns a thread instead of POST /terminals or Electron worktree minting', () => {
+describe('createTerminal uses the legacy PTY path', () => {
+  it('spawns through product.terminals.create, not host-thread adapters', () => {
     const source = readFileSync(new URL('../../store.ts', import.meta.url), 'utf8');
-    expect(source).toContain('product.threads.spawn');
-    expect(source).toContain('adoptHostThread(spawned.value)');
-    expect(source).not.toContain('worktree: opts?.worktree');
-    expect(source).not.toContain("if (!hasDesktopBridge()) {\n        const family = harnessFamilyOf");
-    expect(source).not.toContain("worktree: item.worktree");
+    expect(source).toContain('product.terminals.create');
+    expect(source).not.toContain('product.threads.spawn');
+    expect(source).not.toContain('adoptHostThread');
+    expect(source).not.toContain('hydrateHostThreads');
   });
 });

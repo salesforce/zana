@@ -282,12 +282,21 @@ exit behavior. An agent may later associate with a logical product record, but
 the raw ANSI stream remains terminal transport data rather than a structured
 agent event log.
 
-**Managed harness work is deferred.** Provider bridges, structured threads,
-native provider session identity, transcripts, approvals, and BB-style harness
-events require their own server-owned contracts and parity coverage. Do not add
-those semantics as optional fields to the direct terminal protocol or make the
-host infer provider policy. A future `managed-harness` mode will be introduced
-as a separate capability after the direct PTY authority boundary is stable.
+**Managed harness / Thread runtime is a parallel lane.** Direct PTY
+(`plain-terminal` and `legacyAgentSession` / `terminal-agent`) stays on the
+host PtyManager + `HARNESS_REGISTRATIONS` path. Structured Threads are a
+separate stack: provider plugins register via
+`experimental_registerProvider`, the server issues `thread.start` with
+`bridgeLaunch`, and host-daemon `RuntimeManager` runs `@zana-ai/zcc-agent-runtime`.
+Do not add Thread fields to the PTY protocol or teach PtyManager about
+provider bridges. Adding a Thread harness is a new `plugins/provider-<id>`;
+adding a PTY harness remains a `LaunchProvider` registration.
+
+**Managed harness work is deferred as a merge of those two stacks.** Provider
+bridges, structured threads, native provider session identity, transcripts,
+and BB-style harness events already have their own server-owned contracts on
+the Thread path. Do not fold those semantics into the direct terminal
+protocol or make the host infer provider policy for PTY sessions.
 
 Every host connection has three identities: a stable `hostId` for the durable
 host installation, a fresh `instanceId` for one daemon lifetime, and a

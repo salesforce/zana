@@ -36,6 +36,9 @@ export type {
   PluginRealtime,
   PluginBackground,
   PluginAgents,
+  PluginProviderDeclaration,
+  PluginProviderHandle,
+  PluginProviderCapabilities,
   PluginUi,
   PluginStatusApi
 } from './server.js';

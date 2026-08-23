@@ -173,7 +173,6 @@ export function WorkspaceView() {
     await loadProjects();
     selectProject(res.value.id);
     setWorkspaceMode(res.value.id, 'agents');
-    setLauncherOpen(true);
   };
 
   // Split layouts (vertical/horizontal/grid) are wired up in the store and

@@ -100,7 +100,8 @@ const api: CcApi = {
       const handler = (_e: unknown, projects: Project[]) => cb(projects);
       ipcRenderer.on(IPC.projects.onChanged, handler);
       return () => ipcRenderer.off(IPC.projects.onChanged, handler);
-    }
+    },
+    paths: async () => ({ paths: [], truncated: false })
   },
   ssh: {
     listHosts: () => ipcRenderer.invoke(IPC.ssh.listHosts),

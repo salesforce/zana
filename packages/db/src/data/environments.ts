@@ -170,7 +170,7 @@ export function hasLiveThreadAtHostPath(
 ): boolean {
   const row = db.sqlite.prepare(
     `SELECT 1 AS found
-     FROM threads t
+     FROM legacy_agent_sessions t
      JOIN environments e ON e.id = t.environment_id
      WHERE e.host_id = ? AND e.path = ? AND t.status IN ('starting', 'running')
      LIMIT 1`
@@ -179,11 +179,15 @@ export function hasLiveThreadAtHostPath(
 }
 
 export function countLiveThreadsForEnvironment(db: ZccDatabase, environmentId: string): number {
-  const row = db.sqlite.prepare(
-    `SELECT COUNT(*) AS n FROM threads
+  const legacy = db.sqlite.prepare(
+    `SELECT COUNT(*) AS n FROM legacy_agent_sessions
      WHERE environment_id = ? AND status IN ('starting', 'running')`
   ).get(environmentId) as { n: number };
-  return row.n;
+  const live = db.sqlite.prepare(
+    `SELECT COUNT(*) AS n FROM threads
+     WHERE environment_id = ? AND archived_at IS NULL AND status IN ('starting', 'active', 'stopping')`
+  ).get(environmentId) as { n: number };
+  return legacy.n + live.n;
 }
 
 export function updateEnvironmentStatus(

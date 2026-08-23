@@ -31,6 +31,14 @@ describe('project-row workspace actions', () => {
     expect(source).toContain('enterProjectFocus(p.id);');
   });
 
+  it('opens the shared agent lifecycle menu from a nested session row', () => {
+    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('onContextMenu={(e) => openAgentCardMenu(e, t, p)}');
+    expect(source).toContain('useAgentCardActions()');
+    expect(source).toContain('<AgentCardMenu menu={agentMenu}');
+    expect(source).toContain('setAgentMenu(null)');
+  });
+
   it('lets nested agent rows fill the workspace panel on hover', () => {
     const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
     expect(css).toContain('.project-terminal-row {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  width: 100%;');
@@ -156,5 +164,21 @@ describe('sidebar workspace header menus', () => {
     );
     expect(css).toContain('.sidebar-projects-add-menu {\n  position: fixed;\n  z-index: 20;');
     expect(css).toContain('.sidebar-projects-organize-menu {\n  position: fixed;\n  z-index: 20;');
+  });
+});
+
+describe('workspace move up/down', () => {
+  it('opts into manual order instead of disabling Move up/down on Recents', () => {
+    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    expect(source).toContain("if (inSidebar && sidebarProjectSort !== 'manual') setSidebarSort('manual')");
+    expect(source).toContain('const canReorder = !scopedProjectId && !filter.trim() && !hideIdleProjects;');
+    expect(source).not.toContain("hideIdleProjects && (!inSidebar || sidebarProjectSort === 'manual')");
+  });
+
+  it('does not dismiss the project menu on mousedown inside it', () => {
+    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('if (menuRef.current?.contains(t)) return;');
+    expect(source).toContain("if (e.key === 'Escape') setMenu(null);");
+    expect(source).not.toContain('const close = () => setMenu(null);');
   });
 });

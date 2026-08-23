@@ -17,7 +17,7 @@ import { gitBranchNameSchema } from '@zana-ai/zcc-domain/git-checkout';
  * Bump when any enroll payload, daemon WS message, host-rpc command, or host
  * event envelope changes shape or meaning. Mismatch fails before dispatch.
  */
-export const HOST_RPC_PROTOCOL_VERSION = 3;
+export const HOST_RPC_PROTOCOL_VERSION = 4;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
 
 const UuidSchema = z.string().uuid();
@@ -35,6 +35,7 @@ export const HostRpcCommandTypeSchema = z.enum([
   'thread.resize',
   'thread.input',
   'thread.stop',
+  'thread.resume',
   'turn.submit',
   'host.list_files',
   'host.list_dir',
@@ -150,6 +151,30 @@ const threadLaunchCohortSchema = z.object({
   slotId: z.string().max(120).optional()
 }).strict();
 
+export const HostBridgeLaunchSchema = z.object({
+  pluginId: z.string().min(1),
+  dataDir: PathSchema,
+  source: z.discriminatedUnion('kind', [
+    z.object({
+      kind: z.literal('artifact'),
+      digest: z.string().min(1),
+      artifactPath: PathSchema
+    }).strict(),
+    z.object({
+      kind: z.literal('daemon-bundled'),
+      id: z.string().min(1)
+    }).strict()
+  ]),
+  capabilities: z.object({
+    supportsServiceTier: z.boolean(),
+    permissionModes: z.array(z.string().min(1)).min(1),
+    supportsThreadArchive: z.boolean(),
+    supportsThreadRename: z.boolean(),
+    fork: z.string().min(1)
+  }).strict()
+}).strict();
+export type HostBridgeLaunch = z.infer<typeof HostBridgeLaunchSchema>;
+
 export const ThreadStartCommandSchema = z.object({
   type: z.literal('thread.start'),
   threadId: UuidSchema,
@@ -176,7 +201,12 @@ export const ThreadStartCommandSchema = z.object({
   remote: threadLaunchRemoteSchema.optional(),
   reconnectTmuxId: UuidSchema.optional(),
   resume: z.boolean().optional(),
-  cohort: threadLaunchCohortSchema.optional()
+  cohort: threadLaunchCohortSchema.optional(),
+  /** AgentRuntime provider bridge. Present on the Thread path; absent keeps PTY-shaped tests working. */
+  bridgeLaunch: HostBridgeLaunchSchema.optional(),
+  permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional(),
+  model: z.string().min(1).max(200).optional(),
+  providerThreadId: z.string().min(1).optional()
 }).strict();
 
 export const ThreadResizeCommandSchema = z.object({
@@ -201,7 +231,21 @@ export const TurnSubmitCommandSchema = z.object({
   type: z.literal('turn.submit'),
   threadId: UuidSchema,
   environmentId: UuidSchema,
-  input: z.array(z.string().min(1)).min(1)
+  input: z.array(z.string().min(1)).min(1),
+  mode: z.enum(['start', 'auto', 'steer', 'queue-if-active', 'steer-if-active']).optional()
+}).strict();
+
+export const ThreadResumeCommandSchema = z.object({
+  type: z.literal('thread.resume'),
+  threadId: UuidSchema,
+  environmentId: UuidSchema,
+  projectId: z.string().min(1),
+  providerId: z.string().min(1),
+  providerThreadId: z.string().min(1),
+  cwd: PathSchema.optional(),
+  bridgeLaunch: HostBridgeLaunchSchema.optional(),
+  permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional(),
+  model: z.string().min(1).max(200).optional()
 }).strict();
 
 export const HostListFilesCommandSchema = z.object({
@@ -314,6 +358,7 @@ export const HostRpcCommandSchema = z.union([
   ThreadResizeCommandSchema,
   ThreadInputCommandSchema,
   ThreadStopCommandSchema,
+  ThreadResumeCommandSchema,
   TurnSubmitCommandSchema,
   HostListFilesCommandSchema,
   HostListDirCommandSchema,
@@ -372,7 +417,8 @@ export const EnvironmentDestroyResultSchema = z.object({
 
 export const ThreadStartResultSchema = z.object({
   threadId: UuidSchema,
-  started: z.literal(true)
+  started: z.literal(true),
+  providerThreadId: z.string().min(1).optional()
 }).strict();
 export type ThreadStartResult = z.infer<typeof ThreadStartResultSchema>;
 
@@ -399,6 +445,13 @@ export const TurnSubmitResultSchema = z.object({
   accepted: z.literal(true)
 }).strict();
 export type TurnSubmitResult = z.infer<typeof TurnSubmitResultSchema>;
+
+export const ThreadResumeResultSchema = z.object({
+  threadId: UuidSchema,
+  resumed: z.literal(true),
+  providerThreadId: z.string().min(1).optional()
+}).strict();
+export type ThreadResumeResult = z.infer<typeof ThreadResumeResultSchema>;
 
 export const HostListedFileSchema = z.object({
   root: PathSchema,
@@ -482,6 +535,7 @@ export const HostRpcResultSchemaByType = {
   'thread.resize': ThreadResizeResultSchema,
   'thread.input': ThreadInputResultSchema,
   'thread.stop': ThreadStopResultSchema,
+  'thread.resume': ThreadResumeResultSchema,
   'turn.submit': TurnSubmitResultSchema,
   'host.list_files': HostListFilesResultSchema,
   'host.list_dir': HostListDirResultSchema,
@@ -565,6 +619,7 @@ export type HostRpcResponseMessage = z.infer<typeof HostRpcResponseMessageSchema
 
 export const HostEventKindSchema = z.enum([
   'thread.started',
+  'thread.event',
   'turn.completed',
   'turn.failed',
   'terminal.output',

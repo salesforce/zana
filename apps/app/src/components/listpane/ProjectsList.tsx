@@ -1,5 +1,5 @@
 import { product } from '../../lib/product-client.js';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import {
   DndContext,
   KeyboardSensor,
@@ -22,12 +22,14 @@ import { CursorIcon } from '../icons/CursorIcon.js';
 import {
   useData,
   useUi,
+  useAgentStatus,
+  useIdleTriage,
   sortProjectsForDisplay,
   sortProjectsAlphabetically,
   listedTerminals,
   liveTerminals
 } from '../../store.js';
-import type { OpenTarget, Project } from '@zana-ai/zcc-domain/product';
+import type { OpenTarget, Project, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { profileIcon } from '../../lib/profileIcon.js';
 import { getScopedProjectId } from '../../lib/windowScope.js';
 import { PROJECT_COLORS } from '@zana-ai/zcc-domain/project-colors';
@@ -39,6 +41,9 @@ import { AgentStatusDot } from './AgentStatusDot.js';
 import { AgentRowDetail } from './AgentRowDetail.js';
 import { ProjectRollupDot } from './ProjectRollupDot.js';
 import { reorderProjectIds } from './projectReordering.js';
+import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from '../agentCardActions.js';
+import { PromptModal } from '../PromptModal.js';
+import type { AgentCard } from '../AgentBoard.js';
 
 interface MenuState {
   projectId: string;
@@ -192,6 +197,17 @@ export function ProjectsList({
   const sidebarOrganizeRef = useRef<HTMLDivElement | null>(null);
   const [sidebarProjectSort, setSidebarProjectSort] = useState<SidebarProjectSort>(readSidebarProjectSort);
   const [refreshing, setRefreshing] = useState(false);
+  // Nested session rows share the board/list lifecycle menu (Stop / Restart /
+  // Rename / Delete). Distinct from `menu` below, which is the project-row
+  // overflow. Opening one closes the other so they never stack.
+  const {
+    menu: agentMenu,
+    setMenu: setAgentMenu,
+    actions: agentActions,
+    rename: agentRename,
+    closeRename: closeAgentRename,
+    submitRename: submitAgentRename
+  } = useAgentCardActions();
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
@@ -232,6 +248,35 @@ export function ProjectsList({
     setRenamingId(id);
     setRenameValue(name);
     setMenu(null);
+    setAgentMenu(null);
+  };
+
+  const sessionToCard = (session: TerminalSession, project: Project): AgentCard => ({
+    session,
+    state: useAgentStatus.getState().byId[session.id] ?? 'unknown',
+    projectId: project.id,
+    projectName: project.name,
+    projectColor: project.color,
+    triage: useIdleTriage.getState().byId[session.id]
+  });
+
+  const openAgentCardMenu = (e: MouseEvent, session: TerminalSession, project: Project) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setMenu(null);
+    setAgentMenu({ card: sessionToCard(session, project), ...clampMenuAnchor(e) });
+  };
+
+  const pickAgent = (card: AgentCard) => {
+    const ui = useUi.getState();
+    ui.setNav('projects');
+    ui.enterProjectFocus(card.projectId);
+    if (card.session.headless && card.session.status !== 'exited') {
+      void useData.getState().restoreTerminal(card.session.id, card.projectId);
+    } else {
+      ui.selectTab(card.projectId, card.session.id);
+    }
+    ui.setWorkspaceMode(card.projectId, 'terminals');
   };
 
   const commitRename = () => {
@@ -296,7 +341,10 @@ export function ProjectsList({
     return [{ projects: visibleProjects }];
   }, [visibleProjects]);
 
-  const canReorder = !scopedProjectId && !filter.trim() && !hideIdleProjects && (!inSidebar || sidebarProjectSort === 'manual');
+  // Reorder is allowed whenever the full unfiltered list is on screen. A
+  // Recents/Created/A–Z sort still shows Move up/down — using them (or a
+  // drag) switches the rail to Manual so the new order is what you see.
+  const canReorder = !scopedProjectId && !filter.trim() && !hideIdleProjects;
   const setSidebarSort = (sort: SidebarProjectSort) => {
     setSidebarProjectSort(sort);
     localStorage.setItem(SIDEBAR_PROJECT_SORT_KEY, sort);
@@ -304,6 +352,7 @@ export function ProjectsList({
   };
   const reorderWithinGroup = (group: RailGroup, fromId: string, toId: string) => {
     if (!canReorder || fromId === toId) return;
+    if (inSidebar && sidebarProjectSort !== 'manual') setSidebarSort('manual');
     const orderedIds = sortedProjects.map((project) => project.id);
     const nextIds = reorderProjectIds(
       orderedIds,
@@ -334,12 +383,19 @@ export function ProjectsList({
 
   useEffect(() => {
     if (!menu) return;
-    const close = () => setMenu(null);
-    window.addEventListener('mousedown', close);
-    window.addEventListener('keydown', close);
+    const onDown = (e: Event) => {
+      const t = e.target as Node;
+      if (menuRef.current?.contains(t)) return;
+      setMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenu(null);
+    };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
     return () => {
-      window.removeEventListener('mousedown', close);
-      window.removeEventListener('keydown', close);
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
     };
   }, [menu]);
 
@@ -461,6 +517,7 @@ export function ProjectsList({
             className={`project-item ${selectedId === p.id ? 'active' : ''}`}
             onContextMenu={(e) => {
               e.preventDefault();
+              setAgentMenu(null);
               setMenu({ projectId: p.id, x: e.clientX, y: e.clientY });
             }}
           >
@@ -614,6 +671,7 @@ export function ProjectsList({
                         type="button"
                         className={`project-terminal-row ${isUnread ? 'unread' : ''}`}
                         onClick={() => useUi.getState().openAgentModal(t.id, p.id)}
+                        onContextMenu={(e) => openAgentCardMenu(e, t, p)}
                         aria-label={isUnread ? `${t.title}, unread output` : t.title}
                         title={isUnread ? `${t.title} · unread output` : t.title}
                       >
@@ -1085,6 +1143,19 @@ export function ProjectsList({
         </div>
         );
       })()}
+      {agentMenu && (
+        <AgentCardMenu menu={agentMenu} setMenu={setAgentMenu} actions={agentActions} onPick={pickAgent} />
+      )}
+      {agentRename && (
+        <PromptModal
+          title="Rename agent"
+          label="Name"
+          initialValue={agentRename.card.session.title}
+          confirmLabel="Rename"
+          onSubmit={(v) => submitAgentRename(agentRename.card, v)}
+          onClose={closeAgentRename}
+        />
+      )}
       {!inSidebar && <ListPaneResizer />}
       {showRemoteDialog && (
         <AddRemoteProjectDialog

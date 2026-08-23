@@ -46,8 +46,20 @@ const LIST_DIR_DENY = new Set([
 
 export type ThreadStartFields = z.infer<typeof ThreadStartCommandSchema>;
 
-export type ThreadWorkInput = Omit<ThreadStartFields, 'type' | 'environmentId' | 'cwd'> & {
+export type ThreadWorkInput = Omit<ThreadStartFields, 'type' | 'cwd'> & {
   cwd: string;
+};
+
+export type ThreadResumeInput = {
+  threadId: string;
+  environmentId: string;
+  projectId: string;
+  providerId: string;
+  providerThreadId: string;
+  cwd: string;
+  bridgeLaunch?: ThreadStartFields['bridgeLaunch'];
+  permissionMode?: ThreadStartFields['permissionMode'];
+  model?: string;
 };
 
 export interface CommandRuntime {
@@ -58,8 +70,9 @@ export interface CommandRuntime {
   lanes: Map<string, Promise<void>>;
   verifyProviders: () => Promise<ProviderStatusResult>;
   emit: (event: HostEventEnvelope) => void;
-  startWork?: (input: ThreadWorkInput) => Promise<void>;
-  submitTurn?: (input: { threadId: string; input: string[] }) => Promise<void>;
+  startWork?: (input: ThreadWorkInput) => Promise<{ providerThreadId?: string } | void>;
+  submitTurn?: (input: { threadId: string; input: string[]; mode?: string }) => Promise<void>;
+  resumeWork?: (input: ThreadResumeInput) => Promise<{ providerThreadId?: string } | void>;
   resizeWork?: (input: { threadId: string; cols: number; rows: number }) => Promise<void>;
   writeWork?: (input: { threadId: string; data: string }) => Promise<void>;
   stopWork?: (input: { threadId: string }) => Promise<void>;
@@ -70,8 +83,9 @@ export function createCommandRuntime(options: {
   loadConfig?: () => AppConfig;
   verifyProviders?: () => Promise<ProviderStatusResult>;
   emit?: (event: HostEventEnvelope) => void;
-  startWork?: (input: ThreadWorkInput) => Promise<void>;
-  submitTurn?: (input: { threadId: string; input: string[] }) => Promise<void>;
+  startWork?: (input: ThreadWorkInput) => Promise<{ providerThreadId?: string } | void>;
+  submitTurn?: (input: { threadId: string; input: string[]; mode?: string }) => Promise<void>;
+  resumeWork?: (input: ThreadResumeInput) => Promise<{ providerThreadId?: string } | void>;
   resizeWork?: (input: { threadId: string; cols: number; rows: number }) => Promise<void>;
   writeWork?: (input: { threadId: string; data: string }) => Promise<void>;
   stopWork?: (input: { threadId: string }) => Promise<void>;
@@ -86,6 +100,7 @@ export function createCommandRuntime(options: {
     emit: options.emit ?? (() => {}),
     startWork: options.startWork,
     submitTurn: options.submitTurn,
+    resumeWork: options.resumeWork,
     resizeWork: options.resizeWork,
     writeWork: options.writeWork,
     stopWork: options.stopWork,
@@ -324,20 +339,26 @@ export async function dispatchHostCommand(
       if (!environment) {
         throw new HostCommandError('environment_not_ready', 'environment is not provisioned');
       }
-      if (!providerAvailable(await runtime.verifyProviders(), command.providerId)) {
+      if (!command.bridgeLaunch && !providerAvailable(await runtime.verifyProviders(), command.providerId)) {
         throw new HostCommandError('provider_unavailable', `provider CLI is not available: ${command.providerId}`);
       }
       const cwd = confineThreadCwd(environment.path, command.cwd);
+      let providerThreadId: string | undefined;
       if (runtime.startWork) {
-        const { type: _type, environmentId: _environmentId, cwd: _cwd, ...rest } = command;
-        await runtime.startWork({ ...rest, cwd });
+        const { type: _type, cwd: _cwd, ...rest } = command;
+        const started = await runtime.startWork({ ...rest, cwd });
+        providerThreadId = started?.providerThreadId;
       }
       runtime.threads.set(command.threadId, {
         environmentId: command.environmentId,
         providerId: command.providerId
       });
       runtime.emit({ threadId: command.threadId, kind: 'thread.started' });
-      return { threadId: command.threadId, started: true as const };
+      return {
+        threadId: command.threadId,
+        started: true as const,
+        ...(providerThreadId ? { providerThreadId } : {})
+      };
     }
     case 'thread.resize': {
       if (!runtime.threads.has(command.threadId)) {
@@ -368,12 +389,54 @@ export async function dispatchHostCommand(
       runtime.threads.delete(command.threadId);
       return { threadId: command.threadId, stopped: true as const };
     }
+    case 'thread.resume': {
+      const environment = runtime.environments.get(command.environmentId);
+      const environmentPath = environment?.path ?? command.cwd;
+      if (!environmentPath) {
+        throw new HostCommandError('environment_not_ready', 'environment is not provisioned');
+      }
+      const cwd = confineThreadCwd(environmentPath, command.cwd);
+      let providerThreadId = command.providerThreadId;
+      if (runtime.resumeWork) {
+        const resumed = await runtime.resumeWork({
+          threadId: command.threadId,
+          environmentId: command.environmentId,
+          projectId: command.projectId,
+          providerId: command.providerId,
+          providerThreadId: command.providerThreadId,
+          cwd,
+          bridgeLaunch: command.bridgeLaunch,
+          permissionMode: command.permissionMode,
+          model: command.model
+        });
+        providerThreadId = resumed?.providerThreadId ?? providerThreadId;
+      }
+      runtime.threads.set(command.threadId, {
+        environmentId: command.environmentId,
+        providerId: command.providerId
+      });
+      if (!environment) {
+        runtime.environments.set(command.environmentId, {
+          path: environmentPath,
+          workspaceProvisionType: 'unmanaged'
+        });
+      }
+      return {
+        threadId: command.threadId,
+        resumed: true as const,
+        ...(providerThreadId ? { providerThreadId } : {})
+      };
+    }
     case 'turn.submit': {
       if (!runtime.threads.has(command.threadId)) {
         throw new HostCommandError('unknown_thread', 'thread is not running on this host');
       }
       if (runtime.submitTurn) {
-        await runtime.submitTurn({ threadId: command.threadId, input: command.input });
+        await runtime.submitTurn({
+          threadId: command.threadId,
+          input: command.input,
+          mode: command.mode
+        });
       } else {
         runtime.emit({ threadId: command.threadId, kind: 'turn.completed' });
       }

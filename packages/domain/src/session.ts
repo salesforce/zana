@@ -3,6 +3,7 @@
 export type {
   SessionCohort,
   TerminalSession,
+  LegacyAgentSession,
   SessionMetadataValue,
   SessionMetadataSection,
   SessionMetadataSnapshot,

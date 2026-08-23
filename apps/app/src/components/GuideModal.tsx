@@ -1,4 +1,5 @@
 import { useRef } from 'react';
+import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { X, type LucideIcon } from 'lucide-react';
@@ -19,12 +20,16 @@ interface Props {
  * class) and the inbox's `.inbox-md` markdown styling — no new visual
  * surface for what's fundamentally the same "read some formatted text and
  * close" interaction.
+ *
+ * Portaled to `document.body` so the Home panel's stacking context
+ * (`.aurora-host { isolation: isolate }`) and the sidebar's `z-index: 1`
+ * cannot paint over the dialog.
  */
 export function GuideModal({ title, icon: Icon, content, actionLabel, onAction, onClose }: Props) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
   useDialogFocusTrap(dialogRef, onClose);
 
-  return (
+  return createPortal(
     <div className="palette-backdrop" onMouseDown={onClose}>
       <div
         ref={dialogRef}
@@ -61,6 +66,7 @@ export function GuideModal({ title, icon: Icon, content, actionLabel, onAction, 
           </footer>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

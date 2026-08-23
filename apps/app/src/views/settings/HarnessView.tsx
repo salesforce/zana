@@ -25,7 +25,8 @@ const CODEX_UI = providerUiSchema('codex');
  * operator sees WHY an enabled harness might be greyed-out in the New Agent modal
  * (its CLI isn't on PATH) right where they toggle it. Claude Code is
  * `alwaysEnabled` — it has no switch (like Finder in the opener bar), only a
- * status badge.
+ * status badge. Optional families auto-activate when the CLI is found; the
+ * switch is an explicit hide, not a required opt-in.
  *
  * NOTE: these are the coding-CLI harnesses (`cursor-agent`/`codex`/`pi`/
  * `opencode`) — DISTINCT from the GUI-launch editors (`cursor`/`code`/`idea`)
@@ -326,6 +327,28 @@ function HarnessRow({
   );
 }
 
+function ThreadProvidersPanel() {
+  const [providers, setProviders] = useState<Array<{ id: string; displayName: string; pluginId: string }>>([]);
+  useEffect(() => {
+    void product.threads.providers()
+      .then((body) => setProviders(body.providers))
+      .catch(() => setProviders([]));
+  }, []);
+  if (providers.length === 0) {
+    return <p className="settings-help">No thread providers registered.</p>;
+  }
+  return (
+    <ul className="opener-list thread-provider-list" data-testid="thread-provider-catalog">
+      {providers.map((provider) => (
+        <li key={provider.id} className="opener-row">
+          <span className="opener-row-name">{provider.displayName}</span>
+          <span className="settings-help">{provider.pluginId}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function HarnessView({
   config,
   onConfigDraft,
@@ -467,13 +490,13 @@ export function HarnessView({
   );
 
   const piNativeAdvanced = (
-    <fieldset disabled={config.harnessPiEnabled !== true} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+    <fieldset disabled={config.harnessPiEnabled === false || status.find((entry) => entry.family === 'pi')?.installed !== true} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       {piAdvanced}
     </fieldset>
   );
 
   const codexAdvanced = (
-    <fieldset disabled={config.harnessCodexEnabled !== true} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+    <fieldset disabled={config.harnessCodexEnabled === false || status.find((entry) => entry.family === 'codex')?.installed !== true} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       <Field
         label="Default Sandbox Policy"
         help="Controls filesystem and command isolation. Bracketed text shows which portable Persona/Agent Execution State normally selects this policy."
@@ -515,15 +538,23 @@ export function HarnessView({
     ? status.find((entry) => entry.family === config.defaultHarness)
     : undefined;
   const defaultUnavailable = !!config.defaultHarness && (
-    (!!selectedDefaultEnableKey && config[selectedDefaultEnableKey] !== true) ||
+    (!!selectedDefaultEnableKey && config[selectedDefaultEnableKey] === false) ||
     selectedDefaultStatus?.installed === false
   );
   const optionAvailability = new Map(status.map((entry) => [entry.family, entry]));
   return (
+    <>
+    <Section
+      anchorId="thread-providers"
+      title="Thread providers"
+      help="Thread Code Harnesses are provider plugins (Claude Code, Codex, Pi, ACP). They register through experimental_registerProvider and launch via AgentRuntime — not the PTY harness SDK."
+    >
+      <ThreadProvidersPanel />
+    </Section>
     <Section
       anchorId="harness-status"
-      title="Code harnesses"
-      help="Global defaults apply first. Launch settings then apply in this order: Global → Project → Persona → Agent. Expand each harness to configure its defaults."
+      title="Legacy PTY harnesses"
+      help="PTY coding-agent CLIs used only by legacyAgentSession. Global defaults apply first. Launch settings then apply in this order: Global → Project → Persona → Agent."
     >
       <Field
         label="Default harness"
@@ -544,7 +575,7 @@ export function HarnessView({
               value: descriptor.id,
               label: `${descriptor.label}${descriptor.availability.installed ? '' : ' (not installed)'}`,
               disabled: (descriptor.id !== 'shell' && optionAvailability.get(descriptor.id)?.installed === false) ||
-                (descriptor.id !== 'shell' && !!ENABLE_KEY[descriptor.id] && config[ENABLE_KEY[descriptor.id]!] !== true)
+                (descriptor.id !== 'shell' && !!ENABLE_KEY[descriptor.id] && config[ENABLE_KEY[descriptor.id]!] === false)
             }))}
           />
         )}
@@ -605,6 +636,7 @@ export function HarnessView({
         </button>
       </div>
     </Section>
+    </>
   );
 }
 

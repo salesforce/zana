@@ -1,147 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import type { Project, TerminalSession } from '@zana-ai/zcc-domain/product';
 import {
-  snapshotTabs,
   shouldResumeConversation,
   withResumeArgs,
   stripOpeningPrompt,
-  planRestore,
-  type SessionSnapshotMap
+  resolveRestartProfile
 } from '../sessionRestore.js';
-
-function session(over: Partial<TerminalSession>): TerminalSession {
-  return {
-    id: 'sid',
-    projectId: 'p1',
-    title: 'claude',
-    profile: 'claude',
-    cwd: '/work/p1',
-    status: 'running',
-    createdAt: 0,
-    ...over
-  };
-}
-
-function project(over: Partial<Project>): Project {
-  return {
-    id: 'p1',
-    name: 'p1',
-    path: '/work/p1',
-    createdAt: 0,
-    lastActiveAt: 0,
-    ...over
-  };
-}
-
-describe('snapshotTabs', () => {
-  it('preserves named worktree identity for authorized restore', () => {
-    const worktreeSession = session({
-      worktree: { path: '/worktrees/p1/task', branch: 'zcc/task' },
-      cwd: '/worktrees/p1/task'
-    });
-    expect(snapshotTabs([worktreeSession])[0]).toMatchObject({
-      worktree: { path: '/worktrees/p1/task', branch: 'zcc/task' },
-      cwd: '/worktrees/p1/task'
-    });
-  });
-  it('captures profile/title/extraArgs/cwd/pinned/claudeSessionId for visible tabs', () => {
-    const snap = snapshotTabs([
-      session({
-        id: 'a',
-        profile: 'claude',
-        title: 'c',
-        cwd: '/work/p1',
-        pinned: true,
-        autoTitledByLlm: true,
-        claudeSessionId: 'sess-a'
-      }),
-      session({ id: 'b', profile: 'shell', title: 'sh', extraArgs: ['--foo'] })
-    ]);
-    expect(snap).toEqual([
-      {
-        profile: 'claude',
-        title: 'c',
-        extraArgs: undefined,
-        cwd: '/work/p1',
-        pinned: true,
-        titleLocked: undefined,
-        autoTitledByLlm: true,
-        autoTitledByOsc: undefined,
-        claudeSessionId: 'sess-a'
-      },
-      {
-        profile: 'shell',
-        title: 'sh',
-        extraArgs: ['--foo'],
-        cwd: '/work/p1',
-        pinned: undefined,
-        titleLocked: undefined,
-        autoTitledByLlm: undefined,
-        autoTitledByOsc: undefined,
-        claudeSessionId: undefined
-      }
-    ]);
-  });
-
-  it('captures the auto-title pins so a restored auto-named tab is not re-renamed', () => {
-    const snap = snapshotTabs([
-      session({ id: 'a', autoTitledByOsc: true }),
-      session({ id: 'b', autoTitledByLlm: true })
-    ]);
-    expect(snap[0]).toMatchObject({ autoTitledByOsc: true, autoTitledByLlm: undefined });
-    expect(snap[1]).toMatchObject({ autoTitledByLlm: true, autoTitledByOsc: undefined });
-  });
-
-  it('strips the opening prompt so restore resumes instead of re-issuing it', () => {
-    const snap = snapshotTabs([
-      session({ id: 'a', extraArgs: ['Look at the repo…'] })
-    ]);
-    // The prompt positional must not survive into the snapshot.
-    expect(snap[0].extraArgs).toBeUndefined();
-  });
-
-  it('keeps the resume pin while dropping the prompt', () => {
-    const snap = snapshotTabs([
-      session({ id: 'a', extraArgs: ['--resume', 'sess-a', 'do the thing'] })
-    ]);
-    expect(snap[0].extraArgs).toEqual(['--resume', 'sess-a']);
-  });
-
-  it('drops headless (background) tabs', () => {
-    const snap = snapshotTabs([
-      session({ id: 'a' }),
-      session({ id: 'b', headless: true })
-    ]);
-    expect(snap).toHaveLength(1);
-    expect(snap[0]).toMatchObject({ profile: 'claude' });
-  });
-
-  it('captures headless Team workers for lifecycle restoration', () => {
-    const snap = snapshotTabs([
-      session({
-        id: 'worker',
-        headless: true,
-        restoreCapabilityId: 'restore-worker',
-        cohort: {
-          cohortId: 'cohort-1', teamId: 'team-1', teamName: 'Team',
-          role: 'worker', slotId: 'slot-1'
-        }
-      })
-    ]);
-
-    expect(snap).toHaveLength(1);
-    expect(snap[0]).toMatchObject({ restoreCapabilityId: 'restore-worker' });
-  });
-
-  it('drops exited tabs so a session the user let die is not resurrected', () => {
-    const snap = snapshotTabs([
-      session({ id: 'a', status: 'running' }),
-      session({ id: 'b', status: 'exited', exitCode: 0 })
-    ]);
-    expect(snap).toHaveLength(1);
-    expect(snap[0].profile).toBe('claude');
-  });
-});
 
 describe('stripOpeningPrompt', () => {
   it('removes OpenCode --prompt forms so restore cannot replay the original task', () => {
@@ -260,160 +123,41 @@ describe('withResumeArgs', () => {
   });
 });
 
-describe('planRestore', () => {
-  const snapshot: SessionSnapshotMap = {
-    p1: [
-      { profile: 'claude', title: 'c', cwd: '/work/p1' },
-      { profile: 'shell', title: 'sh' }
-    ]
-  };
-
-  it('plans a spawn per remembered tab, folding --continue into claude tabs with no id', () => {
-    const plan = planRestore(snapshot, [project({ id: 'p1' })], {});
-    expect(plan).toHaveLength(2);
-    expect(plan[0]).toMatchObject({ projectId: 'p1', profile: 'claude', extraArgs: ['--continue'] });
-    expect(plan[1]).toMatchObject({ projectId: 'p1', profile: 'shell' });
-    expect(plan[1].extraArgs).toBeUndefined();
-  });
-
-  it('resumes each claude tab’s OWN conversation when ids were captured', () => {
-    const snap: SessionSnapshotMap = {
-      p1: [
-        { profile: 'claude', title: 'a', cwd: '/work/p1', claudeSessionId: 'sess-a' },
-        { profile: 'claude', title: 'b', cwd: '/work/p1', claudeSessionId: 'sess-b' }
-      ]
-    };
-    const plan = planRestore(snap, [project({ id: 'p1' })], {});
-    expect(plan).toHaveLength(2);
-    // The whole point of the fix: two tabs in one cwd resume DISTINCT sessions,
-    // not the same most-recent one.
-    expect(plan[0].extraArgs).toEqual(['--resume', 'sess-a']);
-    expect(plan[1].extraArgs).toEqual(['--resume', 'sess-b']);
-  });
-
-  it('heals a dirty on-disk snapshot that still carries the opening prompt', () => {
-    // Snapshot written before snapshotTabs stripped the prompt: the prompt is a
-    // positional in extraArgs and the tab has its own captured id. Restore must
-    // resume that id, NOT replay the prompt as a fresh first turn.
-    const snap: SessionSnapshotMap = {
-      p1: [
-        {
-          profile: 'claude',
-          title: 'Claude Code',
-          extraArgs: ['Look at the repo…'],
-          cwd: '/work/p1',
-          claudeSessionId: 'sess-a'
-        }
-      ]
-    };
-    const plan = planRestore(snap, [project({ id: 'p1' })], {});
-    expect(plan).toHaveLength(1);
-    expect(plan[0].extraArgs).toEqual(['--resume', 'sess-a']);
-  });
-
-  it('heals a dirty legacy snapshot (prompt, no id) down to --continue', () => {
-    const snap: SessionSnapshotMap = {
-      p1: [{ profile: 'claude', title: 'c', extraArgs: ['do the thing'], cwd: '/work/p1' }]
-    };
-    const plan = planRestore(snap, [project({ id: 'p1' })], {});
-    expect(plan[0].extraArgs).toEqual(['--continue']);
-  });
-
-  it('heals a doubly-dirty snapshot (prompt + already-appended --continue)', () => {
-    // The worst on-disk shape: a prior restore already appended --continue AFTER
-    // the prompt, so the prompt sits left of the flag. Strip must still find and
-    // drop it, and withResumeArgs must not double-add the flag.
-    const snap: SessionSnapshotMap = {
-      p1: [
-        { profile: 'claude', title: 'c', extraArgs: ['I have a few tickets…', '--continue'], cwd: '/work/p1' }
-      ]
-    };
-    const plan = planRestore(snap, [project({ id: 'p1' })], {});
-    expect(plan[0].extraArgs).toEqual(['--continue']);
+describe('resolveRestartProfile', () => {
+  it('resumes a claude tab via --resume <id>', () => {
+    expect(resolveRestartProfile('claude', undefined, 'sess-a', undefined, undefined)).toMatchObject({
+      profile: 'claude',
+      extraArgs: ['--resume', 'sess-a']
+    });
   });
 
   it('resumes a codex tab via the codex-resume profile + positional id (not a flag)', () => {
-    // Codex resume is a POSITIONAL subcommand, so the id must ride resumeSessionId,
-    // NOT extraArgs (which the launcher would append as flags). The profile also
-    // switches to codex-resume so resolveLaunch emits `resume <id>`.
-    const snap: SessionSnapshotMap = {
-      p1: [{ profile: 'codex', title: 'x', cwd: '/work/p1', codexSessionId: 'roll-uuid-1' }]
-    };
-    const plan = planRestore(snap, [project({ id: 'p1' })], {});
-    expect(plan).toHaveLength(1);
-    expect(plan[0]).toMatchObject({
+    const resolved = resolveRestartProfile('codex', undefined, undefined, 'roll-uuid-1', undefined);
+    expect(resolved).toMatchObject({
       profile: 'codex-resume',
       resumeSessionId: 'roll-uuid-1'
     });
-    // The id never leaks into extraArgs — codex can't take it as a flag.
-    expect(plan[0].extraArgs ?? []).not.toContain('roll-uuid-1');
+    expect(resolved.extraArgs ?? []).not.toContain('roll-uuid-1');
   });
 
   it('falls back to codex-resume with no id (→ resume --last) when none was captured', () => {
-    const snap: SessionSnapshotMap = {
-      p1: [{ profile: 'codex', title: 'x', cwd: '/work/p1' }]
-    };
-    const plan = planRestore(snap, [project({ id: 'p1' })], {});
-    expect(plan[0]).toMatchObject({ profile: 'codex-resume' });
-    expect(plan[0].resumeSessionId).toBeUndefined();
+    const resolved = resolveRestartProfile('codex', undefined, undefined, undefined, undefined);
+    expect(resolved).toMatchObject({ profile: 'codex-resume' });
+    expect(resolved.resumeSessionId).toBeUndefined();
   });
 
-  it('resumes an opencode tab via the opencode-resume profile + --session id (not extraArgs)', () => {
-    const snap: SessionSnapshotMap = {
-      p1: [{ profile: 'opencode', title: 'x', cwd: '/work/p1', openCodeSessionId: 'ses_abc123' }]
-    };
-    const plan = planRestore(snap, [project({ id: 'p1' })], {});
-    expect(plan).toHaveLength(1);
-    expect(plan[0]).toMatchObject({
+  it('resumes an opencode tab via the opencode-resume profile + session id (not extraArgs)', () => {
+    const resolved = resolveRestartProfile('opencode', undefined, undefined, undefined, 'ses_abc123');
+    expect(resolved).toMatchObject({
       profile: 'opencode-resume',
       resumeSessionId: 'ses_abc123'
     });
-    expect(plan[0].extraArgs ?? []).not.toContain('ses_abc123');
+    expect(resolved.extraArgs ?? []).not.toContain('ses_abc123');
   });
 
   it('falls back to opencode-resume with no id (→ --continue) when none was captured', () => {
-    const snap: SessionSnapshotMap = {
-      p1: [{ profile: 'opencode', title: 'x', cwd: '/work/p1' }]
-    };
-    const plan = planRestore(snap, [project({ id: 'p1' })], {});
-    expect(plan[0]).toMatchObject({ profile: 'opencode-resume' });
-    expect(plan[0].resumeSessionId).toBeUndefined();
-  });
-
-  it('skips projects that no longer exist', () => {
-    expect(planRestore(snapshot, [], {})).toEqual([]);
-  });
-
-  it('skips remote (ssh) projects', () => {
-    const plan = planRestore(
-      snapshot,
-      [project({ id: 'p1', remote: { host: 'box', user: 'me' } })],
-      {}
-    );
-    expect(plan).toEqual([]);
-  });
-
-  it('skips a project that already has live sessions (renderer reload, not fresh launch)', () => {
-    const plan = planRestore(snapshot, [project({ id: 'p1' })], {
-      p1: [session({ id: 'already-live' })]
-    });
-    expect(plan).toEqual([]);
-  });
-
-  it('skips a project whose hydration failed (can\'t tell if it has live ptys)', () => {
-    const plan = planRestore(snapshot, [project({ id: 'p1' })], {}, new Set(['p1']));
-    expect(plan).toEqual([]);
-  });
-
-  it('restores other projects even when one is already live', () => {
-    const snap: SessionSnapshotMap = {
-      p1: [{ profile: 'claude', title: 'c' }],
-      p2: [{ profile: 'shell', title: 'sh' }]
-    };
-    const plan = planRestore(snap, [project({ id: 'p1' }), project({ id: 'p2' })], {
-      p1: [session({ id: 'live' })]
-    });
-    expect(plan).toHaveLength(1);
-    expect(plan[0].projectId).toBe('p2');
+    const resolved = resolveRestartProfile('opencode', undefined, undefined, undefined, undefined);
+    expect(resolved).toMatchObject({ profile: 'opencode-resume' });
+    expect(resolved.resumeSessionId).toBeUndefined();
   });
 });

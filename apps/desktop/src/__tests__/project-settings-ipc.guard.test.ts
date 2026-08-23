@@ -19,7 +19,6 @@ describe('project settings IPC failure handling', () => {
   });
 
   it('registers cloned directories through the product HTTP clone path', () => {
-    expect(source).toMatch(/async function spawnHostThreadFromMain[\s\S]*?productServerUrl\(\)/);
     expect(source).toMatch(/async function cloneAndRegisterProject[\s\S]*?api\/v1\/projects\/clone/);
     expect(source).toMatch(/cloneAndRegisterProject[\s\S]*?runtimeSupervisor \? await runtimeSupervisor\.listProjects\(\) as Project\[\] : store\.listProjects\(\)/);
   });
@@ -32,5 +31,11 @@ describe('project settings IPC failure handling', () => {
   it('self-heals local extension projects through server add and bounded update operations', () => {
     expect(source).toMatch(/const registerExtensionProject = async[\s\S]*?runtimeSupervisor\s*\? await runtimeSupervisor\.addProject\(workingDir\)[\s\S]*?: store\.ensureExtensionProject\(workingDir, name\)/);
     expect(source).toMatch(/registerExtensionProject = async[\s\S]*?runtimeSupervisor\.updateProject\(project\.id, \{ category: EXTENSION_PROJECT_CATEGORY, name: label \}\)/);
+  });
+
+  it('closes legacy PTY sessions through PtyManager, not HTTP thread archive', () => {
+    expect(source).toContain('ptys.closeExpected(sessionId)');
+    expect(source).not.toContain('api/v1/threads/${encodeURIComponent(sessionId)}/archive');
+    expect(source).not.toContain('completeThreadAtDataDir');
   });
 });

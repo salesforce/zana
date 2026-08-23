@@ -1,4 +1,5 @@
 import { useRef, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { useDialogFocusTrap } from '../hooks/useDialogFocusTrap.js';
 
@@ -51,6 +52,10 @@ interface ModalProps {
  * existing modal is markup-only: pass `title`/`onClose`, move the old body into
  * `children` and the old footer buttons into `footer`, and append any bespoke
  * class (`scheduler-modal`, …) via `className`.
+ *
+ * Portaled to `document.body` so panel stacking contexts (sidebar `z-index`,
+ * aurora `isolation`) cannot paint over the dialog. Server/static markup
+ * still returns the node in-place because `document` is absent.
  */
 export function Modal({
   title,
@@ -67,7 +72,7 @@ export function Modal({
   const dialogRef = useRef<HTMLDivElement>(null);
   useDialogFocusTrap(dialogRef, onClose);
 
-  return (
+  const node = (
     <div
       className="modal-backdrop"
       onMouseDown={(e) => {
@@ -99,4 +104,7 @@ export function Modal({
       </div>
     </div>
   );
+
+  if (typeof document === 'undefined') return node;
+  return createPortal(node, document.body);
 }

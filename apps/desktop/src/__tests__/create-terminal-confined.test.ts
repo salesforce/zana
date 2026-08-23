@@ -148,28 +148,29 @@ describe('sanitizeRendererTerminalRequest', () => {
 });
 
 describe('resolveWorktreeForRequest', () => {
-  it('strips leftover Electron worktree mint intent', async () => {
+  it('fails closed for an explicit unusable name', async () => {
     const result = await resolveWorktreeForRequest({
-      projectId: 'p1', profile: 'claude', cols: 80, rows: 24, worktree: { branch: 'task' }
+      projectId: 'p1', profile: 'claude', cols: 80, rows: 24, worktree: { branch: '///' }
     });
-    expect(result).toEqual({
-      ok: true,
-      value: { projectId: 'p1', profile: 'claude', cols: 80, rows: 24 }
-    });
+    expect(result).toEqual({ ok: false, code: 'INVALID', message: 'Worktree name required.' });
   });
 
-  it('strips boolean worktree intent and any smuggled worktreeInfo', async () => {
+  it('keeps legacy boolean intent compatible when project is not a git repo', async () => {
+    const request = {
+      projectId: 'p1', profile: 'claude' as const, cols: 80, rows: 24, worktree: true
+    };
+    expect(await resolveWorktreeForRequest(request)).toEqual({ ok: true, value: request });
+  });
+
+  it('fails visibly for named intent when project is not a git repo', async () => {
     const result = await resolveWorktreeForRequest({
-      projectId: 'p1',
-      profile: 'claude',
-      cols: 80,
-      rows: 24,
-      worktree: true,
-      worktreeInfo: { path: '/tmp/zcc-worktrees/task', branch: 'zcc/task' }
+      projectId: 'p1', profile: 'claude', cols: 80, rows: 24,
+      worktree: { branch: 'task' }
     });
     expect(result).toEqual({
-      ok: true,
-      value: { projectId: 'p1', profile: 'claude', cols: 80, rows: 24 }
+      ok: false,
+      code: 'WORKTREE_UNAVAILABLE',
+      message: 'Worktree isolation requires a Git repository.'
     });
   });
 });

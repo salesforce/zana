@@ -12,7 +12,8 @@ describe('AgentsBoard', () => {
     expect(workspace).toContain('<AgentsBoard scope={{ kind: \'project\', project }} />');
     expect(board).not.toContain('<AgentLauncher');
     expect(board).toContain('setLauncherOpen(true)');
-    expect(app).toContain('onLaunched={stayOnAgentsBoard}');
+    expect(board).toContain('aria-label="Legacy PTY agent"');
+    expect(board).not.toContain('aria-label="New agent"');
     expect(app).toContain('{launcherOpen && (nav !== \'projects\' || !focusedProjectId) && (');
     expect(app).not.toContain("nav !== 'home'");
   });
@@ -24,10 +25,10 @@ describe('AgentsBoard', () => {
     expect(filterStart).toBeGreaterThan(emptyStart);
     const emptyBranch = board.slice(emptyStart, filterStart);
     expect(emptyBranch).toContain('<AuroraGrid />');
-    expect(emptyBranch).toContain('<HomeAgentComposer project={scopedProject} />');
+    expect(emptyBranch).not.toContain('<HomeAgentComposer');
     expect(emptyBranch).toContain('No agents running');
     expect(emptyBranch).toContain('No agents yet');
-    expect(emptyBranch).not.toContain('New agent');
+    expect(board).toContain('<HomeAgentComposer project={scopedProject} />');
 
     const filterBranch = board.slice(filterStart, board.indexOf('<AgentBoardLanes', filterStart));
     expect(filterBranch).not.toContain('<AuroraGrid');
@@ -42,7 +43,7 @@ describe('AgentsBoard compact chrome contract', () => {
     expect(board).toContain('className="agents-board-header-actions"');
     expect(board).toContain('className="agents-board-btn-label"');
     expect(board).toContain('className="agents-board-count-extra"');
-    expect(board).toContain('aria-label="New agent"');
+    expect(board).toContain('aria-label="Legacy PTY agent"');
     expect(board).toContain('Close ${reclaimableAgents.length} idle agents');
   });
 

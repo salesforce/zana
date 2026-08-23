@@ -75,6 +75,43 @@ const MIGRATE_V2 = [
      WHERE path IS NOT NULL`
 ];
 
+const MIGRATE_V3 = [
+  `ALTER TABLE threads RENAME TO legacy_agent_sessions`,
+  `ALTER TABLE thread_events RENAME TO legacy_agent_session_events`
+];
+
+const MIGRATE_V4 = [
+  `CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        host_id TEXT NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+        environment_id TEXT REFERENCES environments(id) ON DELETE SET NULL,
+        provider_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('idle', 'starting', 'active', 'stopping', 'error')),
+        origin_kind TEXT CHECK (origin_kind IS NULL OR origin_kind IN ('fork')),
+        visibility TEXT NOT NULL DEFAULT 'visible' CHECK (visibility IN ('visible', 'hidden')),
+        title TEXT,
+        provider_thread_id TEXT,
+        parent_thread_id TEXT REFERENCES threads(id) ON DELETE SET NULL,
+        archived_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`,
+  `CREATE INDEX conversation_threads_project_idx ON threads(project_id, updated_at)`,
+  `CREATE INDEX conversation_threads_host_idx ON threads(host_id)`,
+  `CREATE INDEX conversation_threads_environment_idx ON threads(environment_id)`,
+  `CREATE TABLE thread_events (
+        id TEXT PRIMARY KEY,
+        thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+        sequence INTEGER NOT NULL,
+        type TEXT NOT NULL,
+        payload TEXT NOT NULL DEFAULT '{}',
+        created_at INTEGER NOT NULL,
+        UNIQUE (thread_id, sequence)
+      )`,
+  `CREATE INDEX conversation_thread_events_thread_seq_idx ON thread_events(thread_id, sequence)`
+];
+
 function applyVersion(database: SqliteDatabase, version: number, statements: readonly string[]): void {
   database.transaction(() => {
     for (const statement of statements) {
@@ -87,6 +124,37 @@ function applyVersion(database: SqliteDatabase, version: number, statements: rea
   })();
 }
 
+/** Keep one environments row per (project, host, path) so v2's unique index can apply. */
+export function collapseDuplicateEnvironmentPaths(database: SqliteDatabase): void {
+  const duplicates = database
+    .prepare(
+      `SELECT project_id AS projectId, host_id AS hostId, path
+         FROM environments
+        WHERE path IS NOT NULL
+        GROUP BY project_id, host_id, path
+       HAVING COUNT(*) > 1`
+    )
+    .all() as Array<{ projectId: string; hostId: string; path: string }>;
+  const listIds = database.prepare(
+    `SELECT id FROM environments
+      WHERE project_id = ? AND host_id = ? AND path = ?
+      ORDER BY updated_at DESC, id DESC`
+  );
+  const retargetThreads = database.prepare(
+    'UPDATE threads SET environment_id = ? WHERE environment_id = ?'
+  );
+  const deleteEnvironment = database.prepare('DELETE FROM environments WHERE id = ?');
+  for (const group of duplicates) {
+    const ids = listIds.all(group.projectId, group.hostId, group.path) as Array<{ id: string }>;
+    const keepId = ids[0]?.id;
+    if (!keepId) continue;
+    for (const extra of ids.slice(1)) {
+      retargetThreads.run(keepId, extra.id);
+      deleteEnvironment.run(extra.id);
+    }
+  }
+}
+
 export function migrate(database: SqliteDatabase): void {
   const bootstrap = 'CREATE TABLE IF NOT EXISTS runtime_schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)';
   database.exec(bootstrap);
@@ -95,5 +163,18 @@ export function migrate(database: SqliteDatabase): void {
       .map((row) => row.version)
   );
   if (!applied.has(1)) applyVersion(database, 1, CREATE_TABLES_V1);
-  if (!applied.has(2)) applyVersion(database, 2, MIGRATE_V2);
+  if (!applied.has(2)) {
+    database.transaction(() => {
+      collapseDuplicateEnvironmentPaths(database);
+      for (const statement of MIGRATE_V2) database.exec(statement);
+      database.prepare('INSERT INTO runtime_schema_migrations (version, applied_at) VALUES (?, ?)').run(
+        2,
+        Date.now()
+      );
+    })();
+  }
+  if (!applied.has(3)) applyVersion(database, 3, MIGRATE_V3);
+  if (!applied.has(4)) applyVersion(database, 4, MIGRATE_V4);
 }
+
+export { CREATE_TABLES_V1 as SCHEMA_STATEMENTS_V1 };

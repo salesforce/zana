@@ -9,6 +9,7 @@ import { ExtensionsPane } from './components/listpane/ExtensionsPane.js';
 import { WorkspaceView } from '@/views/project/WorkspaceView';
 import { TerminalSurface } from './components/TerminalSurface.js';
 import { AgentsView } from '@/views/agents/AgentsView';
+import { ThreadDetailView } from '@/views/threads/ThreadDetailView';
 import { ProjectScopedNav } from './components/ProjectScopedNav.js';
 import { SettingsView } from '@/views/settings/SettingsView';
 import { SchedulerView } from '@/views/scheduler/SchedulerView';
@@ -86,6 +87,7 @@ import {
   SETTINGS_ROUTE_PATH,
   SETTINGS_SECTION_ROUTE_PATH,
   SUGGESTIONS_ROUTE_PATH,
+  THREAD_ROUTE_PATH,
   TOOLS_MCP_ROUTE_PATH,
   TOOLS_PLUGIN_BROWSE_ROUTE_PATH,
   TOOLS_PLUGIN_DETAIL_ROUTE_PATH,
@@ -117,6 +119,7 @@ function AppRoutes({ suggestionsEnabled }: { suggestionsEnabled: boolean }) {
         <Route path={APP_ROOT_ROUTE_PATH} element={<HomeView />} />
         <Route path={INBOX_ROUTE_PATH} element={<InboxView />} />
         <Route path={AGENTS_ROUTE_PATH} element={<AgentsView />} />
+        <Route path={THREAD_ROUTE_PATH} element={<ThreadDetailView />} />
         <Route path={FOLLOWUPS_ROUTE_PATH} element={<FollowUpsView />} />
         <Route
           path={SUGGESTIONS_ROUTE_PATH}

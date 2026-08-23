@@ -32,7 +32,7 @@ function toEvent(row: ThreadEventSqlRow): ThreadEventRow {
 
 export function nextEventSequence(db: ZccDatabase, threadId: string): number {
   const row = db.sqlite.prepare(
-    'SELECT COALESCE(MAX(sequence), 0) AS max_sequence FROM thread_events WHERE thread_id = ?'
+    'SELECT COALESCE(MAX(sequence), 0) AS max_sequence FROM legacy_agent_session_events WHERE thread_id = ?'
   ).get(threadId) as { max_sequence: number };
   return row.max_sequence + 1;
 }
@@ -46,16 +46,16 @@ export function appendThreadEvent(
   const id = createEventId();
   const sequence = nextEventSequence(db, input.threadId);
   db.sqlite.prepare(
-    `INSERT INTO thread_events (id, thread_id, sequence, kind, payload, created_at)
+    `INSERT INTO legacy_agent_session_events (id, thread_id, sequence, kind, payload, created_at)
      VALUES (?, ?, ?, ?, ?, ?)`
   ).run(id, input.threadId, sequence, input.kind, JSON.stringify(input.payload ?? {}), now);
-  const row = db.sqlite.prepare('SELECT * FROM thread_events WHERE id = ?').get(id) as ThreadEventSqlRow;
+  const row = db.sqlite.prepare('SELECT * FROM legacy_agent_session_events WHERE id = ?').get(id) as ThreadEventSqlRow;
   return toEvent(row);
 }
 
 export function listThreadEvents(db: ZccDatabase, threadId: string): ThreadEventRow[] {
   return (db.sqlite.prepare(
-    'SELECT * FROM thread_events WHERE thread_id = ? ORDER BY sequence'
+    'SELECT * FROM legacy_agent_session_events WHERE thread_id = ? ORDER BY sequence'
   ).all(threadId) as ThreadEventSqlRow[]).map(toEvent);
 }
 
@@ -65,7 +65,7 @@ const THREAD_OUTPUT_EVENT_CAP = 2000;
 /** Bounded PTY replay tail, newest events first, trimmed to 256 KiB. */
 export function threadOutputTail(db: ZccDatabase, threadId: string): string {
   const rows = db.sqlite.prepare(
-    `SELECT payload FROM thread_events
+    `SELECT payload FROM legacy_agent_session_events
      WHERE thread_id = ? AND kind = 'terminal.output'
      ORDER BY sequence DESC
      LIMIT ?`

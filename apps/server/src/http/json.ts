@@ -1,16 +1,42 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
+const CORS_HEADER_NAMES = [
+  'Access-Control-Allow-Origin',
+  'Access-Control-Allow-Headers',
+  'Access-Control-Allow-Methods',
+  'Vary'
+] as const;
+
+export function applyTrustedOriginCors(response: ServerResponse, origin: string): void {
+  response.setHeader('Access-Control-Allow-Origin', origin);
+  response.setHeader('Access-Control-Allow-Headers', 'content-type, x-zcc-app-surface');
+  response.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, PATCH, DELETE, OPTIONS');
+  response.setHeader('Vary', 'Origin');
+}
+
+function headersWithCors(response: ServerResponse, base: Record<string, string>): Record<string, string> {
+  const headers = { ...base };
+  for (const name of CORS_HEADER_NAMES) {
+    const value = response.getHeader(name);
+    if (typeof value === 'string') headers[name] = value;
+  }
+  return headers;
+}
+
 export function sendJson(response: ServerResponse, status: number, body: unknown): void {
-  response.writeHead(status, {
-    'Cache-Control': 'no-store',
-    'Content-Type': 'application/json; charset=utf-8',
-    'X-Content-Type-Options': 'nosniff'
-  });
+  response.writeHead(
+    status,
+    headersWithCors(response, {
+      'Cache-Control': 'no-store',
+      'Content-Type': 'application/json; charset=utf-8',
+      'X-Content-Type-Options': 'nosniff'
+    })
+  );
   response.end(JSON.stringify(body));
 }
 
 export function sendNoContent(response: ServerResponse): void {
-  response.writeHead(204, { 'Cache-Control': 'no-store' }).end();
+  response.writeHead(204, headersWithCors(response, { 'Cache-Control': 'no-store' })).end();
 }
 
 export async function readJsonBody(request: IncomingMessage, limit = 1_000_000): Promise<unknown> {

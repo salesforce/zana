@@ -3,6 +3,7 @@ import { matchPath } from 'react-router-dom';
 export const APP_ROOT_ROUTE_PATH = '/';
 export const INBOX_ROUTE_PATH = '/inbox';
 export const AGENTS_ROUTE_PATH = '/agents';
+export const THREAD_ROUTE_PATH = '/threads/:threadId';
 export const FOLLOWUPS_ROUTE_PATH = '/followups';
 export const SUGGESTIONS_ROUTE_PATH = '/suggestions';
 export const SCHEDULER_ROUTE_PATH = '/scheduler';
@@ -74,6 +75,10 @@ export function getInboxRoutePath(): string {
 
 export function getAgentsRoutePath(): string {
   return AGENTS_ROUTE_PATH;
+}
+
+export function getThreadRoutePath(threadId: string): string {
+  return `/threads/${encodeURIComponent(threadId)}`;
 }
 
 export function getFollowUpsRoutePath(): string {

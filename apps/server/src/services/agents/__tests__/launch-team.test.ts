@@ -182,15 +182,19 @@ vi.mock('@zana-ai/zcc-host-daemon/mcp-config', () => ({
 // evidence-registry's approved versions so structured-routing assertions are
 // deterministic regardless of what's actually installed on the machine
 // running the suite (see evidence-registry.ts's per-family cliVersion pins).
-vi.mock('@zana-ai/zcc-host-daemon/harness/harness-verify', () => ({
-  verifyHarnesses: async () => ([
-    { family: 'claude', label: 'Claude Code', binary: 'claude', enabled: true, alwaysEnabled: true, installed: true, normalizedVersion: '2.1.220' },
-    { family: 'cursor', label: 'Cursor', binary: 'cursor', enabled: true, alwaysEnabled: false, installed: true, normalizedVersion: '2026.01.23' },
-    { family: 'codex', label: 'Codex', binary: 'codex', enabled: true, alwaysEnabled: false, installed: true, normalizedVersion: '0.140.0' },
-    { family: 'pi', label: 'PI', binary: 'pi', enabled: true, alwaysEnabled: false, installed: true, normalizedVersion: '0.52.12' },
-    { family: 'opencode', label: 'OpenCode', binary: 'opencode', enabled: true, alwaysEnabled: false, installed: true, normalizedVersion: '1.18.10' }
-  ])
-}));
+vi.mock('@zana-ai/zcc-host-daemon/harness/harness-verify', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@zana-ai/zcc-host-daemon/harness/harness-verify')>();
+  return {
+    ...actual,
+    verifyHarnesses: async () => ([
+      { family: 'claude', label: 'Claude Code', binary: 'claude', enabled: true, alwaysEnabled: true, installed: true, normalizedVersion: '2.1.220' },
+      { family: 'cursor', label: 'Cursor', binary: 'cursor', enabled: true, alwaysEnabled: false, installed: true, normalizedVersion: '2026.01.23' },
+      { family: 'codex', label: 'Codex', binary: 'codex', enabled: true, alwaysEnabled: false, installed: true, normalizedVersion: '0.140.0' },
+      { family: 'pi', label: 'PI', binary: 'pi', enabled: true, alwaysEnabled: false, installed: true, normalizedVersion: '0.52.12' },
+      { family: 'opencode', label: 'OpenCode', binary: 'opencode', enabled: true, alwaysEnabled: false, installed: true, normalizedVersion: '1.18.10' }
+    ])
+  };
+});
 
 // launchTeam routes through the real, module-internal createTerminalConfined →
 // ptys.create (mocked above). We assert on the Result's `launched` count.

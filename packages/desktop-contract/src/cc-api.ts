@@ -252,6 +252,28 @@ export interface CcApi {
      * `register_project` MCP tool — so the sidebar stays live without polling.
      */
     onChanged(cb: (projects: Project[]) => void): () => void;
+    /**
+     * Confined workspace path search for composer `@` mentions. Authorizes
+     * `projectId` on the product server and walks the project root on the host.
+     */
+    paths(
+      projectId: string,
+      opts?: {
+        query?: string;
+        limit?: number;
+        includeFiles?: boolean;
+        includeDirectories?: boolean;
+      }
+    ): Promise<{
+      paths: Array<{
+        kind: 'file' | 'directory';
+        path: string;
+        name: string;
+        score: number;
+        positions: number[];
+      }>;
+      truncated: boolean;
+    }>;
   };
   ssh: {
     listHosts(): Promise<SshHostEntry[]>;
@@ -259,10 +281,34 @@ export interface CcApi {
     syncHosts(): Promise<SshSyncResult>;
   };
   /**
-   * Browser local-dev spawn path. The product server inserts a durable thread,
-   * then RPCs the enrolled host. Desktop keeps `terminals.create`.
+   * Thread control plane is HTTP to the product server (create/send/events).
+   * Not a PTY spawn path. Desktop `terminals.create` remains legacyAgentSession.
    */
   threads: {
+    create(input: {
+      projectId: string;
+      providerId: string;
+      input?: string | string[] | Array<{ type: string; text?: string; mentions?: unknown[] }>;
+      hostId?: string;
+      environment?: SpawnEnvironmentChoice;
+      cwd?: string;
+      title?: string;
+      permissionMode?: 'accept-edits' | 'auto' | 'full';
+      model?: string;
+    }): Promise<Result<{
+      id: string;
+      projectId: string;
+      hostId: string;
+      environmentId: string | null;
+      providerId: string;
+      status: string;
+      title: string | null;
+      createdAt: number;
+      cwd: string | null;
+      branchName: string | null;
+      isWorktree: boolean;
+    }>>;
+    /** @deprecated Use create(). */
     spawn(input: {
       projectId: string;
       providerId: string;
@@ -271,23 +317,6 @@ export interface CcApi {
       environment?: SpawnEnvironmentChoice;
       cwd?: string;
       title?: string;
-      extraArgs?: string[];
-      harnessRouting?: import('@zana-ai/zcc-domain/product').HarnessModelRoutingV1;
-      personaId?: string;
-      headless?: boolean;
-      scheduled?: boolean;
-      autoCloseOnFinish?: boolean;
-      inboxLevel?: 'silent' | 'quiet' | 'loud';
-      autonomous?: boolean;
-      resumeSessionId?: string;
-      executionEnvironment?: 'local' | 'sandbox' | 'microvm';
-      sandboxDenyNetwork?: boolean;
-      microVmImage?: string;
-      microVmCpus?: number;
-      microVmMemoryMib?: number;
-      reconnectTmuxId?: string;
-      resume?: boolean;
-      cohort?: import('@zana-ai/zcc-domain/product').SessionCohort;
     }): Promise<Result<{
       id: string;
       projectId: string;
@@ -313,9 +342,39 @@ export interface CcApi {
       cwd: string | null;
       branchName: string | null;
       isWorktree: boolean;
+      archivedAt?: number | null;
     }>>;
+    get(threadId: string): Promise<{ thread: Record<string, unknown> }>;
+    send(threadId: string, input: string | unknown[], mode?: string): Promise<{ ok: boolean }>;
+    stop(threadId: string): Promise<{ ok: boolean }>;
+    resume(threadId: string): Promise<{ ok: boolean }>;
+    timeline(threadId: string): Promise<{ rows: unknown[]; events: unknown[]; status: string }>;
+    events(threadId: string): Promise<{ events: unknown[] }>;
+    providers(): Promise<{ providers: Array<{
+      id: string;
+      displayName: string;
+      pluginId: string;
+      permissionModes: string[];
+      reasoningLevels: string[];
+      composerActions: string[];
+    }> }>;
+    commands(projectId: string): Promise<{ commands: Array<{ id: string; name: string; providerId: string; description: string }> }>;
     onUpdated(cb: (payload: unknown) => void): () => void;
+    onEvent(cb: (payload: unknown) => void): () => void;
     archive(threadId: string): Promise<{ ok: boolean }>;
+    fork(threadId: string): Promise<Result<{
+      id: string;
+      projectId: string;
+      hostId: string;
+      environmentId: string | null;
+      providerId: string;
+      status: string;
+      title: string | null;
+      createdAt: number;
+      cwd: string | null;
+      branchName: string | null;
+      isWorktree: boolean;
+    }>>;
   };
   environments: {
     list(projectId: string, hostId?: string): Promise<Environment[]>;

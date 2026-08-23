@@ -27,6 +27,10 @@
     "./server": {
       "types": "./src/server.ts",
       "default": "./src/server.ts"
+    },
+    "./provider-bridge": {
+      "types": "./src/provider-bridge.ts",
+      "default": "./src/provider-bridge.ts"
     }
   },
   "scripts": {
@@ -40,7 +44,10 @@
     "react": { "optional": true }
   },
   "dependencies": {
-    "@zana-ai/zcc-domain": "workspace:*"
+    "@zana-ai/zcc-agent-process-utils": "workspace:*",
+    "@zana-ai/zcc-domain": "workspace:*",
+    "@zana-ai/zcc-host-daemon-contract": "workspace:*",
+    "@zana-ai/zcc-provider-bridge-protocol": "workspace:*"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",

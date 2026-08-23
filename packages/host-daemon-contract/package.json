@@ -1,0 +1,45 @@
+{
+  "name": "@zana-ai/zcc-host-daemon-contract",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./local": {
+      "source": "./src/local.ts",
+      "types": "./src/local.ts",
+      "default": "./src/local.ts"
+    },
+    "./protocol": {
+      "source": "./src/protocol.ts",
+      "types": "./src/protocol.ts",
+      "default": "./src/protocol.ts"
+    },
+    "./workspace": {
+      "source": "./src/workspace.ts",
+      "types": "./src/workspace.ts",
+      "default": "./src/workspace.ts"
+    }
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "clean": "rimraf dist tsconfig.tsbuildinfo",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@zana-ai/zcc-domain": "workspace:*",
+    "@zana-ai/zcc-hono-typed-routes": "workspace:*",
+    "hono": "^4.7.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@zana-ai/zcc-tsconfig": "workspace:*",
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2"
+  },
+  "private": true
+}

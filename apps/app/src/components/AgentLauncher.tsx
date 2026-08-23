@@ -218,6 +218,15 @@ export function selectedAvailableFamily<T extends { id: LauncherFamily }>(
   return families.find((family) => family.id === requestedId);
 }
 
+/** Installed CLIs appear automatically; an explicit Settings hide still wins. */
+export function optionalHarnessOffered(
+  status: { enabled: boolean; installed: boolean } | undefined,
+  configEnabled: boolean
+): boolean {
+  if (status) return status.enabled && status.installed;
+  return configEnabled;
+}
+
 export function launchStatusAccessibility(hasStatus: boolean) {
   return {
     status: {
@@ -713,24 +722,27 @@ function QuickPromptEditor({
   const harnessCodexEnabled = useData((s) => s.harnessCodexEnabled);
   const harnessPiEnabled = useData((s) => s.harnessPiEnabled);
   const harnessOpenCodeEnabled = useData((s) => s.harnessOpenCodeEnabled);
+  const harnessStatus = useData((s) => s.harnessStatus);
 
   // Every launch profile is a valid quick-prompt target (the prompt rides argv,
   // which all profiles accept), so the picker offers the whole set from the
   // shared source of truth instead of a hand-kept claude/shell subset — cursor/
-  // codex/pi/opencode gated on their harness flags, matching the main launcher. A
-  // resume variant isn't a "start a new prompt" identity, so drop those two.
+  // codex/pi/opencode follow the same installed-auto-on rule as the main
+  // launcher. A resume variant isn't a "start a new prompt" identity, so drop
+  // those two.
   const promptProfiles = useMemo(() => {
+    const statusFor = (family: HarnessFamily) => harnessStatus.find((row) => row.family === family);
     const list = VALID_PROFILES.filter((p) => !p.endsWith('-resume')).filter((p) => {
-      if (isCursorProfile(p)) return harnessCursorEnabled;
-      if (isCodexProfile(p)) return harnessCodexEnabled;
-      if (isPiProfile(p)) return harnessPiEnabled;
-      if (isOpenCodeProfile(p)) return harnessOpenCodeEnabled;
+      if (isCursorProfile(p)) return optionalHarnessOffered(statusFor('cursor'), harnessCursorEnabled);
+      if (isCodexProfile(p)) return optionalHarnessOffered(statusFor('codex'), harnessCodexEnabled);
+      if (isPiProfile(p)) return optionalHarnessOffered(statusFor('pi'), harnessPiEnabled);
+      if (isOpenCodeProfile(p)) return optionalHarnessOffered(statusFor('opencode'), harnessOpenCodeEnabled);
       return true;
     });
     // Keep an already-saved profile selectable even if it's now filtered out (a
     // disabled harness, or a legacy `-resume` prompt) — else the select blanks.
     return list.includes(profile) ? list : [profile, ...list];
-  }, [harnessCursorEnabled, harnessCodexEnabled, harnessPiEnabled, harnessOpenCodeEnabled, profile]);
+  }, [harnessCursorEnabled, harnessCodexEnabled, harnessPiEnabled, harnessOpenCodeEnabled, harnessStatus, profile]);
 
   // Slots the template actually references — the source of truth for the args
   // section. Recomputed as the body is edited.
@@ -1179,21 +1191,22 @@ export const AgentLauncher = memo(function AgentLauncher({
   }, [harnessStatus]);
   const familyInstalled = (fam: LauncherFamily): boolean =>
     installedFamilies.get(fam) !== false;
-  // The families offered in the picker: enabled (user intent — Claude is always
-  // on) AND installed (machine reality — a harness whose CLI isn't found is
-  // hidden, not greyed-out). Yolo is a SEPARATE axis, so a family appears once
-  // regardless of permission posture.
+  // Families offered in the picker: installed CLIs activate automatically
+  // (BB-style). An explicit Settings hide still drops them. Claude is always
+  // on. Yolo is a SEPARATE axis, so a family appears once regardless of
+  // permission posture.
   const availableFamilies = useMemo(
     () =>
       FAMILIES.filter((f) => {
-        if (f.id === 'cursor' && !harnessCursorEnabled) return false;
-        if (f.id === 'codex' && !harnessCodexEnabled) return false;
-        if (f.id === 'pi' && !harnessPiEnabled) return false;
-        if (f.id === 'opencode' && !harnessOpenCodeEnabled) return false;
+        const status = harnessStatus.find((row) => row.family === f.id);
+        if (f.id === 'cursor') return optionalHarnessOffered(status, harnessCursorEnabled);
+        if (f.id === 'codex') return optionalHarnessOffered(status, harnessCodexEnabled);
+        if (f.id === 'pi') return optionalHarnessOffered(status, harnessPiEnabled);
+        if (f.id === 'opencode') return optionalHarnessOffered(status, harnessOpenCodeEnabled);
         return familyInstalled(f.id);
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [harnessCursorEnabled, harnessCodexEnabled, harnessPiEnabled, harnessOpenCodeEnabled, installedFamilies]
+    [harnessCursorEnabled, harnessCodexEnabled, harnessPiEnabled, harnessOpenCodeEnabled, harnessStatus, installedFamilies]
   );
   const selectedPersona = personaId ? allPersonas.find((p) => p.id === personaId) : undefined;
   const unavailableHistoryProviders = [

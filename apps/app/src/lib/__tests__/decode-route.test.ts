@@ -6,6 +6,7 @@ describe('decodeRoutePath', () => {
     ['/', { nav: 'home', focusedProjectId: null }],
     ['/inbox', { nav: 'inbox' }],
     ['/agents', { nav: 'agents' }],
+    ['/threads/abc', { nav: 'agents' }],
     ['/followups', { nav: 'followups' }],
     ['/suggestions', { nav: 'suggestions' }],
     ['/scheduler', { nav: 'scheduler' }],

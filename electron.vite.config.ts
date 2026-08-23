@@ -168,6 +168,8 @@ export default defineConfig({
       __ZCC_DEV_WS_PORT__: JSON.stringify(serverPortFromEnv())
     },
     server: {
+      host: '127.0.0.1',
+      strictPort: true,
       // Vite root is apps/app; the slack built-in and other plugins live at
       // repo-root `plugins/`. Allow the workspace so those imports are served.
       fs: { allow: [resolve(__dirname)] },

@@ -135,15 +135,6 @@ export function HomeView() {
     <div className="settings-panel home-panel aurora-host">
       <AuroraGrid />
       <div className="settings-inner">
-        <div className="scheduler-header">
-          <div className="scheduler-header-text">
-            <p className="settings-help scheduler-subtitle">
-              Your open follow-ups, the latest inbox activity, and everything currently
-              running — one glance across every project.
-            </p>
-          </div>
-        </div>
-
         <HomeAgentComposer />
 
         <div className="home-grid">

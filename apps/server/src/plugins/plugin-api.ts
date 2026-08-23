@@ -2,6 +2,7 @@ import { pathToFileURL } from 'node:url';
 import { existsSync, realpathSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 import type { ZccPluginApi, ZccPluginFactory } from '@zana-ai/zcc-plugin-sdk/server';
+import { registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
 
 export const HOST_ZCC_VERSION = '1.0.10';
 export const HOST_PLUGIN_SDK_VERSION = '0.1.0';
@@ -75,7 +76,11 @@ export function createPluginApi(pluginId: string, kvDir: string): PluginHandle {
     },
     agents: {
       contributeInstructions: () => undefined,
-      contributeSkills: () => undefined
+      contributeSkills: () => undefined,
+      experimental_registerProvider: (declaration) => {
+        assertLive();
+        return registerThreadProvider(pluginId, declaration);
+      }
     },
     ui: {
       requestInput: async () => {

@@ -37,6 +37,7 @@
     "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
+    "@zana-ai/zcc-agent-runtime": "workspace:*",
     "@zana-ai/zcc-contracts": "workspace:*",
     "@zana-ai/zcc-domain": "workspace:*",
     "@zana-ai/zcc-host-workspace": "workspace:*",

@@ -1,5 +1,3 @@
-import { getAppSurface } from './app-surface.js';
-
 export interface ProductWsEvent {
   type: string;
   payload: unknown;
@@ -16,7 +14,7 @@ function wsUrl(): string {
     typeof __ZCC_DEV_WS_PORT__ === 'number' && Number.isFinite(__ZCC_DEV_WS_PORT__)
       ? __ZCC_DEV_WS_PORT__
       : undefined;
-  if (devPort && getAppSurface() === 'web') {
+  if (import.meta.env.DEV && devPort) {
     return `ws://127.0.0.1:${devPort}/ws`;
   }
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';

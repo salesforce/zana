@@ -5,6 +5,54 @@ import { useExclusivePopover } from './use-exclusive-popover.js';
 
 const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
+const VIEWPORT_PAD = 8;
+const MENU_GAP = 4;
+const FLIP_BELOW_PX = 160;
+
+export interface PopoverMenuPlacement {
+  left: number;
+  width: number;
+  maxHeight: number;
+  top?: number;
+  bottom?: number;
+}
+
+/** Keep a fixed menu attached to its trigger and fully inside the viewport. */
+export function placePopoverMenu(
+  trigger: Pick<DOMRect, 'left' | 'right' | 'top' | 'bottom' | 'width'>,
+  viewport: { width: number; height: number },
+  minWidth: number
+): PopoverMenuPlacement {
+  const width = Math.max(trigger.width, minWidth);
+  let left = trigger.left;
+  if (left + width > viewport.width - VIEWPORT_PAD) {
+    left = trigger.right - width;
+  }
+  if (left < VIEWPORT_PAD) left = VIEWPORT_PAD;
+  if (left + width > viewport.width - VIEWPORT_PAD) {
+    left = Math.max(VIEWPORT_PAD, viewport.width - width - VIEWPORT_PAD);
+  }
+
+  const spaceBelow = viewport.height - trigger.bottom - VIEWPORT_PAD;
+  const spaceAbove = trigger.top - VIEWPORT_PAD;
+  const openAbove = spaceBelow < FLIP_BELOW_PX && spaceAbove > spaceBelow;
+  const maxHeight = Math.max(120, openAbove ? spaceAbove : spaceBelow);
+  if (openAbove) {
+    return {
+      left,
+      width,
+      maxHeight,
+      bottom: viewport.height - trigger.top + MENU_GAP
+    };
+  }
+  return {
+    left,
+    width,
+    maxHeight,
+    top: trigger.bottom + MENU_GAP
+  };
+}
+
 export interface PopoverPicklistOption<T extends string> {
   value: T;
   /** Plain text used for the trigger, search matching, and the default option row. */
@@ -70,7 +118,7 @@ export function PopoverPicklist<T extends string>({
 }: PopoverPicklistProps<T>) {
   const [open, setOpen] = useExclusivePopover();
   const [query, setQuery] = useState('');
-  const [position, setPosition] = useState<{ left: number; top: number; width: number; maxHeight?: number } | null>(null);
+  const [position, setPosition] = useState<PopoverMenuPlacement | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -132,15 +180,11 @@ export function PopoverPicklist<T extends string>({
     const rect = anchorToParent
       ? triggerRef.current.parentElement?.getBoundingClientRect() ?? triggerRef.current.getBoundingClientRect()
       : triggerRef.current.getBoundingClientRect();
-    const spaceBelow = window.innerHeight - rect.bottom - 8;
-    const spaceAbove = rect.top - 8;
-    const openAbove = spaceBelow < 160 && spaceAbove > spaceBelow;
-    setPosition({
-      left: rect.left,
-      top: openAbove ? 8 : rect.bottom + 4,
-      width: Math.max(rect.width, minWidth),
-      maxHeight: Math.max(120, openAbove ? spaceAbove : spaceBelow)
-    });
+    setPosition(placePopoverMenu(
+      rect,
+      { width: window.innerWidth, height: window.innerHeight },
+      minWidth
+    ));
   }, [open, anchorToParent, minWidth]);
 
   useEffect(() => {
@@ -219,7 +263,14 @@ export function PopoverPicklist<T extends string>({
           aria-label={ariaLabel}
           aria-activedescendant={activeOption ? optionId(activeOption) : undefined}
           onKeyDown={handleMenuKeyDown}
-          style={position ? { left: position.left, top: position.top, width: position.width, maxHeight: position.maxHeight } : { visibility: 'hidden' }}
+          style={position ? {
+            left: position.left,
+            width: position.width,
+            maxHeight: position.maxHeight,
+            ...(position.bottom != null
+              ? { bottom: position.bottom, top: 'auto' }
+              : { top: position.top })
+          } : { visibility: 'hidden' }}
         >
           {searchable && (
             <div className="launch-model-picker-search">

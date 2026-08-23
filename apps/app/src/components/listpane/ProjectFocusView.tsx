@@ -1,8 +1,8 @@
 import { product } from '../../lib/product-client.js';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { Plus, X, ArrowLeft, AppWindow } from 'lucide-react';
-import { useData, useUi, useAgentStatus, usePersonas } from '../../store.js';
-import type { Project, LaunchProfileId, Persona } from '@zana-ai/zcc-domain/product';
+import { useData, useUi, useAgentStatus, useIdleTriage, usePersonas } from '../../store.js';
+import type { Project, LaunchProfileId, Persona, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { profileLabel } from '@zana-ai/zcc-domain/launch-provider';
 import { profileIcon, personaIcon } from '../../lib/profileIcon.js';
 import { bucketSessions } from '../../lib/sessionBuckets.js';
@@ -10,9 +10,11 @@ import { getScopedProjectId } from '../../lib/windowScope.js';
 import { ListPaneResizer } from '../ListPaneResizer.js';
 import { SectionHeader } from './SectionHeader.js';
 import { AgentStatusDot } from './AgentStatusDot.js';
-import { AgentRowDetail } from './AgentRowDetail.js';
 import { ProjectRollupDot } from './ProjectRollupDot.js';
 import { AppPageHeader } from '../AppPageHeader.js';
+import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from '../agentCardActions.js';
+import { PromptModal } from '../PromptModal.js';
+import type { AgentCard } from '../AgentBoard.js';
 
 /** Quick-launch profiles offered by the focus-view "+" dropdown, in order. */
 const FOCUS_NEW_PROFILES: { profile: LaunchProfileId; label: string }[] = [
@@ -39,6 +41,39 @@ export function ProjectFocusView({ project }: { project: Project }) {
   const closeTerminal = useData((s) => s.closeTerminal);
   const restoreTerminal = useData((s) => s.restoreTerminal);
   const renameTerminal = useData((s) => s.renameTerminal);
+  const {
+    menu: agentMenu,
+    setMenu: setAgentMenu,
+    actions: agentActions,
+    rename: agentRename,
+    closeRename: closeAgentRename,
+    submitRename: submitAgentRename
+  } = useAgentCardActions();
+
+  const sessionToCard = (session: TerminalSession): AgentCard => ({
+    session,
+    state: useAgentStatus.getState().byId[session.id] ?? 'unknown',
+    projectId: project.id,
+    projectName: project.name,
+    projectColor: project.color,
+    triage: useIdleTriage.getState().byId[session.id]
+  });
+
+  const openAgentCardMenu = (e: MouseEvent, session: TerminalSession) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setAgentMenu({ card: sessionToCard(session), ...clampMenuAnchor(e) });
+  };
+
+  const pickAgent = (card: AgentCard) => {
+    selectProject(card.projectId);
+    if (card.session.headless && card.session.status !== 'exited') {
+      void restoreTerminal(card.session.id, card.projectId);
+    } else {
+      selectTab(card.projectId, card.session.id);
+    }
+    setWorkspaceMode(card.projectId, 'terminals');
+  };
 
   // Inline rename of an agent row, mirroring the tab strip's double-click→edit.
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -263,6 +298,7 @@ export function ProjectFocusView({ project }: { project: Project }) {
                             }
                             setWorkspaceMode(project.id, 'terminals');
                           }}
+                          onContextMenu={(e) => openAgentCardMenu(e, t)}
                           aria-label={isUnread ? `${t.title} · unread output` : undefined}
                           title={
                             exited && t.exitCode != null
@@ -350,6 +386,24 @@ export function ProjectFocusView({ project }: { project: Project }) {
         )}
       </div>
       <ListPaneResizer />
+      {agentMenu && (
+        <AgentCardMenu
+          menu={agentMenu}
+          setMenu={setAgentMenu}
+          actions={agentActions}
+          onPick={pickAgent}
+        />
+      )}
+      {agentRename && (
+        <PromptModal
+          title="Rename agent"
+          label="Name"
+          initialValue={agentRename.card.session.title}
+          confirmLabel="Rename"
+          onSubmit={(v) => submitAgentRename(agentRename.card, v)}
+          onClose={closeAgentRename}
+        />
+      )}
     </section>
   );
 }

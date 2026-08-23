@@ -9,7 +9,7 @@ import { createEventSink, type EventSink } from './event-sink.js';
 import { createCommandRuntime, type CommandRuntime } from './command-dispatch.js';
 import { handleHostRpcRequest } from './command-router.js';
 import { loadHostAppConfig } from './host-config.js';
-import { createPtyThreadAdapter, type ThreadRuntimeAdapter } from './thread-runtime.js';
+import { createRuntimeManager, type ThreadRuntimeAdapter } from './runtime-manager.js';
 
 const BACKOFF_MS = [250, 500, 1_000, 2_000, 5_000];
 const HEARTBEAT_MS = 15_000;
@@ -72,9 +72,9 @@ export function startEnrolledHostConnection(options: {
   let adapter: ThreadRuntimeAdapter | null = null;
   const runtime = options.runtime ?? (() => {
     const loadConfig = () => loadHostAppConfig(options.dataDir);
-    adapter = createPtyThreadAdapter({
+    adapter = createRuntimeManager({
       emit: (event) => sink.emit(event),
-      loadConfig
+      dataDir: options.dataDir
     });
     return createCommandRuntime({
       dataDir: options.dataDir,
@@ -82,6 +82,7 @@ export function startEnrolledHostConnection(options: {
       loadConfig,
       startWork: (input) => adapter!.startWork(input),
       submitTurn: (input) => adapter!.submitTurn(input),
+      resumeWork: (input) => adapter!.resumeWork(input),
       resizeWork: (input) => adapter!.resizeWork(input),
       writeWork: (input) => adapter!.writeWork(input),
       stopWork: (input) => adapter!.stopWork(input)

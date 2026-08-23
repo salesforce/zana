@@ -199,6 +199,11 @@ describe('harness settings containers', () => {
     expect(store.getConfig().defaultHarness).toBeUndefined();
   });
 
+  it('keeps a configured default when the enable flag is unset', () => {
+    store.setConfig({ defaultHarness: 'opencode' });
+    expect(store.getConfig().defaultHarness).toBe('opencode');
+  });
+
   it('atomically resets the default when its harness is disabled', () => {
     store.setConfig({ harnessOpenCodeEnabled: true, defaultHarness: 'opencode' });
     expect(store.getConfig().defaultHarness).toBe('opencode');

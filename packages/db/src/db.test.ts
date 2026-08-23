@@ -1,19 +1,24 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   appendThreadEvent,
+  createConversationThread,
   createEnvironment,
   createThread,
+  getConversationThread,
   getThread,
   listLiveThreads,
   listThreadEvents,
   openDatabase,
+  completeThread,
   threadOutputTail,
   upsertHost,
   type ZccDatabase
 } from './index.js';
+import { migrate, SCHEMA_STATEMENTS_V1 } from './migrate.js';
 
 let db: ZccDatabase | null = null;
 let dir: string | null = null;
@@ -80,6 +85,34 @@ describe('packages/db', () => {
     expect(listThreadEvents(db, thread.id).map((event) => event.sequence)).toEqual([1, 2]);
   });
 
+  it('creates BB conversation threads beside legacy PTY session rows', () => {
+    dir = mkdtempSync(join(tmpdir(), 'zcc-db-v4-'));
+    db = openDatabase(join(dir, 'zcc.sqlite'));
+    const host = upsertHost(db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: '/tmp/proj'
+    });
+    const legacy = createThread(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude'
+    });
+    const conversation = createConversationThread(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code',
+      title: 'Hello'
+    });
+    expect(legacy.id).not.toBe(conversation.id);
+    expect(getThread(db, conversation.id)).toBeNull();
+    expect(getConversationThread(db, conversation.id)?.providerId).toBe('claude-code');
+    expect(getConversationThread(db, legacy.id)).toBeNull();
+  });
+
   it('lists only starting and running threads as live', () => {
     dir = mkdtempSync(join(tmpdir(), 'zcc-db-'));
     db = openDatabase(join(dir, 'zcc.sqlite'));
@@ -106,6 +139,28 @@ describe('packages/db', () => {
     const listed = listLiveThreads(db).map((row) => row.id);
     expect(listed).toContain(live.id);
     expect(listed).not.toContain(done.id);
+  });
+
+  it('completeThread drops a running row out of the live list', () => {
+    dir = mkdtempSync(join(tmpdir(), 'zcc-db-'));
+    db = openDatabase(join(dir, 'zcc.sqlite'));
+    const host = upsertHost(db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: '/tmp/proj'
+    });
+    const live = createThread(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude',
+      status: 'running'
+    });
+    expect(completeThread(db, live.id)).toBe(true);
+    expect(getThread(db, live.id)?.status).toBe('completed');
+    expect(listLiveThreads(db).map((row) => row.id)).not.toContain(live.id);
+    expect(completeThread(db, 'missing')).toBe(false);
   });
 
   it('reconstructs a bounded terminal output tail in order', () => {
@@ -156,5 +211,43 @@ describe('packages/db', () => {
       workspaceProvisionType: 'unmanaged'
     });
     expect(other.projectId).toBe('proj-2');
+  });
+
+  it('collapses duplicate environment paths before adding the unique index', () => {
+    const sqlite = new Database(':memory:');
+    sqlite.prepare(
+      'CREATE TABLE IF NOT EXISTS runtime_schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)'
+    ).run();
+    sqlite.transaction(() => {
+      for (const statement of SCHEMA_STATEMENTS_V1) sqlite.prepare(statement).run();
+      sqlite.prepare('INSERT INTO runtime_schema_migrations (version, applied_at) VALUES (?, ?)').run(1, Date.now());
+    })();
+    sqlite.prepare(
+      `INSERT INTO hosts (id, name, type, host_key_hash, created_at, updated_at)
+       VALUES ('host-1', 'laptop', 'persistent', ?, 1, 1)`
+    ).run('h'.repeat(64));
+    sqlite.prepare(
+      `INSERT INTO environments (id, project_id, host_id, path, workspace_provision_type, status, created_at, updated_at)
+       VALUES (?, 'proj-1', 'host-1', '/tmp/proj', 'unmanaged', 'ready', 1, 1)`
+    ).run('env-old');
+    sqlite.prepare(
+      `INSERT INTO environments (id, project_id, host_id, path, workspace_provision_type, status, created_at, updated_at)
+       VALUES (?, 'proj-1', 'host-1', '/tmp/proj', 'unmanaged', 'ready', 2, 2)`
+    ).run('env-new');
+    sqlite.prepare(
+      `INSERT INTO threads (id, project_id, host_id, environment_id, provider_id, status, created_at, updated_at)
+       VALUES ('thr-1', 'proj-1', 'host-1', 'env-old', 'claude', 'idle', 1, 1)`
+    ).run();
+
+    expect(() => migrate(sqlite)).not.toThrow();
+    expect(
+      sqlite.prepare(
+        'SELECT id FROM environments WHERE project_id = ? AND host_id = ? AND path = ?'
+      ).all('proj-1', 'host-1', '/tmp/proj')
+    ).toEqual([{ id: 'env-new' }]);
+    expect(sqlite.prepare('SELECT environment_id FROM legacy_agent_sessions WHERE id = ?').get('thr-1')).toEqual({
+      environment_id: 'env-new'
+    });
+    sqlite.close();
   });
 });

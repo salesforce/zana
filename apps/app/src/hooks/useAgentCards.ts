@@ -10,7 +10,6 @@ import {
   favoriteKey
 } from '../store.js';
 import type { AgentCard } from '../components/AgentBoard.js';
-import { hostThreadAgentState } from '../lib/host-thread-session.js';
 
 /**
  * Flatten every project's listed (visible + hidden-but-alive) non-shell sessions
@@ -42,9 +41,7 @@ export function useAllAgentCards(): AgentCard[] {
         if (s.profile === 'shell') continue;
         out.push({
           session: s,
-          state: s.workspaceEnvironmentId
-            ? hostThreadAgentState(s.status === 'exited' ? 'completed' : s.status)
-            : (byId[s.id] ?? 'unknown'),
+          state: byId[s.id] ?? 'unknown',
           stateSince: sinceById[s.id],
           projectId,
           projectName: project.name,

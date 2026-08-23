@@ -36,8 +36,8 @@ import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { registerIpcFamilies } from './ipc/register.js';
 import type { IpcCtx } from './ipc/ctx.js';
 import { sanitizeExtraArgs } from '@zana-ai/zcc-domain/launch-sanitize';
-import { providerCapabilities, isClaudeProfile, isCodexProfile, isOpenCodeProfile, parseProfile, seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
-import { EXTENSION_PROJECT_CATEGORY, store, scratchWorkspaceRoot, worktreeRoot } from '@zana-ai/zcc-server/services/projects/store';
+import { providerCapabilities, isClaudeProfile, isCodexProfile, isOpenCodeProfile, seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
+import { EXTENSION_PROJECT_CATEGORY, store, scratchWorkspaceRoot, worktreeRoot, worktreeTargetDir } from '@zana-ai/zcc-server/services/projects/store';
 import { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
 import { resolveMaxLiveSessions } from '@zana-ai/zcc-host-daemon/capacity';
 import { revalidateLaunchCommit as revalidateCommonLaunchCommit } from '@zana-ai/zcc-server/services/launch/commit-revalidation';
@@ -96,6 +96,9 @@ import {
   removeWorktree,
   withWorktreeLock,
   worktreeState,
+  createWorktree,
+  sanitizeBranchSlug,
+  isGitRepo,
   previewProjectCommit,
   commitProjectChanges,
   pushProjectBranch
@@ -787,23 +790,10 @@ const launchAuthorization = new LaunchAuthorizationService({
   resolvePrincipal: (id) => launchPrincipals.get(id)
 });
 async function terminateSession(sessionId: string, expected = true): Promise<boolean> {
-  if (mainHostThreadIds.has(sessionId)) {
-    try {
-      await fetch(new URL(`api/v1/threads/${encodeURIComponent(sessionId)}/stop`, productServerUrl()), {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: '{}'
-      });
-    } catch {
-      /* host may already have dropped the PTY */
-    }
-    mainHostThreadIds.delete(sessionId);
-    restoreCapabilities.removeSession(sessionId);
-    return true;
-  }
+  restoreCapabilities.removeSession(sessionId);
+  await killLocalTmuxSession(sessionId);
   const session = ptys.getSession(sessionId);
   if (!session) {
-    restoreCapabilities.removeSession(sessionId);
     return true;
   }
   const project = store.listProjects().find((candidate) => candidate.id === session.projectId);
@@ -2772,10 +2762,48 @@ export function frameworkPersonaFromEntries(
 export async function resolveWorktreeForRequest(
   req: CreateTerminalRequest
 ): Promise<Result<CreateTerminalRequest>> {
-  // Managed worktrees are provisioned by host-daemon via threads.spawn.
-  // Strip leftover renderer mint intent so Electron never recreates ~/zcc-worktrees.
-  const { worktreeInfo: _ignored, worktree: _worktree, ...base } = req;
-  return { ok: true, value: base };
+  // Strip any untrusted pre-set worktreeInfo — only THIS function may set it.
+  const { worktreeInfo: _ignored, ...base } = req;
+  if (!req.worktree || req.cwd) return { ok: true, value: base };
+  const requested =
+    typeof req.worktree === 'object' && req.worktree.branch ? req.worktree.branch : undefined;
+  const explicitName = typeof req.worktree === 'object';
+  const derived =
+    requested ?? req.title ?? (req.prompt ? req.prompt.slice(0, 60) : undefined);
+  const sanitized = sanitizeBranchSlug(derived);
+  if (explicitName && !sanitized) {
+    return { ok: false, code: 'INVALID', message: 'Worktree name required.' };
+  }
+  const project = store.listProjects().find((p) => p.id === req.projectId);
+  if (!project || project.remote || project.quickAgent) return { ok: true, value: base };
+  if (!(await isGitRepo(project.path))) {
+    return explicitName
+      ? { ok: false, code: 'WORKTREE_UNAVAILABLE', message: 'Worktree isolation requires a Git repository.' }
+      : { ok: true, value: base };
+  }
+
+  // Branch: an explicit pin (object form) wins; else derive from the launch
+  // title/prompt; else a stable fallback. Sanitized to a git-legal slug.
+  const slug = sanitized ?? `agent_${randomUUID().slice(0, 8)}`;
+  const branchSlug = `zcc/${slug}`;
+  const targetDir = worktreeTargetDir(project, slug);
+
+  const res = await createWorktree(project.path, targetDir, branchSlug, worktreeRoot());
+  if (!res.ok) {
+    logMainError('resolveWorktreeForRequest', new Error(`worktree add failed: ${res.reason}`));
+    if (explicitName) {
+      return {
+        ok: false,
+        code: 'WORKTREE_CREATE_FAILED',
+        message: `Could not prepare worktree "${slug}": ${res.reason}`
+      };
+    }
+    return { ok: true, value: base };
+  }
+  return {
+    ok: true,
+    value: { ...base, worktreeInfo: { path: res.path, branch: res.branch } }
+  };
 }
 
 /**
@@ -3137,101 +3165,6 @@ export function createTerminalConfined(
   }
 }
 
-const mainHostThreadIds = new Set<string>();
-
-async function spawnHostThreadFromMain(
-  req: CreateTerminalRequest & {
-    reconnectTmuxId?: string;
-    resume?: boolean;
-    autonomous?: boolean;
-    preallocatedSessionId?: string;
-  }
-): Promise<Result<TerminalSession>> {
-  const base = productServerUrl();
-  try {
-    const response = await fetch(new URL('api/v1/threads', base), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        id: req.preallocatedSessionId,
-        projectId: req.projectId,
-        providerId: req.profile,
-        input: req.prompt ? [req.prompt] : [],
-        cwd: req.cwd,
-        title: req.title,
-        extraArgs: req.extraArgs,
-        harnessRouting: req.harnessRouting,
-        personaId: req.personaId,
-        headless: req.headless,
-        scheduled: req.scheduled,
-        autoCloseOnFinish: req.autoCloseOnFinish,
-        inboxLevel: req.inboxLevel,
-        autonomous: req.autonomous,
-        resumeSessionId: req.resumeSessionId,
-        executionEnvironment: req.environment === 'runtime-host' ? 'local' : req.environment,
-        sandboxDenyNetwork: req.sandboxDenyNetwork,
-        microVmImage: req.microVmImage,
-        microVmCpus: req.microVmCpus,
-        microVmMemoryMib: req.microVmMemoryMib,
-        reconnectTmuxId: req.reconnectTmuxId,
-        resume: req.resume,
-        cohort: req.cohort,
-        environment: { kind: 'unmanaged' }
-      })
-    });
-    const body = await response.json() as {
-      ok?: boolean;
-      value?: {
-        id: string;
-        projectId: string;
-        providerId: string;
-        title: string | null;
-        createdAt: number;
-        cwd: string | null;
-        environmentId: string | null;
-        branchName: string | null;
-        isWorktree: boolean;
-      };
-      code?: string;
-      message?: string;
-    };
-    if (!response.ok || !body.ok || !body.value) {
-      return {
-        ok: false,
-        code: body.code ?? 'PTY_SPAWN_FAILED',
-        message: body.message ?? 'thread spawn failed'
-      };
-    }
-    const thread = body.value;
-    mainHostThreadIds.add(thread.id);
-    return {
-      ok: true,
-      value: {
-        id: thread.id,
-        projectId: thread.projectId,
-        title: thread.title ?? req.title ?? 'Agent',
-        profile: parseProfile(thread.providerId) ?? req.profile,
-        cwd: thread.cwd ?? req.cwd ?? '',
-        status: 'running',
-        createdAt: thread.createdAt,
-        workspaceEnvironmentId: thread.environmentId ?? undefined,
-        worktree: thread.isWorktree && thread.cwd
-          ? { path: thread.cwd, branch: thread.branchName ?? '' }
-          : undefined,
-        headless: req.headless,
-        scheduled: req.scheduled,
-        cohort: req.cohort
-      }
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      code: 'PTY_SPAWN_FAILED',
-      message: error instanceof Error ? error.message : String(error)
-    };
-  }
-}
-
 /** Generic new-launch path. Principal and spawn-only metadata come from main callers. */
 async function launchAuthorizedTerminal(
   req: CreateTerminalRequest,
@@ -3396,16 +3329,17 @@ async function launchAuthorizedTerminal(
       selection.personaId ? resolvedPersonas.find((candidate) => candidate.id === selection.personaId) : undefined
     ),
     spawn: async (authorizedPlan) => {
-      const spawnLaunch = materializeEffectiveLaunch(authorizedPlan.resolved.effectiveLaunch);
-      const { args: safeExtraArgs } = sanitizeExtraArgs(authorizedPlan.request.extraArgs);
-      const result = await spawnHostThreadFromMain({
-        ...authorizedPlan.request,
-        cwd: spawnLaunch.cwd,
-        extraArgs: safeExtraArgs,
-        autonomous: spawnOpts?.autonomous,
-        reconnectTmuxId: spawnOpts?.reconnectTmuxId,
-        resume: spawnOpts?.resume,
-        preallocatedSessionId: authorizedPlan.sessionId
+      const result = createTerminalConfined(authorizedPlan.request, {
+        ...spawnOpts,
+        preallocatedSessionId: authorizedPlan.sessionId,
+        launchSnapshot: {
+          project: authorizedPlan.resolved.project,
+          config: authorizedPlan.resolved.config,
+          projectSettings: authorizedPlan.resolved.projectSettings,
+          personas: authorizedPlan.resolved.personas,
+          frameworkPersona: authorizedPlan.resolved.frameworkPersona
+        },
+        effectiveLaunch: authorizedPlan.resolved.effectiveLaunch
       });
       if (!result.ok) throw new LaunchSpawnError(result.code, result.message);
       return result.value;
@@ -3630,28 +3564,13 @@ async function launchBackgroundTerminal(
     },
     spawn: async (authorizedPlan) => {
       const spawnLaunch = materializeEffectiveLaunch(authorizedPlan.resolved.effectiveLaunch);
-      const { args: safeExtraArgs } = sanitizeExtraArgs(authorizedPlan.request.extraArgs);
-      const result = await spawnHostThreadFromMain({
-        projectId: authorizedPlan.request.projectId,
-        profile: authorizedPlan.request.profile,
-        cols: 80,
-        rows: 24,
+      const session = createTerminalFromAuthorizedPlan({
+        ...authorizedPlan.request,
+        projectSettings: authorizedPlan.resolved.projectSettings,
         cwd: spawnLaunch.cwd,
-        title: authorizedPlan.request.title,
-        extraArgs: safeExtraArgs,
-        harnessRouting: authorizedPlan.request.harnessRouting,
-        personaId: authorizedPlan.request.persona?.id,
-        prompt: authorizedPlan.request.prompt,
-        headless: true,
-        scheduled: authorizedPlan.request.scheduled,
-        autoCloseOnFinish: authorizedPlan.request.autoCloseOnFinish,
-        inboxLevel: authorizedPlan.request.inboxLevel,
-        autonomous: authorizedPlan.request.autonomous,
-        cohort: authorizedPlan.request.cohort,
         preallocatedSessionId: authorizedPlan.sessionId
       });
-      if (!result.ok) throw new LaunchSpawnError(result.code, result.message);
-      return result.value;
+      return ptys.waitForReady(session.id);
     },
     onLaunched: ({ ledgerEntryId, authorizationId, session }) => {
       launchLedgerEntriesBySession.set(session.id, ledgerEntryId);

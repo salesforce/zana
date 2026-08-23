@@ -47,10 +47,26 @@ function run(command, args) {
   return child;
 }
 
+async function waitForProductServer(port, timeoutMs = 20_000) {
+  const url = `http://127.0.0.1:${port}/api/v1/health`;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(url);
+      if (response.ok) return;
+    } catch {
+      /* listen.ts has not bound yet */
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`product server did not become ready on ${url}`);
+}
+
 run('pnpm', ['exec', 'tsx', 'apps/server/src/http/listen.ts']);
+await waitForProductServer(serverPort);
+run('pnpm', ['exec', 'tsx', 'apps/host-daemon/src/enroll-entry.ts']);
 
 if (skipDesktop) {
-  run('pnpm', ['exec', 'tsx', 'apps/host-daemon/src/enroll-entry.ts']);
   run('pnpm', ['exec', 'vite', '--config', 'apps/app/vite.dev.config.ts']);
 } else {
   run('pnpm', ['exec', 'electron-vite', 'dev']);

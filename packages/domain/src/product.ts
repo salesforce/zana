@@ -1119,6 +1119,13 @@ export interface SessionCohort {
   slotId?: string;
 }
 
+/**
+ * Canonical name for a PTY-spawned coding agent. Same shape as
+ * {@link TerminalSession}; Threads use a separate domain type and must not
+ * share this map, RPC, or event log.
+ */
+export type LegacyAgentSession = TerminalSession;
+
 export interface TerminalSession {
   id: string;
   /** Opaque main-owned capability used to restore/reconnect this launch. */
@@ -1538,19 +1545,23 @@ export interface AppConfig {
    */
   opencodeBinary?: string;
   /**
-   * Show the Cursor harness profile in agent-launch UIs. Default off.
+   * Hide the Cursor harness from agent-launch UIs. Absent/undefined ⇒ auto-on
+   * when the CLI is installed. `false` is an explicit hide.
    */
   harnessCursorEnabled?: boolean;
   /**
-   * Show the Codex harness profile in agent-launch UIs. Default off.
+   * Hide the Codex harness from agent-launch UIs. Absent/undefined ⇒ auto-on
+   * when the CLI is installed. `false` is an explicit hide.
    */
   harnessCodexEnabled?: boolean;
   /**
-   * Show the PI harness profile in agent-launch UIs. Default off.
+   * Hide the PI harness from agent-launch UIs. Absent/undefined ⇒ auto-on when
+   * the CLI is installed. `false` is an explicit hide.
    */
   harnessPiEnabled?: boolean;
   /**
-   * Show the OpenCode harness profile in agent-launch UIs. Default off.
+   * Hide the OpenCode harness from agent-launch UIs. Absent/undefined ⇒ auto-on
+   * when the CLI is installed. `false` is an explicit hide.
    */
   harnessOpenCodeEnabled?: boolean;
   /**

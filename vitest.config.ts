@@ -19,7 +19,15 @@ export default defineConfig({
     // (git-ignored): their tests belong to THAT checkout and may import symbols
     // that don't exist on this branch — collect them and `pnpm test` fails on
     // unrelated code and masks real failures.
-    exclude: [...configDefaults.exclude, 'e2e/**', '.claude/worktrees/**', 'salesforce-only/**']
+    exclude: [
+      ...configDefaults.exclude,
+      'e2e/**',
+      '.claude/worktrees/**',
+      'salesforce-only/**',
+      'packages/agent-runtime/src/integration*.test.ts',
+      'packages/host-daemon-contract/test/**',
+      'packages/server-contract/test/**'
+    ]
   },
   resolve: {
     alias: [
@@ -38,6 +46,54 @@ export default defineConfig({
       {
         find: /^@zana-ai\/zcc-process-utils$/,
         replacement: resolve(__dirname, 'packages/process-utils/src/index.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-agent-process-utils$/,
+        replacement: resolve(__dirname, 'packages/agent-process-utils/src/index.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-agent-runtime\/test$/,
+        replacement: resolve(__dirname, 'packages/agent-runtime/src/test/index.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-agent-runtime$/,
+        replacement: resolve(__dirname, 'packages/agent-runtime/src/index.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-thread-view$/,
+        replacement: resolve(__dirname, 'packages/thread-view/src/index.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-provider-bridge-protocol\/bridge-kit$/,
+        replacement: resolve(__dirname, 'packages/provider-bridge-protocol/src/bridge-kit/index.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-provider-bridge-protocol\/conformance$/,
+        replacement: resolve(__dirname, 'packages/provider-bridge-protocol/src/conformance/index.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-provider-bridge-protocol\/testing$/,
+        replacement: resolve(__dirname, 'packages/provider-bridge-protocol/src/testing/index.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-provider-bridge-protocol$/,
+        replacement: resolve(__dirname, 'packages/provider-bridge-protocol/src/index.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-host-daemon-contract\/(.*)$/,
+        replacement: resolve(__dirname, 'packages/host-daemon-contract/src/$1.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-host-daemon-contract$/,
+        replacement: resolve(__dirname, 'packages/host-daemon-contract/src/index.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-server-contract$/,
+        replacement: resolve(__dirname, 'packages/server-contract/src/index.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-hono-typed-routes$/,
+        replacement: resolve(__dirname, 'packages/hono-typed-routes/src/index.ts')
       },
       {
         find: /^@zana-ai\/zcc-ui\/(.*)$/,

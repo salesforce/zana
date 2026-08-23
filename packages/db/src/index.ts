@@ -41,10 +41,23 @@ export {
   listThreadsByHost,
   listLiveThreads,
   updateThreadStatus,
+  completeThread,
   disconnectLiveThreadsForHost,
   type ThreadRow,
   type ThreadStatus
 } from './data/threads.js';
+export {
+  createConversationThread,
+  getConversationThread,
+  listConversationThreadsByProject,
+  listLiveConversationThreads,
+  updateConversationThreadStatus,
+  setConversationProviderThreadId,
+  archiveConversationThread,
+  countLiveConversationThreadsForEnvironment,
+  type ConversationThreadRow,
+  type ConversationThreadStatus
+} from './data/conversation-threads.js';
 export {
   appendThreadEvent,
   listThreadEvents,
@@ -52,3 +65,9 @@ export {
   nextEventSequence,
   type ThreadEventRow
 } from './data/events.js';
+export {
+  appendConversationThreadEvent,
+  listConversationThreadEvents,
+  nextConversationEventSequence,
+  type ConversationThreadEventRow
+} from './data/conversation-events.js';

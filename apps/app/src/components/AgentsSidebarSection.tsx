@@ -1,9 +1,9 @@
 import { useState, type CSSProperties, type HTMLAttributes, type MouseEvent as ReactMouseEvent } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { ChevronRight, LayoutDashboard, MessageCirclePlus } from 'lucide-react';
 import { useUi } from '../store.js';
 import { useRouteState } from '../hooks/useRouteState.js';
-import { getAgentsRoutePath, getProjectWorkspaceRoutePath } from '../lib/route-paths.js';
+import { getAgentsRoutePath, getProjectWorkspaceRoutePath, getRootRoutePath } from '../lib/route-paths.js';
 import { AgentTray } from './AgentTray.js';
 
 export const AGENTS_SECTION_KEY = 'sidebar:agents';
@@ -42,8 +42,8 @@ export function AgentsSidebarSection({
 }) {
   const collapsed = useUi((s) => !!s.collapsedSections[AGENTS_SECTION_KEY]);
   const toggleSection = useUi((s) => s.toggleSection);
-  const setLauncherOpen = useUi((s) => s.setLauncherOpen);
   const setNav = useUi((s) => s.setNav);
+  const navigate = useNavigate();
   const route = useRouteState();
   const [height, setHeight] = useState(readAgentsSectionHeight);
   const dashboardPath = projectId
@@ -134,9 +134,9 @@ export function AgentsSidebarSection({
           <button
             type="button"
             className="icon-btn"
-            aria-label="New quick agent"
-            title="New quick agent"
-            onClick={() => setLauncherOpen(true)}
+            aria-label="New thread"
+            title="New thread"
+            onClick={() => navigate(getRootRoutePath())}
           >
             <MessageCirclePlus size={14} />
           </button>

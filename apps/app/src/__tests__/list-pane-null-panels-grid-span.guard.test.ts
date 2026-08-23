@@ -29,7 +29,8 @@ const REQUIRED_FULL_WIDTH_PANELS = [
   'agents-board--global',
   'gus-panel',
   'cu-panel',
-  'scheduler-page'
+  'scheduler-page',
+  'thread-detail-view'
 ] as const;
 
 describe('shell content panels span the remaining track', () => {
@@ -53,6 +54,20 @@ describe('shell content panels span the remaining track', () => {
         `.${panel} is missing the 'grid-column: 2 / -1;' declaration in ` +
           `global.css. The shell is always full content; without the span a ` +
           `panel can collapse if a list track reappears.\n`
+      ).toBe(true);
+    }
+  );
+
+  it.each(REQUIRED_FULL_WIDTH_PANELS)(
+    '.%s must reset to column 1 when the sidebar is collapsed',
+    (panel) => {
+      expect(
+        css.includes(
+          `.app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .${panel}`
+        ),
+        `.${panel} is missing from the collapsed-sidebar grid-column reset in ` +
+          `global.css. With the sidebar gone there is only one explicit column; ` +
+          `leaving grid-column: 2 / -1 places the panel in an implicit track.\n`
       ).toBe(true);
     }
   );

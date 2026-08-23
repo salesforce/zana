@@ -43,7 +43,7 @@ const enabledByConfig: Readonly<Record<HarnessFamily, keyof AppConfig | null>> =
 
 function isEnabled(config: AppConfig, adapterId: HarnessFamily): boolean {
   const key = enabledByConfig[adapterId];
-  return key === null || config[key] === true;
+  return key === null || config[key] !== false;
 }
 
 function defaultProfile(adapterId: HarnessFamily): LaunchProfileId | undefined {
