@@ -199,6 +199,7 @@ import {
 import { TranscriptSource } from './transcript-source.js';
 import { ClaudeCliProvider } from './llm/claude-cli-provider.js';
 import { OpenAiProvider } from './llm/openai-provider.js';
+import { serializeMonitorTranscript } from './monitor-semantic-input.js';
 import { GeminiProvider } from './llm/gemini-provider.js';
 import type { LlmProvider } from './llm/provider.js';
 import type { LlmProviderId } from '../shared/types.js';
@@ -999,9 +1000,9 @@ const llmNamedSessions = new Set<string>();
  * Idle-agent triage add-on (off by default; spends tokens). Classifies WHY an
  * agent is idle — waiting on you / done / paused — from its transcript's last
  * turn, once per idle spell. All collaborators injected so the service stays
- * Electron-free and unit-testable; the `claude --print` cost is gated by the
- * config flag, the claude-profile check, and a "no transcript text → no call"
- * bail (see {@link IdleTriageService}).
+ * Electron-free and unit-testable; semantic HTTP work is gated by the config
+ * flag, verified monitor capability, and a "no transcript text → no call" bail
+ * (see {@link IdleTriageService}).
  */
 /**
  * Provider-agnostic transcript seam shared by every transcript consumer (idle
@@ -1092,13 +1093,20 @@ const idleTriage = new IdleTriageService({
       : null;
   },
   hasTranscript: (profile) => providerCapabilities(profile as LaunchProfileId).hasTranscript,
+  hasMonitorCapability: (profile) =>
+    registrationFor(profile as LaunchProfileId)?.monitorCapability.state === 'supported',
   readLastTurn: (ref) => transcriptSource.readLastTurn(ref),
   runTriage: (lastTurn, dedupeKey) => {
     const entry = promptRegistry.get('builtin:idle-triage');
     if (!entry) {
-      return Promise.resolve({ ok: false, text: '', error: 'no idle-triage prompt', provider: 'claude-cli', ms: 0 });
+      return Promise.resolve({ ok: false, text: '', error: 'no idle-triage prompt', provider: 'openai', ms: 0 });
     }
-    return llmService.run(entry, { lastTurn }, `idle-triage:${dedupeKey}`);
+    return llmService.runMonitor(
+      entry,
+      store.getConfig().monitorSemanticProvider,
+      { lastTurn: serializeMonitorTranscript(lastTurn) },
+      `idle-triage:${dedupeKey}`
+    );
   },
   now: () => Date.now(),
   setTimer: (fn, ms) => setTimeout(fn, ms),
@@ -1155,13 +1163,20 @@ const catchUpSummary = new CatchUpSummaryService({
       : null;
   },
   hasTranscript: (profile) => providerCapabilities(profile as LaunchProfileId).hasTranscript,
+  hasMonitorCapability: (profile) =>
+    registrationFor(profile as LaunchProfileId)?.monitorCapability.state === 'supported',
   readDigest: (ref) => transcriptSource.readDigest(ref),
   runSummary: (digest, trigger, dedupeKey) => {
     const entry = promptRegistry.get('builtin:catch-up-summary');
     if (!entry) {
-      return Promise.resolve({ ok: false, text: '', error: 'no catch-up-summary prompt', provider: 'claude-cli', ms: 0 });
+      return Promise.resolve({ ok: false, text: '', error: 'no catch-up-summary prompt', provider: 'openai', ms: 0 });
     }
-    return llmService.run(entry, { digest, trigger }, `catch-up-summary:${dedupeKey}`);
+    return llmService.runMonitor(
+      entry,
+      store.getConfig().monitorSemanticProvider,
+      { digest: serializeMonitorTranscript(digest), trigger },
+      `catch-up-summary:${dedupeKey}`
+    );
   },
   now: () => Date.now(),
   setTimer: (fn, ms) => setTimeout(fn, ms),
@@ -4471,10 +4486,12 @@ function wireBridgeListeners() {
     safeSend(IPC.terminals.onData, sessionId, data);
     // Feed the raw PTY stream through the OSC-title detector. Cheap and
     // off the render path — only emits when the agent state actually changes.
-    agentStatus.observeData(sessionId, data);
+    const session = ptys.getSession(sessionId);
+    if (session && registrationFor(session.profile as LaunchProfileId)?.monitorCapability.sources.includes('osc-title')) {
+      agentStatus.observeData(sessionId, session.profile as LaunchProfileId, data);
+    }
     // The registration chooses a primary visual source. Lifecycle hooks remain
     // an additive AgentStatusTracker overlay, never a mutually exclusive mode.
-    const session = ptys.getSession(sessionId);
     if (session) {
       const status = providerFor(session.profile as LaunchProfileId).adapter.status;
       if (status?.mode === 'output-activity' || status?.mode === 'screen-scan') {

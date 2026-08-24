@@ -58,6 +58,7 @@ describe('CatchUpSummaryService', () => {
       delaySeconds: () => 20,
       getSession: () => baseSession,
       hasTranscript: (p) => p === 'claude',
+      hasMonitorCapability: (p) => p === 'claude',
       readDigest: vi.fn(async () => 'User: do task\n\nAssistant: working on it'),
       runSummary: vi.fn(async () => okResult('**Summary**\n\n- Did the thing')),
       now: () => 1000,
@@ -263,6 +264,18 @@ describe('CatchUpSummaryService', () => {
   });
 
   describe('session eligibility', () => {
+    it('returns monitor-unsupported without reading a transcript', async () => {
+      const { deps } = makeDeps({
+        getSession: () => ({ ...baseSession, profile: 'cursor' }),
+        hasTranscript: () => true,
+        hasMonitorCapability: () => false
+      });
+      const svc = new CatchUpSummaryService(deps);
+      const result = await svc.generateOne('s');
+      expect(result.error).toBe('monitor-unsupported');
+      expect(deps.readDigest).not.toHaveBeenCalled();
+    });
+
     it('skips scheduled/headless (background) sessions — no timer, no runSummary', async () => {
       const scheduled = makeDeps({ getSession: () => ({ ...baseSession, scheduled: true }) });
       const svcScheduled = new CatchUpSummaryService(scheduled.deps);

@@ -120,3 +120,41 @@ describe('LlmService.availableProviders', () => {
     expect(ids).not.toContain('gemini');
   });
 });
+
+describe('LlmService.runMonitor', () => {
+  it('fails closed when no eligible HTTP provider is configured', async () => {
+    const cli = fakeProvider();
+    const svc = new LlmService(new Map([['claude-cli', cli]]));
+
+    const result = await svc.runMonitor(entry(), undefined, { name: 'x' });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('eligible monitor HTTP provider');
+    expect(cli.run).not.toHaveBeenCalled();
+  });
+
+  it('rejects a coding-harness provider even when the prompt requests it', async () => {
+    const cli = fakeProvider();
+    const svc = new LlmService(new Map([['claude-cli', cli]]));
+
+    const result = await svc.runMonitor(entry(), 'claude-cli', { name: 'x' });
+
+    expect(result.ok).toBe(false);
+    expect(cli.run).not.toHaveBeenCalled();
+  });
+
+  it('overrides a prompt provider with the explicit eligible monitor provider', async () => {
+    const openai: LlmProvider = {
+      id: 'openai',
+      run: vi.fn(async () => ({ ok: true, text: 'ok', provider: 'openai' as const, ms: 1 }))
+    };
+    const cli = fakeProvider();
+    const svc = new LlmService(new Map([['claude-cli', cli], ['openai', openai]]));
+
+    const result = await svc.runMonitor(entry({ provider: 'claude-cli' }), 'openai', { name: 'x' });
+
+    expect(result.ok).toBe(true);
+    expect(openai.run).toHaveBeenCalledOnce();
+    expect(cli.run).not.toHaveBeenCalled();
+  });
+});

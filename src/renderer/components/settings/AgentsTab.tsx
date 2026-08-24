@@ -171,10 +171,28 @@ export function AgentsTab({
       >
         <CheckboxField
           label="Idle-agent triage"
-          help="When an agent goes idle, classify why — waiting on you, done, or paused — and badge it on the Agents board. Uses the idle-triage prompt (edit under Prompts). Off by default: it spends tokens, one claude call per idle spell."
+          help="When an agent goes idle, classify why — waiting on you, done, or paused — and badge it on the Agents board. Uses the idle-triage prompt through the selected monitor HTTP provider. Off by default: it spends tokens."
           checked={config.idleTriageEnabled ?? false}
           onChange={(v) => onUpdate({ idleTriageEnabled: v })}
         />
+        <Field
+          label="Monitor semantic provider"
+          help="Used only for idle triage and catch-up summaries. Select OpenAI or Gemini after configuring its key under Prompts. Without one, monitoring stays deterministic and semantic results are unavailable."
+        >
+          <PopoverPicklist
+            value={config.monitorSemanticProvider ?? ''}
+            ariaLabel="Monitor semantic provider"
+            searchable={false}
+            onChange={(monitorSemanticProvider) =>
+              onUpdate({ monitorSemanticProvider: monitorSemanticProvider || undefined })
+            }
+            options={[
+              { value: '', label: 'No provider (semantic work unavailable)' },
+              { value: 'openai', label: 'OpenAI' },
+              { value: 'gemini', label: 'Gemini' }
+            ]}
+          />
+        </Field>
         {config.idleTriageEnabled && (
           <>
             <Field
