@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GITHUB_REPO_URL } from '@zana-ai/zcc-domain/product';
 
 const getConfig = vi.fn();
-const setConfig = vi.fn(() => Promise.resolve());
+const setConfig = vi.fn() as any;
 const scoped = vi.fn(() => false);
 
 vi.mock('../lib/product-client.js', () => ({

@@ -1891,7 +1891,7 @@ export const AgentLauncher = memo(function AgentLauncher({
             <AgentConversationHistory projectId={project!.id} unavailableProviders={unavailableHistoryProviders} onResumed={onClose} />
           )}
 
-          {mode === 'autonomous' && (<>
+          {mode === 'autonomous' && (
           <div className="launch-thread-composer">
             <AutonomousTeamComposer
               project={project}
@@ -1899,6 +1899,7 @@ export const AgentLauncher = memo(function AgentLauncher({
               onClose={onClose}
             />
           </div>
+          )}
 
           {false && scratchIsTarget && !argPreset && !editor && (
             <div className="quick-prompt-chips" role="group" aria-label="Starter prompts">
@@ -1951,7 +1952,7 @@ export const AgentLauncher = memo(function AgentLauncher({
 
           {false && editor && (
             <QuickPromptEditor
-              initial={editor.mode === 'edit' ? editor.prompt : null}
+              initial={editor?.mode === 'edit' ? (editor as any).prompt : null}
               onSaved={() => setEditor(null)}
               onCancel={() => setEditor(null)}
             />
@@ -1959,7 +1960,7 @@ export const AgentLauncher = memo(function AgentLauncher({
 
           {false && argPreset && (
             <WorkflowArgForm
-              preset={argPreset}
+              preset={argPreset!}
               values={argValues}
               onChange={(name, v) => setArgValues((prev) => ({ ...prev, [name]: v }))}
               onApply={applyArgForm}
@@ -2471,7 +2472,6 @@ export const AgentLauncher = memo(function AgentLauncher({
           )}
 
           {projectMode && <AgentConversationHistory projectId={project!.id} unavailableProviders={unavailableHistoryProviders} onResumed={onClose} />}
-          </>)}
           </div>
         </div>
       </div>

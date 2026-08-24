@@ -23,7 +23,7 @@ export function ComposerHostActionChip({
         type="button"
         className="thread-command-host-action-btn"
         data-testid="composer-host-action"
-        title={action.reason}
+        title={'reason' in action ? action.reason : undefined}
         disabled={!clickable}
         onClick={onAction}
       >

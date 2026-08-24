@@ -70,7 +70,7 @@ describe('ThreadPendingInteractionBanner', () => {
   });
 
   it('renders a source-thread link and a question form', () => {
-    const question: PendingInteraction = {
+    const question = {
       ...commandInteraction(),
       payload: {
         kind: 'user_question',
@@ -86,7 +86,7 @@ describe('ThreadPendingInteractionBanner', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <ThreadPendingInteractionBanner
-          interaction={question}
+          interaction={question as any}
           threadId="thr-child"
           sourceThread={{ href: '/threads/thr-child', title: 'Child work' }}
         />
@@ -101,7 +101,7 @@ describe('ThreadPendingInteractionBanner', () => {
   });
 
   it('shows one question at a time for a multi-question ask', () => {
-    const question: PendingInteraction = {
+    const question = {
       ...commandInteraction(),
       payload: {
         kind: 'user_question',
@@ -130,7 +130,7 @@ describe('ThreadPendingInteractionBanner', () => {
     };
     const html = renderToStaticMarkup(
       <MemoryRouter>
-        <ThreadPendingInteractionBanner interaction={question} threadId="thr-1" />
+        <ThreadPendingInteractionBanner interaction={question as any} threadId="thr-1" />
       </MemoryRouter>
     );
     expect(html).toContain('Waiting for answers to 2 questions');
@@ -145,7 +145,7 @@ describe('ThreadPendingInteractionBanner', () => {
   });
 
   it('shows a free-text input for an open question', () => {
-    const question: PendingInteraction = {
+    const question = {
       ...commandInteraction(),
       payload: {
         kind: 'user_question',
@@ -159,7 +159,7 @@ describe('ThreadPendingInteractionBanner', () => {
     };
     const html = renderToStaticMarkup(
       <MemoryRouter>
-        <ThreadPendingInteractionBanner interaction={question} threadId="thr-1" />
+        <ThreadPendingInteractionBanner interaction={question as any} threadId="thr-1" />
       </MemoryRouter>
     );
     expect(html).toContain('thread-pending-question-input');
@@ -171,7 +171,7 @@ describe('ThreadPendingInteractionBanner', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <ThreadPendingInteractionBanner
-          interaction={{
+          interaction={{...({} as any),
             ...commandInteraction(),
             origin: { kind: 'plugin', pluginId: 'ask-user', rendererId: 'form' },
             payload: { kind: 'plugin', title: 'Confirm delete', data: { path: '/tmp' } }
@@ -189,7 +189,7 @@ describe('ThreadPendingInteractionBanner', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <ThreadPendingInteractionBanner
-          interaction={{
+          interaction={{...({} as any),
             ...commandInteraction(),
             payload: {
               kind: 'approval',
@@ -220,7 +220,7 @@ describe('ThreadPendingInteractionBanner', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <ThreadPendingInteractionBanner
-          interaction={{
+          interaction={{...({} as any),
             ...commandInteraction(),
             payload: {
               kind: 'approval',

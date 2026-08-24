@@ -294,6 +294,15 @@ export class PtyManager extends EventEmitter {
   /** Async execution failures are available to the creator until readiness settles. */
   private startupFailures = new Map<string, string>();
 
+  /** Run scheduled commands through a native supervisor with stable child PID ownership. */
+  private scheduledSupervisor(command: string, args: string[]): { command: string; args: string[] } {
+    const packaged = join(process.resourcesPath ?? '', 'scheduled-supervisor');
+    const binary = existsSync(packaged)
+      ? packaged
+      : join(process.cwd(), 'resources', 'scheduled-supervisor');
+    return { command: binary, args: [command, ...args] };
+  }
+
   /**
    * Buffer a PTY chunk and arm a flush. All output for a session funnels
    * through here so a burst of small chunks collapses into one IPC message
@@ -1394,6 +1403,8 @@ export class PtyManager extends EventEmitter {
     // before the async branch existed (guarded by the golden-argv net).
     const spawnCmd = useTmux
       ? buildLocalTmuxCommand(sessionId, inner.command, inner.args, sessionEnv)
+      : opts.scheduled && process.platform !== 'win32'
+      ? this.scheduledSupervisor(inner.command, inner.args)
       : inner;
     ensureNodePtySpawnHelperExecutable();
     const proc = pty.spawn(spawnCmd.command, spawnCmd.args, {
@@ -1405,7 +1416,11 @@ export class PtyManager extends EventEmitter {
     });
     session.pid = proc.pid;
 
-    this.live.set(session.id, { session, proc, localTmuxBacked: useTmux || undefined });
+    this.live.set(session.id, {
+      session,
+      proc,
+      localTmuxBacked: useTmux || undefined,
+    });
     // Broadcast every newly-created session so scheduler-spawned tabs (which
     // bypass the renderer's create() return path) still light up the tab strip.
     this.emit('sessionUpdated', session);
@@ -2303,7 +2318,9 @@ export class PtyManager extends EventEmitter {
     // onExit finalizes the session instead of scheduling another re-attach.
     this.disarmReattach(l);
     try {
-      l.proc.kill();
+      // Scheduled supervisor traps this and performs target-group cleanup before
+      // exiting. Other process types retain node-pty's historical SIGHUP close.
+      l.proc.kill(l.session.scheduled ? 'SIGTERM' : undefined);
     } catch {
       /* ignore */
     }
@@ -2326,7 +2343,7 @@ export class PtyManager extends EventEmitter {
     try {
       const expectedTermination = l.proc as ExecutionSession & { terminateExpected?: () => void };
       if (expectedTermination.terminateExpected) expectedTermination.terminateExpected();
-      else l.proc.kill();
+      else l.proc.kill(l.session.scheduled ? 'SIGTERM' : undefined);
     } catch {
       /* already dead — the onExit (if any) will still clear the flag */
     }

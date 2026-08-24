@@ -100,6 +100,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
 exports[`golden argv — auto-mode + overseer variants > content-screen hook installed regardless of scheduled/headless/yolo (unlike overseer) 1`] = `
 {
   "args": [
+    "claude",
     "--dangerously-skip-permissions",
     "--session-id",
     "<UUID>",
@@ -267,6 +268,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
 exports[`golden argv — local create() matrix > claude · persona · scheduled 1`] = `
 {
   "args": [
+    "claude",
     "--model",
     "opus",
     "--session-id",
@@ -298,7 +300,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "--disallowedTools",
     "Bash",
   ],
-  "command": "claude",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
@@ -363,6 +365,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
 exports[`golden argv — local create() matrix > claude · persona+projectSettings · scheduled 1`] = `
 {
   "args": [
+    "claude",
     "--model",
     "opus",
     "--session-id",
@@ -401,7 +404,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "--disallowedTools",
     "WebFetch,Bash",
   ],
-  "command": "claude",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
@@ -452,6 +455,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
 exports[`golden argv — local create() matrix > claude · plain · scheduled 1`] = `
 {
   "args": [
+    "claude",
     "--permission-mode",
     "auto",
     "--session-id",
@@ -475,7 +479,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "--allowedTools",
     "mcp__zcc-inbox__inbox_push,mcp__zcc-inbox__inbox_ask,mcp__zcc-inbox__inbox_search,mcp__zcc-inbox__preview_file,mcp__zcc-inbox__schedule_report,mcp__zcc-inbox__register_agent,mcp__zcc-inbox__list_agents,mcp__zcc-inbox__find_agent,mcp__zcc-inbox__agent_inbox,mcp__zcc-inbox__followup_create,mcp__zcc-inbox__followup_list,mcp__zcc-inbox__followup_resolve,mcp__zcc-inbox__library_write,mcp__zcc-inbox__library_read,mcp__zcc-inbox__library_list,mcp__zcc-inbox__goal_create,mcp__zcc-inbox__goal_list,mcp__zcc-inbox__register_project",
   ],
-  "command": "claude",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "CLAUDE_CODE_ENABLE_AUTO_MODE": "1",
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
@@ -535,6 +539,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
 exports[`golden argv — local create() matrix > claude · projectSettings · scheduled 1`] = `
 {
   "args": [
+    "claude",
     "--model",
     "sonnet",
     "--session-id",
@@ -567,7 +572,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "--disallowedTools",
     "WebFetch",
   ],
-  "command": "claude",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
@@ -624,6 +629,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
 exports[`golden argv — local create() matrix > claude-resume · persona · scheduled 1`] = `
 {
   "args": [
+    "claude",
     "--resume",
     "--model",
     "opus",
@@ -654,7 +660,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "--disallowedTools",
     "Bash",
   ],
-  "command": "claude",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
@@ -718,6 +724,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
 exports[`golden argv — local create() matrix > claude-resume · persona+projectSettings · scheduled 1`] = `
 {
   "args": [
+    "claude",
     "--resume",
     "--model",
     "opus",
@@ -755,7 +762,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "--disallowedTools",
     "WebFetch,Bash",
   ],
-  "command": "claude",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
@@ -805,6 +812,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
 exports[`golden argv — local create() matrix > claude-resume · plain · scheduled 1`] = `
 {
   "args": [
+    "claude",
     "--resume",
     "--permission-mode",
     "auto",
@@ -827,7 +835,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "--allowedTools",
     "mcp__zcc-inbox__inbox_push,mcp__zcc-inbox__inbox_ask,mcp__zcc-inbox__inbox_search,mcp__zcc-inbox__preview_file,mcp__zcc-inbox__schedule_report,mcp__zcc-inbox__register_agent,mcp__zcc-inbox__list_agents,mcp__zcc-inbox__find_agent,mcp__zcc-inbox__agent_inbox,mcp__zcc-inbox__followup_create,mcp__zcc-inbox__followup_list,mcp__zcc-inbox__followup_resolve,mcp__zcc-inbox__library_write,mcp__zcc-inbox__library_read,mcp__zcc-inbox__library_list,mcp__zcc-inbox__goal_create,mcp__zcc-inbox__goal_list,mcp__zcc-inbox__register_project",
   ],
-  "command": "claude",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "CLAUDE_CODE_ENABLE_AUTO_MODE": "1",
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
@@ -886,6 +894,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
 exports[`golden argv — local create() matrix > claude-resume · projectSettings · scheduled 1`] = `
 {
   "args": [
+    "claude",
     "--resume",
     "--model",
     "sonnet",
@@ -917,7 +926,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "--disallowedTools",
     "WebFetch",
   ],
-  "command": "claude",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
@@ -974,6 +983,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
 exports[`golden argv — local create() matrix > claude-yolo · persona · scheduled 1`] = `
 {
   "args": [
+    "claude",
     "--dangerously-skip-permissions",
     "--model",
     "opus",
@@ -1004,7 +1014,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "--disallowedTools",
     "Bash",
   ],
-  "command": "claude",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
@@ -1066,6 +1076,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
 exports[`golden argv — local create() matrix > claude-yolo · persona+projectSettings · scheduled 1`] = `
 {
   "args": [
+    "claude",
     "--dangerously-skip-permissions",
     "--model",
     "opus",
@@ -1101,7 +1112,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "--disallowedTools",
     "WebFetch,Bash",
   ],
-  "command": "claude",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
@@ -1150,6 +1161,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
 exports[`golden argv — local create() matrix > claude-yolo · plain · scheduled 1`] = `
 {
   "args": [
+    "claude",
     "--dangerously-skip-permissions",
     "--session-id",
     "<UUID>",
@@ -1172,7 +1184,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "--allowedTools",
     "mcp__zcc-inbox__inbox_push,mcp__zcc-inbox__inbox_ask,mcp__zcc-inbox__inbox_search,mcp__zcc-inbox__preview_file,mcp__zcc-inbox__schedule_report,mcp__zcc-inbox__register_agent,mcp__zcc-inbox__list_agents,mcp__zcc-inbox__find_agent,mcp__zcc-inbox__agent_inbox,mcp__zcc-inbox__followup_create,mcp__zcc-inbox__followup_list,mcp__zcc-inbox__followup_resolve,mcp__zcc-inbox__library_write,mcp__zcc-inbox__library_read,mcp__zcc-inbox__library_list,mcp__zcc-inbox__goal_create,mcp__zcc-inbox__goal_list,mcp__zcc-inbox__register_project",
   ],
-  "command": "claude",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
@@ -1230,6 +1242,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
 exports[`golden argv — local create() matrix > claude-yolo · projectSettings · scheduled 1`] = `
 {
   "args": [
+    "claude",
     "--dangerously-skip-permissions",
     "--model",
     "sonnet",
@@ -1261,7 +1274,7 @@ Occasionally you hit a question you genuinely cannot resolve yourself — one th
     "--disallowedTools",
     "WebFetch",
   ],
-  "command": "claude",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_HOOK_URL": "http://127.0.0.1:<PORT>/hook/stop/proj1/<UUID>",
     "ZCC_MCP_URL": "http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>",
@@ -1303,6 +1316,7 @@ exports[`golden argv — local create() matrix > codex · persona · interactive
 exports[`golden argv — local create() matrix > codex · persona · scheduled 1`] = `
 {
   "args": [
+    "codex",
     "-m",
     "opus",
     "-c",
@@ -1321,7 +1335,7 @@ exports[`golden argv — local create() matrix > codex · persona · scheduled 1
     "-c",
     "hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]",
   ],
-  "command": "codex",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -1359,6 +1373,7 @@ exports[`golden argv — local create() matrix > codex · persona+projectSetting
 exports[`golden argv — local create() matrix > codex · persona+projectSettings · scheduled 1`] = `
 {
   "args": [
+    "codex",
     "-m",
     "opus",
     "-c",
@@ -1377,7 +1392,7 @@ exports[`golden argv — local create() matrix > codex · persona+projectSetting
     "-c",
     "hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]",
   ],
-  "command": "codex",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -1413,6 +1428,7 @@ exports[`golden argv — local create() matrix > codex · plain · interactive 1
 exports[`golden argv — local create() matrix > codex · plain · scheduled 1`] = `
 {
   "args": [
+    "codex",
     "-c",
     "mcp_servers.zcc-inbox.url="http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>"",
     "-c",
@@ -1429,7 +1445,7 @@ exports[`golden argv — local create() matrix > codex · plain · scheduled 1`]
     "-c",
     "hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]",
   ],
-  "command": "codex",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -1467,6 +1483,7 @@ exports[`golden argv — local create() matrix > codex · projectSettings · int
 exports[`golden argv — local create() matrix > codex · projectSettings · scheduled 1`] = `
 {
   "args": [
+    "codex",
     "-m",
     "sonnet",
     "-c",
@@ -1485,7 +1502,7 @@ exports[`golden argv — local create() matrix > codex · projectSettings · sch
     "-c",
     "hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]",
   ],
-  "command": "codex",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -1525,6 +1542,7 @@ exports[`golden argv — local create() matrix > codex-resume · persona · inte
 exports[`golden argv — local create() matrix > codex-resume · persona · scheduled 1`] = `
 {
   "args": [
+    "codex",
     "resume",
     "--last",
     "-m",
@@ -1545,7 +1563,7 @@ exports[`golden argv — local create() matrix > codex-resume · persona · sche
     "-c",
     "hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]",
   ],
-  "command": "codex",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -1585,6 +1603,7 @@ exports[`golden argv — local create() matrix > codex-resume · persona+project
 exports[`golden argv — local create() matrix > codex-resume · persona+projectSettings · scheduled 1`] = `
 {
   "args": [
+    "codex",
     "resume",
     "--last",
     "-m",
@@ -1605,7 +1624,7 @@ exports[`golden argv — local create() matrix > codex-resume · persona+project
     "-c",
     "hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]",
   ],
-  "command": "codex",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -1643,6 +1662,7 @@ exports[`golden argv — local create() matrix > codex-resume · plain · intera
 exports[`golden argv — local create() matrix > codex-resume · plain · scheduled 1`] = `
 {
   "args": [
+    "codex",
     "resume",
     "--last",
     "-c",
@@ -1661,7 +1681,7 @@ exports[`golden argv — local create() matrix > codex-resume · plain · schedu
     "-c",
     "hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]",
   ],
-  "command": "codex",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -1701,6 +1721,7 @@ exports[`golden argv — local create() matrix > codex-resume · projectSettings
 exports[`golden argv — local create() matrix > codex-resume · projectSettings · scheduled 1`] = `
 {
   "args": [
+    "codex",
     "resume",
     "--last",
     "-m",
@@ -1721,7 +1742,7 @@ exports[`golden argv — local create() matrix > codex-resume · projectSettings
     "-c",
     "hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]",
   ],
-  "command": "codex",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -1760,6 +1781,7 @@ exports[`golden argv — local create() matrix > codex-yolo · persona · intera
 exports[`golden argv — local create() matrix > codex-yolo · persona · scheduled 1`] = `
 {
   "args": [
+    "codex",
     "--dangerously-bypass-approvals-and-sandbox",
     "-m",
     "opus",
@@ -1779,7 +1801,7 @@ exports[`golden argv — local create() matrix > codex-yolo · persona · schedu
     "-c",
     "hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]",
   ],
-  "command": "codex",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -1818,6 +1840,7 @@ exports[`golden argv — local create() matrix > codex-yolo · persona+projectSe
 exports[`golden argv — local create() matrix > codex-yolo · persona+projectSettings · scheduled 1`] = `
 {
   "args": [
+    "codex",
     "--dangerously-bypass-approvals-and-sandbox",
     "-m",
     "opus",
@@ -1837,7 +1860,7 @@ exports[`golden argv — local create() matrix > codex-yolo · persona+projectSe
     "-c",
     "hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]",
   ],
-  "command": "codex",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -1874,6 +1897,7 @@ exports[`golden argv — local create() matrix > codex-yolo · plain · interact
 exports[`golden argv — local create() matrix > codex-yolo · plain · scheduled 1`] = `
 {
   "args": [
+    "codex",
     "--dangerously-bypass-approvals-and-sandbox",
     "-c",
     "mcp_servers.zcc-inbox.url="http://127.0.0.1:39999/mcp/proj1/<UUID>/<SESSION_CREDENTIAL>"",
@@ -1891,7 +1915,7 @@ exports[`golden argv — local create() matrix > codex-yolo · plain · schedule
     "-c",
     "hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]",
   ],
-  "command": "codex",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -1930,6 +1954,7 @@ exports[`golden argv — local create() matrix > codex-yolo · projectSettings �
 exports[`golden argv — local create() matrix > codex-yolo · projectSettings · scheduled 1`] = `
 {
   "args": [
+    "codex",
     "--dangerously-bypass-approvals-and-sandbox",
     "-m",
     "sonnet",
@@ -1949,7 +1974,7 @@ exports[`golden argv — local create() matrix > codex-yolo · projectSettings �
     "-c",
     "hooks.SubagentStop=[{matcher="*",hooks=[{type="command",command="cat >/dev/null 2>&1; curl -sS -m 5 -o /dev/null -X POST \\"http://127.0.0.1:<PORT>/hook/subagent/proj1/<UUID>/stop\\""}]}]",
   ],
-  "command": "codex",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -1968,8 +1993,10 @@ exports[`golden argv — local create() matrix > cursor · persona · interactiv
 
 exports[`golden argv — local create() matrix > cursor · persona · scheduled 1`] = `
 {
-  "args": [],
-  "command": "cursor-agent",
+  "args": [
+    "cursor-agent",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -1988,8 +2015,10 @@ exports[`golden argv — local create() matrix > cursor · persona+projectSettin
 
 exports[`golden argv — local create() matrix > cursor · persona+projectSettings · scheduled 1`] = `
 {
-  "args": [],
-  "command": "cursor-agent",
+  "args": [
+    "cursor-agent",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2008,8 +2037,10 @@ exports[`golden argv — local create() matrix > cursor · plain · interactive 
 
 exports[`golden argv — local create() matrix > cursor · plain · scheduled 1`] = `
 {
-  "args": [],
-  "command": "cursor-agent",
+  "args": [
+    "cursor-agent",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2028,8 +2059,10 @@ exports[`golden argv — local create() matrix > cursor · projectSettings · in
 
 exports[`golden argv — local create() matrix > cursor · projectSettings · scheduled 1`] = `
 {
-  "args": [],
-  "command": "cursor-agent",
+  "args": [
+    "cursor-agent",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2051,9 +2084,10 @@ exports[`golden argv — local create() matrix > cursor-resume · persona · int
 exports[`golden argv — local create() matrix > cursor-resume · persona · scheduled 1`] = `
 {
   "args": [
+    "cursor-agent",
     "--resume",
   ],
-  "command": "cursor-agent",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2075,9 +2109,10 @@ exports[`golden argv — local create() matrix > cursor-resume · persona+projec
 exports[`golden argv — local create() matrix > cursor-resume · persona+projectSettings · scheduled 1`] = `
 {
   "args": [
+    "cursor-agent",
     "--resume",
   ],
-  "command": "cursor-agent",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2099,9 +2134,10 @@ exports[`golden argv — local create() matrix > cursor-resume · plain · inter
 exports[`golden argv — local create() matrix > cursor-resume · plain · scheduled 1`] = `
 {
   "args": [
+    "cursor-agent",
     "--resume",
   ],
-  "command": "cursor-agent",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2123,9 +2159,10 @@ exports[`golden argv — local create() matrix > cursor-resume · projectSetting
 exports[`golden argv — local create() matrix > cursor-resume · projectSettings · scheduled 1`] = `
 {
   "args": [
+    "cursor-agent",
     "--resume",
   ],
-  "command": "cursor-agent",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2147,9 +2184,10 @@ exports[`golden argv — local create() matrix > cursor-yolo · persona · inter
 exports[`golden argv — local create() matrix > cursor-yolo · persona · scheduled 1`] = `
 {
   "args": [
+    "cursor-agent",
     "--force",
   ],
-  "command": "cursor-agent",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2171,9 +2209,10 @@ exports[`golden argv — local create() matrix > cursor-yolo · persona+projectS
 exports[`golden argv — local create() matrix > cursor-yolo · persona+projectSettings · scheduled 1`] = `
 {
   "args": [
+    "cursor-agent",
     "--force",
   ],
-  "command": "cursor-agent",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2195,9 +2234,10 @@ exports[`golden argv — local create() matrix > cursor-yolo · plain · interac
 exports[`golden argv — local create() matrix > cursor-yolo · plain · scheduled 1`] = `
 {
   "args": [
+    "cursor-agent",
     "--force",
   ],
-  "command": "cursor-agent",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2219,9 +2259,10 @@ exports[`golden argv — local create() matrix > cursor-yolo · projectSettings 
 exports[`golden argv — local create() matrix > cursor-yolo · projectSettings · scheduled 1`] = `
 {
   "args": [
+    "cursor-agent",
     "--force",
   ],
-  "command": "cursor-agent",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2240,8 +2281,10 @@ exports[`golden argv — local create() matrix > opencode · persona · interact
 
 exports[`golden argv — local create() matrix > opencode · persona · scheduled 1`] = `
 {
-  "args": [],
-  "command": "opencode",
+  "args": [
+    "opencode",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2260,8 +2303,10 @@ exports[`golden argv — local create() matrix > opencode · persona+projectSett
 
 exports[`golden argv — local create() matrix > opencode · persona+projectSettings · scheduled 1`] = `
 {
-  "args": [],
-  "command": "opencode",
+  "args": [
+    "opencode",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2280,8 +2325,10 @@ exports[`golden argv — local create() matrix > opencode · plain · interactiv
 
 exports[`golden argv — local create() matrix > opencode · plain · scheduled 1`] = `
 {
-  "args": [],
-  "command": "opencode",
+  "args": [
+    "opencode",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2300,8 +2347,10 @@ exports[`golden argv — local create() matrix > opencode · projectSettings · 
 
 exports[`golden argv — local create() matrix > opencode · projectSettings · scheduled 1`] = `
 {
-  "args": [],
-  "command": "opencode",
+  "args": [
+    "opencode",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2323,9 +2372,10 @@ exports[`golden argv — local create() matrix > opencode-resume · persona · i
 exports[`golden argv — local create() matrix > opencode-resume · persona · scheduled 1`] = `
 {
   "args": [
+    "opencode",
     "--continue",
   ],
-  "command": "opencode",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2347,9 +2397,10 @@ exports[`golden argv — local create() matrix > opencode-resume · persona+proj
 exports[`golden argv — local create() matrix > opencode-resume · persona+projectSettings · scheduled 1`] = `
 {
   "args": [
+    "opencode",
     "--continue",
   ],
-  "command": "opencode",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2371,9 +2422,10 @@ exports[`golden argv — local create() matrix > opencode-resume · plain · int
 exports[`golden argv — local create() matrix > opencode-resume · plain · scheduled 1`] = `
 {
   "args": [
+    "opencode",
     "--continue",
   ],
-  "command": "opencode",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2395,9 +2447,10 @@ exports[`golden argv — local create() matrix > opencode-resume · projectSetti
 exports[`golden argv — local create() matrix > opencode-resume · projectSettings · scheduled 1`] = `
 {
   "args": [
+    "opencode",
     "--continue",
   ],
-  "command": "opencode",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2416,8 +2469,10 @@ exports[`golden argv — local create() matrix > pi · persona · interactive 1`
 
 exports[`golden argv — local create() matrix > pi · persona · scheduled 1`] = `
 {
-  "args": [],
-  "command": "pi",
+  "args": [
+    "pi",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2436,8 +2491,10 @@ exports[`golden argv — local create() matrix > pi · persona+projectSettings �
 
 exports[`golden argv — local create() matrix > pi · persona+projectSettings · scheduled 1`] = `
 {
-  "args": [],
-  "command": "pi",
+  "args": [
+    "pi",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2456,8 +2513,10 @@ exports[`golden argv — local create() matrix > pi · plain · interactive 1`] 
 
 exports[`golden argv — local create() matrix > pi · plain · scheduled 1`] = `
 {
-  "args": [],
-  "command": "pi",
+  "args": [
+    "pi",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2476,8 +2535,10 @@ exports[`golden argv — local create() matrix > pi · projectSettings · intera
 
 exports[`golden argv — local create() matrix > pi · projectSettings · scheduled 1`] = `
 {
-  "args": [],
-  "command": "pi",
+  "args": [
+    "pi",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2499,9 +2560,10 @@ exports[`golden argv — local create() matrix > pi-resume · persona · interac
 exports[`golden argv — local create() matrix > pi-resume · persona · scheduled 1`] = `
 {
   "args": [
+    "pi",
     "--continue",
   ],
-  "command": "pi",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2523,9 +2585,10 @@ exports[`golden argv — local create() matrix > pi-resume · persona+projectSet
 exports[`golden argv — local create() matrix > pi-resume · persona+projectSettings · scheduled 1`] = `
 {
   "args": [
+    "pi",
     "--continue",
   ],
-  "command": "pi",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2547,9 +2610,10 @@ exports[`golden argv — local create() matrix > pi-resume · plain · interacti
 exports[`golden argv — local create() matrix > pi-resume · plain · scheduled 1`] = `
 {
   "args": [
+    "pi",
     "--continue",
   ],
-  "command": "pi",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2571,9 +2635,10 @@ exports[`golden argv — local create() matrix > pi-resume · projectSettings ·
 exports[`golden argv — local create() matrix > pi-resume · projectSettings · scheduled 1`] = `
 {
   "args": [
+    "pi",
     "--continue",
   ],
-  "command": "pi",
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2592,8 +2657,10 @@ exports[`golden argv — local create() matrix > shell · persona · interactive
 
 exports[`golden argv — local create() matrix > shell · persona · scheduled 1`] = `
 {
-  "args": [],
-  "command": "/bin/zsh",
+  "args": [
+    "/bin/zsh",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2612,8 +2679,10 @@ exports[`golden argv — local create() matrix > shell · persona+projectSetting
 
 exports[`golden argv — local create() matrix > shell · persona+projectSettings · scheduled 1`] = `
 {
-  "args": [],
-  "command": "/bin/zsh",
+  "args": [
+    "/bin/zsh",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2632,8 +2701,10 @@ exports[`golden argv — local create() matrix > shell · plain · interactive 1
 
 exports[`golden argv — local create() matrix > shell · plain · scheduled 1`] = `
 {
-  "args": [],
-  "command": "/bin/zsh",
+  "args": [
+    "/bin/zsh",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },
@@ -2652,8 +2723,10 @@ exports[`golden argv — local create() matrix > shell · projectSettings · int
 
 exports[`golden argv — local create() matrix > shell · projectSettings · scheduled 1`] = `
 {
-  "args": [],
-  "command": "/bin/zsh",
+  "args": [
+    "/bin/zsh",
+  ],
+  "command": "<SCHEDULED_SUPERVISOR>",
   "sessionEnv": {
     "ZCC_SESSION_ID": "<UUID>",
   },

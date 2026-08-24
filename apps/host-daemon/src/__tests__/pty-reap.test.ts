@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Fake IPty (same shape as pty-live-cap.test.ts) so we can spawn "sessions"
 // without launching real subprocesses. Each carries a controllable `pid`; the
@@ -9,11 +9,12 @@ interface FakeProc {
   pid: number;
   destroyed: number;
   exitCb?: (e: { exitCode: number }) => void;
+  signals: string[];
   write: (data: string) => void;
   onData: (cb: (d: string) => void) => void;
   onExit: (cb: (e: { exitCode: number }) => void) => void;
   resize: () => void;
-  kill: () => void;
+  kill: (signal?: string) => void;
   destroy: () => void;
 }
 
@@ -25,14 +26,16 @@ vi.mock('node-pty', () => ({
     const proc: FakeProc = {
       pid: nextPid++,
       destroyed: 0,
+      signals: [],
       write() {},
       onData() {},
       onExit(cb: (e: { exitCode: number }) => void) {
         this.exitCb = cb;
       },
       resize() {},
-      kill() {
-        this.exitCb?.({ exitCode: 0 });
+      kill(signal?: string) {
+        this.signals.push(signal ?? 'SIGHUP');
+        if (signal !== 'SIGTERM') this.exitCb?.({ exitCode: 0 });
       },
       destroy() {
         this.destroyed++;
@@ -62,14 +65,15 @@ const CONFIG: AppConfig = {
   maxLiveSessions: MAX_LIVE_SESSIONS
 };
 
-function makeSession(mgr: PtyManager) {
+function makeSession(mgr: PtyManager, scheduled = false) {
   return mgr.create({
     projectId: 'p1',
     profile: 'shell',
     cwd: '/tmp',
     cols: 80,
     rows: 24,
-    config: CONFIG
+    config: CONFIG,
+    scheduled
   });
 }
 
@@ -78,6 +82,10 @@ describe('PtyManager.reapDeadSessions', () => {
     spawned.length = 0;
     nextPid = 5000;
     vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('reaps a session whose process is gone (ESRCH) and frees its slot', () => {
@@ -155,4 +163,14 @@ describe('PtyManager.reapDeadSessions', () => {
     // Nothing left to probe — kill is never called.
     expect(killSpy).not.toHaveBeenCalled();
   });
+
+  it('asks a scheduled supervisor to stop with SIGTERM', () => {
+    const mgr = new PtyManager();
+    const session = makeSession(mgr, true);
+    mgr.close(session.id);
+
+    expect(spawned[0].destroyed).toBe(0);
+    expect(spawned[0].signals).toEqual(['SIGTERM']);
+  });
+
 });
