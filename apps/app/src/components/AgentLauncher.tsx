@@ -65,6 +65,7 @@ import { useData, useUi, usePersonas, useTeams, sortProjectsAlphabetically } fro
 import { profileIcon, personaIcon } from '../lib/profileIcon.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
 import { PromptComposer, type PromptComposerHandle } from './PromptComposer.js';
+import { ThreadCommandComposer } from './ThreadCommandComposer.js';
 import { TextArgsField } from './settings/FormFields.js';
 import { AgentConversationHistory } from './AgentConversationHistory.js';
 import { titleFromPrompt } from '../lib/promptTitle.js';
@@ -1144,11 +1145,11 @@ export const AgentLauncher = memo(function AgentLauncher({
    * registered project instead. Unused in project mode (the target is fixed).
    */
   const [targetProjectId, setTargetProjectId] = useState<string | null>(null);
-  // Launch mode: a single agent (default, the flow above) or an autonomous team
-  // run (orchestrator + workers driven toward a goal). Autonomous mode swaps the
-  // profile/persona/framework pickers for a Team picker and launches via
-  // `teams.launchAutonomous` instead of `createTerminal`.
-  const [mode, setMode] = useState<'agent' | 'autonomous'>('agent');
+  // Launch mode: Thread (HTTP conversation, default), Legacy Agent (PTY spawn),
+  // or an autonomous team run. Autonomous mode swaps the profile/persona/
+  // framework pickers for a Team picker and launches via `teams.launchAutonomous`
+  // instead of `createTerminal`. Thread create stays in ThreadCommandComposer.
+  const [mode, setMode] = useState<'thread' | 'agent' | 'autonomous'>('thread');
   const [teamId, setTeamId] = useState<string | null>(null);
   const [harnessDescriptors, setHarnessDescriptors] = useState<HarnessAdapterDescriptor[]>([]);
   const [openCodeAgentDiscoverySnapshot, setOpenCodeAgentDiscoverySnapshot] = useState<OpenCodeAgentDiscoverySnapshot | null>(null);
@@ -1161,6 +1162,9 @@ export const AgentLauncher = memo(function AgentLauncher({
   const [attachments, setAttachments] = useState<string[]>([]);
   const [fixingWithAi, setFixingWithAi] = useState(false);
   const teams = useTeams(useShallow((s) => s.teams));
+  useEffect(() => {
+    if (mode === 'autonomous' && teams.length === 0) setMode('thread');
+  }, [mode, teams.length]);
   const pushToast = useUi((s) => s.pushToast);
   const composerRef = useRef<PromptComposerHandle>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -1863,24 +1867,30 @@ export const AgentLauncher = memo(function AgentLauncher({
         className="palette launch-modal"
         role="dialog"
         aria-modal
-        aria-label="New agent"
+        aria-label={mode === 'thread' ? 'New thread' : mode === 'autonomous' ? 'New autonomous team' : 'New agent'}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="launch-panel">
           <div className="launch-header">
             <div>
-              <h3>{projectMode ? project!.name : scratchIsTarget ? 'Quick agent' : target?.name ?? 'New agent'}</h3>
+              <h3>
+                {mode === 'thread'
+                  ? (projectMode ? project!.name : 'New thread')
+                  : projectMode ? project!.name : scratchIsTarget ? 'Quick agent' : target?.name ?? 'New agent'}
+              </h3>
               <p>
-                {projectMode
-                  ? 'Start a session'
-                  : scratchIsTarget
-                    ? 'A scratch Claude session in your workspace'
-                    : 'Start a Claude session in this project'}
+                {mode === 'thread'
+                  ? 'Start a thread'
+                  : projectMode
+                    ? 'Start a session'
+                    : scratchIsTarget
+                      ? 'A scratch Claude session in your workspace'
+                      : 'Start a Claude session in this project'}
               </p>
             </div>
           </div>
 
-          {anchorError && scratchIsTarget && (
+          {mode !== 'thread' && anchorError && scratchIsTarget && (
             <div className="launch-error" role="alert">
               Couldn’t prepare the workspace: {anchorError}
             </div>
@@ -1891,31 +1901,50 @@ export const AgentLauncher = memo(function AgentLauncher({
               .launch-scroll / .launch-actions in global.css) so a long Advanced
               section or extra-args panel can never push Send off-screen. */}
           <div className="launch-scroll">
-          {/* Launch mode: single agent (today's flow) or an autonomous team run.
-              Only offered when teams exist — otherwise the toggle would dead-end. */}
-          {teams.length > 0 && (
-            <div className="launch-row">
-              <div className="launch-segmented" role="group" aria-label="Launch mode">
-                <button
-                  type="button"
-                  className={mode === 'agent' ? 'active' : ''}
-                  onClick={() => setMode('agent')}
-                  aria-pressed={mode === 'agent'}
-                >
-                  Single agent
-                </button>
+          {/* Launch mode: Thread (HTTP conversation) and Legacy Agent (PTY) are
+              always offered. Autonomous Team only appears when teams exist. */}
+          <div className="launch-row">
+            <div className="launch-segmented" role="group" aria-label="Launch mode">
+              <button
+                type="button"
+                className={mode === 'thread' ? 'active' : ''}
+                onClick={() => setMode('thread')}
+                aria-pressed={mode === 'thread'}
+              >
+                Thread
+              </button>
+              <button
+                type="button"
+                className={mode === 'agent' ? 'active' : ''}
+                onClick={() => setMode('agent')}
+                aria-pressed={mode === 'agent'}
+              >
+                Legacy Agent
+              </button>
+              {teams.length > 0 && (
                 <button
                   type="button"
                   className={mode === 'autonomous' ? 'active' : ''}
                   onClick={() => setMode('autonomous')}
                   aria-pressed={mode === 'autonomous'}
                 >
-                  <Zap size={13} /> Autonomous team
+                  <Zap size={13} /> Autonomous Team
                 </button>
-              </div>
+              )}
+            </div>
+          </div>
+
+          {mode === 'thread' && (
+            <div className="launch-thread-composer">
+              <ThreadCommandComposer
+                project={project}
+                initialText={initialPrompt}
+                onCreated={onClose}
+              />
             </div>
           )}
 
+          {mode !== 'thread' && (<>
           <PromptComposer
             ref={composerRef}
             value={prompt}
@@ -2537,9 +2566,10 @@ export const AgentLauncher = memo(function AgentLauncher({
           )}
 
           {projectMode && <AgentConversationHistory projectId={project!.id} unavailableProviders={unavailableHistoryProviders} onResumed={onClose} />}
+          </>)}
           </div>
 
-          {!useQuickAgentHomeComposer && (
+          {mode !== 'thread' && !useQuickAgentHomeComposer && (
             <div className="launch-actions">
               {mode === 'autonomous' ? (
                 <button

@@ -40,8 +40,10 @@ export function ThreadDetailView() {
   const [projectId, setProjectId] = useState<string | null>(null);
   const [environmentId, setEnvironmentId] = useState<string | null>(null);
   const [isWorktree, setIsWorktree] = useState(false);
-  const [parentThreadId, setParentThreadId] = useState<string | null>(null);
   const [branchName, setBranchName] = useState<string | null>(null);
+  const [threadProviderId, setThreadProviderId] = useState<string | null>(null);
+  const [threadModel, setThreadModel] = useState<string | null>(null);
+  const [threadReasoning, setThreadReasoning] = useState<string | null>(null);
   const [rows, setRows] = useState<TimelineRow[]>([]);
   const [thinking, setThinking] = useState<ActiveThinking | null>(null);
   const [todos, setTodos] = useState<ThreadTimelinePendingTodos | null>(null);
@@ -81,7 +83,8 @@ export function ThreadDetailView() {
           branchName?: string | null;
           isWorktree?: boolean;
           archivedAt?: number | null;
-          parentThreadId?: string | null;
+          model?: string | null;
+          reasoningLevel?: string | null;
         };
         const nextStatus = thread.status ?? timeline.status;
         setTitle(thread.title?.trim() || 'Thread');
@@ -90,8 +93,10 @@ export function ThreadDetailView() {
         setProjectId(typeof thread.projectId === 'string' ? thread.projectId : null);
         setEnvironmentId(typeof thread.environmentId === 'string' ? thread.environmentId : null);
         setIsWorktree(thread.isWorktree ?? false);
-        setParentThreadId(typeof thread.parentThreadId === 'string' ? thread.parentThreadId : null);
         setBranchName(thread.branchName ?? null);
+        setThreadProviderId(typeof thread.providerId === 'string' ? thread.providerId : null);
+        setThreadModel(typeof thread.model === 'string' ? thread.model : null);
+        setThreadReasoning(typeof thread.reasoningLevel === 'string' ? thread.reasoningLevel : null);
         setRows((timeline.rows as TimelineRow[]) ?? []);
         setThinking((timeline.activeThinking as ActiveThinking | null) ?? null);
         setTodos((timeline.pendingTodos as ThreadTimelinePendingTodos | null) ?? null);
@@ -119,8 +124,7 @@ export function ThreadDetailView() {
             cwd: typeof thread.cwd === 'string' ? thread.cwd : null,
             branchName: thread.branchName ?? null,
             isWorktree: thread.isWorktree ?? false,
-            archivedAt: thread.archivedAt ?? null,
-            parentThreadId: typeof thread.parentThreadId === 'string' ? thread.parentThreadId : null
+            archivedAt: thread.archivedAt ?? null
           });
         }
         if (!isBusyThreadStatus(nextStatus) && poll !== null) {
@@ -180,12 +184,6 @@ export function ThreadDetailView() {
     panel.selectPin('diff');
   }, [panel]);
 
-  const assignParent = useCallback(async (nextParentId: string | null) => {
-    if (!threadId) return;
-    await product.threads.update(threadId, { parentThreadId: nextParentId });
-    setParentThreadId(nextParentId);
-  }, [threadId]);
-
   const startPanelTerminal = useCallback(async () => {
     if (!projectId) return;
     const created = await product.terminals.create({
@@ -217,12 +215,13 @@ export function ThreadDetailView() {
       <ThreadInfoContent
         threadId={threadId}
         projectId={projectId}
-        parentThreadId={parentThreadId}
         isWorktree={isWorktree}
         cwd={cwd}
         branchName={branchName}
         environmentId={environmentId}
-        onAssignedParent={(next) => { void assignParent(next); }}
+        model={threadModel}
+        reasoningLevel={threadReasoning}
+        providerId={threadProviderId}
       />
     );
   } else if (pin === 'diff' && environmentId) {
@@ -379,6 +378,9 @@ export function ThreadDetailView() {
               status={status}
               environmentLabel={isWorktree ? 'This checkout' : 'Local'}
               contextWindowUsage={contextWindow}
+              providerId={threadProviderId ?? undefined}
+              model={threadModel}
+              reasoningLevel={threadReasoning}
               onOpenExplorer={projectId ? () => navigate(getProjectWorkspaceRoutePath(projectId, 'explorer')) : undefined}
             />
           </div>

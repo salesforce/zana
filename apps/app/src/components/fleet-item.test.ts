@@ -10,6 +10,9 @@ import {
   threadFleetItem,
   RAIL_IDLE_THREAD_LIMIT,
   railThreadsForProject,
+  threadCardRuntimeLabel,
+  threadCardShowsProject,
+  threadHarnessLabel,
   threadIsLiveForRail,
   threadRailDetail
 } from './fleet-item.js';
@@ -74,6 +77,21 @@ describe('fleet items', () => {
     expect(threadRailDetail(thread({ id: 't1', status: 'error' }))).toBe('Needs you · Thread');
     expect(threadRailDetail(thread({ id: 't1', status: 'active' }))).toBe('Working · Thread');
     expect(threadRailDetail(thread({ id: 't1', status: 'idle' }))).toBe('Idle · Thread');
+  });
+
+  it('labels a thread card with harness and runtime instead of the project slug', () => {
+    expect(threadHarnessLabel('claude-code')).toBe('Claude Code');
+    expect(threadHarnessLabel('acp-cursor')).toBe('Cursor');
+    expect(threadHarnessLabel('codex')).toBe('Codex');
+    expect(threadHarnessLabel('pi')).toBe('Pi');
+    expect(threadHarnessLabel('custom-agent')).toBe('Custom Agent');
+    expect(threadCardRuntimeLabel(thread({ id: 't1', status: 'idle' }))).toBe('Claude Code · Local');
+    expect(threadCardRuntimeLabel(thread({ id: 't1', status: 'idle', isWorktree: true }))).toBe(
+      'Claude Code · This checkout'
+    );
+    expect(threadCardShowsProject(true, true)).toBe(false);
+    expect(threadCardShowsProject(true, false)).toBe(true);
+    expect(threadCardShowsProject(false, false)).toBe(false);
   });
 
   it('never feeds a thread id to the PTY monitor selection store', () => {

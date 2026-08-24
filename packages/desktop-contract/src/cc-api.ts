@@ -295,6 +295,7 @@ export interface CcApi {
       title?: string;
       permissionMode?: 'accept-edits' | 'auto' | 'full';
       model?: string;
+      reasoningLevel?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'ultracode' | 'max' | 'ultra';
     }): Promise<Result<{
       id: string;
       projectId: string;
@@ -346,7 +347,15 @@ export interface CcApi {
       parentThreadId?: string | null;
     }>>;
     get(threadId: string): Promise<{ thread: Record<string, unknown> }>;
-    send(threadId: string, input: string | unknown[], mode?: string): Promise<{ ok: boolean }>;
+    send(
+      threadId: string,
+      input: string | unknown[],
+      mode?: string,
+      extras?: {
+        model?: string;
+        reasoningLevel?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'ultracode' | 'max' | 'ultra';
+      }
+    ): Promise<{ ok: boolean }>;
     stop(threadId: string): Promise<{ ok: boolean }>;
     resume(threadId: string): Promise<{ ok: boolean }>;
     timeline(threadId: string, query?: {
@@ -386,6 +395,33 @@ export interface CcApi {
       contentType: string | null;
     }>;
     events(threadId: string): Promise<{ events: unknown[] }>;
+    executionOptions(query?: { providerId?: string }): Promise<{
+      providers: Array<{
+        id: string;
+        displayName: string;
+        available: boolean;
+        composerActions: string[];
+        capabilities: { permissionModes: string[] };
+      }>;
+      models: Array<{
+        id: string;
+        model: string;
+        displayName: string;
+        supportedReasoningEfforts: Array<{ reasoningEffort: string; description: string }>;
+        defaultReasoningEffort: string;
+        isDefault: boolean;
+      }>;
+      selectedOnlyModels: Array<{
+        id: string;
+        model: string;
+        displayName: string;
+        supportedReasoningEfforts: Array<{ reasoningEffort: string; description: string }>;
+        defaultReasoningEffort: string;
+        isDefault: boolean;
+      }>;
+      permissionCeiling: string;
+      modelLoadError: { providerId: string; code: string } | null;
+    }>;
     providers(): Promise<{ providers: Array<{
       id: string;
       displayName: string;
@@ -411,12 +447,35 @@ export interface CcApi {
       branchName: string | null;
       isWorktree: boolean;
     }>>;
-    update(threadId: string, patch: { parentThreadId?: string | null }): Promise<{ thread: Record<string, unknown> }>;
   };
   environments: {
     list(projectId: string, hostId?: string): Promise<Environment[]>;
     status(environmentId: string): Promise<WorkspaceStatus>;
     diff(environmentId: string, target?: unknown): Promise<WorkspaceDiffResponse>;
+    diffFiles(environmentId: string, target?: unknown): Promise<{
+      outcome: 'available';
+      files: Array<{
+        path: string;
+        previousPath: string | null;
+        changeKind: 'added' | 'modified' | 'deleted' | 'renamed' | 'copied' | 'type_changed';
+        additions: number;
+        deletions: number;
+        binary: boolean;
+        origin: 'tracked' | 'untracked';
+        loadMode: 'auto' | 'on_demand' | 'too_large';
+      }>;
+      truncated: boolean;
+      shortstat: string;
+      mergeBaseRef: string | null;
+      initialPatches: Array<{ path: string; patch: string; truncated: boolean }>;
+    }>;
+    diffPatch(
+      environmentId: string,
+      body: { target?: unknown; paths: string[] }
+    ): Promise<{
+      outcome: 'available';
+      patches: Array<{ path: string; patch: string; truncated: boolean }>;
+    }>;
     pullRequest(environmentId: string): Promise<{ pullRequest: GitHostPullRequest | null }>;
     action(environmentId: string, action: EnvironmentAction): Promise<Record<string, unknown>>;
     cancelProvision(environmentId: string): Promise<{ ok: boolean; cancelled?: boolean }>;

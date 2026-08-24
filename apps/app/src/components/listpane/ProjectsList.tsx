@@ -150,7 +150,6 @@ export function ProjectsList({
   const projects = useData((s) => s.projects);
   const terminals = useData((s) => s.terminals);
   const loadProjects = useData((s) => s.loadProjects);
-  const loadGitStatus = useData((s) => s.loadGitStatus);
   const addProjectByPath = useData((s) => s.addProjectByPath);
   const addRemoteProject = useData((s) => s.addRemoteProject);
   const cloneProject = useData((s) => s.cloneProject);
@@ -168,7 +167,6 @@ export function ProjectsList({
   const selectedTabId = useUi((s) => s.selectedTabId);
   const pushToast = useUi((s) => s.pushToast);
   const unread = useUi((s) => s.unread);
-  const gitStatus = useData((s) => s.gitStatus);
   const projectExpanded = useUi((s) => s.projectExpanded);
   const setProjectExpanded = useUi((s) => s.setProjectExpanded);
   const hideIdleProjects = useUi((s) => s.hideIdleProjects);
@@ -263,16 +261,14 @@ export function ProjectsList({
 
   // Manual reload of the project list — covers out-of-band edits to
   // projects.json that the live `projects:onChanged` push didn't originate
-  // (e.g. another window, a hand-edit, or a stale list after sleep). Also
-  // re-pulls git status for the projects currently in view so branch/dirty
-  // chips don't lag behind. Guarded by `refreshing` so a double-click can't
-  // stack reloads; the spinner gives the gesture visible feedback.
+  // (e.g. another window, a hand-edit, or a stale list after sleep). Guarded
+  // by `refreshing` so a double-click can't stack reloads; the spinner gives
+  // the gesture visible feedback.
   const handleRefresh = async () => {
     if (refreshing) return;
     setRefreshing(true);
     try {
       await loadProjects();
-      await Promise.all(visibleProjects.map((p) => loadGitStatus(p.id)));
     } finally {
       setRefreshing(false);
     }
@@ -549,12 +545,15 @@ export function ProjectsList({
   const renderProject = (group: RailGroup, p: Project) => {
     const sortable = canReorder && renamingId !== p.id;
     const labelClass = sortable ? 'project-label project-label--sortable' : 'project-label';
+    const liveList = liveTerminals(terminals[p.id]);
+    const railThreads = railThreadsByProject.get(p.id) ?? [];
+    const nestedCount = liveList.length + railThreads.length;
     return (
     <SortableProject key={p.id} project={p} disabled={!sortable}>
       {({ attributes, listeners }) => (
         <>
           <div
-            className={`project-item ${selectedId === p.id ? 'active' : ''}`}
+            className="project-item"
             onContextMenu={(e) => {
               e.preventDefault();
               setAgentMenu(null);
@@ -562,7 +561,6 @@ export function ProjectsList({
             }}
           >
             {(() => {
-              const g = gitStatus[p.id];
               const tooltip = [
                 p.path,
                 p.tag ? `#${p.tag}` : null,
@@ -582,18 +580,8 @@ export function ProjectsList({
                 <span className="project-meta project-meta--inline" title={tooltip || undefined}>
                   <span className="project-name">{p.name}</span>
                   {p.remote && <Network size={11} strokeWidth={2} className="project-remote-icon" aria-label="Remote SSH project" />}
-                  {g && (
-                    <span className="project-git">
-                      <span className="project-git-branch">{g.detached ? '(detached)' : g.branch ?? '?'}</span>
-                      {g.dirty && <span className="project-git-dirty" title="Uncommitted changes">●</span>}
-                      {g.ahead > 0 && <span className="project-git-ahead" title="Ahead">↑{g.ahead}</span>}
-                      {g.behind > 0 && <span className="project-git-behind" title="Behind">↓{g.behind}</span>}
-                    </span>
-                  )}
                 </span>
               );
-              const liveList = liveTerminals(terminals[p.id]);
-              const railThreads = railThreadsByProject.get(p.id) ?? [];
               const expanded = isProjectExpanded(p);
               const treeChevron =
                 liveList.length === 0 && railThreads.length === 0 ? null : (
@@ -655,24 +643,14 @@ export function ProjectsList({
               );
             })()}
             {!isProjectExpanded(p) && <ProjectRollupDot projectId={p.id} />}
-            {(() => {
-              const list = listedTerminals(terminals[p.id]);
-              const running = list.filter((t) => t.status !== 'exited').length;
-              const liveThreadCount = liveThreadsByProject.get(p.id)?.length ?? 0;
-              const liveCount = running + liveThreadCount;
-              const exited = list.filter((t) => t.status === 'exited').length;
-              const crashed = list.filter((t) => t.status === 'exited' && (t.exitCode ?? 0) !== 0).length;
-              if (!list.length && !liveThreadCount) return null;
-              const titleParts = [`${liveCount} running`, `${exited} exited`];
-              if (crashed) titleParts.push(`${crashed} crashed`);
-              return (
-                <span className={`project-badge ${crashed ? 'has-crashed' : ''}`} title={titleParts.join(', ')}>
-                  {liveCount}
-                  {exited > 0 && <span className="project-badge-exited">·{exited}</span>}
-                  {crashed > 0 && <span className="project-badge-crashed" aria-hidden="true" />}
-                </span>
-              );
-            })()}
+            {nestedCount > 0 && (
+              <span
+                className="project-badge"
+                title={`${nestedCount} ${nestedCount === 1 ? 'agent' : 'agents'}`}
+              >
+                {nestedCount}
+              </span>
+            )}
             <button
               type="button"
               className="project-actions"
@@ -700,9 +678,7 @@ export function ProjectsList({
             </button>
           </div>
           {(() => {
-            const list = liveTerminals(terminals[p.id]);
-            const railThreads = railThreadsByProject.get(p.id) ?? [];
-            if (!list.length && !railThreads.length) return null;
+            if (!nestedCount) return null;
             if (!isProjectExpanded(p)) return null;
             const activeTab = selectedId === p.id ? selectedTabId[p.id] : undefined;
             return (
@@ -735,7 +711,7 @@ export function ProjectsList({
                     </div>
                   );
                 })}
-                {list.map((t) => {
+                {liveList.map((t) => {
                   const isUnread = !!unread[t.id] && activeTab !== t.id;
                   return (
                     <div key={t.id} role="listitem">

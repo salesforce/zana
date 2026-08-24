@@ -389,7 +389,8 @@ function httpProduct(): Pick<
             cwd: input.cwd,
             title: input.title,
             permissionMode: input.permissionMode,
-            model: input.model
+            model: input.model,
+            reasoningLevel: input.reasoningLevel
           })
         });
         const body = (await response.json()) as Awaited<ReturnType<CcApi['threads']['create']>> & {
@@ -411,10 +412,15 @@ function httpProduct(): Pick<
         return body.threads;
       },
       get: async (threadId) => apiJson(`/threads/${encodeURIComponent(threadId)}`),
-      send: async (threadId, input, mode) =>
+      send: async (threadId, input, mode, extras) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/send`, {
           method: 'POST',
-          body: JSON.stringify({ input, mode })
+          body: JSON.stringify({
+            input,
+            mode,
+            ...(extras?.model ? { model: extras.model } : {}),
+            ...(extras?.reasoningLevel ? { reasoningLevel: extras.reasoningLevel } : {})
+          })
         }),
       stop: async (threadId) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/stop`, { method: 'POST', body: '{}' }),
@@ -435,6 +441,12 @@ function httpProduct(): Pick<
       hostFileContent: async (threadId, path) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/host-files/content?path=${encodeURIComponent(path)}`),
       events: async (threadId) => apiJson(`/threads/${encodeURIComponent(threadId)}/events`),
+      executionOptions: async (query) => {
+        const params = new URLSearchParams();
+        if (query?.providerId) params.set('providerId', query.providerId);
+        const suffix = params.size ? `?${params.toString()}` : '';
+        return apiJson(`/system/execution-options${suffix}`);
+      },
       providers: async () => apiJson('/threads/providers'),
       commands: async (projectId) =>
         apiJson(`/projects/${encodeURIComponent(projectId)}/commands`),
@@ -454,12 +466,7 @@ function httpProduct(): Pick<
           body: '{}'
         });
         return (await response.json()) as Awaited<ReturnType<CcApi['threads']['fork']>>;
-      },
-      update: async (threadId, patch) =>
-        apiJson(`/threads/${encodeURIComponent(threadId)}`, {
-          method: 'PATCH',
-          body: JSON.stringify(patch)
-        })
+      }
     } as CcApi['threads'],
     environments: {
       list: async (projectId, hostId) => {
@@ -476,6 +483,15 @@ function httpProduct(): Pick<
         const suffix = target ? `?target=${encodeURIComponent(JSON.stringify(target))}` : '';
         return apiJson(`/environments/${encodeURIComponent(environmentId)}/diff${suffix}`);
       },
+      diffFiles: async (environmentId, target) => {
+        const suffix = target ? `?target=${encodeURIComponent(JSON.stringify(target))}` : '';
+        return apiJson(`/environments/${encodeURIComponent(environmentId)}/diff/files${suffix}`);
+      },
+      diffPatch: async (environmentId, body) =>
+        apiJson(`/environments/${encodeURIComponent(environmentId)}/diff/patch`, {
+          method: 'POST',
+          body: JSON.stringify(body)
+        }),
       pullRequest: async (environmentId) => {
         return apiJson(`/environments/${encodeURIComponent(environmentId)}/pull-request`);
       },

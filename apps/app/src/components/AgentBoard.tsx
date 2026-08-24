@@ -16,6 +16,8 @@ import {
   fleetAgentCards,
   fleetMatchesLane,
   groupFleetByProject,
+  threadCardRuntimeLabel,
+  threadCardShowsProject,
   type FleetItem
 } from './fleet-item.js';
 
@@ -864,46 +866,56 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
     );
   };
 
-  const renderThreadCard = (item: Extract<FleetItem, { kind: 'thread' }>, laneKey: LaneKey) => (
-    <button
-      key={item.id}
-      type="button"
-      className={`agent-card is-thread lane-${laneKey} ${item.id === activeId ? 'active' : ''}`}
-      data-kind="thread"
-      onClick={() => onInspect(item)}
-      onContextMenu={(e) => {
-        setMenu(null);
-        openThreadMenu(e, item.thread, setThreadMenu);
-      }}
-      aria-current={item.id === activeId ? 'true' : undefined}
-      title={`${item.title} · ${item.projectName} · ${item.thread.status}`}
-    >
-      {laneKey === 'working' && (
-        <span className="agent-card-activity" aria-hidden="true">
-          <span className="agent-card-activity-bar" />
-        </span>
-      )}
-      <span className="agent-card-head">
-        <span className="agent-card-icon">
-          <MessageSquare size={14} aria-hidden="true" />
-        </span>
-        <span className="agent-card-title">{item.title}</span>
-        <span className={`tab-agent-dot agent-${item.state}`} aria-hidden="true" />
-        <FleetKindChip kind="thread" />
-      </span>
-      <span className="agent-card-meta">
-        {showProject && (
-          <span className="agent-card-project" title={item.projectName}>
-            <span className="agent-card-project-name">{item.projectName}</span>
+  const renderThreadCard = (
+    item: Extract<FleetItem, { kind: 'thread' }>,
+    laneKey: LaneKey,
+    grouped = false
+  ) => {
+    const runtime = threadCardRuntimeLabel(item.thread);
+    const showProjectChip = threadCardShowsProject(Boolean(showProject), grouped);
+    return (
+      <button
+        key={item.id}
+        type="button"
+        className={`agent-card is-thread lane-${laneKey} ${item.id === activeId ? 'active' : ''}`}
+        data-kind="thread"
+        onClick={() => onInspect(item)}
+        onContextMenu={(e) => {
+          setMenu(null);
+          openThreadMenu(e, item.thread, setThreadMenu);
+        }}
+        aria-current={item.id === activeId ? 'true' : undefined}
+        title={`${item.title} · ${runtime}${showProjectChip ? ` · ${item.projectName}` : ''}`}
+      >
+        {laneKey === 'working' && (
+          <span className="agent-card-activity" aria-hidden="true">
+            <span className="agent-card-activity-bar" />
           </span>
         )}
-        <span className="agent-card-sub">{item.thread.status}</span>
-      </span>
-    </button>
-  );
+        <span className="agent-card-head">
+          <span className="agent-card-icon">
+            <MessageSquare size={14} aria-hidden="true" />
+          </span>
+          <span className="agent-card-title">{item.title}</span>
+          <span className={`tab-agent-dot agent-${item.state}`} aria-hidden="true" />
+          <FleetKindChip kind="thread" />
+        </span>
+        <span className="agent-card-meta">
+          {/* Grouped under a project header: the project is already named above —
+              show runtime/harness instead of repeating the project slug. */}
+          {showProjectChip && (
+            <span className="agent-card-project" title={item.projectName}>
+              <span className="agent-card-project-name">{item.projectName}</span>
+            </span>
+          )}
+          {(!showProject || grouped) && <span className="agent-card-sub">{runtime}</span>}
+        </span>
+      </button>
+    );
+  };
 
   const renderItem = (item: FleetItem, laneKey: LaneKey, grouped = false) =>
-    item.kind === 'thread' ? renderThreadCard(item, laneKey) : renderCard(item.card, laneKey, grouped);
+    item.kind === 'thread' ? renderThreadCard(item, laneKey, grouped) : renderCard(item.card, laneKey, grouped);
 
   return (
     <div className="agents-board-lanes">

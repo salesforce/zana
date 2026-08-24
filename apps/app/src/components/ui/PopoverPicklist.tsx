@@ -1,6 +1,7 @@
 export {
   PopoverPicklist,
   placePopoverMenu,
+  useExclusivePopover,
   type PopoverMenuPlacement,
   type PopoverPicklistOption,
   type PopoverPicklistProps

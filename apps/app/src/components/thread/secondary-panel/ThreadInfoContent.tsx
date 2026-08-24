@@ -1,9 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Box, ChevronDown, Copy, Folder, GitBranch, GitPullRequest, UserRound } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Box, Copy, Cpu, Folder, Gauge, GitBranch, GitPullRequest } from 'lucide-react';
 import type { GitHostPullRequest, WorkspaceStatus } from '@zana-ai/zcc-domain';
 import { product } from '../../../lib/product-client.js';
-import { getThreadRoutePath } from '../../../lib/route-paths.js';
 import {
   workspaceFileBasename,
   workspaceFileKindLetter,
@@ -13,88 +11,43 @@ import {
   applyIfCurrent,
   copyText,
   environmentLabel,
-  hydrateThreadInfo,
-  parentFromSelectValue,
-  type ThreadOption
+  hydrateThreadInfo
 } from './threadSecondaryPanelLogic.js';
+import {
+  humanThreadModelLabel,
+  humanThreadReasoningLabel
+} from '../pickers/thread-execution-labels.js';
 
-export type ParentOption = ThreadOption;
 export { environmentLabel };
 
 export function ThreadInfoRows({
-  threadId,
-  parentThreadId,
-  parentOptions,
-  forks,
   isWorktree,
   environmentName,
   cwd,
   branchName,
   workspaceStatus,
   pullRequest,
-  onAssignParent
+  model,
+  reasoningLevel,
+  providerId
 }: {
-  threadId: string;
-  parentThreadId: string | null;
-  parentOptions: ParentOption[];
-  forks: ParentOption[];
   isWorktree: boolean;
   environmentName?: string | null;
   cwd: string | null;
   branchName: string | null;
   workspaceStatus: WorkspaceStatus | null;
   pullRequest: GitHostPullRequest | null;
-  onAssignParent: (parentThreadId: string | null) => void;
+  model?: string | null;
+  reasoningLevel?: string | null;
+  providerId?: string | null;
 }) {
-  const parent = parentOptions.find((option) => option.id === parentThreadId) ?? null;
   const gitLabel = workspaceStatusPresentation(workspaceStatus).label;
   const files = workspaceStatus?.files ?? [];
+  const modelLabel = model ? humanThreadModelLabel(model, providerId ?? undefined) : null;
+  const reasoningLabel = humanThreadReasoningLabel(reasoningLevel);
 
   return (
     <div className="thread-info-content" data-testid="thread-info-tab">
-      <InfoRow icon={<UserRound size={14} />} label="Parent" testId="thread-info-parent">
-        {parent ? (
-          <span className="thread-info-parent-value">
-            <Link to={getThreadRoutePath(parent.id)} className="thread-info-link">{parent.title}</Link>
-            <button
-              type="button"
-              className="thread-info-clear"
-              aria-label="Clear parent thread"
-              onClick={() => onAssignParent(null)}
-            >
-              ×
-            </button>
-          </span>
-        ) : (
-          <label className="thread-info-select-wrap">
-            <select
-              className="thread-info-select"
-              aria-label="Assign parent thread"
-              value=""
-              onChange={(event) => onAssignParent(parentFromSelectValue(event.target.value))}
-            >
-              <option value="">None</option>
-              {parentOptions.filter((option) => option.id !== threadId).map((option) => (
-                <option key={option.id} value={option.id}>{option.title}</option>
-              ))}
-            </select>
-            <ChevronDown size={12} aria-hidden="true" />
-          </label>
-        )}
-      </InfoRow>
-
-      {forks.length > 0 ? (
-        <InfoRow icon={<UserRound size={14} />} label="Forks" testId="thread-info-forks">
-          <ul className="thread-info-forks">
-            {forks.map((fork) => (
-              <li key={fork.id}>
-                <Link to={getThreadRoutePath(fork.id)} className="thread-info-link">{fork.title}</Link>
-              </li>
-            ))}
-          </ul>
-        </InfoRow>
-      ) : null}
-
       <InfoRow icon={<Box size={14} />} label="Environment" testId="thread-info-environment">
         {environmentLabel(isWorktree, environmentName)}
       </InfoRow>
@@ -148,6 +101,18 @@ export function ThreadInfoRows({
           </ul>
         </InfoRow>
       ) : null}
+
+      {modelLabel ? (
+        <InfoRow icon={<Cpu size={14} />} label="Model" testId="thread-info-model">
+          {modelLabel}
+        </InfoRow>
+      ) : null}
+
+      {reasoningLabel ? (
+        <InfoRow icon={<Gauge size={14} />} label="Reasoning" testId="thread-info-reasoning">
+          {reasoningLabel}
+        </InfoRow>
+      ) : null}
     </div>
   );
 }
@@ -179,24 +144,24 @@ function InfoRow({
 export function ThreadInfoContent({
   threadId,
   projectId,
-  parentThreadId,
   isWorktree,
   cwd,
   branchName,
   environmentId,
-  onAssignedParent
+  model,
+  reasoningLevel,
+  providerId
 }: {
   threadId: string;
   projectId: string | null;
-  parentThreadId: string | null;
   isWorktree: boolean;
   cwd: string | null;
   branchName: string | null;
   environmentId: string | null;
-  onAssignedParent: (parentThreadId: string | null) => void;
+  model?: string | null;
+  reasoningLevel?: string | null;
+  providerId?: string | null;
 }) {
-  const [options, setOptions] = useState<ParentOption[]>([]);
-  const [forks, setForks] = useState<ParentOption[]>([]);
   const [environmentName, setEnvironmentName] = useState<string | null>(null);
   const [workspaceStatus, setWorkspaceStatus] = useState<WorkspaceStatus | null>(null);
   const [pullRequest, setPullRequest] = useState<GitHostPullRequest | null>(null);
@@ -204,14 +169,11 @@ export function ThreadInfoContent({
   useEffect(() => {
     let cancelled = false;
     void hydrateThreadInfo(projectId, threadId, environmentId, {
-      listThreads: product.threads.list,
       listEnvironments: product.environments.list,
       status: product.environments.status,
       pullRequest: product.environments.pullRequest
     }).then((data) => {
       applyIfCurrent(cancelled, data, (next) => {
-        setOptions(next.options);
-        setForks(next.forks);
         setEnvironmentName(next.environmentName);
         setWorkspaceStatus(next.status as WorkspaceStatus | null);
         setPullRequest(next.pullRequest as GitHostPullRequest | null);
@@ -222,17 +184,15 @@ export function ThreadInfoContent({
 
   return (
     <ThreadInfoRows
-      threadId={threadId}
-      parentThreadId={parentThreadId}
-      parentOptions={options}
-      forks={forks}
       isWorktree={isWorktree}
       environmentName={environmentName}
       cwd={cwd}
       branchName={branchName}
       workspaceStatus={workspaceStatus}
       pullRequest={pullRequest}
-      onAssignParent={onAssignedParent}
+      model={model}
+      reasoningLevel={reasoningLevel}
+      providerId={providerId}
     />
   );
 }

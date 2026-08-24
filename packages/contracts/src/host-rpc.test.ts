@@ -110,6 +110,8 @@ describe('host-rpc contract', () => {
       threadId,
       environmentId,
       input: ['follow up'],
+      model: 'claude-sonnet-5',
+      reasoningLevel: 'high',
       resume: {
         projectId: 'p1',
         providerId: 'claude',
@@ -117,6 +119,8 @@ describe('host-rpc contract', () => {
       }
     })).toMatchObject({
       type: 'turn.submit',
+      model: 'claude-sonnet-5',
+      reasoningLevel: 'high',
       resume: { providerThreadId: 'prov-1' }
     });
     expect(HostRpcCommandSchema.parse({
@@ -199,6 +203,38 @@ describe('host-rpc contract', () => {
     expect(batch.events[1]?.kind).toBe('project.clone.progress');
   });
 
+  it('parses provider.list_models commands and results', () => {
+    const command = HostRpcCommandSchema.parse({
+      type: 'provider.list_models',
+      providerId: 'codex',
+      bridgeLaunch: {
+        pluginId: 'provider-codex',
+        dataDir: '/tmp/bridge',
+        source: { kind: 'daemon-bundled', id: 'codex' },
+        capabilities: {
+          supportsServiceTier: true,
+          permissionModes: ['full'],
+          supportsThreadArchive: true,
+          supportsThreadRename: true,
+          fork: 'checkpoint'
+        }
+      }
+    });
+    expect(command.type).toBe('provider.list_models');
+    expect(parseHostRpcResult('provider.list_models', {
+      models: [{
+        id: 'gpt-5.5',
+        model: 'gpt-5.5',
+        displayName: 'GPT-5.5',
+        description: 'Codex default',
+        supportedReasoningEfforts: [{ reasoningEffort: 'medium', description: 'Medium' }],
+        defaultReasoningEffort: 'medium',
+        isDefault: true
+      }],
+      selectedOnlyModels: []
+    }).models[0]?.displayName).toBe('GPT-5.5');
+  });
+
   it('parses provider.status results by command type', () => {
     expect(parseHostRpcResult('provider.status', { providers: [] })).toEqual({ providers: [] });
     expect(parseHostRpcResult('thread.resize', { threadId, resized: true })).toEqual({
@@ -206,5 +242,29 @@ describe('host-rpc contract', () => {
       resized: true
     });
     expect(() => parseHostRpcResult('thread.start', { providers: [] })).toThrow();
+    expect(parseHostRpcResult('workspace.diffFiles', {
+      files: [{
+        path: 'a.ts',
+        previousPath: null,
+        statusLetter: 'M',
+        additions: 1,
+        deletions: 0,
+        binary: false,
+        origin: 'tracked'
+      }],
+      shortstat: '1 file changed',
+      mergeBaseRef: null,
+      truncated: false
+    })).toMatchObject({ truncated: false, files: [{ path: 'a.ts' }] });
+    expect(() => parseHostRpcResult('workspace.diffPatch', [{
+      path: 'a.ts',
+      patch: 'diff --git a/a.ts b/a.ts\n',
+      truncated: false
+    }])).toThrow(/expected object/i);
+    expect(parseHostRpcResult('workspace.diffPatch', {
+      patches: [{ path: 'a.ts', patch: 'diff --git a/a.ts b/a.ts\n', truncated: false }]
+    })).toEqual({
+      patches: [{ path: 'a.ts', patch: 'diff --git a/a.ts b/a.ts\n', truncated: false }]
+    });
   });
 });

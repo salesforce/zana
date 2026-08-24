@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -17,6 +17,15 @@ import {
 } from './ui/CommandComposer.js';
 import { EnvironmentPicker, defaultWorkspaceChoice, type WorkspacePickerValue } from './EnvironmentPicker.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
+import { ComposerModePicker } from './thread/pickers/ComposerModePicker.js';
+import { ModelReasoningPicker } from './thread/pickers/ModelReasoningPicker.js';
+import { ReasoningEffortPicker } from './thread/pickers/ReasoningEffortPicker.js';
+import {
+  applyComposerModePrefix,
+  composerModesForActions,
+  type ComposerWorkMode
+} from './thread/pickers/composer-mode.js';
+import { useThreadComposerOptions } from './thread/pickers/useThreadComposerOptions.js';
 import { ComposerTypeaheadMenu } from './composer/ComposerTypeaheadMenu.js';
 import { VoiceRecordingBar } from './thread/voice/VoiceRecordingBar.js';
 import { useVoiceInput } from './thread/voice/useVoiceInput.js';
@@ -35,20 +44,16 @@ import { ThreadContextMeter } from './thread/ThreadContextMeter.js';
 
 export type ThreadSendMode = 'start' | 'auto' | 'steer' | 'queue-if-active' | 'steer-if-active';
 
-export interface ThreadProviderOption {
-  id: string;
-  displayName: string;
-  permissionModes: string[];
-  reasoningLevels: string[];
-  composerActions: string[];
-}
-
 export interface ThreadCommandComposerProps {
   project?: Project;
   threadId?: string;
   status?: string;
   environmentLabel?: string;
   contextWindowUsage?: ThreadContextWindowUsage | null;
+  providerId?: string;
+  model?: string | null;
+  reasoningLevel?: string | null;
+  initialText?: string;
   onCreated?: (threadId: string) => void;
   onOpenExplorer?: () => void;
 }
@@ -66,19 +71,27 @@ export function ThreadCommandComposer({
   status,
   environmentLabel,
   contextWindowUsage,
+  providerId: lockedProviderId,
+  model: initialModel,
+  reasoningLevel: initialReasoningLevel,
+  initialText,
   onCreated,
   onOpenExplorer
 }: ThreadCommandComposerProps) {
   const navigate = useNavigate();
   const projects = useData((s) => s.projects);
   const upsertThread = useThreads((s) => s.upsert);
-  const [providers, setProviders] = useState<ThreadProviderOption[]>([]);
   const [commands, setCommands] = useState<Array<{ name: string; description: string }>>([]);
   const [commandsLoaded, setCommandsLoaded] = useState(false);
   const [projectId, setProjectId] = useState(pinnedProject?.id ?? '');
-  const [providerId, setProviderId] = useState('claude-code');
+  const options = useThreadComposerOptions({
+    threadId,
+    lockedProviderId,
+    initialModel,
+    initialReasoningLevel
+  });
   const [permissionMode, setPermissionMode] = useState('accept-edits');
-  const [model, setModel] = useState('default');
+  const [composerMode, setComposerMode] = useState<ComposerWorkMode>('agent');
   const sendMode: ThreadSendMode = 'auto';
   const [expanded, setExpanded] = useState(false);
   const [workspace, setWorkspace] = useState<WorkspacePickerValue>(() => defaultWorkspaceChoice(false));
@@ -119,27 +132,16 @@ export function ThreadCommandComposer({
   }, [pinnedProject, projectId, projects]);
 
   useEffect(() => {
-    void product.threads.providers().then((body) => {
-      setProviders(body.providers);
-      const fake = body.providers.find((row) => row.id === 'fake');
-      const next = fake ?? body.providers[0];
-      if (next && (providerId === 'claude-code' || !body.providers.some((row) => row.id === providerId))) {
-        setProviderId(next.id);
-      }
-    }).catch(() => undefined);
-  }, [providerId]);
-
-  useEffect(() => {
     if (!projectId) return;
     setCommandsLoaded(false);
     void product.threads.commands(projectId).then((body) => {
-      setCommands(body.commands.filter((row) => row.providerId === providerId));
+      setCommands(body.commands.filter((row) => row.providerId === options.providerId));
       setCommandsLoaded(true);
     }).catch(() => {
       setCommands([]);
       setCommandsLoaded(true);
     });
-  }, [projectId, providerId]);
+  }, [projectId, options.providerId]);
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -205,6 +207,13 @@ export function ThreadCommandComposer({
     onSelectionUpdate: ({ editor: next }) => syncTrigger(next)
   });
 
+  const seededInitialText = useRef(false);
+  useEffect(() => {
+    if (!editor || seededInitialText.current || !initialText) return;
+    seededInitialText.current = true;
+    editor.chain().insertContent(initialText).run();
+  }, [editor, initialText]);
+
   const insertVoiceTranscript = useCallback((text: string) => {
     editor?.chain().focus().insertContent(text.endsWith(' ') ? text : `${text} `).run();
   }, [editor]);
@@ -249,27 +258,31 @@ export function ThreadCommandComposer({
     }
   };
 
-  const provider = providers.find((row) => row.id === providerId);
-  const permissionOptions = (provider?.permissionModes ?? ['accept-edits', 'full']).map((id) => ({
+  const permissionOptions = (options.provider?.permissionModes ?? ['accept-edits', 'full']).map((id) => ({
     id,
     label: permissionChipLabel(id)
   }));
-  const modelOptions = [
-    { id: 'default', label: 'Default' },
-    ...(provider?.reasoningLevels ?? []).map((id) => ({ id, label: id }))
-  ];
-
-  const resolvedProviderId = providers.find((row) => row.id === 'fake')?.id
-    ?? (providers.some((row) => row.id === providerId) ? providerId : providers[0]?.id);
-  const resolvedProvider = providers.find((row) => row.id === resolvedProviderId);
+  const resolvedProviderId = threadId
+    ? options.providerId
+    : options.providers.find((row) => row.id === 'fake')?.id
+      ?? (options.providers.some((row) => row.id === options.providerId) ? options.providerId : options.providers[0]?.id);
   const canSend = Boolean(threadId || ((pinnedProject || projectId) && resolvedProviderId));
 
+  const composerModes = useMemo(
+    () => composerModesForActions(options.provider?.composerActions ?? []),
+    [options.provider]
+  );
+
   useEffect(() => {
-    const modes = resolvedProvider?.permissionModes ?? [];
+    const modes = options.provider?.permissionModes ?? [];
     if (modes.length > 0 && !modes.includes(permissionMode)) {
       setPermissionMode(modes[0]!);
     }
-  }, [permissionMode, resolvedProvider]);
+  }, [permissionMode, options.provider]);
+
+  useEffect(() => {
+    if (!composerModes.includes(composerMode)) setComposerMode('agent');
+  }, [composerMode, composerModes]);
 
   const submit = useCallback(async () => {
     if (busy || typeaheadRef.current.open) return;
@@ -287,12 +300,16 @@ export function ThreadCommandComposer({
       setError('No thread provider is available');
       return;
     }
-    const input = [{ type: 'text' as const, text: serialized.text, mentions: serialized.mentions }];
+    const text = applyComposerModePrefix(serialized.text, composerMode);
+    const input = [{ type: 'text' as const, text, mentions: serialized.mentions }];
     setError(null);
     setBusy(true);
     try {
       if (threadId) {
-        await product.threads.send(threadId, input, sendMode);
+        await product.threads.send(threadId, input, sendMode, {
+          model: options.model,
+          reasoningLevel: options.reasoningLevel
+        });
         editor?.commands.clearContent();
         return;
       }
@@ -303,7 +320,8 @@ export function ThreadCommandComposer({
         environment: workspace,
         cwd: selected!.path,
         permissionMode: permissionMode as 'accept-edits' | 'auto' | 'full',
-        model
+        model: options.model,
+        reasoningLevel: options.reasoningLevel
       });
       if (!created.ok) {
         setError(created.message ?? 'Could not create thread');
@@ -320,15 +338,16 @@ export function ThreadCommandComposer({
     }
   }, [
     busy,
+    composerMode,
     editor,
-    model,
     navigate,
     onCreated,
+    options.model,
+    options.reasoningLevel,
     permissionMode,
     pinnedProject,
     projectId,
     projects,
-    resolvedProvider,
     resolvedProviderId,
     sendMode,
     threadId,
@@ -402,19 +421,25 @@ export function ThreadCommandComposer({
           ) : (
             <>
               <div className="thread-command-footer-start">
-                {!threadId && (
-                  <PopoverPicklist
-                    value={providerId}
-                    options={providers.map((row) => ({ value: row.id, label: row.displayName }))}
-                    onChange={setProviderId}
-                    ariaLabel="Provider"
-                  />
-                )}
-                <PopoverPicklist
-                  value={model}
-                  options={modelOptions.map((row) => ({ value: row.id, label: row.label }))}
-                  onChange={setModel}
-                  ariaLabel="Model"
+                <ComposerModePicker
+                  value={composerMode}
+                  modes={composerModes}
+                  onChange={setComposerMode}
+                />
+                <ModelReasoningPicker
+                  providerOptions={options.providerOptions}
+                  selectedProviderId={resolvedProviderId ?? options.providerId}
+                  onSelectedProviderChange={threadId ? undefined : options.setProviderId}
+                  modelValue={options.model}
+                  modelOptions={options.modelOptions}
+                  moreModelOptions={options.moreModelOptions}
+                  modelIsLoading={options.modelIsLoading}
+                  onModelChange={options.setModel}
+                />
+                <ReasoningEffortPicker
+                  value={options.reasoningLevel}
+                  options={options.reasoningOptions}
+                  onChange={options.setReasoningLevel}
                 />
               </div>
               <div className="thread-command-footer-end">
@@ -442,12 +467,13 @@ export function ThreadCommandComposer({
                 </ComposerIconButton>
                 {threadId && shouldShowThreadStop(threadId, status) && (
                   <ComposerIconButton
+                    className="thread-command-stop"
                     aria-label="Stop"
                     title="Stop"
                     data-testid="thread-command-stop"
                     onClick={() => void product.threads.stop(threadId)}
                   >
-                    <Square size={14} />
+                    <Square size={14} fill="currentColor" />
                   </ComposerIconButton>
                 )}
                 {sendButton}

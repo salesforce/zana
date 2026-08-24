@@ -5,21 +5,17 @@ import {
   createSecondaryPanelCommands,
   environmentLabel,
   environmentNameFromList,
-  forksFromThreads,
   invokeWebviewMethod,
   isPreviewImagePath,
   matchNewTabFiles,
   newTabFileTitle,
   normalizeBrowserUrl,
   onThreadPanelTerminalUnmount,
-  optionsFromThreads,
-  parentFromSelectValue,
   previewKind,
   shouldClearThreadPanelTerminal,
   widthFromPointer,
   loadEnvironmentName,
   loadFilePreview,
-  loadThreadRelations,
   loadWalkedFiles,
   loadWorkspaceMeta,
   applyIfCurrent,
@@ -32,28 +28,12 @@ import {
 import { emptySecondaryPanelState } from './threadSecondaryPanelState.js';
 
 describe('threadSecondaryPanelLogic', () => {
-  it('labels environments and maps thread options/forks', () => {
+  it('labels environments', () => {
     expect(environmentLabel(false)).toBe('Local');
     expect(environmentLabel(true)).toBe('This checkout');
     expect(environmentLabel(false, ' Staging ')).toBe('Staging');
-    const threads = [
-      { id: 't1', title: ' One ' },
-      { id: 't2', title: null, parentThreadId: 't1' },
-      { id: 't3', title: 'Fork', parentThreadId: 't1' }
-    ];
-    expect(optionsFromThreads(threads)).toEqual([
-      { id: 't1', title: 'One' },
-      { id: 't2', title: 'Thread' },
-      { id: 't3', title: 'Fork' }
-    ]);
-    expect(forksFromThreads(threads, 't1')).toEqual([
-      { id: 't2', title: 'Thread' },
-      { id: 't3', title: 'Fork' }
-    ]);
     expect(environmentNameFromList([{ id: 'e1', name: 'Dev' }], 'e1')).toBe('Dev');
     expect(environmentNameFromList([{ id: 'e1' }], 'missing')).toBeNull();
-    expect(parentFromSelectValue('')).toBeNull();
-    expect(parentFromSelectValue('p1')).toBe('p1');
   });
 
   it('copies text through the clipboard API', async () => {
@@ -202,18 +182,7 @@ describe('threadSecondaryPanelLogic', () => {
     expect(state.isOpen).toBe(false);
   });
 
-  it('loads thread relations, environment names, and workspace meta', async () => {
-    await expect(loadThreadRelations(async () => [
-      { id: 't1', title: 'One' },
-      { id: 't2', title: 'Fork', parentThreadId: 't1' }
-    ], 'p', 't1')).resolves.toEqual({
-      options: [{ id: 't1', title: 'One' }, { id: 't2', title: 'Fork' }],
-      forks: [{ id: 't2', title: 'Fork' }]
-    });
-    await expect(loadThreadRelations(async () => { throw new Error('nope'); }, 'p', 't1')).resolves.toEqual({
-      options: [],
-      forks: []
-    });
+  it('loads environment names and workspace meta', async () => {
     await expect(loadEnvironmentName(async () => [{ id: 'e1', name: 'Dev' }], 'p', 'e1')).resolves.toBe('Dev');
     await expect(loadEnvironmentName(async () => { throw new Error('nope'); }, 'p', 'e1')).resolves.toBeNull();
     await expect(loadWorkspaceMeta(
@@ -266,25 +235,19 @@ describe('threadSecondaryPanelLogic', () => {
     onThreadPanelTerminalUnmount({ sessionId: 's2' }, 's1', clear);
     expect(clear).not.toHaveBeenCalled();
     await expect(hydrateThreadInfo(null, 't1', null, {
-      listThreads: async () => [{ id: 't2' }],
       listEnvironments: async () => [{ id: 'e1', name: 'Dev' }],
       status: async () => ({ dirty: true }),
       pullRequest: async () => ({ pullRequest: { number: 1 } })
     })).resolves.toEqual({
-      options: [],
-      forks: [],
       environmentName: null,
       status: null,
       pullRequest: null
     });
     await expect(hydrateThreadInfo('p', 't1', 'e1', {
-      listThreads: async () => [{ id: 't1', title: 'One' }, { id: 't2', title: 'Fork', parentThreadId: 't1' }],
       listEnvironments: async () => [{ id: 'e1', name: 'Dev' }],
       status: async () => ({ dirty: true }),
       pullRequest: async () => ({ pullRequest: { number: 1 } })
     })).resolves.toEqual({
-      options: [{ id: 't1', title: 'One' }, { id: 't2', title: 'Fork' }],
-      forks: [{ id: 't2', title: 'Fork' }],
       environmentName: 'Dev',
       status: { dirty: true },
       pullRequest: { number: 1 }

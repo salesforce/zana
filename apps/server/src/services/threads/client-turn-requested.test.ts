@@ -45,6 +45,27 @@ describe('appendClientTurnRequested', () => {
     }));
   });
 
+  it('persists the caller reasoningLevel instead of hardcoding medium', () => {
+    vi.mocked(appendConversationThreadEvent).mockClear();
+    appendClientTurnRequested(
+      { db: {}, hub: { emit: vi.fn() } } as never,
+      {
+        threadId: '11111111-1111-4111-8111-111111111111',
+        prompt: ['Follow up'],
+        kind: 'new-turn',
+        model: 'claude-sonnet-5',
+        reasoningLevel: 'high'
+      }
+    );
+    const payload = vi.mocked(appendConversationThreadEvent).mock.calls[0]![1].payload as {
+      execution: { model: string; reasoningLevel: string };
+    };
+    expect(payload.execution).toMatchObject({
+      model: 'claude-sonnet-5',
+      reasoningLevel: 'high'
+    });
+  });
+
   it('skips empty prompts', () => {
     vi.mocked(appendConversationThreadEvent).mockClear();
     appendClientTurnRequested(

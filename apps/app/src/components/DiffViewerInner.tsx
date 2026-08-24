@@ -10,18 +10,20 @@ export default function DiffViewerInner({
   original,
   modified,
   compactStyles,
+  splitView = false,
   isDark
 }: {
   original: string;
   modified: string;
   compactStyles: Record<string, unknown>;
+  splitView?: boolean;
   isDark: boolean;
 }) {
   return (
     <ReactDiffViewer
       oldValue={original}
       newValue={modified}
-      splitView={false}
+      splitView={splitView}
       showDiffOnly
       extraLinesSurroundingDiff={2}
       hideLineNumbers={false}

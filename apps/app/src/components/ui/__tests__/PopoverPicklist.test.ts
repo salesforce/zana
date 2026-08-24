@@ -31,7 +31,7 @@ describe('placePopoverMenu', () => {
     )).toEqual({
       left: 40,
       width: 200,
-      maxHeight: 680,
+      maxHeight: 360,
       top: 116
     });
   });
@@ -66,6 +66,16 @@ describe('placePopoverMenu', () => {
     );
     expect(placed.bottom).toBe(104);
     expect(placed.top).toBeUndefined();
-    expect(placed.maxHeight).toBe(692);
+    expect(placed.maxHeight).toBe(360);
+  });
+
+  it('never lets a long project list fill the viewport', () => {
+    const placed = placePopoverMenu(
+      { left: 40, right: 120, top: 700, bottom: 732, width: 80 },
+      { width: 1280, height: 1200 },
+      200
+    );
+    expect(placed.maxHeight).toBeLessThanOrEqual(360);
+    expect(placed.maxHeight).toBeLessThanOrEqual(Math.floor(1200 * 0.55));
   });
 });

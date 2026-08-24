@@ -61,6 +61,16 @@ describe('ThreadCommandComposer chrome', () => {
   });
 });
 
+describe('ThreadCommandComposer initial text', () => {
+  it('seeds the TipTap editor once from initialText', () => {
+    const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('initialText?: string');
+    expect(source).toContain('initialText,');
+    expect(source).toContain('seededInitialText');
+    expect(source).toContain('editor.chain().insertContent(initialText).run()');
+  });
+});
+
 describe('ThreadCommandComposer pinning', () => {
   it('locks to a passed project and skips the scratch default', () => {
     const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
@@ -96,6 +106,8 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain("{threadId ? (");
     expect(source).toContain('threadId && shouldShowThreadStop(threadId, status)');
     expect(source).toContain('data-testid="thread-command-stop"');
+    expect(source).toContain('className="thread-command-stop"');
+    expect(source).toContain('fill="currentColor"');
     expect(source).toContain('ariaLabel="Permission mode"');
     expect(source).toContain('VoiceRecordingBar');
     expect(source).toContain('Start voice input');
@@ -107,9 +119,20 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).not.toContain('Queue if active');
     expect(source).not.toContain('VoiceInputButton');
     const metaIdx = source.indexOf('thread-command-composer-meta');
-    expect(source.indexOf('ariaLabel="Model"')).toBeLessThan(metaIdx);
+    expect(source.indexOf('<ComposerModePicker')).toBeLessThan(source.indexOf('<ModelReasoningPicker'));
+    expect(source.indexOf('<ModelReasoningPicker')).toBeLessThan(source.indexOf('<ReasoningEffortPicker'));
+    expect(source.indexOf('<ReasoningEffortPicker')).toBeLessThan(metaIdx);
+    expect(source).toContain('onSelectedProviderChange={threadId ? undefined : options.setProviderId}');
+    expect(source).toContain('reasoningLevel: options.reasoningLevel');
+    expect(source).toContain('moreModelOptions={options.moreModelOptions}');
+    expect(source).toContain('applyComposerModePrefix');
     expect(source.indexOf('<EnvironmentPicker')).toBeGreaterThan(metaIdx);
     expect(source.indexOf('ariaLabel="Permission mode"')).toBeGreaterThan(metaIdx);
+
+    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const stopStart = css.indexOf('.thread-command-composer .thread-command-stop {');
+    expect(stopStart).toBeGreaterThan(-1);
+    expect(css.slice(stopStart, css.indexOf('}', stopStart))).toContain('color: var(--danger);');
   });
 
   it('steals typeahead keys while the menu is open and inserts mention pills', () => {
@@ -158,6 +181,8 @@ describe('browser product client thread API', () => {
     expect(source).toContain('voice: {');
     expect(source).toContain('/system/voice-status');
     expect(source).toContain('/system/voice-transcription');
+    expect(source).toContain('/system/execution-options');
+    expect(source).toContain('reasoningLevel: input.reasoningLevel');
     expect(source).toContain('ensureMicAccess: desktop?.ensureMicAccess');
     expect(source).toContain('/threads/${encodeURIComponent(threadId)}/archive');
     expect(source).not.toContain('/threads/${encodeURIComponent(sessionId)}/output');

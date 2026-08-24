@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { LANES, type AgentCard } from '../AgentBoard.js';
 import type { AgentState, TerminalSession } from '@zana-ai/zcc-domain/product';
 
@@ -67,5 +68,17 @@ describe('AgentBoard LANES classification', () => {
         expect(matches.length).toBe(1);
       }
     }
+  });
+});
+
+describe('AgentBoard thread cards', () => {
+  it('passes grouped into thread cards and shows runtime/harness instead of the project slug', () => {
+    const source = readFileSync(new URL('../AgentBoard.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('threadCardRuntimeLabel');
+    expect(source).toContain('threadCardShowsProject');
+    expect(source).toContain('renderThreadCard(item, laneKey, grouped)');
+    expect(source).toContain('{(!showProject || grouped) && <span className="agent-card-sub">{runtime}</span>}');
+    expect(source).not.toContain('<span className="agent-card-sub">{item.thread.status}</span>');
+    expect(source).not.toContain('? renderThreadCard(item, laneKey) :');
   });
 });

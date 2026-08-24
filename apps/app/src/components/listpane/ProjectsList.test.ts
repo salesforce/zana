@@ -201,3 +201,26 @@ describe('nested live threads', () => {
     expect(source).toContain('p.id === selectedId && projectHasNestableSessions(p)');
   });
 });
+
+describe('workspace row badge', () => {
+  it('omits git branch and shows the nested agent count instead', () => {
+    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    expect(source).not.toContain('project-git-branch');
+    expect(source).not.toContain('project-git-ahead');
+    expect(source).not.toContain('gitStatus[p.id]');
+    expect(source).toContain('liveList.length + railThreads.length');
+    expect(source).toContain('className="project-badge"');
+    expect(source).toContain('{nestedCount}');
+  });
+
+  it('does not mark a workspace row as selected — hover is the only highlight', () => {
+    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    expect(source).toContain('className="project-item"');
+    expect(source).not.toContain("selectedId === p.id ? 'active'");
+    expect(css).toContain('.project-item:hover {\n  background: var(--bg-hover);\n}');
+    expect(css).not.toContain('.project-item.active {\n  background: var(--bg-elevated);\n}');
+    expect(css).not.toContain('.project-item.active .project-spawn');
+    expect(css).not.toContain('.project-item.active .project-actions');
+  });
+});

@@ -14,9 +14,24 @@ import { gitChildEnv } from './git-env.js';
 import { WorkspaceError } from './error.js';
 
 export const GIT_TIMEOUT_MS = 20_000;
-export const GIT_MAX_BUFFER = 8 * 1024 * 1024;
+export const GIT_MAX_BUFFER = 16 * 1024 * 1024;
 export const DEFAULT_MAX_DIFF_BYTES = 256 * 1024;
 export const DEFAULT_MAX_FILES = 400;
+
+/**
+ * Truncates `value` to at most `maxBytes` UTF-8 bytes on a codepoint boundary.
+ * A naive `buffer.subarray(0, maxBytes)` can slice a multibyte character, which
+ * `toString('utf8')` then renders as U+FFFD (3 bytes) — corrupting the text and
+ * overshooting the budget. Walk the cut point back over continuation bytes so
+ * the straddling codepoint is dropped whole.
+ */
+export function truncateToMaxBytes(value: string, maxBytes: number): string {
+  const buffer = Buffer.from(value, 'utf8');
+  if (buffer.byteLength <= maxBytes) return value;
+  let cut = maxBytes;
+  while (cut > 0 && (buffer[cut] & 0xc0) === 0x80) cut -= 1;
+  return buffer.subarray(0, cut).toString('utf8');
+}
 
 export interface GitCommandResult {
   stdout: string;
@@ -30,12 +45,13 @@ function runGitProcess(
   args: string[],
   timeoutMs: number,
   maxBuffer: number,
-  overflow: 'throw' | 'truncate'
+  overflow: 'throw' | 'truncate',
+  extraEnv?: NodeJS.ProcessEnv
 ): Promise<GitCommandResult> {
   return new Promise((resolve, reject) => {
     const child = spawn('git', args, {
       cwd,
-      env: gitChildEnv(),
+      env: { ...gitChildEnv(), ...extraEnv },
       stdio: ['ignore', 'pipe', 'pipe']
     });
     const stdoutChunks: Buffer[] = [];
@@ -105,6 +121,7 @@ export async function runGit(
     maxBuffer?: number;
     allowFail?: boolean;
     overflow?: 'throw' | 'truncate';
+    extraEnv?: NodeJS.ProcessEnv;
   } = {}
 ): Promise<GitCommandResult> {
   if (!isAbsolute(cwd)) {
@@ -115,12 +132,87 @@ export async function runGit(
     args,
     options.timeoutMs ?? GIT_TIMEOUT_MS,
     options.maxBuffer ?? GIT_MAX_BUFFER,
-    options.overflow ?? 'throw'
+    options.overflow ?? 'throw',
+    options.extraEnv
   );
   if (result.code !== 0 && !options.allowFail && !result.truncated) {
     throw new WorkspaceError('git_failed', result.stderr.trim() || `git ${args.join(' ')} failed`);
   }
   return result;
+}
+
+/**
+ * Record-bounded `git` for NUL-delimited listings (`ls-files -z`). Stops after
+ * `maxRecords` complete records so a huge untracked tree cannot fill the 16 MB
+ * process buffer. `truncated` is true when the ceiling was hit.
+ */
+export async function runGitWithNullRecordLimit(
+  cwd: string,
+  args: string[],
+  maxRecords: number,
+  extraEnv?: NodeJS.ProcessEnv
+): Promise<{ stdout: string; truncated: boolean }> {
+  if (!Number.isInteger(maxRecords) || maxRecords <= 0) {
+    throw new WorkspaceError('invalid_request', 'maxRecords must be a positive integer');
+  }
+  if (!isAbsolute(cwd)) {
+    throw new WorkspaceError('invalid_path', 'git cwd must be absolute');
+  }
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', args, {
+      cwd,
+      env: { ...gitChildEnv(), ...extraEnv },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    const records: Buffer[] = [];
+    let pending = Buffer.alloc(0);
+    let truncated = false;
+    let settled = false;
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      if (!settled) {
+        settled = true;
+        reject(new WorkspaceError('git_failed', `git timed out after ${GIT_TIMEOUT_MS}ms`));
+      }
+    }, GIT_TIMEOUT_MS);
+    const finish = (stdout: string, wasTruncated: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ stdout, truncated: wasTruncated });
+    };
+    child.stdout.on('data', (chunk: Buffer) => {
+      if (settled || truncated) return;
+      const input = pending.length === 0 ? chunk : Buffer.concat([pending, chunk]);
+      let start = 0;
+      for (let i = 0; i < input.length; i++) {
+        if (input[i] !== 0) continue;
+        records.push(Buffer.from(input.subarray(start, i)));
+        start = i + 1;
+        if (records.length >= maxRecords) {
+          truncated = true;
+          child.kill('SIGKILL');
+          finish(`${records.map((record) => record.toString('utf8')).join('\0')}\0`, true);
+          return;
+        }
+      }
+      pending = Buffer.from(input.subarray(start));
+    });
+    child.stderr.resume();
+    child.on('error', (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new WorkspaceError('git_failed', error instanceof Error ? error.message : String(error)));
+    });
+    child.on('close', () => {
+      if (settled) return;
+      const tail = pending.length > 0 ? pending.toString('utf8') : '';
+      const parts = records.map((record) => record.toString('utf8'));
+      if (tail) parts.push(tail);
+      finish(parts.length > 0 ? `${parts.join('\0')}${tail ? '' : records.length > 0 ? '\0' : ''}` : '', false);
+    });
+  });
 }
 
 export async function pathExists(path: string): Promise<boolean> {
@@ -306,7 +398,9 @@ export async function readWorkspaceStatus(cwd: string, maxFiles = DEFAULT_MAX_FI
       filesTruncated: false
     };
   }
-  const status = await runGit(cwd, ['status', '--porcelain=v1', '-b', '-uall']);
+  const status = await runGit(cwd, ['status', '--porcelain=v1', '-b', '-uall'], {
+    overflow: 'truncate'
+  });
   const lines = status.stdout.split('\n').filter(Boolean);
   const header = lines.find((line) => line.startsWith('## ')) ?? '';
   let ahead: number | null = 0;
@@ -342,7 +436,7 @@ export async function readWorkspaceStatus(cwd: string, maxFiles = DEFAULT_MAX_FI
     behind,
     dirty: fileLines.length > 0,
     files,
-    filesTruncated: fileLines.length > maxFiles
+    filesTruncated: fileLines.length > maxFiles || Boolean(status.truncated)
   };
 }
 
@@ -368,15 +462,12 @@ export async function readWorkspaceDiff(
   const args = diffArgsFor(target);
   const result = await runGit(cwd, args, {
     allowFail: true,
-    maxBuffer: maxDiffBytes,
+    maxBuffer: maxDiffBytes + 1,
     overflow: 'truncate'
   });
-  let diff = result.stdout;
-  let truncated = Boolean(result.truncated);
-  if (diff.length > maxDiffBytes) {
-    diff = diff.slice(0, maxDiffBytes);
-    truncated = true;
-  }
+  const overflowed = Boolean(result.truncated) || Buffer.byteLength(result.stdout, 'utf8') > maxDiffBytes;
+  const diff = overflowed ? truncateToMaxBytes(result.stdout, maxDiffBytes) : result.stdout;
+  const truncated = overflowed;
   const nameOnly = await runGit(cwd, [...diffArgsFor(target), '--name-only'], { allowFail: true });
   const short = await runGit(cwd, [...diffArgsFor(target), '--shortstat'], { allowFail: true });
   return {

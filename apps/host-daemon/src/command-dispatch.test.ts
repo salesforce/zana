@@ -374,6 +374,41 @@ describe('host command dispatch', () => {
       data: 'nope'
     })).rejects.toMatchObject({ code: 'unknown_terminal' });
   });
+
+  it('lists provider models through the injected runtime', async () => {
+    const runtime = createCommandRuntime({
+      verifyProviders: async () => installedClaude,
+      listModels: async ({ providerId }) => ({
+        models: [{
+          id: `${providerId}-model`,
+          model: `${providerId}-model`,
+          displayName: 'Live Model',
+          description: 'from host',
+          supportedReasoningEfforts: [{ reasoningEffort: 'medium', description: 'Medium' }],
+          defaultReasoningEffort: 'medium',
+          isDefault: true
+        }],
+        selectedOnlyModels: []
+      })
+    });
+    const listed = await dispatchHostCommand(runtime, {
+      type: 'provider.list_models',
+      providerId: 'codex',
+      bridgeLaunch: {
+        pluginId: 'provider-codex',
+        dataDir: '/tmp/bridge',
+        source: { kind: 'daemon-bundled', id: 'codex' },
+        capabilities: {
+          supportsServiceTier: true,
+          permissionModes: ['full'],
+          supportsThreadArchive: false,
+          supportsThreadRename: true,
+          fork: 'checkpoint'
+        }
+      }
+    });
+    expect(listed).toMatchObject({ models: [{ displayName: 'Live Model' }] });
+  });
 });
 
 function git(cwd: string, args: string[]): void {

@@ -14,42 +14,17 @@ import {
   type ThreadSecondaryPanelState
 } from './threadSecondaryPanelState.js';
 
-export interface ThreadOption {
-  id: string;
-  title: string;
-}
-
 export function environmentLabel(isWorktree: boolean, environmentName?: string | null): string {
   const named = environmentName?.trim();
   if (named) return named;
   return isWorktree ? 'This checkout' : 'Local';
 }
 
-export function optionsFromThreads(
-  threads: Array<{ id: string; title?: string | null }>
-): ThreadOption[] {
-  return threads.map((thread) => ({
-    id: thread.id,
-    title: thread.title?.trim() || 'Thread'
-  }));
-}
-
-export function forksFromThreads(
-  threads: Array<{ id: string; title?: string | null; parentThreadId?: string | null }>,
-  threadId: string
-): ThreadOption[] {
-  return optionsFromThreads(threads.filter((thread) => thread.parentThreadId === threadId));
-}
-
 export function environmentNameFromList(
-  environments: Array<{ id: string; name?: string }>,
+  environments: Array<{ id: string; name?: string | null }>,
   environmentId: string
 ): string | null {
   return environments.find((environment) => environment.id === environmentId)?.name ?? null;
-}
-
-export function parentFromSelectValue(value: string): string | null {
-  return value || null;
 }
 
 export async function copyText(text: string): Promise<void> {
@@ -201,24 +176,8 @@ export function createSecondaryPanelCommands(
   };
 }
 
-export async function loadThreadRelations(
-  list: (projectId: string) => Promise<Array<{ id: string; title?: string | null; parentThreadId?: string | null }>>,
-  projectId: string,
-  threadId: string
-): Promise<{ options: ThreadOption[]; forks: ThreadOption[] }> {
-  try {
-    const threads = await list(projectId);
-    return {
-      options: optionsFromThreads(threads),
-      forks: forksFromThreads(threads, threadId)
-    };
-  } catch {
-    return { options: [], forks: [] };
-  }
-}
-
 export async function loadEnvironmentName(
-  list: (projectId: string) => Promise<Array<{ id: string; name?: string }>>,
+  list: (projectId: string) => Promise<Array<{ id: string; name?: string | null }>>,
   projectId: string,
   environmentId: string
 ): Promise<string | null> {
@@ -283,24 +242,18 @@ export function onThreadPanelTerminalUnmount(
 
 export async function hydrateThreadInfo(
   projectId: string | null,
-  threadId: string,
+  _threadId: string,
   environmentId: string | null,
   deps: {
-    listThreads: (projectId: string) => Promise<Array<{ id: string; title?: string | null; parentThreadId?: string | null }>>;
-    listEnvironments: (projectId: string) => Promise<Array<{ id: string; name?: string }>>;
+    listEnvironments: (projectId: string) => Promise<Array<{ id: string; name?: string | null }>>;
     status: (environmentId: string) => Promise<unknown>;
     pullRequest: (environmentId: string) => Promise<{ pullRequest?: unknown } | null>;
   }
 ): Promise<{
-  options: ThreadOption[];
-  forks: ThreadOption[];
   environmentName: string | null;
   status: unknown;
   pullRequest: unknown;
 }> {
-  const relations = projectId
-    ? await loadThreadRelations(deps.listThreads, projectId, threadId)
-    : { options: [], forks: [] };
   const environmentName = projectId && environmentId
     ? await loadEnvironmentName(deps.listEnvironments, projectId, environmentId)
     : null;
@@ -308,8 +261,6 @@ export async function hydrateThreadInfo(
     ? await loadWorkspaceMeta(deps.status, deps.pullRequest, environmentId)
     : { status: null, pullRequest: null };
   return {
-    options: relations.options,
-    forks: relations.forks,
     environmentName,
     status: meta.status,
     pullRequest: meta.pullRequest

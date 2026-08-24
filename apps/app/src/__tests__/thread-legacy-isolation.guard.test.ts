@@ -16,17 +16,47 @@ describe('thread / legacy isolation', () => {
     expect(source).not.toContain('createTerminal');
     expect(source).not.toContain('LaunchProfileId');
     expect(source).not.toContain('product.terminals.create');
+    expect(source).toContain('ModelReasoningPicker');
+    expect(source).toContain('ReasoningEffortPicker');
+    expect(source).toContain('ComposerModePicker');
+    expect(source).not.toContain('LauncherModelPicker');
+  });
+
+  it('keeps the thread model picker off AgentLauncher and PTY launch', () => {
+    const picker = stripComments(readFileSync(join(appRoot, 'components/thread/pickers/ModelReasoningPicker.tsx'), 'utf8'));
+    const effortPicker = stripComments(readFileSync(join(appRoot, 'components/thread/pickers/ReasoningEffortPicker.tsx'), 'utf8'));
+    const modePicker = stripComments(readFileSync(join(appRoot, 'components/thread/pickers/ComposerModePicker.tsx'), 'utf8'));
+    const hook = stripComments(readFileSync(join(appRoot, 'components/thread/pickers/useThreadComposerOptions.ts'), 'utf8'));
+    const icons = stripComments(readFileSync(join(appRoot, 'components/thread/pickers/provider-icon.ts'), 'utf8'));
+    expect(picker).not.toContain('LauncherModelPicker');
+    expect(picker).not.toContain('createTerminal');
+    expect(picker).toContain('providerIconForId');
+    expect(effortPicker).not.toContain('LauncherModelPicker');
+    expect(effortPicker).not.toContain('createTerminal');
+    expect(effortPicker).toContain('thinkingEffortTitle');
+    expect(modePicker).not.toContain('LauncherModelPicker');
+    expect(modePicker).not.toContain('createTerminal');
+    expect(hook).not.toContain('LauncherModelPicker');
+    expect(hook).not.toContain('AgentLauncher');
+    expect(hook).toContain('executionOptions');
+    expect(hook).toContain('reconcileReasoningLevel');
+    expect(hook).toContain('composerActions');
+    expect(icons).not.toContain('AgentLauncher');
+    expect(icons).not.toContain('LauncherModelPicker');
   });
 
   it('keeps the thread view off terminals.create except the optional workspace shell pane', () => {
     const source = stripComments(readFileSync(join(appRoot, 'views/threads/ThreadDetailView.tsx'), 'utf8'));
     expect(source).toContain('ThreadCommandComposer');
+    expect(source).toContain('model={threadModel}');
+    expect(source).toContain('reasoningLevel={threadReasoning}');
     expect(source).not.toContain('createTerminal');
     expect(source).not.toContain('LaunchProfileId');
   });
 
   it('keeps AgentLauncher off the Thread HTTP create path', () => {
     const source = stripComments(readFileSync(join(appRoot, 'components/AgentLauncher.tsx'), 'utf8'));
+    expect(source).toContain('ThreadCommandComposer');
     expect(source).not.toContain('threads.create');
     expect(source).not.toContain('product.threads');
   });

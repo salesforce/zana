@@ -7,6 +7,7 @@ import type {
   HostEventEnvelope,
   HostListedFile,
   HostRpcCommand,
+  ProviderListModelsResult,
   ProviderStatusResult,
   ThreadResumeFields,
   ThreadStartCommandSchema
@@ -23,6 +24,8 @@ import {
   workspaceBranches,
   workspaceCommit,
   workspaceDiff,
+  workspaceDiffFiles,
+  workspaceDiffPatch,
   workspacePullRequest,
   workspacePullRequestAction,
   workspacePullRequestCreate,
@@ -62,6 +65,7 @@ export type ThreadResumeInput = {
   bridgeLaunch?: ThreadStartFields['bridgeLaunch'];
   permissionMode?: ThreadStartFields['permissionMode'];
   model?: string;
+  reasoningLevel?: ThreadWorkInput['reasoningLevel'];
 };
 
 export interface CommandRuntime {
@@ -74,7 +78,13 @@ export interface CommandRuntime {
   verifyProviders: () => Promise<ProviderStatusResult>;
   emit: (event: HostEventEnvelope) => void;
   startWork?: (input: ThreadWorkInput) => Promise<{ providerThreadId?: string } | void>;
-  submitTurn?: (input: { threadId: string; input: string[]; mode?: string }) => Promise<void>;
+  submitTurn?: (input: {
+    threadId: string;
+    input: string[];
+    mode?: string;
+    model?: string;
+    reasoningLevel?: ThreadWorkInput['reasoningLevel'];
+  }) => Promise<void>;
   resumeWork?: (input: ThreadResumeInput) => Promise<{ providerThreadId?: string } | void>;
   resizeWork?: (input: { threadId: string; cols: number; rows: number }) => Promise<void>;
   writeWork?: (input: { threadId: string; data: string }) => Promise<void>;
@@ -83,6 +93,11 @@ export interface CommandRuntime {
   writeTerminal?: (input: { sessionId: string; data: string }) => Promise<void>;
   resizeTerminal?: (input: { sessionId: string; cols: number; rows: number }) => Promise<void>;
   stopTerminal?: (input: { sessionId: string }) => Promise<void>;
+  listModels?: (input: {
+    providerId: string;
+    bridgeLaunch: NonNullable<ThreadWorkInput['bridgeLaunch']>;
+    cwd?: string;
+  }) => Promise<ProviderListModelsResult>;
 }
 
 export function createCommandRuntime(options: {
@@ -91,7 +106,13 @@ export function createCommandRuntime(options: {
   verifyProviders?: () => Promise<ProviderStatusResult>;
   emit?: (event: HostEventEnvelope) => void;
   startWork?: (input: ThreadWorkInput) => Promise<{ providerThreadId?: string } | void>;
-  submitTurn?: (input: { threadId: string; input: string[]; mode?: string }) => Promise<void>;
+  submitTurn?: (input: {
+    threadId: string;
+    input: string[];
+    mode?: string;
+    model?: string;
+    reasoningLevel?: ThreadWorkInput['reasoningLevel'];
+  }) => Promise<void>;
   resumeWork?: (input: ThreadResumeInput) => Promise<{ providerThreadId?: string } | void>;
   resizeWork?: (input: { threadId: string; cols: number; rows: number }) => Promise<void>;
   writeWork?: (input: { threadId: string; data: string }) => Promise<void>;
@@ -100,6 +121,11 @@ export function createCommandRuntime(options: {
   writeTerminal?: (input: { sessionId: string; data: string }) => Promise<void>;
   resizeTerminal?: (input: { sessionId: string; cols: number; rows: number }) => Promise<void>;
   stopTerminal?: (input: { sessionId: string }) => Promise<void>;
+  listModels?: (input: {
+    providerId: string;
+    bridgeLaunch: NonNullable<ThreadWorkInput['bridgeLaunch']>;
+    cwd?: string;
+  }) => Promise<ProviderListModelsResult>;
 }): CommandRuntime {
   const loadConfig = options.loadConfig ?? (() => ({ version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null }) as AppConfig);
   return {
@@ -120,6 +146,7 @@ export function createCommandRuntime(options: {
     writeTerminal: options.writeTerminal,
     resizeTerminal: options.resizeTerminal,
     stopTerminal: options.stopTerminal,
+    listModels: options.listModels,
     verifyProviders: options.verifyProviders ?? (async () => {
       const results: HarnessVerifyResult[] = await verifyHarnesses(loadConfig());
       return { providers: results };
@@ -206,7 +233,8 @@ async function applyThreadResume(
       cwd,
       bridgeLaunch: command.bridgeLaunch,
       permissionMode: command.permissionMode,
-      model: command.model
+      model: command.model,
+      reasoningLevel: command.reasoningLevel
     });
     providerThreadId = resumed?.providerThreadId ?? providerThreadId;
   }
@@ -345,6 +373,16 @@ export async function dispatchHostCommand(
   switch (command.type) {
     case 'provider.status':
       return runtime.verifyProviders();
+    case 'provider.list_models': {
+      if (!runtime.listModels) {
+        throw new HostCommandError('unsupported', 'model listing is not available on this host');
+      }
+      return runtime.listModels({
+        providerId: command.providerId,
+        bridgeLaunch: command.bridgeLaunch,
+        ...(command.cwd !== undefined ? { cwd: command.cwd } : {})
+      });
+    }
     case 'environment.provision': {
       return withEnvironmentLane(runtime, command.environmentId, async () => {
         try {
@@ -481,7 +519,9 @@ export async function dispatchHostCommand(
         await runtime.submitTurn({
           threadId: command.threadId,
           input: command.input,
-          mode: command.mode
+          mode: command.mode,
+          model: command.model,
+          reasoningLevel: command.reasoningLevel
         });
       } else {
         runtime.emit({ threadId: command.threadId, kind: 'turn.completed' });
@@ -590,22 +630,18 @@ export async function dispatchHostCommand(
       }
     case 'workspace.diffFiles':
       try {
-        const status = await workspaceStatus(command.workspacePath);
-        const maxFiles = command.maxFiles ?? 400;
-        return { files: status.files.slice(0, maxFiles), truncated: status.files.length > maxFiles };
+        return await workspaceDiffFiles(command.workspacePath, command.target, command.maxFiles ?? 400);
       } catch (error) {
         mapWorkspaceError(error);
       }
     case 'workspace.diffPatch':
       try {
-        const diff = await workspaceDiff(command.workspacePath, command.target);
-        return {
-          patches: command.paths.map((path) => ({
-            path,
-            patch: diff.diff,
-            truncated: diff.truncated
-          }))
-        };
+        return await workspaceDiffPatch(
+          command.workspacePath,
+          command.target,
+          command.paths,
+          command.maxBytesPerFile ?? 64 * 1024
+        );
       } catch (error) {
         mapWorkspaceError(error);
       }

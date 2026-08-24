@@ -11,7 +11,31 @@ import {
   workspaceFileCountLabel,
   workspaceFileStatText
 } from './ThreadWorkspaceBanner.js';
-import { hunkForPath, diffPanelPhase } from './thread-diff.js';
+import {
+  hunkForPath,
+  diffPanelPhase,
+  changeKindLetter,
+  DIFF_AUTO_COLLAPSE_FILE_THRESHOLD,
+  DIFF_SELECTION_OPTIONS,
+  areAllDiffCardsCollapsed,
+  collapseAllDiffCards,
+  diffCardHeaderStats,
+  diffTargetForSelection,
+  filterDiffFiles,
+  formatDiffCardLabel,
+  formatDiffFilesLabel,
+  isDiffCardInitiallyCollapsed,
+  resolveDiffCardBodyKind,
+  resolveDiffCardCollapsed,
+  pairSplitDiffRows,
+  parseUnifiedPatch,
+  unmodifiedLineCountBefore,
+  unmodifiedLineCountBetween,
+  shouldAutoLoadPatch,
+  summarizeDiffFiles
+} from './thread-diff.js';
+import { ThreadDiffCardBody } from './ThreadDiffPanel.js';
+import { ThreadDiffHunkView } from './ThreadDiffHunkView.js';
 import { ExpandableTimelineRow } from './timeline/ExpandableTimelineRow.js';
 import {
   ThreadDetailHeading,
@@ -172,10 +196,285 @@ describe('diff hunk helper', () => {
     expect(hunkForPath(diff, 'missing.ts').modified).toBe(diff);
   });
 
+  it('parses unified hunks and omits unmodified gaps the way BB does', () => {
+    const patch = [
+      'diff --git a/src/a.ts b/src/a.ts',
+      '--- a/src/a.ts',
+      '+++ b/src/a.ts',
+      '@@ -88,4 +88,5 @@',
+      ' context',
+      '-old',
+      '+new',
+      ' keep',
+      '@@ -200,2 +201,2 @@',
+      ' later',
+      '-gone',
+      '+here'
+    ].join('\n');
+    const hunks = parseUnifiedPatch(patch);
+    expect(hunks).toHaveLength(2);
+    expect(hunks[0]!.oldStart).toBe(88);
+    expect(unmodifiedLineCountBefore(hunks[0]!)).toBe(87);
+    expect(unmodifiedLineCountBetween(hunks[0]!, hunks[1]!)).toBe(108);
+    expect(hunks[0]!.lines.map((line) => line.kind)).toEqual(['context', 'del', 'add', 'context']);
+    expect(unmodifiedLineCountBefore({
+      header: '@@ -0,0 +1,2 @@',
+      oldStart: 0,
+      oldCount: 0,
+      newStart: 1,
+      newCount: 2,
+      lines: []
+    })).toBe(0);
+    expect(parseUnifiedPatch('@@ -1 +1 @@\n-old\n+new\n\\ No newline at end of file\n')[0]!.oldCount).toBe(1);
+    expect(pairSplitDiffRows([
+      { kind: 'del', text: 'a', oldNo: 1, newNo: null },
+      { kind: 'del', text: 'b', oldNo: 2, newNo: null },
+      { kind: 'add', text: 'c', oldNo: null, newNo: 1 }
+    ])).toHaveLength(2);
+    const html = renderToStaticMarkup(
+      <ThreadDiffHunkView path="src/a.ts" patch={patch} />
+    );
+    expect(html).toContain('87 unmodified lines');
+    expect(html).toContain('thread-diff-hunk-line is-add');
+    expect(html).toContain('thread-diff-hunk-line is-del');
+    expect(renderToStaticMarkup(
+      <ThreadDiffHunkView path="src/a.ts" patch={patch} splitView />
+    )).toContain('is-split');
+    expect(renderToStaticMarkup(
+      <ThreadDiffHunkView path="src/a.ts" patch={'diff --git a/src/a.ts b/src/a.ts\n'} />
+    )).toContain('No renderable diff');
+  });
+
   it('shows an error instead of loading when the diff request fails', () => {
     expect(diffPanelPhase('git output exceeded the buffer cap', false)).toBe('error');
     expect(diffPanelPhase(null, false)).toBe('loading');
     expect(diffPanelPhase(null, true)).toBe('ready');
+  });
+
+  it('loads a file TOC and stacked per-file cards instead of one workspace diff blob', () => {
+    const source = readFileSync(fileURLToPath(new URL('./ThreadDiffPanel.tsx', import.meta.url)), 'utf8');
+    expect(source).toContain('diffFiles');
+    expect(source).toContain('diffPatch');
+    expect(source).toContain('thread-diff-cards');
+    expect(source).toContain('ThreadDiffHunkView');
+    expect(source).not.toContain('from \'../DiffViewer.js\'');
+    expect(source).toContain('Expand all files');
+    expect(source).toContain('Search files');
+    expect(source).toContain('Wrap diff lines');
+    expect(source).toContain('Split diff view');
+    expect(source).toContain('Diff scope');
+    expect(source).not.toContain('Show {hiddenCount} more');
+    expect(source).not.toMatch(/environments\.diff\(/);
+    const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
+    expect(css).toContain('.thread-diff-card {');
+    expect(css).toContain('.thread-diff-cards {');
+    expect(css).toContain('.thread-diff-hunks');
+    expect(css).not.toContain('.thread-diff-list-pane');
+    expect(css).not.toContain('.thread-diff-list-search');
+    expect(changeKindLetter('added')).toBe('A');
+    expect(changeKindLetter('type_changed')).toBe('T');
+  });
+
+  it('collapses many-file diffs and stacks cards the way BB does', () => {
+    const many = Array.from({ length: DIFF_AUTO_COLLAPSE_FILE_THRESHOLD + 1 }, (_, index) => ({
+      path: `src/f${index}.ts`,
+      changeKind: 'modified' as const,
+      additions: 2,
+      deletions: 1
+    }));
+    expect(isDiffCardInitiallyCollapsed(many[0]!, many.length)).toBe(true);
+    expect(isDiffCardInitiallyCollapsed({ changeKind: 'deleted' }, 3)).toBe(true);
+    expect(isDiffCardInitiallyCollapsed({ changeKind: 'modified' }, 3)).toBe(false);
+    expect(resolveDiffCardCollapsed(true, many[0]!, many.length)).toBe(true);
+    expect(resolveDiffCardCollapsed(false, many[0]!, many.length)).toBe(false);
+    expect(areAllDiffCardsCollapsed(many, {})).toBe(true);
+    expect(areAllDiffCardsCollapsed(many, { 'src/f0.ts': false })).toBe(false);
+    expect(Object.values(collapseAllDiffCards(many, true)).every(Boolean)).toBe(true);
+    expect(filterDiffFiles(many, 'f0.ts').map((file) => file.path)).toEqual(['src/f0.ts']);
+    expect(filterDiffFiles(many, '  ').map((file) => file.path)).toHaveLength(many.length);
+    expect(filterDiffFiles([
+      { path: 'src/new.ts', previousPath: 'src/old.ts' }
+    ], 'old.ts').map((file) => file.path)).toEqual(['src/new.ts']);
+    expect(diffTargetForSelection('uncommitted')).toEqual({ type: 'uncommitted' });
+    expect(diffTargetForSelection('all')).toBeUndefined();
+    expect(DIFF_SELECTION_OPTIONS.map((option) => option.label)).toEqual([
+      'All changes',
+      'Uncommitted changes'
+    ]);
+    expect(summarizeDiffFiles(many)).toEqual({
+      filesCount: DIFF_AUTO_COLLAPSE_FILE_THRESHOLD + 1,
+      insertions: 22,
+      deletions: 11
+    });
+    expect(formatDiffFilesLabel(400, true)).toBe('400+ files');
+    expect(formatDiffFilesLabel(1)).toBe('1 file');
+    expect(formatDiffFilesLabel(1, true)).toBe('1+ file');
+    expect(formatDiffCardLabel({
+      path: 'src/new.ts',
+      previousPath: 'src/old.ts',
+      changeKind: 'copied'
+    })).toBe('src/old.ts -> src/new.ts');
+    expect(areAllDiffCardsCollapsed([], {})).toBe(true);
+    expect(changeKindLetter('modified')).toBe('M');
+    expect(changeKindLetter('deleted')).toBe('D');
+    expect(changeKindLetter('renamed')).toBe('R');
+    expect(changeKindLetter('copied')).toBe('C');
+    expect(shouldAutoLoadPatch({
+      collapsed: true,
+      visible: true,
+      binary: false,
+      loadMode: 'auto',
+      patchStatus: 'idle'
+    })).toBe(false);
+    expect(shouldAutoLoadPatch({
+      collapsed: false,
+      visible: false,
+      binary: false,
+      loadMode: 'auto',
+      patchStatus: 'idle'
+    })).toBe(false);
+    expect(shouldAutoLoadPatch({
+      collapsed: false,
+      visible: true,
+      binary: true,
+      loadMode: 'auto',
+      patchStatus: 'idle'
+    })).toBe(false);
+    expect(resolveDiffCardBodyKind({
+      collapsed: false,
+      binary: false,
+      loadMode: 'auto',
+      patchStatus: 'idle'
+    })).toBe('loading');
+    expect(diffCardHeaderStats({ changeKind: 'modified', additions: 4, deletions: 9 })).toEqual({
+      insertions: 4,
+      deletions: 9,
+      hideZero: false
+    });
+    expect(formatDiffCardLabel({
+      path: 'src/new.ts',
+      previousPath: 'src/old.ts',
+      changeKind: 'renamed'
+    })).toBe('src/old.ts -> src/new.ts');
+    expect(formatDiffCardLabel({
+      path: 'src/a.ts',
+      previousPath: 'src/a.ts',
+      changeKind: 'renamed'
+    })).toBe('src/a.ts');
+    expect(diffCardHeaderStats({ changeKind: 'added', additions: 4, deletions: 9 })).toEqual({
+      insertions: 4,
+      deletions: 0,
+      hideZero: true
+    });
+    expect(diffCardHeaderStats({ changeKind: 'deleted', additions: 4, deletions: 9 })).toEqual({
+      insertions: 0,
+      deletions: 9,
+      hideZero: true
+    });
+    expect(shouldAutoLoadPatch({
+      collapsed: false,
+      visible: true,
+      binary: false,
+      loadMode: 'auto',
+      patchStatus: 'idle'
+    })).toBe(true);
+    expect(shouldAutoLoadPatch({
+      collapsed: false,
+      visible: true,
+      binary: false,
+      loadMode: 'on_demand',
+      patchStatus: 'idle'
+    })).toBe(false);
+    expect(resolveDiffCardBodyKind({
+      collapsed: true,
+      binary: false,
+      loadMode: 'auto',
+      patchStatus: 'idle'
+    })).toBe('hidden');
+    expect(resolveDiffCardBodyKind({
+      collapsed: false,
+      binary: true,
+      loadMode: 'auto',
+      patchStatus: 'idle'
+    })).toBe('binary');
+    expect(resolveDiffCardBodyKind({
+      collapsed: false,
+      binary: false,
+      loadMode: 'too_large',
+      patchStatus: 'idle'
+    })).toBe('too_large');
+    expect(resolveDiffCardBodyKind({
+      collapsed: false,
+      binary: false,
+      loadMode: 'on_demand',
+      patchStatus: 'idle'
+    })).toBe('load_cta');
+    expect(resolveDiffCardBodyKind({
+      collapsed: false,
+      binary: false,
+      loadMode: 'auto',
+      patchStatus: 'error'
+    })).toBe('error');
+    expect(resolveDiffCardBodyKind({
+      collapsed: false,
+      binary: false,
+      loadMode: 'auto',
+      patchStatus: 'loading'
+    })).toBe('loading');
+    expect(resolveDiffCardBodyKind({
+      collapsed: false,
+      binary: false,
+      loadMode: 'auto',
+      patchStatus: 'ready',
+      patchEmpty: true
+    })).toBe('empty');
+    expect(resolveDiffCardBodyKind({
+      collapsed: false,
+      binary: false,
+      loadMode: 'auto',
+      patchStatus: 'ready'
+    })).toBe('patch');
+  });
+
+  it('renders stacked-card notices for binary, large, and on-demand files', () => {
+    const file = { path: 'src/a.ts', additions: 12, deletions: 0 };
+    expect(renderToStaticMarkup(
+      <ThreadDiffCardBody bodyKind="binary" file={file} patch={undefined} onLoadPatch={() => {}} />
+    )).toContain('Binary file');
+    expect(renderToStaticMarkup(
+      <ThreadDiffCardBody bodyKind="too_large" file={file} patch={undefined} onLoadPatch={() => {}} />
+    )).toContain('Too large to display');
+    expect(renderToStaticMarkup(
+      <ThreadDiffCardBody bodyKind="load_cta" file={file} patch={undefined} onLoadPatch={() => {}} />
+    )).toContain('Load diff');
+    expect(renderToStaticMarkup(
+      <ThreadDiffCardBody bodyKind="load_cta" file={file} patch={undefined} onLoadPatch={() => {}} />
+    )).toContain('+12');
+    expect(renderToStaticMarkup(
+      <ThreadDiffCardBody
+        bodyKind="error"
+        file={file}
+        patch={{ status: 'error', error: 'offline' }}
+        onLoadPatch={() => {}}
+      />
+    )).toContain('Retry');
+    expect(renderToStaticMarkup(
+      <ThreadDiffCardBody bodyKind="empty" file={file} patch={{ status: 'ready', patch: '', truncated: false }} onLoadPatch={() => {}} />
+    )).toContain('No renderable diff');
+    expect(renderToStaticMarkup(
+      <ThreadDiffCardBody bodyKind="load_cta" file={{ path: 'src/a.ts', additions: 0, deletions: 0 }} patch={undefined} onLoadPatch={() => {}} />
+    )).toContain('Changed file.');
+    expect(renderToStaticMarkup(
+      <ThreadDiffCardBody bodyKind="hidden" file={file} patch={undefined} onLoadPatch={() => {}} />
+    )).toBe('');
+    expect(renderToStaticMarkup(
+      <ThreadDiffCardBody
+        bodyKind="patch"
+        file={file}
+        patch={{ status: 'ready', patch: 'diff --git a/src/a.ts b/src/a.ts\n', truncated: true }}
+        onLoadPatch={() => {}}
+      />
+    )).toContain('Patch truncated');
   });
 });
 

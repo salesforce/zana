@@ -20,6 +20,7 @@ import {
   squashMergeInto,
   switchBranch
 } from './git.js';
+import { readWorkspaceDiffFiles, readWorkspaceDiffPatch } from './git-diff.js';
 import { withCheckoutMutationLock } from './checkout-mutation-lock.js';
 import {
   createWorktree,
@@ -127,6 +128,23 @@ export async function workspaceStatus(path: string): Promise<WorkspaceStatus> {
 
 export async function workspaceDiff(path: string, target: WorkspaceDiffTarget) {
   return readWorkspaceDiff(path, target);
+}
+
+export async function workspaceDiffFiles(
+  path: string,
+  target: WorkspaceDiffTarget,
+  maxFiles?: number
+) {
+  return readWorkspaceDiffFiles(path, target, maxFiles);
+}
+
+export async function workspaceDiffPatch(
+  path: string,
+  target: WorkspaceDiffTarget,
+  paths: string[],
+  maxBytesPerFile?: number
+) {
+  return { patches: await readWorkspaceDiffPatch(path, target, paths, maxBytesPerFile) };
 }
 
 export async function workspaceCommit(path: string, message: string, noVerify = false) {

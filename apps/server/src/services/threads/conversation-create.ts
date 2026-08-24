@@ -20,6 +20,7 @@ import {
   type SpawnEnvironmentChoice
 } from '@zana-ai/zcc-domain';
 import type { Project } from '@zana-ai/zcc-domain/product';
+import type { ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
 import type { EnvironmentProvisionCommand, EnvironmentProvisionResult } from '@zana-ai/zcc-contracts/host-rpc';
 import { AmbiguousHostError, HostUnavailableError } from '../../http/host-hub.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
@@ -46,6 +47,7 @@ export interface CreateConversationInput {
   title?: string;
   permissionMode?: 'accept-edits' | 'auto' | 'full';
   model?: string;
+  reasoningLevel?: ReasoningLevel;
 }
 
 const THREAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -142,7 +144,8 @@ async function startConversationOnHost(
     prompt: args.prompt,
     kind: 'thread-start',
     permissionMode: args.input.permissionMode,
-    model: args.input.model
+    model: args.input.model,
+    reasoningLevel: args.input.reasoningLevel
   });
   const started = await ctx.hostHub.callHostOnlineRpc<ThreadStartResult>({
     hostId: args.hostId,
@@ -157,7 +160,8 @@ async function startConversationOnHost(
       title: args.thread.title ?? undefined,
       bridgeLaunch: bridgeLaunchForProvider(providerId, dataDir),
       permissionMode: args.input.permissionMode ?? permissionModeForLaunchProfile(args.input.providerId),
-      ...(args.input.model ? { model: args.input.model } : {})
+      ...(args.input.model ? { model: args.input.model } : {}),
+      ...(args.input.reasoningLevel ? { reasoningLevel: args.input.reasoningLevel } : {})
     }
   });
   if (started.providerThreadId) {

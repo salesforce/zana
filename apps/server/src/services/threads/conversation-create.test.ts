@@ -51,6 +51,8 @@ describe('unmanaged environment reuse', () => {
     expect(source).toContain("choice.kind === 'unmanaged'");
     expect(source).toContain('needsHostAttach');
     expect(source).toContain("existing.workspaceProvisionType === 'unmanaged'");
+    expect(source).toContain('reasoningLevel: args.input.reasoningLevel');
+    expect(source).toContain("...(args.input.reasoningLevel ? { reasoningLevel: args.input.reasoningLevel } : {})");
   });
 });
 

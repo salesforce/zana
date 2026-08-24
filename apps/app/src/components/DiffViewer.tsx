@@ -17,6 +17,8 @@ export function DiffViewer({
   path,
   fitContent = false,
   compact = false,
+  wrap = false,
+  splitView = false,
   onContentHeightChange
 }: {
   original: string;
@@ -25,6 +27,8 @@ export function DiffViewer({
   path: string;
   fitContent?: boolean;
   compact?: boolean;
+  wrap?: boolean;
+  splitView?: boolean;
   onContentHeightChange?: (height: number) => void;
 }) {
   const monacoTheme = useMonacoTheme();
@@ -47,13 +51,15 @@ export function DiffViewer({
     const observer = new ResizeObserver(() => reportHeight());
     observer.observe(el);
     return () => observer.disconnect();
-  }, [fitContent, original, modified, path]);
+  }, [fitContent, original, modified, path, wrap, splitView]);
 
   const compactStyles = useMemo(
     () => ({
       contentText: {
         fontSize: compact ? 11.5 : 12,
         lineHeight: compact ? '17px' : '18px',
+        whiteSpace: wrap ? 'pre-wrap' : 'pre',
+        wordBreak: wrap ? 'break-word' : 'normal',
         fontFamily:
           "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace"
       },
@@ -68,7 +74,7 @@ export function DiffViewer({
         minWidth: 14
       }
     }),
-    [compact]
+    [compact, wrap]
   );
 
   return (
@@ -79,6 +85,7 @@ export function DiffViewer({
       data-language={language ?? ''}
       aria-label={`Diff for ${path}`}
       data-compact={compact ? 'true' : 'false'}
+      data-wrap={wrap ? 'true' : 'false'}
       style={{ height: fitContent ? `${contentHeight}px` : '100%', width: '100%' }}
     >
       <Suspense fallback={null}>
@@ -86,6 +93,7 @@ export function DiffViewer({
           original={original}
           modified={modified}
           compactStyles={compactStyles}
+          splitView={splitView}
           isDark={monacoTheme === 'vs-dark'}
         />
       </Suspense>

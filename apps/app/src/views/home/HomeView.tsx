@@ -38,10 +38,10 @@ interface GuideItem {
 }
 
 /**
- * Landing dashboard: the latest inbox activity and task-oriented guides,
- * read from already-hydrated stores (no new IPC), each card deep-linking into
- * the existing full views. Full-width standalone panel, same shape as
- * PersonasPanel/UsagePanel (ListPane returns null for `nav === 'home'`).
+ * Landing dashboard: Inbox + Guides fill the panel, and the thread composer
+ * is docked to the bottom of the viewport (always reachable, never below the
+ * cards). Cards deep-link into the existing full views. Full-width standalone
+ * panel (ListPane returns null for `nav === 'home'`).
  */
 export function HomeView() {
   const inboxEntries = useInbox((s) => s.entries);
@@ -135,80 +135,81 @@ export function HomeView() {
     <div className="settings-panel home-panel aurora-host">
       <AuroraGrid />
       <div className="settings-inner">
-        <HomeAgentComposer />
-
-        <div className="home-grid">
-          <HomeCard
-            title="Inbox"
-            icon={InboxIcon}
-            count={unreadInbox}
-            onViewAll={() => setNav('inbox')}
-            viewAllLabel="View all"
-            loading={inboxLoading}
-            empty="Nothing in the inbox yet."
-          >
-            {latestInbox.map((entry) => (
-              <button
-                key={entry.id}
-                className="home-row"
-                onClick={() => openInboxEntry(entry.id)}
-              >
-                <span className="home-row-icon" aria-hidden="true">
-                  <InboxIcon size={14} />
-                </span>
-                <span className="home-row-text">
-                  <span className="home-row-title">{inboxPrimaryTitle(entry)}</span>
-                  <span className="home-row-meta">
-                    {entry.projectLabel ?? entry.projectId}
-                    {inboxSecondaryLine(entry) ? ` · ${inboxSecondaryLine(entry)}` : ''}
-                  </span>
-                </span>
-              </button>
-            ))}
-          </HomeCard>
-
-          <HomeCard title="Guides" icon={Compass} count={0} loading={false} empty="">
-            {guides.map((g) => {
-              const Icon = g.icon;
-              return (
+        <div className="home-dashboard">
+          <div className="home-grid">
+            <HomeCard
+              title="Inbox"
+              icon={InboxIcon}
+              count={unreadInbox}
+              onViewAll={() => setNav('inbox')}
+              viewAllLabel="View all"
+              loading={inboxLoading}
+              empty="Nothing in the inbox yet."
+            >
+              {latestInbox.map((entry) => (
                 <button
-                  key={g.id}
-                  className="home-row home-row--guide"
-                  onClick={() => setOpenGuideId(g.id)}
+                  key={entry.id}
+                  className="home-row"
+                  onClick={() => openInboxEntry(entry.id)}
                 >
                   <span className="home-row-icon" aria-hidden="true">
-                    <Icon size={14} />
+                    <InboxIcon size={14} />
                   </span>
                   <span className="home-row-text">
-                    <span className="home-row-title">{g.title}</span>
-                    <span className="home-row-meta">{g.description}</span>
+                    <span className="home-row-title">{inboxPrimaryTitle(entry)}</span>
+                    <span className="home-row-meta">
+                      {entry.projectLabel ?? entry.projectId}
+                      {inboxSecondaryLine(entry) ? ` · ${inboxSecondaryLine(entry)}` : ''}
+                    </span>
                   </span>
                 </button>
-              );
-            })}
-          </HomeCard>
+              ))}
+            </HomeCard>
+
+            <HomeCard title="Guides" icon={Compass} count={0} loading={false} empty="">
+              {guides.map((g) => {
+                const Icon = g.icon;
+                return (
+                  <button
+                    key={g.id}
+                    className="home-row home-row--guide"
+                    onClick={() => setOpenGuideId(g.id)}
+                  >
+                    <span className="home-row-icon" aria-hidden="true">
+                      <Icon size={14} />
+                    </span>
+                    <span className="home-row-text">
+                      <span className="home-row-title">{g.title}</span>
+                      <span className="home-row-meta">{g.description}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </HomeCard>
+          </div>
+
+          {pluginHomepage.length > 0 && (
+            <div className="home-plugin-sections">
+              {pluginHomepage.map((section) => {
+                const Section = section.component;
+                return (
+                  <PluginSlotBoundary
+                    key={`${section.id}:${section.generation}`}
+                    pluginId={section.id}
+                    generation={section.generation}
+                  >
+                    <section className="home-plugin-section">
+                      <h3>{section.title}</h3>
+                      <Section pluginId={section.id} projectId={null} />
+                    </section>
+                  </PluginSlotBoundary>
+                );
+              })}
+            </div>
+          )}
         </div>
 
-        {pluginHomepage.length > 0 && (
-          <div className="home-plugin-sections">
-            {pluginHomepage.map((section) => {
-              const Section = section.component;
-              return (
-                <PluginSlotBoundary
-                  key={`${section.id}:${section.generation}`}
-                  pluginId={section.id}
-                  generation={section.generation}
-                >
-                  <section className="home-plugin-section">
-                    <h3>{section.title}</h3>
-                    <Section pluginId={section.id} projectId={null} />
-                  </section>
-                </PluginSlotBoundary>
-              );
-            })}
-          </div>
-        )}
-
+        <HomeAgentComposer />
       </div>
 
       {creatingExtension && (

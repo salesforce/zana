@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -118,8 +118,30 @@ describe('product HTTP', () => {
     expect(escaped.status).toBe(403);
     await expect(escaped.json()).resolves.toMatchObject({ ok: false, code: 'cwd-escape' });
 
-    const liveThreads = await fetch(`${server.url}api/v1/threads`).then((response) => response.json());
-    expect(liveThreads).toEqual({ threads: [] });
+    const listed = await fetch(`${server.url}api/v1/threads`).then((response) => response.json());
+    expect(listed).toEqual({ threads: [] });
+
+    const execution = await fetch(`${server.url}api/v1/system/execution-options?providerId=claude-code`);
+    expect(execution.status).toBe(200);
+    const options = await execution.json() as {
+      providers: Array<{ id: string; composerActions?: string[] }>;
+      models: Array<{ displayName: string; model: string }>;
+      selectedOnlyModels?: Array<{ displayName: string; model: string }>;
+    };
+    expect(options.providers.map((row) => row.id)).toEqual(
+      expect.arrayContaining(['claude-code', 'codex', 'pi', 'acp-cursor'])
+    );
+    expect(options.providers.find((row) => row.id === 'claude-code')?.composerActions).toEqual(['plan']);
+    expect(options.models.map((row) => row.displayName)).toEqual(expect.arrayContaining([
+      'Fable 5',
+      'Opus 5 (1M)',
+      'Sonnet 5'
+    ]));
+    expect(options.selectedOnlyModels?.map((row) => row.displayName)).toEqual(expect.arrayContaining([
+      'Opus Alias (1M, Current)',
+      'Sonnet Alias (Legacy)',
+      'Haiku Alias (Legacy)'
+    ]));
 
     const providers = await fetch(`${server.url}api/v1/threads/providers`).then((response) => response.json());
     expect(providers.providers.map((row: { id: string }) => row.id)).toEqual(
@@ -315,80 +337,6 @@ describe('product HTTP', () => {
     expect(body.threads).toEqual([expect.objectContaining({ id: thread.id, status: 'idle' })]);
   });
 
-  it('patches a conversation parent on the same project and rejects cycles', async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-parent-'));
-    server = await startProductServer({
-      dataDir,
-      origins: { serverPort: 0, devAppPort: 5173 }
-    });
-    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
-    const environment = createEnvironment(server.ctx.db, {
-      projectId: 'proj-1',
-      hostId: host.id,
-      path: '/tmp/proj'
-    });
-    const parent = createConversationThread(server.ctx.db, {
-      projectId: 'proj-1',
-      hostId: host.id,
-      environmentId: environment.id,
-      providerId: 'claude-code',
-      title: 'Parent'
-    });
-    const child = createConversationThread(server.ctx.db, {
-      projectId: 'proj-1',
-      hostId: host.id,
-      environmentId: environment.id,
-      providerId: 'claude-code',
-      title: 'Child'
-    });
-    const otherEnv = createEnvironment(server.ctx.db, {
-      projectId: 'proj-2',
-      hostId: host.id,
-      path: '/tmp/other'
-    });
-    const foreign = createConversationThread(server.ctx.db, {
-      projectId: 'proj-2',
-      hostId: host.id,
-      environmentId: otherEnv.id,
-      providerId: 'claude-code',
-      title: 'Foreign'
-    });
-
-    const assigned = await fetch(`${server.url}api/v1/threads/${child.id}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ parentThreadId: parent.id })
-    });
-    expect(assigned.status).toBe(200);
-    await expect(assigned.json()).resolves.toMatchObject({
-      thread: expect.objectContaining({ id: child.id, parentThreadId: parent.id })
-    });
-
-    const self = await fetch(`${server.url}api/v1/threads/${child.id}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ parentThreadId: child.id })
-    });
-    expect(self.status).toBe(400);
-    await expect(self.json()).resolves.toMatchObject({ error: 'invalid-parent' });
-
-    const cycle = await fetch(`${server.url}api/v1/threads/${parent.id}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ parentThreadId: child.id })
-    });
-    expect(cycle.status).toBe(400);
-    await expect(cycle.json()).resolves.toMatchObject({ error: 'invalid-parent' });
-
-    const cross = await fetch(`${server.url}api/v1/threads/${child.id}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ parentThreadId: foreign.id })
-    });
-    expect(cross.status).toBe(400);
-    await expect(cross.json()).resolves.toMatchObject({ error: 'invalid-parent' });
-  });
-
   it('rejects explorer list-dir outside a registered project', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-fs-'));
     const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-product-fs-proj-'));
@@ -540,5 +488,85 @@ describe('product HTTP', () => {
       body: originForm
     });
     expect(originDenied.status).toBe(403);
+  });
+
+  it('serves environment diff file TOC and per-file patches', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-diff-'));
+    server = await startProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: '/tmp/proj',
+      status: 'ready'
+    });
+    const rpc = vi.fn(async (input: { command: { type: string; paths?: string[] } }) => {
+      if (input.command.type === 'workspace.diffFiles') {
+        return {
+          files: [{
+            path: 'src/a.ts',
+            previousPath: null,
+            statusLetter: 'M',
+            additions: 2,
+            deletions: 1,
+            binary: false,
+            origin: 'tracked'
+          }],
+          shortstat: '1 file changed, 2 insertions(+), 1 deletion(-)',
+          mergeBaseRef: null,
+          truncated: false
+        };
+      }
+      if (input.command.type === 'workspace.diffPatch') {
+        return {
+          patches: (input.command.paths ?? ['src/a.ts']).map((path) => ({
+            path,
+            patch: `diff --git a/${path} b/${path}\n+ok\n`,
+            truncated: false
+          }))
+        };
+      }
+      throw new Error(`unexpected command ${input.command.type}`);
+    });
+    server.ctx.hostHub.connectedHostIds = () => [host.id];
+    server.ctx.hostHub.resolveHostId = () => host.id;
+    server.ctx.hostHub.callHostOnlineRpc = rpc;
+
+    const files = await fetch(`${server.url}api/v1/environments/${environment.id}/diff/files`);
+    expect(files.status).toBe(200);
+    const filesBody = await files.json() as {
+      outcome: string;
+      files: Array<{ path: string; changeKind: string; loadMode: string }>;
+      initialPatches: Array<{ path: string }>;
+    };
+    expect(filesBody.outcome).toBe('available');
+    expect(filesBody.files[0]).toMatchObject({ path: 'src/a.ts', changeKind: 'modified', loadMode: 'auto' });
+    expect(filesBody.initialPatches[0]?.path).toBe('src/a.ts');
+    expect(rpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({ type: 'workspace.diffFiles' })
+    }));
+
+    const patch = await fetch(`${server.url}api/v1/environments/${environment.id}/diff/patch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ paths: ['src/a.ts'] })
+    });
+    expect(patch.status).toBe(200);
+    await expect(patch.json()).resolves.toMatchObject({
+      outcome: 'available',
+      patches: [{ path: 'src/a.ts', truncated: false }]
+    });
+  });
+});
+
+describe('product HTTP thread reasoning', () => {
+  it('imports reasoningLevelSchema so create/send can parse the picker value', () => {
+    const source = readFileSync(new URL('./product-api.ts', import.meta.url), 'utf8');
+    expect(source).toContain("from '@zana-ai/zcc-domain/thread-runtime'");
+    expect(source).toContain('reasoningLevelSchema');
+    expect(source).toContain('parseReasoningLevel(body.reasoningLevel)');
   });
 });

@@ -1,6 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import type { HostBridgeLaunch, HostEventEnvelope } from '@zana-ai/zcc-contracts/host-rpc';
+import type { HostBridgeLaunch, HostEventEnvelope, ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
 import {
   createAgentRuntime,
   type AgentRuntime,
@@ -12,6 +12,7 @@ import {
   encodeClientTurnRequestIdNumber,
   type PermissionMode,
   type PromptInput,
+  type ReasoningLevel,
   type RuntimeThreadExecutionOptions,
   type ThreadEvent
 } from '@zana-ai/zcc-domain/thread-runtime';
@@ -72,18 +73,21 @@ function permissionPolicy(
 export function threadExecutionOptions(input: {
   permissionMode?: RuntimeThreadExecutionOptions['permissionMode'];
   model?: string;
+  reasoningLevel?: ReasoningLevel;
 }): RuntimeThreadExecutionOptions {
   const mode = input.permissionMode ?? DEFAULT_THREAD_EXECUTION_OPTIONS.permissionMode;
   return {
     ...DEFAULT_THREAD_EXECUTION_OPTIONS,
     ...permissionPolicy(mode),
-    ...(input.model ? { model: input.model } : {})
+    ...(input.model ? { model: input.model } : {}),
+    ...(input.reasoningLevel ? { reasoningLevel: input.reasoningLevel } : {})
   } as RuntimeThreadExecutionOptions;
 }
 
 function executionOptions(input: {
   permissionMode?: RuntimeThreadExecutionOptions['permissionMode'];
   model?: string;
+  reasoningLevel?: ReasoningLevel;
 }): RuntimeThreadExecutionOptions {
   return threadExecutionOptions(input);
 }
@@ -160,6 +164,24 @@ export function createAgentRuntimeAdapter(options: {
   }
 
   return {
+    async listModels(input: {
+      providerId: string;
+      bridgeLaunch: HostBridgeLaunch;
+      cwd?: string;
+    }): Promise<ProviderListModelsResult> {
+      const dataDir = join(storageRoot, 'model-list', input.providerId);
+      mkdirSync(dataDir, { recursive: true });
+      const runtime = runtimeFor(`model-list:${input.providerId}`, input.cwd ?? dataDir);
+      const listed = await runtime.listModels({
+        providerId: input.providerId,
+        bridgeLaunch: toRuntimeBridgeLaunch({ ...input.bridgeLaunch, dataDir }),
+        ...(input.cwd ? { cwd: input.cwd } : {})
+      });
+      return {
+        models: listed.models,
+        selectedOnlyModels: listed.selectedOnlyModels
+      };
+    },
     async startWork(input: ThreadWorkInput) {
       const runtime = runtimeFor(input.environmentId, input.cwd);
       threadLocation.set(input.threadId, { environmentId: input.environmentId, cwd: input.cwd });
@@ -172,7 +194,8 @@ export function createAgentRuntimeAdapter(options: {
         clientRequestId: encodeClientTurnRequestIdNumber({ value: Date.now() }),
         options: executionOptions({
           permissionMode: input.permissionMode,
-          model: input.model
+          model: input.model,
+          reasoningLevel: input.reasoningLevel
         }),
         ...(input.bridgeLaunch ? { bridgeLaunch: toRuntimeBridgeLaunch(input.bridgeLaunch) } : {})
       });
@@ -184,7 +207,10 @@ export function createAgentRuntimeAdapter(options: {
         threadId: input.threadId,
         input: textInput(input.input),
         clientRequestId: encodeClientTurnRequestIdNumber({ value: Date.now() }),
-        options: DEFAULT_THREAD_EXECUTION_OPTIONS
+        options: executionOptions({
+          model: input.model,
+          reasoningLevel: input.reasoningLevel
+        })
       });
     },
     async resumeWork(input: ThreadResumeInput) {
@@ -198,7 +224,8 @@ export function createAgentRuntimeAdapter(options: {
         providerThreadId: input.providerThreadId,
         options: executionOptions({
           permissionMode: input.permissionMode,
-          model: input.model
+          model: input.model,
+          reasoningLevel: input.reasoningLevel
         }),
         ...(input.bridgeLaunch ? { bridgeLaunch: toRuntimeBridgeLaunch(input.bridgeLaunch) } : {})
       });

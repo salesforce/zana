@@ -4,6 +4,7 @@ import {
   threadEventSchema,
   threadScope,
   type PermissionMode,
+  type ReasoningLevel,
   type ThreadEvent
 } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ProductHttpContext } from '../../http/product-context.js';
@@ -16,6 +17,7 @@ export function appendClientTurnRequested(
     kind: 'thread-start' | 'new-turn';
     permissionMode?: PermissionMode;
     model?: string;
+    reasoningLevel?: ReasoningLevel;
   }
 ): void {
   const input = args.prompt
@@ -44,7 +46,7 @@ export function appendClientTurnRequested(
     execution: {
       model: args.model?.trim() || 'default',
       serviceTier: 'default',
-      reasoningLevel: 'medium',
+      reasoningLevel: args.reasoningLevel ?? 'medium',
       permissionMode: args.permissionMode ?? 'accept-edits',
       source: 'client/turn/requested'
     }

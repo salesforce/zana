@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { homedir } from 'node:os';
-import { realpathSync, statSync } from 'node:fs';
+import { mkdirSync, realpathSync, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type {
   AppConfig,
@@ -25,25 +25,30 @@ import {
 } from '../services/threads/conversation-create.js';
 import {
   forkConversation,
-  assignConversationParent,
   resumeConversation,
   sendConversationTurn,
   stopConversation,
   type ThreadSendMode
 } from '../services/threads/conversation-lifecycle.js';
 import { conversationOutline, conversationTimeline } from '../services/threads/conversation-timeline.js';
+import { readLastThreadExecution } from '../services/threads/thread-last-execution.js';
 import { markThreadRead } from '../services/threads/thread-reads.js';
 import { readThreadHostFile } from '../services/threads/thread-host-file.js';
-import { listThreadProviders } from '../services/threads/thread-provider-catalog.js';
+import { listThreadProviders, bridgeLaunchForProvider } from '../services/threads/thread-provider-catalog.js';
+import { buildThreadExecutionOptions } from '../services/threads/thread-execution-options.js';
 import { archiveThread, destroyEnvironment } from '../services/environments/environment-cleanup.js';
 import {
   environmentDiff,
+  environmentDiffFiles,
+  environmentDiffPatch,
   environmentPullRequest,
   environmentStatus,
   listProjectEnvironments,
   runEnvironmentAction
 } from '../services/environments/environment-actions.js';
 import { spawnEnvironmentChoiceSchema } from '@zana-ai/zcc-domain';
+import { reasoningLevelSchema, type ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
+import type { ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
 import { normalizeRepoUrl } from '../services/projects/git-clone.js';
 import { harnessDescriptors, harnessEffectiveDefault, harnessVerify } from './harness-via-rpc.js';
 import { isSafeRelPath, listLibraryDocs, listQuickPrompts, readLibraryDoc } from './library-via-host.js';
@@ -58,6 +63,11 @@ import {
 } from '../services/threads/voice-transcription.js';
 
 const VALID_FOLLOW_UP_STATUS: FollowUpStatus[] = ['open', 'resolved', 'dismissed'];
+
+function parseReasoningLevel(value: unknown): ReasoningLevel | undefined {
+  const parsed = reasoningLevelSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
 
 function isContained(root: string, candidate: string): boolean {
   const path = relative(root, candidate);
@@ -510,35 +520,12 @@ export async function handleProductHttp(
         sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
         return true;
       }
-      sendJson(response, 200, { thread: conversationThreadView(ctx, thread) });
-      return true;
-    }
-
-    if (threadById && method === 'PATCH') {
-      const body = (await readJsonBody(request)) as { parentThreadId?: unknown };
-      if (!Object.prototype.hasOwnProperty.call(body ?? {}, 'parentThreadId')) {
-        sendJson(response, 400, { error: 'invalid-input', message: 'parentThreadId is required' });
-        return true;
-      }
-      const parentThreadId = body.parentThreadId === null
-        ? null
-        : typeof body.parentThreadId === 'string'
-          ? body.parentThreadId
-          : undefined;
-      if (parentThreadId === undefined) {
-        sendJson(response, 400, { error: 'invalid-input', message: 'parentThreadId must be a string or null' });
-        return true;
-      }
-      try {
-        const thread = assignConversationParent(ctx, threadById.id, parentThreadId);
-        sendJson(response, 200, { thread: conversationThreadView(ctx, thread) });
-      } catch (error) {
-        if (error instanceof ThreadCreateError) {
-          sendJson(response, error.status, { error: error.code, message: error.message });
-          return true;
+      sendJson(response, 200, {
+        thread: {
+          ...conversationThreadView(ctx, thread),
+          ...readLastThreadExecution(ctx, thread.id)
         }
-        sendHostFailure(response, error);
-      }
+      });
       return true;
     }
 
@@ -680,13 +667,22 @@ export async function handleProductHttp(
     const threadReply = routeParams(path, '/api/v1/threads/:id/reply');
     if ((threadSend || threadReply) && method === 'POST') {
       const id = threadSend?.id ?? threadReply?.id;
-      const body = (await readJsonBody(request)) as { input?: unknown; text?: unknown; mode?: unknown };
+      const body = (await readJsonBody(request)) as {
+        input?: unknown;
+        text?: unknown;
+        mode?: unknown;
+        model?: unknown;
+        reasoningLevel?: unknown;
+      };
       const mode = body.mode === 'start' || body.mode === 'auto' || body.mode === 'steer'
         || body.mode === 'queue-if-active' || body.mode === 'steer-if-active'
         ? body.mode as ThreadSendMode
         : 'auto';
       try {
-        const thread = await sendConversationTurn(ctx, id!, body.input ?? body.text, mode);
+        const thread = await sendConversationTurn(ctx, id!, body.input ?? body.text, mode, {
+          model: typeof body.model === 'string' ? body.model : undefined,
+          reasoningLevel: parseReasoningLevel(body.reasoningLevel)
+        });
         sendJson(response, 200, { ok: true, thread: conversationThreadView(ctx, thread) });
       } catch (error) {
         if (error instanceof ThreadCreateError) {
@@ -723,7 +719,8 @@ export async function handleProductHttp(
           permissionMode: body.permissionMode === 'accept-edits' || body.permissionMode === 'auto' || body.permissionMode === 'full'
             ? body.permissionMode
             : undefined,
-          model: typeof body.model === 'string' ? body.model : undefined
+          model: typeof body.model === 'string' ? body.model : undefined,
+          reasoningLevel: parseReasoningLevel(body.reasoningLevel)
         });
         sendJson(response, 201, { ok: true, value: conversationThreadView(ctx, thread), thread: conversationThreadView(ctx, thread) });
       } catch (error) {
@@ -795,6 +792,37 @@ export async function handleProductHttp(
     if (envStatus && method === 'GET') {
       try {
         sendJson(response, 200, await environmentStatus(ctx, envStatus.id));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { ok: false, code: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const envDiffFiles = routeParams(path, '/api/v1/environments/:id/diff/files');
+    if (envDiffFiles && method === 'GET') {
+      try {
+        const raw = requestUrl.searchParams.get('target');
+        const target = raw ? JSON.parse(raw) : undefined;
+        sendJson(response, 200, await environmentDiffFiles(ctx, envDiffFiles.id, target));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { ok: false, code: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const envDiffPatch = routeParams(path, '/api/v1/environments/:id/diff/patch');
+    if (envDiffPatch && method === 'POST') {
+      try {
+        const body = await readJsonBody(request);
+        sendJson(response, 200, await environmentDiffPatch(ctx, envDiffPatch.id, body));
       } catch (error) {
         if (error instanceof ThreadCreateError) {
           sendJson(response, error.status, { ok: false, code: error.code, message: error.message });
@@ -1162,6 +1190,37 @@ export async function handleProductHttp(
       } catch (error) {
         sendHostFailure(response, error);
       }
+      return true;
+    }
+
+    if (path === '/api/v1/system/execution-options' && method === 'GET') {
+      const providerId = requestUrl.searchParams.get('providerId') ?? undefined;
+      let availability: Awaited<ReturnType<typeof harnessVerify>> = [];
+      try {
+        availability = await harnessVerify(ctx.hostHub);
+      } catch {
+        availability = [];
+      }
+      let listed: ProviderListModelsResult | null = null;
+      if (providerId) {
+        try {
+          const hostId = ctx.hostHub.resolveHostId();
+          const dataDir = join(ctx.dataDir, 'thread-bridges', providerId);
+          mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+          listed = await ctx.hostHub.callHostOnlineRpc<ProviderListModelsResult>({
+            hostId,
+            timeoutMs: 20_000,
+            command: {
+              type: 'provider.list_models',
+              providerId,
+              bridgeLaunch: bridgeLaunchForProvider(providerId, dataDir)
+            }
+          });
+        } catch {
+          listed = null;
+        }
+      }
+      sendJson(response, 200, buildThreadExecutionOptions({ providerId, availability, listed }));
       return true;
     }
 

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
-import { assignConversationParent, forkConversation, resumeConversation, sendConversationTurn } from './conversation-lifecycle.js';
+import { forkConversation, resumeConversation, sendConversationTurn } from './conversation-lifecycle.js';
 import { conversationTimeline } from './conversation-timeline.js';
 
 const thread = {
@@ -37,7 +37,6 @@ vi.mock('@zana-ai/zcc-db', () => {
   return {
   getConversationThread: vi.fn(() => thread),
   updateConversationThreadStatus: vi.fn((_db, id, status) => ({ ...thread, id, status })),
-  updateConversationThreadParent: vi.fn((_db, id, parentThreadId) => ({ ...thread, id, parentThreadId })),
   setConversationProviderThreadId: vi.fn(),
   archiveConversationThread: vi.fn(),
   appendConversationThreadEvent: vi.fn((_db, input) => ({
@@ -68,7 +67,6 @@ import {
   createConversationThread,
   getConversationThread,
   listConversationThreadEvents,
-  updateConversationThreadParent,
   updateConversationThreadStatus
 } from '@zana-ai/zcc-db';
 
@@ -108,6 +106,24 @@ describe('conversation lifecycle', () => {
           providerId: 'claude-code',
           cwd: '/tmp/proj'
         })
+      })
+    }));
+  });
+
+  it('forwards model and reasoningLevel on follow-up turn.submit', async () => {
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
+    await sendConversationTurn(
+      ctx(callHostOnlineRpc),
+      thread.id,
+      [{ type: 'text', text: 'follow up' }],
+      'auto',
+      { model: 'claude-sonnet-5', reasoningLevel: 'high' }
+    );
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({
+        type: 'turn.submit',
+        model: 'claude-sonnet-5',
+        reasoningLevel: 'high'
       })
     }));
   });
@@ -172,48 +188,6 @@ describe('conversation lifecycle', () => {
     );
     expect(forked.originKind).toBe('fork');
     expect(forked.parentThreadId).toBe(thread.id);
-  });
-
-  it('assigns a same-project parent and rejects self or cycles', () => {
-    const parent = {
-      ...thread,
-      id: '44444444-4444-4444-8444-444444444444',
-      title: 'Parent'
-    };
-    const child = {
-      ...thread,
-      id: '55555555-5555-4555-8555-555555555555',
-      parentThreadId: parent.id
-    };
-    vi.mocked(getConversationThread).mockImplementation((_db, id) => {
-      if (id === thread.id) return thread;
-      if (id === parent.id) return parent;
-      if (id === child.id) return child;
-      return undefined;
-    });
-    vi.mocked(updateConversationThreadParent).mockImplementation((_db, id, parentThreadId) => ({
-      ...thread,
-      id,
-      parentThreadId
-    }));
-
-    const assigned = assignConversationParent(ctx(async () => ({})), thread.id, parent.id);
-    expect(assigned.parentThreadId).toBe(parent.id);
-    expect(updateConversationThreadParent).toHaveBeenCalledWith(expect.anything(), thread.id, parent.id);
-
-    expect(() => assignConversationParent(ctx(async () => ({})), thread.id, thread.id)).toThrow(ThreadCreateError);
-    try {
-      assignConversationParent(ctx(async () => ({})), thread.id, thread.id);
-    } catch (error) {
-      expect(error).toMatchObject({ status: 400, code: 'invalid-parent' });
-    }
-
-    expect(() => assignConversationParent(ctx(async () => ({})), parent.id, child.id)).toThrow(ThreadCreateError);
-    try {
-      assignConversationParent(ctx(async () => ({})), parent.id, child.id);
-    } catch (error) {
-      expect(error).toMatchObject({ status: 400, code: 'invalid-parent' });
-    }
   });
 
   it('projects stored events into a timeline', () => {

@@ -4,47 +4,37 @@ import { MemoryRouter } from 'react-router-dom';
 import { environmentLabel, ThreadInfoContent, ThreadInfoRows } from './ThreadInfoContent.js';
 
 describe('ThreadInfoRows', () => {
-  it('renders Parent None, Local environment, and a copyable directory', () => {
+  it('renders Local environment and a copyable directory without a parent control', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <ThreadInfoRows
-          threadId="t1"
-          parentThreadId={null}
-          parentOptions={[]}
-          forks={[]}
           isWorktree={false}
           cwd="/Users/me/project"
           branchName={null}
           workspaceStatus={null}
           pullRequest={null}
-          onAssignParent={() => undefined}
         />
       </MemoryRouter>
     );
-    expect(html).toContain('data-testid="thread-info-parent"');
-    expect(html).toContain('None');
+    expect(html).not.toContain('data-testid="thread-info-parent"');
+    expect(html).not.toContain('Assign parent thread');
+    expect(html).not.toContain('data-testid="thread-info-forks"');
     expect(html).toContain('data-testid="thread-info-environment"');
     expect(html).toContain('Local');
     expect(html).toContain('data-testid="thread-info-directory"');
     expect(html).toContain('/Users/me/project');
     expect(html).toContain('data-testid="thread-info-copy-directory"');
-    expect(html).not.toContain('data-testid="thread-info-forks"');
   });
 
   it('hides empty git/PR/file rows and labels a worktree checkout', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <ThreadInfoRows
-          threadId="t1"
-          parentThreadId={null}
-          parentOptions={[]}
-          forks={[]}
           isWorktree
           cwd={null}
           branchName={null}
           workspaceStatus={null}
           pullRequest={null}
-          onAssignParent={() => undefined}
         />
       </MemoryRouter>
     );
@@ -61,14 +51,10 @@ describe('ThreadInfoRows', () => {
     expect(environmentLabel(false, 'Staging')).toBe('Staging');
   });
 
-  it('renders parent, forks, git, PR, and changed-file rows when present', () => {
+  it('renders git, PR, and changed-file rows when present', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <ThreadInfoRows
-          threadId="t1"
-          parentThreadId="p1"
-          parentOptions={[{ id: 'p1', title: 'Parent thread' }, { id: 't2', title: 'Other' }]}
-          forks={[{ id: 'f1', title: 'Fork one' }]}
           isWorktree={false}
           environmentName="Staging"
           cwd="/tmp/proj"
@@ -78,13 +64,11 @@ describe('ThreadInfoRows', () => {
             files: [{ path: 'src/a.ts', kind: 'modified' }]
           } as never}
           pullRequest={{ url: 'https://example.com/pr/1', number: 1, state: 'open' } as never}
-          onAssignParent={() => undefined}
         />
       </MemoryRouter>
     );
-    expect(html).toContain('Parent thread');
-    expect(html).toContain('data-testid="thread-info-forks"');
-    expect(html).toContain('Fork one');
+    expect(html).not.toContain('Parent thread');
+    expect(html).not.toContain('data-testid="thread-info-forks"');
     expect(html).toContain('Staging');
     expect(html).toContain('feat/panel');
     expect(html).toContain('data-testid="thread-info-git"');
@@ -94,23 +78,43 @@ describe('ThreadInfoRows', () => {
     expect(html).toContain('a.ts');
   });
 
+  it('renders Model and Reasoning with human labels', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ThreadInfoRows
+          isWorktree={false}
+          cwd={null}
+          branchName={null}
+          workspaceStatus={null}
+          pullRequest={null}
+          model="claude-sonnet-5"
+          reasoningLevel="xhigh"
+          providerId="claude-code"
+        />
+      </MemoryRouter>
+    );
+    expect(html).toContain('data-testid="thread-info-model"');
+    expect(html).toContain('Sonnet 5');
+    expect(html).toContain('data-testid="thread-info-reasoning"');
+    expect(html).toContain('X-High');
+    expect(html).not.toContain('xhigh');
+  });
+
   it('renders the Info content shell before async hydration', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <ThreadInfoContent
           threadId="t1"
           projectId={null}
-          parentThreadId={null}
           isWorktree={false}
           cwd="/tmp/proj"
           branchName={null}
           environmentId={null}
-          onAssignedParent={() => undefined}
         />
       </MemoryRouter>
     );
     expect(html).toContain('data-testid="thread-info-tab"');
-    expect(html).toContain('None');
+    expect(html).not.toContain('None');
     expect(html).toContain('Local');
     expect(html).toContain('/tmp/proj');
   });

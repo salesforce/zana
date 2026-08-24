@@ -109,6 +109,30 @@ export function threadRailDetail(thread: Pick<ThreadListItem, 'status'>): string
   return 'Idle · Thread';
 }
 
+/** Humanize a thread provider id (`claude-code` → `Claude Code`, `acp-cursor` → `Cursor`). */
+export function threadHarnessLabel(providerId: string): string {
+  const trimmed = providerId.replace(/^acp-/, '');
+  const label = trimmed
+    .split(/[-_]/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+  return label || providerId;
+}
+
+/** Runtime + harness line for a board card (replaces the redundant project name). */
+export function threadCardRuntimeLabel(
+  thread: Pick<ThreadListItem, 'providerId' | 'isWorktree'>
+): string {
+  const harness = threadHarnessLabel(thread.providerId);
+  const runtime = thread.isWorktree ? 'This checkout' : 'Local';
+  return `${harness} · ${runtime}`;
+}
+
+export function threadCardShowsProject(showProject: boolean, grouped: boolean): boolean {
+  return showProject && !grouped;
+}
+
 export function fleetThreadLane(item: Extract<FleetItem, { kind: 'thread' }>): LaneKey {
   if (item.state === 'blocked') return 'blocked';
   if (item.state === 'working') return 'working';

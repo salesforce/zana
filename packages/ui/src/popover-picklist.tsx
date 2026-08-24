@@ -3,11 +3,15 @@ import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Search } from 'lucide-react';
 import { useExclusivePopover } from './use-exclusive-popover.js';
 
+export { useExclusivePopover } from './use-exclusive-popover.js';
+
 const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 const VIEWPORT_PAD = 8;
 const MENU_GAP = 4;
 const FLIP_BELOW_PX = 160;
+const MENU_MAX_HEIGHT_PX = 360;
+const MENU_MAX_HEIGHT_VH = 0.55;
 
 export interface PopoverMenuPlacement {
   left: number;
@@ -36,7 +40,12 @@ export function placePopoverMenu(
   const spaceBelow = viewport.height - trigger.bottom - VIEWPORT_PAD;
   const spaceAbove = trigger.top - VIEWPORT_PAD;
   const openAbove = spaceBelow < FLIP_BELOW_PX && spaceAbove > spaceBelow;
-  const maxHeight = Math.max(120, openAbove ? spaceAbove : spaceBelow);
+  const available = Math.max(120, openAbove ? spaceAbove : spaceBelow);
+  const cap = Math.min(
+    MENU_MAX_HEIGHT_PX,
+    Math.floor(viewport.height * MENU_MAX_HEIGHT_VH)
+  );
+  const maxHeight = Math.min(available, cap);
   if (openAbove) {
     return {
       left,

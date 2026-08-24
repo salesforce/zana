@@ -7,17 +7,18 @@ import {
   provisioningTranscriptEntrySchema,
   workspaceDiffResponseSchema,
   workspaceDiffTargetSchema,
-  workspaceFileStatusSchema,
+  rawDiffFileStatSchema,
   workspaceProvisionTypeSchema,
   workspaceStatusSchema
 } from '@zana-ai/zcc-domain';
 import { gitBranchNameSchema } from '@zana-ai/zcc-domain/git-checkout';
+import { availableModelSchema, reasoningLevelSchema } from '@zana-ai/zcc-domain/thread-runtime';
 
 /**
  * Bump when any enroll payload, daemon WS message, host-rpc command, or host
  * event envelope changes shape or meaning. Mismatch fails before dispatch.
  */
-export const HOST_RPC_PROTOCOL_VERSION = 6;
+export const HOST_RPC_PROTOCOL_VERSION = 9;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
 
 const UuidSchema = z.string().uuid();
@@ -28,6 +29,7 @@ const RelPathSchema = z.string().min(1).max(1024);
 
 export const HostRpcCommandTypeSchema = z.enum([
   'provider.status',
+  'provider.list_models',
   'environment.provision',
   'environment.provision.cancel',
   'environment.destroy',
@@ -180,6 +182,14 @@ export const HostBridgeLaunchSchema = z.object({
 }).strict();
 export type HostBridgeLaunch = z.infer<typeof HostBridgeLaunchSchema>;
 
+export const ProviderListModelsCommandSchema = z.object({
+  type: z.literal('provider.list_models'),
+  providerId: z.string().min(1),
+  bridgeLaunch: HostBridgeLaunchSchema,
+  cwd: PathSchema.optional()
+}).strict();
+export type ProviderListModelsCommand = z.infer<typeof ProviderListModelsCommandSchema>;
+
 export const ThreadStartCommandSchema = z.object({
   type: z.literal('thread.start'),
   threadId: UuidSchema,
@@ -211,6 +221,7 @@ export const ThreadStartCommandSchema = z.object({
   bridgeLaunch: HostBridgeLaunchSchema.optional(),
   permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional(),
   model: z.string().min(1).max(200).optional(),
+  reasoningLevel: reasoningLevelSchema.optional(),
   providerThreadId: z.string().min(1).optional()
 }).strict();
 
@@ -239,7 +250,8 @@ export const ThreadResumeFieldsSchema = z.object({
   cwd: PathSchema.optional(),
   bridgeLaunch: HostBridgeLaunchSchema.optional(),
   permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional(),
-  model: z.string().min(1).max(200).optional()
+  model: z.string().min(1).max(200).optional(),
+  reasoningLevel: reasoningLevelSchema.optional()
 }).strict();
 export type ThreadResumeFields = z.infer<typeof ThreadResumeFieldsSchema>;
 
@@ -249,7 +261,9 @@ export const TurnSubmitCommandSchema = z.object({
   environmentId: UuidSchema,
   input: z.array(z.string().min(1)).min(1),
   mode: z.enum(['start', 'auto', 'steer', 'queue-if-active', 'steer-if-active']).optional(),
-  resume: ThreadResumeFieldsSchema.optional()
+  resume: ThreadResumeFieldsSchema.optional(),
+  model: z.string().min(1).max(200).optional(),
+  reasoningLevel: reasoningLevelSchema.optional()
 }).strict();
 
 export const ThreadResumeCommandSchema = ThreadResumeFieldsSchema.extend({
@@ -399,6 +413,7 @@ export type CodexVoiceTranscribeCommand = z.infer<typeof CodexVoiceTranscribeCom
 
 export const HostRpcCommandSchema = z.union([
   ProviderStatusCommandSchema,
+  ProviderListModelsCommandSchema,
   EnvironmentProvisionCommandSchema,
   EnvironmentProvisionCancelCommandSchema,
   EnvironmentDestroyCommandSchema,
@@ -451,6 +466,12 @@ export const ProviderStatusResultSchema = z.object({
   providers: z.array(ProviderStatusEntrySchema)
 }).strict();
 export type ProviderStatusResult = z.infer<typeof ProviderStatusResultSchema>;
+
+export const ProviderListModelsResultSchema = z.object({
+  models: z.array(availableModelSchema),
+  selectedOnlyModels: z.array(availableModelSchema)
+}).strict();
+export type ProviderListModelsResult = z.infer<typeof ProviderListModelsResultSchema>;
 
 export const EnvironmentProvisionResultSchema = discoveredWorkspacePropertiesSchema.extend({
   environmentId: UuidSchema,
@@ -570,7 +591,9 @@ export const HostListBranchesResultSchema = z.object({
 export const WorkspaceStatusResultSchema = workspaceStatusSchema;
 export const WorkspaceDiffResultSchema = workspaceDiffResponseSchema;
 export const WorkspaceDiffFilesResultSchema = z.object({
-  files: z.array(workspaceFileStatusSchema),
+  files: z.array(rawDiffFileStatSchema),
+  shortstat: z.string(),
+  mergeBaseRef: z.string().nullable(),
   truncated: z.boolean()
 }).strict();
 export const WorkspaceDiffPatchResultSchema = z.object({
@@ -611,6 +634,7 @@ export type CodexVoiceTranscribeResult = z.infer<typeof CodexVoiceTranscribeResu
 
 export const HostRpcResultSchemaByType = {
   'provider.status': ProviderStatusResultSchema,
+  'provider.list_models': ProviderListModelsResultSchema,
   'environment.provision': EnvironmentProvisionResultSchema,
   'environment.provision.cancel': EnvironmentProvisionCancelResultSchema,
   'environment.destroy': EnvironmentDestroyResultSchema,

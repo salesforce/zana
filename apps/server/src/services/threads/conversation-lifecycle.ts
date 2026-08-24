@@ -3,11 +3,11 @@ import {
   createConversationThread,
   getConversationThread,
   getEnvironment,
-  updateConversationThreadParent,
   updateConversationThreadStatus,
   type ConversationThreadRow
 } from '@zana-ai/zcc-db';
 import type { ProductHttpContext } from '../../http/product-context.js';
+import type { ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import { conversationThreadView, flattenThreadInput } from './conversation-create.js';
 import { appendClientTurnRequested } from './client-turn-requested.js';
@@ -26,7 +26,8 @@ export async function sendConversationTurn(
   ctx: ProductHttpContext,
   threadId: string,
   input: unknown,
-  mode: ThreadSendMode = 'auto'
+  mode: ThreadSendMode = 'auto',
+  execution?: { model?: string; reasoningLevel?: ReasoningLevel }
 ): Promise<ConversationThreadRow> {
   const thread = getConversationThread(ctx.db, threadId);
   if (!thread) {
@@ -42,15 +43,17 @@ export async function sendConversationTurn(
   appendClientTurnRequested(ctx, {
     threadId: thread.id,
     prompt,
-    kind: 'new-turn'
+    kind: 'new-turn',
+    model: execution?.model,
+    reasoningLevel: execution?.reasoningLevel
   });
   updateConversationThreadStatus(ctx.db, thread.id, 'active');
   try {
-    await submitTurnOnHost(ctx, thread, prompt, mode);
+    await submitTurnOnHost(ctx, thread, prompt, mode, execution);
   } catch (error) {
     if (!isUnknownThreadHostError(error)) throw error;
     await resumeConversationOnHost(ctx, getConversationThread(ctx.db, thread.id) ?? thread);
-    await submitTurnOnHost(ctx, thread, prompt, mode);
+    await submitTurnOnHost(ctx, thread, prompt, mode, execution);
   }
   const next = getConversationThread(ctx.db, thread.id) ?? thread;
   ctx.hub.emit('threads:updated', conversationThreadView(ctx, next));
@@ -141,45 +144,6 @@ export async function forkConversation(
   return forked;
 }
 
-export function assignConversationParent(
-  ctx: ProductHttpContext,
-  threadId: string,
-  parentThreadId: string | null
-): ConversationThreadRow {
-  const thread = getConversationThread(ctx.db, threadId);
-  if (!thread) {
-    throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
-  }
-  if (parentThreadId === thread.id) {
-    throw new ThreadCreateError(400, 'invalid-parent', 'a thread cannot be its own parent');
-  }
-  if (parentThreadId) {
-    const parent = getConversationThread(ctx.db, parentThreadId);
-    if (!parent) {
-      throw new ThreadCreateError(404, 'unknown-parent', 'parent thread is not registered');
-    }
-    if (parent.projectId !== thread.projectId) {
-      throw new ThreadCreateError(400, 'invalid-parent', 'parent must belong to the same project');
-    }
-    let cursor: string | null = parent.parentThreadId;
-    const seen = new Set<string>([parent.id]);
-    while (cursor) {
-      if (cursor === thread.id) {
-        throw new ThreadCreateError(400, 'invalid-parent', 'parent assignment would create a cycle');
-      }
-      if (seen.has(cursor)) break;
-      seen.add(cursor);
-      cursor = getConversationThread(ctx.db, cursor)?.parentThreadId ?? null;
-    }
-  }
-  const next = updateConversationThreadParent(ctx.db, thread.id, parentThreadId);
-  if (!next) {
-    throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
-  }
-  ctx.hub.emit('threads:updated', conversationThreadView(ctx, next));
-  return next;
-}
-
 function isUnknownThreadHostError(error: unknown): boolean {
   return Boolean(
     error
@@ -211,7 +175,8 @@ async function submitTurnOnHost(
   ctx: ProductHttpContext,
   thread: ConversationThreadRow,
   prompt: string[],
-  mode: ThreadSendMode
+  mode: ThreadSendMode,
+  execution?: { model?: string; reasoningLevel?: ReasoningLevel }
 ): Promise<void> {
   if (!thread.environmentId) {
     throw new ThreadCreateError(409, 'environment_not_ready', 'thread has no environment');
@@ -225,7 +190,9 @@ async function submitTurnOnHost(
       environmentId: thread.environmentId,
       input: prompt,
       mode,
-      ...(resume ? { resume } : {})
+      ...(resume ? { resume } : {}),
+      ...(execution?.model ? { model: execution.model } : {}),
+      ...(execution?.reasoningLevel ? { reasoningLevel: execution.reasoningLevel } : {})
     }
   });
 }

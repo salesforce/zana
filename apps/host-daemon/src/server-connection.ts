@@ -94,7 +94,8 @@ export function startEnrolledHostConnection(options: {
       startTerminal: (input) => enrolledPty!.startTerminal(input),
       writeTerminal: (input) => enrolledPty!.writeTerminal(input),
       resizeTerminal: (input) => enrolledPty!.resizeTerminal(input),
-      stopTerminal: (input) => enrolledPty!.stopTerminal(input)
+      stopTerminal: (input) => enrolledPty!.stopTerminal(input),
+      listModels: (input) => adapter!.listModels(input)
     });
   })();
   runtime.emit = (event: HostEventEnvelope) => sink.emit(event);

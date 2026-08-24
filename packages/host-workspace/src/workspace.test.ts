@@ -10,6 +10,7 @@ import {
   provisionWorkspace,
   workspaceCommit,
   workspaceDiff,
+  workspaceDiffPatch,
   workspaceSquashMerge,
   workspaceStatus
 } from './workspace.js';
@@ -66,6 +67,10 @@ describe('workspace git', () => {
     expect(status.files.some((file) => file.path === 'README.md')).toBe(true);
     const diff = await workspaceDiff(repo, { type: 'uncommitted' });
     expect(diff.diff).toContain('changed');
+    const patches = await workspaceDiffPatch(repo, { type: 'uncommitted' }, ['README.md']);
+    expect(patches.patches).toHaveLength(1);
+    expect(patches.patches[0]?.path).toBe('README.md');
+    expect(patches.patches[0]?.patch).toContain('changed');
     const committed = await workspaceCommit(repo, 'update readme');
     expect(committed.commitSubject).toBe('update readme');
     expect((await workspaceStatus(repo)).dirty).toBe(false);

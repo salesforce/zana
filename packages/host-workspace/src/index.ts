@@ -4,6 +4,8 @@ export {
   destroyWorkspace,
   workspaceStatus,
   workspaceDiff,
+  workspaceDiffFiles,
+  workspaceDiffPatch,
   workspaceCommit,
   workspaceSquashMerge,
   workspaceBranches,
