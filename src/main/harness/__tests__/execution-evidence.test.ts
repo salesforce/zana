@@ -55,6 +55,15 @@ describe('execution evidence', () => {
     })).toMatchObject({ classification: 'available' });
   });
 
+  it('accepts Claude 2.1.209 at its reviewed floor', () => {
+    const claude = registeredAdapters().find(({ adapter }) => adapter.descriptor.id === 'claude')!;
+    const target = executionTargetFor(claude, 'plan')!;
+    const evidence = fixture({ id: target.id, cliVersion: '2.1.209', scopes: ['local', 'remote'] });
+    expect(evaluateExecutionEvidence(target, evidence, {
+      cliVersion: '2.1.209', scope: 'local', profilePosture: 'default'
+    })).toMatchObject({ classification: 'available' });
+  });
+
   it.each([
     ['missing', undefined, {}, 'missing evidence'],
     ['candidate', fixture({ status: 'candidate' }), {}, 'candidate evidence'],

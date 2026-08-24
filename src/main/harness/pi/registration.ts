@@ -13,6 +13,7 @@ export const piHarness: HarnessRegistration = {
   defaultProfileId: 'pi',
   implementation,
   renderRemoteCommand: (input) => implementation.buildRemoteCommand(input),
+  monitorCapability: { state: 'unsupported', sources: [], reason: 'No verified native monitor source' },
   supportedScopes: ['local', 'remote'],
   verification: {
     enabledConfigKey: 'harnessPiEnabled',
