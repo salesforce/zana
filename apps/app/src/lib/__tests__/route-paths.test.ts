@@ -9,6 +9,7 @@ import {
   getLocationRoutePath,
   getMcpRoutePath,
   getNavRoutePath,
+  getNewThreadRoutePath,
   getPluginBrowseRoutePath,
   getPluginDetailRoutePath,
   getPluginPanelRoutePath,
@@ -58,6 +59,7 @@ describe('route path helpers', () => {
   it('maps core nav ids and module ids', () => {
     expect(getNavRoutePath('home')).toBe('/');
     expect(getNavRoutePath('inbox')).toBe('/inbox');
+    expect(getNavRoutePath('agents')).toBe('/agents');
     expect(getNavRoutePath('extensions')).toBe('/extensions');
     expect(getNavRoutePath('projects')).toBe('/');
     expect(getNavRoutePath('goals')).toBe('/goals');
@@ -82,7 +84,10 @@ describe('route path helpers', () => {
       '/settings/global#appearance',
       '/extensions/plugins/browse',
       '/projects/p1/terminals?x=1',
-      '/plugins/docs/panel'
+      '/plugins/docs/panel',
+      '/threads/new',
+      '/projects/p1/threads/new',
+      '/threads/abc'
     ]) {
       expect(isRoutePath({ path })).toBe(true);
     }
@@ -95,6 +100,8 @@ describe('route path helpers', () => {
     expect(getRootRoutePath()).toBe('/');
     expect(getInboxRoutePath()).toBe('/inbox');
     expect(getAgentsRoutePath()).toBe('/agents');
+    expect(getNewThreadRoutePath()).toBe('/threads/new');
+    expect(getNewThreadRoutePath('proj/1')).toBe('/projects/proj%2F1/threads/new');
     expect(getFollowUpsRoutePath()).toBe('/followups');
     expect(getSuggestionsRoutePath()).toBe('/suggestions');
     expect(getSchedulerRoutePath()).toBe('/scheduler');

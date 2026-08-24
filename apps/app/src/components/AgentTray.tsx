@@ -8,6 +8,7 @@ import { useEnsureThreads } from '../hooks/useEnsureThreads.js';
 import { getThreadRoutePath } from '../lib/route-paths.js';
 import { FavoriteStar } from './FavoriteStar.js';
 import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from './agentCardActions.js';
+import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from './threadCardActions.js';
 import { PromptModal } from './PromptModal.js';
 import type { AgentCard } from './AgentBoard.js';
 import { FleetKindChip } from './FleetKindChip.js';
@@ -99,6 +100,7 @@ export function AgentTray({
   const collapsed = useUi((s) => s.sidebarCollapsed);
   const toggleSidebar = useUi((s) => s.toggleSidebar);
   const { menu, setMenu, actions, rename, closeRename, submitRename } = useAgentCardActions();
+  const { menu: threadMenu, setMenu: setThreadMenu } = useThreadCardActions();
 
   const pickAgent = (card: AgentCard) => {
     const ui = useUi.getState();
@@ -115,6 +117,7 @@ export function AgentTray({
   const openAgentMenu = (e: MouseEvent, a: TrayAgent) => {
     e.preventDefault();
     e.stopPropagation();
+    setThreadMenu(null);
     setMenu({
       card: {
         session: a.session,
@@ -234,6 +237,12 @@ export function AgentTray({
                 className={`agent-tray-row is-thread ${item.projectColor ? 'project-tinted' : ''}`}
                 data-kind="thread"
                 onClick={() => navigate(getThreadRoutePath(item.id))}
+                onContextMenu={(e) => {
+                  const thread = threads.find((row) => row.id === item.id);
+                  if (!thread) return;
+                  setMenu(null);
+                  openThreadMenu(e, thread, setThreadMenu);
+                }}
                 title={`${item.title} — ${item.projectName} · ${STATE_LABEL[item.state]}`}
                 style={item.projectColor ? ({ '--project-color': item.projectColor } as CSSProperties) : undefined}
               >
@@ -291,6 +300,9 @@ export function AgentTray({
       </div>
       {menu && (
         <AgentCardMenu menu={menu} setMenu={setMenu} actions={actions} onPick={pickAgent} />
+      )}
+      {threadMenu && (
+        <ThreadCardMenu menu={threadMenu} setMenu={setThreadMenu} />
       )}
       {rename && (
         <PromptModal

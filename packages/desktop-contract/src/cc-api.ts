@@ -343,6 +343,7 @@ export interface CcApi {
       branchName: string | null;
       isWorktree: boolean;
       archivedAt?: number | null;
+      parentThreadId?: string | null;
     }>>;
     get(threadId: string): Promise<{ thread: Record<string, unknown> }>;
     send(threadId: string, input: string | unknown[], mode?: string): Promise<{ ok: boolean }>;
@@ -410,6 +411,7 @@ export interface CcApi {
       branchName: string | null;
       isWorktree: boolean;
     }>>;
+    update(threadId: string, patch: { parentThreadId?: string | null }): Promise<{ thread: Record<string, unknown> }>;
   };
   environments: {
     list(projectId: string, hostId?: string): Promise<Environment[]>;

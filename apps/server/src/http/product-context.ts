@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import type { AppConfig, Project } from '@zana-ai/zcc-domain/product';
+import type { AppConfig, Project, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { openDatabase, type ZccDatabase } from '@zana-ai/zcc-db';
 import { createProjectStore, type ProjectStore } from '../project-store.js';
 import { createConfigStore } from '../services/config/config-store.js';
@@ -12,6 +12,10 @@ import { createSavedStore, type ISavedStore } from '../services/saved/saved-stor
 import type { LocalAppOriginArgs } from './local-app-origins.js';
 import { createProductHub, type ProductHub } from './product-hub.js';
 import { createHostHub, type HostHub } from './host-hub.js';
+
+export interface ProductTerminalRecord extends TerminalSession {
+  hostId: string;
+}
 
 export interface ProductHttpContext {
   origins: LocalAppOriginArgs;
@@ -25,6 +29,7 @@ export interface ProductHttpContext {
   suggestions: ISuggestionsStore;
   saved: ISavedStore;
   hub: ProductHub;
+  terminalSessions: Map<string, ProductTerminalRecord>;
   toProjects(): Project[];
 }
 
@@ -62,7 +67,8 @@ export function createProductHttpContext(
   const saved = createSavedStore({ dir: join(dataDir, 'saved') });
   const hub = createProductHub();
   const db = openDatabase(join(dataDir, 'zcc.sqlite'));
-  const hostHub = createHostHub(db, hub);
+  const terminalSessions = new Map<string, ProductTerminalRecord>();
+  const hostHub = createHostHub(db, hub, terminalSessions);
   const envToken = process.env.ZCC_HOST_ENROLL_TOKEN;
   const enrollToken = options.enrollToken
     ?? (envToken && envToken.length >= 16 ? envToken : undefined)
@@ -92,6 +98,7 @@ export function createProductHttpContext(
     suggestions,
     saved,
     hub,
+    terminalSessions,
     toProjects: () => projects.list() as unknown as Project[]
   };
 }

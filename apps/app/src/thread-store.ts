@@ -14,6 +14,7 @@ export interface ThreadListItem {
   branchName: string | null;
   isWorktree: boolean;
   archivedAt?: number | null;
+  parentThreadId?: string | null;
 }
 
 interface ThreadStore {
@@ -46,6 +47,21 @@ function withoutArchived(threads: ThreadListItem[]): ThreadListItem[] {
   return threads.filter((row) => !row.archivedAt);
 }
 
+/** Patch an existing row in place so opening a thread does not reshuffle the rail. */
+export function mergeThreadRoster(
+  threads: ThreadListItem[],
+  thread: ThreadListItem
+): ThreadListItem[] {
+  if (thread.archivedAt) {
+    return threads.filter((row) => row.id !== thread.id);
+  }
+  const index = threads.findIndex((row) => row.id === thread.id);
+  if (index < 0) return [thread, ...threads];
+  const next = threads.slice();
+  next[index] = thread;
+  return next;
+}
+
 export const useThreads = create<ThreadStore>((set, get) => ({
   threads: [],
   loading: false,
@@ -61,12 +77,7 @@ export const useThreads = create<ThreadStore>((set, get) => ({
   },
   upsert(thread) {
     ensureThreadUpdates();
-    const threads = get().threads.filter((row) => row.id !== thread.id);
-    if (thread.archivedAt) {
-      set({ threads });
-      return;
-    }
-    set({ threads: [thread, ...threads] });
+    set({ threads: mergeThreadRoster(get().threads, thread) });
   },
   remove(id) {
     set({ threads: get().threads.filter((row) => row.id !== id) });

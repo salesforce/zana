@@ -19,6 +19,9 @@ export function threadStatusToAgentState(status: string): AgentState {
 export function threadStatusLabel(status: string): string {
   const trimmed = status.trim();
   if (!trimmed) return '';
+  if (isBusyThreadStatus(trimmed)) return 'Working';
+  if (trimmed === 'error') return 'Error';
+  if (trimmed === 'idle') return 'Idle';
   return trimmed.replace(/-/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 }
 

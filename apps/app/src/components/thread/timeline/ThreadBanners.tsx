@@ -1,5 +1,7 @@
+import { Link } from 'react-router-dom';
 import type { ActiveThinking, ThreadTimelineGoal, ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
 import type { TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
+import { getAgentsRoutePath } from '../../../lib/route-paths.js';
 import { isBusyThreadStatus, threadStatusLabel, threadStatusToAgentState, visiblePendingTodos } from '../thread-timeline-model.js';
 
 export function ThreadTodoCard({ todos }: { todos: ThreadTimelinePendingTodos | null }) {
@@ -100,5 +102,30 @@ export function ThreadStatusBadge({ status }: { status: string }) {
       <span className={`tab-agent-dot agent-${state}`} aria-hidden="true" />
       {label}
     </span>
+  );
+}
+
+export function ThreadDetailHeading({
+  title,
+  status
+}: {
+  title: string;
+  status: string;
+}) {
+  return (
+    <div className="thread-detail-heading">
+      <div className="thread-detail-title-row">
+        <Link
+          to={getAgentsRoutePath()}
+          className="thread-detail-crumb"
+          data-testid="thread-agents-crumb"
+        >
+          Agents
+        </Link>
+        <span className="thread-detail-crumb-sep" aria-hidden="true">›</span>
+        <h1>{title}</h1>
+      </div>
+      <ThreadStatusBadge status={status} />
+    </div>
   );
 }

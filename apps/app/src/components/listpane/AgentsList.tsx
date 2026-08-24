@@ -5,7 +5,7 @@ import type { AgentState, IdleTriageResult, TerminalSession } from '@zana-ai/zcc
 import { useData, useUi, useAgentStatus, useIdleTriage, openWhatsNewAll } from '@/store';
 import { useThreads, type ThreadListItem } from '@/thread-store';
 import { useEnsureThreads } from '@/hooks/useEnsureThreads';
-import { getRootRoutePath, THREAD_ROUTE_PATH } from '@/lib/route-paths';
+import { getNewThreadRoutePath, NEW_THREAD_ROUTE_PATH, PROJECT_NEW_THREAD_ROUTE_PATH, THREAD_ROUTE_PATH } from '@/lib/route-paths';
 import { getScopedProjectId } from '@/lib/windowScope';
 import { profileIcon } from '@/lib/profileIcon';
 import { isRecentlyFinished } from '@/lib/sessionBuckets';
@@ -16,6 +16,7 @@ import { FleetKindChip } from '@/components/FleetKindChip';
 import { isVisibleThread } from '@/components/fleet-item';
 import { threadStatusToAgentState } from '@/components/thread/thread-timeline-model';
 import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from '@/components/agentCardActions';
+import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from '@/components/threadCardActions';
 import { PromptModal } from '@/components/PromptModal';
 import { ListPaneResizer } from '@/components/ListPaneResizer';
 
@@ -158,8 +159,12 @@ export function AgentsListPane() {
   const projects = useData((s) => s.projects);
   useEnsureThreads();
   const scopedProjectId = getScopedProjectId();
-  const activeThreadId = matchPath(THREAD_ROUTE_PATH, location.pathname)?.params.threadId;
-  const openComposer = () => navigate(getRootRoutePath());
+  const activeThreadId =
+    location.pathname === NEW_THREAD_ROUTE_PATH ||
+    matchPath(PROJECT_NEW_THREAD_ROUTE_PATH, location.pathname)
+      ? undefined
+      : matchPath(THREAD_ROUTE_PATH, location.pathname)?.params.threadId;
+  const openComposer = () => navigate(getNewThreadRoutePath(scopedProjectId ?? undefined));
   const openBoard = () => {
     // List mode consumes the full content area, avoiding a duplicate fleet list
     // beside the board while preserving the board/list preference in one place.
@@ -169,6 +174,7 @@ export function AgentsListPane() {
   // and a board card drive the identical pty actions and expose the identical
   // menu (Stop / Restart / Rename / Delete …). No parallel action path.
   const { menu, setMenu, actions, rename, closeRename, submitRename } = useAgentCardActions();
+  const { menu: threadMenu, setMenu: setThreadMenu } = useThreadCardActions();
 
   // Clicking a row opens the agent-inspector modal — a peek at the live terminal
   // plus metadata, with "Open in workspace" as the escape hatch to the full
@@ -206,6 +212,7 @@ export function AgentsListPane() {
 
   const onRowContextMenu = (e: MouseEvent, r: AgentRow) => {
     e.preventDefault();
+    setThreadMenu(null);
     setMenu({ card: rowToCard(r), ...clampMenuAnchor(e) });
   };
 
@@ -432,7 +439,7 @@ export function AgentsListPane() {
           <div className="agents-list-empty">
             <Bot size={20} aria-hidden="true" />
             <p>No threads yet</p>
-            <span>Start a thread from Home, or open a legacy PTY agent.</span>
+            <span>Start a thread, or open a legacy PTY agent.</span>
             <button
               type="button"
               data-testid="agents-new-empty"
@@ -477,6 +484,10 @@ export function AgentsListPane() {
                       thread={entry.thread}
                       projectName={entry.projectName}
                       active={entry.thread.id === activeThreadId}
+                      onContextMenu={(e) => {
+                        setMenu(null);
+                        openThreadMenu(e, entry.thread, setThreadMenu);
+                      }}
                     />
                   ) : (
                     renderRow(entry.row)
@@ -515,6 +526,9 @@ export function AgentsListPane() {
       <ListPaneResizer />
       {menu && (
         <AgentCardMenu menu={menu} setMenu={setMenu} actions={actions} onPick={pick} />
+      )}
+      {threadMenu && (
+        <ThreadCardMenu menu={threadMenu} setMenu={setThreadMenu} />
       )}
       {rename && (
         <PromptModal

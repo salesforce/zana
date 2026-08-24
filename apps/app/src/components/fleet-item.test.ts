@@ -8,7 +8,10 @@ import {
   fleetThreadLane,
   resolveMonitorSelection,
   threadFleetItem,
-  threadIsLiveForRail
+  RAIL_IDLE_THREAD_LIMIT,
+  railThreadsForProject,
+  threadIsLiveForRail,
+  threadRailDetail
 } from './fleet-item.js';
 
 function thread(over: Partial<ThreadListItem> & Pick<ThreadListItem, 'id' | 'status'>): ThreadListItem {
@@ -55,6 +58,22 @@ describe('fleet items', () => {
     expect(threadIsLiveForRail(thread({ id: 't1', status: 'error' }))).toBe(true);
     expect(threadIsLiveForRail(thread({ id: 't1', status: 'idle' }))).toBe(false);
     expect(threadIsLiveForRail(thread({ id: 't1', status: 'active', archivedAt: 9 }))).toBe(false);
+  });
+
+  it('nests live threads first, then a bounded idle history, and skips archived', () => {
+    const rows = railThreadsForProject([
+      thread({ id: 'archived', status: 'idle', archivedAt: 1 }),
+      thread({ id: 'idle-a', status: 'idle' }),
+      thread({ id: 'live', status: 'active' }),
+      thread({ id: 'blocked', status: 'error' }),
+      ...Array.from({ length: 10 }, (_, i) => thread({ id: `idle-${i}`, status: 'idle' }))
+    ]);
+    expect(rows.map((row) => row.id).slice(0, 2)).toEqual(['live', 'blocked']);
+    expect(rows.some((row) => row.id === 'archived')).toBe(false);
+    expect(rows.filter((row) => row.status === 'idle')).toHaveLength(RAIL_IDLE_THREAD_LIMIT);
+    expect(threadRailDetail(thread({ id: 't1', status: 'error' }))).toBe('Needs you · Thread');
+    expect(threadRailDetail(thread({ id: 't1', status: 'active' }))).toBe('Working · Thread');
+    expect(threadRailDetail(thread({ id: 't1', status: 'idle' }))).toBe('Idle · Thread');
   });
 
   it('never feeds a thread id to the PTY monitor selection store', () => {

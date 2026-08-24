@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import type { MouseEvent } from 'react';
 import { MessageSquare } from 'lucide-react';
 import type { ThreadListItem } from '../thread-store.js';
 import { getThreadRoutePath } from '../lib/route-paths.js';
@@ -8,11 +9,13 @@ import { FleetKindChip } from './FleetKindChip.js';
 export function ThreadListEntry({
   thread,
   projectName,
-  active = false
+  active = false,
+  onContextMenu
 }: {
   thread: ThreadListItem;
   projectName?: string;
   active?: boolean;
+  onContextMenu?: (e: MouseEvent) => void;
 }) {
   const navigate = useNavigate();
   const working = isBusyThreadStatus(thread.status);
@@ -25,6 +28,7 @@ export function ThreadListEntry({
       data-kind="thread"
       data-status={thread.status}
       onClick={() => navigate(getThreadRoutePath(thread.id))}
+      onContextMenu={onContextMenu}
       aria-current={active ? 'true' : undefined}
       title={`${thread.title ?? 'Untitled thread'}${projectName ? ` — ${projectName}` : ''} · ${thread.status}`}
     >

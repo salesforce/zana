@@ -8,6 +8,7 @@ import type {
   HostListedFile,
   HostRpcCommand,
   ProviderStatusResult,
+  ThreadResumeFields,
   ThreadStartCommandSchema
 } from '@zana-ai/zcc-contracts/host-rpc';
 import type { z } from 'zod';
@@ -67,6 +68,7 @@ export interface CommandRuntime {
   dataDir: string;
   environments: Map<string, { path: string; workspaceProvisionType: 'unmanaged' | 'managed-worktree' | 'personal' }>;
   threads: Map<string, { environmentId: string; providerId: string }>;
+  terminals: Map<string, { cwd: string }>;
   provisionSignals: Map<string, AbortController>;
   lanes: Map<string, Promise<void>>;
   verifyProviders: () => Promise<ProviderStatusResult>;
@@ -77,6 +79,10 @@ export interface CommandRuntime {
   resizeWork?: (input: { threadId: string; cols: number; rows: number }) => Promise<void>;
   writeWork?: (input: { threadId: string; data: string }) => Promise<void>;
   stopWork?: (input: { threadId: string }) => Promise<void>;
+  startTerminal?: (input: { sessionId: string; cwd: string; cols: number; rows: number }) => Promise<{ pid?: number } | void>;
+  writeTerminal?: (input: { sessionId: string; data: string }) => Promise<void>;
+  resizeTerminal?: (input: { sessionId: string; cols: number; rows: number }) => Promise<void>;
+  stopTerminal?: (input: { sessionId: string }) => Promise<void>;
 }
 
 export function createCommandRuntime(options: {
@@ -90,12 +96,17 @@ export function createCommandRuntime(options: {
   resizeWork?: (input: { threadId: string; cols: number; rows: number }) => Promise<void>;
   writeWork?: (input: { threadId: string; data: string }) => Promise<void>;
   stopWork?: (input: { threadId: string }) => Promise<void>;
+  startTerminal?: (input: { sessionId: string; cwd: string; cols: number; rows: number }) => Promise<{ pid?: number } | void>;
+  writeTerminal?: (input: { sessionId: string; data: string }) => Promise<void>;
+  resizeTerminal?: (input: { sessionId: string; cols: number; rows: number }) => Promise<void>;
+  stopTerminal?: (input: { sessionId: string }) => Promise<void>;
 }): CommandRuntime {
   const loadConfig = options.loadConfig ?? (() => ({ version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null }) as AppConfig);
   return {
     dataDir: options.dataDir ?? join(homedir(), '.zcc'),
     environments: new Map(),
     threads: new Map(),
+    terminals: new Map(),
     provisionSignals: new Map(),
     lanes: new Map(),
     emit: options.emit ?? (() => {}),
@@ -105,6 +116,10 @@ export function createCommandRuntime(options: {
     resizeWork: options.resizeWork,
     writeWork: options.writeWork,
     stopWork: options.stopWork,
+    startTerminal: options.startTerminal,
+    writeTerminal: options.writeTerminal,
+    resizeTerminal: options.resizeTerminal,
+    stopTerminal: options.stopTerminal,
     verifyProviders: options.verifyProviders ?? (async () => {
       const results: HarnessVerifyResult[] = await verifyHarnesses(loadConfig());
       return { providers: results };
@@ -165,6 +180,74 @@ function confineThreadCwd(environmentPath: string, requested?: string): string {
     throw new HostCommandError('cwd-escape', 'cwd is outside the environment');
   }
   return realRequested;
+}
+
+async function applyThreadResume(
+  runtime: CommandRuntime,
+  command: {
+    threadId: string;
+    environmentId: string;
+  } & ThreadResumeFields
+): Promise<{ threadId: string; resumed: true; providerThreadId?: string }> {
+  const environment = runtime.environments.get(command.environmentId);
+  const environmentPath = environment?.path ?? command.cwd;
+  if (!environmentPath) {
+    throw new HostCommandError('environment_not_ready', 'environment is not provisioned');
+  }
+  const cwd = confineThreadCwd(environmentPath, command.cwd);
+  let providerThreadId = command.providerThreadId;
+  if (runtime.resumeWork) {
+    const resumed = await runtime.resumeWork({
+      threadId: command.threadId,
+      environmentId: command.environmentId,
+      projectId: command.projectId,
+      providerId: command.providerId,
+      providerThreadId: command.providerThreadId,
+      cwd,
+      bridgeLaunch: command.bridgeLaunch,
+      permissionMode: command.permissionMode,
+      model: command.model
+    });
+    providerThreadId = resumed?.providerThreadId ?? providerThreadId;
+  }
+  runtime.threads.set(command.threadId, {
+    environmentId: command.environmentId,
+    providerId: command.providerId
+  });
+  if (!environment) {
+    runtime.environments.set(command.environmentId, {
+      path: environmentPath,
+      workspaceProvisionType: 'unmanaged'
+    });
+  }
+  return {
+    threadId: command.threadId,
+    resumed: true as const,
+    ...(providerThreadId ? { providerThreadId } : {})
+  };
+}
+
+async function resumeThreadRuntimeIfMissing(
+  runtime: CommandRuntime,
+  command: Extract<HostRpcCommand, { type: 'turn.submit' }>
+): Promise<void> {
+  if (runtime.threads.has(command.threadId)) return;
+  if (!command.resume?.providerThreadId) {
+    throw new HostCommandError('unknown_thread', 'thread is not running on this host');
+  }
+  await applyThreadResume(runtime, {
+    threadId: command.threadId,
+    environmentId: command.environmentId,
+    ...command.resume
+  });
+}
+
+function requireTerminal(runtime: CommandRuntime, sessionId: string): { cwd: string } {
+  const session = runtime.terminals.get(sessionId);
+  if (!session) {
+    throw new HostCommandError('unknown_terminal', 'terminal is not running on this host');
+  }
+  return session;
 }
 
 function listRoot(root: string): HostListedFile[] {
@@ -390,48 +473,10 @@ export async function dispatchHostCommand(
       runtime.threads.delete(command.threadId);
       return { threadId: command.threadId, stopped: true as const };
     }
-    case 'thread.resume': {
-      const environment = runtime.environments.get(command.environmentId);
-      const environmentPath = environment?.path ?? command.cwd;
-      if (!environmentPath) {
-        throw new HostCommandError('environment_not_ready', 'environment is not provisioned');
-      }
-      const cwd = confineThreadCwd(environmentPath, command.cwd);
-      let providerThreadId = command.providerThreadId;
-      if (runtime.resumeWork) {
-        const resumed = await runtime.resumeWork({
-          threadId: command.threadId,
-          environmentId: command.environmentId,
-          projectId: command.projectId,
-          providerId: command.providerId,
-          providerThreadId: command.providerThreadId,
-          cwd,
-          bridgeLaunch: command.bridgeLaunch,
-          permissionMode: command.permissionMode,
-          model: command.model
-        });
-        providerThreadId = resumed?.providerThreadId ?? providerThreadId;
-      }
-      runtime.threads.set(command.threadId, {
-        environmentId: command.environmentId,
-        providerId: command.providerId
-      });
-      if (!environment) {
-        runtime.environments.set(command.environmentId, {
-          path: environmentPath,
-          workspaceProvisionType: 'unmanaged'
-        });
-      }
-      return {
-        threadId: command.threadId,
-        resumed: true as const,
-        ...(providerThreadId ? { providerThreadId } : {})
-      };
-    }
+    case 'thread.resume':
+      return applyThreadResume(runtime, command);
     case 'turn.submit': {
-      if (!runtime.threads.has(command.threadId)) {
-        throw new HostCommandError('unknown_thread', 'thread is not running on this host');
-      }
+      await resumeThreadRuntimeIfMissing(runtime, command);
       if (runtime.submitTurn) {
         await runtime.submitTurn({
           threadId: command.threadId,
@@ -442,6 +487,53 @@ export async function dispatchHostCommand(
         runtime.emit({ threadId: command.threadId, kind: 'turn.completed' });
       }
       return { threadId: command.threadId, accepted: true as const };
+    }
+    case 'terminal.start': {
+      const cwd = confineThreadCwd(command.root, command.cwd);
+      const cols = command.cols ?? 80;
+      const rows = command.rows ?? 24;
+      let pid: number | undefined;
+      if (runtime.startTerminal) {
+        const started = await runtime.startTerminal({
+          sessionId: command.sessionId,
+          cwd,
+          cols,
+          rows
+        });
+        pid = started?.pid;
+      }
+      runtime.terminals.set(command.sessionId, { cwd });
+      return {
+        sessionId: command.sessionId,
+        started: true as const,
+        ...(pid !== undefined ? { pid } : {})
+      };
+    }
+    case 'terminal.input': {
+      requireTerminal(runtime, command.sessionId);
+      if (runtime.writeTerminal) {
+        await runtime.writeTerminal({ sessionId: command.sessionId, data: command.data });
+      }
+      return { sessionId: command.sessionId, accepted: true as const };
+    }
+    case 'terminal.resize': {
+      requireTerminal(runtime, command.sessionId);
+      if (runtime.resizeTerminal) {
+        await runtime.resizeTerminal({
+          sessionId: command.sessionId,
+          cols: command.cols,
+          rows: command.rows
+        });
+      }
+      return { sessionId: command.sessionId, resized: true as const };
+    }
+    case 'terminal.stop': {
+      requireTerminal(runtime, command.sessionId);
+      if (runtime.stopTerminal) {
+        await runtime.stopTerminal({ sessionId: command.sessionId });
+      }
+      runtime.terminals.delete(command.sessionId);
+      return { sessionId: command.sessionId, stopped: true as const };
     }
     case 'host.list_files':
       return { files: command.roots.flatMap(listRoot) };

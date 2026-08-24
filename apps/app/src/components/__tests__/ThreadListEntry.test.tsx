@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
+import { readFileSync } from 'node:fs';
 import { ThreadListEntry } from '../ThreadListEntry.js';
 
 describe('ThreadListEntry', () => {
@@ -37,5 +38,11 @@ describe('ThreadListEntry', () => {
     );
     expect(html).not.toContain('thread-list-entry-working');
     expect(html).toContain('idle');
+  });
+
+  it('forwards a right-click handler onto the row', () => {
+    const source = readFileSync(new URL('../ThreadListEntry.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('onContextMenu?: (e: MouseEvent) => void');
+    expect(source).toContain('onContextMenu={onContextMenu}');
   });
 });

@@ -106,6 +106,28 @@ describe('host-rpc contract', () => {
       threadId
     }).type).toBe('thread.stop');
     expect(HostRpcCommandSchema.parse({
+      type: 'turn.submit',
+      threadId,
+      environmentId,
+      input: ['follow up'],
+      resume: {
+        projectId: 'p1',
+        providerId: 'claude',
+        providerThreadId: 'prov-1'
+      }
+    })).toMatchObject({
+      type: 'turn.submit',
+      resume: { providerThreadId: 'prov-1' }
+    });
+    expect(HostRpcCommandSchema.parse({
+      type: 'terminal.start',
+      sessionId: threadId,
+      root: '/tmp/proj',
+      cwd: '/tmp/proj',
+      cols: 80,
+      rows: 24
+    }).type).toBe('terminal.start');
+    expect(HostRpcCommandSchema.parse({
       type: 'host.list_dir',
       root: '/tmp/proj',
       relPath: 'apps'
@@ -169,7 +191,8 @@ describe('host-rpc contract', () => {
       instanceId,
       events: [
         { threadId, kind: 'thread.started' },
-        { kind: 'project.clone.progress', payload: { text: 'Cloning into repo...' } }
+        { kind: 'project.clone.progress', payload: { text: 'Cloning into repo...' } },
+        { terminalId: threadId, kind: 'terminal.output', payload: { data: 'hi' } }
       ]
     });
     expect(batch.events[0]).not.toHaveProperty('sequence');

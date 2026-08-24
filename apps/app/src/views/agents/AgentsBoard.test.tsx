@@ -12,13 +12,14 @@ describe('AgentsBoard', () => {
     expect(workspace).toContain('<AgentsBoard scope={{ kind: \'project\', project }} />');
     expect(board).not.toContain('<AgentLauncher');
     expect(board).toContain('setLauncherOpen(true)');
+    expect(board).toContain('aria-label="New thread"');
     expect(board).toContain('aria-label="Legacy PTY agent"');
     expect(board).not.toContain('aria-label="New agent"');
     expect(app).toContain('{launcherOpen && (nav !== \'projects\' || !focusedProjectId) && (');
     expect(app).not.toContain("nav !== 'home'");
   });
 
-  it('embeds the Home composer and AuroraGrid on both empty scopes', () => {
+  it('embeds AuroraGrid on both empty scopes and keeps create off the board', () => {
     const emptyStart = board.indexOf('fleet.length === 0 ? (');
     const filterStart = board.indexOf('isGlobal && visibleFleet.length === 0');
     expect(emptyStart).toBeGreaterThan(-1);
@@ -28,7 +29,8 @@ describe('AgentsBoard', () => {
     expect(emptyBranch).not.toContain('<HomeAgentComposer');
     expect(emptyBranch).toContain('No agents or threads');
     expect(emptyBranch).toContain('No agents or threads yet');
-    expect(board).toContain('<HomeAgentComposer project={scopedProject} />');
+    expect(emptyBranch).toContain('getNewThreadRoutePath(scopedProject?.id)');
+    expect(board).not.toContain('<HomeAgentComposer');
 
     const filterBranch = board.slice(filterStart, board.indexOf('<AgentBoardLanes', filterStart));
     expect(filterBranch).not.toContain('<AuroraGrid');
@@ -51,6 +53,13 @@ describe('AgentsBoard compact chrome contract', () => {
     expect(board).toContain('className="agents-board-header-actions"');
     expect(board).toContain('className="agents-board-btn-label"');
     expect(board).toContain('className="agents-board-count-extra"');
+    expect(board).toContain('aria-label="New thread"');
+    expect(board).toContain('data-testid="agents-board-new-thread"');
+    expect(board).toContain('getNewThreadRoutePath');
+    expect(board).toContain('btn primary agents-board-new');
+    expect(board.indexOf('aria-label="New thread"')).toBeLessThan(
+      board.indexOf('aria-label="Legacy PTY agent"')
+    );
     expect(board).toContain('aria-label="Legacy PTY agent"');
     expect(board).toContain('Close ${reclaimableAgents.length} idle agents');
   });
@@ -60,6 +69,7 @@ describe('AgentsBoard compact chrome contract', () => {
     expect(css).toContain('@container agents-board (max-width: 820px)');
     expect(css).toContain('.agents-board-btn-label {\n    display: none;');
     expect(css).toContain('.agents-board-count-extra {\n    display: none;');
+    expect(css).toContain('.agents-board-new,\n  .agents-board-legacy,\n  .agents-board-close-idle');
     expect(css).toContain('@container agents-board (max-width: 560px)');
     expect(css).toContain('.agents-board-filter {\n    flex: 1 1 100%;');
   });
@@ -75,14 +85,8 @@ describe('AgentsBoard compact chrome contract', () => {
     );
   });
 
-  it('spans the launch composer across the workbench with header gutters', () => {
-    expect(board).toContain('<HomeAgentComposer project={scopedProject} />');
-    const start = css.indexOf('.agents-board > .home-agent-composer {');
-    expect(start).toBeGreaterThan(-1);
-    const block = css.slice(start, css.indexOf('}', start));
-    expect(block).toContain('width: 100%;');
-    expect(block).toContain('max-width: none;');
-    expect(block).toContain('padding: 12px 16px 8px;');
-    expect(block).toContain('margin: 0;');
+  it('does not span a launch composer across the workbench', () => {
+    expect(board).not.toContain('<HomeAgentComposer');
+    expect(css).not.toContain('.agents-board > .home-agent-composer {');
   });
 });

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { MemoryRouter } from 'react-router-dom';
 import type { WorkspaceFileStatus } from '@zana-ai/zcc-domain';
 import { ThreadConversationToc } from './ThreadConversationToc.js';
 import {
@@ -8,9 +11,14 @@ import {
   workspaceFileCountLabel,
   workspaceFileStatText
 } from './ThreadWorkspaceBanner.js';
-import { hunkForPath } from './thread-diff.js';
+import { hunkForPath, diffPanelPhase } from './thread-diff.js';
 import { ExpandableTimelineRow } from './timeline/ExpandableTimelineRow.js';
-import { ThreadWorkflowChips, ThreadPromptModeChip, ThreadStatusBadge } from './timeline/ThreadBanners.js';
+import {
+  ThreadDetailHeading,
+  ThreadWorkflowChips,
+  ThreadPromptModeChip,
+  ThreadStatusBadge
+} from './timeline/ThreadBanners.js';
 
 describe('thread TOC', () => {
   it('renders outline items that jump by id', () => {
@@ -163,6 +171,12 @@ describe('diff hunk helper', () => {
     expect(hunkForPath(diff, '').modified).toBe(diff);
     expect(hunkForPath(diff, 'missing.ts').modified).toBe(diff);
   });
+
+  it('shows an error instead of loading when the diff request fails', () => {
+    expect(diffPanelPhase('git output exceeded the buffer cap', false)).toBe('error');
+    expect(diffPanelPhase(null, false)).toBe('loading');
+    expect(diffPanelPhase(null, true)).toBe('ready');
+  });
 });
 
 describe('expandable row and chips', () => {
@@ -203,11 +217,41 @@ describe('expandable row and chips', () => {
         completedAt: null
       }]} />
     )).toContain('Build');
-    expect(renderToStaticMarkup(<ThreadStatusBadge status="active" />)).toContain('Active');
+    expect(renderToStaticMarkup(<ThreadStatusBadge status="active" />)).toContain('Working');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="active" />)).toContain('thread-status-badge is-working');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="idle" />)).toContain('is-idle');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="error" />)).toContain('is-blocked');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="error" />)).toContain('Error');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="" />)).toBe('');
+  });
+
+  it('prefixes the thread title with a link back to Agents', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ThreadDetailHeading title="Hello" status="active" />
+      </MemoryRouter>
+    );
+    expect(html).toContain('data-testid="thread-agents-crumb"');
+    expect(html).toContain('href="/agents"');
+    expect(html).toContain('>Agents<');
+    expect(html).toContain('<h1>Hello</h1>');
+    expect(html).toContain('data-testid="thread-detail-status"');
+  });
+
+  it('opens the secondary panel Diff pin from Review', () => {
+    const source = readFileSync(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)), 'utf8');
+    expect(source).toContain("selectPin('diff')");
+    expect(source).toContain('thread-secondary-show');
+  });
+
+  it('keeps the secondary panel a sibling of the main column', () => {
+    const source = readFileSync(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)), 'utf8');
+    expect(source).toContain('thread-detail-main');
+    const panelAt = source.indexOf('<ThreadSecondaryPanel');
+    const bodyAt = source.indexOf('className="thread-detail-body"');
+    expect(panelAt).toBeGreaterThan(-1);
+    expect(bodyAt).toBeGreaterThan(-1);
+    expect(source.slice(bodyAt, panelAt)).not.toContain('<ThreadSecondaryPanel');
+    expect(source.indexOf('thread-detail-main')).toBeLessThan(panelAt);
   });
 });

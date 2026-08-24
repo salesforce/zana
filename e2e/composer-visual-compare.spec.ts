@@ -12,7 +12,7 @@ test('Home Thread composer uses the TipTap editor and provider controls', async 
   await expect(homeComposer.getByTestId('thread-command-send')).toBeVisible();
 });
 
-test('Agents + opens the Home composer, not the legacy launcher', async ({ app }) => {
+test('Agents + opens the new-thread composer, not the legacy launcher', async ({ app }) => {
   const { window } = app;
 
   await window.locator('[data-testid="nav-agents"]').click();

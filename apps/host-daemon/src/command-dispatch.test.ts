@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -281,6 +281,98 @@ describe('host command dispatch', () => {
     } finally {
       process.env.PATH = previous;
     }
+  });
+
+  it('lazily resumes a missing thread runtime before turn.submit', async () => {
+    const project = mkdtempSync(join(tmpdir(), 'zcc-lazy-resume-'));
+    const resumed: Array<{ threadId: string; providerThreadId: string }> = [];
+    const submitted: string[][] = [];
+    const runtime = createCommandRuntime({
+      verifyProviders: async () => installedClaude,
+      resumeWork: async (input) => {
+        resumed.push({ threadId: input.threadId, providerThreadId: input.providerThreadId });
+      },
+      submitTurn: async (input) => {
+        submitted.push(input.input);
+      }
+    });
+    const environmentId = randomUUID();
+    await dispatchHostCommand(runtime, {
+      type: 'environment.provision',
+      environmentId,
+      workspaceProvisionType: 'unmanaged',
+      path: project
+    });
+    const threadId = randomUUID();
+    await expect(dispatchHostCommand(runtime, {
+      type: 'turn.submit',
+      threadId,
+      environmentId,
+      input: ['hello again']
+    })).rejects.toMatchObject({ code: 'unknown_thread' });
+    expect(resumed).toEqual([]);
+    await expect(dispatchHostCommand(runtime, {
+      type: 'turn.submit',
+      threadId,
+      environmentId,
+      input: ['hello again'],
+      resume: {
+        projectId: 'proj-1',
+        providerId: 'claude',
+        providerThreadId: 'prov-1',
+        cwd: project
+      }
+    })).resolves.toMatchObject({ accepted: true });
+    expect(resumed).toEqual([{ threadId, providerThreadId: 'prov-1' }]);
+    expect(submitted).toEqual([['hello again']]);
+    expect(runtime.threads.has(threadId)).toBe(true);
+  });
+
+  it('starts and drives a confined terminal session', async () => {
+    const project = mkdtempSync(join(tmpdir(), 'zcc-term-'));
+    const started: Array<{ cwd: string; cols: number; rows: number }> = [];
+    const written: string[] = [];
+    const runtime = createCommandRuntime({
+      verifyProviders: async () => installedClaude,
+      startTerminal: async (input) => {
+        started.push({ cwd: input.cwd, cols: input.cols, rows: input.rows });
+        return { pid: 9 };
+      },
+      writeTerminal: async (input) => {
+        written.push(input.data);
+      }
+    });
+    const sessionId = randomUUID();
+    await expect(dispatchHostCommand(runtime, {
+      type: 'terminal.start',
+      sessionId,
+      root: project,
+      cwd: project,
+      cols: 100,
+      rows: 30
+    })).resolves.toMatchObject({ started: true, pid: 9 });
+    expect(started).toEqual([{ cwd: realpathSync(project), cols: 100, rows: 30 }]);
+    await expect(dispatchHostCommand(runtime, {
+      type: 'terminal.input',
+      sessionId,
+      data: 'echo hi\n'
+    })).resolves.toMatchObject({ accepted: true });
+    expect(written).toEqual(['echo hi\n']);
+    await expect(dispatchHostCommand(runtime, {
+      type: 'terminal.resize',
+      sessionId,
+      cols: 120,
+      rows: 40
+    })).resolves.toMatchObject({ resized: true });
+    await expect(dispatchHostCommand(runtime, {
+      type: 'terminal.stop',
+      sessionId
+    })).resolves.toMatchObject({ stopped: true });
+    await expect(dispatchHostCommand(runtime, {
+      type: 'terminal.input',
+      sessionId,
+      data: 'nope'
+    })).rejects.toMatchObject({ code: 'unknown_terminal' });
   });
 });
 

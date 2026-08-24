@@ -99,4 +99,23 @@ describe('project-focus navigation contract', () => {
     useUi.getState().enterProjectFocus('proj-persisted');
     expect(useUi.getState().focusedProjectId).toBe('proj-persisted');
   });
+
+  it('openProjectSettings navigates to that project\'s settings, not global Settings', async () => {
+    const { useUi } = await import('../store.js');
+    const { getLastAppNavigatePath, registerAppNavigate } = await import('../lib/app-navigate.js');
+    const navigate = vi.fn();
+    registerAppNavigate(navigate);
+
+    useUi.getState().enterProjectFocus('other-proj');
+    useUi.getState().openProjectSettings('proj-settings');
+
+    expect(useUi.getState().nav).toBe('settings');
+    expect(useUi.getState().settingsTab).toBe('project');
+    expect(useUi.getState().focusedProjectId).toBe('proj-settings');
+    expect(useUi.getState().selectedProjectId).toBe('proj-settings');
+    expect(getLastAppNavigatePath()).toBe('/projects/proj-settings/settings');
+    expect(navigate).toHaveBeenCalledWith('/projects/proj-settings/settings', undefined);
+
+    registerAppNavigate(null);
+  });
 });

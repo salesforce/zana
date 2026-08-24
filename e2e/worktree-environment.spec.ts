@@ -183,7 +183,7 @@ async function prepareClaudeAndProject(
 
 async function openWorktreeLauncher(window: Page, projectName: string, prompt: string): Promise<void> {
   await ensureSidebarExpanded(window);
-  await window.locator('.sidebar-agents-actions').getByRole('button', { name: 'New quick agent' }).click();
+  await window.getByRole('button', { name: `New agent in ${projectName}` }).click();
   const modal = window.locator('[data-testid="launch-modal"]');
   await expect(modal).toBeVisible();
   await modal.locator('[data-testid="launch-instruction"]').fill(prompt);

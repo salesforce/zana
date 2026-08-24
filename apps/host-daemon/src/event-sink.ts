@@ -1,7 +1,14 @@
 import type { HostEventEnvelope } from '@zana-ai/zcc-contracts/host-rpc';
 
 const DEFAULT_DEBOUNCE_MS = 100;
-const IMMEDIATE_KINDS = new Set(['thread.started', 'turn.completed', 'turn.failed', 'project.clone.progress']);
+const IMMEDIATE_KINDS = new Set([
+  'thread.started',
+  'turn.completed',
+  'turn.failed',
+  'project.clone.progress',
+  'terminal.output',
+  'terminal.exited'
+]);
 
 export interface EventSink {
   emit(event: HostEventEnvelope): void;

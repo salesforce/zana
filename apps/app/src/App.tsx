@@ -10,6 +10,7 @@ import { WorkspaceView } from '@/views/project/WorkspaceView';
 import { TerminalSurface } from './components/TerminalSurface.js';
 import { AgentsView } from '@/views/agents/AgentsView';
 import { ThreadDetailView } from '@/views/threads/ThreadDetailView';
+import { NewThreadView } from '@/views/threads/NewThreadView';
 import { ProjectScopedNav } from './components/ProjectScopedNav.js';
 import { SettingsView } from '@/views/settings/SettingsView';
 import { SchedulerView } from '@/views/scheduler/SchedulerView';
@@ -81,12 +82,14 @@ import {
   PLUGIN_PANEL_ROOT_ROUTE_PATH,
   PROJECT_ROUTE_PATH,
   PROJECT_SETTINGS_ROUTE_PATH,
+  PROJECT_NEW_THREAD_ROUTE_PATH,
   PROJECT_WORKSPACE_ROUTE_PATH,
   SCHEDULER_ROUTE_PATH,
   SETTINGS_PROJECT_ALIAS_ROUTE_PATH,
   SETTINGS_ROUTE_PATH,
   SETTINGS_SECTION_ROUTE_PATH,
   SUGGESTIONS_ROUTE_PATH,
+  NEW_THREAD_ROUTE_PATH,
   THREAD_ROUTE_PATH,
   TOOLS_MCP_ROUTE_PATH,
   TOOLS_PLUGIN_BROWSE_ROUTE_PATH,
@@ -119,6 +122,7 @@ function AppRoutes({ suggestionsEnabled }: { suggestionsEnabled: boolean }) {
         <Route path={APP_ROOT_ROUTE_PATH} element={<HomeView />} />
         <Route path={INBOX_ROUTE_PATH} element={<InboxView />} />
         <Route path={AGENTS_ROUTE_PATH} element={<AgentsView />} />
+        <Route path={NEW_THREAD_ROUTE_PATH} element={<NewThreadView />} />
         <Route path={THREAD_ROUTE_PATH} element={<ThreadDetailView />} />
         <Route path={FOLLOWUPS_ROUTE_PATH} element={<FollowUpsView />} />
         <Route
@@ -137,6 +141,7 @@ function AppRoutes({ suggestionsEnabled }: { suggestionsEnabled: boolean }) {
         <Route path={SETTINGS_PROJECT_ALIAS_ROUTE_PATH} element={<SettingsProjectAliasRedirect />} />
         <Route path={SETTINGS_SECTION_ROUTE_PATH} element={<SettingsView />} />
         <Route path={PROJECT_SETTINGS_ROUTE_PATH} element={<SettingsView />} />
+        <Route path={PROJECT_NEW_THREAD_ROUTE_PATH} element={null} />
         <Route path={PROJECT_ROUTE_PATH} element={null} />
         <Route path={PROJECT_WORKSPACE_ROUTE_PATH} element={null} />
         <Route path={PLUGIN_PANEL_ROOT_ROUTE_PATH} element={null} />

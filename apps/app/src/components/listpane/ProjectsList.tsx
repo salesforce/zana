@@ -43,14 +43,14 @@ import { AgentRowDetail } from './AgentRowDetail.js';
 import { ProjectRollupDot } from './ProjectRollupDot.js';
 import { reorderProjectIds } from './projectReordering.js';
 import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from '../agentCardActions.js';
+import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from '../threadCardActions.js';
 import { PromptModal } from '../PromptModal.js';
 import type { AgentCard } from '../AgentBoard.js';
 import { useThreads } from '../../thread-store.js';
 import { useEnsureThreads } from '../../hooks/useEnsureThreads.js';
 import { getThreadRoutePath } from '../../lib/route-paths.js';
 import { FleetKindChip } from '../FleetKindChip.js';
-import { threadIsLiveForRail, threadTitle } from '../fleet-item.js';
-import { threadStatusToAgentState } from '../thread/thread-timeline-model.js';
+import { railThreadsForProject, threadIsLiveForRail, threadRailDetail, threadTitle } from '../fleet-item.js';
 
 interface MenuState {
   projectId: string;
@@ -164,7 +164,7 @@ export function ProjectsList({
   const exitProjectFocus = useUi((s) => s.exitProjectFocus);
   const setLauncherOpen = useUi((s) => s.setLauncherOpen);
   const setNav = useUi((s) => s.setNav);
-  const setSettingsTab = useUi((s) => s.setSettingsTab);
+  const openProjectSettings = useUi((s) => s.openProjectSettings);
   const selectedTabId = useUi((s) => s.selectedTabId);
   const pushToast = useUi((s) => s.pushToast);
   const unread = useUi((s) => s.unread);
@@ -189,6 +189,19 @@ export function ProjectsList({
       const list = map.get(thread.projectId) ?? [];
       list.push(thread);
       map.set(thread.projectId, list);
+    }
+    return map;
+  }, [threads]);
+  const railThreadsByProject = useMemo(() => {
+    const grouped = new Map<string, typeof threads>();
+    for (const thread of threads) {
+      const list = grouped.get(thread.projectId) ?? [];
+      list.push(thread);
+      grouped.set(thread.projectId, list);
+    }
+    const map = new Map<string, typeof threads>();
+    for (const [projectId, list] of grouped) {
+      map.set(projectId, railThreadsForProject(list));
     }
     return map;
   }, [threads]);
@@ -228,6 +241,7 @@ export function ProjectsList({
     closeRename: closeAgentRename,
     submitRename: submitAgentRename
   } = useAgentCardActions();
+  const { menu: threadMenu, setMenu: setThreadMenu } = useThreadCardActions();
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
@@ -284,6 +298,7 @@ export function ProjectsList({
     e.preventDefault();
     e.stopPropagation();
     setMenu(null);
+    setThreadMenu(null);
     setAgentMenu({ card: sessionToCard(session, project), ...clampMenuAnchor(e) });
   };
 
@@ -332,12 +347,16 @@ export function ProjectsList({
     listedTerminals(terminals[p.id]).some((t) => t.status !== 'exited') ||
     (liveThreadsByProject.get(p.id)?.length ?? 0) > 0;
 
-  // Whether a project's agent sub-list is shown. The rail auto-expands any
-  // project with a live agent so its running agents are visible at a glance
-  // without a click; the user's explicit choice (stored boolean) always wins
-  // over that default, so collapsing a busy project sticks.
+  const projectHasNestableSessions = (p: Project) =>
+    liveTerminals(terminals[p.id]).length > 0 ||
+    (railThreadsByProject.get(p.id)?.length ?? 0) > 0;
+
+  // Nested rows show live agents plus recent threads. Auto-expand any project
+  // with live work, and the selected workspace when it has anything to nest,
+  // so the tree is visible without a click. An explicit collapse still wins.
   const isProjectExpanded = (p: Project) =>
-    projectExpanded[p.id] ?? projectHasRunningAgents(p);
+    projectExpanded[p.id] ??
+    (projectHasRunningAgents(p) || (p.id === selectedId && projectHasNestableSessions(p)));
 
   const visibleProjects = useMemo(() => {
     // A per-project window locks the rail to its one project — no other projects
@@ -574,10 +593,10 @@ export function ProjectsList({
                 </span>
               );
               const liveList = liveTerminals(terminals[p.id]);
-              const liveThreads = liveThreadsByProject.get(p.id) ?? [];
+              const railThreads = railThreadsByProject.get(p.id) ?? [];
               const expanded = isProjectExpanded(p);
               const treeChevron =
-                liveList.length === 0 && liveThreads.length === 0 ? null : (
+                liveList.length === 0 && railThreads.length === 0 ? null : (
                   <button
                     type="button"
                     className={`project-tree-chevron ${expanded ? 'expanded' : ''}`}
@@ -682,15 +701,14 @@ export function ProjectsList({
           </div>
           {(() => {
             const list = liveTerminals(terminals[p.id]);
-            const liveThreads = liveThreadsByProject.get(p.id) ?? [];
-            if (!list.length && !liveThreads.length) return null;
+            const railThreads = railThreadsByProject.get(p.id) ?? [];
+            if (!list.length && !railThreads.length) return null;
             if (!isProjectExpanded(p)) return null;
             const activeTab = selectedId === p.id ? selectedTabId[p.id] : undefined;
             return (
-              <div className="project-terminals" role="list" aria-label={`Live sessions in ${p.name}`}>
-                {liveThreads.map((thread) => {
+              <div className="project-terminals" role="list" aria-label={`Sessions in ${p.name}`}>
+                {railThreads.map((thread) => {
                   const title = threadTitle(thread);
-                  const state = threadStatusToAgentState(thread.status);
                   return (
                     <div key={thread.id} role="listitem">
                       <button
@@ -699,6 +717,7 @@ export function ProjectsList({
                         data-kind="thread"
                         data-testid="project-thread-row"
                         onClick={() => navigate(getThreadRoutePath(thread.id))}
+                        onContextMenu={(e) => openThreadMenu(e, thread, setThreadMenu)}
                         aria-label={title}
                         title={`${title} · ${thread.status}`}
                       >
@@ -708,7 +727,7 @@ export function ProjectsList({
                         <span className="project-terminal-text">
                           <span className="project-terminal-name">{title}</span>
                           <span className="project-terminal-detail">
-                            {state === 'blocked' ? 'Needs you' : 'Working'} · Thread
+                            {threadRailDetail(thread)}
                           </span>
                         </span>
                         <FleetKindChip kind="thread" />
@@ -1120,9 +1139,7 @@ export function ProjectsList({
                 className="project-menu-item"
                 onClick={() => {
                   setMenu(null);
-                  selectProject(p.id);
-                  setSettingsTab('project');
-                  setNav('settings');
+                  openProjectSettings(p.id);
                 }}
               >
                 <Settings2 size={12} />
@@ -1199,6 +1216,9 @@ export function ProjectsList({
       })()}
       {agentMenu && (
         <AgentCardMenu menu={agentMenu} setMenu={setAgentMenu} actions={agentActions} onPick={pickAgent} />
+      )}
+      {threadMenu && (
+        <ThreadCardMenu menu={threadMenu} setMenu={setThreadMenu} />
       )}
       {agentRename && (
         <PromptModal

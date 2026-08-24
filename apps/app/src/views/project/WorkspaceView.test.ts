@@ -11,6 +11,9 @@ describe('WorkspaceView launcher host', () => {
     expect(source).not.toContain('launcherOpen && project && !isAgents');
     expect(source).toContain('<AgentLauncher');
     expect(source).not.toContain('presentation=');
+    expect(source).toContain('route.isNewThread');
+    expect(source).toContain('<NewThreadView project={project} />');
+    expect(source).toContain('mode === \'agents\' && !!project && !isNewThread');
   });
 });
 

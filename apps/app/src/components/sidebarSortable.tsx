@@ -14,7 +14,6 @@ import { sortableKeyboardCoordinates, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { normalizeSidebarNavOrder, reorderSidebarNavItems } from './sidebarNavOrder.js';
 
-export const AGENTS_SECTION_SORT_ID = 'sidebar-section:agents';
 export const WORKSPACES_SECTION_SORT_ID = 'sidebar-section:workspaces';
 export const GLOBAL_NAV_ORDER_KEY = 'zcc.sidebarNavOrder';
 export const PROJECT_NAV_ORDER_KEY = 'zcc.projectSidebarNavOrder';
@@ -59,7 +58,10 @@ export function SortableSidebarSection({
   children
 }: {
   id: string;
-  children: ReactElement<{ dragHandle?: HTMLAttributes<HTMLElement> }>;
+  children: ReactElement<{
+    dragHandle?: HTMLAttributes<HTMLElement>;
+    onNavigate?: (event: { preventDefault: () => void }) => void;
+  }>;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({
     id,

@@ -30,6 +30,13 @@ import {
 } from '@zana-ai/zcc-db';
 import type { ProductHub } from './product-hub.js';
 
+export interface HostTerminalSessionRecord {
+  hostId: string;
+  status: 'starting' | 'running' | 'exited';
+  exitCode?: number;
+  finishedAt?: number;
+}
+
 export class HostUnavailableError extends Error {
   readonly code = 'host-unavailable';
   constructor(message = 'host session is not connected') {
@@ -75,7 +82,11 @@ export interface ConnectedHostSession {
 
 const DEFAULT_RPC_TIMEOUT_MS = 30_000;
 
-export function createHostHub(db: ZccDatabase, hub: ProductHub) {
+export function createHostHub(
+  db: ZccDatabase,
+  hub: ProductHub,
+  terminalSessions: Map<string, HostTerminalSessionRecord> = new Map()
+) {
   const sessions = new Map<string, ConnectedHostSession>();
   const pending = new Map<string, PendingRpc>();
 
@@ -200,6 +211,35 @@ export function createHostHub(db: ZccDatabase, hub: ProductHub) {
           hub.emit('projects:cloneProgress', event.payload);
           return;
         }
+        if (event.kind === 'terminal.output' || event.kind === 'terminal.exited') {
+          if (!event.terminalId) {
+            rejected.push({ index, reason: 'unknown_terminal' });
+            return;
+          }
+          accepted += 1;
+          if (event.kind === 'terminal.output') {
+            const data = event.payload && typeof event.payload === 'object' && 'data' in event.payload
+              ? String((event.payload as { data: unknown }).data)
+              : '';
+            hub.emit('terminals:data', { sessionId: event.terminalId, data });
+          } else {
+            const exitCode = event.payload && typeof event.payload === 'object' && 'exitCode' in event.payload
+              ? Number((event.payload as { exitCode: unknown }).exitCode)
+              : 0;
+            const record = terminalSessions.get(event.terminalId);
+            if (record) {
+              record.status = 'exited';
+              record.exitCode = Number.isFinite(exitCode) ? exitCode : 0;
+              record.finishedAt = Date.now();
+            }
+            hub.emit('terminals:exit', {
+              sessionId: event.terminalId,
+              code: Number.isFinite(exitCode) ? exitCode : 0
+            });
+            hub.emit('terminals:updated', { sessionId: event.terminalId });
+          }
+          return;
+        }
         if (!event.threadId) {
           rejected.push({ index, reason: 'unknown_thread' });
           return;
@@ -269,6 +309,7 @@ export function createHostHub(db: ZccDatabase, hub: ProductHub) {
     if (accepted > 0) {
       const statusChanged = batch.events.some((event, index) => (
         event.kind !== 'terminal.output'
+        && event.kind !== 'terminal.exited'
         && event.kind !== 'project.clone.progress'
         && !rejected.some((row) => row.index === index)
       ));

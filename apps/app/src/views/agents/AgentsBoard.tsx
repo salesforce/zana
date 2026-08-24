@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { matchPath, useLocation, useNavigate } from 'react-router-dom';
-import { Bot, Moon, Plus, Search, X, Loader2 } from 'lucide-react';
+import { Bot, Moon, Plus, Search, Terminal, X, Loader2 } from 'lucide-react';
 import type { Project, TerminalSession } from '@zana-ai/zcc-domain/product';
 import {
   useData,
@@ -15,7 +15,7 @@ import {
 } from '@/store';
 import { useThreads } from '@/thread-store';
 import { useEnsureThreads } from '@/hooks/useEnsureThreads';
-import { getThreadRoutePath, THREAD_ROUTE_PATH } from '@/lib/route-paths';
+import { getNewThreadRoutePath, getThreadRoutePath, THREAD_ROUTE_PATH } from '@/lib/route-paths';
 import { AgentBoardLanes, isReclaimableIdle, type AgentCard } from '@/components/AgentBoard';
 import { AgentViewToggle } from '@/components/AgentViewToggle';
 import { SquadFlowView } from '@/views/agents/SquadFlowView';
@@ -24,7 +24,6 @@ import { AgentMonitor } from '@/components/AgentMonitor';
 import { CloseIdleAgentsDialog } from '@/components/CloseIdleAgentsDialog';
 import { CohortBar, type LiveCohort } from '@/components/CohortBar';
 import { AuroraGrid } from '@/components/AuroraGrid';
-import { HomeAgentComposer } from '@/components/HomeAgentComposer';
 import {
   agentFleetItem,
   fleetAgentCards,
@@ -36,10 +35,11 @@ import {
 /**
  * One Agents Kanban, two scopes. Global (`kind: 'global'`) flattens every
  * project's listed non-shell sessions; project scope keeps the same lanes /
- * list / flow / empty composer but filters to one workspace. Presentational
+ * list / flow / empty board but filters to one workspace. Presentational
  * lane/card rendering lives in the shared {@link AgentBoardLanes}.
  *
- * New agent never mounts a launcher here — it flips `useUi.launcherOpen` so
+ * New thread from a project workspace stays on `/projects/:id/threads/new`.
+ * Legacy PTY never mounts a launcher here — it flips `useUi.launcherOpen` so
  * App (fleet) or Workspace (project) hosts the shared modal.
  */
 
@@ -284,18 +284,27 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
           )}
           <button
             type="button"
+            className="btn primary agents-board-new"
+            data-testid="agents-board-new-thread"
+            onClick={() => navigate(getNewThreadRoutePath(scopedProject?.id))}
+            aria-label="New thread"
+            title="Start a new thread"
+          >
+            <Plus size={14} />
+            <span className="agents-board-btn-label">New Thread</span>
+          </button>
+          <button
+            type="button"
             className="btn agents-board-legacy"
             onClick={() => useUi.getState().setLauncherOpen(true)}
             aria-label="Legacy PTY agent"
             title="Start a legacy PTY agent"
           >
-            <Plus size={14} />
+            <Terminal size={14} />
             <span className="agents-board-btn-label">Legacy PTY</span>
           </button>
         </div>
       </header>
-
-      <HomeAgentComposer project={scopedProject} />
 
       {scopedProject && <AutonomousRunBanner projectId={scopedProject.id} />}
       {boardView === 'board' && (
@@ -324,8 +333,8 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
               <>
                 <h4>No agents or threads</h4>
                 <p>
-                  Open a project on the left and start a thread — it&rsquo;ll appear here, across
-                  every project.
+                  Start a thread — it&rsquo;ll appear here, across every project. Legacy PTY
+                  agents still launch from the header.
                 </p>
               </>
             ) : (
@@ -334,6 +343,14 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
                 <p>Start a thread in this project and watch it move across the board.</p>
               </>
             )}
+            <button
+              type="button"
+              className="btn primary"
+              onClick={() => navigate(getNewThreadRoutePath(scopedProject?.id))}
+            >
+              <Plus size={14} />
+              New Thread
+            </button>
           </div>
         </div>
       ) : isGlobal && visibleFleet.length === 0 ? (

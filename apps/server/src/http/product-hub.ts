@@ -20,7 +20,10 @@ export type ProductEventType =
   | 'threads:updated'
   | 'threads:event'
   | 'projects:cloneProgress'
-  | 'library:changed';
+  | 'library:changed'
+  | 'terminals:data'
+  | 'terminals:exit'
+  | 'terminals:updated';
 
 export interface ProductEvent {
   type: ProductEventType;

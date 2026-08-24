@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -107,8 +107,8 @@ describe('product HTTP', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ projectId: 'proj-1', profile: 'claude' })
     });
-    expect(launch.status).toBe(503);
-    await expect(launch.json()).resolves.toMatchObject({ ok: false, code: 'launch-unavailable' });
+    expect(launch.status).toBe(502);
+    await expect(launch.json()).resolves.toMatchObject({ ok: false, code: 'host_disconnected' });
 
     const escaped = await fetch(`${server.url}api/v1/terminals`, {
       method: 'POST',
@@ -142,6 +142,107 @@ describe('product HTTP', () => {
     });
     expect(preflight.status).toBe(204);
     expect(preflight.headers.get('access-control-allow-origin')).toBe('http://127.0.0.1:5173');
+  });
+
+  it('launches a terminal through a connected host and drives input/resize/close', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-term-'));
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-product-term-proj-'));
+    writeFileSync(
+      join(dataDir, 'projects.json'),
+      JSON.stringify({
+        version: 1,
+        projects: [
+          {
+            id: 'proj-1',
+            name: 'Alpha',
+            path: projectRoot,
+            createdAt: 1,
+            lastActiveAt: 1
+          }
+        ]
+      })
+    );
+    writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ version: 1, theme: 'dark' }));
+    server = await startProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+
+    const rpc = vi.fn(async (input: { command: { type: string; sessionId?: string } }) => {
+      if (input.command.type === 'terminal.start') {
+        return { sessionId: input.command.sessionId, started: true, pid: 4242 };
+      }
+      return { accepted: true };
+    });
+    server.ctx.hostHub.connectedHostIds = () => ['host-1'];
+    server.ctx.hostHub.resolveHostId = () => 'host-1';
+    server.ctx.hostHub.callHostOnlineRpc = rpc;
+
+    const launch = await fetch(`${server.url}api/v1/terminals`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: 'proj-1', profile: 'claude' })
+    });
+    expect(launch.status).toBe(201);
+    const created = await launch.json() as { ok: true; value: { id: string; status: string; pid?: number } };
+    expect(created).toMatchObject({
+      ok: true,
+      value: { projectId: 'proj-1', profile: 'claude', status: 'running', pid: 4242 }
+    });
+    expect(created.value).not.toHaveProperty('hostId');
+    expect(rpc).toHaveBeenCalledWith(expect.objectContaining({
+      hostId: 'host-1',
+      command: expect.objectContaining({
+        type: 'terminal.start',
+        root: realpathSync(projectRoot),
+        cwd: realpathSync(projectRoot)
+      })
+    }));
+
+    const listed = await fetch(`${server.url}api/v1/terminals`).then((response) => response.json());
+    expect(listed.sessions).toHaveLength(1);
+    expect(listed.sessions[0].id).toBe(created.value.id);
+
+    const input = await fetch(`${server.url}api/v1/terminals/${created.value.id}/input`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ data: 'ls\n' })
+    });
+    expect(input.status).toBe(200);
+    const resize = await fetch(`${server.url}api/v1/terminals/${created.value.id}/resize`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cols: 120, rows: 40 })
+    });
+    expect(resize.status).toBe(200);
+    const closed = await fetch(`${server.url}api/v1/terminals/${created.value.id}/close`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    });
+    expect(closed.status).toBe(200);
+    expect(rpc.mock.calls.map((call) => call[0].command.type)).toEqual([
+      'terminal.start',
+      'terminal.input',
+      'terminal.resize',
+      'terminal.stop'
+    ]);
+
+    const missing = await fetch(`${server.url}api/v1/terminals/missing-session/input`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ data: 'x' })
+    });
+    expect(missing.status).toBe(404);
+    await expect(missing.json()).resolves.toMatchObject({ ok: false, code: 'unknown-session' });
+
+    const badInput = await fetch(`${server.url}api/v1/terminals/${created.value.id}/input`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    expect(badInput.status).toBe(400);
+    await expect(badInput.json()).resolves.toMatchObject({ ok: false, code: 'invalid-input' });
   });
 
   it('returns 410 for PTY I/O on the Thread API', async () => {
@@ -212,6 +313,80 @@ describe('product HTTP', () => {
       threads: Array<{ id: string; status: string }>;
     };
     expect(body.threads).toEqual([expect.objectContaining({ id: thread.id, status: 'idle' })]);
+  });
+
+  it('patches a conversation parent on the same project and rejects cycles', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-parent-'));
+    server = await startProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: '/tmp/proj'
+    });
+    const parent = createConversationThread(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code',
+      title: 'Parent'
+    });
+    const child = createConversationThread(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code',
+      title: 'Child'
+    });
+    const otherEnv = createEnvironment(server.ctx.db, {
+      projectId: 'proj-2',
+      hostId: host.id,
+      path: '/tmp/other'
+    });
+    const foreign = createConversationThread(server.ctx.db, {
+      projectId: 'proj-2',
+      hostId: host.id,
+      environmentId: otherEnv.id,
+      providerId: 'claude-code',
+      title: 'Foreign'
+    });
+
+    const assigned = await fetch(`${server.url}api/v1/threads/${child.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ parentThreadId: parent.id })
+    });
+    expect(assigned.status).toBe(200);
+    await expect(assigned.json()).resolves.toMatchObject({
+      thread: expect.objectContaining({ id: child.id, parentThreadId: parent.id })
+    });
+
+    const self = await fetch(`${server.url}api/v1/threads/${child.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ parentThreadId: child.id })
+    });
+    expect(self.status).toBe(400);
+    await expect(self.json()).resolves.toMatchObject({ error: 'invalid-parent' });
+
+    const cycle = await fetch(`${server.url}api/v1/threads/${parent.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ parentThreadId: child.id })
+    });
+    expect(cycle.status).toBe(400);
+    await expect(cycle.json()).resolves.toMatchObject({ error: 'invalid-parent' });
+
+    const cross = await fetch(`${server.url}api/v1/threads/${child.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ parentThreadId: foreign.id })
+    });
+    expect(cross.status).toBe(400);
+    await expect(cross.json()).resolves.toMatchObject({ error: 'invalid-parent' });
   });
 
   it('rejects explorer list-dir outside a registered project', async () => {

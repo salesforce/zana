@@ -35,10 +35,7 @@ test('selecting a project puts workspace modes in the side panel', async ({ app 
 
     const rail = window.locator('.project-scoped-nav.project-focused-nav');
     await expect(rail).toBeVisible({ timeout: 15_000 });
-    await expect(rail.getByRole('button', { name: /Agents section/ })).toBeVisible();
-    await expect(rail.getByRole('button', { name: 'Open Agents dashboard' })).toBeVisible();
-    await expect(rail.getByRole('button', { name: 'New quick agent' })).toBeVisible();
-    await expect(rail.getByRole('status', { name: 'No agents' })).toBeVisible();
+    await expect(rail.getByTestId('project-nav-agents')).toBeVisible();
     await expect(rail.getByTestId('project-nav-terminals')).toBeVisible();
     await expect(rail.getByTestId('project-nav-scheduler')).toBeVisible();
     await expect(window.locator('.workspace-mode-segmented')).toHaveCount(0);
@@ -47,13 +44,8 @@ test('selecting a project puts workspace modes in the side panel', async ({ app 
     await expect(window.locator('.scheduler-panel--embedded')).toBeVisible({ timeout: 15_000 });
     await expect(window.getByRole('heading', { name: 'Project schedules' })).toBeVisible();
 
-    await rail.getByTestId('sidebar-agents-heading').click();
+    await rail.getByTestId('project-nav-agents').click();
     await expect(window.locator('.agents-board')).toBeVisible({ timeout: 15_000 });
-    await expect(rail.getByRole('status', { name: 'No agents' })).toBeVisible();
-
-    await rail.getByTestId('sidebar-agents-toggle').click();
-    await expect(rail.getByRole('status', { name: 'No agents' })).toBeHidden();
-    await expect(window.locator('.agents-board')).toBeVisible();
   } finally {
     await window.evaluate(async (pid) => {
       try {

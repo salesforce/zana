@@ -6,6 +6,7 @@ describe('decodeRoutePath', () => {
     ['/', { nav: 'home', focusedProjectId: null }],
     ['/inbox', { nav: 'inbox' }],
     ['/agents', { nav: 'agents' }],
+    ['/threads/new', { nav: 'agents' }],
     ['/threads/abc', { nav: 'agents' }],
     ['/followups', { nav: 'followups' }],
     ['/suggestions', { nav: 'suggestions' }],
@@ -21,6 +22,7 @@ describe('decodeRoutePath', () => {
     ['/extensions/skills', { nav: 'extensions', extensionsTab: 'skills' }],
     ['/extensions/mcp', { nav: 'extensions', extensionsTab: 'mcp' }],
     ['/projects/p1', { nav: 'projects', focusedProjectId: 'p1', workspaceMode: 'agents', isProjectWorkspace: true }],
+    ['/projects/p1/threads/new', { nav: 'projects', focusedProjectId: 'p1', workspaceMode: 'agents', isProjectWorkspace: true, isNewThread: true }],
     ['/projects/p1/terminals', { nav: 'projects', focusedProjectId: 'p1', workspaceMode: 'terminals', isProjectWorkspace: true }],
     ['/projects/p1/settings', { nav: 'settings', settingsTab: 'project', focusedProjectId: 'p1', isProjectSettings: true }],
     ['/plugins/docs/panel', { nav: 'docs' }],
@@ -82,6 +84,9 @@ describe('decodeRoutePath', () => {
     ).toEqual({ pathname: '/projects/p1', search: '?surface=x&projectId=p1', hash: '#h' });
     expect(
       scopedWindowLockReplace({ pathname: '/projects/p1', search: '?projectId=p1', hash: '' }, 'p1')
+    ).toBeNull();
+    expect(
+      scopedWindowLockReplace({ pathname: '/projects/p1/threads/new', search: '', hash: '' }, 'p1')
     ).toBeNull();
     expect(
       scopedWindowLockReplace({ pathname: '/projects/p1/terminals', search: '', hash: '' }, 'p1')

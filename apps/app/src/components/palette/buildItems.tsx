@@ -362,8 +362,7 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
         category: 'Actions',
         source: 'core',
         run: () => {
-          setSettingsTab('project');
-          setNav('settings');
+          useUi.getState().openProjectSettings(selectedProject.id);
           onClose();
         }
       },

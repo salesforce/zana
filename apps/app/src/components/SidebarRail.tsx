@@ -100,7 +100,10 @@ export function SidebarRail({
     if (!item) return null;
     if (item.kind === 'section') {
       const section = cloneElement(
-        item.node as ReactElement<{ onNavigate?: (event: { preventDefault: () => void }) => void }>,
+        item.node as ReactElement<{
+          dragHandle?: HTMLAttributes<HTMLElement>;
+          onNavigate?: (event: { preventDefault: () => void }) => void;
+        }>,
         { onNavigate }
       );
       if (!sortable) {

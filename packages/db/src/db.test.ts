@@ -17,6 +17,7 @@ import {
   openDatabase,
   completeThread,
   threadOutputTail,
+  updateConversationThreadParent,
   updateConversationThreadStatus,
   upsertHost,
   type ZccDatabase
@@ -156,6 +157,35 @@ describe('packages/db', () => {
     expect(liveIds).not.toContain(idle.id);
     expect(visibleIds).toEqual(expect.arrayContaining([live.id, idle.id, failed.id]));
     expect(listVisibleConversationThreads(db, { limit: 1 })).toHaveLength(1);
+  });
+
+  it('updates a conversation thread parent pointer', () => {
+    dir = mkdtempSync(join(tmpdir(), 'zcc-db-parent-'));
+    db = openDatabase(join(dir, 'zcc.sqlite'));
+    const host = upsertHost(db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: '/tmp/proj'
+    });
+    const parent = createConversationThread(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code',
+      title: 'Parent'
+    });
+    const child = createConversationThread(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code',
+      title: 'Child'
+    });
+    const updated = updateConversationThreadParent(db, child.id, parent.id);
+    expect(updated?.parentThreadId).toBe(parent.id);
+    expect(getConversationThread(db, child.id)?.parentThreadId).toBe(parent.id);
+    expect(updateConversationThreadParent(db, child.id, null)?.parentThreadId).toBeNull();
   });
 
   it('lists only starting and running threads as live', () => {

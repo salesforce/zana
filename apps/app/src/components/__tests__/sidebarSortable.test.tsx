@@ -35,16 +35,16 @@ describe('sidebarSortable', () => {
     expect(PINNED_PROJECT_NAV_IDS).toEqual(['inbox']);
   });
 
-  it('pins Inbox and leaves the Agents collection movable on the project rail', () => {
+  it('pins Inbox and leaves Agents movable on the project rail', () => {
     const markup = renderToStaticMarkup(
       <Probe
-        available={['inbox', 'feed', 'terminals', 'sidebar-section:agents']}
+        available={['inbox', 'agents', 'feed', 'terminals']}
         pinned={PINNED_PROJECT_NAV_IDS}
       />
     );
 
     expect(markup).toContain('data-pinned="inbox"');
-    expect(markup).toContain('data-sortable="feed,terminals,sidebar-section:agents"');
+    expect(markup).toContain('data-sortable="agents,feed,terminals"');
   });
 
   it('uses translation-only transforms so collection sections keep their height', () => {

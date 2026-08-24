@@ -1666,10 +1666,10 @@ export function useProjectOpenFollowUpCount(projectId: string): number {
 
 /**
  * Sidebar-badge counts for the Agents nav item. `active` is every agent that
- * is working or blocked right now (headless included — same set the bottom tray
- * surfaces); `blocked` is how many of those need the user. The Agents nav shows
- * `active` as the badge and reds it when `blocked`. Reads the same two stores
- * the Agents list does (terminals + agent status).
+ * is working or blocked right now (headless included — same set the Agents
+ * board surfaces); `blocked` is how many of those need the user. The Agents nav
+ * shows `active` as the badge and reds it when `blocked`. Reads the same two
+ * stores the Agents board does (terminals + agent status).
  *
  * Scope: a per-project WINDOW (hard URL lock via {@link getScopedProjectId})
  * always wins; absent that, an explicit `projectId` narrows the count to one

@@ -12,6 +12,7 @@ import {
   ArrowLeft,
   AppWindow,
   Sparkles,
+  Bot,
   type LucideIcon
 } from 'lucide-react';
 import type { Project } from '@zana-ai/zcc-domain/product';
@@ -19,17 +20,16 @@ import {
   useData,
   useUi,
   useUnreadInboxCount,
+  useAgentNavCounts,
   useProjectActiveGoalCount,
   useProjectOpenFollowUpCount,
   useProjectScheduleCount,
   useProjectRunningTerminalCount,
-  type WorkspaceMode,
-  type ProjectView
+  type WorkspaceMode
 } from '../store.js';
 import { useProjectTabModules } from '../modules/index.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
 import { resolveProjectTabModule } from '../lib/libraryPlugin.js';
-import { AgentsSidebarSection } from './AgentsSidebarSection.js';
 import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js';
 import { useRouteState } from '../hooks/useRouteState.js';
 import {
@@ -38,7 +38,6 @@ import {
   getSuggestionsRoutePath
 } from '../lib/route-paths.js';
 import {
-  AGENTS_SECTION_SORT_ID,
   PINNED_PROJECT_NAV_IDS,
   PROJECT_NAV_ORDER_KEY
 } from './sidebarSortable.js';
@@ -54,14 +53,12 @@ import {
  * and drag-and-drop reorder — only the destinations change (this project's
  * workspace modes instead of Home / Workspaces).
  *
- * Inbox is pinned (same as the global rail). Everything else, including the
- * Agents collection, can be reordered and is persisted separately from the
- * global sidebar.
+ * Inbox is pinned (same as the global rail). Everything else, including
+ * Agents, can be reordered and is persisted separately from the global sidebar.
  *
  * Inbox switches `nav`; workspace modes set `nav='projects'` + the project's
- * `workspaceMode`. Agents is a collapsible collection (same chrome as the
- * global Sidebar): the label opens this project's Agents board, and only the
- * chevron toggles the live tray.
+ * `workspaceMode`. Agents is an ordinary destination: it opens this project's
+ * Agents board.
  *
  * Two variants, same rail:
  * - `'window'` — a PER-PROJECT WINDOW (opened "in a new window"). The window is
@@ -78,6 +75,7 @@ interface ModeItem {
 }
 
 const MODE_ITEMS: ModeItem[] = [
+  { mode: 'agents', label: 'Agents', icon: Bot },
   { mode: 'feed', label: 'Feed', icon: Activity },
   { mode: 'terminals', label: 'Terminals', icon: TerminalSquare },
   { mode: 'explorer', label: 'Explorer', icon: FolderTree },
@@ -109,6 +107,7 @@ export function ProjectScopedNav({
   const routeMemory = useAppSettingsRouteMemory();
   const navigate = useNavigate();
   const unreadInbox = useUnreadInboxCount();
+  const agentCounts = useAgentNavCounts(project.id);
   const activeGoals = useProjectActiveGoalCount(project.id);
   const openFollowUps = useProjectOpenFollowUpCount(project.id);
   const scheduleCount = useProjectScheduleCount(project.id);
@@ -126,10 +125,6 @@ export function ProjectScopedNav({
       setWorkspaceMode(project.id, 'agents');
     }
   }, [mode, goalsEnabled, followUpsEnabled, project.id, setWorkspaceMode]);
-
-  const selectMode = (m: ProjectView) => {
-    setWorkspaceMode(project.id, m);
-  };
 
   const handleBack = () => {
     useUi.getState().exitProjectFocus();
@@ -173,12 +168,26 @@ export function ProjectScopedNav({
     ...modeItems.map((item): SidebarRailItem => {
       const Icon = item.icon;
       const active = onProjects && mode === item.mode;
+      const agentsLive = item.mode === 'agents' && agentCounts.active > 0;
       const goalsActive = item.mode === 'goals' && activeGoals > 0;
       const followupsOpen = item.mode === 'followups' && openFollowUps > 0;
       const schedulerCount = item.mode === 'scheduler' && scheduleCount > 0;
       const terminalsRunning = item.mode === 'terminals' && runningTerminals > 0;
+      const agentsTitle =
+        agentCounts.blocked > 0
+          ? `${agentCounts.active} active · ${agentCounts.blocked} need you`
+          : `${agentCounts.active} active`;
       let badge: ReactNode = null;
-      if (goalsActive) {
+      if (agentsLive) {
+        badge = (
+          <SidebarCountBadge
+            count={agentCounts.active}
+            label={agentsTitle}
+            title={agentsTitle}
+            kind={agentCounts.blocked > 0 ? 'blocked' : 'running'}
+          />
+        );
+      } else if (goalsActive) {
         badge = (
           <SidebarCountBadge
             count={activeGoals}
@@ -222,7 +231,7 @@ export function ProjectScopedNav({
         to: getProjectWorkspaceRoutePath(project.id, item.mode),
         testId: `project-nav-${item.mode}`,
         active,
-        running: goalsActive || followupsOpen || terminalsRunning,
+        running: agentsLive || goalsActive || followupsOpen || terminalsRunning,
         badge
       };
     }),
@@ -239,17 +248,7 @@ export function ProjectScopedNav({
         testId: `project-nav-${m.id}`,
         active: onProjects && (mode === m.id || extActive)
       };
-    }),
-    {
-      kind: 'section',
-      id: AGENTS_SECTION_SORT_ID,
-      node: (
-        <AgentsSidebarSection
-          projectId={project.id}
-          onOpenDashboard={() => selectMode('agents')}
-        />
-      )
-    }
+    })
   ];
 
   return (

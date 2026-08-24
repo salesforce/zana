@@ -83,6 +83,32 @@ export function threadIsLiveForRail(thread: ThreadListItem): boolean {
   return state === 'working' || state === 'blocked';
 }
 
+/** Recent idle threads to nest under a workspace after live ones. */
+export const RAIL_IDLE_THREAD_LIMIT = 8;
+
+/**
+ * Workspace-rail thread rows for one project: live (busy/error) first, then a
+ * bounded slice of idle conversations so the tree stays a glanceable history
+ * after the Agents collection left the sidebar.
+ */
+export function railThreadsForProject(threads: ThreadListItem[]): ThreadListItem[] {
+  const live: ThreadListItem[] = [];
+  const idle: ThreadListItem[] = [];
+  for (const thread of threads) {
+    if (!isVisibleThread(thread)) continue;
+    if (threadIsLiveForRail(thread)) live.push(thread);
+    else idle.push(thread);
+  }
+  return [...live, ...idle.slice(0, RAIL_IDLE_THREAD_LIMIT)];
+}
+
+export function threadRailDetail(thread: Pick<ThreadListItem, 'status'>): string {
+  const state = threadStatusToAgentState(thread.status);
+  if (state === 'blocked') return 'Needs you · Thread';
+  if (state === 'working') return 'Working · Thread';
+  return 'Idle · Thread';
+}
+
 export function fleetThreadLane(item: Extract<FleetItem, { kind: 'thread' }>): LaneKey {
   if (item.state === 'blocked') return 'blocked';
   if (item.state === 'working') return 'working';

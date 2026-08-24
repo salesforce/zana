@@ -22,9 +22,16 @@ export interface GitCommandResult {
   stdout: string;
   stderr: string;
   code: number;
+  truncated?: boolean;
 }
 
-function runGitProcess(cwd: string, args: string[], timeoutMs: number, maxBuffer: number): Promise<GitCommandResult> {
+function runGitProcess(
+  cwd: string,
+  args: string[],
+  timeoutMs: number,
+  maxBuffer: number,
+  overflow: 'throw' | 'truncate'
+): Promise<GitCommandResult> {
   return new Promise((resolve, reject) => {
     const child = spawn('git', args, {
       cwd,
@@ -34,25 +41,45 @@ function runGitProcess(cwd: string, args: string[], timeoutMs: number, maxBuffer
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     let size = 0;
+    let settled = false;
+    let truncated = false;
+    const settleReject = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    const settleResolve = (result: GitCommandResult) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
     const onChunk = (chunks: Buffer[], buf: Buffer) => {
-      size += buf.length;
-      if (size > maxBuffer) {
+      if (settled || truncated) return;
+      const next = size + buf.length;
+      if (next > maxBuffer) {
+        truncated = true;
+        const keep = maxBuffer - size;
+        if (keep > 0) chunks.push(buf.subarray(0, keep));
+        size = maxBuffer;
         child.kill('SIGKILL');
-        reject(new WorkspaceError('git_failed', 'git output exceeded the buffer cap'));
+        if (overflow === 'throw') {
+          settleReject(new WorkspaceError('git_failed', 'git output exceeded the buffer cap'));
+        }
         return;
       }
+      size = next;
       chunks.push(buf);
     };
     child.stdout.on('data', (buf: Buffer) => onChunk(stdoutChunks, buf));
     child.stderr.on('data', (buf: Buffer) => onChunk(stderrChunks, buf));
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
-      reject(new WorkspaceError('git_failed', `git timed out after ${timeoutMs}ms`));
+      settleReject(new WorkspaceError('git_failed', `git timed out after ${timeoutMs}ms`));
     }, timeoutMs);
     child.on('error', (error) => {
       clearTimeout(timer);
       const err = error as NodeJS.ErrnoException;
-      resolve({
+      settleResolve({
         stdout: '',
         stderr: err.code === 'ENOENT' ? 'git not found or cwd missing' : String(error),
         code: 127
@@ -60,10 +87,11 @@ function runGitProcess(cwd: string, args: string[], timeoutMs: number, maxBuffer
     });
     child.on('close', (code) => {
       clearTimeout(timer);
-      resolve({
+      settleResolve({
         stdout: Buffer.concat(stdoutChunks).toString('utf8'),
         stderr: Buffer.concat(stderrChunks).toString('utf8'),
-        code: code ?? 1
+        code: truncated && overflow === 'truncate' ? 0 : (code ?? 1),
+        truncated
       });
     });
   });
@@ -72,7 +100,12 @@ function runGitProcess(cwd: string, args: string[], timeoutMs: number, maxBuffer
 export async function runGit(
   cwd: string,
   args: string[],
-  options: { timeoutMs?: number; maxBuffer?: number; allowFail?: boolean } = {}
+  options: {
+    timeoutMs?: number;
+    maxBuffer?: number;
+    allowFail?: boolean;
+    overflow?: 'throw' | 'truncate';
+  } = {}
 ): Promise<GitCommandResult> {
   if (!isAbsolute(cwd)) {
     throw new WorkspaceError('invalid_path', 'git cwd must be absolute');
@@ -81,9 +114,10 @@ export async function runGit(
     cwd,
     args,
     options.timeoutMs ?? GIT_TIMEOUT_MS,
-    options.maxBuffer ?? GIT_MAX_BUFFER
+    options.maxBuffer ?? GIT_MAX_BUFFER,
+    options.overflow ?? 'throw'
   );
-  if (result.code !== 0 && !options.allowFail) {
+  if (result.code !== 0 && !options.allowFail && !result.truncated) {
     throw new WorkspaceError('git_failed', result.stderr.trim() || `git ${args.join(' ')} failed`);
   }
   return result;
@@ -332,9 +366,13 @@ export async function readWorkspaceDiff(
     mergeBaseRef = mb.code === 0 ? mb.stdout.trim() || null : null;
   }
   const args = diffArgsFor(target);
-  const result = await runGit(cwd, args, { allowFail: true, maxBuffer: maxDiffBytes * 2 });
+  const result = await runGit(cwd, args, {
+    allowFail: true,
+    maxBuffer: maxDiffBytes,
+    overflow: 'truncate'
+  });
   let diff = result.stdout;
-  let truncated = false;
+  let truncated = Boolean(result.truncated);
   if (diff.length > maxDiffBytes) {
     diff = diff.slice(0, maxDiffBytes);
     truncated = true;

@@ -9,12 +9,14 @@ import {
   PLUGIN_PANEL_ROUTE_PATH,
   PROJECT_ROUTE_PATH,
   PROJECT_SETTINGS_ROUTE_PATH,
+  PROJECT_NEW_THREAD_ROUTE_PATH,
   PROJECT_WORKSPACE_ROUTE_PATH,
   SCHEDULER_ROUTE_PATH,
   SETTINGS_PROJECT_ALIAS_ROUTE_PATH,
   SETTINGS_ROUTE_PATH,
   SETTINGS_SECTION_ROUTE_PATH,
   SUGGESTIONS_ROUTE_PATH,
+  NEW_THREAD_ROUTE_PATH,
   THREAD_ROUTE_PATH,
   TOOLS_MCP_ROUTE_PATH,
   TOOLS_PLUGIN_BROWSE_ROUTE_PATH,
@@ -35,6 +37,7 @@ export interface DecodedRoute {
   workspaceMode: string | null;
   isProjectSettings: boolean;
   isProjectWorkspace: boolean;
+  isNewThread: boolean;
 }
 
 const DEFAULT_DECODED: DecodedRoute = {
@@ -46,7 +49,8 @@ const DEFAULT_DECODED: DecodedRoute = {
   focusedProjectId: null,
   workspaceMode: null,
   isProjectSettings: false,
-  isProjectWorkspace: false
+  isProjectWorkspace: false,
+  isNewThread: false
 };
 
 function hashAnchor(hash: string): string | null {
@@ -83,6 +87,9 @@ export function decodeRoutePath(pathname: string, hash = ''): DecodedRoute {
     return { ...DEFAULT_DECODED, nav: 'inbox', settingsAnchor: anchor };
   }
   if (pathname === AGENTS_ROUTE_PATH) {
+    return { ...DEFAULT_DECODED, nav: 'agents', settingsAnchor: anchor };
+  }
+  if (pathname === NEW_THREAD_ROUTE_PATH) {
     return { ...DEFAULT_DECODED, nav: 'agents', settingsAnchor: anchor };
   }
   const threadMatch = matchPath(THREAD_ROUTE_PATH, pathname);
@@ -154,6 +161,19 @@ export function decodeRoutePath(pathname: string, hash = ''): DecodedRoute {
       settingsAnchor: anchor,
       focusedProjectId: projectId,
       isProjectSettings: true
+    };
+  }
+
+  const projectNewThread = matchPath(PROJECT_NEW_THREAD_ROUTE_PATH, pathname);
+  if (projectNewThread) {
+    const projectId = param(projectNewThread, 'projectId') ?? null;
+    return {
+      ...DEFAULT_DECODED,
+      nav: 'projects',
+      focusedProjectId: projectId,
+      workspaceMode: 'agents',
+      isProjectWorkspace: true,
+      isNewThread: true
     };
   }
 

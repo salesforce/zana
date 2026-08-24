@@ -3,6 +3,7 @@ import { matchPath } from 'react-router-dom';
 export const APP_ROOT_ROUTE_PATH = '/';
 export const INBOX_ROUTE_PATH = '/inbox';
 export const AGENTS_ROUTE_PATH = '/agents';
+export const NEW_THREAD_ROUTE_PATH = '/threads/new';
 export const THREAD_ROUTE_PATH = '/threads/:threadId';
 export const FOLLOWUPS_ROUTE_PATH = '/followups';
 export const SUGGESTIONS_ROUTE_PATH = '/suggestions';
@@ -22,6 +23,7 @@ export const TOOLS_MCP_ROUTE_PATH = '/extensions/mcp';
 
 export const PROJECT_ROUTE_PATH = '/projects/:projectId';
 export const PROJECT_SETTINGS_ROUTE_PATH = '/projects/:projectId/settings';
+export const PROJECT_NEW_THREAD_ROUTE_PATH = '/projects/:projectId/threads/new';
 export const PROJECT_WORKSPACE_ROUTE_PATH = '/projects/:projectId/:mode';
 
 export const DEFAULT_PLUGIN_PANEL_PATH = 'panel';
@@ -79,6 +81,11 @@ export function getAgentsRoutePath(): string {
 
 export function getThreadRoutePath(threadId: string): string {
   return `/threads/${encodeURIComponent(threadId)}`;
+}
+
+export function getNewThreadRoutePath(projectId?: string): string {
+  if (!projectId) return NEW_THREAD_ROUTE_PATH;
+  return `/projects/${encodeURIComponent(projectId)}/threads/new`;
 }
 
 export function getFollowUpsRoutePath(): string {
@@ -229,6 +236,8 @@ const baseRoutePatterns: readonly string[] = [
   APP_ROOT_ROUTE_PATH,
   INBOX_ROUTE_PATH,
   AGENTS_ROUTE_PATH,
+  NEW_THREAD_ROUTE_PATH,
+  THREAD_ROUTE_PATH,
   FOLLOWUPS_ROUTE_PATH,
   SUGGESTIONS_ROUTE_PATH,
   SCHEDULER_ROUTE_PATH,
@@ -244,6 +253,7 @@ const baseRoutePatterns: readonly string[] = [
   TOOLS_MCP_ROUTE_PATH,
   PROJECT_ROUTE_PATH,
   PROJECT_SETTINGS_ROUTE_PATH,
+  PROJECT_NEW_THREAD_ROUTE_PATH,
   PROJECT_WORKSPACE_ROUTE_PATH,
   PLUGIN_PANEL_ROOT_ROUTE_PATH,
   PLUGIN_PANEL_ROUTE_PATH

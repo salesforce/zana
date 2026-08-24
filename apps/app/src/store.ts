@@ -55,6 +55,7 @@ import {
   getFollowUpsRoutePath,
   getNavRoutePath,
   getPluginDetailRoutePath,
+  getProjectSettingsRoutePath,
   getProjectWorkspaceRoutePath,
   getSchedulerRoutePath,
   getSettingsTabRoutePath
@@ -373,6 +374,14 @@ interface UiState {
   selectMonitorAgent: (sessionId: string, projectId: string) => void;
   /** Clear the monitor selection (e.g. its session died). */
   clearMonitorAgent: () => void;
+  /**
+   * The terminal session shown inside a thread secondary-panel tab. Ranked
+   * below the agent modal and list monitor so those focused surfaces keep the
+   * live xterm; ranked above the Projects workspace park.
+   */
+  threadPanelTerminal: { sessionId: string; projectId: string } | null;
+  selectThreadPanelTerminal: (sessionId: string, projectId: string) => void;
+  clearThreadPanelTerminal: () => void;
   toasts: Toast[];
   /**
    * W1-4 trust inversion: launches a MAIN extension module requested via
@@ -519,6 +528,8 @@ interface UiState {
    */
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
+  /** Open `/projects/:id/settings` for a specific project (sidebar + palette). */
+  openProjectSettings: (projectId: string) => void;
   /** Page selected in the focused top-level Extensions workspace. */
   extensionsTab: ExtensionsTab;
   setExtensionsTab: (tab: ExtensionsTab) => void;
@@ -850,6 +861,7 @@ export const useUi = create<UiState>((set, get) => ({
   findOpen: false,
   agentModal: null,
   agentMonitor: null,
+  threadPanelTerminal: null,
   settingsTab: 'global',
   extensionsTab: 'marketplace',
   settingsExtensionId: null,
@@ -1037,11 +1049,17 @@ export const useUi = create<UiState>((set, get) => ({
   closeAgentModal: () => set({ agentModal: null }),
   selectMonitorAgent: (sessionId, projectId) => set({ agentMonitor: { sessionId, projectId } }),
   clearMonitorAgent: () => set({ agentMonitor: null }),
+  selectThreadPanelTerminal: (sessionId, projectId) => set({ threadPanelTerminal: { sessionId, projectId } }),
+  clearThreadPanelTerminal: () => set({ threadPanelTerminal: null }),
   setSettingsTab: (settingsTab) =>
     applyDestination(
       set,
       getSettingsTabRoutePath(settingsTab, get().focusedProjectId ?? get().selectedProjectId)
     ),
+  openProjectSettings: (projectId) => {
+    get().selectProject(projectId);
+    applyDestination(set, getProjectSettingsRoutePath(projectId));
+  },
   setExtensionsTab: (extensionsTab) =>
     applyDestination(set, getExtensionsTabRoutePath(extensionsTab)),
   setSettingsExtensionId: (settingsExtensionId) => set({ settingsExtensionId }),

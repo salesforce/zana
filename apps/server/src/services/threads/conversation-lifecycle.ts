@@ -3,6 +3,7 @@ import {
   createConversationThread,
   getConversationThread,
   getEnvironment,
+  updateConversationThreadParent,
   updateConversationThreadStatus,
   type ConversationThreadRow
 } from '@zana-ai/zcc-db';
@@ -17,6 +18,7 @@ import {
 } from './thread-provider-catalog.js';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
+import type { ThreadResumeFields } from '@zana-ai/zcc-contracts/host-rpc';
 
 export type ThreadSendMode = 'start' | 'auto' | 'steer' | 'queue-if-active' | 'steer-if-active';
 
@@ -139,6 +141,45 @@ export async function forkConversation(
   return forked;
 }
 
+export function assignConversationParent(
+  ctx: ProductHttpContext,
+  threadId: string,
+  parentThreadId: string | null
+): ConversationThreadRow {
+  const thread = getConversationThread(ctx.db, threadId);
+  if (!thread) {
+    throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
+  }
+  if (parentThreadId === thread.id) {
+    throw new ThreadCreateError(400, 'invalid-parent', 'a thread cannot be its own parent');
+  }
+  if (parentThreadId) {
+    const parent = getConversationThread(ctx.db, parentThreadId);
+    if (!parent) {
+      throw new ThreadCreateError(404, 'unknown-parent', 'parent thread is not registered');
+    }
+    if (parent.projectId !== thread.projectId) {
+      throw new ThreadCreateError(400, 'invalid-parent', 'parent must belong to the same project');
+    }
+    let cursor: string | null = parent.parentThreadId;
+    const seen = new Set<string>([parent.id]);
+    while (cursor) {
+      if (cursor === thread.id) {
+        throw new ThreadCreateError(400, 'invalid-parent', 'parent assignment would create a cycle');
+      }
+      if (seen.has(cursor)) break;
+      seen.add(cursor);
+      cursor = getConversationThread(ctx.db, cursor)?.parentThreadId ?? null;
+    }
+  }
+  const next = updateConversationThreadParent(ctx.db, thread.id, parentThreadId);
+  if (!next) {
+    throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
+  }
+  ctx.hub.emit('threads:updated', conversationThreadView(ctx, next));
+  return next;
+}
+
 function isUnknownThreadHostError(error: unknown): boolean {
   return Boolean(
     error
@@ -146,6 +187,24 @@ function isUnknownThreadHostError(error: unknown): boolean {
     && 'code' in error
     && (error as { code: unknown }).code === 'unknown_thread'
   );
+}
+
+function threadResumeFields(
+  ctx: ProductHttpContext,
+  thread: ConversationThreadRow
+): ThreadResumeFields | undefined {
+  if (!thread.providerThreadId) return undefined;
+  const environment = thread.environmentId ? getEnvironment(ctx.db, thread.environmentId) : undefined;
+  const dataDir = join(ctx.dataDir, 'thread-bridges', thread.providerId);
+  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  return {
+    projectId: thread.projectId,
+    providerId: thread.providerId,
+    providerThreadId: thread.providerThreadId,
+    cwd: environment?.path ?? undefined,
+    bridgeLaunch: bridgeLaunchForProvider(thread.providerId, dataDir),
+    permissionMode: permissionModeForLaunchProfile(thread.providerId)
+  };
 }
 
 async function submitTurnOnHost(
@@ -157,6 +216,7 @@ async function submitTurnOnHost(
   if (!thread.environmentId) {
     throw new ThreadCreateError(409, 'environment_not_ready', 'thread has no environment');
   }
+  const resume = threadResumeFields(ctx, thread);
   await ctx.hostHub.callHostOnlineRpc({
     hostId: thread.hostId,
     command: {
@@ -164,7 +224,8 @@ async function submitTurnOnHost(
       threadId: thread.id,
       environmentId: thread.environmentId,
       input: prompt,
-      mode
+      mode,
+      ...(resume ? { resume } : {})
     }
   });
 }
@@ -176,21 +237,17 @@ async function resumeConversationOnHost(
   if (!thread.environmentId || !thread.providerThreadId) {
     throw new ThreadCreateError(409, 'not_resumable', 'thread has no provider session to resume');
   }
-  const environment = getEnvironment(ctx.db, thread.environmentId);
-  const dataDir = join(ctx.dataDir, 'thread-bridges', thread.providerId);
-  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  const resume = threadResumeFields(ctx, thread);
+  if (!resume) {
+    throw new ThreadCreateError(409, 'not_resumable', 'thread has no provider session to resume');
+  }
   await ctx.hostHub.callHostOnlineRpc({
     hostId: thread.hostId,
     command: {
       type: 'thread.resume',
       threadId: thread.id,
       environmentId: thread.environmentId,
-      projectId: thread.projectId,
-      providerId: thread.providerId,
-      providerThreadId: thread.providerThreadId,
-      cwd: environment?.path ?? undefined,
-      bridgeLaunch: bridgeLaunchForProvider(thread.providerId, dataDir),
-      permissionMode: permissionModeForLaunchProfile(thread.providerId)
+      ...resume
     }
   });
 }

@@ -69,6 +69,12 @@ describe('project-row workspace actions', () => {
     const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
     expect(source).toContain("setNav('agents')");
   });
+
+  it('Project settings… opens the project settings route, not global Settings', () => {
+    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('openProjectSettings(p.id)');
+    expect(source).not.toContain("setSettingsTab('project');\n                  setNav('settings')");
+  });
 });
 
 describe('project-row compact chrome', () => {
@@ -184,12 +190,14 @@ describe('workspace move up/down', () => {
 });
 
 describe('nested live threads', () => {
-  it('mixes busy/error threads under the owning project and treats them as running work', () => {
+  it('nests live agents and recent threads under the owning project', () => {
     const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('railThreadsForProject');
     expect(source).toContain('threadIsLiveForRail');
     expect(source).toContain('data-testid="project-thread-row"');
     expect(source).toContain('navigate(getThreadRoutePath(thread.id))');
-    expect(source).toContain('liveThreadsByProject.get(p.id)');
-    expect(source).toContain('liveList.length === 0 && liveThreads.length === 0');
+    expect(source).toContain('railThreadsByProject.get(p.id)');
+    expect(source).toContain('liveList.length === 0 && railThreads.length === 0');
+    expect(source).toContain('p.id === selectedId && projectHasNestableSessions(p)');
   });
 });

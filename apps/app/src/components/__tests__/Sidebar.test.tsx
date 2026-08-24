@@ -23,7 +23,8 @@ const h = vi.hoisted(() => {
     cache,
     state,
     data,
-    modules: [] as AppModule[]
+    modules: [] as AppModule[],
+    agentCounts: { active: 0, blocked: 0 }
   };
 });
 
@@ -37,15 +38,12 @@ vi.mock('../../store', () => ({
   useUnreadInboxCount: () => 0,
   useEnabledSchedulerCount: () => 0,
   useRunningSchedulerCount: () => 0,
-  useAgentNavCounts: () => ({ active: 0, blocked: 0 }),
+  useAgentNavCounts: () => h.agentCounts,
   applySidebarWidth: vi.fn(),
   SIDEBAR_MIN: 256,
   SIDEBAR_MAX: 480
 }));
 vi.mock('../../modules', () => ({ useMergedModules: () => h.modules }));
-vi.mock('../AgentTray', () => ({
-  AgentTray: ({ placement }: { placement?: string }) => <div data-agent-tray-placement={placement} />
-}));
 vi.mock('../listpane/ProjectsList', () => ({
   ProjectsList: () => <div data-testid="sidebar-projects" />
 }));
@@ -71,6 +69,7 @@ describe('Sidebar structure and compact accessibility', () => {
   it('renders a labelled navigation region that owns the scrollable destinations', () => {
     h.state.sidebarCollapsed = false;
     h.modules = [];
+    h.agentCounts = { active: 0, blocked: 0 };
 
     const markup = renderSidebar();
 
@@ -79,16 +78,20 @@ describe('Sidebar structure and compact accessibility', () => {
     expect(markup).toContain('aria-label="Main navigation"');
     expect(markup).not.toContain('role="group"');
     expect(markup).toContain('data-testid="sidebar-projects"');
-    expect(markup).toContain('data-sortable-sidebar-section-id="sidebar-section:agents"');
+    expect(markup).not.toContain('data-sortable-sidebar-section-id="sidebar-section:agents"');
     expect(markup).toContain('data-sortable-sidebar-section-id="sidebar-section:workspaces"');
     expect(markup.indexOf('data-testid="nav-home"')).toBeLessThan(
       markup.indexOf('data-testid="nav-inbox"')
     );
     expect(markup.indexOf('data-testid="nav-inbox"')).toBeLessThan(
+      markup.indexOf('data-sortable-nav-id="agents"')
+    );
+    expect(markup.indexOf('data-sortable-nav-id="agents"')).toBeLessThan(
       markup.indexOf('data-sortable-nav-id="scheduler"')
     );
     expect(markup).not.toContain('data-sortable-nav-id="home"');
     expect(markup).not.toContain('data-sortable-nav-id="inbox"');
+    expect(markup).toContain('>Agents<');
     expect(markup).toContain('>Scheduler<');
     expect(markup).not.toContain('>Docs<');
     expect(markup).not.toContain('>New thread<');
@@ -96,8 +99,10 @@ describe('Sidebar structure and compact accessibility', () => {
     expect(markup).not.toContain('Command center');
     expect(markup).not.toContain('aria-label="Go back"');
     expect(markup).toContain('href="/inbox"');
+    expect(markup).toContain('href="/agents"');
     expect(markup).toContain('href="/scheduler"');
     expect(markup).toContain('href="/settings"');
+    expect(markup).toContain('data-testid="nav-agents"');
     expect(markup).toContain('data-sortable-nav-id="scheduler"');
     expect(markup).not.toContain('data-sortable-nav-id="personas"');
     expect(markup).not.toContain('data-sortable-nav-id="squads"');
@@ -108,15 +113,31 @@ describe('Sidebar structure and compact accessibility', () => {
     expect(markup).toContain('aria-orientation="vertical"');
     expect(markup).toContain('aria-label="Settings"');
     expect(markup).not.toContain('>Settings<');
-    expect(markup).toContain('aria-label="New quick agent"');
-    expect(markup).toContain('aria-label="Open Agents dashboard"');
-    expect(markup).toContain('data-testid="sidebar-agents-heading"');
-    expect(markup).toContain('href="/agents"');
-    expect(markup).toContain('data-testid="sidebar-agents-toggle"');
-    expect(markup).toContain('class="sidebar-agents-resizer"');
-    expect(markup).toContain('aria-orientation="horizontal"');
-    expect(markup).toContain('data-agent-tray-placement="inline"');
-    expect(markup).toContain('aria-label="New quick agent"');
+    expect(markup).not.toContain('aria-label="Open Agents dashboard"');
+    expect(markup).not.toContain('data-testid="sidebar-agents-heading"');
+    expect(markup).not.toContain('data-testid="sidebar-agents-toggle"');
+    expect(markup).not.toContain('class="sidebar-agents-resizer"');
+    expect(markup).not.toContain('data-agent-tray-placement="inline"');
+    expect(markup).not.toContain('class="sidebar-agents ');
+  });
+
+  it('badges Agents with the live fleet count and reds it when someone is blocked', () => {
+    h.state.sidebarCollapsed = false;
+    h.modules = [];
+    h.agentCounts = { active: 4, blocked: 2 };
+
+    const markup = renderSidebar();
+    const agentsStart = markup.indexOf('data-testid="nav-agents"');
+    const agentsChunk = markup.slice(agentsStart, markup.indexOf('</a>', agentsStart));
+
+    expect(agentsChunk).toContain('href="/agents"');
+    expect(agentsChunk).toContain('>Agents<');
+    expect(agentsChunk).toContain('class="nav-badge nav-badge--blocked"');
+    expect(agentsChunk).toContain('aria-label="4 active · 2 need you"');
+    expect(agentsChunk).toContain('>4<');
+    expect(agentsChunk).toContain('class="nav-running-dot"');
+
+    h.agentCounts = { active: 0, blocked: 0 };
   });
 
   it('puts installed extension panels in the movable primary navigation list', () => {

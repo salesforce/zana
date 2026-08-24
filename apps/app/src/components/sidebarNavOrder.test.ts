@@ -48,19 +48,35 @@ describe('sidebar navigation order', () => {
   });
 
   it('pins Inbox first on the project rail', () => {
-    const projectIds = ['inbox', 'feed', 'terminals', 'sidebar-section:agents'];
+    const projectIds = ['inbox', 'agents', 'feed', 'terminals'];
     expect(
       normalizeSidebarNavOrder(['feed', 'inbox', 'terminals'], projectIds, ['inbox'])
-    ).toEqual(['inbox', 'feed', 'terminals', 'sidebar-section:agents']);
+    ).toEqual(['inbox', 'feed', 'terminals', 'agents']);
     expect(
       reorderSidebarNavItems(projectIds, 'inbox', 'feed', ['inbox'])
     ).toEqual(projectIds);
   });
 
+  it('maps the retired Agents collection onto the Agents destination', () => {
+    expect(
+      normalizeSidebarNavOrder(
+        ['home', 'inbox', 'sidebar-section:agents', 'scheduler'],
+        ['home', 'inbox', 'agents', 'scheduler']
+      )
+    ).toEqual(['home', 'inbox', 'agents', 'scheduler']);
+    expect(
+      normalizeSidebarNavOrder(
+        ['inbox', 'feed', 'sidebar-section:agents'],
+        ['inbox', 'agents', 'feed', 'terminals'],
+        ['inbox']
+      )
+    ).toEqual(['inbox', 'feed', 'agents', 'terminals']);
+  });
+
   it('persists collection sections alongside ordinary destinations', () => {
-    const sections = ['home', 'inbox', 'scheduler', 'sidebar-section:agents', 'sidebar-section:workspaces'];
+    const sections = ['home', 'inbox', 'agents', 'scheduler', 'sidebar-section:workspaces'];
     expect(reorderSidebarNavItems(sections, 'sidebar-section:workspaces', 'scheduler')).toEqual([
-      'home', 'inbox', 'sidebar-section:workspaces', 'scheduler', 'sidebar-section:agents'
+      'home', 'inbox', 'agents', 'sidebar-section:workspaces', 'scheduler'
     ]);
   });
 });

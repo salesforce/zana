@@ -44,8 +44,11 @@ describe('thread timeline model', () => {
   });
 
   it('titles status badges with a readable label', () => {
-    expect(threadStatusLabel('active')).toBe('Active');
+    expect(threadStatusLabel('active')).toBe('Working');
+    expect(threadStatusLabel('starting')).toBe('Working');
+    expect(threadStatusLabel('stopping')).toBe('Working');
     expect(threadStatusLabel('idle')).toBe('Idle');
+    expect(threadStatusLabel('error')).toBe('Error');
     expect(threadStatusLabel('')).toBe('');
   });
 

@@ -58,6 +58,12 @@ export const AGENT_MODAL_TERMINAL_ANCHOR_ID = 'cc-terminal-anchor-agent-modal';
 // selection never steals the terminal from the Projects workspace.
 export const AGENT_MONITOR_TERMINAL_ANCHOR_ID = 'cc-terminal-anchor-agent-monitor';
 
+// DOM id of the thread secondary-panel terminal tab. Ranked below the agent
+// modal and the List-view monitor so those focused surfaces keep the live
+// xterm, and above the Projects workspace park so a thread-panel tab can show
+// the same session without a second PTY.
+export const THREAD_PANEL_TERMINAL_ANCHOR_ID = 'cc-terminal-anchor-thread-panel';
+
 export function TerminalSurface() {
   const terminals = useData((s) => s.terminals);
   const nav = useUi((s) => s.nav);
@@ -67,6 +73,7 @@ export function TerminalSurface() {
   const splitTabIdsMap = useUi((s) => s.splitTabIds);
   const agentModal = useUi((s) => s.agentModal);
   const agentMonitor = useUi((s) => s.agentMonitor);
+  const threadPanelTerminal = useUi((s) => s.threadPanelTerminal);
 
   // The single, persistent portal node. React renders the grid into THIS node
   // for the surface's whole lifetime; we only ever move the node between anchors
@@ -90,6 +97,7 @@ export function TerminalSurface() {
   // doesn't change the target won't thrash the DOM.
   const modalSessionId = agentModal?.sessionId ?? null;
   const monitorSessionId = agentMonitor?.sessionId ?? null;
+  const threadPanelSessionId = threadPanelTerminal?.sessionId ?? null;
   useLayoutEffect(() => {
     const node = portalNodeRef.current;
     if (!node) return;
@@ -100,12 +108,17 @@ export function TerminalSurface() {
       !modalAnchor && monitorSessionId
         ? document.getElementById(AGENT_MONITOR_TERMINAL_ANCHOR_ID)
         : null;
+    const threadPanelAnchor =
+      !modalAnchor && !monitorAnchor && threadPanelSessionId
+        ? document.getElementById(THREAD_PANEL_TERMINAL_ANCHOR_ID)
+        : null;
     const anchor =
       modalAnchor ??
       monitorAnchor ??
+      threadPanelAnchor ??
       document.getElementById(PROJECTS_TERMINAL_ANCHOR_ID);
     if (anchor && node.parentElement !== anchor) anchor.appendChild(node);
-  }, [modalSessionId, monitorSessionId]);
+  }, [modalSessionId, monitorSessionId, threadPanelSessionId]);
 
   // Build a tab-id → area map for the layout. The agent modal wins: when open,
   // it forces a single pane showing ONLY its session (so the live xterm appears
@@ -118,7 +131,9 @@ export function TerminalSurface() {
   // Whether the live terminal is being driven by an id-only selector (modal or
   // monitor) rather than the per-project split layout — in that mode a session
   // claims its area regardless of which project is selected.
-  const byIdSelection = agentModal ?? (monitorSessionId ? agentMonitor : null);
+  const byIdSelection = agentModal
+    ?? (monitorSessionId ? agentMonitor : null)
+    ?? (threadPanelSessionId ? threadPanelTerminal : null);
 
   if (agentModal) {
     areaByTabId.set(agentModal.sessionId, 'a');
@@ -128,6 +143,9 @@ export function TerminalSurface() {
     // session, so its live xterm fills the center pane. Same shape as the modal
     // branch, one tier down in precedence.
     areaByTabId.set(agentMonitor.sessionId, 'a');
+    layout = 'single';
+  } else if (threadPanelTerminal) {
+    areaByTabId.set(threadPanelTerminal.sessionId, 'a');
     layout = 'single';
   } else if (nav === 'projects') {
     const activeTabId = selectedProjectId ? selectedTabId[selectedProjectId] : undefined;

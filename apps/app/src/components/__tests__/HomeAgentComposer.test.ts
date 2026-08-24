@@ -38,7 +38,7 @@ describe('ThreadCommandComposer chrome', () => {
     expect(editor).not.toContain('max-height: 70dvh;');
 
     const threadComposer = css.slice(
-      css.indexOf('.thread-detail-view > .thread-command-composer {'),
+      css.indexOf('.thread-detail-main > .thread-command-composer {'),
       css.indexOf('.thread-detail-header {')
     );
     expect(threadComposer).toContain('max-width: 46rem;');
@@ -60,7 +60,8 @@ describe('ThreadCommandComposer pinning', () => {
     const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
     expect(source).toContain('project: pinnedProject');
     expect(source).toContain('if (pinnedProject) setProjectId(pinnedProject.id)');
-    expect(source).toContain('{!pinnedProject && (');
+    expect(source).toContain('disabled={Boolean(pinnedProject)}');
+    expect(source).not.toContain('{!pinnedProject && (');
   });
 });
 

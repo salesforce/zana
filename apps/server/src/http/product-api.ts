@@ -1,12 +1,21 @@
+import { randomUUID } from 'node:crypto';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { realpathSync, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { AppConfig, CreateTerminalRequest, FollowUpStatus, LibraryScope, Persona } from '@zana-ai/zcc-domain/product';
+import type {
+  AppConfig,
+  CreateTerminalRequest,
+  FollowUpStatus,
+  LaunchProfileId,
+  LibraryScope,
+  Persona,
+  TerminalSession
+} from '@zana-ai/zcc-domain/product';
 import { browserRequestProblem, headerValue } from './browser-request-guard.js';
 import { listJsonFiles, readJsonFile, writeJsonFile } from './disk-json.js';
 import { applyTrustedOriginCors, readJsonBody, sendJson } from './json.js';
-import type { ProductHttpContext } from './product-context.js';
+import type { ProductHttpContext, ProductTerminalRecord } from './product-context.js';
 import { ThreadCreateError } from './thread-create.js';
 import {
   conversationThreadView,
@@ -16,6 +25,7 @@ import {
 } from '../services/threads/conversation-create.js';
 import {
   forkConversation,
+  assignConversationParent,
   resumeConversation,
   sendConversationTurn,
   stopConversation,
@@ -86,6 +96,18 @@ function routeParams(pathname: string, pattern: string): Record<string, string> 
     }
   }
   return params;
+}
+
+function publicTerminal(record: ProductTerminalRecord): TerminalSession {
+  const { hostId: _hostId, ...session } = record;
+  return session;
+}
+
+function requireTerminalSession(
+  ctx: ProductHttpContext,
+  sessionId: string
+): ProductTerminalRecord | null {
+  return ctx.terminalSessions.get(sessionId) ?? null;
 }
 
 /**
@@ -489,6 +511,34 @@ export async function handleProductHttp(
         return true;
       }
       sendJson(response, 200, { thread: conversationThreadView(ctx, thread) });
+      return true;
+    }
+
+    if (threadById && method === 'PATCH') {
+      const body = (await readJsonBody(request)) as { parentThreadId?: unknown };
+      if (!Object.prototype.hasOwnProperty.call(body ?? {}, 'parentThreadId')) {
+        sendJson(response, 400, { error: 'invalid-input', message: 'parentThreadId is required' });
+        return true;
+      }
+      const parentThreadId = body.parentThreadId === null
+        ? null
+        : typeof body.parentThreadId === 'string'
+          ? body.parentThreadId
+          : undefined;
+      if (parentThreadId === undefined) {
+        sendJson(response, 400, { error: 'invalid-input', message: 'parentThreadId must be a string or null' });
+        return true;
+      }
+      try {
+        const thread = assignConversationParent(ctx, threadById.id, parentThreadId);
+        sendJson(response, 200, { thread: conversationThreadView(ctx, thread) });
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
       return true;
     }
 
@@ -946,7 +996,9 @@ export async function handleProductHttp(
     }
 
     if (path === '/api/v1/terminals' && method === 'GET') {
-      sendJson(response, 200, { sessions: [] });
+      sendJson(response, 200, {
+        sessions: [...ctx.terminalSessions.values()].map(publicTerminal)
+      });
       return true;
     }
 
@@ -990,12 +1042,126 @@ export async function handleProductHttp(
         });
         return true;
       }
-      void cwd;
-      sendJson(response, 503, {
-        ok: false,
-        code: 'launch-unavailable',
-        message: 'terminal launch is authorized but the host session runtime is not attached'
-      });
+      if (ctx.hostHub.connectedHostIds().length === 0) {
+        sendJson(response, 502, {
+          ok: false,
+          code: 'host_disconnected',
+          message: 'Host is not connected'
+        });
+        return true;
+      }
+      try {
+        const hostId = ctx.hostHub.resolveHostId();
+        const sessionId = randomUUID();
+        const cols = typeof body.cols === 'number' ? body.cols : 80;
+        const rows = typeof body.rows === 'number' ? body.rows : 24;
+        const started = await ctx.hostHub.callHostOnlineRpc<{
+          sessionId: string;
+          started: true;
+          pid?: number;
+        }>({
+          hostId,
+          command: {
+            type: 'terminal.start',
+            sessionId,
+            root: realpathSync(project.path),
+            cwd,
+            cols,
+            rows
+          }
+        });
+        const record: ProductTerminalRecord = {
+          id: sessionId,
+          projectId: project.id,
+          title: typeof body.title === 'string' && body.title.length > 0 ? body.title : 'Terminal',
+          profile: (typeof body.profile === 'string' ? body.profile : 'shell') as LaunchProfileId,
+          cwd,
+          pid: started.pid,
+          status: 'running',
+          createdAt: Date.now(),
+          hostId
+        };
+        ctx.terminalSessions.set(sessionId, record);
+        ctx.hub.emit('terminals:updated', publicTerminal(record));
+        sendJson(response, 201, { ok: true, value: publicTerminal(record) });
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const terminalInput = routeParams(path, '/api/v1/terminals/:id/input');
+    if (terminalInput && method === 'POST') {
+      const session = requireTerminalSession(ctx, terminalInput.id);
+      if (!session) {
+        sendJson(response, 404, { ok: false, code: 'unknown-session', message: 'terminal is not registered' });
+        return true;
+      }
+      const body = (await readJsonBody(request)) as { data?: unknown };
+      if (typeof body?.data !== 'string') {
+        sendJson(response, 400, { ok: false, code: 'invalid-input', message: 'data is required' });
+        return true;
+      }
+      try {
+        await ctx.hostHub.callHostOnlineRpc({
+          hostId: session.hostId,
+          command: { type: 'terminal.input', sessionId: session.id, data: body.data }
+        });
+        sendJson(response, 200, { ok: true });
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const terminalResize = routeParams(path, '/api/v1/terminals/:id/resize');
+    if (terminalResize && method === 'POST') {
+      const session = requireTerminalSession(ctx, terminalResize.id);
+      if (!session) {
+        sendJson(response, 404, { ok: false, code: 'unknown-session', message: 'terminal is not registered' });
+        return true;
+      }
+      const body = (await readJsonBody(request)) as { cols?: unknown; rows?: unknown };
+      if (typeof body?.cols !== 'number' || typeof body?.rows !== 'number') {
+        sendJson(response, 400, { ok: false, code: 'invalid-resize', message: 'cols and rows are required' });
+        return true;
+      }
+      try {
+        await ctx.hostHub.callHostOnlineRpc({
+          hostId: session.hostId,
+          command: {
+            type: 'terminal.resize',
+            sessionId: session.id,
+            cols: body.cols,
+            rows: body.rows
+          }
+        });
+        sendJson(response, 200, { ok: true });
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const terminalClose = routeParams(path, '/api/v1/terminals/:id/close');
+    if (terminalClose && method === 'POST') {
+      const session = requireTerminalSession(ctx, terminalClose.id);
+      if (!session) {
+        sendJson(response, 404, { ok: false, code: 'unknown-session', message: 'terminal is not registered' });
+        return true;
+      }
+      try {
+        await ctx.hostHub.callHostOnlineRpc({
+          hostId: session.hostId,
+          command: { type: 'terminal.stop', sessionId: session.id }
+        });
+        session.status = 'exited';
+        session.finishedAt = Date.now();
+        ctx.hub.emit('terminals:updated', publicTerminal(session));
+        sendJson(response, 200, { ok: true });
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
       return true;
     }
 
@@ -1078,8 +1244,18 @@ function sendHostFailure(response: ServerResponse, error: unknown): void {
     });
     return;
   }
+  if (error && typeof error === 'object' && 'code' in error && typeof (error as { code: unknown }).code === 'string') {
+    sendJson(response, 500, {
+      ok: false,
+      code: (error as { code: string }).code,
+      message: error instanceof Error ? error.message : String(error)
+    });
+    return;
+  }
   sendJson(response, 500, {
-    error: error instanceof Error ? error.message : String(error)
+    ok: false,
+    code: 'host-error',
+    message: error instanceof Error ? error.message : String(error)
   });
 }
 

@@ -17,7 +17,7 @@ import { gitBranchNameSchema } from '@zana-ai/zcc-domain/git-checkout';
  * Bump when any enroll payload, daemon WS message, host-rpc command, or host
  * event envelope changes shape or meaning. Mismatch fails before dispatch.
  */
-export const HOST_RPC_PROTOCOL_VERSION = 5;
+export const HOST_RPC_PROTOCOL_VERSION = 6;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
 
 const UuidSchema = z.string().uuid();
@@ -37,6 +37,10 @@ export const HostRpcCommandTypeSchema = z.enum([
   'thread.stop',
   'thread.resume',
   'turn.submit',
+  'terminal.start',
+  'terminal.input',
+  'terminal.resize',
+  'terminal.stop',
   'host.list_files',
   'host.list_dir',
   'host.read_file',
@@ -228,18 +232,7 @@ export const ThreadStopCommandSchema = z.object({
   threadId: UuidSchema
 }).strict();
 
-export const TurnSubmitCommandSchema = z.object({
-  type: z.literal('turn.submit'),
-  threadId: UuidSchema,
-  environmentId: UuidSchema,
-  input: z.array(z.string().min(1)).min(1),
-  mode: z.enum(['start', 'auto', 'steer', 'queue-if-active', 'steer-if-active']).optional()
-}).strict();
-
-export const ThreadResumeCommandSchema = z.object({
-  type: z.literal('thread.resume'),
-  threadId: UuidSchema,
-  environmentId: UuidSchema,
+export const ThreadResumeFieldsSchema = z.object({
   projectId: z.string().min(1),
   providerId: z.string().min(1),
   providerThreadId: z.string().min(1),
@@ -247,6 +240,49 @@ export const ThreadResumeCommandSchema = z.object({
   bridgeLaunch: HostBridgeLaunchSchema.optional(),
   permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional(),
   model: z.string().min(1).max(200).optional()
+}).strict();
+export type ThreadResumeFields = z.infer<typeof ThreadResumeFieldsSchema>;
+
+export const TurnSubmitCommandSchema = z.object({
+  type: z.literal('turn.submit'),
+  threadId: UuidSchema,
+  environmentId: UuidSchema,
+  input: z.array(z.string().min(1)).min(1),
+  mode: z.enum(['start', 'auto', 'steer', 'queue-if-active', 'steer-if-active']).optional(),
+  resume: ThreadResumeFieldsSchema.optional()
+}).strict();
+
+export const ThreadResumeCommandSchema = ThreadResumeFieldsSchema.extend({
+  type: z.literal('thread.resume'),
+  threadId: UuidSchema,
+  environmentId: UuidSchema
+}).strict();
+
+export const TerminalStartCommandSchema = z.object({
+  type: z.literal('terminal.start'),
+  sessionId: UuidSchema,
+  root: PathSchema,
+  cwd: PathSchema.optional(),
+  cols: z.number().int().min(20).max(300).optional(),
+  rows: z.number().int().min(8).max(100).optional()
+}).strict();
+
+export const TerminalInputCommandSchema = z.object({
+  type: z.literal('terminal.input'),
+  sessionId: UuidSchema,
+  data: z.string().max(64 * 1024)
+}).strict();
+
+export const TerminalResizeCommandSchema = z.object({
+  type: z.literal('terminal.resize'),
+  sessionId: UuidSchema,
+  cols: z.number().int().min(20).max(300),
+  rows: z.number().int().min(8).max(100)
+}).strict();
+
+export const TerminalStopCommandSchema = z.object({
+  type: z.literal('terminal.stop'),
+  sessionId: UuidSchema
 }).strict();
 
 export const HostListFilesCommandSchema = z.object({
@@ -372,6 +408,10 @@ export const HostRpcCommandSchema = z.union([
   ThreadStopCommandSchema,
   ThreadResumeCommandSchema,
   TurnSubmitCommandSchema,
+  TerminalStartCommandSchema,
+  TerminalInputCommandSchema,
+  TerminalResizeCommandSchema,
+  TerminalStopCommandSchema,
   HostListFilesCommandSchema,
   HostListDirCommandSchema,
   HostReadFileCommandSchema,
@@ -466,6 +506,31 @@ export const ThreadResumeResultSchema = z.object({
 }).strict();
 export type ThreadResumeResult = z.infer<typeof ThreadResumeResultSchema>;
 
+export const TerminalStartResultSchema = z.object({
+  sessionId: UuidSchema,
+  started: z.literal(true),
+  pid: z.number().int().optional()
+}).strict();
+export type TerminalStartResult = z.infer<typeof TerminalStartResultSchema>;
+
+export const TerminalInputResultSchema = z.object({
+  sessionId: UuidSchema,
+  accepted: z.literal(true)
+}).strict();
+export type TerminalInputResult = z.infer<typeof TerminalInputResultSchema>;
+
+export const TerminalResizeResultSchema = z.object({
+  sessionId: UuidSchema,
+  resized: z.literal(true)
+}).strict();
+export type TerminalResizeResult = z.infer<typeof TerminalResizeResultSchema>;
+
+export const TerminalStopResultSchema = z.object({
+  sessionId: UuidSchema,
+  stopped: z.literal(true)
+}).strict();
+export type TerminalStopResult = z.infer<typeof TerminalStopResultSchema>;
+
 export const HostListedFileSchema = z.object({
   root: PathSchema,
   relPath: RelPathSchema,
@@ -555,6 +620,10 @@ export const HostRpcResultSchemaByType = {
   'thread.stop': ThreadStopResultSchema,
   'thread.resume': ThreadResumeResultSchema,
   'turn.submit': TurnSubmitResultSchema,
+  'terminal.start': TerminalStartResultSchema,
+  'terminal.input': TerminalInputResultSchema,
+  'terminal.resize': TerminalResizeResultSchema,
+  'terminal.stop': TerminalStopResultSchema,
   'host.list_files': HostListFilesResultSchema,
   'host.list_dir': HostListDirResultSchema,
   'host.read_file': HostReadFileResultSchema,
@@ -642,6 +711,7 @@ export const HostEventKindSchema = z.enum([
   'turn.completed',
   'turn.failed',
   'terminal.output',
+  'terminal.exited',
   'environment.provision.progress',
   'project.clone.progress'
 ]);
@@ -650,6 +720,7 @@ export type HostEventKind = z.infer<typeof HostEventKindSchema>;
 /** Host-emitted work evidence. Sequence is assigned by the server, never the host. */
 export const HostEventEnvelopeSchema = z.object({
   threadId: UuidSchema.optional(),
+  terminalId: UuidSchema.optional(),
   kind: HostEventKindSchema,
   payload: z.unknown().optional()
 }).strict();

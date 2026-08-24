@@ -53,6 +53,7 @@ export {
   listLiveConversationThreads,
   listVisibleConversationThreads,
   updateConversationThreadStatus,
+  updateConversationThreadParent,
   setConversationProviderThreadId,
   archiveConversationThread,
   countLiveConversationThreadsForEnvironment,

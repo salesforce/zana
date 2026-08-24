@@ -58,11 +58,6 @@ vi.mock('../../store', () => ({
 vi.mock('../../modules', () => ({
   useProjectTabModules: () => h.modules
 }));
-vi.mock('../AgentTray', () => ({
-  AgentTray: ({ projectId, placement }: { projectId?: string; placement?: string }) => (
-    <div data-agent-tray-project={projectId ?? ''} data-agent-tray-placement={placement ?? ''} />
-  )
-}));
 vi.mock('../../plugins/plugin-slots', () => ({
   subscribePluginSlots: (listener: () => void) => {
     listener();
@@ -109,36 +104,51 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     expect(markup).not.toContain('>System<');
     expect(markup).toContain('data-testid="project-nav-inbox"');
     expect(markup).toContain('href="/inbox"');
+    expect(markup).toContain('href="/projects/proj-1"');
     expect(markup).toContain('href="/projects/proj-1/terminals"');
     expect(markup).toContain('href="/projects/proj-1/scheduler"');
-    expect(markup).not.toContain('data-testid="project-nav-agents"');
+    expect(markup).toContain('data-testid="project-nav-agents"');
     expect(markup).not.toContain('data-sortable-nav-id="inbox"');
+    expect(markup).toContain('data-sortable-nav-id="agents"');
     expect(markup).toContain('data-sortable-nav-id="feed"');
     expect(markup).toContain('data-sortable-nav-id="terminals"');
     expect(markup).toContain('data-sortable-nav-id="scheduler"');
     expect(markup).toContain('aria-roledescription="sortable"');
-    expect(markup).toContain('data-sortable-sidebar-section-id="sidebar-section:agents"');
+    expect(markup).not.toContain('data-sortable-sidebar-section-id="sidebar-section:agents"');
     expect(markup).toContain('class="sidebar-nav sidebar-nav--sortable"');
     expect(markup).toContain('data-testid="project-nav-terminals"');
     expect(markup).toContain('data-testid="project-nav-scheduler"');
     expect(markup).toContain('>Inbox<');
-    expect(markup).toContain('class="sidebar-agents "');
-    expect(markup).toContain('data-testid="sidebar-agents-heading"');
-    expect(markup).toContain('href="/projects/proj-1"');
-    expect(markup).toContain('data-testid="sidebar-agents-toggle"');
-    expect(markup).toContain('aria-label="Collapse Agents section"');
-    expect(markup).toContain('aria-label="Open Agents dashboard"');
-    expect(markup).toContain('aria-label="New quick agent"');
+    expect(markup).not.toContain('class="sidebar-agents "');
+    expect(markup).not.toContain('data-testid="sidebar-agents-heading"');
+    expect(markup).not.toContain('data-testid="sidebar-agents-toggle"');
+    expect(markup).not.toContain('aria-label="Collapse Agents section"');
+    expect(markup).not.toContain('aria-label="Open Agents dashboard"');
+    expect(markup).not.toContain('data-agent-tray-project="proj-1"');
+    expect(markup).not.toContain('data-agent-tray-placement="inline"');
     expect(markup).toContain('>Agents<');
     expect(markup).toContain('>Scheduler<');
-    expect(markup).toContain('data-agent-tray-project="proj-1"');
-    expect(markup).toContain('data-agent-tray-placement="inline"');
     expect(markup.indexOf('data-testid="project-nav-inbox"')).toBeLessThan(
+      markup.indexOf('data-testid="project-nav-agents"')
+    );
+    expect(markup.indexOf('data-testid="project-nav-agents"')).toBeLessThan(
       markup.indexOf('data-testid="project-nav-feed"')
     );
-    expect(markup.indexOf('data-testid="project-nav-feed"')).toBeLessThan(
-      markup.indexOf('class="sidebar-agents "')
+  });
+
+  it('badges this project Agents row from the scoped fleet count', () => {
+    h.agentCounts = { active: 3, blocked: 0 };
+    const markup = renderNav(
+      <ProjectScopedNav project={project} variant="focus" onBack={() => undefined} />
     );
+    const agentsStart = markup.indexOf('data-testid="project-nav-agents"');
+    const agentsChunk = markup.slice(agentsStart, markup.indexOf('</a>', agentsStart));
+
+    expect(agentsChunk).toContain('href="/projects/proj-1"');
+    expect(agentsChunk).toContain('class="nav-badge nav-badge--running"');
+    expect(agentsChunk).toContain('aria-label="3 active"');
+    expect(agentsChunk).toContain('>3<');
+    h.agentCounts = { active: 0, blocked: 0 };
   });
 
   it('omits the pop-out control in a dedicated project window', () => {
@@ -178,13 +188,15 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     h.modules = [];
   });
 
-  it('opens this project Agents board from the collection dashboard control', () => {
+  it('opens this project Agents board from the Agents destination', () => {
     const source = readFileSync(new URL('../ProjectScopedNav.tsx', import.meta.url), 'utf8');
 
-    expect(source).toContain("onOpenDashboard={() => selectMode('agents')}");
-    expect(source).toContain('projectId={project.id}');
+    expect(source).toContain("mode: 'agents'");
+    expect(source).toContain('getProjectWorkspaceRoutePath(project.id, item.mode)');
+    expect(source).toContain('testId: `project-nav-${item.mode}`');
     expect(source).toContain('PROJECT_NAV_ORDER_KEY');
     expect(source).toContain('sidebar--titlebar-controls');
-    expect(source).not.toContain("mode: 'agents'");
+    expect(source).not.toContain('AgentsSidebarSection');
+    expect(source).not.toContain('onOpenDashboard');
   });
 });

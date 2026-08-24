@@ -470,17 +470,17 @@ export function ThreadCommandComposer({
             </button>
           ) : (
             <>
-              {!pinnedProject && (
-                <div className="thread-command-chip">
-                  <Folder size={14} aria-hidden="true" />
-                  <PopoverPicklist
-                    value={projectId}
-                    options={projects.map((row) => ({ value: row.id, label: row.name }))}
-                    onChange={setProjectId}
-                    ariaLabel="Project"
-                  />
-                </div>
-              )}
+              <div className="thread-command-chip">
+                <Folder size={14} aria-hidden="true" />
+                <PopoverPicklist
+                  value={projectId}
+                  options={projects.map((row) => ({ value: row.id, label: row.name }))}
+                  onChange={setProjectId}
+                  ariaLabel="Project"
+                  disabled={Boolean(pinnedProject)}
+                  title={pinnedProject ? 'Workspace is locked to this project' : undefined}
+                />
+              </div>
               <EnvironmentPicker projectId={projectId} value={workspace} onChange={setWorkspace} />
             </>
           )}

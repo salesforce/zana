@@ -53,5 +53,9 @@ describe('AgentsListPane', () => {
     expect(source).not.toContain('data-testid="thread-list"');
     expect(source).toContain("entry.kind === 'thread'");
     expect(source).toContain('<FleetKindChip kind="agent" />');
+    expect(source).toContain('getNewThreadRoutePath');
+    expect(source).not.toContain('getRootRoutePath');
+    expect(source).toContain('NEW_THREAD_ROUTE_PATH');
+    expect(source).toContain('PROJECT_NEW_THREAD_ROUTE_PATH');
   });
 });

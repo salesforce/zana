@@ -342,13 +342,38 @@ function httpProduct(): Pick<
       setFavorites: async () => {},
       setHeartbeat: async () => {},
       backlog: async () => '',
-      onData: noopSubscribe,
-      onUpdated: noopSubscribe,
-      onExit: noopSubscribe,
-      resize: async () => {},
-      write: async () => {},
+      onData: (cb) => subscribeProductEvent<{ sessionId: string; data: string }>('terminals:data', (payload) => {
+        cb(payload.sessionId, payload.data);
+      }),
+      onUpdated: (cb) => subscribeProductEvent('terminals:updated', (payload) => {
+        if (payload && typeof payload === 'object' && 'id' in payload) {
+          cb(payload as TerminalSession);
+        }
+      }),
+      onExit: (cb) => subscribeProductEvent<{ sessionId: string; code: number }>('terminals:exit', (payload) => {
+        cb(payload.sessionId, payload.code);
+      }),
+      resize: async (sessionId, cols, rows) => {
+        await apiJson(`/terminals/${encodeURIComponent(sessionId)}/resize`, {
+          method: 'POST',
+          body: JSON.stringify({ cols, rows })
+        });
+      },
+      write: async (sessionId, data) => {
+        await apiJson(`/terminals/${encodeURIComponent(sessionId)}/input`, {
+          method: 'POST',
+          body: JSON.stringify({ data })
+        });
+      },
       reply: async () => false,
-      close: async () => false
+      close: async (sessionId) => {
+        const response = await fetchWithAppSurface(`/api/v1/terminals/${encodeURIComponent(sessionId)}/close`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}'
+        });
+        return response.ok;
+      }
     } as CcApi['terminals'],
     threads: {
       create: async (input) => {
@@ -429,7 +454,12 @@ function httpProduct(): Pick<
           body: '{}'
         });
         return (await response.json()) as Awaited<ReturnType<CcApi['threads']['fork']>>;
-      }
+      },
+      update: async (threadId, patch) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}`, {
+          method: 'PATCH',
+          body: JSON.stringify(patch)
+        })
     } as CcApi['threads'],
     environments: {
       list: async (projectId, hostId) => {

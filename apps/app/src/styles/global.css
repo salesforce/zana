@@ -17,6 +17,8 @@
   --accent: var(--accent-blue);
   --danger: #f85149;
   --success: #3fb950;
+  --ink: var(--text-primary);
+  --ink-muted: var(--text-muted);
 
   --sidebar-bg: var(--bg-base);
   --sidebar-hover: var(--bg-hover);
@@ -219,6 +221,7 @@ input {
 .app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .scheduler-page,
 .app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .agents-board--global,
 .app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .thread-detail-view,
+.app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .new-thread-view,
 .app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .module-panel-slot {
   grid-column: 1 / -1;
 }
@@ -4613,7 +4616,8 @@ body.resizing-col {
    width. */
 .workspace-body > .settings-panel,
 .workspace-body > .feed-view,
-.workspace-body > .gus-panel {
+.workspace-body > .gus-panel,
+.workspace-body > .new-thread-view {
   flex: 1;
   min-width: 0;
 }
@@ -10852,6 +10856,7 @@ body.resizing-col .explorer-resizer::after {
 }
 
 .agents-board-new,
+.agents-board-legacy,
 .agents-board-close-idle {
   display: inline-flex;
   align-items: center;
@@ -10869,10 +10874,6 @@ body.resizing-col .explorer-resizer::after {
     padding: 0 12px;
   }
 
-  .home-agent-composer {
-    padding: 10px 12px 8px;
-  }
-
   .agents-board-header-actions {
     gap: 6px;
   }
@@ -10886,6 +10887,7 @@ body.resizing-col .explorer-resizer::after {
   }
 
   .agents-board-new,
+  .agents-board-legacy,
   .agents-board-close-idle {
     padding-left: 8px;
     padding-right: 8px;
@@ -11098,28 +11100,13 @@ body.resizing-col .explorer-resizer::after {
   max-width: 340px;
 }
 
-/* Empty fleet board: the AuroraGrid fills this pane. The launch composer is a
-   sibling of this empty state (always mounted), so its inset lives on the
-   direct-child rule below — not here. */
+/* Empty fleet board: the AuroraGrid fills this pane. */
 .agents-board-empty--launch {
   overflow: auto;
   gap: 20px;
   justify-content: center;
   padding: 48px 24px 56px;
   background: var(--bg-base);
-}
-
-/* Workbench chrome is padding:0. Don't inherit Home's centered 820px cap —
-   span the pane and match the header gutters so the composer isn't flush
-   and isn't a floating dashboard island. */
-.agents-board > .home-agent-composer {
-  position: relative;
-  z-index: 1;
-  box-sizing: border-box;
-  width: 100%;
-  max-width: none;
-  margin: 0;
-  padding: 12px 16px 8px;
 }
 
 .agents-board-empty--launch .agents-board-empty-copy {
@@ -27854,6 +27841,15 @@ textarea.ui-command-composer-input {
   min-width: 0;
 }
 
+.thread-command-chip .launch-model-picker-trigger:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.thread-command-chip .launch-model-picker-trigger:disabled svg {
+  visibility: hidden;
+}
+
 .thread-command-footer-start {
   flex: 1 1 auto;
   gap: 4px;
@@ -28376,16 +28372,60 @@ textarea.ui-command-composer-input {
 
 .thread-detail-view {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   min-width: 0;
   min-height: 0;
   height: 100%;
   grid-column: 2 / -1;
+}
+
+.thread-detail-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
   padding: 16px 20px 12px;
   gap: 12px;
 }
 
-.thread-detail-view > .thread-command-composer {
+.thread-detail-view.is-secondary-maximized .thread-detail-main {
+  display: none;
+}
+
+.new-thread-view {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  grid-column: 2 / -1;
+  padding: 48px 24px 32px;
+  overflow-y: auto;
+}
+
+.new-thread-view-heading {
+  width: min(820px, 100%);
+  margin: 0 0 16px;
+  color: var(--text-primary);
+  font-size: 22px;
+  font-weight: 620;
+  letter-spacing: -0.02em;
+}
+
+.new-thread-view > .home-agent-composer {
+  width: min(820px, 100%);
+  margin: 0;
+}
+
+.workspace-body > .new-thread-view {
+  grid-column: auto;
+  height: auto;
+  min-height: 0;
+}
+
+.thread-detail-main > .thread-command-composer {
   width: 100%;
   max-width: 46rem;
   margin-inline: auto;
@@ -28393,8 +28433,8 @@ textarea.ui-command-composer-input {
 }
 
 @media (min-width: 1280px) {
-  .thread-detail-view > .thread-command-composer,
-  .thread-detail-view > .thread-workspace-banner {
+  .thread-detail-main > .thread-command-composer,
+  .thread-detail-main > .thread-workspace-banner {
     max-width: 52rem;
   }
 
@@ -28424,9 +28464,46 @@ textarea.ui-command-composer-input {
   min-width: 0;
 }
 
+.thread-detail-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.thread-detail-crumb {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: 18px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.thread-detail-crumb:hover,
+.thread-detail-crumb:focus-visible {
+  color: var(--text-primary);
+}
+
+.thread-detail-crumb:focus-visible {
+  outline: 2px solid var(--focus-ring, var(--accent-blue));
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.thread-detail-crumb-sep {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
 .thread-detail-header h1 {
   margin: 0;
+  min-width: 0;
   font-size: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .thread-status-badge {
@@ -28616,21 +28693,22 @@ textarea.ui-command-composer-input {
 .thread-working-indicator {
   margin: 0;
   min-height: 1.75rem;
-  color: var(--ink-muted);
+  color: var(--text-muted, var(--ink-muted));
   font-size: 13px;
 }
 
 .is-shimmer {
+  color: var(--text-muted, var(--ink-muted));
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--ink-muted) 35%, transparent) 0%,
-    color-mix(in srgb, var(--ink) 70%, transparent) 50%,
-    color-mix(in srgb, var(--ink-muted) 35%, transparent) 100%
+    color-mix(in srgb, var(--text-muted, var(--ink-muted)) 35%, transparent) 0%,
+    color-mix(in srgb, var(--text-primary, var(--ink)) 70%, transparent) 50%,
+    color-mix(in srgb, var(--text-muted, var(--ink-muted)) 35%, transparent) 100%
   );
   background-size: 200% 100%;
   background-clip: text;
   -webkit-background-clip: text;
-  color: transparent;
+  -webkit-text-fill-color: transparent;
   animation: shimmer 1.5s ease-in-out infinite;
 }
 
@@ -29033,6 +29111,7 @@ textarea.ui-command-composer-input {
 }
 
 .thread-detail-body {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 12px;
@@ -29091,6 +29170,381 @@ textarea.ui-command-composer-input {
   .thread-toc {
     display: none;
   }
+
+  .thread-detail-view.is-secondary-open:not(.is-secondary-maximized) {
+    position: relative;
+  }
+
+  .thread-detail-view.is-secondary-open:not(.is-secondary-maximized) .thread-secondary-panel {
+    position: absolute;
+    inset: 0 0 0 auto;
+    width: min(var(--thread-secondary-width, 22rem), 70%);
+    z-index: 6;
+    background: var(--bg, var(--surface, #111));
+    box-shadow: -8px 0 24px rgb(0 0 0 / 0.2);
+  }
+}
+
+.thread-secondary-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  flex: 0 0 var(--thread-secondary-width, 22rem);
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg, inherit);
+}
+
+.thread-detail-view.is-secondary-maximized .thread-secondary-panel {
+  flex: 1 1 auto;
+}
+
+.thread-secondary-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 8px;
+  cursor: col-resize;
+  z-index: 2;
+}
+
+.thread-secondary-chrome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 36px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.thread-secondary-pins,
+.thread-secondary-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.thread-secondary-pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-muted, var(--text-dim));
+  cursor: pointer;
+}
+
+.thread-secondary-pin[aria-pressed='true'] {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.thread-secondary-tab {
+  display: inline-flex;
+  align-items: center;
+  max-width: 9rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-muted, var(--text-dim));
+}
+
+.thread-secondary-tab.is-active {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.thread-secondary-tab-label,
+.thread-secondary-tab-close {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.thread-secondary-tab-label {
+  min-width: 0;
+  padding: 4px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.thread-secondary-tab-close {
+  padding: 4px 6px 4px 0;
+}
+
+.thread-secondary-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.thread-info-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+.thread-info-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.thread-info-row.is-start {
+  align-items: start;
+}
+
+.thread-info-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-muted, var(--text-dim));
+}
+
+.thread-info-icon {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+}
+
+.thread-info-value,
+.thread-info-truncate {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.thread-info-directory,
+.thread-info-parent-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.thread-info-copy,
+.thread-info-clear {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted, var(--text-dim));
+  cursor: pointer;
+}
+
+.thread-info-select-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.thread-info-select {
+  width: 100%;
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 4px 22px 4px 8px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.thread-info-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.thread-info-forks,
+.thread-info-files {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.thread-info-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.thread-new-tab-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+}
+
+.thread-new-tab-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  color: var(--ink-muted, var(--text-dim));
+}
+
+.thread-new-tab-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.thread-new-tab-actions,
+.thread-new-tab-files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.thread-new-tab-actions button,
+.thread-new-tab-files button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 8px;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.thread-new-tab-actions button:hover,
+.thread-new-tab-files button:hover {
+  background: var(--bg-hover);
+}
+
+.thread-new-tab-empty {
+  padding: 8px;
+  color: var(--ink-muted, var(--text-dim));
+  font-size: 12px;
+}
+
+.thread-file-preview {
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.thread-file-preview-image {
+  max-width: 100%;
+  padding: 12px;
+}
+
+.thread-browser-tab,
+.thread-terminal-tab,
+.thread-plugin-tab {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.thread-browser-chrome {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.thread-browser-chrome input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.thread-browser-chrome button {
+  display: inline-flex;
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted, var(--text-dim));
+  cursor: pointer;
+}
+
+.thread-browser-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  border: 0;
+}
+
+.thread-terminal-tab {
+  min-height: 12rem;
+}
+
+.thread-diff-panel.is-embedded {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  border-left: 0;
+  padding-left: 0;
+}
+
+.thread-diff-error,
+.thread-diff-truncated {
+  margin: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.thread-diff-error {
+  background: color-mix(in srgb, var(--danger, #e5484d) 12%, transparent);
+  color: var(--danger, #e5484d);
+  font-weight: 600;
+}
+
+.thread-diff-truncated {
+  background: var(--bg-hover, var(--bg-elevated));
+  color: var(--ink-muted, var(--text-dim));
+}
+
+.thread-diff-embedded-title {
+  margin: 8px 12px 0;
+  font-size: 12px;
+  color: var(--ink-muted, var(--text-dim));
 }
 
 .thread-diff-panel {

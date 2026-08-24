@@ -10,6 +10,7 @@ import { createCommandRuntime, type CommandRuntime } from './command-dispatch.js
 import { handleHostRpcRequest } from './command-router.js';
 import { loadHostAppConfig } from './host-config.js';
 import { createRuntimeManager, type ThreadRuntimeAdapter } from './runtime-manager.js';
+import { createEnrolledPty, type EnrolledPty } from './enrolled-pty.js';
 
 const BACKOFF_MS = [250, 500, 1_000, 2_000, 5_000];
 const HEARTBEAT_MS = 15_000;
@@ -70,11 +71,15 @@ export function startEnrolledHostConnection(options: {
   });
 
   let adapter: ThreadRuntimeAdapter | null = null;
+  let enrolledPty: EnrolledPty | null = null;
   const runtime = options.runtime ?? (() => {
     const loadConfig = () => loadHostAppConfig(options.dataDir);
     adapter = createRuntimeManager({
       emit: (event) => sink.emit(event),
       dataDir: options.dataDir
+    });
+    enrolledPty = createEnrolledPty({
+      emit: (event) => sink.emit(event)
     });
     return createCommandRuntime({
       dataDir: options.dataDir,
@@ -85,7 +90,11 @@ export function startEnrolledHostConnection(options: {
       resumeWork: (input) => adapter!.resumeWork(input),
       resizeWork: (input) => adapter!.resizeWork(input),
       writeWork: (input) => adapter!.writeWork(input),
-      stopWork: (input) => adapter!.stopWork(input)
+      stopWork: (input) => adapter!.stopWork(input),
+      startTerminal: (input) => enrolledPty!.startTerminal(input),
+      writeTerminal: (input) => enrolledPty!.writeTerminal(input),
+      resizeTerminal: (input) => enrolledPty!.resizeTerminal(input),
+      stopTerminal: (input) => enrolledPty!.stopTerminal(input)
     });
   })();
   runtime.emit = (event: HostEventEnvelope) => sink.emit(event);
@@ -155,6 +164,7 @@ export function startEnrolledHostConnection(options: {
       if (reconnectTimer) clearTimeout(reconnectTimer);
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       adapter?.dispose();
+      enrolledPty?.dispose();
       await sink.dispose();
       socket?.close();
       socket = null;

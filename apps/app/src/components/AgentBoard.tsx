@@ -7,6 +7,7 @@ import { isRecentlyFinished } from '../lib/sessionBuckets.js';
 import { usePersonas, useData, useScheduler } from '../store.js';
 import { useSessionGit } from '../lib/gitInfo.js';
 import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from './agentCardActions.js';
+import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from './threadCardActions.js';
 import { FavoriteStar } from './FavoriteStar.js';
 import { PromptModal } from './PromptModal.js';
 import { FleetKindChip } from './FleetKindChip.js';
@@ -573,6 +574,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
   // Lifecycle actions + right-click menu state, shared with the list view so
   // both layouts drive the same pty and expose the same menu.
   const { menu, setMenu, actions, rename, closeRename, submitRename } = useAgentCardActions();
+  const { menu: threadMenu, setMenu: setThreadMenu } = useThreadCardActions();
 
   // One timer drives every live "running for X". Recomputed at render from
   // createdAt vs. now; only mounted while a board is shown.
@@ -708,6 +710,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();
+          setThreadMenu(null);
           setMenu({ card: c, ...clampMenuAnchor(e) });
         }}
         aria-current={active ? 'true' : undefined}
@@ -868,6 +871,10 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
       className={`agent-card is-thread lane-${laneKey} ${item.id === activeId ? 'active' : ''}`}
       data-kind="thread"
       onClick={() => onInspect(item)}
+      onContextMenu={(e) => {
+        setMenu(null);
+        openThreadMenu(e, item.thread, setThreadMenu);
+      }}
       aria-current={item.id === activeId ? 'true' : undefined}
       title={`${item.title} · ${item.projectName} · ${item.thread.status}`}
     >
@@ -941,6 +948,9 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
 
       {menu && (
         <AgentCardMenu menu={menu} setMenu={setMenu} actions={actions} onPick={(card) => onPick(agentFleetItem(card))} />
+      )}
+      {threadMenu && (
+        <ThreadCardMenu menu={threadMenu} setMenu={setThreadMenu} />
       )}
       {rename && (
         <PromptModal

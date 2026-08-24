@@ -9,6 +9,7 @@ import { PROJECTS_TERMINAL_ANCHOR_ID } from '@/components/TerminalSurface';
 import { AgentLauncher } from '@/components/AgentLauncher';
 import { FindBar } from '@/components/FindBar';
 import { AgentsBoard } from '@/views/agents/AgentsBoard';
+import { NewThreadView } from '@/views/threads/NewThreadView';
 import { ProjectExtensionTab } from '@/views/project/ProjectExtensionTab';
 import { useProjectTabModules } from '@/modules';
 import { resolveProjectTabModule } from '@/lib/libraryPlugin';
@@ -95,7 +96,8 @@ export function WorkspaceView() {
   // Terminals catch-all below.
   const extModule = project ? resolveProjectTabModule(mode, projectTabModules) : undefined;
   const isExtTab = !!extModule;
-  const isAgents = mode === 'agents' && !!project;
+  const isNewThread = route.isNewThread && !!project;
+  const isAgents = mode === 'agents' && !!project && !isNewThread;
   const isExplorer = mode === 'explorer' && !!project;
   const isScheduler = mode === 'scheduler' && !!project;
   const isFeed = mode === 'feed' && !!project;
@@ -110,6 +112,7 @@ export function WorkspaceView() {
   // board, so the terminal-host is hidden for it — same as explorer/
   // library/goals/followups and any extension project tab.
   const isTerminals =
+    !isNewThread &&
     !isAgents &&
     !isExplorer &&
     !isScheduler &&
@@ -274,6 +277,10 @@ export function WorkspaceView() {
             onRemoveFromSplit={SPLIT_UI_ENABLED ? (id) => project && removeFromSplit(project.id, id) : undefined}
             onCloseSplit={SPLIT_UI_ENABLED && project ? () => closeSplit(project.id) : undefined}
           />
+        ) : isNewThread ? (
+          <div className="explorer-topbar">
+            <span className="explorer-topbar-label">New thread</span>
+          </div>
         ) : isAgents ? (
           <div className="explorer-topbar">
             <span className="explorer-topbar-label">Agents</span>
@@ -378,6 +385,7 @@ export function WorkspaceView() {
               <ProjectExtensionTab moduleId={extModule.id} project={project} />
             </div>
           )}
+          {isNewThread && project && <NewThreadView project={project} />}
           {isAgents && project && (
             // Agents mode: a Kanban-style status board. Cards auto-flow across
             // lanes by live agent state; New agent opens the shared modal host.

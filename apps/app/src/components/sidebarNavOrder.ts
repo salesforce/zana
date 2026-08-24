@@ -2,6 +2,14 @@ import { arrayMove } from '@dnd-kit/sortable';
 
 export const PINNED_SIDEBAR_NAV_IDS = ['home', 'inbox'] as const;
 
+/** Retired collapsible collection; saved orders map this onto the Agents row. */
+export const LEGACY_AGENTS_SECTION_ID = 'sidebar-section:agents';
+
+function canonicalizeSidebarNavId(id: string, available: Set<string>): string {
+  if (id === LEGACY_AGENTS_SECTION_ID && available.has('agents')) return 'agents';
+  return id;
+}
+
 /** Keep a saved order valid as optional features and extensions come and go. */
 export function normalizeSidebarNavOrder(
   value: unknown,
@@ -15,15 +23,10 @@ export function normalizeSidebarNavOrder(
   const order: string[] = [...pinned];
   for (const id of pinned) seen.add(id);
   if (Array.isArray(value)) {
-    for (const id of value) {
-      if (
-        typeof id !== 'string' ||
-        !available.has(id) ||
-        pinnedSet.has(id) ||
-        seen.has(id)
-      ) {
-        continue;
-      }
+    for (const raw of value) {
+      if (typeof raw !== 'string') continue;
+      const id = canonicalizeSidebarNavId(raw, available);
+      if (!available.has(id) || pinnedSet.has(id) || seen.has(id)) continue;
       seen.add(id);
       order.push(id);
     }

@@ -1,6 +1,7 @@
 import { useMemo, type ReactNode } from 'react';
 import {
   Blocks,
+  Bot,
   Clock,
   House,
   Inbox,
@@ -14,6 +15,7 @@ import {
   useUnreadInboxCount,
   useEnabledSchedulerCount,
   useRunningSchedulerCount,
+  useAgentNavCounts,
   type NavId
 } from '../store.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
@@ -21,11 +23,9 @@ import { getNavRoutePath } from '../lib/route-paths.js';
 import { useMergedModules } from '../modules/index.js';
 import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js';
 import { useRouteState } from '../hooks/useRouteState.js';
-import { AgentsSidebarSection } from './AgentsSidebarSection.js';
 import { ProjectsList } from './listpane/ProjectsList.js';
 import { PINNED_SIDEBAR_NAV_IDS } from './sidebarNavOrder.js';
 import {
-  AGENTS_SECTION_SORT_ID,
   GLOBAL_NAV_ORDER_KEY,
   WORKSPACES_SECTION_SORT_ID
 } from './sidebarSortable.js';
@@ -43,6 +43,7 @@ interface NavEntry {
 
 const homeNavItem: NavEntry = { id: 'home', label: 'Home', icon: House };
 const inboxNavItem: NavEntry = { id: 'inbox', label: 'Inbox', icon: Inbox };
+const agentsNavItem: NavEntry = { id: 'agents', label: 'Agents', icon: Bot };
 const schedulerNavItem: NavEntry = { id: 'scheduler', label: 'Scheduler', icon: Clock };
 
 // Next Steps launcher (afl-03) — opt-in via AppConfig.suggestionsEnabled. The
@@ -67,6 +68,7 @@ export function Sidebar() {
   const unreadInbox = useUnreadInboxCount();
   const enabledSchedules = useEnabledSchedulerCount();
   const runningSchedules = useRunningSchedulerCount();
+  const agentCounts = useAgentNavCounts();
   const suggestionsEnabled = useData((s) => s.suggestionsEnabled);
   const followUpsEnabled = useData((s) => s.followUpsEnabled);
   const routeMemory = useAppSettingsRouteMemory();
@@ -100,8 +102,13 @@ export function Sidebar() {
     // the "running" state reads at a glance. An armed-but-idle schedule shows
     // no badge.
     const isScheduler = item.id === 'scheduler';
-    const running = isScheduler && runningSchedules > 0;
+    const isAgents = item.id === 'agents';
+    const running = (isScheduler && runningSchedules > 0) || (isAgents && agentCounts.active > 0);
     const scheduleTitle = `${runningSchedules} running · ${enabledSchedules} scheduled`;
+    const agentsTitle =
+      agentCounts.blocked > 0
+        ? `${agentCounts.active} active · ${agentCounts.blocked} need you`
+        : `${agentCounts.active} active`;
     let badge: ReactNode;
     if (showBadge) {
       badge = (
@@ -111,13 +118,22 @@ export function Sidebar() {
           title={`${unreadInbox} unread`}
         />
       );
-    } else if (running) {
+    } else if (isScheduler && running) {
       badge = (
         <SidebarCountBadge
           count={runningSchedules}
           label={scheduleTitle}
           title={scheduleTitle}
           kind="running"
+        />
+      );
+    } else if (isAgents && agentCounts.active > 0) {
+      badge = (
+        <SidebarCountBadge
+          count={agentCounts.active}
+          label={agentsTitle}
+          title={agentsTitle}
+          kind={agentCounts.blocked > 0 ? 'blocked' : 'running'}
         />
       );
     }
@@ -133,7 +149,7 @@ export function Sidebar() {
       badge,
       title: collapsed
         ? running
-          ? `${item.label} — ${scheduleTitle}`
+          ? `${item.label} — ${isAgents ? agentsTitle : scheduleTitle}`
           : item.label
         : undefined
     };
@@ -143,14 +159,10 @@ export function Sidebar() {
     toRow(homeNavItem),
     toRow(inboxNavItem),
     ...extraItems.map(toRow),
+    toRow(agentsNavItem),
     toRow(schedulerNavItem),
     toRow(extensionsNavItem),
     ...moduleNavItems.map(toRow),
-    {
-      kind: 'section',
-      id: AGENTS_SECTION_SORT_ID,
-      node: <AgentsSidebarSection />
-    },
     {
       kind: 'section',
       id: WORKSPACES_SECTION_SORT_ID,
