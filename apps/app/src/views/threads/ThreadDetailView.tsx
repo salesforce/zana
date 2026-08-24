@@ -338,52 +338,54 @@ export function ThreadDetailView() {
           </div>
         </header>
         <div className="thread-detail-body">
-          <ThreadTimeline
-            threadId={threadId}
-            rows={rows}
-            status={status}
-            thinking={thinking}
-            todos={todos}
-            goal={goal}
-            activeWorkflows={workflows}
-            activePromptMode={promptMode}
-            lastReadSeq={lastReadSeq}
-            hasOlderRows={hasOlderRows}
-            loadingOlder={loadingOlder}
-            onLoadOlder={() => {
-              setLoadingOlder(true);
-              setSegmentLimit((current) => current + INITIAL_SEGMENT_LIMIT);
-            }}
-            onReachedBottom={markRead}
-            onCopy={(text) => {
-              void navigator.clipboard?.writeText(text);
-            }}
-            onTitleAction={(action) => {
-              if (action.kind === 'open-file-diff') openDiff(action.path);
-            }}
-            onTitleLink={(link) => {
-              if (link.kind === 'thread') navigate(getThreadRoutePath(link.threadId));
-            }}
-            onOpenDiff={(path) => openDiff(path)}
-            onAnswer={(text) => {
-              void product.threads.send(threadId, [{ type: 'text', text }], 'auto');
-            }}
-          />
+          <div className="thread-detail-column">
+            <ThreadTimeline
+              threadId={threadId}
+              rows={rows}
+              status={status}
+              thinking={thinking}
+              todos={todos}
+              goal={goal}
+              activeWorkflows={workflows}
+              activePromptMode={promptMode}
+              lastReadSeq={lastReadSeq}
+              hasOlderRows={hasOlderRows}
+              loadingOlder={loadingOlder}
+              onLoadOlder={() => {
+                setLoadingOlder(true);
+                setSegmentLimit((current) => current + INITIAL_SEGMENT_LIMIT);
+              }}
+              onReachedBottom={markRead}
+              onCopy={(text) => {
+                void navigator.clipboard?.writeText(text);
+              }}
+              onTitleAction={(action) => {
+                if (action.kind === 'open-file-diff') openDiff(action.path);
+              }}
+              onTitleLink={(link) => {
+                if (link.kind === 'thread') navigate(getThreadRoutePath(link.threadId));
+              }}
+              onOpenDiff={(path) => openDiff(path)}
+              onAnswer={(text) => {
+                void product.threads.send(threadId, [{ type: 'text', text }], 'auto');
+              }}
+            />
+            <ThreadWorkspaceBanner
+              environmentId={environmentId}
+              onOpenDiff={(path) => openDiff(path)}
+            />
+            <ThreadCommandComposer
+              threadId={threadId}
+              status={status}
+              environmentLabel={isWorktree ? 'This checkout' : 'Local'}
+              contextWindowUsage={contextWindow}
+              onOpenExplorer={projectId ? () => navigate(getProjectWorkspaceRoutePath(projectId, 'explorer')) : undefined}
+            />
+          </div>
           {!panelOpen ? (
             <ThreadConversationToc items={outline} onJump={jumpTo} />
           ) : null}
         </div>
-        <ThreadWorkspaceBanner
-          environmentId={environmentId}
-          onOpenDiff={(path) => openDiff(path)}
-        />
-        <ThreadCommandComposer
-          threadId={threadId}
-          status={status}
-          environmentLabel={isWorktree ? 'This checkout' : 'Local'}
-          contextWindowUsage={contextWindow}
-          onOpenExplorer={projectId ? () => navigate(getProjectWorkspaceRoutePath(projectId, 'explorer')) : undefined}
-        />
       </div>
       {panelOpen ? (
         <ThreadSecondaryPanel

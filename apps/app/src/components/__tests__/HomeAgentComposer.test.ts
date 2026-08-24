@@ -38,12 +38,18 @@ describe('ThreadCommandComposer chrome', () => {
     expect(editor).not.toContain('max-height: 70dvh;');
 
     const threadComposer = css.slice(
-      css.indexOf('.thread-detail-main > .thread-command-composer {'),
+      css.indexOf('.thread-detail-column {'),
       css.indexOf('.thread-detail-header {')
     );
     expect(threadComposer).toContain('max-width: 46rem;');
-    expect(threadComposer).toContain('margin-inline: auto;');
+    expect(threadComposer).toContain('justify-self: center;');
     expect(threadComposer).toContain('flex: 0 0 auto;');
+    const timeline = css.slice(
+      css.indexOf('.thread-detail-timeline {'),
+      css.indexOf('.thread-timeline-turn {')
+    );
+    expect(timeline).not.toContain('max-width:');
+    expect(timeline).not.toContain('margin-inline:');
 
     const wide = css.slice(
       css.indexOf('@media (min-width: 1280px) {'),

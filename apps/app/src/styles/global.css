@@ -28425,16 +28425,25 @@ textarea.ui-command-composer-input {
   min-height: 0;
 }
 
-.thread-detail-main > .thread-command-composer {
+.thread-detail-column {
+  display: flex;
+  flex-direction: column;
+  justify-self: center;
+  min-width: 0;
+  min-height: 0;
   width: 100%;
   max-width: 46rem;
-  margin-inline: auto;
+  gap: 12px;
+}
+
+.thread-detail-column > .thread-command-composer,
+.thread-detail-column > .thread-workspace-banner {
+  width: 100%;
   flex: 0 0 auto;
 }
 
 @media (min-width: 1280px) {
-  .thread-detail-main > .thread-command-composer,
-  .thread-detail-main > .thread-workspace-banner {
+  .thread-detail-column {
     max-width: 52rem;
   }
 
@@ -28551,8 +28560,13 @@ textarea.ui-command-composer-input {
   flex-direction: column;
   gap: 12px;
   width: 100%;
-  max-width: 46rem;
-  margin-inline: auto;
+}
+
+.thread-timeline-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
 }
 
 .thread-timeline-item {
@@ -28577,6 +28591,7 @@ textarea.ui-command-composer-input {
 }
 
 .thread-timeline-row.is-assistant {
+  position: relative;
   width: 100%;
 }
 
@@ -28827,6 +28842,10 @@ textarea.ui-command-composer-input {
 }
 
 .thread-timeline-row.is-assistant .thread-message-actions {
+  position: absolute;
+  top: calc(100% - 2px);
+  left: 0;
+  margin: 0;
   justify-content: flex-start;
 }
 
@@ -28956,8 +28975,6 @@ textarea.ui-command-composer-input {
 
 .thread-workspace-banner {
   width: 100%;
-  max-width: 46rem;
-  margin-inline: auto;
   padding: 2px 8px;
   border: 1px solid transparent;
   border-radius: 12px;
@@ -29114,6 +29131,7 @@ textarea.ui-command-composer-input {
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
   flex: 1 1 auto;

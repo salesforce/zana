@@ -254,4 +254,24 @@ describe('expandable row and chips', () => {
     expect(source.slice(bodyAt, panelAt)).not.toContain('<ThreadSecondaryPanel');
     expect(source.indexOf('thread-detail-main')).toBeLessThan(panelAt);
   });
+
+  it('keeps the transcript, workspace banner, and composer in one column', () => {
+    const source = readFileSync(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)), 'utf8');
+    const columnAt = source.indexOf('className="thread-detail-column"');
+    const tocAt = source.indexOf('<ThreadConversationToc');
+    expect(columnAt).toBeGreaterThan(-1);
+    expect(tocAt).toBeGreaterThan(columnAt);
+    const column = source.slice(columnAt, tocAt);
+    expect(column).toContain('<ThreadTimeline');
+    expect(column).toContain('<ThreadWorkspaceBanner');
+    expect(column).toContain('<ThreadCommandComposer');
+
+    const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
+    const assistantActions = css.slice(
+      css.indexOf('.thread-timeline-row.is-assistant .thread-message-actions {'),
+      css.indexOf('.thread-timeline-row:hover .thread-message-actions')
+    );
+    expect(assistantActions).toContain('position: absolute;');
+    expect(assistantActions).toContain('left: 0;');
+  });
 });
