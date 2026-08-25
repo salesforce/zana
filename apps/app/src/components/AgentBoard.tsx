@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { Bot, AlertCircle, Zap, Moon, CheckCircle2, HelpCircle, CheckCheck, PauseCircle, Network, Crown, Users, Clock, GitBranch, ShieldCheck, ShieldAlert, Boxes, Unplug, MessageSquare } from 'lucide-react';
+import { Bot, AlertCircle, Zap, Moon, CheckCircle2, HelpCircle, CheckCheck, PauseCircle, Network, Crown, Users, Clock, GitBranch, ShieldCheck, ShieldAlert, Boxes, Unplug } from 'lucide-react';
 import type { AgentState, IdleResolution, IdleTriageResult, OverseerActivity, Persona, ScheduledTask, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { scheduleSummary } from '@zana-ai/zcc-domain/schedule-spec';
 import { profileIcon, personaIcon } from '../lib/profileIcon.js';
@@ -11,6 +11,7 @@ import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from './threadCa
 import { FavoriteStar } from './FavoriteStar.js';
 import { PromptModal } from './PromptModal.js';
 import { FleetKindChip } from './FleetKindChip.js';
+import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
 import {
   agentFleetItem,
   fleetAgentCards,
@@ -894,7 +895,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
         )}
         <span className="agent-card-head">
           <span className="agent-card-icon">
-            <MessageSquare size={14} aria-hidden="true" />
+            <ProviderIcon providerId={item.thread.providerId} size={14} />
           </span>
           <span className="agent-card-title">{item.title}</span>
           <span className={`tab-agent-dot agent-${item.state}`} aria-hidden="true" />

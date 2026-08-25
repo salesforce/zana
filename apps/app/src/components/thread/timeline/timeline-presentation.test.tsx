@@ -135,7 +135,6 @@ describe('WorkRowBody', () => {
   it('renders pending questions and waiting approvals', () => {
     const question = renderToStaticMarkup(
       <WorkRowBody
-        onAnswer={() => undefined}
         row={{
           ...workBase,
           id: 'q1',
@@ -155,7 +154,8 @@ describe('WorkRowBody', () => {
       />
     );
     expect(question).toContain('Continue?');
-    expect(question).toContain('thread-question-input');
+    expect(question).toContain('Waiting for an answer');
+    expect(question).not.toContain('thread-question-input');
     const approval = renderToStaticMarkup(
       <WorkRowBody row={{
         ...workBase,

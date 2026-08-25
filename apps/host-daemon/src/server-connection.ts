@@ -11,6 +11,11 @@ import { handleHostRpcRequest } from './command-router.js';
 import { loadHostAppConfig } from './host-config.js';
 import { createRuntimeManager, type ThreadRuntimeAdapter } from './runtime-manager.js';
 import { createEnrolledPty, type EnrolledPty } from './enrolled-pty.js';
+import { createInteractiveRequestHttpClient } from './interactive-request-client.js';
+import {
+  InteractiveRequestRegistry,
+  InteractiveRequestRegistryError
+} from './interactive-request-registry.js';
 
 const BACKOFF_MS = [250, 500, 1_000, 2_000, 5_000];
 const HEARTBEAT_MS = 15_000;
@@ -72,11 +77,55 @@ export function startEnrolledHostConnection(options: {
 
   let adapter: ThreadRuntimeAdapter | null = null;
   let enrolledPty: EnrolledPty | null = null;
+  const interactiveClient = createInteractiveRequestHttpClient({
+    serverUrl: options.serverUrl,
+    hostId: options.hostId,
+    hostKey: options.hostKey,
+    sessionId: instanceId
+  });
+  const interactiveRequests = new InteractiveRequestRegistry({
+    registerRequest: (request) => interactiveClient.registerRequest(request),
+    onRegistrationFailure: ({ error, request }) => {
+      void interactiveClient.interruptRequests({
+        providerId: request.providerId,
+        threadIds: [request.threadId],
+        reason: `Failed to register interactive request while provider was waiting: ${error.message}`
+      });
+    }
+  });
   const runtime = options.runtime ?? (() => {
     const loadConfig = () => loadHostAppConfig(options.dataDir);
     adapter = createRuntimeManager({
       emit: (event) => sink.emit(event),
-      dataDir: options.dataDir
+      dataDir: options.dataDir,
+      onInteractiveRequest: async (request) => {
+        try {
+          return await interactiveRequests.registerAndWait(request);
+        } catch (error) {
+          if (
+            error instanceof InteractiveRequestRegistryError
+            && error.code === 'interactive_request_rejected'
+          ) {
+            throw error;
+          }
+          throw error;
+        }
+      },
+      onProcessExit: (info) => {
+        const threadIds = info.threads.map((thread) => thread.threadId);
+        if (threadIds.length === 0) return;
+        const reason = `Provider "${info.providerId}" exited while awaiting user interaction`;
+        interactiveRequests.interruptThreads({
+          providerId: info.providerId,
+          threadIds,
+          reason
+        });
+        void interactiveClient.interruptRequests({
+          providerId: info.providerId,
+          threadIds,
+          reason
+        });
+      }
     });
     enrolledPty = createEnrolledPty({
       emit: (event) => sink.emit(event)
@@ -91,6 +140,7 @@ export function startEnrolledHostConnection(options: {
       resizeWork: (input) => adapter!.resizeWork(input),
       writeWork: (input) => adapter!.writeWork(input),
       stopWork: (input) => adapter!.stopWork(input),
+      deliverInteractiveResolve: (input) => interactiveRequests.resolve(input),
       startTerminal: (input) => enrolledPty!.startTerminal(input),
       writeTerminal: (input) => enrolledPty!.writeTerminal(input),
       resizeTerminal: (input) => enrolledPty!.resizeTerminal(input),

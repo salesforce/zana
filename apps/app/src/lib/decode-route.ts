@@ -10,6 +10,7 @@ import {
   PROJECT_ROUTE_PATH,
   PROJECT_SETTINGS_ROUTE_PATH,
   PROJECT_NEW_THREAD_ROUTE_PATH,
+  PROJECT_THREAD_ROUTE_PATH,
   PROJECT_WORKSPACE_ROUTE_PATH,
   SCHEDULER_ROUTE_PATH,
   SETTINGS_PROJECT_ALIAS_ROUTE_PATH,
@@ -38,6 +39,8 @@ export interface DecodedRoute {
   isProjectSettings: boolean;
   isProjectWorkspace: boolean;
   isNewThread: boolean;
+  isThreadView: boolean;
+  threadId: string | null;
 }
 
 const DEFAULT_DECODED: DecodedRoute = {
@@ -50,7 +53,9 @@ const DEFAULT_DECODED: DecodedRoute = {
   workspaceMode: null,
   isProjectSettings: false,
   isProjectWorkspace: false,
-  isNewThread: false
+  isNewThread: false,
+  isThreadView: false,
+  threadId: null
 };
 
 function hashAnchor(hash: string): string | null {
@@ -94,7 +99,12 @@ export function decodeRoutePath(pathname: string, hash = ''): DecodedRoute {
   }
   const threadMatch = matchPath(THREAD_ROUTE_PATH, pathname);
   if (threadMatch) {
-    return { ...DEFAULT_DECODED, nav: 'agents', settingsAnchor: anchor };
+    return {
+      ...DEFAULT_DECODED,
+      nav: 'agents',
+      settingsAnchor: anchor,
+      threadId: param(threadMatch, 'threadId') ?? null
+    };
   }
   if (pathname === FOLLOWUPS_ROUTE_PATH) {
     return { ...DEFAULT_DECODED, nav: 'followups', settingsAnchor: anchor };
@@ -174,6 +184,20 @@ export function decodeRoutePath(pathname: string, hash = ''): DecodedRoute {
       workspaceMode: 'agents',
       isProjectWorkspace: true,
       isNewThread: true
+    };
+  }
+
+  const projectThread = matchPath(PROJECT_THREAD_ROUTE_PATH, pathname);
+  if (projectThread) {
+    const projectId = param(projectThread, 'projectId') ?? null;
+    return {
+      ...DEFAULT_DECODED,
+      nav: 'projects',
+      focusedProjectId: projectId,
+      workspaceMode: 'agents',
+      isProjectWorkspace: true,
+      isThreadView: true,
+      threadId: param(projectThread, 'threadId') ?? null
     };
   }
 

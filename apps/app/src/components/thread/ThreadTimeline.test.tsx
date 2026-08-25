@@ -117,6 +117,7 @@ describe('ThreadTimeline', () => {
     const html = renderToStaticMarkup(
       <ThreadTimeline rows={rows} status="idle" thinking={null} todos={null} />
     );
+    expect(html).toContain('thread-detail-timeline thread-scrollbar');
     expect(html).toContain('data-testid="thread-user-text"');
     expect(html).toContain('thread-timeline-item is-user');
     expect(html).toContain('Read README.md');

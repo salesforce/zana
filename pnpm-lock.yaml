@@ -314,6 +314,9 @@ importers:
       '@zana-ai/zcc-domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@zana-ai/zcc-host-daemon-contract':
+        specifier: workspace:*
+        version: link:../../packages/host-daemon-contract
       '@zana-ai/zcc-host-workspace':
         specifier: workspace:*
         version: link:../../packages/host-workspace
@@ -354,6 +357,9 @@ importers:
       '@zana-ai/zcc-host-daemon':
         specifier: workspace:*
         version: link:../host-daemon
+      '@zana-ai/zcc-host-daemon-contract':
+        specifier: workspace:*
+        version: link:../../packages/host-daemon-contract
       '@zana-ai/zcc-plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk

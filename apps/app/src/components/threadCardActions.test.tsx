@@ -56,8 +56,10 @@ describe('threadTitle', () => {
 describe('viewingThread', () => {
   it('matches the open thread route and ignores other paths', () => {
     expect(viewingThread('/threads/11111111-1111-4111-8111-111111111111', thread.id)).toBe(true);
+    expect(viewingThread('/projects/p1/threads/11111111-1111-4111-8111-111111111111', thread.id)).toBe(true);
     expect(viewingThread('/threads/other', thread.id)).toBe(false);
     expect(viewingThread('/agents', thread.id)).toBe(false);
+    expect(viewingThread('/projects/p1/threads/new', thread.id)).toBe(false);
   });
 });
 
@@ -66,6 +68,12 @@ describe('runThreadMenuAction', () => {
     const c = ctx();
     await runThreadMenuAction('open', thread, c);
     expect(c.navigate).toHaveBeenCalledWith(`/threads/${thread.id}`);
+  });
+
+  it('opens a project-scoped thread without leaving the workspace', async () => {
+    const c = ctx({ projectId: 'p1' });
+    await runThreadMenuAction('open', thread, c);
+    expect(c.navigate).toHaveBeenCalledWith(`/projects/p1/threads/${thread.id}`);
   });
 
   it('stops the running thread', async () => {
@@ -80,6 +88,12 @@ describe('runThreadMenuAction', () => {
     await runThreadMenuAction('fork', thread, c);
     expect(c.fork).toHaveBeenCalledWith(thread.id);
     expect(c.navigate).toHaveBeenCalledWith('/threads/fork-1');
+  });
+
+  it('keeps a fork on the project thread URL', async () => {
+    const c = ctx({ projectId: 'p1' });
+    await runThreadMenuAction('fork', thread, c);
+    expect(c.navigate).toHaveBeenCalledWith('/projects/p1/threads/fork-1');
   });
 
   it('does not navigate when fork fails', async () => {
@@ -101,6 +115,12 @@ describe('runThreadMenuAction', () => {
     expect(c.archive).toHaveBeenCalledWith(thread.id);
     expect(c.remove).toHaveBeenCalledWith(thread.id);
     expect(c.navigate).toHaveBeenCalledWith('/agents');
+  });
+
+  it('returns to the project workspace after archiving a project thread', async () => {
+    const c = ctx({ pathname: `/projects/p1/threads/${thread.id}`, projectId: 'p1' });
+    await runThreadMenuAction('archive', thread, c);
+    expect(c.navigate).toHaveBeenCalledWith('/projects/p1');
   });
 
   it('archives without navigating when some other thread is open', async () => {
@@ -153,6 +173,10 @@ describe('thread context-menu wiring', () => {
     const board = readFileSync(new URL('./AgentBoard.tsx', import.meta.url), 'utf8');
     expect(board).toContain('openThreadMenu(e, item.thread, setThreadMenu)');
     expect(board).toContain('<ThreadCardMenu menu={threadMenu}');
+
+    const monitor = readFileSync(new URL('./AgentMonitor.tsx', import.meta.url), 'utf8');
+    expect(monitor).toContain('openThreadMenu(e, item.thread, setThreadMenu)');
+    expect(monitor).toContain('<ThreadCardMenu menu={threadMenu}');
 
     const projects = readFileSync(new URL('./listpane/ProjectsList.tsx', import.meta.url), 'utf8');
     expect(projects).toContain('onContextMenu={(e) => openThreadMenu(e, thread, setThreadMenu)}');

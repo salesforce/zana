@@ -85,6 +85,23 @@ const BUILTIN_DECLARATIONS: Array<PluginProviderDeclaration & { pluginId: string
       reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max']
     },
     composerActions: []
+  },
+  {
+    pluginId: 'provider-acp',
+    id: 'acp-opencode',
+    displayName: 'OpenCode',
+    icon: './icons/opencode.svg',
+    hostEntry: 'src/bridge/bridge.ts',
+    capabilities: {
+      supportsServiceTier: true,
+      fork: 'tip',
+      supportsManualCompaction: true,
+      supportsThreadArchive: false,
+      supportsThreadRename: false,
+      permissionModes: ['accept-edits', 'full'],
+      reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max']
+    },
+    composerActions: []
   }
 ];
 
@@ -111,9 +128,8 @@ const FAKE_DECLARATION: PluginProviderDeclaration & { pluginId: string; hostEntr
 };
 
 function seedBuiltins(): void {
-  if (providers.size > 0) return;
   for (const entry of BUILTIN_DECLARATIONS) {
-    providers.set(entry.id, entry);
+    if (!providers.has(entry.id)) providers.set(entry.id, entry);
   }
 }
 
@@ -143,6 +159,7 @@ export function registerThreadProvider(
     unregister() {
       const current = providers.get(declaration.id);
       if (current?.pluginId === pluginId) providers.delete(declaration.id);
+      seedBuiltins();
     }
   };
 }
@@ -162,6 +179,7 @@ export function getThreadProvider(providerId: string): ThreadProviderRecord | un
 export function canonicalThreadProviderId(providerId: string): string {
   if (providerId === 'claude' || providerId === 'claude-yolo') return 'claude-code';
   if (providerId === 'cursor') return 'acp-cursor';
+  if (providerId === 'opencode' || providerId === 'opencode-resume') return 'acp-opencode';
   return providerId;
 }
 

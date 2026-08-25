@@ -80,5 +80,7 @@ describe('AgentBoard thread cards', () => {
     expect(source).toContain('{(!showProject || grouped) && <span className="agent-card-sub">{runtime}</span>}');
     expect(source).not.toContain('<span className="agent-card-sub">{item.thread.status}</span>');
     expect(source).not.toContain('? renderThreadCard(item, laneKey) :');
+    expect(source).toContain('<ProviderIcon providerId={item.thread.providerId}');
+    expect(source).not.toContain('MessageSquare');
   });
 });

@@ -39,5 +39,7 @@ describe('fallback thread catalogs', () => {
     ]);
     expect(fallbackModelsForProvider('pi')).toEqual([]);
     expect(fallbackModelsForProvider('acp-cursor')).toEqual([]);
+    expect(fallbackModelsForProvider('acp-opencode')).toEqual([]);
+    expect(fallbackProviderOption('acp-opencode').displayName).toBe('OpenCode');
   });
 });

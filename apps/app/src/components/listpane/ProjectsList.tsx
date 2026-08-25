@@ -18,7 +18,7 @@ import {
   verticalListSortingStrategy
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Plus, Search, Trash2, X, Check, Pencil, Code2, FolderOpen, TerminalSquare, LayoutDashboard, Settings2, Network, GitBranch, ClipboardCopy, Star, AppWindow, RefreshCw, Activity, ChevronRight, MoreHorizontal, ChevronUp, ChevronDown, ListFilter, MessageCirclePlus, MessageSquare } from 'lucide-react';
+import { Plus, Search, Trash2, X, Check, Pencil, Code2, FolderOpen, TerminalSquare, LayoutDashboard, Settings2, Network, GitBranch, ClipboardCopy, Star, AppWindow, RefreshCw, Activity, ChevronRight, MoreHorizontal, ChevronUp, ChevronDown, ListFilter, MessageCirclePlus } from 'lucide-react';
 import { CursorIcon } from '../icons/CursorIcon.js';
 import {
   useData,
@@ -50,6 +50,7 @@ import { useThreads } from '../../thread-store.js';
 import { useEnsureThreads } from '../../hooks/useEnsureThreads.js';
 import { getThreadRoutePath } from '../../lib/route-paths.js';
 import { FleetKindChip } from '../FleetKindChip.js';
+import { ProviderIcon } from '../thread/pickers/ProviderIcon.js';
 import { railThreadsForProject, threadIsLiveForRail, threadRailDetail, threadTitle } from '../fleet-item.js';
 
 interface MenuState {
@@ -698,7 +699,7 @@ export function ProjectsList({
                         title={`${title} · ${thread.status}`}
                       >
                         <span className="tab-profile-icon" aria-hidden="true">
-                          <MessageSquare size={14} />
+                          <ProviderIcon providerId={thread.providerId} size={14} />
                         </span>
                         <span className="project-terminal-text">
                           <span className="project-terminal-name">{title}</span>

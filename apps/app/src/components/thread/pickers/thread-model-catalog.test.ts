@@ -1,0 +1,166 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  ensureThreadProviderModels,
+  getThreadModelCatalog,
+  prefetchThreadModelCatalog,
+  reloadThreadModelCatalog,
+  resetThreadModelCatalog,
+  type ThreadExecutionOptionsFetcher
+} from './thread-model-catalog.js';
+
+type OptionsBody = Awaited<ReturnType<ThreadExecutionOptionsFetcher>>;
+
+function modelRow(id: string): OptionsBody['models'][number] {
+  return {
+    id,
+    model: id,
+    displayName: id,
+    supportedReasoningEfforts: [{ reasoningEffort: 'medium', description: 'medium' }],
+    defaultReasoningEffort: 'medium',
+    isDefault: true
+  };
+}
+
+function providerRow(id: string, displayName = id): OptionsBody['providers'][number] {
+  return {
+    id,
+    displayName,
+    available: true,
+    composerActions: [],
+    capabilities: { permissionModes: ['full'] }
+  };
+}
+
+function optionsBody(
+  providerIds: string[],
+  modelsFor: string
+): OptionsBody {
+  return {
+    providers: providerIds.map((id) => providerRow(id)),
+    models: [modelRow(`${modelsFor}-model`)],
+    selectedOnlyModels: [],
+    permissionCeiling: 'full',
+    modelLoadError: null
+  };
+}
+
+afterEach(() => {
+  resetThreadModelCatalog();
+});
+
+describe('thread model catalog', () => {
+  it('prefetches models for every offered harness and reuses the cache', async () => {
+    const calls: Array<string | undefined> = [];
+    const fetcher: ThreadExecutionOptionsFetcher = async (query) => {
+      calls.push(query?.providerId);
+      const roster = ['claude-code', 'codex', 'acp-opencode'];
+      return optionsBody(roster, query?.providerId ?? 'roster');
+    };
+    resetThreadModelCatalog(fetcher);
+
+    await prefetchThreadModelCatalog();
+    expect(calls).toEqual([undefined, 'claude-code', 'codex', 'acp-opencode']);
+    expect(getThreadModelCatalog().byProvider['codex']?.models[0]?.model).toBe('codex-model');
+    expect(getThreadModelCatalog().byProvider['acp-opencode']?.models[0]?.model).toBe('acp-opencode-model');
+
+    calls.length = 0;
+    await prefetchThreadModelCatalog();
+    await ensureThreadProviderModels('codex');
+    expect(calls).toEqual([undefined]);
+    expect(getThreadModelCatalog().inflight.size).toBe(0);
+  });
+
+  it('fetches only a newly offered harness and drops a removed one', async () => {
+    let roster = ['claude-code', 'codex'];
+    const calls: Array<string | undefined> = [];
+    const fetcher: ThreadExecutionOptionsFetcher = async (query) => {
+      calls.push(query?.providerId);
+      return optionsBody(roster, query?.providerId ?? 'roster');
+    };
+    resetThreadModelCatalog(fetcher);
+
+    await prefetchThreadModelCatalog();
+    expect(Object.keys(getThreadModelCatalog().byProvider).sort()).toEqual(['claude-code', 'codex']);
+
+    roster = ['claude-code', 'codex', 'pi'];
+    calls.length = 0;
+    await prefetchThreadModelCatalog();
+    expect(calls).toEqual([undefined, 'pi']);
+    expect(getThreadModelCatalog().byProvider.pi?.models[0]?.model).toBe('pi-model');
+
+    roster = ['claude-code'];
+    await prefetchThreadModelCatalog();
+    expect(Object.keys(getThreadModelCatalog().byProvider)).toEqual(['claude-code']);
+  });
+
+  it('caches fallbacks after a provider fetch fails so the picker is not stuck loading', async () => {
+    const fetcher: ThreadExecutionOptionsFetcher = async (query) => {
+      if (query?.providerId === 'pi') throw new Error('unavailable');
+      return optionsBody(['claude-code', 'pi'], query?.providerId ?? 'roster');
+    };
+    resetThreadModelCatalog(fetcher);
+    await prefetchThreadModelCatalog();
+    expect(getThreadModelCatalog().byProvider.pi).toBeDefined();
+    expect(getThreadModelCatalog().byProvider.pi?.models).toEqual([]);
+    expect(getThreadModelCatalog().byProvider.pi?.modelLoadError).toBe('failed');
+    expect(getThreadModelCatalog().inflight.size).toBe(0);
+  });
+
+  it('stores auth_required so Settings can show sign-in and a later retry can refill models', async () => {
+    let signedIn = false;
+    const fetcher: ThreadExecutionOptionsFetcher = async (query) => {
+      const body = optionsBody(['acp-cursor'], query?.providerId ?? 'roster');
+      if (query?.providerId === 'acp-cursor' && !signedIn) {
+        return { ...body, models: [], modelLoadError: { providerId: 'acp-cursor', code: 'auth_required' } };
+      }
+      return body;
+    };
+    resetThreadModelCatalog(fetcher);
+    await prefetchThreadModelCatalog();
+    expect(getThreadModelCatalog().byProvider['acp-cursor']?.modelLoadError).toBe('auth_required');
+    expect(getThreadModelCatalog().byProvider['acp-cursor']?.models).toEqual([]);
+
+    signedIn = true;
+    await ensureThreadProviderModels('acp-cursor');
+    expect(getThreadModelCatalog().byProvider['acp-cursor']?.modelLoadError).toBeNull();
+    expect(getThreadModelCatalog().byProvider['acp-cursor']?.models[0]?.model).toBe('acp-cursor-model');
+  });
+
+  it('reloads every offered harness so Settings Check can pick up a new login', async () => {
+    const calls: Array<string | undefined> = [];
+    const fetcher: ThreadExecutionOptionsFetcher = async (query) => {
+      calls.push(query?.providerId);
+      return optionsBody(['claude-code', 'codex'], query?.providerId ?? 'roster');
+    };
+    resetThreadModelCatalog(fetcher);
+    await prefetchThreadModelCatalog();
+    calls.length = 0;
+    await reloadThreadModelCatalog();
+    expect(calls).toEqual([undefined, 'claude-code', 'codex']);
+  });
+
+  it('re-runs prefetch when a harness is added while the first load is in flight', async () => {
+    let roster = ['claude-code'];
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let gated = true;
+    const fetcher: ThreadExecutionOptionsFetcher = async (query) => {
+      const ids = [...roster];
+      if (!query?.providerId && gated) {
+        gated = false;
+        await gate;
+      }
+      return optionsBody(ids, query?.providerId ?? 'roster');
+    };
+    resetThreadModelCatalog(fetcher);
+    const first = prefetchThreadModelCatalog();
+    roster = ['claude-code', 'codex'];
+    const second = prefetchThreadModelCatalog();
+    expect(second).toBe(first);
+    release();
+    await first;
+    expect(getThreadModelCatalog().byProvider.codex).toBeDefined();
+  });
+});

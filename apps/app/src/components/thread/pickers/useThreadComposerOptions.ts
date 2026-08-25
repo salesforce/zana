@@ -1,20 +1,24 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import {
   reconcileReasoningLevel,
   reasoningLevelSchema,
   type AvailableModel,
   type ReasoningLevel
 } from '@zana-ai/zcc-domain/thread-runtime';
-import { product } from '../../../lib/product-client.js';
 import type { ModelPickerOption, PickerOption } from './model-picker-option.js';
 import { REASONING_LABELS, visibleComposerReasoningLevels } from './reasoning-labels.js';
-import { composerActionsFromProvider } from './composer-mode.js';
 import {
   fallbackModelsForProvider,
   fallbackMoreModelsForProvider,
   fallbackProviderOption,
   type ThreadComposerProviderOption
 } from './fallback-models.js';
+import {
+  ensureThreadProviderModels,
+  getThreadModelCatalog,
+  prefetchThreadModelCatalog,
+  subscribeThreadModelCatalog
+} from './thread-model-catalog.js';
 
 export type { ThreadComposerProviderOption };
 
@@ -34,16 +38,11 @@ export function useThreadComposerOptions(input: {
   initialModel?: string | null;
   initialReasoningLevel?: string | null;
 }) {
-  const [providers, setProviders] = useState<ThreadComposerProviderOption[]>(() => [
-    fallbackProviderOption(input.lockedProviderId ?? 'claude-code')
-  ]);
-  const [models, setModels] = useState<AvailableModel[]>(() =>
-    fallbackModelsForProvider(input.lockedProviderId ?? 'claude-code')
+  const catalog = useSyncExternalStore(
+    subscribeThreadModelCatalog,
+    getThreadModelCatalog,
+    getThreadModelCatalog
   );
-  const [moreModels, setMoreModels] = useState<AvailableModel[]>(() =>
-    fallbackMoreModelsForProvider(input.lockedProviderId ?? 'claude-code')
-  );
-  const [loading, setLoading] = useState(false);
   const [providerId, setProviderId] = useState(input.lockedProviderId ?? 'claude-code');
   const [model, setModel] = useState(
     input.initialModel
@@ -69,40 +68,28 @@ export function useThreadComposerOptions(input: {
   }, [input.initialModel, input.initialReasoningLevel]);
 
   useEffect(() => {
-    let cancelled = false;
-    const fallbackModels = fallbackModelsForProvider(providerId);
-    const fallbackMore = fallbackMoreModelsForProvider(providerId);
-    setModels(fallbackModels);
-    setMoreModels(fallbackMore);
-    setLoading(true);
-    void product.threads.executionOptions({ providerId }).then((body) => {
-      if (cancelled) return;
-      const nextProviders = (body.providers ?? []).map((row) => ({
-        id: row.id,
-        displayName: row.displayName,
-        permissionModes: row.capabilities?.permissionModes ?? [],
-        composerActions: composerActionsFromProvider(row.composerActions)
-      }));
-      if (nextProviders.length > 0) setProviders(nextProviders);
-      else setProviders([fallbackProviderOption(providerId)]);
-      const nextModels = (body.models ?? []) as AvailableModel[];
-      setModels(nextModels.length > 0 ? nextModels : fallbackModels);
-      const nextMore = (body.selectedOnlyModels ?? []) as AvailableModel[];
-      setMoreModels(nextMore.length > 0 ? nextMore : fallbackMore);
-      if (!input.threadId) {
-        const offered = nextProviders.some((row) => row.id === providerId);
-        if (!offered && nextProviders[0]) setProviderId(nextProviders[0].id);
-      }
-      setLoading(false);
-    }).catch(() => {
-      if (cancelled) return;
-      setProviders([fallbackProviderOption(providerId)]);
-      setModels(fallbackModels);
-      setMoreModels(fallbackMore);
-      setLoading(false);
-    });
-    return () => { cancelled = true; };
-  }, [input.threadId, providerId]);
+    void prefetchThreadModelCatalog();
+  }, []);
+
+  useEffect(() => {
+    void ensureThreadProviderModels(providerId);
+  }, [providerId]);
+
+  const providers = catalog.providers.length > 0
+    ? catalog.providers
+    : [fallbackProviderOption(providerId)];
+  const cached = catalog.byProvider[providerId];
+  const models = cached?.models ?? fallbackModelsForProvider(providerId);
+  const moreModels = cached?.selectedOnlyModels ?? fallbackMoreModelsForProvider(providerId);
+  const loading = !cached;
+  const modelLoadError = cached?.modelLoadError ?? null;
+
+  useEffect(() => {
+    if (input.threadId || input.lockedProviderId) return;
+    if (catalog.providers.length === 0) return;
+    const offered = catalog.providers.some((row) => row.id === providerId);
+    if (!offered && catalog.providers[0]) setProviderId(catalog.providers[0].id);
+  }, [input.threadId, input.lockedProviderId, catalog.providers, providerId]);
 
   const activeModel = useMemo(
     () => models.concat(moreModels).find((row) => row.model === model) ?? models.find((row) => row.isDefault) ?? models[0],
@@ -164,6 +151,7 @@ export function useThreadComposerOptions(input: {
     modelOptions,
     moreModelOptions,
     modelIsLoading: loading,
+    modelLoadError,
     reasoningLevel,
     setReasoningLevel,
     reasoningOptions

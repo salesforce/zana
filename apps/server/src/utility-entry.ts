@@ -48,9 +48,18 @@ parentPort.on('message', async ({ data }) => {
       projectSettings = createProjectSettingsStore({
         projectSettingsFile: join(message.dataDir, 'project-settings.json')
       });
+      const product = createProductHttpContext({
+        dataDir: message.dataDir,
+        origins: { serverPort: 0, devAppPort: DEFAULT_DEV_APP_PORT },
+        projects: projects ?? undefined
+      });
       plugins = createPluginService({
         dataDir: message.dataDir,
         bundledRoot: message.bundledPluginsRoot ?? join(message.dataDir, '..', 'plugins'),
+        requestPluginInteraction: (args) => product.pendingInteractions.requestPluginInteraction(args),
+        interruptPluginInteractions: (pluginId) => {
+          product.pendingInteractions.interruptPluginInteractions(pluginId);
+        },
         onAgentCapabilitiesChanged: (contributors) => {
           parentPort.postMessage({
             type: 'plugin-capabilities',
@@ -74,11 +83,6 @@ parentPort.on('message', async ({ data }) => {
         }
       });
       await plugins.start();
-      const product = createProductHttpContext({
-        dataDir: message.dataDir,
-        origins: { serverPort: 0, devAppPort: DEFAULT_DEV_APP_PORT },
-        projects: projects ?? undefined
-      });
       const host = await startStaticHost({
         rootDir: message.rendererRoot,
         browserBootstrap: () => ({

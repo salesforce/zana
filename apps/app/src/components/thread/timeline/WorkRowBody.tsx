@@ -1,8 +1,8 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState } from 'react';
 import type { TimelineViewWorkRow } from '@zana-ai/zcc-thread-view';
 import { formatDiffStatsText } from '@zana-ai/zcc-thread-view';
 import { product } from '../../../lib/product-client.js';
-import { imagePreviewSrc, resolveQuestionAnswer } from './work-row-helpers.js';
+import { imagePreviewSrc } from './work-row-helpers.js';
 
 function TerminalOutput({
   command,
@@ -115,41 +115,26 @@ function WorkflowBody({ row }: { row: Extract<TimelineViewWorkRow, { workKind: '
 }
 
 function QuestionBody({
-  row,
-  onAnswer
+  row
 }: {
   row: Extract<TimelineViewWorkRow, { workKind: 'question' }>;
-  onAnswer?: (text: string) => void;
 }) {
-  const [draft, setDraft] = useState('');
-  const pending = row.lifecycle === 'pending';
   const prompts = row.questions.map((question) => question.prompt).filter(Boolean);
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    const text = resolveQuestionAnswer(draft, prompts);
-    if (!text || !onAnswer) return;
-    onAnswer(text);
-    setDraft('');
-  };
+  const answers = row.answers
+    ? Object.values(row.answers).flatMap((answer) => [
+        ...answer.selected,
+        ...(answer.freeText ? [answer.freeText] : [])
+      ]).filter(Boolean)
+    : [];
   return (
-    <div className="thread-question-body" data-lifecycle={row.lifecycle}>
+    <div className="thread-question-body" data-lifecycle={row.lifecycle} data-testid="thread-question-row">
       {prompts.map((prompt) => (
         <p key={prompt} className="thread-question-prompt">{prompt}</p>
       ))}
-      {pending && onAnswer ? (
-        <form className="thread-question-form" onSubmit={submit}>
-          <input
-            className="thread-question-input"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            placeholder="Answer…"
-            aria-label="Answer question"
-            data-testid="thread-question-input"
-          />
-          <button type="submit" className="thread-question-submit" data-testid="thread-question-submit">
-            Send
-          </button>
-        </form>
+      {answers.length > 0 ? (
+        <p className="thread-question-answer">{answers.join(', ')}</p>
+      ) : row.lifecycle === 'pending' ? (
+        <p className="thread-terminal-meta">Waiting for an answer</p>
       ) : null}
     </div>
   );
@@ -212,13 +197,11 @@ function ImageViewBody({
 export function WorkRowBody({
   row,
   threadId,
-  onOpenDiff,
-  onAnswer
+  onOpenDiff
 }: {
   row: TimelineViewWorkRow;
   threadId?: string;
   onOpenDiff?: (path: string) => void;
-  onAnswer?: (text: string) => void;
 }) {
   switch (row.workKind) {
     case 'command':
@@ -251,7 +234,7 @@ export function WorkRowBody({
     case 'workflow':
       return <WorkflowBody row={row} />;
     case 'question':
-      return <QuestionBody row={row} onAnswer={onAnswer} />;
+      return <QuestionBody row={row} />;
     case 'approval':
       return <ApprovalBody row={row} />;
     case 'image-view':

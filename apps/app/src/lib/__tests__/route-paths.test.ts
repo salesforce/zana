@@ -23,11 +23,14 @@ import {
   getSettingsTabRoutePath,
   getSkillsRoutePath,
   getSuggestionsRoutePath,
+  getThreadRoutePath,
   isExtensionsRoutePath,
   isProjectRoutePath,
   isRoutePath,
   isSettingsRoutePath,
+  projectIdFromThreadPath,
   resolveRouteHref,
+  threadIdFromPath,
   TOOLS_PLUGIN_BROWSE_ROUTE_PATH,
   TOOLS_PLUGINS_ROUTE_PATH,
   TOOLS_SKILLS_ROUTE_PATH
@@ -87,7 +90,8 @@ describe('route path helpers', () => {
       '/plugins/docs/panel',
       '/threads/new',
       '/projects/p1/threads/new',
-      '/threads/abc'
+      '/threads/abc',
+      '/projects/p1/threads/abc'
     ]) {
       expect(isRoutePath({ path })).toBe(true);
     }
@@ -102,6 +106,14 @@ describe('route path helpers', () => {
     expect(getAgentsRoutePath()).toBe('/agents');
     expect(getNewThreadRoutePath()).toBe('/threads/new');
     expect(getNewThreadRoutePath('proj/1')).toBe('/projects/proj%2F1/threads/new');
+    expect(getThreadRoutePath('abc')).toBe('/threads/abc');
+    expect(getThreadRoutePath('abc', 'proj/1')).toBe('/projects/proj%2F1/threads/abc');
+    expect(threadIdFromPath('/threads/abc')).toBe('abc');
+    expect(threadIdFromPath('/projects/p1/threads/abc')).toBe('abc');
+    expect(threadIdFromPath('/threads/new')).toBeUndefined();
+    expect(threadIdFromPath('/projects/p1/threads/new')).toBeUndefined();
+    expect(projectIdFromThreadPath('/projects/p1/threads/abc')).toBe('p1');
+    expect(projectIdFromThreadPath('/threads/abc')).toBeUndefined();
     expect(getFollowUpsRoutePath()).toBe('/followups');
     expect(getSuggestionsRoutePath()).toBe('/suggestions');
     expect(getSchedulerRoutePath()).toBe('/scheduler');

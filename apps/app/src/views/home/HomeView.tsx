@@ -38,10 +38,9 @@ interface GuideItem {
 }
 
 /**
- * Landing dashboard: Inbox + Guides fill the panel, and the thread composer
- * is docked to the bottom of the viewport (always reachable, never below the
- * cards). Cards deep-link into the existing full views. Full-width standalone
- * panel (ListPane returns null for `nav === 'home'`).
+ * Landing dashboard: the thread composer leads at the top of the panel, and
+ * Inbox + Guides scroll beneath it. Cards deep-link into the existing full
+ * views. Full-width standalone panel (ListPane returns null for `nav === 'home'`).
  */
 export function HomeView() {
   const inboxEntries = useInbox((s) => s.entries);
@@ -135,6 +134,8 @@ export function HomeView() {
     <div className="settings-panel home-panel aurora-host">
       <AuroraGrid />
       <div className="settings-inner">
+        <HomeAgentComposer />
+
         <div className="home-dashboard">
           <div className="home-grid">
             <HomeCard
@@ -208,8 +209,6 @@ export function HomeView() {
             </div>
           )}
         </div>
-
-        <HomeAgentComposer />
       </div>
 
       {creatingExtension && (

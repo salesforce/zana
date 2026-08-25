@@ -19,6 +19,16 @@ async function selectTargetProject(
   await expect(trigger).toContainText(projectName);
 }
 
+async function openLegacyAgentLauncher(window: Page) {
+  const newButton = window.locator('[data-testid="agents-new"]');
+  if (await newButton.count()) await newButton.click();
+  else await window.locator('[data-testid="agents-new-empty"]').click();
+  const modal = window.locator('[data-testid="launch-modal"]');
+  await expect(modal).toBeVisible();
+  await modal.getByRole('button', { name: 'Legacy Agent' }).click();
+  return modal;
+}
+
 test('OpenCode agent picker loads effective visible primary agents through real IPC', async ({ app }) => {
   const { window } = app;
   const openCode = makeFakeOpenCodeBinary();
@@ -44,11 +54,7 @@ test('OpenCode agent picker loads effective visible primary agents through real 
     await window.locator('[data-testid="nav-projects"]').click();
     await window.locator('button[aria-label="Reload project list"]').click();
     await window.locator('[data-testid="nav-agents"]').click();
-    const newButton = window.locator('[data-testid="agents-new"]');
-    if (await newButton.count()) await newButton.click();
-    else await window.locator('[data-testid="agents-new-empty"]').click();
-
-    const modal = window.locator('[data-testid="launch-modal"]');
+    const modal = await openLegacyAgentLauncher(window);
     await selectTargetProject(window, modal, projectName);
     const harness = modal.getByLabel('Launch harness').locator('[data-testid="launch-profile-opencode"]');
     await expect(harness).toBeEnabled();
@@ -97,10 +103,7 @@ test('OpenCode picker holds cached agents until explicit Refresh', async ({ app 
     await window.locator('[data-testid="nav-projects"]').click();
     await window.locator('button[aria-label="Reload project list"]').click();
     await window.locator('[data-testid="nav-agents"]').click();
-    const newButton = window.locator('[data-testid="agents-new"]');
-    if (await newButton.count()) await newButton.click();
-    else await window.locator('[data-testid="agents-new-empty"]').click();
-    const modal = window.locator('[data-testid="launch-modal"]');
+    const modal = await openLegacyAgentLauncher(window);
     await selectTargetProject(window, modal, projectName);
     await modal.getByLabel('Launch harness').locator('[data-testid="launch-profile-opencode"]').click();
     await modal.getByRole('button', { name: 'Customize launch' }).click();
@@ -136,10 +139,7 @@ test.describe('Quick Agent OpenCode startup warmup', () => {
         ? readFileSync(openCode.catalogCalls, 'utf8').trim().split('\n').filter(Boolean).length
         : 0).toBe(1);
       await window.locator('[data-testid="nav-agents"]').click();
-      const newButton = window.locator('[data-testid="agents-new"]');
-      if (await newButton.count()) await newButton.click();
-      else await window.locator('[data-testid="agents-new-empty"]').click();
-      const modal = window.locator('[data-testid="launch-modal"]');
+      const modal = await openLegacyAgentLauncher(window);
       await modal.getByLabel('Launch harness').locator('[data-testid="launch-profile-opencode"]').click();
       await modal.getByRole('button', { name: 'Customize launch' }).click();
       const picker = modal.locator('#launch-role-target');
@@ -183,11 +183,7 @@ test('real OpenCode CLI agents become selectable through Electron UI', async ({ 
     await window.locator('[data-testid="nav-projects"]').click();
     await window.locator('button[aria-label="Reload project list"]').click();
     await window.locator('[data-testid="nav-agents"]').click();
-    const newButton = window.locator('[data-testid="agents-new"]');
-    if (await newButton.count()) await newButton.click();
-    else await window.locator('[data-testid="agents-new-empty"]').click();
-
-    const modal = window.locator('[data-testid="launch-modal"]');
+    const modal = await openLegacyAgentLauncher(window);
     await selectTargetProject(window, modal, projectName);
     const harness = modal.getByLabel('Launch harness').locator('[data-testid="launch-profile-opencode"]');
     await expect(harness).toBeEnabled();
@@ -235,11 +231,7 @@ test.describe('real OpenCode home integration', () => {
       await window.locator('[data-testid="nav-projects"]').click();
       await window.locator('button[aria-label="Reload project list"]').click();
       await window.locator('[data-testid="nav-agents"]').click();
-      const newButton = window.locator('[data-testid="agents-new"]');
-      if (await newButton.count()) await newButton.click();
-      else await window.locator('[data-testid="agents-new-empty"]').click();
-
-      const modal = window.locator('[data-testid="launch-modal"]');
+      const modal = await openLegacyAgentLauncher(window);
       await selectTargetProject(window, modal, projectName);
       const harness = modal.getByLabel('Launch harness').locator('[data-testid="launch-profile-opencode"]');
       await expect(harness).toBeEnabled();

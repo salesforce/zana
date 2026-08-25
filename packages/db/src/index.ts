@@ -5,7 +5,8 @@ export {
   createHostSessionId,
   createEnvironmentId,
   createThreadId,
-  createEventId
+  createEventId,
+  createPendingInteractionId
 } from './ids.js';
 export {
   getHost,
@@ -16,6 +17,7 @@ export {
 } from './data/hosts.js';
 export {
   getActiveSessionForHost,
+  getLatestSessionForHost,
   openHostSession,
   closeHostSession,
   type HostSessionRow
@@ -51,6 +53,7 @@ export {
   getConversationThread,
   listConversationThreadsByProject,
   listLiveConversationThreads,
+  listLiveConversationThreadsForHost,
   listVisibleConversationThreads,
   updateConversationThreadStatus,
   updateConversationThreadParent,
@@ -75,3 +78,24 @@ export {
   nextConversationEventSequence,
   type ConversationThreadEventRow
 } from './data/conversation-events.js';
+export {
+  createPendingInteraction,
+  getActivePendingInteractionForThread,
+  getPendingInteraction,
+  getPendingInteractionByProviderRequest,
+  hasPendingInteractionForThread,
+  interruptPendingInteractionsForPlugin,
+  interruptPendingInteractionsForThreadIds,
+  interruptPendingInteractionsForThreads,
+  listActivePendingInteractionThreadIdsForHost,
+  listActivePendingInteractionsForPlugin,
+  listActivePluginPendingInteractions,
+  listPendingInteractionsByThread,
+  setPendingInteractionInterrupted,
+  setPendingInteractionResolved,
+  setPendingInteractionResolving,
+  type CreatePendingInteractionInput,
+  type PendingInteractionOriginKind,
+  type PendingInteractionRow,
+  type PendingInteractionStatus
+} from './data/pending-interactions.js';

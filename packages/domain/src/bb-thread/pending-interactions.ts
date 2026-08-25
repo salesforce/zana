@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { jsonValueSchema } from "./json-value.js";
-import { PLUGIN_INTERACTION_MAX_TITLE_LENGTH } from "./plugin-interaction-limits.js";
+import { PLUGIN_INTERACTION_MAX_PAYLOAD_BYTES, PLUGIN_INTERACTION_MAX_TITLE_LENGTH } from "./plugin-interaction-limits.js";
 
-export { PLUGIN_INTERACTION_MAX_TITLE_LENGTH };
+export { PLUGIN_INTERACTION_MAX_PAYLOAD_BYTES, PLUGIN_INTERACTION_MAX_TITLE_LENGTH };
 
 export const pendingInteractionStatusSchema = z.enum([
   "pending",

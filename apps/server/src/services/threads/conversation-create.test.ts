@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { flattenThreadInput } from './conversation-create.js';
-import { canonicalThreadProviderId, listThreadProviders } from './thread-provider-catalog.js';
+import {
+  canonicalThreadProviderId,
+  getThreadProvider,
+  listThreadProviders,
+  registerThreadProvider
+} from './thread-provider-catalog.js';
 
 describe('flattenThreadInput', () => {
   it('accepts a string, string array, and PromptInput text parts', () => {
@@ -18,15 +23,32 @@ describe('flattenThreadInput', () => {
 });
 
 describe('thread provider catalog', () => {
-  it('seeds Claude Code, Codex, Pi, and ACP Cursor', () => {
+  it('seeds Claude Code, Codex, Pi, ACP Cursor, and ACP OpenCode', () => {
     const ids = listThreadProviders().map((row) => row.id).sort();
-    expect(ids).toEqual(['acp-cursor', 'claude-code', 'codex', 'pi']);
+    expect(ids).toEqual(['acp-cursor', 'acp-opencode', 'claude-code', 'codex', 'pi']);
+  });
+
+  it('re-seeds a builtin after the ACP plugin unregisters it', () => {
+    const current = getThreadProvider('acp-opencode');
+    expect(current).toBeDefined();
+    const handle = registerThreadProvider('provider-acp', {
+      id: 'acp-opencode',
+      displayName: 'OpenCode overlay',
+      capabilities: current!.capabilities,
+      composerActions: current!.composerActions
+    });
+    expect(getThreadProvider('acp-opencode')?.displayName).toBe('OpenCode overlay');
+    handle.unregister();
+    expect(listThreadProviders().map((row) => row.id)).toContain('acp-opencode');
+    expect(getThreadProvider('acp-opencode')?.displayName).toBe('OpenCode');
   });
 
   it('maps ZCC launch-profile aliases onto thread providers', () => {
     expect(canonicalThreadProviderId('claude')).toBe('claude-code');
     expect(canonicalThreadProviderId('claude-yolo')).toBe('claude-code');
     expect(canonicalThreadProviderId('cursor')).toBe('acp-cursor');
+    expect(canonicalThreadProviderId('opencode')).toBe('acp-opencode');
+    expect(canonicalThreadProviderId('opencode-resume')).toBe('acp-opencode');
     expect(canonicalThreadProviderId('codex')).toBe('codex');
   });
 

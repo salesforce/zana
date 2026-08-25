@@ -2112,7 +2112,8 @@ export const AgentLauncher = memo(function AgentLauncher({
                       setYolo(false);
                     }}
                     aria-pressed={!profileChosen}
-                    title="Use configured default"
+                    aria-label="Use configured default"
+                    title={harnessCompact ? undefined : 'Use configured default'}
                   >
                     {!harnessCompact && <span className="launch-segmented-text">Default</span>}
                   </button>
@@ -2127,7 +2128,8 @@ export const AgentLauncher = memo(function AgentLauncher({
                         setProfileChosen(true);
                       }}
                       aria-pressed={profileChosen && family?.id === f.id}
-                      title={f.label}
+                      aria-label={f.label}
+                      title={harnessCompact ? undefined : f.label}
                     >
                       <span className={`tab-profile-icon profile-${f.base}`} aria-hidden="true">
                         {profileIcon(f.base)}

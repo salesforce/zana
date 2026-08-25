@@ -38,4 +38,14 @@ export const BUILT_IN_ACP_LAUNCH_SPECS: Readonly<
       ],
     },
   },
+  "acp-opencode": {
+    displayName: "OpenCode",
+    command: "opencode",
+    args: ["acp"],
+    env: {},
+    modelCli: {
+      listArgs: ["models"],
+      primaryModels: [],
+    },
+  },
 };

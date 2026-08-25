@@ -1,6 +1,7 @@
 import { useMemo, type CSSProperties, type MouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Activity, Clock, MessageSquare } from 'lucide-react';
+import { Activity, Clock } from 'lucide-react';
+import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
 import type { AgentState, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { useData, useUi, useAgentStatus, useIdleTriage } from '../store.js';
 import { useThreads } from '../thread-store.js';
@@ -63,6 +64,7 @@ interface TrayThread {
   id: string;
   title: string;
   projectId: string;
+  providerId: string;
   projectName: string;
   projectColor?: string;
   state: AgentState;
@@ -163,6 +165,7 @@ export function AgentTray({
         id: thread.id,
         title: threadTitle(thread),
         projectId: thread.projectId,
+        providerId: thread.providerId,
         projectName: project?.name ?? 'Unknown',
         projectColor: project?.color,
         state
@@ -236,7 +239,7 @@ export function AgentTray({
                 type="button"
                 className={`agent-tray-row is-thread ${item.projectColor ? 'project-tinted' : ''}`}
                 data-kind="thread"
-                onClick={() => navigate(getThreadRoutePath(item.id))}
+                onClick={() => navigate(getThreadRoutePath(item.id, projectId))}
                 onContextMenu={(e) => {
                   const thread = threads.find((row) => row.id === item.id);
                   if (!thread) return;
@@ -247,7 +250,7 @@ export function AgentTray({
                 style={item.projectColor ? ({ '--project-color': item.projectColor } as CSSProperties) : undefined}
               >
                 <span className={`tab-agent-dot agent-${item.state}`} aria-hidden="true" />
-                <MessageSquare size={13} aria-hidden="true" />
+                <ProviderIcon providerId={item.providerId} size={13} />
                 <span className="agent-tray-row-text">
                   <span className="agent-tray-row-title-line">
                     <span className="agent-tray-row-title">{item.title}</span>

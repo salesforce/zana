@@ -224,6 +224,27 @@ describe('host command dispatch', () => {
     if (!response.ok) expect(response.error.code).toBe('unknown_command');
   });
 
+  it('delivers interactive.resolve through the runtime registry', async () => {
+    const delivered: Array<{ interactionId: string }> = [];
+    const runtime = createCommandRuntime({
+      verifyProviders: async () => installedClaude,
+      deliverInteractiveResolve: (input) => {
+        delivered.push({ interactionId: input.interactionId });
+      }
+    });
+    const threadId = randomUUID();
+    await expect(dispatchHostCommand(runtime, {
+      type: 'interactive.resolve',
+      threadId,
+      interactionId: 'pint_1',
+      providerId: 'claude-code',
+      providerThreadId: 'prov-1',
+      providerRequestId: 'req-1',
+      resolution: { decision: 'deny' }
+    })).resolves.toEqual({ interactionId: 'pint_1', delivered: true });
+    expect(delivered).toEqual([{ interactionId: 'pint_1' }]);
+  });
+
   it('provisions a managed worktree, reports status, and destroys it', async () => {
     const source = mkdtempSync(join(tmpdir(), 'zcc-wt-src-'));
     git(source, ['init', '-b', 'main']);

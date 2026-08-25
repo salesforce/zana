@@ -9,6 +9,7 @@
 import type {
   PluginHomepageSectionRegistration,
   PluginNavPanelRegistration,
+  PluginPendingInteractionRegistration,
   PluginProjectTabRegistration,
   PluginRegistrationSet,
   PluginSettingsSectionRegistration,
@@ -31,7 +32,8 @@ let snapshot = {
   homepageSections: [] as PluginHomepageSectionRegistration[],
   settingsSections: [] as PluginSettingsSectionRegistration[],
   projectTabs: [] as PluginProjectTabRegistration[],
-  sidebarFooterActions: [] as PluginSidebarFooterActionRegistration[]
+  sidebarFooterActions: [] as PluginSidebarFooterActionRegistration[],
+  pendingInteractions: [] as PluginPendingInteractionRegistration[]
 };
 
 function rebuildSnapshot(): void {
@@ -42,7 +44,8 @@ function rebuildSnapshot(): void {
     homepageSections: orderedSets.flatMap((set) => set.homepageSections),
     settingsSections: orderedSets.flatMap((set) => set.settingsSections),
     projectTabs: orderedSets.flatMap((set) => set.projectTabs),
-    sidebarFooterActions: orderedSets.flatMap((set) => set.sidebarFooterActions)
+    sidebarFooterActions: orderedSets.flatMap((set) => set.sidebarFooterActions),
+    pendingInteractions: orderedSets.flatMap((set) => set.pendingInteractions)
   };
 }
 
@@ -109,6 +112,10 @@ export function listProjectTabs(): PluginProjectTabRegistration[] {
 
 export function listSidebarFooterActions(): PluginSidebarFooterActionRegistration[] {
   return snapshot.sidebarFooterActions;
+}
+
+export function listPendingInteractionSlots(): PluginPendingInteractionRegistration[] {
+  return snapshot.pendingInteractions;
 }
 
 /**

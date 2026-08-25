@@ -111,6 +111,7 @@ export function threadRailDetail(thread: Pick<ThreadListItem, 'status'>): string
 
 /** Humanize a thread provider id (`claude-code` → `Claude Code`, `acp-cursor` → `Cursor`). */
 export function threadHarnessLabel(providerId: string): string {
+  if (providerId === 'acp-opencode' || providerId === 'opencode') return 'OpenCode';
   const trimmed = providerId.replace(/^acp-/, '');
   const label = trimmed
     .split(/[-_]/g)

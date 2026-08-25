@@ -7,6 +7,7 @@ import {
   findProjectEnvironmentByHostPath,
   getConversationThread,
   getEnvironment,
+  hasPendingInteractionForThread,
   updateConversationThreadStatus,
   updateEnvironmentDiscovery,
   updateEnvironmentStatus,
@@ -187,6 +188,7 @@ export interface ConversationThreadView {
   cwd: string | null;
   branchName: string | null;
   isWorktree: boolean;
+  hasPendingInteraction: boolean;
 }
 
 export function conversationThreadView(ctx: ProductHttpContext, thread: ConversationThreadRow): ConversationThreadView {
@@ -195,7 +197,8 @@ export function conversationThreadView(ctx: ProductHttpContext, thread: Conversa
     ...thread,
     cwd: environment?.path ?? null,
     branchName: environment?.branchName ?? null,
-    isWorktree: environment?.isWorktree ?? false
+    isWorktree: environment?.isWorktree ?? false,
+    hasPendingInteraction: hasPendingInteractionForThread(ctx.db, thread.id)
   };
 }
 
@@ -298,7 +301,7 @@ export async function createConversationFromRequest(
       ctx.hub.emit('threads:updated', conversationThreadView(ctx, running));
       return running;
     } catch (error) {
-      updateConversationThreadStatus(ctx.db, thread.id, 'error');
+      failConversationStart(ctx, thread);
       if (!canReuseReady) updateEnvironmentStatus(ctx.db, existing.id, 'failed');
       if (error instanceof ThreadCreateError) throw error;
       throw mapHostError(error);
@@ -385,11 +388,19 @@ export async function createConversationFromRequest(
     ctx.hub.emit('threads:updated', conversationThreadView(ctx, running));
     return running;
   } catch (error) {
-    updateConversationThreadStatus(ctx.db, created.thread.id, 'error');
+    failConversationStart(ctx, created.thread);
     updateEnvironmentStatus(ctx.db, created.environment.id, 'failed');
     if (error instanceof ThreadCreateError) throw error;
     throw mapHostError(error);
   }
+}
+
+function failConversationStart(ctx: ProductHttpContext, thread: ConversationThreadRow): void {
+  const failed = updateConversationThreadStatus(ctx.db, thread.id, 'error') ?? {
+    ...thread,
+    status: 'error' as const
+  };
+  ctx.hub.emit('threads:updated', conversationThreadView(ctx, failed));
 }
 
 export function flattenThreadInput(input: unknown): string[] {

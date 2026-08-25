@@ -10,6 +10,7 @@ import { AgentLauncher } from '@/components/AgentLauncher';
 import { FindBar } from '@/components/FindBar';
 import { AgentsBoard } from '@/views/agents/AgentsBoard';
 import { NewThreadView } from '@/views/threads/NewThreadView';
+import { ThreadDetail } from '@/views/threads/ThreadDetailView';
 import { ProjectExtensionTab } from '@/views/project/ProjectExtensionTab';
 import { useProjectTabModules } from '@/modules';
 import { resolveProjectTabModule } from '@/lib/libraryPlugin';
@@ -97,7 +98,8 @@ export function WorkspaceView() {
   const extModule = project ? resolveProjectTabModule(mode, projectTabModules) : undefined;
   const isExtTab = !!extModule;
   const isNewThread = route.isNewThread && !!project;
-  const isAgents = mode === 'agents' && !!project && !isNewThread;
+  const isThreadView = route.isThreadView && !!project && !!route.threadId;
+  const isAgents = mode === 'agents' && !!project && !isNewThread && !isThreadView;
   const isExplorer = mode === 'explorer' && !!project;
   const isScheduler = mode === 'scheduler' && !!project;
   const isFeed = mode === 'feed' && !!project;
@@ -113,6 +115,7 @@ export function WorkspaceView() {
   // library/goals/followups and any extension project tab.
   const isTerminals =
     !isNewThread &&
+    !isThreadView &&
     !isAgents &&
     !isExplorer &&
     !isScheduler &&
@@ -227,6 +230,7 @@ export function WorkspaceView() {
   // we visually swap the middle section to ExplorerView via display:none.
   return (
     <div className="workspace panel-body--full">
+      {!isThreadView && (
       <div className="workspace-topbar">
         {/* Layout picker only. Mode switching lives on ProjectScopedNav; mounting
             an empty modes row would leave a padded band where the old horizontal
@@ -314,6 +318,7 @@ export function WorkspaceView() {
         )}
         </div>
       </div>
+      )}
       <div className="workspace-body">
           <div
             id={PROJECTS_TERMINAL_ANCHOR_ID}
@@ -386,6 +391,7 @@ export function WorkspaceView() {
             </div>
           )}
           {isNewThread && project && <NewThreadView project={project} />}
+          {isThreadView && route.threadId && <ThreadDetail threadId={route.threadId} />}
           {isAgents && project && (
             // Agents mode: a Kanban-style status board. Cards auto-flow across
             // lanes by live agent state; New agent opens the shared modal host.

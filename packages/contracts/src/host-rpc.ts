@@ -12,13 +12,13 @@ import {
   workspaceStatusSchema
 } from '@zana-ai/zcc-domain';
 import { gitBranchNameSchema } from '@zana-ai/zcc-domain/git-checkout';
-import { availableModelSchema, reasoningLevelSchema } from '@zana-ai/zcc-domain/thread-runtime';
+import { availableModelSchema, pendingInteractionResolutionSchema, reasoningLevelSchema } from '@zana-ai/zcc-domain/thread-runtime';
 
 /**
  * Bump when any enroll payload, daemon WS message, host-rpc command, or host
  * event envelope changes shape or meaning. Mismatch fails before dispatch.
  */
-export const HOST_RPC_PROTOCOL_VERSION = 9;
+export const HOST_RPC_PROTOCOL_VERSION = 10;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
 
 const UuidSchema = z.string().uuid();
@@ -60,7 +60,8 @@ export const HostRpcCommandTypeSchema = z.enum([
   'workspace.pull_request_create',
   'project.clone',
   'project.clone_default_path',
-  'codex.voice.transcribe'
+  'codex.voice.transcribe',
+  'interactive.resolve'
 ]);
 export type HostRpcCommandType = z.infer<typeof HostRpcCommandTypeSchema>;
 
@@ -411,6 +412,17 @@ export const CodexVoiceTranscribeCommandSchema = z.object({
 }).strict();
 export type CodexVoiceTranscribeCommand = z.infer<typeof CodexVoiceTranscribeCommandSchema>;
 
+export const InteractiveResolveCommandSchema = z.object({
+  type: z.literal('interactive.resolve'),
+  threadId: UuidSchema,
+  interactionId: z.string().min(1).max(128),
+  providerId: z.string().min(1).max(200),
+  providerThreadId: z.string().min(1).max(200),
+  providerRequestId: z.string().min(1).max(200),
+  resolution: pendingInteractionResolutionSchema
+}).strict();
+export type InteractiveResolveCommand = z.infer<typeof InteractiveResolveCommandSchema>;
+
 export const HostRpcCommandSchema = z.union([
   ProviderStatusCommandSchema,
   ProviderListModelsCommandSchema,
@@ -444,7 +456,8 @@ export const HostRpcCommandSchema = z.union([
   WorkspacePullRequestCreateCommandSchema,
   ProjectCloneCommandSchema,
   ProjectCloneDefaultPathCommandSchema,
-  CodexVoiceTranscribeCommandSchema
+  CodexVoiceTranscribeCommandSchema,
+  InteractiveResolveCommandSchema
 ]);
 export type HostRpcCommand = z.infer<typeof HostRpcCommandSchema>;
 
@@ -632,6 +645,12 @@ export const CodexVoiceTranscribeResultSchema = z.object({
 }).strict();
 export type CodexVoiceTranscribeResult = z.infer<typeof CodexVoiceTranscribeResultSchema>;
 
+export const InteractiveResolveResultSchema = z.object({
+  interactionId: z.string().min(1),
+  delivered: z.literal(true)
+}).strict();
+export type InteractiveResolveResult = z.infer<typeof InteractiveResolveResultSchema>;
+
 export const HostRpcResultSchemaByType = {
   'provider.status': ProviderStatusResultSchema,
   'provider.list_models': ProviderListModelsResultSchema,
@@ -665,7 +684,8 @@ export const HostRpcResultSchemaByType = {
   'workspace.pull_request_create': WorkspacePullRequestResultSchema,
   'project.clone': ProjectCloneResultSchema,
   'project.clone_default_path': ProjectCloneDefaultPathResultSchema,
-  'codex.voice.transcribe': CodexVoiceTranscribeResultSchema
+  'codex.voice.transcribe': CodexVoiceTranscribeResultSchema,
+  'interactive.resolve': InteractiveResolveResultSchema
 } as const;
 
 export const HostRpcErrorSchema = z.object({

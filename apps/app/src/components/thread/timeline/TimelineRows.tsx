@@ -29,7 +29,6 @@ interface TimelineRowsProps {
   onTitleAction?: TimelineTitleActionHandler;
   onTitleLink?: TimelineTitleLinkHandler;
   onOpenDiff?: (path: string) => void;
-  onAnswer?: (text: string) => void;
   threadId?: string;
 }
 
@@ -71,7 +70,6 @@ function TimelineRowView({
   onTitleAction,
   onTitleLink,
   onOpenDiff,
-  onAnswer,
   threadId
 }: TimelineRowsProps & { row: ThreadTimelineViewRow; title: TimelineTitle }) {
   const autoOpen = isAutoExpandedRow(row.id, expansion);
@@ -92,7 +90,6 @@ function TimelineRowView({
     onTitleAction,
     onTitleLink,
     onOpenDiff,
-    onAnswer,
     threadId
   };
 
@@ -133,7 +130,6 @@ function TimelineRowView({
         row={row}
         threadId={threadId}
         onOpenDiff={onOpenDiff}
-        onAnswer={onAnswer}
       />
     )
     : null;

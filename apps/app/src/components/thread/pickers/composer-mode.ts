@@ -13,6 +13,17 @@ export function composerModesForActions(actions: readonly string[]): ComposerWor
   return modes;
 }
 
+/** Next composer work mode, wrapping from the last offered mode back to the first. */
+export function nextComposerWorkMode(
+  modes: readonly ComposerWorkMode[],
+  current: ComposerWorkMode
+): ComposerWorkMode {
+  if (modes.length === 0) return current;
+  const index = modes.indexOf(current);
+  const from = index < 0 ? 0 : index;
+  return modes[(from + 1) % modes.length]!;
+}
+
 export function applyComposerModePrefix(text: string, mode: ComposerWorkMode): string {
   if (mode === 'agent') return text;
   const command = mode === 'plan' ? '/plan' : '/goal';

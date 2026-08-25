@@ -69,6 +69,7 @@ const FALLBACK_PROVIDERS: readonly ThreadComposerProviderOption[] = [
   { id: 'codex', displayName: 'Codex', permissionModes: ['accept-edits', 'auto', 'full'], composerActions: ['plan', 'goal'] },
   { id: 'pi', displayName: 'Pi', permissionModes: ['full'], composerActions: [] },
   { id: 'acp-cursor', displayName: 'Cursor', permissionModes: ['accept-edits', 'full'], composerActions: [] },
+  { id: 'acp-opencode', displayName: 'OpenCode', permissionModes: ['accept-edits', 'full'], composerActions: [] },
   { id: 'fake', displayName: 'Fake', permissionModes: ['full'], composerActions: ['plan'] }
 ];
 

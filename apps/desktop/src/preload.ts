@@ -114,12 +114,27 @@ const api: CcApi = {
       message: 'desktop launches use terminals.create'
     }),
     list: async () => [],
-      onUpdated: (cb) => {
-        void cb;
-        return () => {};
-      },
-      archive: async () => ({ ok: false })
+    onUpdated: (cb) => {
+      void cb;
+      return () => {};
     },
+    interactions: {
+      list: async () => [],
+      get: async () => {
+        throw new Error('threads require the product server');
+      },
+      resolve: async () => {
+        throw new Error('threads require the product server');
+      },
+      respond: async () => {
+        throw new Error('threads require the product server');
+      },
+      cancel: async () => {
+        throw new Error('threads require the product server');
+      }
+    },
+    archive: async () => ({ ok: false })
+  },
     environments: {
       list: async () => [],
       status: async () => {

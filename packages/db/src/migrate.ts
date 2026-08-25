@@ -112,6 +112,38 @@ const MIGRATE_V4 = [
   `CREATE INDEX conversation_thread_events_thread_seq_idx ON thread_events(thread_id, sequence)`
 ];
 
+const MIGRATE_V5 = [
+  `CREATE TABLE pending_interactions (
+        id TEXT PRIMARY KEY,
+        thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+        origin_kind TEXT NOT NULL DEFAULT 'provider' CHECK (origin_kind IN ('provider', 'plugin')),
+        turn_id TEXT,
+        provider_id TEXT,
+        provider_thread_id TEXT,
+        provider_request_id TEXT,
+        plugin_id TEXT,
+        renderer_id TEXT,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'resolving', 'resolved', 'interrupted')),
+        payload TEXT NOT NULL,
+        resolution TEXT,
+        status_reason TEXT,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER,
+        resolved_at INTEGER,
+        updated_at INTEGER NOT NULL
+      )`,
+  `CREATE UNIQUE INDEX pending_interactions_provider_request_idx
+     ON pending_interactions(provider_id, provider_thread_id, provider_request_id)`,
+  `CREATE INDEX pending_interactions_thread_created_idx
+     ON pending_interactions(thread_id, created_at)`,
+  `CREATE INDEX pending_interactions_thread_status_created_idx
+     ON pending_interactions(thread_id, status, created_at)`,
+  `CREATE INDEX pending_interactions_status_created_idx
+     ON pending_interactions(status, created_at)`,
+  `CREATE INDEX pending_interactions_plugin_status_created_idx
+     ON pending_interactions(plugin_id, status, created_at)`
+];
+
 function applyVersion(database: SqliteDatabase, version: number, statements: readonly string[]): void {
   database.transaction(() => {
     for (const statement of statements) {
@@ -175,6 +207,7 @@ export function migrate(database: SqliteDatabase): void {
   }
   if (!applied.has(3)) applyVersion(database, 3, MIGRATE_V3);
   if (!applied.has(4)) applyVersion(database, 4, MIGRATE_V4);
+  if (!applied.has(5)) applyVersion(database, 5, MIGRATE_V5);
 }
 
 export { CREATE_TABLES_V1 as SCHEMA_STATEMENTS_V1 };

@@ -1,19 +1,21 @@
 import { useNavigate } from 'react-router-dom';
 import type { MouseEvent } from 'react';
-import { MessageSquare } from 'lucide-react';
 import type { ThreadListItem } from '../thread-store.js';
 import { getThreadRoutePath } from '../lib/route-paths.js';
 import { isBusyThreadStatus, threadStatusToAgentState } from './thread/thread-timeline-model.js';
+import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
 import { FleetKindChip } from './FleetKindChip.js';
 
 export function ThreadListEntry({
   thread,
   projectName,
+  projectId,
   active = false,
   onContextMenu
 }: {
   thread: ThreadListItem;
   projectName?: string;
+  projectId?: string | null;
   active?: boolean;
   onContextMenu?: (e: MouseEvent) => void;
 }) {
@@ -27,13 +29,13 @@ export function ThreadListEntry({
       data-testid="thread-list-entry"
       data-kind="thread"
       data-status={thread.status}
-      onClick={() => navigate(getThreadRoutePath(thread.id))}
+      onClick={() => navigate(getThreadRoutePath(thread.id, projectId))}
       onContextMenu={onContextMenu}
       aria-current={active ? 'true' : undefined}
       title={`${thread.title ?? 'Untitled thread'}${projectName ? ` — ${projectName}` : ''} · ${thread.status}`}
     >
       <span className="agents-row-icon">
-        <MessageSquare size={13} aria-hidden="true" />
+        <ProviderIcon providerId={thread.providerId} size={13} />
       </span>
       <span className="agents-row-text">
         <span className="agents-row-title-line">

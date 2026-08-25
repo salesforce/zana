@@ -148,6 +148,15 @@ describe('launcher presentation', () => {
       expect(source, file.pathname).not.toMatch(/presentation=/);
     }
   });
+
+  it('names compact icon-only harness buttons so hover can show the label', () => {
+    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
+    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    expect(source).toContain('aria-label={f.label}');
+    expect(source).toContain("title={harnessCompact ? undefined : f.label}");
+    expect(css).toContain('.launch-segmented--harness.is-compact button:hover::after');
+    expect(css).toContain('content: attr(aria-label)');
+  });
 });
 
 describe('Fix with AI recovery launch', () => {

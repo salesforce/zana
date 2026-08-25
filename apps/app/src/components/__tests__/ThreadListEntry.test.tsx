@@ -28,6 +28,8 @@ describe('ThreadListEntry', () => {
     expect(html).toContain('Working');
     expect(html).toContain('data-kind="thread"');
     expect(html).toContain('Thread');
+    expect(html).toContain('<svg');
+    expect(html).not.toContain('lucide-message-square');
   });
 
   it('shows the raw status when idle', () => {
@@ -44,5 +46,12 @@ describe('ThreadListEntry', () => {
     const source = readFileSync(new URL('../ThreadListEntry.tsx', import.meta.url), 'utf8');
     expect(source).toContain('onContextMenu?: (e: MouseEvent) => void');
     expect(source).toContain('onContextMenu={onContextMenu}');
+  });
+
+  it('uses the thread harness icon instead of a chat bubble', () => {
+    const source = readFileSync(new URL('../ThreadListEntry.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('ProviderIcon');
+    expect(source).toContain('thread.providerId');
+    expect(source).not.toContain('MessageSquare');
   });
 });

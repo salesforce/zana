@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import type { HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
 import {
   buildThreadExecutionOptions,
+  classifyModelListError,
   isThreadProviderOffered,
   modelsForThreadProvider,
   selectedOnlyModelsForThreadProvider,
@@ -29,6 +30,7 @@ describe('threadProviderFamily', () => {
   it('maps thread ids onto PTY harness families and skips fake', () => {
     expect(threadProviderFamily('claude-code')).toBe('claude');
     expect(threadProviderFamily('acp-cursor')).toBe('cursor');
+    expect(threadProviderFamily('acp-opencode')).toBe('opencode');
     expect(threadProviderFamily('codex')).toBe('codex');
     expect(threadProviderFamily('pi')).toBe('pi');
     expect(threadProviderFamily('fake')).toBeNull();
@@ -41,6 +43,8 @@ describe('isThreadProviderOffered', () => {
     expect(isThreadProviderOffered({ id: 'codex' }, [verify('codex', { enabled: false })])).toBe(false);
     expect(isThreadProviderOffered({ id: 'codex' }, [])).toBe(true);
     expect(isThreadProviderOffered({ id: 'codex' }, [verify('codex')])).toBe(true);
+    expect(isThreadProviderOffered({ id: 'acp-opencode' }, [verify('opencode', { installed: false })])).toBe(false);
+    expect(isThreadProviderOffered({ id: 'acp-opencode' }, [verify('opencode')])).toBe(true);
     expect(isThreadProviderOffered({ id: 'fake' }, [verify('codex', { installed: false })])).toBe(true);
   });
 });
@@ -119,6 +123,21 @@ describe('buildThreadExecutionOptions', () => {
     expect(selectedOnlyModelsForThreadProvider('codex')).toEqual([]);
   });
 
+  it('keeps static Codex models and reports auth_required when listing needs login', () => {
+    const body = buildThreadExecutionOptions({
+      providerId: 'codex',
+      availability: [verify('codex')],
+      listError: 'auth_required'
+    });
+    expect(body.modelLoadError).toEqual({ providerId: 'codex', code: 'auth_required' });
+    expect(body.models.map((row) => row.displayName)).toEqual([
+      'GPT-5.5',
+      'GPT-5.4',
+      'GPT-5.4 Mini',
+      'GPT-5.6 Sol'
+    ]);
+  });
+
   it('prefers a live host catalog over the static fallback', () => {
     const body = buildThreadExecutionOptions({
       providerId: 'codex',
@@ -151,5 +170,18 @@ describe('execution-options API wiring', () => {
     expect(source).toContain('availability = []');
     expect(source).toContain('parseReasoningLevel(body.reasoningLevel)');
     expect(source).toContain('readLastThreadExecution');
+    expect(source).toContain('classifyModelListError');
+    expect(source).toContain('listError');
+  });
+});
+
+describe('classifyModelListError', () => {
+  it('maps Cursor/Codex login failures onto auth_required', () => {
+    expect(classifyModelListError(Object.assign(new Error('ACP agent is not authenticated.'), { code: 'auth_required' }))).toBe('auth_required');
+    expect(classifyModelListError(new Error("Error: Authentication required. Run 'agent login'"))).toBe('auth_required');
+    expect(classifyModelListError(new Error('Run `codex login` on this host'))).toBe('auth_required');
+    expect(classifyModelListError(new Error('spawn cursor-agent ENOENT'))).toBe('missing_executable');
+    expect(classifyModelListError(new Error('host rpc timed out: provider.list_models'))).toBe('timeout');
+    expect(classifyModelListError(new Error('bridge crashed'))).toBe('failed');
   });
 });

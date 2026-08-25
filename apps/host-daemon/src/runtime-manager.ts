@@ -16,6 +16,8 @@ export function createRuntimeManager(options: {
   emit: (event: HostEventEnvelope) => void;
   dataDir?: string;
   createRuntime?: CreateAgentRuntimeFn;
+  onInteractiveRequest?: Parameters<typeof createAgentRuntimeAdapter>[0]['onInteractiveRequest'];
+  onProcessExit?: Parameters<typeof createAgentRuntimeAdapter>[0]['onProcessExit'];
 }): ThreadRuntimeAdapter {
   return createAgentRuntimeAdapter(options);
 }

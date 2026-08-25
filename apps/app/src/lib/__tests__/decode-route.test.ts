@@ -23,6 +23,7 @@ describe('decodeRoutePath', () => {
     ['/extensions/mcp', { nav: 'extensions', extensionsTab: 'mcp' }],
     ['/projects/p1', { nav: 'projects', focusedProjectId: 'p1', workspaceMode: 'agents', isProjectWorkspace: true }],
     ['/projects/p1/threads/new', { nav: 'projects', focusedProjectId: 'p1', workspaceMode: 'agents', isProjectWorkspace: true, isNewThread: true }],
+    ['/projects/p1/threads/abc', { nav: 'projects', focusedProjectId: 'p1', workspaceMode: 'agents', isProjectWorkspace: true, isThreadView: true, threadId: 'abc' }],
     ['/projects/p1/terminals', { nav: 'projects', focusedProjectId: 'p1', workspaceMode: 'terminals', isProjectWorkspace: true }],
     ['/projects/p1/settings', { nav: 'settings', settingsTab: 'project', focusedProjectId: 'p1', isProjectSettings: true }],
     ['/plugins/docs/panel', { nav: 'docs' }],
@@ -87,6 +88,9 @@ describe('decodeRoutePath', () => {
     ).toBeNull();
     expect(
       scopedWindowLockReplace({ pathname: '/projects/p1/threads/new', search: '', hash: '' }, 'p1')
+    ).toBeNull();
+    expect(
+      scopedWindowLockReplace({ pathname: '/projects/p1/threads/abc', search: '', hash: '' }, 'p1')
     ).toBeNull();
     expect(
       scopedWindowLockReplace({ pathname: '/projects/p1/terminals', search: '', hash: '' }, 'p1')

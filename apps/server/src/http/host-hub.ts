@@ -22,12 +22,21 @@ import {
   disconnectLiveThreadsForHost,
   getConversationThread,
   getHost,
+  getLatestSessionForHost,
   getThread,
   openHostSession,
   updateConversationThreadStatus,
   updateThreadStatus,
   type ZccDatabase
 } from '@zana-ai/zcc-db';
+import {
+  providerThreadIdFromPayload,
+  rememberConversationProviderThreadId
+} from '../services/threads/conversation-provider-identity.js';
+import {
+  interruptLiveConversationThreadsForHost,
+  shouldInterruptLiveThreadsOnNewHostInstance
+} from '../services/threads/conversation-host-recovery.js';
 import type { ProductHub } from './product-hub.js';
 
 export interface HostTerminalSessionRecord {
@@ -85,7 +94,10 @@ const DEFAULT_RPC_TIMEOUT_MS = 30_000;
 export function createHostHub(
   db: ZccDatabase,
   hub: ProductHub,
-  terminalSessions: Map<string, HostTerminalSessionRecord> = new Map()
+  terminalSessions: Map<string, HostTerminalSessionRecord> = new Map(),
+  options?: {
+    onNewHostInstance?: (hostId: string) => void;
+  }
 ) {
   const sessions = new Map<string, ConnectedHostSession>();
   const pending = new Map<string, PendingRpc>();
@@ -132,10 +144,18 @@ export function createHostHub(
   }
 
   function attach(socket: WebSocket, hostId: string, instanceId: string): void {
-    const previous = sessions.get(hostId);
-    if (previous && previous.instanceId !== instanceId) {
+    const previousLive = sessions.get(hostId);
+    const previousPersisted = getLatestSessionForHost(db, hostId);
+    if (previousLive && previousLive.instanceId !== instanceId) {
+      previousLive.socket.close();
+    }
+    if (shouldInterruptLiveThreadsOnNewHostInstance(
+      previousPersisted?.instanceId ?? previousLive?.instanceId ?? null,
+      instanceId
+    )) {
       disconnectLiveThreadsForHost(db, hostId);
-      previous.socket.close();
+      interruptLiveConversationThreadsForHost(db, hub, { hostId, reason: 'host-daemon-restarted' });
+      options?.onNewHostInstance?.(hostId);
     }
     openHostSession(db, { hostId, instanceId, hostName: getHost(db, hostId)?.name ?? 'host' });
     sessions.set(hostId, { hostId, instanceId, socket });
@@ -258,6 +278,10 @@ export function createHostHub(
             payload: event.payload
           });
           accepted += 1;
+          const providerThreadId = providerThreadIdFromPayload(event.payload);
+          if (providerThreadId) {
+            rememberConversationProviderThreadId(db, event.threadId, providerThreadId);
+          }
           if (event.kind === 'thread.started' || eventType === 'turn/started') {
             updateConversationThreadStatus(db, event.threadId, 'active');
           }

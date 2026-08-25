@@ -24,6 +24,7 @@ export const TOOLS_MCP_ROUTE_PATH = '/extensions/mcp';
 export const PROJECT_ROUTE_PATH = '/projects/:projectId';
 export const PROJECT_SETTINGS_ROUTE_PATH = '/projects/:projectId/settings';
 export const PROJECT_NEW_THREAD_ROUTE_PATH = '/projects/:projectId/threads/new';
+export const PROJECT_THREAD_ROUTE_PATH = '/projects/:projectId/threads/:threadId';
 export const PROJECT_WORKSPACE_ROUTE_PATH = '/projects/:projectId/:mode';
 
 export const DEFAULT_PLUGIN_PANEL_PATH = 'panel';
@@ -79,8 +80,23 @@ export function getAgentsRoutePath(): string {
   return AGENTS_ROUTE_PATH;
 }
 
-export function getThreadRoutePath(threadId: string): string {
-  return `/threads/${encodeURIComponent(threadId)}`;
+export function getThreadRoutePath(threadId: string, projectId?: string | null): string {
+  if (!projectId) return `/threads/${encodeURIComponent(threadId)}`;
+  return `/projects/${encodeURIComponent(projectId)}/threads/${encodeURIComponent(threadId)}`;
+}
+
+export function threadIdFromPath(pathname: string): string | undefined {
+  if (pathname === NEW_THREAD_ROUTE_PATH || matchPath(PROJECT_NEW_THREAD_ROUTE_PATH, pathname)) {
+    return undefined;
+  }
+  return (
+    matchPath(THREAD_ROUTE_PATH, pathname)?.params.threadId ??
+    matchPath(PROJECT_THREAD_ROUTE_PATH, pathname)?.params.threadId
+  );
+}
+
+export function projectIdFromThreadPath(pathname: string): string | undefined {
+  return matchPath(PROJECT_THREAD_ROUTE_PATH, pathname)?.params.projectId;
 }
 
 export function getNewThreadRoutePath(projectId?: string): string {
@@ -254,6 +270,7 @@ const baseRoutePatterns: readonly string[] = [
   PROJECT_ROUTE_PATH,
   PROJECT_SETTINGS_ROUTE_PATH,
   PROJECT_NEW_THREAD_ROUTE_PATH,
+  PROJECT_THREAD_ROUTE_PATH,
   PROJECT_WORKSPACE_ROUTE_PATH,
   PLUGIN_PANEL_ROOT_ROUTE_PATH,
   PLUGIN_PANEL_ROUTE_PATH

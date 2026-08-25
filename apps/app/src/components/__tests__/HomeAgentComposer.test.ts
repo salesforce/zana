@@ -69,15 +69,27 @@ describe('ThreadCommandComposer initial text', () => {
     expect(source).toContain('seededInitialText');
     expect(source).toContain('editor.chain().insertContent(initialText).run()');
   });
+
+  it('stays on the project thread URL after create from a workspace', () => {
+    const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('route.isProjectWorkspace ? route.focusedProjectId');
+    expect(source).toContain('getThreadRoutePath');
+  });
 });
 
 describe('ThreadCommandComposer pinning', () => {
   it('locks to a passed project and skips the scratch default', () => {
     const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
     expect(source).toContain('project: pinnedProject');
-    expect(source).toContain('if (pinnedProject) setProjectId(pinnedProject.id)');
+    expect(source).toContain('if (pinnedProject) {');
+    expect(source).toContain('setProjectId(pinnedProject.id)');
     expect(source).toContain('disabled={Boolean(pinnedProject)}');
+    expect(source).toContain('ensureQuickAgent');
+    expect(source).toContain('resolveComposerProjectId');
+    expect(source).toContain('DEFAULT_COMPOSER_WORKSPACE_LABEL');
+    expect(source).toContain('composerProjectLabel');
     expect(source).not.toContain('{!pinnedProject && (');
+    expect(source).not.toContain('projects[0]!');
   });
 });
 
@@ -126,6 +138,8 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain('reasoningLevel: options.reasoningLevel');
     expect(source).toContain('moreModelOptions={options.moreModelOptions}');
     expect(source).toContain('applyComposerModePrefix');
+    expect(source).toContain('nextComposerWorkMode');
+    expect(source).toContain("event.key !== 'Tab'");
     expect(source.indexOf('<EnvironmentPicker')).toBeGreaterThan(metaIdx);
     expect(source.indexOf('ariaLabel="Permission mode"')).toBeGreaterThan(metaIdx);
 

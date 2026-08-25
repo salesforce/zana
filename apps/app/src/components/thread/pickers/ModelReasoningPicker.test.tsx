@@ -73,10 +73,31 @@ describe('ModelReasoningPicker', () => {
   it('keeps extra models behind a More models row instead of dumping them in the primary list', () => {
     const source = readFileSync(new URL('./ModelReasoningPicker.tsx', import.meta.url), 'utf8');
     expect(source).toContain('More models');
+    expect(source).toContain('emptyModelsHint');
     expect(source).toContain('data-testid="model-reasoning-more-toggle"');
     expect(source).toContain('data-testid="model-reasoning-more-menu"');
     expect(source).toContain('model-reasoning-picker-more');
     expect(source).not.toContain('model-reasoning-level-');
+  });
+
+  it('names each icon-only harness tab so hover can show the label', () => {
+    const source = readFileSync(new URL('./ModelReasoningPicker.tsx', import.meta.url), 'utf8');
+    const css = readFileSync(new URL('../../../styles/global.css', import.meta.url), 'utf8');
+    expect(source).toContain('aria-label={provider.label}');
+    expect(source).not.toContain('title={provider.label}');
+    expect(css).toContain('.model-reasoning-picker-tab:hover::after');
+    expect(css).toContain('content: attr(aria-label)');
+  });
+
+  it('scrolls the model list instead of the whole popover', () => {
+    const source = readFileSync(new URL('./ModelReasoningPicker.tsx', import.meta.url), 'utf8');
+    const css = readFileSync(new URL('../../../styles/global.css', import.meta.url), 'utf8');
+    expect(source).toContain('model-reasoning-picker-menu--models');
+    expect(css).toContain('.model-reasoning-picker-menu--models {');
+    expect(css).toContain('.model-reasoning-picker-menu--models .model-reasoning-picker-section');
+    expect(css).toMatch(
+      /\.model-reasoning-picker-menu--models \.model-reasoning-picker-section\s*\{[^}]*overflow:\s*auto/
+    );
   });
 });
 

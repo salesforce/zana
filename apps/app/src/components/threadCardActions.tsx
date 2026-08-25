@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { matchPath, useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { product } from '../lib/product-client.js';
-import { getAgentsRoutePath, getThreadRoutePath, THREAD_ROUTE_PATH } from '../lib/route-paths.js';
+import { getAgentsRoutePath, getProjectRoutePath, getThreadRoutePath, projectIdFromThreadPath, threadIdFromPath } from '../lib/route-paths.js';
+import { useRouteState } from '../hooks/useRouteState.js';
 import { useThreads, type ThreadListItem } from '../thread-store.js';
 import { shouldShowThreadStop } from './thread/thread-timeline-model.js';
 import { clampMenuAnchor } from './agentCardActions.js';
@@ -18,6 +19,7 @@ export type ThreadMenuAction = 'open' | 'stop' | 'fork' | 'archive';
 export interface ThreadMenuContext {
   navigate: (path: string) => void;
   pathname: string;
+  projectId?: string | null;
   confirm: (message: string) => boolean;
   stop: (id: string) => Promise<unknown>;
   fork: (id: string) => Promise<{ ok: boolean; value?: { id: string } }>;
@@ -30,7 +32,7 @@ export function threadTitle(thread: Pick<ThreadListItem, 'title'>): string {
 }
 
 export function viewingThread(pathname: string, threadId: string): boolean {
-  return matchPath(THREAD_ROUTE_PATH, pathname)?.params.threadId === threadId;
+  return threadIdFromPath(pathname) === threadId;
 }
 
 export async function runThreadMenuAction(
@@ -38,8 +40,9 @@ export async function runThreadMenuAction(
   thread: Pick<ThreadListItem, 'id' | 'title'>,
   ctx: ThreadMenuContext
 ): Promise<void> {
+  const projectId = ctx.projectId || projectIdFromThreadPath(ctx.pathname) || undefined;
   if (action === 'open') {
-    ctx.navigate(getThreadRoutePath(thread.id));
+    ctx.navigate(getThreadRoutePath(thread.id, projectId));
     return;
   }
   if (action === 'stop') {
@@ -48,7 +51,7 @@ export async function runThreadMenuAction(
   }
   if (action === 'fork') {
     const forked = await ctx.fork(thread.id);
-    if (forked.ok && forked.value?.id) ctx.navigate(getThreadRoutePath(forked.value.id));
+    if (forked.ok && forked.value?.id) ctx.navigate(getThreadRoutePath(forked.value.id, projectId));
     return;
   }
   const title = threadTitle(thread);
@@ -56,7 +59,9 @@ export async function runThreadMenuAction(
   const result = await ctx.archive(thread.id);
   if (result && result.ok === false) return;
   ctx.remove(thread.id);
-  if (viewingThread(ctx.pathname, thread.id)) ctx.navigate(getAgentsRoutePath());
+  if (viewingThread(ctx.pathname, thread.id)) {
+    ctx.navigate(projectId ? getProjectRoutePath(projectId) : getAgentsRoutePath());
+  }
 }
 
 export function openThreadMenu(
@@ -108,14 +113,17 @@ interface ThreadCardMenuProps {
 export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
   const navigate = useNavigate();
   const location = useLocation();
+  const route = useRouteState();
   const { thread } = menu;
   const canStop = shouldShowThreadStop(thread.id, thread.status);
+  const projectId = route.isProjectWorkspace ? route.focusedProjectId : null;
 
   const run = (action: ThreadMenuAction) => {
     setMenu(null);
     void runThreadMenuAction(action, thread, {
       navigate,
       pathname: location.pathname,
+      projectId,
       confirm: (message) => window.confirm(message),
       stop: (id) => product.threads.stop(id),
       fork: (id) => product.threads.fork(id),

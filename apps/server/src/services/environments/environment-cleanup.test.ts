@@ -51,7 +51,10 @@ describe('archiveThread', () => {
     const ctx = {
       db: {},
       hub: { emit },
-      hostHub: { callHostOnlineRpc }
+      hostHub: { callHostOnlineRpc },
+      pendingInteractions: {
+        interruptPendingInteractionsForThreadIds: vi.fn(() => [])
+      }
     } as unknown as ProductHttpContext;
 
     expect(await archiveThread(ctx, thread.id)).toBe(true);
@@ -73,7 +76,10 @@ describe('archiveThread', () => {
     const ctx = {
       db: {},
       hub: { emit: vi.fn() },
-      hostHub: { callHostOnlineRpc }
+      hostHub: { callHostOnlineRpc },
+      pendingInteractions: {
+        interruptPendingInteractionsForThreadIds: vi.fn(() => [])
+      }
     } as unknown as ProductHttpContext;
 
     expect(await archiveThread(ctx, 'missing')).toBe(false);

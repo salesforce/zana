@@ -7,7 +7,11 @@ import {
   HostEnrollRequestSchema,
   HostEnrollResponseSchema
 } from '@zana-ai/zcc-contracts/host-rpc';
-import { getHost, upsertHost } from '@zana-ai/zcc-db';
+import { getConversationThread, getHost, upsertHost } from '@zana-ai/zcc-db';
+import {
+  hostDaemonInteractiveInterruptRequestSchema,
+  hostDaemonInteractiveRequestSchema
+} from '@zana-ai/zcc-host-daemon-contract';
 import { isLoopbackHttpHost } from '../browser-bootstrap.js';
 import { generateHostKey, hashHostKey, hostKeyMatches } from './host-hub.js';
 import { headerValue } from './browser-request-guard.js';
@@ -45,8 +49,25 @@ export async function handleHostInternalHttp(
   ctx: ProductHttpContext
 ): Promise<boolean> {
   const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
-  if (requestUrl.pathname !== '/internal/hosts/enroll') return false;
+  const pathname = requestUrl.pathname.replace(/\/$/, '') || '/';
 
+  if (pathname === '/internal/hosts/enroll') {
+    return handleHostEnroll(request, response, ctx);
+  }
+  if (
+    pathname === '/internal/hosts/interactive-request'
+    || pathname === '/internal/hosts/interactive-request/interrupt'
+  ) {
+    return handleHostInteractiveRequest(request, response, ctx, pathname);
+  }
+  return false;
+}
+
+async function handleHostEnroll(
+  request: IncomingMessage,
+  response: ServerResponse,
+  ctx: ProductHttpContext
+): Promise<boolean> {
   if (!isLoopbackHttpHost(headerValue(request.headers, 'host'))) {
     sendJson(response, 403, { error: 'host is not a loopback app origin' });
     return true;
@@ -96,6 +117,93 @@ export async function handleHostInternalHttp(
     hostId: host.id,
     hostKey
   }));
+  return true;
+}
+
+function authenticateHostCall(
+  request: IncomingMessage,
+  requestUrl: URL,
+  ctx: ProductHttpContext
+): { hostId: string } | { error: string; status: number } {
+  if (!isLoopbackHttpHost(headerValue(request.headers, 'host'))) {
+    return { error: 'host is not a loopback app origin', status: 403 };
+  }
+  if (hasBrowserOrigin(request)) {
+    return { error: 'host call is not a browser origin', status: 403 };
+  }
+  const hostId = headerValue(request.headers, 'x-zcc-host-id') ?? requestUrl.searchParams.get('hostId');
+  const hostKey = bearerToken(request.headers) ?? requestUrl.searchParams.get('hostKey');
+  if (!hostId || !hostKey) {
+    return { error: 'unauthorized', status: 401 };
+  }
+  const host = getHost(ctx.db, hostId);
+  if (!host || !hostKeyMatches(hostKey, host.hostKeyHash)) {
+    return { error: 'unauthorized', status: 401 };
+  }
+  return { hostId };
+}
+
+async function handleHostInteractiveRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  ctx: ProductHttpContext,
+  pathname: string
+): Promise<boolean> {
+  const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
+  const auth = authenticateHostCall(request, requestUrl, ctx);
+  if ('error' in auth) {
+    sendJson(response, auth.status, { error: auth.error });
+    return true;
+  }
+  if ((request.method ?? 'GET').toUpperCase() !== 'POST') {
+    sendJson(response, 405, { error: 'method not allowed' });
+    return true;
+  }
+  let body: unknown;
+  try {
+    body = await readJsonBody(request);
+  } catch {
+    sendJson(response, 400, { error: 'invalid JSON' });
+    return true;
+  }
+
+  if (pathname.endsWith('/interrupt')) {
+    const parsed = hostDaemonInteractiveInterruptRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      sendJson(response, 400, { error: 'invalid interrupt request' });
+      return true;
+    }
+    const interruptible = parsed.data.threadIds.filter((threadId) => {
+      const thread = getConversationThread(ctx.db, threadId);
+      return thread?.hostId === auth.hostId;
+    });
+    const interrupted = ctx.pendingInteractions.interruptPendingInteractionsForThreads({
+      providerId: parsed.data.providerId,
+      threadIds: interruptible,
+      reason: parsed.data.reason
+    });
+    sendJson(response, 200, {
+      ok: true,
+      interactionIds: interrupted.map((row) => row.id)
+    });
+    return true;
+  }
+
+  const parsed = hostDaemonInteractiveRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    sendJson(response, 400, { error: 'invalid interactive request' });
+    return true;
+  }
+  const thread = getConversationThread(ctx.db, parsed.data.interaction.threadId);
+  if (!thread) {
+    sendJson(response, 200, { outcome: 'rejected', reason: 'Thread does not exist' });
+    return true;
+  }
+  if (thread.hostId !== auth.hostId) {
+    sendJson(response, 403, { error: 'thread does not belong to this host' });
+    return true;
+  }
+  sendJson(response, 200, ctx.pendingInteractions.registerPendingInteraction(parsed.data.interaction));
   return true;
 }
 

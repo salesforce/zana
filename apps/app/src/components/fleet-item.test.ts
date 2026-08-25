@@ -82,6 +82,7 @@ describe('fleet items', () => {
   it('labels a thread card with harness and runtime instead of the project slug', () => {
     expect(threadHarnessLabel('claude-code')).toBe('Claude Code');
     expect(threadHarnessLabel('acp-cursor')).toBe('Cursor');
+    expect(threadHarnessLabel('acp-opencode')).toBe('OpenCode');
     expect(threadHarnessLabel('codex')).toBe('Codex');
     expect(threadHarnessLabel('pi')).toBe('Pi');
     expect(threadHarnessLabel('custom-agent')).toBe('Custom Agent');

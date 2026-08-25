@@ -69,10 +69,11 @@ export function ComposerModePicker({
       type="button"
       className="composer-mode-picker-trigger"
       aria-label="Composer mode"
+      aria-keyshortcuts="Shift+Tab"
       aria-haspopup="listbox"
       aria-expanded={open}
       disabled={disabled}
-      title={selectedLabel}
+      title={`${selectedLabel} (Shift+Tab)`}
       data-testid="composer-mode-picker-trigger"
       onClick={() => setOpen((current) => !current)}
     >

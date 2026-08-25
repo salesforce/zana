@@ -83,6 +83,7 @@ import {
   PROJECT_ROUTE_PATH,
   PROJECT_SETTINGS_ROUTE_PATH,
   PROJECT_NEW_THREAD_ROUTE_PATH,
+  PROJECT_THREAD_ROUTE_PATH,
   PROJECT_WORKSPACE_ROUTE_PATH,
   SCHEDULER_ROUTE_PATH,
   SETTINGS_PROJECT_ALIAS_ROUTE_PATH,
@@ -142,6 +143,7 @@ function AppRoutes({ suggestionsEnabled }: { suggestionsEnabled: boolean }) {
         <Route path={SETTINGS_SECTION_ROUTE_PATH} element={<SettingsView />} />
         <Route path={PROJECT_SETTINGS_ROUTE_PATH} element={<SettingsView />} />
         <Route path={PROJECT_NEW_THREAD_ROUTE_PATH} element={null} />
+        <Route path={PROJECT_THREAD_ROUTE_PATH} element={null} />
         <Route path={PROJECT_ROUTE_PATH} element={null} />
         <Route path={PROJECT_WORKSPACE_ROUTE_PATH} element={null} />
         <Route path={PLUGIN_PANEL_ROOT_ROUTE_PATH} element={null} />

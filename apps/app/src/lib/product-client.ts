@@ -452,6 +452,27 @@ function httpProduct(): Pick<
         apiJson(`/projects/${encodeURIComponent(projectId)}/commands`),
       onUpdated: (cb) => subscribeProductEvent('threads:updated', cb),
       onEvent: (cb) => subscribeProductEvent('threads:event', cb),
+      interactions: {
+        list: async (threadId) =>
+          apiJson(`/threads/${encodeURIComponent(threadId)}/interactions`),
+        get: async (threadId, interactionId) =>
+          apiJson(`/threads/${encodeURIComponent(threadId)}/interactions/${encodeURIComponent(interactionId)}`),
+        resolve: async (threadId, interactionId, resolution) =>
+          apiJson(`/threads/${encodeURIComponent(threadId)}/interactions/${encodeURIComponent(interactionId)}/resolve`, {
+            method: 'POST',
+            body: JSON.stringify(resolution)
+          }),
+        respond: async (threadId, interactionId, value) =>
+          apiJson(`/threads/${encodeURIComponent(threadId)}/interactions/${encodeURIComponent(interactionId)}/respond`, {
+            method: 'POST',
+            body: JSON.stringify({ value })
+          }),
+        cancel: async (threadId, interactionId) =>
+          apiJson(`/threads/${encodeURIComponent(threadId)}/interactions/${encodeURIComponent(interactionId)}/cancel`, {
+            method: 'POST',
+            body: '{}'
+          })
+      },
       archive: async (threadId) => {
         const body = await apiJson<{ ok: boolean }>(`/threads/${encodeURIComponent(threadId)}/archive`, {
           method: 'POST',

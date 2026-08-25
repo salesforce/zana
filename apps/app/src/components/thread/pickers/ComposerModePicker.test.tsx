@@ -4,7 +4,8 @@ import { ComposerModePicker } from './ComposerModePicker.js';
 import {
   applyComposerModePrefix,
   composerActionsFromProvider,
-  composerModesForActions
+  composerModesForActions,
+  nextComposerWorkMode
 } from './composer-mode.js';
 
 describe('composerModesForActions', () => {
@@ -12,6 +13,18 @@ describe('composerModesForActions', () => {
     expect(composerModesForActions([])).toEqual(['agent']);
     expect(composerModesForActions(['plan'])).toEqual(['agent', 'plan']);
     expect(composerModesForActions(['plan', 'goal'])).toEqual(['agent', 'plan', 'goal']);
+  });
+});
+
+describe('nextComposerWorkMode', () => {
+  it('wraps through every offered mode', () => {
+    expect(nextComposerWorkMode(['agent', 'plan'], 'agent')).toBe('plan');
+    expect(nextComposerWorkMode(['agent', 'plan'], 'plan')).toBe('agent');
+    expect(nextComposerWorkMode(['agent', 'plan', 'goal'], 'plan')).toBe('goal');
+    expect(nextComposerWorkMode(['agent', 'plan', 'goal'], 'goal')).toBe('agent');
+    expect(nextComposerWorkMode(['agent'], 'agent')).toBe('agent');
+    expect(nextComposerWorkMode(['agent', 'plan'], 'goal')).toBe('plan');
+    expect(nextComposerWorkMode([], 'agent')).toBe('agent');
   });
 });
 
@@ -43,5 +56,7 @@ describe('ComposerModePicker', () => {
     expect(html).toContain('data-testid="composer-mode-picker-trigger"');
     expect(html).toContain('Plan');
     expect(html).toContain('aria-label="Composer mode"');
+    expect(html).toContain('aria-keyshortcuts="Shift+Tab"');
+    expect(html).toContain('Shift+Tab');
   });
 });

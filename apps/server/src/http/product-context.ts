@@ -12,6 +12,7 @@ import { createSavedStore, type ISavedStore } from '../services/saved/saved-stor
 import type { LocalAppOriginArgs } from './local-app-origins.js';
 import { createProductHub, type ProductHub } from './product-hub.js';
 import { createHostHub, type HostHub } from './host-hub.js';
+import { PendingInteractionLifecycle } from '../services/interactions/pending-interactions.js';
 
 export interface ProductTerminalRecord extends TerminalSession {
   hostId: string;
@@ -29,6 +30,7 @@ export interface ProductHttpContext {
   suggestions: ISuggestionsStore;
   saved: ISavedStore;
   hub: ProductHub;
+  pendingInteractions: PendingInteractionLifecycle;
   terminalSessions: Map<string, ProductTerminalRecord>;
   toProjects(): Project[];
 }
@@ -68,7 +70,21 @@ export function createProductHttpContext(
   const hub = createProductHub();
   const db = openDatabase(join(dataDir, 'zcc.sqlite'));
   const terminalSessions = new Map<string, ProductTerminalRecord>();
-  const hostHub = createHostHub(db, hub, terminalSessions);
+  let pendingInteractions: PendingInteractionLifecycle;
+  const hostHub = createHostHub(db, hub, terminalSessions, {
+    onNewHostInstance: (hostId) => {
+      pendingInteractions?.interruptPendingInteractionsForHost(
+        hostId,
+        'host-daemon-restarted'
+      );
+    }
+  });
+  pendingInteractions = new PendingInteractionLifecycle({
+    db,
+    hub,
+    callHostOnlineRpc: (input) => hostHub.callHostOnlineRpc(input)
+  });
+  pendingInteractions.start();
   const envToken = process.env.ZCC_HOST_ENROLL_TOKEN;
   const enrollToken = options.enrollToken
     ?? (envToken && envToken.length >= 16 ? envToken : undefined)
@@ -98,6 +114,7 @@ export function createProductHttpContext(
     suggestions,
     saved,
     hub,
+    pendingInteractions,
     terminalSessions,
     toProjects: () => projects.list() as unknown as Project[]
   };

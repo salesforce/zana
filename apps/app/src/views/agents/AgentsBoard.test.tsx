@@ -12,8 +12,8 @@ describe('AgentsBoard', () => {
     expect(workspace).toContain('<AgentsBoard scope={{ kind: \'project\', project }} />');
     expect(board).not.toContain('<AgentLauncher');
     expect(board).toContain('setLauncherOpen(true)');
-    expect(board).toContain('aria-label="New thread"');
-    expect(board).toContain('aria-label="Legacy PTY agent"');
+    expect(board).toContain('aria-label="New thread/agent"');
+    expect(board).not.toContain('aria-label="Legacy PTY agent"');
     expect(board).not.toContain('aria-label="New agent"');
     expect(app).toContain('{launcherOpen && (nav !== \'projects\' || !focusedProjectId) && (');
     expect(app).not.toContain("nav !== 'home'");
@@ -29,7 +29,7 @@ describe('AgentsBoard', () => {
     expect(emptyBranch).not.toContain('<HomeAgentComposer');
     expect(emptyBranch).toContain('No agents or threads');
     expect(emptyBranch).toContain('No agents or threads yet');
-    expect(emptyBranch).toContain('getNewThreadRoutePath(scopedProject?.id)');
+    expect(emptyBranch).toContain('setLauncherOpen(true)');
     expect(board).not.toContain('<HomeAgentComposer');
 
     const filterBranch = board.slice(filterStart, board.indexOf('<AgentBoardLanes', filterStart));
@@ -41,6 +41,8 @@ describe('AgentsBoard', () => {
     expect(board).toContain('threadFleetItem');
     expect(board).toContain('fleetAgentCards(visibleFleet)');
     expect(board).toContain('item.kind === \'thread\'');
+    expect(board).toContain('getThreadRoutePath(item.id, threadProjectId)');
+    expect(board).toContain('threadIdFromPath');
     expect(board).toContain('setCloseIdleTarget(reclaimableAgents)');
     expect(board).toContain('<AgentMonitor cards={visibleFleet}');
   });
@@ -53,14 +55,11 @@ describe('AgentsBoard compact chrome contract', () => {
     expect(board).toContain('className="agents-board-header-actions"');
     expect(board).toContain('className="agents-board-btn-label"');
     expect(board).toContain('className="agents-board-count-extra"');
-    expect(board).toContain('aria-label="New thread"');
+    expect(board).toContain('aria-label="New thread/agent"');
     expect(board).toContain('data-testid="agents-board-new-thread"');
-    expect(board).toContain('getNewThreadRoutePath');
     expect(board).toContain('btn primary agents-board-new');
-    expect(board.indexOf('aria-label="New thread"')).toBeLessThan(
-      board.indexOf('aria-label="Legacy PTY agent"')
-    );
-    expect(board).toContain('aria-label="Legacy PTY agent"');
+    expect(board).not.toContain('agents-board-legacy');
+    expect(board).not.toContain('getNewThreadRoutePath');
     expect(board).toContain('Close ${reclaimableAgents.length} idle agents');
   });
 
@@ -69,7 +68,7 @@ describe('AgentsBoard compact chrome contract', () => {
     expect(css).toContain('@container agents-board (max-width: 820px)');
     expect(css).toContain('.agents-board-btn-label {\n    display: none;');
     expect(css).toContain('.agents-board-count-extra {\n    display: none;');
-    expect(css).toContain('.agents-board-new,\n  .agents-board-legacy,\n  .agents-board-close-idle');
+    expect(css).toContain('.agents-board-new,\n  .agents-board-close-idle');
     expect(css).toContain('@container agents-board (max-width: 560px)');
     expect(css).toContain('.agents-board-filter {\n    flex: 1 1 100%;');
   });
@@ -82,6 +81,9 @@ describe('AgentsBoard compact chrome contract', () => {
     expect(css).toContain('@container agents-board (max-width: 920px)');
     expect(css).toContain(
       'grid-template-columns: minmax(160px, 28%) minmax(0, 1fr) minmax(180px, 26%);'
+    );
+    expect(css).toContain(
+      'grid-template-columns: minmax(160px, 28%) minmax(0, 1fr);'
     );
   });
 

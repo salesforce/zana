@@ -11,6 +11,7 @@ import {
   splitModelLabelTag
 } from './model-picker-search.js';
 import { providerIconForId } from './provider-icon.js';
+import { emptyModelsHint } from './harness-login.js';
 
 const MODEL_SEARCH_MIN_OPTIONS = 5;
 const MENU_MIN_WIDTH = 208;
@@ -45,6 +46,7 @@ export interface ModelReasoningPickerProps {
   modelOptions: readonly ModelPickerOption[];
   moreModelOptions?: readonly ModelPickerOption[];
   modelIsLoading?: boolean;
+  modelLoadError?: string | null;
   onModelChange: (value: string) => void;
   disabled?: boolean;
 }
@@ -57,6 +59,7 @@ export function ModelReasoningPicker({
   modelOptions,
   moreModelOptions = [],
   modelIsLoading = false,
+  modelLoadError = null,
   onModelChange,
   disabled
 }: ModelReasoningPickerProps) {
@@ -225,7 +228,7 @@ export function ModelReasoningPicker({
       {open && createPortal(
         <div
           ref={menuRef}
-          className="model-reasoning-picker-menu"
+          className="model-reasoning-picker-menu model-reasoning-picker-menu--models"
           role="dialog"
           aria-label="Provider and model"
           data-testid="model-reasoning-picker-menu"
@@ -239,8 +242,8 @@ export function ModelReasoningPicker({
                     key={provider.value}
                     type="button"
                     role="tab"
+                    aria-label={provider.label}
                     aria-selected={active}
-                    title={provider.label}
                     className={`model-reasoning-picker-tab${active ? ' is-active' : ''}`}
                     data-testid={`model-reasoning-provider-${provider.value}`}
                     onClick={() => {
@@ -274,7 +277,7 @@ export function ModelReasoningPicker({
             {modelIsLoading ? (
               <div className="model-reasoning-picker-hint">Loading models…</div>
             ) : navRows.length === 0 ? (
-              <div className="model-reasoning-picker-hint">No models available</div>
+              <div className="model-reasoning-picker-hint">{emptyModelsHint(selectedProviderId, modelLoadError)}</div>
             ) : navRows.map((row, index) => {
               if (row.kind === 'more-toggle') {
                 return (

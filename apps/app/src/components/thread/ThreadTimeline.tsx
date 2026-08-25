@@ -11,7 +11,13 @@ import type { ActiveThinking, ThreadTimelineGoal, ThreadTimelinePendingTodos } f
 import type { TimelineRow } from '@zana-ai/zcc-server-contract';
 import { isBusyThreadStatus } from './thread-timeline-model.js';
 import { collectTimelineAutoExpansionRowIds } from './timeline/timeline-auto-expand.js';
-import { firstUnreadRowId, isNearBottom, shouldStickToBottom } from './timeline/timeline-scroll.js';
+import {
+  clearTransientScrollbarScrolling,
+  firstUnreadRowId,
+  isNearBottom,
+  markTransientScrollbarScrolling,
+  shouldStickToBottom
+} from './timeline/timeline-scroll.js';
 import {
   ThreadGoalBanner,
   ThreadPromptModeChip,
@@ -38,7 +44,6 @@ export interface ThreadTimelineProps {
   onTitleAction?: (action: TimelineTitleAction) => void;
   onTitleLink?: (link: TimelineTitleLink) => void;
   onOpenDiff?: (path: string) => void;
-  onAnswer?: (text: string) => void;
   threadId?: string;
 }
 
@@ -76,11 +81,11 @@ export function ThreadTimeline({
   onTitleAction,
   onTitleLink,
   onOpenDiff,
-  onAnswer,
   threadId
 }: ThreadTimelineProps) {
   const [now] = useState(() => Date.now());
   const paneRef = useRef<HTMLDivElement>(null);
+  const scrollbarIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [pinnedAway, setPinnedAway] = useState(false);
   const viewRows = useMemo(() => buildTimelineViewRows(rows), [rows]);
   const expansion = useMemo(
@@ -104,9 +109,14 @@ export function ThreadTimeline({
     pane.scrollTop = pane.scrollHeight;
   }, [stick, viewRows, thinking, todos]);
 
+  useEffect(() => () => {
+    clearTransientScrollbarScrolling(paneRef.current, scrollbarIdleRef);
+  }, []);
+
   const onScroll = useCallback(() => {
     const pane = paneRef.current;
     if (!pane) return;
+    markTransientScrollbarScrolling(pane, scrollbarIdleRef);
     const near = isNearBottom(pane);
     setPinnedAway(!near);
     if (near) onReachedBottom?.();
@@ -131,7 +141,7 @@ export function ThreadTimeline({
         <ThreadWorkflowChips workflows={activeWorkflows} />
       </div>
       <div
-        className="thread-detail-timeline"
+        className="thread-detail-timeline thread-scrollbar"
         data-testid="thread-timeline"
         ref={paneRef}
         onScroll={onScroll}
@@ -159,7 +169,6 @@ export function ThreadTimeline({
             onTitleAction={onTitleAction}
             onTitleLink={onTitleLink}
             onOpenDiff={onOpenDiff}
-            onAnswer={onAnswer}
             threadId={threadId}
           />
         )}

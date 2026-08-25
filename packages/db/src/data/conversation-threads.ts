@@ -120,6 +120,17 @@ export function listLiveConversationThreads(db: ZccDatabase): ConversationThread
   ).all() as ConversationThreadSqlRow[]).map(toThread);
 }
 
+export function listLiveConversationThreadsForHost(
+  db: ZccDatabase,
+  hostId: string
+): ConversationThreadRow[] {
+  return (db.sqlite.prepare(
+    `SELECT * FROM threads
+     WHERE host_id = ? AND archived_at IS NULL AND status IN ('starting', 'active', 'stopping')
+     ORDER BY updated_at DESC`
+  ).all(hostId) as ConversationThreadSqlRow[]).map(toThread);
+}
+
 /** Cap for the unscoped visible-thread list (idle + error included). */
 export const VISIBLE_CONVERSATION_THREAD_LIMIT = 200;
 

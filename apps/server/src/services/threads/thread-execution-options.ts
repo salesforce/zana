@@ -16,12 +16,19 @@ export type ThreadExecutionProviderInfo = Omit<ProviderInfo, 'composerActions'> 
   composerActions: string[];
 };
 
+export type ThreadModelLoadErrorCode =
+  | 'provider_unavailable'
+  | 'missing_executable'
+  | 'auth_required'
+  | 'timeout'
+  | 'failed';
+
 export interface ThreadExecutionOptionsResponse {
   providers: ThreadExecutionProviderInfo[];
   permissionCeiling: PermissionMode;
   models: AvailableModel[];
   selectedOnlyModels: AvailableModel[];
-  modelLoadError: { providerId: string; code: 'provider_unavailable' } | null;
+  modelLoadError: { providerId: string; code: ThreadModelLoadErrorCode } | null;
 }
 
 const CLAUDE_REASONING_LEVELS: readonly ReasoningLevel[] = [
@@ -81,6 +88,7 @@ const CLAUDE_FALLBACK_MODELS: ReadonlyArray<{
 export function threadProviderFamily(providerId: string): string | null {
   if (providerId === 'claude-code') return 'claude';
   if (providerId === 'acp-cursor') return 'cursor';
+  if (providerId === 'acp-opencode') return 'opencode';
   if (providerId === 'codex' || providerId === 'pi') return providerId;
   return null;
 }
@@ -298,10 +306,37 @@ export function selectedOnlyModelsForThreadProvider(providerId: string): Availab
   return [];
 }
 
+export function classifyModelListError(error: unknown): Exclude<ThreadModelLoadErrorCode, 'provider_unavailable'> {
+  const code = error && typeof error === 'object' && 'code' in error
+    ? String((error as { code: unknown }).code)
+    : '';
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  const text = `${code}\n${message}`.toLowerCase();
+  if (
+    code === 'auth_required'
+    || text.includes('not authenticated')
+    || text.includes('authentication required')
+    || text.includes('agent login')
+    || text.includes('codex login')
+    || text.includes('cursor_api_key')
+    || text.includes('cursor_auth_token')
+  ) {
+    return 'auth_required';
+  }
+  if (code === 'enoent' || text.includes('enoent')) {
+    return 'missing_executable';
+  }
+  if (text.includes('timed out') || text.includes('timeout')) {
+    return 'timeout';
+  }
+  return 'failed';
+}
+
 export function buildThreadExecutionOptions(input: {
   providerId?: string;
   availability: readonly HarnessVerifyResult[];
   listed?: { models: AvailableModel[]; selectedOnlyModels: AvailableModel[] } | null;
+  listError?: ThreadModelLoadErrorCode | null;
 }): ThreadExecutionOptionsResponse {
   const catalog = listThreadProviders();
   const offered = catalog.filter((provider) => isThreadProviderOffered(provider, input.availability));
@@ -313,13 +348,16 @@ export function buildThreadExecutionOptions(input: {
     : [];
   const staticMore = requested ? selectedOnlyModelsForThreadProvider(requested.id) : [];
   const useListed = Boolean(input.listed && input.listed.models.length > 0);
+  const modelLoadError = !requested && input.providerId
+    ? { providerId: input.providerId, code: 'provider_unavailable' as const }
+    : requested && input.listError
+      ? { providerId: requested.id, code: input.listError }
+      : null;
   return {
     providers: offered.map((provider) => toProviderInfo(provider, true)),
     permissionCeiling: 'full',
     models: useListed ? input.listed!.models : staticModels,
     selectedOnlyModels: useListed ? input.listed!.selectedOnlyModels : staticMore,
-    modelLoadError: requested ? null : (input.providerId
-      ? { providerId: input.providerId, code: 'provider_unavailable' }
-      : null)
+    modelLoadError
   };
 }

@@ -1,7 +1,17 @@
 import { pathToFileURL } from 'node:url';
 import { existsSync, realpathSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
-import type { ZccPluginApi, ZccPluginFactory } from '@zana-ai/zcc-plugin-sdk/server';
+import type {
+  PluginInteractionRequest,
+  PluginInteractionResult,
+  ZccPluginApi,
+  ZccPluginFactory
+} from '@zana-ai/zcc-plugin-sdk/server';
+import {
+  PLUGIN_INTERACTION_MAX_PAYLOAD_BYTES,
+  PLUGIN_INTERACTION_MAX_TITLE_LENGTH,
+  type JsonValue
+} from '@zana-ai/zcc-domain/thread-runtime';
 import { registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
 
 export const HOST_ZCC_VERSION = '1.0.10';
@@ -19,7 +29,22 @@ export interface PluginHandle {
   dispose(): Promise<void>;
 }
 
-export function createPluginApi(pluginId: string, kvDir: string): PluginHandle {
+export function createPluginApi(
+  pluginId: string,
+  kvDir: string,
+  options?: {
+    requestPluginInteraction?: (args: {
+      pluginId: string;
+      threadId: string;
+      rendererId: string;
+      title: string;
+      payload: JsonValue;
+      timeoutMs: number;
+      signal?: AbortSignal;
+    }) => Promise<PluginInteractionResult>;
+    interruptPluginInteractions?: (pluginId: string) => void;
+  }
+): PluginHandle {
   const disposeHooks: Array<() => void | Promise<void>> = [];
   const kv = new Map<string, unknown>();
   let stale = false;
@@ -79,12 +104,27 @@ export function createPluginApi(pluginId: string, kvDir: string): PluginHandle {
       contributeSkills: () => undefined,
       experimental_registerProvider: (declaration) => {
         assertLive();
-        return registerThreadProvider(pluginId, declaration);
+        const handle = registerThreadProvider(pluginId, declaration);
+        disposeHooks.push(() => handle.unregister());
+        return handle;
       }
     },
     ui: {
-      requestInput: async () => {
-        throw new Error('ui.requestInput is not available in this runtime');
+      requestInput: async (request, requestOptions) => {
+        assertLive();
+        const parsed = validatePluginRequestInput(request);
+        if (!options?.requestPluginInteraction) {
+          throw new Error('ui.requestInput is not available in this runtime');
+        }
+        return options.requestPluginInteraction({
+          pluginId,
+          threadId: parsed.threadId,
+          rendererId: parsed.rendererId,
+          title: parsed.title,
+          payload: parsed.payload,
+          timeoutMs: parsed.timeoutMs,
+          signal: requestOptions?.signal
+        });
       }
     },
     status: {
@@ -99,6 +139,7 @@ export function createPluginApi(pluginId: string, kvDir: string): PluginHandle {
     api,
     async dispose() {
       stale = true;
+      options?.interruptPluginInteractions?.(pluginId);
       for (const hook of [...disposeHooks].reverse()) {
         try {
           await hook();
@@ -108,6 +149,54 @@ export function createPluginApi(pluginId: string, kvDir: string): PluginHandle {
       }
       disposeHooks.length = 0;
     }
+  };
+}
+
+export function validatePluginRequestInput(request: PluginInteractionRequest): {
+  threadId: string;
+  rendererId: string;
+  title: string;
+  payload: JsonValue;
+  timeoutMs: number;
+} {
+  if (!request || typeof request !== 'object') {
+    throw new Error('ui.requestInput requires an options object');
+  }
+  if (typeof request.threadId !== 'string' || request.threadId.length === 0) {
+    throw new Error('ui.requestInput threadId must be a non-empty string');
+  }
+  if (typeof request.rendererId !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(request.rendererId)) {
+    throw new Error("ui.requestInput rendererId must use letters, digits, '-' or '_'");
+  }
+  if (
+    typeof request.title !== 'string'
+    || request.title.trim().length === 0
+    || request.title.trim().length > PLUGIN_INTERACTION_MAX_TITLE_LENGTH
+  ) {
+    throw new Error(`ui.requestInput title must be 1-${PLUGIN_INTERACTION_MAX_TITLE_LENGTH} characters`);
+  }
+  let payload: JsonValue;
+  try {
+    const json = JSON.stringify(request.payload);
+    if (json === undefined) throw new Error();
+    if (Buffer.byteLength(json, 'utf8') > PLUGIN_INTERACTION_MAX_PAYLOAD_BYTES) {
+      throw new Error('ui.requestInput payload exceeds 64 KiB');
+    }
+    payload = JSON.parse(json) as JsonValue;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('64 KiB')) throw error;
+    throw new Error('ui.requestInput payload must be JSON-serializable');
+  }
+  const timeoutMs = request.timeoutMs ?? 10 * 60 * 1000;
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 60 * 60 * 1000) {
+    throw new Error('ui.requestInput timeoutMs must be between 1 and 3600000');
+  }
+  return {
+    threadId: request.threadId,
+    rendererId: request.rendererId,
+    title: request.title.trim(),
+    payload,
+    timeoutMs
   };
 }
 

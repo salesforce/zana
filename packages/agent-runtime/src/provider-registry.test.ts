@@ -254,6 +254,42 @@ describe("provider registry", () => {
     });
   });
 
+  it("carries the built-in OpenCode launch spec to the acp bridge", () => {
+    const provider = createProviderForId("acp-opencode", {
+      additionalWorkspaceWriteRoots: [],
+      bridgeLaunch: ACP_BRIDGE_LAUNCH,
+    });
+    const plan = provider.buildCommandPlan({
+      type: "thread/start",
+      threadId: "thread-1",
+      cwd: "/workspace",
+      options: {
+        claudeCodeMockCliTraffic: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
+        workflowsEnabled: false,
+        permissionMode: "full",
+        permissionScope: "full",
+        approvalReviewer: null,
+        permissionEscalation: null,
+      },
+      instructionMode: "append",
+    });
+    expect(plan).toMatchObject({
+      kind: "request",
+      method: "thread/start",
+      params: {
+        options: {
+          providerOptions: {
+            acpLaunchSpec: {
+              displayName: "OpenCode",
+              command: "opencode",
+              args: ["acp"],
+            },
+          },
+        },
+      },
+    });
+  });
+
   it("creates a dynamic acp provider from a launch spec", () => {
     const provider = createProviderForId("acp-custom", {
       additionalWorkspaceWriteRoots: ["/extra-root"],

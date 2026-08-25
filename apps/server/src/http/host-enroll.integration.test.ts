@@ -8,7 +8,10 @@ import {
   HOST_RPC_PROTOCOL_VERSION,
   type HostRpcRequestMessage
 } from '@zana-ai/zcc-contracts/host-rpc';
-import { listConversationThreadEvents } from '@zana-ai/zcc-db';
+import {
+  getConversationThread,
+  listConversationThreadEvents
+} from '@zana-ai/zcc-db';
 import { startProductServer, type ProductServer } from './product-server.js';
 
 let server: ProductServer | null = null;
@@ -112,6 +115,14 @@ async function waitForHost(hostId: string): Promise<void> {
   throw new Error(`host ${hostId} did not connect`);
 }
 
+async function waitForThreadStatus(threadId: string, status: string): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (getConversationThread(server!.ctx.db, threadId)?.status === status) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`thread ${threadId} did not reach status ${status}`);
+}
+
 function defaultRpcHandler(projectRoot: string) {
   return (
     request: HostRpcRequestMessage,
@@ -158,6 +169,9 @@ function defaultRpcHandler(projectRoot: string) {
         return;
       case 'thread.stop':
         reply(true, { threadId: request.command.threadId, stopped: true });
+        return;
+      case 'interactive.resolve':
+        reply(true, { interactionId: request.command.interactionId, delivered: true });
         return;
       case 'environment.destroy':
         reply(true, { environmentId: request.command.environmentId, destroyed: true });
@@ -316,6 +330,7 @@ describe('host enroll hub and thread create', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ projectId: 'proj-1', providerId: 'claude', input: ['hi'] })
     }).then((response) => response.json()) as { value: { id: string } };
+    const before = listConversationThreadEvents(server!.ctx.db, spawned.value.id).length;
 
     socket.send(JSON.stringify({
       type: 'host.event',
@@ -326,7 +341,8 @@ describe('host enroll hub and thread create', () => {
     }));
     await new Promise((resolve) => setTimeout(resolve, 50));
     const first = listConversationThreadEvents(server!.ctx.db, spawned.value.id);
-    expect(first.map((event) => event.sequence)).toEqual([1]);
+    expect(first).toHaveLength(before + 1);
+    expect(first.map((event) => event.sequence)).toEqual(first.map((_, index) => index + 1));
 
     socket.send(JSON.stringify({
       type: 'host.event',
@@ -336,7 +352,43 @@ describe('host enroll hub and thread create', () => {
       events: [{ threadId: spawned.value.id, kind: 'turn.completed' }]
     }));
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(listConversationThreadEvents(server!.ctx.db, spawned.value.id).map((event) => event.sequence)).toEqual([1]);
+    expect(listConversationThreadEvents(server!.ctx.db, spawned.value.id)).toHaveLength(before + 1);
+  });
+
+  it('persists a later provider session identity from host events', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-proj-'));
+    const { enrollToken } = await startServer(projectRoot);
+    const instanceId = randomUUID();
+    const enrolled = await enrollHost(enrollToken, 'alpha', instanceId);
+    const socket = await openHostSocket(enrolled, instanceId, defaultRpcHandler(projectRoot));
+    await waitForHost(enrolled.hostId);
+
+    const spawned = await fetch(`${server!.url}api/v1/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: 'proj-1', providerId: 'claude', input: ['hi'] })
+    }).then((response) => response.json()) as { value: { id: string; providerThreadId: string | null } };
+    expect(spawned.value.providerThreadId).toMatch(/^prov-/);
+
+    socket.send(JSON.stringify({
+      type: 'host.event',
+      protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+      hostId: enrolled.hostId,
+      instanceId,
+      events: [{
+        threadId: spawned.value.id,
+        kind: 'thread.event',
+        payload: {
+          type: 'thread/identity',
+          threadId: spawned.value.id,
+          providerThreadId: 'prov-replaced'
+        }
+      }]
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const stored = getConversationThread(server!.ctx.db, spawned.value.id);
+    expect(stored?.providerThreadId).toBe('prov-replaced');
   });
 
   it('lists library files through host rpc and rejects a path escape on the server', async () => {
@@ -379,6 +431,68 @@ describe('host enroll hub and thread create', () => {
     ).resolves.toBe(403);
   });
 
+  it('interrupts live conversation threads when the host instance restarts', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-proj-'));
+    const { enrollToken } = await startServer(projectRoot);
+    const instanceId = randomUUID();
+    const enrolled = await enrollHost(enrollToken, 'alpha', instanceId);
+    const socket = await openHostSocket(enrolled, instanceId, defaultRpcHandler(projectRoot));
+    await waitForHost(enrolled.hostId);
+
+    const spawned = await fetch(`${server!.url}api/v1/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: 'proj-1', providerId: 'claude', input: ['keep working'] })
+    }).then((response) => response.json()) as { value: { id: string } };
+    expect(getConversationThread(server!.ctx.db, spawned.value.id)?.status).toBe('active');
+
+    socket.send(JSON.stringify({
+      type: 'host.event',
+      protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+      hostId: enrolled.hostId,
+      instanceId,
+      events: [{
+        threadId: spawned.value.id,
+        kind: 'thread.event',
+        payload: {
+          type: 'turn/started',
+          threadId: spawned.value.id,
+          scope: { kind: 'turn', turnId: 'turn-live' },
+          providerThreadId: 'prov-live'
+        }
+      }]
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const restarted = randomUUID();
+    await openHostSocket(enrolled, restarted, defaultRpcHandler(projectRoot));
+    await waitForThreadStatus(spawned.value.id, 'error');
+    expect(listConversationThreadEvents(server!.ctx.db, spawned.value.id).map((event) => event.type)).toEqual(
+      expect.arrayContaining(['turn/completed', 'system/error', 'system/thread/interrupted'])
+    );
+  });
+
+  it('keeps a live conversation thread active when the same host instance reconnects', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-proj-'));
+    const { enrollToken } = await startServer(projectRoot);
+    const instanceId = randomUUID();
+    const enrolled = await enrollHost(enrollToken, 'alpha', instanceId);
+    await openHostSocket(enrolled, instanceId, defaultRpcHandler(projectRoot));
+    await waitForHost(enrolled.hostId);
+
+    const spawned = await fetch(`${server!.url}api/v1/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: 'proj-1', providerId: 'claude', input: ['still running'] })
+    }).then((response) => response.json()) as { value: { id: string } };
+    expect(getConversationThread(server!.ctx.db, spawned.value.id)?.status).toBe('active');
+
+    await openHostSocket(enrolled, instanceId, defaultRpcHandler(projectRoot));
+    await waitForHost(enrolled.hostId);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(getConversationThread(server!.ctx.db, spawned.value.id)?.status).toBe('active');
+  });
+
   it('enrolls the host-daemon runtime against the product hub', async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-proj-'));
     const { enrollToken, dataDir } = await startServer(projectRoot);
@@ -393,5 +507,217 @@ describe('host enroll hub and thread create', () => {
     } finally {
       await daemon.close();
     }
+  });
+
+  it('registers a pending interaction over host-key HTTP and resolves it over host-rpc', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-proj-'));
+    const { enrollToken } = await startServer(projectRoot);
+    const instanceId = randomUUID();
+    const enrolled = await enrollHost(enrollToken, 'alpha', instanceId);
+    await openHostSocket(enrolled, instanceId, defaultRpcHandler(projectRoot));
+    await waitForHost(enrolled.hostId);
+
+    const spawned = await fetch(`${server!.url}api/v1/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: 'proj-1', providerId: 'claude', input: ['approve me'] })
+    }).then((response) => response.json()) as { value: { id: string; hostId: string } };
+
+    const registered = await fetch(`${server!.url}internal/hosts/interactive-request`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${enrolled.hostKey}`,
+        'content-type': 'application/json',
+        'x-zcc-host-id': enrolled.hostId
+      },
+      body: JSON.stringify({
+        sessionId: instanceId,
+        interaction: {
+          threadId: spawned.value.id,
+          turnId: 'turn-ask',
+          providerId: 'claude-code',
+          providerThreadId: `prov-${spawned.value.id}`,
+          providerRequestId: 'req-1',
+          payload: {
+            kind: 'approval',
+            reason: 'Needs approval',
+            availableDecisions: ['allow_once', 'deny'],
+            subject: {
+              kind: 'command',
+              itemId: 'item-1',
+              command: 'git status',
+              cwd: projectRoot,
+              actions: [],
+              sessionGrant: null
+            }
+          }
+        }
+      })
+    }).then(async (response) => ({ status: response.status, body: await response.json() }));
+    expect(registered.status).toBe(200);
+    expect(registered.body.outcome).toBe('created');
+
+    const listed = await fetch(`${server!.url}api/v1/threads/${spawned.value.id}/interactions`)
+      .then((response) => response.json()) as Array<{ id: string; status: string }>;
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.status).toBe('pending');
+
+    const blocked = await fetch(`${server!.url}api/v1/threads/${spawned.value.id}/send`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ input: ['follow up'], mode: 'auto' })
+    }).then(async (response) => ({ status: response.status, body: await response.json() }));
+    expect(blocked.status).toBe(409);
+    expect(blocked.body.code).toBe('awaiting_user_interaction');
+
+    const resolved = await fetch(`${server!.url}api/v1/threads/${spawned.value.id}/interactions/${listed[0]!.id}/resolve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ decision: 'deny' })
+    }).then(async (response) => ({ status: response.status, body: await response.json() }));
+    expect(resolved.status).toBe(200);
+    expect(resolved.body.status).toBe('resolved');
+  });
+
+  it('rejects browser Origin and a mismatched host key on interactive-request', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-proj-'));
+    const { enrollToken } = await startServer(projectRoot);
+    const instanceId = randomUUID();
+    const enrolled = await enrollHost(enrollToken, 'alpha', instanceId);
+    await openHostSocket(enrolled, instanceId, defaultRpcHandler(projectRoot));
+    await waitForHost(enrolled.hostId);
+    const spawned = await fetch(`${server!.url}api/v1/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: 'proj-1', providerId: 'claude', input: ['hi'] })
+    }).then((response) => response.json()) as { value: { id: string } };
+
+    await expect(
+      fetch(`${server!.url}internal/hosts/interactive-request`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${enrolled.hostKey}`,
+          'content-type': 'application/json',
+          origin: 'http://localhost:5173',
+          'x-zcc-host-id': enrolled.hostId
+        },
+        body: JSON.stringify({ sessionId: instanceId, interaction: { threadId: spawned.value.id } })
+      }).then((response) => response.status)
+    ).resolves.toBe(403);
+
+    await expect(
+      fetch(`${server!.url}internal/hosts/interactive-request`, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer wrong-host-key-wrong-host-key',
+          'content-type': 'application/json',
+          'x-zcc-host-id': enrolled.hostId
+        },
+        body: JSON.stringify({ sessionId: instanceId, interaction: { threadId: spawned.value.id } })
+      }).then((response) => response.status)
+    ).resolves.toBe(401);
+
+    const other = await enrollHost(enrollToken, 'beta', randomUUID());
+    await expect(
+      fetch(`${server!.url}internal/hosts/interactive-request`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${other.hostKey}`,
+          'content-type': 'application/json',
+          'x-zcc-host-id': other.hostId
+        },
+        body: JSON.stringify({
+          sessionId: instanceId,
+          interaction: {
+            threadId: spawned.value.id,
+            turnId: 'turn-ask',
+            providerId: 'claude-code',
+            providerThreadId: `prov-${spawned.value.id}`,
+            providerRequestId: 'req-mismatch',
+            payload: {
+              kind: 'approval',
+              reason: 'Needs approval',
+              availableDecisions: ['deny'],
+              subject: {
+                kind: 'command',
+                itemId: 'item-mismatch',
+                command: 'git status',
+                cwd: '/tmp',
+                actions: [],
+                sessionGrant: null
+              }
+            }
+          }
+        })
+      }).then((response) => response.status)
+    ).resolves.toBe(403);
+  });
+
+  it('does not interrupt a pending interaction on same-instance reconnect, and does on a new instance', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-proj-'));
+    const { enrollToken } = await startServer(projectRoot);
+    const instanceId = randomUUID();
+    const enrolled = await enrollHost(enrollToken, 'alpha', instanceId);
+    await openHostSocket(enrolled, instanceId, defaultRpcHandler(projectRoot));
+    await waitForHost(enrolled.hostId);
+    const spawned = await fetch(`${server!.url}api/v1/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: 'proj-1', providerId: 'claude', input: ['hold'] })
+    }).then((response) => response.json()) as { value: { id: string } };
+
+    const payload = {
+      sessionId: instanceId,
+      interaction: {
+        threadId: spawned.value.id,
+        turnId: 'turn-ask',
+        providerId: 'claude-code',
+        providerThreadId: `prov-${spawned.value.id}`,
+        providerRequestId: 'req-reconnect',
+        payload: {
+          kind: 'approval',
+          reason: 'Needs approval',
+          availableDecisions: ['deny'],
+          subject: {
+            kind: 'command',
+            itemId: 'item-1',
+            command: 'ls',
+            cwd: projectRoot,
+            actions: [],
+            sessionGrant: null
+          }
+        }
+      }
+    };
+    const created = await fetch(`${server!.url}internal/hosts/interactive-request`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${enrolled.hostKey}`,
+        'content-type': 'application/json',
+        'x-zcc-host-id': enrolled.hostId
+      },
+      body: JSON.stringify(payload)
+    }).then((response) => response.json()) as { interactionId: string; outcome: string };
+    expect(created.outcome).toBe('created');
+
+    await openHostSocket(enrolled, instanceId, defaultRpcHandler(projectRoot));
+    await waitForHost(enrolled.hostId);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const stillPending = await fetch(`${server!.url}api/v1/threads/${spawned.value.id}/interactions`)
+      .then((response) => response.json()) as Array<{ status: string }>;
+    expect(stillPending.map((row) => row.status)).toEqual(['pending']);
+
+    const restarted = randomUUID();
+    await openHostSocket(enrolled, restarted, defaultRpcHandler(projectRoot));
+    await waitForHost(enrolled.hostId);
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const listed = await fetch(`${server!.url}api/v1/threads/${spawned.value.id}/interactions`)
+        .then((response) => response.json()) as unknown[];
+      if (listed.length === 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const afterRestart = await fetch(`${server!.url}api/v1/threads/${spawned.value.id}/interactions`)
+      .then((response) => response.json()) as unknown[];
+    expect(afterRestart).toEqual([]);
   });
 });

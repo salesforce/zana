@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
-import { matchPath, useLocation, useNavigate } from 'react-router-dom';
-import { Bot, PanelRight, Plus, Sparkles, Terminal } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
+import { Bot, PanelRight, Plus, Sparkles } from 'lucide-react';
 import type { AgentState, IdleTriageResult, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { useData, useUi, useAgentStatus, useIdleTriage, openWhatsNewAll } from '@/store';
 import { useThreads, type ThreadListItem } from '@/thread-store';
 import { useEnsureThreads } from '@/hooks/useEnsureThreads';
-import { getNewThreadRoutePath, NEW_THREAD_ROUTE_PATH, PROJECT_NEW_THREAD_ROUTE_PATH, THREAD_ROUTE_PATH } from '@/lib/route-paths';
+import { threadIdFromPath } from '@/lib/route-paths';
 import { getScopedProjectId } from '@/lib/windowScope';
 import { profileIcon } from '@/lib/profileIcon';
 import { isRecentlyFinished } from '@/lib/sessionBuckets';
@@ -153,18 +153,13 @@ export function AgentsListPane() {
   const promoteTriage = useData((s) => s.agentListNeedsYouFromTriage);
   const sensitivity = useData((s) => s.idleAttentionSensitivity);
   const [launcherOpen, setLauncherOpen] = useState(false);
-  const navigate = useNavigate();
   const location = useLocation();
   const threads = useThreads((s) => s.threads);
   const projects = useData((s) => s.projects);
   useEnsureThreads();
   const scopedProjectId = getScopedProjectId();
-  const activeThreadId =
-    location.pathname === NEW_THREAD_ROUTE_PATH ||
-    matchPath(PROJECT_NEW_THREAD_ROUTE_PATH, location.pathname)
-      ? undefined
-      : matchPath(THREAD_ROUTE_PATH, location.pathname)?.params.threadId;
-  const openComposer = () => navigate(getNewThreadRoutePath(scopedProjectId ?? undefined));
+  const activeThreadId = threadIdFromPath(location.pathname);
+  const openLauncher = () => setLauncherOpen(true);
   const openBoard = () => {
     // List mode consumes the full content area, avoiding a duplicate fleet list
     // beside the board while preserving the board/list preference in one place.
@@ -417,21 +412,11 @@ export function AgentsListPane() {
           type="button"
           data-testid="agents-new"
           className="icon-btn agents-new"
-          onClick={openComposer}
-          aria-label="New thread"
-          title="New thread"
+          onClick={openLauncher}
+          aria-label="New thread/agent"
+          title="New thread/agent"
         >
           <Plus size={14} />
-        </button>
-        <button
-          type="button"
-          data-testid="agents-legacy-new"
-          className="icon-btn agents-legacy-new"
-          onClick={() => setLauncherOpen(true)}
-          aria-label="New legacy PTY agent"
-          title="New legacy PTY agent"
-        >
-          <Terminal size={14} />
         </button>
       </header>
       <div className="list-body">
@@ -439,24 +424,15 @@ export function AgentsListPane() {
           <div className="agents-list-empty">
             <Bot size={20} aria-hidden="true" />
             <p>No threads yet</p>
-            <span>Start a thread, or open a legacy PTY agent.</span>
+            <span>Start a thread or agent from the launcher.</span>
             <button
               type="button"
               data-testid="agents-new-empty"
               className="btn primary"
-              onClick={openComposer}
+              onClick={openLauncher}
             >
               <Plus size={14} />
-              New thread
-            </button>
-            <button
-              type="button"
-              className="btn"
-              data-testid="agents-legacy-empty"
-              onClick={() => setLauncherOpen(true)}
-            >
-              <Terminal size={14} />
-              Legacy PTY agent
+              New thread/agent
             </button>
             <button
               type="button"
@@ -483,6 +459,7 @@ export function AgentsListPane() {
                       key={entry.thread.id}
                       thread={entry.thread}
                       projectName={entry.projectName}
+                      projectId={scopedProjectId}
                       active={entry.thread.id === activeThreadId}
                       onContextMenu={(e) => {
                         setMenu(null);

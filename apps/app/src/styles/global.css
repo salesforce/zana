@@ -4611,7 +4611,8 @@ body.resizing-col {
 .workspace-body > .settings-panel,
 .workspace-body > .feed-view,
 .workspace-body > .gus-panel,
-.workspace-body > .new-thread-view {
+.workspace-body > .new-thread-view,
+.workspace-body > .thread-detail-view {
   flex: 1;
   min-width: 0;
 }
@@ -5398,6 +5399,13 @@ body.resizing-col {
 .opener-row-blurb {
   font-size: 11.5px;
   color: var(--text-dim);
+}
+.opener-row-status-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex: none;
 }
 .opener-row-status {
   display: inline-flex;
@@ -10850,7 +10858,6 @@ body.resizing-col .explorer-resizer::after {
 }
 
 .agents-board-new,
-.agents-board-legacy,
 .agents-board-close-idle {
   display: inline-flex;
   align-items: center;
@@ -10881,7 +10888,6 @@ body.resizing-col .explorer-resizer::after {
   }
 
   .agents-board-new,
-  .agents-board-legacy,
   .agents-board-close-idle {
     padding-left: 8px;
     padding-right: 8px;
@@ -11843,29 +11849,17 @@ body.resizing-col .explorer-resizer::after {
   background: color-mix(in srgb, var(--accent-blue, #4d8dff) 16%, transparent);
 }
 
-.agent-monitor-thread-placeholder {
+.agent-monitor-thread {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  height: 100%;
-  color: var(--text-muted);
-  text-align: center;
-  padding: 16px;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
 }
 
-.agent-monitor-thread-placeholder p {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: 14px;
-}
-
-.agent-monitor-status.is-thread {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
+.agent-monitor-thread > .thread-detail-view {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
 }
 
 .agents-row-icon {
@@ -20947,12 +20941,54 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
   min-width: 0;
 }
 
+.launch-harness-measure-wrap:has(.is-compact) {
+  z-index: 4;
+}
+
 .launch-segmented--harness button {
   min-width: 0;
 }
 
 .launch-segmented--harness.is-compact button {
+  position: relative;
   padding: 5px 8px;
+}
+
+.launch-segmented--harness.is-compact button::after {
+  content: attr(aria-label);
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 2;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+}
+
+.launch-segmented--harness.is-compact button:first-child::after {
+  left: 0;
+  transform: none;
+}
+
+.launch-segmented--harness.is-compact button:last-child::after {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+
+.launch-segmented--harness.is-compact button:hover::after,
+.launch-segmented--harness.is-compact button:focus-visible::after {
+  opacity: 1;
 }
 
 /* The measurement mirror: same buttons/labels, laid out unconstrained
@@ -23978,6 +24014,10 @@ body.resizing-col .library-split-resizer::after {
 .agent-monitor.panel-collapsed {
   grid-template-columns: 260px minmax(0, 1fr) 40px;
 }
+.agent-monitor.is-thread,
+.agent-monitor.is-thread.panel-collapsed {
+  grid-template-columns: 260px minmax(0, 1fr);
+}
 
 .agent-monitor--empty {
   display: flex;
@@ -24152,6 +24192,10 @@ body.resizing-col .library-split-resizer::after {
   min-height: 0;
   background: var(--bg-panel);
   overflow: hidden;
+}
+.agent-monitor-terminal.is-thread {
+  display: flex;
+  flex-direction: column;
 }
 .agent-monitor-terminal-empty {
   position: absolute;
@@ -27535,7 +27579,8 @@ body.resizing-col .library-split-resizer::after {
   flex: 1 1 auto;
   min-height: 0;
   width: 100%;
-  padding: 24px 32px 16px;
+  padding: 40px 32px 16px;
+  gap: 24px;
 }
 
 .home-dashboard {
@@ -27548,14 +27593,12 @@ body.resizing-col .library-split-resizer::after {
   margin-top: 16px;
 }
 
-/* Docked Home composer: stay in the panel footer so Inbox/Guides lead and
- * the prompt remains reachable. Match the dashboard column (not the narrower
+/* Home composer leads the panel. Match the dashboard column (not the narrower
  * 820px New Thread composer) and give the empty prompt a bit more height. */
 .home-panel .home-agent-composer {
   flex: 0 0 auto;
   width: 100%;
   margin: 0 auto;
-  padding-top: 12px;
 }
 
 .home-panel .thread-command-editor-slot {
@@ -27566,13 +27609,6 @@ body.resizing-col .library-split-resizer::after {
 .home-panel .thread-command-editor {
   min-height: 52px;
   max-height: 16rem;
-}
-
-/* The editor slot's mention menu is `top: 100%` (opens below). On Home the
- * composer sits on the viewport floor, so flip it above the prompt. */
-.home-panel .mention-popover {
-  top: auto;
-  bottom: calc(100% + 4px);
 }
 
 /* AuroraGrid: a low-contrast grid, slow blue/gold drift, and occasional circuit
@@ -27844,6 +27880,68 @@ textarea.ui-command-composer-input {
   min-width: 0;
 }
 
+.thread-pending-banner {
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elevated, var(--bg-background));
+  color: var(--text-secondary, var(--ink-muted));
+  font-size: 12px;
+}
+.thread-pending-banner-source {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-muted, var(--ink-muted));
+}
+.thread-pending-banner-title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, var(--ink));
+}
+.thread-pending-banner-reason,
+.thread-pending-banner-details {
+  margin: 0 0 8px;
+  padding-left: 16px;
+}
+.thread-pending-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.thread-pending-banner-decision {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 10px;
+  background: var(--bg-background, var(--bg-elevated));
+  color: var(--text-primary, var(--ink));
+  cursor: pointer;
+}
+.thread-pending-banner-decision:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.thread-pending-banner-error {
+  margin: 8px 0 0;
+  color: var(--danger, #c44);
+}
+.thread-pending-question {
+  border: 0;
+  margin: 0 0 8px;
+  padding: 0;
+}
+.thread-pending-question legend {
+  font-weight: 600;
+  color: var(--text-primary, var(--ink));
+}
+.thread-pending-question-input {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+}
+
 .thread-command-composer {
   width: 100%;
 }
@@ -28038,18 +28136,39 @@ textarea.ui-command-composer-input {
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
 }
 
+.model-reasoning-picker-menu--models {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.model-reasoning-picker-menu--models .model-reasoning-picker-tabs,
+.model-reasoning-picker-menu--models .model-reasoning-picker-search {
+  flex: 0 0 auto;
+}
+
+.model-reasoning-picker-menu--models .model-reasoning-picker-section {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
 .model-reasoning-picker-tabs {
   display: flex;
   align-items: center;
   gap: 2px;
   padding: 4px 8px 0;
   border-bottom: 1px solid var(--border);
+  position: relative;
+  z-index: 2;
 }
 
 .model-reasoning-picker-tab {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  position: relative;
   width: 28px;
   height: 28px;
   border: none;
@@ -28070,6 +28189,45 @@ textarea.ui-command-composer-input {
 .model-reasoning-picker-tab.is-active {
   border-bottom-color: var(--text-primary);
   color: var(--text-primary);
+}
+
+/* Icon-only harness tabs: native `title` is clipped inside the popover, so
+   paint the name ourselves on hover/focus. */
+.model-reasoning-picker-tab::after {
+  content: attr(aria-label);
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 6px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: 0;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+}
+
+.model-reasoning-picker-tab:first-child::after {
+  left: 0;
+  transform: none;
+}
+
+.model-reasoning-picker-tab:last-child::after {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+
+.model-reasoning-picker-tab:hover::after,
+.model-reasoning-picker-tab:focus-visible::after {
+  opacity: 1;
 }
 
 .model-reasoning-picker-search {
@@ -28683,6 +28841,14 @@ textarea.ui-command-composer-input {
   grid-column: 2 / -1;
 }
 
+.thread-detail-view--embedded {
+  grid-column: auto;
+}
+
+.thread-detail-view--embedded .thread-detail-main {
+  padding: 10px 14px 8px;
+}
+
 .thread-detail-main {
   display: flex;
   flex-direction: column;
@@ -28723,7 +28889,8 @@ textarea.ui-command-composer-input {
   margin: 0;
 }
 
-.workspace-body > .new-thread-view {
+.workspace-body > .new-thread-view,
+.workspace-body > .thread-detail-view {
   grid-column: auto;
   height: auto;
   min-height: 0;
@@ -28859,11 +29026,43 @@ textarea.ui-command-composer-input {
 .thread-detail-timeline {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 12px;
   width: 100%;
+}
+
+/*
+ * Keep the thread transcript visually quiet at rest while preserving the native
+ * scroll container, its hit area, and its layout geometry. The pane briefly
+ * sets `data-scrollbar-scrolling` for real scroll events, matching overlay-
+ * style transient scrollbar behavior without making content reflow as the
+ * thumb appears.
+ */
+.thread-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.thread-scrollbar::-webkit-scrollbar-thumb,
+.thread-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: transparent;
+  border-radius: 9999px;
+}
+
+.thread-scrollbar[data-scrollbar-scrolling="true"] {
+  scrollbar-color: color-mix(in oklab, var(--text-primary) 20%, transparent)
+    transparent;
+}
+
+.thread-scrollbar[data-scrollbar-scrolling="true"]::-webkit-scrollbar-thumb {
+  background-color: color-mix(in oklab, var(--text-primary) 20%, transparent);
+}
+
+.thread-scrollbar[data-scrollbar-scrolling="true"]::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklab, var(--text-primary) 40%, transparent);
 }
 
 .thread-timeline-turn {
@@ -29441,56 +29640,13 @@ textarea.ui-command-composer-input {
   flex: 1 1 auto;
 }
 
-.thread-detail-body:has(.thread-toc),
 .thread-detail-body.is-diff {
   grid-template-columns: minmax(0, 1fr) minmax(11rem, 16rem);
 }
 
-.thread-toc {
-  min-width: 0;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  border-left: 1px solid var(--border);
-  padding-left: 10px;
-}
-
-.thread-toc-heading {
-  margin: 0 0 6px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--ink-muted);
-}
-
-.thread-toc-item {
-  text-align: left;
-  padding: 4px 6px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--ink-muted);
-  font-size: 11px;
-  line-height: 1.35;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.thread-toc-item.is-user {
-  opacity: 0.75;
-}
-
 @media (max-width: 1100px) {
-  .thread-detail-body:has(.thread-toc),
   .thread-detail-body.is-diff {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .thread-toc {
-    display: none;
   }
 
   .thread-detail-view.is-secondary-open:not(.is-secondary-maximized) {
@@ -29974,6 +30130,15 @@ textarea.ui-command-composer-input {
   color: var(--danger, #f85149);
 }
 
+.thread-diff-empty {
+  margin: 12px 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--ink-muted, var(--text-dim));
+  font-size: 12px;
+}
+
 .thread-diff-cards {
   display: flex;
   flex-direction: column;
@@ -29982,6 +30147,66 @@ textarea.ui-command-composer-input {
   min-height: 0;
   overflow: auto;
   padding: 0 16px 16px;
+}
+
+.thread-diff-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 16px 16px;
+}
+
+.thread-diff-skel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px 12px;
+}
+
+.thread-diff-skel {
+  display: block;
+  height: 10px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--ink-muted, var(--text-dim)) 22%, transparent);
+  animation: thread-diff-skel-pulse 1.2s ease-in-out infinite;
+}
+
+.thread-diff-skel-icon {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  margin-left: 8px;
+}
+
+.thread-diff-skel-path {
+  flex: 1 1 auto;
+  max-width: 14rem;
+  height: 10px;
+}
+
+.thread-diff-skel-stat {
+  flex: 0 0 3.5rem;
+  width: 3.5rem;
+  height: 10px;
+}
+
+.thread-diff-skel.is-wide { width: 94%; }
+.thread-diff-skel.is-mid { width: 88%; }
+.thread-diff-skel.is-short { width: 72%; }
+
+@keyframes thread-diff-skel-pulse {
+  0%,
+  100% { opacity: 0.45; }
+  50% { opacity: 0.85; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thread-diff-skel {
+    animation: none;
+  }
 }
 
 .thread-diff-card {
@@ -31384,6 +31609,12 @@ textarea.ui-command-composer-input {
 .agent-monitor.panel-collapsed {
   grid-template-columns: 260px minmax(0, 1fr) 40px;
 }
+/* A selected thread owns the remaining columns: conversation + its own
+   secondary panel, so the agent status rail steps aside. */
+.agent-monitor.is-thread,
+.agent-monitor.is-thread.panel-collapsed {
+  grid-template-columns: 260px minmax(0, 1fr);
+}
 
 @container agents-board (max-width: 920px) {
   .agent-monitor {
@@ -31391,6 +31622,10 @@ textarea.ui-command-composer-input {
   }
   .agent-monitor.panel-collapsed {
     grid-template-columns: minmax(160px, 28%) minmax(0, 1fr) 40px;
+  }
+  .agent-monitor.is-thread,
+  .agent-monitor.is-thread.panel-collapsed {
+    grid-template-columns: minmax(160px, 28%) minmax(0, 1fr);
   }
 }
 

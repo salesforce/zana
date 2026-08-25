@@ -92,6 +92,7 @@ describe('AgentTray', () => {
       {
         id: 'thread-1',
         projectId: 'project-1',
+        providerId: 'claude-code',
         status: 'idle',
         title: 'Idle review'
       }

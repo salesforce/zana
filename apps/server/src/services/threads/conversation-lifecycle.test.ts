@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
-import { forkConversation, resumeConversation, sendConversationTurn } from './conversation-lifecycle.js';
+import { archiveConversation, forkConversation, resumeConversation, sendConversationTurn, stopConversation } from './conversation-lifecycle.js';
 import { conversationTimeline } from './conversation-timeline.js';
 
 const thread = {
@@ -56,6 +56,8 @@ vi.mock('@zana-ai/zcc-db', () => {
     status: input.status ?? 'starting'
   })),
   getEnvironment: vi.fn(() => ({ id: thread.environmentId, path: '/tmp/proj' })),
+  hasPendingInteractionForThread: vi.fn(() => false),
+  countLiveThreadsForEnvironment: vi.fn(() => 1),
   countConversationThreadEvents: vi.fn(() => listConversationThreadEvents().length),
   listConversationThreadEventsWindow: vi.fn(() => listConversationThreadEvents()),
   listConversationThreadEvents
@@ -67,21 +69,35 @@ import {
   createConversationThread,
   getConversationThread,
   listConversationThreadEvents,
+  listConversationThreadEventsWindow,
+  setConversationProviderThreadId,
   updateConversationThreadStatus
 } from '@zana-ai/zcc-db';
+
+function pendingInteractionsStub(overrides?: {
+  hasPendingThreadInteraction?: boolean;
+}): ProductHttpContext['pendingInteractions'] {
+  return {
+    hasPendingThreadInteraction: () => overrides?.hasPendingThreadInteraction ?? false,
+    interruptPendingInteractionsForThreadIds: vi.fn(() => [])
+  } as unknown as ProductHttpContext['pendingInteractions'];
+}
 
 function ctx(callHostOnlineRpc: (input: unknown) => Promise<unknown>): ProductHttpContext {
   return {
     db: {},
     dataDir: '/tmp/zcc-data',
     hub: { emit: vi.fn() },
-    hostHub: { callHostOnlineRpc }
+    hostHub: { callHostOnlineRpc },
+    pendingInteractions: pendingInteractionsStub()
   } as unknown as ProductHttpContext;
 }
 
 beforeEach(() => {
   vi.mocked(getConversationThread).mockReturnValue(thread);
   vi.mocked(updateConversationThreadStatus).mockImplementation((_db, id, status) => ({ ...thread, id, status }));
+  vi.mocked(listConversationThreadEventsWindow).mockImplementation(() => listConversationThreadEvents());
+  vi.mocked(setConversationProviderThreadId).mockReset();
 });
 
 describe('conversation lifecycle', () => {
@@ -89,6 +105,7 @@ describe('conversation lifecycle', () => {
     const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
     await sendConversationTurn(ctx(callHostOnlineRpc), thread.id, [{ type: 'text', text: 'follow up' }], 'queue-if-active');
     expect(updateConversationThreadStatus).toHaveBeenCalledWith(expect.anything(), thread.id, 'active');
+    expect(updateConversationThreadStatus).not.toHaveBeenCalledWith(expect.anything(), thread.id, 'error');
     expect(appendConversationThreadEvent).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -159,10 +176,42 @@ describe('conversation lifecycle', () => {
     const callHostOnlineRpc = vi.fn(async () => {
       throw Object.assign(new Error('thread is not running on this host'), { code: 'unknown_thread' });
     });
+    const product = ctx(callHostOnlineRpc);
     await expect(
-      sendConversationTurn(ctx(callHostOnlineRpc), thread.id, [{ type: 'text', text: 'follow up' }])
+      sendConversationTurn(product, thread.id, [{ type: 'text', text: 'follow up' }])
     ).rejects.toMatchObject({ code: 'not_resumable' });
     expect(callHostOnlineRpc).toHaveBeenCalledTimes(1);
+    expect(updateConversationThreadStatus).toHaveBeenCalledWith(expect.anything(), thread.id, 'error');
+    expect(product.hub.emit).toHaveBeenCalledWith(
+      'threads:updated',
+      expect.objectContaining({ id: thread.id, status: 'error' })
+    );
+  });
+
+  it('recovers a provider session from stored events before sending a follow-up', async () => {
+    vi.mocked(getConversationThread).mockReturnValue({ ...thread, providerThreadId: null });
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValue([
+      {
+        id: 'evt-identity',
+        threadId: thread.id,
+        sequence: 1,
+        type: 'thread/identity',
+        payload: { type: 'thread/identity', providerThreadId: 'prov-from-event' },
+        createdAt: 1
+      }
+    ]);
+    vi.mocked(setConversationProviderThreadId).mockReturnValue({
+      ...thread,
+      providerThreadId: 'prov-from-event'
+    });
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
+    await sendConversationTurn(ctx(callHostOnlineRpc), thread.id, [{ type: 'text', text: 'follow up' }]);
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({
+        type: 'turn.submit',
+        resume: expect.objectContaining({ providerThreadId: 'prov-from-event' })
+      })
+    }));
   });
 
   it('resumes with the stored providerThreadId', async () => {
@@ -368,5 +417,36 @@ describe('conversation lifecycle', () => {
     };
     walk(timeline.rows as Parameters<typeof walk>[0]);
     expect(work).toEqual(expect.arrayContaining(['tool', 'command']));
+  });
+
+  it('blocks send while a pending interaction is open', async () => {
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
+    const context = {
+      ...ctx(callHostOnlineRpc),
+      pendingInteractions: pendingInteractionsStub({ hasPendingThreadInteraction: true })
+    };
+    await expect(sendConversationTurn(context, thread.id, [{ type: 'text', text: 'follow up' }]))
+      .rejects.toMatchObject({ status: 409, code: 'awaiting_user_interaction' });
+    expect(callHostOnlineRpc).not.toHaveBeenCalled();
+  });
+
+  it('interrupts pending interactions when stopping a thread', async () => {
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, stopped: true }));
+    const context = ctx(callHostOnlineRpc);
+    await stopConversation(context, thread.id);
+    expect(context.pendingInteractions.interruptPendingInteractionsForThreadIds).toHaveBeenCalledWith({
+      threadIds: [thread.id],
+      reason: 'thread-stopped'
+    });
+  });
+
+  it('interrupts pending interactions when archiving a thread', async () => {
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, stopped: true }));
+    const context = ctx(callHostOnlineRpc);
+    await archiveConversation(context, thread.id);
+    expect(context.pendingInteractions.interruptPendingInteractionsForThreadIds).toHaveBeenCalledWith({
+      threadIds: [thread.id],
+      reason: 'thread-deleted'
+    });
   });
 });

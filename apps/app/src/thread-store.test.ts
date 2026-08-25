@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeThreadRoster, type ThreadListItem } from './thread-store.js';
+import { mergeThreadRoster, pendingChildThreads, type ThreadListItem } from './thread-store.js';
 
 function thread(over: Partial<ThreadListItem> & Pick<ThreadListItem, 'id'>): ThreadListItem {
   return {
@@ -42,5 +42,20 @@ describe('mergeThreadRoster', () => {
     expect(
       mergeThreadRoster([keep, gone], thread({ id: 'gone', archivedAt: 9 })).map((row) => row.id)
     ).toEqual(['keep']);
+  });
+});
+
+describe('pendingChildThreads', () => {
+  it('keeps only children of the open thread that are awaiting interaction', () => {
+    const parent = thread({ id: 'parent' });
+    const waiting = thread({
+      id: 'child-wait',
+      parentThreadId: 'parent',
+      hasPendingInteraction: true,
+      title: 'Blocked'
+    });
+    const quiet = thread({ id: 'child-quiet', parentThreadId: 'parent', hasPendingInteraction: false });
+    const other = thread({ id: 'other', parentThreadId: 'elsewhere', hasPendingInteraction: true });
+    expect(pendingChildThreads([parent, waiting, quiet, other], 'parent')).toEqual([waiting]);
   });
 });

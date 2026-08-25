@@ -49,6 +49,7 @@ import { getScopedProjectId, isScopedWindow } from './lib/windowScope.js';
 import { appNavigate } from './lib/app-navigate.js';
 import { hasDesktopBridge } from './lib/app-surface.js';
 import { product } from './lib/product-client.js';
+import { prefetchThreadModelCatalog, reloadThreadModelCatalog } from './components/thread/pickers/thread-model-catalog.js';
 import { decodeRoutePath } from './lib/decode-route.js';
 import {
   getExtensionsTabRoutePath,
@@ -1831,18 +1832,22 @@ export const useData = create<DataState>((set, get) => ({
 
   setHarnessCursorEnabled(on) {
     set({ harnessCursorEnabled: on });
+    void prefetchThreadModelCatalog().catch(() => undefined);
   },
 
   setHarnessCodexEnabled(on) {
     set({ harnessCodexEnabled: on });
+    void prefetchThreadModelCatalog().catch(() => undefined);
   },
 
   setHarnessPiEnabled(on) {
     set({ harnessPiEnabled: on });
+    void prefetchThreadModelCatalog().catch(() => undefined);
   },
 
   setHarnessOpenCodeEnabled(on) {
     set({ harnessOpenCodeEnabled: on });
+    void prefetchThreadModelCatalog().catch(() => undefined);
   },
 
   async refreshHarnessStatus() {
@@ -1852,6 +1857,7 @@ export const useData = create<DataState>((set, get) => ({
     } catch {
       set({ harnessStatus: [] });
     }
+    void reloadThreadModelCatalog().catch(() => undefined);
   },
 
   async refreshEditorStatus() {

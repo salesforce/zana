@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { product } from '../../lib/product-client.js';
 import { AlertTriangle, Bot, CheckCircle2, ChevronRight, RefreshCw, XCircle } from 'lucide-react';
@@ -6,10 +6,16 @@ import type { AppConfig, HarnessFamily, HarnessVerifyResult, LaunchProfileId } f
 import type { HarnessAdapterDescriptor } from '@zana-ai/zcc-domain/harness-adapter';
 import { useData, useUi } from '@/store';
 import { profileIcon } from '@/lib/profileIcon';
+import { providerIconForId } from '@/components/thread/pickers/provider-icon';
 import { Section, Field, ToggleSwitch, ChipField, TextArgsField } from '@/components/settings/FormFields';
 import { HarnessOptionSelect } from '@/components/HarnessOptionSelect';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
 import { providerUiSchema } from '@zana-ai/zcc-domain/launch-provider';
+import {
+  getThreadModelCatalog,
+  subscribeThreadModelCatalog
+} from '../../components/thread/pickers/thread-model-catalog.js';
+import { harnessLoginStatus, type HarnessLoginStatus } from '../../components/thread/pickers/harness-login.js';
 
 const USE_HARNESS_DEFAULT = { id: '', label: 'Use harness default' } as const;
 const CODEX_UI = providerUiSchema('codex');
@@ -125,6 +131,40 @@ function StatusBadge({ h, enabled }: { h: HarnessVerifyResult; enabled: boolean 
   );
 }
 
+function LoginBadge({ login }: { login: HarnessLoginStatus }) {
+  if (login.state === 'checking') {
+    return (
+      <span className="opener-row-status opener-row-status--muted" title={`Checking ${login.loginCommand}`}>
+        checking login…
+      </span>
+    );
+  }
+  if (login.state === 'sign_in_required') {
+    return (
+      <span
+        className="opener-row-status opener-row-status--warn"
+        title={`Run ${login.loginCommand}, then Check`}
+      >
+        <AlertTriangle size={13} />
+        sign in
+      </span>
+    );
+  }
+  if (login.state === 'unverified') {
+    return (
+      <span className="opener-row-status opener-row-status--muted" title={`Could not verify. Run ${login.loginCommand} if needed, then Check.`}>
+        login unverified
+      </span>
+    );
+  }
+  return (
+    <span className="opener-row-status opener-row-status--ok" title={`Signed in. Models refresh on Check.`}>
+      <CheckCircle2 size={13} />
+      signed in
+    </span>
+  );
+}
+
 /**
  * One harness family as a compact row. `status` mode is install + enable only
  * (the verification list). `settings` mode is the Legacy Agent advanced
@@ -137,7 +177,8 @@ function HarnessRow({
   onUpdate,
   descriptor,
   advanced,
-  mode
+  mode,
+  login
 }: {
   h: HarnessVerifyResult;
   config: AppConfig;
@@ -146,6 +187,7 @@ function HarnessRow({
   descriptor?: HarnessAdapterDescriptor;
   advanced?: React.ReactNode;
   mode: 'status' | 'settings';
+  login?: HarnessLoginStatus | null;
 }) {
   const [open, setOpen] = useState(false);
   const enableKey = ENABLE_KEY[h.family];
@@ -324,7 +366,12 @@ function HarnessRow({
           <span className="opener-row-blurb">{FAMILY_BLURB[h.family]}</span>
         </div>
 
-        {mode === 'status' ? <StatusBadge h={h} enabled={enabled} /> : null}
+        {mode === 'status' ? (
+          <span className="opener-row-status-stack">
+            <StatusBadge h={h} enabled={enabled} />
+            {login ? <LoginBadge login={login} /> : null}
+          </span>
+        ) : null}
 
         {mode === 'status' ? (
           enableKey ? (
@@ -366,10 +413,26 @@ type ThreadProviderListItem = {
   pluginId: string;
 };
 
+const BUILTIN_THREAD_PROVIDERS: readonly ThreadProviderListItem[] = [
+  { id: 'claude-code', displayName: 'Claude Code', pluginId: 'provider-claude-code' },
+  { id: 'codex', displayName: 'Codex', pluginId: 'provider-codex' },
+  { id: 'pi', displayName: 'Pi', pluginId: 'provider-pi' },
+  { id: 'acp-cursor', displayName: 'Cursor', pluginId: 'provider-acp' },
+  { id: 'acp-opencode', displayName: 'OpenCode', pluginId: 'provider-acp' }
+];
+
+export function mergeBuiltinThreadProviders(rows: ThreadProviderListItem[]): ThreadProviderListItem[] {
+  const seen = new Set(rows.map((row) => row.id));
+  const missing = BUILTIN_THREAD_PROVIDERS.filter((row) => !seen.has(row.id));
+  return missing.length === 0 ? rows : [...rows, ...missing];
+}
+
 const THREAD_PROVIDER_PROFILE: Record<string, LaunchProfileId> = {
   'claude-code': 'claude',
   'acp-cursor': 'cursor',
   cursor: 'cursor',
+  'acp-opencode': 'opencode',
+  opencode: 'opencode',
   codex: 'codex',
   pi: 'pi'
 };
@@ -378,12 +441,16 @@ const THREAD_PROVIDER_BLURB: Record<string, string> = {
   'claude-code': 'Anthropic’s Claude Code — the default thread provider.',
   'acp-cursor': 'Cursor via the Agent Client Protocol (ACP).',
   cursor: 'Cursor via the Agent Client Protocol (ACP).',
+  'acp-opencode': 'OpenCode via the Agent Client Protocol (ACP).',
+  opencode: 'OpenCode via the Agent Client Protocol (ACP).',
   codex: 'OpenAI’s Codex coding CLI.',
   pi: 'The multi-provider Pi coding-agent CLI.',
   fake: 'Test-only provider used by AgentRuntime.'
 };
 
 function threadProviderGlyph(providerId: string) {
+  const Brand = providerIconForId(providerId);
+  if (Brand) return <Brand size={17} />;
   const profile = THREAD_PROVIDER_PROFILE[providerId];
   return profile ? profileIcon(profile, 17) : <Bot size={17} />;
 }
@@ -428,7 +495,7 @@ function ThreadProvidersPanel() {
     let cancelled = false;
     void product.threads.providers()
       .then((body) => {
-        if (!cancelled) setProviders(body.providers);
+        if (!cancelled) setProviders(mergeBuiltinThreadProviders(body.providers));
       })
       .catch(() => {
         if (!cancelled) setProviders([]);
@@ -454,6 +521,11 @@ export function HarnessView({
 }) {
   const status = useData((s) => s.harnessStatus);
   const refresh = useData((s) => s.refreshHarnessStatus);
+  const modelCatalog = useSyncExternalStore(
+    subscribeThreadModelCatalog,
+    getThreadModelCatalog,
+    getThreadModelCatalog
+  );
   // Track the in-flight probe so the button can show it's actively re-checking —
   // the row list stays populated during a re-check (each probe runs `--version`).
   const [checking, setChecking] = useState(false);
@@ -680,7 +752,7 @@ export function HarnessView({
     <Section
       anchorId="harness-status"
       title="Install status"
-      help="Coding CLIs used by Threads and legacy agents. Enable a family here to show it in launch UIs. Check, Install or Fix re-probes each binary on your PATH."
+      help="Coding CLIs used by Threads and legacy agents. Enable a family here to show it in launch UIs. Check re-probes each binary and, for Cursor and Codex, whether you are signed in — a successful check also refreshes their model lists."
     >
       <div className={`harness-health harness-health--${health.ok ? 'ok' : 'warn'}`} role="status">
         {health.ok ? <CheckCircle2 size={16} aria-hidden /> : <AlertTriangle size={16} aria-hidden />}
@@ -702,6 +774,7 @@ export function HarnessView({
               onConfigDraft={onConfigDraft}
               onUpdate={onUpdate}
               mode="status"
+              login={harnessLoginStatus(h.family, modelCatalog, h.installed)}
             />
           ))
         )}

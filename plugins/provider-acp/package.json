@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Run bb threads with ACP (Agent Client Protocol) agents, starting with Cursor.",
+  "description": "Run threads with ACP (Agent Client Protocol) agents, including Cursor and OpenCode.",
   "engines": {
     "zcc": ">=1.0.0",
     "zccPluginSdk": ">=0.1.0"
@@ -28,7 +28,7 @@
   },
   "zcc": {
     "name": "ACP providers",
-    "description": "Run bb threads with ACP (Agent Client Protocol) agents, starting with Cursor.",
+    "description": "Run threads with ACP agents, including Cursor and OpenCode.",
     "branding": {
       "icon": "./icons/cursor.svg"
     },

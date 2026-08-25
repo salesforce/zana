@@ -11,6 +11,8 @@ import { createFakeAgentRuntime, fakeProviderEnabled } from './fake-runtime.js';
 import {
   encodeClientTurnRequestIdNumber,
   type PermissionMode,
+  type PendingInteractionCreate,
+  type PendingInteractionResolution,
   type PromptInput,
   type ReasoningLevel,
   type RuntimeThreadExecutionOptions,
@@ -129,6 +131,15 @@ export function createAgentRuntimeAdapter(options: {
   emit: (event: HostEventEnvelope) => void;
   dataDir?: string;
   createRuntime?: CreateAgentRuntimeFn;
+  onInteractiveRequest?: (request: PendingInteractionCreate) => Promise<PendingInteractionResolution>;
+  onProcessExit?: (info: {
+    providerId: string;
+    threads: Array<{ threadId: string }>;
+    code: number | null;
+    expected: boolean;
+    signal: string | null;
+    stderr: string | null;
+  }) => void;
 }): ThreadRuntimeAdapter {
   const runtimes = new Map<string, AgentRuntime>();
   const threadLocation = new Map<string, { environmentId: string; cwd: string }>();
@@ -149,7 +160,9 @@ export function createAgentRuntimeAdapter(options: {
       onToolCall: async () => ({
         contentItems: [{ type: 'inputText', text: 'ok' }],
         success: true
-      })
+      }),
+      ...(options.onInteractiveRequest ? { onInteractiveRequest: options.onInteractiveRequest } : {}),
+      ...(options.onProcessExit ? { onProcessExit: options.onProcessExit } : {})
     });
     runtimes.set(environmentId, runtime);
     return runtime;

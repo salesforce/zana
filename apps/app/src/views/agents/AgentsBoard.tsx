@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
-import { matchPath, useLocation, useNavigate } from 'react-router-dom';
-import { Bot, Moon, Plus, Search, Terminal, X, Loader2 } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { Bot, Moon, Plus, Search, X, Loader2 } from 'lucide-react';
 import type { Project, TerminalSession } from '@zana-ai/zcc-domain/product';
 import {
   useData,
@@ -15,7 +15,7 @@ import {
 } from '@/store';
 import { useThreads } from '@/thread-store';
 import { useEnsureThreads } from '@/hooks/useEnsureThreads';
-import { getNewThreadRoutePath, getThreadRoutePath, THREAD_ROUTE_PATH } from '@/lib/route-paths';
+import { getThreadRoutePath, threadIdFromPath } from '@/lib/route-paths';
 import { AgentBoardLanes, isReclaimableIdle, type AgentCard } from '@/components/AgentBoard';
 import { AgentViewToggle } from '@/components/AgentViewToggle';
 import { SquadFlowView } from '@/views/agents/SquadFlowView';
@@ -38,9 +38,8 @@ import {
  * list / flow / empty board but filters to one workspace. Presentational
  * lane/card rendering lives in the shared {@link AgentBoardLanes}.
  *
- * New thread from a project workspace stays on `/projects/:id/threads/new`.
- * Legacy PTY never mounts a launcher here — it flips `useUi.launcherOpen` so
- * App (fleet) or Workspace (project) hosts the shared modal.
+ * New thread/agent never mounts a launcher here — it flips `useUi.launcherOpen`
+ * so App (fleet) or Workspace (project) hosts the shared modal.
  */
 
 export type AgentsBoardScope =
@@ -171,12 +170,13 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
     [visibleCards, favoriteIds]
   );
   const activeTabId = scopedProject ? selectedTabId[scopedProject.id] : undefined;
-  const activeThreadId = matchPath(THREAD_ROUTE_PATH, location.pathname)?.params.threadId;
+  const activeThreadId = threadIdFromPath(location.pathname);
   const activeId = activeThreadId ?? activeTabId;
+  const threadProjectId = isGlobal ? undefined : scopedProject?.id;
 
   const inspect = (item: FleetItem) => {
     if (item.kind === 'thread') {
-      navigate(getThreadRoutePath(item.id));
+      navigate(getThreadRoutePath(item.id, threadProjectId));
       return;
     }
     useUi.getState().openAgentModal(item.card.session.id, item.projectId);
@@ -184,7 +184,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
 
   const pick = (item: FleetItem) => {
     if (item.kind === 'thread') {
-      navigate(getThreadRoutePath(item.id));
+      navigate(getThreadRoutePath(item.id, threadProjectId));
       return;
     }
     const c = item.card;
@@ -286,22 +286,12 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
             type="button"
             className="btn primary agents-board-new"
             data-testid="agents-board-new-thread"
-            onClick={() => navigate(getNewThreadRoutePath(scopedProject?.id))}
-            aria-label="New thread"
-            title="Start a new thread"
+            onClick={() => useUi.getState().setLauncherOpen(true)}
+            aria-label="New thread/agent"
+            title="Start a new thread or agent"
           >
             <Plus size={14} />
-            <span className="agents-board-btn-label">New Thread</span>
-          </button>
-          <button
-            type="button"
-            className="btn agents-board-legacy"
-            onClick={() => useUi.getState().setLauncherOpen(true)}
-            aria-label="Legacy PTY agent"
-            title="Start a legacy PTY agent"
-          >
-            <Terminal size={14} />
-            <span className="agents-board-btn-label">Legacy PTY</span>
+            <span className="agents-board-btn-label">New thread/agent</span>
           </button>
         </div>
       </header>
@@ -333,23 +323,22 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
               <>
                 <h4>No agents or threads</h4>
                 <p>
-                  Start a thread — it&rsquo;ll appear here, across every project. Legacy PTY
-                  agents still launch from the header.
+                  Start a thread or agent — it&rsquo;ll appear here, across every project.
                 </p>
               </>
             ) : (
               <>
                 <h4>No agents or threads yet</h4>
-                <p>Start a thread in this project and watch it move across the board.</p>
+                <p>Start a thread or agent in this project and watch it move across the board.</p>
               </>
             )}
             <button
               type="button"
               className="btn primary"
-              onClick={() => navigate(getNewThreadRoutePath(scopedProject?.id))}
+              onClick={() => useUi.getState().setLauncherOpen(true)}
             >
               <Plus size={14} />
-              New Thread
+              New thread/agent
             </button>
           </div>
         </div>

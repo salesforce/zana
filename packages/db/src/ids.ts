@@ -19,3 +19,7 @@ export function createThreadId(): string {
 export function createEventId(): string {
   return randomUUID();
 }
+
+export function createPendingInteractionId(): string {
+  return `pint_${randomUUID()}`;
+}

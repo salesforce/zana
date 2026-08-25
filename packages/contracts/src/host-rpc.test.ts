@@ -266,5 +266,18 @@ describe('host-rpc contract', () => {
     })).toEqual({
       patches: [{ path: 'a.ts', patch: 'diff --git a/a.ts b/a.ts\n', truncated: false }]
     });
+    expect(HostRpcCommandSchema.parse({
+      type: 'interactive.resolve',
+      threadId,
+      interactionId: 'pint_1',
+      providerId: 'claude-code',
+      providerThreadId: 'pt-1',
+      providerRequestId: 'req-1',
+      resolution: { decision: 'deny' }
+    }).type).toBe('interactive.resolve');
+    expect(parseHostRpcResult('interactive.resolve', {
+      interactionId: 'pint_1',
+      delivered: true
+    })).toEqual({ interactionId: 'pint_1', delivered: true });
   });
 });

@@ -7,6 +7,7 @@ describe('providerIconForId', () => {
     expect(providerIconForId('codex')).not.toBeNull();
     expect(providerIconForId('pi')).not.toBeNull();
     expect(providerIconForId('acp-cursor')).not.toBeNull();
+    expect(providerIconForId('acp-opencode')).not.toBeNull();
   });
 
   it('returns null for unknown ids so the picker can fall back to a letter', () => {

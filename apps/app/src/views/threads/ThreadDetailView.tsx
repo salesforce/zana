@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { PanelRight } from 'lucide-react';
 import type { ActiveThinking, ThreadTimelineGoal, ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
@@ -7,13 +7,16 @@ import type { TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
 import { product } from '../../lib/product-client.js';
 import { ThreadCommandComposer } from '../../components/ThreadCommandComposer.js';
 import { ThreadTimeline } from '../../components/thread/ThreadTimeline.js';
-import { ThreadConversationToc } from '../../components/thread/ThreadConversationToc.js';
 import { ThreadDiffPanel } from '../../components/thread/ThreadDiffPanel.js';
 import { ThreadWorkspaceBanner } from '../../components/thread/ThreadWorkspaceBanner.js';
 import { isBusyThreadStatus } from '../../components/thread/thread-timeline-model.js';
 import { ThreadStatusBadge } from '../../components/thread/timeline/ThreadBanners.js';
 import { getProjectWorkspaceRoutePath, getThreadRoutePath } from '../../lib/route-paths.js';
-import { useThreads } from '../../thread-store.js';
+import { useRouteState } from '../../hooks/useRouteState.js';
+import { pendingChildThreads, useThreads } from '../../thread-store.js';
+import { ThreadPendingInteractionBanner } from '../../components/thread/pending-interactions/ThreadPendingInteractionBanner.js';
+import { ChildThreadPendingBanners } from '../../components/thread/pending-interactions/ChildThreadPendingBanners.js';
+import { useOpenPendingInteractions } from '../../components/thread/pending-interactions/useOpenPendingInteractions.js';
 import { ThreadSecondaryPanel } from '../../components/thread/secondary-panel/ThreadSecondaryPanel.js';
 import { ThreadInfoContent } from '../../components/thread/secondary-panel/ThreadInfoContent.js';
 import { ThreadNewTabPage } from '../../components/thread/secondary-panel/ThreadNewTabPage.js';
@@ -31,8 +34,26 @@ const INITIAL_SEGMENT_LIMIT = 200;
 
 export function ThreadDetailView() {
   const { threadId } = useParams<{ threadId: string }>();
+  if (!threadId) return null;
+  return <ThreadDetail threadId={threadId} />;
+}
+
+export function ThreadDetail({
+  threadId,
+  embedded = false
+}: {
+  threadId: string;
+  embedded?: boolean;
+}) {
   const navigate = useNavigate();
+  const route = useRouteState();
   const upsertThread = useThreads((s) => s.upsert);
+  const threads = useThreads((s) => s.threads);
+  const childThreads = useMemo(
+    () => pendingChildThreads(threads, threadId),
+    [threadId, threads]
+  );
+  const pendingInteractions = useOpenPendingInteractions(threadId);
   const panel = useThreadSecondaryPanel(threadId);
   const [title, setTitle] = useState('Thread');
   const [status, setStatus] = useState('starting');
@@ -55,7 +76,6 @@ export function ThreadDetailView() {
   const [hasOlderRows, setHasOlderRows] = useState(false);
   const [segmentLimit, setSegmentLimit] = useState(INITIAL_SEGMENT_LIMIT);
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const [outline, setOutline] = useState<Array<{ id: string; role: 'user' | 'assistant'; preview: string }>>([]);
   const [diffPath, setDiffPath] = useState<string | null>(null);
 
   useEffect(() => {
@@ -64,10 +84,9 @@ export function ThreadDetailView() {
     let poll: number | null = null;
     const refresh = async () => {
       try {
-        const [detail, timeline, toc] = await Promise.all([
+        const [detail, timeline] = await Promise.all([
           product.threads.get(threadId),
-          product.threads.timeline(threadId, { segmentLimit }),
-          product.threads.conversationOutline(threadId).catch(() => ({ items: [] as Array<{ id: string; role: 'user' | 'assistant'; preview: string }> }))
+          product.threads.timeline(threadId, { segmentLimit })
         ]);
         if (cancelled) return;
         const thread = detail.thread as {
@@ -106,11 +125,6 @@ export function ThreadDetailView() {
         setContextWindow((timeline.contextWindowUsage as ThreadContextWindowUsage | null) ?? null);
         setLastReadSeq(typeof timeline.lastReadSeq === 'number' ? timeline.lastReadSeq : null);
         setHasOlderRows(Boolean(timeline.timelinePage?.hasOlderRows));
-        setOutline((toc.items ?? []).map((item) => ({
-          id: item.id,
-          role: item.role,
-          preview: item.preview
-        })));
         if (thread.id) {
           upsertThread({
             id: thread.id,
@@ -124,7 +138,9 @@ export function ThreadDetailView() {
             cwd: typeof thread.cwd === 'string' ? thread.cwd : null,
             branchName: thread.branchName ?? null,
             isWorktree: thread.isWorktree ?? false,
-            archivedAt: thread.archivedAt ?? null
+            archivedAt: thread.archivedAt ?? null,
+            parentThreadId: (thread as { parentThreadId?: string | null }).parentThreadId ?? null,
+            hasPendingInteraction: Boolean((thread as { hasPendingInteraction?: boolean }).hasPendingInteraction)
           });
         }
         if (!isBusyThreadStatus(nextStatus) && poll !== null) {
@@ -168,17 +184,6 @@ export function ThreadDetailView() {
     }).catch(() => undefined);
   }, [threadId]);
 
-  const jumpTo = useCallback((id: string) => {
-    const node = document.querySelector(`[data-row-id="${CSS.escape(id)}"]`);
-    if (node) {
-      node.scrollIntoView({ block: 'center' });
-      return;
-    }
-    setLoadingOlder(true);
-    setSegmentLimit((current) => current + INITIAL_SEGMENT_LIMIT);
-  }, []);
-
-
   const openDiff = useCallback((path?: string | null) => {
     setDiffPath(path ?? null);
     panel.selectPin('diff');
@@ -198,13 +203,12 @@ export function ThreadDetailView() {
     }
   }, [cwd, panel, projectId]);
 
-  if (!threadId) return null;
-
   const pin = activePinnedView(panel.state);
   const closable = activeClosableTab(panel.state);
   const panelOpen = panel.state.isOpen;
   const viewClass = [
     'thread-detail-view',
+    embedded ? 'thread-detail-view--embedded' : '',
     panelOpen ? 'is-secondary-open' : '',
     panel.state.isMaximized ? 'is-secondary-maximized' : ''
   ].filter(Boolean).join(' ');
@@ -266,6 +270,7 @@ export function ThreadDetailView() {
     <section
       className={viewClass}
       data-testid="thread-detail"
+      data-embedded={embedded ? 'true' : undefined}
       style={panelOpen ? { ['--thread-secondary-width' as string]: `${panel.state.widthPx}px` } : undefined}
     >
       <div className="thread-detail-main">
@@ -284,7 +289,12 @@ export function ThreadDetailView() {
               aria-label="Fork thread"
               onClick={async () => {
                 const forked = await product.threads.fork(threadId);
-                if (forked.ok) navigate(getThreadRoutePath(forked.value.id));
+                if (forked.ok) {
+                  navigate(getThreadRoutePath(
+                    forked.value.id,
+                    route.isProjectWorkspace ? route.focusedProjectId : undefined
+                  ));
+                }
               }}
             >
               <GitFork size={14} />
@@ -362,20 +372,31 @@ export function ThreadDetailView() {
                 if (action.kind === 'open-file-diff') openDiff(action.path);
               }}
               onTitleLink={(link) => {
-                if (link.kind === 'thread') navigate(getThreadRoutePath(link.threadId));
+                if (link.kind === 'thread') {
+                  navigate(getThreadRoutePath(
+                    link.threadId,
+                    route.isProjectWorkspace ? route.focusedProjectId : undefined
+                  ));
+                }
               }}
               onOpenDiff={(path) => openDiff(path)}
-              onAnswer={(text) => {
-                void product.threads.send(threadId, [{ type: 'text', text }], 'auto');
-              }}
             />
             <ThreadWorkspaceBanner
               environmentId={environmentId}
               onOpenDiff={(path) => openDiff(path)}
             />
+            <ChildThreadPendingBanners childThreads={childThreads} projectId={projectId} />
+            {pendingInteractions.map((interaction) => (
+              <ThreadPendingInteractionBanner
+                key={interaction.id}
+                interaction={interaction}
+                threadId={threadId}
+              />
+            ))}
             <ThreadCommandComposer
               threadId={threadId}
               status={status}
+              sendBlocked={pendingInteractions.length > 0}
               environmentLabel={isWorktree ? 'This checkout' : 'Local'}
               contextWindowUsage={contextWindow}
               providerId={threadProviderId ?? undefined}
@@ -384,9 +405,6 @@ export function ThreadDetailView() {
               onOpenExplorer={projectId ? () => navigate(getProjectWorkspaceRoutePath(projectId, 'explorer')) : undefined}
             />
           </div>
-          {!panelOpen ? (
-            <ThreadConversationToc items={outline} onJump={jumpTo} />
-          ) : null}
         </div>
       </div>
       {panelOpen ? (

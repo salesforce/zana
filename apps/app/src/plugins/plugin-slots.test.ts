@@ -6,6 +6,7 @@ import {
   interpretPluginApp,
   listHomepageSections,
   listNavPanels,
+  listPendingInteractionSlots,
   listSidebarFooterActions
 } from './plugin-slots.js';
 
@@ -25,10 +26,12 @@ describe('plugin slot registry', () => {
       definePluginApp((app) => {
         app.slots.navPanel({ id: 'main', title: 'Tasks', icon: 'ListTodo', component: () => null });
         app.slots.homepageSection({ id: 'open', title: 'Open', component: () => null });
+        app.slots.pendingInteraction({ id: 'confirm', component: () => null });
       })
     );
     expect(listNavPanels()).toHaveLength(1);
     expect(listHomepageSections()).toHaveLength(1);
+    expect(listPendingInteractionSlots()).toHaveLength(1);
     expect(listNavPanels()[0]?.generation).toBe(2);
   });
 

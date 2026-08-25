@@ -57,6 +57,10 @@ export async function destroyEnvironment(ctx: ProductHttpContext, environmentId:
 export async function archiveThread(ctx: ProductHttpContext, threadId: string): Promise<boolean> {
   const conversation = getConversationThread(ctx.db, threadId);
   if (conversation) {
+    ctx.pendingInteractions.interruptPendingInteractionsForThreadIds({
+      threadIds: [threadId],
+      reason: 'thread-deleted'
+    });
     try {
       await ctx.hostHub.callHostOnlineRpc({
         hostId: conversation.hostId,

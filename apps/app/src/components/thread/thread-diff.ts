@@ -20,8 +20,8 @@ export const DIFF_SELECTION_UNCOMMITTED = 'uncommitted';
 export type DiffSelection = typeof DIFF_SELECTION_ALL | typeof DIFF_SELECTION_UNCOMMITTED;
 
 export const DIFF_SELECTION_OPTIONS: ReadonlyArray<{ value: DiffSelection; label: string }> = [
-  { value: DIFF_SELECTION_ALL, label: 'All changes' },
-  { value: DIFF_SELECTION_UNCOMMITTED, label: 'Uncommitted changes' }
+  { value: DIFF_SELECTION_UNCOMMITTED, label: 'Uncommitted changes' },
+  { value: DIFF_SELECTION_ALL, label: 'All changes' }
 ];
 
 export function diffTargetForSelection(

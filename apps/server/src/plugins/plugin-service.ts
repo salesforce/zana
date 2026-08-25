@@ -107,6 +107,16 @@ export interface PluginServiceOptions {
   onAgentCapabilitiesChanged?: (contributors: PluginAgentContribution[]) => void | Promise<void>;
   /** Notify the runtime bridge after a plugin's visible app state changes. */
   onAppsChanged?: (apps: PluginUiSnapshot[]) => void | Promise<void>;
+  requestPluginInteraction?: (args: {
+    pluginId: string;
+    threadId: string;
+    rendererId: string;
+    title: string;
+    payload: import('@zana-ai/zcc-domain/thread-runtime').JsonValue;
+    timeoutMs: number;
+    signal?: AbortSignal;
+  }) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginInteractionResult>;
+  interruptPluginInteractions?: (pluginId: string) => void;
 }
 
 interface LivePlugin {
@@ -277,7 +287,10 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await store.upsert(degraded);
       return;
     }
-    const handle = createPluginApi(row.id, join(kvRoot, row.id));
+    const handle = createPluginApi(row.id, join(kvRoot, row.id), {
+      requestPluginInteraction: opts.requestPluginInteraction,
+      interruptPluginInteractions: opts.interruptPluginInteractions
+    });
     const rpc = new Map<string, (args: unknown) => unknown | Promise<unknown>>();
     const originalMethod = handle.api.rpc.method.bind(handle.api.rpc);
     handle.api.rpc.method = (name, handler) => {

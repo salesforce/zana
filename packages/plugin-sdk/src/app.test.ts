@@ -17,6 +17,10 @@ describe('definePluginApp', () => {
         title: 'Open tasks',
         component: () => null
       });
+      app.slots.pendingInteraction({
+        id: 'confirm',
+        component: () => null
+      });
     });
     expect(isPluginAppDefinition(def)).toBe(true);
     const set = collectPluginApp('tasks', 3, def);
@@ -24,6 +28,7 @@ describe('definePluginApp', () => {
     expect(set.navPanels).toHaveLength(1);
     expect(set.navPanels[0]?.pluginId).toBe('tasks');
     expect(set.homepageSections[0]?.id).toBe('summary');
+    expect(set.pendingInteractions[0]?.id).toBe('confirm');
   });
 });
 

@@ -15,6 +15,7 @@ import type {
 import type { z } from 'zod';
 import { harnessFamilyOf, parseProfile } from '@zana-ai/zcc-domain/launch-provider';
 import type { AppConfig, HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
+import type { PendingInteractionResolution } from '@zana-ai/zcc-domain/thread-runtime';
 import {
   WorkspaceError,
   cloneProject,
@@ -89,6 +90,14 @@ export interface CommandRuntime {
   resizeWork?: (input: { threadId: string; cols: number; rows: number }) => Promise<void>;
   writeWork?: (input: { threadId: string; data: string }) => Promise<void>;
   stopWork?: (input: { threadId: string }) => Promise<void>;
+  deliverInteractiveResolve?: (input: {
+    threadId: string;
+    interactionId: string;
+    providerId: string;
+    providerThreadId: string;
+    providerRequestId: string;
+    resolution: PendingInteractionResolution;
+  }) => void;
   startTerminal?: (input: { sessionId: string; cwd: string; cols: number; rows: number }) => Promise<{ pid?: number } | void>;
   writeTerminal?: (input: { sessionId: string; data: string }) => Promise<void>;
   resizeTerminal?: (input: { sessionId: string; cols: number; rows: number }) => Promise<void>;
@@ -117,6 +126,14 @@ export function createCommandRuntime(options: {
   resizeWork?: (input: { threadId: string; cols: number; rows: number }) => Promise<void>;
   writeWork?: (input: { threadId: string; data: string }) => Promise<void>;
   stopWork?: (input: { threadId: string }) => Promise<void>;
+  deliverInteractiveResolve?: (input: {
+    threadId: string;
+    interactionId: string;
+    providerId: string;
+    providerThreadId: string;
+    providerRequestId: string;
+    resolution: PendingInteractionResolution;
+  }) => void;
   startTerminal?: (input: { sessionId: string; cwd: string; cols: number; rows: number }) => Promise<{ pid?: number } | void>;
   writeTerminal?: (input: { sessionId: string; data: string }) => Promise<void>;
   resizeTerminal?: (input: { sessionId: string; cols: number; rows: number }) => Promise<void>;
@@ -142,6 +159,7 @@ export function createCommandRuntime(options: {
     resizeWork: options.resizeWork,
     writeWork: options.writeWork,
     stopWork: options.stopWork,
+    deliverInteractiveResolve: options.deliverInteractiveResolve,
     startTerminal: options.startTerminal,
     writeTerminal: options.writeTerminal,
     resizeTerminal: options.resizeTerminal,
@@ -712,6 +730,33 @@ export async function dispatchHostCommand(
       }
     case 'codex.voice.transcribe':
       return transcribeCodexVoice(command);
+    case 'interactive.resolve': {
+      try {
+        if (!runtime.deliverInteractiveResolve) {
+          throw new HostCommandError(
+            'interactive_request_resolution_unavailable',
+            'Interactive request resolution is not available on this host'
+          );
+        }
+        runtime.deliverInteractiveResolve({
+          threadId: command.threadId,
+          interactionId: command.interactionId,
+          providerId: command.providerId,
+          providerThreadId: command.providerThreadId,
+          providerRequestId: command.providerRequestId,
+          resolution: command.resolution
+        });
+      } catch (error) {
+        if (error instanceof HostCommandError) throw error;
+        throw new HostCommandError(
+          error instanceof Error && 'code' in error && typeof error.code === 'string'
+            ? error.code
+            : 'stale_interactive_request',
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+      return { interactionId: command.interactionId, delivered: true as const };
+    }
     default: {
       const exhaustive: never = command;
       throw new HostCommandError('unknown_command', `unsupported command ${(exhaustive as { type: string }).type}`);

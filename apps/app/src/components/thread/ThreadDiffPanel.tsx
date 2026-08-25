@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ChevronRight, ChevronsDown, ChevronsUp, Columns2, Copy, Rows2, Search, TextWrap } from 'lucide-react';
 import { formatDiffCount, formatDiffStatsText } from '@zana-ai/zcc-thread-view';
 import { product } from '../../lib/product-client.js';
@@ -43,6 +43,31 @@ function seedPatchCache(initialPatches: readonly DiffPatchEntry[]): Record<strin
     next[entry.path] = { status: 'ready', patch: entry.patch, truncated: entry.truncated };
   }
   return next;
+}
+
+function DiffToolbarButton({
+  label,
+  pressed,
+  onClick,
+  children
+}: {
+  label: string;
+  pressed?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      className={`thread-diff-toolbar-btn${pressed ? ' is-pressed' : ''}`}
+      aria-label={label}
+      title={label}
+      {...(typeof pressed === 'boolean' ? { 'aria-pressed': pressed } : {})}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
 }
 
 export function ThreadDiffPanel({
@@ -145,7 +170,7 @@ export function ThreadDiffPanel({
         <p className="thread-diff-error">{error}</p>
       ) : phase === 'ready' && files ? (
         files.length === 0 ? (
-          <p className="thread-detail-empty">No changes.</p>
+          <p className="thread-diff-empty">No changes.</p>
         ) : (
           <>
             <div className="thread-diff-toolbar" data-testid="thread-diff-toolbar">
@@ -195,42 +220,34 @@ export function ThreadDiffPanel({
                   )}
                 </span>
                 <div className="thread-diff-toolbar-actions">
-                  <button
-                    type="button"
-                    className="thread-diff-toolbar-btn"
-                    aria-label={allCollapsed ? 'Expand all files' : 'Collapse all files'}
+                  <DiffToolbarButton
+                    label={allCollapsed ? 'Expand all files' : 'Collapse all files'}
                     onClick={() => setCollapsedByPath(collapseAllDiffCards(files, !allCollapsed))}
                   >
                     {allCollapsed ? <ChevronsDown size={16} /> : <ChevronsUp size={16} />}
-                  </button>
-                  <button
-                    type="button"
-                    className={`thread-diff-toolbar-btn${wrap ? ' is-pressed' : ''}`}
-                    aria-label={wrap ? 'Disable diff line wrap' : 'Wrap diff lines'}
-                    aria-pressed={wrap}
+                  </DiffToolbarButton>
+                  <DiffToolbarButton
+                    label={wrap ? 'Disable diff line wrap' : 'Wrap diff lines'}
+                    pressed={wrap}
                     onClick={() => setWrap((current) => !current)}
                   >
                     <TextWrap size={16} />
-                  </button>
+                  </DiffToolbarButton>
                   <div className="thread-diff-mode" role="tablist" aria-label="Diff view mode">
-                    <button
-                      type="button"
-                      className={`thread-diff-toolbar-btn${splitView ? '' : ' is-pressed'}`}
-                      aria-label="Stacked diff view"
-                      aria-pressed={!splitView}
+                    <DiffToolbarButton
+                      label="Stacked diff view"
+                      pressed={!splitView}
                       onClick={() => setSplitView(false)}
                     >
                       <Rows2 size={16} />
-                    </button>
-                    <button
-                      type="button"
-                      className={`thread-diff-toolbar-btn${splitView ? ' is-pressed' : ''}`}
-                      aria-label="Split diff view"
-                      aria-pressed={splitView}
+                    </DiffToolbarButton>
+                    <DiffToolbarButton
+                      label="Split diff view"
+                      pressed={splitView}
                       onClick={() => setSplitView(true)}
                     >
                       <Columns2 size={16} />
-                    </button>
+                    </DiffToolbarButton>
                   </div>
                 </div>
               </div>
@@ -242,7 +259,7 @@ export function ThreadDiffPanel({
             ) : null}
             <div className="thread-diff-cards" ref={cardsRef} data-testid="thread-diff-cards">
               {visibleFiles.length === 0 ? (
-                <p className="thread-detail-empty">No matching files.</p>
+                <p className="thread-diff-empty">No matching files.</p>
               ) : visibleFiles.map((file) => {
                 const collapsed = resolveDiffCardCollapsed(collapsedByPath[file.path], file, files.length);
                 return (
@@ -267,9 +284,50 @@ export function ThreadDiffPanel({
           </>
         )
       ) : (
-        <p className="thread-detail-empty">Loading diff…</p>
+        <ThreadDiffSkeleton />
       )}
     </aside>
+  );
+}
+
+const DIFF_SKELETON_CARD_COUNT = 3;
+
+export function ThreadDiffSkeleton({ count = DIFF_SKELETON_CARD_COUNT }: { count?: number }) {
+  return (
+    <div
+      className="thread-diff-skeleton"
+      data-testid="thread-diff-skeleton"
+      aria-busy="true"
+      aria-live="polite"
+    >
+      <span className="sr-only">Loading diff</span>
+      {Array.from({ length: count }, (_, index) => (
+        <div key={index} className="thread-diff-card is-skeleton" aria-hidden="true">
+          <div className="thread-diff-card-header">
+            <span className="thread-diff-skel thread-diff-skel-icon" />
+            <span className="thread-diff-skel thread-diff-skel-path" />
+            <span className="thread-diff-skel thread-diff-skel-stat" />
+          </div>
+          <div className="thread-diff-card-body thread-diff-skel-body">
+            <span className="thread-diff-skel" />
+            <span className="thread-diff-skel is-wide" />
+            <span className="thread-diff-skel is-mid" />
+            <span className="thread-diff-skel is-short" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ThreadDiffCardBodySkeleton() {
+  return (
+    <div className="thread-diff-skel-body" aria-hidden="true">
+      <span className="thread-diff-skel" />
+      <span className="thread-diff-skel is-wide" />
+      <span className="thread-diff-skel is-mid" />
+      <span className="thread-diff-skel is-short" />
+    </div>
   );
 }
 
@@ -332,7 +390,7 @@ export function ThreadDiffCardBody({
           </button>
         </p>
       ) : bodyKind === 'loading' ? (
-        <p className="thread-diff-card-notice">Loading diff…</p>
+        <ThreadDiffCardBodySkeleton />
       ) : bodyKind === 'empty' ? (
         <p className="thread-diff-card-notice">No renderable diff.</p>
       ) : patch?.status === 'ready' ? (

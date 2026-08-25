@@ -36,4 +36,10 @@ describe('AgentTray context menu', () => {
     expect(source).toContain('useAgentCardActions()');
     expect(source).toContain('<AgentCardMenu menu={menu}');
   });
+
+  it('uses the thread harness icon instead of a chat bubble', () => {
+    const source = readFileSync(new URL('../AgentTray.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('<ProviderIcon providerId={item.providerId}');
+    expect(source).not.toContain('MessageSquare');
+  });
 });

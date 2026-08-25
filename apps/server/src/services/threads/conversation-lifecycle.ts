@@ -11,6 +11,7 @@ import type { ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import { conversationThreadView, flattenThreadInput } from './conversation-create.js';
 import { appendClientTurnRequested } from './client-turn-requested.js';
+import { recoverConversationProviderThreadId } from './conversation-provider-identity.js';
 import { destroyEnvironmentIfIdle } from '../environments/environment-cleanup.js';
 import {
   bridgeLaunchForProvider,
@@ -33,31 +34,59 @@ export async function sendConversationTurn(
   if (!thread) {
     throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
   }
-  if (!thread.environmentId) {
+  const live = recoverConversationProviderThreadId(ctx.db, thread);
+  if (!live.environmentId) {
     throw new ThreadCreateError(409, 'environment_not_ready', 'thread has no environment');
+  }
+  if (ctx.pendingInteractions.hasPendingThreadInteraction(threadId)) {
+    throw new ThreadCreateError(
+      409,
+      'awaiting_user_interaction',
+      'Thread is awaiting user interaction. Resolve the pending interaction before sending another prompt.'
+    );
   }
   const prompt = flattenThreadInput(input).map((part) => part.trim()).filter((part) => part.length > 0);
   if (prompt.length === 0) {
     throw new ThreadCreateError(400, 'invalid-input', 'input is required');
   }
   appendClientTurnRequested(ctx, {
-    threadId: thread.id,
+    threadId: live.id,
     prompt,
     kind: 'new-turn',
     model: execution?.model,
     reasoningLevel: execution?.reasoningLevel
   });
-  updateConversationThreadStatus(ctx.db, thread.id, 'active');
+  updateConversationThreadStatus(ctx.db, live.id, 'active');
   try {
-    await submitTurnOnHost(ctx, thread, prompt, mode, execution);
+    try {
+      await submitTurnOnHost(ctx, live, prompt, mode, execution);
+    } catch (error) {
+      if (!isUnknownThreadHostError(error)) throw error;
+      const current = recoverConversationProviderThreadId(
+        ctx.db,
+        getConversationThread(ctx.db, live.id) ?? live
+      );
+      await resumeConversationOnHost(ctx, current);
+      await submitTurnOnHost(ctx, current, prompt, mode, execution);
+    }
   } catch (error) {
-    if (!isUnknownThreadHostError(error)) throw error;
-    await resumeConversationOnHost(ctx, getConversationThread(ctx.db, thread.id) ?? thread);
-    await submitTurnOnHost(ctx, thread, prompt, mode, execution);
+    failActiveConversationTurn(ctx, live);
+    throw error;
   }
-  const next = getConversationThread(ctx.db, thread.id) ?? thread;
+  const next = getConversationThread(ctx.db, live.id) ?? live;
   ctx.hub.emit('threads:updated', conversationThreadView(ctx, next));
   return next;
+}
+
+function failActiveConversationTurn(
+  ctx: ProductHttpContext,
+  thread: ConversationThreadRow
+): void {
+  const failed = updateConversationThreadStatus(ctx.db, thread.id, 'error') ?? {
+    ...thread,
+    status: 'error' as const
+  };
+  ctx.hub.emit('threads:updated', conversationThreadView(ctx, failed));
 }
 
 export async function stopConversation(
@@ -68,6 +97,10 @@ export async function stopConversation(
   if (!thread) {
     throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
   }
+  ctx.pendingInteractions.interruptPendingInteractionsForThreadIds({
+    threadIds: [thread.id],
+    reason: 'thread-stopped'
+  });
   updateConversationThreadStatus(ctx.db, thread.id, 'stopping');
   try {
     await ctx.hostHub.callHostOnlineRpc({
@@ -90,11 +123,12 @@ export async function resumeConversation(
   if (!thread) {
     throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
   }
-  if (!thread.environmentId || !thread.providerThreadId) {
+  const live = recoverConversationProviderThreadId(ctx.db, thread);
+  if (!live.environmentId || !live.providerThreadId) {
     throw new ThreadCreateError(409, 'not_resumable', 'thread has no provider session to resume');
   }
-  await resumeConversationOnHost(ctx, thread);
-  const next = updateConversationThreadStatus(ctx.db, thread.id, 'idle') ?? thread;
+  await resumeConversationOnHost(ctx, live);
+  const next = updateConversationThreadStatus(ctx.db, live.id, 'idle') ?? live;
   ctx.hub.emit('threads:updated', conversationThreadView(ctx, next));
   return next;
 }
@@ -105,6 +139,10 @@ export async function archiveConversation(
 ): Promise<boolean> {
   const thread = getConversationThread(ctx.db, threadId);
   if (!thread) return false;
+  ctx.pendingInteractions.interruptPendingInteractionsForThreadIds({
+    threadIds: [thread.id],
+    reason: 'thread-deleted'
+  });
   try {
     await ctx.hostHub.callHostOnlineRpc({
       hostId: thread.hostId,

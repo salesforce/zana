@@ -1,23 +1,23 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Bot,
   ExternalLink,
   Inbox,
   Loader2,
-  MessageSquare,
   RotateCw,
   Square,
   Trash2,
   Terminal as TerminalIcon
 } from 'lucide-react';
 import type { AgentState } from '@zana-ai/zcc-domain/product';
-import { useNavigate } from 'react-router-dom';
 import { useData, useUi, usePersonas, useAgentPanel } from '../store.js';
 import { profileIcon, personaIcon } from '../lib/profileIcon.js';
 import { isClaudeProfile } from '../lib/launchProfile.js';
-import { getThreadRoutePath } from '../lib/route-paths.js';
 import { AGENT_MONITOR_TERMINAL_ANCHOR_ID } from './TerminalSurface.js';
-import { useAgentCardActions } from './agentCardActions.js';
+import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from './agentCardActions.js';
+import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from './threadCardActions.js';
+import { PromptModal } from './PromptModal.js';
 import { AgentDetailPanel } from './AgentDetailPanel.js';
 import {
   LANES,
@@ -29,21 +29,27 @@ import {
   type LaneKey
 } from './AgentBoard.js';
 import { FleetKindChip } from './FleetKindChip.js';
+import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
 import { fleetMatchesLane, resolveMonitorSelection, type FleetItem } from './fleet-item.js';
+import { ThreadDetail } from '../views/threads/ThreadDetailView.js';
 
 /**
- * The Agents "List" view: a three-pane live monitor — agent list (left),
- * the selected agent's LIVE terminal (center), and its status + actions
- * (right). Replaces the old mesh/registry panel as the List toggle target.
+ * The Agents "List" view: a live monitor — item list (left), the selected
+ * session (center), and status + actions (right). Replaces the old mesh/registry
+ * panel as the List toggle target.
  *
- * The center pane does NOT re-create a terminal: TerminalSurface portals the
- * selected session's already-live xterm into {@link AGENT_MONITOR_TERMINAL_ANCHOR_ID}
+ * Agents keep the existing 3-pane layout: TerminalSurface portals the selected
+ * session's already-live xterm into {@link AGENT_MONITOR_TERMINAL_ANCHOR_ID}
  * (the one-xterm-per-session invariant), exactly like the agent-inspector modal
  * — so scrollback is shared with the agent's workspace tab and the prompt stays
- * interactive right here. Selection is held in the UI store (`agentMonitor`);
- * this component owns that selection's lifecycle and CLEARS it on unmount, so a
- * stale selection can never steal the live terminal from the Projects workspace
- * once the List view is off screen.
+ * interactive right here.
+ *
+ * Threads drop the status rail and mount {@link ThreadDetail} in the center so
+ * the conversation, composer, and thread side panel are the thing you see —
+ * not a placeholder that asks you to open the thread elsewhere. Selection is
+ * held in the UI store (`agentMonitor`); this component owns that selection's
+ * lifecycle and CLEARS it on unmount, so a stale selection can never steal the
+ * live terminal from the Projects workspace once the List view is off screen.
  *
  * Fed a flat {@link AgentCard}[] by whichever board hosts it (global or
  * per-project), so it honors the same filter/scope the board already applied.
@@ -71,6 +77,20 @@ function laneOf(item: FleetItem, sensitivity: IdleAttentionSensitivity): LaneKey
   return lane?.key ?? 'idle';
 }
 
+/** Same workspace jump the status-rail Open button and the card menu share. */
+function openAgentInWorkspace(card: AgentCard): void {
+  const ui = useUi.getState();
+  const data = useData.getState();
+  ui.setNav('projects');
+  ui.enterProjectFocus(card.projectId);
+  if (card.session.headless && card.session.status !== 'exited') {
+    void data.restoreTerminal(card.session.id, card.projectId);
+  } else {
+    ui.selectTab(card.projectId, card.session.id);
+  }
+  ui.setWorkspaceMode(card.projectId, 'terminals');
+}
+
 export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) {
   const sensitivity = useData((s) => s.idleAttentionSensitivity);
   const selection = useUi((s) => s.agentMonitor);
@@ -78,6 +98,8 @@ export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) 
   const clearMonitorAgent = useUi((s) => s.clearMonitorAgent);
   const collapsed = useAgentPanel((s) => s.collapsed.monitor);
   const [pickedId, setPickedId] = useState<string | null>(null);
+  const { menu, setMenu, actions, rename, closeRename, submitRename } = useAgentCardActions();
+  const { menu: threadMenu, setMenu: setThreadMenu } = useThreadCardActions();
 
   useEffect(() => () => clearMonitorAgent(), [clearMonitorAgent]);
 
@@ -129,7 +151,11 @@ export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) 
   }
 
   return (
-    <div className={`agent-monitor ${collapsed ? 'panel-collapsed' : ''}`}>
+    <div
+      className={`agent-monitor ${collapsed ? 'panel-collapsed' : ''} ${
+        selected?.kind === 'thread' ? 'is-thread' : ''
+      }`}
+    >
       <nav className="agent-monitor-list" aria-label="Agents">
         {grouped.map((g) => (
           <div key={g.key} className="agent-monitor-group">
@@ -145,6 +171,17 @@ export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) 
                 active={item.id === selected?.id}
                 showProject={showProject}
                 onSelect={() => setPickedId(item.id)}
+                onContextMenu={(e) => {
+                  if (item.kind === 'thread') {
+                    setMenu(null);
+                    openThreadMenu(e, item.thread, setThreadMenu);
+                    return;
+                  }
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setThreadMenu(null);
+                  setMenu({ card: item.card, ...clampMenuAnchor(e) });
+                }}
               />
             ))}
           </div>
@@ -153,7 +190,36 @@ export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) 
 
       <AgentMonitorTerminal selected={selected} />
 
-      {selected && <AgentMonitorStatus item={selected} showProject={showProject} />}
+      {selected?.kind === 'agent' && (
+        <AgentMonitorAgentStatus card={selected.card} showProject={showProject} />
+      )}
+      {typeof document !== 'undefined' &&
+        menu &&
+        createPortal(
+          <AgentCardMenu
+            menu={menu}
+            setMenu={setMenu}
+            actions={actions}
+            onPick={openAgentInWorkspace}
+          />,
+          document.body
+        )}
+      {typeof document !== 'undefined' &&
+        threadMenu &&
+        createPortal(
+          <ThreadCardMenu menu={threadMenu} setMenu={setThreadMenu} />,
+          document.body
+        )}
+      {rename && (
+        <PromptModal
+          title="Rename agent"
+          label="Name"
+          initialValue={rename.card.session.title}
+          confirmLabel="Rename"
+          onSubmit={(v) => submitRename(rename.card, v)}
+          onClose={closeRename}
+        />
+      )}
     </div>
   );
 }
@@ -166,9 +232,10 @@ interface RowProps {
   active: boolean;
   showProject: boolean;
   onSelect: () => void;
+  onContextMenu: (e: MouseEvent) => void;
 }
 
-function AgentMonitorRow({ item, laneKey, active, showProject, onSelect }: RowProps) {
+function AgentMonitorRow({ item, laneKey, active, showProject, onSelect, onContextMenu }: RowProps) {
   const personas = usePersonas((s) => s.personas);
   if (item.kind === 'thread') {
     return (
@@ -177,11 +244,12 @@ function AgentMonitorRow({ item, laneKey, active, showProject, onSelect }: RowPr
         className={`agent-monitor-row is-thread lane-${laneKey} ${active ? 'active' : ''}`}
         data-kind="thread"
         onClick={onSelect}
+        onContextMenu={onContextMenu}
         aria-current={active ? 'true' : undefined}
         title={`${item.title} · ${item.projectName} · ${item.thread.status}`}
       >
         <span className="agent-monitor-row-icon">
-          <MessageSquare size={14} aria-hidden="true" />
+          <ProviderIcon providerId={item.thread.providerId} size={14} />
         </span>
         <span className="agent-monitor-row-text">
           <span className="agent-monitor-row-title-line">
@@ -216,6 +284,7 @@ function AgentMonitorRow({ item, laneKey, active, showProject, onSelect }: RowPr
       type="button"
       className={`agent-monitor-row lane-${laneKey} ${active ? 'active' : ''} ${exited ? 'exited' : ''}`}
       onClick={onSelect}
+      onContextMenu={onContextMenu}
       aria-current={active ? 'true' : undefined}
       title={`${t.title} · ${subtitle}${showProject ? ` · ${card.projectName}` : ''}`}
     >
@@ -253,49 +322,39 @@ function AgentMonitorRow({ item, laneKey, active, showProject, onSelect }: RowPr
 // ── Center pane: the live terminal portal target + a header ─────────────────
 
 function AgentMonitorTerminal({ selected }: { selected: FleetItem | null }) {
-  const navigate = useNavigate();
   const agent = selected?.kind === 'agent' ? selected : null;
   const thread = selected?.kind === 'thread' ? selected : null;
   return (
     <section className="agent-monitor-main">
-      <header className="agent-monitor-main-head">
-        {thread ? <MessageSquare size={13} aria-hidden="true" /> : <TerminalIcon size={13} aria-hidden="true" />}
-        {thread ? (
-          <>
-            <span className="agent-monitor-main-title">{thread.title}</span>
-            <span className={`agent-monitor-main-state agent-${thread.state}`}>
-              <span className={`tab-agent-dot agent-${thread.state}`} aria-hidden="true" />
-              {STATE_LABEL[thread.state]}
-            </span>
-            <FleetKindChip kind="thread" />
-          </>
-        ) : agent ? (
-          <>
-            <span className="agent-monitor-main-title">{agent.card.session.title}</span>
-            {agent.card.session.status !== 'exited' && (
-              <span className={`agent-monitor-main-state agent-${agent.state}`}>
-                <span className={`tab-agent-dot agent-${agent.state}`} aria-hidden="true" />
-                {STATE_LABEL[agent.state]}
-              </span>
-            )}
-          </>
-        ) : (
-          <span className="agent-monitor-main-title">No agent selected</span>
-        )}
-      </header>
+      {!thread && (
+        <header className="agent-monitor-main-head">
+          <TerminalIcon size={13} aria-hidden="true" />
+          {agent ? (
+            <>
+              <span className="agent-monitor-main-title">{agent.card.session.title}</span>
+              {agent.card.session.status !== 'exited' && (
+                <span className={`agent-monitor-main-state agent-${agent.state}`}>
+                  <span className={`tab-agent-dot agent-${agent.state}`} aria-hidden="true" />
+                  {STATE_LABEL[agent.state]}
+                </span>
+              )}
+            </>
+          ) : (
+            <span className="agent-monitor-main-title">No agent selected</span>
+          )}
+        </header>
+      )}
       {/* TerminalSurface portals the selected session's live xterm into this
           anchor while the List view is on screen (see the monitor anchor id).
           The anchor is positioned; the surface fills it via inset:0. Thread
-          selection clears the PTY store so nothing is portaled here. */}
-      <div className="agent-monitor-terminal" id={AGENT_MONITOR_TERMINAL_ANCHOR_ID}>
+          selection clears the PTY store and mounts ThreadDetail here instead. */}
+      <div
+        className={`agent-monitor-terminal${thread ? ' is-thread' : ''}`}
+        id={AGENT_MONITOR_TERMINAL_ANCHOR_ID}
+      >
         {thread ? (
-          <div className="agent-monitor-thread-placeholder" data-testid="agent-monitor-thread">
-            <MessageSquare size={24} aria-hidden="true" />
-            <p>{thread.title}</p>
-            <span>{thread.thread.status}</span>
-            <button type="button" className="btn" onClick={() => navigate(getThreadRoutePath(thread.id))}>
-              Open thread
-            </button>
+          <div className="agent-monitor-thread" data-testid="agent-monitor-thread">
+            <ThreadDetail threadId={thread.id} embedded />
           </div>
         ) : !agent ? (
           <div className="agent-monitor-terminal-empty">
@@ -308,26 +367,7 @@ function AgentMonitorTerminal({ selected }: { selected: FleetItem | null }) {
   );
 }
 
-// ── Right pane: status + actions ────────────────────────────────────────────
-
-function AgentMonitorStatus({ item, showProject }: { item: FleetItem; showProject: boolean }) {
-  const navigate = useNavigate();
-  if (item.kind === 'thread') {
-    return (
-      <aside className="agent-monitor-status is-thread" data-testid="agent-monitor-thread-status">
-        <h4>{item.title}</h4>
-        <p>
-          {STATE_LABEL[item.state]} · {item.thread.status}
-          {showProject ? ` · ${item.projectName}` : ''}
-        </p>
-        <button type="button" className="agent-monitor-action" onClick={() => navigate(getThreadRoutePath(item.id))}>
-          <ExternalLink size={13} /> Open thread
-        </button>
-      </aside>
-    );
-  }
-  return <AgentMonitorAgentStatus card={item.card} showProject={showProject} />;
-}
+// ── Right pane: status + actions (agents only; threads use ThreadDetail) ──
 
 function AgentMonitorAgentStatus({ card, showProject }: { card: AgentCard; showProject: boolean }) {
   const { actions } = useAgentCardActions();
@@ -340,18 +380,7 @@ function AgentMonitorAgentStatus({ card, showProject }: { card: AgentCard; showP
 
   // "Open in workspace" — the escape hatch into the full split-pane view, same
   // path the board card's context-menu "Open" uses.
-  const openInWorkspace = () => {
-    const ui = useUi.getState();
-    const data = useData.getState();
-    ui.setNav('projects');
-    ui.enterProjectFocus(card.projectId);
-    if (t.headless && !exited) {
-      void data.restoreTerminal(t.id, card.projectId);
-    } else {
-      ui.selectTab(card.projectId, t.id);
-    }
-    ui.setWorkspaceMode(card.projectId, 'terminals');
-  };
+  const openInWorkspace = () => openAgentInWorkspace(card);
 
   // Summarize this agent's work to the inbox (claude-family only — a shell has
   // no transcript). Guards against a double-click while the micro-call is live.

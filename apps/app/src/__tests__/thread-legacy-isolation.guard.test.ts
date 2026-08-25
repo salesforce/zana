@@ -27,6 +27,7 @@ describe('thread / legacy isolation', () => {
     const effortPicker = stripComments(readFileSync(join(appRoot, 'components/thread/pickers/ReasoningEffortPicker.tsx'), 'utf8'));
     const modePicker = stripComments(readFileSync(join(appRoot, 'components/thread/pickers/ComposerModePicker.tsx'), 'utf8'));
     const hook = stripComments(readFileSync(join(appRoot, 'components/thread/pickers/useThreadComposerOptions.ts'), 'utf8'));
+    const catalog = stripComments(readFileSync(join(appRoot, 'components/thread/pickers/thread-model-catalog.ts'), 'utf8'));
     const icons = stripComments(readFileSync(join(appRoot, 'components/thread/pickers/provider-icon.ts'), 'utf8'));
     expect(picker).not.toContain('LauncherModelPicker');
     expect(picker).not.toContain('createTerminal');
@@ -38,9 +39,15 @@ describe('thread / legacy isolation', () => {
     expect(modePicker).not.toContain('createTerminal');
     expect(hook).not.toContain('LauncherModelPicker');
     expect(hook).not.toContain('AgentLauncher');
-    expect(hook).toContain('executionOptions');
+    expect(hook).toContain('prefetchThreadModelCatalog');
+    expect(hook).toContain('ensureThreadProviderModels');
     expect(hook).toContain('reconcileReasoningLevel');
-    expect(hook).toContain('composerActions');
+    expect(catalog).toContain('executionOptions');
+    expect(catalog).toContain('composerActionsFromProvider');
+    expect(catalog).not.toContain('list_models');
+    expect(catalog).not.toContain('AgentLauncher');
+    expect(stripComments(readFileSync(join(appRoot, 'store.ts'), 'utf8'))).toContain('prefetchThreadModelCatalog');
+    expect(stripComments(readFileSync(join(appRoot, 'store.ts'), 'utf8'))).toContain('reloadThreadModelCatalog');
     expect(icons).not.toContain('AgentLauncher');
     expect(icons).not.toContain('LauncherModelPicker');
   });

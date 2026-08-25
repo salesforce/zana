@@ -199,6 +199,8 @@ describe('nested live threads', () => {
     expect(source).toContain('railThreadsByProject.get(p.id)');
     expect(source).toContain('liveList.length === 0 && railThreads.length === 0');
     expect(source).toContain('p.id === selectedId && projectHasNestableSessions(p)');
+    expect(source).toContain('<ProviderIcon providerId={thread.providerId}');
+    expect(source).not.toContain('MessageSquare');
   });
 });
 

@@ -12,8 +12,11 @@ describe('WorkspaceView launcher host', () => {
     expect(source).toContain('<AgentLauncher');
     expect(source).not.toContain('presentation=');
     expect(source).toContain('route.isNewThread');
+    expect(source).toContain('route.isThreadView');
     expect(source).toContain('<NewThreadView project={project} />');
-    expect(source).toContain('mode === \'agents\' && !!project && !isNewThread');
+    expect(source).toContain('<ThreadDetail threadId={route.threadId} />');
+    expect(source).toContain('mode === \'agents\' && !!project && !isNewThread && !isThreadView');
+    expect(css).toContain('.workspace-body > .thread-detail-view');
   });
 });
 

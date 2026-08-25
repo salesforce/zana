@@ -15,6 +15,7 @@ export interface ThreadListItem {
   isWorktree: boolean;
   archivedAt?: number | null;
   parentThreadId?: string | null;
+  hasPendingInteraction?: boolean;
 }
 
 interface ThreadStore {
@@ -60,6 +61,13 @@ export function mergeThreadRoster(
   const next = threads.slice();
   next[index] = thread;
   return next;
+}
+
+export function pendingChildThreads(
+  threads: readonly ThreadListItem[],
+  parentThreadId: string
+): ThreadListItem[] {
+  return threads.filter((row) => row.parentThreadId === parentThreadId && row.hasPendingInteraction);
 }
 
 export const useThreads = create<ThreadStore>((set, get) => ({

@@ -10,6 +10,7 @@ import { product } from '../lib/product-client.js';
 import { useData } from '../store.js';
 import { useThreads } from '../thread-store.js';
 import { getThreadRoutePath } from '../lib/route-paths.js';
+import { useRouteState } from '../hooks/useRouteState.js';
 import {
   CommandComposer,
   ComposerIconButton,
@@ -23,6 +24,7 @@ import { ReasoningEffortPicker } from './thread/pickers/ReasoningEffortPicker.js
 import {
   applyComposerModePrefix,
   composerModesForActions,
+  nextComposerWorkMode,
   type ComposerWorkMode
 } from './thread/pickers/composer-mode.js';
 import { useThreadComposerOptions } from './thread/pickers/useThreadComposerOptions.js';
@@ -41,6 +43,12 @@ import { COMPOSER_TRIGGERS, type ActiveTrigger, type TypeaheadSuggestion } from 
 import { useComposerSuggestions } from './composer/use-composer-suggestions.js';
 import { shouldShowThreadStop } from './thread/thread-timeline-model.js';
 import { ThreadContextMeter } from './thread/ThreadContextMeter.js';
+import {
+  composerProjectLabel,
+  composerProjectOptions,
+  DEFAULT_COMPOSER_WORKSPACE_LABEL,
+  resolveComposerProjectId
+} from './composer-project-default.js';
 
 export type ThreadSendMode = 'start' | 'auto' | 'steer' | 'queue-if-active' | 'steer-if-active';
 
@@ -49,6 +57,7 @@ export interface ThreadCommandComposerProps {
   threadId?: string;
   status?: string;
   environmentLabel?: string;
+  sendBlocked?: boolean;
   contextWindowUsage?: ThreadContextWindowUsage | null;
   providerId?: string;
   model?: string | null;
@@ -70,6 +79,7 @@ export function ThreadCommandComposer({
   threadId,
   status,
   environmentLabel,
+  sendBlocked = false,
   contextWindowUsage,
   providerId: lockedProviderId,
   model: initialModel,
@@ -79,11 +89,15 @@ export function ThreadCommandComposer({
   onOpenExplorer
 }: ThreadCommandComposerProps) {
   const navigate = useNavigate();
+  const route = useRouteState();
   const projects = useData((s) => s.projects);
+  const loadProjects = useData((s) => s.loadProjects);
   const upsertThread = useThreads((s) => s.upsert);
   const [commands, setCommands] = useState<Array<{ name: string; description: string }>>([]);
   const [commandsLoaded, setCommandsLoaded] = useState(false);
   const [projectId, setProjectId] = useState(pinnedProject?.id ?? '');
+  const ensureScratchRef = useRef(false);
+  const projectOptions = useMemo(() => composerProjectOptions(projects), [projects]);
   const options = useThreadComposerOptions({
     threadId,
     lockedProviderId,
@@ -107,6 +121,15 @@ export function ThreadCommandComposer({
     move: (_delta: number) => {},
     dismiss: () => {}
   });
+  const cycleComposerModeRef = useRef<(event: {
+    key: string;
+    shiftKey: boolean;
+    metaKey: boolean;
+    ctrlKey: boolean;
+    altKey: boolean;
+    preventDefault: () => void;
+    stopPropagation: () => void;
+  }) => boolean>(() => false);
 
   const syncTrigger = useCallback((editor: Parameters<typeof findActiveTrigger>[0]) => {
     const next = findActiveTrigger(editor, COMPOSER_TRIGGERS);
@@ -123,13 +146,29 @@ export function ThreadCommandComposer({
   }, []);
 
   useEffect(() => {
-    if (pinnedProject) setProjectId(pinnedProject.id);
-  }, [pinnedProject]);
-
-  useEffect(() => {
-    if (pinnedProject || projectId || projects.length === 0) return;
-    setProjectId(projects[0]!.id);
-  }, [pinnedProject, projectId, projects]);
+    if (pinnedProject) {
+      setProjectId(pinnedProject.id);
+      return;
+    }
+    const nextId = resolveComposerProjectId(projects, projectId);
+    if (nextId && nextId !== projectId) {
+      setProjectId(nextId);
+      return;
+    }
+    if (nextId || ensureScratchRef.current) return;
+    ensureScratchRef.current = true;
+    let cancelled = false;
+    void product.projects.ensureQuickAgent().then(async (result) => {
+      if (cancelled || !result.ok) return;
+      if (!useData.getState().projects.some((row) => row.id === result.value.id)) {
+        await loadProjects();
+      }
+      if (!cancelled) setProjectId((current) => current || result.value.id);
+    }).catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [loadProjects, pinnedProject, projectId, projects]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -160,6 +199,7 @@ export function ThreadCommandComposer({
         'data-testid': 'thread-command-input'
       },
       handleKeyDown: (_view, event) => {
+        if (cycleComposerModeRef.current(event)) return true;
         const menu = typeaheadRef.current;
         if (menu.open) {
           const action = typeaheadKeyAction(event);
@@ -272,6 +312,16 @@ export function ThreadCommandComposer({
     () => composerModesForActions(options.provider?.composerActions ?? []),
     [options.provider]
   );
+  cycleComposerModeRef.current = (event) => {
+    if (event.key !== 'Tab' || !event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) {
+      return false;
+    }
+    if (composerModes.length <= 1) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    setComposerMode((current) => nextComposerWorkMode(composerModes, current));
+    return true;
+  };
 
   useEffect(() => {
     const modes = options.provider?.permissionModes ?? [];
@@ -285,7 +335,7 @@ export function ThreadCommandComposer({
   }, [composerMode, composerModes]);
 
   const submit = useCallback(async () => {
-    if (busy || typeaheadRef.current.open) return;
+    if (busy || sendBlocked || typeaheadRef.current.open) return;
     const serialized = serializePromptEditor(editor?.getJSON());
     if (!serialized.text.trim()) {
       setError('Enter a message first');
@@ -330,7 +380,10 @@ export function ThreadCommandComposer({
       upsertThread(created.value);
       editor?.commands.clearContent();
       onCreated?.(created.value.id);
-      navigate(getThreadRoutePath(created.value.id));
+      navigate(getThreadRoutePath(
+        created.value.id,
+        route.isProjectWorkspace ? route.focusedProjectId : undefined
+      ));
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Could not send message');
     } finally {
@@ -338,6 +391,7 @@ export function ThreadCommandComposer({
     }
   }, [
     busy,
+    sendBlocked,
     composerMode,
     editor,
     navigate,
@@ -349,6 +403,8 @@ export function ThreadCommandComposer({
     projectId,
     projects,
     resolvedProviderId,
+    route.focusedProjectId,
+    route.isProjectWorkspace,
     sendMode,
     threadId,
     upsertThread,
@@ -360,6 +416,7 @@ export function ThreadCommandComposer({
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
+    if (cycleComposerModeRef.current(event)) return;
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
       if (typeaheadRef.current.open) {
         event.preventDefault();
@@ -376,7 +433,7 @@ export function ThreadCommandComposer({
       aria-label="Send"
       title="Send"
       data-testid="thread-command-send"
-      disabled={busy || !canSend}
+      disabled={busy || sendBlocked || !canSend}
       onClick={() => void submit()}
     >
       <ArrowUp size={16} />
@@ -384,13 +441,16 @@ export function ThreadCommandComposer({
   );
 
   return (
-    <div className={`thread-command-composer${expanded ? ' is-expanded' : ''}`}>
+    <div
+      className={`thread-command-composer${expanded ? ' is-expanded' : ''}`}
+      onKeyDown={onKeyDown}
+    >
       <span id="thread-command-label" className="thread-command-label">Thread composer</span>
       {error ? (
         <p className="thread-command-error" data-testid="thread-command-error">{error}</p>
       ) : null}
       <CommandComposer className="home-agent-command thread-command-card" labelledBy="thread-command-label">
-        <div className="thread-command-editor-slot" onKeyDown={onKeyDown}>
+        <div className="thread-command-editor-slot">
           <ComposerIconButton
             className="thread-command-expand"
             aria-label={expanded ? 'Make prompt box smaller' : 'Make prompt box larger'}
@@ -413,7 +473,7 @@ export function ThreadCommandComposer({
         <ComposerToolbar>
           {voiceBusy ? (
             <VoiceRecordingBar
-              state={voice.state}
+              state={voice.state === 'transcribing' ? 'transcribing' : 'recording'}
               stream={voice.stream}
               onConfirm={voice.stop}
               onCancel={voice.cancel}
@@ -434,6 +494,7 @@ export function ThreadCommandComposer({
                   modelOptions={options.modelOptions}
                   moreModelOptions={options.moreModelOptions}
                   modelIsLoading={options.modelIsLoading}
+                  modelLoadError={options.modelLoadError}
                   onModelChange={options.setModel}
                 />
                 <ReasoningEffortPicker
@@ -500,9 +561,10 @@ export function ThreadCommandComposer({
                 <Folder size={14} aria-hidden="true" />
                 <PopoverPicklist
                   value={projectId}
-                  options={projects.map((row) => ({ value: row.id, label: row.name }))}
+                  options={projectOptions.map((row) => ({ value: row.id, label: composerProjectLabel(row) }))}
                   onChange={setProjectId}
                   ariaLabel="Project"
+                  placeholder={DEFAULT_COMPOSER_WORKSPACE_LABEL}
                   disabled={Boolean(pinnedProject)}
                   title={pinnedProject ? 'Workspace is locked to this project' : undefined}
                 />

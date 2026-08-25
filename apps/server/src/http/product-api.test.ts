@@ -129,7 +129,7 @@ describe('product HTTP', () => {
       selectedOnlyModels?: Array<{ displayName: string; model: string }>;
     };
     expect(options.providers.map((row) => row.id)).toEqual(
-      expect.arrayContaining(['claude-code', 'codex', 'pi', 'acp-cursor'])
+      expect.arrayContaining(['claude-code', 'codex', 'pi', 'acp-cursor', 'acp-opencode'])
     );
     expect(options.providers.find((row) => row.id === 'claude-code')?.composerActions).toEqual(['plan']);
     expect(options.models.map((row) => row.displayName)).toEqual(expect.arrayContaining([
@@ -145,7 +145,7 @@ describe('product HTTP', () => {
 
     const providers = await fetch(`${server.url}api/v1/threads/providers`).then((response) => response.json());
     expect(providers.providers.map((row: { id: string }) => row.id)).toEqual(
-      expect.arrayContaining(['claude-code', 'codex', 'pi', 'acp-cursor'])
+      expect.arrayContaining(['claude-code', 'codex', 'pi', 'acp-cursor', 'acp-opencode'])
     );
 
     const fromRenderer = await fetch(`${server.url}api/v1/threads`, {
@@ -568,5 +568,18 @@ describe('product HTTP thread reasoning', () => {
     expect(source).toContain("from '@zana-ai/zcc-domain/thread-runtime'");
     expect(source).toContain('reasoningLevelSchema');
     expect(source).toContain('parseReasoningLevel(body.reasoningLevel)');
+  });
+});
+
+describe('product HTTP pending interactions', () => {
+  it('returns 404 for interactions on an unknown thread', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-pint-'));
+    server = await startProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    await expect(
+      fetch(`${server.url}api/v1/threads/missing-thread/interactions`).then((response) => response.status)
+    ).resolves.toBe(404);
   });
 });

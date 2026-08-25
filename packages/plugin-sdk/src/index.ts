@@ -40,6 +40,9 @@ export type {
   PluginProviderHandle,
   PluginProviderCapabilities,
   PluginUi,
+  PluginInteractionRequest,
+  PluginInteractionResult,
+  PluginInteractionCancelReason,
   PluginStatusApi
 } from './server.js';
 
@@ -54,6 +57,9 @@ export type {
   PluginHomepageSectionRegistration,
   PluginProjectTabRegistration,
   PluginSidebarFooterActionRegistration,
+  PluginPendingInteractionRegistration,
+  PluginPendingInteractionProps,
+  PluginPendingInteractionView,
   PluginSlotBase
 } from './app-contract.js';
 

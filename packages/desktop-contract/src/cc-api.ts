@@ -139,6 +139,11 @@ import type {
 } from '@zana-ai/zcc-domain/harness-adapter';
 import type { UsageSummary } from '@zana-ai/zcc-domain/telemetry-events';
 import type {
+  JsonValue,
+  PendingInteraction,
+  PendingInteractionResolution
+} from '@zana-ai/zcc-domain/thread-runtime';
+import type {
   ApplyAuthorizationInput,
   AuthorizationApplyResult
 } from '@zana-ai/zcc-domain/authorizations';
@@ -433,6 +438,13 @@ export interface CcApi {
     commands(projectId: string): Promise<{ commands: Array<{ id: string; name: string; providerId: string; description: string }> }>;
     onUpdated(cb: (payload: unknown) => void): () => void;
     onEvent(cb: (payload: unknown) => void): () => void;
+    interactions: {
+      list(threadId: string): Promise<PendingInteraction[]>;
+      get(threadId: string, interactionId: string): Promise<PendingInteraction>;
+      resolve(threadId: string, interactionId: string, resolution: PendingInteractionResolution): Promise<PendingInteraction>;
+      respond(threadId: string, interactionId: string, value: JsonValue): Promise<PendingInteraction>;
+      cancel(threadId: string, interactionId: string): Promise<PendingInteraction>;
+    };
     archive(threadId: string): Promise<{ ok: boolean }>;
     fork(threadId: string): Promise<Result<{
       id: string;

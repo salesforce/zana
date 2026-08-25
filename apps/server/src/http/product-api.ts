@@ -35,7 +35,11 @@ import { readLastThreadExecution } from '../services/threads/thread-last-executi
 import { markThreadRead } from '../services/threads/thread-reads.js';
 import { readThreadHostFile } from '../services/threads/thread-host-file.js';
 import { listThreadProviders, bridgeLaunchForProvider } from '../services/threads/thread-provider-catalog.js';
-import { buildThreadExecutionOptions } from '../services/threads/thread-execution-options.js';
+import {
+  buildThreadExecutionOptions,
+  classifyModelListError,
+  type ThreadModelLoadErrorCode
+} from '../services/threads/thread-execution-options.js';
 import { archiveThread, destroyEnvironment } from '../services/environments/environment-cleanup.js';
 import {
   environmentDiff,
@@ -47,7 +51,7 @@ import {
   runEnvironmentAction
 } from '../services/environments/environment-actions.js';
 import { spawnEnvironmentChoiceSchema } from '@zana-ai/zcc-domain';
-import { reasoningLevelSchema, type ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
+import { jsonValueSchema, pendingInteractionResolutionSchema, reasoningLevelSchema, type ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
 import { normalizeRepoUrl } from '../services/projects/git-clone.js';
 import { harnessDescriptors, harnessEffectiveDefault, harnessVerify } from './harness-via-rpc.js';
@@ -686,7 +690,12 @@ export async function handleProductHttp(
         sendJson(response, 200, { ok: true, thread: conversationThreadView(ctx, thread) });
       } catch (error) {
         if (error instanceof ThreadCreateError) {
-          sendJson(response, error.status, { error: error.code, message: error.message });
+          sendJson(response, error.status, {
+            ok: false,
+            code: error.code,
+            error: error.code,
+            message: error.message
+          });
           return true;
         }
         sendHostFailure(response, error);
@@ -730,6 +739,103 @@ export async function handleProductHttp(
         }
         sendHostFailure(response, error);
       }
+      return true;
+    }
+
+    const threadInteractionResolve = routeParams(path, '/api/v1/threads/:id/interactions/:interactionId/resolve');
+    if (threadInteractionResolve && method === 'POST') {
+      try {
+        const parsed = pendingInteractionResolutionSchema.safeParse(await readJsonBody(request));
+        if (!parsed.success) {
+          sendJson(response, 400, { error: 'invalid_request', message: 'invalid resolution' });
+          return true;
+        }
+        const resolution = parsed.data;
+        const interaction = await ctx.pendingInteractions.resolvePendingInteraction({
+          threadId: threadInteractionResolve.id,
+          interactionId: threadInteractionResolve.interactionId,
+          resolution
+        });
+        sendJson(response, 200, interaction);
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadInteractionRespond = routeParams(path, '/api/v1/threads/:id/interactions/:interactionId/respond');
+    if (threadInteractionRespond && method === 'POST') {
+      try {
+        const body = (await readJsonBody(request)) as { value?: unknown };
+        const parsed = jsonValueSchema.safeParse(body?.value);
+        if (!parsed.success) {
+          sendJson(response, 400, { error: 'invalid_request', message: 'respond value must be JSON' });
+          return true;
+        }
+        const interaction = ctx.pendingInteractions.respondToPluginInteraction({
+          threadId: threadInteractionRespond.id,
+          interactionId: threadInteractionRespond.interactionId,
+          value: parsed.data
+        });
+        sendJson(response, 200, interaction);
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadInteractionCancel = routeParams(path, '/api/v1/threads/:id/interactions/:interactionId/cancel');
+    if (threadInteractionCancel && method === 'POST') {
+      try {
+        const interaction = ctx.pendingInteractions.cancelPluginInteraction({
+          threadId: threadInteractionCancel.id,
+          interactionId: threadInteractionCancel.interactionId,
+          reason: 'user'
+        });
+        sendJson(response, 200, interaction);
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadInteraction = routeParams(path, '/api/v1/threads/:id/interactions/:interactionId');
+    if (threadInteraction && method === 'GET') {
+      try {
+        sendJson(response, 200, ctx.pendingInteractions.getThreadInteraction({
+          threadId: threadInteraction.id,
+          interactionId: threadInteraction.interactionId
+        }));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadInteractions = routeParams(path, '/api/v1/threads/:id/interactions');
+    if (threadInteractions && method === 'GET') {
+      const thread = getConversationThread(ctx.db, threadInteractions.id);
+      if (!thread) {
+        sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
+        return true;
+      }
+      sendJson(response, 200, ctx.pendingInteractions.listPendingThreadInteractions(thread.id));
       return true;
     }
 
@@ -1202,6 +1308,7 @@ export async function handleProductHttp(
         availability = [];
       }
       let listed: ProviderListModelsResult | null = null;
+      let listError: ThreadModelLoadErrorCode | null = null;
       if (providerId) {
         try {
           const hostId = ctx.hostHub.resolveHostId();
@@ -1216,11 +1323,12 @@ export async function handleProductHttp(
               bridgeLaunch: bridgeLaunchForProvider(providerId, dataDir)
             }
           });
-        } catch {
+        } catch (error) {
           listed = null;
+          listError = classifyModelListError(error);
         }
       }
-      sendJson(response, 200, buildThreadExecutionOptions({ providerId, availability, listed }));
+      sendJson(response, 200, buildThreadExecutionOptions({ providerId, availability, listed, listError }));
       return true;
     }
 

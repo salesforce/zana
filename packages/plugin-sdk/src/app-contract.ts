@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react';
+import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
 
 export interface PluginSlotBase {
   id: string;
@@ -38,12 +39,33 @@ export interface PluginSidebarFooterActionRegistration extends PluginSlotBase {
   run: () => void | Promise<void>;
 }
 
+export interface PluginPendingInteractionView {
+  id: string;
+  threadId: string;
+  title: string;
+  payload: JsonValue;
+  createdAt: number;
+  expiresAt: number | null;
+}
+
+export interface PluginPendingInteractionProps {
+  interaction: PluginPendingInteractionView;
+  submit(value: JsonValue): Promise<void>;
+  cancel(): Promise<void>;
+}
+
+export interface PluginPendingInteractionRegistration extends PluginSlotBase {
+  /** Matches `rendererId` passed to `zcc.ui.requestInput`. */
+  component: ComponentType<PluginPendingInteractionProps>;
+}
+
 export interface PluginAppSlots {
   navPanel(registration: Omit<PluginNavPanelRegistration, 'generation' | 'pluginId'>): void;
   settingsSection(registration: Omit<PluginSettingsSectionRegistration, 'generation' | 'pluginId'>): void;
   homepageSection(registration: Omit<PluginHomepageSectionRegistration, 'generation' | 'pluginId'>): void;
   projectTab(registration: Omit<PluginProjectTabRegistration, 'generation' | 'pluginId'>): void;
   sidebarFooterAction(registration: Omit<PluginSidebarFooterActionRegistration, 'generation' | 'pluginId'>): void;
+  pendingInteraction(registration: Omit<PluginPendingInteractionRegistration, 'generation' | 'pluginId'>): void;
 }
 
 export interface PluginAppBuilder {
@@ -65,6 +87,7 @@ export interface PluginRegistrationSet {
   homepageSections: PluginHomepageSectionRegistration[];
   projectTabs: PluginProjectTabRegistration[];
   sidebarFooterActions: PluginSidebarFooterActionRegistration[];
+  pendingInteractions: PluginPendingInteractionRegistration[];
 }
 
 export function emptyRegistrationSet(pluginId: string, generation: number): PluginRegistrationSet {
@@ -75,7 +98,8 @@ export function emptyRegistrationSet(pluginId: string, generation: number): Plug
     settingsSections: [],
     homepageSections: [],
     projectTabs: [],
-    sidebarFooterActions: []
+    sidebarFooterActions: [],
+    pendingInteractions: []
   };
 }
 
@@ -106,6 +130,9 @@ export function collectPluginApp(
       },
       sidebarFooterAction: (registration) => {
         set.sidebarFooterActions.push(stamp(registration));
+      },
+      pendingInteraction: (registration) => {
+        set.pendingInteractions.push(stamp(registration));
       }
     }
   });

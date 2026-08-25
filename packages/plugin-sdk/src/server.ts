@@ -98,8 +98,34 @@ export interface PluginAgents {
   experimental_registerProvider(declaration: PluginProviderDeclaration): PluginProviderHandle;
 }
 
+import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
+
+export type PluginInteractionCancelReason =
+  | 'user'
+  | 'request-aborted'
+  | 'thread-stopped'
+  | 'thread-deleted'
+  | 'plugin-disposed'
+  | 'server-restarted'
+  | 'timeout';
+
+export type PluginInteractionResult =
+  | { outcome: 'submitted'; value: JsonValue }
+  | { outcome: 'cancelled'; reason: PluginInteractionCancelReason };
+
+export interface PluginInteractionRequest {
+  threadId: string;
+  rendererId: string;
+  title: string;
+  payload: JsonValue;
+  timeoutMs?: number;
+}
+
 export interface PluginUi {
-  requestInput(rendererId: string, payload: unknown): Promise<unknown>;
+  requestInput(
+    request: PluginInteractionRequest,
+    options?: { signal?: AbortSignal }
+  ): Promise<PluginInteractionResult>;
 }
 
 export interface PluginStatusApi {

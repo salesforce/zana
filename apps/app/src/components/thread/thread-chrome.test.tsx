@@ -4,7 +4,6 @@ import { fileURLToPath } from 'node:url';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import type { WorkspaceFileStatus } from '@zana-ai/zcc-domain';
-import { ThreadConversationToc } from './ThreadConversationToc.js';
 import {
   ThreadWorkspaceBanner,
   ThreadWorkspaceBannerView,
@@ -34,7 +33,7 @@ import {
   shouldAutoLoadPatch,
   summarizeDiffFiles
 } from './thread-diff.js';
-import { ThreadDiffCardBody } from './ThreadDiffPanel.js';
+import { ThreadDiffCardBody, ThreadDiffSkeleton } from './ThreadDiffPanel.js';
 import { ThreadDiffHunkView } from './ThreadDiffHunkView.js';
 import { ExpandableTimelineRow } from './timeline/ExpandableTimelineRow.js';
 import {
@@ -43,53 +42,6 @@ import {
   ThreadPromptModeChip,
   ThreadStatusBadge
 } from './timeline/ThreadBanners.js';
-
-describe('thread TOC', () => {
-  it('renders outline items that jump by id', () => {
-    const html = renderToStaticMarkup(
-      <ThreadConversationToc
-        items={[
-          { id: 'u1', role: 'user', preview: 'Read README.md' },
-          { id: 'a1', role: 'assistant', preview: 'Done' },
-          { id: 'u2', role: 'user', preview: 'Follow up' }
-        ]}
-        onJump={() => undefined}
-      />
-    );
-    expect(html).toContain('thread-toc');
-    expect(html).toContain('Outline');
-    expect(html).toContain('Read README.md');
-    expect(html).toContain('Done');
-  });
-
-  it('hides an empty or short outline so it cannot repeat a two-bubble thread', () => {
-    expect(renderToStaticMarkup(
-      <ThreadConversationToc items={[]} onJump={() => undefined} />
-    )).toBe('');
-    expect(renderToStaticMarkup(
-      <ThreadConversationToc
-        items={[
-          { id: 'u1', role: 'user', preview: 'hello' },
-          { id: 'a1', role: 'assistant', preview: 'Hello! What can I help you with today?' }
-        ]}
-        onJump={() => undefined}
-      />
-    )).toBe('');
-  });
-
-  it('falls back to role labels when preview is empty', () => {
-    expect(renderToStaticMarkup(
-      <ThreadConversationToc
-        items={[
-          { id: 'u1', role: 'user', preview: '' },
-          { id: 'a1', role: 'assistant', preview: 'Done' },
-          { id: 'u2', role: 'user', preview: 'Next' }
-        ]}
-        onJump={() => undefined}
-      />
-    )).toContain('User');
-  });
-});
 
 function file(overrides: Partial<WorkspaceFileStatus> & Pick<WorkspaceFileStatus, 'path'>): WorkspaceFileStatus {
   return {
@@ -262,13 +214,16 @@ describe('diff hunk helper', () => {
     expect(source).toContain('Search files');
     expect(source).toContain('Wrap diff lines');
     expect(source).toContain('Split diff view');
+    expect(source).toContain('title={label}');
+    expect(source).toContain('DiffToolbarButton');
     expect(source).toContain('Diff scope');
     expect(source).not.toContain('Show {hiddenCount} more');
     expect(source).not.toMatch(/environments\.diff\(/);
     const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
     expect(css).toContain('.thread-diff-card {');
     expect(css).toContain('.thread-diff-cards {');
-    expect(css).toContain('.thread-diff-hunks');
+    expect(css).toContain('.thread-diff-skeleton');
+    expect(css).toContain('.thread-diff-skel');
     expect(css).not.toContain('.thread-diff-list-pane');
     expect(css).not.toContain('.thread-diff-list-search');
     expect(changeKindLetter('added')).toBe('A');
@@ -298,8 +253,8 @@ describe('diff hunk helper', () => {
     expect(diffTargetForSelection('uncommitted')).toEqual({ type: 'uncommitted' });
     expect(diffTargetForSelection('all')).toBeUndefined();
     expect(DIFF_SELECTION_OPTIONS.map((option) => option.label)).toEqual([
-      'All changes',
-      'Uncommitted changes'
+      'Uncommitted changes',
+      'All changes'
     ]);
     expect(summarizeDiffFiles(many)).toEqual({
       filesCount: DIFF_AUTO_COLLAPSE_FILE_THRESHOLD + 1,
@@ -468,6 +423,12 @@ describe('diff hunk helper', () => {
       <ThreadDiffCardBody bodyKind="hidden" file={file} patch={undefined} onLoadPatch={() => {}} />
     )).toBe('');
     expect(renderToStaticMarkup(
+      <ThreadDiffCardBody bodyKind="loading" file={file} patch={{ status: 'loading' }} onLoadPatch={() => {}} />
+    )).toContain('thread-diff-skel');
+    expect(renderToStaticMarkup(<ThreadDiffSkeleton />)).toContain('thread-diff-skeleton');
+    expect(renderToStaticMarkup(<ThreadDiffSkeleton />)).toContain('Loading diff');
+    expect(renderToStaticMarkup(<ThreadDiffSkeleton count={2} />).split('is-skeleton').length - 1).toBe(2);
+    expect(renderToStaticMarkup(
       <ThreadDiffCardBody
         bodyKind="patch"
         file={file}
@@ -557,10 +518,9 @@ describe('expandable row and chips', () => {
   it('keeps the transcript, workspace banner, and composer in one column', () => {
     const source = readFileSync(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)), 'utf8');
     const columnAt = source.indexOf('className="thread-detail-column"');
-    const tocAt = source.indexOf('<ThreadConversationToc');
     expect(columnAt).toBeGreaterThan(-1);
-    expect(tocAt).toBeGreaterThan(columnAt);
-    const column = source.slice(columnAt, tocAt);
+    expect(source).not.toContain('ThreadConversationToc');
+    const column = source.slice(columnAt);
     expect(column).toContain('<ThreadTimeline');
     expect(column).toContain('<ThreadWorkspaceBanner');
     expect(column).toContain('<ThreadCommandComposer');
@@ -572,5 +532,37 @@ describe('expandable row and chips', () => {
     );
     expect(assistantActions).toContain('position: absolute;');
     expect(assistantActions).toContain('left: 0;');
+  });
+
+  it('keeps the transcript scrollbar invisible at rest and paints it only while scrolling', () => {
+    const source = readFileSync(fileURLToPath(new URL('./ThreadTimeline.tsx', import.meta.url)), 'utf8');
+    expect(source).toContain('thread-detail-timeline thread-scrollbar');
+    expect(source).toContain('markTransientScrollbarScrolling');
+    expect(source).toContain('clearTransientScrollbarScrolling');
+
+    const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
+    const scrollbar = css.slice(
+      css.indexOf('.thread-scrollbar {'),
+      css.indexOf('.thread-timeline-turn {')
+    );
+    expect(scrollbar).toContain('scrollbar-color: transparent transparent;');
+    expect(scrollbar).toContain('.thread-scrollbar[data-scrollbar-scrolling="true"]');
+    expect(scrollbar).toContain('color-mix(in oklab, var(--text-primary) 20%, transparent)');
+    expect(scrollbar).not.toContain('scrollbar-width: none;');
+  });
+
+  it('can render the same thread surface embedded in the Agents list monitor', () => {
+    const source = readFileSync(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)), 'utf8');
+    expect(source).toContain('export function ThreadDetail(');
+    expect(source).toContain('embedded = false');
+    expect(source).toContain('thread-detail-view--embedded');
+    expect(source).toContain("data-embedded={embedded ? 'true' : undefined}");
+    expect(source).toContain('route.isProjectWorkspace ? route.focusedProjectId');
+    expect(source).toContain('pendingChildThreads(threads, threadId)');
+    expect(source).not.toContain('useThreads((s) => s.threads.filter');
+    const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
+    expect(css).toContain('.thread-detail-view--embedded');
+    expect(css).toContain('.agent-monitor.is-thread');
+    expect(css).toContain('.agent-monitor-terminal.is-thread');
   });
 });

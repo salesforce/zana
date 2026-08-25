@@ -6,6 +6,8 @@ import { VOICE_TRANSCRIPTION_MAX_BYTES } from '../../http/multipart-voice.js';
 export const DEFAULT_VOICE_MODEL = 'gpt-transcribe';
 export const VOICE_COMMAND_TIMEOUT_MS = 10_000;
 export const VOICE_RPC_TIMEOUT_MS = 25_000;
+export const CODEX_VOICE_LOGIN_MESSAGE =
+  'Sign in with Codex (`codex login`) or set OPENAI_API_KEY.';
 
 export class VoiceTranscriptionError extends Error {
   constructor(
@@ -19,7 +21,7 @@ export class VoiceTranscriptionError extends Error {
 }
 
 function hostErrorStatus(code: string): number {
-  if (code === 'codex_auth_missing' || code === 'codex_auth_invalid' || code === 'not_configured') {
+  if (code === 'codex_auth_missing' || code === 'codex_auth_invalid' || code === 'codex_auth_failed' || code === 'not_configured') {
     return 501;
   }
   if (code === 'invalid_request') return 400;
@@ -30,6 +32,17 @@ function hostErrorStatus(code: string): number {
 
 export function voiceTranscriptionEnabled(ctx: ProductHttpContext): boolean {
   return ctx.hostHub.connectedHostIds().length > 0;
+}
+
+function hostErrorCode(error: unknown): string {
+  if (error && typeof error === 'object' && 'code' in error) {
+    return String((error as { code: unknown }).code);
+  }
+  return 'provider_rpc_error';
+}
+
+function isCodexAuthErrorCode(code: string): boolean {
+  return code === 'codex_auth_missing' || code === 'codex_auth_invalid' || code === 'codex_auth_failed';
 }
 
 export async function transcribeVoiceOnHost(
@@ -66,16 +79,10 @@ export async function transcribeVoiceOnHost(
     if (error instanceof AmbiguousHostError) {
       throw new VoiceTranscriptionError(409, error.code, error.message);
     }
-    const code = error && typeof error === 'object' && 'code' in error
-      ? String((error as { code: unknown }).code)
-      : 'provider_rpc_error';
+    const code = hostErrorCode(error);
     const message = error instanceof Error ? error.message : String(error);
-    if (code === 'codex_auth_missing' || code === 'codex_auth_invalid') {
-      throw new VoiceTranscriptionError(
-        501,
-        code,
-        'Sign in with Codex (`codex login`) or set OPENAI_API_KEY.'
-      );
+    if (isCodexAuthErrorCode(code)) {
+      throw new VoiceTranscriptionError(501, code, CODEX_VOICE_LOGIN_MESSAGE);
     }
     throw new VoiceTranscriptionError(hostErrorStatus(code), code, message);
   }

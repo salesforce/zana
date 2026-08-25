@@ -5,16 +5,16 @@ const view = readFileSync(new URL('./HomeView.tsx', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
 
 describe('HomeView composer dock', () => {
-  it('puts Inbox/Guides in a scroll region above the docked composer', () => {
+  it('puts the composer above the Inbox/Guides scroll region', () => {
     expect(view).toContain('className="home-dashboard"');
     expect(view).toContain('className="home-grid"');
     expect(view).toContain('<HomeAgentComposer />');
-    expect(view.indexOf('className="home-dashboard"')).toBeLessThan(view.indexOf('<HomeAgentComposer />'));
-    expect(view.indexOf('className="home-grid"')).toBeLessThan(view.indexOf('<HomeAgentComposer />'));
-    expect(view.indexOf('home-plugin-sections')).toBeLessThan(view.indexOf('<HomeAgentComposer />'));
+    expect(view.indexOf('<HomeAgentComposer />')).toBeLessThan(view.indexOf('className="home-dashboard"'));
+    expect(view.indexOf('<HomeAgentComposer />')).toBeLessThan(view.indexOf('className="home-grid"'));
+    expect(view.indexOf('<HomeAgentComposer />')).toBeLessThan(view.indexOf('home-plugin-sections'));
   });
 
-  it('fills the shell track and docks the composer to the panel footer', () => {
+  it('fills the shell track and pins the composer to the panel header', () => {
     const panelStart = css.indexOf('.home-panel {');
     const panel = css.slice(panelStart, css.indexOf('}', panelStart));
     expect(panel).toContain('grid-column: 2 / -1;');
@@ -29,6 +29,8 @@ describe('HomeView composer dock', () => {
     expect(inner).toContain('flex-direction: column;');
     expect(inner).toContain('flex: 1 1 auto;');
     expect(inner).toContain('min-height: 0;');
+    expect(inner).toContain('padding: 40px 32px 16px;');
+    expect(inner).toContain('gap: 24px;');
 
     const dashStart = css.indexOf('.home-dashboard {');
     const dashboard = css.slice(dashStart, css.indexOf('}', dashStart));
@@ -49,11 +51,7 @@ describe('HomeView composer dock', () => {
     expect(editor).toContain('max-height: 16rem;');
   });
 
-  it('opens the Home mention menu above the docked prompt', () => {
-    const start = css.indexOf('.home-panel .mention-popover {');
-    expect(start).toBeGreaterThan(-1);
-    const block = css.slice(start, css.indexOf('}', start));
-    expect(block).toContain('top: auto;');
-    expect(block).toContain('bottom: calc(100% + 4px);');
+  it('lets the Home mention menu open below the leading prompt', () => {
+    expect(css).not.toContain('.home-panel .mention-popover {');
   });
 });

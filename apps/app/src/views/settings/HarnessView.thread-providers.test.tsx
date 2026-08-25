@@ -1,12 +1,13 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { HarnessSettingsTabs, ThreadProviderCatalog } from './HarnessView.js';
+import { HarnessSettingsTabs, mergeBuiltinThreadProviders, ThreadProviderCatalog } from './HarnessView.js';
 
 const catalog = [
   { id: 'claude-code', displayName: 'Claude Code', pluginId: 'provider-claude-code' },
   { id: 'codex', displayName: 'Codex', pluginId: 'provider-codex' },
   { id: 'pi', displayName: 'Pi', pluginId: 'provider-pi' },
-  { id: 'acp-cursor', displayName: 'Cursor', pluginId: 'provider-acp' }
+  { id: 'acp-cursor', displayName: 'Cursor', pluginId: 'provider-acp' },
+  { id: 'acp-opencode', displayName: 'OpenCode', pluginId: 'provider-acp' }
 ];
 
 describe('ThreadProviderCatalog', () => {
@@ -20,6 +21,22 @@ describe('ThreadProviderCatalog', () => {
     expect(html).toContain('Agent Client Protocol');
     expect(html).toContain('Codex coding CLI');
     expect(html).toContain('Pi coding-agent CLI');
+    expect(html).toContain('OpenCode via the Agent Client Protocol');
+  });
+
+  it('inserts OpenCode when a stale catalog omits it', () => {
+    const merged = mergeBuiltinThreadProviders([
+      { id: 'claude-code', displayName: 'Claude Code', pluginId: 'provider-claude-code' },
+      { id: 'codex', displayName: 'Codex', pluginId: 'provider-codex' },
+      { id: 'pi', displayName: 'Pi', pluginId: 'provider-pi' },
+      { id: 'acp-cursor', displayName: 'Cursor', pluginId: 'provider-acp' }
+    ]);
+    expect(merged.map((row) => row.id)).toContain('acp-opencode');
+    expect(merged.find((row) => row.id === 'acp-opencode')).toEqual({
+      id: 'acp-opencode',
+      displayName: 'OpenCode',
+      pluginId: 'provider-acp'
+    });
   });
 
   it('renders an empty catalog without a list', () => {

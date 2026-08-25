@@ -39,6 +39,9 @@ describe('AgentsListPane', () => {
     const html = renderToStaticMarkup(<MemoryRouter><AgentsListPane /></MemoryRouter>);
 
     expect(html).toContain('aria-label="Open full-width Agents list"');
+    expect(html).toContain('aria-label="New thread/agent"');
+    expect(html).toContain('New thread/agent');
+    expect(html).not.toContain('Legacy PTY');
     expect(html).not.toContain('aria-expanded');
   });
 
@@ -53,9 +56,12 @@ describe('AgentsListPane', () => {
     expect(source).not.toContain('data-testid="thread-list"');
     expect(source).toContain("entry.kind === 'thread'");
     expect(source).toContain('<FleetKindChip kind="agent" />');
-    expect(source).toContain('getNewThreadRoutePath');
+    expect(source).toContain('openLauncher');
+    expect(source).toContain('setLauncherOpen(true)');
+    expect(source).not.toContain('getNewThreadRoutePath');
     expect(source).not.toContain('getRootRoutePath');
-    expect(source).toContain('NEW_THREAD_ROUTE_PATH');
-    expect(source).toContain('PROJECT_NEW_THREAD_ROUTE_PATH');
+    expect(source).not.toContain('agents-legacy-new');
+    expect(source).toContain('aria-label="New thread/agent"');
+    expect(source).toContain('threadIdFromPath');
   });
 });
