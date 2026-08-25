@@ -87,9 +87,9 @@ export function HomeView() {
     {
       id: 'create-extension',
       icon: Puzzle,
-      title: 'Create an extension',
-      description: 'Build your own panel or tool with the in-app Extension Creator.',
-      actionLabel: 'Create an extension',
+      title: 'Create a plugin',
+      description: 'Build your own panel or tool with the in-app Plugin Creator.',
+      actionLabel: 'Create a plugin',
       onAction: () => setCreatingExtension(true)
     },
     {
@@ -134,7 +134,7 @@ export function HomeView() {
     <div className="settings-panel home-panel aurora-host">
       <AuroraGrid />
       <div className="settings-inner">
-        <HomeAgentComposer />
+        <HomeAgentComposer allowLegacyAgent />
 
         <div className="home-dashboard">
           <div className="home-grid">

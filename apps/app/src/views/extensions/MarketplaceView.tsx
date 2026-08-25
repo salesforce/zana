@@ -1,6 +1,6 @@
 import { product } from '../../lib/product-client.js';
 /**
- * Extensions → Browse extensions (Marketplace). Lists first-party plugins the
+ * Plugins → Browse (Marketplace). Lists first-party plugins the
  * app ships (offline) and, when configured, the opt-in remote registry — so the
  * user can install / update without rebuilding the app.
  *
@@ -27,14 +27,17 @@ import {
   GitBranch,
   FolderOpen,
   FileArchive,
-  ChevronDown
+  ChevronDown,
+  Plus,
+  Package
 } from 'lucide-react';
 import type { MarketplaceEntry } from '@zana-ai/zcc-domain/product';
 import { resolveIcon } from '@/lib/resolveIcon';
-import { PERMISSION_LABELS } from '@/components/ExtensionConsent';
+import { PERMISSION_LABELS, pluginCapabilityLines } from '@/components/ExtensionConsent';
 import { InstallFromGitDialog } from '@/components/InstallFromGitDialog';
+import { filterMarketplaceEntries, marketplaceTags, type MarketplaceTag } from './marketplace-filter.js';
 
-export function MarketplaceView() {
+export function MarketplaceView({ onCreate }: { onCreate?: () => void } = {}) {
   const [entries, setEntries] = useState<MarketplaceEntry[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,6 +46,10 @@ export function MarketplaceView() {
   const [rowError, setRowError] = useState<Record<string, string>>({});
   const [query, setQuery] = useState('');
   const [gitOpen, setGitOpen] = useState(false);
+  const [pendingConfirm, setPendingConfirm] = useState<MarketplaceEntry | null>(null);
+  const [tag, setTag] = useState<MarketplaceTag | 'all'>('all');
+  const [npmOpen, setNpmOpen] = useState(false);
+  const [npmSpec, setNpmSpec] = useState('');
   // "Install from…" dropdown — groups the three source pickers (folder/archive/
   // repo) behind one button so the toolbar doesn't read as five flat peers.
   const [installMenuOpen, setInstallMenuOpen] = useState(false);
@@ -153,21 +160,26 @@ export function MarketplaceView() {
   // author). No network — just narrows what's shown.
   const filtered = useMemo(() => {
     if (!entries) return entries;
-    const q = query.trim().toLowerCase();
-    if (!q) return entries;
-    return entries.filter((e) =>
-      [e.title, e.id, e.description, e.author]
-        .filter(Boolean)
-        .some((s) => (s as string).toLowerCase().includes(q))
-    );
-  }, [entries, query]);
+    return filterMarketplaceEntries(entries, query, tag);
+  }, [entries, query, tag]);
 
   return (
     <section className="settings-section ext-market">
-      <div className="ext-market-toolbar">
+      <div className="ext-market-hero">
         <p className="settings-help">
-          Browse and install shared extensions. Updates are verified before they’re applied. Install Extensions only from publishers you trust: an Extension can see data visible in ZCC and request ZCC actions, though sensitive terminal launches still need your native confirmation.
+          Browse and install plugins. Official plugins install offline from the app
+          binary. Community catalogs are provenance-only (npm/git pointers — refresh
+          never runs plugin code). Plugins run in-process on the server after install:
+          confirm each install, and only install from publishers you trust.
         </p>
+        {onCreate && (
+          <button type="button" className="settings-btn primary" onClick={onCreate}>
+            <Plus size={14} />
+            Create
+          </button>
+        )}
+      </div>
+      <div className="ext-market-toolbar">
         <div className="settings-btn-row">
           <div className="settings-btn-group" role="group" aria-label="Sync catalog">
             <button
@@ -175,7 +187,7 @@ export function MarketplaceView() {
               className="settings-btn"
               disabled={loading || busy.__all !== undefined}
               onClick={checkUpdates}
-              title="Check the registry for newer versions of installed extensions"
+              title="Check the registry for newer versions of installed plugins"
             >
               <ArrowUpCircle size={14} />
               {busy.__all ?? 'Check for updates'}
@@ -242,6 +254,18 @@ export function MarketplaceView() {
                   <GitBranch size={14} />
                   Repository…
                 </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="ext-install-menu-item"
+                  onClick={() => {
+                    setInstallMenuOpen(false);
+                    setNpmOpen(true);
+                  }}
+                >
+                  <Package size={14} />
+                  npm package…
+                </button>
               </div>
             )}
           </div>
@@ -249,6 +273,48 @@ export function MarketplaceView() {
       </div>
 
       {gitOpen && <InstallFromGitDialog onClose={() => setGitOpen(false)} />}
+      {npmOpen && (
+        <div className="palette-backdrop" onMouseDown={() => setNpmOpen(false)}>
+          <div
+            className="palette launch-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Install npm plugin"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="launch-panel">
+              <h3>Install from npm</h3>
+              <p>Package name or name@version. Installs through PluginService as npm:spec.</p>
+              <input
+                type="text"
+                className="settings-input"
+                value={npmSpec}
+                onChange={(e) => setNpmSpec(e.target.value)}
+                placeholder="zcc-plugin-notes"
+                autoFocus
+              />
+              <div className="settings-btn-row">
+                <button type="button" className="settings-btn" onClick={() => setNpmOpen(false)}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="settings-btn primary"
+                  disabled={!npmSpec.trim()}
+                  onClick={() => {
+                    const spec = npmSpec.trim();
+                    setNpmOpen(false);
+                    setNpmSpec('');
+                    product.extensions.install({ kind: 'npm', spec }).catch(() => {});
+                  }}
+                >
+                  Install
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && <p className="modal-error">{error}</p>}
 
@@ -258,13 +324,25 @@ export function MarketplaceView() {
           <input
             type="text"
             className="ext-market-search-input"
-            placeholder="Search extensions…"
+            placeholder="Search plugins…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
           <span className="ext-market-search-count">
             {filtered?.length ?? 0} of {entries.length}
           </span>
+          <div className="ext-market-tags" role="group" aria-label="Filter by tag">
+            {(['all', 'official', 'community', 'update'] as const).map((id) => (
+              <button
+                key={id}
+                type="button"
+                className={`settings-btn ${tag === id ? 'primary' : ''}`}
+                onClick={() => setTag(id)}
+              >
+                {id === 'all' ? 'All' : id}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -272,14 +350,13 @@ export function MarketplaceView() {
         <p className="settings-help settings-help--muted">Loading marketplace…</p>
       ) : entries.length === 0 ? (
         <p className="settings-help settings-help--muted">
-          No extensions to show. First-party plugins ship with the app; if this list is empty,
-          the bundled plugins root was not found. Point <code>~/.zcc/extension-registry.json</code>{' '}
-          at an HTTPS registry (with <code>enabled: true</code>) to browse shared extensions, or
-          install from a local folder or archive above.
+          No plugins to show. First-party plugins ship with the app; if this list is empty,
+          the bundled plugins root was not found. Add a community catalog with
+          <code> zcc marketplace add</code>, or install from a local folder above.
         </p>
       ) : filtered && filtered.length === 0 ? (
         <p className="settings-help settings-help--muted">
-          No extensions match “{query.trim()}”.
+          No plugins match “{query.trim()}”.
         </p>
       ) : (
         <ul className="ext-market-list">
@@ -289,10 +366,62 @@ export function MarketplaceView() {
               entry={entry}
               busy={busy[entry.id]}
               error={rowError[entry.id]}
-              onInstall={() => install(entry)}
+              onInstall={() => setPendingConfirm(entry)}
             />
           ))}
         </ul>
+      )}
+
+      {pendingConfirm && (
+        <div className="palette-backdrop" onMouseDown={() => setPendingConfirm(null)}>
+          <div
+            className="palette launch-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Confirm plugin install"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="launch-panel">
+              <h3>Install {pendingConfirm.title}?</h3>
+              <p>
+                This plugin runs in-process on the server with full trust after
+                install. Host-daemon tokens stay on the server. Only continue if
+                you trust the publisher.
+              </p>
+              {pendingConfirm.description && <p>{pendingConfirm.description}</p>}
+              {pluginCapabilityLines(pendingConfirm).length > 0 && (
+                <ul>
+                  {pluginCapabilityLines(pendingConfirm).map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              )}
+              {pendingConfirm.permissions && pendingConfirm.permissions.length > 0 && (
+                <ul>
+                  {pendingConfirm.permissions.map((p) => (
+                    <li key={p}>{PERMISSION_LABELS[p] ?? p}</li>
+                  ))}
+                </ul>
+              )}
+              <div className="settings-btn-row">
+                <button type="button" className="settings-btn" onClick={() => setPendingConfirm(null)}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="settings-btn primary"
+                  onClick={() => {
+                    const entry = pendingConfirm;
+                    setPendingConfirm(null);
+                    install(entry);
+                  }}
+                >
+                  Install with full trust
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </section>
   );
@@ -323,13 +452,18 @@ function MarketRow({
             className={`ext-market-item-source ext-market-item-source--${entry.source}`}
             title={
               entry.source === 'bundled'
-                ? 'First-party extension shipped with the app'
-                : 'From the configured extension registry'
+                ? 'First-party plugin shipped with the app'
+                : 'From a configured plugin catalog'
             }
           >
             {entry.source === 'bundled' ? 'Bundled' : 'Marketplace'}
           </span>
           {entry.author && <span className="ext-market-item-author">by {entry.author}</span>}
+          {marketplaceTags(entry).map((itemTag) => (
+            <span key={itemTag} className={`ext-market-item-source ext-market-item-source--${itemTag}`}>
+              {itemTag}
+            </span>
+          ))}
         </div>
         {entry.description && (
           <p className="ext-market-item-desc">{entry.description}</p>

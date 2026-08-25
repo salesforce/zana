@@ -3,6 +3,7 @@ import {
   LOW_REASONING_EFFORT,
   MAX_REASONING_EFFORT,
   MEDIUM_REASONING_EFFORT,
+  NONE_REASONING_EFFORT,
   ULTRACODE_REASONING_EFFORT,
   XHIGH_REASONING_EFFORT,
   type AvailableModel,
@@ -30,6 +31,7 @@ export interface ClaudeCodeCatalogEntry {
 // standing workflow orchestration), so only the xhigh ladder offers it.
 export const CLAUDE_XHIGH_CAPABLE_REASONING_EFFORTS: readonly ModelReasoningEffort[] =
   [
+    NONE_REASONING_EFFORT,
     LOW_REASONING_EFFORT,
     MEDIUM_REASONING_EFFORT,
     HIGH_REASONING_EFFORT,

@@ -57,6 +57,7 @@ describe('PluginService', () => {
     expect(row.status).toBe('running');
     expect(row.provenance).toBe('direct');
     await expect(service.callRpc('echo', 'ping', {})).resolves.toEqual({ ok: true, id: 'echo' });
+    expect(service.getSettings('echo')).toEqual({ descriptors: {}, values: {} });
   });
 
   it('shims a legacy extension.json directory', async () => {
@@ -122,6 +123,22 @@ describe('PluginService', () => {
     expect(row.statusDetail).toMatch(/boom/);
   });
 
+  it('keeps the previous running generation when a reload factory throws', async () => {
+    const dataDir = root();
+    const pluginDir = writePlugin(join(root(), 'sticky'), 'sticky');
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    await service.install(pluginDir);
+    expect(service.get('sticky')?.status).toBe('running');
+    writeFileSync(
+      join(pluginDir, 'server.mjs'),
+      'export default function plugin() { throw new Error("reload-boom"); }\n'
+    );
+    const reloaded = await service.reload('sticky');
+    expect(reloaded.status).toBe('running');
+    expect(reloaded.statusDetail).toMatch(/reload-boom/);
+    await expect(service.callRpc('sticky', 'ping', {})).resolves.toEqual({ ok: true, id: 'sticky' });
+  });
+
   it('adds a marketplace catalog of provenance pointers', async () => {
     const dataDir = root();
     const service = createPluginService({
@@ -145,6 +162,8 @@ describe('PluginService', () => {
     const row = await service.addMarketplace('https://example.test/index.json');
     expect(row.name).toBe('official');
     expect(service.listMarketplaces()).toHaveLength(1);
+    const hits = await service.searchCatalog('from');
+    expect(hits.some((h) => h.id === 'from-catalog' && h.marketplace === 'official')).toBe(true);
   });
 
   it('exposes skill names, mcpServers without env values, and extra on snapshot', async () => {

@@ -39,6 +39,7 @@ import { PERMISSION_LABELS, pluginCapabilityLines } from '@/components/Extension
 import { CreateExtensionDialog } from '@/components/CreateExtensionDialog';
 import { InstallFromGitDialog } from '@/components/InstallFromGitDialog';
 import { Marketplace } from '@/views/extensions/MarketplaceView';
+import { PluginDefinedSettings } from '@/plugins/PluginDefinedSettings';
 import { useUi } from '@/store';
 
 /**
@@ -219,7 +220,7 @@ export function ExtensionsHub({
           </button>
           <button type="button" role="menuitem" onClick={reload} disabled={reloading}>
             <RotateCw size={14} className={reloading ? 'ext-spin' : undefined} />
-            {reloading ? 'Rescanning extensions…' : 'Rescan installed extensions'}
+            {reloading ? 'Rescanning plugins…' : 'Rescan installed plugins'}
           </button>
         </div>
       )}
@@ -229,7 +230,7 @@ export function ExtensionsHub({
   return (
     <div className="ext-hub-shell">
       {showTabs ? (
-        <div className="ext-hub-tabs" role="tablist" aria-label="Extensions">
+        <div className="ext-hub-tabs" role="tablist" aria-label="Plugins">
           <button
             type="button"
             role="tab"
@@ -246,7 +247,7 @@ export function ExtensionsHub({
             className={`ext-hub-tab ${tab === 'marketplace' ? 'active' : ''}`}
             onClick={() => selectTab('marketplace')}
           >
-            Marketplace
+            Browse
           </button>
           <span className="ext-hub-tabs-spacer" />
           {maintenanceActions}
@@ -257,24 +258,24 @@ export function ExtensionsHub({
       {tab === 'installed' && (
         <section className="ext-dev-guide" aria-labelledby="ext-dev-guide-title">
           <div className="ext-dev-guide-copy">
-            <span className="ext-dev-guide-eyebrow">Extension development</span>
-            <h3 id="ext-dev-guide-title">Build or continue an extension</h3>
+            <span className="ext-dev-guide-eyebrow">Plugin development</span>
+            <h3 id="ext-dev-guide-title">Build or continue a plugin</h3>
             <p>Use a template for something new, or connect an existing folder or Git clone to keep editing it here.</p>
           </div>
           <div className="ext-dev-guide-actions">
             <button type="button" className="settings-btn primary" onClick={() => setOpenExisting(true)}>
               <FolderOpen size={14} />
-              Open existing extension
+              Open existing plugin
             </button>
             <button type="button" className="settings-btn" onClick={openCreate}>
               <Wand2 size={14} />
-              Create extension
+              Create plugin
             </button>
           </div>
           <ol className="ext-dev-guide-steps">
-            <li>Open or create an extension.</li>
-            <li>Edit its source and run its build command.</li>
-            <li>With its Creator or shell session open, changes in <code>dist/</code> reload automatically.</li>
+            <li>Open or create a plugin.</li>
+            <li>Edit <code>server.ts</code> / <code>app.tsx</code> and run <code>zcc plugin dev</code>.</li>
+            <li>Reload from source, or save while the watcher is running — a failed reload keeps the last good panel.</li>
           </ol>
         </section>
       )}
@@ -283,7 +284,7 @@ export function ExtensionsHub({
           {redeployNote}
         </div>
       )}
-      {tab === 'installed' ? <InstalledView /> : <Marketplace />}
+      {tab === 'installed' ? <InstalledView /> : <Marketplace onCreate={openCreate} />}
       {creating && <CreateExtensionDialog onClose={() => setCreating(false)} />}
       {openExisting && <InstallFromGitDialog mode="open" onClose={() => setOpenExisting(false)} />}
     </div>
@@ -379,14 +380,14 @@ export function InstalledView() {
   if (rows.length === 0) {
     return (
       <section className="settings-section">
-        <h3>Extensions</h3>
+        <h3>Plugins</h3>
         <p className="settings-help">
-          No extensions installed. Browse the Marketplace, or build your own.
+          No plugins installed. Browse the Marketplace, or build your own.
         </p>
         <div className="settings-btn-row">
           <button type="button" className="settings-btn primary" onClick={() => setCreating(true)}>
             <Wand2 size={14} />
-            Create your first extension
+            Create your first plugin
           </button>
         </div>
         {creating && <CreateExtensionDialog onClose={() => setCreating(false)} />}
@@ -400,7 +401,7 @@ export function InstalledView() {
       ref={gridRef}
       style={{ ['--ext-hub-list-w' as string]: `${Math.round(listWidth)}px` }}
     >
-      <nav className="ext-hub-list" aria-label="Installed extensions">
+      <nav className="ext-hub-list" aria-label="Installed plugins">
         {rows.map(({ module, entry }) => {
           const Icon = resolveIcon(module.icon);
           const status = rowStatus(module, entry);
@@ -549,6 +550,7 @@ function ExtensionDetail({ row }: { row: HubRow }) {
     <>
       <AboutCard row={row} />
       {entry && <InstallConfirmationCard entry={entry} />}
+      <PluginDefinedSettings pluginId={module.id} />
       {module.loadError ? (
         <section className="settings-section">
           <p className="modal-error">{module.loadError}</p>

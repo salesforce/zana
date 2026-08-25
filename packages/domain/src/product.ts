@@ -4460,6 +4460,21 @@ export interface PluginAppEntry {
   };
 }
 
+export interface PluginSettingsSnapshot {
+  descriptors: Record<
+    string,
+    {
+      type: 'string' | 'boolean' | 'select' | 'project';
+      label: string;
+      description?: string;
+      secret?: true;
+      options?: string[];
+      default?: string | boolean;
+    }
+  >;
+  values: Record<string, string | boolean | undefined>;
+}
+
 /**
  * One discovered runtime extension under `~/.zcc/extensions/<id>/`, as
  * surfaced to the renderer by `cc.extensions.list()`. Mirrors the SDK's
@@ -4694,7 +4709,13 @@ export type ExtensionInstallSource =
    * network, same trust gates as `localDir`. A renderer-supplied id is never a
    * path (Rule #1): main maps id → the app-owned bundled dir itself.
    */
-  | { kind: 'bundled'; id: string };
+  | { kind: 'bundled'; id: string }
+  /**
+   * Install a plugin from npm. `spec` is a package name or `name@version`.
+   * Main prefixes `npm:` and path-installs through PluginService — never a
+   * renderer-supplied filesystem path (Rule 1).
+   */
+  | { kind: 'npm'; spec: string };
 
 /**
  * Renderer → main request to create a new LOCAL (in-app authored) extension. The
@@ -4786,6 +4807,11 @@ export interface MarketplaceEntry {
    * Lets the browse UI badge provenance the way VSCode marks built-in vs. store.
    */
   source: 'bundled' | 'marketplace';
+  /** Skill folder names this plugin would add. */
+  skillNames?: string[];
+  mcpServers?: Array<{ name: string; alwaysOn?: boolean }>;
+  extra?: Record<string, unknown>;
+  tags?: string[];
 }
 
 export type McpSource = 'user' | 'plugin' | 'project';

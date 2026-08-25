@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -31,6 +31,11 @@ import { useThreadComposerOptions } from './thread/pickers/useThreadComposerOpti
 import { ComposerTypeaheadMenu } from './composer/ComposerTypeaheadMenu.js';
 import { VoiceRecordingBar } from './thread/voice/VoiceRecordingBar.js';
 import { useVoiceInput } from './thread/voice/useVoiceInput.js';
+import {
+  droppedPathsFromDataTransfer,
+  isComposerPathDrag,
+  mentionContentForDroppedPaths
+} from './composer/composer-file-drop.js';
 import { findActiveTrigger } from './composer/find-active-trigger.js';
 import { mentionAttrsForSuggestion } from './composer/mention-attrs.js';
 import { serializePromptEditor } from './composer/serialize-prompt-editor.js';
@@ -65,6 +70,8 @@ export interface ThreadCommandComposerProps {
   initialText?: string;
   onCreated?: (threadId: string) => void;
   onOpenExplorer?: () => void;
+  /** Home-only: add Legacy Agent to the mode picker. Does not spawn a PTY. */
+  onSelectLegacyAgent?: () => void;
 }
 
 function permissionChipLabel(id: string): string {
@@ -86,7 +93,8 @@ export function ThreadCommandComposer({
   reasoningLevel: initialReasoningLevel,
   initialText,
   onCreated,
-  onOpenExplorer
+  onOpenExplorer,
+  onSelectLegacyAgent
 }: ThreadCommandComposerProps) {
   const navigate = useNavigate();
   const route = useRouteState();
@@ -130,6 +138,9 @@ export function ThreadCommandComposer({
     preventDefault: () => void;
     stopPropagation: () => void;
   }) => boolean>(() => false);
+  const insertDroppedMentionsRef = useRef<(event: DragEvent) => boolean>(() => false);
+  const [dropOver, setDropOver] = useState(false);
+  const selectedProject = pinnedProject ?? projects.find((row) => row.id === projectId);
 
   const syncTrigger = useCallback((editor: Parameters<typeof findActiveTrigger>[0]) => {
     const next = findActiveTrigger(editor, COMPOSER_TRIGGERS);
@@ -198,6 +209,11 @@ export function ThreadCommandComposer({
         class: 'ui-command-composer-input thread-command-editor',
         'data-testid': 'thread-command-input'
       },
+      handleDrop: (_view, event) => {
+        if (!insertDroppedMentionsRef.current(event)) return false;
+        event.stopPropagation();
+        return true;
+      },
       handleKeyDown: (_view, event) => {
         if (cycleComposerModeRef.current(event)) return true;
         const menu = typeaheadRef.current;
@@ -253,6 +269,50 @@ export function ThreadCommandComposer({
     seededInitialText.current = true;
     editor.chain().insertContent(initialText).run();
   }, [editor, initialText]);
+
+  const insertDroppedMentions = useCallback((event: DragEvent, atDropPoint: boolean): boolean => {
+    const data = event.dataTransfer;
+    if (!editor || !data) return false;
+    const paths = droppedPathsFromDataTransfer({
+      types: Array.from(data.types),
+      files: Array.from(data.files),
+      items: data.items,
+      getData: (type) => data.getData(type),
+      pathForFile: (file) => product.files.pathForFile(file),
+      projectRoot: selectedProject?.path
+    });
+    if (paths.length === 0) return false;
+    event.preventDefault();
+    const chain = editor.chain().focus();
+    if (atDropPoint) {
+      const pos = editor.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+      if (typeof pos === 'number') chain.setTextSelection(pos);
+    }
+    return chain.insertContent(mentionContentForDroppedPaths(paths)).run();
+  }, [editor, selectedProject?.path]);
+
+  insertDroppedMentionsRef.current = (event) => {
+    const inserted = insertDroppedMentions(event, true);
+    if (inserted) setDropOver(false);
+    return inserted;
+  };
+
+  const dropHandlers = {
+    onDragOver: (event: ReactDragEvent) => {
+      if (!isComposerPathDrag(Array.from(event.dataTransfer.types))) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+      if (!dropOver) setDropOver(true);
+    },
+    onDragLeave: (event: ReactDragEvent) => {
+      if (event.currentTarget === event.target) setDropOver(false);
+    },
+    onDrop: (event: ReactDragEvent) => {
+      if (!insertDroppedMentions(event.nativeEvent, false)) return;
+      event.preventDefault();
+      setDropOver(false);
+    }
+  };
 
   const insertVoiceTranscript = useCallback((text: string) => {
     editor?.chain().focus().insertContent(text.endsWith(' ') ? text : `${text} `).run();
@@ -442,14 +502,18 @@ export function ThreadCommandComposer({
 
   return (
     <div
-      className={`thread-command-composer${expanded ? ' is-expanded' : ''}`}
+      className={`thread-command-composer${expanded ? ' is-expanded' : ''}${dropOver ? ' is-drop-over' : ''}`}
       onKeyDown={onKeyDown}
+      {...dropHandlers}
     >
       <span id="thread-command-label" className="thread-command-label">Thread composer</span>
       {error ? (
         <p className="thread-command-error" data-testid="thread-command-error">{error}</p>
       ) : null}
-      <CommandComposer className="home-agent-command thread-command-card" labelledBy="thread-command-label">
+      <CommandComposer
+        className={`home-agent-command thread-command-card${dropOver ? ' is-drop-over' : ''}`}
+        labelledBy="thread-command-label"
+      >
         <div className="thread-command-editor-slot">
           <ComposerIconButton
             className="thread-command-expand"
@@ -461,15 +525,15 @@ export function ThreadCommandComposer({
             {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </ComposerIconButton>
           <EditorContent editor={editor} />
-          {menuOpen && (
-            <ComposerTypeaheadMenu
-              suggestions={suggestions}
-              selectedIndex={highlighted}
-              triggerKind={trigger?.kind === 'command' ? 'command' : 'mention'}
-              onApply={applySuggestion}
-            />
-          )}
         </div>
+        {menuOpen && (
+          <ComposerTypeaheadMenu
+            suggestions={suggestions}
+            selectedIndex={highlighted}
+            triggerKind={trigger?.kind === 'command' ? 'command' : 'mention'}
+            onApply={applySuggestion}
+          />
+        )}
         <ComposerToolbar>
           {voiceBusy ? (
             <VoiceRecordingBar
@@ -485,6 +549,8 @@ export function ThreadCommandComposer({
                   value={composerMode}
                   modes={composerModes}
                   onChange={setComposerMode}
+                  showLegacyAgent={Boolean(onSelectLegacyAgent)}
+                  onSelectLegacyAgent={onSelectLegacyAgent}
                 />
                 <ModelReasoningPicker
                   providerOptions={options.providerOptions}

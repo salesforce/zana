@@ -29,6 +29,7 @@ export type TypeaheadSuggestion =
       threadId: string;
       projectId: string;
       title: string;
+      projectName?: string | null;
     }
   | {
       kind: 'project';

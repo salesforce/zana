@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronDown, Columns2, Flag } from 'lucide-react';
+import { Check, ChevronDown, Columns2, Flag, SquareTerminal } from 'lucide-react';
 import { placePopoverMenu, useExclusivePopover } from '../../ui/PopoverPicklist.js';
 import {
   COMPOSER_MODE_LABELS,
@@ -8,8 +8,12 @@ import {
 } from './composer-mode.js';
 
 const MENU_MIN_WIDTH = 180;
+export const LEGACY_AGENT_LABEL = 'Legacy Agent';
 
-function ModeIcon({ mode }: { mode: ComposerWorkMode }): ReactNode {
+function ModeIcon({ mode }: { mode: ComposerWorkMode | 'legacy' }): ReactNode {
+  if (mode === 'legacy') {
+    return <SquareTerminal size={14} aria-hidden="true" />;
+  }
   if (mode === 'agent') {
     return <span className="composer-mode-picker-infinity" aria-hidden="true">∞</span>;
   }
@@ -23,17 +27,24 @@ export function ComposerModePicker({
   value,
   modes,
   onChange,
-  disabled
+  disabled,
+  showLegacyAgent = false,
+  legacyAgentSelected = false,
+  onSelectLegacyAgent
 }: {
   value: ComposerWorkMode;
   modes: readonly ComposerWorkMode[];
   onChange: (value: ComposerWorkMode) => void;
   disabled?: boolean;
+  /** Home-only: offer the PTY launch path beside Agent/Plan/Goal. */
+  showLegacyAgent?: boolean;
+  legacyAgentSelected?: boolean;
+  onSelectLegacyAgent?: () => void;
 }) {
   const [open, setOpen] = useExclusivePopover();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const selectedLabel = COMPOSER_MODE_LABELS[value];
+  const selectedLabel = legacyAgentSelected ? LEGACY_AGENT_LABEL : COMPOSER_MODE_LABELS[value];
 
   useEffect(() => {
     if (!open || !triggerRef.current || !menuRef.current) return;
@@ -50,7 +61,7 @@ export function ComposerModePicker({
       menu.style.top = `${position.top}px`;
       menu.style.bottom = 'auto';
     }
-  }, [open, modes.length]);
+  }, [open, modes.length, showLegacyAgent, legacyAgentSelected]);
 
   useEffect(() => {
     if (!open) return;
@@ -77,7 +88,7 @@ export function ComposerModePicker({
       data-testid="composer-mode-picker-trigger"
       onClick={() => setOpen((current) => !current)}
     >
-      <ModeIcon mode={value} />
+      <ModeIcon mode={legacyAgentSelected ? 'legacy' : value} />
       <span className="composer-mode-picker-label">{selectedLabel}</span>
       {disabled ? null : <ChevronDown size={14} aria-hidden="true" />}
     </button>
@@ -97,7 +108,7 @@ export function ComposerModePicker({
           data-testid="composer-mode-picker-menu"
         >
           {modes.map((mode) => {
-            const selected = mode === value;
+            const selected = !legacyAgentSelected && mode === value;
             return (
               <button
                 key={mode}
@@ -119,6 +130,25 @@ export function ComposerModePicker({
               </button>
             );
           })}
+          {showLegacyAgent && (
+            <button
+              type="button"
+              role="option"
+              aria-selected={legacyAgentSelected}
+              className={`model-reasoning-picker-row${legacyAgentSelected ? ' is-selected' : ''}`}
+              data-testid="composer-mode-legacy"
+              onClick={() => {
+                onSelectLegacyAgent?.();
+                setOpen(false);
+              }}
+            >
+              <span className="composer-mode-picker-row-label">
+                <ModeIcon mode="legacy" />
+                {LEGACY_AGENT_LABEL}
+              </span>
+              {legacyAgentSelected ? <Check size={14} aria-hidden="true" /> : null}
+            </button>
+          )}
         </div>,
         document.body
       )}

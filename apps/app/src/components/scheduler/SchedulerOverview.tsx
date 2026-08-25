@@ -242,7 +242,7 @@ export function SchedulerOverview({
       </section>
 
       {working.length > 0 && (
-        <section className="overview-card">
+        <section className="overview-card overview-card--live">
           <header className="overview-card-header">
             <Activity size={14} />
             <h3>Running now</h3>
@@ -252,7 +252,7 @@ export function SchedulerOverview({
             {working.map(({ task, sessionId }) => {
               const project = projects.find((p) => p.id === task.projectId);
               return (
-                <li key={task.id} className="overview-item">
+                <li key={task.id} className="overview-item overview-item--running">
                   <span
                     className="scheduler-status-dot scheduler-status-dot--running"
                     aria-hidden="true"
@@ -443,7 +443,7 @@ export function SchedulerOverview({
               return (
                 <li
                   key={t.id}
-                  className={`overview-item overview-item--schedule ${t.enabled ? '' : 'is-off'}`}
+                  className={`overview-item overview-item--schedule ${t.enabled ? '' : 'is-off'}${liveSessionId ? ' overview-item--running' : ''}`}
                 >
                   {external ? (
                     <span

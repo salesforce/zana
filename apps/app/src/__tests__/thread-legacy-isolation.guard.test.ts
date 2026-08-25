@@ -67,4 +67,19 @@ describe('thread / legacy isolation', () => {
     expect(source).not.toContain('threads.create');
     expect(source).not.toContain('product.threads');
   });
+
+  it('keeps Home legacy launch on LegacyAgentHomeComposer, not ThreadCommandComposer', () => {
+    const home = stripComments(readFileSync(join(appRoot, 'components/HomeAgentComposer.tsx'), 'utf8'));
+    const legacy = stripComments(readFileSync(join(appRoot, 'components/LegacyAgentHomeComposer.tsx'), 'utf8'));
+    const thread = stripComments(readFileSync(join(appRoot, 'components/ThreadCommandComposer.tsx'), 'utf8'));
+    expect(home).toContain('allowLegacyAgent');
+    expect(home).toContain('LegacyAgentHomeComposer');
+    expect(home).not.toContain('createTerminal');
+    expect(legacy).toContain('createTerminal');
+    expect(legacy).toContain('buildLaunchArgs');
+    expect(legacy).toContain("from './legacy-agent-home.js'");
+    expect(thread).toContain('onSelectLegacyAgent');
+    expect(thread).not.toContain('createTerminal');
+    expect(thread).not.toContain('LegacyAgentHomeComposer');
+  });
 });

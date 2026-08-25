@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { createPluginApi, validatePluginRequestInput } from './plugin-api.js';
 
@@ -83,5 +86,39 @@ describe('plugin requestInput validation', () => {
     })).resolves.toEqual({ outcome: 'submitted', value: { ok: true } });
     await handle.dispose();
     expect(interrupted).toEqual(['ask-user']);
+  });
+});
+
+describe('plugin storage and settings', () => {
+  it('persists kv across api instances', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-kv-'));
+    try {
+      const handle = createPluginApi('kv', dir);
+      await handle.api.storage.kv.set('n', 3);
+      await handle.dispose();
+      const again = createPluginApi('kv', dir);
+      await expect(again.api.storage.kv.get('n')).resolves.toBe(3);
+      await again.dispose();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('persists settings.define defaults and host writes', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-settings-'));
+    try {
+      const handle = createPluginApi('set', dir);
+      const settings = handle.api.settings.define({
+        token: { type: 'string', label: 'Token', default: 'x' }
+      });
+      expect(await settings.get()).toEqual({ token: 'x' });
+      await handle.setSettings({ token: 'secret' });
+      expect(await settings.get()).toEqual({ token: 'secret' });
+      expect(handle.getSettings().values.token).toBe('secret');
+      expect(handle.getSettings().descriptors.token?.label).toBe('Token');
+      await handle.dispose();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

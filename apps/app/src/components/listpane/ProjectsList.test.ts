@@ -55,7 +55,7 @@ describe('project-row workspace actions', () => {
     const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
     const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
     expect(source).toContain(
-      '{projectDot}\n                    {projectMeta}\n                  </button>\n                  {treeChevron}'
+      '{projectDot}\n                    {projectMeta}\n                  </button>\n                  {favoriteStar}\n                  {treeChevron}'
     );
     expect(source).toContain('className="project-rename"');
     const renameIdx = source.indexOf('className="project-rename"');
@@ -74,6 +74,12 @@ describe('project-row workspace actions', () => {
     const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
     expect(source).toContain('openProjectSettings(p.id)');
     expect(source).not.toContain("setSettingsTab('project');\n                  setNav('settings')");
+  });
+
+  it('copies the workspace path through the desktop clipboard bridge', () => {
+    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('void copyText(p.path)');
+    expect(source).not.toContain('navigator.clipboard');
   });
 });
 
@@ -198,9 +204,14 @@ describe('nested live threads', () => {
     expect(source).toContain('navigate(getThreadRoutePath(thread.id))');
     expect(source).toContain('railThreadsByProject.get(p.id)');
     expect(source).toContain('liveList.length === 0 && railThreads.length === 0');
-    expect(source).toContain('p.id === selectedId && projectHasNestableSessions(p)');
+    expect(source).toContain('isWorkspaceRailExpanded(projectExpanded[p.id], projectHasNestableSessions(p))');
+    expect(source).toContain('pinFavoriteProjectsFirst(sorted)');
+    expect(source).not.toContain('p.id === selectedId && projectHasNestableSessions(p)');
     expect(source).toContain('<ProviderIcon providerId={thread.providerId}');
+    expect(source).toContain('threadRailStatus');
+    expect(source).toContain('agents-row-needs-you');
     expect(source).not.toContain('MessageSquare');
+    expect(source).not.toContain('<FleetKindChip kind="thread" />');
   });
 });
 
@@ -213,6 +224,14 @@ describe('workspace row badge', () => {
     expect(source).toContain('liveList.length + railThreads.length');
     expect(source).toContain('className="project-badge"');
     expect(source).toContain('{nestedCount}');
+  });
+
+  it('pins favorites first and shows a star on the workspace row', () => {
+    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    expect(source).toContain('project-favorite-star');
+    expect(source).toContain("updateProject(p.id, { favorite: !p.favorite })");
+    expect(css).toContain('.project-favorite-star.is-fav {\n  color: var(--accent-gold);\n}');
   });
 
   it('does not mark a workspace row as selected — hover is the only highlight', () => {

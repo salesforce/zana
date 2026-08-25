@@ -10,7 +10,7 @@ describe('ComposerTypeaheadMenu', () => {
         selectedIndex={1}
         onApply={() => undefined}
         suggestions={[
-          { kind: 'thread', threadId: 't1', projectId: 'p1', title: 'Review' },
+          { kind: 'thread', threadId: 't1', projectId: 'p1', title: 'Review', projectName: 'Zana' },
           { kind: 'path', path: 'src/foo.ts', name: 'foo.ts', entryKind: 'file' }
         ]}
       />
@@ -19,6 +19,8 @@ describe('ComposerTypeaheadMenu', () => {
     expect(html).toContain('Threads');
     expect(html).toContain('Files');
     expect(html).toContain('foo.ts');
+    expect(html).toContain('Zana');
+    expect(html).toContain('title="Review · Zana"');
     expect(html).toContain('aria-selected="true"');
   });
 

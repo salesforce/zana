@@ -154,15 +154,15 @@ export default function Home() {
               <p className="bb-section-label">Built to be extended</p>
               <h2 id="build-heading">Make Zana fit the way your team works.</h2>
               <p>
-                Install capabilities from the marketplace or build a TypeScript extension with panels, project tabs,
-                commands, personas, and tightly scoped permissions.
+                Install capabilities from the marketplace or build a TypeScript plugin with panels, project tabs,
+                skills, and MCP servers. Plugins are full-trust after a loud install confirm.
               </p>
               <div className="bb-actions">
-                <Link className="bb-button bb-button-primary" href="/extensions/">Build an extension <span aria-hidden="true">&#8594;</span></Link>
+                <Link className="bb-button bb-button-primary" href="/extensions/">Build a plugin <span aria-hidden="true">&#8594;</span></Link>
                 <Link className="bb-button bb-button-secondary" href="/marketplace/">Browse marketplace</Link>
               </div>
             </div>
-            <pre className="bb-code-window" aria-label="Example Zana extension definition"><code><span className="bb-code-muted">extension.json</span>{'\n'}{'{'}{'\n'}  <span className="bb-code-key">"id"</span>: <span className="bb-code-value">"your-team-tools"</span>,{'\n'}  <span className="bb-code-key">"permissions"</span>: [<span className="bb-code-value">"agent:contribute"</span>],{'\n'}  <span className="bb-code-key">"projectTab"</span>: {'{'} <span className="bb-code-key">"title"</span>: <span className="bb-code-value">"Deploys"</span> {'}'}{'\n'}{'}'}</code></pre>
+            <pre className="bb-code-window" aria-label="Example Zana plugin definition"><code><span className="bb-code-muted">package.json</span>{'\n'}{'{'}{'\n'}  <span className="bb-code-key">"name"</span>: <span className="bb-code-value">"zcc-plugin-team-tools"</span>,{'\n'}  <span className="bb-code-key">"zcc"</span>: {'{'} <span className="bb-code-key">"name"</span>: <span className="bb-code-value">"Team tools"</span>, <span className="bb-code-key">"app"</span>: <span className="bb-code-value">"./app.js"</span> {'}'}{'\n'}{'}'}</code></pre>
           </div>
         </div>
       </section>

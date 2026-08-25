@@ -47,6 +47,19 @@ describe('runtime host execution environment', () => {
       onPluginCapabilitiesChanged: () => () => {},
       listPluginApps: async () => [],
       onPluginAppsChanged: () => () => {},
+      installPlugin: async () => { throw new Error('not used'); },
+      enablePlugin: async () => { throw new Error('not used'); },
+      disablePlugin: async () => { throw new Error('not used'); },
+      removePlugin: async () => { throw new Error('not used'); },
+      reloadPlugin: async () => { throw new Error('not used'); },
+      searchPlugins: async () => [],
+      outdatedPlugins: async () => [],
+      updatePlugin: async () => { throw new Error('not used'); },
+      listMarketplaces: async () => [],
+      addMarketplace: async () => { throw new Error('not used'); },
+      callPluginRpc: async () => { throw new Error('not used'); },
+      getPluginSettings: async () => ({ descriptors: {}, values: {} }),
+      setPluginSettings: async () => { throw new Error('not used'); },
       close: async () => {}
     };
     const environment = createRuntimeHostExecutionEnvironment({
@@ -141,6 +154,19 @@ describe('runtime host execution environment', () => {
       onPluginCapabilitiesChanged: () => () => {},
       listPluginApps: async () => [],
       onPluginAppsChanged: () => () => {},
+      installPlugin: async () => { throw new Error('not used'); },
+      enablePlugin: async () => { throw new Error('not used'); },
+      disablePlugin: async () => { throw new Error('not used'); },
+      removePlugin: async () => { throw new Error('not used'); },
+      reloadPlugin: async () => { throw new Error('not used'); },
+      searchPlugins: async () => [],
+      outdatedPlugins: async () => [],
+      updatePlugin: async () => { throw new Error('not used'); },
+      listMarketplaces: async () => [],
+      addMarketplace: async () => { throw new Error('not used'); },
+      callPluginRpc: async () => { throw new Error('not used'); },
+      getPluginSettings: async () => ({ descriptors: {}, values: {} }),
+      setPluginSettings: async () => { throw new Error('not used'); },
       close: async () => {}
     };
     const environment = createRuntimeHostExecutionEnvironment({ runtime });
@@ -195,6 +221,19 @@ describe('runtime host execution environment', () => {
       onPluginCapabilitiesChanged: () => () => {},
       listPluginApps: async () => [],
       onPluginAppsChanged: () => () => {},
+      installPlugin: async () => { throw new Error('not used'); },
+      enablePlugin: async () => { throw new Error('not used'); },
+      disablePlugin: async () => { throw new Error('not used'); },
+      removePlugin: async () => { throw new Error('not used'); },
+      reloadPlugin: async () => { throw new Error('not used'); },
+      searchPlugins: async () => [],
+      outdatedPlugins: async () => [],
+      updatePlugin: async () => { throw new Error('not used'); },
+      listMarketplaces: async () => [],
+      addMarketplace: async () => { throw new Error('not used'); },
+      callPluginRpc: async () => { throw new Error('not used'); },
+      getPluginSettings: async () => ({ descriptors: {}, values: {} }),
+      setPluginSettings: async () => { throw new Error('not used'); },
       close: async () => {}
     };
     const environment = createRuntimeHostExecutionEnvironment({ runtime });

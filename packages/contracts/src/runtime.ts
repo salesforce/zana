@@ -134,6 +134,32 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
     operation: z.literal('plugins-snapshot')
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('plugins-search'),
+    query: z.string().max(256).optional()
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('plugins-outdated')
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('plugins-update'),
+    pluginId: z.string().min(1).max(128)
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('plugins-call-rpc'),
+    pluginId: z.string().min(1).max(128),
+    method: z.string().min(1).max(128),
+    args: z.unknown().optional()
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('plugins-settings-get'),
+    pluginId: z.string().min(1).max(128)
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('plugins-settings-set'),
+    pluginId: z.string().min(1).max(128),
+    values: z.record(z.string(), z.union([z.string(), z.boolean(), z.null()])).optional()
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('marketplace-list')
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({

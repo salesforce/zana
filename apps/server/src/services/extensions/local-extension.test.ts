@@ -69,7 +69,7 @@ describe('workingDirFor', () => {
 });
 
 describe('scaffoldLocalExtension', () => {
-  it('writes a manifest + renderer + README with NO declared permissions', async () => {
+  it('writes a package.json zcc plugin with a runnable app panel', async () => {
     const res = await scaffoldLocalExtension(work, {
       id: 'foo-abcd',
       name: 'Foo Tool',
@@ -78,30 +78,26 @@ describe('scaffoldLocalExtension', () => {
     });
     expect(res.ok).toBe(true);
 
-    const manifest = JSON.parse(await readFile(join(work, 'extension.json'), 'utf-8'));
-    expect(manifest.id).toBe('foo-abcd');
-    expect(manifest.title).toBe('Foo Tool');
-    expect(manifest.permissions).toEqual([]); // consent-clean until user adds one
-    expect(manifest.entry.renderer).toBe('dist/renderer.js');
-    expect(manifest.engines.zccApi).toMatch(/^\^\d+\.0\.0$/);
+    const pkg = JSON.parse(await readFile(join(work, 'package.json'), 'utf-8')) as {
+      name: string;
+      zcc: { name: string; app?: string; server?: string; skills: string[] };
+    };
+    expect(pkg.name).toBe('zcc-plugin-foo-abcd');
+    expect(pkg.zcc.name).toBe('Foo Tool');
+    expect(pkg.zcc.app).toBe('./app.js');
+    expect(pkg.zcc.server).toBeUndefined();
+    expect(pkg.zcc.skills).toEqual(['skills']);
+    expect(existsSync(join(work, 'app.js'))).toBe(true);
+    expect(existsSync(join(work, 'extension.json'))).toBe(false);
 
-    expect(existsSync(join(work, 'dist', 'renderer.js'))).toBe(true);
-    expect(existsSync(join(work, 'README.md'))).toBe(true);
-    const renderer = await readFile(join(work, 'dist', 'renderer.js'), 'utf-8');
-    expect(renderer).toContain('activate({ React, host })');
-
-    // The "template" file the Creator agent auto-loads as project instructions.
     expect(existsSync(join(work, 'CLAUDE.md'))).toBe(true);
     const claude = await readFile(join(work, 'CLAUDE.md'), 'utf-8');
-    expect(claude).toContain('Extension Creator');
-    expect(claude).toContain('Reload from source'); // ship-changes loop
-    expect(claude).toContain('extension-creator'); // points at the deeper skill
-    expect(claude).toContain(manifest.id); // names this extension's id
+    expect(claude).toContain('zcc plugin dev');
+    expect(claude).toContain('foo-abcd');
   });
 
   it('never clobbers a file the agent has since edited', async () => {
-    await mkdir(join(work, 'dist'), { recursive: true });
-    await writeFile(join(work, 'dist', 'renderer.js'), '// user edits here', 'utf-8');
+    await writeFile(join(work, 'app.js'), '// user edits here', 'utf-8');
 
     const res = await scaffoldLocalExtension(work, {
       id: 'foo-abcd',
@@ -109,16 +105,27 @@ describe('scaffoldLocalExtension', () => {
       kind: 'panel'
     });
     expect(res.ok).toBe(true);
-    // Existing renderer preserved verbatim.
-    expect(await readFile(join(work, 'dist', 'renderer.js'), 'utf-8')).toBe('// user edits here');
+    expect(await readFile(join(work, 'app.js'), 'utf-8')).toBe('// user edits here');
   });
 });
 
 describe('packLocalExtension', () => {
-  it('copies ONLY the manifest + dist/, leaving source clutter behind', async () => {
-    await scaffoldLocalExtension(work, { id: 'foo-abcd', name: 'Foo', kind: 'panel' });
-    // Drop clutter (and a would-be secret) into the working dir.
-    await writeFile(join(work, 'README.md'), '# readme', 'utf-8'); // already there; keep
+  it('copies ONLY the legacy manifest + dist/, leaving source clutter behind', async () => {
+    await mkdir(join(work, 'dist'), { recursive: true });
+    await writeFile(
+      join(work, 'extension.json'),
+      JSON.stringify({
+        id: 'foo-abcd',
+        version: '0.1.0',
+        title: 'Foo',
+        icon: 'Puzzle',
+        entry: { renderer: 'dist/renderer.js' },
+        engines: { zccApi: '^1.0.0' }
+      }) + '\n',
+      'utf-8'
+    );
+    await writeFile(join(work, 'dist', 'renderer.js'), '// x\n', 'utf-8');
+    await writeFile(join(work, 'README.md'), '# readme', 'utf-8');
     await writeFile(join(work, '.env'), 'SECRET=shhh', 'utf-8');
     await mkdir(join(work, 'node_modules', 'left'), { recursive: true });
     await writeFile(join(work, 'node_modules', 'left', 'index.js'), 'x', 'utf-8');
@@ -131,7 +138,6 @@ describe('packLocalExtension', () => {
     try {
       const entries = (await readdir(staging)).sort();
       expect(entries).toEqual(['dist', 'extension.json']);
-      // The secret + clutter never crossed into staging.
       expect(existsSync(join(staging, '.env'))).toBe(false);
       expect(existsSync(join(staging, 'node_modules'))).toBe(false);
       expect(existsSync(join(staging, 'package.json'))).toBe(false);

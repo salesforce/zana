@@ -55,7 +55,7 @@ export function threadFleetItem(
   return {
     kind: 'thread',
     id: thread.id,
-    state: threadStatusToAgentState(thread.status),
+    state: threadStatusToAgentState(thread.status, thread.hasPendingInteraction),
     title: threadTitle(thread),
     projectId: thread.projectId,
     projectName: project?.name ?? 'Unknown',
@@ -79,7 +79,7 @@ export function fleetAgentCards(items: FleetItem[]): AgentCard[] {
 /** Nested Projects-rail rows: busy or failed threads, matching live PTY sessions. */
 export function threadIsLiveForRail(thread: ThreadListItem): boolean {
   if (!isVisibleThread(thread)) return false;
-  const state = threadStatusToAgentState(thread.status);
+  const state = threadStatusToAgentState(thread.status, thread.hasPendingInteraction);
   return state === 'working' || state === 'blocked';
 }
 
@@ -102,11 +102,17 @@ export function railThreadsForProject(threads: ThreadListItem[]): ThreadListItem
   return [...live, ...idle.slice(0, RAIL_IDLE_THREAD_LIMIT)];
 }
 
-export function threadRailDetail(thread: Pick<ThreadListItem, 'status'>): string {
-  const state = threadStatusToAgentState(thread.status);
-  if (state === 'blocked') return 'Needs you · Thread';
-  if (state === 'working') return 'Working · Thread';
-  return 'Idle · Thread';
+export function threadRailStatus(
+  thread: Pick<ThreadListItem, 'status' | 'hasPendingInteraction'>
+): 'Needs you' | 'Working' | 'Idle' {
+  const state = threadStatusToAgentState(thread.status, thread.hasPendingInteraction);
+  if (state === 'blocked') return 'Needs you';
+  if (state === 'working') return 'Working';
+  return 'Idle';
+}
+
+export function threadRailDetail(thread: Pick<ThreadListItem, 'status' | 'hasPendingInteraction'>): string {
+  return `${threadRailStatus(thread)} · Thread`;
 }
 
 /** Humanize a thread provider id (`claude-code` → `Claude Code`, `acp-cursor` → `Cursor`). */

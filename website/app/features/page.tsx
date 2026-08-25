@@ -6,11 +6,11 @@ import type { ProductShotId } from '@/lib/product-shots';
 
 export const metadata: Metadata = {
   title: 'Features',
-  description: 'A detailed tour of the cockpit: terminals, agents board, inbox, orchestration, extensions, and more.',
+  description: 'A detailed tour of the cockpit: terminals, agents board, inbox, orchestration, plugins, and more.',
   alternates: { canonical: '/features/' },
   openGraph: {
     title: 'Features — Zana Command Center',
-    description: 'A detailed tour of the cockpit: terminals, agents, inbox, orchestration, and extensions.',
+    description: 'A detailed tour of the cockpit: terminals, agents, inbox, orchestration, and plugins.',
     url: '/features/',
     type: 'website',
     images: ['/opengraph-image']
@@ -86,7 +86,7 @@ export default function Features() {
             <p>Start with the desktop app, then extend the workspace as your process grows.</p>
             <div className="clean-page-actions">
               <Link className="clean-button clean-button-dark" href="/download/">Download for macOS <span aria-hidden="true">→</span></Link>
-              <Link className="clean-button" href="/marketplace/">Browse extensions</Link>
+              <Link className="clean-button" href="/marketplace/">Browse plugins</Link>
             </div>
           </div>
         </div>

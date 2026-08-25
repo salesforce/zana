@@ -135,6 +135,8 @@ function TimelineRowView({
     : null;
 
   const pending = 'status' in row && row.status === 'pending';
+  const awaitingUser = row.kind === 'work'
+    && (row.workKind === 'question' || row.workKind === 'approval');
   const expandable = isRowExpandable(row);
   const hasBody = Boolean(body) || Boolean(nested);
 
@@ -144,7 +146,7 @@ function TimelineRowView({
       rowId={row.id}
       status={'status' in row ? row.status : undefined}
       dim={dim}
-      open={autoOpen || pending}
+      open={autoOpen || (pending && !awaitingUser)}
       expandable={expandable && hasBody}
       summary={summary}
     >

@@ -20,7 +20,7 @@ export default function plugin(bb: ZccPluginApi) {
       supportsThreadRename: false,
       supportsWorkflows: true,
       permissionModes: ["accept-edits", "auto", "full"],
-      reasoningLevels: ["low", "medium", "high", "xhigh", "ultracode", "max"],
+      reasoningLevels: ["none", "low", "medium", "high", "xhigh", "ultracode", "max"],
     },
     composerActions: ["plan"],
   });

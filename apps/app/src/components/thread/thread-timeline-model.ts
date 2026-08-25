@@ -1,5 +1,6 @@
 import type { AgentState } from '@zana-ai/zcc-domain/product';
 import type { ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
+import type { TimelineRow } from '@zana-ai/zcc-server-contract';
 
 export function isBusyThreadStatus(status: string): boolean {
   return status === 'starting' || status === 'active' || status === 'stopping';
@@ -10,19 +11,44 @@ export function shouldShowThreadStop(threadId: string | undefined, status: strin
 }
 
 /** Map a conversation-thread status onto the agent-board lanes. */
-export function threadStatusToAgentState(status: string): AgentState {
+export function threadStatusToAgentState(status: string, waitingOnUser = false): AgentState {
+  if (waitingOnUser) return 'blocked';
   if (isBusyThreadStatus(status)) return 'working';
   if (status === 'error') return 'blocked';
   return 'idle';
 }
 
-export function threadStatusLabel(status: string): string {
+export function threadStatusLabel(status: string, waitingOnUser = false): string {
+  if (waitingOnUser) return 'Needs you';
   const trimmed = status.trim();
   if (!trimmed) return '';
   if (isBusyThreadStatus(trimmed)) return 'Working';
   if (trimmed === 'error') return 'Error';
   if (trimmed === 'idle') return 'Idle';
   return trimmed.replace(/-/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+export function timelineRowsAwaitUser(rows: readonly TimelineRow[] | null | undefined): boolean {
+  if (!rows?.length) return false;
+  for (const row of rows) {
+    if (row.kind === 'turn') {
+      if (timelineRowsAwaitUser(row.children)) return true;
+      continue;
+    }
+    if (row.kind !== 'work') continue;
+    if (row.workKind === 'question') {
+      if (row.lifecycle === 'pending' || row.lifecycle === 'resolving') return true;
+      continue;
+    }
+    if (row.workKind === 'approval') {
+      if (row.lifecycle === 'waiting' || row.lifecycle === 'pending' || row.lifecycle === 'resolving') {
+        return true;
+      }
+      continue;
+    }
+    if (row.workKind === 'delegation' && timelineRowsAwaitUser(row.childRows)) return true;
+  }
+  return false;
 }
 
 export function visiblePendingTodos(

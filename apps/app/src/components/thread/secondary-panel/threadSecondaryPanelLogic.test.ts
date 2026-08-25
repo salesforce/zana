@@ -36,12 +36,15 @@ describe('threadSecondaryPanelLogic', () => {
     expect(environmentNameFromList([{ id: 'e1' }], 'missing')).toBeNull();
   });
 
-  it('copies text through the clipboard API', async () => {
+  it('re-exports copyText for thread callers', async () => {
     const writeText = vi.fn(async () => undefined);
     vi.stubGlobal('navigator', { clipboard: { writeText } });
-    await copyText('/tmp/proj');
-    expect(writeText).toHaveBeenCalledWith('/tmp/proj');
-    vi.unstubAllGlobals();
+    try {
+      await copyText('/tmp/proj');
+      expect(writeText).toHaveBeenCalledWith('/tmp/proj');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('normalizes browser urls and invokes webview methods', () => {

@@ -50,12 +50,14 @@ export function useComposerSuggestions(args: {
     if (args.trigger.kind === 'command') {
       return buildCommandSuggestions(args.commands, args.trigger.query);
     }
+    const projectNames = new Map(args.projects.map((project) => [project.id, project.name]));
     return buildMentionSuggestions({
       paths,
       threads: threads.map((thread) => ({
         id: thread.id,
         projectId: thread.projectId,
-        title: thread.title
+        title: thread.title,
+        projectName: projectNames.get(thread.projectId) ?? null
       })),
       projects: args.projects,
       query: args.trigger.query

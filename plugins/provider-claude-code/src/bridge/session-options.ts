@@ -80,12 +80,9 @@ const CLAUDE_CODE_EXECUTABLE_ENV = "BB_CLAUDE_CODE_EXECUTABLE";
  */
 export function toSdkEffort(
   reasoningLevel: ReasoningLevel,
-): ClaudeSdkReasoningEffort {
+): ClaudeSdkReasoningEffort | undefined {
+  if (reasoningLevel === "none") return undefined;
   if (reasoningLevel === "ultracode") return "xhigh";
-  // "none" (thinking-off) is a level Cursor and some Pi models expose;
-  // Claude Code models never expose it, so this is a defensive floor that
-  // reconciliation never reaches.
-  if (reasoningLevel === "none") return "low";
   // "ultra" is a Codex-only top tier; if it ever reaches Claude, floor to max.
   if (reasoningLevel === "ultra") return "max";
   return reasoningLevel;
@@ -104,12 +101,14 @@ export function buildMutableFlagSettings(args: {
   reasoningLevel: ReasoningLevel | undefined;
   workflowsEnabled: boolean;
 }): ClaudeMutableFlagSettings {
+  const effortLevel =
+    args.reasoningLevel !== undefined
+      ? toSdkEffort(args.reasoningLevel)
+      : undefined;
   return {
     autoMemoryEnabled: args.memoryEnabled,
     enableWorkflows: args.workflowsEnabled,
-    ...(args.reasoningLevel !== undefined
-      ? { effortLevel: toSdkEffort(args.reasoningLevel) }
-      : {}),
+    ...(effortLevel ? { effortLevel } : {}),
     ultracode: args.reasoningLevel === "ultracode",
   };
 }
@@ -345,6 +344,9 @@ export function buildSessionOptions(
     : [];
   const pathToClaudeCodeExecutable = resolveClaudeCodeExecutable({ env });
   const flagSettings = buildFlagSettings(params);
+  const effort = params.reasoningLevel
+    ? toSdkEffort(params.reasoningLevel)
+    : undefined;
 
   return {
     cwd: params.cwd,
@@ -352,12 +354,8 @@ export function buildSessionOptions(
     model,
     env,
     permissionMode: params.permissionMode,
-    ...(params.reasoningLevel
-      ? { effort: toSdkEffort(params.reasoningLevel) }
-      : {}),
-    ...(params.reasoningLevel
-      ? { thinking: SUMMARIZED_ADAPTIVE_THINKING }
-      : {}),
+    ...(effort ? { effort } : {}),
+    ...(effort ? { thinking: SUMMARIZED_ADAPTIVE_THINKING } : {}),
     settings: flagSettings,
     ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
     ...(params.plugins ? { plugins: params.plugins } : {}),

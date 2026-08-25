@@ -9,7 +9,7 @@ export const site = {
   /** Canonical README on the repo host — the docs "Getting started" links here
    *  rather than re-rendering a copy that drifts from the source. */
   readmeUrl: 'https://github.com/salesforce/zana/blob/main/README.md',
-  /** Public extension registry index.json (the same feed the app reads). */
+  /** Public plugin registry index.json (the same feed the app reads). */
   registryUrl: process.env.NEXT_PUBLIC_REGISTRY_URL,
   /** electron-updater generic feed base (where latest-mac.yml + artifacts live). */
   updateFeedUrl: process.env.NEXT_PUBLIC_UPDATE_FEED_URL,

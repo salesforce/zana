@@ -1,4 +1,5 @@
 import { product } from '../lib/product-client.js';
+import type { PluginHostBridge } from '@zana-ai/zcc-plugin-sdk';
 /**
  * Loads renderer apps owned by the server-side PluginService. These are distinct
  * from legacy disk extensions: their bundles are served from the supervised
@@ -155,6 +156,14 @@ export async function reconcilePluginApps(
 
 /** Initial snapshot for the server-owned plugin app registry. */
 export async function initPluginApps(): Promise<void> {
+  const host: PluginHostBridge = {
+    callRpc: (pluginId, method, args) => product.pluginApps.callRpc(pluginId, method, args),
+    getSettings: (pluginId) => product.pluginApps.getSettings(pluginId),
+    setSettings: async (pluginId, values) => {
+      await product.pluginApps.setSettings(pluginId, values);
+    }
+  };
+  (globalThis as { __ZCC_PLUGIN_HOST__?: PluginHostBridge }).__ZCC_PLUGIN_HOST__ = host;
   try {
     await reconcilePluginApps(await product.pluginApps.list());
   } catch {

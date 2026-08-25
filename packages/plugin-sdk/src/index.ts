@@ -4,6 +4,7 @@
  * Subpaths:
  *   - `@zana-ai/zcc-plugin-sdk/server` — ZccPluginApi factory contract
  *   - `@zana-ai/zcc-plugin-sdk/app` — definePluginApp + v1 slots
+ *   - `@zana-ai/zcc-plugin-sdk/testing` — fake host for plugin unit tests
  */
 
 export const PLUGIN_SDK_VERSION = '0.1.0';
@@ -43,7 +44,8 @@ export type {
   PluginInteractionRequest,
   PluginInteractionResult,
   PluginInteractionCancelReason,
-  PluginStatusApi
+  PluginStatusApi,
+  PluginSettingsSnapshot
 } from './server.js';
 
 export type {
@@ -63,7 +65,8 @@ export type {
   PluginSlotBase
 } from './app-contract.js';
 
-export { definePluginApp, isPluginAppDefinition } from './app.js';
+export { definePluginApp, isPluginAppDefinition, callPluginRpc, getPluginSettings, setPluginSettings } from './app.js';
+export type { PluginHostBridge } from './app.js';
 export { collectPluginApp, emptyRegistrationSet } from './app-contract.js';
 
 export { shimLegacyExtensionManifest, type LegacyExtensionJson } from './legacy-shim.js';

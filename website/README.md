@@ -1,8 +1,8 @@
 # Zana Command Center — website
 
-The public face of the app: **marketing landing**, **extension marketplace**,
+The public face of the app: **marketing landing**, **plugin marketplace**,
 **docs**, and **download**. Built with Next.js (App Router) in standalone-server
-mode so the site can serve its authenticated publishing API and extension feed
+mode so the site can serve its authenticated publishing API and plugin feed
 routes alongside static marketing and documentation pages.
 
 ## Run
@@ -19,7 +19,7 @@ npm run build        # production standalone build in .next/
 | Page | Source of truth |
 | --- | --- |
 | `/` landing | Curated copy in `app/page.tsx` (mirrors repo `README.md`) |
-| `/marketplace` | Live fetch of `NEXT_PUBLIC_REGISTRY_URL` — the **same `index.json`** the app reads (`apps/server/src/services/extensions/extension-registry.ts`). Types mirror `packages/extension-sdk`. Falls back to bundled examples. |
+| `/marketplace` | Live fetch of `NEXT_PUBLIC_REGISTRY_URL` — the **same `index.json`** the app reads (`apps/server/src/services/extensions/extension-registry.ts`). Types mirror `packages/extension-sdk`. Falls back to bundled plugins. |
 | `/docs/*` | Rendered at build time from the repo's `docs/` + `README.md`, via a **curated allowlist** in `lib/docs.ts` (internal audits are NOT published) |
 | `/download` | Parses `latest-mac.yml` from `NEXT_PUBLIC_UPDATE_FEED_URL`; links to GitHub Releases |
 

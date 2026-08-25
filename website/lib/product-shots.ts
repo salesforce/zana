@@ -91,50 +91,50 @@ export const PRODUCT_SHOTS: Record<ProductShotId, ProductShotDefinition> = {
   },
   'marketplace-catalog': {
     id: 'marketplace-catalog',
-    title: 'Extension marketplace',
-    caption: 'Browse extensions that add panels, project tabs, commands, personas, and teams.',
-    alt: 'The Zana extension marketplace showing a searchable extension catalog.',
-    capture: 'Show the marketplace catalog with search, extension metadata, and permission summaries.',
+    title: 'Plugin marketplace',
+    caption: 'Browse plugins that add panels, skills, and MCP servers from official and community catalogs.',
+    alt: 'The Zana plugin marketplace showing a searchable plugin catalog.',
+    capture: 'Show the marketplace catalog with search, plugin metadata, and a full-trust install confirm.',
     aspectRatio: 'wide'
   },
   'extension-install': {
     id: 'extension-install',
-    title: 'Install an extension',
-    caption: 'Install from the marketplace, a local built folder, or a published archive using the same validation flow.',
-    alt: 'The Zana extension installation interface showing install options.',
-    capture: 'Show the extensions settings surface with marketplace, folder, and archive install options.',
+    title: 'Install a plugin',
+    caption: 'Install from official or community catalogs, a local folder, or a git/npm pointer using the same confirm flow.',
+    alt: 'The Zana plugin installation interface showing install options.',
+    capture: 'Show Plugins → Browse with marketplace, folder, git, and npm install options.',
     aspectRatio: 'standard'
   },
   'extension-consent': {
     id: 'extension-consent',
-    title: 'Review permissions',
-    caption: 'Extensions declare the capabilities they need; Zana asks for explicit consent before granting access.',
-    alt: 'A Zana extension permission consent dialog.',
-    capture: 'Show a permission review dialog with scoped capabilities and no sensitive values.',
+    title: 'Confirm full trust',
+    caption: 'Plugins run in-process on the server. Zana lists skills, MCP, and extra, then you confirm the install.',
+    alt: 'A Zana plugin full-trust install confirm dialog.',
+    capture: 'Show a full-trust install confirm that names skills and MCP servers.',
     aspectRatio: 'portrait'
   },
   'local-extension-workspace': {
     id: 'local-extension-workspace',
-    title: 'Editable local extension',
-    caption: 'Keep a local source folder connected so a creator or shell session can rebuild and reload your extension live.',
-    alt: 'A local Zana extension source workspace connected to the desktop application.',
-    capture: 'Show an editable extension project with its manifest, source, and reload status.',
+    title: 'Editable local plugin',
+    caption: 'Keep a local source folder connected so zcc plugin dev can rebuild and reload live.',
+    alt: 'A local Zana plugin source workspace connected to the desktop application.',
+    capture: 'Show an editable plugin project with package.json zcc, source, and reload status.',
     aspectRatio: 'wide'
   },
   'extension-panel-result': {
     id: 'extension-panel-result',
     title: 'Your panel in Zana',
-    caption: 'A renderer entry can return a React panel that runs inside the host application without a core rebuild.',
-    alt: 'A custom extension panel running inside Zana Command Center.',
-    capture: 'Show a small finished extension panel mounted inside the Zana application shell.',
+    caption: 'definePluginApp can register a React panel that runs inside the host without a core rebuild.',
+    alt: 'A custom plugin panel running inside Zana Command Center.',
+    capture: 'Show a small finished plugin panel mounted inside the Zana application shell.',
     aspectRatio: 'standard'
   },
   'sdk-main-module': {
     id: 'sdk-main-module',
-    title: 'Brokered main module',
-    caption: 'Optional main-side capabilities are permission-gated and scoped by the host rather than granted as raw Node access.',
-    alt: 'Extension source code showing a Zana main module capability call.',
-    capture: 'Show a concise main-module example and its permission declaration side by side.',
+    title: 'Server plugin API',
+    caption: 'export default function plugin(zcc) receives ZccPluginApi in-process. Host-daemon tokens never reach the plugin.',
+    alt: 'Plugin source code showing a Zana server plugin API call.',
+    capture: 'Show a concise plugin(zcc) example next to its package.json zcc block.',
     aspectRatio: 'standard'
   }
 };

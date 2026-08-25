@@ -10,6 +10,8 @@ test('Home Thread composer uses the TipTap editor and provider controls', async 
   await expect(homeComposer.getByLabel('Provider')).toBeVisible();
   await expect(homeComposer.getByLabel('Permission mode')).toBeVisible();
   await expect(homeComposer.getByTestId('thread-command-send')).toBeVisible();
+  await homeComposer.getByTestId('composer-mode-picker-trigger').click();
+  await expect(window.getByTestId('composer-mode-legacy')).toBeVisible();
 });
 
 test('Agents + opens the launch modal for a new thread or agent', async ({ app }) => {

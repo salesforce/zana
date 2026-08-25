@@ -104,6 +104,7 @@ describe('buildThreadExecutionOptions', () => {
       'Sonnet 5'
     ]);
     expect(models.find((row) => row.isDefault)?.model).toBe('claude-opus-5[1m]');
+    expect(models[0]?.supportedReasoningEfforts.map((effort) => effort.reasoningEffort)[0]).toBe('none');
   });
 
   it('returns Claude aliases under selectedOnlyModels so the picker can show More models', () => {

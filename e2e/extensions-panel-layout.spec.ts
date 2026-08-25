@@ -14,7 +14,7 @@ test('top-level Extensions view fills the content area, not the narrow list colu
   const win = app.window;
 
   // Sidebar "Extensions" rail entry → the standalone top-level view.
-  await win.locator('.nav-item').filter({ hasText: 'Extensions' }).first().click();
+  await win.locator('.nav-item').filter({ hasText: 'Plugins' }).first().click();
 
   // The panel mounts with the layout-fix modifier class.
   const panel = win.locator('.settings-panel.extensions-panel');

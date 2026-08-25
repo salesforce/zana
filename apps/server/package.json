@@ -34,6 +34,7 @@
     "@zana-ai/zcc-host-daemon": "workspace:*",
     "@zana-ai/zcc-host-daemon-contract": "workspace:*",
     "@zana-ai/zcc-plugin-sdk": "workspace:*",
+    "@zana-ai/zcc-plugin-templates": "workspace:*",
     "@zana-ai/zcc-thread-view": "workspace:*",
     "better-sqlite3": "^12.11.1",
     "ws": "^8.21.3"

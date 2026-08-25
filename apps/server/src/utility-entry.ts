@@ -257,6 +257,68 @@ parentPort.on('message', async ({ data }) => {
     if (message.operation === 'plugins-snapshot') {
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: plugins?.snapshot() ?? [] });
     }
+    if (message.operation === 'plugins-search') {
+      if (!plugins) {
+        parentPort.postMessage({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, message: 'plugin host is unavailable' });
+        return;
+      }
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: await plugins.searchCatalog(message.query ?? '') });
+    }
+    if (message.operation === 'plugins-outdated') {
+      if (!plugins) {
+        parentPort.postMessage({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, message: 'plugin host is unavailable' });
+        return;
+      }
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: await plugins.checkUpdates() });
+    }
+    if (message.operation === 'plugins-update') {
+      if (!plugins) {
+        parentPort.postMessage({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, message: 'plugin host is unavailable' });
+        return;
+      }
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: await plugins.applyUpdate(message.pluginId) });
+    }
+    if (message.operation === 'plugins-call-rpc') {
+      if (!plugins) {
+        parentPort.postMessage({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, message: 'plugin host is unavailable' });
+        return;
+      }
+      parentPort.postMessage({
+        type: 'result',
+        protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+        id: message.id,
+        value: await plugins.callRpc(message.pluginId, message.method, message.args)
+      });
+    }
+    if (message.operation === 'plugins-settings-get') {
+      if (!plugins) {
+        parentPort.postMessage({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, message: 'plugin host is unavailable' });
+        return;
+      }
+      parentPort.postMessage({
+        type: 'result',
+        protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+        id: message.id,
+        value: plugins.getSettings(message.pluginId)
+      });
+    }
+    if (message.operation === 'plugins-settings-set') {
+      if (!plugins) {
+        parentPort.postMessage({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, message: 'plugin host is unavailable' });
+        return;
+      }
+      const values: Record<string, string | boolean | undefined> = {};
+      for (const [key, value] of Object.entries(message.values ?? {})) {
+        values[key] = value === null ? undefined : value;
+      }
+      await plugins.setSettings(message.pluginId, values);
+      parentPort.postMessage({
+        type: 'result',
+        protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+        id: message.id,
+        value: plugins.getSettings(message.pluginId)
+      });
+    }
     if (message.operation === 'marketplace-list') {
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: plugins?.listMarketplaces() ?? [] });
     }

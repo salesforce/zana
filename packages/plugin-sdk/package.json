@@ -8,33 +8,78 @@
     "url": "https://github.com/salesforce/zana"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "main": "./dist/index.js",
+    "types": "./bundled-types/zcc-plugin-sdk.d.ts",
+    "exports": {
+      ".": {
+        "types": "./bundled-types/zcc-plugin-sdk.d.ts",
+        "import": "./dist/index.js",
+        "default": "./dist/index.js"
+      },
+      "./app": {
+        "types": "./bundled-types/zcc-plugin-sdk-app.d.ts",
+        "import": "./dist/app.js",
+        "default": "./dist/app.js"
+      },
+      "./server": {
+        "types": "./bundled-types/zcc-plugin-sdk-server.d.ts",
+        "import": "./dist/server.js",
+        "default": "./dist/server.js"
+      },
+      "./testing": {
+        "types": "./bundled-types/zcc-plugin-sdk-testing.d.ts",
+        "import": "./dist/testing/index.js",
+        "default": "./dist/testing/index.js"
+      },
+      "./testing/app": {
+        "types": "./bundled-types/zcc-plugin-sdk-testing-app.d.ts",
+        "import": "./dist/testing/app.js",
+        "default": "./dist/testing/app.js"
+      }
+    }
   },
   "type": "module",
-  "main": "./dist/index.js",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "files": ["dist", "README.md"],
+  "main": "./src/index.ts",
+  "module": "./src/index.ts",
+  "types": "./src/index.ts",
+  "files": ["dist", "bundled-types", "README.md"],
   "exports": {
     ".": {
+      "source": "./src/index.ts",
       "types": "./src/index.ts",
       "default": "./src/index.ts"
     },
     "./app": {
+      "source": "./src/app.ts",
       "types": "./src/app.ts",
       "default": "./src/app.ts"
     },
     "./server": {
+      "source": "./src/server.ts",
       "types": "./src/server.ts",
       "default": "./src/server.ts"
     },
+    "./testing": {
+      "source": "./src/testing/index.ts",
+      "types": "./src/testing/index.ts",
+      "default": "./src/testing/index.ts"
+    },
+    "./testing/app": {
+      "source": "./src/testing/app.ts",
+      "types": "./src/testing/app.ts",
+      "default": "./src/testing/app.ts"
+    },
     "./provider-bridge": {
+      "source": "./src/provider-bridge.ts",
       "types": "./src/provider-bridge.ts",
       "default": "./src/provider-bridge.ts"
     }
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "prepack": "tsc -p tsconfig.build.json",
+    "test": "vitest run --config ../../vitest.config.ts src/testing/index.test.ts src/app.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "peerDependencies": {

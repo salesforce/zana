@@ -34,7 +34,10 @@ import type {
 } from '@zana-ai/zcc-domain/product';
 import type { UsageSummary } from '@zana-ai/zcc-domain/telemetry-events';
 import { getScopedProjectId } from '../lib/windowScope.js';
+import { agentNavCounts } from '../lib/agent-nav-counts.js';
 import { product } from '../lib/product-client.js';
+import { useEnsureThreads } from '../hooks/useEnsureThreads.js';
+import { useThreads } from '../thread-store.js';
 import { isClaudeProfile, knownProfile, projectDefaultProfile } from '../lib/launchProfile.js';
 import { buildFollowUpAnswerPrompt, followUpAgentTitle } from '../lib/followUpPrompt.js';
 import { classifyEntry } from '@zana-ai/zcc-domain/feed-categories';
@@ -1668,8 +1671,8 @@ export function useProjectOpenFollowUpCount(projectId: string): number {
  * Sidebar-badge counts for the Agents nav item. `active` is every agent that
  * is working or blocked right now (headless included — same set the Agents
  * board surfaces); `blocked` is how many of those need the user. The Agents nav
- * shows `active` as the badge and reds it when `blocked`. Reads the same two
- * stores the Agents board does (terminals + agent status).
+ * shows `active` as the badge and reds it when `blocked`. Counts live PTY
+ * agents and visible threads (pending questions count as blocked).
  *
  * Scope: a per-project WINDOW (hard URL lock via {@link getScopedProjectId})
  * always wins; absent that, an explicit `projectId` narrows the count to one
@@ -1682,29 +1685,14 @@ export function useProjectOpenFollowUpCount(projectId: string): number {
 export function useAgentNavCounts(projectId?: string): { active: number; blocked: number } {
   const terminals = useData((s) => s.terminals);
   const byId = useAgentStatus((s) => s.byId);
-  const scopeProjectId = getScopedProjectId() ?? projectId ?? null;
-  const lists = scopeProjectId
-    ? [terminals[scopeProjectId] ?? []]
-    : Object.values(terminals);
-  let active = 0;
-  let blocked = 0;
-  for (const list of lists) {
-    for (const session of list) {
-      // A `shell` tab is not an agent — the Agents board / list exclude it, so
-      // the "Agents" badge must too, or a shell that happens to emit a spinner
-      // (npm install, a manually-launched claude) would be counted as "working"
-      // here while showing zero rows in the list it heads. Match the list.
-      if (session.profile === 'shell') continue;
-      const state = byId[session.id];
-      if (state === 'blocked') {
-        active += 1;
-        blocked += 1;
-      } else if (state === 'working') {
-        active += 1;
-      }
-    }
-  }
-  return { active, blocked };
+  const threads = useThreads((s) => s.threads);
+  useEnsureThreads();
+  return agentNavCounts({
+    terminals,
+    agentStateById: byId,
+    threads,
+    scopeProjectId: getScopedProjectId() ?? projectId ?? null
+  });
 }
 
 /**

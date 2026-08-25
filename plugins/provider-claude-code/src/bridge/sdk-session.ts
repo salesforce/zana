@@ -199,6 +199,9 @@ export class SdkSession {
       this.query as ClaudeMutableSettingsQueryBoundary | undefined
     )?.applyFlagSettings(args.settings);
     this.options.effort = args.effort;
+    this.options.thinking = args.effort
+      ? { type: "adaptive", display: "summarized" }
+      : undefined;
     const { effortLevel: _effortLevel, ...sessionSettings } = args.settings;
     const currentSettings =
       typeof this.options.settings === "object" ? this.options.settings : {};

@@ -4,7 +4,7 @@ import type { TerminalSession, AgentState } from '@zana-ai/zcc-domain/product';
 /** Compact state words for an agent's detail subtitle (the verbose
  *  AGENT_STATE_LABEL reads as a tooltip; the inline line stays terse). */
 const AGENT_STATE_SHORT: Record<AgentState, string> = {
-  blocked: 'Blocked',
+  blocked: 'Needs you',
   working: 'Working',
   done: 'Done',
   idle: 'Idle',
@@ -44,7 +44,17 @@ export function AgentRowDetail({ session }: { session: TerminalSession }) {
     : session.status === 'starting'
       ? 'starting…'
       : `started ${timeAgo(session.createdAt)}`;
-  const detail = [stateText, subagentText, timeText].filter(Boolean).join(' · ');
-  if (!detail) return null;
-  return <span className="project-terminal-detail">{detail}</span>;
+  const detailParts = [subagentText, timeText].filter(Boolean);
+  if (!stateText && detailParts.length === 0) return null;
+  return (
+    <span className="project-terminal-detail">
+      {stateText ? (
+        <span className={state === 'blocked' && !exited ? 'agents-row-needs-you' : undefined}>
+          {stateText}
+        </span>
+      ) : null}
+      {stateText && detailParts.length > 0 ? ' · ' : null}
+      {detailParts.join(' · ')}
+    </span>
+  );
 }

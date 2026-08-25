@@ -22,6 +22,10 @@ describe('HomeAgentComposer layout', () => {
     const source = readFileSync(new URL('../HomeAgentComposer.tsx', import.meta.url), 'utf8');
     expect(source).toContain('className="home-agent-composer"');
     expect(source).toContain('<ThreadCommandComposer');
+    expect(source).toContain('allowLegacyAgent');
+    expect(source).toContain('<LegacyAgentHomeComposer');
+    expect(source).toContain("kind === 'legacy'");
+    expect(source).toContain('onSelectLegacyAgent={allowLegacyAgent ? () => setKind(\'legacy\') : undefined}');
   });
 });
 
@@ -34,6 +38,7 @@ describe('ThreadCommandComposer chrome', () => {
     );
     expect(editor).toContain('min-height: 40px;');
     expect(editor).toContain('max-height: 12rem;');
+    expect(editor).toContain('textarea.thread-command-editor');
     expect(editor).not.toContain('min-height: 80px;');
     expect(editor).not.toContain('max-height: 70dvh;');
 
@@ -135,6 +140,8 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source.indexOf('<ModelReasoningPicker')).toBeLessThan(source.indexOf('<ReasoningEffortPicker'));
     expect(source.indexOf('<ReasoningEffortPicker')).toBeLessThan(metaIdx);
     expect(source).toContain('onSelectedProviderChange={threadId ? undefined : options.setProviderId}');
+    expect(source).toContain('showLegacyAgent={Boolean(onSelectLegacyAgent)}');
+    expect(source).toContain('onSelectLegacyAgent={onSelectLegacyAgent}');
     expect(source).toContain('reasoningLevel: options.reasoningLevel');
     expect(source).toContain('moreModelOptions={options.moreModelOptions}');
     expect(source).toContain('applyComposerModePrefix');
@@ -158,6 +165,20 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain("type: 'mention'");
     expect(source).not.toContain('thread-slash-menu');
   });
+
+  it('drops files and explorer paths in as mention pills', () => {
+    const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('droppedPathsFromDataTransfer');
+    expect(source).toContain('mentionContentForDroppedPaths');
+    expect(source).toContain('isComposerPathDrag');
+    expect(source).toContain('handleDrop');
+    expect(source).toContain('is-drop-over');
+    expect(source).toContain('product.files.pathForFile');
+    expect(source).not.toContain('useFileDrop');
+
+    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    expect(css).toContain('.thread-command-composer.is-drop-over .ui-command-composer');
+  });
 });
 
 describe('composer mention data sources', () => {
@@ -167,6 +188,7 @@ describe('composer mention data sources', () => {
     expect(hook).toContain('buildMentionSuggestions');
     expect(hook).toContain('buildCommandSuggestions');
     expect(hook).toContain('typeaheadMenuOpen');
+    expect(hook).toContain('projectNames.get(thread.projectId)');
   });
 });
 

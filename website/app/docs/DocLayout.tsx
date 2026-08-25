@@ -61,20 +61,20 @@ function DocsNextStep({ slug }: { slug: string }) {
       action: 'Explore features'
     },
     'extensions-quickstart': {
-      title: 'Use the visual extension workflow',
+      title: 'Use the visual plugin workflow',
       body: 'See the scaffold-to-reload loop, then return here for the exact code and commands.',
       href: '/extensions/getting-started/',
-      action: 'Open extension quickstart'
+      action: 'Open plugin quickstart'
     },
     'extensions-authoring': {
-      title: 'Choose an extension task',
-      body: 'The extension hub separates installation, first-panel authoring, and the SDK boundary.',
+      title: 'Choose a plugin task',
+      body: 'The plugins hub separates installation, first-panel authoring, and the SDK boundary.',
       href: '/extensions/',
-      action: 'Open extension hub'
+      action: 'Open plugins hub'
     },
     'extensions-sdk-reference': {
       title: 'Review the SDK as a workflow',
-      body: 'See how the manifest, renderer, optional main module, and permissions fit together.',
+      body: 'See how package.json zcc, app slots, and the server API fit together.',
       href: '/extensions/sdk/',
       action: 'Open SDK overview'
     }

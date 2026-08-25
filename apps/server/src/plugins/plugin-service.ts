@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } fr
 import { homedir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defaultCloneGit, defaultFetchJson, defaultSpawnNpm } from './plugin-process.js';
+import { marketplaceInstallSpec } from './marketplace.js';
 import {
   createMarketplaceStore,
   fetchMarketplaceIndex,
@@ -12,6 +12,7 @@ import {
   type MarketplaceStore
 } from './marketplace-store.js';
 import {
+  compareVersions,
   isPluginId,
   parsePluginSource,
   readPluginManifest,
@@ -32,12 +33,28 @@ import {
 } from './plugin-api.js';
 import { discoverPluginSkillNames } from './plugin-skills.js';
 import { BUILTIN_PLUGINS, bundledPluginByName } from './builtin-registry.js';
+import { defaultCloneGit, defaultFetchJson, defaultSpawnNpm } from './plugin-process.js';
 import {
   createPluginStore,
   pluginStorePath,
   type InstalledPluginRow,
   type PluginStore
 } from './plugin-store.js';
+
+export interface CatalogSearchHit {
+  marketplace: string;
+  id: string;
+  displayName: string;
+  description: string;
+  source: string;
+}
+
+export interface PluginUpdateRow {
+  id: string;
+  current: string;
+  available: string;
+  marketplace: string;
+}
 
 export interface PluginService {
   list(): InstalledPluginRow[];
@@ -53,8 +70,19 @@ export interface PluginService {
   snapshot(): PluginUiSnapshot[];
   agentContributions(): PluginAgentContribution[];
   callRpc(pluginId: string, method: string, args: unknown): Promise<unknown>;
+  getSettings(pluginId: string): {
+    descriptors: Record<string, import('@zana-ai/zcc-plugin-sdk/server').PluginSettingDescriptor>;
+    values: Record<string, import('@zana-ai/zcc-plugin-sdk/server').PluginSettingValue | undefined>;
+  };
+  setSettings(
+    pluginId: string,
+    values: Record<string, import('@zana-ai/zcc-plugin-sdk/server').PluginSettingValue | undefined>
+  ): Promise<void>;
   listMarketplaces(): MarketplaceCatalogRow[];
   addMarketplace(url: string): Promise<MarketplaceCatalogRow>;
+  searchCatalog(query: string): Promise<CatalogSearchHit[]>;
+  checkUpdates(): Promise<PluginUpdateRow[]>;
+  applyUpdate(id: string): Promise<InstalledPluginRow>;
 }
 
 export interface PluginUiSnapshot {
@@ -210,7 +238,10 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
           id: row.id,
           enabled: row.enabled,
           rootDir: row.rootDir,
-          skillsRootPaths: manifest.skillsRootPaths,
+          skillsRootPaths: [
+            ...manifest.skillsRootPaths,
+            ...(live.get(row.id)?.handle?.extraSkillRoots ?? [])
+          ],
           skillNames: manifest.skillNames,
           mcpServers: manifest.mcpServers,
           extra: manifest.extra
@@ -267,14 +298,26 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   }
 
   async function loadOne(row: InstalledPluginRow): Promise<void> {
-    await disposeOne(row.id);
+    const previous = live.get(row.id);
     if (!row.enabled) {
+      await disposeOne(row.id);
       const disabled = { ...row, status: 'disabled' as const };
       live.set(row.id, { row: disabled, handle: null, rpc: new Map() });
       await store.upsert(disabled);
       return;
     }
     if (!existsSync(row.rootDir)) {
+      if (previous?.handle && previous.row.status === 'running') {
+        const kept = {
+          ...previous.row,
+          status: 'running' as const,
+          statusDetail: 'reload failed: plugin directory missing'
+        };
+        live.set(row.id, { ...previous, row: kept });
+        await store.upsert(kept);
+        return;
+      }
+      await disposeOne(row.id);
       const degraded = { ...row, status: 'degraded' as const, statusDetail: 'plugin directory missing' };
       live.set(row.id, { row: degraded, handle: null, rpc: new Map() });
       await store.upsert(degraded);
@@ -282,14 +325,19 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     }
     const files = listFiles(row.rootDir);
     if (containsNativeAddon(row.rootDir, files)) {
+      await disposeOne(row.id);
       const degraded = { ...row, status: 'degraded' as const, statusDetail: 'native addons are not allowed' };
       live.set(row.id, { row: degraded, handle: null, rpc: new Map() });
       await store.upsert(degraded);
       return;
     }
+    let configurationMessage: string | null = null;
     const handle = createPluginApi(row.id, join(kvRoot, row.id), {
       requestPluginInteraction: opts.requestPluginInteraction,
-      interruptPluginInteractions: opts.interruptPluginInteractions
+      interruptPluginInteractions: opts.interruptPluginInteractions,
+      onNeedsConfiguration: (message) => {
+        configurationMessage = message;
+      }
     });
     const rpc = new Map<string, (args: unknown) => unknown | Promise<unknown>>();
     const originalMethod = handle.api.rpc.method.bind(handle.api.rpc);
@@ -300,19 +348,33 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     try {
       if (row.serverEntry) {
         const entry = resolveContainedEntry(row.rootDir, row.serverEntry);
-        const factory = await importServerFactory(entry);
+        const factory = await importServerFactory(entry, row.updatedAt);
         await runFactoryTimeBoxed(factory, handle.api);
       }
-      const running = { ...row, status: 'running' as const, statusDetail: null };
+      const running = {
+        ...row,
+        status: (configurationMessage ? 'needs-configuration' : 'running') as InstalledPluginRow['status'],
+        statusDetail: configurationMessage
+      };
       live.set(row.id, { row: running, handle, rpc });
       await store.upsert(running);
+      if (previous && previous.handle && previous.handle !== handle) {
+        await previous.handle.dispose();
+      }
     } catch (error) {
       await handle.dispose();
-      const degraded = {
-        ...row,
-        status: 'degraded' as const,
-        statusDetail: error instanceof Error ? error.message : String(error)
-      };
+      const detail = error instanceof Error ? error.message : String(error);
+      if (previous?.handle && previous.row.status === 'running') {
+        const kept = {
+          ...previous.row,
+          status: 'running' as const,
+          statusDetail: `reload failed: ${detail}`
+        };
+        live.set(row.id, { ...previous, row: kept });
+        await store.upsert(kept);
+        return;
+      }
+      const degraded = { ...row, status: 'degraded' as const, statusDetail: detail };
       live.set(row.id, { row: degraded, handle: null, rpc: new Map() });
       await store.upsert(degraded);
     }
@@ -588,10 +650,115 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       if (!handler) throw new Error(`unknown rpc ${pluginId}.${method}`);
       return handler(args);
     },
+    getSettings(pluginId) {
+      return live.get(pluginId)?.handle?.getSettings() ?? { descriptors: {}, values: {} };
+    },
+    async setSettings(pluginId, values) {
+      const handle = live.get(pluginId)?.handle;
+      if (!handle) throw new Error(`plugin not running: ${pluginId}`);
+      await handle.setSettings(values);
+    },
     listMarketplaces: () => marketplaces.list(),
     async addMarketplace(url) {
       const index = await fetchMarketplaceIndex(url, fetchJson);
       return marketplaces.add(url, index);
+    },
+    async searchCatalog(query) {
+      const q = query.trim().toLowerCase();
+      const hits: CatalogSearchHit[] = [];
+      for (const def of BUILTIN_PLUGINS) {
+        const hay = `${def.pluginId} ${def.name} ${def.category ?? ''}`.toLowerCase();
+        if (!q || hay.includes(q)) {
+          hits.push({
+            marketplace: 'official',
+            id: def.pluginId,
+            displayName: def.name,
+            description: `builtin:${def.name}`,
+            source: `builtin:${def.name}`
+          });
+        }
+      }
+      for (const catalog of marketplaces.list()) {
+        try {
+          const index = await fetchMarketplaceIndex(catalog.url, fetchJson);
+          for (const plugin of index.plugins) {
+            const hay = `${plugin.id} ${plugin.displayName} ${plugin.description}`.toLowerCase();
+            if (!q || hay.includes(q)) {
+              hits.push({
+                marketplace: catalog.name,
+                id: plugin.id,
+                displayName: plugin.displayName,
+                description: plugin.description,
+                source: marketplaceInstallSpec(plugin)
+              });
+            }
+          }
+        } catch {
+          /* skip unreachable catalogs */
+        }
+      }
+      return hits;
+    },
+    async checkUpdates() {
+      const updates: PluginUpdateRow[] = [];
+      for (const row of store.list()) {
+        if (!row.catalogMarketplace || !row.catalogEntryId) continue;
+        try {
+          const spec = await resolveCatalogSource(
+            row.catalogMarketplace,
+            row.catalogEntryId,
+            marketplaces.list(),
+            fetchJson
+          );
+          const parsed = parsePluginSource(spec);
+          const available =
+            parsed.kind === 'npm' ? (parsed.spec ?? row.version) : row.gitResolvedCommit ?? row.version;
+          if (parsed.kind === 'npm' && parsed.spec && compareVersions(parsed.spec, row.version) > 0) {
+            updates.push({
+              id: row.id,
+              current: row.version,
+              available: parsed.spec,
+              marketplace: row.catalogMarketplace
+            });
+          } else if (available && available !== row.version && available !== row.gitResolvedCommit) {
+            updates.push({
+              id: row.id,
+              current: row.npmResolvedVersion ?? row.version,
+              available,
+              marketplace: row.catalogMarketplace
+            });
+          }
+        } catch {
+          /* skip */
+        }
+      }
+      return updates;
+    },
+    async applyUpdate(id) {
+      const row = store.get(id);
+      if (!row) throw new Error(`plugin not installed: ${id}`);
+      if (row.catalogMarketplace && row.catalogEntryId) {
+        const resolved = await resolveCatalogSource(
+          row.catalogMarketplace,
+          row.catalogEntryId,
+          marketplaces.list(),
+          fetchJson
+        );
+        const next = await installParsed(parsePluginSource(resolved), row.enabled);
+        const stamped = {
+          ...next,
+          provenance: 'catalog' as const,
+          catalogMarketplace: row.catalogMarketplace,
+          catalogEntryId: row.catalogEntryId,
+          updatedAt: now()
+        };
+        await store.upsert(stamped);
+        await emitAppsChanged();
+        return stamped;
+      }
+      const next = await installParsed(parsePluginSource(row.source), row.enabled);
+      await emitAppsChanged();
+      return next;
     }
   };
 }
@@ -669,6 +836,10 @@ export interface BundledPluginCatalogEntry {
   description?: string;
   author?: string;
   permissions: string[];
+  skillNames?: string[];
+  mcpServers?: Array<{ name: string; alwaysOn?: boolean }>;
+  extra?: Record<string, unknown>;
+  tags?: string[];
 }
 
 /**
@@ -704,7 +875,14 @@ export function listBundledPluginCatalog(
           title: manifest.name,
           icon: manifest.branding.icon,
           description: manifest.description,
-          permissions: []
+          permissions: [],
+          skillNames: discoverPluginSkillNames(dir, manifest.skillsRootPaths),
+          mcpServers: manifest.mcpServers.map((server) => ({
+            name: server.name,
+            alwaysOn: server.alwaysOn
+          })),
+          extra: Object.keys(manifest.extra).length > 0 ? manifest.extra : undefined,
+          tags: ['official']
         });
       } catch (err) {
         log?.(`listBundledPluginCatalog:${name}`, err);

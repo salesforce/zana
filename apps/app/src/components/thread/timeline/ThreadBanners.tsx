@@ -24,12 +24,14 @@ export function ThreadTodoCard({ todos }: { todos: ThreadTimelinePendingTodos | 
 
 export function ThreadWorkingIndicator({
   status,
-  thinking
+  thinking,
+  waitingOnUser
 }: {
   status: string;
   thinking: ActiveThinking | null;
+  waitingOnUser?: boolean;
 }) {
-  if (!isBusyThreadStatus(status) && !thinking) return null;
+  if (waitingOnUser || (!isBusyThreadStatus(status) && !thinking)) return null;
   const details = thinking?.text?.trim() ?? '';
   const label = details || (thinking ? 'Thinking…' : 'Working…');
   if (details) {
@@ -89,10 +91,16 @@ export function ThreadPromptModeChip({
   );
 }
 
-export function ThreadStatusBadge({ status }: { status: string }) {
-  const label = threadStatusLabel(status);
+export function ThreadStatusBadge({
+  status,
+  waitingOnUser
+}: {
+  status: string;
+  waitingOnUser?: boolean;
+}) {
+  const label = threadStatusLabel(status, waitingOnUser);
   if (!label) return null;
-  const state = threadStatusToAgentState(status);
+  const state = threadStatusToAgentState(status, waitingOnUser);
   return (
     <span
       className={`thread-chip thread-status-badge is-${state}`}
@@ -107,10 +115,12 @@ export function ThreadStatusBadge({ status }: { status: string }) {
 
 export function ThreadDetailHeading({
   title,
-  status
+  status,
+  waitingOnUser
 }: {
   title: string;
   status: string;
+  waitingOnUser?: boolean;
 }) {
   return (
     <div className="thread-detail-heading">
@@ -125,7 +135,7 @@ export function ThreadDetailHeading({
         <span className="thread-detail-crumb-sep" aria-hidden="true">›</span>
         <h1>{title}</h1>
       </div>
-      <ThreadStatusBadge status={status} />
+      <ThreadStatusBadge status={status} waitingOnUser={waitingOnUser} />
     </div>
   );
 }

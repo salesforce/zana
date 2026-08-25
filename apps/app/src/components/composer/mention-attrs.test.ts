@@ -32,4 +32,18 @@ describe('mentionAttrsForSuggestion', () => {
       resource: { kind: 'command', name: 'plan', trigger: '/' }
     });
   });
+
+  it('labels a thread pill Thread: <title> while serializing the bare title', () => {
+    expect(mentionAttrsForSuggestion({
+      kind: 'thread',
+      threadId: 't1',
+      projectId: 'p1',
+      title: 'Hello',
+      projectName: 'Zana'
+    })).toMatchObject({
+      label: 'Thread: Hello',
+      serializedText: '@Hello',
+      resource: { kind: 'thread', threadId: 't1', label: 'Hello' }
+    });
+  });
 });

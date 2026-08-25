@@ -9,7 +9,7 @@ import { ThreadCommandComposer } from '../../components/ThreadCommandComposer.js
 import { ThreadTimeline } from '../../components/thread/ThreadTimeline.js';
 import { ThreadDiffPanel } from '../../components/thread/ThreadDiffPanel.js';
 import { ThreadWorkspaceBanner } from '../../components/thread/ThreadWorkspaceBanner.js';
-import { isBusyThreadStatus } from '../../components/thread/thread-timeline-model.js';
+import { isBusyThreadStatus, timelineRowsAwaitUser } from '../../components/thread/thread-timeline-model.js';
 import { ThreadStatusBadge } from '../../components/thread/timeline/ThreadBanners.js';
 import { getProjectWorkspaceRoutePath, getThreadRoutePath } from '../../lib/route-paths.js';
 import { useRouteState } from '../../hooks/useRouteState.js';
@@ -24,6 +24,7 @@ import { ThreadFilePreviewTab } from '../../components/thread/secondary-panel/Th
 import { ThreadBrowserTab } from '../../components/thread/secondary-panel/ThreadBrowserTab.js';
 import { ThreadTerminalTab } from '../../components/thread/secondary-panel/ThreadTerminalTab.js';
 import { ThreadPluginTab } from '../../components/thread/secondary-panel/ThreadPluginTab.js';
+import { copyText } from '../../components/thread/secondary-panel/threadSecondaryPanelLogic.js';
 import { useThreadSecondaryPanel } from '../../components/thread/secondary-panel/useThreadSecondaryPanel.js';
 import {
   activeClosableTab,
@@ -265,6 +266,7 @@ export function ThreadDetail({
     panelBody = <p className="thread-detail-empty">No environment is attached to this thread.</p>;
   }
 
+  const awaitingUser = pendingInteractions.length > 0 || timelineRowsAwaitUser(rows);
 
   return (
     <section
@@ -277,7 +279,7 @@ export function ThreadDetail({
         <header className="thread-detail-header">
           <div className="thread-detail-heading">
             <h1>{title}</h1>
-            <ThreadStatusBadge status={status} />
+            <ThreadStatusBadge status={status} waitingOnUser={awaitingUser} />
           </div>
           <div className="thread-detail-actions">
             {/* Fork / workspace shell / archive — parked until the chrome is useful
@@ -352,6 +354,7 @@ export function ThreadDetail({
               threadId={threadId}
               rows={rows}
               status={status}
+              waitingOnUser={awaitingUser}
               thinking={thinking}
               todos={todos}
               goal={goal}
@@ -366,7 +369,7 @@ export function ThreadDetail({
               }}
               onReachedBottom={markRead}
               onCopy={(text) => {
-                void navigator.clipboard?.writeText(text);
+                void copyText(text);
               }}
               onTitleAction={(action) => {
                 if (action.kind === 'open-file-diff') openDiff(action.path);
@@ -385,25 +388,27 @@ export function ThreadDetail({
               environmentId={environmentId}
               onOpenDiff={(path) => openDiff(path)}
             />
-            <ChildThreadPendingBanners childThreads={childThreads} projectId={projectId} />
-            {pendingInteractions.map((interaction) => (
-              <ThreadPendingInteractionBanner
-                key={interaction.id}
-                interaction={interaction}
+            <div className="thread-composer-dock">
+              <ChildThreadPendingBanners childThreads={childThreads} projectId={projectId} />
+              {pendingInteractions.map((interaction) => (
+                <ThreadPendingInteractionBanner
+                  key={interaction.id}
+                  interaction={interaction}
+                  threadId={threadId}
+                />
+              ))}
+              <ThreadCommandComposer
                 threadId={threadId}
+                status={status}
+                sendBlocked={pendingInteractions.length > 0}
+                environmentLabel={isWorktree ? 'This checkout' : 'Local'}
+                contextWindowUsage={contextWindow}
+                providerId={threadProviderId ?? undefined}
+                model={threadModel}
+                reasoningLevel={threadReasoning}
+                onOpenExplorer={projectId ? () => navigate(getProjectWorkspaceRoutePath(projectId, 'explorer')) : undefined}
               />
-            ))}
-            <ThreadCommandComposer
-              threadId={threadId}
-              status={status}
-              sendBlocked={pendingInteractions.length > 0}
-              environmentLabel={isWorktree ? 'This checkout' : 'Local'}
-              contextWindowUsage={contextWindow}
-              providerId={threadProviderId ?? undefined}
-              model={threadModel}
-              reasoningLevel={threadReasoning}
-              onOpenExplorer={projectId ? () => navigate(getProjectWorkspaceRoutePath(projectId, 'explorer')) : undefined}
-            />
+            </div>
           </div>
         </div>
       </div>

@@ -483,6 +483,8 @@ describe('expandable row and chips', () => {
     expect(renderToStaticMarkup(<ThreadStatusBadge status="error" />)).toContain('is-blocked');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="error" />)).toContain('Error');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="" />)).toBe('');
+    expect(renderToStaticMarkup(<ThreadStatusBadge status="active" waitingOnUser />)).toContain('Needs you');
+    expect(renderToStaticMarkup(<ThreadStatusBadge status="active" waitingOnUser />)).toContain('is-blocked');
   });
 
   it('prefixes the thread title with a link back to Agents', () => {
@@ -496,6 +498,16 @@ describe('expandable row and chips', () => {
     expect(html).toContain('>Agents<');
     expect(html).toContain('<h1>Hello</h1>');
     expect(html).toContain('data-testid="thread-detail-status"');
+  });
+
+  it('passes waitingOnUser through the heading status badge', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ThreadDetailHeading title="Hello" status="active" waitingOnUser />
+      </MemoryRouter>
+    );
+    expect(html).toContain('Needs you');
+    expect(html).toContain('is-blocked');
   });
 
   it('opens the secondary panel Diff pin from Review', () => {
@@ -524,14 +536,24 @@ describe('expandable row and chips', () => {
     expect(column).toContain('<ThreadTimeline');
     expect(column).toContain('<ThreadWorkspaceBanner');
     expect(column).toContain('<ThreadCommandComposer');
+    expect(column).toContain('thread-composer-dock');
 
     const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
+    expect(css).toContain('.thread-timeline-row .inbox-md {\n  font-size: 15px;');
+    const mentionPopover = css.slice(
+      css.indexOf('.thread-detail-view .mention-popover {'),
+      css.indexOf('.composer-typeahead-heading {')
+    );
+    expect(mentionPopover).toContain('top: auto;');
+    expect(mentionPopover).toContain('bottom: calc(100% + 8px);');
     const assistantActions = css.slice(
       css.indexOf('.thread-timeline-row.is-assistant .thread-message-actions {'),
       css.indexOf('.thread-timeline-row:hover .thread-message-actions')
     );
     expect(assistantActions).toContain('position: absolute;');
     expect(assistantActions).toContain('left: 0;');
+    expect(css).toContain('.thread-timeline-item:hover,\n.thread-timeline-item:focus-within {\n  z-index: 1;');
+    expect(css).toContain('.thread-detail-timeline {\n  user-select: text;');
   });
 
   it('keeps the transcript scrollbar invisible at rest and paints it only while scrolling', () => {
@@ -557,6 +579,8 @@ describe('expandable row and chips', () => {
     expect(source).toContain('embedded = false');
     expect(source).toContain('thread-detail-view--embedded');
     expect(source).toContain("data-embedded={embedded ? 'true' : undefined}");
+    expect(source).toContain('void copyText(text)');
+    expect(source).not.toContain('navigator.clipboard');
     expect(source).toContain('route.isProjectWorkspace ? route.focusedProjectId');
     expect(source).toContain('pendingChildThreads(threads, threadId)');
     expect(source).not.toContain('useThreads((s) => s.threads.filter');

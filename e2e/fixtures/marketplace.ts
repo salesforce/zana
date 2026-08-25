@@ -16,7 +16,7 @@ export class MarketplacePage {
 
   /** Navigate Sidebar → Extensions → Browse extensions. */
   async open(): Promise<void> {
-    await this.window.locator('.nav-item', { hasText: 'Extensions' }).first().click();
+    await this.window.locator('.nav-item', { hasText: 'Plugins' }).first().click();
     await this.window.getByTestId('extensions-nav-marketplace').click();
     await this.window.waitForSelector('.ext-market', { timeout: 15_000 });
   }
@@ -24,7 +24,7 @@ export class MarketplacePage {
   /** The marketplace empty hint (shown when bundled + remote catalogs are both empty). */
   emptyHint() {
     return this.window.locator('.settings-help--muted', {
-      hasText: 'No extensions to show',
+      hasText: 'No plugins to show',
     });
   }
 

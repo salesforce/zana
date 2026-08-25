@@ -1,3 +1,4 @@
+import { copyText } from '../../lib/copy-text.js';
 import { product } from '../../lib/product-client.js';
 import { useCallback } from 'react';
 import type { OpenTarget } from '@zana-ai/zcc-domain/product';
@@ -37,7 +38,7 @@ export function useFileOperations({ viewRoot, isRemote, projectId, pushToast }: 
 
   const copyPath = useCallback(async (path: string) => {
     try {
-      await navigator.clipboard.writeText(path);
+      await copyText(path);
       pushToast('Path copied');
     } catch {
       pushToast('Failed to copy path', 'error');

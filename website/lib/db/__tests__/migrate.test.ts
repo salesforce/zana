@@ -74,7 +74,7 @@ describe('db:migrate (sqlite)', () => {
         .prepare(`INSERT INTO extensions (id, owner_user_id, created_at) VALUES (?, ?, ?)`)
         .run('gus', 'user-1', now);
 
-      const archiveBytes = Buffer.from(JSON.stringify({ files: { 'extension.json': 'e30=' } }));
+      const archiveBytes = Buffer.from(JSON.stringify({ files: { 'package.json': 'e30=' } }));
       sqlite
         .prepare(
           `INSERT INTO releases (

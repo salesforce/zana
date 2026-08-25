@@ -492,6 +492,10 @@ export async function listMarketplace(
       author: b.author,
       icon: b.icon,
       permissions: b.permissions,
+      skillNames: b.skillNames,
+      mcpServers: b.mcpServers,
+      extra: b.extra,
+      tags: b.tags ?? ['official'],
       installed: installedSet.has(b.id) || installed !== null,
       installedVersion: installed?.version,
       hasUpdate: false,
@@ -536,6 +540,10 @@ export interface BundledMarketplaceInput {
   description?: string;
   author?: string;
   permissions: string[];
+  skillNames?: string[];
+  mcpServers?: Array<{ name: string; alwaysOn?: boolean }>;
+  extra?: Record<string, unknown>;
+  tags?: string[];
 }
 
 /**
@@ -598,6 +606,7 @@ async function listRemoteMarketplace(
       author: best.author,
       icon: best.icon,
       permissions: best.permissions,
+      tags: ['community'],
       installed: isInstalled,
       installedVersion: installed?.version,
       hasUpdate,

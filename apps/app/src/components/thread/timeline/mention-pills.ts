@@ -1,10 +1,7 @@
+import { mentionDisplayLabel } from '../../composer/mention-label.js';
+
 export function mentionPillLabel(mention: {
-  resource?: { kind?: string; label?: string; path?: string; name?: string };
+  resource?: { kind?: string; label?: string; path?: string; name?: string; entryKind?: string };
 }): string {
-  const resource = mention.resource;
-  if (!resource) return '';
-  if (typeof resource.label === 'string' && resource.label.trim()) return resource.label;
-  if (typeof resource.path === 'string' && resource.path.trim()) return resource.path;
-  if (typeof resource.name === 'string' && resource.name.trim()) return resource.name;
-  return resource.kind ?? '';
+  return mentionDisplayLabel(mention.resource);
 }

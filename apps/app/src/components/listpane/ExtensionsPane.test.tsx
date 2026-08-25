@@ -35,11 +35,11 @@ describe('ExtensionsPane', () => {
     expect(markup).toContain('class="sidebar-resizer"');
     expect(markup).toContain('Back to app');
     expect(markup).not.toContain('aria-label="Extensions navigation history"');
-    expect(markup).toContain('>Extensions</h2>');
+    expect(markup).toContain('>Plugins</h2>');
     expect(markup).toContain('>Skills</h2>');
     expect(markup).toContain('>MCP</h2>');
-    expect(markup).toContain('>Browse extensions<');
-    expect(markup).toContain('>Installed extensions<');
+    expect(markup).toContain('>Browse plugins<');
+    expect(markup).toContain('>Installed plugins<');
     expect(markup).toContain('>Skills<');
     expect(markup).toContain('>MCP<');
     expect(markup).toContain('href="/extensions/plugins/browse"');

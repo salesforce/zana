@@ -1,39 +1,42 @@
 /**
- * Local (in-app authored) extensions — the "create your own extension" feature.
+ * Local (in-app authored) plugins — the "create your own plugin" feature.
  *
- * A local extension is one the user builds INSIDE the app with the Extension
- * Creator agent, without ever publishing it. It is NOT a special trust tier: it
- * lives in the same `~/.zcc/extensions/<id>` dir as any disk extension and is
- * subject to the SAME P3-D consent + broker gates. What makes it "local" is only
- * a pointer — an entry in `local.json` (see `discovery.markLocal`) recording the
+ * A local plugin is one the user builds INSIDE the app with the Creator agent,
+ * without ever publishing it. After install it is full-trust in-process on the
+ * server (same as a path/git/npm plugin). What makes it "local" is only a
+ * pointer — an entry in `local.json` (see `discovery.markLocal`) recording the
  * SOURCE dir the Creator agent works in, so the hub can offer "Continue building"
  * / "Reload from source".
  *
  * The trust story (why this is safe):
  *   - The agent writes SOURCE into a scratch working dir (`workingDirFor`), which
  *     is under `~/zcc-workspace/extensions/<id>` — NEVER HOME, never a registered
- *     project, never any `~/.zcc` path. Its file output there is completely INERT.
- *   - Nothing runs until main PACKS the source into a staging dir (manifest +
- *     `dist/` only) and hands it to the SINGLE trusted install seam
- *     (`installFromDir`), which re-runs every manifest/id/api/reserved gate.
+ *     project, never the app data dir. Its file output there is completely INERT.
+ *   - New scaffolds are `package.json` `zcc` plugins. `packAndInstallLocal`
+ *     path-installs them through PluginService. A leftover `extension.json` dir
+ *     still packs through the one-release shim (`installFromDir`).
  *   - The agent NEVER writes the install dir. `reinstallLocal` re-derives the
- *     working dir from `local.json` (main's own record — Rule 1), re-packs, and
- *     re-installs. The renderer only ever passes an id.
+ *     working dir from `local.json` (main's own record — Rule 1). The renderer
+ *     only ever passes an id.
  *
  * This module owns the pure/main-side mechanics (mint id, scaffold template,
- * pack). The IPC handlers in index.ts wire it to consent/discovery + the agent
- * launch. Deliberately electron-free so it's unit-testable (paths come in as
- * args); it honors the `ZCC_EXTENSIONS_DIR` override the rest of the extension
- * pipeline uses.
+ * pack). Deliberately electron-free so it's unit-testable (paths come in as
+ * args).
  */
 
-import { join, dirname, relative } from 'node:path';
-import { existsSync } from 'node:fs';
-import { mkdir, cp, rm, writeFile, readFile, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { mkdir, cp, rm, writeFile, readFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { SDK_API_VERSION } from '@zana-ai/zcc-extension-sdk';
+import { derivePluginId } from '@zana-ai/zcc-domain';
 import type { Result } from '@zana-ai/zcc-domain/product';
+import {
+  clampPluginStarterKind,
+  scaffoldPlugin,
+  VALID_PLUGIN_STARTER_KINDS,
+  type PluginStarterKind
+} from '@zana-ai/zcc-plugin-templates';
 
 /**
  * Id shape a local extension may claim — the SAME containment gate as
@@ -44,27 +47,20 @@ import type { Result } from '@zana-ai/zcc-domain/product';
 const VALID_ID = /^[a-z0-9][a-z0-9._-]*$/i;
 
 /**
- * The kinds of starter template the Creator can scaffold, along the trust ladder:
- *  - `panel`        — renderer-only, no permissions (default).
- *  - `main-panel`   — main + renderer; declares `exec` (git) — trips consent.
- *  - `mcp-consumer` — declares `mcp`; ships a placeholder allowlist + TODO.
- *  - `agent-preset` — a framework Quick Agent preset; no main, no permissions.
+ * The kinds of starter template the Creator can scaffold:
+ *  - `panel`        — app slot only.
+ *  - `main-panel`   — server factory + app slot.
+ *  - `mcp-consumer` — declares `zcc.mcpServers`.
+ *  - `agent-preset` — skills / agent instructions, no panel.
  */
-export type LocalExtensionKind = 'panel' | 'main-panel' | 'mcp-consumer' | 'agent-preset';
+export type LocalExtensionKind = PluginStarterKind;
 
 /** The allowlist main clamps a renderer-supplied `kind` against (Rule 1). */
-export const VALID_LOCAL_KINDS: ReadonlySet<LocalExtensionKind> = new Set<LocalExtensionKind>([
-  'panel',
-  'main-panel',
-  'mcp-consumer',
-  'agent-preset'
-]);
+export const VALID_LOCAL_KINDS: ReadonlySet<LocalExtensionKind> = VALID_PLUGIN_STARTER_KINDS;
 
 /** Clamp an untrusted `kind` to a known template, defaulting to `panel`. */
 export function clampLocalKind(kind: unknown): LocalExtensionKind {
-  return typeof kind === 'string' && VALID_LOCAL_KINDS.has(kind as LocalExtensionKind)
-    ? (kind as LocalExtensionKind)
-    : 'panel';
+  return clampPluginStarterKind(kind);
 }
 
 export interface MintIdOptions {
@@ -125,104 +121,48 @@ export function workingDirFor(scratchRoot: string, id: string): string {
 }
 
 /**
- * Resolve the editable starter-template root for a given `kind` — the
- * repo-committed `templates/extension-starter/<kind>` dir that
- * {@link scaffoldLocalExtension} copies and token-substitutes. Mirrors
- * `extension-installer.ts` `bundledRoot`: a test override
- * (`ZCC_EXTENSION_TEMPLATE_DIR`) is authoritative; packaged builds read
- * `process.resourcesPath/extension-template` (electron-builder `extraResources`);
- * dev reads the committed source (`__dirname = out/main`, so `../../templates/…`).
- *
- * For each base we prefer the per-kind subdir (`<base>/<kind>`) and fall back to
- * the FLAT `<base>` layout when the subdir is absent, so an older packaged build
- * (single flat `panel` template) still scaffolds a panel without regressing.
- * Returns the first that exists, or null (caller falls back to the inline minimal
- * scaffold so a missing template never blocks creation).
+ * True when `workingDir` is a `package.json` `zcc` plugin (the current
+ * authoring model). Legacy `extension.json` dirs return false.
  */
-function templateRoot(kind: LocalExtensionKind): string | null {
-  const override = process.env.ZCC_EXTENSION_TEMPLATE_DIR;
-  const bases = override
-    ? [override]
-    : [
-        process.resourcesPath ? join(process.resourcesPath, 'extension-template') : null,
-        join(__dirname, '../../templates/extension-starter')
-      ].filter((p): p is string => !!p);
-  for (const base of bases) {
-    const perKind = join(base, kind);
-    if (existsSync(perKind)) return perKind;
-    // Back-compat: a flat base is the old panel-only layout. Only honor it for
-    // the panel kind so a non-panel kind never silently scaffolds a panel.
-    if (kind === 'panel' && existsSync(join(base, 'extension.json'))) return base;
+export function isZccPluginWorkingDir(workingDir: string): boolean {
+  try {
+    const raw = JSON.parse(readFileSync(join(workingDir, 'package.json'), 'utf-8')) as {
+      zcc?: unknown;
+    };
+    return raw['zcc'] !== null && typeof raw['zcc'] === 'object';
+  } catch {
+    return false;
   }
-  return null;
-}
-
-/**
- * The token → value map applied to every template file's TEXT contents. Kept
- * tiny and literal so the template stays a normal, runnable project a maintainer
- * can open and edit directly. `__EXT_API_MAJOR__` is the SDK's major so the
- * scaffolded manifest's `engines.zccApi` tracks the shipped SDK.
- */
-function templateTokens(opts: ScaffoldOptions): Record<string, string> {
-  const apiMajor = String(SDK_API_VERSION);
-  return {
-    __EXT_ID__: opts.id,
-    __EXT_TITLE__: opts.name.replace(/["\\]/g, ''),
-    __EXT_DESCRIPTION__: (opts.description || `${opts.name} — a local extension.`).replace(
-      /["\\]/g,
-      ''
-    ),
-    __EXT_API_MAJOR__: apiMajor
-  };
-}
-
-/** Apply the token map to a template file's text (all occurrences, literal). */
-function applyTokens(text: string, tokens: Record<string, string>): string {
-  let out = text;
-  for (const [token, value] of Object.entries(tokens)) {
-    out = out.split(token).join(value);
-  }
-  return out;
 }
 
 export interface ScaffoldOptions {
   id: string;
   /** Display title for the manifest. */
   name: string;
-  /** One-line description surfaced in the hub + consent screen. */
+  /** One-line description surfaced in the hub. */
   description?: string;
   kind: LocalExtensionKind;
 }
 
 /**
- * Write a starter template into `workingDir` (created if absent). Idempotent-ish:
- * it never clobbers files the user/agent has since edited — an existing file is
- * left as-is (so re-scaffolding a dir the agent already worked in is safe). The
- * template is renderer-only (no `main`, no build step): `dist/renderer.js` is
- * plain ESM the host blob-imports, so the extension activates live with no
- * relaunch. It declares NO permissions — the user/agent adds them deliberately,
- * and each addition re-triggers consent.
- *
- * Returns the manifest path on success.
+ * Write a plugin starter into `workingDir` (created if absent). Idempotent-ish:
+ * it never clobbers files the user/agent has since edited. Returns the
+ * package.json path on success.
  */
 export async function scaffoldLocalExtension(
   workingDir: string,
   opts: ScaffoldOptions
 ): Promise<Result<{ manifestPath: string }>> {
   try {
-    const manifestPath = join(workingDir, 'extension.json');
-    const root = templateRoot(opts.kind);
-    if (root) {
-      // Preferred path: copy the editable repo template, substituting tokens in
-      // every file's text. A maintainer enhances the starter by editing files
-      // under `templates/extension-starter/` — no code change here needed.
-      await scaffoldFromTemplate(root, workingDir, templateTokens(opts));
-    } else {
-      // Fallback: the template dir wasn't found (e.g. a stripped build). Emit a
-      // minimal renderer-only scaffold inline so creation never hard-fails.
-      await scaffoldMinimal(workingDir, opts);
-    }
-    return { ok: true, value: { manifestPath } };
+    await scaffoldPlugin({
+      targetDir: workingDir,
+      id: opts.id,
+      name: opts.name,
+      description: opts.description,
+      kind: opts.kind,
+      skipExisting: true
+    });
+    return { ok: true, value: { manifestPath: join(workingDir, 'package.json') } };
   } catch (err) {
     return {
       ok: false,
@@ -230,103 +170,6 @@ export async function scaffoldLocalExtension(
       message: err instanceof Error ? err.message : String(err)
     };
   }
-}
-
-/**
- * Copy every file under `root` into `workingDir`, applying {@link applyTokens} to
- * each file's TEXT. Never clobbers a file the agent/user already edited
- * (writeIfAbsent), so re-scaffolding a worked-in dir is safe. Directory structure
- * is preserved (so `dist/renderer.js` lands under `dist/`).
- */
-async function scaffoldFromTemplate(
-  root: string,
-  workingDir: string,
-  tokens: Record<string, string>
-): Promise<void> {
-  const files = await listTemplateFiles(root);
-  for (const abs of files) {
-    const rel = relative(root, abs);
-    const dest = join(workingDir, rel);
-    if (existsSync(dest)) continue; // never clobber
-    const raw = await readFile(abs, 'utf-8');
-    await mkdir(dirname(dest), { recursive: true });
-    await writeFile(dest, applyTokens(raw, tokens), 'utf-8');
-  }
-}
-
-/** Recursively list every file (not dir) under `dir`, absolute paths. */
-async function listTemplateFiles(dir: string): Promise<string[]> {
-  const entries = await readdir(dir, { withFileTypes: true });
-  const out: string[] = [];
-  for (const e of entries) {
-    const abs = join(dir, e.name);
-    if (e.isDirectory()) out.push(...(await listTemplateFiles(abs)));
-    else if (e.isFile()) out.push(abs);
-  }
-  return out;
-}
-
-/**
- * Fallback scaffold when the editable template dir is absent — the smallest
- * runnable renderer-only extension. Deliberately minimal (no projectTab, no
- * CLAUDE.md prose) so it can't drift from the real template; the real template
- * (`templates/extension-starter/`) is the maintained one.
- */
-async function scaffoldMinimal(workingDir: string, opts: ScaffoldOptions): Promise<void> {
-  await mkdir(join(workingDir, 'dist'), { recursive: true });
-  const manifest = {
-    id: opts.id,
-    version: '0.1.0',
-    title: opts.name,
-    icon: 'Puzzle',
-    description: opts.description || `${opts.name} — a local extension.`,
-    author: 'You',
-    entry: { renderer: 'dist/renderer.js' },
-    engines: { zccApi: `^${SDK_API_VERSION}.0.0` },
-    permissions: [] as string[]
-  };
-  // title is emitted via JSON.stringify below (double-quoted, backtick-safe), so
-  // no need to sanitize it for the surrounding template literal.
-  const title = opts.name;
-  const renderer = `export default {
-  activate({ React, host }) {
-    const { createElement: h, useState } = React;
-    return function Panel() {
-      const [count, setCount] = useState(0);
-      return h(
-        'div',
-        { style: { padding: 24, fontFamily: 'system-ui, sans-serif' } },
-        h('h2', { style: { marginTop: 0 } }, ${JSON.stringify(title)}),
-        h(
-          'p',
-          { style: { color: 'var(--text-muted, #8b949e)', fontSize: 13 } },
-          'Your local extension is live. Edit dist/renderer.js and reload.'
-        ),
-        h(
-          'button',
-          {
-            className: 'btn',
-            onClick: () => {
-              setCount((n) => n + 1);
-              host.toast && host.toast('Hello from ' + host.moduleId);
-            }
-          },
-          'Clicked ' + count + ' times'
-        )
-      );
-    };
-  }
-};
-`;
-  await writeIfAbsent(join(workingDir, 'extension.json'), JSON.stringify(manifest, null, 2) + '\n');
-  await writeIfAbsent(join(workingDir, 'dist', 'renderer.js'), renderer);
-}
-
-/** Write `contents` to `file` only if it doesn't already exist (never clobber). */
-async function writeIfAbsent(file: string, contents: string): Promise<void> {
-  if (existsSync(file)) return;
-  await mkdir(dirname(file), { recursive: true });
-  await writeFile(file, contents, 'utf-8');
 }
 
 /**
@@ -400,22 +243,35 @@ async function copyInstallableInto(workingDir: string, dest: string): Promise<vo
  * Returns the absolute `share/` dir path on success.
  */
 export async function prepareShareDir(workingDir: string): Promise<Result<{ shareDir: string }>> {
-  const manifestSrc = join(workingDir, 'extension.json');
+  const plugin = isZccPluginWorkingDir(workingDir);
+  const manifestSrc = join(workingDir, plugin ? 'package.json' : 'extension.json');
   if (!existsSync(manifestSrc)) {
-    return { ok: false, code: 'NO_MANIFEST', message: `No extension.json in ${workingDir}` };
+    return { ok: false, code: 'NO_MANIFEST', message: `No plugin manifest in ${workingDir}` };
   }
   const shareDir = join(workingDir, 'share');
   try {
-    await rm(shareDir, { recursive: true, force: true }); // idempotent — rebuild
+    await rm(shareDir, { recursive: true, force: true });
     await mkdir(shareDir, { recursive: true });
-    await copyInstallableInto(workingDir, shareDir);
-    const manifest = JSON.parse(await readFile(manifestSrc, 'utf-8')) as {
-      id?: string;
-      title?: string;
-      description?: string;
-      version?: string;
-    };
-    await writeFile(shareDir + '/README.md', shareReadme(manifest), 'utf-8');
+    if (plugin) {
+      await cp(manifestSrc, join(shareDir, 'package.json'));
+      for (const rel of ['server.mjs', 'app.js', 'server.ts', 'app.tsx', 'CLAUDE.md']) {
+        const src = join(workingDir, rel);
+        if (existsSync(src)) await cp(src, join(shareDir, rel));
+      }
+      const skills = join(workingDir, 'skills');
+      if (existsSync(skills)) await cp(skills, join(shareDir, 'skills'), { recursive: true });
+      const id = await readWorkingDirId(workingDir);
+      await writeFile(join(shareDir, 'README.md'), pluginShareReadme(id ?? 'plugin'), 'utf-8');
+    } else {
+      await copyInstallableInto(workingDir, shareDir);
+      const manifest = JSON.parse(await readFile(manifestSrc, 'utf-8')) as {
+        id?: string;
+        title?: string;
+        description?: string;
+        version?: string;
+      };
+      await writeFile(join(shareDir, 'README.md'), shareReadme(manifest), 'utf-8');
+    }
     return { ok: true, value: { shareDir } };
   } catch (err) {
     await rm(shareDir, { recursive: true, force: true }).catch(() => {});
@@ -425,6 +281,20 @@ export async function prepareShareDir(workingDir: string): Promise<Result<{ shar
       message: err instanceof Error ? err.message : String(err)
     };
   }
+}
+
+function pluginShareReadme(id: string): string {
+  return [
+    `# ${id}`,
+    '',
+    '## Install',
+    '',
+    'In Zana Command Center: **Plugins → Browse**, then Install from folder or',
+    '`zcc plugin install path:' + id + '`.',
+    '',
+    'Plugins run in-process on the server after install (full trust). Host-daemon tokens stay on the server.',
+    ''
+  ].join('\n');
 }
 
 /** Generate the README shipped in a share export, with the install one-liner. */
@@ -452,6 +322,17 @@ function shareReadme(m: { id?: string; title?: string; description?: string; ver
  * the packed id must match the registry key). Null on any read/parse failure.
  */
 export async function readWorkingDirId(workingDir: string): Promise<string | null> {
+  try {
+    const pkg = JSON.parse(await readFile(join(workingDir, 'package.json'), 'utf-8')) as {
+      name?: unknown;
+      zcc?: unknown;
+    };
+    if (pkg['zcc'] && typeof pkg.name === 'string' && pkg.name) {
+      return derivePluginId(pkg.name);
+    }
+  } catch {
+    /* fall through to the one-release extension.json shim */
+  }
   try {
     const raw = JSON.parse(await readFile(join(workingDir, 'extension.json'), 'utf-8')) as {
       id?: unknown;

@@ -32,6 +32,24 @@ describe('ThreadListEntry', () => {
     expect(html).not.toContain('lucide-message-square');
   });
 
+  it('shows Needs you instead of Working when a question is pending', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ThreadListEntry thread={{ ...thread, status: 'active', hasPendingInteraction: true }} />
+      </MemoryRouter>
+    );
+    expect(html).toContain('Needs you');
+    expect(html).toContain('agents-row-needs-you');
+    expect(html).toContain('agent-blocked');
+    expect(html).not.toContain('thread-list-entry-working');
+    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const needsYou = css.slice(
+      css.indexOf('.agents-row-needs-you {'),
+      css.indexOf('.agents-row-badge {')
+    );
+    expect(needsYou).toContain('color: var(--danger);');
+  });
+
   it('shows the raw status when idle', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>

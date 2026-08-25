@@ -591,6 +591,11 @@ function httpProduct(): Pick<
     } as CcApi['fs'],
     pluginApps: {
       list: async () => [],
+      callRpc: async () => {
+        throw new Error('plugin rpc is not available on this origin');
+      },
+      getSettings: async () => ({ descriptors: {}, values: {} }),
+      setSettings: async () => ({ descriptors: {}, values: {} }),
       onChanged: noopSubscribe
     } as CcApi['pluginApps'],
     voice: {

@@ -24,15 +24,15 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Result } from '@zana-ai/zcc-domain/product';
 
 export const CREATE_LOCAL_EXTENSION_DESCRIPTION = [
-  'Scaffold a brand-new, in-app-authored extension project (the same thing the',
-  '"Create extension" dialog does). Mints a fresh extension id, writes a starter',
-  'template into its own working directory, packs + installs it (so it shows up',
-  'immediately as a bare panel), and registers a dedicated project for it.',
+  'Scaffold a brand-new, in-app-authored plugin project (the same thing the',
+  '"Create plugin" dialog does). Mints a fresh plugin id, writes a package.json',
+  'zcc starter into its own working directory, path-installs it through PluginService',
+  '(so it shows up immediately as a panel), and registers a dedicated project for it.',
   '',
   'This tool only scaffolds — it cannot open a terminal tab for you. To build the',
-  'extension, open (or ask the user to open) a new agent session with its `cwd`',
+  'plugin, open (or ask the user to open) a new agent session with its `cwd`',
   'set to the returned `workingDir`; from inside that session, `install_local_extension`',
-  'can pack + reinstall your changes as you go.'
+  'can reload your changes as you go.'
 ].join(' ');
 
 export const createLocalExtensionInputSchema = {

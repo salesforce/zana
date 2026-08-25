@@ -42,16 +42,18 @@ import { AgentStatusDot } from './AgentStatusDot.js';
 import { AgentRowDetail } from './AgentRowDetail.js';
 import { ProjectRollupDot } from './ProjectRollupDot.js';
 import { reorderProjectIds } from './projectReordering.js';
+import { isWorkspaceRailExpanded, pinFavoriteProjectsFirst } from './workspace-rail.js';
 import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from '../agentCardActions.js';
 import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from '../threadCardActions.js';
 import { PromptModal } from '../PromptModal.js';
 import type { AgentCard } from '../AgentBoard.js';
 import { useThreads } from '../../thread-store.js';
 import { useEnsureThreads } from '../../hooks/useEnsureThreads.js';
+import { copyText } from '../../lib/copy-text.js';
 import { getThreadRoutePath } from '../../lib/route-paths.js';
 import { FleetKindChip } from '../FleetKindChip.js';
 import { ProviderIcon } from '../thread/pickers/ProviderIcon.js';
-import { railThreadsForProject, threadIsLiveForRail, threadRailDetail, threadTitle } from '../fleet-item.js';
+import { railThreadsForProject, threadIsLiveForRail, threadRailStatus, threadTitle } from '../fleet-item.js';
 
 interface MenuState {
   projectId: string;
@@ -327,13 +329,16 @@ export function ProjectsList({
   };
 
   const sortedProjects = useMemo(() => {
-    if (!inSidebar || sidebarProjectSort === 'manual') return sortProjectsForDisplay(projects);
-    if (sidebarProjectSort === 'alphabetical') return sortProjectsAlphabetically(projects);
-    return projects.slice().sort((a, b) =>
-      sidebarProjectSort === 'created'
-        ? b.createdAt - a.createdAt
-        : b.lastActiveAt - a.lastActiveAt
-    );
+    const sorted = !inSidebar || sidebarProjectSort === 'manual'
+      ? sortProjectsForDisplay(projects)
+      : sidebarProjectSort === 'alphabetical'
+        ? sortProjectsAlphabetically(projects)
+        : projects.slice().sort((a, b) =>
+          sidebarProjectSort === 'created'
+            ? b.createdAt - a.createdAt
+            : b.lastActiveAt - a.lastActiveAt
+        );
+    return pinFavoriteProjectsFirst(sorted);
   }, [inSidebar, projects, sidebarProjectSort]);
 
   // A project is "active" when it has at least one live session — any listed
@@ -349,11 +354,10 @@ export function ProjectsList({
     (railThreadsByProject.get(p.id)?.length ?? 0) > 0;
 
   // Nested rows show live agents plus recent threads. Auto-expand any project
-  // with live work, and the selected workspace when it has anything to nest,
-  // so the tree is visible without a click. An explicit collapse still wins.
+  // that has something to nest so those sessions are visible without a click.
+  // An explicit collapse still wins.
   const isProjectExpanded = (p: Project) =>
-    projectExpanded[p.id] ??
-    (projectHasRunningAgents(p) || (p.id === selectedId && projectHasNestableSessions(p)));
+    isWorkspaceRailExpanded(projectExpanded[p.id], projectHasNestableSessions(p));
 
   const visibleProjects = useMemo(() => {
     // A per-project window locks the rail to its one project — no other projects
@@ -583,6 +587,30 @@ export function ProjectsList({
                   {p.remote && <Network size={11} strokeWidth={2} className="project-remote-icon" aria-label="Remote SSH project" />}
                 </span>
               );
+              const favoriteStar = (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className={`project-favorite-star${p.favorite ? ' is-fav' : ''}`}
+                  aria-pressed={Boolean(p.favorite)}
+                  aria-label={p.favorite ? `Remove ${p.name} from favorites` : `Add ${p.name} to favorites`}
+                  title={p.favorite ? 'Favorite — click to remove' : 'Add to favorites'}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    void updateProject(p.id, { favorite: !p.favorite });
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      void updateProject(p.id, { favorite: !p.favorite });
+                    }
+                  }}
+                >
+                  <Star size={11} fill={p.favorite ? 'currentColor' : 'none'} aria-hidden="true" />
+                </span>
+              );
               const expanded = isProjectExpanded(p);
               const treeChevron =
                 liveList.length === 0 && railThreads.length === 0 ? null : (
@@ -639,6 +667,7 @@ export function ProjectsList({
                     {projectDot}
                     {projectMeta}
                   </button>
+                  {favoriteStar}
                   {treeChevron}
                 </div>
               );
@@ -686,6 +715,7 @@ export function ProjectsList({
               <div className="project-terminals" role="list" aria-label={`Sessions in ${p.name}`}>
                 {railThreads.map((thread) => {
                   const title = threadTitle(thread);
+                  const status = threadRailStatus(thread);
                   return (
                     <div key={thread.id} role="listitem">
                       <button
@@ -704,10 +734,12 @@ export function ProjectsList({
                         <span className="project-terminal-text">
                           <span className="project-terminal-name">{title}</span>
                           <span className="project-terminal-detail">
-                            {threadRailDetail(thread)}
+                            <span className={status === 'Needs you' ? 'agents-row-needs-you' : undefined}>
+                              {status}
+                            </span>
+                            {' · Thread'}
                           </span>
                         </span>
-                        <FleetKindChip kind="thread" />
                       </button>
                     </div>
                   );
@@ -1090,7 +1122,7 @@ export function ProjectsList({
                 className="project-menu-item"
                 onClick={() => {
                   setMenu(null);
-                  void navigator.clipboard.writeText(p.path).then(
+                  void copyText(p.path).then(
                     () => pushToast('Path copied', 'info'),
                     () => pushToast('Failed to copy path', 'error')
                   );

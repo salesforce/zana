@@ -1,5 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, watch } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
+import { PLUGIN_SDK_VERSION, derivePluginId } from '@zana-ai/zcc-plugin-sdk';
+import { clampPluginStarterKind, scaffoldPlugin } from '@zana-ai/zcc-plugin-templates';
+import { buildPlugin, createPluginDevLoop, syncPluginTypes } from '@zana-ai/zcc-plugin-build';
 import { callControlPlane, isAppRunning } from './control-client.js';
 
 interface CliResult {
@@ -82,91 +85,105 @@ export async function runPluginCommand(
       ? rest[rest.indexOf('--dir') + 1]
       : join(process.cwd(), name);
     if (!dest) return err('plugin new --dir requires a path', 2);
+    const kindFlag = rest.includes('--kind') ? rest[rest.indexOf('--kind') + 1] : undefined;
+    const kind = rest.includes('--app') && !kindFlag ? 'panel' : clampPluginStarterKind(kindFlag ?? 'main-panel');
     mkdirSync(dest, { recursive: true });
-    const id = name.toLowerCase().replace(/[^a-z0-9-]/g, '-');
-    writeFileSync(
-      join(dest, 'package.json'),
-      `${JSON.stringify(
-        {
-          name: `zcc-plugin-${id}`,
-          version: '0.1.0',
-          type: 'module',
-          engines: { zcc: '>=1.0.0', zccPluginSdk: '>=0.1.0' },
-          zcc: {
-            name,
-            description: `${name} plugin`,
-            branding: { icon: 'Puzzle' },
-            server: './server.mjs',
-            app: './app.js',
-            skills: ['skills'],
-            extra: {
-              notes: 'Forward-compat keys go here. Skills and MCP have first-class fields.'
-            }
-          }
-        },
-        null,
-        2
-      )}\n`
-    );
-    writeFileSync(
-      join(dest, 'server.mjs'),
-      `/** @typedef {import('@zana-ai/zcc-plugin-sdk/server').ZccPluginApi} ZccPluginApi */
-export default function plugin(zcc) {
-  zcc.log.info('${id} loaded');
-  zcc.rpc.method('ping', () => ({ ok: true }));
-}
-`
-    );
-    writeFileSync(
-      join(dest, 'app.js'),
-      `import { definePluginApp } from '@zana-ai/zcc-plugin-sdk/app';
-
-export default definePluginApp((app) => {
-  app.slots.navPanel({
-    id: 'main',
-    title: ${JSON.stringify(name)},
-    icon: 'Puzzle',
-    component: () => null
-  });
-});
-`
-    );
-    writeFileSync(join(dest, 'README.md'), `# ${name}\n\nInstall with \`zcc plugin install ${dest}\`.\n`);
-    writeFileSync(
-      join(dest, 'CLAUDE.md'),
-      `# ${name} plugin
-
-This is a Zana Command Center plugin. Manifest lives in package.json → zcc.
-Skills live in skills/<name>/SKILL.md (declared as zcc.skills: ["skills"]).
-MCP servers belong in zcc.mcpServers; other notes go in zcc.extra.
-Install with \`zcc plugin install ${dest}\`. Reload with \`zcc plugin reload ${id}\`.
-Do not request host-daemon tokens. Fill the host panel slot (height 100%).
-`
-    );
-    mkdirSync(join(dest, 'skills', 'hello'), { recursive: true });
-    writeFileSync(
-      join(dest, 'skills', 'hello', 'SKILL.md'),
-      `---
-name: hello
-description: Sample skill shipped by the ${name} plugin.
----
-
-Use this skill when the user asks about ${name}.
-`
-    );
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'plugin';
+    const id = derivePluginId(`zcc-plugin-${slug}`);
+    await scaffoldPlugin({
+      targetDir: dest,
+      id,
+      name,
+      kind,
+      pluginSdkVersion: PLUGIN_SDK_VERSION
+    });
     return { exitCode: 0, stdout: `Created plugin scaffold in ${dest}\n` };
   }
+  if (subcommand === 'types') {
+    const dir = resolve(rest[0] ?? process.cwd());
+    if (!existsSync(join(dir, 'package.json'))) {
+      return err('plugin types requires a package.json in the directory', 2);
+    }
+    const written = await syncPluginTypes(dir, { check: rest.includes('--check') });
+    if (jsonOutput) return { exitCode: 0, stdout: `${JSON.stringify(written, null, 2)}\n` };
+    const stale = written.filter((row) => row.outcome === 'stale');
+    if (rest.includes('--check') && stale.length > 0) {
+      return err(`stale types: ${stale.map((row) => row.path).join(', ')}`, 1);
+    }
+    return {
+      exitCode: 0,
+      stdout: `${written.map((row) => `${row.outcome} ${row.path}`).join('\n')}\n`
+    };
+  }
+  if (subcommand === 'build') {
+    const dir = resolve(rest[0] ?? process.cwd());
+    if (!existsSync(join(dir, 'package.json'))) {
+      return err('plugin build requires a package.json in the directory', 2);
+    }
+    const built = await buildPlugin(dir, '1.0.0');
+    return {
+      exitCode: 0,
+      stdout: `Built ${[built.server?.jsPath, built.app?.jsPath].filter(Boolean).join(' ') || dir}\n`
+    };
+  }
   if (subcommand === 'dev') {
-    const dir = rest[0] ?? process.cwd();
+    const dir = resolve(rest[0] ?? process.cwd());
     if (!existsSync(join(dir, 'package.json'))) {
       return err('plugin dev requires a package.json in the directory', 2);
     }
+    const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
+      name?: string;
+      zcc?: { server?: string; app?: string };
+    };
+    const id = derivePluginId(pkg.name ?? `zcc-plugin-${dir}`);
     const installed = await live(dataDir, 'plugin.install', { source: dir }, jsonOutput);
     if (installed.exitCode !== 0) return installed;
-    return {
-      exitCode: 0,
-      stdout: `${installed.stdout}Watching ${dir}. Re-run \`zcc plugin reload <id>\` after edits (live watch requires a running app).\n`
-    };
+    if (rest.includes('--once')) {
+      return { exitCode: 0, stdout: installed.stdout };
+    }
+    const loop = createPluginDevLoop({
+      pluginId: id,
+      hasApp: Boolean(pkg.zcc?.app),
+      hasServer: Boolean(pkg.zcc?.server),
+      buildApp: async () => {
+        await buildPlugin(dir, '1.0.0');
+      },
+      buildServer: async () => {
+        await buildPlugin(dir, '1.0.0');
+      },
+      reloadPlugin: async () => {
+        const reloaded = await live(dataDir, 'plugin.reload', { id }, false);
+        if (reloaded.exitCode !== 0) throw new Error(reloaded.stderr ?? 'reload failed');
+      },
+      log: (line) => {
+        process.stderr.write(`${line}\n`);
+      }
+    });
+    const watcher = watch(dir, { recursive: true }, (_event, filename) => {
+      if (typeof filename === 'string') loop.handleChange(relative(dir, join(dir, filename)));
+    });
+    await new Promise<void>((resolveWait) => {
+      const stop = () => {
+        loop.dispose();
+        watcher.close();
+        resolveWait();
+      };
+      process.once('SIGINT', stop);
+      process.once('SIGTERM', stop);
+    });
+    return { exitCode: 0, stdout: `${installed.stdout}Stopped watching ${dir}\n` };
+  }
+  if (subcommand === 'search') {
+    const query = rest.join(' ').trim();
+    return live(dataDir, 'plugin.search', { query }, jsonOutput);
+  }
+  if (subcommand === 'outdated') {
+    return live(dataDir, 'plugin.outdated', {}, jsonOutput);
+  }
+  if (subcommand === 'update') {
+    const id = rest[0];
+    if (!id) return err('plugin update requires a <pluginId>', 2);
+    return live(dataDir, 'plugin.update', { id }, jsonOutput);
   }
   return err(`unknown plugin command '${subcommand}'`, 2);
 }

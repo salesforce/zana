@@ -177,6 +177,23 @@ export interface ControlPlaneDeps {
   listSchedules: () => ScheduledTask[];
   runScheduleNow: (id: string) => Result<ScheduledTask>;
   setScheduleEnabled: (id: string, enabled: boolean) => Result<ScheduledTask>;
+  /**
+   * Optional live plugin host. When present, CLI plugin/marketplace ops go
+   * through the running server PluginService (so `plugin.dev` remounts panels).
+   * Absent in unit tests; those fall back to a process-local PluginService.
+   */
+  pluginHost?: {
+    install(source: string): Promise<unknown>;
+    enable(id: string): Promise<unknown>;
+    disable(id: string): Promise<unknown>;
+    remove(id: string): Promise<unknown>;
+    reload(id: string): Promise<unknown>;
+    search(query: string): Promise<unknown>;
+    outdated(): Promise<unknown>;
+    update(id: string): Promise<unknown>;
+    listMarketplaces(): Promise<unknown>;
+    addMarketplace(url: string): Promise<unknown>;
+  };
   log?: (msg: string) => void;
 }
 
@@ -255,6 +272,9 @@ const KNOWN_OPS = new Set<string>([
   'plugin.disable',
   'plugin.remove',
   'plugin.reload',
+  'plugin.search',
+  'plugin.outdated',
+  'plugin.update',
   'marketplace.list',
   'marketplace.add'
 ]);
@@ -366,10 +386,21 @@ let controlPlanePluginService: Awaited<
   ReturnType<typeof import('@zana-ai/zcc-server/plugins/plugin-service')['createPluginService']>
 > | null = null;
 
-function getControlPlanePluginService(
-  create: () => NonNullable<typeof controlPlanePluginService>
-): NonNullable<typeof controlPlanePluginService> {
-  if (!controlPlanePluginService) controlPlanePluginService = create();
+async function ensureFallbackPluginService(): Promise<NonNullable<typeof controlPlanePluginService>> {
+  if (controlPlanePluginService) return controlPlanePluginService;
+  const { createPluginService, defaultBundledRoot, defaultPluginDataDir } = await import(
+    '@zana-ai/zcc-server/plugins/plugin-service'
+  );
+  const { applyPluginAgentCapabilities } = await import(
+    '@zana-ai/zcc-server/services/extensions/plugin-agent-sync'
+  );
+  controlPlanePluginService = createPluginService({
+    dataDir: defaultPluginDataDir(),
+    bundledRoot: defaultBundledRoot(),
+    onAgentCapabilitiesChanged: (contributors) => {
+      void applyPluginAgentCapabilities(contributors);
+    }
+  });
   return controlPlanePluginService;
 }
 
@@ -543,54 +574,59 @@ export async function dispatchOp(
     case 'plugin.disable':
     case 'plugin.remove':
     case 'plugin.reload':
+    case 'plugin.search':
+    case 'plugin.outdated':
+    case 'plugin.update':
     case 'marketplace.list':
     case 'marketplace.add': {
-      const { createPluginService, defaultBundledRoot, defaultPluginDataDir } = await import('@zana-ai/zcc-server/plugins/plugin-service'
-      );
-      const { applyPluginAgentCapabilities } = await import('@zana-ai/zcc-server/services/extensions/plugin-agent-sync');
-      const service = getControlPlanePluginService(() =>
-        createPluginService({
-          dataDir: defaultPluginDataDir(),
-          bundledRoot: defaultBundledRoot(),
-          onAgentCapabilitiesChanged: (contributors) => {
-            void applyPluginAgentCapabilities(contributors);
-          }
-        })
-      );
+      const host = deps.pluginHost;
       try {
         if (op === 'plugin.install') {
           const source = str(args.source);
           if (!source) return { ok: false, code: 'BAD_ARGS', message: 'source required' };
-          return { ok: true, value: await service.install(source) };
+          return { ok: true, value: await (host?.install(source) ?? (await ensureFallbackPluginService()).install(source)) };
         }
         if (op === 'plugin.enable') {
           const id = str(args.id);
           if (!id) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
-          return { ok: true, value: await service.enable(id) };
+          return { ok: true, value: await (host?.enable(id) ?? (await ensureFallbackPluginService()).enable(id)) };
         }
         if (op === 'plugin.disable') {
           const id = str(args.id);
           if (!id) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
-          return { ok: true, value: await service.disable(id) };
+          return { ok: true, value: await (host?.disable(id) ?? (await ensureFallbackPluginService()).disable(id)) };
         }
         if (op === 'plugin.remove') {
           const id = str(args.id);
           if (!id) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
-          await service.remove(id);
+          if (host) await host.remove(id);
+          else await (await ensureFallbackPluginService()).remove(id);
           return { ok: true, value: { ok: true } };
         }
         if (op === 'plugin.reload') {
           const id = str(args.id);
           if (!id) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
-          return { ok: true, value: await service.reload(id) };
+          return { ok: true, value: await (host?.reload(id) ?? (await ensureFallbackPluginService()).reload(id)) };
+        }
+        if (op === 'plugin.search') {
+          const query = str(args.query) ?? '';
+          return { ok: true, value: await (host?.search(query) ?? (await ensureFallbackPluginService()).searchCatalog(query)) };
+        }
+        if (op === 'plugin.outdated') {
+          return { ok: true, value: await (host?.outdated() ?? (await ensureFallbackPluginService()).checkUpdates()) };
+        }
+        if (op === 'plugin.update') {
+          const id = str(args.id);
+          if (!id) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
+          return { ok: true, value: await (host?.update(id) ?? (await ensureFallbackPluginService()).applyUpdate(id)) };
         }
         if (op === 'marketplace.list') {
-          return { ok: true, value: service.listMarketplaces() };
+          return { ok: true, value: await (host?.listMarketplaces() ?? (await ensureFallbackPluginService()).listMarketplaces()) };
         }
         if (op === 'marketplace.add') {
           const url = str(args.url);
           if (!url) return { ok: false, code: 'BAD_ARGS', message: 'url required' };
-          return { ok: true, value: await service.addMarketplace(url) };
+          return { ok: true, value: await (host?.addMarketplace(url) ?? (await ensureFallbackPluginService()).addMarketplace(url)) };
         }
       } catch (error) {
         return {
@@ -599,7 +635,7 @@ export async function dispatchOp(
           message: error instanceof Error ? error.message : String(error)
         };
       }
-      return { ok: false, code: 'BAD_OP', message: `unhandled op: ${op}` };
+      return { ok: false, code: 'BAD_ARGS', message: `unknown plugin op ${op}` };
     }
     default:
       return { ok: false, code: 'BAD_OP', message: `unhandled op: ${op}` };

@@ -25,8 +25,7 @@ export function isWorkRowExpandable(row: TimelineViewWorkRow): boolean {
     case 'image-view':
       return true;
     case 'question':
-      return row.lifecycle === 'answered' || row.lifecycle === 'resolving'
-        || row.lifecycle === 'pending';
+      return row.lifecycle === 'answered' || row.lifecycle === 'resolving';
     case 'command':
     case 'tool':
       return !hasTimelineExplorationIntent(row);

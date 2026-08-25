@@ -21,7 +21,11 @@ export function rankSuggestions(
           : item.kind === 'project'
             ? item.name
             : item.name;
-      const extra = item.kind === 'command' ? item.description : '';
+      const extra = item.kind === 'command'
+        ? item.description
+        : item.kind === 'thread'
+          ? (item.projectName ?? '')
+          : '';
       const primaryScore = fuzzyScore(primary, q);
       const extraScore = extra ? fuzzyScore(extra, q) : null;
       const score = Math.max(primaryScore?.score ?? -1, extraScore?.score ?? -1);
@@ -44,7 +48,12 @@ export function mentionOrder(items: readonly TypeaheadSuggestion[]): TypeaheadSu
 
 export function buildMentionSuggestions(input: {
   paths: ReadonlyArray<{ path: string; name: string; entryKind: PathEntryKind }>;
-  threads: ReadonlyArray<{ id: string; projectId: string; title: string | null }>;
+  threads: ReadonlyArray<{
+    id: string;
+    projectId: string;
+    title: string | null;
+    projectName?: string | null;
+  }>;
   projects: ReadonlyArray<{ id: string; name: string }>;
   query: string;
 }): TypeaheadSuggestion[] {
@@ -53,7 +62,8 @@ export function buildMentionSuggestions(input: {
       kind: 'thread' as const,
       threadId: thread.id,
       projectId: thread.projectId,
-      title: thread.title?.trim() || 'Untitled thread'
+      title: thread.title?.trim() || 'Untitled thread',
+      projectName: thread.projectName?.trim() || null
     })),
     input.query,
     4

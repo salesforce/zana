@@ -100,14 +100,14 @@ export const FEATURES: FeatureDetail[] = [
   },
   {
     slug: 'extensions',
-    title: 'Extensions & marketplace',
+    title: 'Plugins & marketplace',
     tagline: 'Extend the app, or install from the marketplace.',
     body:
-      'Add new features — a sidebar panel, a per-project tab, command-palette commands, even personas and teams — without editing core. Install from the marketplace in a click, or build your own with the SDK.',
+      'Add new features — a sidebar panel, a per-project tab, skills, MCP servers — without editing core. Install from the marketplace in a click, or build your own with the plugin SDK.',
     points: [
-      'Install extensions from the marketplace',
-      'Add panels, tabs, commands, personas & teams',
-      'Build your own with a documented SDK'
+      'Install plugins from official or community catalogs',
+      'Add panels, tabs, skills, and MCP servers',
+      'Build your own with @zana-ai/zcc-plugin-sdk'
     ],
     docs: 'extensions-authoring'
   }

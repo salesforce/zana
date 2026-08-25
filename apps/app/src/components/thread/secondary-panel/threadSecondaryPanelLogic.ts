@@ -1,3 +1,4 @@
+import { copyText } from '../../../lib/copy-text.js';
 import {
   activateClosableTab,
   addClosableTab,
@@ -14,6 +15,8 @@ import {
   type ThreadSecondaryPanelState
 } from './threadSecondaryPanelState.js';
 
+export { copyText };
+
 export function environmentLabel(isWorktree: boolean, environmentName?: string | null): string {
   const named = environmentName?.trim();
   if (named) return named;
@@ -25,10 +28,6 @@ export function environmentNameFromList(
   environmentId: string
 ): string | null {
   return environments.find((environment) => environment.id === environmentId)?.name ?? null;
-}
-
-export async function copyText(text: string): Promise<void> {
-  await globalThis.navigator?.clipboard?.writeText(text);
 }
 
 export function normalizeBrowserUrl(next: string): string {

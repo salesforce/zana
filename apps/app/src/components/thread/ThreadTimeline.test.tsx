@@ -7,6 +7,7 @@ import {
   shouldShowThreadStop,
   threadStatusLabel,
   threadStatusToAgentState,
+  timelineRowsAwaitUser,
   visiblePendingTodos,
   workRowBody
 } from './thread-timeline-model.js';
@@ -41,6 +42,7 @@ describe('thread timeline model', () => {
     expect(threadStatusToAgentState('stopping')).toBe('working');
     expect(threadStatusToAgentState('idle')).toBe('idle');
     expect(threadStatusToAgentState('error')).toBe('blocked');
+    expect(threadStatusToAgentState('active', true)).toBe('blocked');
   });
 
   it('titles status badges with a readable label', () => {
@@ -50,6 +52,56 @@ describe('thread timeline model', () => {
     expect(threadStatusLabel('idle')).toBe('Idle');
     expect(threadStatusLabel('error')).toBe('Error');
     expect(threadStatusLabel('')).toBe('');
+    expect(threadStatusLabel('active', true)).toBe('Needs you');
+  });
+
+  it('treats pending questions and approvals as waiting on the user', () => {
+    const question: TimelineRow = {
+      ...base,
+      id: 'q1',
+      kind: 'work',
+      workKind: 'question',
+      status: 'pending',
+      interactionId: 'pi_1',
+      lifecycle: 'pending',
+      questions: [{
+        id: 'q',
+        prompt: 'Continue?',
+        multiSelect: false,
+        allowFreeText: true
+      }],
+      answers: null,
+      statusReason: null
+    };
+    expect(timelineRowsAwaitUser([question])).toBe(true);
+    expect(timelineRowsAwaitUser([{
+      ...question,
+      id: 'q-done',
+      status: 'completed',
+      lifecycle: 'answered',
+      answers: { q: { selected: ['yes'] } }
+    }])).toBe(false);
+    expect(timelineRowsAwaitUser([{
+      ...base,
+      id: 'turn-wrap',
+      kind: 'turn',
+      turnId: 'turn-1',
+      status: 'pending',
+      summaryCount: 1,
+      completedAt: null,
+      children: [question]
+    }])).toBe(true);
+    expect(timelineRowsAwaitUser([{
+      ...base,
+      id: 'a1',
+      kind: 'work',
+      workKind: 'approval',
+      status: 'pending',
+      interactionId: 'pi_2',
+      approvalKind: 'file-edit',
+      lifecycle: 'waiting',
+      target: { itemId: 'item', toolName: 'Edit' }
+    }])).toBe(true);
   });
 
   it('hides todos when every item is completed', () => {
@@ -288,6 +340,39 @@ describe('ThreadTimeline', () => {
     );
     expect(html).toContain('data-testid="thread-work-row"');
     expect(html).toContain('Working…');
+    expect(renderToStaticMarkup(
+      <ThreadTimeline
+        rows={[command('c-a', 'ls'), command('c-b', 'pwd')]}
+        status="active"
+        thinking={null}
+        todos={null}
+        waitingOnUser
+      />
+    )).not.toContain('Working…');
+    expect(renderToStaticMarkup(
+      <ThreadTimeline
+        rows={[{
+          ...base,
+          id: 'q1',
+          kind: 'work',
+          workKind: 'question',
+          status: 'pending',
+          interactionId: 'pi_1',
+          lifecycle: 'pending',
+          questions: [{
+            id: 'q',
+            prompt: 'Continue?',
+            multiSelect: false,
+            allowFreeText: true
+          }],
+          answers: null,
+          statusReason: null
+        }]}
+        status="active"
+        thinking={null}
+        todos={null}
+      />
+    )).not.toContain('Working…');
   });
 
   it('renders goal, context, unread divider, and load-older', () => {

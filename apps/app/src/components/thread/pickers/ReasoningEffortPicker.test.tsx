@@ -69,10 +69,17 @@ describe('nextComposerReasoningLevel', () => {
       'max'
     )).toBe('low');
   });
+
+  it('wraps from X-High to None when thinking-off is offered', () => {
+    expect(nextComposerReasoningLevel(
+      ['none', 'low', 'medium', 'high', 'xhigh', 'ultracode', 'max'],
+      'xhigh'
+    )).toBe('none');
+  });
 });
 
 describe('ReasoningEffortPicker', () => {
-  it('renders a compact thinking trigger without the effort word on the button', () => {
+  it('renders the thinking effort value next to the trigger icons', () => {
     const html = renderToStaticMarkup(
       <ReasoningEffortPicker
         value="low"
@@ -84,7 +91,8 @@ describe('ReasoningEffortPicker', () => {
     expect(html).toContain('aria-label="Thinking: Low"');
     expect(html).toContain('title="Thinking: Low"');
     expect(html).toContain('reasoning-effort-bars');
-    expect(html).not.toContain('Low</span>');
+    expect(html).toContain('reasoning-effort-picker-label');
+    expect(html).toContain('Low</span>');
   });
 
   it('increments thinking on click instead of opening the menu', () => {
@@ -107,6 +115,7 @@ describe('ReasoningEffortPicker', () => {
       />
     );
     expect(html).toContain('aria-label="Thinking: X-High"');
+    expect(html).toContain('X-High</span>');
     expect(html).not.toContain('data-testid="reasoning-effort-ultracode"');
     expect(html).not.toContain('data-testid="reasoning-effort-max"');
   });

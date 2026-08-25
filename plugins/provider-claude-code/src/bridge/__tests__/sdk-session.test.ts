@@ -306,6 +306,28 @@ describe("SdkSession", () => {
     );
   });
 
+  it("omits effortLevel when live settings drop to none", async () => {
+    keepSdkStreamOpen();
+    const session = new SdkSession(defaultOptions, vi.fn(), vi.fn());
+    session.start();
+
+    await session.applyMutableSettings({
+      effort: undefined,
+      settings: {
+        autoMemoryEnabled: true,
+        enableWorkflows: false,
+        ultracode: false,
+      },
+    });
+
+    expect(mockQueryInstance.applyFlagSettings).toHaveBeenCalledWith({
+      autoMemoryEnabled: true,
+      enableWorkflows: false,
+      ultracode: false,
+    });
+    session.stop();
+  });
+
   it("forwards an explicit Claude Code executable path to the SDK", () => {
     const onMessage = vi.fn();
     const onDone = vi.fn();

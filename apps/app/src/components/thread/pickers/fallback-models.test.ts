@@ -12,6 +12,15 @@ describe('fallback thread catalogs', () => {
       'Sonnet 5'
     ]);
     expect(models.find((row) => row.isDefault)?.model).toBe('claude-opus-5[1m]');
+    expect(models[0]?.supportedReasoningEfforts.map((effort) => effort.reasoningEffort)).toEqual([
+      'none',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'ultracode',
+      'max'
+    ]);
     expect(fallbackProviderOption('claude-code').displayName).toBe('Claude Code');
     expect(fallbackProviderOption('claude-code').composerActions).toEqual(['plan']);
     expect(fallbackProviderOption('codex').composerActions).toEqual(['plan', 'goal']);

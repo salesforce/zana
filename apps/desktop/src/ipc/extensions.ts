@@ -14,7 +14,7 @@ import { applyRelease, listMarketplace, maybeCheckRemoteUpdates, resolveMarketpl
 import { grantConsent, pruneConsentedPermission, revokeConsent } from '../extensions/consent.js';
 import { addExtensionPermission, clearGit, clearLocal, extensionDir, getGitRecord, getLocalRecord, markGit, readRendererEntry, removeExtensionPermission, setExtensionEnabled } from '../extensions/discovery.js';
 import { cloneProject } from '@zana-ai/zcc-server/services/projects/git-clone';
-import { prepareShareDir, readWorkingDirId } from '@zana-ai/zcc-server/services/extensions/local-extension';
+import { prepareShareDir, readWorkingDirId, isZccPluginWorkingDir } from '@zana-ai/zcc-server/services/extensions/local-extension';
 import { ensureMcpConfigForProject, rebuildExtensionServers } from '@zana-ai/zcc-host-daemon/mcp-config';
 import { applyPluginAgentCapabilities } from '@zana-ai/zcc-server/services/extensions/plugin-agent-sync';
 import { redeployBundledSkills, removeSkillsForExtension, syncExtensionSkills } from '@zana-ai/zcc-server/services/skills/skill-installer';
@@ -258,6 +258,18 @@ export function registerExtensionsIpc(): void {
         if (pick.canceled || !pick.filePaths[0]) {
           return { ok: false, code: 'CANCELED', message: 'Install canceled' };
         }
+        if (isZccPluginWorkingDir(pick.filePaths[0])) {
+          if (!ctx.runtimeSupervisor) {
+            return { ok: false, code: 'UNAVAILABLE', message: 'plugin host is unavailable' };
+          }
+          const row = await ctx.runtimeSupervisor.installPlugin(pick.filePaths[0]);
+          const id =
+            row && typeof row === 'object' && 'id' in row ? String((row as { id: unknown }).id) : '';
+          if (!id) {
+            return { ok: false, code: 'INSTALL_FAILED', message: 'plugin install did not return an id' };
+          }
+          return { ok: true, value: { id } };
+        }
         res = await installFromDir(pick.filePaths[0], installOpts);
       } else if (source.kind === 'localArchive') {
         if (!win) return { ok: false, code: 'NO_WINDOW', message: 'No window to host the picker' };
@@ -335,6 +347,20 @@ export function registerExtensionsIpc(): void {
         } else {
           res = await installFromBundled(source.id, installOpts);
         }
+      } else if (source.kind === 'npm') {
+        const spec = source.spec.trim();
+        if (!spec) return { ok: false, code: 'BAD_SOURCE', message: 'npm spec is required' };
+        if (!ctx.runtimeSupervisor) {
+          return { ok: false, code: 'UNAVAILABLE', message: 'plugin host is unavailable' };
+        }
+        const installSpec = spec.startsWith('npm:') ? spec : `npm:${spec}`;
+        const row = await ctx.runtimeSupervisor.installPlugin(installSpec);
+        const id =
+          row && typeof row === 'object' && 'id' in row ? String((row as { id: unknown }).id) : '';
+        if (!id) {
+          return { ok: false, code: 'INSTALL_FAILED', message: 'plugin install did not return an id' };
+        }
+        return { ok: true, value: { id } };
       } else {
         return { ok: false, code: 'BAD_SOURCE', message: 'Unknown install source' };
       }

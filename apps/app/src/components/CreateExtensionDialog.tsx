@@ -30,21 +30,21 @@ type ExtKind = 'panel' | 'main-panel' | 'mcp-consumer' | 'agent-preset';
 
 /** The kind picker options, along the trust ladder. */
 const KINDS: Array<{ id: ExtKind; label: string; hint: string }> = [
-  { id: 'panel', label: 'Panel', hint: 'Renderer-only UI. No permissions.' },
+  { id: 'panel', label: 'Panel', hint: 'App-only UI slot. No server factory.' },
   {
     id: 'main-panel',
     label: 'Panel + backend',
-    hint: 'Runs a tool (git). Requests exec — you’ll approve it.'
+    hint: 'Server factory plus a panel. Runs in-process after install.'
   },
   {
     id: 'mcp-consumer',
     label: 'MCP consumer',
-    hint: 'Talks to an integration server. Requests mcp — you’ll approve it.'
+    hint: 'Declares zcc.mcpServers for a Claude CLI integration.'
   },
   {
     id: 'agent-preset',
     label: 'Agent preset',
-    hint: 'A reusable Quick Agent preset. No permissions.'
+    hint: 'Skills and agent instructions. No panel.'
   }
 ];
 
@@ -123,16 +123,16 @@ export function CreateExtensionDialog({ onClose }: Props) {
         onMouseDown={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label="Create a new extension"
+        aria-label="Create a new plugin"
       >
         <div className="launch-panel">
           <div className="launch-header">
             <h3>
               <Puzzle size={16} style={{ verticalAlign: '-2px', marginRight: 6 }} />
-              Create an extension
+              Create a plugin
             </h3>
             <p>
-              Build your own extension in the app. We’ll scaffold a starter panel and open an
+              Build your own plugin in the app. We’ll scaffold a package.json zcc starter and open an
               AI agent to build it with you — no publishing required.
             </p>
           </div>

@@ -9,7 +9,7 @@
  *
  * Deliberately small and reusable: this module only validates SHAPE (are the
  * right keys present, are they strings). Byte-level rules (path-escape names,
- * `extension.json` presence, the 16 MiB cap, manifest field types) live in
+ * `package.json` presence, the 16 MiB cap, manifest field types) live in
  * `lib/publish.ts`, which re-runs the engine's exact `decodeArchive` rules
  * over the derived canonical bytes — those rules can't be expressed in zod
  * alone (they depend on base64-decoded content, not just JSON shape).

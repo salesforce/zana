@@ -1,3 +1,4 @@
+import { mentionDisplayLabel } from './mention-label.js';
 import {
   resourceFromSuggestion,
   serializedTextForSuggestion,
@@ -12,17 +13,11 @@ export function mentionAttrsForSuggestion(item: TypeaheadSuggestion): {
   serializedText: string;
 } {
   const serializedText = serializedTextForSuggestion(item);
-  const label = item.kind === 'path'
-    ? item.name
-    : item.kind === 'thread'
-      ? item.title
-      : item.kind === 'project'
-        ? item.name
-        : item.name.replace(/^\//, '');
+  const resource = resourceFromSuggestion(item);
   return {
     id: suggestionKey(item),
-    label,
-    resource: resourceFromSuggestion(item),
+    label: mentionDisplayLabel(resource),
+    resource,
     serializedText
   };
 }

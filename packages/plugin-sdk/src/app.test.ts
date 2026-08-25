@@ -30,6 +30,11 @@ describe('definePluginApp', () => {
     expect(set.homepageSections[0]?.id).toBe('summary');
     expect(set.pendingInteractions[0]?.id).toBe('confirm');
   });
+
+  it('throws when callPluginRpc has no host bridge', async () => {
+    const { callPluginRpc } = await import('./app.js');
+    await expect(callPluginRpc('notes', 'ping')).rejects.toThrow(/plugin host is not available/);
+  });
 });
 
 describe('shimLegacyExtensionManifest', () => {

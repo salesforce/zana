@@ -43,6 +43,9 @@ const ZCC_CLI_SKILL_FILE = join(ZCC_CLI_SKILL_DIR, 'SKILL.md');
 const EXT_CREATOR_SKILL_DIR = join(homedir(), '.claude', 'skills', 'extension-creator');
 const EXT_CREATOR_SKILL_FILE = join(EXT_CREATOR_SKILL_DIR, 'SKILL.md');
 
+const SUBMIT_PLUGIN_SKILL_DIR = join(homedir(), '.claude', 'skills', 'submit-a-plugin');
+const SUBMIT_PLUGIN_SKILL_FILE = join(SUBMIT_PLUGIN_SKILL_DIR, 'SKILL.md');
+
 const HARNESS_AUTHORING_SKILL_DIR = join(homedir(), '.claude', 'skills', 'harness-authoring');
 const HARNESS_AUTHORING_SKILL_FILE = join(HARNESS_AUTHORING_SKILL_DIR, 'SKILL.md');
 
@@ -57,7 +60,9 @@ function resolveShippedPath(fileName: string): string | null {
     process.resourcesPath ? join(process.resourcesPath, fileName) : null,
     join(moduleDir, `../../resources/${fileName}`),
     // Shared chunks emit below out/main/chunks, unlike the main entry.
-    join(moduleDir, `../../../resources/${fileName}`)
+    join(moduleDir, `../../../resources/${fileName}`),
+    // Unit tests import this file from apps/server/src/services/skills.
+    join(moduleDir, `../../../../../resources/${fileName}`)
   ].filter((p): p is string => !!p);
   for (const p of candidates) {
     if (existsSync(p)) return p;
@@ -160,6 +165,18 @@ async function installExtensionCreatorSkill(
   );
 }
 
+async function installSubmitPluginSkill(
+  log?: (context: string, err: unknown) => void
+): Promise<string | null> {
+  return installSkill(
+    'installSubmitPluginSkill',
+    'submit-a-plugin-skill.md',
+    SUBMIT_PLUGIN_SKILL_DIR,
+    SUBMIT_PLUGIN_SKILL_FILE,
+    log
+  );
+}
+
 /** Deploy the bundled `harness-authoring` skill (first-party CLI integrations). */
 async function installHarnessAuthoringSkill(
   log?: (context: string, err: unknown) => void
@@ -189,6 +206,7 @@ const BUNDLED_SKILLS: ReadonlyArray<{
   { name: 'brainstorm', install: installBrainstormSkill },
   { name: 'zcc-cli', install: installZccCliSkill },
   { name: 'extension-creator', install: installExtensionCreatorSkill },
+  { name: 'submit-a-plugin', install: installSubmitPluginSkill },
   { name: 'harness-authoring', install: installHarnessAuthoringSkill }
 ];
 

@@ -20,8 +20,9 @@ export function ThreadListEntry({
   onContextMenu?: (e: MouseEvent) => void;
 }) {
   const navigate = useNavigate();
-  const working = isBusyThreadStatus(thread.status);
-  const state = threadStatusToAgentState(thread.status);
+  const waitingOnUser = Boolean(thread.hasPendingInteraction);
+  const working = isBusyThreadStatus(thread.status) && !waitingOnUser;
+  const state = threadStatusToAgentState(thread.status, waitingOnUser);
   return (
     <button
       type="button"
@@ -45,7 +46,9 @@ export function ThreadListEntry({
         </span>
         <span className="agents-row-meta">
           {projectName && <span className="agents-row-project">{projectName}</span>}
-          {working ? (
+                          {waitingOnUser ? (
+            <span className="agents-row-needs-you">Needs you</span>
+          ) : working ? (
             <span className="thread-list-entry-working is-shimmer" data-testid="thread-list-entry-working">
               Working
             </span>

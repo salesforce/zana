@@ -12,6 +12,7 @@ export interface ThreadComposerProviderOption {
 }
 
 const CLAUDE_REASONING_LEVELS: readonly ReasoningLevel[] = [
+  'none',
   'low',
   'medium',
   'high',

@@ -153,7 +153,7 @@ describe('Sidebar structure and compact accessibility', () => {
 
     const markup = renderSidebar();
     expect(markup).toContain('data-testid="nav-extensions"');
-    expect(markup).toContain('>Extensions<');
+    expect(markup).toContain('>Plugins<');
     expect(markup).toContain('data-testid="nav-library-surface"');
     expect(markup).toContain('>Docs<');
     expect(markup).toContain('data-sortable-nav-id="library-surface"');

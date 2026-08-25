@@ -68,65 +68,89 @@ export function summarizePendingInteractionRequestedPermissions(
   ];
 }
 
-function summarizeCommandActions(actions: PendingInteractionCommandAction[]): string[] {
-  return actions.map((action) => {
-    switch (action.type) {
-      case 'read':
-        return `Read ${action.path}`;
-      case 'listFiles':
-        return action.path ? `List files in ${action.path}` : 'List files';
-      case 'search':
-        return action.query
-          ? `Search for ${action.query}${action.path ? ` in ${action.path}` : ''}`
-          : action.path
-            ? `Search in ${action.path}`
-            : 'Search files';
-      case 'unknown':
-        return action.command;
-      default:
-        return action.command;
-    }
-  });
+export type PendingInteractionDetail = {
+  kind: 'text' | 'code';
+  label: string;
+  value: string;
+};
+
+function normalizeComparable(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
 }
 
-function formatPermissionSummaryLine(
+function permissionDetail(
   label: string,
   permissions: PendingInteractionGrantablePermissionProfile | null
-): string | null {
+): PendingInteractionDetail | null {
   if (permissions === null) return null;
   const summaries = summarizePendingInteractionRequestedPermissions(permissions);
-  return summaries.length > 0 ? `${label}: ${summaries.join(', ')}` : null;
+  return summaries.length > 0 ? { kind: 'text', label, value: summaries.join(', ') } : null;
 }
 
-export function formatPendingInteractionSubjectDetailLines(interaction: PendingInteraction): string[] {
+function summarizeCommandActions(
+  actions: PendingInteractionCommandAction[],
+  command: string
+): PendingInteractionDetail[] {
+  const commandKey = normalizeComparable(command);
+  const details: PendingInteractionDetail[] = [];
+  for (const action of actions) {
+    switch (action.type) {
+      case 'read':
+        details.push({ kind: 'text', label: 'Action', value: `Read ${action.path}` });
+        break;
+      case 'listFiles':
+        details.push({
+          kind: 'text',
+          label: 'Action',
+          value: action.path ? `List files in ${action.path}` : 'List files'
+        });
+        break;
+      case 'search':
+        details.push({
+          kind: 'text',
+          label: 'Action',
+          value: action.query
+            ? `Search for ${action.query}${action.path ? ` in ${action.path}` : ''}`
+            : action.path
+              ? `Search in ${action.path}`
+              : 'Search files'
+        });
+        break;
+      default:
+        if (normalizeComparable(action.command) === commandKey) break;
+        details.push({ kind: 'code', label: 'Action', value: action.command });
+    }
+  }
+  return details;
+}
+
+export function pendingInteractionSubjectDetails(interaction: PendingInteraction): PendingInteractionDetail[] {
   if (interaction.payload.kind === 'plugin') return [];
   if (!isApprovalPendingInteractionPayload(interaction.payload)) {
-    return interaction.payload.questions.map((question) => question.prompt);
+    return interaction.payload.questions.map((question) => ({
+      kind: 'text',
+      label: 'Question',
+      value: question.prompt
+    }));
   }
   switch (interaction.payload.subject.kind) {
     case 'command': {
-      const actionLines = summarizeCommandActions(interaction.payload.subject.actions)
-        .map((action) => `Action: ${action}`);
-      const sessionGrant = formatPermissionSummaryLine(
-        'Session grant',
-        interaction.payload.subject.sessionGrant
-      );
+      const sessionGrant = permissionDetail('Session grant', interaction.payload.subject.sessionGrant);
       return [
-        `Command: ${interaction.payload.subject.command}`,
-        ...(interaction.payload.subject.cwd ? [`Cwd: ${interaction.payload.subject.cwd}`] : []),
-        ...actionLines,
+        { kind: 'code', label: 'Command', value: interaction.payload.subject.command },
+        ...(interaction.payload.subject.cwd
+          ? [{ kind: 'text' as const, label: 'Cwd', value: interaction.payload.subject.cwd }]
+          : []),
+        ...summarizeCommandActions(interaction.payload.subject.actions, interaction.payload.subject.command),
         ...(sessionGrant ? [sessionGrant] : [])
       ];
     }
     case 'file_change': {
-      const sessionGrant = formatPermissionSummaryLine(
-        'Session grant',
-        interaction.payload.subject.sessionGrant
-      );
+      const sessionGrant = permissionDetail('Session grant', interaction.payload.subject.sessionGrant);
       return [
-        `Item: ${interaction.payload.subject.itemId}`,
+        { kind: 'text', label: 'Item', value: interaction.payload.subject.itemId },
         ...(interaction.payload.subject.writeScope
-          ? [`Write root: ${interaction.payload.subject.writeScope}`]
+          ? [{ kind: 'text' as const, label: 'Write root', value: interaction.payload.subject.writeScope }]
           : []),
         ...(sessionGrant ? [sessionGrant] : [])
       ];
@@ -137,18 +161,35 @@ export function formatPendingInteractionSubjectDetailLines(interaction: PendingI
       );
       return [
         ...(interaction.payload.subject.toolName
-          ? [`Tool: ${interaction.payload.subject.toolName}`]
+          ? [{ kind: 'text' as const, label: 'Tool', value: interaction.payload.subject.toolName }]
           : []),
-        ...permissions.map((permission) => `Permission: ${permission}`)
+        ...permissions.map((permission) => ({ kind: 'text' as const, label: 'Permission', value: permission }))
       ];
     }
     case 'plan':
       return interaction.payload.subject.planFilePath
-        ? [`Plan file: ${interaction.payload.subject.planFilePath}`]
+        ? [{ kind: 'text', label: 'Plan file', value: interaction.payload.subject.planFilePath }]
         : [];
     default:
       return [];
   }
+}
+
+export function formatPendingInteractionSubjectDetailLines(interaction: PendingInteraction): string[] {
+  if (interaction.payload.kind !== 'plugin' && !isApprovalPendingInteractionPayload(interaction.payload)) {
+    return interaction.payload.questions.map((question) => question.prompt);
+  }
+  return pendingInteractionSubjectDetails(interaction).map((detail) => `${detail.label}: ${detail.value}`);
+}
+
+export function shouldShowPendingInteractionReason(
+  reason: string | null | undefined,
+  details: readonly PendingInteractionDetail[]
+): boolean {
+  const trimmed = reason?.trim() ?? '';
+  if (!trimmed) return false;
+  const reasonKey = normalizeComparable(trimmed);
+  return !details.some((detail) => normalizeComparable(detail.value) === reasonKey);
 }
 
 function toGrantedPermissions(
@@ -193,5 +234,18 @@ export function approvalDecisionLabel(decision: PendingInteractionApprovalDecisi
       return 'Allow for session';
     case 'deny':
       return 'Deny';
+  }
+}
+
+export function approvalDecisionTone(
+  decision: PendingInteractionApprovalDecision
+): 'primary' | 'secondary' | 'ghost' {
+  switch (decision) {
+    case 'allow_once':
+      return 'primary';
+    case 'allow_for_session':
+      return 'secondary';
+    case 'deny':
+      return 'ghost';
   }
 }

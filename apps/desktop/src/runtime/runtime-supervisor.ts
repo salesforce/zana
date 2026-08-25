@@ -55,6 +55,19 @@ export interface RuntimeSupervisor {
   ): () => void;
   listPluginApps(): Promise<RuntimePluginApp[]>;
   onPluginAppsChanged(listener: (apps: RuntimePluginApp[]) => void): () => void;
+  installPlugin(source: string): Promise<unknown>;
+  enablePlugin(id: string): Promise<unknown>;
+  disablePlugin(id: string): Promise<unknown>;
+  removePlugin(id: string): Promise<unknown>;
+  reloadPlugin(id: string): Promise<unknown>;
+  searchPlugins(query: string): Promise<unknown>;
+  outdatedPlugins(): Promise<unknown>;
+  updatePlugin(id: string): Promise<unknown>;
+  listMarketplaces(): Promise<unknown>;
+  addMarketplace(url: string): Promise<unknown>;
+  callPluginRpc(pluginId: string, method: string, args?: unknown): Promise<unknown>;
+  getPluginSettings(pluginId: string): Promise<unknown>;
+  setPluginSettings(pluginId: string, values: Record<string, string | boolean | null>): Promise<unknown>;
   close(): Promise<void>;
 }
 
@@ -157,6 +170,19 @@ export async function startRuntimeSupervisor(options: StartRuntimeSupervisorOpti
     onPluginCapabilitiesChanged: () => () => {},
     listPluginApps: async () => [],
     onPluginAppsChanged: () => () => {},
+    installPlugin: async () => { throw new Error('plugin host is unavailable'); },
+    enablePlugin: async () => { throw new Error('plugin host is unavailable'); },
+    disablePlugin: async () => { throw new Error('plugin host is unavailable'); },
+    removePlugin: async () => { throw new Error('plugin host is unavailable'); },
+    reloadPlugin: async () => { throw new Error('plugin host is unavailable'); },
+    searchPlugins: async () => [],
+    outdatedPlugins: async () => [],
+    updatePlugin: async () => { throw new Error('plugin host is unavailable'); },
+    listMarketplaces: async () => [],
+    addMarketplace: async () => { throw new Error('plugin host is unavailable'); },
+    callPluginRpc: async () => { throw new Error('plugin host is unavailable'); },
+    getPluginSettings: async () => ({ descriptors: {}, values: {} }),
+    setPluginSettings: async () => { throw new Error('plugin host is unavailable'); },
     async close(): Promise<void> {
       if (hostConnectionRenewal) clearInterval(hostConnectionRenewal);
       await Promise.allSettled([renderer.close(), host.close()]);
@@ -188,6 +214,19 @@ interface UtilityRuntime {
   request(operation: 'terminal-record', event: TerminalHostEvent): Promise<unknown>;
   request(operation: 'terminal-events-since', sessionId: string, afterSequence?: number): Promise<unknown>;
   request(operation: 'plugins-snapshot'): Promise<unknown>;
+  request(operation: 'plugins-install', source: string): Promise<unknown>;
+  request(operation: 'plugins-enable', pluginId: string): Promise<unknown>;
+  request(operation: 'plugins-disable', pluginId: string): Promise<unknown>;
+  request(operation: 'plugins-remove', pluginId: string): Promise<unknown>;
+  request(operation: 'plugins-reload', pluginId: string): Promise<unknown>;
+  request(operation: 'plugins-search', query: string): Promise<unknown>;
+  request(operation: 'plugins-outdated'): Promise<unknown>;
+  request(operation: 'plugins-update', pluginId: string): Promise<unknown>;
+  request(operation: 'plugins-call-rpc', pluginId: string, method: string, args?: unknown): Promise<unknown>;
+  request(operation: 'plugins-settings-get', pluginId: string): Promise<unknown>;
+  request(operation: 'plugins-settings-set', pluginId: string, values: Record<string, string | boolean | null>): Promise<unknown>;
+  request(operation: 'marketplace-list'): Promise<unknown>;
+  request(operation: 'marketplace-add', url: string): Promise<unknown>;
   stop(): Promise<void>;
 }
 
@@ -426,6 +465,19 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
       pluginAppsListeners.add(listener);
       return () => pluginAppsListeners.delete(listener);
     },
+    installPlugin: (source) => server.request('plugins-install', source),
+    enablePlugin: (id) => server.request('plugins-enable', id),
+    disablePlugin: (id) => server.request('plugins-disable', id),
+    removePlugin: (id) => server.request('plugins-remove', id),
+    reloadPlugin: (id) => server.request('plugins-reload', id),
+    searchPlugins: (query) => server.request('plugins-search', query),
+    outdatedPlugins: () => server.request('plugins-outdated'),
+    updatePlugin: (id) => server.request('plugins-update', id),
+    listMarketplaces: () => server.request('marketplace-list'),
+    addMarketplace: (url) => server.request('marketplace-add', url),
+    callPluginRpc: (pluginId, method, args) => server.request('plugins-call-rpc', pluginId, method, args),
+    getPluginSettings: (pluginId) => server.request('plugins-settings-get', pluginId),
+    setPluginSettings: (pluginId, values) => server.request('plugins-settings-set', pluginId, values),
     async close(): Promise<void> {
       await Promise.allSettled([server.stop(), hostRuntime.stop()]);
     }
@@ -465,8 +517,8 @@ function createUtilityRuntime(runtime: { child: UtilityChild; url: string }): Ut
   return {
     ...runtime,
     request(
-      operation: 'app-version' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot',
-       ...args: [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | []
+      operation: 'app-version' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-call-rpc' | 'plugins-settings-get' | 'plugins-settings-set' | 'marketplace-list' | 'marketplace-add',
+       ...args: [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, Record<string, string | boolean | null>] | []
     ) {
       const id = randomUUID();
       return new Promise<unknown>((resolveResult, rejectResult) => {
@@ -495,7 +547,13 @@ function createUtilityRuntime(runtime: { child: UtilityChild; url: string }): Ut
           ...(operation === 'project-settings-set' ? {
             projectId: args[0] as string,
             patch: args[1] as RuntimeProjectSettings
-          } : {})
+          } : {}),
+          ...(operation === 'plugins-install' ? { source: args[0] as string } : {}),
+          ...(operation === 'plugins-enable' || operation === 'plugins-disable' || operation === 'plugins-remove' || operation === 'plugins-reload' || operation === 'plugins-update' || operation === 'plugins-settings-get' ? { pluginId: args[0] as string } : {}),
+          ...(operation === 'plugins-search' ? { query: args[0] as string } : {}),
+          ...(operation === 'plugins-call-rpc' ? { pluginId: args[0] as string, method: args[1] as string, args: args[2] } : {}),
+          ...(operation === 'plugins-settings-set' ? { pluginId: args[0] as string, values: args[1] as Record<string, string | boolean | null> } : {}),
+          ...(operation === 'marketplace-add' ? { url: args[0] as string } : {})
         });
       });
     },

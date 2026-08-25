@@ -3,6 +3,7 @@ import {
   LOW_REASONING_EFFORT,
   MAX_REASONING_EFFORT,
   MEDIUM_REASONING_EFFORT,
+  NONE_REASONING_EFFORT,
   ULTRACODE_REASONING_EFFORT,
   XHIGH_REASONING_EFFORT,
   type AvailableModel,
@@ -21,6 +22,7 @@ const OPUS_4_7_REASONING_EFFORTS: readonly ModelReasoningEffort[] =
   CLAUDE_XHIGH_CAPABLE_REASONING_EFFORTS;
 
 const OPUS_4_6_REASONING_EFFORTS: readonly ModelReasoningEffort[] = [
+  NONE_REASONING_EFFORT,
   LOW_REASONING_EFFORT,
   MEDIUM_REASONING_EFFORT,
   HIGH_REASONING_EFFORT,
@@ -28,6 +30,7 @@ const OPUS_4_6_REASONING_EFFORTS: readonly ModelReasoningEffort[] = [
 ];
 
 const SONNET_REASONING_EFFORTS: readonly ModelReasoningEffort[] = [
+  NONE_REASONING_EFFORT,
   LOW_REASONING_EFFORT,
   MEDIUM_REASONING_EFFORT,
   HIGH_REASONING_EFFORT,
@@ -35,6 +38,7 @@ const SONNET_REASONING_EFFORTS: readonly ModelReasoningEffort[] = [
 ];
 
 const HAIKU_REASONING_EFFORTS: readonly ModelReasoningEffort[] = [
+  NONE_REASONING_EFFORT,
   LOW_REASONING_EFFORT,
 ];
 
@@ -185,8 +189,9 @@ function buildCatalogModel(entry: ClaudeCodeCatalogEntry): AvailableModel {
 }
 
 function buildDiscoveredModel(modelInfo: ModelInfo): AvailableModel {
-  const supportedReasoningEfforts = cloneReasoningEfforts(
-    modelInfo.supportedEffortLevels?.length
+  const supportedReasoningEfforts = cloneReasoningEfforts([
+    NONE_REASONING_EFFORT,
+    ...(modelInfo.supportedEffortLevels?.length
       ? modelInfo.supportedEffortLevels.flatMap((level) => {
           switch (level) {
             case "low":
@@ -199,10 +204,12 @@ function buildDiscoveredModel(modelInfo: ModelInfo): AvailableModel {
               return [XHIGH_REASONING_EFFORT, ULTRACODE_REASONING_EFFORT];
             case "max":
               return [MAX_REASONING_EFFORT];
+            default:
+              return [];
           }
         })
-      : [LOW_REASONING_EFFORT],
-  );
+      : [LOW_REASONING_EFFORT]),
+  ]);
   const supportedLevels = supportedReasoningEfforts.map(
     (effort) => effort.reasoningEffort,
   );
@@ -210,7 +217,11 @@ function buildDiscoveredModel(modelInfo: ModelInfo): AvailableModel {
     ? "high"
     : supportedLevels.includes("medium")
       ? "medium"
-      : (supportedLevels[0] ?? "low");
+      : supportedLevels.includes("low")
+        ? "low"
+        : (supportedLevels.find((level) => level !== "none") ??
+          supportedLevels[0] ??
+          "low");
   const model = modelInfo.resolvedModel ?? modelInfo.value;
   return {
     id: model,

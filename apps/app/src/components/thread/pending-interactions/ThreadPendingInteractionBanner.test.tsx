@@ -59,11 +59,14 @@ describe('ThreadPendingInteractionBanner', () => {
       </MemoryRouter>
     );
     expect(html).toContain('Waiting for approval');
-    expect(html).toContain('git push');
+    expect(html).toContain('$ git push');
+    expect(html).toContain('thread-pending-banner-code');
     expect(html).toContain('Allow once');
     expect(html).toContain('Allow for session');
     expect(html).toContain('Deny');
     expect(html).toContain('thread-pending-decision-deny');
+    expect(html).toContain('is-primary');
+    expect(html).toContain('is-ghost');
   });
 
   it('renders a source-thread link and a question form', () => {
@@ -90,9 +93,78 @@ describe('ThreadPendingInteractionBanner', () => {
       </MemoryRouter>
     );
     expect(html).toContain('From child thread: Child work');
+    expect(html).toContain('Waiting for an answer');
     expect(html).toContain('Continue?');
+    expect(html).toContain('Other…');
     expect(html).toContain('thread-pending-question-submit');
+    expect(html).not.toContain('thread-pending-question-input');
+  });
+
+  it('shows one question at a time for a multi-question ask', () => {
+    const question: PendingInteraction = {
+      ...commandInteraction(),
+      payload: {
+        kind: 'user_question',
+        questions: [
+          {
+            id: 'q1',
+            prompt: 'What should the report be about?',
+            shortLabel: 'Topic',
+            multiSelect: false,
+            allowFreeText: false,
+            options: [
+              { value: 'workspace', label: 'This workspace/codebase', description: 'Use the current project' },
+              { value: 'else', label: 'Something else' }
+            ]
+          },
+          {
+            id: 'q2',
+            prompt: 'What format do you want the report in?',
+            shortLabel: 'Format',
+            multiSelect: false,
+            allowFreeText: true,
+            options: []
+          }
+        ]
+      }
+    };
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ThreadPendingInteractionBanner interaction={question} threadId="thr-1" />
+      </MemoryRouter>
+    );
+    expect(html).toContain('Waiting for answers to 2 questions');
+    expect(html).toContain('1 of 2');
+    expect(html).toContain('<legend>What should the report be about?</legend>');
+    expect(html).not.toContain('<legend>What format do you want the report in?</legend>');
+    expect(html).toContain('thread-pending-question-next');
+    expect(html).not.toContain('thread-pending-question-submit');
+    expect(html).toContain('This workspace/codebase');
+    expect(html).toContain('Use the current project');
+    expect(html).not.toContain('type="radio"');
+  });
+
+  it('shows a free-text input for an open question', () => {
+    const question: PendingInteraction = {
+      ...commandInteraction(),
+      payload: {
+        kind: 'user_question',
+        questions: [{
+          id: 'q1',
+          prompt: 'Anything else?',
+          multiSelect: false,
+          allowFreeText: true
+        }]
+      }
+    };
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ThreadPendingInteractionBanner interaction={question} threadId="thr-1" />
+      </MemoryRouter>
+    );
     expect(html).toContain('thread-pending-question-input');
+    expect(html).toContain('Type your own answer');
+    expect(html).toContain('thread-pending-question-submit');
   });
 
   it('renders a plugin banner when the slot is missing', () => {
@@ -110,5 +182,37 @@ describe('ThreadPendingInteractionBanner', () => {
     );
     expect(html).toContain('Confirm delete');
     expect(html).toContain('Plugin form is not registered.');
+  });
+
+  it('renders a long command as a code block and omits a duplicate action', () => {
+    const command = 'for d in */ ; do echo "$d"; git -C "$d" status -sb; done';
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ThreadPendingInteractionBanner
+          interaction={{
+            ...commandInteraction(),
+            payload: {
+              kind: 'approval',
+              reason: command,
+              availableDecisions: ['allow_once', 'deny'],
+              subject: {
+                kind: 'command',
+                itemId: 'item-1',
+                command,
+                cwd: '/tmp/proj',
+                actions: [{ type: 'unknown', command }],
+                sessionGrant: null
+              }
+            }
+          }}
+          threadId="thr-1"
+        />
+      </MemoryRouter>
+    );
+    expect(html).toContain('thread-pending-banner-code');
+    expect(html).toContain('$ for d in */ ; do echo');
+    expect(html).toContain('Cwd');
+    expect(html).not.toContain('>Action<');
+    expect(html).not.toContain('thread-pending-banner-reason');
   });
 });

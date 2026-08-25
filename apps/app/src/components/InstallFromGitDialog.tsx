@@ -140,7 +140,7 @@ export function InstallFromGitDialog({ onClose, mode = 'install' }: Props) {
           <div className="launch-header">
             <h3>
               <GitBranch size={16} style={{ verticalAlign: '-2px', marginRight: 6 }} />
-              {isOpen ? 'Open existing extension' : 'Install from repo'}
+              {isOpen ? 'Open existing plugin' : 'Install from repo'}
             </h3>
             <p>
               {isOpen

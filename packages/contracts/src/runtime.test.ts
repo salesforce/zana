@@ -118,4 +118,25 @@ describe('server runtime contract', () => {
       afterSequence: -2
     }).success).toBe(false);
   });
+
+  it('accepts plugin rpc and settings operations', () => {
+    expect(ServerRuntimeInboundSchema.safeParse({
+      ...request,
+      operation: 'plugins-call-rpc',
+      pluginId: 'notes',
+      method: 'ping',
+      args: { n: 1 }
+    }).success).toBe(true);
+    expect(ServerRuntimeInboundSchema.safeParse({
+      ...request,
+      operation: 'plugins-settings-get',
+      pluginId: 'notes'
+    }).success).toBe(true);
+    expect(ServerRuntimeInboundSchema.safeParse({
+      ...request,
+      operation: 'plugins-settings-set',
+      pluginId: 'notes',
+      values: { token: 'secret' }
+    }).success).toBe(true);
+  });
 });

@@ -519,6 +519,9 @@ const api: CcApi = {
   },
   pluginApps: {
     list: () => ipcRenderer.invoke(IPC.pluginApps.list),
+    callRpc: (pluginId, method, args) => ipcRenderer.invoke(IPC.pluginApps.callRpc, pluginId, method, args),
+    getSettings: (pluginId) => ipcRenderer.invoke(IPC.pluginApps.getSettings, pluginId),
+    setSettings: (pluginId, values) => ipcRenderer.invoke(IPC.pluginApps.setSettings, pluginId, values),
     onChanged: (cb) => {
       const handler = (_e: unknown, entries: PluginAppEntry[]) => cb(entries);
       ipcRenderer.on(IPC.pluginApps.onChanged, handler);

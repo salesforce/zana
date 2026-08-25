@@ -152,8 +152,24 @@ export default defineConfig({
         replacement: resolve(__dirname, 'packages/plugin-sdk/src/index.ts')
       },
       {
+        find: /^@zana-ai\/zcc-plugin-sdk\/testing\/app$/,
+        replacement: resolve(__dirname, 'packages/plugin-sdk/src/testing/app.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-plugin-sdk\/testing$/,
+        replacement: resolve(__dirname, 'packages/plugin-sdk/src/testing/index.ts')
+      },
+      {
         find: /^@zana-ai\/zcc-plugin-sdk\/(.*)$/,
         replacement: resolve(__dirname, 'packages/plugin-sdk/src/$1.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-plugin-templates$/,
+        replacement: resolve(__dirname, 'packages/plugin-templates/src/index.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-plugin-build$/,
+        replacement: resolve(__dirname, 'packages/plugin-build/src/index.ts')
       },
       {
         find: /^@zana-ai\/zcc-domain$/,

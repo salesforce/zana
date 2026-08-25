@@ -80,5 +80,37 @@ export function registerPluginsIpc(): void {
     async () => ctx.runtimeSupervisor?.listPluginApps() ?? [],
     () => []
   );
+  ctx.safeHandle(
+    IPC.pluginApps.callRpc,
+    async (pluginId: string, method: string, args?: unknown) => {
+      if (!ctx.runtimeSupervisor) throw new Error('plugin host is unavailable');
+      return ctx.runtimeSupervisor.callPluginRpc(pluginId, method, args);
+    },
+    (err) => {
+      throw err;
+    }
+  );
+  ctx.safeHandle(
+    IPC.pluginApps.getSettings,
+    async (pluginId: string) => {
+      if (!ctx.runtimeSupervisor) return { descriptors: {}, values: {} };
+      return ctx.runtimeSupervisor.getPluginSettings(pluginId);
+    },
+    () => ({ descriptors: {}, values: {} })
+  );
+  ctx.safeHandle(
+    IPC.pluginApps.setSettings,
+    async (pluginId: string, values: Record<string, string | boolean | undefined>) => {
+      if (!ctx.runtimeSupervisor) throw new Error('plugin host is unavailable');
+      const payload: Record<string, string | boolean | null> = {};
+      for (const [key, value] of Object.entries(values)) {
+        payload[key] = value === undefined ? null : value;
+      }
+      return ctx.runtimeSupervisor.setPluginSettings(pluginId, payload);
+    },
+    (err) => {
+      throw err;
+    }
+  );
 }
 

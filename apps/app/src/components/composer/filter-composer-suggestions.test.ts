@@ -58,10 +58,23 @@ describe('buildMentionSuggestions', () => {
     const rows = buildMentionSuggestions({
       query: 'al',
       paths: [{ path: 'src/alpha.ts', name: 'alpha.ts', entryKind: 'file' }],
-      threads: [{ id: 't1', projectId: 'p1', title: 'Alpha review' }],
+      threads: [{ id: 't1', projectId: 'p1', title: 'Alpha review', projectName: 'Zana' }],
       projects: [{ id: 'p1', name: 'Alpha' }, { id: 'p2', name: 'Other' }]
     });
     expect(rows.map((row) => row.kind)).toEqual(['thread', 'project', 'path']);
+    expect(rows[0]).toMatchObject({ kind: 'thread', title: 'Alpha review', projectName: 'Zana' });
+  });
+
+  it('matches a thread by project name when the title does not', () => {
+    const rows = buildMentionSuggestions({
+      query: 'zana',
+      paths: [],
+      threads: [{ id: 't1', projectId: 'p1', title: 'Hello', projectName: 'Zana' }],
+      projects: []
+    });
+    expect(rows).toEqual([
+      { kind: 'thread', threadId: 't1', projectId: 'p1', title: 'Hello', projectName: 'Zana' }
+    ]);
   });
 });
 

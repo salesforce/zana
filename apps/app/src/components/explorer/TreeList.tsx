@@ -1,6 +1,7 @@
 import React from 'react';
 import { ChevronRight, ChevronDown, Folder, FileText } from 'lucide-react';
 import type { FsEntry, GitFileCode } from '@zana-ai/zcc-domain/product';
+import { FS_ENTRY_DRAG_MIME, serializeFsEntryDrag } from '../../lib/fs-entry-drag.js';
 
 interface TreeListProps {
   list: FsEntry[];
@@ -67,6 +68,10 @@ export const TreeList = React.memo(function TreeList({
               draggable
               onDragStart={(e) => {
                 e.dataTransfer.setData('text/plain', entry.path);
+                e.dataTransfer.setData(FS_ENTRY_DRAG_MIME, serializeFsEntryDrag({
+                  path: entry.path,
+                  kind: entry.kind
+                }));
                 e.dataTransfer.effectAllowed = 'copy';
               }}
               title={gitTitle || undefined}

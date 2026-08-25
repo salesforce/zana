@@ -14,7 +14,8 @@ import {
   threadCardShowsProject,
   threadHarnessLabel,
   threadIsLiveForRail,
-  threadRailDetail
+  threadRailDetail,
+  threadRailStatus
 } from './fleet-item.js';
 
 function thread(over: Partial<ThreadListItem> & Pick<ThreadListItem, 'id' | 'status'>): ThreadListItem {
@@ -75,7 +76,10 @@ describe('fleet items', () => {
     expect(rows.some((row) => row.id === 'archived')).toBe(false);
     expect(rows.filter((row) => row.status === 'idle')).toHaveLength(RAIL_IDLE_THREAD_LIMIT);
     expect(threadRailDetail(thread({ id: 't1', status: 'error' }))).toBe('Needs you · Thread');
+    expect(threadRailStatus(thread({ id: 't1', status: 'error' }))).toBe('Needs you');
     expect(threadRailDetail(thread({ id: 't1', status: 'active' }))).toBe('Working · Thread');
+    expect(threadRailDetail(thread({ id: 't1', status: 'active', hasPendingInteraction: true }))).toBe('Needs you · Thread');
+    expect(threadFleetItem(thread({ id: 't1', status: 'active', hasPendingInteraction: true })).state).toBe('blocked');
     expect(threadRailDetail(thread({ id: 't1', status: 'idle' }))).toBe('Idle · Thread');
   });
 

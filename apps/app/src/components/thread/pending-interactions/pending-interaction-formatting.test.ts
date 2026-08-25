@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { PendingInteraction } from '@zana-ai/zcc-domain/thread-runtime';
 import {
   approvalDecisionLabel,
+  approvalDecisionTone,
   buildPendingInteractionApprovalResolution,
   formatPendingInteractionSubjectDetailLines,
+  pendingInteractionSubjectDetails,
+  shouldShowPendingInteractionReason,
   summarizePendingInteractionRequestedPermissions
 } from './pending-interaction-formatting.js';
 
@@ -53,6 +56,42 @@ describe('pending interaction formatting', () => {
       'Action: Read README.md',
       'Session grant: Network access, Read 1 path'
     ]);
+    expect(pendingInteractionSubjectDetails(commandInteraction())).toEqual([
+      { kind: 'code', label: 'Command', value: 'git push' },
+      { kind: 'text', label: 'Cwd', value: '/tmp/proj' },
+      { kind: 'text', label: 'Action', value: 'Read README.md' },
+      { kind: 'text', label: 'Session grant', value: 'Network access, Read 1 path' }
+    ]);
+  });
+
+  it('omits unknown actions that repeat the command and duplicate reasons', () => {
+    const command = 'for d in */ ; do echo "$d"; done';
+    const interaction = {
+      ...commandInteraction(),
+      payload: {
+        kind: 'approval' as const,
+        reason: command,
+        availableDecisions: ['allow_once', 'deny'] as const,
+        subject: {
+          kind: 'command' as const,
+          itemId: 'item-1',
+          command,
+          cwd: null,
+          actions: [
+            { type: 'unknown' as const, command: `  ${command}  ` },
+            { type: 'unknown' as const, command: 'ls' }
+          ],
+          sessionGrant: null
+        }
+      }
+    };
+    expect(pendingInteractionSubjectDetails(interaction)).toEqual([
+      { kind: 'code', label: 'Command', value: command },
+      { kind: 'code', label: 'Action', value: 'ls' }
+    ]);
+    expect(shouldShowPendingInteractionReason(command, pendingInteractionSubjectDetails(interaction))).toBe(false);
+    expect(shouldShowPendingInteractionReason('Needs approval', pendingInteractionSubjectDetails(interaction))).toBe(true);
+    expect(shouldShowPendingInteractionReason('  ', pendingInteractionSubjectDetails(interaction))).toBe(false);
   });
 
   it('builds allow-once without a session grant and deny without permissions', () => {
@@ -76,6 +115,9 @@ describe('pending interaction formatting', () => {
     expect(approvalDecisionLabel('allow_once')).toBe('Allow once');
     expect(approvalDecisionLabel('allow_for_session')).toBe('Allow for session');
     expect(approvalDecisionLabel('deny')).toBe('Deny');
+    expect(approvalDecisionTone('allow_once')).toBe('primary');
+    expect(approvalDecisionTone('allow_for_session')).toBe('secondary');
+    expect(approvalDecisionTone('deny')).toBe('ghost');
   });
 
   it('formats file-change, permission-grant, plan, and question details', () => {
@@ -138,6 +180,19 @@ describe('pending interaction formatting', () => {
         }]
       }
     })).toEqual(['Continue?']);
+    expect(pendingInteractionSubjectDetails({
+      ...base,
+      payload: {
+        kind: 'user_question',
+        questions: [{
+          id: 'q1',
+          prompt: 'Continue?',
+          multiSelect: false,
+          allowFreeText: false,
+          options: [{ value: 'yes', label: 'Yes' }]
+        }]
+      }
+    })).toEqual([{ kind: 'text', label: 'Question', value: 'Continue?' }]);
     expect(formatPendingInteractionSubjectDetailLines({
       ...base,
       origin: { kind: 'plugin', pluginId: 'ask-user', rendererId: 'form' },

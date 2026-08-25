@@ -5,6 +5,7 @@ export type {
   PluginProvides,
   PluginEntry,
   PluginAppEntry,
+  PluginSettingsSnapshot,
   ExtensionEntry,
   ExtensionLoadError,
   ExtensionManifestView,

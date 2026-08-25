@@ -273,7 +273,8 @@ import {
   packLocalExtension,
   prepareShareDir,
   clampLocalKind,
-  readWorkingDirId
+  readWorkingDirId,
+  isZccPluginWorkingDir
 } from '@zana-ai/zcc-server/services/extensions/local-extension';
 import {
   maybeCheckRemoteUpdates,
@@ -2268,19 +2269,28 @@ const packAndInstallLocal = async (
   id: string,
   workingDir: string
 ): Promise<Result<{ id: string }>> => {
+  const packedId = await readWorkingDirId(workingDir);
+  if (packedId !== id) {
+    return {
+      ok: false,
+      code: 'ID_MISMATCH',
+      message: `Working dir id "${packedId ?? '(none)'}" does not match "${id}"`
+    };
+  }
+  if (isZccPluginWorkingDir(workingDir)) {
+    if (!runtimeSupervisor) {
+      return { ok: false, code: 'NO_RUNTIME', message: 'plugin host is unavailable' };
+    }
+    try {
+      await runtimeSupervisor.reloadPlugin(id);
+    } catch {
+      await runtimeSupervisor.installPlugin(workingDir);
+    }
+    return { ok: true, value: { id } };
+  }
   const packed = await packLocalExtension(workingDir);
   if (!packed.ok) return packed;
   try {
-    // Verify the packed snapshot, rather than the mutable source directory, so
-    // an edit racing this operation cannot install bytes under another id.
-    const packedId = await readWorkingDirId(packed.value.stagingDir);
-    if (packedId !== id) {
-      return {
-        ok: false,
-        code: 'ID_MISMATCH',
-        message: `Packed manifest id "${packedId ?? '(none)'}" does not match "${id}"`
-      };
-    }
     const installed = await installFromDir(packed.value.stagingDir, {
       reservedIds: builtinIds,
       log: logMainError
@@ -2342,7 +2352,7 @@ const createLocalExtension = async (
   stampFeedEvent(
     project.id,
     'extension-installed',
-    `Extension created: ${name}`,
+    `Plugin created: ${name}`,
     `extension-installed:${id}`
   );
   return { ok: true, value: { id, workingDir, projectId: project.id } };
@@ -2353,7 +2363,7 @@ const createLocalExtension = async (
 const adoptLocalSource = async (workingDir: string): Promise<Result<CreateLocalExtensionResult>> => {
   const id = await readWorkingDirId(workingDir);
   if (!id) {
-    return { ok: false, code: 'NO_MANIFEST', message: 'Selected folder has no valid extension.json id' };
+    return { ok: false, code: 'NO_MANIFEST', message: 'Selected folder has no valid plugin id' };
   }
   if (builtinIds.has(id)) {
     return { ok: false, code: 'RESERVED_ID', message: `"${id}" is a built-in and cannot be imported` };
@@ -6312,7 +6322,21 @@ async function bootstrapNormal() {
       } catch (err) {
         return { ok: false, code: 'SET_ENABLED_FAILED', message: String(err) };
       }
-    }
+    },
+    pluginHost: runtimeSupervisor
+      ? {
+          install: (source) => runtimeSupervisor!.installPlugin(source),
+          enable: (id) => runtimeSupervisor!.enablePlugin(id),
+          disable: (id) => runtimeSupervisor!.disablePlugin(id),
+          remove: (id) => runtimeSupervisor!.removePlugin(id),
+          reload: (id) => runtimeSupervisor!.reloadPlugin(id),
+          search: (query) => runtimeSupervisor!.searchPlugins(query),
+          outdated: () => runtimeSupervisor!.outdatedPlugins(),
+          update: (id) => runtimeSupervisor!.updatePlugin(id),
+          listMarketplaces: () => runtimeSupervisor!.listMarketplaces(),
+          addMarketplace: (url) => runtimeSupervisor!.addMarketplace(url)
+        }
+      : undefined
   })
     .then((handle) => {
       controlPlane = handle;

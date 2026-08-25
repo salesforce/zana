@@ -7,6 +7,7 @@ import type { PickerOption } from './model-picker-option.js';
 import {
   isComposerHiddenReasoningLevel,
   nextComposerReasoningLevel,
+  REASONING_LABELS,
   reasoningEffortFill,
   thinkingEffortTitle
 } from './reasoning-labels.js';
@@ -106,6 +107,7 @@ export function ReasoningEffortPicker({
     >
       <Brain size={14} aria-hidden="true" />
       <EffortBars filled={reasoningEffortFill(displayLevel)} />
+      <span className="reasoning-effort-picker-label">{REASONING_LABELS[displayLevel]}</span>
     </button>
   );
 

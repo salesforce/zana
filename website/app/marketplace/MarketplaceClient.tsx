@@ -41,16 +41,16 @@ export function MarketplaceClient() {
         <div className="clean-page-hero clean-marketplace-hero">
           <span className="clean-page-kicker">Marketplace</span>
           <h1>
-            Extensions
+            Plugins
             <span className={`feed-pill ${status === 'live' ? 'live' : ''}`}>
               <span className="fdot" />
               {status === 'loading' ? 'connecting…' : status === 'live' ? 'live feed' : 'sample catalog'}
             </span>
           </h1>
           <p>
-            Add new features to the app — panels, tabs, commands, personas, and teams. Install from the same
-            catalog the desktop app reads.
-            {status === 'sample' && ' Connect a live registry feed to list published extensions.'}
+            Add plugins to the app — official bundled plugins install offline; community catalogs
+            list npm/git pointers only. Install from the same catalog the desktop app reads.
+            {status === 'sample' && ' Connect a live registry feed to list published plugins.'}
           </p>
         </div>
 
@@ -58,24 +58,24 @@ export function MarketplaceClient() {
           <div>
             <span className="clean-page-kicker">How installation works</span>
             <h2>Discover here. Install from Zana.</h2>
-            <p>Use this catalog to evaluate extensions. In the desktop app, open <strong>Settings → Extensions → Marketplace</strong> to install a published extension, or choose a local build when you are developing privately.</p>
+            <p>Use this catalog to evaluate plugins. In the desktop app, open <strong>Plugins → Browse</strong> to install, or choose a local build when you are developing privately. Plugins run in-process on the server after a loud full-trust confirm.</p>
           </div>
           <div className="clean-marketplace-actions">
             <Link className="clean-button clean-button-dark" href="/extensions/install/">See install paths <span aria-hidden="true">→</span></Link>
-            <Link className="clean-button" href="/extensions/">Build an extension</Link>
+            <Link className="clean-button" href="/extensions/">Build a plugin</Link>
           </div>
         </div>
 
         <div className="mk-toolbar">
           <input
             className="search-box"
-            aria-label="Search extensions"
-            placeholder="Search extensions…"
+            aria-label="Search plugins"
+            placeholder="Search plugins…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
           <span style={{ color: 'var(--muted-2)', fontSize: 13 }}>
-            {filtered.length} {filtered.length === 1 ? 'extension' : 'extensions'}
+            {filtered.length} {filtered.length === 1 ? 'plugin' : 'plugins'}
           </span>
           <Link href="/dashboard/" className="clean-button clean-button-small clean-marketplace-publish">
             Publish yours
@@ -83,7 +83,7 @@ export function MarketplaceClient() {
         </div>
 
         {filtered.length === 0 ? (
-          <div className="empty">No extensions match “{q}”.</div>
+          <div className="empty">No plugins match “{q}”.</div>
         ) : (
           <div className="mk-grid" data-reveal-stagger>
             {filtered.map((e) => (
@@ -105,7 +105,7 @@ export function MarketplaceClient() {
                   </div>
                 )}
                 <p className="clean-marketplace-install-command">
-                  Install in Zana: <code>Settings → Extensions → Marketplace → {e.id}</code>
+                  Install in Zana: <code>Plugins → Browse → {e.id}</code>
                 </p>
               </div>
             ))}

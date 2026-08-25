@@ -271,7 +271,7 @@ export function AgentsListPane() {
       kind: 'thread',
       thread,
       projectName: nameById.get(thread.projectId) ?? 'Unknown',
-      state: threadStatusToAgentState(thread.status)
+      state: threadStatusToAgentState(thread.status, thread.hasPendingInteraction)
     }));
     return [...agents, ...threadEntries];
   }, [live, visibleThreads, projects]);
@@ -357,6 +357,9 @@ export function AgentsListPane() {
           </span>
           <span className="agents-row-meta">
             <span className="agents-row-project">{r.projectName}</span>
+            {r.state === 'blocked' && !exited ? (
+              <span className="agents-row-needs-you">Needs you</span>
+            ) : null}
             {!exited && <span className="agents-row-duration">{dur}</span>}
             {exited && t.finishedAt && (
               <span className="agents-row-duration" title="Total run time">

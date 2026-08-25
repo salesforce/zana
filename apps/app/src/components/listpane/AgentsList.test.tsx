@@ -63,5 +63,6 @@ describe('AgentsListPane', () => {
     expect(source).not.toContain('agents-legacy-new');
     expect(source).toContain('aria-label="New thread/agent"');
     expect(source).toContain('threadIdFromPath');
+    expect(source).toContain('agents-row-needs-you');
   });
 });

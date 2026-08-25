@@ -322,7 +322,10 @@ export const IPC = {
   /** Server-owned ZCC plugin renderer apps (distinct from Claude plugins). */
   pluginApps: {
     list: 'pluginApps:list',
-    onChanged: 'pluginApps:onChanged'
+    onChanged: 'pluginApps:onChanged',
+    callRpc: 'pluginApps:callRpc',
+    getSettings: 'pluginApps:getSettings',
+    setSettings: 'pluginApps:setSettings'
   },
   /**
    * Runtime extensions under `~/.zcc/extensions/<id>/`. Mirrors the

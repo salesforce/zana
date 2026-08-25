@@ -9,7 +9,7 @@ import {
 } from '@zana-ai/zcc-thread-view';
 import type { ActiveThinking, ThreadTimelineGoal, ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
 import type { TimelineRow } from '@zana-ai/zcc-server-contract';
-import { isBusyThreadStatus } from './thread-timeline-model.js';
+import { isBusyThreadStatus, timelineRowsAwaitUser } from './thread-timeline-model.js';
 import { collectTimelineAutoExpansionRowIds } from './timeline/timeline-auto-expand.js';
 import {
   clearTransientScrollbarScrolling,
@@ -45,6 +45,7 @@ export interface ThreadTimelineProps {
   onTitleLink?: (link: TimelineTitleLink) => void;
   onOpenDiff?: (path: string) => void;
   threadId?: string;
+  waitingOnUser?: boolean;
 }
 
 function flattenForUnread(rows: ThreadTimelineViewRow[]): Array<{ id: string; sourceSeqStart?: number }> {
@@ -81,19 +82,21 @@ export function ThreadTimeline({
   onTitleAction,
   onTitleLink,
   onOpenDiff,
-  threadId
+  threadId,
+  waitingOnUser = false
 }: ThreadTimelineProps) {
   const [now] = useState(() => Date.now());
   const paneRef = useRef<HTMLDivElement>(null);
   const scrollbarIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [pinnedAway, setPinnedAway] = useState(false);
   const viewRows = useMemo(() => buildTimelineViewRows(rows), [rows]);
+  const awaitingUser = waitingOnUser || timelineRowsAwaitUser(rows);
   const expansion = useMemo(
     () => collectTimelineAutoExpansionRowIds({
       rows: viewRows,
-      scopeActive: isBusyThreadStatus(status)
+      scopeActive: isBusyThreadStatus(status) && !awaitingUser
     }),
-    [status, viewRows]
+    [awaitingUser, status, viewRows]
   );
   const unreadRowId = useMemo(
     () => firstUnreadRowId(flattenForUnread(viewRows), lastReadSeq),
@@ -172,7 +175,7 @@ export function ThreadTimeline({
             threadId={threadId}
           />
         )}
-        <ThreadWorkingIndicator status={status} thinking={thinking} />
+        <ThreadWorkingIndicator status={status} thinking={thinking} waitingOnUser={awaitingUser} />
         <ThreadTodoCard todos={todos} />
       </div>
       {pinnedAway ? (

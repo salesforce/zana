@@ -92,7 +92,8 @@ body,
 .inbox-question,
 .scheduler-card,
 .library-viewer,
-.settings-panel {
+.settings-panel,
+.thread-detail-timeline {
   user-select: text;
   -webkit-user-select: text;
 }
@@ -2686,6 +2687,29 @@ body.resizing-col {
   flex: 0 0 auto;
   color: var(--accent-blue);
   align-self: center;
+}
+
+.project-favorite-star {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-dim);
+  cursor: pointer;
+  opacity: 0;
+  align-self: center;
+}
+
+.project-item:hover .project-favorite-star,
+.project-favorite-star.is-fav,
+.project-favorite-star:focus-visible {
+  opacity: 1;
+}
+
+.project-favorite-star.is-fav {
+  color: var(--accent-gold);
 }
 
 /* ===== Project Focus Mode ===== */
@@ -7947,6 +7971,9 @@ body.resizing-col .ext-hub-resizer::before {
 .conversation-history {
   margin-top: 32px;
   text-align: left;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .conversation-history-header,
@@ -7959,6 +7986,7 @@ body.resizing-col .ext-hub-resizer::before {
 .conversation-history-header {
   justify-content: space-between;
   margin-bottom: 8px;
+  flex-shrink: 0;
 }
 
 .conversation-history-status,
@@ -7969,10 +7997,17 @@ body.resizing-col .ext-hub-resizer::before {
   font-size: 11px;
 }
 
+/* Cap the row list so a full native page (8 rows) scrolls inside this
+   section instead of stretching the launcher. Header + coverage stay put. */
 .conversation-history-list {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  max-height: min(240px, 40vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+  scrollbar-width: thin;
 }
 
 .conversation-history-row {
@@ -7987,6 +8022,7 @@ body.resizing-col .ext-hub-resizer::before {
 
 .conversation-history-coverage {
   min-height: 14px;
+  flex-shrink: 0;
 }
 
 
@@ -11910,6 +11946,12 @@ body.resizing-col .explorer-resizer::after {
   font-variant-numeric: tabular-nums;
 }
 
+.agents-row-needs-you {
+  flex: 0 0 auto;
+  font-weight: 650;
+  color: var(--danger);
+}
+
 .agents-row-badge {
   font-size: 9px;
   text-transform: uppercase;
@@ -15481,8 +15523,9 @@ body.resizing-col .explorer-resizer::after {
 }
 
 .overview-kpi--live {
-  border-color: rgba(63, 185, 80, 0.45);
-  box-shadow: 0 0 0 1px rgba(63, 185, 80, 0.15) inset;
+  border-color: color-mix(in srgb, var(--success) 45%, var(--border));
+  background: color-mix(in srgb, var(--success) 10%, var(--bg-panel));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--success) 16%, transparent) inset;
 }
 
 .overview-kpi--error {
@@ -15529,6 +15572,32 @@ body.resizing-col .explorer-resizer::after {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+/* Live scheduled agents: a success wash so "Running now" reads as active,
+   not another neutral list card. Scoped to the scheduler overview so it
+   doesn't restyle the home OverviewPanel's `.overview-card`. */
+.scheduler-overview .overview-card--live {
+  border-color: color-mix(in srgb, var(--success) 42%, var(--border));
+  background: color-mix(in srgb, var(--success) 8%, var(--bg-panel));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--success) 12%, transparent) inset;
+}
+
+.scheduler-overview .overview-card--live .overview-card-header {
+  color: var(--success);
+  border-bottom-color: color-mix(in srgb, var(--success) 22%, var(--border));
+}
+
+.scheduler-overview .overview-card--live .overview-card-header h3 {
+  color: var(--success);
+}
+
+.scheduler-overview .overview-card--live:hover {
+  border-color: color-mix(in srgb, var(--success) 58%, var(--border));
+}
+
+.overview-item--running {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
 }
 
 .overview-card-header {
@@ -15857,7 +15926,12 @@ body.resizing-col .explorer-resizer::after {
 }
 
 .scheduler-card.is-running {
-  border-color: rgba(63, 185, 80, 0.45);
+  border-color: color-mix(in srgb, var(--success) 45%, var(--border));
+  background: color-mix(in srgb, var(--success) 8%, var(--bg-panel));
+}
+
+.scheduler-card.is-running:hover {
+  border-color: color-mix(in srgb, var(--success) 62%, var(--border));
 }
 
 .scheduler-card.is-done {
@@ -27545,17 +27619,36 @@ body.resizing-col .library-split-resizer::after {
 
 /* Top-level Extensions view is the same case: ListPane returns null for the
  * 'extensions' nav, so without this span the settings-panel auto-places in the
- * narrow --col-list track (col 2) and col 3 sits empty. */
+ * narrow --col-list track (col 2) and col 3 sits empty. `aurora-host` + the
+ * inner z-index lift match Home so AuroraGrid paints behind the hub. */
 .extensions-panel,
 /* Library is the same case: ListPane returns null for the 'library' nav. */
 .library-panel {
   grid-column: 2 / -1;
 }
 
+.extensions-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.extensions-panel .settings-inner {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 /* Home mirrors the above: ListPane returns null for the 'home' nav, so
  * without an explicit span the .settings-panel auto-flows into the narrow
  * list column (col 2) — collapsing the dashboard into a sliver. `aurora-host`
- * makes it a valid host for AuroraGrid (also used by the empty Agents board).
+ * makes it a valid host for AuroraGrid (Home, Plugins, empty Agents).
  * `.home-panel .settings-inner` lifts real content above the grid's z-index:0. */
 .aurora-host {
   position: relative;
@@ -27799,7 +27892,8 @@ body.resizing-col .library-split-resizer::after {
     0 5px 18px color-mix(in srgb, var(--accent-blue) 14%, transparent);
 }
 
-.ui-command-composer.is-drop-over {
+.ui-command-composer.is-drop-over,
+.thread-command-composer.is-drop-over .ui-command-composer {
   border-color: var(--accent-blue);
   border-style: dashed;
   background: color-mix(in srgb, var(--accent-blue) 7%, var(--bg-elevated));
@@ -27880,73 +27974,289 @@ textarea.ui-command-composer-input {
   min-width: 0;
 }
 
+.thread-composer-dock {
+  position: relative;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: visible;
+}
+
 .thread-pending-banner {
   margin: 0 0 8px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg-elevated, var(--bg-background));
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 42%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent-blue) 9%, var(--bg-elevated, var(--bg-background)));
+  box-shadow: inset 3px 0 0 var(--accent-blue);
   color: var(--text-secondary, var(--ink-muted));
-  font-size: 12px;
+  font-size: 14px;
 }
+
+.thread-composer-dock:has(.thread-pending-banner) .thread-pending-banner {
+  margin: 0;
+  border-bottom: 0;
+  border-radius: 0;
+}
+
+.thread-composer-dock:has(.thread-pending-banner) .thread-pending-banner:first-child {
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
+}
+
+.thread-composer-dock:has(.thread-pending-banner) .thread-command-composer .ui-command-composer {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
 .thread-pending-banner-source {
   display: block;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   color: var(--text-muted, var(--ink-muted));
+  font-size: 12px;
 }
 .thread-pending-banner-title {
-  margin: 0 0 6px;
-  font-size: 13px;
-  font-weight: 600;
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 650;
   color: var(--text-primary, var(--ink));
 }
-.thread-pending-banner-reason,
+.thread-pending-banner-reason {
+  margin: 0 0 10px;
+  color: var(--text-secondary, var(--ink-muted));
+}
 .thread-pending-banner-details {
-  margin: 0 0 8px;
-  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  margin: 0 0 10px;
+}
+.thread-pending-banner-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.thread-pending-banner-detail-label {
+  color: var(--text-muted, var(--ink-muted));
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.thread-pending-banner-detail-value {
+  overflow-wrap: anywhere;
+  color: var(--text-secondary, var(--ink-muted));
+}
+.thread-pending-banner-code {
+  margin: 0;
+  max-width: 100%;
+  max-height: 18rem;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated, var(--bg-2));
+  color: var(--text-primary, var(--ink));
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre;
 }
 .thread-pending-banner-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+  margin-top: 12px;
 }
 .thread-pending-banner-decision {
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 4px 10px;
+  padding: 6px 12px;
   background: var(--bg-background, var(--bg-elevated));
   color: var(--text-primary, var(--ink));
+  font: inherit;
+  font-size: 13px;
+  font-weight: 550;
   cursor: pointer;
 }
+.thread-pending-banner-decision.is-primary {
+  background: var(--accent-blue);
+  border-color: var(--accent-blue);
+  color: #fff;
+}
+.thread-pending-banner-decision.is-secondary {
+  background: color-mix(in srgb, var(--accent-blue) 10%, var(--bg-background, var(--bg-elevated)));
+  border-color: color-mix(in srgb, var(--accent-blue) 32%, var(--border));
+}
+.thread-pending-banner-decision.is-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted, var(--ink-muted));
+}
 .thread-pending-banner-decision:disabled {
-  opacity: 0.6;
+  opacity: 0.55;
   cursor: default;
 }
 .thread-pending-banner-error {
-  margin: 8px 0 0;
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--danger, #c44) 35%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger, #c44) 10%, var(--bg-elevated));
   color: var(--danger, #c44);
+}
+.thread-pending-question-form {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.thread-pending-question-form .thread-pending-banner-actions {
+  margin-top: 4px;
+}
+.thread-pending-question-steps {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.thread-pending-question-step-list {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 6px;
+  overflow-x: auto;
+}
+.thread-pending-question-step {
+  flex: 0 0 auto;
+  min-width: 28px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-background, var(--bg-elevated));
+  color: var(--text-muted, var(--ink-muted));
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.thread-pending-question-step.is-active {
+  border-color: color-mix(in srgb, var(--accent-blue) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent-blue) 14%, var(--bg-elevated));
+  color: var(--text-primary, var(--ink));
+  font-weight: 600;
+}
+.thread-pending-question-step.is-answered:not(.is-active) {
+  text-decoration: line-through;
+  opacity: 0.72;
+}
+.thread-pending-question-progress {
+  flex: 0 0 auto;
+  color: var(--text-muted, var(--ink-muted));
+  font-size: 12px;
 }
 .thread-pending-question {
   border: 0;
   margin: 0 0 8px;
   padding: 0;
+  min-width: 0;
 }
 .thread-pending-question legend {
-  font-weight: 600;
+  padding: 0;
+  margin-bottom: 8px;
+  font-size: 15px;
+  font-weight: 650;
   color: var(--text-primary, var(--ink));
+}
+.thread-pending-option-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.thread-pending-option {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.thread-pending-option:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+.thread-pending-option.is-selected {
+  background: color-mix(in srgb, var(--accent-blue) 12%, var(--bg-elevated, var(--bg-background)));
+  border-color: color-mix(in srgb, var(--accent-blue) 28%, var(--border));
+}
+.thread-pending-option-mark {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: #fff;
+}
+.thread-pending-option.is-multi .thread-pending-option-mark {
+  border-radius: 4px;
+}
+.thread-pending-option.is-selected .thread-pending-option-mark {
+  border-color: var(--accent-blue);
+  background: var(--accent-blue);
+}
+.thread-pending-option-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.thread-pending-option-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 550;
+  color: var(--text-primary, var(--ink));
+}
+.thread-pending-option-desc {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-muted, var(--ink-muted));
 }
 .thread-pending-question-input {
   display: block;
   width: 100%;
-  margin-top: 6px;
+  min-height: 72px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-background, var(--bg-base));
+  color: var(--text-primary, var(--ink));
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.55;
+  resize: vertical;
 }
 
 .thread-command-composer {
+  position: relative;
   width: 100%;
 }
 
 .thread-command-composer .ui-command-composer {
+  position: relative;
   gap: 0;
   padding: 0;
   overflow: visible;
@@ -28070,6 +28380,13 @@ textarea.ui-command-composer-input {
 .reasoning-effort-picker-trigger {
   gap: 4px;
   padding: 0 8px;
+}
+
+.reasoning-effort-picker-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .reasoning-effort-picker-row-label {
@@ -28598,8 +28915,17 @@ textarea.ui-command-composer-input {
   overflow-y: auto;
   box-sizing: border-box;
   outline: none;
-  font-size: 14px;
-  line-height: 1.45;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+textarea.thread-command-editor {
+  border: 0;
+  resize: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
 }
 
 .thread-command-editor.ProseMirror p,
@@ -29073,9 +29399,15 @@ textarea.ui-command-composer-input {
 }
 
 .thread-timeline-item {
+  position: relative;
   display: flex;
   flex-direction: column;
   width: 100%;
+}
+
+.thread-timeline-item:hover,
+.thread-timeline-item:focus-within {
+  z-index: 1;
 }
 
 .thread-timeline-item.is-user {
@@ -29118,10 +29450,23 @@ textarea.ui-command-composer-input {
   margin: 0;
 }
 
-.thread-timeline-row.is-user .inbox-md {
-  font-size: 14px;
-  line-height: 1.45;
+/* BB conversation bodies use text-sm + leading-relaxed (~13px / 1.625). ZCC's
+ * 13px chrome made the same size feel cramped, so thread prose sits one step
+ * up at 15px with matching line-height. */
+.thread-timeline-row .inbox-md {
+  font-size: 15px;
+  line-height: 1.55;
 }
+
+.thread-timeline-row.is-user .inbox-md {
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.thread-timeline-row .inbox-md h1 { font-size: 20px; }
+.thread-timeline-row .inbox-md h2 { font-size: 18px; }
+.thread-timeline-row .inbox-md h3 { font-size: 16px; }
+.thread-timeline-row .inbox-md h4 { font-size: 15px; }
 
 .thread-timeline-work {
   border-radius: 8px;
@@ -29143,7 +29488,8 @@ textarea.ui-command-composer-input {
   align-items: baseline;
   gap: 4px;
   color: var(--ink-muted);
-  font-size: 13px;
+  font-size: 14px;
+  line-height: 1.4;
 }
 
 .thread-timeline-title .is-em {
@@ -29188,7 +29534,52 @@ textarea.ui-command-composer-input {
 
 .thread-timeline-title-deco {
   color: var(--ink-muted);
+  font-size: 13px;
+}
+
+.thread-code-card {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated, var(--bg-2));
+  color: var(--text-primary, var(--ink));
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
   font-size: 12px;
+  line-height: 1.4;
+}
+
+.thread-expandable-line {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.thread-expandable-line > summary {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  list-style: none;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.thread-expandable-line > summary::-webkit-details-marker {
+  display: none;
+}
+
+.thread-expandable-line[open] > summary {
+  display: block;
+  -webkit-line-clamp: unset;
+  max-height: 18rem;
+  overflow: auto;
+  white-space: pre;
+  overflow-wrap: normal;
 }
 
 .thread-timeline-work-body {
@@ -29196,23 +29587,32 @@ textarea.ui-command-composer-input {
   padding: 8px 10px;
   border-radius: 6px;
   background: var(--bg-elevated, var(--bg-2));
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
   font-size: 12px;
+  line-height: 1.4;
   overflow: auto;
-  max-height: 16rem;
-  white-space: pre-wrap;
+  max-height: 18rem;
+  white-space: pre;
+}
+
+.thread-code-card .thread-timeline-work-body {
+  margin: 8px 0 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .thread-timeline-system {
   margin: 0;
   color: var(--ink-muted);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .thread-working-indicator {
   margin: 0;
   min-height: 1.75rem;
   color: var(--text-muted, var(--ink-muted));
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .is-shimmer {
@@ -29327,7 +29727,7 @@ textarea.ui-command-composer-input {
   padding: 1px 8px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent-blue) 16%, var(--bg-elevated, var(--bg-2)));
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .thread-message-actions {
@@ -29417,9 +29817,9 @@ textarea.ui-command-composer-input {
 .thread-file-hunk,
 .thread-timeline-work-body.is-danger {
   margin: 6px 0 0;
-  max-height: 16rem;
+  max-height: 18rem;
   overflow: auto;
-  white-space: pre-wrap;
+  white-space: pre;
   font-size: 12px;
 }
 
@@ -29432,7 +29832,7 @@ textarea.ui-command-composer-input {
   display: flex;
   gap: 8px;
   color: var(--ink-muted);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .thread-file-change-path {
@@ -30417,6 +30817,11 @@ textarea.ui-command-composer-input {
   z-index: 50;
 }
 
+.thread-detail-view .mention-popover {
+  top: auto;
+  bottom: calc(100% + 8px);
+}
+
 .composer-typeahead-heading {
   padding: 6px 8px 2px;
   font-size: 11px;
@@ -30432,19 +30837,24 @@ textarea.ui-command-composer-input {
   font-family: inherit;
 }
 
+.composer-typeahead-icon {
+  flex: 0 0 auto;
+}
+
 .composer-typeahead-primary {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .composer-typeahead-trailing {
-  margin-left: auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text-dim, var(--ink-muted));
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .composer-typeahead-empty {

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { Check } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import {
   isApprovalPendingInteractionPayload,
@@ -6,7 +7,6 @@ import {
   isUserQuestionPendingInteractionPayload,
   type PendingInteraction,
   type PendingInteractionApprovalDecision,
-  type PendingInteractionUserAnswer,
   type PluginPendingInteraction,
   type UserQuestionPendingInteractionPayload
 } from '@zana-ai/zcc-domain/thread-runtime';
@@ -14,9 +14,24 @@ import { product } from '../../../lib/product-client.js';
 import { listPendingInteractionSlots, subscribePluginSlots } from '../../../plugins/plugin-slots.js';
 import {
   approvalDecisionLabel,
+  approvalDecisionTone,
   buildPendingInteractionApprovalResolution,
-  formatPendingInteractionSubjectDetailLines
+  pendingInteractionSubjectDetails,
+  shouldShowPendingInteractionReason,
+  type PendingInteractionDetail
 } from './pending-interaction-formatting.js';
+import {
+  OTHER_OPTION_LABEL,
+  createInitialQuestionAnswers,
+  isQuestionAnswered,
+  pendingQuestionBannerTitle,
+  shouldShowFreeTextInput,
+  shouldShowOtherChoice,
+  toggleOtherChoice,
+  toggleQuestionOption,
+  toUserAnswerResolution,
+  type QuestionAnswerDraft
+} from './pending-interaction-question-form.js';
 
 interface SourceThread {
   href: string;
@@ -101,7 +116,7 @@ function ApprovalPendingInteractionBanner({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const payload = isApprovalPendingInteractionPayload(interaction.payload) ? interaction.payload : null;
-  const details = useMemo(() => formatPendingInteractionSubjectDetailLines(interaction), [interaction]);
+  const details = useMemo(() => pendingInteractionSubjectDetails(interaction), [interaction]);
   if (!payload) return null;
   const title = payload.subject.kind === 'command'
     ? 'Waiting for approval'
@@ -130,7 +145,7 @@ function ApprovalPendingInteractionBanner({
         <button
           key={decision}
           type="button"
-          className="thread-pending-banner-decision"
+          className={`thread-pending-banner-decision is-${approvalDecisionTone(decision)}`}
           data-testid={`thread-pending-decision-${decision}`}
           disabled={busy || interaction.status === 'resolving'}
           onClick={() => submit(decision)}
@@ -139,13 +154,70 @@ function ApprovalPendingInteractionBanner({
         </button>
       ))}
     >
-      {payload.reason ? <p className="thread-pending-banner-reason">{payload.reason}</p> : null}
+      {shouldShowPendingInteractionReason(payload.reason, details) ? (
+        <p className="thread-pending-banner-reason">{payload.reason}</p>
+      ) : null}
       {details.length > 0 ? (
-        <ul className="thread-pending-banner-details">
-          {details.map((line) => <li key={line}>{line}</li>)}
-        </ul>
+        <div className="thread-pending-banner-details">
+          {details.map((detail, index) => (
+            <ApprovalDetailBlock key={`${detail.label}:${index}`} detail={detail} />
+          ))}
+        </div>
       ) : null}
     </BannerShell>
+  );
+}
+
+function ApprovalDetailBlock({ detail }: { detail: PendingInteractionDetail }) {
+  if (detail.kind === 'code') {
+    return (
+      <div className="thread-pending-banner-detail is-code">
+        <span className="thread-pending-banner-detail-label">{detail.label}</span>
+        <pre className="thread-pending-banner-code" data-testid="thread-pending-banner-code">
+          {detail.label === 'Command' ? `$ ${detail.value}` : detail.value}
+        </pre>
+      </div>
+    );
+  }
+  return (
+    <div className="thread-pending-banner-detail">
+      <span className="thread-pending-banner-detail-label">{detail.label}</span>
+      <span className="thread-pending-banner-detail-value">{detail.value}</span>
+    </div>
+  );
+}
+
+function QuestionOptionButton({
+  checked,
+  description,
+  disabled,
+  label,
+  multiSelect,
+  onSelect
+}: {
+  checked: boolean;
+  description?: string;
+  disabled: boolean;
+  label: string;
+  multiSelect: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`thread-pending-option${checked ? ' is-selected' : ''}${multiSelect ? ' is-multi' : ''}`}
+      aria-pressed={checked}
+      disabled={disabled}
+      onClick={onSelect}
+    >
+      <span className="thread-pending-option-mark" aria-hidden="true">
+        {checked ? <Check size={10} strokeWidth={3} /> : null}
+      </span>
+      <span className="thread-pending-option-copy">
+        <span className="thread-pending-option-label">{label}</span>
+        {description ? <span className="thread-pending-option-desc">{description}</span> : null}
+      </span>
+    </button>
   );
 }
 
@@ -162,89 +234,159 @@ function QuestionPendingInteractionBanner({
 }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [answers, setAnswers] = useState<Record<string, PendingInteractionUserAnswer>>(() => {
-    const initial: Record<string, PendingInteractionUserAnswer> = {};
-    for (const question of payload.questions) {
-      initial[question.id] = { selected: [], freeText: question.allowFreeText ? '' : undefined };
-    }
-    return initial;
-  });
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [activeId, setActiveId] = useState(interaction.id);
+  const [answers, setAnswers] = useState<Record<string, QuestionAnswerDraft>>(
+    () => createInitialQuestionAnswers(payload.questions)
+  );
+  if (activeId !== interaction.id) {
+    setActiveId(interaction.id);
+    setAnswers(createInitialQuestionAnswers(payload.questions));
+    setCurrentIndex(0);
+  }
+  const questions = payload.questions;
+  const total = questions.length;
+  const current = questions[Math.min(currentIndex, Math.max(total - 1, 0))] ?? null;
+  const disabled = busy || interaction.status === 'resolving';
+  const allAnswered = questions.every((question) => (
+    isQuestionAnswered(question, answers[question.id] ?? { selected: [], otherSelected: false })
+  ));
+  const updateAnswer = (
+    questionId: string,
+    update: (answer: QuestionAnswerDraft) => QuestionAnswerDraft
+  ) => {
+    setAnswers((currentAnswers) => ({
+      ...currentAnswers,
+      [questionId]: update(currentAnswers[questionId] ?? { selected: [], otherSelected: false })
+    }));
+  };
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    if (disabled || !allAnswered) return;
     setBusy(true);
     setError(null);
-    const resolutionAnswers: Record<string, PendingInteractionUserAnswer> = {};
-    for (const [id, answer] of Object.entries(answers)) {
-      resolutionAnswers[id] = {
-        selected: answer.selected,
-        ...(answer.freeText && answer.freeText.trim() ? { freeText: answer.freeText } : {})
-      };
-    }
     void product.threads.interactions.resolve(threadId, interaction.id, {
       kind: 'user_answer',
-      answers: resolutionAnswers
+      answers: toUserAnswerResolution(questions, answers)
     }).catch((caught: unknown) => {
       setError(caught instanceof Error ? caught.message : 'Failed to answer question');
     }).finally(() => setBusy(false));
   };
+  const isLast = currentIndex >= total - 1;
   return (
-    <BannerShell sourceThread={sourceThread} errorMessage={error}>
+    <BannerShell
+      title={pendingQuestionBannerTitle(total)}
+      sourceThread={sourceThread}
+      errorMessage={error}
+    >
       <form className="thread-pending-question-form" onSubmit={submit}>
-        {payload.questions.map((question) => {
-          const answer = answers[question.id] ?? { selected: [] };
-          return (
-            <fieldset key={question.id} className="thread-pending-question">
-              <legend>{question.prompt}</legend>
-              {(question.options ?? []).map((option) => (
-                <label key={option.value}>
-                  <input
-                    type={question.multiSelect ? 'checkbox' : 'radio'}
-                    name={question.id}
-                    value={option.value}
+        {total > 1 ? (
+          <div className="thread-pending-question-steps">
+            <div className="thread-pending-question-step-list">
+              {questions.map((question, index) => {
+                const answered = isQuestionAnswered(
+                  question,
+                  answers[question.id] ?? { selected: [], otherSelected: false }
+                );
+                return (
+                  <button
+                    key={question.id}
+                    type="button"
+                    className={`thread-pending-question-step${index === currentIndex ? ' is-active' : ''}${answered ? ' is-answered' : ''}`}
+                    data-testid="thread-pending-question-step"
+                    title={question.prompt}
+                    onClick={() => setCurrentIndex(index)}
+                  >
+                    {question.shortLabel ?? String(index + 1)}
+                  </button>
+                );
+              })}
+            </div>
+            <span className="thread-pending-question-progress">{currentIndex + 1} of {total}</span>
+          </div>
+        ) : null}
+        {current ? (
+          <fieldset className="thread-pending-question" disabled={disabled}>
+            <legend>{current.prompt}</legend>
+            <div className="thread-pending-option-list">
+              {(current.options ?? []).map((option) => {
+                const answer = answers[current.id] ?? { selected: [], otherSelected: false };
+                return (
+                  <QuestionOptionButton
+                    key={option.value}
                     checked={answer.selected.includes(option.value)}
-                    onChange={() => {
-                      setAnswers((current) => {
-                        const selected = question.multiSelect
-                          ? current[question.id]?.selected.includes(option.value)
-                            ? current[question.id]!.selected.filter((value) => value !== option.value)
-                            : [...(current[question.id]?.selected ?? []), option.value]
-                          : [option.value];
-                        return {
-                          ...current,
-                          [question.id]: { ...current[question.id], selected, freeText: current[question.id]?.freeText }
-                        };
-                      });
-                    }}
+                    description={option.description}
+                    disabled={disabled}
+                    label={option.label}
+                    multiSelect={current.multiSelect}
+                    onSelect={() => updateAnswer(current.id, (draft) => (
+                      toggleQuestionOption(current, draft, option.value)
+                    ))}
                   />
-                  {option.label}
-                </label>
-              ))}
-              {question.allowFreeText ? (
-                <input
-                  className="thread-pending-question-input"
-                  value={answer.freeText ?? ''}
-                  placeholder="Answer…"
-                  aria-label={question.prompt}
-                  onChange={(event) => {
-                    const freeText = event.target.value;
-                    setAnswers((current) => ({
-                      ...current,
-                      [question.id]: { selected: current[question.id]?.selected ?? [], freeText }
-                    }));
-                  }}
+                );
+              })}
+              {shouldShowOtherChoice(current) ? (
+                <QuestionOptionButton
+                  checked={Boolean(answers[current.id]?.otherSelected)}
+                  disabled={disabled}
+                  label={OTHER_OPTION_LABEL}
+                  multiSelect={current.multiSelect}
+                  onSelect={() => updateAnswer(current.id, (draft) => toggleOtherChoice(current, draft))}
                 />
               ) : null}
-            </fieldset>
-          );
-        })}
-        <button
-          type="submit"
-          className="thread-pending-banner-decision"
-          data-testid="thread-pending-question-submit"
-          disabled={busy || interaction.status === 'resolving'}
-        >
-          Submit
-        </button>
+            </div>
+            {shouldShowFreeTextInput(
+              current,
+              answers[current.id] ?? { selected: [], otherSelected: false }
+            ) ? (
+              <textarea
+                className="thread-pending-question-input"
+                data-testid="thread-pending-question-input"
+                value={answers[current.id]?.freeText ?? ''}
+                placeholder="Type your own answer…"
+                aria-label={current.prompt}
+                rows={3}
+                onChange={(event) => {
+                  const freeText = event.target.value;
+                  updateAnswer(current.id, (draft) => ({ ...draft, freeText }));
+                }}
+              />
+            ) : null}
+          </fieldset>
+        ) : null}
+        <div className="thread-pending-banner-actions">
+          {currentIndex > 0 ? (
+            <button
+              type="button"
+              className="thread-pending-banner-decision is-ghost"
+              data-testid="thread-pending-question-back"
+              disabled={disabled}
+              onClick={() => setCurrentIndex((index) => Math.max(index - 1, 0))}
+            >
+              Back
+            </button>
+          ) : null}
+          {isLast ? (
+            <button
+              type="submit"
+              className="thread-pending-banner-decision is-primary"
+              data-testid="thread-pending-question-submit"
+              disabled={disabled || !allAnswered}
+            >
+              Submit
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="thread-pending-banner-decision is-primary"
+              data-testid="thread-pending-question-next"
+              disabled={disabled}
+              onClick={() => setCurrentIndex((index) => Math.min(index + 1, total - 1))}
+            >
+              Next
+            </button>
+          )}
+        </div>
       </form>
     </BannerShell>
   );

@@ -768,6 +768,30 @@ describe("bridge", () => {
     });
   });
 
+  it("omits SDK effort and thinking when reasoning is none", () => {
+    const options = buildSessionOptions(
+      {
+        baseInstructions: "You are a coder.",
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        reasoningLevel: "none",
+        workflowsEnabled: false,
+        getPermissionEscalation: () => "ask",
+        permissionMode: "default",
+        permissionScope: "workspace",
+      },
+      {},
+    );
+
+    expect(options.effort).toBeUndefined();
+    expect(options.thinking).toBeUndefined();
+    expect(options.settings).toEqual({
+      autoMemoryEnabled: true,
+      enableWorkflows: false,
+      ultracode: false,
+    });
+  });
+
   it("enables workflows without the ultracode flag at lower efforts", () => {
     const options = buildSessionOptions(
       {

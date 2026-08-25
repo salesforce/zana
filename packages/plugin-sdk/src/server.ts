@@ -39,6 +39,11 @@ export interface PluginSettingsHandle {
   onChange(listener: (next: Record<string, PluginSettingValue | undefined>) => void): void;
 }
 
+export interface PluginSettingsSnapshot {
+  descriptors: Record<string, PluginSettingDescriptor>;
+  values: Record<string, PluginSettingValue | undefined>;
+}
+
 export interface PluginSettings {
   define(descriptors: Record<string, PluginSettingDescriptor>): PluginSettingsHandle;
 }

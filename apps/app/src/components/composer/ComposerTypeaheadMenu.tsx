@@ -30,18 +30,27 @@ function primaryLabel(item: TypeaheadSuggestion): string {
 
 function trailingLabel(item: TypeaheadSuggestion): string {
   if (item.kind === 'path') return directoryFromPath(item.path);
+  if (item.kind === 'thread') return item.projectName?.trim() || '';
   if (item.kind === 'command') return item.description;
   return '';
 }
 
+function rowTitle(item: TypeaheadSuggestion): string {
+  const primary = primaryLabel(item);
+  const trailing = trailingLabel(item);
+  if (item.kind === 'path') return item.path;
+  if (trailing) return `${primary} · ${trailing}`;
+  return primary;
+}
+
 function RowIcon({ item }: { item: TypeaheadSuggestion }) {
   if (item.kind === 'path' && item.entryKind === 'directory') {
-    return <Folder size={14} aria-hidden="true" />;
+    return <Folder className="composer-typeahead-icon" size={14} aria-hidden="true" />;
   }
-  if (item.kind === 'path') return <File size={14} aria-hidden="true" />;
-  if (item.kind === 'thread') return <MessageSquare size={14} aria-hidden="true" />;
-  if (item.kind === 'project') return <FolderGit2 size={14} aria-hidden="true" />;
-  return <Terminal size={14} aria-hidden="true" />;
+  if (item.kind === 'path') return <File className="composer-typeahead-icon" size={14} aria-hidden="true" />;
+  if (item.kind === 'thread') return <MessageSquare className="composer-typeahead-icon" size={14} aria-hidden="true" />;
+  if (item.kind === 'project') return <FolderGit2 className="composer-typeahead-icon" size={14} aria-hidden="true" />;
+  return <Terminal className="composer-typeahead-icon" size={14} aria-hidden="true" />;
 }
 
 export function ComposerTypeaheadMenu({
@@ -98,7 +107,7 @@ export function ComposerTypeaheadMenu({
                   data-kind={item.kind}
                   aria-selected={selected}
                   className={`mention-item composer-typeahead-item${selected ? ' active' : ''}`}
-                  title={item.kind === 'path' ? item.path : primaryLabel(item)}
+                  title={rowTitle(item)}
                   onMouseDown={(event) => {
                     event.preventDefault();
                     onApply(item);

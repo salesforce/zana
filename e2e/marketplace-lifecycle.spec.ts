@@ -129,7 +129,7 @@ test.describe('marketplace lifecycle — install and uninstall', () => {
     expect(list.some((e) => e.id === id)).toBe(false);
 
     // Navigate back to marketplace — should show "Install" again
-    await app.window.getByRole('tab', { name: 'Marketplace' }).click();
+    await app.window.getByRole('tab', { name: 'Browse' }).click();
     await expect(market.rowButton('E2E Dummy')).toHaveText(/Install/);
   });
 
@@ -146,7 +146,7 @@ test.describe('marketplace lifecycle — install and uninstall', () => {
     }
 
     // Trigger a rescan via the Extensions panel
-    await app.window.locator('.nav-item', { hasText: 'Extensions' }).first().click();
+    await app.window.locator('.nav-item', { hasText: 'Plugins' }).first().click();
     await app.window.getByTestId('extensions-nav-installed').click();
 
     // Click "Reload" or "Rescan" button

@@ -104,6 +104,35 @@ describe("buildClaudeCodeModels", () => {
         displayName: "Future 6",
         isDefault: false,
         defaultReasoningEffort: "high",
+        supportedReasoningEfforts: expect.arrayContaining([
+          expect.objectContaining({ reasoningEffort: "none" }),
+          expect.objectContaining({ reasoningEffort: "low" }),
+          expect.objectContaining({ reasoningEffort: "high" }),
+        ]),
+      }),
+    );
+  });
+
+  it("does not default discovered models to thinking-off", () => {
+    const result = buildClaudeCodeModels([
+      {
+        value: "haiku-next",
+        resolvedModel: "claude-haiku-next",
+        displayName: "Haiku Next",
+        description: "Newly discovered Haiku",
+        supportsEffort: true,
+        supportedEffortLevels: ["low"],
+      },
+    ]);
+
+    expect(result.models.at(-1)).toEqual(
+      expect.objectContaining({
+        model: "claude-haiku-next",
+        defaultReasoningEffort: "low",
+        supportedReasoningEfforts: expect.arrayContaining([
+          expect.objectContaining({ reasoningEffort: "none" }),
+          expect.objectContaining({ reasoningEffort: "low" }),
+        ]),
       }),
     );
   });

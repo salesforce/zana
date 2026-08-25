@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { ConversationHistorySnapshot } from '@zana-ai/zcc-domain/product';
 import { historySnapshotForDisplay } from '../AgentConversationHistory.js';
@@ -34,5 +35,16 @@ describe('historySnapshotForDisplay', () => {
   it('shows an empty initial load because no previous choices exist', () => {
     const empty = snapshot({ rows: [] });
     expect(historySnapshotForDisplay(snapshot({ rows: [] }), empty, false)).toBe(empty);
+  });
+});
+
+describe('recent conversation list layout', () => {
+  it('scrolls rows inside the list so the section header stays put', () => {
+    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const start = css.indexOf('.conversation-history-list {');
+    expect(start).toBeGreaterThan(-1);
+    const block = css.slice(start, css.indexOf('}', start));
+    expect(block).toContain('overflow-y: auto');
+    expect(block).toContain('max-height: min(240px, 40vh)');
   });
 });

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { TimelineViewWorkRow } from '@zana-ai/zcc-thread-view';
 import { formatDiffStatsText } from '@zana-ai/zcc-thread-view';
 import { product } from '../../../lib/product-client.js';
+import { ExpandableLine } from './ExpandableLine.js';
 import { imagePreviewSrc } from './work-row-helpers.js';
 
 function TerminalOutput({
@@ -17,9 +18,15 @@ function TerminalOutput({
   exitCode?: number | null;
   streaming?: boolean;
 }) {
+  const commandText = command ? `$ ${command}` : '';
   return (
-    <div className="thread-terminal-output" data-streaming={streaming ? 'true' : undefined}>
-      {command ? <div className="thread-terminal-cmd">$ {command}</div> : null}
+    <div
+      className="thread-code-card thread-terminal-output"
+      data-streaming={streaming ? 'true' : undefined}
+    >
+      {commandText ? (
+        <ExpandableLine fullText={commandText}>{commandText}</ExpandableLine>
+      ) : null}
       {source ? <div className="thread-terminal-meta">source: {source}</div> : null}
       {output ? <pre className="thread-timeline-work-body">{output}</pre> : null}
       {exitCode != null ? <div className="thread-terminal-meta">exit {exitCode}</div> : null}
@@ -40,7 +47,10 @@ function ToolCallDetail({
 }) {
   const serialized = args == null ? '' : typeof args === 'string' ? args : JSON.stringify(args, null, 2);
   return (
-    <div className="thread-tool-detail" data-streaming={streaming ? 'true' : undefined}>
+    <div
+      className="thread-code-card thread-tool-detail"
+      data-streaming={streaming ? 'true' : undefined}
+    >
       <div className="thread-terminal-meta">{toolName}</div>
       {serialized ? <pre className="thread-timeline-work-body">{serialized}</pre> : null}
       {output ? <pre className="thread-timeline-work-body">{output}</pre> : null}
@@ -126,6 +136,7 @@ function QuestionBody({
         ...(answer.freeText ? [answer.freeText] : [])
       ]).filter(Boolean)
     : [];
+  if (row.lifecycle === 'pending') return null;
   return (
     <div className="thread-question-body" data-lifecycle={row.lifecycle} data-testid="thread-question-row">
       {prompts.map((prompt) => (
@@ -133,8 +144,6 @@ function QuestionBody({
       ))}
       {answers.length > 0 ? (
         <p className="thread-question-answer">{answers.join(', ')}</p>
-      ) : row.lifecycle === 'pending' ? (
-        <p className="thread-terminal-meta">Waiting for an answer</p>
       ) : null}
     </div>
   );

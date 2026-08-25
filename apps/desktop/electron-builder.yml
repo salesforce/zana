@@ -31,6 +31,8 @@ extraResources:
     to: zcc-cli-skill.md
   - from: resources/extension-creator-skill.md
     to: extension-creator-skill.md
+  - from: resources/submit-a-plugin-skill.md
+    to: submit-a-plugin-skill.md
   - from: resources/harness-authoring-skill.md
     to: harness-authoring-skill.md
   # Editable starter template the "create local extension" scaffolder copies +

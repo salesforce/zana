@@ -142,6 +142,19 @@ describe('timeline auto-expand', () => {
       questions: [],
       answers: null,
       statusReason: null
+    })).toBe(false);
+    expect(isWorkRowExpandable({
+      ...base,
+      id: 'q-done',
+      kind: 'work',
+      workKind: 'question',
+      status: 'completed',
+      callId: 'q-done',
+      interactionId: 'pi',
+      lifecycle: 'answered',
+      questions: [],
+      answers: { q: { selected: ['yes'] } },
+      statusReason: null
     })).toBe(true);
     expect(isWorkRowExpandable({
       ...base,

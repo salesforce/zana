@@ -3,16 +3,16 @@ import type { Metadata } from 'next';
 import { ProductShot } from '../../components/ProductShot';
 
 export const metadata: Metadata = {
-  title: 'Install extensions',
-  description: 'Understand marketplace, local folder, archive, and editable-source extension installation in Zana Command Center.',
+  title: 'Install plugins',
+  description: 'Understand marketplace, local folder, git/npm, and editable-source plugin installation in Zana Command Center.',
   alternates: { canonical: '/extensions/install/' }
 };
 
 const METHODS = [
-  ['Marketplace', 'Use when the extension is published to a registry.', 'Discover the capability, inspect its description and permissions, then install from Zana’s Extensions settings.'],
-  ['Local built folder', 'Use during private development or team testing.', 'Choose a folder containing extension.json and the current dist build. The host validates the artifact before it activates.'],
-  ['Published archive', 'Use when a registry is not part of the distribution path.', 'Install a packaged extension bundle through the same manifest and API-compatibility validation path.'],
-  ['Editable source', 'Use when you are actively authoring an extension.', 'Keep source connected locally so builds can reload the installed extension while preserving the normal permission model.']
+  ['Marketplace', 'Use when the plugin is listed in an official or community catalog.', 'Discover the capability, inspect what it adds (skills, MCP servers), then confirm the full-trust install from Plugins → Browse.'],
+  ['Local folder', 'Use during private development or team testing.', 'Choose a folder containing package.json with a zcc block. PluginService path-installs it; a failed reload keeps the last good generation.'],
+  ['Git or npm pointer', 'Use when a registry is not part of the distribution path.', 'Install via git: or npm: sources. The marketplace lists pointers only — refresh never executes plugin code.'],
+  ['Editable source', 'Use when you are actively authoring a plugin.', 'Keep source connected locally. zcc plugin dev watches, rebuilds, and reloads while the plugin stays full-trust in-process.']
 ] as const;
 
 export default function ExtensionInstallPage() {
@@ -21,9 +21,9 @@ export default function ExtensionInstallPage() {
       <section className="guide-hero">
         <div className="wrap">
           <div className="guide-hero-copy" data-reveal>
-            <span className="eyebrow">Install extensions</span>
-            <h1>Choose the source.<br /><span className="grad">Zana validates the rest.</span></h1>
-            <p>Extensions use one installation boundary whether they arrive from a marketplace, a local build folder, or a shareable archive. The host checks compatibility before an extension is allowed to run.</p>
+            <span className="eyebrow">Install plugins</span>
+            <h1>Choose the source.<br /><span className="grad">Zana records provenance.</span></h1>
+            <p>Plugins use one installation boundary whether they arrive from an official catalog, a community git marketplace, or a local folder. After install they run in-process on the server — confirm that full-trust step before you continue.</p>
             <div className="cta"><Link className="btn btn-primary btn-lg" href="/marketplace/">Browse marketplace</Link><Link className="btn btn-ghost btn-lg" href="/extensions/getting-started/">Build one instead</Link></div>
           </div>
           <ProductShot id="extension-install" priority />
@@ -43,11 +43,11 @@ export default function ExtensionInstallPage() {
         <div className="wrap">
           <div className="product-proof reverse" data-reveal>
             <div className="product-proof-copy">
-              <span className="eyebrow">Permissions are explicit</span>
-              <h2>Read the declared access before the extension receives it.</h2>
-              <p>Disk extensions declare what they need. Zana asks for consent and enforces the resulting grant, rather than treating an installed package as automatically trusted.</p>
-              <ul><li>Renderer-only panels can require no permissions</li><li>Scope is reviewed before capabilities are granted</li><li>Permission-widening updates require a new consent decision</li></ul>
-              <p style={{ marginTop: 20 }}><Link className="text-link" href="/extensions/sdk/#permissions">See the permission model <span aria-hidden="true">→</span></Link></p>
+              <span className="eyebrow">Install is the trust gate</span>
+              <h2>Confirm full trust before the plugin loads.</h2>
+              <p>Plugins run in-process on the server after install. Zana lists skills, MCP servers, and extra the grant would add, then you confirm.</p>
+              <ul><li>Official catalogs install offline</li><li>Community catalogs are npm/git pointers — refresh never executes plugin code</li><li>A failed reload keeps the last good generation</li></ul>
+              <p style={{ marginTop: 20 }}><Link className="text-link" href="/extensions/sdk/#permissions">See how trust works <span aria-hidden="true">→</span></Link></p>
             </div>
             <ProductShot id="extension-consent" />
           </div>
@@ -55,7 +55,7 @@ export default function ExtensionInstallPage() {
       </section>
 
       <section className="guide-next-section">
-        <div className="wrap"><div className="guide-next-card" data-reveal><div><span className="eyebrow">Need deeper detail?</span><h2>Use the reference for exact install and publishing commands.</h2><p>The public docs retain the detailed artifact, registry, API, and permission contract.</p></div><div className="guide-next-actions"><Link className="btn btn-primary" href="/docs/extensions-authoring/#install--dev-loop">Open authoring install guide</Link><Link className="btn btn-ghost" href="/docs/release-hosting/">Marketplace hosting</Link></div></div></div>
+        <div className="wrap"><div className="guide-next-card" data-reveal><div><span className="eyebrow">Need deeper detail?</span><h2>Use the reference for exact install and publishing commands.</h2><p>The public docs retain the detailed artifact, registry, API, and plugin contract.</p></div><div className="guide-next-actions"><Link className="btn btn-primary" href="/docs/extensions-authoring/#install--dev-loop">Open authoring install guide</Link><Link className="btn btn-ghost" href="/docs/release-hosting/">Marketplace hosting</Link></div></div></div>
       </section>
     </>
   );

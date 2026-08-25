@@ -6,38 +6,36 @@
  */
 export const GUIDE_CONTENT: Record<string, string> = {
   'create-extension': `
-An extension is your own panel or tool, running inside Zana.
+A plugin is your own panel or tool, running inside Zana.
 
-## 1. Open the Extension Creator
+## 1. Open the Plugin Creator
 
-Click **Create an extension** on Home (or **Extensions → Create extension**).
+Click **Create a plugin** on Home (or **Plugins → Browse → Create**).
 Give it a name and pick a kind:
 
-- **Panel** — renderer-only UI, no permissions needed.
-- **Panel + backend** — also runs a tool (e.g. \`git\`); you'll approve the
-  exec permission it asks for.
-- **MCP consumer** — talks to an MCP server.
-- **Agent preset** — contributes a persona/team, not a UI panel.
+- **Panel** — app-only UI slot.
+- **Panel + backend** — server factory plus a panel.
+- **MCP consumer** — declares \`zcc.mcpServers\`.
+- **Agent preset** — skills / agent instructions, not a UI panel.
 
 ## 2. Build it with the agent
 
-Submitting the dialog scaffolds a starter template into its own working
-directory and opens a Claude agent there, already primed with the extension
-SDK's rules. Just describe what you want changed — "add a button that lists
-the open PRs", "show a table of X" — and the agent edits the source for you.
+Submitting the dialog scaffolds a \`package.json\` \`zcc\` starter into its own
+working directory and opens a Claude agent there, already primed with the plugin
+SDK. Describe what you want — the agent edits the source.
 
 ## 3. Reload and iterate
 
-The agent's edits are **inert** until packed and installed — ask it to
-rebuild, or use the **Reload** button in **Extensions**. Every install goes
-through the same consent screen as a marketplace extension, so a new
-permission you add later re-prompts.
+Call **Reload from source**, \`install_local_extension\`, or \`zcc plugin dev .\`.
+A failed reload keeps the last good generation running. Plugins are full-trust
+in-process on the server after install — the hub names skills, MCP servers, and
+that trust model before you confirm.
 
 ## Where things live
 
 - Source: \`~/zcc-workspace/extensions/<id>\` — yours to edit freely.
-- Installed copy: managed by the app; don't hand-edit it.
-- \`extension.json\` declares its manifest (title, permissions, panel entry).
+- Installed copy: managed by PluginService; don't hand-edit it.
+- \`package.json\` → \`zcc\` is the manifest (name, app/server entries, skills, MCP).
 `,
   scheduler: `
 The Scheduler runs an agent on a recurring cadence — a nightly report, a

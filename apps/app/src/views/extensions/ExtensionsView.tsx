@@ -12,6 +12,7 @@
  * empty. The `extensions-panel` modifier spans it cols 2..end, the same fix
  * Personas/Teams use for their list-less panels.
  */
+import { AuroraGrid } from '@/components/AuroraGrid';
 import { useUi } from '@/store';
 import { ExtensionsHub } from '@/views/extensions/ExtensionsHub';
 import { PluginSettingsSections } from '@/plugins/PluginSettingsSections';
@@ -24,7 +25,8 @@ export function ExtensionsView() {
   const showingCatalogue = tab === 'skills' || tab === 'mcp';
 
   return (
-    <div className="settings-panel extensions-panel">
+    <div className="settings-panel extensions-panel aurora-host">
+      <AuroraGrid />
       <div className={`settings-inner${showingCatalogue ? '' : ' settings-inner--wide'}`}>
         {tab === 'skills' ? (
           <SkillsBody showHeader={false} />

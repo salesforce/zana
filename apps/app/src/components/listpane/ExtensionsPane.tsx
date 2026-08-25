@@ -17,10 +17,10 @@ const EXTENSIONS_GROUPS: Array<{
   items: Array<{ id: ExtensionsTab; label: string; icon: typeof Blocks }>;
 }> = [
   {
-    label: 'Extensions',
+    label: 'Plugins',
     items: [
-      { id: 'marketplace', label: 'Browse extensions', icon: Blocks },
-      { id: 'installed', label: 'Installed extensions', icon: FolderOpen }
+      { id: 'marketplace', label: 'Browse plugins', icon: Blocks },
+      { id: 'installed', label: 'Installed plugins', icon: FolderOpen }
     ]
   },
   {
@@ -50,7 +50,7 @@ export function ExtensionsPane() {
             <ChevronLeft size={17} aria-hidden="true" />
             Back to app
           </Link>
-          <nav className="extensions-picker" aria-label="Extensions navigation">
+          <nav className="extensions-picker" aria-label="Plugins navigation">
             {EXTENSIONS_GROUPS.map((group) => (
               <section key={group.label} className="extensions-picker-group" aria-label={group.label}>
                 <h2 className="extensions-picker-label">{group.label}</h2>

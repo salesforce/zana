@@ -90,6 +90,7 @@ import type {
   PersonaInput,
   PluginAppEntry,
   PluginEntry,
+  PluginSettingsSnapshot,
   Project,
   ProjectExecutionConsentGrant,
   ProjectSettings,
@@ -1139,6 +1140,12 @@ export interface CcApi {
   pluginApps: {
     list(): Promise<PluginAppEntry[]>;
     onChanged(cb: (entries: PluginAppEntry[]) => void): () => void;
+    callRpc(pluginId: string, method: string, args?: unknown): Promise<unknown>;
+    getSettings(pluginId: string): Promise<PluginSettingsSnapshot>;
+    setSettings(
+      pluginId: string,
+      values: Record<string, string | boolean | undefined>
+    ): Promise<PluginSettingsSnapshot>;
   };
   /**
    * Runtime extensions discovered under `~/.zcc/extensions/<id>/`.

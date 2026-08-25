@@ -239,8 +239,11 @@ READ COMMANDS (work whether the app is running or not):
        [--project ID] [--status open|resolved|dismissed] [--all]
        Defaults to open only; --all shows every state.
   plugin ls                List installed plugins (from ~/.zcc/plugins)
-  plugin new <name>        Scaffold a plugin package in the current directory
-       [--dir PATH]
+  plugin new <name>        Scaffold a TypeScript plugin (package.json zcc)
+       [--dir PATH] [--app] [--kind panel|main-panel|mcp-consumer|agent-preset]
+  plugin types [dir]       Sync bundled SDK .d.ts into the plugin
+       [--check]
+  plugin build [dir]       Bundle zcc.app / zcc.server for CI
 
 LIVE COMMANDS (require the app to be running):
   plugin install <source>  Install path: | git: | npm: | builtin:<name>
@@ -248,6 +251,10 @@ LIVE COMMANDS (require the app to be running):
   plugin disable <id>      Unload a plugin
   plugin reload <id>       Dispose and load again
   plugin remove <id>       Unregister (path sources stay on disk)
+  plugin dev [dir]         Watch, rebuild, and reload (use --once to skip watch)
+  plugin search [query]    Search official + configured catalogs
+  plugin outdated          List installed plugins with a newer catalog version
+  plugin update <id>       Reinstall from the recorded catalog pointer
   marketplace ls           List configured marketplace catalogs
   marketplace add <url>    Add a provenance-only marketplace index
   marketplace install <id@marketplace>

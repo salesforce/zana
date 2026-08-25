@@ -60,7 +60,7 @@ const followupsNavItem: NavEntry = { id: 'followups', label: 'Follow-ups', icon:
 // Settings). Extensions itself is a content/discovery destination (browse +
 // install, the VSCode-style store), so it earns a system-level rail entry
 // alongside Settings.
-const extensionsNavItem: NavEntry = { id: 'extensions', label: 'Extensions', icon: Blocks };
+const extensionsNavItem: NavEntry = { id: 'extensions', label: 'Plugins', icon: Blocks };
 
 export function Sidebar() {
   const { nav } = useRouteState();

@@ -1,9 +1,11 @@
 import { pathToFileURL } from 'node:url';
-import { existsSync, realpathSync } from 'node:fs';
-import { resolve, sep } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve, sep } from 'node:path';
 import type {
   PluginInteractionRequest,
   PluginInteractionResult,
+  PluginSettingDescriptor,
+  PluginSettingValue,
   ZccPluginApi,
   ZccPluginFactory
 } from '@zana-ai/zcc-plugin-sdk/server';
@@ -26,7 +28,29 @@ export type PluginRuntimeStatus =
 
 export interface PluginHandle {
   api: ZccPluginApi;
+  extraSkillRoots: string[];
+  extraInstructions: string[];
+  getSettings(): {
+    descriptors: Record<string, PluginSettingDescriptor>;
+    values: Record<string, PluginSettingValue | undefined>;
+  };
+  setSettings(values: Record<string, PluginSettingValue | undefined>): Promise<void>;
+  subscribeRealtime(listener: (event: string, payload: unknown) => void): () => void;
   dispose(): Promise<void>;
+}
+
+function readJsonFile<T>(path: string, fallback: T): T {
+  if (!existsSync(path)) return fallback;
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJsonFile(path: string, value: unknown): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(value)}\n`);
 }
 
 export function createPluginApi(
@@ -43,15 +67,27 @@ export function createPluginApi(
       signal?: AbortSignal;
     }) => Promise<PluginInteractionResult>;
     interruptPluginInteractions?: (pluginId: string) => void;
+    onNeedsConfiguration?: (message: string) => void;
   }
 ): PluginHandle {
+  mkdirSync(kvDir, { recursive: true });
+  const kvPath = join(kvDir, 'kv.json');
+  const settingsPath = join(kvDir, 'settings.json');
   const disposeHooks: Array<() => void | Promise<void>> = [];
-  const kv = new Map<string, unknown>();
+  const extraSkillRoots: string[] = [];
+  const extraInstructions: string[] = [];
+  const settingListeners: Array<(next: Record<string, PluginSettingValue | undefined>) => void> = [];
+  const realtimeListeners = new Set<(event: string, payload: unknown) => void>();
+  let settingDescriptors: Record<string, PluginSettingDescriptor> = {};
   let stale = false;
   const assertLive = (): void => {
     if (stale) throw new Error(`plugin context is stale: ${pluginId}`);
   };
   const rpc = new Map<string, (args: unknown) => unknown | Promise<unknown>>();
+  const readKv = (): Record<string, unknown> => readJsonFile<Record<string, unknown>>(kvPath, {});
+  const readSettings = (): Record<string, PluginSettingValue | undefined> =>
+    readJsonFile<Record<string, PluginSettingValue | undefined>>(settingsPath, {});
+
   const api: ZccPluginApi = {
     pluginId,
     log: {
@@ -61,23 +97,39 @@ export function createPluginApi(
       error: (message) => console.error(`[plugin:${pluginId}] ${message}`)
     },
     settings: {
-      define: () => ({
-        get: async () => ({}),
-        onChange: () => undefined
-      })
+      define: (descriptors) => {
+        settingDescriptors = descriptors;
+        return {
+          get: async () => {
+            const stored = readSettings();
+            const next: Record<string, PluginSettingValue | undefined> = {};
+            for (const [key, descriptor] of Object.entries(descriptors)) {
+              next[key] = stored[key] ?? descriptor.default;
+            }
+            return next;
+          },
+          onChange: (listener) => {
+            settingListeners.push(listener);
+          }
+        };
+      }
     },
     storage: {
       kv: {
-        get: async <T>(key: string) => kv.get(key) as T | undefined,
+        get: async <T>(key: string) => readKv()[key] as T | undefined,
         set: async (key, value) => {
           assertLive();
-          kv.set(key, value);
+          const next = readKv();
+          next[key] = value;
+          writeJsonFile(kvPath, next);
         },
         delete: async (key) => {
-          kv.delete(key);
+          const next = readKv();
+          delete next[key];
+          writeJsonFile(kvPath, next);
         },
         list: async (prefix) =>
-          [...kv.keys()].filter((key) => (prefix ? key.startsWith(prefix) : true))
+          Object.keys(readKv()).filter((key) => (prefix ? key.startsWith(prefix) : true))
       }
     },
     rpc: {
@@ -87,8 +139,9 @@ export function createPluginApi(
       }
     },
     realtime: {
-      publish: () => {
+      publish: (event, payload) => {
         assertLive();
+        for (const listener of realtimeListeners) listener(event, payload);
       }
     },
     background: {
@@ -97,11 +150,23 @@ export function createPluginApi(
           if (typeof stop === 'function') disposeHooks.push(stop);
         });
       },
-      schedule: () => undefined
+      schedule: (cron, job) => {
+        assertLive();
+        const timer = setInterval(() => {
+          void Promise.resolve(job()).catch((error) => {
+            console.error(`[plugin:${pluginId}] schedule ${cron} failed`, error);
+          });
+        }, 60_000);
+        disposeHooks.push(() => clearInterval(timer));
+      }
     },
     agents: {
-      contributeInstructions: () => undefined,
-      contributeSkills: () => undefined,
+      contributeInstructions: (text) => {
+        extraInstructions.push(text);
+      },
+      contributeSkills: (rootPaths) => {
+        extraSkillRoots.push(...rootPaths);
+      },
       experimental_registerProvider: (declaration) => {
         assertLive();
         const handle = registerThreadProvider(pluginId, declaration);
@@ -128,15 +193,41 @@ export function createPluginApi(
       }
     },
     status: {
-      needsConfiguration: () => undefined
+      needsConfiguration: (message) => {
+        options?.onNeedsConfiguration?.(message);
+      }
     },
     onDispose: (hook) => {
       disposeHooks.push(hook);
     }
   };
-  void kvDir;
   return {
     api,
+    extraSkillRoots,
+    extraInstructions,
+    getSettings() {
+      const stored = readSettings();
+      const values: Record<string, PluginSettingValue | undefined> = {};
+      for (const [key, descriptor] of Object.entries(settingDescriptors)) {
+        values[key] = stored[key] ?? descriptor.default;
+      }
+      return { descriptors: { ...settingDescriptors }, values };
+    },
+    async setSettings(values) {
+      const next = { ...readSettings(), ...values };
+      writeJsonFile(settingsPath, next);
+      const projected: Record<string, PluginSettingValue | undefined> = {};
+      for (const [key, descriptor] of Object.entries(settingDescriptors)) {
+        projected[key] = next[key] ?? descriptor.default;
+      }
+      for (const listener of settingListeners) listener(projected);
+    },
+    subscribeRealtime(listener) {
+      realtimeListeners.add(listener);
+      return () => {
+        realtimeListeners.delete(listener);
+      };
+    },
     async dispose() {
       stale = true;
       options?.interruptPluginInteractions?.(pluginId);
@@ -204,8 +295,11 @@ function isMainModuleExport(value: unknown): value is { setup: (ctx: unknown) =>
   return typeof value === 'object' && value !== null && typeof (value as { setup?: unknown }).setup === 'function';
 }
 
-export async function importServerFactory(entryPath: string): Promise<ZccPluginFactory> {
-  const href = pathToFileURL(entryPath).href;
+export async function importServerFactory(
+  entryPath: string,
+  cacheBust?: string | number
+): Promise<ZccPluginFactory> {
+  const href = `${pathToFileURL(entryPath).href}${cacheBust != null ? `?v=${cacheBust}` : ''}`;
   const mod = (await import(href)) as { default?: unknown };
   if (typeof mod.default === 'function') return mod.default as ZccPluginFactory;
   if (isMainModuleExport(mod.default)) {

@@ -59,6 +59,86 @@ describe('WorkRowBody', () => {
     expect(html).toContain('$ ls -la');
     expect(html).toContain('README.md');
     expect(html).toContain('source: user');
+    expect(html).toContain('thread-code-card');
+    expect(html).toContain('thread-expandable-line');
+    expect(html).toContain('thread-timeline-work-body');
+  });
+
+  it('keeps a long bash one-liner in an expandable code card', () => {
+    const command = 'for d in */; do name="${d%/}"; echo "$name"; git -C "$d" status -sb; done';
+    const html = renderToStaticMarkup(
+      <WorkRowBody row={{
+        ...workBase,
+        id: 'c-long',
+        workKind: 'command',
+        status: 'pending',
+        command,
+        cwd: null,
+        source: null,
+        output: '',
+        exitCode: null,
+        completedAt: null,
+        approvalStatus: null,
+        activityIntents: []
+      }} />
+    );
+    expect(html).toContain('thread-code-card thread-terminal-output');
+    expect(html).toContain('thread-expandable-line');
+    expect(html).toContain('$ for d in */');
+    expect(html).toContain('git -C');
+    expect(html).not.toContain('thread-terminal-cmd');
+  });
+
+  it('renders exit codes and string tool args in a code card', () => {
+    const command = renderToStaticMarkup(
+      <WorkRowBody row={{
+        ...workBase,
+        id: 'c-exit',
+        workKind: 'command',
+        status: 'completed',
+        command: '',
+        cwd: null,
+        source: null,
+        output: 'ok',
+        exitCode: 0,
+        completedAt: 2,
+        approvalStatus: null,
+        activityIntents: []
+      }} />
+    );
+    expect(command).toContain('thread-code-card');
+    expect(command).toContain('exit 0');
+    expect(command).not.toContain('thread-expandable-line');
+    const tool = renderToStaticMarkup(
+      <WorkRowBody row={{
+        ...workBase,
+        id: 'tool-str',
+        workKind: 'tool',
+        status: 'completed',
+        toolName: 'Bash',
+        toolArgs: 'echo hi',
+        output: 'hi',
+        completedAt: 2,
+        approvalStatus: null,
+        activityIntents: []
+      }} />
+    );
+    expect(tool).toContain('thread-code-card thread-tool-detail');
+    expect(tool).toContain('echo hi');
+    expect(renderToStaticMarkup(
+      <WorkRowBody row={{
+        ...workBase,
+        id: 'tool-empty',
+        workKind: 'tool',
+        status: 'completed',
+        toolName: 'Nop',
+        toolArgs: null,
+        output: '',
+        completedAt: 2,
+        approvalStatus: null,
+        activityIntents: []
+      }} />
+    )).toContain('Nop');
   });
 
   it('renders file-change hunks and stats', () => {
@@ -153,9 +233,31 @@ describe('WorkRowBody', () => {
         }}
       />
     );
-    expect(question).toContain('Continue?');
-    expect(question).toContain('Waiting for an answer');
+    expect(question).toBe('');
     expect(question).not.toContain('thread-question-input');
+    const answered = renderToStaticMarkup(
+      <WorkRowBody
+        row={{
+          ...workBase,
+          id: 'q2',
+          workKind: 'question',
+          status: 'completed',
+          interactionId: 'pi_1',
+          lifecycle: 'answered',
+          questions: [{
+            id: 'q',
+            prompt: 'Continue?',
+            multiSelect: false,
+            allowFreeText: true
+          }],
+          answers: { q: { selected: ['yes'], freeText: 'ship it' } },
+          statusReason: null
+        }}
+      />
+    );
+    expect(answered).toContain('Continue?');
+    expect(answered).toContain('yes');
+    expect(answered).toContain('ship it');
     const approval = renderToStaticMarkup(
       <WorkRowBody row={{
         ...workBase,
@@ -299,6 +401,7 @@ describe('conversation and banners', () => {
     expect(mentionPillLabel({ resource: { kind: 'path', label: 'src' } })).toBe('src');
     expect(mentionPillLabel({ resource: { kind: 'path', path: 'a.ts' } })).toBe('a.ts');
     expect(mentionPillLabel({ resource: { kind: 'command', name: 'help' } })).toBe('help');
+    expect(mentionPillLabel({ resource: { kind: 'thread', label: 'Hello' } })).toBe('Thread: Hello');
     expect(mentionPillLabel({})).toBe('');
   });
 
@@ -313,6 +416,13 @@ describe('conversation and banners', () => {
     expect(renderToStaticMarkup(
       <ThreadWorkingIndicator status="active" thinking={{ id: 'th', text: 'Planning', startedAt: 1, updatedAt: 1 }} />
     )).toContain('Planning');
+    expect(renderToStaticMarkup(
+      <ThreadWorkingIndicator
+        status="active"
+        thinking={{ id: 'th', text: 'Planning', startedAt: 1, updatedAt: 1 }}
+        waitingOnUser
+      />
+    )).toBe('');
     expect(renderToStaticMarkup(
       <ThreadGoalBanner goal={{
         sourceSeq: 1,

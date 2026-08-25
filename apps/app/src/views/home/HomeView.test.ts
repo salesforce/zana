@@ -8,10 +8,10 @@ describe('HomeView composer dock', () => {
   it('puts the composer above the Inbox/Guides scroll region', () => {
     expect(view).toContain('className="home-dashboard"');
     expect(view).toContain('className="home-grid"');
-    expect(view).toContain('<HomeAgentComposer />');
-    expect(view.indexOf('<HomeAgentComposer />')).toBeLessThan(view.indexOf('className="home-dashboard"'));
-    expect(view.indexOf('<HomeAgentComposer />')).toBeLessThan(view.indexOf('className="home-grid"'));
-    expect(view.indexOf('<HomeAgentComposer />')).toBeLessThan(view.indexOf('home-plugin-sections'));
+    expect(view).toContain('<HomeAgentComposer allowLegacyAgent />');
+    expect(view.indexOf('<HomeAgentComposer allowLegacyAgent />')).toBeLessThan(view.indexOf('className="home-dashboard"'));
+    expect(view.indexOf('<HomeAgentComposer allowLegacyAgent />')).toBeLessThan(view.indexOf('className="home-grid"'));
+    expect(view.indexOf('<HomeAgentComposer allowLegacyAgent />')).toBeLessThan(view.indexOf('home-plugin-sections'));
   });
 
   it('fills the shell track and pins the composer to the panel header', () => {

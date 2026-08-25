@@ -46,6 +46,22 @@ describe("Claude Code curated catalog", () => {
     }
   });
 
+  it("offers thinking-off as the first Claude reasoning step", () => {
+    for (const model of listClaudeCodeFallbackModels()) {
+      expect(
+        model.supportedReasoningEfforts.map((effort) => effort.reasoningEffort),
+      ).toEqual([
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "ultracode",
+        "max",
+      ]);
+    }
+  });
+
   // These rows flow into mutable API responses and react-query placeholder
   // data, so a caller mutating one must not corrupt every later reader.
   it("returns fresh objects on each call", () => {
