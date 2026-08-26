@@ -35,6 +35,7 @@ import type {
 import type { UsageSummary } from '@zana-ai/zcc-domain/telemetry-events';
 import { getScopedProjectId } from '../lib/windowScope.js';
 import { agentNavCounts } from '../lib/agent-nav-counts.js';
+import { runningSchedulerCount } from '../lib/scheduler-nav-counts.js';
 import { product } from '../lib/product-client.js';
 import { useEnsureThreads } from '../hooks/useEnsureThreads.js';
 import { useThreads } from '../thread-store.js';
@@ -1587,24 +1588,7 @@ export function useEnabledSchedulerCount(): number {
 export function useRunningSchedulerCount(): number {
   const tasks = useScheduler((s) => s.tasks);
   const terminals = useData((s) => s.terminals);
-  const live = new Set<string>();
-  for (const [pid, list] of Object.entries(terminals)) {
-    for (const s of list) {
-      if (s.status === 'running' || s.status === 'starting') {
-        live.add(`${pid}:${s.id}`);
-      }
-    }
-  }
-  let n = 0;
-  for (const t of tasks) {
-    for (const r of t.status?.runs ?? []) {
-      if (r.sessionId && live.has(`${t.projectId}:${r.sessionId}`)) {
-        n += 1;
-        break;
-      }
-    }
-  }
-  return n;
+  return runningSchedulerCount(tasks, terminals);
 }
 
 /** Sidebar-badge count: goals that are armed (status `active`) right now. */
@@ -1669,10 +1653,10 @@ export function useProjectOpenFollowUpCount(projectId: string): number {
 
 /**
  * Sidebar-badge counts for the Agents nav item. `active` is every agent that
- * is working or blocked right now (headless included — same set the Agents
- * board surfaces); `blocked` is how many of those need the user. The Agents nav
- * shows `active` as the badge and reds it when `blocked`. Counts live PTY
- * agents and visible threads (pending questions count as blocked).
+ * is live right now (working, blocked, or an idle/unknown pty that is still
+ * `running`/`starting` — headless included); `blocked` is how many of those
+ * need the user. The Agents nav shows `active` as the badge and reds it when
+ * `blocked`. Counts live PTY agents and busy/pending threads.
  *
  * Scope: a per-project WINDOW (hard URL lock via {@link getScopedProjectId})
  * always wins; absent that, an explicit `projectId` narrows the count to one

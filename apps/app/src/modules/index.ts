@@ -27,15 +27,31 @@ export function getModule(id: string): AppModule | undefined {
   return APP_MODULES.find((m) => m.id === id);
 }
 
+function loadErrorOf(module: AppModule): string | undefined {
+  return 'loadError' in module ? (module as { loadError?: string }).loadError : undefined;
+}
+
 /**
  * Combine the static built-ins with the runtime-loaded extension modules. A
  * runtime extension may not collide with a built-in id; if one does, the
- * built-in wins (it was registered first and is trusted).
+ * built-in wins (it was registered first and is trusted). Plugin-app modules
+ * normally win over disk extensions for the same id, except a failed plugin
+ * load must not hide a working legacy `activate()` module.
  */
 function mergeModules(pluginAppModules: AppModule[], extensionModules: AppModule[]): AppModule[] {
   if (pluginAppModules.length === 0 && extensionModules.length === 0) return APP_MODULES;
   const taken = new Set(APP_MODULES.map((m) => m.id));
-  const extras = [...pluginAppModules, ...extensionModules].filter((m) => {
+  const byId = new Map<string, AppModule>();
+  for (const module of pluginAppModules) byId.set(module.id, module);
+  for (const module of extensionModules) {
+    const existing = byId.get(module.id);
+    if (!existing) {
+      byId.set(module.id, module);
+      continue;
+    }
+    if (loadErrorOf(existing) && !loadErrorOf(module)) byId.set(module.id, module);
+  }
+  const extras = [...byId.values()].filter((m) => {
     if (taken.has(m.id)) return false;
     taken.add(m.id);
     return true;

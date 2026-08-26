@@ -24,7 +24,9 @@ const h = vi.hoisted(() => {
     state,
     data,
     modules: [] as AppModule[],
-    agentCounts: { active: 0, blocked: 0 }
+    agentCounts: { active: 0, blocked: 0 },
+    enabledSchedules: 0,
+    runningSchedules: 0
   };
 });
 
@@ -36,8 +38,8 @@ vi.mock('../../store', () => ({
   }),
   useData: (selector: (state: typeof h.data) => unknown) => selector(h.data),
   useUnreadInboxCount: () => 0,
-  useEnabledSchedulerCount: () => 0,
-  useRunningSchedulerCount: () => 0,
+  useEnabledSchedulerCount: () => h.enabledSchedules,
+  useRunningSchedulerCount: () => h.runningSchedules,
   useAgentNavCounts: () => h.agentCounts,
   applySidebarWidth: vi.fn(),
   SIDEBAR_MIN: 256,
@@ -71,6 +73,8 @@ describe('Sidebar structure and compact accessibility', () => {
     h.state.sidebarCollapsed = false;
     h.modules = [];
     h.agentCounts = { active: 0, blocked: 0 };
+    h.enabledSchedules = 0;
+    h.runningSchedules = 0;
 
     const markup = renderSidebar();
 
@@ -143,6 +147,44 @@ describe('Sidebar structure and compact accessibility', () => {
     h.agentCounts = { active: 0, blocked: 0 };
   });
 
+  it('badges Agents with a running count when the fleet is live', () => {
+    h.state.sidebarCollapsed = false;
+    h.modules = [];
+    h.agentCounts = { active: 3, blocked: 0 };
+
+    const markup = renderSidebar();
+    const agentsStart = markup.indexOf('data-testid="nav-agents"');
+    const agentsChunk = markup.slice(agentsStart, markup.indexOf('</a>', agentsStart));
+
+    expect(agentsChunk).toContain('class="nav-badge nav-badge--running"');
+    expect(agentsChunk).toContain('aria-label="3 active"');
+    expect(agentsChunk).toContain('>3<');
+    expect(agentsChunk).toContain('class="nav-running-dot"');
+
+    h.agentCounts = { active: 0, blocked: 0 };
+  });
+
+  it('badges Scheduler with the live run count', () => {
+    h.state.sidebarCollapsed = false;
+    h.modules = [];
+    h.runningSchedules = 2;
+    h.enabledSchedules = 5;
+
+    const markup = renderSidebar();
+    const start = markup.indexOf('data-testid="nav-scheduler"');
+    const chunk = markup.slice(start, markup.indexOf('</a>', start));
+
+    expect(chunk).toContain('href="/scheduler"');
+    expect(chunk).toContain('>Scheduler<');
+    expect(chunk).toContain('class="nav-badge nav-badge--running"');
+    expect(chunk).toContain('aria-label="2 running · 5 scheduled"');
+    expect(chunk).toContain('>2<');
+    expect(chunk).toContain('class="nav-running-dot"');
+
+    h.runningSchedules = 0;
+    h.enabledSchedules = 0;
+  });
+
   it('puts installed extension panels in the movable primary navigation list', () => {
     h.state.sidebarCollapsed = false;
     h.modules = [
@@ -180,6 +222,7 @@ describe('Sidebar structure and compact accessibility', () => {
 
     expect(css).toMatch(/\.sidebar a\s*\{[^}]*text-decoration:\s*none/);
     expect(css).toMatch(/\.nav-item\s*\{[^}]*text-decoration:\s*none/);
+    expect(css).toMatch(/\.nav-item-label\s*\{[^}]*flex:\s*1 1 auto/);
   });
 
   it('uses translation-only transforms when compact rows cross collection sections', () => {

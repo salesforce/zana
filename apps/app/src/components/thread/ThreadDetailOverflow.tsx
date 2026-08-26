@@ -14,6 +14,12 @@ export function threadOverflowMenuPosition(rect: Pick<DOMRect, 'bottom' | 'left'
   return { top: rect.bottom + 4, left: rect.left };
 }
 
+/** Fork stays wired; hide the menu item until the flow is ready. */
+export const SHOW_THREAD_FORK = false;
+
+/** Mark unread stays wired; hide the menu item until the flow is ready. */
+export const SHOW_THREAD_UNREAD = false;
+
 export function ThreadDetailOverflowMenu({
   canStop,
   onUnread,
@@ -43,20 +49,24 @@ export function ThreadDetailOverflowMenu({
       style={style}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      <button type="button" role="menuitem" onClick={onUnread}>
-        <Mail size={13} /> Mark unread
-      </button>
+      {SHOW_THREAD_UNREAD ? (
+        <button type="button" role="menuitem" onClick={onUnread}>
+          <Mail size={13} /> Mark unread
+        </button>
+      ) : null}
       <button type="button" role="menuitem" onClick={onRename}>
         <Pencil size={13} /> Rename
       </button>
-      <button
-        type="button"
-        role="menuitem"
-        onClick={onFork}
-        title="Start a new thread from this conversation"
-      >
-        <GitFork size={13} /> Fork
-      </button>
+      {SHOW_THREAD_FORK ? (
+        <button
+          type="button"
+          role="menuitem"
+          onClick={onFork}
+          title="Start a new thread from this conversation"
+        >
+          <GitFork size={13} /> Fork
+        </button>
+      ) : null}
       {canStop ? (
         <button
           type="button"

@@ -32,6 +32,8 @@ describe('scaffoldPlugin', () => {
     expect(readFileSync(join(dest, 'app.js'), 'utf8')).toContain('__zccPluginApp');
     expect(readFileSync(join(dest, 'app.test.js'), 'utf8')).toContain('collectTestPluginApp');
     expect(readFileSync(join(dest, 'CLAUDE.md'), 'utf8')).toContain('zcc plugin dev');
+    expect(readFileSync(join(dest, 'CLAUDE.md'), 'utf8')).not.toContain('extension.json');
+    expect(readFileSync(join(dest, 'app.js'), 'utf8')).not.toMatch(/activate\s*\(/);
     expect(readFileSync(join(dest, 'skills', 'hello-abcd', 'SKILL.md'), 'utf8')).toMatch(/hello-abcd/);
   });
 

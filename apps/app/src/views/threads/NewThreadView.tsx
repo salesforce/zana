@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import type { Project } from '@zana-ai/zcc-domain/product';
 import { useData } from '@/store';
+import { AuroraGrid } from '@/components/AuroraGrid';
 import { HomeAgentComposer } from '@/components/HomeAgentComposer';
 import { PluginNewThreadActions } from '@/plugins/PluginNewThreadActions';
 
@@ -24,10 +25,13 @@ export function NewThreadView({ project: projectProp }: { project?: Project } = 
   );
 
   return (
-    <section className="new-thread-view" data-testid="new-thread-view">
-      <h1 className="new-thread-view-heading">New thread</h1>
-      <HomeAgentComposer project={project} />
-      <PluginNewThreadActions projectId={project?.id ?? null} />
+    <section className="new-thread-view aurora-host" data-testid="new-thread-view">
+      <AuroraGrid />
+      <div className="new-thread-view-inner">
+        <h1 className="new-thread-view-heading">New thread</h1>
+        <HomeAgentComposer project={project} />
+        <PluginNewThreadActions projectId={project?.id ?? null} />
+      </div>
     </section>
   );
 }

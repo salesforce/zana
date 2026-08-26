@@ -203,10 +203,13 @@ interface LivePlugin {
   rpc: Map<string, (args: unknown) => unknown | Promise<unknown>>;
 }
 
+const NATIVE_ADDON_SKIP_DIRS = new Set(['node_modules', '.git']);
+
 function listFiles(root: string): string[] {
   const out: string[] = [];
   const walk = (dir: string): void => {
     for (const name of readdirSync(dir)) {
+      if (NATIVE_ADDON_SKIP_DIRS.has(name)) continue;
       const full = join(dir, name);
       const st = statSync(full);
       if (st.isDirectory()) walk(full);

@@ -6,7 +6,9 @@ const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'u
 
 describe('HomeView New Chat surface', () => {
   it('is a composer-only create surface with plugin CTAs under the prompt', () => {
-    expect(view).toContain('className="settings-panel home-panel"');
+    expect(view).toContain('className="settings-panel home-panel aurora-host"');
+    expect(view).toContain('<AuroraGrid />');
+    expect(view.indexOf('<AuroraGrid />')).toBeLessThan(view.indexOf('className="settings-inner"'));
     expect(view).toContain('<HomeAgentComposer allowLegacyAgent />');
     expect(view).toContain('PluginNewThreadActions');
     expect(view).toContain('projectId={null}');
@@ -18,7 +20,6 @@ describe('HomeView New Chat surface', () => {
     expect(view.indexOf('<PluginNewThreadActions')).toBeLessThan(view.indexOf('home-plugin-sections'));
     expect(view).not.toContain('home-dashboard');
     expect(view).not.toContain('home-grid');
-    expect(view).not.toContain('AuroraGrid');
     expect(view).not.toContain('GuideModal');
     expect(view).not.toContain('CreateExtensionDialog');
     expect(view).not.toContain('new-thread-view-heading');
@@ -39,6 +40,8 @@ describe('HomeView New Chat surface', () => {
 
     const innerStart = css.indexOf('.home-panel .settings-inner {');
     const inner = css.slice(innerStart, css.indexOf('}', innerStart));
+    expect(inner).toContain('position: relative;');
+    expect(inner).toContain('z-index: 1;');
     expect(inner).toContain('width: min(820px, 100%);');
     expect(inner).toContain('display: flex;');
     expect(inner).toContain('flex-direction: column;');

@@ -111,6 +111,8 @@ describe('PluginService', () => {
 
   it('rejects native addons and npm installs without ignore-scripts would be the spawn contract', async () => {
     expect(containsNativeAddon('/x', ['foo.node'])).toBe(true);
+    expect(containsNativeAddon('/x', ['node_modules/fsevents/fsevents.node'])).toBe(false);
+    expect(containsNativeAddon('/x', ['node_modules/rollup/rollup.darwin-arm64.node'])).toBe(false);
     const dataDir = root();
     const service = createPluginService({
       dataDir,
@@ -121,6 +123,26 @@ describe('PluginService', () => {
       }
     });
     await expect(service.install('npm:some-plugin')).rejects.toThrow(/nope|npm install failed/);
+  });
+
+  it('degrades a plugin that ships a native addon in its own tree', async () => {
+    const dataDir = root();
+    const pluginDir = writePlugin(join(root(), 'native'), 'native');
+    writeFileSync(join(pluginDir, 'binding.node'), '');
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    const row = await service.install(pluginDir);
+    expect(row.status).toBe('degraded');
+    expect(row.statusDetail).toBe('native addons are not allowed');
+  });
+
+  it('loads a plugin whose node_modules contains a native addon', async () => {
+    const dataDir = root();
+    const pluginDir = writePlugin(join(root(), 'devtools'), 'devtools');
+    mkdirSync(join(pluginDir, 'node_modules', 'fsevents'), { recursive: true });
+    writeFileSync(join(pluginDir, 'node_modules', 'fsevents', 'fsevents.node'), '');
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    const row = await service.install(pluginDir);
+    expect(row.status).toBe('running');
   });
 
   it('degrades when the factory throws', async () => {

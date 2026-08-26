@@ -7,14 +7,6 @@ vendor/opencode
 # Stray root main-bundle artifact (electron-vite emits the real bundle to
 # out/main/index.js — package.json `main` points there, never at ./index.js).
 /index.js
-# ...but the local-extension starter SHIPS its dist/renderer.js as the panel the
-# app copies into every new extension (electron-builder packs templates/ as
-# extension-template). Without this negation the `dist` rule above silently drops
-# it, so a clean checkout / CI build ships the template with no panel.
-!templates/extension-starter/dist/
-!templates/extension-starter/dist/**
-!templates/extension-starter/**/dist/
-!templates/extension-starter/**/dist/**
 .DS_Store
 *.orig
 *.rej

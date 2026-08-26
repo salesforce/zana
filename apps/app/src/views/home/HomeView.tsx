@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { AuroraGrid } from '@/components/AuroraGrid';
 import { HomeAgentComposer } from '@/components/HomeAgentComposer';
 import { PluginNewThreadActions } from '@/plugins/PluginNewThreadActions';
 import { listHomepageSections, subscribePluginSlots } from '@/plugins/plugin-slots';
@@ -8,6 +9,7 @@ import { PluginSlotBoundary } from '@/plugins/PluginSlotBoundary';
  * New Chat compose surface at `/`. ListPane returns null for `nav === 'home'`,
  * so this panel spans the remaining shell track. Submit already opens
  * `/threads/:id`. Plugin CTAs and homepage sections sit under the prompt.
+ * AuroraGrid fills the pane behind the composer (same host as Plugins).
  */
 export function HomeView() {
   const pluginHomepage = useSyncExternalStore(
@@ -17,7 +19,8 @@ export function HomeView() {
   );
 
   return (
-    <div className="settings-panel home-panel">
+    <div className="settings-panel home-panel aurora-host">
+      <AuroraGrid />
       <div className="settings-inner">
         <HomeAgentComposer allowLegacyAgent />
         <PluginNewThreadActions projectId={null} />

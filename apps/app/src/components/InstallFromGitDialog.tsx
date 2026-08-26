@@ -1,17 +1,15 @@
 import { product } from '../lib/product-client.js';
 /**
- * "Install from repo" dialog — installs a shared extension straight from a git
- * repository. The user gives a repo URL (+ optional branch/tag and subfolder);
- * on submit we ask main to `install({kind:'git',...})`. Main owns the whole
- * trust path: it clones (shallow), locates `extension.json`, scrubs symlinks/
- * `.git`, and funnels the tree through the single `installFromDir` seam — so the
- * deny-by-default broker + P3-D consent fire exactly as for a local dir. The url/
- * ref/subdir the renderer passes are ADVISORY hints; main re-validates everything
- * (Rule 1).
+ * "Install from repo" dialog — installs a shared plugin from a git repository.
+ * The user gives a repo URL (+ optional branch/tag and subfolder); on submit we
+ * ask main to `install({kind:'git',...})`. Main owns the whole trust path: it
+ * clones (shallow), locates a plugin manifest (`package.json` with a `zcc` block,
+ * or a leftover `extension.json`), scrubs symlinks/`.git`, and installs through
+ * PluginService (or the one-release disk-extension seam). The url/ref/subdir the
+ * renderer passes are ADVISORY hints; main re-validates everything (Rule 1).
  *
- * There is NO trust fast-path for repo installs: once installed, the consent
- * overlay (ExtensionConsent) shows a loud remote-origin provenance line before
- * the code runs.
+ * There is NO trust fast-path for repo installs: once installed, the confirm
+ * overlay shows a loud remote-origin provenance line before the code runs.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -32,7 +30,7 @@ function friendly(code: string | undefined, message: string): string {
     case 'CLONE_FAILED':
       return 'Could not clone the repository. Check the URL, branch/tag, and your access.';
     case 'MANIFEST_NOT_FOUND':
-      return 'No extension.json found in the repo. If it’s in a subfolder, set the Subfolder field.';
+      return 'No plugin manifest found (package.json with a zcc block). If it is in a subfolder, set the Subfolder field.';
     case 'AMBIGUOUS_MANIFEST':
       return 'Multiple extensions found. Set the Subfolder field to pick one.';
     case 'BAD_SUBDIR':

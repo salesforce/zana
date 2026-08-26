@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
-import { ArrowUp, Folder, Laptop, Maximize2, Mic, Minimize2, Square } from 'lucide-react';
+import { ArrowUp, Folder, Laptop, Loader2, Maximize2, Mic, Minimize2, Square } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { Project } from '@zana-ai/zcc-domain/product';
 import type { ThreadContextWindowUsage } from '@zana-ai/zcc-server-contract';
@@ -298,6 +298,10 @@ export function ThreadCommandComposer({
     editor.chain().insertContent(initialText).run();
   }, [editor, initialText]);
 
+  useEffect(() => {
+    editor?.setEditable(!busy);
+  }, [busy, editor]);
+
   const insertDroppedMentions = useCallback((event: DragEvent, atDropPoint: boolean): boolean => {
     const data = event.dataTransfer;
     if (!editor || !data) return false;
@@ -537,14 +541,19 @@ export function ThreadCommandComposer({
 
   const sendButton = (
     <ComposerIconButton
-      className="thread-command-send"
-      aria-label="Send"
-      title="Send"
+      className={`thread-command-send${busy ? ' is-sending' : ''}`}
+      aria-label={busy ? 'Sending' : 'Send'}
+      title={busy ? 'Sending' : 'Send'}
+      aria-busy={busy}
       data-testid="thread-command-send"
       disabled={busy || sendBlocked || !canSend}
       onClick={() => void submit()}
     >
-      <ArrowUp size={16} />
+      {busy ? (
+        <Loader2 size={16} className="thread-command-send-spin" aria-hidden="true" />
+      ) : (
+        <ArrowUp size={16} />
+      )}
     </ComposerIconButton>
   );
 
@@ -564,7 +573,7 @@ export function ThreadCommandComposer({
       focus={composerFocus}
     >
     <div
-      className={`thread-command-composer${expanded ? ' is-expanded' : ''}${dropOver ? ' is-drop-over' : ''}`}
+      className={`thread-command-composer${expanded ? ' is-expanded' : ''}${dropOver ? ' is-drop-over' : ''}${busy ? ' is-sending' : ''}`}
       onKeyDown={onKeyDown}
       {...dropHandlers}
     >
@@ -575,6 +584,7 @@ export function ThreadCommandComposer({
       <CommandComposer
         className={`home-agent-command thread-command-card${dropOver ? ' is-drop-over' : ''}`}
         labelledBy="thread-command-label"
+        aria-busy={busy}
       >
         <div className="thread-command-editor-slot">
           <ComposerIconButton

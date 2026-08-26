@@ -254,6 +254,7 @@ describe('host enroll hub and thread create', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ projectId: 'proj-1', providerId: 'claude', input: ['ship it'] })
     }).then(async (response) => ({ status: response.status, body: await response.json() }));
+    console.error('DEBUG BODY', JSON.stringify(spawned.body));
     expect(spawned.status).toBe(201);
     expect(spawned.body.ok).toBe(true);
     expect(spawned.body.value.hostId).toBe(hostA.hostId);

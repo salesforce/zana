@@ -1,21 +1,24 @@
 import { product } from '../lib/product-client.js';
 import type { PluginHostBridge } from '@zana-ai/zcc-plugin-sdk';
 /**
- * Loads renderer apps owned by the server-side PluginService. These are distinct
- * from legacy disk extensions: their bundles are served from the supervised
- * same-origin static host, so relative chunks and assets resolve without giving
- * the renderer an install path or a filesystem read capability.
+ * Loads renderer apps owned by the server-side PluginService. Bundles are served
+ * from the supervised same-origin static host, so relative chunks and assets
+ * resolve without giving the renderer an install path or a filesystem read
+ * capability. Already-installed `extension.json` bundles still default-export
+ * `RendererEntry.activate()`; that shape is accepted for one-release compatibility
+ * with the server-side manifest shim.
  */
 
 import * as React from 'react';
 import { create } from 'zustand';
-import type { AppModule, ModuleHost } from '@zana-ai/zcc-extension-sdk/renderer';
+import type { AppModule, ModuleHost, RendererEntry } from '@zana-ai/zcc-extension-sdk/renderer';
 import type { PluginAppEntry } from '@zana-ai/zcc-domain/product';
 import type { PluginRegistrationSet } from '@zana-ai/zcc-plugin-sdk';
 import { isPluginAppDefinition } from '@zana-ai/zcc-plugin-sdk';
 import { PluginSlotBoundary } from './PluginSlotBoundary.js';
 import { clearPluginSlots, interpretPluginApp } from './plugin-slots.js';
-import { evictHost } from '../modules/ModulePanelHost.js';
+import { evictHost, getHost } from '../modules/ModulePanelHost.js';
+import { normalizeActivateResult } from '../modules/loader.js';
 
 export interface PluginAppModule extends AppModule {
   loadError?: string;
@@ -59,6 +62,39 @@ function errorModule(entry: PluginAppEntry, message: string): PluginAppModule {
     panel: Panel,
     projectTab: entry.projectTab,
     loadError: message
+  };
+}
+
+function isRendererEntry(value: unknown): value is RendererEntry {
+  return typeof value === 'object' && value !== null && typeof (value as RendererEntry).activate === 'function';
+}
+
+function moduleFromLegacyActivate(entry: PluginAppEntry, exported: RendererEntry): PluginAppModule {
+  const host = getHost(entry.id);
+  const { panel, settingsPanel, background, commands, navBadge } = normalizeActivateResult(
+    exported.activate({ React, host })
+  );
+  const hasPanel = typeof panel === 'function' || (typeof panel === 'object' && panel !== null);
+  const hasSettings =
+    typeof settingsPanel === 'function' || (typeof settingsPanel === 'object' && settingsPanel !== null);
+  const contributes =
+    hasPanel || hasSettings || typeof commands === 'function' || typeof navBadge === 'function';
+  if (!contributes) {
+    return errorModule(
+      entry,
+      'activate() returned nothing usable (no panel, settingsPanel, commands, or navBadge).'
+    );
+  }
+  return {
+    id: entry.id,
+    title: entry.name,
+    icon: entry.icon,
+    panel: hasPanel ? panel : undefined,
+    settingsPanel: hasSettings ? settingsPanel : undefined,
+    background,
+    commands,
+    navBadge,
+    projectTab: hasPanel ? entry.projectTab : undefined
   };
 }
 
@@ -114,12 +150,18 @@ async function loadPluginApp(
     // (before their slot registration runs), so prime it before importing.
     (globalThis as Record<string, unknown>).__ZCC_HOST_REACT__ = React;
     const mod = await importer(entry.appUrl);
-    if (!isPluginAppDefinition(mod.default)) {
-      clearPluginSlots(entry.id);
-      return errorModule(entry, 'Bundle did not default-export a plugin app.');
+    if (isPluginAppDefinition(mod.default)) {
+      const set = interpretPluginApp(entry.id, mod.default);
+      return moduleFromSet(entry, set);
     }
-    const set = interpretPluginApp(entry.id, mod.default);
-    return moduleFromSet(entry, set);
+    // One-release compatibility: already-installed extension.json bundles still
+    // default-export RendererEntry.activate(), matching the server-side shim.
+    if (isRendererEntry(mod.default)) {
+      clearPluginSlots(entry.id);
+      return moduleFromLegacyActivate(entry, mod.default);
+    }
+    clearPluginSlots(entry.id);
+    return errorModule(entry, 'Bundle did not default-export a plugin app.');
   } catch (error) {
     clearPluginSlots(entry.id);
     return errorModule(entry, error instanceof Error ? error.message : String(error));

@@ -624,7 +624,14 @@ export async function runFactoryTimeBoxed(
 }
 
 export function containsNativeAddon(rootDir: string, entries: string[]): boolean {
-  return entries.some((rel) => rel.endsWith('.node') || rel.endsWith('.node.js'));
+  return entries.some((rel) => {
+    const normalized = rel.replace(/\\/g, '/');
+    const parts = normalized.split('/');
+    // Dev-time trees (local extension working dirs) ship rollup/fsevents
+    // binaries under node_modules. Those are not the plugin's runtime image.
+    if (parts.includes('node_modules') || parts.includes('.git')) return false;
+    return normalized.endsWith('.node') || normalized.endsWith('.node.js');
+  });
 }
 
 export function resolveContainedEntry(rootDir: string, relative: string): string {

@@ -44,20 +44,29 @@ import { MarkdownContent } from '@/components/MarkdownContent';
 
 const PAGE_SIZE = 60;
 
-/** Per-kind icon + accent class for the timeline rows. */
-const KIND_META: Record<FeedEventKind, { icon: LucideIcon; cls: string }> = {
-  commit: { icon: GitCommit, cls: 'feed-ico--commit' },
-  report: { icon: FileText, cls: 'feed-ico--report' },
-  'session-finished': { icon: CheckCircle2, cls: 'feed-ico--session' },
-  'followup-created': { icon: CircleDot, cls: 'feed-ico--followup' },
-  'followup-resolved': { icon: CheckCircle2, cls: 'feed-ico--followup' },
-  'goal-achieved': { icon: Target, cls: 'feed-ico--goal' },
-  'library-doc': { icon: BookText, cls: 'feed-ico--library' },
-  'schedule-run': { icon: Clock, cls: 'feed-ico--schedule' },
-  'extension-installed': { icon: Puzzle, cls: 'feed-ico--ext' },
-  'extension-uninstalled': { icon: Puzzle, cls: 'feed-ico--ext' },
-  'project-created': { icon: FolderPlus, cls: 'feed-ico--project' }
+/** Per-kind icon, accent token, and chip label for the timeline rows. */
+const KIND_META: Record<FeedEventKind, { icon: LucideIcon; token: string; label: string }> = {
+  commit: { icon: GitCommit, token: 'commit', label: 'Commit' },
+  report: { icon: FileText, token: 'report', label: 'Report' },
+  'session-finished': { icon: CheckCircle2, token: 'session', label: 'Session' },
+  'followup-created': { icon: CircleDot, token: 'followup', label: 'Follow-up' },
+  'followup-resolved': { icon: CheckCircle2, token: 'followup', label: 'Resolved' },
+  'goal-achieved': { icon: Target, token: 'goal', label: 'Goal' },
+  'library-doc': { icon: BookText, token: 'library', label: 'Library' },
+  'schedule-run': { icon: Clock, token: 'schedule', label: 'Schedule' },
+  'extension-installed': { icon: Puzzle, token: 'ext', label: 'Installed' },
+  'extension-uninstalled': { icon: Puzzle, token: 'ext', label: 'Removed' },
+  'project-created': { icon: FolderPlus, token: 'project', label: 'Project' }
 };
+
+const FALLBACK_META = { icon: Activity, token: 'report', label: 'Event' };
+
+function KindChip({ kind }: { kind: FeedEventKind }) {
+  const meta = KIND_META[kind] ?? FALLBACK_META;
+  return (
+    <span className={`feed-kind-chip feed-kind--${meta.token}`}>{meta.label}</span>
+  );
+}
 
 /** Plural noun for a collapsed cluster of `n` same-kind events. */
 function clusterLabel(kind: FeedEventKind, n: number): string {
@@ -261,89 +270,98 @@ export function FeedView({ project }: { project: Project }) {
       </header>
 
       {/* The scroll body. Kept SEPARATE from the header so the header is
-          structurally fixed (no sticky/negative-margin hacks) — the recap and
-          timeline scroll away beneath it. */}
+          structurally fixed (no sticky / z-index / negative-margin hacks) — the recap and
+          timeline scroll away beneath it. Centered reading column lives in
+          `.feed-scroll-inner`; the header stays full-bleed. */}
       <div className="feed-scroll">
-      {/* AI recap card — on-demand (never auto-warmed), mirrors the Inbox digest. */}
-      <FeedRecapCard
-        digest={digest}
-        state={digestState}
-        hasEvents={events.length > 0}
-        onGenerate={() => void generateRecap()}
-      />
+        <div className="feed-scroll-inner">
+          {/* AI recap card — on-demand (never auto-warmed), mirrors the Inbox digest. */}
+          <FeedRecapCard
+            digest={digest}
+            state={digestState}
+            hasEvents={events.length > 0}
+            onGenerate={() => void generateRecap()}
+          />
 
-      {loading ? (
-        <div className="feed-empty">Loading feed…</div>
-      ) : events.length === 0 ? (
-        <div className="feed-empty">
-          No activity yet. Commits, agent reports, finished sessions, resolved
-          follow-ups and achieved goals will show up here.
-        </div>
-      ) : totalNodes === 0 ? (
-        <div className="feed-empty">No activity matches “{query.trim()}”.</div>
-      ) : (
-        <div className="feed-timeline">
-          {(() => {
-            // Running index across ALL buckets so the spine trims only the very
-            // first / very last node's overhang (continuous across buckets).
-            let idx = -1;
-            return bucketed.map(([bucket, nodes]) => (
-              <section key={bucket} className="feed-bucket">
-                <h4 className="feed-bucket-label">{BUCKET_LABEL[bucket]}</h4>
-                <ul className="feed-rows">
-                  {nodes.map((node) => {
-                    idx += 1;
-                    const isFirst = idx === 0;
-                    // Don't cap the spine at the last node while more can load — a
-                    // trailing segment hints the timeline continues into "Load older".
-                    const isLast = !hasMore && idx === totalNodes - 1;
-                    const spineCls = `${isFirst ? ' feed-row--first' : ''}${
-                      isLast ? ' feed-row--last' : ''
-                    }`;
-                    if (node.type === 'cluster') {
-                      return (
-                        <ClusterRow
-                          key={`cluster:${node.kind}:${node.latest.id}`}
-                          node={node}
-                          spineCls={spineCls}
-                          open={expanded.has(node.latest.id)}
-                          onToggle={() => toggleCluster(node.latest.id)}
-                        />
-                      );
-                    }
-                    return (
-                      <EventRow
-                        key={node.event.id}
-                        event={node.event}
-                        spineCls={spineCls}
-                        open={expandedEvents.has(node.event.id)}
-                        onToggle={() => toggleEvent(node.event.id)}
-                      />
-                    );
-                  })}
-                </ul>
-              </section>
-            ));
-          })()}
-          {hasMore && (
-            <button
-              type="button"
-              className="feed-more-btn"
-              onClick={() => void loadMore()}
-              disabled={loadingMore}
-            >
-              {loadingMore ? 'Loading…' : 'Load older activity'}
-            </button>
+          {loading ? (
+            <div className="feed-empty">
+              <p className="feed-empty-copy">Loading feed…</p>
+            </div>
+          ) : events.length === 0 ? (
+            <div className="feed-empty">
+              <p className="feed-empty-copy">
+                No activity yet. Commits, agent reports, finished sessions, resolved
+                follow-ups and achieved goals will show up here.
+              </p>
+            </div>
+          ) : totalNodes === 0 ? (
+            <div className="feed-empty">
+              <p className="feed-empty-copy">No activity matches “{query.trim()}”.</p>
+            </div>
+          ) : (
+            <div className="feed-timeline">
+              {(() => {
+                // Running index across ALL buckets so the spine trims only the very
+                // first / very last node's overhang (continuous across buckets).
+                let idx = -1;
+                return bucketed.map(([bucket, nodes]) => (
+                  <section key={bucket} className="feed-bucket">
+                    <h4 className="feed-bucket-label">{BUCKET_LABEL[bucket]}</h4>
+                    <ul className="feed-rows">
+                      {nodes.map((node) => {
+                        idx += 1;
+                        const isFirst = idx === 0;
+                        // Don't cap the spine at the last node while more can load — a
+                        // trailing segment hints the timeline continues into "Load older".
+                        const isLast = !hasMore && idx === totalNodes - 1;
+                        const spineCls = `${isFirst ? ' feed-row--first' : ''}${
+                          isLast ? ' feed-row--last' : ''
+                        }`;
+                        if (node.type === 'cluster') {
+                          return (
+                            <ClusterRow
+                              key={`cluster:${node.kind}:${node.latest.id}`}
+                              node={node}
+                              spineCls={spineCls}
+                              open={expanded.has(node.latest.id)}
+                              onToggle={() => toggleCluster(node.latest.id)}
+                            />
+                          );
+                        }
+                        return (
+                          <EventRow
+                            key={node.event.id}
+                            event={node.event}
+                            spineCls={spineCls}
+                            open={expandedEvents.has(node.event.id)}
+                            onToggle={() => toggleEvent(node.event.id)}
+                          />
+                        );
+                      })}
+                    </ul>
+                  </section>
+                ));
+              })()}
+              {hasMore && (
+                <button
+                  type="button"
+                  className="feed-more-btn"
+                  onClick={() => void loadMore()}
+                  disabled={loadingMore}
+                >
+                  {loadingMore ? 'Loading…' : 'Load older activity'}
+                </button>
+              )}
+            </div>
           )}
         </div>
-      )}
       </div>
     </div>
   );
 }
 
 /** A single feed event as a timeline row. Click to expand full detail. */
-function EventRow({
+export function EventRow({
   event,
   spineCls,
   open,
@@ -354,7 +372,7 @@ function EventRow({
   open: boolean;
   onToggle: () => void;
 }) {
-  const meta = KIND_META[event.kind] ?? { icon: Activity, cls: '' };
+  const meta = KIND_META[event.kind] ?? FALLBACK_META;
   const Icon = meta.icon;
   const title = mdToPlainText(event.title);
   // A one-line, markdown-stripped preview for the collapsed row (clamped to 2
@@ -363,8 +381,8 @@ function EventRow({
   const hasDetail = !!event.detail || !!event.context;
   return (
     <li className={`feed-row feed-row--event${open ? ' is-open' : ''}${spineCls}`}>
-      <span className={`feed-ico ${meta.cls}`} aria-hidden>
-        <Icon size={14} />
+      <span className={`feed-ico feed-ico--${meta.token}`} aria-hidden>
+        <Icon size={15} />
       </span>
       <div className="feed-row-body">
         {/* The clickable summary. The expanded panel is a SIBLING (not nested)
@@ -380,9 +398,12 @@ function EventRow({
             <span className="feed-row-title">{title}</span>
             {!open && preview && <span className="feed-row-detail">{preview}</span>}
           </span>
-          <time className="feed-row-ts" title={absTime(event.ts)}>
-            {formatRelative(event.ts)}
-          </time>
+          <span className="feed-row-meta">
+            <KindChip kind={event.kind} />
+            <time className="feed-row-ts" title={absTime(event.ts)}>
+              {formatRelative(event.ts)}
+            </time>
+          </span>
         </button>
         {open && (
           <div className="feed-row-expanded">
@@ -401,7 +422,6 @@ function EventRow({
                 <div className="feed-row-expanded-body">No extra details on this event.</div>
               )
             )}
-            <div className="feed-row-expanded-meta">{event.kind}</div>
           </div>
         )}
       </div>
@@ -410,7 +430,7 @@ function EventRow({
 }
 
 /** A collapsed run of same-kind events; expands its members in place. */
-function ClusterRow({
+export function ClusterRow({
   node,
   spineCls,
   open,
@@ -421,28 +441,39 @@ function ClusterRow({
   open: boolean;
   onToggle: () => void;
 }) {
-  const meta = KIND_META[node.kind] ?? { icon: Activity, cls: '' };
+  const meta = KIND_META[node.kind] ?? FALLBACK_META;
   const Icon = meta.icon;
   const first = node.events[node.events.length - 1]!;
   const span =
     first.ts === node.latest.ts ? '' : ` · ${formatRelative(first.ts)}–${formatRelative(node.latest.ts)}`;
   return (
-    <li className={`feed-row feed-row--cluster${spineCls}`}>
+    <li className={`feed-row feed-row--cluster${open ? ' is-open' : ''}${spineCls}`}>
       <button
         type="button"
-        className={`feed-ico feed-ico--cluster ${meta.cls}`}
+        className={`feed-ico feed-ico--cluster feed-ico--${meta.token}`}
         onClick={onToggle}
         aria-expanded={open}
         aria-label={open ? 'Collapse group' : 'Expand group'}
       >
-        <Icon size={14} />
+        <Icon size={15} />
         {!open && <span className="feed-cluster-badge">{node.events.length}</span>}
       </button>
       <div className="feed-row-body">
-        <button type="button" className="feed-cluster-toggle" onClick={onToggle} aria-expanded={open}>
-          <ChevronRight size={13} className={`feed-cluster-chev${open ? ' feed-cluster-chev--open' : ''}`} />
-          <span className="feed-row-title">{clusterLabel(node.kind, node.events.length)}</span>
-        </button>
+        <div className="feed-cluster-head">
+          <button type="button" className="feed-cluster-toggle" onClick={onToggle} aria-expanded={open}>
+            <ChevronRight size={13} className={`feed-cluster-chev${open ? ' feed-cluster-chev--open' : ''}`} />
+            <span className="feed-row-title">{clusterLabel(node.kind, node.events.length)}</span>
+          </button>
+          <span className="feed-row-meta">
+            <KindChip kind={node.kind} />
+            {!open && (
+              <time className="feed-row-ts" title={absTime(node.latest.ts)}>
+                {formatRelative(node.latest.ts)}
+                {span}
+              </time>
+            )}
+          </span>
+        </div>
         {open && (
           <ul className="feed-cluster-members">
             {node.events.map((ev) => (
@@ -457,17 +488,11 @@ function ClusterRow({
           </ul>
         )}
       </div>
-      {!open && (
-        <time className="feed-row-ts" title={absTime(node.latest.ts)}>
-          {formatRelative(node.latest.ts)}
-          {span}
-        </time>
-      )}
     </li>
   );
 }
 
-function FeedRecapCard({
+export function FeedRecapCard({
   digest,
   state,
   hasEvents,
@@ -479,23 +504,35 @@ function FeedRecapCard({
   onGenerate: () => void;
 }) {
   if (!hasEvents) return null;
+  const ready = !!digest;
+  const note =
+    state === 'failed'
+      ? 'Couldn’t summarize the feed right now.'
+      : state === 'empty'
+        ? 'Not enough activity to summarize yet.'
+        : ready
+          ? null
+          : 'Generate a short AI summary of what’s happened on this project.';
   return (
-    <div className="feed-recap">
+    <div className={`feed-recap${ready ? ' feed-recap--ready' : ' feed-recap--idle'}`}>
       <div className="feed-recap-head">
-        <span className="feed-recap-title">
-          <Sparkles size={13} />
-          Recap
+        <span className="feed-recap-ico" aria-hidden>
+          <Sparkles size={14} />
         </span>
+        <div className="feed-recap-head-text">
+          <span className="feed-recap-title">Recap</span>
+          {note && <p className="feed-recap-note">{note}</p>}
+        </div>
         <button
           type="button"
-          className="feed-recap-btn"
+          className={`feed-recap-btn${ready ? '' : ' feed-recap-btn--primary'}`}
           onClick={onGenerate}
           disabled={state === 'loading'}
         >
-          {state === 'loading' ? 'Summarizing…' : digest ? 'Regenerate' : 'Generate recap'}
+          {state === 'loading' ? 'Summarizing…' : ready ? 'Regenerate' : 'Generate recap'}
         </button>
       </div>
-      {digest ? (
+      {digest && (
         <div className="feed-recap-body">
           <p className="feed-recap-headline">{digest.headline}</p>
           {digest.highlights.length > 0 && (
@@ -506,14 +543,6 @@ function FeedRecapCard({
             </ul>
           )}
         </div>
-      ) : state === 'failed' ? (
-        <p className="feed-recap-note">Couldn’t summarize the feed right now.</p>
-      ) : state === 'empty' ? (
-        <p className="feed-recap-note">Not enough activity to summarize yet.</p>
-      ) : (
-        <p className="feed-recap-note">
-          Generate a short AI summary of what’s happened on this project.
-        </p>
       )}
     </div>
   );

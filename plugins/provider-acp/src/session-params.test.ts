@@ -203,6 +203,24 @@ describe("buildAcpSessionParams", () => {
     });
   });
 
+  it("does not pin the host default sentinel over the ACP protocol", () => {
+    expect(
+      buildAcpSessionParams({
+        additionalWorkspaceWriteRoots: [],
+        cwd: "/workspace",
+        options: { ...BASE_OPTIONS, model: "default" },
+        profile: profileFor({
+          displayName: "OpenCode",
+          command: "opencode",
+          args: ["acp"],
+          env: {},
+        }),
+        providerLabel: "acp-opencode",
+        threadId: "thread-1",
+      }),
+    ).not.toHaveProperty("modelSelection");
+  });
+
   it("pins the launch reasoning level only when the spec has a reasoning CLI", () => {
     const reasoningCli: NonNullable<HostDaemonAcpLaunchSpec["reasoningCli"]> = {
       flag: "--reasoning-effort",
@@ -321,6 +339,13 @@ describe("buildAcpSessionParams model selection", () => {
     const params = cursorSessionParams({ model: "acp-default" });
     expect("modelSelection" in params).toBe(false);
     expect(params.agent).toEqual({ command: "cursor-agent", args: ["acp"] });
+  });
+
+  it("never forwards the host execution-options default sentinel", () => {
+    // Host fills model: "default" when the composer sent no pin; OpenCode has
+    // no such model id.
+    const params = cursorSessionParams({ model: "default" });
+    expect("modelSelection" in params).toBe(false);
   });
 
   it("selects over the protocol when a CLI-discovered agent has no select flag", () => {

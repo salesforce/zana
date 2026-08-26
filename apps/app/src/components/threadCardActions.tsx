@@ -4,6 +4,7 @@ import { product } from '../lib/product-client.js';
 import { getAgentsRoutePath, getProjectRoutePath, getThreadRoutePath, projectIdFromThreadPath, threadIdFromPath } from '../lib/route-paths.js';
 import { useRouteState } from '../hooks/useRouteState.js';
 import { useThreads, type ThreadListItem } from '../thread-store.js';
+import { SHOW_THREAD_FORK } from './thread/ThreadDetailOverflow.js';
 import { shouldShowThreadStop } from './thread/thread-timeline-model.js';
 import { clampMenuAnchor } from './agentCardActions.js';
 
@@ -151,13 +152,15 @@ export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
           Stop
         </button>
       )}
-      <button
-        type="button"
-        onClick={() => run('fork')}
-        title="Start a new thread from this conversation"
-      >
-        Fork
-      </button>
+      {SHOW_THREAD_FORK ? (
+        <button
+          type="button"
+          onClick={() => run('fork')}
+          title="Start a new thread from this conversation"
+        >
+          Fork
+        </button>
+      ) : null}
       <div className="tab-context-sep" />
       <button
         type="button"

@@ -106,6 +106,8 @@ describe('scaffoldLocalExtension (per kind)', () => {
         const brief = await readFile(join(dir, 'CLAUDE.md'), 'utf-8');
         expect(brief, `${kind}/CLAUDE.md`).toContain('zcc plugin dev');
         expect(brief, `${kind}/CLAUDE.md`).toContain('definePluginApp');
+        expect(brief, `${kind}/CLAUDE.md`).not.toContain('extension.json');
+        expect(brief, `${kind}/CLAUDE.md`).not.toMatch(/activate\s*\(/);
       } finally {
         await rm(dir, { recursive: true, force: true });
       }

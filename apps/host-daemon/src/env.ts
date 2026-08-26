@@ -61,8 +61,8 @@ function fallbackDirs(): string[] {
  * `undefined` — a no-op — when it can't be found, so this degrades cleanly
  * before the CLI is built or on a platform we don't ship a launcher for.
  *
- * Ladder mirrors `local-extension.ts` templateRoot() / `extension-installer.ts`
- * bundledRoot(): explicit override → packaged `resourcesPath` → dev repo-relative.
+ * Ladder mirrors `extension-installer.ts` bundledRoot(): explicit override →
+ * packaged `resourcesPath` → dev repo-relative.
  * The candidates are, in priority order:
  *   1. `ZCC_CLI_DIR` override (only when the dir it names exists),
  *   2. packaged: `resourcesPath/zcc-cli/bin` (electron-builder copies

@@ -166,25 +166,26 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   app-shell's grid. Two couplings: (1) built-in panels that self-set
   `grid-column: 2 / -1` (`.gus-panel`, `.cu-panel`) still work — that rule is now a
   harmless no-op inside the flex slot — but do NOT rely on it for new panels; fill
-  the slot instead. (2) The **starter template teaches this**: the local-extension
-  starter (`templates/extension-starter/dist/renderer.js` root style + LAYOUT
-  comment, its `CLAUDE.md` "Layout — fill the panel" section) and the
-  `extension-creator` skill (`resources/extension-creator-skill.md`) all instruct a
-  full-slot root (`height:'100%'`/`flex:1` + own `overflow`, `max-width` only on an
-  inner reading-width wrapper). Changing the slot contract means updating those
-  three teaching artifacts too, or new extensions regress the bug.
+  the slot instead. (2) The **plugin starter teaches this**:
+  `packages/plugin-templates/src/files.ts` (panel root `height: '100%'`), the
+  generated starter `CLAUDE.md`, and the `extension-creator` /
+  `zcc-plugin-authoring` skills all instruct a full-slot root (`height:'100%'` /
+  `flex:1` + own `overflow`, `max-width` only on an inner reading-width wrapper).
+  Changing the slot contract means updating those teaching artifacts too, or new
+  plugins regress the bug.
 
 - **Extension-contributed personas/teams (`PersonaTeamRegistry`).** `apps/desktop/src/extensions/persona-team-registry.ts` lets a live extension contribute personas/teams in-memory via `ctx.personas`/`ctx.teams`. Provenance is **host-stamped** (`source: { extensionId }` from the authenticated `moduleId`, never a literal — a Rule-6-clean pattern; ids namespaced `ext:<moduleId>:<slug>`), cleared on teardown/crash. Coupling: changes to the shared `sanitizePersona`/`sanitizeTeam` gate or to `PersonaSource` narrowing now also affect extension-contributed entries, and the renderer source badge narrows on `'extensionId' in source`.
 
-- **Extension-contributed agent capabilities — skills + MCP servers, one
-  permission token (`agent:contribute`), MANIFEST-declared not `ctx`-registered
-  (`docs/extension-agent-capabilities-plan.md`).** Unlike personas/teams (pure
-  in-memory data ZCC fully owns), a skill (`SKILL.md`) and an MCP server
-  definition are filesystem/static-config artifacts consumed by `claude` CLI
-  processes outside ZCC's control — so `ExtensionManifest.skills`/`mcpServers`
-  (SDK) are declared once in `extension.json`, not registered live. Two
-  parallel sync functions, both gated identically (enabled ∧ consented ∧
-  `agent:contribute` declared) and called from the SAME finite choke-point set
+- **Plugin-contributed agent capabilities — skills + MCP servers.** New plugins
+  declare these in `package.json` → `zcc.skills` / `zcc.mcpServers` (see
+  `PluginManifest`). Leftover disk extensions still declare them on
+  `ExtensionManifest.skills`/`mcpServers` in `extension.json` (`docs/extension-agent-capabilities-plan.md`).
+  Unlike personas/teams (pure in-memory data ZCC fully owns), a skill (`SKILL.md`)
+  and an MCP server definition are filesystem/static-config artifacts consumed by
+  `claude` CLI processes outside ZCC's control — so they are declared in the
+  manifest, not registered live. Two parallel sync functions, both gated
+  identically (enabled ∧ consented ∧ `agent:contribute` declared) and called from
+  the SAME finite choke-point set
   `redeployBundledSkills`/`ensureMcpConfigForProject` already used (boot,
   install/uninstall/enable/disable, the disk-sync reconcile, the "Reload
   skills & MCP" button — the button's name stops being aspirational here):
@@ -275,71 +276,59 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   It's called on **uninstall only** — `teardown`/disable deliberately preserve
   state for a later re-enable.
 
-- **Local (in-app authored) extensions are ordinary disk extensions + a pointer,
-  NOT a trust tier.** The "create your own extension" feature
+- **Local (in-app authored) plugins are ordinary PluginService installs + a
+  pointer, NOT a trust tier.** The "create your own plugin" feature
   (`CreateExtensionDialog` → `extensions:createLocal`) mints a unique id
-  (`apps/server/src/services/extensions/local-extension.ts` `mintLocalId`), scaffolds a renderer-only starter
-  into a scratch working dir (`workingDirFor(scratchWorkspaceRoot(), id)` =
+  (`apps/server/src/services/extensions/local-extension.ts` `mintLocalId`),
+  scaffolds a `package.json` `zcc` starter into a scratch working dir
+  (`workingDirFor(scratchWorkspaceRoot(), id)` =
   `~/zcc-workspace/extensions/<id>` — never HOME, a project, or `~/.zcc`)
-  **including a `CLAUDE.md` "template"** the Creator auto-loads as project
-  instructions (orient + trust boundary + build/reload loop; the deeper reference
-  stays the bundled `extension-creator` skill). The starter is copied from an
-  **editable repo dir** (see the template-dir coupling note below), not emitted as
-  inline strings. It then registers a **dedicated project** rooted at that working dir under
-  the `category: 'Extensions'` group (`store.ensureExtensionProject` →
-  `EXTENSION_PROJECT_CATEGORY`, named `Ext: <title>`, idempotent-by-path +
+  **including a `CLAUDE.md`** the Creator auto-loads as project instructions
+  (orient + trust boundary + `zcc plugin dev` loop; the deeper reference stays
+  the bundled `extension-creator` / `zcc-plugin-authoring` skills). The starter
+  is generated from `@zana-ai/zcc-plugin-templates` (see the starter coupling
+  note below). It then registers a **dedicated project** rooted at that working
+  dir under the `category: 'Extensions'` group (`store.ensureExtensionProject`
+  → `EXTENSION_PROJECT_CATEGORY`, named `Ext: <title>`, idempotent-by-path +
   self-healing) and opens the Creator agent (persona `builtin:ext-creator`,
-  baseProfile `claude`, `permissionMode: 'acceptEdits'`) with its cwd bounded to
-  that project root. The
-  agent's file output is **INERT** until main **packs** it (manifest + `dist/`
-  ONLY — a curated allowlist, so a stray secret in the working dir never rides
-  into the install root) and crosses the single trusted seam `installFromDir`,
-  which re-runs every manifest/id/api/reserved/containment gate. **There is NO
-  "trust local" fast-path** — local extensions go through P3-D consent + the
-  broker unconditionally (the template declares `permissions: []`, so a bare panel
-  installs consent-free; adding a permission later re-prompts). Three couplings:
-  (1) **"local" is stored BESIDE the extension dirs, in `local.json`**
+  baseProfile `claude`, `permissionMode: 'acceptEdits'`) with its cwd bounded
+  to that project root. The agent's file output is **INERT** until main
+  path-installs the working dir through PluginService (`installPlugin` /
+  `reloadPlugin`). **There is NO "trust local" fast-path** — local plugins go
+  through the same install/enable confirm as any other plugin. Three couplings:
+  (1) **"local" is stored BESIDE the install, in `local.json`**
   (`discovery.markLocal`/`getLocalRecord`/`clearLocal`, keyed by id →
-  `{ workingDir }`), never inside the ext dir — so publishing the packed dir
-  carries none of it (Rule-6 clean, publish-safe). `discoverExtensions` stamps
-  `source: 'local'` from that map; the hub reads `entry.source === 'local'` for
-  the badge + local actions. (2) **Reload/Continue re-derive the working dir from
-  main's own `local.json`, never from renderer/agent free-text** (Rule 1):
-  `reinstallLocal(id)` reads the record, sanity-checks the source manifest id
-  still matches the registry key (ID_MISMATCH), re-packs, re-installs;
+  `{ workingDir }`), never inside the plugin dir — so publishing the source
+  carries none of it. The hub reads `entry.source === 'local'` for the badge +
+  local actions. (2) **Reload/Continue re-derive the working dir from main's
+  own `local.json`, never from renderer/agent free-text** (Rule 1):
+  `reinstallLocal(id)` reads the record, sanity-checks the source plugin id
+  still matches the registry key (ID_MISMATCH), reloads via PluginService;
   `localInfo(id)`/`createLocal` return the working dir **plus the dedicated
   Extensions-category project id** (re-derived/self-healed via
-  `ensureExtensionProject`, Rule 1) so the renderer can re-open the Creator agent
-  against a stable home — the renderer only ever passes an id. The
+  `ensureExtensionProject`, Rule 1) so the renderer can re-open the Creator
+  agent against a stable home — the renderer only ever passes an id. The
   `'Extensions'` category string is shared: `store.EXTENSION_PROJECT_CATEGORY`
   and the ListPane rail's `projects:extensions` group compare against the same
   literal, so renaming the group means changing both. (3) **Uninstall calls
   `clearLocal(id)` but
   deliberately LEAVES the source working dir on disk** (the user's in-progress
   work), so a source dir can outlive its `local.json` entry — a re-create mints a
-  fresh id rather than reclaiming the orphaned dir. The install-seam invariant
-  (`local-extension.ts` never touches the install root; only `installFromDir`
-  writes there) is guarded by
+  fresh id rather than reclaiming the orphaned dir. Leftover `extension.json`
+  working dirs still pack through `installFromDir`; that seam is guarded by
   `apps/server/src/services/extensions/__tests__/local-extension-install-seam.guard.test.ts`.
 
-- **The local-extension starter is an EDITABLE repo template, not inline strings.**
-  `templates/extension-starter/` holds the real starter files (`extension.json`
-  with BOTH a global entry + a `projectTab`, `dist/renderer.js`, `README.md`,
-  `CLAUDE.md`). `scaffoldLocalExtension` (`local-extension.ts`) resolves the dir
-  via `templateRoot()` — override `ZCC_EXTENSION_TEMPLATE_DIR` → packaged
-  `process.resourcesPath/extension-template` (electron-builder `extraResources`)
-  → dev `__dirname/../../templates/extension-starter`, mirroring
-  `extension-installer.ts` `bundledRoot()` — then copies each file, substituting
-  literal `__EXT_ID__` / `__EXT_TITLE__` / `__EXT_DESCRIPTION__` / `__EXT_API_MAJOR__`
-  tokens (`applyTokens`), never clobbering an already-edited file. Enhance the
-  starter by editing the template files — no code change. Two couplings: (1) a new
-  token means adding it to BOTH the template files AND `templateTokens()`; an
-  orphaned `__X__` ships verbatim. (2) An inline `scaffoldMinimal` fallback runs
-  only when the dir is absent (stripped build) — keep it deliberately minimal (no
-  projectTab/CLAUDE.md) so it can't masquerade as the maintained template. The
-  install-seam guard scans `local-extension.ts` source for `~/.zcc`; its naive
-  backtick-pairing desyncs on a lone `` ` `` in code, so avoid stray backtick
-  chars in that file's non-template-literal code (the guard test documents this).
+- **The local-plugin starter is generated from `@zana-ai/zcc-plugin-templates`,
+  not an `extension.json` disk template.** `scaffoldLocalExtension`
+  (`local-extension.ts`) calls `scaffoldPlugin()` which writes a `package.json`
+  `zcc` plugin (`panel` / `main-panel` / `mcp-consumer` / `agent-preset`) using
+  `pluginScaffoldFileMap` in `packages/plugin-templates/src/files.ts`. Enhance
+  the starter by editing that file map — kinds, `definePluginApp` panel, server
+  factory, skills, MCP. Tokens are the scaffold args (`id`, `name`,
+  `description`), not `__EXT_ID__` substitution. The install-seam guard scans
+  `local-extension.ts` source for `~/.zcc`; its naive backtick-pairing desyncs
+  on a lone `` ` `` in code, so avoid stray backtick chars in that file's
+  non-template-literal code (the guard test documents this).
 
 - **Bundled skills + per-project MCP config are the app's runtime capability
   artifacts — one roster, two triggers.** The five shipped SKILL.md files deploy

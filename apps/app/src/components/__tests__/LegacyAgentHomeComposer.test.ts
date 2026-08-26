@@ -16,4 +16,14 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain("from './legacy-agent-home.js'");
     expect(source).not.toContain('product.threads.create');
   });
+
+  it('shows a sending spinner on the launch button while createTerminal is in flight', () => {
+    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('Loader2');
+    expect(source).toContain('is-sending');
+    expect(source).toContain('aria-busy={launching}');
+    expect(source).toContain('thread-command-send-spin');
+    expect(source).toContain("className={`thread-command-send${launching ? ' is-sending' : ''}`}");
+    expect(source).toContain('disabled={launching}');
+  });
 });

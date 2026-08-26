@@ -147,7 +147,7 @@ describe('ThreadCardMenu', () => {
     );
     expect(idle).toContain('data-testid="thread-context-menu"');
     expect(idle).toContain('Open');
-    expect(idle).toContain('Fork');
+    expect(idle).not.toContain('Fork');
     expect(idle).toContain('Archive');
     expect(idle).not.toContain('Stop');
 

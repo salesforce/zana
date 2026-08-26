@@ -69,4 +69,59 @@ describe('server plugin app loader', () => {
     expect(usePluginAppModules.getState().modules[0]).toMatchObject({ id: 'broken', loadError: 'bundle exploded' });
     expect(listNavPanels().some((panel) => panel.pluginId === 'broken')).toBe(false);
   });
+
+  it('activates a legacy RendererEntry bundle instead of treating it as a missing plugin app', async () => {
+    const Panel = () => null;
+    await reconcilePluginApps(
+      [{
+        id: 'gus',
+        name: 'GUS',
+        description: 'GUS',
+        icon: 'Ticket',
+        enabled: true,
+        provenance: 'direct',
+        status: 'running',
+        appUrl: '/plugins/gus/assets/renderer.js?v=1'
+      }],
+      {
+        importer: async () => ({
+          default: {
+            activate: () => ({ panel: Panel })
+          }
+        })
+      }
+    );
+
+    const loaded = usePluginAppModules.getState().modules[0];
+    expect(loaded.id).toBe('gus');
+    expect(loaded.title).toBe('GUS');
+    expect(loaded.loadError).toBeUndefined();
+    expect(loaded.panel).toBe(Panel);
+    expect(listNavPanels().some((panel) => panel.pluginId === 'gus')).toBe(false);
+  });
+
+  it('surfaces a legacy activate() that contributes nothing', async () => {
+    await reconcilePluginApps(
+      [{
+        id: 'empty',
+        name: 'Empty',
+        description: '',
+        icon: 'Puzzle',
+        enabled: true,
+        provenance: 'direct',
+        status: 'running',
+        appUrl: '/plugins/empty/assets/renderer.js?v=1'
+      }],
+      {
+        importer: async () => ({
+          default: { activate: () => ({}) }
+        })
+      }
+    );
+
+    expect(usePluginAppModules.getState().modules[0]).toMatchObject({
+      id: 'empty',
+      loadError: 'activate() returned nothing usable (no panel, settingsPanel, commands, or navBadge).'
+    });
+  });
 });

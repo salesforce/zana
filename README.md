@@ -52,7 +52,7 @@ npm run dev
 ```
 
 `npm run dev` launches the Electron development app. The pre-dev step builds the
-`zcc` CLI and seeds the bundled extensions automatically.
+`zcc` CLI and seeds bundled plugins automatically.
 
 ## The Operating Loop
 
@@ -102,18 +102,16 @@ npm run dev
 | **Personas and Teams** | Reusable agent roles, model and provider routing, and multi-agent team definitions that can be imported or exported. |
 | **Scheduler** | Recurring agent tasks, templates, run history, and per-run reports. |
 | **Library** | Cross-project folders and documents for durable technical knowledge and agent-authored findings. |
-| **Extensions** | Permission-gated modules that add panels, project tabs, commands, capabilities, skills, MCP servers, and personas or teams. |
+| **Plugins** | Installed TypeScript packages (`package.json` `zcc`) that add panels, project tabs, skills, MCP servers, settings, and CLI commands. |
 
-## Extensions
+## Plugins
 
-Zana is extensible through [`@zana-ai/zcc-extension-sdk`](packages/extension-sdk). Disk extensions are discovered at runtime, run in isolated utility processes, and receive only the capabilities granted through explicit, scoped user consent. First-party features can use the same extension path.
-
-Extensions can contribute sidebar or project-tab panels, command-palette commands, notifications, main-side capabilities, personas, teams, skills, and MCP server definitions. You can also create a local extension from within Zana and iteratively build and reload it in a dedicated project.
+Zana is extensible through [`@zana-ai/zcc-plugin-sdk`](packages/plugin-sdk). A plugin is a TypeScript package whose `package.json` carries a `zcc` block. After install it is full-trust in-process code on the server and registers UI with `definePluginApp`. Scaffold with `zcc plugin new <name>` or **Create** in Plugins → Browse.
 
 - **Overview:** [`docs/extensions.md`](docs/extensions.md)
 - **Authoring guide:** [`docs/extensions-authoring.md`](docs/extensions-authoring.md)
 - **SDK reference:** [`docs/extensions-sdk-reference.md`](docs/extensions-sdk-reference.md)
-- **Starter:** [`tools/create-zcc-extension`](tools/create-zcc-extension)
+- **Quickstart:** [`docs/extensions-quickstart.md`](docs/extensions-quickstart.md)
 
 ## CLI
 
@@ -144,7 +142,7 @@ environments it already uses.
 
 - [Getting started](docs/getting-started.md) for the first project-to-agent loop.
 - [Using Zana](docs/using-zana.md) for the day-to-day Inbox, Agents, Teams, and Scheduler workflows.
-- [Extension authoring](docs/extensions-authoring.md) for building permission-gated panels and capabilities.
+- [Plugin authoring](docs/extensions-authoring.md) for `package.json` `zcc`, `definePluginApp`, and `ZccPluginApi`.
 
 ## Development
 

@@ -172,25 +172,12 @@ bundle actually reaches `interpretPluginApp`.
    server-hosted-static-assets model per Runtime Foundation #2), reads its
    default export, and calls `interpretPluginApp(row.id, defaultExport)`. On
    `disabled`/`degraded`/removal, call `clearPluginSlots(row.id)`.
-3. **React injection, if still needed.** The in-process model does not have
-   plugins bundle React — they receive the host's instance through
-   `activate({ React, host })` (`packages/plugin-sdk/src/app-contract.ts`; see
-   `definePluginApp`). Zana's new `definePluginApp` setup function
-   takes only `app` (`PluginAppSetup = (app: PluginAppBuilder) => void`), no
-   React argument — so a plugin's `component: ComponentType<...>` fields are
-   plain values calling `React.createElement`/JSX like any other module.
-   Decide now, before wiring the loader: does a zana plugin bundle its own
-   React (simplest — no shim needed, at the cost of two React copies if a
-   plugin also imports a component library that hooks into the host's React
-   context, e.g. a shared theme provider), or does it need the same
-   `globalThis.__ZCC_HOST_REACT__` shim the retired extension-sdk used for
-   JSX/hooks/lucide-react (`docs/extensions-authoring.md`
-   "Using JSX, hooks, or a UI library")? Given plugin panels now render
-   through ordinary component composition (`PluginSlotBoundary` wraps a
-   `ComponentType`, not a blob-imported subtree with its own mount call), a
-   bundled React is the simpler default — flag it explicitly in the plugin
-   authoring guide once this doc's Phase 0 ships, rather than silently
-   inheriting the old shim requirement.
+3. **React injection.** Plugins do not bundle React. `definePluginApp` setup
+   takes only `app` (`PluginAppSetup = (app: PluginAppBuilder) => void`). Panel
+   components read the host instance from `globalThis.__ZCC_HOST_REACT__`
+   (the plugin-templates starter does this). Do not teach
+   `RendererEntry.activate({ React, host })` — that is leftover disk-extension
+   compatibility, not the authoring contract.
 4. **Tests.** `plugin-loader.test.ts` covering: a running plugin's snapshot
    populates the registry; a degraded/disabled plugin does not; a
    status-flip event reloads or clears the registry entry; a bundle that
@@ -222,9 +209,8 @@ the granularity of the existing backlog's other sections.
 
 **Phase 0 — Close the loader gap (§2).** Nothing else matters until a real
 installed plugin's `navPanel`/`homepageSection`/`sidebarFooterAction` renders
-in a running app. Completion gate: installing `tools/create-zcc-extension`'s
-`sample-hello`-equivalent through the new `PluginService` (once it's ported to
-the `zcc` manifest shape) produces a visible sidebar row end-to-end, no manual
+in a running app. Completion gate: `zcc plugin new` (or Plugins → Create)
+produces a visible sidebar row end-to-end through PluginService, no manual
 registry population in a test.
 
 **Phase 1 — `settingsSection` renderer consumer.** Smallest possible next
@@ -247,8 +233,8 @@ component calls `submit`/`cancel`.
 extension-sdk runtime, not after — `migrateLegacySidecars` only moves the
 *plugin*, not any of these contributions, into the new system. Completion
 gate: every bundled first-party plugin in `plugins/` that uses
-one of these (check each one's `extension.json` for `agentPreset`/`skills`/
-`mcpServers`/`ssh:hosts` before assuming none do) has a working equivalent on
+one of these (check each one's `package.json` `zcc` block for `skills` /
+`mcpServers` before assuming none do) has a working equivalent on
 the new system.
 
 **Phase 4 — Dynamic per-project tab strip + `projectPanelAction` + `fileOpener`.**

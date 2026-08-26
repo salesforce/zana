@@ -42,11 +42,6 @@ extraResources:
   # process.resourcesPath/builtin-skills (see injected-skill-roots.ts).
   - from: apps/server/src/plugins/builtin-skills
     to: builtin-skills
-  # Editable starter template the "create local extension" scaffolder copies +
-  # token-substitutes (see src/main/local-extension.ts `templateRoot`). Resolved
-  # via process.resourcesPath/extension-template in packaged builds.
-  - from: templates/extension-starter
-    to: extension-template
   # The @zcc/cli build output, so a bare `zcc` resolves on PATH inside every pty
   # the packaged app spawns. `npm run build:cli` (chained ahead of electron-builder
   # in the dist/dist:mac/release:mac scripts) emits packages/cli/dist including an

@@ -49,9 +49,8 @@ function versionFromFilename(name: string): string | null {
 }
 
 /**
- * Resolve the directory holding the bundled `<version>.md` notes. Mirrors
- * `local-extension.ts` `templateRoot`: a test override
- * (`ZCC_RELEASE_NOTES_DIR`) is authoritative; packaged builds read
+ * Resolve the directory holding the bundled `<version>.md` notes. A test
+ * override (`ZCC_RELEASE_NOTES_DIR`) is authoritative; packaged builds read
  * `process.resourcesPath/release-notes` (electron-builder `extraResources`); dev
  * reads the committed source (`__dirname = out/main`, so `../../docs/releases`).
  * Returns the first that exists, or null.

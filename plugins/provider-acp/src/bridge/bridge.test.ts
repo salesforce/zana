@@ -1083,6 +1083,20 @@ describe("acp bridge", () => {
     ).toBe(true);
   });
 
+  it("leaves the agent's default model pinned when the host sent the default sentinel", async () => {
+    const { providerThreadId } = await startThread({
+      envVars: { FAKE_ACP_MODEL_CONFIG: "1" },
+      model: "default",
+    });
+
+    sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "echo-selected-model", mentions: [] }],
+    });
+    await waitForTurnCompleted();
+
+    expect(agentMessageTexts()).toContain("selected-model:fake/default");
+  });
+
   it("selects ACP-native models with session/set_config_option before the first prompt", async () => {
     const { providerThreadId } = await startThread({
       envVars: { FAKE_ACP_MODEL_CONFIG: "1" },

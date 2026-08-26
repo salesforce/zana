@@ -1,12 +1,12 @@
 import { product } from '../lib/product-client.js';
 /**
- * "Create your own extension" dialog — the entry point for authoring a LOCAL
- * extension in-app. The user gives a name (+ optional description); on submit we:
- *   1. ask main to createLocal — mint a unique id, scaffold a starter template
- *      into a scratch working dir, pack + install it (through the same trust
- *      gates + consent as any install), and record it as `local`;
- *   2. open the Extension Creator agent (persona `builtin:ext-creator`) as a
- *      Claude terminal whose cwd is the extension's working dir, so it can edit
+ * "Create a plugin" dialog — the entry point for authoring a LOCAL plugin
+ * in-app. The user gives a name (+ optional description); on submit we:
+ *   1. ask main to createLocal — mint a unique id, scaffold a `package.json`
+ *      `zcc` starter into a scratch working dir, path-install it through
+ *      PluginService, and record it as `local`;
+ *   2. open the Plugin Creator agent (persona `builtin:ext-creator`) as a
+ *      Claude terminal whose cwd is the plugin's working dir, so it can edit
  *      the source with the user;
  *   3. redirect into that agent's terminal.
  *

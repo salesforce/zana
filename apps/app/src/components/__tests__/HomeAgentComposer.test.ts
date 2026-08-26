@@ -167,6 +167,27 @@ describe('ThreadCommandComposer submit path', () => {
     expect(css).toContain('.launch-model-picker-trigger.is-warning');
   });
 
+  it('shows a sending spinner and freezes the editor while submit is in flight', () => {
+    const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('Loader2');
+    expect(source).toContain('is-sending');
+    expect(source).toContain("'Sending'");
+    expect(source).toContain('setEditable');
+    expect(source).toContain('aria-busy={busy}');
+    expect(source).toContain('thread-command-send-spin');
+    expect(source).toContain('editor?.setEditable(!busy)');
+
+    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const sendingStart = css.indexOf('.thread-command-composer .thread-command-send.is-sending,');
+    expect(sendingStart).toBeGreaterThan(-1);
+    const sending = css.slice(sendingStart, css.indexOf('}', sendingStart));
+    expect(sending).toContain('opacity: 1;');
+    expect(sending).toContain('cursor: progress;');
+    expect(css).toContain('.thread-command-send-spin');
+    expect(css).toContain('animation: cu-spin 0.8s linear infinite;');
+    expect(css).toContain('.thread-command-composer.is-sending .thread-command-editor');
+  });
+
   it('steals typeahead keys while the menu is open and inserts mention pills', () => {
     const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
     expect(source).toContain('typeaheadKeyAction');

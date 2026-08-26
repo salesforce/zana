@@ -239,14 +239,18 @@ export function buildAcpModelListParams(
   };
 }
 
-/** The synthetic "acp-default" id is never forwarded. */
+/** Sentinels that mean "leave the agent's own default pinned". Never forwarded. */
 function buildAcpModelSelectionParam(
   profile: AcpAgentProfile,
   options: AcpSessionExecutionOptions,
 ): { modelSelection?: AcpModelSelection } {
   const model = options.model;
   const listCommand = buildAcpModelListCommand(profile);
-  if (!model || model === ACP_DEFAULT_MODEL_ID) {
+  // `"acp-default"` is the synthetic catalog row; `"default"` is the runtime
+  // execution-options placeholder when no model was chosen. Forwarding either
+  // as `session/set_model` makes OpenCode reject the session with
+  // `model not found: default`.
+  if (!model || model === ACP_DEFAULT_MODEL_ID || model === "default") {
     return {};
   }
   if (!listCommand || !profile.modelCli?.selectFlag) {

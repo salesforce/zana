@@ -8,6 +8,10 @@ export interface AgentNavCountThread {
   hasPendingInteraction?: boolean;
 }
 
+function isLiveAgentProcess(session: Pick<TerminalSession, 'status'>): boolean {
+  return session.status === 'running' || session.status === 'starting';
+}
+
 export function agentNavCounts(input: {
   terminals: Record<string, TerminalSession[] | undefined>;
   agentStateById: Record<string, AgentState | undefined>;
@@ -26,7 +30,10 @@ export function agentNavCounts(input: {
       if (state === 'blocked') {
         active += 1;
         blocked += 1;
-      } else if (state === 'working') {
+      } else if (state === 'working' || (isLiveAgentProcess(session) && state !== 'done')) {
+        // Live pty sessions count even before a working/blocked status arrives
+        // (unknown) and while the agent is idle between turns — the process is
+        // still running, which is what the Agents nav badge is for.
         active += 1;
       }
     }

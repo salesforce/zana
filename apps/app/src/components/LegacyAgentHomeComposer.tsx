@@ -1,6 +1,6 @@
 import { product } from '../lib/product-client.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, Folder, Maximize2, Mic, Minimize2, Paperclip } from 'lucide-react';
+import { ArrowUp, Folder, Loader2, Maximize2, Mic, Minimize2, Paperclip } from 'lucide-react';
 import type { HarnessAdapterDescriptor, HarnessModelTarget } from '@zana-ai/zcc-domain/harness-adapter';
 import type {
   EffectiveHarnessDefaultResult,
@@ -256,7 +256,7 @@ export function LegacyAgentHomeComposer({
 
   return (
     <div
-      className={`thread-command-composer${expanded ? ' is-expanded' : ''}${dropOver ? ' is-drop-over' : ''}`}
+      className={`thread-command-composer${expanded ? ' is-expanded' : ''}${dropOver ? ' is-drop-over' : ''}${launching ? ' is-sending' : ''}`}
       {...dropHandlers}
     >
       <span id="legacy-agent-command-label" className="thread-command-label">Legacy agent composer</span>
@@ -266,7 +266,11 @@ export function LegacyAgentHomeComposer({
       {selectionState === 'unavailable' && selectionMessage ? (
         <p className="thread-command-error" role="status">{selectionMessage}</p>
       ) : null}
-      <CommandComposer className="home-agent-command thread-command-card" labelledBy="legacy-agent-command-label">
+      <CommandComposer
+        className="home-agent-command thread-command-card"
+        labelledBy="legacy-agent-command-label"
+        aria-busy={launching}
+      >
         <AttachmentPills
           paths={attachments}
           onRemove={(path) => setAttachments((current) => current.filter((item) => item !== path))}
@@ -287,6 +291,7 @@ export function LegacyAgentHomeComposer({
             value={prompt}
             placeholder="Describe the task… Leave empty to open an interactive session"
             aria-label="Instruction for the legacy agent"
+            disabled={launching}
             onChange={(event) => setPrompt(event.target.value)}
             onKeyDown={(event) => {
               if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
@@ -379,14 +384,19 @@ export function LegacyAgentHomeComposer({
                   <Mic size={14} />
                 </ComposerIconButton>
                 <ComposerIconButton
-                    className="thread-command-send"
+                    className={`thread-command-send${launching ? ' is-sending' : ''}`}
                     aria-label={launching ? 'Launching agent' : 'Launch agent'}
                     title={launching ? 'Launching agent' : 'Launch agent'}
+                    aria-busy={launching}
                     data-testid="legacy-agent-command-send"
                     disabled={!canLaunch}
                     onClick={() => void launch()}
                   >
-                    <ArrowUp size={16} />
+                    {launching ? (
+                      <Loader2 size={16} className="thread-command-send-spin" aria-hidden="true" />
+                    ) : (
+                      <ArrowUp size={16} />
+                    )}
                   </ComposerIconButton>
               </div>
             </>

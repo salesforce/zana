@@ -26,6 +26,22 @@ describe('agentNavCounts', () => {
     })).toEqual({ active: 2, blocked: 1 });
   });
 
+  it('counts live agent processes before status arrives and while idle', () => {
+    expect(agentNavCounts({
+      terminals: {
+        p1: [
+          session({ id: 'unknown', status: 'running' }),
+          session({ id: 'idle', status: 'running' }),
+          session({ id: 'starting', status: 'starting' }),
+          session({ id: 'done', status: 'running' }),
+          session({ id: 'exited', status: 'exited' }),
+          session({ id: 'sh', profile: 'shell', status: 'running' })
+        ]
+      },
+      agentStateById: { idle: 'idle', done: 'done' }
+    })).toEqual({ active: 3, blocked: 0 });
+  });
+
   it('includes pending threads in the Agents badge, matching blocked agents', () => {
     expect(agentNavCounts({
       terminals: { p1: [session({ id: 'a' })] },
