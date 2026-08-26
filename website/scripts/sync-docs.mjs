@@ -26,6 +26,7 @@ const OUT_DIR = join(WEBSITE, 'content', 'docs');
 const DOCS = [
   { slug: 'getting-started', title: 'Getting started', source: 'docs/getting-started.md', group: 'Start' },
   { slug: 'using-zana', title: 'Using Zana Command Center', source: 'docs/using-zana.md', group: 'Start' },
+  { slug: 'multiple-devices', title: 'Using Zana on multiple machines', source: 'docs/multiple-devices.md', group: 'Start' },
   { slug: 'cli', title: 'The zcc CLI', source: 'docs/cli.md', group: 'Start' },
   { slug: 'extensions-quickstart', title: 'Build your first extension', source: 'docs/extensions-quickstart.md', group: 'Extensions' },
   { slug: 'extensions', title: 'Extensions overview', source: 'docs/extensions.md', group: 'Extensions' },

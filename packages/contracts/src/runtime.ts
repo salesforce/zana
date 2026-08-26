@@ -160,6 +160,14 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
     values: z.record(z.string(), z.union([z.string(), z.boolean(), z.null()])).optional()
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('plugins-cli-contributions')
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('plugins-cli-run'),
+    pluginId: z.string().min(1).max(128),
+    argv: z.array(z.string().max(16_384)).max(256).optional()
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('marketplace-list')
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({

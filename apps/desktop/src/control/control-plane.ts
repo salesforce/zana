@@ -193,6 +193,8 @@ export interface ControlPlaneDeps {
     update(id: string): Promise<unknown>;
     listMarketplaces(): Promise<unknown>;
     addMarketplace(url: string): Promise<unknown>;
+    cliContributions(): Promise<unknown>;
+    runCliCommand(id: string, argv: string[]): Promise<unknown>;
   };
   log?: (msg: string) => void;
 }
@@ -275,6 +277,8 @@ const KNOWN_OPS = new Set<string>([
   'plugin.search',
   'plugin.outdated',
   'plugin.update',
+  'plugin.contributions',
+  'plugin.cli',
   'marketplace.list',
   'marketplace.add'
 ]);
@@ -627,6 +631,15 @@ export async function dispatchOp(
           const url = str(args.url);
           if (!url) return { ok: false, code: 'BAD_ARGS', message: 'url required' };
           return { ok: true, value: await (host?.addMarketplace(url) ?? (await ensureFallbackPluginService()).addMarketplace(url)) };
+        }
+        if (op === 'plugin.contributions') {
+          return { ok: true, value: await (host?.cliContributions() ?? (await ensureFallbackPluginService()).cliContributions()) };
+        }
+        if (op === 'plugin.cli') {
+          const id = str(args.id);
+          if (!id) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
+          const argv = Array.isArray(args.argv) ? args.argv.map((item) => String(item)) : [];
+          return { ok: true, value: await (host?.runCliCommand(id, argv) ?? (await ensureFallbackPluginService()).runCliCommand(id, argv)) };
         }
       } catch (error) {
         return {

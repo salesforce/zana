@@ -629,6 +629,8 @@ describe('ensureQuickAgentProject — legacy migration', () => {
     expect(existsSync(join(scratchWorkspaceRoot(), 'keepme.txt'))).toBe(true);
     expect(project.path).toBe(scratchWorkspaceRoot());
     expect(project.quickAgent).toBe(true);
+    expect(project.name).toBe('Default Workspace');
+    expect(project.tag).toBe('zcc-workspace');
   });
 
   it('re-points a registered project that pointed at the legacy path', () => {
@@ -644,6 +646,7 @@ describe('ensureQuickAgentProject — legacy migration', () => {
     expect(rows.length).toBe(1);
     // same id survived the rename (re-pointed, not orphaned + re-added)
     expect(rows[0].id).toBe(existing.id);
+    expect(rows[0].name).toBe('Default Workspace');
     expect(store.listProjects().some((p) => p.path === legacy)).toBe(false);
   });
 
@@ -684,7 +687,28 @@ describe('ensureQuickAgentProject — legacy migration', () => {
     expect(existsSync(scratchWorkspaceRoot())).toBe(true);
     expect(project.path).toBe(scratchWorkspaceRoot());
     expect(project.quickAgent).toBe(true);
+    expect(project.name).toBe('Default Workspace');
+    expect(project.tag).toBe('zcc-workspace');
     // exactly one scratch dir, freshly made
     expect(readdirSync(h.home)).toContain('zcc-workspace');
+  });
+
+  it('relabels a stored zcc-workspace name without changing the tag', () => {
+    const first = store.ensureQuickAgentProject();
+    store.updateProject(first.id, { name: 'zcc-workspace' });
+
+    const project = store.ensureQuickAgentProject();
+
+    expect(project.id).toBe(first.id);
+    expect(project.name).toBe('Default Workspace');
+    expect(project.tag).toBe('zcc-workspace');
+    expect(project.path).toBe(scratchWorkspaceRoot());
+  });
+
+  it('keeps a custom scratch-workspace name', () => {
+    const first = store.ensureQuickAgentProject();
+    store.updateProject(first.id, { name: 'My Scratch' });
+
+    expect(store.ensureQuickAgentProject().name).toBe('My Scratch');
   });
 });

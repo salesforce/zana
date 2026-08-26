@@ -1,22 +1,25 @@
 /**
- * Core `bb` CLI top-level command names (plus commander's built-in help).
+ * Core `zcc` CLI top-level command names (plus built-in help).
  * Plugin CLI commands may not shadow these. Maintained by hand and checked
- * against the real Commander program by
- * apps/cli/src/__tests__/plugin-cli-proxy.test.ts.
- *
- * "automation" and "connect" are intentionally absent: builtin plugins own
- * those top-level commands and the CLI proxies them.
+ * against the real CLI program by packages/cli/src/lib/plugin-cli-proxy.test.ts.
  */
-export const RESERVED_BB_CLI_COMMANDS: readonly string[] = [
-  "environment",
-  "guide",
-  "help",
-  "manager",
-  "plugin",
-  "project",
-  "provider",
-  "skill",
-  "status",
-  "theme",
-  "thread",
+export const RESERVED_ZCC_CLI_COMMANDS: readonly string[] = [
+  'agent',
+  'followup',
+  'help',
+  'inbox',
+  'marketplace',
+  'personas',
+  'plugin',
+  'projects',
+  'run',
+  'schedule',
+  'status',
+  'team',
+  'term'
 ];
+
+/** @deprecated Use RESERVED_ZCC_CLI_COMMANDS. */
+export const RESERVED_BB_CLI_COMMANDS = RESERVED_ZCC_CLI_COMMANDS;
+
+export const PLUGIN_CLI_COMMAND_NAME_PATTERN = /^[a-z0-9-]+$/;

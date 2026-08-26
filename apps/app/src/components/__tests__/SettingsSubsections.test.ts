@@ -35,6 +35,15 @@ describe('Settings subsection navigation', () => {
     expect(source).not.toContain('selectSettingsExtension');
   });
 
+  it('mounts plugin settings sections on the Global tab, not as a competing nav destination', () => {
+    const source = readFileSync(
+      fileURLToPath(new URL('../../views/settings/GlobalView.tsx', import.meta.url)),
+      'utf8'
+    );
+    expect(source).toContain('PluginSettingsSections');
+    expect(SETTINGS_SECTIONS.map((section) => section.id)).not.toContain('plugins');
+  });
+
   it('keeps Plugins, Skills, and MCP off Settings — they live on the Extensions workspace', () => {
     const ids = SETTINGS_SECTIONS.map((section) => section.id);
     expect(ids).not.toContain('extensions');

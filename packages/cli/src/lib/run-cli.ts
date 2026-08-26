@@ -207,6 +207,15 @@ export async function runCli(argv: string[], deps?: Partial<CliDeps>): Promise<C
       const { runMarketplaceCommand } = await import('./plugin-commands.js');
       return await runMarketplaceCommand(dataDir, subcommand, rest, jsonOutput);
     } else {
+      const { pluginProxyCandidate, proxyPluginCliCommand } = await import('./plugin-cli-proxy.js');
+      if (pluginProxyCandidate(command)) {
+        return await proxyPluginCliCommand(
+          dataDir,
+          command,
+          subcommand ? [subcommand, ...rest] : rest,
+          jsonOutput
+        );
+      }
       return {
         exitCode: 1,
         stdout: '',
@@ -255,6 +264,7 @@ LIVE COMMANDS (require the app to be running):
   plugin search [query]    Search official + configured catalogs
   plugin outdated          List installed plugins with a newer catalog version
   plugin update <id>       Reinstall from the recorded catalog pointer
+  plugin run <id> <args…>  Run a plugin CLI contribution by plugin id
   marketplace ls           List configured marketplace catalogs
   marketplace add <url>    Add a provenance-only marketplace index
   marketplace install <id@marketplace>

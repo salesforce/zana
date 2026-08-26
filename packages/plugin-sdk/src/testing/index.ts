@@ -22,6 +22,19 @@ export interface FakePluginHarness {
   schedules: Array<{ cron: string; job: () => void | Promise<void> }>;
   extraSkillRoots: string[];
   extraInstructions: string[];
+  cli: import('../server.js').PluginCliRegistration | null;
+  agentTools: import('../server.js').PluginAgentToolRegistration[];
+  httpRoutes: Array<{
+    method: import('../server.js').PluginHttpMethod;
+    path: string;
+    handler: (request: import('../server.js').PluginHttpRequest) =>
+      | import('../server.js').PluginHttpResponse
+      | Promise<import('../server.js').PluginHttpResponse>;
+  }>;
+  events: Array<{
+    name: import('../server.js').PluginThreadEventName;
+    handler: (event: import('../server.js').PluginThreadEvent) => void | Promise<void>;
+  }>;
   needsConfiguration: string | null;
   setSettings(values: Record<string, PluginSettingValue | undefined>): void;
   callRpc(name: string, args?: unknown): Promise<unknown>;
@@ -47,6 +60,10 @@ export function createFakePluginHost(options?: { pluginId?: string }): FakePlugi
   const schedules: Array<{ cron: string; job: () => void | Promise<void> }> = [];
   const extraSkillRoots: string[] = [];
   const extraInstructions: string[] = [];
+  const agentTools: import('../server.js').PluginAgentToolRegistration[] = [];
+  const httpRoutes: FakePluginHarness['httpRoutes'] = [];
+  const events: FakePluginHarness['events'] = [];
+  let cliRegistration: import('../server.js').PluginCliRegistration | null = null;
   const disposeHooks: Array<() => void | Promise<void>> = [];
   let needsConfiguration: string | null = null;
   let stale = false;
@@ -98,6 +115,54 @@ export function createFakePluginHost(options?: { pluginId?: string }): FakePlugi
         async list(prefix) {
           return [...kv.keys()].filter((key) => (prefix ? key.startsWith(prefix) : true));
         }
+      },
+      database() {
+        const rows = new Map<string, unknown[]>();
+        return {
+          runScript() {
+            /* no-op in harness */
+          },
+          prepare(sql: string) {
+            return {
+              all: () => rows.get(sql) ?? [],
+              get: () => (rows.get(sql) ?? [])[0],
+              run: () => ({ changes: 0 })
+            };
+          },
+          migrate() {
+            /* no-op in harness */
+          }
+        };
+      }
+    },
+    http: {
+      route(method, path, handler) {
+        assertLive();
+        httpRoutes.push({ method, path, handler });
+      }
+    },
+    cli: {
+      register(registration) {
+        assertLive();
+        if (cliRegistration) throw new Error('cli command is already registered');
+        cliRegistration = registration;
+      }
+    },
+    events: {
+      on(name, handler) {
+        events.push({ name, handler });
+      }
+    },
+    sdk: {
+      threads: {
+        async spawn() {
+          throw new Error('zcc.sdk is not available in this runtime');
+        }
+      }
+    },
+    host: {
+      async experimental_call() {
+        throw new Error('zcc.host is not available in this runtime');
       }
     },
     rpc: {
@@ -126,10 +191,15 @@ export function createFakePluginHost(options?: { pluginId?: string }): FakePlugi
     },
     agents: {
       contributeInstructions(text) {
-        extraInstructions.push(text);
+        extraInstructions.length = 0;
+        const trimmed = typeof text === 'string' ? text.trim() : '';
+        if (trimmed) extraInstructions.push(trimmed);
       },
       contributeSkills(rootPaths) {
         extraSkillRoots.push(...rootPaths);
+      },
+      registerTool(registration) {
+        agentTools.push(registration);
       },
       experimental_registerProvider: () => ({
         id: 'fake',
@@ -164,6 +234,12 @@ export function createFakePluginHost(options?: { pluginId?: string }): FakePlugi
     schedules,
     extraSkillRoots,
     extraInstructions,
+    get cli() {
+      return cliRegistration;
+    },
+    agentTools,
+    httpRoutes,
+    events,
     get needsConfiguration() {
       return needsConfiguration;
     },

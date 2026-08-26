@@ -369,6 +369,9 @@ importers:
       '@zana-ai/zcc-plugin-templates':
         specifier: workspace:*
         version: link:../../packages/plugin-templates
+      '@zana-ai/zcc-server-contract':
+        specifier: workspace:*
+        version: link:../../packages/server-contract
       '@zana-ai/zcc-thread-view':
         specifier: workspace:*
         version: link:../../packages/thread-view
@@ -468,6 +471,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@zana-ai/zcc-domain':
+        specifier: workspace:*
+        version: link:../domain
       '@zana-ai/zcc-plugin-build':
         specifier: workspace:*
         version: link:../plugin-build
@@ -887,6 +893,10 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
+  plugins/ask-user-question: {}
+
+  plugins/custom-instructions: {}
+
   plugins/docs: {}
 
   plugins/provider-acp:
@@ -1008,6 +1018,8 @@ importers:
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
+
+  plugins/tasks: {}
 
   website:
     dependencies:

@@ -20,7 +20,7 @@ npm run build        # production standalone build in .next/
 | --- | --- |
 | `/` landing | Curated copy in `app/page.tsx` (mirrors repo `README.md`) |
 | `/marketplace` | Live fetch of `NEXT_PUBLIC_REGISTRY_URL` — the **same `index.json`** the app reads (`apps/server/src/services/extensions/extension-registry.ts`). Types mirror `packages/extension-sdk`. Falls back to bundled plugins. |
-| `/docs/*` | Rendered at build time from the repo's `docs/` + `README.md`, via a **curated allowlist** in `lib/docs.ts` (internal audits are NOT published) |
+| `/docs/*` | Rendered at build time from the repo's `docs/` + `README.md`, via a **curated allowlist** in `scripts/sync-docs.mjs` (internal audits are NOT published) |
 | `/download` | Parses `latest-mac.yml` from `NEXT_PUBLIC_UPDATE_FEED_URL`; links to GitHub Releases |
 
 ## Configure
@@ -61,5 +61,7 @@ example; set the application name and public URLs for your own deployment.
 
 ## Adding a doc
 
-Edit the `DOCS` allowlist in `lib/docs.ts`. Only listed files are published;
-this is deliberate so internal `docs/*` (audits, plans, reviews) stay private.
+Edit the `DOCS` allowlist in `scripts/sync-docs.mjs`, then run
+`npm run sync-docs` (also a `predev` / `prebuild` hook). Only listed files are
+published; this is deliberate so internal `docs/*` (audits, plans, reviews)
+stay private. `lib/docs.ts` reads the generated `content/docs/_manifest.json`.

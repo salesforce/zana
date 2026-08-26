@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { readFile, writeFile, mkdir, rename, readdir, rm } from 'node:fs/promises';
 import { resolveContainedReal } from '@zana-ai/zcc-path-confine';
+import { builtinSkillsRootPath } from '../../plugins/injected-skill-roots.js';
 import { discoverPluginSkillNames } from '../../plugins/plugin-skills.js';
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -49,6 +50,9 @@ const SUBMIT_PLUGIN_SKILL_FILE = join(SUBMIT_PLUGIN_SKILL_DIR, 'SKILL.md');
 const HARNESS_AUTHORING_SKILL_DIR = join(homedir(), '.claude', 'skills', 'harness-authoring');
 const HARNESS_AUTHORING_SKILL_FILE = join(HARNESS_AUTHORING_SKILL_DIR, 'SKILL.md');
 
+const PLUGIN_AUTHORING_SKILL_DIR = join(homedir(), '.claude', 'skills', 'zcc-plugin-authoring');
+const PLUGIN_AUTHORING_SKILL_FILE = join(PLUGIN_AUTHORING_SKILL_DIR, 'SKILL.md');
+
 /**
  * Resolve a shipped resource file. In dev, electron-vite runs from the repo
  * root with `moduleDir = out/main`, so the source is `../../resources`. Once
@@ -56,13 +60,15 @@ const HARNESS_AUTHORING_SKILL_FILE = join(HARNESS_AUTHORING_SKILL_DIR, 'SKILL.md
  * surfaced as `process.resourcesPath`. Mirrors `resolveIconPath` in index.ts.
  */
 function resolveShippedPath(fileName: string): string | null {
+  const builtinSlug = fileName.replace(/-skill\.md$/, '');
   const candidates = [
     process.resourcesPath ? join(process.resourcesPath, fileName) : null,
     join(moduleDir, `../../resources/${fileName}`),
     // Shared chunks emit below out/main/chunks, unlike the main entry.
     join(moduleDir, `../../../resources/${fileName}`),
     // Unit tests import this file from apps/server/src/services/skills.
-    join(moduleDir, `../../../../../resources/${fileName}`)
+    join(moduleDir, `../../../../../resources/${fileName}`),
+    join(builtinSkillsRootPath(), builtinSlug, 'SKILL.md')
   ].filter((p): p is string => !!p);
   for (const p of candidates) {
     if (existsSync(p)) return p;
@@ -190,6 +196,19 @@ async function installHarnessAuthoringSkill(
   );
 }
 
+/** Deploy the always-on plugin-authoring skill (all providers via catalog + Claude copy). */
+async function installPluginAuthoringSkill(
+  log?: (context: string, err: unknown) => void
+): Promise<string | null> {
+  return installSkill(
+    'installPluginAuthoringSkill',
+    'zcc-plugin-authoring-skill.md',
+    PLUGIN_AUTHORING_SKILL_DIR,
+    PLUGIN_AUTHORING_SKILL_FILE,
+    log
+  );
+}
+
 /**
  * One entry per bundled skill: a stable `name` (the skill dir slug, used in the
  * redeploy summary) and its installer. Keeping the list here — beside the
@@ -207,7 +226,8 @@ const BUNDLED_SKILLS: ReadonlyArray<{
   { name: 'zcc-cli', install: installZccCliSkill },
   { name: 'extension-creator', install: installExtensionCreatorSkill },
   { name: 'submit-a-plugin', install: installSubmitPluginSkill },
-  { name: 'harness-authoring', install: installHarnessAuthoringSkill }
+  { name: 'harness-authoring', install: installHarnessAuthoringSkill },
+  { name: 'zcc-plugin-authoring', install: installPluginAuthoringSkill }
 ];
 
 /** The bundled-skill names, for callers that only need the roster (e.g. boot). */

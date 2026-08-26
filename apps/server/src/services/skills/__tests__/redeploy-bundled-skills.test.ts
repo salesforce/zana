@@ -42,6 +42,12 @@ describe('redeployBundledSkills', () => {
     const skillFile = join(testHome, '.claude', 'skills', 'harness-authoring', 'SKILL.md');
     expect(existsSync(skillFile)).toBe(true);
     expect(readFileSync(skillFile, 'utf-8')).toMatch(/first-party.*coding-agent/i);
+
+    const pluginAuthoring = results.find((r) => r.name === 'zcc-plugin-authoring');
+    expect(pluginAuthoring?.ok).toBe(true);
+    const pluginAuthoringFile = join(testHome, '.claude', 'skills', 'zcc-plugin-authoring', 'SKILL.md');
+    expect(existsSync(pluginAuthoringFile)).toBe(true);
+    expect(readFileSync(pluginAuthoringFile, 'utf-8')).toMatch(/zcc plugin new/);
   });
 
   it('is idempotent — a second run leaves the files and still reports ok', async () => {

@@ -568,19 +568,20 @@ describe('expandable row and chips', () => {
     expect(source.indexOf('thread-detail-main')).toBeLessThan(panelAt);
   });
 
-  it('keeps the modal header outside the split so maximize cannot hide it', () => {
+  it('keeps the thread-detail-header in the left column of the split', () => {
     const source = readFileSync(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)), 'utf8');
-    const headerAt = source.indexOf('className="thread-detail-header"');
     const splitAt = source.indexOf('className="thread-detail-split"');
     const mainAt = source.indexOf('className="thread-detail-main"');
-    expect(headerAt).toBeGreaterThan(-1);
-    expect(splitAt).toBeGreaterThan(headerAt);
+    const headerAt = source.indexOf('className="thread-detail-header"');
+    const bodyAt = source.indexOf('className="thread-detail-body"');
+    expect(splitAt).toBeGreaterThan(-1);
     expect(mainAt).toBeGreaterThan(splitAt);
+    expect(headerAt).toBeGreaterThan(mainAt);
+    expect(bodyAt).toBeGreaterThan(headerAt);
 
     const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
     expect(css).toContain('.thread-detail-split {');
     expect(css).toContain('.thread-detail-view.is-secondary-maximized .thread-detail-main {\n  display: none;');
-    expect(css).not.toContain('.thread-detail-view.is-secondary-maximized .thread-detail-header');
     expect(css).toContain('.thread-detail-view.is-secondary-open:not(.is-secondary-maximized) .thread-detail-split');
     expect(css).toContain('.agent-terminal-modal > .modal-header');
   });

@@ -9,5 +9,6 @@ export type {
 } from './product.js';
 
 export {
+  DEFAULT_WORKSPACE_DISPLAY_NAME,
   toProjectSummary
 } from './product.js';

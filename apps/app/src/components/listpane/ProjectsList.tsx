@@ -55,6 +55,7 @@ import { FleetKindChip } from '../FleetKindChip.js';
 import { ProviderIcon } from '../thread/pickers/ProviderIcon.js';
 import { railThreadsForProject, threadIsLiveForRail, threadRailStatus, threadTitle } from '../fleet-item.js';
 import { POST_DRAG_CLICK_SUPPRESS_MS, suppressPostDragClick } from '../../lib/suppress-post-drag-click.js';
+import { composerProjectLabel } from '../composer-project-default.js';
 
 interface MenuState {
   projectId: string;
@@ -291,7 +292,7 @@ export function ProjectsList({
     session,
     state: useAgentStatus.getState().byId[session.id] ?? 'unknown',
     projectId: project.id,
-    projectName: project.name,
+    projectName: composerProjectLabel(project),
     projectColor: project.color,
     triage: useIdleTriage.getState().byId[session.id]
   });
@@ -375,7 +376,11 @@ export function ProjectsList({
     const q = filter.trim().toLowerCase();
     if (!q) return list;
     return list.filter(
-      (p) => p.name.toLowerCase().includes(q) || p.path.toLowerCase().includes(q)
+      (p) =>
+        composerProjectLabel(p).toLowerCase().includes(q) ||
+        p.name.toLowerCase().includes(q) ||
+        p.path.toLowerCase().includes(q) ||
+        (p.tag?.toLowerCase().includes(q) ?? false)
     );
   }, [sortedProjects, scopedProjectId, hideIdleProjects, selectedId, filter, terminals, liveThreadsByProject]);
 
@@ -556,6 +561,7 @@ export function ProjectsList({
     const liveList = liveTerminals(terminals[p.id]);
     const railThreads = railThreadsByProject.get(p.id) ?? [];
     const nestedCount = liveList.length + railThreads.length;
+    const displayName = composerProjectLabel(p);
     return (
     <SortableProject key={p.id} project={p} disabled={!sortable}>
       {({ attributes, listeners }) => (
@@ -586,7 +592,7 @@ export function ProjectsList({
               );
               const projectMeta = (
                 <span className="project-meta project-meta--inline" title={tooltip || undefined}>
-                  <span className="project-name">{p.name}</span>
+                  <span className="project-name">{displayName}</span>
                   {p.remote && <Network size={11} strokeWidth={2} className="project-remote-icon" aria-label="Remote SSH project" />}
                 </span>
               );
@@ -596,7 +602,7 @@ export function ProjectsList({
                   tabIndex={0}
                   className={`project-favorite-star${p.favorite ? ' is-fav' : ''}`}
                   aria-pressed={Boolean(p.favorite)}
-                  aria-label={p.favorite ? `Remove ${p.name} from favorites` : `Add ${p.name} to favorites`}
+                  aria-label={p.favorite ? `Remove ${displayName} from favorites` : `Add ${displayName} to favorites`}
                   title={p.favorite ? 'Favorite — click to remove' : 'Add to favorites'}
                   onClick={(e) => {
                     e.preventDefault();
@@ -620,7 +626,7 @@ export function ProjectsList({
                   <button
                     type="button"
                     className={`project-tree-chevron ${expanded ? 'expanded' : ''}`}
-                    aria-label={`${expanded ? 'Collapse' : 'Expand'} sessions for ${p.name}`}
+                    aria-label={`${expanded ? 'Collapse' : 'Expand'} sessions for ${displayName}`}
                     aria-expanded={expanded}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -638,7 +644,7 @@ export function ProjectsList({
                       className="project-rename"
                       value={renameValue}
                       autoFocus
-                      aria-label={`Rename ${p.name}`}
+                      aria-label={`Rename ${displayName}`}
                       onChange={(e) => setRenameValue(e.target.value)}
                       onBlur={commitRename}
                       onKeyDown={(e) => {
@@ -660,7 +666,7 @@ export function ProjectsList({
                   <button
                     type="button"
                     className="project-select"
-                    aria-label={`Open ${p.name}`}
+                    aria-label={`Open ${displayName}`}
                     onClick={() => {
                       if (consumeProjectClick()) return;
                       enterProjectFocus(p.id);
@@ -687,7 +693,7 @@ export function ProjectsList({
             <button
               type="button"
               className="project-actions"
-              aria-label={`Project actions for ${p.name}`}
+              aria-label={`Project actions for ${displayName}`}
               title="Project actions"
               onClick={(e) => {
                 e.stopPropagation();
@@ -700,7 +706,7 @@ export function ProjectsList({
             <button
               type="button"
               className="project-spawn"
-              aria-label={`New agent in ${p.name}`}
+              aria-label={`New agent in ${displayName}`}
               title="New agent"
               onClick={(e) => {
                 e.stopPropagation();
@@ -715,7 +721,7 @@ export function ProjectsList({
             if (!isProjectExpanded(p)) return null;
             const activeTab = selectedId === p.id ? selectedTabId[p.id] : undefined;
             return (
-              <div className="project-terminals" role="list" aria-label={`Sessions in ${p.name}`}>
+              <div className="project-terminals" role="list" aria-label={`Sessions in ${displayName}`}>
                 {railThreads.map((thread) => {
                   const title = threadTitle(thread);
                   const status = threadRailStatus(thread);
@@ -1169,7 +1175,7 @@ export function ProjectsList({
               </button>
               <button
                 className="project-menu-item"
-                onClick={() => startRename(p.id, p.name)}
+                onClick={() => startRename(p.id, composerProjectLabel(p))}
               >
                 <Pencil size={12} />
                 <span>Rename</span>

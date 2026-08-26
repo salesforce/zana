@@ -31,6 +31,12 @@ describe('project-row workspace actions', () => {
     expect(source).toContain('enterProjectFocus(p.id);');
   });
 
+  it('shows Default Workspace for the scratch folder without renaming the tag', () => {
+    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('composerProjectLabel');
+    expect(source).toContain('<span className="project-name">{displayName}</span>');
+  });
+
   it('opens the shared agent lifecycle menu from a nested session row', () => {
     const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
     expect(source).toContain('onContextMenu={(e) => openAgentCardMenu(e, t, p)}');

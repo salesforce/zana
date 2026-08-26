@@ -1,0 +1,19 @@
+{
+  "name": "@zcc-ext/tasks",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Plan and track work in ZCC — sidebar panel, zcc tasks, and a skill.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "zcc": {
+    "name": "Tasks",
+    "description": "Plan and track work: a sidebar panel, `zcc tasks`, and a generated-skill-friendly command.",
+    "branding": { "icon": "ListTodo" },
+    "server": "./server.mjs",
+    "app": "./app.js",
+    "skills": ["skills"]
+  }
+}

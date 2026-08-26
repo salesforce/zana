@@ -268,6 +268,8 @@ export const PROJECTS_SCHEMA_VERSION = 1 as const;
 export const SCRATCH_DIR_NAME = 'zcc-workspace';
 /** Pre-rebrand scratch folder name, kept only so we can migrate it. */
 const LEGACY_SCRATCH_DIR_NAME = 'cc-workspace';
+/** User-facing label; folder and tag stay {@link SCRATCH_DIR_NAME}. */
+const DEFAULT_WORKSPACE_DISPLAY_NAME = 'Default Workspace';
 /** App-managed parent for isolated git worktrees. */
 export const WORKTREE_DIR_NAME = 'zcc-worktrees';
 
@@ -1279,7 +1281,8 @@ export const store = {
    * The single built-in scratch project that backs the Agents-module Quick
    * Agent. Rooted at `~/zcc-workspace` (created on first call), reused on every
    * subsequent call via `addProject`'s path-dedup. Tagged `quickAgent` so the
-   * UI can treat it specially. Idempotent.
+   * UI can treat it specially. Display name is `Default Workspace` when it is
+   * still the folder basename; the path and tag stay `zcc-workspace`. Idempotent.
    *
    * Migration: pre-rebrand installs anchored the scratch project at
    * `~/cc-workspace`. On first call we rename that folder to the new name (and
@@ -1290,16 +1293,20 @@ export const store = {
   ensureQuickAgentProject(): Project {
     const anchor = this.ensureScratchRoot();
     const project = this.addProject(anchor);
-    if (!project.quickAgent) {
-      const projects = this.listProjects();
-      const idx = projects.findIndex((p) => p.id === project.id);
-      if (idx !== -1) {
-        projects[idx] = { ...projects[idx], quickAgent: true };
-        writeProjects(projects);
-        return projects[idx];
-      }
-    }
-    return project;
+    const needsQuickAgent = !project.quickAgent;
+    const needsDisplayName =
+      project.name === SCRATCH_DIR_NAME || project.name === LEGACY_SCRATCH_DIR_NAME;
+    if (!needsQuickAgent && !needsDisplayName) return project;
+    const projects = this.listProjects();
+    const idx = projects.findIndex((p) => p.id === project.id);
+    if (idx === -1) return project;
+    projects[idx] = {
+      ...projects[idx],
+      ...(needsQuickAgent ? { quickAgent: true } : {}),
+      ...(needsDisplayName ? { name: DEFAULT_WORKSPACE_DISPLAY_NAME } : {})
+    };
+    writeProjects(projects);
+    return projects[idx];
   },
   /**
    * Ensure a dedicated project rooted at a local extension's SOURCE working dir,

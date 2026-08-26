@@ -22,6 +22,7 @@ import { PendingInteractionLifecycle } from '../services/interactions/pending-in
 import { conversationThreadView } from '../services/threads/conversation-create.js';
 import { createThreadTitleNamer, type ThreadTitleNamer } from '../services/threads/thread-title-namer.js';
 import { createJoinCodeStore, type JoinCodeStore } from '../services/hosts/join-codes.js';
+import type { PluginService } from '../plugins/plugin-service.js';
 
 export interface ProductTerminalRecord extends TerminalSession {
   hostId: string;
@@ -43,6 +44,7 @@ export interface ProductHttpContext {
   pendingInteractions: PendingInteractionLifecycle;
   threadTitleNamer: ThreadTitleNamer;
   terminalSessions: Map<string, ProductTerminalRecord>;
+  plugins?: PluginService;
   toProjects(): Project[];
   /** Release long-lived watchers started with this context. */
   dispose(): void;

@@ -3,6 +3,7 @@ import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { SESSION_MEMORY_DEFAULTS } from '@zana-ai/zcc-domain/product';
 import { useUi } from '@/store';
 import { Section, Field, CheckboxField } from '@/components/settings/FormFields';
+import { PluginSettingsSections } from '@/plugins/PluginSettingsSections';
 import { DoctorSection } from '@/components/settings/DoctorSection';
 import { AuthorizationsSection } from '@/components/settings/AuthorizationsSection';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
@@ -232,6 +233,7 @@ export function GlobalView({
       </Section>
 
       <DoctorSection />
+      <PluginSettingsSections />
     </>
   );
 }

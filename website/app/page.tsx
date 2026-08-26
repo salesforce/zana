@@ -12,7 +12,7 @@ const WORKFLOW = [
   {
     n: '01',
     title: 'Give work a home',
-    body: 'Add local folders or SSH projects. Every project keeps its terminals, files, sessions, and settings together.'
+    body: 'Add local folders, enrolled machines, or SSH projects. Every project keeps its terminals, files, sessions, and settings together.'
   },
   {
     n: '02',
@@ -101,7 +101,7 @@ export default function Home() {
             <span className="bb-feature-index">01</span>
             <h2>One place for work that spans projects.</h2>
             <p>
-              Move between local folders and remote SSH workspaces without losing the context behind a terminal,
+              Move between local folders, enrolled machines, and remote SSH workspaces without losing the context behind a terminal,
               agent, or report.
             </p>
             <div className="bb-project-pills" aria-hidden="true">

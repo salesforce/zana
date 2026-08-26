@@ -36,12 +36,18 @@ next step.
 
 ## 2. Add your projects
 
-A **project** is a folder (local) or an SSH host (remote) that ZCC watches.
-Each one becomes a lane with its own terminals, agents, and file explorer.
+A **project** is a folder ZCC watches. It can live on this computer, on an
+**enrolled machine**, or on an SSH host. Each one becomes a lane with its own
+terminals, agents, and file explorer.
 
 - Click **Add project** in the sidebar.
-- Point it at a local folder, or add a remote SSH box.
+- Point it at a local folder, pick an enrolled machine and browse its disk, or
+  add a remote SSH box.
 - Repeat for every codebase you work in — they all live in the same window.
+
+Enrolled machines are paired from **Settings → Machines** (a host daemon on the
+other box). SSH remotes stay a separate path. See
+[Using Zana on multiple machines](/docs/multiple-devices/).
 
 You can group projects by category in the sidebar so a large fleet stays
 navigable.
@@ -57,6 +63,8 @@ selected harness** with its native behavior, tools, and permissions.
   current project.
 - The session starts in the project's directory, so the selected harness sees
   the right files immediately.
+- On a local git project the composer can also open a **New worktree** instead
+  of sharing the checkout. See [Environments](/docs/using-zana/#environments).
 - Type your task and let it work — exactly as you would in a standalone
   terminal.
 
@@ -104,6 +112,8 @@ letting the agents carry the rest.
 
 - **[Using Zana Command Center](/docs/using-zana/)** — a fuller tour of the
   Inbox, Agents, Teams, and the day-to-day workflows.
+- **[Using Zana on multiple machines](/docs/multiple-devices/)** — pair another
+  computer as an execution host (Tailscale Serve, not SSH).
 - **[The `zcc` CLI](/docs/cli/)** — a command-line companion that reads the
   same stores and can drive the running app.
 - **[Extensions overview](/docs/extensions/)** — add panels, tabs, commands,

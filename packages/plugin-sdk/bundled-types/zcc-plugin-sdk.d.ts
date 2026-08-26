@@ -14,10 +14,33 @@ declare module '@zana-ai/zcc-plugin-sdk' {
 }
 
 declare module '@zana-ai/zcc-plugin-sdk/server' {
+  export const PLUGIN_CLI_OUTPUT_MAX_BYTES: number;
+  export function enforcePluginCliOutputLimit(result: {
+    exitCode: number;
+    stdout?: string;
+    stderr?: string;
+  }): {
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+    error?: { code: 'plugin_cli_output_too_large'; message: string; maxBytes: number };
+  };
+
   export interface PluginSettingsSnapshot {
     descriptors: Record<string, { type: string; label: string; default?: string | boolean }>;
     values: Record<string, string | boolean | undefined>;
   }
+
+  export interface PluginDatabase {
+    runScript(sql: string): void;
+    prepare(sql: string): {
+      all(...params: unknown[]): unknown[];
+      get(...params: unknown[]): unknown;
+      run(...params: unknown[]): { changes: number };
+    };
+    migrate(statements: readonly string[]): void;
+  }
+
   export interface ZccPluginApi {
     readonly pluginId: string;
     readonly log: { debug(m: string): void; info(m: string): void; warn(m: string): void; error(m: string): void };
@@ -27,6 +50,23 @@ declare module '@zana-ai/zcc-plugin-sdk/server' {
         onChange(listener: (next: Record<string, string | boolean | undefined>) => void): void;
       };
     };
+    readonly http: {
+      route(
+        method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+        path: string,
+        handler: (request: {
+          method: string;
+          path: string;
+          query: Record<string, string>;
+          body: unknown;
+        }) => { status?: number; json?: unknown; body?: string; headers?: Record<string, string> } | Promise<{
+          status?: number;
+          json?: unknown;
+          body?: string;
+          headers?: Record<string, string>;
+        }>
+      ): void;
+    };
     readonly storage: {
       kv: {
         get<T>(key: string): Promise<T | undefined>;
@@ -34,6 +74,7 @@ declare module '@zana-ai/zcc-plugin-sdk/server' {
         delete(key: string): Promise<void>;
         list(prefix?: string): Promise<string[]>;
       };
+      database(): PluginDatabase;
     };
     readonly rpc: { method(name: string, handler: (args: unknown) => unknown | Promise<unknown>): void };
     readonly realtime: { publish(event: string, payload: unknown): void };
@@ -41,14 +82,60 @@ declare module '@zana-ai/zcc-plugin-sdk/server' {
       service(name: string, start: () => void | (() => void) | Promise<void | (() => void)>): void;
       schedule(cron: string, job: () => void | Promise<void>): void;
     };
+    readonly cli: {
+      register(registration: {
+        name: string;
+        summary: string;
+        commands?: Array<{ name: string; summary: string; usage: string }>;
+        run(
+          argv: string[],
+          ctx: { pluginId: string; argv: string[] }
+        ): { exitCode: number; stdout?: string; stderr?: string } | Promise<{
+          exitCode: number;
+          stdout?: string;
+          stderr?: string;
+        }>;
+      }): void;
+    };
     readonly agents: {
       contributeInstructions(text: string): void;
       contributeSkills(rootPaths: string[]): void;
+      registerTool(registration: {
+        name: string;
+        description: string;
+        inputSchema?: unknown;
+        execute(input: unknown, ctx: { threadId: string; projectId: string; signal: AbortSignal }): unknown | Promise<unknown>;
+      }): void;
+      experimental_registerProvider(declaration: {
+        id: string;
+        displayName: string;
+        capabilities: Record<string, unknown>;
+      }): { id: string; unregister(): void };
+    };
+    readonly events: {
+      on(
+        name:
+          | 'thread.created'
+          | 'thread.active'
+          | 'thread.idle'
+          | 'thread.failed'
+          | 'thread.archived'
+          | 'thread.deleted',
+        handler: (event: { name: string; threadId: string; projectId?: string }) => void | Promise<void>
+      ): void;
     };
     readonly ui: {
       requestInput(request: { threadId: string; rendererId: string; title: string; payload: unknown }): Promise<unknown>;
     };
     readonly status: { needsConfiguration(message: string): void };
+    readonly sdk: {
+      threads: {
+        spawn(args: { projectId: string; prompt: string; providerId?: string }): Promise<{ id: string }>;
+      };
+    };
+    readonly host: {
+      experimental_call(method: string, input?: unknown): Promise<unknown>;
+    };
     onDispose(hook: () => void | Promise<void>): void;
   }
 }
@@ -75,6 +162,9 @@ declare module '@zana-ai/zcc-plugin-sdk/testing' {
     harness: {
       callRpc(name: string, args?: unknown): Promise<unknown>;
       setSettings(values: Record<string, string | boolean | undefined>): void;
+      extraInstructions: string[];
+      cli: { name: string; run: (...args: never[]) => unknown } | null;
+      agentTools: Array<{ name: string }>;
       dispose(): Promise<void>;
     };
   };
@@ -89,5 +179,7 @@ declare module '@zana-ai/zcc-plugin-sdk/testing/app' {
     pluginId: string;
     generation: number;
     navPanels: Array<{ id: string; title: string }>;
+    settingsSections: Array<{ id: string; title?: string }>;
+    pendingInteractions: Array<{ id: string }>;
   };
 }

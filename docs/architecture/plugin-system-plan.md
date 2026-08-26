@@ -5,10 +5,17 @@ Section 5 ("Plugin and Integration Services"). That section commits to the
 direction — plugins as full-trust, in-process, server-owned code using a
 `definePluginApp` slot registry, replacing the
 retired per-extension `utilityProcess` + `PermissionBroker` design described in
-`docs/extensions.md` / `docs/extensions-authoring.md`. This document is the
-detailed, file-level plan for getting there: what already exists, the one
-broken link blocking end-to-end operation, and a slot-by-slot comparison
-against the target slot set with a concrete proposal for each gap.
+`docs/extensions.md` / `docs/extensions-authoring.md`. The product contract for
+**self-development** (any thread can extend ZCC; a new verb teaches the next
+agent) lives in [`self-development.md`](./self-development.md).
+
+**Status (2026-08-26):** Phase 0 (the app-bundle loader) is done.
+`apps/app/src/plugins/plugin-app-loader.ts` fetches running snapshots, evaluates
+`appUrl`, and calls `interpretPluginApp`. `ui.requestInput` is wired when the
+host supplies `requestPluginInteraction`. Stale “no caller / always throws”
+claims in §2 below are historical. Remaining work is the closed loop in
+`self-development.md`: `zcc.cli`, generated `plugin-commands`, runtime skill
+injection for every provider, and official plugins.
 
 Everything here is grounded in reading the current plugin surface directly —
 `packages/plugin-sdk/src/app-contract.ts`, `apps/app/src/lib/plugin-slots.ts`,

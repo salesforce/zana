@@ -163,27 +163,27 @@ export function AgentSessionView({
       data-testid="agent-session-view"
       style={panelOpen ? { ['--thread-secondary-width' as string]: `${panel.state.widthPx}px` } : undefined}
     >
-      <header className="thread-detail-header">
-        <div className="thread-detail-heading">
-          <h1>{session.title}</h1>
-        </div>
-        <div className="thread-detail-actions">
-          {!panelOpen ? (
-            <button
-              type="button"
-              className="icon-btn"
-              title="Show right panel"
-              aria-label="Show right panel"
-              data-testid="thread-secondary-show"
-              onClick={panel.open}
-            >
-              <PanelRight size={14} />
-            </button>
-          ) : null}
-        </div>
-      </header>
       <div className="thread-detail-split">
       <div className="thread-detail-main agent-session-main">
+        <header className="thread-detail-header">
+          <div className="thread-detail-heading">
+            <h1>{session.title}</h1>
+          </div>
+          <div className="thread-detail-actions">
+            {!panelOpen ? (
+              <button
+                type="button"
+                className="icon-btn"
+                title="Show right panel"
+                aria-label="Show right panel"
+                data-testid="thread-secondary-show"
+                onClick={panel.open}
+              >
+                <PanelRight size={14} />
+              </button>
+            ) : null}
+          </div>
+        </header>
         {stageChrome}
         <div className="agent-session-terminal" id={terminalAnchorId} />
         {stageOverlay}

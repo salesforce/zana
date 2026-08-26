@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -267,6 +267,59 @@ describe('PluginService', () => {
     expect(() => resolveContainedEntry(dir, '../outside.mjs')).toThrow(/escapes/);
     expect(resolveContainedEntry(dir, 'ok.mjs')).toContain('ok.mjs');
   });
+
+  it('registers zcc CLI contributions, writes plugin-commands, and runs by name', async () => {
+    const dataDir = root();
+    const pluginDir = writePlugin(
+      join(root(), 'hello'),
+      'hello',
+      `export default function plugin(zcc) {
+        zcc.cli.register({
+          name: 'hello',
+          summary: 'Say hello',
+          commands: [{ name: 'world', summary: 'Greet', usage: 'zcc hello world' }],
+          async run(argv) {
+            return { exitCode: 0, stdout: 'hello ' + argv.join(' ') + '\\n' };
+          }
+        });
+        zcc.agents.contributeInstructions('Be kind.');
+      }\n`
+    );
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    await service.install(pluginDir);
+    expect(service.cliContributions()).toEqual([
+      {
+        pluginId: 'hello',
+        name: 'hello',
+        summary: 'Say hello',
+        commands: [{ name: 'world', summary: 'Greet', usage: 'zcc hello world' }]
+      }
+    ]);
+    await expect(service.runCliCommand('hello', ['world'])).resolves.toMatchObject({
+      exitCode: 0,
+      stdout: 'hello world\n'
+    });
+    const generated = join(dataDir, 'skills-generated', 'plugin-commands', 'SKILL.md');
+    expect(existsSync(generated)).toBe(true);
+    expect(readFileSync(generated, 'utf8')).toContain('zcc hello');
+    expect(readFileSync(join(dataDir, 'skills-generated', 'plugin-instructions', 'SKILL.md'), 'utf8')).toContain(
+      'Be kind.'
+    );
+    await service.disable('hello');
+    expect(existsSync(join(dataDir, 'skills-generated', 'plugin-commands'))).toBe(false);
+  });
+
+  it('reconcileBuiltins skips official autoInstall:false plugins such as tasks', async () => {
+    const dataDir = root();
+    const bundled = root();
+    writePlugin(join(bundled, 'docs'), 'docs');
+    writePlugin(join(bundled, 'tasks'), 'tasks');
+    const service = createPluginService({ dataDir, bundledRoot: bundled });
+    const installed = await service.reconcileBuiltins();
+    expect(installed.map((row) => row.id)).toContain('docs');
+    expect(installed.map((row) => row.id)).not.toContain('tasks');
+    expect(service.get('tasks')).toBeUndefined();
+  });
 });
 
 describe('listBundledPluginCatalog', () => {
@@ -310,6 +363,9 @@ describe('listBundledPluginCatalog', () => {
     const pluginsRoot = join(dirname(fileURLToPath(import.meta.url)), '../../../../plugins');
     const out = listBundledPluginCatalog(pluginsRoot);
     expect(out.some((entry) => entry.id === 'docs' && entry.title === 'Docs')).toBe(true);
+    expect(out.map((entry) => entry.id)).toEqual(
+      expect.arrayContaining(['docs', 'tasks', 'custom-instructions', 'ask-user-question'])
+    );
   });
 });
 

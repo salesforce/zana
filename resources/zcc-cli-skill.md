@@ -19,6 +19,11 @@ normal shell tools (Bash).
 
 > Authoring **schedules** and **templates** (writing JSON into `.zcc`) is a
 > *different* skill — `zcc-center`. This skill is for *driving* the app.
+>
+> Writing a **plugin** (panel, `zcc <verb>`, skills) is another skill —
+> `zcc-plugin-authoring`. Use that when the user asks to add a capability ZCC
+> does not have yet. After install, contributed commands appear in the generated
+> `plugin-commands` skill and run as `zcc <name>` (or `zcc plugin run <id> …`).
 
 ---
 

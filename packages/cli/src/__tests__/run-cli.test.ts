@@ -336,7 +336,7 @@ describe('cc CLI', () => {
   it('handles unknown command', async () => {
     const result = await runCli(['node', 'zcc', 'unknown', 'cmd'], { dataDir: fixtureDir });
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain('unknown command');
+    expect(result.stderr).toMatch(/not running|unknown command/);
   });
 
   it('term close-summary rejects missing args with usage exit code', async () => {

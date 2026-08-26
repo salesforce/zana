@@ -23,10 +23,18 @@ describe('scratchWorkspaceProject', () => {
 });
 
 describe('composerProjectLabel', () => {
-  it('shows Default (zcc-workspace) for the scratch workspace', () => {
-    expect(composerProjectLabel(scratch)).toBe('Default (zcc-workspace)');
+  it('shows Default Workspace for the scratch folder name and keeps other names', () => {
+    expect(composerProjectLabel(scratch)).toBe('Default Workspace');
     expect(composerProjectLabel({ id: 'ws', name: SCRATCH_WORKSPACE_NAME })).toBe(DEFAULT_COMPOSER_WORKSPACE_LABEL);
     expect(composerProjectLabel(zana)).toBe('zana-command-center');
+  });
+
+  it('keeps a custom scratch-workspace name', () => {
+    expect(composerProjectLabel({ id: 'scratch-1', name: 'My Scratch', quickAgent: true })).toBe('My Scratch');
+  });
+
+  it('relabels the legacy cc-workspace folder name', () => {
+    expect(composerProjectLabel({ id: 'ws', name: 'cc-workspace' })).toBe(DEFAULT_COMPOSER_WORKSPACE_LABEL);
   });
 });
 

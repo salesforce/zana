@@ -282,40 +282,40 @@ export function ThreadDetail({
       data-embedded={embedded ? 'true' : undefined}
       style={panelOpen ? { ['--thread-secondary-width' as string]: `${panel.state.widthPx}px` } : undefined}
     >
-      <header className="thread-detail-header">
-        <ThreadDetailHeading
-          title={title}
-          status={status}
-          waitingOnUser={awaitingUser}
-          thinking={thinking}
-          overflow={
-            <ThreadDetailOverflow
-              threadId={threadId}
-              title={title}
-              status={status}
-              projectId={projectId}
-              onRenamed={setTitle}
-              onUnread={() => setLastReadSeq(0)}
-            />
-          }
-        />
-        <div className="thread-detail-actions">
-          {!panelOpen ? (
-            <button
-              type="button"
-              className="icon-btn"
-              title="Show right panel"
-              aria-label="Show right panel"
-              data-testid="thread-secondary-show"
-              onClick={panel.open}
-            >
-              <PanelRight size={14} />
-            </button>
-          ) : null}
-        </div>
-      </header>
       <div className="thread-detail-split">
       <div className="thread-detail-main">
+        <header className="thread-detail-header">
+          <ThreadDetailHeading
+            title={title}
+            status={status}
+            waitingOnUser={awaitingUser}
+            thinking={thinking}
+            overflow={
+              <ThreadDetailOverflow
+                threadId={threadId}
+                title={title}
+                status={status}
+                projectId={projectId}
+                onRenamed={setTitle}
+                onUnread={() => setLastReadSeq(0)}
+              />
+            }
+          />
+          <div className="thread-detail-actions">
+            {!panelOpen ? (
+              <button
+                type="button"
+                className="icon-btn"
+                title="Show right panel"
+                aria-label="Show right panel"
+                data-testid="thread-secondary-show"
+                onClick={panel.open}
+              >
+                <PanelRight size={14} />
+              </button>
+            ) : null}
+          </div>
+        </header>
         <div className="thread-detail-body">
           <div className="thread-detail-column">
             <ThreadTimeline

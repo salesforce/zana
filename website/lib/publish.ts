@@ -144,7 +144,7 @@ function derivePluginId(packageName: string): string {
     throw new Error(`cannot derive a plugin id from package name "${packageName}"`);
   }
   const base = packageName.includes('/')
-    ? (packageName.split('/').at(-1) ?? packageName)
+    ? (packageName.split('/').pop() ?? packageName)
     : packageName;
   const id = base
     .replace(/^(zcc|zana)-plugin-/, '')

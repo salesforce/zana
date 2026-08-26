@@ -1,0 +1,19 @@
+{
+  "name": "@zcc-ext/ask-user-question",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Ask the operator a structured question via pendingInteraction.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "zcc": {
+    "name": "Ask user question",
+    "description": "Structured multiple-choice questions in the thread workbench.",
+    "branding": { "icon": "CircleHelp" },
+    "server": "./server.mjs",
+    "app": "./app.js",
+    "skills": ["skills"]
+  }
+}

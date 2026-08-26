@@ -24,6 +24,7 @@ export * from "./json-value.js";
 export * from "./lifecycle-diagram.js";
 export * from "./number-utils.js";
 export * from "./pending-interactions.js";
+export * from "./plugin-cli.js";
 export * from "./plugin-id.js";
 export * from "./plugin-manifest.js";
 export * from "./plugin-sdk-version.js";

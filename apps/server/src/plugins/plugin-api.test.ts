@@ -122,3 +122,98 @@ describe('plugin storage and settings', () => {
     }
   });
 });
+
+describe('plugin CLI, HTTP, events, and sdk', () => {
+  it('rejects reserved and duplicate CLI names, then runs with the 1MiB cap', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-cli-'));
+    try {
+      const handle = createPluginApi('hello', dir);
+      expect(() =>
+        handle.api.cli.register({
+          name: 'plugin',
+          summary: 'nope',
+          run: async () => ({ exitCode: 0 })
+        })
+      ).toThrow(/reserved/);
+      handle.api.cli.register({
+        name: 'hello',
+        summary: 'Say hello',
+        commands: [{ name: 'world', summary: 'hi', usage: 'zcc hello world' }],
+        run: async (argv) => ({ exitCode: 0, stdout: argv.join(' ') })
+      });
+      expect(() =>
+        handle.api.cli.register({
+          name: 'other',
+          summary: 'too late',
+          run: async () => ({ exitCode: 0 })
+        })
+      ).toThrow(/already registered/);
+      const { runPluginCli } = await import('./plugin-api.js');
+      await expect(runPluginCli(handle, ['world'])).resolves.toMatchObject({
+        exitCode: 0,
+        stdout: 'world',
+        stderr: ''
+      });
+      handle.cli.registration = {
+        name: 'hello',
+        summary: 'Say hello',
+        run: async () => ({ exitCode: 0, stdout: 'x'.repeat(1024 * 1024 + 1) })
+      };
+      const capped = await runPluginCli(handle, []);
+      expect(capped.error?.code).toBe('plugin_cli_output_too_large');
+      expect(capped.stdout).toBe('');
+      await handle.dispose();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('registers http routes, fans thread events, and stubs host/sdk unless spawn is wired', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-http-'));
+    try {
+      const spawnThread = vi.fn(async () => ({ id: 'thr-spawned' }));
+      const handle = createPluginApi('demo', dir, { spawnThread });
+      handle.api.http.route('GET', '/ping', () => ({ json: { ok: true } }));
+      expect(handle.httpRoutes[0]?.path).toBe('/ping');
+      handle.api.agents.registerTool({
+        name: 'echo',
+        description: 'Echo',
+        execute: async (input) => input
+      });
+      expect(handle.agentTools[0]?.name).toBe('echo');
+      const seen: string[] = [];
+      handle.api.events.on('thread.created', (event) => {
+        seen.push(event.threadId);
+      });
+      await handle.emitThreadEvent({ name: 'thread.created', threadId: 'thr-1', projectId: 'p' });
+      expect(seen).toEqual(['thr-1']);
+      await expect(handle.api.sdk.threads.spawn({ projectId: 'p', prompt: 'hi' })).resolves.toEqual({
+        id: 'thr-spawned'
+      });
+      expect(spawnThread).toHaveBeenCalledWith({ pluginId: 'demo', projectId: 'p', prompt: 'hi' });
+      await expect(handle.api.host.experimental_call('keep-awake')).rejects.toThrow(/not available/);
+      const bare = createPluginApi('bare', dir);
+      await expect(bare.api.sdk.threads.spawn({ projectId: 'p', prompt: 'hi' })).rejects.toThrow(
+        /not available/
+      );
+      await handle.dispose();
+      await bare.dispose();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('opens a per-plugin sqlite database via storage.database', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-db-'));
+    try {
+      const handle = createPluginApi('dbdemo', dir);
+      const database = handle.api.storage.database();
+      database.runScript('CREATE TABLE items (id TEXT PRIMARY KEY, title TEXT);');
+      database.prepare('INSERT INTO items (id, title) VALUES (?, ?)').run('1', 'Loop');
+      expect(database.prepare('SELECT title FROM items WHERE id = ?').get('1')).toEqual({ title: 'Loop' });
+      await handle.dispose();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

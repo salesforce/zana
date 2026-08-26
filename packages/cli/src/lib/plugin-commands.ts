@@ -185,6 +185,12 @@ export async function runPluginCommand(
     if (!id) return err('plugin update requires a <pluginId>', 2);
     return live(dataDir, 'plugin.update', { id }, jsonOutput);
   }
+  if (subcommand === 'run') {
+    const id = rest[0];
+    if (!id) return err('plugin run requires a <pluginId>', 2);
+    const { runExplicitPluginCli } = await import('./plugin-cli-proxy.js');
+    return runExplicitPluginCli(dataDir, id, rest.slice(1), jsonOutput);
+  }
   return err(`unknown plugin command '${subcommand}'`, 2);
 }
 

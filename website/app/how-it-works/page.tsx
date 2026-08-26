@@ -22,8 +22,8 @@ const JOURNEY = [
     eyebrow: 'Start with real context',
     title: 'Give every project a place to work.',
     body:
-      'Add a local folder or remote SSH workspace. Zana keeps its terminals, files, and agents together so you can change projects without losing the thread.',
-    details: ['Use the same project directory your coding tools expect', 'Keep local and remote work in one app', 'Organize a large project list by category'],
+      'Add a local folder, an enrolled machine, or a remote SSH workspace. Zana keeps its terminals, files, and agents together so you can change projects without losing the thread.',
+    details: ['Use the same project directory your coding tools expect', 'Pair another computer from Settings → Machines', 'Organize a large project list by category'],
     visual: 'project-setup'
   },
   {

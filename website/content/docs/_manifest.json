@@ -10,6 +10,11 @@
     "group": "Start"
   },
   {
+    "slug": "multiple-devices",
+    "title": "Using Zana on multiple machines",
+    "group": "Start"
+  },
+  {
     "slug": "cli",
     "title": "The zcc CLI",
     "group": "Start"

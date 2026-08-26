@@ -5,12 +5,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createConversationThread, createEnvironment, updateConversationThreadStatus, upsertHost } from '@zana-ai/zcc-db';
 import { startProductServer, type ProductServer } from './product-server.js';
 import { HostUnavailableError } from './host-hub.js';
+import { registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
 
 let server: ProductServer | null = null;
+const providerHandles: Array<{ unregister(): void }> = [];
 
 afterEach(async () => {
   await server?.close();
   server = null;
+  for (const handle of providerHandles.splice(0)) handle.unregister();
 });
 
 describe('product HTTP', () => {
@@ -64,6 +67,22 @@ describe('product HTTP', () => {
       dataDir,
       origins: { serverPort: 0, devAppPort: 5173 }
     });
+    for (const id of ['claude-code', 'codex', 'pi', 'acp-cursor', 'acp-opencode'] as const) {
+      providerHandles.push(
+        registerThreadProvider('test', {
+          id,
+          displayName: id,
+          capabilities: {
+            supportsServiceTier: false,
+            fork: 'checkpoint',
+            supportsThreadArchive: false,
+            supportsThreadRename: false,
+            permissionModes: ['full']
+          },
+          composerActions: id === 'claude-code' ? ['plan'] : undefined
+        })
+      );
+    }
 
     const health = await fetch(`${server.url}api/v1/health`);
     await expect(health.json()).resolves.toEqual({ ok: true });
@@ -628,6 +647,46 @@ describe('product HTTP thread reasoning', () => {
     expect(source).toContain("from '@zana-ai/zcc-domain/thread-runtime'");
     expect(source).toContain('reasoningLevelSchema');
     expect(source).toContain('parseReasoningLevel(body.reasoningLevel)');
+  });
+});
+
+describe('product HTTP plugins', () => {
+  it('lists contributions and dispatches plugin CLI and HTTP', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugins-'));
+    server = await startProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    server.ctx.plugins = {
+      list: () => [{ id: 'hello' }],
+      cliContributions: () => [{ pluginId: 'hello', name: 'hello', summary: 'Say hello', commands: [] }],
+      runCliCommand: async (_id: string, argv: string[]) => ({
+        exitCode: 0,
+        stdout: `hello ${argv.join(' ')}\n`,
+        stderr: ''
+      }),
+      dispatchHttp: async (_id: string, request: { path: string }) => ({
+        json: { path: request.path }
+      })
+    } as never;
+
+    const listed = await fetch(`${server.url}api/v1/plugins`);
+    await expect(listed.json()).resolves.toEqual({ plugins: [{ id: 'hello' }] });
+
+    const contributions = await fetch(`${server.url}api/v1/plugins/contributions`);
+    await expect(contributions.json()).resolves.toEqual({
+      cliCommands: [{ pluginId: 'hello', name: 'hello', summary: 'Say hello', commands: [] }]
+    });
+
+    const cli = await fetch(`${server.url}api/v1/plugins/hello/cli`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ argv: ['world'] })
+    });
+    await expect(cli.json()).resolves.toMatchObject({ exitCode: 0, stdout: 'hello world\n' });
+
+    const http = await fetch(`${server.url}api/v1/plugins/hello/http/ping`);
+    await expect(http.json()).resolves.toEqual({ path: '/ping' });
   });
 });
 

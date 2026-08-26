@@ -8,6 +8,7 @@ import {
   type AgentRuntimeOptions
 } from '@zana-ai/zcc-agent-runtime';
 import { createFakeAgentRuntime, fakeProviderEnabled } from './fake-runtime.js';
+import { loadRuntimeSkillRoots } from './injected-skill-roots.js';
 import {
   encodeClientTurnRequestIdNumber,
   type PermissionMode,
@@ -154,6 +155,7 @@ export function createAgentRuntimeAdapter(options: {
     const runtime = createRuntime({
       workspacePath: cwd,
       threadStorageRootPath: storageRoot,
+      skillRoots: loadRuntimeSkillRoots(options.dataDir ?? storageRoot),
       onEvent: (event) => {
         options.emit(mapThreadEvent(event));
       },

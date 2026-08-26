@@ -82,6 +82,7 @@ parentPort.on('message', async ({ data }) => {
           });
         }
       });
+      product.plugins = plugins;
       await plugins.start();
       const host = await startStaticHost({
         rootDir: message.rendererRoot,
@@ -328,6 +329,21 @@ parentPort.on('message', async ({ data }) => {
         return;
       }
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: await plugins.addMarketplace(message.url) });
+    }
+    if (message.operation === 'plugins-cli-contributions') {
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: plugins?.cliContributions() ?? [] });
+    }
+    if (message.operation === 'plugins-cli-run') {
+      if (!plugins) {
+        parentPort.postMessage({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, message: 'plugin host is unavailable' });
+        return;
+      }
+      parentPort.postMessage({
+        type: 'result',
+        protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+        id: message.id,
+        value: await plugins.runCliCommand(message.pluginId, message.argv ?? [])
+      });
     }
   }
   if (message.type === 'stop') {

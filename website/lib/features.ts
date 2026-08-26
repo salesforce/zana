@@ -77,14 +77,15 @@ export const FEATURES: FeatureDetail[] = [
   {
     slug: 'projects',
     title: 'Local & remote projects',
-    tagline: 'Local folders or remote SSH — one explorer for both.',
+    tagline: 'This computer, an enrolled machine, or SSH — one explorer.',
     body:
-      'Add a local folder or a remote SSH project and work either the same way, with a file explorer that spans both.',
+      'Add a local folder, browse a machine you paired in Settings → Machines, or attach a remote SSH project. Work the same way, with a file explorer that spans all three. Enrolled machines and SSH remotes are separate paths.',
     points: [
       'Add local folders or git repos in a click',
-      'Browse remote SSH projects in the app',
-      'One explorer for local and remote alike'
-    ]
+      'Pair another computer as an execution host',
+      'Browse SSH remotes without leaving the app'
+    ],
+    docs: 'multiple-devices'
   },
   {
     slug: 'scheduler',

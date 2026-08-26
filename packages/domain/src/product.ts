@@ -161,6 +161,12 @@ export type PersonaSource =
   | { projectId: string; projectName?: string }
   | { extensionId: string; extensionTitle?: string };
 
+/**
+ * User-facing label for the built-in scratch workspace. The on-disk folder
+ * and project tag stay `zcc-workspace` (the API / handle name).
+ */
+export const DEFAULT_WORKSPACE_DISPLAY_NAME = 'Default Workspace';
+
 export interface Project {
   id: string;
   name: string;

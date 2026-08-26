@@ -27,6 +27,7 @@ import { clampPermissionModeToHost } from '../hosts/permission-ceiling.js';
 import type { EnvironmentProvisionCommand, EnvironmentProvisionResult } from '@zana-ai/zcc-contracts/host-rpc';
 import { AmbiguousHostError, HostUnavailableError } from '../../http/host-hub.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
+import { emitPluginThreadEvent } from '../../plugins/thread-events.js';
 import { unmanagedAttachRefusal } from './workspace-path-claims.js';
 import { resolveManagedTargetPath, resolvePersonalTargetPath } from './worktree-paths.js';
 import {
@@ -298,6 +299,11 @@ export async function createConversationFromRequest(
       title: threadTitle(input, prompt),
       status: 'starting'
     });
+    emitPluginThreadEvent(ctx, {
+      name: 'thread.created',
+      threadId: thread.id,
+      projectId: thread.projectId
+    });
     try {
       if (needsHostAttach) {
         const provisioned = await ctx.hostHub.callHostOnlineRpc<EnvironmentProvisionResult>({
@@ -321,6 +327,11 @@ export async function createConversationFromRequest(
       const running = updateConversationThreadStatus(ctx.db, thread.id, 'active') ?? thread;
       ctx.hub.emit('threads:updated', conversationThreadView(ctx, running));
       requestAutoThreadTitle(ctx, input, running.id, prompt);
+      emitPluginThreadEvent(ctx, {
+        name: 'thread.active',
+        threadId: running.id,
+        projectId: running.projectId
+      });
       return running;
     } catch (error) {
       failConversationStart(ctx, thread);
@@ -360,6 +371,11 @@ export async function createConversationFromRequest(
       title: threadTitle(input, prompt),
       status: 'starting'
     });
+    emitPluginThreadEvent(ctx, {
+      name: 'thread.created',
+      threadId: thread.id,
+      projectId: thread.projectId
+    });
     return { environment, thread };
   });
   } catch (error) {
@@ -377,6 +393,11 @@ export async function createConversationFromRequest(
       providerId,
       title: threadTitle(input, prompt),
       status: 'starting'
+    });
+    emitPluginThreadEvent(ctx, {
+      name: 'thread.created',
+      threadId: thread.id,
+      projectId: thread.projectId
     });
     created = { environment: existing, thread };
   }
@@ -409,6 +430,11 @@ export async function createConversationFromRequest(
     const running = updateConversationThreadStatus(ctx.db, created.thread.id, 'active') ?? created.thread;
     ctx.hub.emit('threads:updated', conversationThreadView(ctx, running));
     requestAutoThreadTitle(ctx, input, running.id, prompt);
+    emitPluginThreadEvent(ctx, {
+      name: 'thread.active',
+      threadId: running.id,
+      projectId: running.projectId
+    });
     return running;
   } catch (error) {
     failConversationStart(ctx, created.thread);
@@ -424,6 +450,11 @@ function failConversationStart(ctx: ProductHttpContext, thread: ConversationThre
     status: 'error' as const
   };
   ctx.hub.emit('threads:updated', conversationThreadView(ctx, failed));
+  emitPluginThreadEvent(ctx, {
+    name: 'thread.failed',
+    threadId: failed.id,
+    projectId: failed.projectId
+  });
 }
 
 export function flattenThreadInput(input: unknown): string[] {

@@ -1,4 +1,5 @@
-import { createReadStream, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,18 +24,22 @@ function hostDaemonVersion(): string {
   }
 }
 
-function joinCliPath(): string | null {
+function joinStandalonePath(): string | null {
   const here = dirname(fileURLToPath(import.meta.url));
   const candidates = [
-    join(here, '../../../host-daemon/src/join-cli.ts'),
-    join(here, '../../../../apps/host-daemon/src/join-cli.ts'),
-    join(process.cwd(), 'apps/host-daemon/src/join-cli.ts')
+    join(here, '../../../host-daemon/src/join-standalone.mjs'),
+    join(here, '../../../../apps/host-daemon/src/join-standalone.mjs'),
+    join(process.cwd(), 'apps/host-daemon/src/join-standalone.mjs')
   ];
   return candidates.find((path) => existsSync(path)) ?? null;
 }
 
-function cachedTarballPath(version: string): string {
-  return join(tmpdir(), `zcc-host-artifact-${version}-${HOST_RPC_PROTOCOL_VERSION}.tgz`);
+function artifactStamp(source: string): string {
+  return createHash('sha256').update(readFileSync(source)).digest('hex').slice(0, 8);
+}
+
+function cachedTarballPath(version: string, stamp: string): string {
+  return join(tmpdir(), `zcc-host-artifact-${version}-${HOST_RPC_PROTOCOL_VERSION}-${stamp}.tgz`);
 }
 
 /**
@@ -51,9 +56,14 @@ export function resolveHostArtifact(env: NodeJS.ProcessEnv = process.env): HostA
     };
   }
   const version = hostDaemonVersion();
-  const cached = cachedTarballPath(version);
+  const source = joinStandalonePath();
+  if (!source) {
+    throw new Error('zcc-host join standalone is missing from this checkout');
+  }
+  const stamp = artifactStamp(source);
+  const cached = cachedTarballPath(version, stamp);
   if (!existsSync(cached)) {
-    packJoinArtifact(cached);
+    packJoinArtifact(cached, source);
   }
   return {
     version,
@@ -62,8 +72,7 @@ export function resolveHostArtifact(env: NodeJS.ProcessEnv = process.env): HostA
   };
 }
 
-function packJoinArtifact(tarball: string): void {
-  const source = joinCliPath();
+function packJoinArtifact(tarball: string, source: string): void {
   const dir = mkdtempSync(join(tmpdir(), 'zcc-host-artifact-'));
   mkdirSync(dir, { recursive: true, mode: 0o755 });
   writeFileSync(
@@ -75,31 +84,11 @@ function packJoinArtifact(tarball: string): void {
       bin: { 'zcc-host': 'join.mjs' }
     }, null, 2)
   );
-  const launcher = `#!/usr/bin/env node
-import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-const here = dirname(fileURLToPath(import.meta.url));
-const envCli = process.env.ZCC_HOST_JOIN_CLI;
-const bundled = join(here, 'join-cli.ts');
-const joinCli = (envCli && existsSync(envCli) ? envCli : null)
-  ?? ${source ? JSON.stringify(source) : 'null'}
-  ?? (existsSync(bundled) ? bundled : null);
-if (!joinCli) {
-  console.error('zcc-host join CLI is missing from this artifact');
-  process.exit(1);
-}
-const child = spawn(process.execPath, ['--import', 'tsx', joinCli, ...process.argv.slice(2)], {
-  stdio: 'inherit',
-  env: process.env
-});
-child.on('exit', (code) => process.exit(code ?? 1));
-`;
-  writeFileSync(join(dir, 'join.mjs'), launcher, { mode: 0o755 });
-  if (source) {
-    writeFileSync(join(dir, 'join-cli.ts'), `export * from ${JSON.stringify(source)};\n`, { mode: 0o644 });
-  }
+  const script = readFileSync(source, 'utf8').replace(
+    /const PROTOCOL_VERSION = \d+;/,
+    `const PROTOCOL_VERSION = ${HOST_RPC_PROTOCOL_VERSION};`
+  );
+  writeFileSync(join(dir, 'join.mjs'), script, { mode: 0o755 });
   const packed = spawnSync('tar', ['-czf', tarball, '-C', dir, 'package.json', 'join.mjs'], {
     encoding: 'utf8'
   });

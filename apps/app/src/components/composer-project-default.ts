@@ -1,10 +1,12 @@
-import type { Project } from '@zana-ai/zcc-domain/product';
+import { DEFAULT_WORKSPACE_DISPLAY_NAME, type Project } from '@zana-ai/zcc-domain/product';
 
 /** Folder basename of the built-in scratch workspace (`~/zcc-workspace`). */
 export const SCRATCH_WORKSPACE_NAME = 'zcc-workspace';
 
 /** Picker label for the scratch default when the user has not chosen a project. */
-export const DEFAULT_COMPOSER_WORKSPACE_LABEL = 'Default (zcc-workspace)';
+export const DEFAULT_COMPOSER_WORKSPACE_LABEL = DEFAULT_WORKSPACE_DISPLAY_NAME;
+
+const SCRATCH_FOLDER_NAMES = new Set([SCRATCH_WORKSPACE_NAME, 'cc-workspace']);
 
 type ComposerProject = Pick<Project, 'id' | 'name' | 'quickAgent'>;
 
@@ -20,7 +22,7 @@ export function scratchWorkspaceProject(
 }
 
 export function composerProjectLabel(project: ComposerProject): string {
-  return isScratchWorkspaceProject(project) ? DEFAULT_COMPOSER_WORKSPACE_LABEL : project.name;
+  return SCRATCH_FOLDER_NAMES.has(project.name) ? DEFAULT_COMPOSER_WORKSPACE_LABEL : project.name;
 }
 
 /** Scratch workspace first, then the rest in the store's existing order. */

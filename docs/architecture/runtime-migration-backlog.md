@@ -455,9 +455,9 @@ records rather than additional unrelated JSON blobs.
 Plugins follow BB's model, not the retired per-extension `utilityProcess` +
 consent-broker host. This section **replaces** the old "keep desktop-spawned
 utility processes" plan. See
-[`plugin-system-plan.md`](./plugin-system-plan.md) for the detailed,
-file-level current-state map, the bb slot-parity gap table, and the phased
-task list this section summarizes.
+[`plugin-system-plan.md`](./plugin-system-plan.md) for slots and install, and
+[`self-development.md`](./self-development.md) for the closed loop (any thread
+can extend ZCC; a plugin verb teaches the next agent).
 
 1. Server-owned `PluginService`: `package.json` `zcc` manifests, install sources
    (`path:` / `git:` / `npm:` / `builtin:` / catalog), provenance rows on
@@ -468,14 +468,19 @@ task list this section summarizes.
    children and does not grant host credentials.
 3. Marketplace is discovery + provenance only (npm/git pointers, exact
    resolution). A catalog refresh never installs or executes code.
-4. Migrate MCP pools, sandbox/remote execution, and vendor integrations through
+4. Closed loop: `zcc.cli.register`, unknown-command proxy, generated
+   `plugin-commands` skill, runtime `skillRoots` for every provider, always-on
+   `zcc-plugin-authoring` catalog entry, official (`autoInstall: false`) plugins.
+5. Migrate MCP pools, sandbox/remote execution, and vendor integrations through
    server-to-host contracts. The host-managed MCP pool stays in core; plugins
    reach it through the product SDK.
 
 Completion gate: plugin policy, install, and lifecycle are server-owned;
 desktop only supervises the server child and performs explicitly authorized
 Electron-native actions. No per-extension `utilityProcess`, `PermissionBroker`,
-or `needsConsent` grant set remains.
+or `needsConsent` grant set remains. From an ordinary Claude and Codex/Pi
+thread, a newly installed plugin’s CLI verb appears in the next thread’s skill
+catalog and runs via `zcc <verb>`.
 
 ### 6. Package Ownership and Cleanup
 

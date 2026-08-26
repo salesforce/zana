@@ -55,8 +55,21 @@ export interface PluginKvStorage {
   list(prefix?: string): Promise<string[]>;
 }
 
+export interface PluginDatabaseStatement {
+  all(...params: unknown[]): unknown[];
+  get(...params: unknown[]): unknown;
+  run(...params: unknown[]): { changes: number };
+}
+
+export interface PluginDatabase {
+  runScript(sql: string): void;
+  prepare(sql: string): PluginDatabaseStatement;
+  migrate(statements: readonly string[]): void;
+}
+
 export interface PluginStorage {
   kv: PluginKvStorage;
+  database(): PluginDatabase;
 }
 
 export interface PluginRpc {
@@ -65,6 +78,143 @@ export interface PluginRpc {
 
 export interface PluginRealtime {
   publish(event: string, payload: unknown): void;
+}
+
+export type PluginHttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
+export interface PluginHttpRequest {
+  method: PluginHttpMethod;
+  path: string;
+  query: Record<string, string>;
+  body: unknown;
+}
+
+export interface PluginHttpResponse {
+  status?: number;
+  json?: unknown;
+  body?: string;
+  headers?: Record<string, string>;
+}
+
+export interface PluginHttp {
+  route(
+    method: PluginHttpMethod,
+    path: string,
+    handler: (request: PluginHttpRequest) => PluginHttpResponse | Promise<PluginHttpResponse>
+  ): void;
+}
+
+export const PLUGIN_CLI_OUTPUT_MAX_BYTES = 1024 * 1024;
+
+export interface PluginCliContext {
+  pluginId: string;
+  argv: string[];
+}
+
+export interface PluginCliResult {
+  exitCode: number;
+  stdout?: string;
+  stderr?: string;
+}
+
+export interface PluginCliCommandInfo {
+  name: string;
+  summary: string;
+  usage: string;
+}
+
+export interface PluginCliOutputLimitError {
+  code: 'plugin_cli_output_too_large';
+  message: string;
+  maxBytes: number;
+  stdoutBytes: number;
+  stderrBytes: number;
+  totalBytes: number;
+}
+
+export interface PluginCliExecutionResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  error?: PluginCliOutputLimitError;
+}
+
+export interface PluginCliRegistration {
+  name: string;
+  summary: string;
+  commands?: PluginCliCommandInfo[];
+  run(argv: string[], ctx: PluginCliContext): PluginCliResult | Promise<PluginCliResult>;
+}
+
+export interface PluginCli {
+  register(registration: PluginCliRegistration): void;
+}
+
+export type PluginThreadEventName =
+  | 'thread.created'
+  | 'thread.active'
+  | 'thread.idle'
+  | 'thread.failed'
+  | 'thread.archived'
+  | 'thread.deleted';
+
+export interface PluginThreadEvent {
+  name: PluginThreadEventName;
+  threadId: string;
+  projectId?: string;
+}
+
+export interface PluginEvents {
+  on(name: PluginThreadEventName, handler: (event: PluginThreadEvent) => void | Promise<void>): void;
+}
+
+export interface PluginSdkThreads {
+  spawn(args: { projectId: string; prompt: string; providerId?: string }): Promise<{ id: string }>;
+}
+
+export interface PluginSdk {
+  threads: PluginSdkThreads;
+}
+
+export interface PluginHostApi {
+  experimental_call(method: string, input?: unknown): Promise<unknown>;
+}
+
+export interface PluginAgentToolContext {
+  threadId: string;
+  projectId: string;
+  signal: AbortSignal;
+}
+
+export interface PluginAgentToolRegistration {
+  name: string;
+  description: string;
+  inputSchema?: unknown;
+  execute(input: unknown, ctx: PluginAgentToolContext): unknown | Promise<unknown>;
+}
+
+export function enforcePluginCliOutputLimit(result: PluginCliResult): PluginCliExecutionResult {
+  const stdout = result.stdout ?? '';
+  const stderr = result.stderr ?? '';
+  const stdoutBytes = Buffer.byteLength(stdout, 'utf8');
+  const stderrBytes = Buffer.byteLength(stderr, 'utf8');
+  const totalBytes = stdoutBytes + stderrBytes;
+  if (totalBytes <= PLUGIN_CLI_OUTPUT_MAX_BYTES) {
+    return { exitCode: result.exitCode, stdout, stderr };
+  }
+  return {
+    exitCode: 1,
+    stdout: '',
+    stderr: '',
+    error: {
+      code: 'plugin_cli_output_too_large',
+      message: `plugin CLI output is ${totalBytes} bytes, exceeding the ${PLUGIN_CLI_OUTPUT_MAX_BYTES}-byte limit. Narrow the query, request a smaller page, or use a file/streaming command.`,
+      maxBytes: PLUGIN_CLI_OUTPUT_MAX_BYTES,
+      stdoutBytes,
+      stderrBytes,
+      totalBytes
+    }
+  };
 }
 
 export interface PluginBackground {
@@ -100,6 +250,7 @@ export interface PluginProviderHandle {
 export interface PluginAgents {
   contributeInstructions(text: string): void;
   contributeSkills(rootPaths: string[]): void;
+  registerTool(registration: PluginAgentToolRegistration): void;
   experimental_registerProvider(declaration: PluginProviderDeclaration): PluginProviderHandle;
 }
 
@@ -141,13 +292,18 @@ export interface ZccPluginApi {
   readonly pluginId: string;
   readonly log: PluginLogger;
   readonly settings: PluginSettings;
-  readonly storage: PluginStorage;
+  readonly http: PluginHttp;
   readonly rpc: PluginRpc;
   readonly realtime: PluginRealtime;
+  readonly storage: PluginStorage;
   readonly background: PluginBackground;
+  readonly cli: PluginCli;
   readonly agents: PluginAgents;
+  readonly events: PluginEvents;
   readonly ui: PluginUi;
   readonly status: PluginStatusApi;
+  readonly sdk: PluginSdk;
+  readonly host: PluginHostApi;
   onDispose(hook: () => void | Promise<void>): void;
 }
 

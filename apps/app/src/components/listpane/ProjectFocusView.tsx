@@ -4,6 +4,7 @@ import { Plus, X, ArrowLeft, AppWindow } from 'lucide-react';
 import { useData, useUi, useAgentStatus, useIdleTriage, usePersonas } from '../../store.js';
 import type { Project, LaunchProfileId, Persona, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { profileLabel } from '@zana-ai/zcc-domain/launch-provider';
+import { composerProjectLabel } from '../composer-project-default.js';
 import { profileIcon, personaIcon } from '../../lib/profileIcon.js';
 import { bucketSessions } from '../../lib/sessionBuckets.js';
 import { getScopedProjectId } from '../../lib/windowScope.js';
@@ -54,7 +55,7 @@ export function ProjectFocusView({ project }: { project: Project }) {
     session,
     state: useAgentStatus.getState().byId[session.id] ?? 'unknown',
     projectId: project.id,
-    projectName: project.name,
+    projectName: composerProjectLabel(project),
     projectColor: project.color,
     triage: useIdleTriage.getState().byId[session.id]
   });
@@ -192,7 +193,7 @@ export function ProjectFocusView({ project }: { project: Project }) {
           style={project.color ? { background: project.color } : undefined}
         />
         <span className="focus-project-name" title={project.path}>
-          {project.name}
+          {composerProjectLabel(project)}
         </span>
         <ProjectRollupDot projectId={project.id} />
         <div className="focus-new" ref={newMenuRef}>

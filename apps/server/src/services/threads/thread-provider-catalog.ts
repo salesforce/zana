@@ -15,96 +15,6 @@ export interface ThreadProviderRecord extends PluginProviderDeclaration {
 
 const providers = new Map<string, ThreadProviderRecord>();
 
-const BUILTIN_DECLARATIONS: Array<PluginProviderDeclaration & { pluginId: string; hostEntry: string }> = [
-  {
-    pluginId: 'provider-claude-code',
-    id: 'claude-code',
-    displayName: 'Claude Code',
-    icon: './icons/claude-code.svg',
-    hostEntry: 'src/bridge/bridge.ts',
-    capabilities: {
-      supportsServiceTier: false,
-      supportsNativeUserQuestion: true,
-      fork: 'checkpoint',
-      supportsManualCompaction: true,
-      supportsThreadArchive: false,
-      supportsThreadRename: false,
-      supportsWorkflows: true,
-      permissionModes: ['accept-edits', 'auto', 'full'],
-      reasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh', 'ultracode', 'max']
-    },
-    composerActions: ['plan']
-  },
-  {
-    pluginId: 'provider-codex',
-    id: 'codex',
-    displayName: 'Codex',
-    icon: './icons/codex.svg',
-    hostEntry: 'src/bridge/bridge.ts',
-    capabilities: {
-      supportsServiceTier: true,
-      fork: 'checkpoint',
-      supportsManualCompaction: true,
-      supportsThreadArchive: true,
-      supportsThreadRename: true,
-      permissionModes: ['accept-edits', 'auto', 'full'],
-      reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']
-    },
-    composerActions: ['plan', 'goal']
-  },
-  {
-    pluginId: 'provider-pi',
-    id: 'pi',
-    displayName: 'Pi',
-    icon: './icons/pi.svg',
-    hostEntry: 'src/bridge/bridge.ts',
-    capabilities: {
-      supportsServiceTier: false,
-      fork: 'checkpoint',
-      supportsManualCompaction: true,
-      supportsThreadArchive: false,
-      supportsThreadRename: false,
-      permissionModes: ['full'],
-      reasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh', 'max']
-    },
-    composerActions: []
-  },
-  {
-    pluginId: 'provider-acp',
-    id: 'acp-cursor',
-    displayName: 'Cursor',
-    icon: './icons/cursor.svg',
-    hostEntry: 'src/bridge/bridge.ts',
-    capabilities: {
-      supportsServiceTier: true,
-      fork: 'tip',
-      supportsManualCompaction: false,
-      supportsThreadArchive: false,
-      supportsThreadRename: false,
-      permissionModes: ['accept-edits', 'full'],
-      reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max']
-    },
-    composerActions: []
-  },
-  {
-    pluginId: 'provider-acp',
-    id: 'acp-opencode',
-    displayName: 'OpenCode',
-    icon: './icons/opencode.svg',
-    hostEntry: 'src/bridge/bridge.ts',
-    capabilities: {
-      supportsServiceTier: true,
-      fork: 'tip',
-      supportsManualCompaction: true,
-      supportsThreadArchive: false,
-      supportsThreadRename: false,
-      permissionModes: ['accept-edits', 'full'],
-      reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max']
-    },
-    composerActions: []
-  }
-];
-
 function fakeProviderEnabled(): boolean {
   return process.env.ZCC_FAKE_PROVIDER === '1' || process.env.ZCC_AGENT_RUNTIME_ADAPTER === 'fake';
 }
@@ -127,22 +37,13 @@ const FAKE_DECLARATION: PluginProviderDeclaration & { pluginId: string; hostEntr
   composerActions: ['plan']
 };
 
-function seedBuiltins(): void {
-  for (const entry of BUILTIN_DECLARATIONS) {
-    if (!providers.has(entry.id)) providers.set(entry.id, entry);
-  }
-}
-
 function syncFakeProvider(): void {
-  seedBuiltins();
   if (fakeProviderEnabled()) {
     if (!providers.has('fake')) providers.set('fake', FAKE_DECLARATION);
   } else {
     providers.delete('fake');
   }
 }
-
-seedBuiltins();
 
 export function registerThreadProvider(
   pluginId: string,
@@ -152,14 +53,13 @@ export function registerThreadProvider(
   providers.set(declaration.id, {
     ...declaration,
     pluginId,
-    hostEntry: hostEntry ?? providers.get(declaration.id)?.hostEntry ?? null
+    hostEntry: hostEntry ?? providers.get(declaration.id)?.hostEntry ?? 'src/bridge/bridge.ts'
   });
   return {
     id: declaration.id,
     unregister() {
       const current = providers.get(declaration.id);
       if (current?.pluginId === pluginId) providers.delete(declaration.id);
-      seedBuiltins();
     }
   };
 }

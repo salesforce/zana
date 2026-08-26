@@ -161,6 +161,9 @@ find something worth surfacing.
 - **Feed-noise classifier** *(optional)* — a small background helper that
   demotes ambiguous routine reports into the folded "Routine" section. Off by
   default.
+- **Machines** — pair another computer so projects and threads can run there.
+  See [Using Zana on multiple machines](/docs/multiple-devices/). SSH remotes
+  stay a separate path.
 - **Extensions** — install from the marketplace or manage what's installed. See
   the [Extensions overview](/docs/extensions/).
 
@@ -170,6 +173,8 @@ find something worth surfacing.
 
 - **[Getting started](/docs/getting-started/)** — if you skipped the five-minute
   setup.
+- **[Using Zana on multiple machines](/docs/multiple-devices/)** — enroll a
+  host daemon on another computer.
 - **[The `zcc` CLI](/docs/cli/)** — drive ZCC from the command line.
 - **[Build your first extension](/docs/extensions-quickstart/)** — extend the
   cockpit in TypeScript.

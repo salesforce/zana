@@ -29,10 +29,11 @@ import {
   createPluginApi,
   importServerFactory,
   resolveContainedEntry,
-  runFactoryTimeBoxed
+  runFactoryTimeBoxed,
+  runPluginCli
 } from './plugin-api.js';
 import { discoverPluginSkillNames } from './plugin-skills.js';
-import { BUILTIN_PLUGINS, bundledPluginByName } from './builtin-registry.js';
+import { BUILTIN_PLUGINS, OFFICIAL_PLUGINS, bundledPluginByName } from './builtin-registry.js';
 import { defaultCloneGit, defaultFetchJson, defaultSpawnNpm } from './plugin-process.js';
 import {
   createPluginStore,
@@ -40,6 +41,18 @@ import {
   type InstalledPluginRow,
   type PluginStore
 } from './plugin-store.js';
+import {
+  generatedSkillsRootPath,
+  syncPluginCommandsSkill,
+  type PluginCliContribution
+} from './plugin-commands-skill.js';
+import { syncPluginInstructionsSkill } from './plugin-instructions-skill.js';
+import {
+  builtinSkillsRootPath,
+  collectPluginSkillDirectoryRoots,
+  writeInjectedSkillRootManifest
+} from './injected-skill-roots.js';
+import type { PluginCliExecutionResult, PluginHttpRequest, PluginHttpResponse, PluginThreadEvent } from '@zana-ai/zcc-plugin-sdk/server';
 
 export interface CatalogSearchHit {
   marketplace: string;
@@ -83,6 +96,10 @@ export interface PluginService {
   searchCatalog(query: string): Promise<CatalogSearchHit[]>;
   checkUpdates(): Promise<PluginUpdateRow[]>;
   applyUpdate(id: string): Promise<InstalledPluginRow>;
+  cliContributions(): PluginCliContribution[];
+  runCliCommand(id: string, argv: string[]): Promise<PluginCliExecutionResult>;
+  dispatchHttp(pluginId: string, request: PluginHttpRequest): Promise<PluginHttpResponse>;
+  emitThreadEvent(event: PluginThreadEvent): Promise<void>;
 }
 
 export interface PluginUiSnapshot {
@@ -273,6 +290,55 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await opts.onAppsChanged?.(snapshot());
     } catch {
       /* Renderer updates are advisory and must not wedge plugin lifecycle. */
+    }
+  }
+
+  function cliContributions(): PluginCliContribution[] {
+    const out: PluginCliContribution[] = [];
+    for (const [id, livePlugin] of live) {
+      const registration = livePlugin.handle?.cli.registration;
+      if (!registration) continue;
+      out.push({
+        pluginId: id,
+        name: registration.name,
+        summary: registration.summary,
+        commands: registration.commands ?? []
+      });
+    }
+    return out.sort((left, right) => left.pluginId.localeCompare(right.pluginId));
+  }
+
+  function instructionContributions() {
+    return [...live.entries()]
+      .flatMap(([pluginId, current]) =>
+        (current.handle?.extraInstructions ?? []).map((text) => ({ pluginId, text }))
+      )
+      .filter((row) => row.text.trim().length > 0);
+  }
+
+  async function syncCliSkill(): Promise<void> {
+    try {
+      await syncPluginCommandsSkill(opts.dataDir, cliContributions());
+      await syncPluginInstructionsSkill(opts.dataDir, instructionContributions());
+      const directoryRoots = [builtinSkillsRootPath(), generatedSkillsRootPath(opts.dataDir)];
+      for (const row of store.list()) {
+        if (!row.enabled) continue;
+        try {
+          const manifest = loadManifestFromDir(row.rootDir);
+          directoryRoots.push(
+            ...collectPluginSkillDirectoryRoots({
+              rootDir: row.rootDir,
+              relativeRoots: manifest.skillsRootPaths,
+              extraRoots: live.get(row.id)?.handle?.extraSkillRoots
+            })
+          );
+        } catch {
+          /* skip unreadable plugins */
+        }
+      }
+      writeInjectedSkillRootManifest(opts.dataDir, directoryRoots);
+    } catch (error) {
+      console.error('[plugins] syncPluginCommandsSkill failed', error);
     }
   }
 
@@ -501,6 +567,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     await store.upsert(row);
     await loadOne(row);
     await emitCapabilities();
+    await syncCliSkill();
     return store.get(manifest.id) ?? row;
   }
 
@@ -583,6 +650,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await store.upsert(next);
       await loadOne(next);
       await emitCapabilities();
+      await syncCliSkill();
       const updated = store.get(id) ?? next;
       await emitAppsChanged();
       return updated;
@@ -596,6 +664,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       live.set(id, { row: next, handle: null, rpc: new Map() });
       await emitCapabilities();
       await emitAppsChanged();
+      await syncCliSkill();
       return next;
     },
     async remove(id) {
@@ -606,6 +675,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       }
       await emitCapabilities();
       await emitAppsChanged();
+      await syncCliSkill();
     },
     async reload(id) {
       const row = store.get(id);
@@ -616,6 +686,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await store.upsert(next);
       await loadOne(next);
       await emitCapabilities();
+      await syncCliSkill();
       const updated = store.get(id) ?? next;
       await emitAppsChanged();
       return updated;
@@ -641,9 +712,30 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       }
       await emitCapabilities();
       await emitAppsChanged();
+      await syncCliSkill();
     },
     snapshot,
     agentContributions,
+    cliContributions,
+    async runCliCommand(id, argv) {
+      const byId = live.get(id)?.handle;
+      if (byId) return runPluginCli(byId, argv);
+      const named = cliContributions().find((row) => row.name === id || row.pluginId === id);
+      const handle = named ? live.get(named.pluginId)?.handle : undefined;
+      if (!handle) throw new Error(`plugin not running: ${id}`);
+      return runPluginCli(handle, argv);
+    },
+    async dispatchHttp(pluginId, request) {
+      const routes = live.get(pluginId)?.handle?.httpRoutes ?? [];
+      const route = routes.find((row) => row.method === request.method && row.path === request.path);
+      if (!route) throw new Error(`unknown http ${pluginId} ${request.method} ${request.path}`);
+      return route.handler(request);
+    },
+    async emitThreadEvent(event) {
+      await Promise.all(
+        [...live.values()].map((current) => current.handle?.emitThreadEvent(event) ?? Promise.resolve())
+      );
+    },
     async callRpc(pluginId, method, args) {
       const current = live.get(pluginId);
       const handler = current?.rpc.get(method);
@@ -657,6 +749,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       const handle = live.get(pluginId)?.handle;
       if (!handle) throw new Error(`plugin not running: ${pluginId}`);
       await handle.setSettings(values);
+      await syncCliSkill();
     },
     listMarketplaces: () => marketplaces.list(),
     async addMarketplace(url) {
@@ -666,7 +759,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     async searchCatalog(query) {
       const q = query.trim().toLowerCase();
       const hits: CatalogSearchHit[] = [];
-      for (const def of BUILTIN_PLUGINS) {
+      for (const def of [...BUILTIN_PLUGINS, ...OFFICIAL_PLUGINS]) {
         const hay = `${def.pluginId} ${def.name} ${def.category ?? ''}`.toLowerCase();
         if (!q || hay.includes(q)) {
           hits.push({

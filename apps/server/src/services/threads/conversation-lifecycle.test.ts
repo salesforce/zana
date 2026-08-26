@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { registerThreadProvider } from './thread-provider-catalog.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import { archiveConversation, forkConversation, resumeConversation, sendConversationTurn, stopConversation } from './conversation-lifecycle.js';
@@ -93,11 +94,30 @@ function ctx(callHostOnlineRpc: (input: unknown) => Promise<unknown>): ProductHt
   } as unknown as ProductHttpContext;
 }
 
+const providerHandles: Array<{ unregister(): void }> = [];
+
 beforeEach(() => {
+  providerHandles.push(
+    registerThreadProvider('test', {
+      id: 'claude-code',
+      displayName: 'Claude Code',
+      capabilities: {
+        supportsServiceTier: false,
+        fork: 'checkpoint',
+        supportsThreadArchive: false,
+        supportsThreadRename: false,
+        permissionModes: ['full']
+      }
+    })
+  );
   vi.mocked(getConversationThread).mockReturnValue(thread);
   vi.mocked(updateConversationThreadStatus).mockImplementation((_db, id, status) => ({ ...thread, id, status }));
   vi.mocked(listConversationThreadEventsWindow).mockImplementation(() => listConversationThreadEvents());
   vi.mocked(setConversationProviderThreadId).mockReset();
+});
+
+afterEach(() => {
+  for (const handle of providerHandles.splice(0)) handle.unregister();
 });
 
 describe('conversation lifecycle', () => {

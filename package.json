@@ -37,6 +37,7 @@
     "test:watch": "vitest",
     "test:e2e": "pnpm run build:legacy && playwright test",
     "test:e2e:docker": "bash scripts/e2e-docker.sh",
+    "docker:host-daemon": "bash scripts/docker-host-daemon.sh",
     "test:e2e:only": "playwright test",
     "test:e2e:thread": "playwright test -c playwright.thread-web.config.ts",
     "test:e2e:headed": "pnpm run build:legacy && playwright test --headed",

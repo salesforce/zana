@@ -65,6 +65,8 @@ export interface RuntimeSupervisor {
   updatePlugin(id: string): Promise<unknown>;
   listMarketplaces(): Promise<unknown>;
   addMarketplace(url: string): Promise<unknown>;
+  pluginCliContributions(): Promise<unknown>;
+  runPluginCli(id: string, argv: string[]): Promise<unknown>;
   callPluginRpc(pluginId: string, method: string, args?: unknown): Promise<unknown>;
   getPluginSettings(pluginId: string): Promise<unknown>;
   setPluginSettings(pluginId: string, values: Record<string, string | boolean | null>): Promise<unknown>;
@@ -180,6 +182,8 @@ export async function startRuntimeSupervisor(options: StartRuntimeSupervisorOpti
     updatePlugin: async () => { throw new Error('plugin host is unavailable'); },
     listMarketplaces: async () => [],
     addMarketplace: async () => { throw new Error('plugin host is unavailable'); },
+    pluginCliContributions: async () => [],
+    runPluginCli: async () => { throw new Error('plugin host is unavailable'); },
     callPluginRpc: async () => { throw new Error('plugin host is unavailable'); },
     getPluginSettings: async () => ({ descriptors: {}, values: {} }),
     setPluginSettings: async () => { throw new Error('plugin host is unavailable'); },
@@ -225,6 +229,8 @@ interface UtilityRuntime {
   request(operation: 'plugins-call-rpc', pluginId: string, method: string, args?: unknown): Promise<unknown>;
   request(operation: 'plugins-settings-get', pluginId: string): Promise<unknown>;
   request(operation: 'plugins-settings-set', pluginId: string, values: Record<string, string | boolean | null>): Promise<unknown>;
+  request(operation: 'plugins-cli-contributions'): Promise<unknown>;
+  request(operation: 'plugins-cli-run', pluginId: string, argv: string[]): Promise<unknown>;
   request(operation: 'marketplace-list'): Promise<unknown>;
   request(operation: 'marketplace-add', url: string): Promise<unknown>;
   stop(): Promise<void>;
@@ -475,6 +481,8 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
     updatePlugin: (id) => server.request('plugins-update', id),
     listMarketplaces: () => server.request('marketplace-list'),
     addMarketplace: (url) => server.request('marketplace-add', url),
+    pluginCliContributions: () => server.request('plugins-cli-contributions'),
+    runPluginCli: (id, argv) => server.request('plugins-cli-run', id, argv),
     callPluginRpc: (pluginId, method, args) => server.request('plugins-call-rpc', pluginId, method, args),
     getPluginSettings: (pluginId) => server.request('plugins-settings-get', pluginId),
     setPluginSettings: (pluginId, values) => server.request('plugins-settings-set', pluginId, values),
@@ -517,7 +525,7 @@ function createUtilityRuntime(runtime: { child: UtilityChild; url: string }): Ut
   return {
     ...runtime,
     request(
-      operation: 'app-version' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-call-rpc' | 'plugins-settings-get' | 'plugins-settings-set' | 'marketplace-list' | 'marketplace-add',
+      operation: 'app-version' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-call-rpc' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add',
        ...args: [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, Record<string, string | boolean | null>] | []
     ) {
       const id = randomUUID();
@@ -553,6 +561,7 @@ function createUtilityRuntime(runtime: { child: UtilityChild; url: string }): Ut
           ...(operation === 'plugins-search' ? { query: args[0] as string } : {}),
           ...(operation === 'plugins-call-rpc' ? { pluginId: args[0] as string, method: args[1] as string, args: args[2] } : {}),
           ...(operation === 'plugins-settings-set' ? { pluginId: args[0] as string, values: args[1] as Record<string, string | boolean | null> } : {}),
+          ...(operation === 'plugins-cli-run' ? { pluginId: args[0] as string, argv: args[1] as string[] } : {}),
           ...(operation === 'marketplace-add' ? { url: args[0] as string } : {})
         });
       });

@@ -51,11 +51,33 @@ export const BUILTIN_PLUGINS: BundledPluginDefinition[] = [
     autoInstall: true,
     defaultEnabled: true,
     category: 'Agent interaction'
+  },
+  {
+    name: 'custom-instructions',
+    pluginId: 'custom-instructions',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Context & knowledge'
+  },
+  {
+    name: 'ask-user-question',
+    pluginId: 'ask-user-question',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Agent interaction'
   }
 ];
 
 /** Bundled but store-only until `zcc plugin install <name>`. */
-export const OFFICIAL_PLUGINS: BundledPluginDefinition[] = [];
+export const OFFICIAL_PLUGINS: BundledPluginDefinition[] = [
+  {
+    name: 'tasks',
+    pluginId: 'tasks',
+    autoInstall: false,
+    defaultEnabled: true,
+    category: 'Workflow management'
+  }
+];
 
 export function bundledPluginByName(name: string): BundledPluginDefinition | undefined {
   return [...BUILTIN_PLUGINS, ...OFFICIAL_PLUGINS].find((plugin) => plugin.name === name);

@@ -1152,8 +1152,77 @@ export async function handleProductHttp(
     }
 
     if (path === '/api/v1/plugins' && method === 'GET') {
-      sendJson(response, 200, { plugins: [] });
+      sendJson(response, 200, { plugins: ctx.plugins?.list() ?? [] });
       return true;
+    }
+
+    if (path === '/api/v1/plugins/contributions' && method === 'GET') {
+      sendJson(response, 200, { cliCommands: ctx.plugins?.cliContributions() ?? [] });
+      return true;
+    }
+
+    const pluginCli = path.match(/^\/api\/v1\/plugins\/([^/]+)\/cli$/);
+    if (pluginCli && method === 'POST') {
+      const pluginId = decodeURIComponent(pluginCli[1]!);
+      if (!ctx.plugins) {
+        sendJson(response, 503, { ok: false, code: 'plugin-host-unavailable', message: 'plugin host is unavailable' });
+        return true;
+      }
+      const body = (await readJsonBody(request)) as { argv?: unknown };
+      const argv = Array.isArray(body?.argv) ? body.argv.map((item) => String(item)) : [];
+      try {
+        sendJson(response, 200, await ctx.plugins.runCliCommand(pluginId, argv));
+      } catch (error) {
+        sendJson(response, 404, {
+          ok: false,
+          code: 'plugin-cli-missing',
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return true;
+    }
+
+    const pluginHttp = path.match(/^\/api\/v1\/plugins\/([^/]+)\/http(\/.*)$/);
+    if (pluginHttp && ctx.plugins) {
+      const pluginId = decodeURIComponent(pluginHttp[1]!);
+      const routePath = pluginHttp[2]!;
+      const httpMethod = method as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+      if (httpMethod === 'GET' || httpMethod === 'POST' || httpMethod === 'PUT' || httpMethod === 'PATCH' || httpMethod === 'DELETE') {
+        const query: Record<string, string> = {};
+        requestUrl.searchParams.forEach((value, key) => {
+          query[key] = value;
+        });
+        let body: unknown = undefined;
+        if (httpMethod !== 'GET') {
+          try {
+            body = await readJsonBody(request);
+          } catch {
+            body = undefined;
+          }
+        }
+        try {
+          const result = await ctx.plugins.dispatchHttp(pluginId, {
+            method: httpMethod,
+            path: routePath,
+            query,
+            body
+          });
+          const status = result.status ?? 200;
+          if (result.json !== undefined) {
+            sendJson(response, status, result.json);
+          } else {
+            response.writeHead(status, result.headers ?? { 'content-type': 'text/plain; charset=utf-8' });
+            response.end(result.body ?? '');
+          }
+        } catch (error) {
+          sendJson(response, 404, {
+            ok: false,
+            code: 'plugin-http-missing',
+            message: error instanceof Error ? error.message : String(error)
+          });
+        }
+        return true;
+      }
     }
 
     if (path === '/api/v1/extensions' && method === 'GET') {

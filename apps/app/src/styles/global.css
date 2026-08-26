@@ -29506,7 +29506,7 @@ textarea.thread-command-editor {
 }
 
 .thread-detail-view--embedded .thread-detail-main {
-  padding: 0 14px 8px;
+  padding: 10px 14px 8px;
 }
 
 .thread-detail-main {
@@ -29515,7 +29515,7 @@ textarea.thread-command-editor {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  padding: 12px 20px 12px;
+  padding: 16px 20px 12px;
   gap: 12px;
 }
 
@@ -29602,17 +29602,9 @@ textarea.thread-command-editor {
   gap: 12px;
   min-height: 32px;
   flex: 0 0 auto;
-  padding: 16px 20px 0;
-  position: relative;
-  z-index: 7;
 }
 
-.thread-detail-view--modal .thread-detail-header {
-  padding: 10px 14px 8px;
-  border-bottom: 1px solid var(--border, #30363d);
-}
-
-.thread-detail-view--embedded .thread-detail-header {
+.agent-session-main > .thread-detail-header {
   padding: 10px 14px 8px;
 }
 

@@ -1,20 +1,34 @@
 import { pathToFileURL } from 'node:url';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
+import { createRequire } from 'node:module';
 import type {
+  PluginAgentToolRegistration,
+  PluginCliExecutionResult,
+  PluginCliRegistration,
+  PluginCliCommandInfo,
+  PluginDatabase,
+  PluginHttpMethod,
+  PluginHttpRequest,
+  PluginHttpResponse,
   PluginInteractionRequest,
   PluginInteractionResult,
   PluginSettingDescriptor,
   PluginSettingValue,
+  PluginThreadEvent,
+  PluginThreadEventName,
   ZccPluginApi,
   ZccPluginFactory
 } from '@zana-ai/zcc-plugin-sdk/server';
 import {
   PLUGIN_INTERACTION_MAX_PAYLOAD_BYTES,
   PLUGIN_INTERACTION_MAX_TITLE_LENGTH,
+  PLUGIN_CLI_COMMAND_NAME_PATTERN,
+  RESERVED_ZCC_CLI_COMMANDS,
   type JsonValue
 } from '@zana-ai/zcc-domain/thread-runtime';
 import { registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
+import { enforcePluginCliOutputLimit } from '@zana-ai/zcc-plugin-sdk/server';
 
 export const HOST_ZCC_VERSION = '1.0.10';
 export const HOST_PLUGIN_SDK_VERSION = '0.1.0';
@@ -26,10 +40,20 @@ export type PluginRuntimeStatus =
   | 'degraded'
   | 'needs-configuration';
 
+export interface PluginHttpRouteRecord {
+  method: PluginHttpMethod;
+  path: string;
+  handler: (request: PluginHttpRequest) => PluginHttpResponse | Promise<PluginHttpResponse>;
+}
+
 export interface PluginHandle {
   api: ZccPluginApi;
   extraSkillRoots: string[];
   extraInstructions: string[];
+  cli: { registration: PluginCliRegistration | null };
+  httpRoutes: PluginHttpRouteRecord[];
+  agentTools: PluginAgentToolRegistration[];
+  emitThreadEvent(event: PluginThreadEvent): Promise<void>;
   getSettings(): {
     descriptors: Record<string, PluginSettingDescriptor>;
     values: Record<string, PluginSettingValue | undefined>;
@@ -68,6 +92,7 @@ export function createPluginApi(
     }) => Promise<PluginInteractionResult>;
     interruptPluginInteractions?: (pluginId: string) => void;
     onNeedsConfiguration?: (message: string) => void;
+    spawnThread?: (args: { pluginId: string; projectId: string; prompt: string; providerId?: string }) => Promise<{ id: string }>;
   }
 ): PluginHandle {
   mkdirSync(kvDir, { recursive: true });
@@ -80,6 +105,14 @@ export function createPluginApi(
   const realtimeListeners = new Set<(event: string, payload: unknown) => void>();
   let settingDescriptors: Record<string, PluginSettingDescriptor> = {};
   let stale = false;
+  const cliRecord: { registration: PluginCliRegistration | null } = { registration: null };
+  const httpRoutes: PluginHttpRouteRecord[] = [];
+  const agentTools: PluginAgentToolRegistration[] = [];
+  const threadEventHandlers: Array<{
+    name: PluginThreadEventName;
+    handler: (event: PluginThreadEvent) => void | Promise<void>;
+  }> = [];
+  const sqliteHandles: Array<{ close(): void }> = [];
   const assertLive = (): void => {
     if (stale) throw new Error(`plugin context is stale: ${pluginId}`);
   };
@@ -130,6 +163,104 @@ export function createPluginApi(
         },
         list: async (prefix) =>
           Object.keys(readKv()).filter((key) => (prefix ? key.startsWith(prefix) : true))
+      },
+      database: (): PluginDatabase => {
+        assertLive();
+        const dbPath = join(kvDir, 'data.db');
+        // Lazy require keeps plugin-api importable in tests that never open a database.
+        const require = createRequire(import.meta.url);
+        const Database = require('better-sqlite3') as new (path: string) => {
+          prepare: (sql: string) => {
+            all: (...params: unknown[]) => unknown[];
+            get: (...params: unknown[]) => unknown;
+            run: (...params: unknown[]) => { changes: number };
+          };
+          close: () => void;
+        };
+        const db = new Database(dbPath);
+        sqliteHandles.push(db);
+        const runScript = (sql: string) => {
+          for (const statement of sql.split(';').map((part) => part.trim()).filter(Boolean)) {
+            db.prepare(statement).run();
+          }
+        };
+        return {
+          runScript,
+          prepare: (sql) => db.prepare(sql),
+          migrate: (statements) => {
+            for (const statement of statements) runScript(statement);
+          }
+        };
+      }
+    },
+    http: {
+      route: (method, path, handler) => {
+        assertLive();
+        if (!path.startsWith('/')) throw new Error('http route path must start with /');
+        httpRoutes.push({ method, path, handler });
+      }
+    },
+    cli: {
+      register: (registration) => {
+        assertLive();
+        if (cliRecord.registration !== null) {
+          throw new Error('cli command is already registered');
+        }
+        const name = registration?.name;
+        if (typeof name !== 'string' || !PLUGIN_CLI_COMMAND_NAME_PATTERN.test(name)) {
+          throw new Error(
+            `invalid cli command name ${JSON.stringify(name)} — use lowercase letters, digits, and "-"`
+          );
+        }
+        if (RESERVED_ZCC_CLI_COMMANDS.includes(name)) {
+          throw new Error(`cli command name "${name}" is reserved by the zcc CLI — pick another name`);
+        }
+        if (typeof registration.summary !== 'string' || registration.summary.trim().length === 0) {
+          throw new Error(`cli command "${name}" must provide a summary`);
+        }
+        if (typeof registration.run !== 'function') {
+          throw new Error(`cli command "${name}" must provide a run(argv, ctx) function`);
+        }
+        const commands: PluginCliCommandInfo[] = (registration.commands ?? []).map((command, index) => {
+          if (
+            typeof command?.name !== 'string'
+            || !PLUGIN_CLI_COMMAND_NAME_PATTERN.test(command.name)
+            || typeof command.summary !== 'string'
+            || typeof command.usage !== 'string'
+          ) {
+            throw new Error(
+              `cli command "${name}" commands[${index}] must be { name: [a-z0-9-]+, summary, usage }`
+            );
+          }
+          return { name: command.name, summary: command.summary, usage: command.usage };
+        });
+        cliRecord.registration = {
+          name,
+          summary: registration.summary.trim(),
+          commands,
+          run: registration.run
+        };
+      }
+    },
+    events: {
+      on: (name, handler) => {
+        threadEventHandlers.push({ name, handler });
+      }
+    },
+    sdk: {
+      threads: {
+        spawn: async (args) => {
+          assertLive();
+          if (!options?.spawnThread) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          return options.spawnThread({ pluginId, ...args });
+        }
+      }
+    },
+    host: {
+      experimental_call: async () => {
+        throw new Error('zcc.host is not available in this runtime');
       }
     },
     rpc: {
@@ -162,10 +293,19 @@ export function createPluginApi(
     },
     agents: {
       contributeInstructions: (text) => {
-        extraInstructions.push(text);
+        extraInstructions.length = 0;
+        const trimmed = typeof text === 'string' ? text.trim() : '';
+        if (trimmed) extraInstructions.push(trimmed);
       },
       contributeSkills: (rootPaths) => {
         extraSkillRoots.push(...rootPaths);
+      },
+      registerTool: (registration) => {
+        assertLive();
+        if (!registration?.name || typeof registration.execute !== 'function') {
+          throw new Error('agents.registerTool requires name and execute');
+        }
+        agentTools.push(registration);
       },
       experimental_registerProvider: (declaration) => {
         assertLive();
@@ -205,6 +345,20 @@ export function createPluginApi(
     api,
     extraSkillRoots,
     extraInstructions,
+    cli: cliRecord,
+    httpRoutes,
+    agentTools,
+    async emitThreadEvent(event) {
+      for (const record of threadEventHandlers) {
+        if (record.name === event.name) {
+          try {
+            await record.handler(event);
+          } catch (error) {
+            console.error(`[plugin:${pluginId}] events.on ${event.name} failed`, error);
+          }
+        }
+      }
+    },
     getSettings() {
       const stored = readSettings();
       const values: Record<string, PluginSettingValue | undefined> = {};
@@ -231,6 +385,14 @@ export function createPluginApi(
     async dispose() {
       stale = true;
       options?.interruptPluginInteractions?.(pluginId);
+      for (const handle of sqliteHandles) {
+        try {
+          handle.close();
+        } catch {
+          /* isolated */
+        }
+      }
+      sqliteHandles.length = 0;
       for (const hook of [...disposeHooks].reverse()) {
         try {
           await hook();
@@ -241,6 +403,21 @@ export function createPluginApi(
       disposeHooks.length = 0;
     }
   };
+}
+
+export async function runPluginCli(
+  handle: PluginHandle,
+  argv: string[]
+): Promise<PluginCliExecutionResult> {
+  const registration = handle.cli.registration;
+  if (!registration) {
+    return { exitCode: 1, stdout: '', stderr: 'plugin has no CLI command\n' };
+  }
+  const result = await registration.run(argv, {
+    pluginId: handle.api.pluginId,
+    argv
+  });
+  return enforcePluginCliOutputLimit(result);
 }
 
 export function validatePluginRequestInput(request: PluginInteractionRequest): {

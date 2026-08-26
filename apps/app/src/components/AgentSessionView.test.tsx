@@ -83,6 +83,8 @@ describe('AgentSessionView', () => {
     expect(html).toContain('thread-detail-split');
     expect(html).toContain('thread-detail-header');
     expect(html).toContain('PTY agent');
+    expect(html.indexOf('thread-detail-split')).toBeLessThan(html.indexOf('thread-detail-main agent-session-main'));
+    expect(html.indexOf('thread-detail-main agent-session-main')).toBeLessThan(html.indexOf('thread-detail-header'));
     expect(html).toContain('data-testid="thread-secondary-panel"');
     expect(html).toContain('data-testid="thread-info-pin"');
     expect(html).toContain('data-testid="thread-diff-pin"');
@@ -190,6 +192,8 @@ describe('AgentSessionView', () => {
     expect(source).toContain('allowSidecarTerminal={false}');
     expect(source).toContain('thread-detail-split');
     expect(source).toContain('thread-detail-header');
+    expect(source.indexOf('thread-detail-split')).toBeLessThan(source.indexOf('thread-detail-main agent-session-main'));
+    expect(source.indexOf('thread-detail-main agent-session-main')).toBeLessThan(source.indexOf('className="thread-detail-header"'));
     expect(source).toContain('thread-detail-view--modal');
     expect(source).not.toContain('agent-session-show-panel');
     expect(source).toContain('<AgentDiffPanel');

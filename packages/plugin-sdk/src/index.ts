@@ -33,10 +33,30 @@ export type {
   PluginSettingDescriptor,
   PluginStorage,
   PluginKvStorage,
+  PluginDatabase,
+  PluginDatabaseStatement,
   PluginRpc,
+  PluginHttp,
+  PluginHttpMethod,
+  PluginHttpRequest,
+  PluginHttpResponse,
   PluginRealtime,
   PluginBackground,
+  PluginCli,
+  PluginCliRegistration,
+  PluginCliCommandInfo,
+  PluginCliResult,
+  PluginCliContext,
+  PluginCliExecutionResult,
+  PluginCliOutputLimitError,
   PluginAgents,
+  PluginAgentToolRegistration,
+  PluginAgentToolContext,
+  PluginEvents,
+  PluginThreadEvent,
+  PluginThreadEventName,
+  PluginSdk,
+  PluginHostApi,
   PluginProviderDeclaration,
   PluginProviderHandle,
   PluginProviderCapabilities,
@@ -47,6 +67,8 @@ export type {
   PluginStatusApi,
   PluginSettingsSnapshot
 } from './server.js';
+
+export { PLUGIN_CLI_OUTPUT_MAX_BYTES, enforcePluginCliOutputLimit } from './server.js';
 
 export type {
   PluginAppBuilder,

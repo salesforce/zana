@@ -10,6 +10,7 @@ import type { ProductHttpContext } from '../../http/product-context.js';
 import type { ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import { conversationThreadView, flattenThreadInput } from './conversation-create.js';
+import { emitPluginThreadEvent } from '../../plugins/thread-events.js';
 import { appendClientTurnRequested } from './client-turn-requested.js';
 import { recoverConversationProviderThreadId } from './conversation-provider-identity.js';
 import { destroyEnvironmentIfIdle } from '../environments/environment-cleanup.js';
@@ -76,6 +77,11 @@ export async function sendConversationTurn(
   const next = getConversationThread(ctx.db, live.id) ?? live;
   ctx.hub.emit('threads:updated', conversationThreadView(ctx, next));
   if (prompt[0] && next.originKind !== 'fork') ctx.threadTitleNamer?.request(next.id, prompt[0]);
+  emitPluginThreadEvent(ctx, {
+    name: 'thread.active',
+    threadId: next.id,
+    projectId: next.projectId
+  });
   return next;
 }
 
@@ -88,6 +94,11 @@ function failActiveConversationTurn(
     status: 'error' as const
   };
   ctx.hub.emit('threads:updated', conversationThreadView(ctx, failed));
+  emitPluginThreadEvent(ctx, {
+    name: 'thread.failed',
+    threadId: failed.id,
+    projectId: failed.projectId
+  });
 }
 
 export async function stopConversation(
@@ -113,6 +124,11 @@ export async function stopConversation(
   }
   const next = updateConversationThreadStatus(ctx.db, thread.id, 'idle') ?? thread;
   ctx.hub.emit('threads:updated', conversationThreadView(ctx, next));
+  emitPluginThreadEvent(ctx, {
+    name: 'thread.idle',
+    threadId: next.id,
+    projectId: next.projectId
+  });
   return next;
 }
 
@@ -154,6 +170,16 @@ export async function archiveConversation(
   }
   const archived = archiveConversationThread(ctx.db, threadId) ?? thread;
   ctx.hub.emit('threads:updated', conversationThreadView(ctx, archived));
+  emitPluginThreadEvent(ctx, {
+    name: 'thread.archived',
+    threadId: archived.id,
+    projectId: archived.projectId
+  });
+  emitPluginThreadEvent(ctx, {
+    name: 'thread.deleted',
+    threadId: archived.id,
+    projectId: archived.projectId
+  });
   if (thread.environmentId) await destroyEnvironmentIfIdle(ctx, thread.environmentId);
   return true;
 }
@@ -180,6 +206,11 @@ export async function forkConversation(
     originKind: 'fork'
   });
   ctx.hub.emit('threads:updated', conversationThreadView(ctx, forked));
+  emitPluginThreadEvent(ctx, {
+    name: 'thread.created',
+    threadId: forked.id,
+    projectId: forked.projectId
+  });
   // Forks already have an explicit "… (fork)" title; pin the id so a later
   // follow-up cannot overwrite it via the retry path on sendConversationTurn.
   ctx.threadTitleNamer?.reserve(forked.id);

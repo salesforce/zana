@@ -60,24 +60,27 @@ describe('requestAutoThreadTitle', () => {
 });
 
 describe('thread provider catalog', () => {
-  it('seeds Claude Code, Codex, Pi, ACP Cursor, and ACP OpenCode', () => {
-    const ids = listThreadProviders().map((row) => row.id).sort();
-    expect(ids).toEqual(['acp-cursor', 'acp-opencode', 'claude-code', 'codex', 'pi']);
+  it('does not seed providers; plugins are the sole source', () => {
+    expect(listThreadProviders().filter((row) => row.id !== 'fake').map((row) => row.id)).toEqual([]);
   });
 
-  it('re-seeds a builtin after the ACP plugin unregisters it', () => {
-    const current = getThreadProvider('acp-opencode');
-    expect(current).toBeDefined();
+  it('unregisters a plugin-provided overlay without restoring a core seed', () => {
     const handle = registerThreadProvider('provider-acp', {
       id: 'acp-opencode',
       displayName: 'OpenCode overlay',
-      capabilities: current!.capabilities,
-      composerActions: current!.composerActions
+      capabilities: {
+        supportsServiceTier: true,
+        fork: 'tip',
+        supportsManualCompaction: true,
+        supportsThreadArchive: false,
+        supportsThreadRename: false,
+        permissionModes: ['accept-edits', 'full']
+      },
+      composerActions: []
     });
     expect(getThreadProvider('acp-opencode')?.displayName).toBe('OpenCode overlay');
     handle.unregister();
-    expect(listThreadProviders().map((row) => row.id)).toContain('acp-opencode');
-    expect(getThreadProvider('acp-opencode')?.displayName).toBe('OpenCode');
+    expect(getThreadProvider('acp-opencode')).toBeUndefined();
   });
 
   it('maps ZCC launch-profile aliases onto thread providers', () => {
@@ -94,7 +97,6 @@ describe('thread provider catalog', () => {
     process.env.ZCC_FAKE_PROVIDER = '1';
     try {
       expect(listThreadProviders()[0]?.id).toBe('fake');
-      expect(listThreadProviders().map((row) => row.id)).toContain('pi');
     } finally {
       if (previous === undefined) delete process.env.ZCC_FAKE_PROVIDER;
       else process.env.ZCC_FAKE_PROVIDER = previous;

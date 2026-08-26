@@ -18,6 +18,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@zana-ai/zcc-domain": "workspace:*",
     "@zana-ai/zcc-plugin-build": "workspace:*",
     "@zana-ai/zcc-plugin-sdk": "workspace:*",
     "@zana-ai/zcc-plugin-templates": "workspace:*"
