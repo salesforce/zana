@@ -323,6 +323,7 @@ export const IPC = {
   pluginApps: {
     list: 'pluginApps:list',
     onChanged: 'pluginApps:onChanged',
+    setEnabled: 'pluginApps:setEnabled',
     callRpc: 'pluginApps:callRpc',
     getSettings: 'pluginApps:getSettings',
     setSettings: 'pluginApps:setSettings'
@@ -371,9 +372,10 @@ export const IPC = {
     // Manually check the (opt-in) remote registry for updates to installed
     // extensions and apply every compatible, non-permission-widening release.
     checkUpdates: 'extensions:checkUpdates',
-    // Fetch the (opt-in) marketplace index and return browsable entries stamped
-    // with installed / hasUpdate / compatible. Returns [] when no registry is
-    // configured — the host never reaches the network by default.
+    // Fetch first-party shipped plugins plus configured marketplace catalogs
+    // (and the opt-in signed registry), stamped with installed / hasUpdate /
+    // compatible. Returns [] when nothing is bundled and no catalog or
+    // registry is configured — the host never reaches the network by default.
     marketplaceList: 'extensions:marketplaceList',
     // Create a new LOCAL (in-app authored) extension: main mints a unique id,
     // scaffolds a starter template into a scratch working dir, packs + installs

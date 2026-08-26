@@ -96,20 +96,64 @@ function createProjectionTurn(
     type: event.type,
     scope: event.scope,
   });
+  return createSyntheticProjectionTurn({
+    createdAt: meta.createdAt,
+    sourceSeqStart: meta.seq,
+    threadId: event.threadId,
+    turnId,
+  });
+}
+
+/**
+ * Latest-page windows are a capped tail of events. A turn that streams more
+ * token deltas than the page size drops `turn/started` out of the window, so
+ * later `turn/completed` / in-turn messages must be able to open a draft.
+ */
+function createSyntheticProjectionTurn(args: {
+  createdAt: number;
+  sourceSeqStart: number;
+  threadId: string;
+  turnId: string;
+}): ProjectionTurnDraft {
   return {
     messages: [],
     turn: {
-      turnId,
-      threadId: event.threadId,
-      sourceSeqStart: meta.seq,
-      sourceSeqEnd: meta.seq,
-      startedAt: meta.createdAt,
-      createdAt: meta.createdAt,
+      turnId: args.turnId,
+      threadId: args.threadId,
+      sourceSeqStart: args.sourceSeqStart,
+      sourceSeqEnd: args.sourceSeqStart,
+      startedAt: args.createdAt,
+      createdAt: args.createdAt,
       completedAt: null,
       status: "pending",
       summaryCount: 0,
     },
   };
+}
+
+function ensureProjectionTurn(
+  turnsById: Map<string, ProjectionTurnDraft>,
+  entryDrafts: ProjectionEntryDraft[],
+  args: {
+    createdAt: number;
+    sourceSeqStart: number;
+    threadId: string;
+    turnId: string;
+  },
+): ProjectionTurnDraft {
+  const existing = turnsById.get(args.turnId);
+  if (existing) {
+    return existing;
+  }
+  const draft = createSyntheticProjectionTurn(args);
+  turnsById.set(args.turnId, draft);
+  entryDrafts.push({
+    kind: "turn",
+    turnId: args.turnId,
+    sourceSeqStart: args.sourceSeqStart,
+    createdAt: args.createdAt,
+  });
+  return draft;
 }
 
 function updateProjectionTurnBounds(
@@ -269,12 +313,12 @@ export function groupEventProjectionTurns(
         type: event.type,
         scope: event.scope,
       });
-      const existing = turnsById.get(turnId);
-      if (!existing) {
-        throw new Error(
-          `Timeline projection found turn/completed without turn/started for ${turnId}`,
-        );
-      }
+      const existing = ensureProjectionTurn(turnsById, entryDrafts, {
+        createdAt: meta.createdAt,
+        sourceSeqStart: meta.seq,
+        threadId: event.threadId,
+        turnId,
+      });
       updateProjectionTurnCompletion(existing, event, meta);
       continue;
     }
@@ -284,12 +328,12 @@ export function groupEventProjectionTurns(
         type: event.type,
         scope: event.scope,
       });
-      const existing = turnsById.get(turnId);
-      if (!existing) {
-        throw new Error(
-          `Timeline projection found turn/input/accepted without turn/started for ${turnId}`,
-        );
-      }
+      const existing = ensureProjectionTurn(turnsById, entryDrafts, {
+        createdAt: meta.createdAt,
+        sourceSeqStart: meta.seq,
+        threadId: event.threadId,
+        turnId,
+      });
       const clientRequestMeta = clientRequestMetaById.get(
         event.clientRequestId,
       );
@@ -316,12 +360,12 @@ export function groupEventProjectionTurns(
     }
 
     const turnId = message.scope.turnId;
-    const turnDraft = turnsById.get(turnId);
-    if (!turnDraft) {
-      throw new Error(
-        `Timeline projection found message ${message.id} for turn ${turnId} without turn/started`,
-      );
-    }
+    const turnDraft = ensureProjectionTurn(turnsById, entryDrafts, {
+      createdAt: message.createdAt,
+      sourceSeqStart: message.sourceSeqStart,
+      threadId: message.threadId,
+      turnId,
+    });
 
     addProjectionTurnMessage(turnDraft, message);
   }

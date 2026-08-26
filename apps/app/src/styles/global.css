@@ -4868,8 +4868,65 @@ body.resizing-col {
 .machines-row-actions {
   display: flex;
   flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.machines-toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.machine-cli-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
   gap: 6px;
-  justify-content: flex-end;
+}
+
+.cli-skills-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cli-skills-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.machine-cli-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0 0;
+}
+
+.machine-cli-row p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.machine-cli-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-badge--warn {
+  background: color-mix(in srgb, var(--warn, #c27803) 18%, transparent);
+  color: var(--warn, #c27803);
 }
 
 .machines-ceiling {
@@ -6432,14 +6489,18 @@ body.resizing-col {
   display: flex;
   flex-direction: column;
   flex: 1;
-  width: min(100%, 1040px);
   min-height: 0;
-  max-width: 1040px;
-  /* Keep the hub's split-pane controls inside the normal Settings reading
-     column, rather than stretching them edge to edge. */
-  margin: 0 auto;
-  /* Trim the default bottom padding — the detail column owns its own scroll. */
   padding-bottom: 28px;
+  scrollbar-width: none;
+}
+.settings-panel:has(.ext-hub-shell) .settings-inner::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+.settings-panel:has(.ext-hub-shell) .settings-inner:not(.settings-inner--wide) {
+  width: min(100%, 1040px);
+  max-width: 1040px;
+  margin: 0 auto;
 }
 .settings-panel:has(.ext-hub-shell) .settings-header {
   flex: 0 0 auto;
@@ -6466,11 +6527,6 @@ body.resizing-col {
   flex: 1;
 }
 
-.ext-hub-top-actions {
-  display: flex;
-  justify-content: flex-end;
-  flex: 0 0 auto;
-}
 .ext-hub-more-wrap {
   position: relative;
 }
@@ -7123,6 +7179,11 @@ body.resizing-col .ext-hub-resizer::before {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  scrollbar-width: none; /* Firefox — keep scrolling, hide the gutter */
+}
+.ext-market::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 .ext-market-note {
   margin: 0 0 14px;
@@ -7138,12 +7199,14 @@ body.resizing-col .ext-hub-resizer::before {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
   margin-bottom: 12px;
 }
-.ext-market-toolbar .settings-btn-row {
-  flex-wrap: wrap;
+.ext-market-toolbar .settings-btn-row,
+.ext-market-toolbar-actions {
+  flex-wrap: nowrap;
   margin-left: auto;
+  gap: 8px;
 }
 .ext-market-tags {
   display: flex;
@@ -7173,27 +7236,6 @@ body.resizing-col .ext-hub-resizer::before {
   background: var(--accent-blue);
   color: #fff;
   border-color: transparent;
-}
-
-/* A visually-grouped cluster of related toolbar buttons — a thin shared
-   border with the internal button seam removed, so "Check for updates" +
-   "Refresh" read as one unit instead of two flat peers. */
-.settings-btn-group {
-  display: inline-flex;
-}
-.settings-btn-group .settings-btn {
-  border-radius: 0;
-}
-.settings-btn-group .settings-btn:first-child {
-  border-top-left-radius: 6px;
-  border-bottom-left-radius: 6px;
-}
-.settings-btn-group .settings-btn:last-child {
-  border-top-right-radius: 6px;
-  border-bottom-right-radius: 6px;
-}
-.settings-btn-group .settings-btn:not(:first-child) {
-  border-left: 0;
 }
 
 /* "Install from…" split menu — one primary button opens a small dropdown
@@ -7267,6 +7309,28 @@ body.resizing-col .ext-hub-resizer::before {
   font-size: 11px;
   font-family: 'JetBrains Mono', 'SF Mono', monospace;
   flex-shrink: 0;
+}
+.ext-market-search-refresh {
+  appearance: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.ext-market-search-refresh:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+.ext-market-search-refresh:disabled {
+  cursor: wait;
+  opacity: 0.55;
 }
 .ext-market-list {
   list-style: none;
@@ -7386,6 +7450,297 @@ body.resizing-col .ext-hub-resizer::before {
 }
 .ext-market-item-action {
   align-self: center;
+}
+
+.ext-market-item-source--local {
+  color: var(--accent-gold, #d4a017);
+  border-color: color-mix(in srgb, var(--accent-gold, #d4a017) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent-gold, #d4a017) 12%, transparent);
+}
+
+.ext-installed {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.ext-installed::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+.ext-installed-header h3 {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 600;
+}
+.ext-installed-header .settings-help {
+  margin: 0;
+}
+.ext-installed-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+}
+.ext-installed-toolbar .ext-market-search {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.ext-installed-back {
+  align-self: flex-start;
+}
+.ext-installed-tags {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.ext-installed-panel {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elevated, var(--bg-panel));
+}
+.ext-installed-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 8px;
+  min-height: 52px;
+  padding: 8px 12px 8px 16px;
+  border-top: 1px solid var(--border);
+}
+.ext-installed-row:first-child {
+  border-top: 0;
+}
+.ext-installed-row:hover {
+  background: color-mix(in srgb, var(--bg-hover) 55%, transparent);
+}
+.ext-installed-row-open {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.ext-installed-row-open:focus-visible {
+  outline: 1px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+.ext-installed-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent-blue) 12%, var(--bg-elevated));
+  color: var(--accent-blue);
+  flex-shrink: 0;
+}
+.ext-installed-row-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ext-installed-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.ext-installed-row-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 13px;
+}
+.ext-installed-pill {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.ext-installed-pill.ext-market-item-source--official {
+  color: var(--accent-blue);
+  border-color: color-mix(in srgb, var(--accent-blue) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
+}
+.ext-installed-pill.ext-market-item-source--community {
+  color: var(--accent-gold);
+  border-color: color-mix(in srgb, var(--accent-gold) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent-gold) 12%, transparent);
+}
+.ext-installed-pill.ext-market-item-source--local {
+  color: var(--accent-gold, #d4a017);
+  border-color: color-mix(in srgb, var(--accent-gold, #d4a017) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent-gold, #d4a017) 12%, transparent);
+}
+.ext-installed-row-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ext-installed-row-trailing {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.ext-installed-row-chevron {
+  width: 16px;
+  opacity: 0;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: opacity 120ms ease;
+}
+.ext-installed-row:hover .ext-installed-row-chevron,
+.ext-installed-row:focus-within .ext-installed-row-chevron {
+  opacity: 1;
+}
+.ext-installed-switch {
+  position: relative;
+  display: inline-flex;
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+}
+.ext-installed-switch input {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.ext-installed-switch input:disabled {
+  cursor: wait;
+}
+.ext-installed-switch-ui {
+  position: relative;
+  display: block;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--border-strong, var(--border));
+  pointer-events: none;
+  transition: background 120ms ease;
+}
+.ext-installed-switch-ui::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+  transition: transform 120ms ease;
+}
+.ext-installed-switch input:checked + .ext-installed-switch-ui {
+  background: var(--accent-blue);
+}
+.ext-installed-switch input:checked + .ext-installed-switch-ui::after {
+  transform: translateX(16px);
+}
+.ext-installed-switch input:disabled + .ext-installed-switch-ui {
+  opacity: 0.6;
+}
+.ext-installed-switch input:focus-visible + .ext-installed-switch-ui {
+  outline: 1px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+.ext-installed-switch-spacer {
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.ext-market-catalogs {
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elevated, transparent);
+}
+.ext-market-catalogs-title {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.ext-market-catalogs-add {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0 8px;
+}
+.ext-market-catalogs-add .settings-input {
+  flex: 1 1 auto;
+}
+.ext-market-catalog-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ext-market-catalog-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.ext-market-catalog-body {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.ext-market-catalog-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.ext-market-catalog-name {
+  font-weight: 600;
+  font-size: 13px;
+}
+.ext-market-catalog-count,
+.ext-market-catalog-source {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.ext-market-catalog-source {
+  margin: 4px 0 0;
+  word-break: break-all;
+}
+.ext-market-catalog-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 /* ── Zana version panel ────────────────────────────────────────────────── */
@@ -7769,7 +8124,8 @@ body.resizing-col .ext-hub-resizer::before {
   flex: 0 0 auto;
   margin-right: 1px;
 }
-.tab-agent-dot.agent-blocked {
+.tab-agent-dot.agent-blocked,
+.tab-agent-dot.agent-error {
   background: var(--danger);
   box-shadow: 0 0 6px var(--danger);
 }
@@ -20770,6 +21126,24 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
   cursor: pointer;
 }
 
+.launch-model-picker-option--stacked {
+  align-items: flex-start;
+}
+
+.launch-model-picker-option-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.launch-model-picker-option-description {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-muted);
+  white-space: normal;
+}
+
 .launch-model-picker-option:hover,
 .launch-model-picker-option.is-active,
 .launch-model-picker-option.is-selected {
@@ -20778,6 +21152,22 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
 
 .launch-model-picker-option.is-selected {
   color: var(--accent-blue);
+}
+
+.launch-model-picker-option:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.launch-model-picker-option:disabled:hover,
+.launch-model-picker-option:disabled.is-active {
+  background: transparent;
+}
+
+.launch-model-picker-option.is-warning,
+.launch-model-picker-option.is-warning.is-selected,
+.launch-model-picker-trigger.is-warning {
+  color: var(--accent-gold);
 }
 
 .launch-model-picker-hint {
@@ -21501,6 +21891,10 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+
+.environment-picker .launch-model-picker-option:disabled .launch-model-picker-option-description {
+  opacity: 1;
 }
 
 /* Workspace git strip in the agent detail panel. Echoes .agent-detail-insights
@@ -27921,6 +28315,23 @@ body.resizing-col .library-split-resizer::after {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  scrollbar-width: none;
+  /* Explicit width so auto side-margins cannot shrink-to-fit; Installed
+     otherwise sits in a narrow column while Browse's wider toolbar fills. */
+  width: 100%;
+}
+.extensions-panel .settings-inner::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/* Installed and Browse share the panel width — Installed must not sit in a
+   narrower centered column than the marketplace catalogue. */
+.extensions-panel .ext-hub-shell,
+.extensions-panel .ext-installed,
+.extensions-panel .ext-market {
+  width: 100%;
+  max-width: none;
 }
 
 /* Let the aurora show through the browse catalogue the way Home cards sit on
@@ -27940,11 +28351,10 @@ body.resizing-col .library-split-resizer::after {
   background: var(--bg-elevated);
 }
 
-/* Home mirrors the above: ListPane returns null for the 'home' nav, so
- * without an explicit span the .settings-panel auto-flows into the narrow
- * list column (col 2) — collapsing the dashboard into a sliver. `aurora-host`
- * makes it a valid host for AuroraGrid (Home, Plugins, empty Agents).
- * `.home-panel .settings-inner` lifts real content above the grid's z-index:0. */
+/* New Chat (`nav === 'home'`): ListPane returns null, so without an explicit
+ * span the .settings-panel auto-flows into a narrow column. Center the
+ * composer column like `.new-thread-view`. `aurora-host` remains a valid host
+ * for AuroraGrid (Plugins, empty Agents). */
 .aurora-host {
   position: relative;
   isolation: isolate;
@@ -27954,39 +28364,49 @@ body.resizing-col .library-split-resizer::after {
   grid-column: 2 / -1;
   display: flex;
   flex-direction: column;
+  align-items: center;
+  justify-content: center;
   height: 100%;
   min-height: 0;
-  overflow: hidden;
+  overflow-y: auto;
+  padding: 48px 24px 32px;
 }
 
 .home-panel .settings-inner {
-  position: relative;
-  z-index: 1;
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
-  min-height: 0;
-  width: 100%;
-  padding: 40px 32px 16px;
-  gap: 24px;
+  align-items: stretch;
+  flex: 0 0 auto;
+  width: min(820px, 100%);
+  max-width: min(820px, 100%);
+  margin: 0;
+  padding: 0;
+  gap: 16px;
 }
 
-.home-dashboard {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.home-plugin-sections {
-  margin-top: 16px;
-}
-
-/* Home composer leads the panel. Match the dashboard column (not the narrower
- * 820px New Thread composer) and give the empty prompt a bit more height. */
 .home-panel .home-agent-composer {
   flex: 0 0 auto;
   width: 100%;
-  margin: 0 auto;
+  margin: 0;
+}
+
+.home-panel .new-thread-plugin-actions {
+  width: 100%;
+  margin-top: 0;
+}
+
+.home-plugin-sections {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.home-plugin-section h3 {
+  margin: 0 0 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .home-panel .thread-command-editor-slot {
@@ -28000,7 +28420,7 @@ body.resizing-col .library-split-resizer::after {
 }
 
 /* AuroraGrid: a low-contrast grid, slow blue/gold drift, and occasional circuit
- * traces. Hosts (Home, Plugins, empty Agents) add `.aurora-host`. Decorative;
+ * traces. Hosts (Plugins, empty Agents) add `.aurora-host`. Decorative;
  * respects reduced-motion. */
 .aurora-host .aurora-grid {
   position: absolute;
@@ -29569,7 +29989,7 @@ textarea.thread-command-editor {
   min-width: 0;
   min-height: 0;
   width: 100%;
-  max-width: 46rem;
+  max-width: 54rem;
   gap: 12px;
 }
 
@@ -29581,7 +30001,7 @@ textarea.thread-command-editor {
 
 @media (min-width: 1280px) {
   .thread-detail-column {
-    max-width: 52rem;
+    max-width: 60rem;
   }
 
   .thread-detail-view .thread-command-editor-slot {
@@ -29706,7 +30126,8 @@ textarea.thread-command-editor {
   background: color-mix(in srgb, var(--success) 14%, var(--bg-elevated, var(--bg-2)));
 }
 
-.thread-status-badge.is-blocked {
+.thread-status-badge.is-blocked,
+.thread-status-badge.is-error {
   background: color-mix(in srgb, var(--danger) 16%, var(--bg-elevated, var(--bg-2)));
   color: var(--text-primary);
 }
@@ -31371,136 +31792,6 @@ textarea.thread-command-editor {
 
 .home-kpi--accent .usage-kpi-value {
   color: var(--danger);
-}
-
-.home-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  align-items: start;
-  gap: 16px;
-}
-
-.home-card {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 14px 16px;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.home-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-
-.home-card-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.home-card-count {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-muted);
-  background: var(--bg-elevated);
-  border-radius: 999px;
-  padding: 1px 7px;
-}
-
-.home-card-viewall {
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  font-size: 12px;
-  cursor: pointer;
-  padding: 2px 4px;
-}
-
-.home-card-viewall:hover {
-  color: var(--text-primary);
-}
-
-.home-card-body {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.home-card-empty {
-  font-size: 12px;
-  color: var(--text-muted);
-  padding: 12px 2px;
-}
-
-.home-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  border-radius: 6px;
-  padding: 6px 6px;
-  cursor: pointer;
-  color: inherit;
-}
-
-.home-row:hover {
-  background: var(--bg-elevated);
-}
-
-.home-row-icon {
-  display: flex;
-  align-items: center;
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.home-row-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1;
-}
-
-.home-row-title {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.home-row-meta {
-  font-size: 11px;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Guide rows carry a longer description than the other Home cards' single-
- * line metadata (a project name, a timestamp) — let it wrap instead of
- * truncating so the "what this does" copy stays legible. */
-.home-row--guide {
-  align-items: flex-start;
-}
-
-.home-row--guide .home-row-meta {
-  white-space: normal;
-  overflow: visible;
-  text-overflow: initial;
-  line-height: 1.4;
 }
 
 /* Guide article modal — same shell shape as .shortcuts-modal (width cap,
@@ -33401,6 +33692,162 @@ textarea.thread-command-editor {
   background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
-.team-slot-remove:hover {
-  color: var(--danger, #e5534b);
+.plugin-nav-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 8px 12px;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+}
+
+.plugin-nav-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.plugin-nav-row.is-active {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.plugin-composer-chrome {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.plugin-composer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.plugin-composer-plus,
+.plugin-thread-header-actions,
+.thread-file-open-with {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.thread-plugin-tab.is-padded {
+  padding: 16px;
+}
+
+.thread-plugin-tab.is-flush {
+  padding: 0;
+}
+
+
+.plugin-nav-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+}
+
+.plugin-nav-row-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.plugin-nav-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.plugin-nav-row.is-active,
+.plugin-nav-row:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.plugin-nav-row.is-compact span {
+  display: none;
+}
+
+.plugin-composer-chrome {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.plugin-composer-banner.is-card {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+}
+
+.plugin-composer-banner.is-bare {
+  padding: 0;
+}
+
+.plugin-composer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.plugin-composer-plus {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.thread-plugin-tab.is-padded {
+  padding: 16px;
+}
+
+.thread-plugin-tab.is-flush {
+  padding: 0;
+}
+
+.new-thread-plugin-actions {
+  width: min(820px, 100%);
+  margin-top: 16px;
+}
+
+.new-thread-plugin-action-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.new-thread-plugin-action-list button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  padding: 6px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.new-thread-plugin-action-list button.is-active {
+  border-color: var(--accent);
 }

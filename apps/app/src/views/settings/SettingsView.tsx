@@ -100,11 +100,15 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
   ],
   global: [
     { id: 'appearance', label: 'Appearance' },
+    { id: 'files', label: 'Files' },
     { id: 'authorizations', label: 'Authorizations' },
     { id: 'connectivity', label: 'Connectivity' },
     { id: 'performance', label: 'Performance & limits' },
     { id: 'projects', label: 'Projects' },
-    { id: 'inbox', label: 'Inbox' }
+    { id: 'inbox', label: 'Inbox' },
+    { id: 'threads', label: 'Threads' },
+    { id: 'cli-skills', label: 'CLI skills' },
+    { id: 'debug', label: 'Debug' }
   ],
   terminal: [
     { id: 'terminal-appearance', label: 'Appearance' },

@@ -40,6 +40,14 @@ export type TypeaheadSuggestion =
       kind: 'command';
       name: string;
       description: string;
+    }
+  | {
+      kind: 'plugin';
+      pluginId: string;
+      providerId: string;
+      id: string;
+      label: string;
+      insertText?: string;
     };
 
 export const COMPOSER_TRIGGERS: readonly TypeaheadTrigger[] = [
@@ -53,6 +61,7 @@ export function suggestionKey(item: TypeaheadSuggestion): string {
   if (item.kind === 'path') return `path:${item.path}`;
   if (item.kind === 'thread') return `thread:${item.threadId}`;
   if (item.kind === 'project') return `project:${item.projectId}`;
+  if (item.kind === 'plugin') return `plugin:${item.pluginId}:${item.providerId}:${item.id}`;
   return `command:${item.name}`;
 }
 
@@ -60,6 +69,7 @@ export function suggestionLabel(item: TypeaheadSuggestion): string {
   if (item.kind === 'path') return item.path;
   if (item.kind === 'thread') return item.title;
   if (item.kind === 'project') return item.name;
+  if (item.kind === 'plugin') return item.label;
   return item.name.startsWith('/') ? item.name : `/${item.name}`;
 }
 
@@ -69,6 +79,7 @@ export function serializedTextForSuggestion(item: TypeaheadSuggestion): string {
   }
   if (item.kind === 'path') return `@${item.path}`;
   if (item.kind === 'thread') return `@${item.title}`;
+  if (item.kind === 'plugin') return item.insertText ?? `@${item.label}`;
   return `@${item.name}`;
 }
 
@@ -95,6 +106,14 @@ export function resourceFromSuggestion(item: TypeaheadSuggestion): PromptMention
       kind: 'project',
       projectId: item.projectId,
       label: item.name
+    };
+  }
+  if (item.kind === 'plugin') {
+    return {
+      kind: 'plugin',
+      pluginId: item.pluginId,
+      itemId: `${item.providerId}:${item.id}`,
+      label: item.label
     };
   }
   const name = item.name.replace(/^\//, '');

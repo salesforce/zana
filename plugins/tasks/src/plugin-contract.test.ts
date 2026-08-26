@@ -29,8 +29,10 @@ describe('tasks plugin', () => {
     expect(listed.stdout).toContain('Loop');
   });
 
-  it('registers a Tasks nav panel', () => {
+  it('registers a Tasks nav panel, thread panel, and task directive', () => {
     const set = collectTestPluginApp(app, 'tasks');
     expect(set.navPanels[0]?.title).toBe('Tasks');
+    expect(set.threadPanelActions[0]?.id).toBe('board');
+    expect(set.messageDirectives[0]?.id).toBe('task');
   });
 });

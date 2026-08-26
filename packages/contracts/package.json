@@ -45,6 +45,7 @@
   },
   "dependencies": {
     "@zana-ai/zcc-domain": "workspace:*",
+    "@zana-ai/zcc-host-daemon-contract": "workspace:*",
     "zod": "^4.0.0"
   },
   "devDependencies": {

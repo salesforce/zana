@@ -36,6 +36,8 @@ import {
 import { verifyHarnesses } from './harness/harness-verify.js';
 import { HostCommandError } from './host-command-error.js';
 import { transcribeCodexVoice } from './codex-voice-transcribe.js';
+import { getProviderCliStatus, runProviderCliInstall } from './provider-cli-health.js';
+import { installGlobalSkills, readGlobalSkillsStatus } from './global-skills.js';
 
 const MAX_LISTED_FILES = 500;
 const MAX_DIR_ENTRIES = 2000;
@@ -107,6 +109,7 @@ export interface CommandRuntime {
     bridgeLaunch: NonNullable<ThreadWorkInput['bridgeLaunch']>;
     cwd?: string;
   }) => Promise<ProviderListModelsResult>;
+  homeDir?: string;
 }
 
 export function createCommandRuntime(options: {
@@ -143,6 +146,7 @@ export function createCommandRuntime(options: {
     bridgeLaunch: NonNullable<ThreadWorkInput['bridgeLaunch']>;
     cwd?: string;
   }) => Promise<ProviderListModelsResult>;
+  homeDir?: string;
 }): CommandRuntime {
   const loadConfig = options.loadConfig ?? (() => ({ version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null }) as AppConfig);
   return {
@@ -165,6 +169,7 @@ export function createCommandRuntime(options: {
     resizeTerminal: options.resizeTerminal,
     stopTerminal: options.stopTerminal,
     listModels: options.listModels,
+    homeDir: options.homeDir,
     verifyProviders: options.verifyProviders ?? (async () => {
       const results: HarnessVerifyResult[] = await verifyHarnesses(loadConfig());
       return { providers: results };
@@ -757,6 +762,17 @@ export async function dispatchHostCommand(
       }
       return { interactionId: command.interactionId, delivered: true as const };
     }
+    case 'provider.cli_status':
+      return getProviderCliStatus();
+    case 'provider.cli_install':
+      return runProviderCliInstall({
+        provider: command.provider,
+        actionKind: command.actionKind
+      });
+    case 'host.global_skills_status':
+      return readGlobalSkillsStatus({ names: command.names, homeDir: runtime.homeDir });
+    case 'host.install_global_skills':
+      return installGlobalSkills({ skills: command.skills, homeDir: runtime.homeDir });
     default: {
       const exhaustive: never = command;
       throw new HostCommandError('unknown_command', `unsupported command ${(exhaustive as { type: string }).type}`);

@@ -197,4 +197,83 @@ createServer((_req, res) => {
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toContain('Connected (service install skipped).');
   }, 20_000);
+
+  it('proxies provider CLI status and install through host RPC', async () => {
+    await start();
+    const enrolled = await fetch(`${server!.url}internal/hosts/enroll`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer enroll-token-enroll-token-enroll',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+        hostName: 'laptop',
+        instanceId: '11111111-1111-4111-8111-111111111111'
+      })
+    });
+    const host = await enrolled.json() as { hostId: string };
+    const missing = await fetch(`${server!.url}api/v1/hosts/missing/provider-clis/status`);
+    expect(missing.status).toBe(404);
+    const disconnected = await fetch(`${server!.url}api/v1/hosts/${host.hostId}/provider-clis/status`);
+    expect(disconnected.status).toBe(503);
+
+    server!.ctx.hostHub.ensureHostSessionReady = () => ({}) as never;
+    server!.ctx.hostHub.callHostOnlineRpc = async (input) => {
+      if ((input.command as { type: string }).type === 'provider.cli_status') {
+        return {
+          codex: {
+            displayName: 'Codex',
+            executableName: 'codex',
+            executablePath: null,
+            installed: false,
+            installSource: 'notInstalled',
+            currentVersion: null,
+            latestVersion: '0.149.1',
+            minimumSupportedVersion: '0.136.0',
+            npmPackageName: '@openai/codex',
+            npmGlobalPackageVersion: null,
+            installAction: {
+              kind: 'install',
+              label: 'Install',
+              commandKind: 'exec',
+              command: 'npm install -g @openai/codex@latest'
+            },
+            needsUpdate: false,
+            versionUnsupported: false
+          }
+        };
+      }
+      return {
+        events: [
+          { type: 'started', provider: 'codex', command: 'npm install -g @openai/codex@latest' },
+          { type: 'completed', provider: 'codex', exitCode: 0, signal: null, success: true }
+        ]
+      };
+    };
+
+    const status = await fetch(`${server!.url}api/v1/hosts/${host.hostId}/provider-clis/status`);
+    expect(status.status).toBe(200);
+    await expect(status.json()).resolves.toMatchObject({
+      codex: { displayName: 'Codex', installAction: { kind: 'install' } }
+    });
+
+    const bad = await fetch(`${server!.url}api/v1/hosts/${host.hostId}/provider-clis/install`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ provider: 'nope' })
+    });
+    expect(bad.status).toBe(400);
+
+    const installed = await fetch(`${server!.url}api/v1/hosts/${host.hostId}/provider-clis/install`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ provider: 'codex', actionKind: 'install' })
+    });
+    expect(installed.status).toBe(200);
+    expect(installed.headers.get('content-type')).toContain('ndjson');
+    const lines = (await installed.text()).trim().split('\n');
+    expect(JSON.parse(lines[0]!)).toMatchObject({ type: 'started', provider: 'codex' });
+    expect(JSON.parse(lines[1]!)).toMatchObject({ type: 'completed', success: true });
+  });
 });

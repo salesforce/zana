@@ -5,6 +5,8 @@ import { ProjectFocusView } from './listpane/ProjectFocusView.js';
 import { InboxPane } from './listpane/InboxPane.js';
 import { SettingsPane } from './listpane/SettingsPane.js';
 import { AgentsListPane } from './listpane/AgentsList.js';
+import { PluginNavListPane } from '../plugins/PluginNavRows.js';
+import { listNavPanels } from '../plugins/plugin-slots.js';
 import type { Project } from '@zana-ai/zcc-domain/product';
 
 export function ListPane() {
@@ -23,7 +25,7 @@ export function ListPane() {
     if (focusedProjectId && !focusedProject) exitProjectFocus();
   }, [focusedProjectId, focusedProject, exitProjectFocus]);
 
-  // Home owns the full content area (its own card grid).
+  // New Chat owns the full content area (composer-only; no list column).
   if (nav === 'home') return null;
   // The global (unscoped) Follow-ups nav owns the full content area (its own
   // toolbar + list). The project-scoped 'followups' WORKSPACE mode is unrelated
@@ -42,6 +44,7 @@ export function ListPane() {
   // Extensions owns the full content area (its own hub tabs + toolbar) — no
   // Projects list column, same as Personas / app-module panels.
   if (nav === 'extensions') return null;
+  if (listNavPanels().some((panel) => panel.pluginId === nav)) return <PluginNavListPane />;
   // App modules (built-ins + runtime extensions) own the whole content area and
   // bring their own filter rail — they don't want the Projects list column.
   if (modules.some((m) => m.id === nav)) return null;

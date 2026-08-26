@@ -71,6 +71,8 @@ describe('config — boolean feature flags round-trip through setConfig', () => 
     'menubarPopoverEnabled',
     'trustZccToolsEnabled',
     'remoteMcpEnabled',
+    'steerActiveThreadOnEnter',
+    'showUnhandledProviderEvents',
     'enableUpdateSimulation',
     'microVmEnabled',
     'followupsFromIdle'

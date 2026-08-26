@@ -40,10 +40,10 @@ describe('plugin slot registry', () => {
       { id: 'a', pluginId: 'p', title: 'A', icon: 'Box', component: () => null, generation: 1 },
       { id: 'b', pluginId: 'p', title: 'B', icon: 'Box', component: () => null, generation: 1 }
     ];
-    const arranged = arrangePluginNavPanels(panels, ['b', 'missing'], new Set(['b']));
+    const arranged = arrangePluginNavPanels(panels, ['p/b', 'missing'], new Set(['p/b']));
     expect(arranged.visible.map((p) => p.id)).toEqual(['a']);
     expect(arranged.hidden.map((p) => p.id)).toEqual(['b']);
-    expect(arranged.normalizedOrder).toEqual(['b', 'missing', 'a']);
+    expect(arranged.normalizedOrder).toEqual(['p/b', 'missing', 'p/a']);
   });
 
   it('keeps slot snapshots referentially stable until registrations change', () => {

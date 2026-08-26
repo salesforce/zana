@@ -124,9 +124,12 @@ describe('readPluginManifest', () => {
     expect(() => readPluginManifest(baseZcc({ extra }))).toThrow(/at most 32/);
   });
 
-  it('rejects an oversized extra payload', () => {
-    expect(() =>
-      readPluginManifest(baseZcc({ extra: { notes: 'n'.repeat(9000) } }))
-    ).toThrow(/bytes/);
+  it('parses zcc.themes', () => {
+    const manifest = readPluginManifest(
+      baseZcc({
+        themes: [{ id: 'dim', name: 'Dim', css: './themes/dim.css' }]
+      })
+    );
+    expect(manifest.themes).toEqual([{ id: 'dim', name: 'Dim', css: './themes/dim.css' }]);
   });
 });

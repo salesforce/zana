@@ -81,6 +81,30 @@ export function registerPluginsIpc(): void {
     () => []
   );
   ctx.safeHandle(
+    IPC.pluginApps.setEnabled,
+    async (id: string, enabled: boolean) => {
+      if (!ctx.runtimeSupervisor) {
+        return { ok: false, code: 'UNAVAILABLE', message: 'plugin host is unavailable' };
+      }
+      try {
+        if (enabled) await ctx.runtimeSupervisor.enablePlugin(id);
+        else await ctx.runtimeSupervisor.disablePlugin(id);
+        return { ok: true as const, value: true as const };
+      } catch (err) {
+        return {
+          ok: false as const,
+          code: 'WRITE_FAILED',
+          message: err instanceof Error ? err.message : String(err)
+        };
+      }
+    },
+    (err): Result<true> => ({
+      ok: false,
+      code: 'WRITE_FAILED',
+      message: err instanceof Error ? err.message : String(err)
+    })
+  );
+  ctx.safeHandle(
     IPC.pluginApps.callRpc,
     async (pluginId: string, method: string, args?: unknown) => {
       if (!ctx.runtimeSupervisor) throw new Error('plugin host is unavailable');

@@ -60,3 +60,19 @@ export const marketplaceIndexSchema = z
 
 export type MarketplaceIndex = z.infer<typeof marketplaceIndexSchema>;
 export type MarketplaceEntry = z.infer<typeof marketplaceEntrySchema>;
+
+export const marketplaceCatalogRowSchema = z
+  .object({
+    source: z.string().min(1),
+    sourceKind: z.enum(['https', 'git', 'path']),
+    name: z.string().min(1),
+    displayName: z.string().min(1),
+    addedAt: z.number(),
+    entryCount: z.number().int().nonnegative(),
+    lastRefreshAt: z.number().nullable(),
+    lastAttemptAt: z.number().nullable(),
+    lastError: z.string().nullable(),
+    official: z.boolean()
+  })
+  .strict();
+export type MarketplaceCatalogRow = z.infer<typeof marketplaceCatalogRowSchema>;

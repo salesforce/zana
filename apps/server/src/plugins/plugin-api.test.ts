@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -200,6 +200,64 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
       await bare.dispose();
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('registers typed rpc, mention providers, configure, and named cron', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-api-deep-'));
+    try {
+      const handle = createPluginApi('deep', dir);
+      handle.api.rpc.register({} as never, {
+        ping: async () => 'pong'
+      });
+      handle.api.ui.registerMentionProvider({
+        id: 'notes',
+        search: (query) => [{ id: '1', label: query || 'Note' }]
+      });
+      expect(handle.mentionProviders).toHaveLength(1);
+      const search = handle.httpRoutes.find((route) => route.path === '/mentions/notes/search');
+      expect(search).toBeDefined();
+      await expect(
+        search!.handler({ method: 'POST', path: '/mentions/notes/search', query: {}, body: { query: 'hi' } })
+      ).resolves.toEqual({ json: { items: [{ id: '1', label: 'hi' }] } });
+      handle.api.agents.configure(() => ({ instructions: 'Be brief.' }));
+      expect(handle.agentConfigurers).toHaveLength(1);
+      expect(await handle.agentConfigurers[0]?.({})).toEqual({ instructions: 'Be brief.' });
+      handle.api.background.schedule('tick', '* * * * *', () => undefined);
+      await handle.dispose();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('named schedules persist last-fired minute and host entries register methods', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 26, 12, 0, 0));
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-cron-'));
+    const hostDir = mkdtempSync(join(tmpdir(), 'zcc-plugin-host-'));
+    try {
+      const job = vi.fn();
+      const handle = createPluginApi('cron', dir);
+      handle.api.background.schedule('tick', '* * * * *', job);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(job).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(job).toHaveBeenCalledTimes(1);
+      await handle.dispose();
+
+      const hostPath = join(hostDir, 'host.mjs');
+      writeFileSync(
+        hostPath,
+        'export default function setup(api) { api.methods.register("ping", () => ({ ok: true })); }\n'
+      );
+      const hosted = createPluginApi('hosted', dir, { hostEntryPath: hostPath });
+      await expect(hosted.api.host.experimental_call('ping')).resolves.toEqual({ ok: true });
+      await expect(hosted.api.host.experimental_client().call('ping')).resolves.toEqual({ ok: true });
+      await hosted.dispose();
+    } finally {
+      vi.useRealTimers();
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(hostDir, { recursive: true, force: true });
     }
   });
 

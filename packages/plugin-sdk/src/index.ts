@@ -57,6 +57,11 @@ export type {
   PluginThreadEventName,
   PluginSdk,
   PluginHostApi,
+  PluginHostClient,
+  PluginAgentConfigureContext,
+  PluginAgentConfigureResult,
+  PluginMentionProviderRegistration,
+  PluginMentionSuggestion,
   PluginProviderDeclaration,
   PluginProviderHandle,
   PluginProviderCapabilities,
@@ -68,10 +73,17 @@ export type {
   PluginSettingsSnapshot
 } from './server.js';
 
-export { PLUGIN_CLI_OUTPUT_MAX_BYTES, enforcePluginCliOutputLimit } from './server.js';
+export {
+  PLUGIN_CLI_OUTPUT_MAX_BYTES,
+  enforcePluginCliOutputLimit,
+  experimental_defineHostEntry,
+  isPluginHostEntryDefinition
+} from './server.js';
 
 export type {
   PluginAppBuilder,
+  PluginAppComposer,
+  PluginAppContentScripts,
   PluginAppDefinition,
   PluginAppSetup,
   PluginAppSlots,
@@ -81,14 +93,48 @@ export type {
   PluginHomepageSectionRegistration,
   PluginProjectTabRegistration,
   PluginSidebarFooterActionRegistration,
+  PluginSidebarFooterActionContext,
   PluginPendingInteractionRegistration,
   PluginPendingInteractionProps,
   PluginPendingInteractionView,
+  PluginThreadPanelActionRegistration,
+  PluginNewThreadPanelActionRegistration,
+  PluginThreadListRegistration,
+  PluginThreadHeaderActionRegistration,
+  PluginFileOpenerRegistration,
+  PluginMessageDirectiveRegistration,
+  PluginMessageActionRegistration,
+  PluginProviderIconRegistration,
+  PluginContentScriptRegistration,
+  ComposerCustomization,
+  PluginSdkApp,
   PluginSlotBase
 } from './app-contract.js';
 
-export { definePluginApp, isPluginAppDefinition, callPluginRpc, getPluginSettings, setPluginSettings } from './app.js';
+export {
+  definePluginApp,
+  isPluginAppDefinition,
+  callPluginRpc,
+  getPluginSettings,
+  setPluginSettings,
+  useRpc,
+  useRealtime,
+  useRealtimeConnectionState,
+  useSettings,
+  useZccContext,
+  useZccNavigate,
+  useComposer,
+  useComposerView,
+  experimental_useSidebarThreads,
+  experimental_useSidebarThreadActions,
+  experimental_useSidebarThreadPullRequest,
+  experimental_useSidebarThreadSplit,
+  ThreadChat,
+  Markdown,
+  experimental_NewThreadComposer
+} from './app.js';
 export type { PluginHostBridge } from './app.js';
 export { collectPluginApp, emptyRegistrationSet } from './app-contract.js';
+export { cronMatches, cronMinuteKey } from './cron.js';
 
 export { shimLegacyExtensionManifest, type LegacyExtensionJson } from './legacy-shim.js';

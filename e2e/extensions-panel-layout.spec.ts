@@ -20,8 +20,24 @@ test('top-level Extensions view fills the content area, not the narrow list colu
   const panel = win.locator('.settings-panel.extensions-panel');
   await panel.waitFor({ state: 'visible', timeout: 15_000 });
 
-  // The hub (its tabs + toolbar) is inside it.
+  // The hub (its toolbar) is inside it.
   await win.waitForSelector('.ext-hub-shell', { timeout: 15_000 });
+
+  await win.getByTestId('extensions-nav-installed').click();
+  await expect(win.getByRole('heading', { name: 'Plugins', level: 3 })).toBeVisible();
+  await expect(win.getByLabel('Search installed plugins')).toBeVisible();
+  await expect(win.getByRole('button', { name: 'New plugin' })).toBeVisible();
+
+  const docsRow = win.getByTestId('plugin-row-docs');
+  await expect(docsRow).toBeVisible({ timeout: 15_000 });
+  await expect(docsRow.getByText('Official')).toBeVisible();
+
+  const pluginApps = await win.evaluate(() => window.cc.pluginApps.list());
+  for (const plugin of pluginApps) {
+    const row = win.getByTestId(`plugin-row-${plugin.id}`);
+    await expect(row).toBeVisible();
+    await expect(row.getByRole('switch', { name: new RegExp(plugin.name, 'i') })).toBeVisible();
+  }
 
   // The --col-list track is 280px (see .app-shell in global.css). A panel stuck
   // in that track would be ~280px wide; the spanned panel takes the remaining
@@ -36,4 +52,13 @@ test('top-level Extensions view fills the content area, not the narrow list colu
   // And it must not leave a dead gutter: the panel's right edge reaches (near)
   // the window's right edge rather than stopping at the old col-2 boundary.
   expect(panelBox!.x + panelBox!.width).toBeGreaterThan(shellWidth - 40);
+
+  // Installed must fill the inner the way Browse does — not shrink-to-fit a
+  // narrow column with empty space on either side of the plugin list.
+  const innerBox = await win.locator('.extensions-panel .settings-inner').boundingBox();
+  const listBox = await win.locator('.ext-installed-panel').boundingBox();
+  expect(innerBox, 'settings inner has a layout box').toBeTruthy();
+  expect(listBox, 'installed list has a layout box').toBeTruthy();
+  expect(innerBox!.width).toBeGreaterThan(panelBox!.width * 0.9);
+  expect(listBox!.width).toBeGreaterThan(innerBox!.width * 0.85);
 });

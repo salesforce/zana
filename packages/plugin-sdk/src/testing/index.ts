@@ -22,6 +22,15 @@ export interface FakePluginHarness {
   schedules: Array<{ cron: string; job: () => void | Promise<void> }>;
   extraSkillRoots: string[];
   extraInstructions: string[];
+  mentionProviders: import('../server.js').PluginMentionProviderRegistration[];
+  agentConfigurers: Array<
+    (
+      ctx: import('../server.js').PluginAgentConfigureContext
+    ) =>
+      | import('../server.js').PluginAgentConfigureResult
+      | void
+      | Promise<import('../server.js').PluginAgentConfigureResult | void>
+  >;
   cli: import('../server.js').PluginCliRegistration | null;
   agentTools: import('../server.js').PluginAgentToolRegistration[];
   httpRoutes: Array<{
@@ -60,6 +69,8 @@ export function createFakePluginHost(options?: { pluginId?: string }): FakePlugi
   const schedules: Array<{ cron: string; job: () => void | Promise<void> }> = [];
   const extraSkillRoots: string[] = [];
   const extraInstructions: string[] = [];
+  const mentionProviders: FakePluginHarness['mentionProviders'] = [];
+  const agentConfigurers: FakePluginHarness['agentConfigurers'] = [];
   const agentTools: import('../server.js').PluginAgentToolRegistration[] = [];
   const httpRoutes: FakePluginHarness['httpRoutes'] = [];
   const events: FakePluginHarness['events'] = [];
@@ -163,6 +174,13 @@ export function createFakePluginHost(options?: { pluginId?: string }): FakePlugi
     host: {
       async experimental_call() {
         throw new Error('zcc.host is not available in this runtime');
+      },
+      experimental_client() {
+        return {
+          async call() {
+            throw new Error('zcc.host is not available in this runtime');
+          }
+        };
       }
     },
     rpc: {
@@ -170,6 +188,12 @@ export function createFakePluginHost(options?: { pluginId?: string }): FakePlugi
         assertLive();
         if (!name.trim()) throw new Error('rpc method name is required');
         rpc.set(name, handler);
+      },
+      register(_contract, handlers) {
+        assertLive();
+        for (const [name, handler] of Object.entries(handlers)) {
+          if (typeof handler === 'function') rpc.set(name, handler);
+        }
       }
     },
     realtime: {
@@ -184,9 +208,12 @@ export function createFakePluginHost(options?: { pluginId?: string }): FakePlugi
           if (typeof stop === 'function') disposeHooks.push(stop);
         });
       },
-      schedule(cron, job) {
+      schedule(cronOrName, jobOrCron, maybeJob?) {
         assertLive();
-        schedules.push({ cron, job });
+        const named = typeof jobOrCron === 'string';
+        const cron = named ? jobOrCron : cronOrName;
+        const job = named ? maybeJob : jobOrCron;
+        if (typeof job === 'function') schedules.push({ cron, job });
       }
     },
     agents: {
@@ -206,7 +233,10 @@ export function createFakePluginHost(options?: { pluginId?: string }): FakePlugi
         unregister() {
           /* no-op in the harness */
         }
-      })
+      }),
+      configure(provider) {
+        agentConfigurers.push(provider);
+      }
     },
     ui: {
       requestInput(_request: PluginInteractionRequest) {
@@ -214,6 +244,10 @@ export function createFakePluginHost(options?: { pluginId?: string }): FakePlugi
         return new Promise<PluginInteractionResult>((resolve) => {
           pendingInteraction = { resolve };
         });
+      },
+      registerMentionProvider(registration) {
+        assertLive();
+        mentionProviders.push(registration);
       }
     },
     status: {
@@ -234,6 +268,8 @@ export function createFakePluginHost(options?: { pluginId?: string }): FakePlugi
     schedules,
     extraSkillRoots,
     extraInstructions,
+    mentionProviders,
+    agentConfigurers,
     get cli() {
       return cliRegistration;
     },

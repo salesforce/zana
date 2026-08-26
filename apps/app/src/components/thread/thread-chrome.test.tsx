@@ -485,8 +485,12 @@ describe('expandable row and chips', () => {
       <ThreadStatusBadge status="active" thinking={{ id: 'th', text: '', startedAt: 1, updatedAt: 1 }} />
     )).toContain('thread-status-badge is-working');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="idle" />)).toContain('is-idle');
-    expect(renderToStaticMarkup(<ThreadStatusBadge status="error" />)).toContain('is-blocked');
+    expect(renderToStaticMarkup(<ThreadStatusBadge status="error" />)).toContain('is-error');
+    expect(renderToStaticMarkup(<ThreadStatusBadge status="error" />)).not.toContain('is-blocked');
+    expect(renderToStaticMarkup(<ThreadStatusBadge status="error" />)).not.toContain('Needs you');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="error" />)).toContain('Error');
+    expect(renderToStaticMarkup(<ThreadStatusBadge status="error" waitingOnUser />)).toContain('Error');
+    expect(renderToStaticMarkup(<ThreadStatusBadge status="error" waitingOnUser />)).not.toContain('Needs you');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="" />)).toBe('');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="active" waitingOnUser />)).toContain('Needs you');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="active" waitingOnUser />)).toContain('is-blocked');
@@ -553,7 +557,10 @@ describe('expandable row and chips', () => {
     expect(source).toContain('<ThreadDetailHeading');
     expect(source).toContain('thinking={thinking}');
     expect(source).toContain('<ThreadDetailOverflow');
-    expect(source).toContain('if (cancelled || my !== gen) return;');
+    expect(source).toContain('createCoalescedRunner');
+    expect(source).toContain('<ThreadDetail key={threadId} threadId={threadId} />');
+    expect(source).toContain("if ((payload as { id: unknown }).id === threadId) runner.run()");
+    expect(source).not.toContain('if (cancelled || my !== gen) return;');
   });
 
   it('keeps the secondary panel a sibling of the main column', () => {

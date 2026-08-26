@@ -7,7 +7,9 @@ vi.mock('../../lib/product-client.js', () => ({
   product: {
     hosts: {
       list: async () => [],
-      onChanged: () => () => {}
+      onChanged: () => () => {},
+      providerCliStatus: async () => ({}),
+      installProviderCli: async () => []
     }
   }
 }));
@@ -39,5 +41,6 @@ describe('MachinesTab', () => {
     expect(html).toContain('Add machine');
     expect(html).toContain('https://box.tailnet.ts.net');
     expect(html).toContain('data-testid="machines-list"');
+    expect(html).toContain('Connected machines follow the server version automatically');
   });
 });

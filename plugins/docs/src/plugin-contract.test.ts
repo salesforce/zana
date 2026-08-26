@@ -3,7 +3,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { derivePluginId, readPluginManifest } from '@zana-ai/zcc-domain';
+import { collectTestPluginApp } from '@zana-ai/zcc-plugin-sdk/testing/app';
 import { discoverPluginSkillNames } from '@zana-ai/zcc-server/plugins/plugin-skills';
+import app from '../app.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -28,6 +30,14 @@ describe('docs plugin contract', () => {
     expect(src).toMatch(/icon:\s*'Library'/);
     expect(src).toMatch(/label:\s*'Library'/);
     expect(src).toMatch(/global:\s*true/);
+  });
+
+  it('registers thread panel, file opener, and doc directive without replacing the compiled Docs rail', () => {
+    const set = collectTestPluginApp(app, 'docs');
+    expect(set.navPanels).toHaveLength(0);
+    expect(set.threadPanelActions[0]?.id).toBe('library');
+    expect(set.fileOpeners[0]?.extensions).toEqual(['md', 'mdx']);
+    expect(set.messageDirectives[0]?.id).toBe('doc');
   });
 
   it('is the only shipped docs plugin (no bundled-extensions copy)', () => {

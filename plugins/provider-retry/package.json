@@ -1,0 +1,20 @@
+{
+  "name": "@zcc-ext/provider-retry",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Composer action to retry the last provider turn.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "zcc": {
+    "name": "Provider retry",
+    "description": "Composer action to retry the last provider turn.",
+    "branding": {
+      "icon": "RotateCcw"
+    },
+    "server": "./server.mjs",
+    "app": "./app.js"
+  }
+}

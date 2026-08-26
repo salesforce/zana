@@ -54,6 +54,8 @@ function httpProduct(): Pick<
   | 'app'
   | 'voice'
   | 'hosts'
+  | 'marketplaces'
+  | 'cliSkills'
 > {
   return {
     projects: {
@@ -404,8 +406,65 @@ function httpProduct(): Pick<
       cloneDefaultPath: async (id, projectId) => apiJson(
         `/hosts/${encodeURIComponent(id)}/clone-default-path?projectId=${encodeURIComponent(projectId)}`
       ),
+      providerCliStatus: async (id) => apiJson(`/hosts/${encodeURIComponent(id)}/provider-clis/status`),
+      installProviderCli: async (id, request) => {
+        const response = await fetchWithAppSurface(
+          `/api/v1/hosts/${encodeURIComponent(id)}/provider-clis/install`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(request)
+          }
+        );
+        if (!response.ok) {
+          let detail = `${response.status}`;
+          try {
+            const body = (await response.json()) as { error?: string; message?: string };
+            detail = body.message ?? body.error ?? detail;
+          } catch {
+            /* keep status */
+          }
+          throw new Error(detail);
+        }
+        const text = await response.text();
+        return text
+          .split('\n')
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0)
+          .map((line) => JSON.parse(line) as Awaited<ReturnType<CcApi['hosts']['installProviderCli']>>[number]);
+      },
       onChanged: (cb) => subscribeProductEvent<Host[] | undefined>('hosts:changed', cb)
     } as CcApi['hosts'],
+    marketplaces: {
+      list: async () => {
+        const body = await apiJson<{ catalogs: Awaited<ReturnType<CcApi['marketplaces']['list']>> }>('/marketplaces');
+        return body.catalogs;
+      },
+      add: async (source) => apiJson('/marketplaces', {
+        method: 'POST',
+        body: JSON.stringify({ source })
+      }),
+      refresh: async (source) => apiJson('/marketplaces/refresh', {
+        method: 'POST',
+        body: JSON.stringify({ source })
+      }),
+      remove: async (source) => apiJson('/marketplaces/remove', {
+        method: 'POST',
+        body: JSON.stringify({ source })
+      })
+    },
+    cliSkills: {
+      status: async (hostIds) => {
+        const suffix = hostIds && hostIds.length > 0
+          ? `?hostIds=${encodeURIComponent(hostIds.join(','))}`
+          : '';
+        return apiJson(`/system/cli-skills${suffix}`);
+      },
+      install: async (hostIds) => apiJson('/system/cli-skills/install', {
+        method: 'POST',
+        body: JSON.stringify({ hostIds })
+      })
+    },
     threads: {
       create: async (input) => {
         const response = await fetchWithAppSurface('/api/v1/threads', {
@@ -629,6 +688,11 @@ function httpProduct(): Pick<
     } as CcApi['fs'],
     pluginApps: {
       list: async () => [],
+      setEnabled: async () => ({
+        ok: false as const,
+        code: 'UNAVAILABLE',
+        message: 'plugin host is not available on this origin'
+      }),
       callRpc: async () => {
         throw new Error('plugin rpc is not available on this origin');
       },
@@ -733,7 +797,7 @@ function stubFamily(family: string): unknown {
 export const product: CcApi = new Proxy({} as CcApi, {
   get(_target, family: string | symbol) {
     const name = String(family);
-    if (name === 'threads' || name === 'environments' || name === 'hosts') {
+    if (name === 'threads' || name === 'environments' || name === 'hosts' || name === 'marketplaces' || name === 'cliSkills') {
       const http = httpProduct() as unknown as Record<string, unknown>;
       return withStubs(name, http[name] as object);
     }

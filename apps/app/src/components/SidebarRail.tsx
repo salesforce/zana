@@ -15,6 +15,8 @@ import { useRouteState } from '../hooks/useRouteState.js';
 import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
 import { listSidebarFooterActions, subscribePluginSlots } from '../plugins/plugin-slots.js';
+import { getPluginDetailRoutePath } from '../lib/route-paths.js';
+import { appNavigate } from '../lib/app-navigate.js';
 import { SidebarResizer } from './SidebarResizer.js';
 import {
   SortableNavItem,
@@ -187,7 +189,11 @@ export function SidebarRail({
               aria-label={action.title}
               title={action.title}
               onClick={() => {
-                void action.run();
+                void action.run({
+                  openSettings() {
+                    appNavigate(getPluginDetailRoutePath(action.pluginId));
+                  }
+                });
               }}
             >
               <Icon size={18} />

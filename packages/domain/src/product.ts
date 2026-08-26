@@ -2192,6 +2192,16 @@ export interface AppConfig {
    */
   remoteMcpEnabled?: boolean;
   /**
+   * When on and a thread is running, Enter steers the active turn and
+   * Cmd/Ctrl+Enter queues. Default off: Enter always uses `auto`.
+   */
+  steerActiveThreadOnEnter?: boolean;
+  /**
+   * Surface `provider/unhandled` timeline rows. Default off; development
+   * builds also force this on.
+   */
+  showUnhandledProviderEvents?: boolean;
+  /**
    * Hard ceiling on concurrently-live terminal sessions. Absent ⇒ a
    * memory-aware default derived from physical RAM (see `computeMaxLiveSessions`
    * in `pty.ts`), so the cap scales down on smaller machines instead of the old
@@ -4467,7 +4477,10 @@ export interface PluginEntry {
 export interface PluginAppEntry {
   id: string;
   name: string;
+  description: string;
   icon: string;
+  enabled: boolean;
+  provenance: 'builtin' | 'direct' | 'catalog';
   status: 'running' | 'disabled' | 'degraded' | 'needs-configuration';
   appUrl: string | null;
   projectTab?: {

@@ -5,14 +5,29 @@ import * as pluginSdkApp from '@zana-ai/zcc-plugin-sdk/app';
 import type {
   PluginAppBuilder,
   PluginAppSlots,
+  PluginFileOpenerProps,
+  PluginFileOpenerRegistration,
   PluginHomepageSectionRegistration,
+  PluginMessageActionContext,
+  PluginMessageActionRegistration,
+  PluginMessageDirectiveProps,
+  PluginMessageDirectiveRegistration,
   PluginNavPanelRegistration,
+  PluginNewThreadPanelActionRegistration,
+  PluginNewThreadPanelProps,
   PluginPendingInteractionProps,
   PluginProjectTabRegistration,
+  PluginProviderIconRegistration,
   PluginSettingDescriptor,
   PluginSettingsSectionRegistration,
   PluginSidebarFooterActionRegistration,
   PluginThreadEvent,
+  PluginThreadHeaderActionProps,
+  PluginThreadHeaderActionRegistration,
+  PluginThreadListProps,
+  PluginThreadListRegistration,
+  PluginThreadPanelActionRegistration,
+  PluginThreadPanelProps,
   ZccPluginApi
 } from '@zana-ai/zcc-plugin-sdk';
 
@@ -88,13 +103,21 @@ type SlotPropsByName = {
   projectTab: { pluginId: string; projectId: string };
   sidebarFooterAction: { title: string; icon: string; run: () => void | Promise<void> };
   pendingInteraction: PluginPendingInteractionProps;
+  threadPanelAction: PluginThreadPanelProps;
+  experimental_newThreadPanelAction: PluginNewThreadPanelProps;
+  experimental_threadList: PluginThreadListProps;
+  experimental_threadHeaderAction: PluginThreadHeaderActionProps;
+  fileOpener: PluginFileOpenerProps;
+  messageDirective: PluginMessageDirectiveProps;
+  messageAction: PluginMessageActionContext;
+  experimental_providerIcon: { className?: string };
 };
 
 type MissingSlot = Exclude<keyof PluginAppSlots, keyof SlotPropsByName>;
 const _assertAllSlotsListed: MissingSlot extends never ? true : never = true;
 void _assertAllSlotsListed;
 
-const APP_BUILDER_FIELDS = ['slots'] as const satisfies readonly (keyof PluginAppBuilder)[];
+const APP_BUILDER_FIELDS = ['slots', 'composer', 'contentScripts'] as const satisfies readonly (keyof PluginAppBuilder)[];
 
 type MissingAppBuilderField = Exclude<
   keyof PluginAppBuilder,
@@ -108,7 +131,9 @@ const NAV_PANEL_REGISTRATION_FIELDS = [
   'title',
   'icon',
   'path',
-  'component'
+  'component',
+  'experimental_sidebarAccessory',
+  'headerContent'
 ] as const satisfies readonly (keyof Omit<PluginNavPanelRegistration, 'generation' | 'pluginId'>)[];
 
 const SETTINGS_SECTION_REGISTRATION_FIELDS = [
@@ -140,13 +165,84 @@ const SIDEBAR_FOOTER_ACTION_REGISTRATION_FIELDS = [
   'run'
 ] as const satisfies readonly (keyof Omit<PluginSidebarFooterActionRegistration, 'generation' | 'pluginId'>)[];
 
+const THREAD_PANEL_ACTION_REGISTRATION_FIELDS = [
+  'id',
+  'title',
+  'icon',
+  'component',
+  'layout',
+  'run'
+] as const satisfies readonly (keyof Omit<PluginThreadPanelActionRegistration, 'generation' | 'pluginId'>)[];
+
+const NEW_THREAD_PANEL_ACTION_REGISTRATION_FIELDS = [
+  'id',
+  'title',
+  'icon',
+  'component',
+  'layout',
+  'run'
+] as const satisfies readonly (keyof Omit<PluginNewThreadPanelActionRegistration, 'generation' | 'pluginId'>)[];
+
+const THREAD_LIST_REGISTRATION_FIELDS = [
+  'id',
+  'title',
+  'description',
+  'component'
+] as const satisfies readonly (keyof Omit<PluginThreadListRegistration, 'generation' | 'pluginId'>)[];
+
+const THREAD_HEADER_ACTION_REGISTRATION_FIELDS = [
+  'id',
+  'title',
+  'component'
+] as const satisfies readonly (keyof Omit<PluginThreadHeaderActionRegistration, 'generation' | 'pluginId'>)[];
+
+const FILE_OPENER_REGISTRATION_FIELDS = [
+  'id',
+  'title',
+  'extensions',
+  'component'
+] as const satisfies readonly (keyof Omit<PluginFileOpenerRegistration, 'generation' | 'pluginId'>)[];
+
+const MESSAGE_DIRECTIVE_REGISTRATION_FIELDS = [
+  'id',
+  'component'
+] as const satisfies readonly (keyof Omit<PluginMessageDirectiveRegistration, 'generation' | 'pluginId'>)[];
+
+const MESSAGE_ACTION_REGISTRATION_FIELDS = [
+  'id',
+  'title',
+  'icon',
+  'run'
+] as const satisfies readonly (keyof Omit<PluginMessageActionRegistration, 'generation' | 'pluginId'>)[];
+
+const PROVIDER_ICON_REGISTRATION_FIELDS = [
+  'providerId',
+  'icon'
+] as const satisfies readonly (keyof Omit<PluginProviderIconRegistration, 'generation' | 'pluginId'>)[];
+
 const FRONTEND_SLOT_PROP_FIELDS = {
   homepageSection: ['pluginId', 'projectId'],
   settingsSection: ['pluginId'],
   navPanel: ['pluginId', 'subPath'],
   projectTab: ['pluginId', 'projectId'],
   sidebarFooterAction: ['title', 'icon', 'run'],
-  pendingInteraction: ['interaction', 'submit', 'cancel']
+  pendingInteraction: ['interaction', 'submit', 'cancel'],
+  threadPanelAction: ['pluginId', 'threadId', 'params'],
+  experimental_newThreadPanelAction: ['pluginId', 'projectId', 'params'],
+  experimental_threadList: [
+    'pluginId',
+    'activeThreadId',
+    'activeProjectId',
+    'isCompactViewport',
+    'onNavigate',
+    'searchQuery',
+    'experimental_Original'
+  ],
+  experimental_threadHeaderAction: ['pluginId', 'threadId', 'projectId', 'isCompactViewport'],
+  fileOpener: ['pluginId', 'path', 'source', 'experimental_Original'],
+  messageDirective: ['pluginId', 'attributes', 'source', 'message', 'openWorkspaceFile'],
+  messageAction: ['threadId', 'message', 'selectedText', 'openPanel'],
+  experimental_providerIcon: ['className']
 } as const satisfies {
   [S in keyof SlotPropsByName]: readonly (keyof SlotPropsByName[S])[];
 };
@@ -192,7 +288,7 @@ describe('zcc-plugin-authoring skill', () => {
     }
   });
 
-  it('documents navPanel, settings, homepage, projectTab, and footer registration fields', () => {
+  it('documents navPanel, settings, homepage, projectTab, footer, and chat-slot registration fields', () => {
     for (const field of NAV_PANEL_REGISTRATION_FIELDS) {
       expect(skill, `navPanel registration field "${field}" is not documented`).toContain(field);
     }
@@ -207,6 +303,30 @@ describe('zcc-plugin-authoring skill', () => {
     }
     for (const field of SIDEBAR_FOOTER_ACTION_REGISTRATION_FIELDS) {
       expect(skill, `sidebarFooterAction registration field "${field}" is not documented`).toContain(field);
+    }
+    for (const field of THREAD_PANEL_ACTION_REGISTRATION_FIELDS) {
+      expect(skill, `threadPanelAction registration field "${field}" is not documented`).toContain(field);
+    }
+    for (const field of NEW_THREAD_PANEL_ACTION_REGISTRATION_FIELDS) {
+      expect(skill, `experimental_newThreadPanelAction registration field "${field}" is not documented`).toContain(field);
+    }
+    for (const field of THREAD_LIST_REGISTRATION_FIELDS) {
+      expect(skill, `experimental_threadList registration field "${field}" is not documented`).toContain(field);
+    }
+    for (const field of THREAD_HEADER_ACTION_REGISTRATION_FIELDS) {
+      expect(skill, `experimental_threadHeaderAction registration field "${field}" is not documented`).toContain(field);
+    }
+    for (const field of FILE_OPENER_REGISTRATION_FIELDS) {
+      expect(skill, `fileOpener registration field "${field}" is not documented`).toContain(field);
+    }
+    for (const field of MESSAGE_DIRECTIVE_REGISTRATION_FIELDS) {
+      expect(skill, `messageDirective registration field "${field}" is not documented`).toContain(field);
+    }
+    for (const field of MESSAGE_ACTION_REGISTRATION_FIELDS) {
+      expect(skill, `messageAction registration field "${field}" is not documented`).toContain(field);
+    }
+    for (const field of PROVIDER_ICON_REGISTRATION_FIELDS) {
+      expect(skill, `experimental_providerIcon registration field "${field}" is not documented`).toContain(field);
     }
   });
 

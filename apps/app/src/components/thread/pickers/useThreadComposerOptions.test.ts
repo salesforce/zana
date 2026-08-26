@@ -15,6 +15,8 @@ describe('useThreadComposerOptions', () => {
     expect(source).toContain('setProviderIdState(next)');
     expect(source).toContain('fallbackModelsForProvider');
     expect(source).toContain('fallbackMoreModelsForProvider');
+    expect(source).toContain('fallbackProviderOption(providerId)');
+    expect(source).toContain('input.threadId || input.lockedProviderId');
     expect(source).toContain('visibleComposerReasoningLevels');
     expect(source).toContain('modelIsLoading: loading');
     expect(source).toContain('modelLoadError');

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Run bb threads with Pi.",
+  "description": "Run threads with Pi.",
   "engines": {
     "zcc": ">=1.0.0",
     "zccPluginSdk": ">=0.1.0"
@@ -19,7 +19,7 @@
   },
   "zcc": {
     "name": "Pi provider",
-    "description": "Run bb threads with Pi.",
+    "description": "Run threads with Pi.",
     "branding": {
       "icon": "./icons/pi.svg"
     },

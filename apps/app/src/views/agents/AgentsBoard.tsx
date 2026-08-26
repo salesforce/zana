@@ -216,85 +216,87 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
 
   return (
     <div className={isGlobal ? 'agents-board agents-board--global panel-body--full' : 'agents-board'}>
-      <header className="agents-board-header">
-        {isGlobal ? <h1>Agents</h1> : (
-          <span className="agents-board-count">
-            {liveCount} {liveCount === 1 ? 'item' : 'items'} live
-          </span>
-        )}
-        <div className="agents-board-header-actions">
-          {isGlobal && (
+      {fleet.length > 0 && (
+        <header className="agents-board-header">
+          {isGlobal ? <h1>Agents</h1> : (
             <span className="agents-board-count">
-              {liveCount} live
-              {projectsWithAgents > 0 && (
-                <span className="agents-board-count-extra">
-                  {` · ${projectsWithAgents} ${projectsWithAgents === 1 ? 'project' : 'projects'}`}
-                </span>
-              )}
+              {liveCount} {liveCount === 1 ? 'item' : 'items'} live
             </span>
           )}
-          {(fleet.length > 0 || boardView === 'list' || boardView === 'flow') && <AgentViewToggle />}
-          {reclaimableAgents.length > 0 && (
+          <div className="agents-board-header-actions">
+            {isGlobal && (
+              <span className="agents-board-count">
+                {liveCount} live
+                {projectsWithAgents > 0 && (
+                  <span className="agents-board-count-extra">
+                    {` · ${projectsWithAgents} ${projectsWithAgents === 1 ? 'project' : 'projects'}`}
+                  </span>
+                )}
+              </span>
+            )}
+            {(fleet.length > 0 || boardView === 'list' || boardView === 'flow') && <AgentViewToggle />}
+            {reclaimableAgents.length > 0 && (
+              <button
+                type="button"
+                className="btn agents-board-close-idle"
+                onClick={() => setCloseIdleTarget(reclaimableAgents)}
+                disabled={busyAction !== null}
+                aria-label={
+                  busyAction === 'close'
+                    ? `Closing ${reclaimableAgents.length} idle agents`
+                    : `Close ${reclaimableAgents.length} idle agents`
+                }
+                title={
+                  isGlobal
+                    ? "Close every idle agent that isn't waiting on a question or starred, across all projects (working and blocked agents are left running)"
+                    : "Close every idle agent that isn't waiting on a question or starred (working and blocked agents are left running)"
+                }
+              >
+                {busyAction === 'close' ? <Loader2 size={14} className="gus-spin" /> : <Moon size={14} />}
+                <span className="agents-board-btn-label">
+                  {busyAction === 'close' ? 'Closing' : 'Close'}
+                </span>
+                <span className="agents-board-btn-count">
+                  ({reclaimableAgents.length}){busyAction === 'close' ? '…' : ''}
+                </span>
+              </button>
+            )}
+            {isGlobal && fleet.length > 0 && (
+              <div className="agents-board-filter">
+                <Search size={12} className="agents-board-filter-icon" aria-hidden="true" />
+                <input
+                  type="text"
+                  placeholder="Filter by project or task…"
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  aria-label="Filter agents"
+                />
+                {filter && (
+                  <button
+                    type="button"
+                    className="agents-board-filter-clear"
+                    aria-label="Clear filter"
+                    onClick={() => setFilter('')}
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            )}
             <button
               type="button"
-              className="btn agents-board-close-idle"
-              onClick={() => setCloseIdleTarget(reclaimableAgents)}
-              disabled={busyAction !== null}
-              aria-label={
-                busyAction === 'close'
-                  ? `Closing ${reclaimableAgents.length} idle agents`
-                  : `Close ${reclaimableAgents.length} idle agents`
-              }
-              title={
-                isGlobal
-                  ? "Close every idle agent that isn't waiting on a question or starred, across all projects (working and blocked agents are left running)"
-                  : "Close every idle agent that isn't waiting on a question or starred (working and blocked agents are left running)"
-              }
+              className="btn primary agents-board-new"
+              data-testid="agents-board-new-thread"
+              onClick={() => useUi.getState().setLauncherOpen(true)}
+              aria-label="New thread/agent"
+              title="Start a new thread or agent"
             >
-              {busyAction === 'close' ? <Loader2 size={14} className="gus-spin" /> : <Moon size={14} />}
-              <span className="agents-board-btn-label">
-                {busyAction === 'close' ? 'Closing' : 'Close'}
-              </span>
-              <span className="agents-board-btn-count">
-                ({reclaimableAgents.length}){busyAction === 'close' ? '…' : ''}
-              </span>
+              <Plus size={14} />
+              <span className="agents-board-btn-label">New thread/agent</span>
             </button>
-          )}
-          {isGlobal && fleet.length > 0 && (
-            <div className="agents-board-filter">
-              <Search size={12} className="agents-board-filter-icon" aria-hidden="true" />
-              <input
-                type="text"
-                placeholder="Filter by project or task…"
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                aria-label="Filter agents"
-              />
-              {filter && (
-                <button
-                  type="button"
-                  className="agents-board-filter-clear"
-                  aria-label="Clear filter"
-                  onClick={() => setFilter('')}
-                >
-                  <X size={12} />
-                </button>
-              )}
-            </div>
-          )}
-          <button
-            type="button"
-            className="btn primary agents-board-new"
-            data-testid="agents-board-new-thread"
-            onClick={() => useUi.getState().setLauncherOpen(true)}
-            aria-label="New thread/agent"
-            title="Start a new thread or agent"
-          >
-            <Plus size={14} />
-            <span className="agents-board-btn-label">New thread/agent</span>
-          </button>
-        </div>
-      </header>
+          </div>
+        </header>
+      )}
 
       {scopedProject && <AutonomousRunBanner projectId={scopedProject.id} />}
       {boardView === 'board' && (
@@ -335,6 +337,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
             <button
               type="button"
               className="btn primary"
+              data-testid="agents-board-new-thread"
               onClick={() => useUi.getState().setLauncherOpen(true)}
             >
               <Plus size={14} />

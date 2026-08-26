@@ -1,0 +1,20 @@
+{
+  "name": "@zcc-ext/memory",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Durable notes the agent should remember across threads.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "zcc": {
+    "name": "Memory",
+    "description": "Durable notes the agent should remember across threads.",
+    "branding": {
+      "icon": "Brain"
+    },
+    "server": "./server.mjs",
+    "app": "./app.js"
+  }
+}

@@ -19,6 +19,8 @@ import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from '@/component
 import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from '@/components/threadCardActions';
 import { PromptModal } from '@/components/PromptModal';
 import { ListPaneResizer } from '@/components/ListPaneResizer';
+import { PluginNavRows } from '@/plugins/PluginNavRows';
+import { PluginExclusiveThreadList } from '@/plugins/PluginExclusiveThreadList';
 
 /**
  * The Agents section's column-2 list pane. Column 3 under the Agents nav is the
@@ -423,6 +425,11 @@ export function AgentsListPane() {
         </button>
       </header>
       <div className="list-body">
+        <PluginNavRows />
+        <PluginExclusiveThreadList
+          activeThreadId={activeThreadId ?? null}
+          activeProjectId={scopedProjectId}
+        >
         {rows.length === 0 && visibleThreads.length === 0 ? (
           <div className="agents-list-empty">
             <Bot size={20} aria-hidden="true" />
@@ -502,6 +509,7 @@ export function AgentsListPane() {
             )}
           </>
         )}
+        </PluginExclusiveThreadList>
       </div>
       <ListPaneResizer />
       {menu && (

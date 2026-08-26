@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   createHostJoinCodeRequestSchema,
   hostDirectoryQuerySchema,
+  hostProviderCliInstallRequestSchema,
   updateHostPermissionCeilingRequestSchema
 } from '@zana-ai/zcc-server-contract';
 import {
@@ -10,7 +11,7 @@ import {
   renameHost,
   updateHostPermissionCeiling
 } from '@zana-ai/zcc-db';
-import { readJsonBody, sendJson } from './json.js';
+import { readJsonBody, sendJson, sendNdjson } from './json.js';
 import type { ProductHttpContext } from './product-context.js';
 import { listPublicHosts, parseHostRename, toPublicHost } from '../services/hosts/host-public.js';
 import { HostUnavailableError } from './host-hub.js';
@@ -177,6 +178,71 @@ export async function handleHostsApi(
         command: { type: 'project.clone_default_path', projectSlug: projectId }
       });
       sendJson(response, 200, result);
+    } catch (error) {
+      if (error instanceof HostUnavailableError) {
+        sendJson(response, 503, { error: error.message });
+        return true;
+      }
+      sendJson(response, 502, { error: error instanceof Error ? error.message : String(error) });
+    }
+    return true;
+  }
+
+  const cliStatus = routeParams(path, '/api/v1/hosts/:id/provider-clis/status');
+  if (cliStatus && method === 'GET') {
+    const host = requireHost(ctx, cliStatus.id);
+    if (!host) {
+      sendJson(response, 404, { error: 'host not found' });
+      return true;
+    }
+    try {
+      ctx.hostHub.ensureHostSessionReady(host.id);
+      const result = await ctx.hostHub.callHostOnlineRpc({
+        hostId: host.id,
+        command: { type: 'provider.cli_status' }
+      });
+      sendJson(response, 200, result);
+    } catch (error) {
+      if (error instanceof HostUnavailableError) {
+        sendJson(response, 503, { error: error.message });
+        return true;
+      }
+      sendJson(response, 502, { error: error instanceof Error ? error.message : String(error) });
+    }
+    return true;
+  }
+
+  const cliInstall = routeParams(path, '/api/v1/hosts/:id/provider-clis/install');
+  if (cliInstall && method === 'POST') {
+    const host = requireHost(ctx, cliInstall.id);
+    if (!host) {
+      sendJson(response, 404, { error: 'host not found' });
+      return true;
+    }
+    let body: unknown;
+    try {
+      body = await readJsonBody(request);
+    } catch {
+      sendJson(response, 400, { error: 'invalid JSON' });
+      return true;
+    }
+    const parsed = hostProviderCliInstallRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      sendJson(response, 400, { error: 'invalid provider CLI install request' });
+      return true;
+    }
+    try {
+      ctx.hostHub.ensureHostSessionReady(host.id);
+      const result = await ctx.hostHub.callHostOnlineRpc<{ events: unknown[] }>({
+        hostId: host.id,
+        command: {
+          type: 'provider.cli_install',
+          provider: parsed.data.provider,
+          actionKind: parsed.data.actionKind
+        },
+        timeoutMs: 11 * 60_000
+      });
+      sendNdjson(response, result.events);
     } catch (error) {
       if (error instanceof HostUnavailableError) {
         sendJson(response, 503, { error: error.message });

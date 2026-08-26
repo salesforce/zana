@@ -750,7 +750,8 @@ function mirroredConfigFlags(config: AppConfig) {
     harnessPiEnabled: config.harnessPiEnabled ?? false,
     harnessOpenCodeEnabled: config.harnessOpenCodeEnabled ?? false,
     microVmEnabled: config.microVmEnabled ?? false,
-    openerHiddenTargets: config.openerHiddenTargets ?? []
+    openerHiddenTargets: config.openerHiddenTargets ?? [],
+    steerActiveThreadOnEnter: config.steerActiveThreadOnEnter ?? false
   };
 }
 
@@ -1408,6 +1409,8 @@ interface DataState {
   /** Mirror of AppConfig.voiceInputEnabled — gates the mic button in the prompt
    *  composer. Hydrated on init, kept live by the Settings toggle. Default off. */
   voiceInputEnabled: boolean;
+  /** Mirror of AppConfig.steerActiveThreadOnEnter — Enter steers a running thread. */
+  steerActiveThreadOnEnter: boolean;
   /** Mirror of AppConfig.autoCloseIdleEnabled — the master switch for closing
    *  idle agents on a timer. Backs the sidebar one-click toggle (near Agents)
    *  and the Settings toggle. Hydrated on init, kept live by both. Default off. */
@@ -1781,6 +1784,7 @@ export const useData = create<DataState>((set, get) => ({
   idleAttentionSensitivity: 'medium',
   agentListNeedsYouFromTriage: false,
   voiceInputEnabled: false,
+  steerActiveThreadOnEnter: false,
   autoCloseIdleEnabled: false,
   overseerMode: 'off',
   reviewerApprovalMode: 'ask',

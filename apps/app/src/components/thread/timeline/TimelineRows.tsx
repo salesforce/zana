@@ -94,7 +94,7 @@ function TimelineRowView({
   };
 
   if (row.kind === 'conversation') {
-    return <ConversationRow row={row} onCopy={onCopy} />;
+    return <ConversationRow row={row} onCopy={onCopy} threadId={threadId} />;
   }
 
   if (row.kind === 'system') {

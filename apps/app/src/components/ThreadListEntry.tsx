@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import type { MouseEvent } from 'react';
 import type { ThreadListItem } from '../thread-store.js';
 import { getThreadRoutePath } from '../lib/route-paths.js';
-import { isBusyThreadStatus, threadStatusToAgentState } from './thread/thread-timeline-model.js';
+import { isBusyThreadStatus, threadStatusLabel, threadStatusTone } from './thread/thread-timeline-model.js';
 import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
 import { FleetKindChip } from './FleetKindChip.js';
 
@@ -20,9 +20,10 @@ export function ThreadListEntry({
   onContextMenu?: (e: MouseEvent) => void;
 }) {
   const navigate = useNavigate();
-  const waitingOnUser = Boolean(thread.hasPendingInteraction);
+  const waitingOnUser = thread.status !== 'error' && Boolean(thread.hasPendingInteraction);
   const working = isBusyThreadStatus(thread.status) && !waitingOnUser;
-  const state = threadStatusToAgentState(thread.status, waitingOnUser);
+  const tone = threadStatusTone(thread.status, waitingOnUser);
+  const statusLabel = threadStatusLabel(thread.status, waitingOnUser);
   return (
     <button
       type="button"
@@ -40,20 +41,22 @@ export function ThreadListEntry({
       </span>
       <span className="agents-row-text">
         <span className="agents-row-title-line">
-          <span className={`tab-agent-dot agent-${state}`} aria-hidden="true" />
+          <span className={`tab-agent-dot agent-${tone}`} aria-hidden="true" />
           <span className="agents-row-title">{thread.title ?? 'Untitled thread'}</span>
           <FleetKindChip kind="thread" />
         </span>
         <span className="agents-row-meta">
           {projectName && <span className="agents-row-project">{projectName}</span>}
-                          {waitingOnUser ? (
+          {waitingOnUser ? (
             <span className="agents-row-needs-you">Needs you</span>
           ) : working ? (
             <span className="thread-list-entry-working is-shimmer" data-testid="thread-list-entry-working">
               Working
             </span>
           ) : (
-            <span className="agents-row-duration">{thread.status}</span>
+            <span className={thread.status === 'error' ? 'agents-row-needs-you' : 'agents-row-duration'}>
+              {statusLabel || thread.status}
+            </span>
           )}
         </span>
       </span>

@@ -1,5 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { product } from '../../../lib/product-client.js';
+import { PluginSlotBoundary } from '../../../plugins/PluginSlotBoundary.js';
+import { listFileOpeners, subscribePluginSlots } from '../../../plugins/plugin-slots.js';
+import {
+  fileOpenerKey,
+  matchingFileOpeners,
+  resolveFileOpener
+} from '../../../plugins/plugin-slot-resolvers.js';
 import { applyPreviewResult, loadFilePreview, previewKind } from './threadSecondaryPanelLogic.js';
 
 export function ThreadFilePreviewView({
@@ -24,13 +31,20 @@ export function ThreadFilePreviewView({
 
 export function ThreadFilePreviewTab({
   threadId,
-  path
+  path,
+  openerKey,
+  projectId
 }: {
   threadId?: string;
   path: string;
+  openerKey?: string | null;
+  projectId?: string | null;
 }) {
+  const [override, setOverride] = useState<string | null>(openerKey ?? null);
   const [content, setContent] = useState<string>('Loading…');
   const [error, setError] = useState<string | null>(null);
+  const openers = useSyncExternalStore(subscribePluginSlots, listFileOpeners, listFileOpeners);
+  const opener = resolveFileOpener(path, openers, override);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,5 +59,53 @@ export function ThreadFilePreviewTab({
     return () => { cancelled = true; };
   }, [path, threadId]);
 
-  return <ThreadFilePreviewView path={path} content={content} error={error} />;
+  const hostPreview = <ThreadFilePreviewView path={path} content={content} error={error} />;
+  const matches = matchingFileOpeners(path, openers);
+  const openWith = matches.length > 0 ? (
+    <label className="thread-file-open-with">
+      Open with
+      <select
+        aria-label="Open with"
+        data-testid="thread-file-open-with"
+        value={opener ? fileOpenerKey(opener) : 'host'}
+        onChange={(event) => {
+          setOverride(event.target.value);
+        }}
+      >
+        <option value="host">Host preview</option>
+        {matches.map((row) => (
+          <option key={fileOpenerKey(row)} value={fileOpenerKey(row)}>
+            {row.title}
+          </option>
+        ))}
+      </select>
+    </label>
+  ) : null;
+  if (!opener) {
+    return (
+      <div className="thread-file-preview-host">
+        {openWith}
+        {hostPreview}
+      </div>
+    );
+  }
+  const Component = opener.component;
+  return (
+    <div className="thread-file-preview-host">
+      {openWith}
+      <PluginSlotBoundary pluginId={opener.pluginId} generation={opener.generation}>
+        <Component
+          pluginId={opener.pluginId}
+          path={path}
+          source={{
+            kind: 'workspace',
+            threadId: threadId ?? null,
+            environmentId: null,
+            projectId: projectId ?? null
+          }}
+          experimental_Original={() => hostPreview}
+        />
+      </PluginSlotBoundary>
+    </div>
+  );
 }

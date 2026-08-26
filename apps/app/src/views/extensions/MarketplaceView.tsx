@@ -1,8 +1,8 @@
 import { product } from '../../lib/product-client.js';
 /**
- * Plugins → Browse (Marketplace). Lists first-party plugins the
- * app ships (offline) and, when configured, the opt-in remote registry — so the
- * user can install / update without rebuilding the app.
+ * Plugins → Browse (Marketplace). Lists first-party plugins the app ships
+ * (offline) plus configured community catalogs and, when opted in, the signed
+ * remote registry.
  *
  * The catalog comes from `product.extensions.marketplaceList()`. Each row is a
  * {@link MarketplaceEntry} already joined with this host's install state
@@ -16,7 +16,7 @@ import { product } from '../../lib/product-client.js';
  * release comes back as a typed `NEEDS_CONSENT` failure we surface inline.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Download,
   RefreshCw,
@@ -29,13 +29,18 @@ import {
   FileArchive,
   ChevronDown,
   Plus,
-  Package
+  Package,
+  Trash2
 } from 'lucide-react';
 import type { MarketplaceEntry } from '@zana-ai/zcc-domain/product';
+import type { MarketplaceCatalogRow } from '@zana-ai/zcc-domain';
 import { resolveIcon } from '@/lib/resolveIcon';
 import { PERMISSION_LABELS, pluginCapabilityLines } from '@/components/ExtensionConsent';
 import { InstallFromGitDialog } from '@/components/InstallFromGitDialog';
+import { Modal } from '@/components/Modal';
+import { PromptModal } from '@/components/PromptModal';
 import { filterMarketplaceEntries, type MarketplaceTag } from './marketplace-filter.js';
+import { catalogCountLabel, catalogErrorText, catalogKindLabel } from './marketplace-catalogs.js';
 
 const MARKET_FILTERS: { id: MarketplaceTag | 'all'; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -44,7 +49,13 @@ const MARKET_FILTERS: { id: MarketplaceTag | 'all'; label: string }[] = [
   { id: 'update', label: 'Update' }
 ];
 
-export function MarketplaceView({ onCreate }: { onCreate?: () => void } = {}) {
+export function MarketplaceView({
+  onCreate,
+  toolbarExtra
+}: {
+  onCreate?: () => void;
+  toolbarExtra?: ReactNode;
+} = {}) {
   const [entries, setEntries] = useState<MarketplaceEntry[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,7 +67,10 @@ export function MarketplaceView({ onCreate }: { onCreate?: () => void } = {}) {
   const [pendingConfirm, setPendingConfirm] = useState<MarketplaceEntry | null>(null);
   const [tag, setTag] = useState<MarketplaceTag | 'all'>('all');
   const [npmOpen, setNpmOpen] = useState(false);
-  const [npmSpec, setNpmSpec] = useState('');
+  const [catalogs, setCatalogs] = useState<MarketplaceCatalogRow[] | null>(null);
+  const [catalogSource, setCatalogSource] = useState('');
+  const [catalogBusy, setCatalogBusy] = useState<string | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
   // "Install from…" dropdown — groups the three source pickers (folder/archive/
   // repo) behind one button so the toolbar doesn't read as five flat peers.
   const [installMenuOpen, setInstallMenuOpen] = useState(false);
@@ -97,8 +111,16 @@ export function MarketplaceView({ onCreate }: { onCreate?: () => void } = {}) {
       .finally(() => setLoading(false));
   }, []);
 
+  const refreshCatalogs = useCallback(() => {
+    product.marketplaces
+      .list()
+      .then(setCatalogs)
+      .catch(() => setCatalogs([]));
+  }, []);
+
   useEffect(() => {
     refresh();
+    refreshCatalogs();
     // An install/update (or a watcher tick) re-stamps the installed set; refresh
     // the catalog so installed/hasUpdate flags stay accurate.
     const offExt = product.extensions.onChanged(() => refresh());
@@ -107,7 +129,7 @@ export function MarketplaceView({ onCreate }: { onCreate?: () => void } = {}) {
       offExt();
       offApps();
     };
-  }, [refresh]);
+  }, [refresh, refreshCatalogs]);
 
   const install = (entry: MarketplaceEntry) => {
     const verb = entry.hasUpdate ? 'Updating…' : 'Installing…';
@@ -148,19 +170,27 @@ export function MarketplaceView({ onCreate }: { onCreate?: () => void } = {}) {
       );
   };
 
-  const checkUpdates = () => {
-    setBusy((b) => ({ ...b, __all: 'Checking…' }));
-    product.extensions
-      .checkUpdates()
-      .catch(() => {})
-      .finally(() => {
-        setBusy((b) => {
-          const next = { ...b };
-          delete next.__all;
-          return next;
-        });
-        refresh();
-      });
+  const runCatalogAction = async (label: string, work: () => Promise<unknown>) => {
+    setCatalogBusy(label);
+    setCatalogError(null);
+    try {
+      await work();
+      refreshCatalogs();
+      refresh();
+    } catch (err) {
+      setCatalogError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCatalogBusy(null);
+    }
+  };
+
+  const addCatalog = () => {
+    const source = catalogSource.trim();
+    if (!source) return;
+    void runCatalogAction('Adding…', async () => {
+      await product.marketplaces.add(source);
+      setCatalogSource('');
+    });
   };
 
   // Client-side filter over the already-fetched catalog (title/id/description/
@@ -179,6 +209,83 @@ export function MarketplaceView({ onCreate }: { onCreate?: () => void } = {}) {
         provenance-only — refresh never runs plugin code. Plugins run in-process
         after install: only install from publishers you trust.
       </p>
+
+      <div className="ext-market-catalogs" data-testid="marketplace-catalogs">
+        <h3 className="ext-market-catalogs-title">Catalog sources</h3>
+        <p className="settings-help">
+          Add <code>https://…/marketplace.json</code>, <code>git:&lt;url&gt;[@ref]</code>, or{' '}
+          <code>path:&lt;dir&gt;</code>. Indexes are cached; a failed refresh keeps the last good catalog.
+        </p>
+        <div className="ext-market-catalogs-add">
+          <input
+            type="text"
+            className="settings-input"
+            value={catalogSource}
+            onChange={(e) => setCatalogSource(e.target.value)}
+            placeholder="https://…/marketplace.json"
+            aria-label="Marketplace catalog source"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                addCatalog();
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="settings-btn primary"
+            disabled={!catalogSource.trim() || catalogBusy !== null}
+            onClick={addCatalog}
+          >
+            Add catalog
+          </button>
+        </div>
+        {catalogError && <p className="modal-error">{catalogError}</p>}
+        {catalogs && catalogs.length > 0 && (
+          <ul className="ext-market-catalog-list">
+            {catalogs.map((row) => {
+              const error = catalogErrorText(row);
+              return (
+                <li key={row.source} className="ext-market-catalog-row">
+                  <div className="ext-market-catalog-body">
+                    <div className="ext-market-catalog-head">
+                      <span className="ext-market-catalog-name">{row.displayName}</span>
+                      <span className="ext-market-item-source">{catalogKindLabel(row.sourceKind)}</span>
+                      {row.official && (
+                        <span className="ext-market-item-source ext-market-item-source--official">Official</span>
+                      )}
+                      <span className="ext-market-catalog-count">{catalogCountLabel(row)}</span>
+                    </div>
+                    <p className="ext-market-catalog-source">{row.source}</p>
+                    {error && <p className="modal-error">{error}</p>}
+                  </div>
+                  <div className="ext-market-catalog-actions">
+                    <button
+                      type="button"
+                      className="settings-btn"
+                      disabled={catalogBusy !== null}
+                      onClick={() => void runCatalogAction('Refreshing…', () => product.marketplaces.refresh(row.source))}
+                    >
+                      <RefreshCw size={14} />
+                      Refresh
+                    </button>
+                    <button
+                      type="button"
+                      className="settings-btn"
+                      disabled={row.official || catalogBusy !== null}
+                      title={row.official ? 'Official catalogs cannot be removed' : 'Remove catalog'}
+                      onClick={() => void runCatalogAction('Removing…', () => product.marketplaces.remove(row.source))}
+                    >
+                      <Trash2 size={14} />
+                      Remove
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
       <div className="ext-market-toolbar">
         {hasCatalog && (
           <div className="ext-market-search">
@@ -194,31 +301,31 @@ export function MarketplaceView({ onCreate }: { onCreate?: () => void } = {}) {
             <span className="ext-market-search-count">
               {filtered?.length ?? 0} of {entries?.length ?? 0}
             </span>
-          </div>
-        )}
-        <div className="settings-btn-row">
-          <div className="settings-btn-group" role="group" aria-label="Sync catalog">
             <button
               type="button"
-              className="settings-btn"
-              disabled={loading || busy.__all !== undefined}
-              onClick={checkUpdates}
-              title="Check the registry for newer versions of installed plugins"
+              className="ext-market-search-refresh"
+              disabled={loading}
+              onClick={refresh}
+              title="Reload the catalog"
+              aria-label="Reload the catalog"
             >
-              <ArrowUpCircle size={14} />
-              {busy.__all ?? 'Check for updates'}
+              <RefreshCw size={14} className={loading ? 'ext-spin' : undefined} />
             </button>
+          </div>
+        )}
+        <div className="settings-btn-row ext-market-toolbar-actions">
+          {!hasCatalog && (
             <button
               type="button"
               className="settings-btn"
               disabled={loading}
               onClick={refresh}
               title="Reload the catalog"
+              aria-label="Reload the catalog"
             >
-              <RefreshCw size={14} />
-              Refresh
+              <RefreshCw size={14} className={loading ? 'ext-spin' : undefined} />
             </button>
-          </div>
+          )}
           <div className="ext-install-menu-wrap" ref={installMenuRef}>
             <button
               type="button"
@@ -291,6 +398,7 @@ export function MarketplaceView({ onCreate }: { onCreate?: () => void } = {}) {
               Create
             </button>
           )}
+          {toolbarExtra}
         </div>
       </div>
 
@@ -311,46 +419,18 @@ export function MarketplaceView({ onCreate }: { onCreate?: () => void } = {}) {
 
       {gitOpen && <InstallFromGitDialog onClose={() => setGitOpen(false)} />}
       {npmOpen && (
-        <div className="palette-backdrop" onMouseDown={() => setNpmOpen(false)}>
-          <div
-            className="palette launch-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Install npm plugin"
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <div className="launch-panel">
-              <h3>Install from npm</h3>
-              <p>Package name or name@version. Installs through PluginService as npm:spec.</p>
-              <input
-                type="text"
-                className="settings-input"
-                value={npmSpec}
-                onChange={(e) => setNpmSpec(e.target.value)}
-                placeholder="zcc-plugin-notes"
-                autoFocus
-              />
-              <div className="settings-btn-row">
-                <button type="button" className="settings-btn" onClick={() => setNpmOpen(false)}>
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="settings-btn primary"
-                  disabled={!npmSpec.trim()}
-                  onClick={() => {
-                    const spec = npmSpec.trim();
-                    setNpmOpen(false);
-                    setNpmSpec('');
-                    product.extensions.install({ kind: 'npm', spec }).catch(() => {});
-                  }}
-                >
-                  Install
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <PromptModal
+          title="Install from npm"
+          hint="Package name or name@version. Installs through PluginService as npm:spec."
+          label="Package"
+          placeholder="zcc-plugin-notes"
+          confirmLabel="Install"
+          onClose={() => setNpmOpen(false)}
+          onSubmit={(spec) => {
+            setNpmOpen(false);
+            product.extensions.install({ kind: 'npm', spec }).catch(() => {});
+          }}
+        />
       )}
 
       {error && <p className="modal-error">{error}</p>}
@@ -360,8 +440,8 @@ export function MarketplaceView({ onCreate }: { onCreate?: () => void } = {}) {
       ) : entries.length === 0 ? (
         <p className="settings-help settings-help--muted">
           No plugins to show. First-party plugins ship with the app; if this list is empty,
-          the bundled plugins root was not found. Add a community catalog with
-          <code> zcc marketplace add</code>, or install from a local folder above.
+          the bundled plugins root was not found. Add a community catalog above,
+          or install from a local folder, archive, git repository, or npm package.
         </p>
       ) : filtered && filtered.length === 0 ? (
         <p className="settings-help settings-help--muted">
@@ -382,57 +462,72 @@ export function MarketplaceView({ onCreate }: { onCreate?: () => void } = {}) {
       )}
 
       {pendingConfirm && (
-        <div className="palette-backdrop" onMouseDown={() => setPendingConfirm(null)}>
-          <div
-            className="palette launch-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Confirm plugin install"
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <div className="launch-panel">
-              <h3>Install {pendingConfirm.title}?</h3>
-              <p>
-                This plugin runs in-process on the server with full trust after
-                install. Host-daemon tokens stay on the server. Only continue if
-                you trust the publisher.
-              </p>
-              {pendingConfirm.description && <p>{pendingConfirm.description}</p>}
-              {pluginCapabilityLines(pendingConfirm).length > 0 && (
-                <ul>
-                  {pluginCapabilityLines(pendingConfirm).map((line) => (
-                    <li key={line}>{line}</li>
-                  ))}
-                </ul>
-              )}
-              {pendingConfirm.permissions && pendingConfirm.permissions.length > 0 && (
-                <ul>
-                  {pendingConfirm.permissions.map((p) => (
-                    <li key={p}>{PERMISSION_LABELS[p] ?? p}</li>
-                  ))}
-                </ul>
-              )}
-              <div className="settings-btn-row">
-                <button type="button" className="settings-btn" onClick={() => setPendingConfirm(null)}>
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="settings-btn primary"
-                  onClick={() => {
-                    const entry = pendingConfirm;
-                    setPendingConfirm(null);
-                    install(entry);
-                  }}
-                >
-                  Install with full trust
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <PluginInstallConfirm
+          entry={pendingConfirm}
+          onCancel={() => setPendingConfirm(null)}
+          onConfirm={() => {
+            const entry = pendingConfirm;
+            setPendingConfirm(null);
+            install(entry);
+          }}
+        />
       )}
     </section>
+  );
+}
+
+/**
+ * Pre-install publisher-trust confirm. Uses the shared {@link Modal} so the
+ * backdrop portals to `document.body` — the Plugins list pane (`.sidebar`)
+ * creates a stacking context (`z-index: 1`) that would otherwise paint over
+ * an in-tree overlay and leave the left nav looking undimmed / highlighted.
+ */
+export function PluginInstallConfirm({
+  entry,
+  onCancel,
+  onConfirm
+}: {
+  entry: MarketplaceEntry;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const capabilities = pluginCapabilityLines(entry);
+  return (
+    <Modal
+      title={`Install ${entry.title}?`}
+      onClose={onCancel}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="button" className="btn primary" onClick={onConfirm}>
+            Install with full trust
+          </button>
+        </>
+      }
+    >
+      <p>
+        This plugin runs in-process on the server with full trust after install.
+        Host-daemon tokens stay on the server. Only continue if you trust the
+        publisher.
+      </p>
+      {entry.description && <p>{entry.description}</p>}
+      {capabilities.length > 0 && (
+        <ul>
+          {capabilities.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      )}
+      {entry.permissions && entry.permissions.length > 0 && (
+        <ul>
+          {entry.permissions.map((perm) => (
+            <li key={perm}>{PERMISSION_LABELS[perm] ?? perm}</li>
+          ))}
+        </ul>
+      )}
+    </Modal>
   );
 }
 
@@ -449,7 +544,8 @@ function MarketRow({
 }) {
   const Icon = resolveIcon(entry.icon ?? 'Package');
   const action = rowAction(entry, busy);
-  const provenance = entry.source === 'bundled' ? 'official' : 'community';
+  const provenance =
+    entry.source === 'bundled' || entry.tags?.includes('official') ? 'official' : 'community';
 
   return (
     <li className="ext-market-item">

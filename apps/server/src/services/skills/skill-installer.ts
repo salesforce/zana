@@ -20,7 +20,7 @@
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { readFile, writeFile, mkdir, rename, readdir, rm } from 'node:fs/promises';
 import { resolveContainedReal } from '@zana-ai/zcc-path-confine';
 import { builtinSkillsRootPath } from '../../plugins/injected-skill-roots.js';
@@ -74,6 +74,19 @@ function resolveShippedPath(fileName: string): string | null {
     if (existsSync(p)) return p;
   }
   return null;
+}
+
+export const ZCC_CLI_SKILL_RESOURCE = 'zcc-cli-skill.md';
+export const ZCC_CLI_SKILL_NAME = 'zcc-cli';
+
+export function readBundledSkillMarkdown(resourceFile: string): string | null {
+  const src = resolveShippedPath(resourceFile);
+  if (!src) return null;
+  try {
+    return readFileSync(src, 'utf8');
+  } catch {
+    return null;
+  }
 }
 
 /**

@@ -141,7 +141,19 @@ export const pluginZccManifestSchema = z
     skills: z.array(requiredManifestString).optional(),
     mcpServers: pluginMcpServersSchema.optional(),
     extra: pluginExtraSchema.optional(),
-    projectTab: pluginProjectTabSchema.optional()
+    projectTab: pluginProjectTabSchema.optional(),
+    themes: z
+      .array(
+        z
+          .object({
+            id: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/).max(64),
+            name: requiredManifestString,
+            description: requiredManifestString.optional(),
+            css: requiredManifestString
+          })
+          .strict()
+      )
+      .optional()
   })
   .strict()
   .refine((block) => block.server !== undefined || block.app !== undefined, {
@@ -191,6 +203,7 @@ export interface PluginManifest {
   mcpServers: PluginMcpServerContribution[];
   extra: PluginExtra;
   projectTab: PluginZccManifest['projectTab'];
+  themes: NonNullable<PluginZccManifest['themes']>;
   engines: { zcc?: string; zccPluginSdk?: string };
 }
 
@@ -218,6 +231,7 @@ export function readPluginManifest(packageJson: unknown): PluginManifest {
     mcpServers,
     extra: parsed.zcc.extra ?? {},
     projectTab: parsed.zcc.projectTab,
+    themes: parsed.zcc.themes ?? [],
     engines: {
       zcc: parsed.engines?.zcc,
       zccPluginSdk: parsed.engines?.zccPluginSdk

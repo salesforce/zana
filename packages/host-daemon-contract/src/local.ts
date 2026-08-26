@@ -164,7 +164,13 @@ export type StatusResponse = z.infer<typeof statusResponseSchema>;
 export const healthResponseSchema = z.string().min(1);
 export type HealthResponse = z.infer<typeof healthResponseSchema>;
 
-export const providerCliKeyValues = ["codex", "claudeCode", "cursor"] as const;
+export const providerCliKeyValues = [
+  "codex",
+  "claudeCode",
+  "cursor",
+  "pi",
+  "opencode",
+] as const;
 export const providerCliKeySchema = z.enum(providerCliKeyValues);
 export type ProviderCliKey = z.infer<typeof providerCliKeySchema>;
 
@@ -231,10 +237,15 @@ export const providerCliStatusSchema = z.object({
 });
 export type ProviderCliStatus = z.infer<typeof providerCliStatusSchema>;
 
-export const providerCliStatusResponseSchema = z.record(
-  providerCliKeySchema,
-  providerCliStatusSchema,
-);
+export const providerCliStatusResponseSchema = z
+  .object({
+    codex: providerCliStatusSchema.optional(),
+    claudeCode: providerCliStatusSchema.optional(),
+    cursor: providerCliStatusSchema.optional(),
+    pi: providerCliStatusSchema.optional(),
+    opencode: providerCliStatusSchema.optional(),
+  })
+  .strict();
 export type ProviderCliStatusResponse = z.infer<
   typeof providerCliStatusResponseSchema
 >;

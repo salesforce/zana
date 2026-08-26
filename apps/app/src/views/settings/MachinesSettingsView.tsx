@@ -1,12 +1,22 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
+import type {
+  ProviderCliInstallActionKind,
+  ProviderCliKey,
+  ProviderCliStatusResponse
+} from '@zana-ai/zcc-contracts/host-rpc';
 import { product } from '../../lib/product-client.js';
 import { useData } from '@/store';
 import { Field, Section } from '@/components/settings/FormFields';
 import { useHosts } from '../../hooks/useHosts.js';
 import { AddMachineDialog } from './AddMachineDialog.js';
 import { TAILSCALE_SERVE_HINT } from './machine-pairing.js';
+import {
+  actionableProviderCliRows,
+  orderedProviderCliRows,
+  providerCliBadge
+} from './machine-provider-clis.js';
 
 interface MachinesTabProps {
   config: AppConfig;
@@ -47,6 +57,8 @@ export function MachinesSettingsView({
   const [adding, setAdding] = useState(false);
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [cliByHost, setCliByHost] = useState<Record<string, ProviderCliStatusResponse>>({});
+  const [busyKey, setBusyKey] = useState<string | null>(null);
   const now = Date.now();
   const counts = useMemo(() => {
     const map = new Map<string, number>();
@@ -56,13 +68,51 @@ export function MachinesSettingsView({
     }
     return map;
   }, [projects]);
+  const connectedSignature = hosts
+    .filter((host) => host.status === 'connected')
+    .map((host) => host.id)
+    .join(',');
+
+  const refreshCliStatus = useCallback(async () => {
+    const connected = hosts.filter((host) => host.status === 'connected');
+    const entries = await Promise.all(connected.map(async (host) => {
+      try {
+        const status = await product.hosts.providerCliStatus(host.id);
+        return [host.id, status] as const;
+      } catch {
+        return [host.id, {}] as const;
+      }
+    }));
+    setCliByHost(Object.fromEntries(entries));
+  }, [hosts]);
+
+  useEffect(() => {
+    void refreshCliStatus();
+  }, [connectedSignature, refreshCliStatus]);
+
+  const actionable = useMemo(() => actionableProviderCliRows(cliByHost), [cliByHost]);
+
+  async function runInstall(
+    hostId: string,
+    provider: ProviderCliKey,
+    actionKind: ProviderCliInstallActionKind
+  ): Promise<void> {
+    const key = `${hostId}:${provider}`;
+    setBusyKey(key);
+    try {
+      await product.hosts.installProviderCli(hostId, { provider, actionKind });
+      await refreshCliStatus();
+    } finally {
+      setBusyKey(null);
+    }
+  }
 
   return (
     <>
       <Section
         anchorId="machines"
         title="Machines"
-        help="Pair another computer so projects and threads can run there. SSH remotes stay a separate path — they use this machine’s daemon to ssh in."
+        help="Pair another computer so projects and threads can run there. SSH remotes stay a separate path — they use this machine’s daemon to ssh in. Connected machines follow the server version automatically; Codex, Claude Code, and the other harness CLIs update from the rows below."
       >
         <Field
           label="Public app URL"
@@ -76,9 +126,27 @@ export function MachinesSettingsView({
             onBlur={(event) => onUpdate({ publicAppUrl: event.target.value.trim() || undefined })}
           />
         </Field>
-        <button type="button" className="btn" onClick={() => setAdding(true)}>
-          Add machine
-        </button>
+        <div className="machines-toolbar">
+          <button type="button" className="btn" onClick={() => setAdding(true)}>
+            Add machine
+          </button>
+          {actionable.length > 0 ? (
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={busyKey !== null}
+              onClick={() => {
+                void (async () => {
+                  for (const item of actionable) {
+                    await runInstall(item.hostId, item.provider, item.action.kind);
+                  }
+                })();
+              }}
+            >
+              Update all ({actionable.length})
+            </button>
+          ) : null}
+        </div>
         <ul className="machines-list" data-testid="machines-list">
           {hosts.map((host) => (
             <li key={host.id} className="machines-row">
@@ -110,6 +178,40 @@ export function MachinesSettingsView({
                   </strong>
                 )}
                 <p>{machineMeta(host, counts.get(host.id) ?? 0, now)}</p>
+                {host.status === 'connected' ? (
+                  <ul className="machine-cli-list" data-testid={`machine-cli-list-${host.id}`}>
+                    {orderedProviderCliRows(cliByHost[host.id]).map((row) => {
+                      const badge = providerCliBadge(row.status);
+                      const busy = busyKey === `${host.id}:${row.provider}`;
+                      return (
+                        <li key={row.provider} className="machine-cli-row">
+                          <div>
+                            <strong>{row.status.displayName}</strong>
+                            <p>
+                              {row.status.currentVersion ?? 'Not installed'}
+                              {row.status.latestVersion && row.status.needsUpdate
+                                ? ` → ${row.status.latestVersion}`
+                                : ''}
+                            </p>
+                          </div>
+                          <div className="machine-cli-row-actions">
+                            {badge ? <span className="settings-badge settings-badge--warn">{badge}</span> : null}
+                            {row.status.installAction ? (
+                              <button
+                                type="button"
+                                className="btn"
+                                disabled={busyKey !== null}
+                                onClick={() => void runInstall(host.id, row.provider, row.status.installAction!.kind)}
+                              >
+                                {busy ? 'Working…' : row.status.installAction.label}
+                              </button>
+                            ) : null}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : null}
               </div>
               <div className="machines-row-actions">
                 <label className="machines-ceiling">

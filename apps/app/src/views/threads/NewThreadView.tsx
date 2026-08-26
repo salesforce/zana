@@ -3,6 +3,7 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import type { Project } from '@zana-ai/zcc-domain/product';
 import { useData } from '@/store';
 import { HomeAgentComposer } from '@/components/HomeAgentComposer';
+import { PluginNewThreadActions } from '@/plugins/PluginNewThreadActions';
 
 /**
  * Composer-only create surface. Agents board and list navigate here instead of
@@ -26,6 +27,7 @@ export function NewThreadView({ project: projectProp }: { project?: Project } = 
     <section className="new-thread-view" data-testid="new-thread-view">
       <h1 className="new-thread-view-heading">New thread</h1>
       <HomeAgentComposer project={project} />
+      <PluginNewThreadActions projectId={project?.id ?? null} />
     </section>
   );
 }

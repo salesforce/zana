@@ -13,6 +13,7 @@
     "description": "Durable project knowledge: Docs rail, per-project Library, and the library-curator skill",
     "branding": { "icon": "Library" },
     "server": "./server.mjs",
+    "app": "./app.js",
     "projectTab": {
       "label": "Library",
       "icon": "Library",

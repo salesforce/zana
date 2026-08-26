@@ -13,12 +13,17 @@ import {
 } from '@zana-ai/zcc-domain';
 import { gitBranchNameSchema } from '@zana-ai/zcc-domain/git-checkout';
 import { availableModelSchema, pendingInteractionResolutionSchema, reasoningLevelSchema } from '@zana-ai/zcc-domain/thread-runtime';
+import {
+  providerCliInstallEventSchema,
+  providerCliInstallRequestSchema,
+  providerCliStatusResponseSchema
+} from '@zana-ai/zcc-host-daemon-contract/local';
 
 /**
  * Bump when any enroll payload, daemon WS message, host-rpc command, or host
  * event envelope changes shape or meaning. Mismatch fails before dispatch.
  */
-export const HOST_RPC_PROTOCOL_VERSION = 10;
+export const HOST_RPC_PROTOCOL_VERSION = 12;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
 
 const UuidSchema = z.string().uuid();
@@ -61,7 +66,11 @@ export const HostRpcCommandTypeSchema = z.enum([
   'project.clone',
   'project.clone_default_path',
   'codex.voice.transcribe',
-  'interactive.resolve'
+  'interactive.resolve',
+  'provider.cli_status',
+  'provider.cli_install',
+  'host.install_global_skills',
+  'host.global_skills_status'
 ]);
 export type HostRpcCommandType = z.infer<typeof HostRpcCommandTypeSchema>;
 
@@ -423,6 +432,33 @@ export const InteractiveResolveCommandSchema = z.object({
 }).strict();
 export type InteractiveResolveCommand = z.infer<typeof InteractiveResolveCommandSchema>;
 
+export const ProviderCliStatusCommandSchema = z.object({
+  type: z.literal('provider.cli_status')
+}).strict();
+export type ProviderCliStatusCommand = z.infer<typeof ProviderCliStatusCommandSchema>;
+
+export const ProviderCliInstallCommandSchema = providerCliInstallRequestSchema.extend({
+  type: z.literal('provider.cli_install')
+}).strict();
+export type ProviderCliInstallCommand = z.infer<typeof ProviderCliInstallCommandSchema>;
+
+const GlobalSkillNameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/);
+
+export const HostInstallGlobalSkillsCommandSchema = z.object({
+  type: z.literal('host.install_global_skills'),
+  skills: z.array(z.object({
+    name: GlobalSkillNameSchema,
+    content: z.string().min(1).max(256 * 1024)
+  }).strict()).min(1).max(16)
+}).strict();
+export type HostInstallGlobalSkillsCommand = z.infer<typeof HostInstallGlobalSkillsCommandSchema>;
+
+export const HostGlobalSkillsStatusCommandSchema = z.object({
+  type: z.literal('host.global_skills_status'),
+  names: z.array(GlobalSkillNameSchema).min(1).max(16)
+}).strict();
+export type HostGlobalSkillsStatusCommand = z.infer<typeof HostGlobalSkillsStatusCommandSchema>;
+
 export const HostRpcCommandSchema = z.union([
   ProviderStatusCommandSchema,
   ProviderListModelsCommandSchema,
@@ -457,7 +493,11 @@ export const HostRpcCommandSchema = z.union([
   ProjectCloneCommandSchema,
   ProjectCloneDefaultPathCommandSchema,
   CodexVoiceTranscribeCommandSchema,
-  InteractiveResolveCommandSchema
+  InteractiveResolveCommandSchema,
+  ProviderCliStatusCommandSchema,
+  ProviderCliInstallCommandSchema,
+  HostInstallGlobalSkillsCommandSchema,
+  HostGlobalSkillsStatusCommandSchema
 ]);
 export type HostRpcCommand = z.infer<typeof HostRpcCommandSchema>;
 
@@ -651,6 +691,40 @@ export const InteractiveResolveResultSchema = z.object({
 }).strict();
 export type InteractiveResolveResult = z.infer<typeof InteractiveResolveResultSchema>;
 
+export const ProviderCliStatusResultSchema = providerCliStatusResponseSchema;
+export type ProviderCliStatusResult = z.infer<typeof ProviderCliStatusResultSchema>;
+
+export const ProviderCliInstallResultSchema = z.object({
+  events: z.array(providerCliInstallEventSchema)
+}).strict();
+export type ProviderCliInstallResult = z.infer<typeof ProviderCliInstallResultSchema>;
+
+export const HostInstallGlobalSkillsResultSchema = z.object({
+  installations: z.array(z.object({
+    name: z.string().min(1),
+    path: PathSchema
+  }).strict())
+}).strict();
+export type HostInstallGlobalSkillsResult = z.infer<typeof HostInstallGlobalSkillsResultSchema>;
+
+export const HostGlobalSkillsStatusResultSchema = z.object({
+  entries: z.array(z.object({
+    name: z.string().min(1),
+    path: PathSchema,
+    installed: z.boolean(),
+    hash: z.string().nullable()
+  }).strict())
+}).strict();
+export type HostGlobalSkillsStatusResult = z.infer<typeof HostGlobalSkillsStatusResultSchema>;
+
+export type {
+  ProviderCliInstallActionKind,
+  ProviderCliInstallEvent,
+  ProviderCliKey,
+  ProviderCliStatus,
+  ProviderCliStatusResponse
+} from '@zana-ai/zcc-host-daemon-contract/local';
+
 export const HostRpcResultSchemaByType = {
   'provider.status': ProviderStatusResultSchema,
   'provider.list_models': ProviderListModelsResultSchema,
@@ -685,7 +759,11 @@ export const HostRpcResultSchemaByType = {
   'project.clone': ProjectCloneResultSchema,
   'project.clone_default_path': ProjectCloneDefaultPathResultSchema,
   'codex.voice.transcribe': CodexVoiceTranscribeResultSchema,
-  'interactive.resolve': InteractiveResolveResultSchema
+  'interactive.resolve': InteractiveResolveResultSchema,
+  'provider.cli_status': ProviderCliStatusResultSchema,
+  'provider.cli_install': ProviderCliInstallResultSchema,
+  'host.install_global_skills': HostInstallGlobalSkillsResultSchema,
+  'host.global_skills_status': HostGlobalSkillsStatusResultSchema
 } as const;
 
 export const HostRpcErrorSchema = z.object({

@@ -76,9 +76,10 @@ export function fleetAgentCards(items: FleetItem[]): AgentCard[] {
   return items.filter(isAgentFleet).map((item) => item.card);
 }
 
-/** Nested Projects-rail rows: busy or failed threads, matching live PTY sessions. */
+/** Nested Projects-rail rows: busy, waiting, or failed threads. */
 export function threadIsLiveForRail(thread: ThreadListItem): boolean {
   if (!isVisibleThread(thread)) return false;
+  if (thread.status === 'error') return true;
   const state = threadStatusToAgentState(thread.status, thread.hasPendingInteraction);
   return state === 'working' || state === 'blocked';
 }
@@ -104,7 +105,8 @@ export function railThreadsForProject(threads: ThreadListItem[]): ThreadListItem
 
 export function threadRailStatus(
   thread: Pick<ThreadListItem, 'status' | 'hasPendingInteraction'>
-): 'Needs you' | 'Working' | 'Idle' {
+): 'Needs you' | 'Working' | 'Idle' | 'Error' {
+  if (thread.status === 'error') return 'Error';
   const state = threadStatusToAgentState(thread.status, thread.hasPendingInteraction);
   if (state === 'blocked') return 'Needs you';
   if (state === 'working') return 'Working';

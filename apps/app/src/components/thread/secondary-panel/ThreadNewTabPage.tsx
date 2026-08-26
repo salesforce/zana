@@ -1,17 +1,24 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { FileText, Globe, Puzzle, Search, Terminal } from 'lucide-react';
+import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
 import { product } from '../../../lib/product-client.js';
 import { hasDesktopBridge } from '../../../lib/app-surface.js';
-import { useProjectTabModules } from '../../../modules/index.js';
 import { useData } from '../../../store.js';
+import { listNewThreadPanelActions, listThreadPanelActions, subscribePluginSlots } from '../../../plugins/plugin-slots.js';
 import { applyIfCurrent, loadWalkedFiles, matchNewTabFiles, newTabFileTitle } from './threadSecondaryPanelLogic.js';
+
+export type OpenPluginOptions = {
+  actionId?: string;
+  params?: JsonValue | null;
+  layout?: 'padded' | 'flush';
+};
 
 export function ThreadNewTabView({
   query,
   onQueryChange,
   matches,
   desktop,
-  modules,
+  actions,
   onOpenFile,
   onOpenBrowser,
   onStartTerminal,
@@ -22,11 +29,11 @@ export function ThreadNewTabView({
   onQueryChange: (query: string) => void;
   matches: Array<{ path: string; rel?: string }>;
   desktop: boolean;
-  modules: Array<{ id: string; title: string; projectTab?: { label?: string } }>;
+  actions: Array<{ pluginId: string; id: string; title: string; layout?: 'padded' | 'flush' }>;
   onOpenFile: (path: string, title: string) => void;
   onOpenBrowser: () => void;
   onStartTerminal?: () => void;
-  onOpenPlugin: (moduleId: string, title: string) => void;
+  onOpenPlugin: (moduleId: string, title: string, options?: OpenPluginOptions) => void;
   allowSidecarTerminal?: boolean;
 }) {
   return (
@@ -68,13 +75,19 @@ export function ThreadNewTabView({
               <Terminal size={14} /> Start terminal
             </button>
           ) : null}
-          {modules.map((mod) => (
+          {actions.map((action) => (
             <button
-              key={mod.id}
+              key={`${action.pluginId}/${action.id}`}
               type="button"
-              onClick={() => onOpenPlugin(mod.id, mod.projectTab?.label ?? mod.title)}
+              data-testid={`thread-new-tab-plugin-${action.pluginId}-${action.id}`}
+              onClick={() =>
+                onOpenPlugin(action.pluginId, action.title, {
+                  actionId: action.id,
+                  layout: action.layout
+                })
+              }
             >
-              <Puzzle size={14} /> {mod.projectTab?.label ?? mod.title}
+              <Puzzle size={14} /> {action.title}
             </button>
           ))}
         </div>
@@ -97,11 +110,21 @@ export function ThreadNewTabPage({
   onOpenFile: (path: string, title: string) => void;
   onOpenBrowser: () => void;
   onStartTerminal?: () => void;
-  onOpenPlugin: (moduleId: string, title: string) => void;
+  onOpenPlugin: (moduleId: string, title: string, options?: OpenPluginOptions) => void;
   allowSidecarTerminal?: boolean;
 }) {
   const project = useData((s) => s.projects.find((row) => row.id === projectId) ?? null);
-  const modules = useProjectTabModules();
+  const threadActions = useSyncExternalStore(
+    subscribePluginSlots,
+    listThreadPanelActions,
+    listThreadPanelActions
+  );
+  const composeActions = useSyncExternalStore(
+    subscribePluginSlots,
+    listNewThreadPanelActions,
+    listNewThreadPanelActions
+  );
+  const actions = [...threadActions, ...composeActions];
   const [query, setQuery] = useState('');
   const [files, setFiles] = useState<Array<{ path: string; rel?: string }>>([]);
   const desktop = hasDesktopBridge();
@@ -123,7 +146,12 @@ export function ThreadNewTabPage({
       onQueryChange={setQuery}
       matches={matches}
       desktop={desktop}
-      modules={modules}
+      actions={actions.map((action) => ({
+        pluginId: action.pluginId,
+        id: action.id,
+        title: action.title,
+        layout: action.layout
+      }))}
       onOpenFile={onOpenFile}
       onOpenBrowser={onOpenBrowser}
       onStartTerminal={onStartTerminal}

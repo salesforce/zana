@@ -483,6 +483,7 @@ describe('worktree launch intent', () => {
   it('replaces the isolation checkbox with a workspace picker', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
     expect(source).toContain('EnvironmentPicker');
+    expect(source).toContain('worktreeStructurallyEligible && (');
     expect(source).not.toContain('Isolate in a git worktree');
   });
 

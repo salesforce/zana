@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { dirname, join, resolve, sep } from 'node:path';
 import { createRequire } from 'node:module';
 import type {
+  PluginAgentConfigureContext,
+  PluginAgentConfigureResult,
   PluginAgentToolRegistration,
   PluginCliExecutionResult,
   PluginCliRegistration,
@@ -13,6 +15,8 @@ import type {
   PluginHttpResponse,
   PluginInteractionRequest,
   PluginInteractionResult,
+  PluginMentionProviderRegistration,
+  PluginMentionSuggestion,
   PluginSettingDescriptor,
   PluginSettingValue,
   PluginThreadEvent,
@@ -28,7 +32,11 @@ import {
   type JsonValue
 } from '@zana-ai/zcc-domain/thread-runtime';
 import { registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
-import { enforcePluginCliOutputLimit } from '@zana-ai/zcc-plugin-sdk/server';
+import {
+  enforcePluginCliOutputLimit,
+  isPluginHostEntryDefinition
+} from '@zana-ai/zcc-plugin-sdk/server';
+import { cronMatches, cronMinuteKey } from '@zana-ai/zcc-plugin-sdk';
 
 export const HOST_ZCC_VERSION = '1.0.10';
 export const HOST_PLUGIN_SDK_VERSION = '0.1.0';
@@ -50,6 +58,12 @@ export interface PluginHandle {
   api: ZccPluginApi;
   extraSkillRoots: string[];
   extraInstructions: string[];
+  agentConfigurers: Array<
+    (
+      ctx: PluginAgentConfigureContext
+    ) => PluginAgentConfigureResult | void | Promise<PluginAgentConfigureResult | void>
+  >;
+  mentionProviders: Array<PluginMentionProviderRegistration & { pluginId: string }>;
   cli: { registration: PluginCliRegistration | null };
   httpRoutes: PluginHttpRouteRecord[];
   agentTools: PluginAgentToolRegistration[];
@@ -93,6 +107,8 @@ export function createPluginApi(
     interruptPluginInteractions?: (pluginId: string) => void;
     onNeedsConfiguration?: (message: string) => void;
     spawnThread?: (args: { pluginId: string; projectId: string; prompt: string; providerId?: string }) => Promise<{ id: string }>;
+    hostEntryPath?: string | null;
+    hostCall?: (method: string, input?: unknown, hostId?: string) => Promise<unknown>;
   }
 ): PluginHandle {
   mkdirSync(kvDir, { recursive: true });
@@ -101,6 +117,10 @@ export function createPluginApi(
   const disposeHooks: Array<() => void | Promise<void>> = [];
   const extraSkillRoots: string[] = [];
   const extraInstructions: string[] = [];
+  const agentConfigurers: PluginHandle['agentConfigurers'] = [];
+  const mentionProviders: PluginHandle['mentionProviders'] = [];
+  const hostMethods = new Map<string, (input: unknown) => unknown | Promise<unknown>>();
+  let hostEntryLoaded: Promise<void> | null = null;
   const settingListeners: Array<(next: Record<string, PluginSettingValue | undefined>) => void> = [];
   const realtimeListeners = new Set<(event: string, payload: unknown) => void>();
   let settingDescriptors: Record<string, PluginSettingDescriptor> = {};
@@ -120,6 +140,34 @@ export function createPluginApi(
   const readKv = (): Record<string, unknown> => readJsonFile<Record<string, unknown>>(kvPath, {});
   const readSettings = (): Record<string, PluginSettingValue | undefined> =>
     readJsonFile<Record<string, PluginSettingValue | undefined>>(settingsPath, {});
+
+  const ensureHostEntry = async (): Promise<void> => {
+    if (hostEntryLoaded) {
+      await hostEntryLoaded;
+      return;
+    }
+    const path = options?.hostEntryPath;
+    if (!path) return;
+    hostEntryLoaded = (async () => {
+      const href = `${pathToFileURL(path).href}?v=${Date.now()}`;
+      const mod = (await import(href)) as { default?: unknown };
+      const methodsApi = {
+        methods: {
+          register(name: string, handler: (input: unknown) => unknown | Promise<unknown>) {
+            hostMethods.set(name, handler);
+          }
+        }
+      };
+      if (isPluginHostEntryDefinition(mod.default)) {
+        await mod.default.setup(methodsApi);
+        return;
+      }
+      if (typeof mod.default === 'function') {
+        await (mod.default as (api: typeof methodsApi) => unknown)(methodsApi);
+      }
+    })();
+    await hostEntryLoaded;
+  };
 
   const api: ZccPluginApi = {
     pluginId,
@@ -259,14 +307,41 @@ export function createPluginApi(
       }
     },
     host: {
-      experimental_call: async () => {
-        throw new Error('zcc.host is not available in this runtime');
+      experimental_call: async (method, input) => {
+        assertLive();
+        if (options?.hostCall) return options.hostCall(method, input);
+        await ensureHostEntry();
+        const handler = hostMethods.get(method);
+        if (!handler) {
+          throw new Error(`zcc.host method is not available: ${method}`);
+        }
+        return handler(input);
+      },
+      experimental_client() {
+        return {
+          call: async (method, input, callOptions) => {
+            assertLive();
+            if (options?.hostCall) return options.hostCall(method, input, callOptions.hostId);
+            await ensureHostEntry();
+            const handler = hostMethods.get(method);
+            if (!handler) {
+              throw new Error(`zcc.host method is not available: ${method}`);
+            }
+            return handler(input);
+          }
+        };
       }
     },
     rpc: {
       method: (name, handler) => {
         assertLive();
         rpc.set(name, handler);
+      },
+      register: (_contract, handlers) => {
+        assertLive();
+        for (const [name, handler] of Object.entries(handlers)) {
+          if (typeof handler === 'function') rpc.set(name, handler);
+        }
       }
     },
     realtime: {
@@ -281,15 +356,30 @@ export function createPluginApi(
           if (typeof stop === 'function') disposeHooks.push(stop);
         });
       },
-      schedule: (cron, job) => {
+      schedule: (cronOrName, jobOrCron, maybeJob?) => {
         assertLive();
+        const named = typeof jobOrCron === 'string';
+        const name = named ? cronOrName : '';
+        const cron = named ? jobOrCron : cronOrName;
+        const job = named ? maybeJob : jobOrCron;
+        if (typeof job !== 'function') throw new Error('background.schedule requires a job function');
+        const persistKey = name ? `schedule:${name}:last` : '';
         const timer = setInterval(() => {
+          if (!cronMatches(cron)) return;
+          const minute = cronMinuteKey();
+          if (persistKey) {
+            const last = readKv()[persistKey];
+            if (last === minute) return;
+            const next = readKv();
+            next[persistKey] = minute;
+            writeJsonFile(kvPath, next);
+          }
           void Promise.resolve(job()).catch((error) => {
-            console.error(`[plugin:${pluginId}] schedule ${cron} failed`, error);
+            console.error(`[plugin:${pluginId}] schedule ${name || cron} failed`, error);
           });
         }, 60_000);
         disposeHooks.push(() => clearInterval(timer));
-      }
+      },
     },
     agents: {
       contributeInstructions: (text) => {
@@ -309,9 +399,13 @@ export function createPluginApi(
       },
       experimental_registerProvider: (declaration) => {
         assertLive();
-        const handle = registerThreadProvider(pluginId, declaration);
+        const handle = registerThreadProvider(pluginId, declaration, options?.hostEntryPath);
         disposeHooks.push(() => handle.unregister());
         return handle;
+      },
+      configure: (provider) => {
+        assertLive();
+        agentConfigurers.push(provider);
       }
     },
     ui: {
@@ -330,6 +424,25 @@ export function createPluginApi(
           timeoutMs: parsed.timeoutMs,
           signal: requestOptions?.signal
         });
+      },
+      registerMentionProvider: (registration) => {
+        assertLive();
+        if (!registration?.id || typeof registration.search !== 'function') {
+          throw new Error('ui.registerMentionProvider requires id and search');
+        }
+        mentionProviders.push({ ...registration, pluginId });
+        httpRoutes.push({
+          method: 'POST',
+          path: `/mentions/${registration.id}/search`,
+          handler: async (request) => {
+            const query =
+              request.body && typeof request.body === 'object' && 'query' in request.body
+                ? String((request.body as { query?: unknown }).query ?? '')
+                : '';
+            const items: PluginMentionSuggestion[] = await registration.search(query);
+            return { json: { items } };
+          }
+        });
       }
     },
     status: {
@@ -345,6 +458,8 @@ export function createPluginApi(
     api,
     extraSkillRoots,
     extraInstructions,
+    agentConfigurers,
+    mentionProviders,
     cli: cliRecord,
     httpRoutes,
     agentTools,

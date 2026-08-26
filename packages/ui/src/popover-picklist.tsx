@@ -66,14 +66,20 @@ export interface PopoverPicklistOption<T extends string> {
   value: T;
   /** Plain text used for the trigger, search matching, and the default option row. */
   label: string;
+  /** Shorter trigger label; the menu still shows `label`. */
+  compactLabel?: string;
   /** Optional richer option-row rendering (icon, meta line, ...); falls back to `label`. */
   content?: ReactNode;
+  /** Muted second line under the option label (helper text or a longer description). */
+  description?: string;
   /** Extra class on this option's row, e.g. for a taller/richer layout. */
   className?: string;
   /** Renders a group header above the first option of a new group, in list order. */
   group?: string;
   /** Keeps an unavailable choice visible without allowing it to be selected. */
   disabled?: boolean;
+  /** Warning color on the trigger (when selected) and the option row. */
+  tone?: 'default' | 'warning';
 }
 
 export interface PopoverPicklistProps<T extends string> {
@@ -139,7 +145,10 @@ export function PopoverPicklist<T extends string>({
     if (!searchable) return options;
     const normalizedQuery = query.trim().toLowerCase();
     return normalizedQuery
-      ? options.filter((option) => option.label.toLowerCase().includes(normalizedQuery))
+      ? options.filter((option) => {
+          const haystack = `${option.label} ${option.compactLabel ?? ''} ${option.description ?? ''}`.toLowerCase();
+          return haystack.includes(normalizedQuery);
+        })
       : options;
   }, [options, query, searchable]);
   const activeOption = visibleOptions[activeIndex];
@@ -244,7 +253,7 @@ export function PopoverPicklist<T extends string>({
         ref={triggerRef}
         id={id}
         type="button"
-        className={`${triggerClassName} ${className}`}
+        className={`${triggerClassName} ${className}${selected?.tone === 'warning' ? ' is-warning' : ''}`}
         disabled={disabled}
         title={title}
         onClick={() => setOpen((current) => !current)}
@@ -259,7 +268,7 @@ export function PopoverPicklist<T extends string>({
         aria-controls={open ? menuId : undefined}
         aria-label={ariaLabel}
       >
-        <span>{selected?.label ?? placeholder}</span>
+        <span>{selected?.compactLabel ?? selected?.label ?? placeholder}</span>
         <ChevronDown size={14} aria-hidden="true" />
       </button>
       {open && createPortal(
@@ -303,7 +312,7 @@ export function PopoverPicklist<T extends string>({
               <button
                 type="button"
                 id={optionId(option)}
-                className={`launch-model-picker-option${option.className ? ` ${option.className}` : ''}${value === option.value ? ' is-selected' : ''}${activeIndex === index ? ' is-active' : ''}`}
+                className={`launch-model-picker-option${option.description ? ' launch-model-picker-option--stacked' : ''}${option.className ? ` ${option.className}` : ''}${value === option.value ? ' is-selected' : ''}${activeIndex === index ? ' is-active' : ''}${option.tone === 'warning' ? ' is-warning' : ''}`}
                 role="option"
                 aria-selected={value === option.value}
                 aria-disabled={option.disabled || undefined}
@@ -313,7 +322,16 @@ export function PopoverPicklist<T extends string>({
                 onFocus={() => setActiveIndex(index)}
                 onClick={() => selectOption(option)}
               >
-                {option.content ?? <span>{option.label}</span>}
+                {option.content || option.description ? (
+                  <span className="launch-model-picker-option-copy">
+                    {option.content ?? <span>{option.label}</span>}
+                    {option.description ? (
+                      <span className="launch-model-picker-option-description">{option.description}</span>
+                    ) : null}
+                  </span>
+                ) : (
+                  <span>{option.label}</span>
+                )}
                 {value === option.value && <Check size={14} aria-hidden="true" />}
               </button>
             </div>

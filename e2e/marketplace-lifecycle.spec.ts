@@ -84,6 +84,7 @@ test.describe('marketplace lifecycle — install and uninstall', () => {
 
     // === Phase 2: Install ===
     await market.rowButton('E2E Dummy').click();
+    await market.confirmInstall();
 
     // Wait for install to complete (button changes to "Installed")
     await expect(market.rowButton('E2E Dummy')).toHaveText(/Installed/, { timeout: 30_000 });
@@ -172,6 +173,7 @@ test.describe('marketplace lifecycle — install and uninstall', () => {
     // Install the extension first
     await market.open();
     await market.rowButton('E2E Dummy').click();
+    await market.confirmInstall();
     await expect(market.rowButton('E2E Dummy')).toHaveText(/Installed/, { timeout: 30_000 });
 
     // Uninstall via IPC (simulating the renderer's uninstall call)

@@ -26,8 +26,8 @@ describe('decodeRoutePath', () => {
     ['/projects/p1/threads/abc', { nav: 'projects', focusedProjectId: 'p1', workspaceMode: 'agents', isProjectWorkspace: true, isThreadView: true, threadId: 'abc' }],
     ['/projects/p1/terminals', { nav: 'projects', focusedProjectId: 'p1', workspaceMode: 'terminals', isProjectWorkspace: true }],
     ['/projects/p1/settings', { nav: 'settings', settingsTab: 'project', focusedProjectId: 'p1', isProjectSettings: true }],
-    ['/plugins/docs/panel', { nav: 'docs' }],
-    ['/plugins/docs/panel/sub', { nav: 'docs' }]
+    ['/plugins/docs/panel', { nav: 'docs', pluginPanelPath: 'panel', pluginSubPath: '' }],
+    ['/plugins/docs/panel/sub', { nav: 'docs', pluginPanelPath: 'panel', pluginSubPath: 'sub' }]
   ] as const)('decodes %s', (path, expected) => {
     expect(decodeRoutePath(path)).toEqual(expect.objectContaining(expected));
   });
@@ -57,6 +57,17 @@ describe('decodeRoutePath', () => {
   it('lets /extensions/plugins/browse win over :pluginId', () => {
     expect(decodeRoutePath('/extensions/plugins/browse').extensionsTab).toBe('marketplace');
     expect(decodeRoutePath('/extensions/plugins/browse').settingsExtensionId).toBeNull();
+  });
+
+  it('round-trips nested plugin panel subPaths', () => {
+    const decoded = decodeRoutePath('/plugins/github/issues/org/repo/42');
+    expect(decoded).toEqual(
+      expect.objectContaining({
+        nav: 'github',
+        pluginPanelPath: 'issues',
+        pluginSubPath: 'org/repo/42'
+      })
+    );
   });
 
   it('lets /projects/:id/settings win over :mode', () => {
@@ -98,5 +109,14 @@ describe('decodeRoutePath', () => {
     expect(
       scopedWindowLockReplace({ pathname: '/projects/other', search: '', hash: '' }, 'p1')
     ).toEqual({ pathname: '/projects/p1', search: '?projectId=p1', hash: '' });
+  });
+
+  it('keeps a global thread URL as that thread under the locked project', () => {
+    expect(
+      scopedWindowLockReplace({ pathname: '/threads/abc', search: '', hash: '' }, 'p1')
+    ).toEqual({ pathname: '/projects/p1/threads/abc', search: '?projectId=p1', hash: '' });
+    expect(
+      scopedWindowLockReplace({ pathname: '/threads/new', search: '', hash: '' }, 'p1')
+    ).toEqual({ pathname: '/projects/p1/threads/new', search: '?projectId=p1', hash: '' });
   });
 });

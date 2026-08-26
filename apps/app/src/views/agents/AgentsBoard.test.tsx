@@ -30,6 +30,8 @@ describe('AgentsBoard', () => {
     expect(emptyBranch).toContain('No agents or threads');
     expect(emptyBranch).toContain('No agents or threads yet');
     expect(emptyBranch).toContain('setLauncherOpen(true)');
+    expect(emptyBranch).toContain('data-testid="agents-board-new-thread"');
+    expect(board).toContain('{fleet.length > 0 && (');
     expect(board).not.toContain('<HomeAgentComposer');
 
     const filterBranch = board.slice(filterStart, board.indexOf('<AgentBoardLanes', filterStart));

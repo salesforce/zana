@@ -1,12 +1,12 @@
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useSyncExternalStore, type ReactNode } from 'react';
 import {
   Blocks,
   Bot,
   Clock,
-  House,
   Inbox,
   MessageCircleQuestion,
   Sparkles,
+  SquarePen,
   type LucideIcon
 } from 'lucide-react';
 import {
@@ -19,7 +19,7 @@ import {
   type NavId
 } from '../store.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
-import { getNavRoutePath } from '../lib/route-paths.js';
+import { getNavRoutePath, getPluginPanelRoutePath } from '../lib/route-paths.js';
 import { useMergedModules } from '../modules/index.js';
 import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js';
 import { useRouteState } from '../hooks/useRouteState.js';
@@ -34,6 +34,7 @@ import {
   SidebarRail,
   type SidebarRailItem
 } from './SidebarRail.js';
+import { listNavPanels, subscribePluginSlots } from '../plugins/plugin-slots.js';
 
 interface NavEntry {
   id: NavId;
@@ -41,7 +42,7 @@ interface NavEntry {
   icon: LucideIcon;
 }
 
-const homeNavItem: NavEntry = { id: 'home', label: 'Home', icon: House };
+const homeNavItem: NavEntry = { id: 'home', label: 'New Chat', icon: SquarePen };
 const inboxNavItem: NavEntry = { id: 'inbox', label: 'Inbox', icon: Inbox };
 const agentsNavItem: NavEntry = { id: 'agents', label: 'Agents', icon: Bot };
 const schedulerNavItem: NavEntry = { id: 'scheduler', label: 'Scheduler', icon: Clock };
@@ -63,7 +64,8 @@ const followupsNavItem: NavEntry = { id: 'followups', label: 'Follow-ups', icon:
 const extensionsNavItem: NavEntry = { id: 'extensions', label: 'Plugins', icon: Blocks };
 
 export function Sidebar() {
-  const { nav } = useRouteState();
+  const route = useRouteState();
+  const { nav, pluginPanelPath } = route;
   const collapsed = useUi((s) => s.sidebarCollapsed);
   const unreadInbox = useUnreadInboxCount();
   const enabledSchedules = useEnabledSchedulerCount();
@@ -73,20 +75,25 @@ export function Sidebar() {
   const followUpsEnabled = useData((s) => s.followUpsEnabled);
   const routeMemory = useAppSettingsRouteMemory();
   const modules = useMergedModules();
+  const pluginPanels = useSyncExternalStore(subscribePluginSlots, listNavPanels, listNavPanels);
+  const pluginIds = useMemo(
+    () => new Set(pluginPanels.map((panel) => panel.pluginId)),
+    [pluginPanels]
+  );
   const extraItems = useMemo(() => {
     const extras: NavEntry[] = [];
     if (followUpsEnabled) extras.push(followupsNavItem);
     if (suggestionsEnabled) extras.push(suggestionsNavItem);
     return extras;
   }, [followUpsEnabled, suggestionsEnabled]);
-  // Extensions shares installation and configuration in one hub. Installed
-  // panels with a global surface also get a direct shortcut above Workspaces;
-  // project-only and Settings-only modules stay in their native surfaces.
+  // Legacy disk modules keep a rail shortcut. Plugin navPanels are listed
+  // separately so every path (not only the first panel) is reachable.
   const moduleNavItems: NavEntry[] = modules
     .filter((module) =>
       !!module.panel &&
       module.placement !== 'settings' &&
-      module.projectTab?.global !== false
+      module.projectTab?.global !== false &&
+      !pluginIds.has(module.id)
     )
     .map((module) => ({
       id: module.id,
@@ -163,6 +170,22 @@ export function Sidebar() {
     toRow(schedulerNavItem),
     toRow(extensionsNavItem),
     ...moduleNavItems.map(toRow),
+    ...pluginPanels.map((panel): SidebarRailItem => {
+      const path = panel.path ?? panel.id;
+      const Icon = resolveIcon(panel.icon);
+      const id = `${panel.pluginId}/${path}`;
+      const active = nav === panel.pluginId && (pluginPanelPath === path || pluginPanelPath === null);
+      return {
+        kind: 'row',
+        id,
+        label: panel.title,
+        icon: <Icon size={16} />,
+        to: getPluginPanelRoutePath({ pluginId: panel.pluginId, path }),
+        testId: `nav-${id}`,
+        active,
+        title: collapsed ? panel.title : undefined
+      };
+    }),
     {
       kind: 'section',
       id: WORKSPACES_SECTION_SORT_ID,

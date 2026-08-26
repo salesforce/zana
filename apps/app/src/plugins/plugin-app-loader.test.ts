@@ -13,7 +13,10 @@ describe('server plugin app loader', () => {
         {
           id: 'tasks',
           name: 'Tasks',
+          description: 'Track work items',
           icon: 'ListTodo',
+          enabled: true,
+          provenance: 'builtin',
           status: 'running',
           appUrl: '/plugins/tasks/assets/dist/app.js?v=1'
         }
@@ -38,7 +41,7 @@ describe('server plugin app loader', () => {
 
   it('clears prior slots when a plugin stops running', async () => {
     await reconcilePluginApps(
-      [{ id: 'tasks', name: 'Tasks', icon: 'ListTodo', status: 'running', appUrl: '/plugins/tasks/assets/app.js?v=1' }],
+      [{ id: 'tasks', name: 'Tasks', description: '', icon: 'ListTodo', enabled: true, provenance: 'builtin', status: 'running', appUrl: '/plugins/tasks/assets/app.js?v=1' }],
       {
         importer: async () => ({
           default: {
@@ -51,7 +54,7 @@ describe('server plugin app loader', () => {
       }
     );
 
-    await reconcilePluginApps([{ id: 'tasks', name: 'Tasks', icon: 'ListTodo', status: 'disabled', appUrl: null }]);
+    await reconcilePluginApps([{ id: 'tasks', name: 'Tasks', description: '', icon: 'ListTodo', enabled: false, provenance: 'builtin', status: 'disabled', appUrl: null }]);
 
     expect(usePluginAppModules.getState().modules).toEqual([]);
     expect(listNavPanels().some((panel) => panel.pluginId === 'tasks')).toBe(false);
@@ -59,7 +62,7 @@ describe('server plugin app loader', () => {
 
   it('surfaces an import failure without leaving stale slot registrations', async () => {
     await reconcilePluginApps(
-      [{ id: 'broken', name: 'Broken', icon: 'Bug', status: 'running', appUrl: '/plugins/broken/assets/app.js?v=1' }],
+      [{ id: 'broken', name: 'Broken', description: '', icon: 'Bug', enabled: true, provenance: 'direct', status: 'running', appUrl: '/plugins/broken/assets/app.js?v=1' }],
       { importer: async () => { throw new Error('bundle exploded'); } }
     );
 

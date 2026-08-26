@@ -56,6 +56,11 @@ export function storedEventsToMeta(rows: ConversationThreadEventRow[]): ThreadEv
   });
 }
 
+function includeProviderUnhandledOperations(ctx: ProductHttpContext): boolean {
+  return ctx.config?.getConfig?.().showUnhandledProviderEvents === true
+    || process.env.NODE_ENV === 'development';
+}
+
 function requireThread(ctx: ProductHttpContext, threadId: string) {
   const thread = getConversationThread(ctx.db, threadId);
   if (!thread) {
@@ -87,7 +92,7 @@ function projectTimeline(
       options: {
         includeDebugRawEvents: false,
         includeNestedRows: true,
-        includeProviderUnhandledOperations: false,
+        includeProviderUnhandledOperations: includeProviderUnhandledOperations(ctx),
         isLatestPage: page.kind === 'latest',
         providerId: thread.providerId,
         threadStatus: thread.status,
@@ -201,7 +206,7 @@ export function conversationOutline(ctx: ProductHttpContext, threadId: string) {
     options: {
       includeDebugRawEvents: false,
       includeNestedRows: true,
-      includeProviderUnhandledOperations: false,
+      includeProviderUnhandledOperations: includeProviderUnhandledOperations(ctx),
       isLatestPage: true,
       providerId: thread.providerId,
       threadStatus: thread.status,

@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import type { HostBridgeLaunch } from '@zana-ai/zcc-contracts/host-rpc';
@@ -50,16 +50,16 @@ export function registerThreadProvider(
   declaration: PluginProviderDeclaration,
   hostEntry?: string | null
 ): PluginProviderHandle {
-  providers.set(declaration.id, {
+  const record: ThreadProviderRecord = {
     ...declaration,
     pluginId,
     hostEntry: hostEntry ?? providers.get(declaration.id)?.hostEntry ?? 'src/bridge/bridge.ts'
-  });
+  };
+  providers.set(declaration.id, record);
   return {
     id: declaration.id,
     unregister() {
-      const current = providers.get(declaration.id);
-      if (current?.pluginId === pluginId) providers.delete(declaration.id);
+      if (providers.get(declaration.id) === record) providers.delete(declaration.id);
     }
   };
 }
@@ -105,7 +105,7 @@ export function bridgeLaunchForProvider(
     throw new Error(`unknown thread provider: ${providerId}`);
   }
   const relative = provider.hostEntry ?? 'src/bridge/bridge.ts';
-  const artifactPath = join(pluginRoot(provider.pluginId), relative);
+  const artifactPath = isAbsolute(relative) ? relative : join(pluginRoot(provider.pluginId), relative);
   const digest = createHash('sha256').update(artifactPath).digest('hex');
   if (provider.id === 'pi' || provider.id === 'fake') {
     return {

@@ -1,0 +1,21 @@
+{
+  "name": "@zcc-ext/connect",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Tunnel this ZCC to an enrolled host.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "zcc": {
+    "name": "Connect",
+    "description": "Tunnel this ZCC to an enrolled host.",
+    "branding": {
+      "icon": "Cable"
+    },
+    "server": "./server.mjs",
+    "app": "./app.js",
+    "host": "./host.mjs"
+  }
+}

@@ -172,7 +172,15 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('marketplace-add'),
-    url: z.string().url().max(4096)
+    url: z.string().min(1).max(4096)
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('marketplace-refresh'),
+    url: z.string().min(1).max(4096)
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('marketplace-remove'),
+    url: z.string().min(1).max(4096)
   }).strict()
 ]);
 
@@ -254,7 +262,10 @@ const PluginAppProjectTabSchema = z.object({
 export const PluginAppSnapshotSchema = z.object({
   id: PluginIdSchema,
   name: z.string().min(1).max(256),
+  description: z.string().max(4096),
   icon: z.string().min(1).max(256),
+  enabled: z.boolean(),
+  provenance: z.enum(['builtin', 'direct', 'catalog']),
   status: z.enum(['running', 'disabled', 'degraded', 'needs-configuration']),
   appUrl: z.string().max(4096).nullable(),
   projectTab: PluginAppProjectTabSchema.optional()

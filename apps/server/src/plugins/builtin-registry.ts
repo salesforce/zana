@@ -76,6 +76,76 @@ export const OFFICIAL_PLUGINS: BundledPluginDefinition[] = [
     autoInstall: false,
     defaultEnabled: true,
     category: 'Workflow management'
+  },
+  {
+    name: 'github',
+    pluginId: 'github',
+    autoInstall: false,
+    defaultEnabled: true,
+    category: 'Developer tools'
+  },
+  {
+    name: 'automations',
+    pluginId: 'automations',
+    autoInstall: false,
+    defaultEnabled: true,
+    category: 'Workflow management'
+  },
+  {
+    name: 'workflows',
+    pluginId: 'workflows',
+    autoInstall: false,
+    defaultEnabled: true,
+    category: 'Workflow management'
+  },
+  {
+    name: 'side-chat',
+    pluginId: 'side-chat',
+    autoInstall: false,
+    defaultEnabled: true,
+    category: 'Agent interaction'
+  },
+  {
+    name: 'inline-vis',
+    pluginId: 'inline-vis',
+    autoInstall: false,
+    defaultEnabled: true,
+    category: 'Interface'
+  },
+  {
+    name: 'provider-retry',
+    pluginId: 'provider-retry',
+    autoInstall: false,
+    defaultEnabled: true,
+    category: 'Agent interaction'
+  },
+  {
+    name: 'memory',
+    pluginId: 'memory',
+    autoInstall: false,
+    defaultEnabled: true,
+    category: 'Context & knowledge'
+  },
+  {
+    name: 'keep-awake',
+    pluginId: 'keep-awake',
+    autoInstall: false,
+    defaultEnabled: true,
+    category: 'Host access'
+  },
+  {
+    name: 'secrets',
+    pluginId: 'secrets',
+    autoInstall: false,
+    defaultEnabled: true,
+    category: 'Host access'
+  },
+  {
+    name: 'connect',
+    pluginId: 'connect',
+    autoInstall: false,
+    defaultEnabled: true,
+    category: 'Host access'
   }
 ];
 

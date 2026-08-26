@@ -1,3 +1,5 @@
+import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
+
 export const SECONDARY_PANEL_STORAGE_PREFIX = 'zcc.secondaryPanel.';
 export const LEGACY_THREAD_STORAGE_PREFIX = 'zcc.thread.secondaryPanel.';
 export const SECONDARY_PANEL_DEFAULT_WIDTH_PX = 352;
@@ -21,6 +23,11 @@ export interface ClosableSecondaryTab {
   url?: string;
   sessionId?: string;
   moduleId?: string;
+  actionId?: string;
+  pluginId?: string;
+  params?: JsonValue | null;
+  layout?: 'padded' | 'flush';
+  openerKey?: string | null;
 }
 
 export interface ThreadSecondaryPanelState {
@@ -58,6 +65,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function parseJsonValue(value: unknown): JsonValue | null {
+  if (value === undefined) return null;
+  try {
+    return JSON.parse(JSON.stringify(value)) as JsonValue;
+  } catch {
+    return null;
+  }
+}
+
 function isTabKind(value: unknown): value is ClosableSecondaryTabKind {
   return (
     value === 'new-tab'
@@ -78,7 +94,12 @@ function parseTab(value: unknown): ClosableSecondaryTab | null {
     ...(typeof value.path === 'string' ? { path: value.path } : {}),
     ...(typeof value.url === 'string' ? { url: value.url } : {}),
     ...(typeof value.sessionId === 'string' ? { sessionId: value.sessionId } : {}),
-    ...(typeof value.moduleId === 'string' ? { moduleId: value.moduleId } : {})
+    ...(typeof value.moduleId === 'string' ? { moduleId: value.moduleId } : {}),
+    ...(typeof value.actionId === 'string' ? { actionId: value.actionId } : {}),
+    ...(typeof value.pluginId === 'string' ? { pluginId: value.pluginId } : {}),
+    ...(value.layout === 'padded' || value.layout === 'flush' ? { layout: value.layout } : {}),
+    ...(value.openerKey === null || typeof value.openerKey === 'string' ? { openerKey: value.openerKey } : {}),
+    ...('params' in value ? { params: parseJsonValue(value.params) } : {})
   };
 }
 
@@ -170,6 +191,14 @@ function mintTabId(kind: ClosableSecondaryTabKind): string {
   return `${kind}:${uniqueTabSuffix(globalThis.crypto?.randomUUID?.bind(globalThis.crypto))}`;
 }
 
+function stableParams(value: unknown): string {
+  try {
+    return JSON.stringify(value ?? null);
+  } catch {
+    return 'null';
+  }
+}
+
 export function openSecondaryPanel(state: ThreadSecondaryPanelState): ThreadSecondaryPanelState {
   return { ...state, isOpen: true };
 }
@@ -222,7 +251,16 @@ function matchExistingTab(
     if (tab.kind !== input.kind) return false;
     if (input.kind === 'file-preview') return tab.path === input.path;
     if (input.kind === 'terminal') return tab.sessionId === input.sessionId;
-    if (input.kind === 'plugin') return tab.moduleId === input.moduleId;
+    if (input.kind === 'plugin') {
+      if (input.actionId) {
+        return (
+          tab.moduleId === input.moduleId
+          && tab.actionId === input.actionId
+          && stableParams(tab.params) === stableParams(input.params)
+        );
+      }
+      return tab.moduleId === input.moduleId && !tab.actionId;
+    }
     if (input.kind === 'browser') return tab.url === input.url && Boolean(input.url);
     return false;
   });

@@ -206,13 +206,13 @@ bundle actually reaches `interpretPluginApp`.
 | `sidebarFooterAction` | Exists, wired in `Sidebar.tsx` with generation keys | Loader gap only | No new work beyond Phase 0 |
 | `homepageSection` | Exists, wired in `HomePanel.tsx` with `PluginSlotBoundary` | Loader gap only | No new work beyond Phase 0 |
 | `settingsSection` | Slot exists in `app-contract.ts`/`plugin-slots.ts` (`listSettingsSections`) | **No renderer consumer yet** — grep found no `listSettingsSections` import outside `plugin-slots.ts` itself | Add a settings-panel mount point (likely in `src/renderer/components/settings/ExtensionsHub.tsx`, which the current uncommitted diff already touches) that renders each registered `PluginSettingsSectionRegistration.component` inside its own `PluginSlotBoundary`, keyed by generation — same pattern as `HomePanel.tsx`, not a new pattern |
-| `experimental_threadList` (exclusive list-replacement slot; `app-contract.ts`) | No equivalent | N/A today | **Defer.** This slot exists in chat-client shells built around one scrollable thread list. Zana's closest analogue would be replacing the project list (`ListPane.tsx`/`ProjectsList.tsx`) — a much higher-blast-radius slot than anything else here. Do not build it speculatively; revisit only if a concrete plugin needs to replace the project list wholesale |
-| `threadPanelAction` / `experimental_newThreadPanelAction` + the `FixedPanelTab` union + `thread_tabs` JSON-blob-plus-revision persistence (`fixed-panel-tabs-state.ts`, `packages/db/src/schema.ts`) | `projectTab` exists — but it is **one static tab per plugin**, declared in the manifest, not a runtime "open an ad-hoc tab" call. There is no tab-strip union a plugin can insert into dynamically, and no persistence table for it | Real gap — the richest UI mechanism in the target set has no zana counterpart yet | **Proposed `projectPanelAction` slot** (naming intentionally distinct from `projectTab` to avoid confusion): `{ id, title, icon?, component, run?() }`, resolved the same way `threadPanelAction` is resolved — calling `run()` (or, if absent, opening with defaults) inserts an entry into a new per-project tab-strip state analogous to the `FixedPanelTab` union. Given zana's existing per-project tabs (Terminals · Explorer · Preview · Library · Tickets, per `docs/extensions-authoring.md`'s `projectTab` section) are apparently already a **fixed, enumerable set** rather than a dynamic strip, the first implementation step is establishing that the tab strip *can* hold a dynamic, session-scoped list at all — a strictly smaller version of a `threadTabs` table (one JSON blob + revision, scoped by project id instead of thread id) is the right persistence shape once that exists. **Sequence this after Phase 0 and after `settingsSection` — it is a UI architecture change, not just a new slot type** |
-| `fileOpener` (`app-contract.ts`) | No equivalent | Real gap, but low priority | Zana's `Explorer` project tab is a candidate host, but wiring "which viewer wins for a given extension" needs the tab-strip work above to land first, so a plugin-registered opener has somewhere to open into |
-| `experimental_threadHeaderAction` / `messageAction` / `messageDirective` / `experimental_providerIcon` (all chat-transcript-scoped) | No equivalent, and **arguably no analogue** | N/A — zana has no per-message chat transcript UI; it is a terminal/session hub, not a chat client | **Do not port.** These slots exist because a chat client renders an agent conversation as a message list. Zana's nearest surface is a terminal pane (raw PTY output) or a session's status row — neither is "per message." Revisit only if zana grows a structured per-turn transcript view (e.g. a persona chat panel) that these would genuinely extend |
-| `pendingInteraction` (backend-triggered, scoped to one interaction, `submit`/`cancel`) | **Server API promises it** (`ZccPluginApi.ui.requestInput`) but **the implementation always throws** (`plugin-api.ts:81-82`) | Real, concrete, already-half-committed gap — the contract exists, the renderer half doesn't | Add a `pendingInteraction` V2 slot: `{ id, component: ComponentType<{ payload, submit, cancel }> }`. Server-side, `requestInput(rendererId, payload)` needs a real channel to the renderer (piggybacking on whatever transport Phase 0 builds for snapshots/events) that (a) delivers `{ rendererId, pluginId, payload }` to a renderer-side pending-interaction store, (b) mounts the matching registered component, and (c) round-trips `submit(value)`/`cancel()` back to resolve/reject the original `requestInput` promise. This is the exact model — server-triggered, not always-mounted |
-| `composer.customize()` (actions/banners/plusMenu/richText on the shared prompt composer) | No equivalent | N/A — no shared "composer" surface exists in zana today | **Do not port speculatively.** If zana's `AgentLauncher.tsx` prompt box grows plugin-extensibility needs (e.g. a plugin wanting to add a banner above the launch form), design a zana-specific customization surface against that concrete component then — don't pre-build a four-contribution-kind abstraction against a surface that doesn't need it yet |
-| `contentScripts.register()` (headless same-origin script, `AbortSignal`-scoped) | No equivalent | Low priority | Covered implicitly by `background.service()` already on `ZccPluginApi` (server-side) — a renderer-side headless-script slot would only be worth adding if a plugin needs renderer-only background work with no visible UI at all, which `background: () => void` in `ActivateResult`-equivalent (the retired extension-sdk had this) did not carry over into the V1 slot set. Track as a candidate, not a commitment |
+| `experimental_threadList` | Exclusive Agents-list replacement behind Settings → Appearance. Plugin nav rows and the footer stay host-owned. | Shipped |
+| `threadPanelAction` / `experimental_newThreadPanelAction` | Thread new-tab launcher inserts a persisted `{ kind: 'plugin', pluginId, actionId, params, layout }` tab. `projectTab` remains the ZCC workspace tab. | Shipped |
+| `fileOpener` | Thread file preview, Settings → Files pin, Open with. Git diffs still use the host preview. | Shipped |
+| `experimental_threadHeaderAction` / `messageAction` / `messageDirective` / `experimental_providerIcon` | Thread header, per-message actions, `::name{attr}` markdown leaves, provider marks. Crash-isolated. | Shipped — ZCC now has a thread workbench; the old “do not port chat slots” guidance is obsolete |
+| `pendingInteraction` | `ui.requestInput` + `pendingInteraction` slot on the thread workbench | Shipped |
+| `composer.customize()` | Banners, plus-menu, actions, richText on PromptComposer / ThreadCommandComposer. `useComposer()` writes the host draft. | Shipped |
+| `contentScripts.register()` | Headless same-origin mount at app init; disposed on generation change (Rule 3) | Shipped |
 | `agentPreset`, `skills`/`mcpServers` contribution, `ssh:hosts` provider, Personas/Teams contribution (retired extension-sdk, `docs/extensions-authoring.md`) | **Not yet re-ported** to the new plugin-sdk manifest/`ZccPluginApi` at all | Real gap — these are zana-specific capabilities the generic slot set has no equivalent for, but they are real, documented, working features today on the old system that `migrateLegacySidecars` will otherwise silently drop | **This is the actual risk in the retirement, not the slot-parity gaps above.** Before removing the old extension-sdk (backlog Section 5's stated goal), each of `agentPreset`, `skills`/`mcpServers`, `ssh:hosts`, and Personas/Teams needs either a `ZccPluginApi`/`PluginAppSlots` equivalent or an explicit decision that it's out of scope for V1 plugins. `ctx.personas`/`ctx.teams` (in-memory, lifecycle-bound, host-namespaced `ext:<id>:<slug>`) maps cleanly onto `ZccPluginApi` — add `personas`/`teams` members mirroring the retired `MainModuleContext` shape. `agentPreset`/`skills`/`mcpServers` are manifest-declared today (not runtime-registered) — the natural home is `PluginManifest`/`pluginZccManifestSchema` (`packages/domain/src/plugin-manifest.ts`), which does not yet have fields for any of them |
 
 ## 4. Phased plan
@@ -262,27 +262,15 @@ via a persisted per-project tab-state record.
 
 ## 5. Deliberately not doing (and why)
 
-- **No permission broker for V1 plugins.** Already decided in
-  `runtime-migration-backlog.md`'s Non-Negotiable Invariants: "Plugins are
-  full-trust... Install uses path containment, `engines` gates,
-  `npm --ignore-scripts`, and native-addon rejection — not capability tokens
-  or a permission broker." This plan does not revisit that; every slot
-  proposal above assumes full trust, which is also the in-process model's
-  own model (no permission broker either; the trust boundary is the
-  host-daemon/server split, which zana's plugins sit entirely inside, on the
-  server side of).
-- **No renderer-side process isolation.** Plugin UI shares one page/React
-  tree with curated trust, error-boundary-isolated only (the
-  "Honest residual" section of zana's own retired `extensions-authoring.md`
-  says the same about the old system: "all panels currently share one
-  `window.cc`... Treat the platform as curated-trust for panels"). The new
-  model doesn't change this, and this plan doesn't propose changing it —
-  `PluginSlotBoundary` is the only isolation.
-- **No message-level extensibility** (`messageAction`/`messageDirective`/
-  `experimental_threadHeaderAction`/`experimental_providerIcon`) — no product
-  surface in zana to extend (§3 table, row 6).
-- **No composer customization** — no shared composer surface exists yet to
-  customize (§3 table, row 7).
+- **No permission broker for V1 plugins.** Already decided.
+- **No renderer-side process isolation.** `PluginSlotBoundary` is the only isolation.
+- Chat slots, composer customization, content scripts, thread-list replacement,
+  thread panel actions, and file openers **are now ported.** The earlier “do not
+  port chat slots because ZCC is a terminal hub” guidance is obsolete: ZCC has a
+  thread workbench, composer, timeline, secondary panel, pending interactions,
+  and `/plugins/:pluginId/:path/*` routes. Full parity is a host-contract +
+  mount-site job. `experimental_threadList` must not hide plugin nav rows or the
+  footer. `projectTab` and the Plugins hub stay ZCC-only.
 
 ## 6. Where this leaves Section 5 of the backlog
 

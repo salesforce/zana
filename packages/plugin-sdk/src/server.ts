@@ -74,6 +74,11 @@ export interface PluginStorage {
 
 export interface PluginRpc {
   method(name: string, handler: (args: unknown) => unknown | Promise<unknown>): void;
+  /** Typed-contract twin of `method`. Handlers are registered by name; schema is advisory. */
+  register(
+    contract: unknown,
+    handlers: Record<string, (args: unknown) => unknown | Promise<unknown>>
+  ): void;
 }
 
 export interface PluginRealtime {
@@ -176,8 +181,13 @@ export interface PluginSdk {
   threads: PluginSdkThreads;
 }
 
+export interface PluginHostClient {
+  call(method: string, input: unknown, options: { hostId: string }): Promise<unknown>;
+}
+
 export interface PluginHostApi {
   experimental_call(method: string, input?: unknown): Promise<unknown>;
+  experimental_client(args?: { contract?: unknown }): PluginHostClient;
 }
 
 export interface PluginAgentToolContext {
@@ -220,6 +230,7 @@ export function enforcePluginCliOutputLimit(result: PluginCliResult): PluginCliE
 export interface PluginBackground {
   service(name: string, start: () => void | (() => void) | Promise<void | (() => void)>): void;
   schedule(cron: string, job: () => void | Promise<void>): void;
+  schedule(name: string, cron: string, job: () => void | Promise<void>): void;
 }
 
 export interface PluginProviderCapabilities {
@@ -247,11 +258,27 @@ export interface PluginProviderHandle {
   unregister(): void;
 }
 
+export interface PluginAgentConfigureContext {
+  threadId?: string;
+  projectId?: string;
+}
+
+export interface PluginAgentConfigureResult {
+  tools?: string[];
+  skills?: string[];
+  instructions?: string;
+}
+
 export interface PluginAgents {
   contributeInstructions(text: string): void;
   contributeSkills(rootPaths: string[]): void;
   registerTool(registration: PluginAgentToolRegistration): void;
   experimental_registerProvider(declaration: PluginProviderDeclaration): PluginProviderHandle;
+  configure(
+    provider: (
+      ctx: PluginAgentConfigureContext
+    ) => PluginAgentConfigureResult | void | Promise<PluginAgentConfigureResult | void>
+  ): void;
 }
 
 import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
@@ -277,11 +304,24 @@ export interface PluginInteractionRequest {
   timeoutMs?: number;
 }
 
+export interface PluginMentionSuggestion {
+  id: string;
+  label: string;
+  insertText?: string;
+}
+
+export interface PluginMentionProviderRegistration {
+  id: string;
+  trigger?: string;
+  search(query: string): PluginMentionSuggestion[] | Promise<PluginMentionSuggestion[]>;
+}
+
 export interface PluginUi {
   requestInput(
     request: PluginInteractionRequest,
     options?: { signal?: AbortSignal }
   ): Promise<PluginInteractionResult>;
+  registerMentionProvider(registration: PluginMentionProviderRegistration): void;
 }
 
 export interface PluginStatusApi {
@@ -308,3 +348,29 @@ export interface ZccPluginApi {
 }
 
 export type ZccPluginFactory = (zcc: ZccPluginApi) => void | Promise<void>;
+
+export interface PluginHostMethodApi {
+  methods: {
+    register(name: string, handler: (input: unknown) => unknown | Promise<unknown>): void;
+  };
+}
+
+export interface PluginHostEntryDefinition {
+  readonly __zccPluginHost: true;
+  readonly setup: (api: PluginHostMethodApi) => void | Promise<void>;
+}
+
+export function experimental_defineHostEntry(
+  setup: (api: PluginHostMethodApi) => void | Promise<void>
+): PluginHostEntryDefinition {
+  return { __zccPluginHost: true, setup };
+}
+
+export function isPluginHostEntryDefinition(value: unknown): value is PluginHostEntryDefinition {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as PluginHostEntryDefinition).__zccPluginHost === true &&
+    typeof (value as PluginHostEntryDefinition).setup === 'function'
+  );
+}

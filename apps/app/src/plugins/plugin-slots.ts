@@ -7,13 +7,23 @@
  */
 
 import type {
+  ComposerCustomization,
+  PluginContentScriptRegistration,
+  PluginFileOpenerRegistration,
   PluginHomepageSectionRegistration,
+  PluginMessageActionRegistration,
+  PluginMessageDirectiveRegistration,
   PluginNavPanelRegistration,
+  PluginNewThreadPanelActionRegistration,
   PluginPendingInteractionRegistration,
   PluginProjectTabRegistration,
+  PluginProviderIconRegistration,
   PluginRegistrationSet,
   PluginSettingsSectionRegistration,
-  PluginSidebarFooterActionRegistration
+  PluginSidebarFooterActionRegistration,
+  PluginThreadHeaderActionRegistration,
+  PluginThreadListRegistration,
+  PluginThreadPanelActionRegistration
 } from '@zana-ai/zcc-plugin-sdk';
 import { collectPluginApp, emptyRegistrationSet, isPluginAppDefinition } from '@zana-ai/zcc-plugin-sdk';
 
@@ -26,15 +36,29 @@ const listeners = new Set<() => void>();
  * slot list stable until a registration changes; rebuilding it in a getter
  * makes every render look like a store update and can recurse indefinitely.
  */
-let snapshot = {
-  sets: [] as PluginRegistrationSet[],
-  navPanels: [] as PluginNavPanelRegistration[],
-  homepageSections: [] as PluginHomepageSectionRegistration[],
-  settingsSections: [] as PluginSettingsSectionRegistration[],
-  projectTabs: [] as PluginProjectTabRegistration[],
-  sidebarFooterActions: [] as PluginSidebarFooterActionRegistration[],
-  pendingInteractions: [] as PluginPendingInteractionRegistration[]
-};
+let snapshot = emptySnapshot();
+
+function emptySnapshot() {
+  return {
+    sets: [] as PluginRegistrationSet[],
+    navPanels: [] as PluginNavPanelRegistration[],
+    homepageSections: [] as PluginHomepageSectionRegistration[],
+    settingsSections: [] as PluginSettingsSectionRegistration[],
+    projectTabs: [] as PluginProjectTabRegistration[],
+    sidebarFooterActions: [] as PluginSidebarFooterActionRegistration[],
+    pendingInteractions: [] as PluginPendingInteractionRegistration[],
+    threadPanelActions: [] as PluginThreadPanelActionRegistration[],
+    newThreadPanelActions: [] as PluginNewThreadPanelActionRegistration[],
+    threadLists: [] as PluginThreadListRegistration[],
+    threadHeaderActions: [] as PluginThreadHeaderActionRegistration[],
+    fileOpeners: [] as PluginFileOpenerRegistration[],
+    messageDirectives: [] as PluginMessageDirectiveRegistration[],
+    messageActions: [] as PluginMessageActionRegistration[],
+    providerIcons: [] as PluginProviderIconRegistration[],
+    composerCustomizations: [] as ComposerCustomization[],
+    contentScripts: [] as PluginContentScriptRegistration[]
+  };
+}
 
 function rebuildSnapshot(): void {
   const orderedSets = [...sets.values()].sort((a, b) => a.pluginId.localeCompare(b.pluginId));
@@ -45,7 +69,17 @@ function rebuildSnapshot(): void {
     settingsSections: orderedSets.flatMap((set) => set.settingsSections),
     projectTabs: orderedSets.flatMap((set) => set.projectTabs),
     sidebarFooterActions: orderedSets.flatMap((set) => set.sidebarFooterActions),
-    pendingInteractions: orderedSets.flatMap((set) => set.pendingInteractions)
+    pendingInteractions: orderedSets.flatMap((set) => set.pendingInteractions),
+    threadPanelActions: orderedSets.flatMap((set) => set.threadPanelActions),
+    newThreadPanelActions: orderedSets.flatMap((set) => set.newThreadPanelActions),
+    threadLists: orderedSets.flatMap((set) => set.threadLists),
+    threadHeaderActions: orderedSets.flatMap((set) => set.threadHeaderActions),
+    fileOpeners: orderedSets.flatMap((set) => set.fileOpeners),
+    messageDirectives: orderedSets.flatMap((set) => set.messageDirectives),
+    messageActions: orderedSets.flatMap((set) => set.messageActions),
+    providerIcons: orderedSets.flatMap((set) => set.providerIcons),
+    composerCustomizations: orderedSets.flatMap((set) => set.composerCustomizations),
+    contentScripts: orderedSets.flatMap((set) => set.contentScripts)
   };
 }
 
@@ -118,6 +152,46 @@ export function listPendingInteractionSlots(): PluginPendingInteractionRegistrat
   return snapshot.pendingInteractions;
 }
 
+export function listThreadPanelActions(): PluginThreadPanelActionRegistration[] {
+  return snapshot.threadPanelActions;
+}
+
+export function listNewThreadPanelActions(): PluginNewThreadPanelActionRegistration[] {
+  return snapshot.newThreadPanelActions;
+}
+
+export function listThreadLists(): PluginThreadListRegistration[] {
+  return snapshot.threadLists;
+}
+
+export function listThreadHeaderActions(): PluginThreadHeaderActionRegistration[] {
+  return snapshot.threadHeaderActions;
+}
+
+export function listFileOpeners(): PluginFileOpenerRegistration[] {
+  return snapshot.fileOpeners;
+}
+
+export function listMessageDirectives(): PluginMessageDirectiveRegistration[] {
+  return snapshot.messageDirectives;
+}
+
+export function listMessageActions(): PluginMessageActionRegistration[] {
+  return snapshot.messageActions;
+}
+
+export function listProviderIcons(): PluginProviderIconRegistration[] {
+  return snapshot.providerIcons;
+}
+
+export function listComposerCustomizations(): ComposerCustomization[] {
+  return snapshot.composerCustomizations;
+}
+
+export function listContentScripts(): PluginContentScriptRegistration[] {
+  return snapshot.contentScripts;
+}
+
 /**
  * `arrangePluginNavPanels`: never-ordered panels append in registry order;
  * stored keys that are not currently registered keep their slot so a slow load
@@ -128,7 +202,7 @@ export function arrangePluginNavPanels(
   storedOrder: readonly string[],
   hiddenKeys: ReadonlySet<string>
 ): { visible: PluginNavPanelRegistration[]; hidden: PluginNavPanelRegistration[]; normalizedOrder: string[] } {
-  const keyOf = (panel: PluginNavPanelRegistration) => `${panel.id}`;
+  const keyOf = (panel: PluginNavPanelRegistration) => `${panel.pluginId}/${panel.path ?? panel.id}`;
   const byKey = new Map(panels.map((panel) => [keyOf(panel), panel]));
   const normalizedOrder = [...storedOrder];
   for (const panel of panels) {

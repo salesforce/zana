@@ -12,6 +12,7 @@ describe('NewThreadView', () => {
     expect(app).toContain('<Route path={PROJECT_THREAD_ROUTE_PATH} element={null} />');
     expect(app.indexOf('NEW_THREAD_ROUTE_PATH')).toBeLessThan(app.indexOf('THREAD_ROUTE_PATH} element={<ThreadDetailView'));
     expect(view).toContain('<HomeAgentComposer project={project} />');
+    expect(view).toContain('PluginNewThreadActions');
     expect(view).not.toContain('allowLegacyAgent');
     expect(view).toContain('search.get(\'project\')');
     expect(view).toContain('routeProjectId');

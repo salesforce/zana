@@ -145,6 +145,27 @@ describe('thread secondary panel state', () => {
       moduleId: 'docs'
     });
     expect(addClosableTab(plugin, { kind: 'plugin', title: 'Docs', moduleId: 'docs' }).tabs).toHaveLength(1);
+    const panel = addClosableTab(emptySecondaryPanelState(), {
+      kind: 'plugin',
+      title: 'Tasks',
+      moduleId: 'tasks',
+      actionId: 'board',
+      params: { id: '1' }
+    });
+    expect(addClosableTab(panel, {
+      kind: 'plugin',
+      title: 'Tasks',
+      moduleId: 'tasks',
+      actionId: 'board',
+      params: { id: '1' }
+    }).tabs).toHaveLength(1);
+    expect(addClosableTab(panel, {
+      kind: 'plugin',
+      title: 'Tasks',
+      moduleId: 'tasks',
+      actionId: 'board',
+      params: { id: '2' }
+    }).tabs).toHaveLength(2);
     const browser = addClosableTab(emptySecondaryPanelState(), {
       kind: 'browser',
       title: 'Browser',

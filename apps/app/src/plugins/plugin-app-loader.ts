@@ -164,6 +164,8 @@ export async function initPluginApps(): Promise<void> {
     }
   };
   (globalThis as { __ZCC_PLUGIN_HOST__?: PluginHostBridge }).__ZCC_PLUGIN_HOST__ = host;
+  const { installPluginRuntime } = await import('./plugin-runtime.js');
+  installPluginRuntime();
   try {
     await reconcilePluginApps(await product.pluginApps.list());
   } catch {

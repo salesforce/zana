@@ -12,12 +12,16 @@ import { ThreadWorkspaceBanner } from '../../components/thread/ThreadWorkspaceBa
 import { isBusyThreadStatus, timelineRowsAwaitUser } from '../../components/thread/thread-timeline-model.js';
 import { ThreadDetailHeading } from '../../components/thread/timeline/ThreadBanners.js';
 import { ThreadDetailOverflow } from '../../components/thread/ThreadDetailOverflow.js';
+import { createCoalescedRunner } from '../../lib/coalesced-runner.js';
 import { getProjectWorkspaceRoutePath, getThreadRoutePath } from '../../lib/route-paths.js';
 import { useRouteState } from '../../hooks/useRouteState.js';
 import { pendingChildThreads, useThreads } from '../../thread-store.js';
 import { ThreadPendingInteractionBanner } from '../../components/thread/pending-interactions/ThreadPendingInteractionBanner.js';
 import { ChildThreadPendingBanners } from '../../components/thread/pending-interactions/ChildThreadPendingBanners.js';
-import { useOpenPendingInteractions } from '../../components/thread/pending-interactions/useOpenPendingInteractions.js';
+import {
+  isOpenThreadEvent,
+  useOpenPendingInteractions
+} from '../../components/thread/pending-interactions/useOpenPendingInteractions.js';
 import { ThreadSecondaryPanel } from '../../components/thread/secondary-panel/ThreadSecondaryPanel.js';
 import { ThreadInfoContent } from '../../components/thread/secondary-panel/ThreadInfoContent.js';
 import { ThreadNewTabPage } from '../../components/thread/secondary-panel/ThreadNewTabPage.js';
@@ -25,6 +29,7 @@ import { ThreadFilePreviewTab } from '../../components/thread/secondary-panel/Th
 import { ThreadBrowserTab } from '../../components/thread/secondary-panel/ThreadBrowserTab.js';
 import { ThreadTerminalTab } from '../../components/thread/secondary-panel/ThreadTerminalTab.js';
 import { ThreadPluginTab } from '../../components/thread/secondary-panel/ThreadPluginTab.js';
+import { PluginThreadHeaderActions } from '../../plugins/PluginThreadHeaderActions.js';
 import { copyText } from '../../components/thread/secondary-panel/threadSecondaryPanelLogic.js';
 import { useThreadSecondaryPanel } from '../../components/thread/secondary-panel/useThreadSecondaryPanel.js';
 import {
@@ -37,7 +42,7 @@ const INITIAL_SEGMENT_LIMIT = 200;
 export function ThreadDetailView() {
   const { threadId } = useParams<{ threadId: string }>();
   if (!threadId) return null;
-  return <ThreadDetail threadId={threadId} />;
+  return <ThreadDetail key={threadId} threadId={threadId} />;
 }
 
 export function ThreadDetail({
@@ -87,15 +92,13 @@ export function ThreadDetail({
     if (!threadId) return;
     let cancelled = false;
     let poll: number | null = null;
-    let gen = 0;
-    const refresh = async () => {
-      const my = ++gen;
+    const runner = createCoalescedRunner(async () => {
       try {
         const [detail, timeline] = await Promise.all([
           product.threads.get(threadId),
           product.threads.timeline(threadId, { segmentLimit })
         ]);
-        if (cancelled || my !== gen) return;
+        if (cancelled) return;
         const thread = detail.thread as {
           id?: string;
           title?: string | null;
@@ -159,24 +162,28 @@ export function ThreadDetail({
       } finally {
         if (!cancelled) setLoadingOlder(false);
       }
-    };
-    void refresh();
+    });
+    runner.run();
     poll = window.setInterval(() => {
       if (cancelled) {
         if (poll !== null) window.clearInterval(poll);
         return;
       }
-      void refresh();
+      runner.run();
     }, 400);
-    const stopUpdated = product.threads.onUpdated(() => void refresh());
-    const stopEvents = product.threads.onEvent((payload) => {
-      if (payload && typeof payload === 'object' && 'threadId' in payload
-        && (payload as { threadId: string }).threadId === threadId) {
-        void refresh();
+    const stopUpdated = product.threads.onUpdated((payload) => {
+      if (payload && typeof payload === 'object' && 'id' in payload) {
+        if ((payload as { id: unknown }).id === threadId) runner.run();
+        return;
       }
+      runner.run();
+    });
+    const stopEvents = product.threads.onEvent((payload) => {
+      if (isOpenThreadEvent(payload, threadId)) runner.run();
     });
     return () => {
       cancelled = true;
+      runner.dispose();
       if (poll !== null) window.clearInterval(poll);
       stopUpdated();
       stopEvents();
@@ -253,11 +260,27 @@ export function ThreadDetail({
         onOpenFile={(path, title) => panel.addTab({ kind: 'file-preview', title, path })}
         onOpenBrowser={() => panel.addTab({ kind: 'browser', title: 'Browser', url: 'https://example.com' })}
         onStartTerminal={() => { void startPanelTerminal(); }}
-        onOpenPlugin={(moduleId, title) => panel.addTab({ kind: 'plugin', title, moduleId })}
+        onOpenPlugin={(moduleId, title, options) =>
+          panel.addTab({
+            kind: 'plugin',
+            title,
+            moduleId,
+            actionId: options?.actionId,
+            params: options?.params ?? null,
+            layout: options?.layout
+          })
+        }
       />
     );
   } else if (closable?.kind === 'file-preview' && closable.path) {
-    panelBody = <ThreadFilePreviewTab threadId={threadId} path={closable.path} />;
+    panelBody = (
+      <ThreadFilePreviewTab
+        threadId={threadId}
+        path={closable.path}
+        openerKey={closable.openerKey}
+        projectId={projectId}
+      />
+    );
   } else if (closable?.kind === 'browser') {
     panelBody = (
       <ThreadBrowserTab
@@ -268,7 +291,16 @@ export function ThreadDetail({
   } else if (closable?.kind === 'terminal' && closable.sessionId && projectId) {
     panelBody = <ThreadTerminalTab sessionId={closable.sessionId} projectId={projectId} />;
   } else if (closable?.kind === 'plugin' && closable.moduleId) {
-    panelBody = <ThreadPluginTab moduleId={closable.moduleId} projectId={projectId} />;
+    panelBody = (
+      <ThreadPluginTab
+        moduleId={closable.moduleId}
+        projectId={projectId}
+        threadId={threadId}
+        actionId={closable.actionId}
+        params={closable.params}
+        layout={closable.layout}
+      />
+    );
   } else if (pin === 'diff') {
     panelBody = <p className="thread-detail-empty">No environment is attached to this thread.</p>;
   }
@@ -302,6 +334,7 @@ export function ThreadDetail({
             }
           />
           <div className="thread-detail-actions">
+            <PluginThreadHeaderActions threadId={threadId} projectId={projectId} />
             {!panelOpen ? (
               <button
                 type="button"

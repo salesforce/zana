@@ -7,6 +7,7 @@ import {
   shouldShowThreadStop,
   threadStatusLabel,
   threadStatusToAgentState,
+  threadStatusTone,
   timelineRowsAwaitUser,
   visiblePendingTodos,
   workRowBody
@@ -41,8 +42,16 @@ describe('thread timeline model', () => {
     expect(threadStatusToAgentState('active')).toBe('working');
     expect(threadStatusToAgentState('stopping')).toBe('working');
     expect(threadStatusToAgentState('idle')).toBe('idle');
-    expect(threadStatusToAgentState('error')).toBe('blocked');
+    expect(threadStatusToAgentState('error')).toBe('idle');
+    expect(threadStatusToAgentState('error', true)).toBe('idle');
     expect(threadStatusToAgentState('active', true)).toBe('blocked');
+  });
+
+  it('keeps an error tone distinct from Needs you', () => {
+    expect(threadStatusTone('error')).toBe('error');
+    expect(threadStatusTone('error', true)).toBe('error');
+    expect(threadStatusTone('active', true)).toBe('blocked');
+    expect(threadStatusTone('idle')).toBe('idle');
   });
 
   it('titles status badges with a readable label', () => {
@@ -51,6 +60,7 @@ describe('thread timeline model', () => {
     expect(threadStatusLabel('stopping')).toBe('Working');
     expect(threadStatusLabel('idle')).toBe('Idle');
     expect(threadStatusLabel('error')).toBe('Error');
+    expect(threadStatusLabel('error', true)).toBe('Error');
     expect(threadStatusLabel('')).toBe('');
     expect(threadStatusLabel('active', true)).toBe('Needs you');
     expect(threadStatusLabel('active', false, { id: 'th', text: '', startedAt: 1, updatedAt: 1 })).toBe('Thinking');

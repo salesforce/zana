@@ -193,6 +193,8 @@ export interface ControlPlaneDeps {
     update(id: string): Promise<unknown>;
     listMarketplaces(): Promise<unknown>;
     addMarketplace(url: string): Promise<unknown>;
+    refreshMarketplace(url: string): Promise<unknown>;
+    removeMarketplace(url: string): Promise<unknown>;
     cliContributions(): Promise<unknown>;
     runCliCommand(id: string, argv: string[]): Promise<unknown>;
   };
@@ -280,7 +282,9 @@ const KNOWN_OPS = new Set<string>([
   'plugin.contributions',
   'plugin.cli',
   'marketplace.list',
-  'marketplace.add'
+  'marketplace.add',
+  'marketplace.refresh',
+  'marketplace.remove'
 ]);
 
 /**
@@ -582,7 +586,9 @@ export async function dispatchOp(
     case 'plugin.outdated':
     case 'plugin.update':
     case 'marketplace.list':
-    case 'marketplace.add': {
+    case 'marketplace.add':
+    case 'marketplace.refresh':
+    case 'marketplace.remove': {
       const host = deps.pluginHost;
       try {
         if (op === 'plugin.install') {
@@ -628,9 +634,19 @@ export async function dispatchOp(
           return { ok: true, value: await (host?.listMarketplaces() ?? (await ensureFallbackPluginService()).listMarketplaces()) };
         }
         if (op === 'marketplace.add') {
-          const url = str(args.url);
-          if (!url) return { ok: false, code: 'BAD_ARGS', message: 'url required' };
+          const url = str(args.url) ?? str(args.source);
+          if (!url) return { ok: false, code: 'BAD_ARGS', message: 'source required' };
           return { ok: true, value: await (host?.addMarketplace(url) ?? (await ensureFallbackPluginService()).addMarketplace(url)) };
+        }
+        if (op === 'marketplace.refresh') {
+          const url = str(args.url) ?? str(args.source);
+          if (!url) return { ok: false, code: 'BAD_ARGS', message: 'source required' };
+          return { ok: true, value: await (host?.refreshMarketplace(url) ?? (await ensureFallbackPluginService()).refreshMarketplace(url)) };
+        }
+        if (op === 'marketplace.remove') {
+          const url = str(args.url) ?? str(args.source);
+          if (!url) return { ok: false, code: 'BAD_ARGS', message: 'source required' };
+          return { ok: true, value: await (host?.removeMarketplace(url) ?? (await ensureFallbackPluginService()).removeMarketplace(url)) };
         }
         if (op === 'plugin.contributions') {
           return { ok: true, value: await (host?.cliContributions() ?? (await ensureFallbackPluginService()).cliContributions()) };

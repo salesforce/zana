@@ -12,6 +12,15 @@ vi.mock('../../../views/project/ProjectExtensionTab.js', () => ({
   ProjectExtensionTab: () => <div>plugin</div>
 }));
 
+vi.mock('../../../plugins/plugin-slots.js', () => ({
+  subscribePluginSlots: (listener: () => void) => {
+    listener();
+    return () => undefined;
+  },
+  listThreadPanelActions: () => [],
+  listNewThreadPanelActions: () => []
+}));
+
 import { ThreadPluginTab } from './ThreadPluginTab.js';
 
 describe('ThreadPluginTab', () => {

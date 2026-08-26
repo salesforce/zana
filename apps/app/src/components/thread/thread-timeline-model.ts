@@ -12,10 +12,20 @@ export function shouldShowThreadStop(threadId: string | undefined, status: strin
 
 /** Map a conversation-thread status onto the agent-board lanes. */
 export function threadStatusToAgentState(status: string, waitingOnUser = false): AgentState {
+  if (status === 'error') return 'idle';
   if (waitingOnUser) return 'blocked';
   if (isBusyThreadStatus(status)) return 'working';
-  if (status === 'error') return 'blocked';
   return 'idle';
+}
+
+/** Visual tone for a thread status chip/dot. Errors keep the danger look without
+ *  borrowing the `blocked` / "Needs you" lane — a failed run is not a prompt. */
+export function threadStatusTone(
+  status: string,
+  waitingOnUser = false
+): AgentState | 'error' {
+  if (status === 'error') return 'error';
+  return threadStatusToAgentState(status, waitingOnUser);
 }
 
 export function threadStatusLabel(
@@ -23,11 +33,11 @@ export function threadStatusLabel(
   waitingOnUser = false,
   thinking?: ActiveThinking | null
 ): string {
-  if (waitingOnUser) return 'Needs you';
   const trimmed = status.trim();
   if (!trimmed) return '';
-  if (isBusyThreadStatus(trimmed)) return thinking ? 'Thinking' : 'Working';
   if (trimmed === 'error') return 'Error';
+  if (waitingOnUser) return 'Needs you';
+  if (isBusyThreadStatus(trimmed)) return thinking ? 'Thinking' : 'Working';
   if (trimmed === 'idle') return 'Idle';
   return trimmed.replace(/-/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 }

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { File, Folder, FolderGit2, MessageSquare, Terminal } from 'lucide-react';
+import { File, Folder, FolderGit2, MessageSquare, Puzzle, Terminal } from 'lucide-react';
 import { suggestionKey, type TypeaheadSuggestion } from './types.js';
 
 function directoryFromPath(path: string): string {
@@ -7,10 +7,11 @@ function directoryFromPath(path: string): string {
   return index > 0 ? path.slice(0, index) : '';
 }
 
-function sectionKind(item: TypeaheadSuggestion): 'threads' | 'projects' | 'files' | 'commands' {
+function sectionKind(item: TypeaheadSuggestion): 'threads' | 'projects' | 'files' | 'commands' | 'plugins' {
   if (item.kind === 'thread') return 'threads';
   if (item.kind === 'project') return 'projects';
   if (item.kind === 'command') return 'commands';
+  if (item.kind === 'plugin') return 'plugins';
   return 'files';
 }
 
@@ -18,6 +19,7 @@ function sectionLabel(kind: ReturnType<typeof sectionKind>): string {
   if (kind === 'threads') return 'Threads';
   if (kind === 'projects') return 'Projects';
   if (kind === 'commands') return 'Commands';
+  if (kind === 'plugins') return 'Plugins';
   return 'Files';
 }
 
@@ -25,6 +27,7 @@ function primaryLabel(item: TypeaheadSuggestion): string {
   if (item.kind === 'path') return item.name;
   if (item.kind === 'thread') return item.title;
   if (item.kind === 'project') return item.name;
+  if (item.kind === 'plugin') return item.label;
   return item.name;
 }
 
@@ -32,6 +35,7 @@ function trailingLabel(item: TypeaheadSuggestion): string {
   if (item.kind === 'path') return directoryFromPath(item.path);
   if (item.kind === 'thread') return item.projectName?.trim() || '';
   if (item.kind === 'command') return item.description;
+  if (item.kind === 'plugin') return item.pluginId;
   return '';
 }
 
@@ -50,6 +54,7 @@ function RowIcon({ item }: { item: TypeaheadSuggestion }) {
   if (item.kind === 'path') return <File className="composer-typeahead-icon" size={14} aria-hidden="true" />;
   if (item.kind === 'thread') return <MessageSquare className="composer-typeahead-icon" size={14} aria-hidden="true" />;
   if (item.kind === 'project') return <FolderGit2 className="composer-typeahead-icon" size={14} aria-hidden="true" />;
+  if (item.kind === 'plugin') return <Puzzle className="composer-typeahead-icon" size={14} aria-hidden="true" />;
   return <Terminal className="composer-typeahead-icon" size={14} aria-hidden="true" />;
 }
 

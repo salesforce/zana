@@ -209,7 +209,10 @@ describe('nested live threads', () => {
     expect(source).toContain('railThreadsForProject');
     expect(source).toContain('threadIsLiveForRail');
     expect(source).toContain('data-testid="project-thread-row"');
-    expect(source).toContain('navigate(getThreadRoutePath(thread.id))');
+    expect(source).toContain('navigate(getThreadRoutePath(thread.id, scopedProjectId))');
+    expect(source).toContain('onPointerDown={(e) => e.stopPropagation()}');
+    expect(source).toContain("activeThreadId === thread.id ? ' active' : ''");
+    expect(source).toContain('useRouteState()');
     expect(source).toContain('railThreadsByProject.get(p.id)');
     expect(source).toContain('liveList.length === 0 && railThreads.length === 0');
     expect(source).toContain('isWorkspaceRailExpanded(projectExpanded[p.id], projectHasNestableSessions(p))');
@@ -218,6 +221,7 @@ describe('nested live threads', () => {
     expect(source).toContain('<ProviderIcon providerId={thread.providerId}');
     expect(source).toContain('threadRailStatus');
     expect(source).toContain('agents-row-needs-you');
+    expect(source).toContain('status === \'Needs you\' || status === \'Error\'');
     expect(source).not.toContain('MessageSquare');
     expect(source).not.toContain('<FleetKindChip kind="thread" />');
   });

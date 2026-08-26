@@ -22,6 +22,8 @@ import { ErrorBoundary } from '../components/ErrorBoundary.js';
 import type { ModuleHost } from '@zana-ai/zcc-extension-sdk/renderer';
 import { listNavPanels } from '../plugins/plugin-slots.js';
 import { PluginSlotBoundary } from '../plugins/PluginSlotBoundary.js';
+import { useRouteState } from '../hooks/useRouteState.js';
+import { PluginNavPanelHost, useHasPluginNavPanel } from '../plugins/PluginNavPanelHost.js';
 
 function generationFor(pluginId: string): number {
   return listNavPanels().find((panel) => panel.pluginId === pluginId)?.generation ?? 0;
@@ -29,7 +31,9 @@ function generationFor(pluginId: string): number {
 
 export function ModulePanelHost() {
   const nav = useUi((s) => s.nav);
+  const route = useRouteState();
   const modules = useMergedModules();
+  const pluginPanel = useHasPluginNavPanel(route.nav || nav);
   const mod = useMemo(() => modules.find((m) => m.id === nav), [modules, nav]);
 
   // W1-6: wrap the cached base host in a per-MOUNT cleanup scope so the panel's
@@ -39,6 +43,8 @@ export function ModulePanelHost() {
   const scoped = useMemo(() => (mod ? createMountScopedHost(getHost(mod.id)) : null), [mod]);
   const host: ModuleHost | null = scoped?.host ?? null;
   useEffect(() => () => scoped?.dispose(), [scoped]);
+
+  if (pluginPanel) return <PluginNavPanelHost />;
 
   if (!mod || !host) return null;
 

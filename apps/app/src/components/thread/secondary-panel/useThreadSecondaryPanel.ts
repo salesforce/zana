@@ -24,6 +24,17 @@ export function useSecondaryPanel(
     persistSecondaryPanel(ownerId, state);
   }, [ownerId, state]);
 
+  useEffect(() => {
+    if (!ownerId) return;
+    const onChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ threadId?: string }>).detail;
+      if (detail?.threadId && detail.threadId !== ownerId) return;
+      setState(restoreSecondaryPanel(ownerId, { defaultOpen }));
+    };
+    window.addEventListener('zcc:secondary-panel-changed', onChanged);
+    return () => window.removeEventListener('zcc:secondary-panel-changed', onChanged);
+  }, [defaultOpen, ownerId]);
+
   const update = useCallback((recipe: (current: ThreadSecondaryPanelState) => ThreadSecondaryPanelState) => {
     setState((current) => recipe(current));
   }, []);

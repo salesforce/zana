@@ -126,7 +126,9 @@ export function useThreadComposerOptions(input: {
 
   const providers = catalog.providers.length > 0
     ? catalog.providers
-    : [fallbackProviderOption(providerId)];
+    : input.threadId || input.lockedProviderId
+      ? [fallbackProviderOption(providerId)]
+      : [];
   const cached = catalog.byProvider[providerId];
   const models = cached?.models ?? fallbackModelsForProvider(providerId);
   const moreModels = cached?.selectedOnlyModels ?? fallbackMoreModelsForProvider(providerId);

@@ -38,11 +38,14 @@ import { nextHostDialogId as hostDialogId } from './modules/host.js';
 import { UpdateBanner } from './components/UpdateBanner.js';
 import { WhatsNewModal } from './components/WhatsNewModal.js';
 import { ExtensionConsent } from './components/ExtensionConsent.js';
+import { PluginContentScriptsHost } from './plugins/PluginContentScriptsHost.js';
+import { PluginThemesHost } from './plugins/PluginThemesHost.js';
 import { ModulePanelHost } from './modules/ModulePanelHost.js';
 import { ModuleBackgroundHost } from './modules/ModuleBackgroundHost.js';
 import { useMergedModules } from './modules/index.js';
 import { initExtensionModules, reconcileExtensionModules } from './modules/loader.js';
 import { initPluginApps, reconcilePluginApps } from './plugins/plugin-app-loader.js';
+import { listNavPanels } from './plugins/plugin-slots.js';
 import {
   CORE_NAV_IDS,
   scheduleGitRefresh,
@@ -212,6 +215,7 @@ export function App() {
     }
     if (CORE_NAV_IDS.has(nav as never)) return;
     if (modules.some((m) => m.id === nav)) return;
+    if (listNavPanels().some((panel) => panel.pluginId === nav)) return;
     useUi.getState().setNav('home');
   }, [nav, modules]);
   const shellChrome = useShellChromeState();
@@ -729,6 +733,8 @@ export function App() {
           retain valid background components, which mount here outside nav-conditional
           views so long-lived work keeps running when a panel is not selected. */}
       <ModuleBackgroundHost />
+      <PluginContentScriptsHost />
+      <PluginThemesHost />
       <CommandPaletteHost />
       <QuickOpenHost />
       <ResumePickerHost />

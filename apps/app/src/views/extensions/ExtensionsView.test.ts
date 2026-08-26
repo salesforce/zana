@@ -28,6 +28,13 @@ describe('ExtensionsView aurora background', () => {
     expect(inner).toContain('flex: 1 1 auto;');
     expect(inner).toContain('min-height: 0;');
     expect(inner).toContain('overflow-y: auto;');
+    expect(inner).toContain('width: 100%;');
+    expect(inner).toContain('scrollbar-width: none;');
+
+    expect(css).toContain('.extensions-panel .settings-inner::-webkit-scrollbar {');
+    expect(css).toContain('.ext-market::-webkit-scrollbar {');
+    expect(css).toContain('.ext-installed::-webkit-scrollbar {');
+    expect(css).toContain('.ext-market-search-refresh {');
 
     expect(css).toContain('.extensions-panel .ext-market.settings-section {');
     expect(css).toContain('.extensions-panel .ext-market-item {\n  background: var(--bg-panel);');

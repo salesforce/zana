@@ -2,7 +2,7 @@
 import { ipcMain } from 'electron';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
-import { installFromArchiveFile, installFromBundled, installFromDir, installFromGit, listBundledCatalog, locateManifestDir, uninstallExtension } from '@zana-ai/zcc-server/services/extensions/extension-installer';
+import { installFromArchiveFile, installFromBundled, installFromDir, installFromGit, locateManifestDir, uninstallExtension } from '@zana-ai/zcc-server/services/extensions/extension-installer';
 import {
   defaultBundledRoot,
   defaultPluginDataDir,
@@ -10,6 +10,12 @@ import {
   listBundledPluginCatalog
 } from '@zana-ai/zcc-server/plugins/plugin-service';
 import { createPluginStore, pluginStorePath } from '@zana-ai/zcc-server/plugins/plugin-store';
+import { createMarketplaceStore, marketplaceStorePath } from '@zana-ai/zcc-server/plugins/marketplace-store';
+import {
+  projectCatalogMarketplaceEntries,
+  resolveCatalogInstallSpec,
+  mergeShippedWithCatalogs
+} from '@zana-ai/zcc-server/plugins/catalog-marketplace-entries';
 import { applyRelease, listMarketplace, maybeCheckRemoteUpdates, resolveMarketplaceRelease } from '@zana-ai/zcc-server/services/extensions/extension-registry';
 import { grantConsent, pruneConsentedPermission, revokeConsent } from '../extensions/consent.js';
 import { addExtensionPermission, clearGit, clearLocal, extensionDir, getGitRecord, getLocalRecord, markGit, readRendererEntry, removeExtensionPermission, setExtensionEnabled } from '../extensions/discovery.js';
@@ -283,6 +289,22 @@ export function registerExtensionsIpc(): void {
         }
         res = await installFromArchiveFile(pick.filePaths[0], installOpts);
       } else if (source.kind === 'marketplace') {
+        const catalogSpec = resolveCatalogInstallSpec(
+          createMarketplaceStore({ file: marketplaceStorePath(defaultPluginDataDir()) }).list(),
+          source.id
+        );
+        if (catalogSpec) {
+          if (!ctx.runtimeSupervisor) {
+            return { ok: false, code: 'UNAVAILABLE', message: 'plugin host is unavailable' };
+          }
+          const row = await ctx.runtimeSupervisor.installPlugin(catalogSpec);
+          const id =
+            row && typeof row === 'object' && 'id' in row ? String((row as { id: unknown }).id) : '';
+          if (!id) {
+            return { ok: false, code: 'INSTALL_FAILED', message: 'plugin install did not return an id' };
+          }
+          return { ok: true, value: { id } };
+        }
         const resolved = await resolveMarketplaceRelease(source.id, ctx.logMainError);
         if (!resolved) {
           return {
@@ -670,32 +692,45 @@ export function registerExtensionsIpc(): void {
       message: err instanceof Error ? err.message : String(err)
     })
   );
-  // Browse the marketplace: first-party BUNDLED plugins (`plugins/`, offline)
-  // unioned with leftover bundled disk extensions and the opt-in remote
-  // registry (a remote release for an id wins over its bundled twin). Never
-  // reaches the network by default — bundled rows are read from app resources.
+  // Browse the marketplace: first-party plugins the app ships (`plugins/`,
+  // offline) plus configured community catalogs, plus the opt-in signed
+  // registry. A remote/catalog row for the same id does not hide a shipped
+  // plugin unless listMarketplace prefers a newer compatible remote release.
   ctx.safeHandle(
     IPC.extensions.marketplaceList,
     async (): Promise<Result<MarketplaceEntry[]>> => {
-      const pluginIds = createPluginStore({
+      const pluginApps = (await ctx.runtimeSupervisor?.listPluginApps()) ?? [];
+      const stored = createPluginStore({
         file: pluginStorePath(defaultPluginDataDir())
-      })
-        .list()
-        .map((row) => row.id);
+      }).list();
       const installedIds = [
-        ...new Set([...ctx.extensionEntries.map((e) => e.id), ...pluginIds])
+        ...new Set([
+          ...ctx.extensionEntries.map((e) => e.id),
+          ...pluginApps.map((plugin) => plugin.id),
+          ...stored.map((row) => row.id)
+        ])
       ];
-      const bundled = [
-        ...listBundledPluginCatalog(defaultBundledRoot(), ctx.logMainError),
-        ...(await listBundledCatalog(ctx.logMainError))
-      ];
-      const entries = await listMarketplace(
+      const installedVersions = new Map(
+        stored
+          .filter((row) => typeof row.version === 'string' && row.version.length > 0)
+          .map((row) => [row.id, row.version])
+      );
+      const shipped = listBundledPluginCatalog(defaultBundledRoot(), ctx.logMainError);
+      const shippedEntries = await listMarketplace(
         installedIds,
         ctx.logMainError,
         undefined,
-        bundled
+        shipped
       );
-      return { ok: true, value: entries };
+      const catalogEntries = projectCatalogMarketplaceEntries(
+        createMarketplaceStore({ file: marketplaceStorePath(defaultPluginDataDir()) }).list(),
+        new Set(installedIds),
+        installedVersions
+      );
+      return {
+        ok: true,
+        value: mergeShippedWithCatalogs(shippedEntries, catalogEntries)
+      };
     },
     (err): Result<MarketplaceEntry[]> => ({
       ok: false,

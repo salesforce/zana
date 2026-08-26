@@ -135,11 +135,26 @@ export function AgentSessionView({
         allowSidecarTerminal={false}
         onOpenFile={(path, title) => panel.addTab({ kind: 'file-preview', title, path })}
         onOpenBrowser={() => panel.addTab({ kind: 'browser', title: 'Browser', url: 'https://example.com' })}
-        onOpenPlugin={(moduleId, title) => panel.addTab({ kind: 'plugin', title, moduleId })}
+        onOpenPlugin={(moduleId, title, options) =>
+          panel.addTab({
+            kind: 'plugin',
+            title,
+            moduleId,
+            actionId: options?.actionId,
+            params: options?.params ?? null,
+            layout: options?.layout
+          })
+        }
       />
     );
   } else if (closable?.kind === 'file-preview' && closable.path) {
-    panelBody = <ThreadFilePreviewTab path={closable.path} />;
+    panelBody = (
+      <ThreadFilePreviewTab
+        path={closable.path}
+        openerKey={closable.openerKey}
+        projectId={projectId}
+      />
+    );
   } else if (closable?.kind === 'browser') {
     panelBody = (
       <ThreadBrowserTab
@@ -148,7 +163,15 @@ export function AgentSessionView({
       />
     );
   } else if (closable?.kind === 'plugin' && closable.moduleId) {
-    panelBody = <ThreadPluginTab moduleId={closable.moduleId} projectId={projectId} />;
+    panelBody = (
+      <ThreadPluginTab
+        moduleId={closable.moduleId}
+        projectId={projectId}
+        actionId={closable.actionId}
+        params={closable.params}
+        layout={closable.layout}
+      />
+    );
   } else if (closable?.kind === 'terminal') {
     panelBody = (
       <p className="thread-detail-empty">

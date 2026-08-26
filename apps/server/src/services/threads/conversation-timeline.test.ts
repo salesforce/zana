@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { storedEventsToMeta, conversationOutline, conversationTimeline } from './conversation-timeline.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 
@@ -136,6 +136,54 @@ describe('conversationTimeline', () => {
     });
     expect(timeline.rows).toEqual([]);
   });
+
+  it('projects a latest window that dropped turn/started instead of failing the timeline', () => {
+    const threadId = '11111111-1111-4111-8111-111111111111';
+    vi.mocked(getConversationThread).mockReturnValueOnce({
+      id: threadId,
+      projectId: 'proj-1',
+      hostId: 'host-1',
+      environmentId: null,
+      providerId: 'pi',
+      status: 'idle',
+      title: 'Hello'
+    });
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValueOnce([
+      {
+        id: 'evt-200',
+        threadId,
+        sequence: 200,
+        type: 'item/agentMessage/delta',
+        payload: {
+          type: 'item/agentMessage/delta',
+          threadId,
+          providerThreadId: 'p1',
+          scope: { kind: 'turn', turnId: 'turn-1' },
+          itemId: 'assistant-1',
+          delta: 'Hello from the tail of a long turn.'
+        },
+        createdAt: 200
+      },
+      {
+        id: 'evt-201',
+        threadId,
+        sequence: 201,
+        type: 'turn/completed',
+        payload: {
+          type: 'turn/completed',
+          threadId,
+          providerThreadId: 'p1',
+          scope: { kind: 'turn', turnId: 'turn-1' },
+          status: 'completed'
+        },
+        createdAt: 201
+      }
+    ]);
+    const timeline = conversationTimeline({ db: {}, dataDir: '/tmp' } as ProductHttpContext, threadId);
+    expect(timeline.status).toBe('idle');
+    expect(timeline.activeThinking).toBeNull();
+    expect(JSON.stringify(timeline.rows)).toContain('Hello from the tail of a long turn.');
+  });
 });
 
 describe('conversationOutline', () => {
@@ -173,5 +221,50 @@ describe('conversationItemsFromRows', () => {
       },
       { id: 'a1', role: 'assistant', preview: 'Done', attachmentSummary: null }
     ]);
+  });
+});
+
+describe('provider/unhandled timeline flag', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+  const threadId = '11111111-1111-4111-8111-111111111111';
+  const unhandled = {
+    id: 'evt-u',
+    threadId,
+    sequence: 1,
+    type: 'provider/unhandled',
+    payload: {
+      type: 'provider/unhandled',
+      threadId,
+      providerThreadId: 'p1',
+      providerId: 'codex',
+      rawType: 'session.updated',
+      rawEvent: { jsonrpc: '2.0' as const, method: 'session.updated' },
+      scope: { kind: 'thread' as const }
+    },
+    createdAt: 1
+  };
+
+  it('drops provider/unhandled rows when the debug flag is off', () => {
+    vi.stubEnv('NODE_ENV', 'test');
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValueOnce([unhandled]);
+    const timeline = conversationTimeline({
+      db: {},
+      dataDir: '/tmp',
+      config: { getConfig: () => ({ showUnhandledProviderEvents: false }) }
+    } as ProductHttpContext, threadId);
+    expect(JSON.stringify(timeline.rows)).not.toMatch(/provider-unhandled/);
+  });
+
+  it('surfaces provider/unhandled rows when the debug flag is on', () => {
+    vi.stubEnv('NODE_ENV', 'test');
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValueOnce([unhandled]);
+    const timeline = conversationTimeline({
+      db: {},
+      dataDir: '/tmp',
+      config: { getConfig: () => ({ showUnhandledProviderEvents: true }) }
+    } as ProductHttpContext, threadId);
+    expect(JSON.stringify(timeline.rows)).toMatch(/provider-unhandled/);
   });
 });

@@ -45,6 +45,11 @@ export class MarketplacePage {
     return this.row(title).locator('.ext-market-item-action button');
   }
 
+  /** Confirm the full-trust dialog that follows an Install / Update click. */
+  async confirmInstall(): Promise<void> {
+    await this.window.getByRole('button', { name: 'Install with full trust' }).click();
+  }
+
   /** Call a `window.cc.extensions.<method>(...args)` in the renderer. */
   async ipc<T = unknown>(method: string, ...args: unknown[]): Promise<T> {
     return this.window.evaluate(

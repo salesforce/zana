@@ -16,7 +16,7 @@ import { highlightMatches } from './palette/highlight.js';
 import { ImprovePromptButton } from './ImprovePromptButton.js';
 import { VoiceInputButton } from './VoiceInputButton.js';
 import { AttachmentPills } from './ui/AttachmentPills.js';
-import { ComposerIconButton } from './ui/CommandComposer.js';
+import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
 import type { WalkedFile } from '@zana-ai/zcc-domain/product';
 import type { AutoGrowTextareaHandle } from './ui/CommandComposer.js';
 
@@ -228,6 +228,12 @@ export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function P
   const homeVariant = variant === 'home';
 
   return (
+    <PluginComposerChrome
+      scope={{ kind: 'new-thread', projectId: null }}
+      text={value}
+      setText={onChange}
+      focus={() => textElement()?.focus()}
+    >
     <div
       className={`${homeVariant ? 'ui-command-composer prompt-composer--home' : 'prompt-composer'} ${dropOver ? (homeVariant ? 'is-drop-over' : 'drop-over') : ''}`}
       {...dropHandlers}
@@ -322,5 +328,6 @@ export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function P
         </div>
       )}
     </div>
+    </PluginComposerChrome>
   );
 });

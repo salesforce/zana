@@ -78,7 +78,10 @@ describe('server runtime contract', () => {
         {
           id: 'tasks',
           name: 'Tasks',
+          description: 'Track work items',
           icon: 'ListTodo',
+          enabled: true,
+          provenance: 'builtin',
           status: 'running',
           appUrl: '/plugins/tasks/assets/dist/renderer.js?v=1',
           projectTab: { label: 'Tasks', global: false }
@@ -88,7 +91,17 @@ describe('server runtime contract', () => {
     expect(RuntimeOutboundSchema.safeParse({
       type: 'plugin-apps-changed',
       protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
-      apps: [{ id: 'tasks', name: 'Tasks', icon: 'ListTodo', status: 'running', appUrl: null, rootDir: '/secret' }]
+      apps: [{
+        id: 'tasks',
+        name: 'Tasks',
+        description: 'Track work items',
+        icon: 'ListTodo',
+        enabled: true,
+        provenance: 'builtin',
+        status: 'running',
+        appUrl: null,
+        rootDir: '/secret'
+      }]
     }).success).toBe(false);
   });
 

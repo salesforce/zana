@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { ChevronRight } from 'lucide-react';
 import type { ActiveThinking, ThreadTimelineGoal, ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
 import type { TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
-import { isBusyThreadStatus, threadStatusLabel, threadStatusToAgentState, visiblePendingTodos } from '../thread-timeline-model.js';
+import { isBusyThreadStatus, threadStatusLabel, threadStatusTone, visiblePendingTodos } from '../thread-timeline-model.js';
 
 export function ThreadTodoCard({ todos }: { todos: ThreadTimelinePendingTodos | null }) {
   const visible = visiblePendingTodos(todos);
@@ -106,14 +106,14 @@ export function ThreadStatusBadge({
 }) {
   const label = threadStatusLabel(status, waitingOnUser, thinking);
   if (!label) return null;
-  const state = threadStatusToAgentState(status, waitingOnUser);
+  const tone = threadStatusTone(status, waitingOnUser);
   return (
     <span
-      className={`thread-chip thread-status-badge is-${state}`}
+      className={`thread-chip thread-status-badge is-${tone}`}
       data-testid="thread-detail-status"
       data-status={status}
     >
-      <span className={`tab-agent-dot agent-${state}`} aria-hidden="true" />
+      <span className={`tab-agent-dot agent-${tone}`} aria-hidden="true" />
       {label}
     </span>
   );

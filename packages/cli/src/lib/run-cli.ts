@@ -261,12 +261,16 @@ LIVE COMMANDS (require the app to be running):
   plugin reload <id>       Dispose and load again
   plugin remove <id>       Unregister (path sources stay on disk)
   plugin dev [dir]         Watch, rebuild, and reload (use --once to skip watch)
-  plugin search [query]    Search official + configured catalogs
+  plugin search [query]    Search official shipped plugins + configured catalogs
   plugin outdated          List installed plugins with a newer catalog version
   plugin update <id>       Reinstall from the recorded catalog pointer
   plugin run <id> <args…>  Run a plugin CLI contribution by plugin id
   marketplace ls           List configured marketplace catalogs
-  marketplace add <url>    Add a provenance-only marketplace index
+  marketplace add <source> Add a provenance-only marketplace index (https, git:, path:)
+  marketplace refresh <source>
+                           Re-fetch a catalog; keeps the last good index on failure
+  marketplace remove <source>
+                           Drop a catalog (installed plugins keep running)
   marketplace install <id@marketplace>
                            Install through the catalog pointer (never from a file-bundle archive)
   agent ls                 List live agents + their state

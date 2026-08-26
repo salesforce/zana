@@ -12,6 +12,14 @@ describe('Settings subsection navigation', () => {
     ]);
   });
 
+  it('lists Threads, CLI skills, and Debug under Global', () => {
+    expect(SETTINGS_SUBSECTIONS.global).toEqual(expect.arrayContaining([
+      { id: 'threads', label: 'Threads' },
+      { id: 'cli-skills', label: 'CLI skills' },
+      { id: 'debug', label: 'Debug' }
+    ]));
+  });
+
   it('lists Git worktrees under global Agent settings', () => {
     expect(SETTINGS_SUBSECTIONS.agents).toContainEqual({
       id: 'git-worktrees',

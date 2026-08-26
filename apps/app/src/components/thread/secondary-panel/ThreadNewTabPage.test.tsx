@@ -1,21 +1,24 @@
 import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-const projectTabModules = vi.hoisted(() => ({
-  current: [] as Array<{ id: string; title: string; projectTab?: { label?: string } }>
-}));
-
 vi.mock('../../../lib/app-surface.js', () => ({
   hasDesktopBridge: () => false
 }));
 vi.mock('../../../lib/product-client.js', () => ({
   product: { fs: {} }
 }));
-vi.mock('../../../modules/index.js', () => ({
-  useProjectTabModules: () => projectTabModules.current
-}));
 vi.mock('../../../store.js', () => ({
   useData: (selector: (s: { projects: unknown[] }) => unknown) => selector({ projects: [] })
+}));
+vi.mock('../../../plugins/plugin-slots.js', () => ({
+  subscribePluginSlots: (listener: () => void) => {
+    listener();
+    return () => undefined;
+  },
+  listThreadPanelActions: () => [
+    { pluginId: 'tasks', id: 'board', title: 'Tasks', layout: 'padded' }
+  ],
+  listNewThreadPanelActions: () => []
 }));
 
 import { ThreadNewTabPage, ThreadNewTabView } from './ThreadNewTabPage.js';
@@ -36,22 +39,7 @@ describe('ThreadNewTabPage', () => {
     expect(html).toContain('data-testid="thread-new-tab-terminal"');
     expect(html).toContain('Start terminal');
     expect(html).not.toContain('data-testid="thread-new-tab-browser"');
-  });
-
-  it('lists project-tab modules as plugin actions', () => {
-    projectTabModules.current = [{ id: 'docs', title: 'Docs', projectTab: { label: 'Library' } }];
-    const html = renderToStaticMarkup(
-      <ThreadNewTabPage
-        projectId={null}
-        cwd={null}
-        onOpenFile={() => undefined}
-        onOpenBrowser={() => undefined}
-        onStartTerminal={() => undefined}
-        onOpenPlugin={() => undefined}
-      />
-    );
-    expect(html).toContain('Library');
-    projectTabModules.current = [];
+    expect(html).toContain('Tasks');
   });
 
   it('lists matching files and an empty search state', () => {
@@ -61,7 +49,7 @@ describe('ThreadNewTabPage', () => {
         onQueryChange={() => undefined}
         matches={[{ path: '/tmp/README.md', rel: 'README.md' }]}
         desktop
-        modules={[]}
+        actions={[]}
         onOpenFile={() => undefined}
         onOpenBrowser={() => undefined}
         onStartTerminal={() => undefined}
@@ -76,7 +64,7 @@ describe('ThreadNewTabPage', () => {
         onQueryChange={() => undefined}
         matches={[]}
         desktop={false}
-        modules={[]}
+        actions={[]}
         onOpenFile={() => undefined}
         onOpenBrowser={() => undefined}
         onStartTerminal={() => undefined}
@@ -90,7 +78,7 @@ describe('ThreadNewTabPage', () => {
         onQueryChange={() => undefined}
         matches={[]}
         desktop
-        modules={[{ id: 'docs', title: 'Docs', projectTab: { label: 'Library' } }]}
+        actions={[{ pluginId: 'tasks', id: 'board', title: 'Tasks' }]}
         onOpenFile={() => undefined}
         onOpenBrowser={() => undefined}
         onStartTerminal={() => undefined}
@@ -98,14 +86,14 @@ describe('ThreadNewTabPage', () => {
       />
     );
     expect(desktop).toContain('data-testid="thread-new-tab-browser"');
-    expect(desktop).toContain('Library');
+    expect(desktop).toContain('Tasks');
     const noSidecar = renderToStaticMarkup(
       <ThreadNewTabView
         query=""
         onQueryChange={() => undefined}
         matches={[]}
         desktop={false}
-        modules={[]}
+        actions={[]}
         onOpenFile={() => undefined}
         onOpenBrowser={() => undefined}
         onOpenPlugin={() => undefined}

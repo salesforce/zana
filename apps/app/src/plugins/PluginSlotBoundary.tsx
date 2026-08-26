@@ -1,4 +1,18 @@
-import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { Component, createContext, useContext, type ErrorInfo, type ReactNode } from 'react';
+
+export interface PluginRuntimeContextValue {
+  pluginId: string;
+  generation: number;
+}
+
+export const PluginRuntimeContext = createContext<PluginRuntimeContextValue>({
+  pluginId: '',
+  generation: 0
+});
+
+export function usePluginRuntimeContext(): PluginRuntimeContextValue {
+  return useContext(PluginRuntimeContext);
+}
 
 /**
  * Per-slot error boundary keyed by pluginId + generation so a reload remounts
@@ -26,6 +40,12 @@ export class PluginSlotBoundary extends Component<
         </div>
       );
     }
-    return this.props.children ?? null;
+    return (
+      <PluginRuntimeContext.Provider
+        value={{ pluginId: this.props.pluginId, generation: this.props.generation }}
+      >
+        {this.props.children ?? null}
+      </PluginRuntimeContext.Provider>
+    );
   }
 }

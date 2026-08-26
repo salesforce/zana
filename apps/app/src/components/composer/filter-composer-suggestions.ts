@@ -20,12 +20,16 @@ export function rankSuggestions(
           ? item.title
           : item.kind === 'project'
             ? item.name
-            : item.name;
+            : item.kind === 'plugin'
+              ? item.label
+              : item.name;
       const extra = item.kind === 'command'
         ? item.description
         : item.kind === 'thread'
           ? (item.projectName ?? '')
-          : '';
+          : item.kind === 'plugin'
+            ? item.pluginId
+            : '';
       const primaryScore = fuzzyScore(primary, q);
       const extraScore = extra ? fuzzyScore(extra, q) : null;
       const score = Math.max(primaryScore?.score ?? -1, extraScore?.score ?? -1);
@@ -41,7 +45,8 @@ export function mentionOrder(items: readonly TypeaheadSuggestion[]): TypeaheadSu
   const rank = (item: TypeaheadSuggestion) => {
     if (item.kind === 'thread') return 0;
     if (item.kind === 'project') return 1;
-    return 2;
+    if (item.kind === 'plugin') return 2;
+    return 3;
   };
   return [...items].sort((left, right) => rank(left) - rank(right));
 }
@@ -55,6 +60,13 @@ export function buildMentionSuggestions(input: {
     projectName?: string | null;
   }>;
   projects: ReadonlyArray<{ id: string; name: string }>;
+  pluginItems?: ReadonlyArray<{
+    pluginId: string;
+    providerId: string;
+    id: string;
+    label: string;
+    insertText?: string;
+  }>;
   query: string;
 }): TypeaheadSuggestion[] {
   const threads = rankSuggestions(
@@ -87,7 +99,19 @@ export function buildMentionSuggestions(input: {
     input.query,
     COMPOSER_SUGGESTION_LIMIT
   );
-  return mentionOrder([...threads, ...projects, ...paths]).slice(0, COMPOSER_SUGGESTION_LIMIT);
+  const plugins = rankSuggestions(
+    (input.pluginItems ?? []).map((row) => ({
+      kind: 'plugin' as const,
+      pluginId: row.pluginId,
+      providerId: row.providerId,
+      id: row.id,
+      label: row.label,
+      insertText: row.insertText
+    })),
+    input.query,
+    4
+  );
+  return mentionOrder([...threads, ...projects, ...plugins, ...paths]).slice(0, COMPOSER_SUGGESTION_LIMIT);
 }
 
 export function buildCommandSuggestions(

@@ -4,9 +4,22 @@ import { SESSION_MEMORY_DEFAULTS } from '@zana-ai/zcc-domain/product';
 import { useUi } from '@/store';
 import { Section, Field, CheckboxField } from '@/components/settings/FormFields';
 import { PluginSettingsSections } from '@/plugins/PluginSettingsSections';
+import { PluginFileOpenerSettings, PluginThemePicker, PluginThreadListPicker } from '@/plugins/PluginAppearanceSettings';
 import { DoctorSection } from '@/components/settings/DoctorSection';
 import { AuthorizationsSection } from '@/components/settings/AuthorizationsSection';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
+import { useBooleanPreference } from '@/lib/use-boolean-preference';
+import {
+  MARKDOWN_IN_PROMPT_DEFAULT,
+  MARKDOWN_IN_PROMPT_KEY,
+  NAVIGATE_TO_THREAD_ON_CREATE_DEFAULT,
+  NAVIGATE_TO_THREAD_ON_CREATE_KEY
+} from '@/lib/thread-composer-preferences';
+import {
+  REWRITE_LOCALHOST_LINKS_DEFAULT,
+  REWRITE_LOCALHOST_LINKS_STORAGE_KEY
+} from '@/lib/localhost-link-rewrite-preference';
+import { CliSkillsSettings } from './CliSkillsSettings';
 
 interface GlobalTabProps {
   config: AppConfig;
@@ -23,6 +36,18 @@ export function GlobalView({
   hooks,
   onOpen
 }: GlobalTabProps) {
+  const [navigateOnCreate, setNavigateOnCreate] = useBooleanPreference(
+    NAVIGATE_TO_THREAD_ON_CREATE_KEY,
+    NAVIGATE_TO_THREAD_ON_CREATE_DEFAULT
+  );
+  const [markdownInPrompt, setMarkdownInPrompt] = useBooleanPreference(
+    MARKDOWN_IN_PROMPT_KEY,
+    MARKDOWN_IN_PROMPT_DEFAULT
+  );
+  const [rewriteLocalhost, setRewriteLocalhost] = useBooleanPreference(
+    REWRITE_LOCALHOST_LINKS_STORAGE_KEY,
+    REWRITE_LOCALHOST_LINKS_DEFAULT
+  );
   return (
     <>
       <Section anchorId="appearance" title="Appearance">
@@ -39,6 +64,12 @@ export function GlobalView({
             ]}
           />
         </Field>
+        <PluginThemePicker />
+        <PluginThreadListPicker />
+      </Section>
+
+      <Section anchorId="files" title="Files" help="Which viewer opens a given extension inside a thread’s file preview. Git diffs still use the host preview.">
+        <PluginFileOpenerSettings />
       </Section>
 
       <AuthorizationsSection />
@@ -176,6 +207,52 @@ export function GlobalView({
             spellCheck={false}
           />
         </Field>
+      </Section>
+
+      <Section
+        anchorId="threads"
+        title="Threads"
+        help="Composer and markdown behavior for new and running threads."
+      >
+        <CheckboxField
+          label="Navigate to threads on creation"
+          help="Open a new thread as soon as you send the first message. Off keeps you on the current page."
+          checked={navigateOnCreate}
+          onChange={setNavigateOnCreate}
+        />
+        <CheckboxField
+          label="Markdown in the prompt box"
+          help="Allow headings, lists, and emphasis in the composer. Mentions still work either way."
+          checked={markdownInPrompt}
+          onChange={setMarkdownInPrompt}
+        />
+        <CheckboxField
+          label="Steer running threads on Enter"
+          help="When a thread is running, Enter steers the current turn and Cmd/Ctrl+Enter queues the next message. Off keeps Enter as auto-send."
+          checked={config.steerActiveThreadOnEnter ?? false}
+          onChange={(v) => onUpdate({ steerActiveThreadOnEnter: v })}
+        />
+        <CheckboxField
+          label="Rewrite localhost links"
+          help="Replace localhost and 127.0.0.1 in thread markdown links with this window’s hostname so a remote viewer reaches the machine they’re looking at."
+          checked={rewriteLocalhost}
+          onChange={setRewriteLocalhost}
+        />
+      </Section>
+
+      <CliSkillsSettings />
+
+      <Section
+        anchorId="debug"
+        title="Debug"
+        help="Diagnostics for thread timelines. Off by default."
+      >
+        <CheckboxField
+          label="Show unhandled provider events"
+          help="Surface provider/unhandled timeline rows. Development builds also force this on."
+          checked={config.showUnhandledProviderEvents ?? false}
+          onChange={(v) => onUpdate({ showUnhandledProviderEvents: v })}
+        />
       </Section>
 
       <Section title="Help">

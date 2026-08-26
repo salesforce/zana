@@ -1,0 +1,20 @@
+{
+  "name": "@zcc-ext/automations",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Author and inspect scheduled automations.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "zcc": {
+    "name": "Automations",
+    "description": "Author and inspect scheduled automations.",
+    "branding": {
+      "icon": "Workflow"
+    },
+    "server": "./server.mjs",
+    "app": "./app.js"
+  }
+}

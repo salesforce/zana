@@ -49,6 +49,7 @@ import { PromptModal } from '../PromptModal.js';
 import type { AgentCard } from '../AgentBoard.js';
 import { useThreads } from '../../thread-store.js';
 import { useEnsureThreads } from '../../hooks/useEnsureThreads.js';
+import { useRouteState } from '../../hooks/useRouteState.js';
 import { copyText } from '../../lib/copy-text.js';
 import { getThreadRoutePath } from '../../lib/route-paths.js';
 import { FleetKindChip } from '../FleetKindChip.js';
@@ -186,6 +187,7 @@ export function ProjectsList({
   const threads = useThreads((s) => s.threads);
   useEnsureThreads();
   const navigate = useNavigate();
+  const { threadId: activeThreadId } = useRouteState();
   const liveThreadsByProject = useMemo(() => {
     const map = new Map<string, typeof threads>();
     for (const thread of threads) {
@@ -729,15 +731,17 @@ export function ProjectsList({
                     <div key={thread.id} role="listitem">
                       <button
                         type="button"
-                        className="project-terminal-row is-thread"
+                        className={`project-terminal-row is-thread${activeThreadId === thread.id ? ' active' : ''}`}
                         data-kind="thread"
                         data-testid="project-thread-row"
+                        onPointerDown={(e) => e.stopPropagation()}
                         onClick={() => {
                           if (consumeProjectClick()) return;
-                          navigate(getThreadRoutePath(thread.id));
+                          navigate(getThreadRoutePath(thread.id, scopedProjectId));
                         }}
                         onContextMenu={(e) => openThreadMenu(e, thread, setThreadMenu)}
                         aria-label={title}
+                        aria-current={activeThreadId === thread.id ? 'true' : undefined}
                         title={`${title} · ${thread.status}`}
                       >
                         <span className="tab-profile-icon" aria-hidden="true">
@@ -746,7 +750,9 @@ export function ProjectsList({
                         <span className="project-terminal-text">
                           <span className="project-terminal-name">{title}</span>
                           <span className="project-terminal-detail">
-                            <span className={status === 'Needs you' ? 'agents-row-needs-you' : undefined}>
+                            <span className={
+                              status === 'Needs you' || status === 'Error' ? 'agents-row-needs-you' : undefined
+                            }>
                               {status}
                             </span>
                             {' · Thread'}
@@ -763,6 +769,7 @@ export function ProjectsList({
                       <button
                         type="button"
                         className={`project-terminal-row ${isUnread ? 'unread' : ''}`}
+                        onPointerDown={(e) => e.stopPropagation()}
                         onClick={() => {
                           if (consumeProjectClick()) return;
                           useUi.getState().openAgentModal(t.id, p.id);

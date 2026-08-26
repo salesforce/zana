@@ -2370,6 +2370,54 @@ describe("timeline CLI rendering snapshots", () => {
     ).toBeNull();
   });
 
+  it("projects a latest-page window that dropped turn/started after a long delta stream", () => {
+    const event = createTimelineEventFactory({ threadId: "thread-1" });
+    const timeline = renderIdleTimeline([
+      event.assistantDelta({
+        itemId: "assistant-1",
+        delta: "Hello from the tail of a long turn.",
+      }),
+      event.turnCompleted(),
+    ]);
+
+    expect(timeline.text).toContain("Hello from the tail of a long turn.");
+    expect(timeline.projection.state.activeThinking).toBeNull();
+  });
+
+  it("projects live assistant deltas when the latest window no longer includes turn/started", () => {
+    const event = createTimelineEventFactory({ threadId: "thread-1" });
+    const timeline = renderTimelineFixture({
+      events: [
+        event.assistantDelta({
+          itemId: "assistant-1",
+          delta: "Still streaming after the page window moved.\n",
+        }),
+      ],
+      projectionOptions: {
+        threadStatus: "active",
+        turnMessageDetail: "full",
+      },
+    });
+
+    expect(messageKinds(timeline.messages)).toContain("assistant-text");
+    expect(JSON.stringify(timeline.rows)).toContain(
+      "Still streaming after the page window moved.",
+    );
+  });
+
+  it("projects turn/input/accepted when turn/started has already paged out", () => {
+    const event = createTimelineEventFactory({ threadId: "thread-1" });
+    expect(() =>
+      renderActiveTimeline([
+        event.inputAccepted({ clientRequestId: "creq_23456789ab" }),
+        event.assistantDelta({
+          itemId: "assistant-1",
+          delta: "Accepted after the start event left the window.\n",
+        }),
+      ]),
+    ).not.toThrow();
+  });
+
   it("shows web search, file edit, and assistant output without task updates", () => {
     const event = createTimelineEventFactory({ threadId: "thread-1" });
     const timeline = renderActiveTimeline([

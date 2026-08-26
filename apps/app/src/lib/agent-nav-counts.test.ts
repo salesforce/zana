@@ -36,7 +36,19 @@ describe('agentNavCounts', () => {
         { projectId: 'p2', status: 'error' },
         { projectId: 'p1', status: 'active', hasPendingInteraction: true, archivedAt: 9 }
       ]
-    })).toEqual({ active: 4, blocked: 2 });
+    })).toEqual({ active: 3, blocked: 1 });
+  });
+
+  it('does not treat a failed thread as Needs you', () => {
+    expect(agentNavCounts({
+      terminals: {},
+      agentStateById: {},
+      threads: [
+        { projectId: 'p1', status: 'error' },
+        { projectId: 'p1', status: 'error', hasPendingInteraction: true },
+        { projectId: 'p1', status: 'active', hasPendingInteraction: true }
+      ]
+    })).toEqual({ active: 1, blocked: 1 });
   });
 
   it('scopes threads and agents to one project', () => {

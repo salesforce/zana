@@ -25,7 +25,9 @@ import {
   TOOLS_PLUGINS_ROUTE_PATH,
   TOOLS_ROUTE_PATH,
   TOOLS_SKILLS_ROUTE_PATH,
-  getProjectRoutePath
+  getNewThreadRoutePath,
+  getProjectRoutePath,
+  getThreadRoutePath
 } from './route-paths.js';
 
 export interface DecodedRoute {
@@ -41,6 +43,8 @@ export interface DecodedRoute {
   isNewThread: boolean;
   isThreadView: boolean;
   threadId: string | null;
+  pluginPanelPath: string | null;
+  pluginSubPath: string;
 }
 
 const DEFAULT_DECODED: DecodedRoute = {
@@ -55,7 +59,9 @@ const DEFAULT_DECODED: DecodedRoute = {
   isProjectWorkspace: false,
   isNewThread: false,
   isThreadView: false,
-  threadId: null
+  threadId: null,
+  pluginPanelPath: null,
+  pluginSubPath: ''
 };
 
 function hashAnchor(hash: string): string | null {
@@ -231,7 +237,30 @@ export function decodeRoutePath(pathname: string, hash = ''): DecodedRoute {
     matchPath(PLUGIN_PANEL_ROOT_ROUTE_PATH, pathname);
   if (pluginPanel) {
     const pluginId = param(pluginPanel, 'pluginId');
-    if (pluginId) return { ...DEFAULT_DECODED, nav: pluginId };
+    const panelPath = param(pluginPanel, 'panelPath');
+    const splat = pluginPanel.params['*'];
+    let subPath = '';
+    if (typeof splat === 'string' && splat.length > 0) {
+      subPath = splat
+        .split('/')
+        .filter((segment) => segment.length > 0)
+        .map((segment) => {
+          try {
+            return decodeURIComponent(segment);
+          } catch {
+            return segment;
+          }
+        })
+        .join('/');
+    }
+    if (pluginId) {
+      return {
+        ...DEFAULT_DECODED,
+        nav: pluginId,
+        pluginPanelPath: panelPath ?? null,
+        pluginSubPath: subPath
+      };
+    }
   }
 
   return { ...DEFAULT_DECODED, settingsAnchor: anchor };
@@ -246,9 +275,10 @@ export function scopedProjectIdFromSearch(search: string): string | null {
 
 /**
  * Where a project-locked window must sit. Returns null when the URL is already
- * on `/projects/:lockId` (settings or workspace). Any other path — including a
- * query-less `/inbox` after a full document load — is replaced back onto that
- * project, keeping `?projectId=`.
+ * on `/projects/:lockId` (settings or workspace). A global `/threads/:id` click
+ * is rewritten onto that project's thread route; any other path — including a
+ * query-less `/inbox` after a full document load — is replaced back onto the
+ * project home, keeping `?projectId=`.
  */
 export function scopedWindowLockReplace(
   location: { pathname: string; search: string; hash: string },
@@ -260,9 +290,26 @@ export function scopedWindowLockReplace(
     location.search.startsWith('?') ? location.search.slice(1) : location.search
   );
   params.set('projectId', lockId);
+  const search = `?${params.toString()}`;
+  // Keep the conversation when a rail click used the global `/threads/:id`
+  // shape — bouncing to the project home made those clicks look dead.
+  if (decoded.threadId) {
+    return {
+      pathname: getThreadRoutePath(decoded.threadId, lockId),
+      search,
+      hash: location.hash
+    };
+  }
+  if (decoded.isNewThread || location.pathname === NEW_THREAD_ROUTE_PATH) {
+    return {
+      pathname: getNewThreadRoutePath(lockId),
+      search,
+      hash: location.hash
+    };
+  }
   return {
     pathname: getProjectRoutePath(lockId),
-    search: `?${params.toString()}`,
+    search,
     hash: location.hash
   };
 }

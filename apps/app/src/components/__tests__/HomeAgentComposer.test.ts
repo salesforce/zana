@@ -18,7 +18,7 @@ describe('HomeAgentComposer preferences', () => {
 });
 
 describe('HomeAgentComposer layout', () => {
-  it('wraps the thread composer so Home keeps its dashboard spacing', () => {
+  it('wraps the thread composer so New Chat keeps its create-surface spacing', () => {
     const source = readFileSync(new URL('../HomeAgentComposer.tsx', import.meta.url), 'utf8');
     expect(source).toContain('className="home-agent-composer"');
     expect(source).toContain('<ThreadCommandComposer');
@@ -46,7 +46,7 @@ describe('ThreadCommandComposer chrome', () => {
       css.indexOf('.thread-detail-column {'),
       css.indexOf('.thread-detail-header {')
     );
-    expect(threadComposer).toContain('max-width: 46rem;');
+    expect(threadComposer).toContain('max-width: 54rem;');
     expect(threadComposer).toContain('justify-self: center;');
     expect(threadComposer).toContain('flex: 0 0 auto;');
     const timeline = css.slice(
@@ -60,7 +60,7 @@ describe('ThreadCommandComposer chrome', () => {
       css.indexOf('@media (min-width: 1280px) {'),
       css.indexOf('.thread-detail-header {')
     );
-    expect(wide).toContain('max-width: 52rem;');
+    expect(wide).toContain('max-width: 60rem;');
     expect(wide).toContain('min-height: 52px;');
     expect(wide).toContain('max-height: 16rem;');
   });
@@ -108,6 +108,11 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain('Enter a message first');
     expect(source).toContain('Could not send message');
     expect(source).toContain('permissionMode: permissionMode as');
+    expect(source).toContain('permissionModeOptionsFor');
+    expect(source).toContain('compactLabel: row.compactLabel');
+    expect(source).toContain('description: row.description');
+    expect(source).toContain('permissionOptions.length > 1');
+    expect(source).not.toContain('permissionChipLabel');
     expect(source).not.toContain('permissionModes[0]');
     expect(source).toContain('product.threads.send');
     expect(source).toContain('EnvironmentPicker');
@@ -127,6 +132,8 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain('className="thread-command-stop"');
     expect(source).toContain('fill="currentColor"');
     expect(source).toContain('ariaLabel="Permission mode"');
+    expect(source).toContain('searchable={false}');
+    expect(source).toContain("tone: row.tone");
     expect(source).toContain('VoiceRecordingBar');
     expect(source).toContain('Start voice input');
     expect(source).toContain('thread-command-expand');
@@ -155,13 +162,16 @@ describe('ThreadCommandComposer submit path', () => {
     const stopStart = css.indexOf('.thread-command-composer .thread-command-stop {');
     expect(stopStart).toBeGreaterThan(-1);
     expect(css.slice(stopStart, css.indexOf('}', stopStart))).toContain('color: var(--danger);');
+    expect(css).toContain('.launch-model-picker-option-description');
+    expect(css).toContain('.launch-model-picker-option.is-warning');
+    expect(css).toContain('.launch-model-picker-trigger.is-warning');
   });
 
   it('steals typeahead keys while the menu is open and inserts mention pills', () => {
     const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
     expect(source).toContain('typeaheadKeyAction');
     expect(source).toContain('ComposerTypeaheadMenu');
-    expect(source).toContain('PromptMentionExtension');
+    expect(source).toContain('composerPromptExtensions');
     expect(source).toContain('deleteRange');
     expect(source).toContain("type: 'mention'");
     expect(source).not.toContain('thread-slash-menu');

@@ -125,7 +125,23 @@ const api: CcApi = {
     remove: async () => ({ ok: true as const }),
     directory: async () => ({ directory: '/', parent: null, entries: [] }),
     cloneDefaultPath: async () => ({ path: '/' }),
+    providerCliStatus: async () => ({}),
+    installProviderCli: async () => [],
     onChanged: () => () => {}
+  },
+  marketplaces: {
+    list: async () => [],
+    add: async () => {
+      throw new Error('marketplaces.add is served over product HTTP');
+    },
+    refresh: async () => {
+      throw new Error('marketplaces.refresh is served over product HTTP');
+    },
+    remove: async () => ({ ok: true as const })
+  },
+  cliSkills: {
+    status: async () => ({ machines: [] }),
+    install: async () => ({ results: [] })
   },
   threads: {
     spawn: async () => ({
@@ -541,6 +557,7 @@ const api: CcApi = {
   },
   pluginApps: {
     list: () => ipcRenderer.invoke(IPC.pluginApps.list),
+    setEnabled: (id, enabled) => ipcRenderer.invoke(IPC.pluginApps.setEnabled, id, enabled),
     callRpc: (pluginId, method, args) => ipcRenderer.invoke(IPC.pluginApps.callRpc, pluginId, method, args),
     getSettings: (pluginId) => ipcRenderer.invoke(IPC.pluginApps.getSettings, pluginId),
     setSettings: (pluginId, values) => ipcRenderer.invoke(IPC.pluginApps.setSettings, pluginId, values),

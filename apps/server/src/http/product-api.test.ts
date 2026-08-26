@@ -667,7 +667,9 @@ describe('product HTTP plugins', () => {
       }),
       dispatchHttp: async (_id: string, request: { path: string }) => ({
         json: { path: request.path }
-      })
+      }),
+      mentionProviders: () => [],
+      snapshot: () => []
     } as never;
 
     const listed = await fetch(`${server.url}api/v1/plugins`);
@@ -675,7 +677,9 @@ describe('product HTTP plugins', () => {
 
     const contributions = await fetch(`${server.url}api/v1/plugins/contributions`);
     await expect(contributions.json()).resolves.toEqual({
-      cliCommands: [{ pluginId: 'hello', name: 'hello', summary: 'Say hello', commands: [] }]
+      cliCommands: [{ pluginId: 'hello', name: 'hello', summary: 'Say hello', commands: [] }],
+      mentionProviders: [],
+      themes: []
     });
 
     const cli = await fetch(`${server.url}api/v1/plugins/hello/cli`, {
@@ -687,6 +691,110 @@ describe('product HTTP plugins', () => {
 
     const http = await fetch(`${server.url}api/v1/plugins/hello/http/ping`);
     await expect(http.json()).resolves.toEqual({ path: '/ping' });
+  });
+
+  it('adds, lists, refreshes, and removes marketplace catalogs', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-mp-'));
+    server = await startProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const catalogs: Array<{
+      source: string;
+      sourceKind: 'https' | 'git' | 'path';
+      name: string;
+      displayName: string;
+      addedAt: number;
+      entryCount: number;
+      lastRefreshAt: number | null;
+      lastAttemptAt: number | null;
+      lastError: string | null;
+      official: boolean;
+    }> = [];
+    server.ctx.plugins = {
+      listMarketplaces: () => catalogs,
+      addMarketplace: async (source: string) => {
+        const row = {
+          source,
+          sourceKind: 'https' as const,
+          name: 'community',
+          displayName: 'Community',
+          addedAt: 1,
+          entryCount: 2,
+          lastRefreshAt: 1,
+          lastAttemptAt: 1,
+          lastError: null,
+          official: false
+        };
+        catalogs.splice(0, catalogs.length, row);
+        return row;
+      },
+      refreshMarketplace: async (source: string) => {
+        const row = catalogs.find((item) => item.source === source);
+        if (!row) throw new Error('missing');
+        return { ...row, lastRefreshAt: 2, lastAttemptAt: 2 };
+      },
+      removeMarketplace: async (source: string) => {
+        const index = catalogs.findIndex((item) => item.source === source);
+        if (index < 0) return false;
+        catalogs.splice(index, 1);
+        return true;
+      }
+    } as never;
+
+    const created = await fetch(`${server.url}api/v1/marketplaces`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ source: 'https://example.test/mp.json' })
+    });
+    expect(created.status).toBe(201);
+    await expect(created.json()).resolves.toMatchObject({
+      source: 'https://example.test/mp.json',
+      entryCount: 2
+    });
+
+    const listed = await fetch(`${server.url}api/v1/marketplaces`);
+    await expect(listed.json()).resolves.toEqual({
+      catalogs: [expect.objectContaining({ source: 'https://example.test/mp.json' })]
+    });
+
+    const refreshed = await fetch(`${server.url}api/v1/marketplaces/refresh`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ source: 'https://example.test/mp.json' })
+    });
+    expect(refreshed.status).toBe(200);
+    await expect(refreshed.json()).resolves.toMatchObject({ lastRefreshAt: 2 });
+
+    const removed = await fetch(`${server.url}api/v1/marketplaces/remove`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ source: 'https://example.test/mp.json' })
+    });
+    expect(removed.status).toBe(200);
+    await expect(fetch(`${server.url}api/v1/marketplaces`).then((r) => r.json())).resolves.toEqual({
+      catalogs: []
+    });
+  });
+});
+
+describe('product HTTP CLI skills', () => {
+  it('lists empty status and requires hostIds on install', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-cli-skills-'));
+    server = await startProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const listed = await fetch(`${server.url}api/v1/system/cli-skills`);
+    expect(listed.status).toBe(200);
+    await expect(listed.json()).resolves.toEqual({ machines: [] });
+
+    const missing = await fetch(`${server.url}api/v1/system/cli-skills/install`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    expect(missing.status).toBe(400);
   });
 });
 

@@ -1,0 +1,20 @@
+{
+  "name": "@zcc-ext/workflows",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Inline workflow cards in assistant messages and a composer plus-menu.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "zcc": {
+    "name": "Workflows",
+    "description": "Inline workflow cards in assistant messages and a composer plus-menu.",
+    "branding": {
+      "icon": "GitBranch"
+    },
+    "server": "./server.mjs",
+    "app": "./app.js"
+  }
+}

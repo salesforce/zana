@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Run bb threads with Codex.",
+  "description": "Run threads with Codex.",
   "engines": {
     "zcc": ">=1.0.0",
     "zccPluginSdk": ">=0.1.0"
@@ -28,7 +28,7 @@
   },
   "zcc": {
     "name": "Codex provider",
-    "description": "Run bb threads with Codex.",
+    "description": "Run threads with Codex.",
     "branding": {
       "icon": "./icons/codex.svg"
     },

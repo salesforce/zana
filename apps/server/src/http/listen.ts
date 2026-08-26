@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { startProductServer } from './product-server.js';
+import { attachProductPluginService } from './product-plugins.js';
 import { DEFAULT_DEV_APP_PORT, serverPortFromEnv } from './ports.js';
 
 const port = serverPortFromEnv();
@@ -30,6 +31,7 @@ const host = await startProductServer({
     appUrl
   }
 });
+await attachProductPluginService(host.ctx);
 
 process.stdout.write(`zcc-server listening on ${host.url}\n`);
 

@@ -391,7 +391,7 @@ export function WorkspaceView() {
             </div>
           )}
           {isNewThread && project && <NewThreadView project={project} />}
-          {isThreadView && route.threadId && <ThreadDetail threadId={route.threadId} />}
+          {isThreadView && route.threadId && <ThreadDetail key={route.threadId} threadId={route.threadId} />}
           {isAgents && project && (
             // Agents mode: a Kanban-style status board. Cards auto-flow across
             // lanes by live agent state; New agent opens the shared modal host.

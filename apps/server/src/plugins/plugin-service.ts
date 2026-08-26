@@ -12,6 +12,11 @@ import {
   type MarketplaceStore
 } from './marketplace-store.js';
 import {
+  marketplaceSourceDisplay,
+  materializeMarketplaceIndex,
+  parseMarketplaceSource
+} from './marketplace-source.js';
+import {
   compareVersions,
   isPluginId,
   parsePluginSource,
@@ -92,11 +97,14 @@ export interface PluginService {
     values: Record<string, import('@zana-ai/zcc-plugin-sdk/server').PluginSettingValue | undefined>
   ): Promise<void>;
   listMarketplaces(): MarketplaceCatalogRow[];
-  addMarketplace(url: string): Promise<MarketplaceCatalogRow>;
+  addMarketplace(source: string): Promise<MarketplaceCatalogRow>;
+  refreshMarketplace(source: string): Promise<MarketplaceCatalogRow>;
+  removeMarketplace(source: string): Promise<boolean>;
   searchCatalog(query: string): Promise<CatalogSearchHit[]>;
   checkUpdates(): Promise<PluginUpdateRow[]>;
   applyUpdate(id: string): Promise<InstalledPluginRow>;
   cliContributions(): PluginCliContribution[];
+  mentionProviders(): Array<{ pluginId: string; id: string; trigger?: string }>;
   runCliCommand(id: string, argv: string[]): Promise<PluginCliExecutionResult>;
   dispatchHttp(pluginId: string, request: PluginHttpRequest): Promise<PluginHttpResponse>;
   emitThreadEvent(event: PluginThreadEvent): Promise<void>;
@@ -108,6 +116,7 @@ export interface PluginUiSnapshot {
   description: string;
   icon: string;
   enabled: boolean;
+  provenance: InstalledPluginRow['provenance'];
   status: InstalledPluginRow['status'];
   appEntry: string | null;
   appUrl: string | null;
@@ -118,6 +127,30 @@ export interface PluginUiSnapshot {
   skillNames: string[];
   mcpServers: PluginUiMcpServer[];
   extra: Record<string, unknown>;
+  themes: PluginThemeSnapshot[];
+}
+
+export interface PluginThemeSnapshot {
+  pluginId: string;
+  id: string;
+  name: string;
+  description?: string;
+  cssUrl: string;
+}
+
+/** Redacted renderer DTO — no install path, source string, or secrets. */
+export function toPluginAppSnapshot(row: PluginUiSnapshot) {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    icon: row.icon,
+    enabled: row.enabled,
+    provenance: row.provenance,
+    status: row.status,
+    appUrl: row.appUrl,
+    projectTab: row.projectTab
+  };
 }
 
 export interface PluginUiMcpServer {
@@ -308,6 +341,20 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     return out.sort((left, right) => left.pluginId.localeCompare(right.pluginId));
   }
 
+  function mentionProviders() {
+    const out: Array<{ pluginId: string; id: string; trigger?: string }> = [];
+    for (const [id, livePlugin] of live) {
+      for (const provider of livePlugin.handle?.mentionProviders ?? []) {
+        out.push({
+          pluginId: id,
+          id: provider.id,
+          ...(provider.trigger ? { trigger: provider.trigger } : {})
+        });
+      }
+    }
+    return out;
+  }
+
   function instructionContributions() {
     return [...live.entries()]
       .flatMap(([pluginId, current]) =>
@@ -316,10 +363,29 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       .filter((row) => row.text.trim().length > 0);
   }
 
+  async function configuredInstructions(): Promise<Array<{ pluginId: string; text: string }>> {
+    const out: Array<{ pluginId: string; text: string }> = [];
+    for (const [pluginId, current] of live.entries()) {
+      for (const provider of current.handle?.agentConfigurers ?? []) {
+        try {
+          const result = await provider({});
+          const text = result?.instructions?.trim();
+          if (text) out.push({ pluginId, text });
+        } catch {
+          /* one misbehaving configure() must not block the rest */
+        }
+      }
+    }
+    return out;
+  }
+
   async function syncCliSkill(): Promise<void> {
     try {
       await syncPluginCommandsSkill(opts.dataDir, cliContributions());
-      await syncPluginInstructionsSkill(opts.dataDir, instructionContributions());
+      await syncPluginInstructionsSkill(opts.dataDir, [
+        ...instructionContributions(),
+        ...(await configuredInstructions())
+      ]);
       const directoryRoots = [builtinSkillsRootPath(), generatedSkillsRootPath(opts.dataDir)];
       for (const row of store.list()) {
         if (!row.enabled) continue;
@@ -403,13 +469,30 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       interruptPluginInteractions: opts.interruptPluginInteractions,
       onNeedsConfiguration: (message) => {
         configurationMessage = message;
-      }
+      },
+      hostEntryPath: (() => {
+        try {
+          const manifest = loadManifestFromDir(row.rootDir);
+          return manifest.hostEntry
+            ? resolveContainedEntry(row.rootDir, manifest.hostEntry)
+            : null;
+        } catch {
+          return null;
+        }
+      })()
     });
     const rpc = new Map<string, (args: unknown) => unknown | Promise<unknown>>();
     const originalMethod = handle.api.rpc.method.bind(handle.api.rpc);
     handle.api.rpc.method = (name, handler) => {
       rpc.set(name, handler);
       originalMethod(name, handler);
+    };
+    const originalRegister = handle.api.rpc.register.bind(handle.api.rpc);
+    handle.api.rpc.register = (contract, handlers) => {
+      originalRegister(contract, handlers);
+      for (const [name, handler] of Object.entries(handlers)) {
+        if (typeof handler === 'function') rpc.set(name, handler);
+      }
     };
     try {
       if (row.serverEntry) {
@@ -577,6 +660,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       let mcpServers: PluginUiMcpServer[] = [];
       let extra: Record<string, unknown> = {};
       let projectTab: PluginManifest['projectTab'];
+      let themes: PluginThemeSnapshot[] = [];
       try {
         const manifest = loadManifestFromDir(row.rootDir);
         skillNames = manifest.skillNames;
@@ -591,6 +675,22 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
           envKeys: server.env ? Object.keys(server.env) : undefined,
           alwaysOn: server.alwaysOn
         }));
+        themes = (manifest.themes ?? []).flatMap((theme) => {
+          try {
+            const root = resolveContainedEntry(row.rootDir, '.');
+            const css = resolveContainedEntry(row.rootDir, theme.css);
+            const cssPath = relative(root, css).split(sep).map(encodeURIComponent).join('/');
+            return [{
+              pluginId: row.id,
+              id: theme.id,
+              name: theme.name,
+              ...(theme.description ? { description: theme.description } : {}),
+              cssUrl: `/plugins/${encodeURIComponent(row.id)}/assets/${cssPath}?v=${row.updatedAt}`
+            }];
+          } catch {
+            return [];
+          }
+        });
       } catch {
         projectTab = undefined;
       }
@@ -600,6 +700,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         description: row.description,
         icon: row.icon,
         enabled: row.enabled,
+        provenance: row.provenance,
         status: row.status,
         appEntry: row.appEntry,
         appUrl: appUrlFor(row),
@@ -609,7 +710,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         projectTab,
         skillNames,
         mcpServers,
-        extra
+        extra,
+        themes
       };
     });
   }
@@ -717,6 +819,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     snapshot,
     agentContributions,
     cliContributions,
+    mentionProviders,
     async runCliCommand(id, argv) {
       const byId = live.get(id)?.handle;
       if (byId) return runPluginCli(byId, argv);
@@ -752,9 +855,27 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await syncCliSkill();
     },
     listMarketplaces: () => marketplaces.list(),
-    async addMarketplace(url) {
-      const index = await fetchMarketplaceIndex(url, fetchJson);
-      return marketplaces.add(url, index);
+    async addMarketplace(source) {
+      const parsed = parseMarketplaceSource(source);
+      const index = await materializeMarketplaceIndex(parsed, fetchJson);
+      return marketplaces.add(marketplaceSourceDisplay(parsed), index);
+    },
+    async refreshMarketplace(source) {
+      const parsed = parseMarketplaceSource(source);
+      const display = marketplaceSourceDisplay(parsed);
+      try {
+        const index = await materializeMarketplaceIndex(parsed, fetchJson);
+        return marketplaces.refresh(display, index);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const row = await marketplaces.recordRefreshError(display, message);
+        if (!row) throw error;
+        return row;
+      }
+    },
+    async removeMarketplace(source) {
+      const parsed = parseMarketplaceSource(source);
+      return marketplaces.remove(marketplaceSourceDisplay(parsed));
     },
     async searchCatalog(query) {
       const q = query.trim().toLowerCase();
@@ -773,7 +894,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       }
       for (const catalog of marketplaces.list()) {
         try {
-          const index = await fetchMarketplaceIndex(catalog.url, fetchJson);
+          const index = catalog.cachedIndex
+            ?? await fetchMarketplaceIndex(catalog.source, fetchJson);
           for (const plugin of index.plugins) {
             const hay = `${plugin.id} ${plugin.displayName} ${plugin.description}`.toLowerCase();
             if (!q || hay.includes(q)) {
@@ -912,7 +1034,11 @@ export function defaultBundledRoot(): string {
 }
 
 export function defaultPluginDataDir(): string {
-  return process.env.ZCC_CENTER_DIR ?? join(homedir(), '.zcc');
+  return (
+    process.env.ZCC_DATA_DIR?.trim() ||
+    process.env.ZCC_CENTER_DIR?.trim() ||
+    join(homedir(), '.zcc')
+  );
 }
 
 /**
@@ -937,10 +1063,10 @@ export interface BundledPluginCatalogEntry {
 
 /**
  * Enumerate first-party plugins from the bundled plugins root (`package.json`
- * `zcc` block). This is the zero-network default Browse extensions shows after
- * first-party packages moved out of the retired `bundled-extensions/` tree.
- * Extension-agnostic (Rule 6): iterates dirs; never names a concrete id.
- * Returns `[]` when the root is missing. Never throws.
+ * `zcc` block). Browse uses this as the shipped-with-the-app floor (offline,
+ * zero network). Community catalogs layer on top. Extension-agnostic (Rule 6):
+ * iterates dirs; never names a concrete id. Returns `[]` when the root is
+ * missing. Never throws.
  */
 export function listBundledPluginCatalog(
   bundledRoot = defaultBundledRoot(),

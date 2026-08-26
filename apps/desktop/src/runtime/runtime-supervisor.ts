@@ -10,6 +10,7 @@ import { createTerminalExecutionService } from '@zana-ai/zcc-server/terminal-exe
 import { TerminalSessionService } from '@zana-ai/zcc-server/terminal-session-service';
 import { defaultBundledRoot } from '@zana-ai/zcc-server/plugins/plugin-service';
 import {
+  PluginAppSnapshotSchema,
   RuntimeOutboundSchema,
   SERVER_RUNTIME_PROTOCOL_VERSION,
   type ProjectMutationPatchSchema,
@@ -65,6 +66,8 @@ export interface RuntimeSupervisor {
   updatePlugin(id: string): Promise<unknown>;
   listMarketplaces(): Promise<unknown>;
   addMarketplace(url: string): Promise<unknown>;
+  refreshMarketplace(url: string): Promise<unknown>;
+  removeMarketplace(url: string): Promise<unknown>;
   pluginCliContributions(): Promise<unknown>;
   runPluginCli(id: string, argv: string[]): Promise<unknown>;
   callPluginRpc(pluginId: string, method: string, args?: unknown): Promise<unknown>;
@@ -182,6 +185,8 @@ export async function startRuntimeSupervisor(options: StartRuntimeSupervisorOpti
     updatePlugin: async () => { throw new Error('plugin host is unavailable'); },
     listMarketplaces: async () => [],
     addMarketplace: async () => { throw new Error('plugin host is unavailable'); },
+    refreshMarketplace: async () => { throw new Error('plugin host is unavailable'); },
+    removeMarketplace: async () => { throw new Error('plugin host is unavailable'); },
     pluginCliContributions: async () => [],
     runPluginCli: async () => { throw new Error('plugin host is unavailable'); },
     callPluginRpc: async () => { throw new Error('plugin host is unavailable'); },
@@ -465,7 +470,11 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
     },
     async listPluginApps() {
       const value = await server.request('plugins-snapshot');
-      return Array.isArray(value) ? value as RuntimePluginApp[] : [];
+      if (!Array.isArray(value)) return [];
+      return value.flatMap((item) => {
+        const parsed = PluginAppSnapshotSchema.safeParse(item);
+        return parsed.success ? [parsed.data] : [];
+      });
     },
     onPluginAppsChanged(listener) {
       pluginAppsListeners.add(listener);
@@ -481,6 +490,8 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
     updatePlugin: (id) => server.request('plugins-update', id),
     listMarketplaces: () => server.request('marketplace-list'),
     addMarketplace: (url) => server.request('marketplace-add', url),
+    refreshMarketplace: (url) => server.request('marketplace-refresh', url),
+    removeMarketplace: (url) => server.request('marketplace-remove', url),
     pluginCliContributions: () => server.request('plugins-cli-contributions'),
     runPluginCli: (id, argv) => server.request('plugins-cli-run', id, argv),
     callPluginRpc: (pluginId, method, args) => server.request('plugins-call-rpc', pluginId, method, args),
@@ -525,7 +536,7 @@ function createUtilityRuntime(runtime: { child: UtilityChild; url: string }): Ut
   return {
     ...runtime,
     request(
-      operation: 'app-version' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-call-rpc' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add',
+      operation: 'app-version' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-call-rpc' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
        ...args: [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, Record<string, string | boolean | null>] | []
     ) {
       const id = randomUUID();
@@ -562,7 +573,7 @@ function createUtilityRuntime(runtime: { child: UtilityChild; url: string }): Ut
           ...(operation === 'plugins-call-rpc' ? { pluginId: args[0] as string, method: args[1] as string, args: args[2] } : {}),
           ...(operation === 'plugins-settings-set' ? { pluginId: args[0] as string, values: args[1] as Record<string, string | boolean | null> } : {}),
           ...(operation === 'plugins-cli-run' ? { pluginId: args[0] as string, argv: args[1] as string[] } : {}),
-          ...(operation === 'marketplace-add' ? { url: args[0] as string } : {})
+          ...(operation === 'marketplace-add' || operation === 'marketplace-refresh' || operation === 'marketplace-remove' ? { url: args[0] as string } : {})
         });
       });
     },

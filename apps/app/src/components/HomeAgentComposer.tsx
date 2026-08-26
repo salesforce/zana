@@ -5,7 +5,7 @@ import { LegacyAgentHomeComposer } from './LegacyAgentHomeComposer.js';
 export { parseHomeLauncherPreferences } from './home-launcher-preferences.js';
 
 export interface HomeAgentComposerProps extends ThreadCommandComposerProps {
-  /** Home dashboard only — New Thread stays on the HTTP thread path. */
+  /** New Chat (`nav === 'home'`) only — New Thread stays on the HTTP thread path. */
   allowLegacyAgent?: boolean;
 }
 

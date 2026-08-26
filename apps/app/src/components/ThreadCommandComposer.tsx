@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
-import StarterKit from '@tiptap/starter-kit';
-import Placeholder from '@tiptap/extension-placeholder';
 import { ArrowUp, Folder, Laptop, Maximize2, Mic, Minimize2, Square } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { Project } from '@zana-ai/zcc-domain/product';
@@ -23,6 +21,7 @@ import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import { ComposerModePicker } from './thread/pickers/ComposerModePicker.js';
 import { ModelReasoningPicker } from './thread/pickers/ModelReasoningPicker.js';
 import { ReasoningEffortPicker } from './thread/pickers/ReasoningEffortPicker.js';
+import { permissionModeOptionsFor } from './thread/pickers/permission-mode-options.js';
 import {
   applyComposerModePrefix,
   composerModesForActions,
@@ -45,10 +44,9 @@ import {
   nextSuggestionIndex,
   typeaheadKeyAction
 } from './composer/typeahead-keyboard.js';
-import { PromptMentionExtension } from './composer/prompt-mention-extension.js';
 import { COMPOSER_TRIGGERS, type ActiveTrigger, type TypeaheadSuggestion } from './composer/types.js';
 import { useComposerSuggestions } from './composer/use-composer-suggestions.js';
-import { shouldShowThreadStop } from './thread/thread-timeline-model.js';
+import { isBusyThreadStatus, shouldShowThreadStop } from './thread/thread-timeline-model.js';
 import { ThreadContextMeter } from './thread/ThreadContextMeter.js';
 import {
   composerProjectLabel,
@@ -56,6 +54,16 @@ import {
   DEFAULT_COMPOSER_WORKSPACE_LABEL,
   resolveComposerProjectId
 } from './composer-project-default.js';
+import { useBooleanPreference } from '../lib/use-boolean-preference.js';
+import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
+import {
+  composerPromptExtensions,
+  MARKDOWN_IN_PROMPT_DEFAULT,
+  MARKDOWN_IN_PROMPT_KEY,
+  NAVIGATE_TO_THREAD_ON_CREATE_DEFAULT,
+  NAVIGATE_TO_THREAD_ON_CREATE_KEY,
+  resolveThreadSendMode
+} from '../lib/thread-composer-preferences.js';
 
 export type ThreadSendMode = 'start' | 'auto' | 'steer' | 'queue-if-active' | 'steer-if-active';
 
@@ -74,13 +82,6 @@ export interface ThreadCommandComposerProps {
   onOpenExplorer?: () => void;
   /** Home-only: add Legacy Agent to the mode picker. Does not spawn a PTY. */
   onSelectLegacyAgent?: () => void;
-}
-
-function permissionChipLabel(id: string): string {
-  if (id === 'full') return 'Full';
-  if (id === 'accept-edits') return 'Edits';
-  if (id === 'auto') return 'Auto';
-  return id;
 }
 
 export function ThreadCommandComposer({
@@ -116,14 +117,22 @@ export function ThreadCommandComposer({
   });
   const [permissionMode, setPermissionMode] = useState('accept-edits');
   const [composerMode, setComposerMode] = useState<ComposerWorkMode>('agent');
-  const sendMode: ThreadSendMode = 'auto';
+  const steerOnEnter = useData((s) => s.steerActiveThreadOnEnter);
+  const [navigateOnCreate] = useBooleanPreference(
+    NAVIGATE_TO_THREAD_ON_CREATE_KEY,
+    NAVIGATE_TO_THREAD_ON_CREATE_DEFAULT
+  );
+  const [markdownInPrompt] = useBooleanPreference(
+    MARKDOWN_IN_PROMPT_KEY,
+    MARKDOWN_IN_PROMPT_DEFAULT
+  );
   const [expanded, setExpanded] = useState(false);
   const [workspace, setWorkspace] = useState<WorkspacePickerValue>(() => defaultWorkspaceChoice(false));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [trigger, setTrigger] = useState<ActiveTrigger | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const submitRef = useRef<() => void>(() => undefined);
+  const submitRef = useRef<(opts?: { modifierEnter?: boolean }) => void>(() => undefined);
   const dismissedRef = useRef<{ from: number; to: number } | null>(null);
   const typeaheadRef = useRef({
     open: false,
@@ -205,15 +214,12 @@ export function ThreadCommandComposer({
 
   const editor = useEditor({
     immediatelyRender: false,
-    extensions: [
-      StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
-      Placeholder.configure({
-        placeholder: threadId
-          ? 'Ask for a follow-up. @ to mention files, folders, or threads'
-          : 'Ask anything. @ to mention files, folders, or threads'
-      }),
-      PromptMentionExtension
-    ],
+    extensions: composerPromptExtensions(
+      markdownInPrompt,
+      threadId
+        ? 'Ask for a follow-up. @ to mention files, folders, or threads'
+        : 'Ask anything. @ to mention files, folders, or threads'
+    ),
     editorProps: {
       attributes: {
         class: 'ui-command-composer-input thread-command-editor',
@@ -275,7 +281,7 @@ export function ThreadCommandComposer({
           && !event.isComposing
         ) {
           event.preventDefault();
-          submitRef.current();
+          submitRef.current({ modifierEnter: false });
           return true;
         }
         return false;
@@ -283,7 +289,7 @@ export function ThreadCommandComposer({
     },
     onUpdate: ({ editor: next }) => syncTrigger(next),
     onSelectionUpdate: ({ editor: next }) => syncTrigger(next)
-  });
+  }, [markdownInPrompt, threadId]);
 
   const seededInitialText = useRef(false);
   useEffect(() => {
@@ -390,10 +396,9 @@ export function ThreadCommandComposer({
     }
   };
 
-  const permissionOptions = (options.provider?.permissionModes ?? ['accept-edits', 'full']).map((id) => ({
-    id,
-    label: permissionChipLabel(id)
-  }));
+  const permissionOptions = permissionModeOptionsFor(
+    options.provider?.permissionModes ?? ['accept-edits', 'full']
+  );
   const resolvedProviderId = threadId
     ? options.providerId
     : options.providers.find((row) => row.id === 'fake')?.id
@@ -426,7 +431,7 @@ export function ThreadCommandComposer({
     if (!composerModes.includes(composerMode)) setComposerMode('agent');
   }, [composerMode, composerModes]);
 
-  const submit = useCallback(async () => {
+  const submit = useCallback(async (opts?: { modifierEnter?: boolean }) => {
     if (busy || sendBlocked || typeaheadRef.current.open) return;
     const serialized = serializePromptEditor(editor?.getJSON());
     if (!serialized.text.trim()) {
@@ -442,6 +447,11 @@ export function ThreadCommandComposer({
       setError('No thread provider is available');
       return;
     }
+    const sendMode = resolveThreadSendMode({
+      steerOnEnter,
+      threadRunning: isBusyThreadStatus(status ?? ''),
+      modifierEnter: opts?.modifierEnter === true
+    });
     const text = applyComposerModePrefix(serialized.text, composerMode);
     const input = [{ type: 'text' as const, text, mentions: serialized.mentions }];
     setError(null);
@@ -473,10 +483,12 @@ export function ThreadCommandComposer({
       upsertThread(created.value);
       editor?.commands.clearContent();
       onCreated?.(created.value.id);
-      navigate(getThreadRoutePath(
-        created.value.id,
-        route.isProjectWorkspace ? route.focusedProjectId : undefined
-      ));
+      if (navigateOnCreate) {
+        navigate(getThreadRoutePath(
+          created.value.id,
+          route.isProjectWorkspace ? route.focusedProjectId : undefined
+        ));
+      }
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Could not send message');
     } finally {
@@ -488,6 +500,7 @@ export function ThreadCommandComposer({
     composerMode,
     editor,
     navigate,
+    navigateOnCreate,
     onCreated,
     options.model,
     options.reasoningLevel,
@@ -498,15 +511,16 @@ export function ThreadCommandComposer({
     resolvedProviderId,
     route.focusedProjectId,
     route.isProjectWorkspace,
-    sendMode,
+    status,
+    steerOnEnter,
     threadId,
     upsertThread,
     workspace,
     hostId
   ]);
 
-  submitRef.current = () => {
-    void submit();
+  submitRef.current = (opts) => {
+    void submit(opts);
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
@@ -517,7 +531,7 @@ export function ThreadCommandComposer({
         return;
       }
       event.preventDefault();
-      void submit();
+      void submit({ modifierEnter: true });
     }
   };
 
@@ -534,7 +548,21 @@ export function ThreadCommandComposer({
     </ComposerIconButton>
   );
 
+  const composerText = editor ? serializePromptEditor(editor.getJSON()).text : '';
+  const setComposerText = useCallback((next: string) => {
+    editor?.commands.setContent(next);
+  }, [editor]);
+  const composerFocus = useCallback(() => {
+    editor?.commands.focus();
+  }, [editor]);
+
   return (
+    <PluginComposerChrome
+      scope={threadId ? { kind: 'thread', threadId } : { kind: 'new-thread', projectId: projectId ?? null }}
+      text={composerText}
+      setText={setComposerText}
+      focus={composerFocus}
+    >
     <div
       className={`thread-command-composer${expanded ? ' is-expanded' : ''}${dropOver ? ' is-drop-over' : ''}`}
       onKeyDown={onKeyDown}
@@ -675,14 +703,25 @@ export function ThreadCommandComposer({
           )}
         </div>
         <div className="thread-command-composer-meta-end">
-          <PopoverPicklist
-            value={permissionMode}
-            options={permissionOptions.map((row) => ({ value: row.id, label: row.label }))}
-            onChange={setPermissionMode}
-            ariaLabel="Permission mode"
-          />
+          {permissionOptions.length > 1 && (
+            <PopoverPicklist
+              value={permissionMode}
+              options={permissionOptions.map((row) => ({
+                value: row.value,
+                label: row.label,
+                compactLabel: row.compactLabel,
+                description: row.description,
+                ...(row.tone ? { tone: row.tone } : {})
+              }))}
+              onChange={setPermissionMode}
+              ariaLabel="Permission mode"
+              searchable={false}
+              minWidth={280}
+            />
+          )}
         </div>
       </div>
     </div>
+    </PluginComposerChrome>
   );
 }

@@ -205,8 +205,18 @@ export async function runMarketplaceCommand(
   }
   if (subcommand === 'add') {
     const url = rest[0];
-    if (!url) return err('marketplace add requires a <url>', 2);
+    if (!url) return err('marketplace add requires a <https-url | git:url[@ref] | path:dir>', 2);
     return live(dataDir, 'marketplace.add', { url }, jsonOutput);
+  }
+  if (subcommand === 'refresh') {
+    const url = rest[0];
+    if (!url) return err('marketplace refresh requires a source', 2);
+    return live(dataDir, 'marketplace.refresh', { url }, jsonOutput);
+  }
+  if (subcommand === 'remove' || subcommand === 'rm') {
+    const url = rest[0];
+    if (!url) return err('marketplace remove requires a source', 2);
+    return live(dataDir, 'marketplace.remove', { url }, jsonOutput);
   }
   if (subcommand === 'install') {
     const spec = rest[0];

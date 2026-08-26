@@ -268,6 +268,7 @@ test.describe('marketplace publish E2E — publish via API, install via the real
       await expect(market.rowButton(EXT_TITLE)).toHaveText(/Install/);
 
       await market.rowButton(EXT_TITLE).click();
+      await market.confirmInstall();
       await expect(market.rowButton(EXT_TITLE)).toHaveText(/Installed/, { timeout: 30_000 });
 
       const list = await market.ipc<Array<{ id: string; enabled: boolean }>>('list');

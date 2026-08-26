@@ -52,7 +52,8 @@ vi.mock('../../plugins/plugin-slots', () => ({
     listener();
     return () => undefined;
   },
-  listSidebarFooterActions: () => []
+  listSidebarFooterActions: () => [],
+  listNavPanels: () => []
 }));
 
 import { Sidebar } from '../Sidebar.js';
@@ -91,6 +92,8 @@ describe('Sidebar structure and compact accessibility', () => {
     );
     expect(markup).not.toContain('data-sortable-nav-id="home"');
     expect(markup).not.toContain('data-sortable-nav-id="inbox"');
+    expect(markup).toContain('>New Chat<');
+    expect(markup).not.toContain('>Home<');
     expect(markup).toContain('>Agents<');
     expect(markup).toContain('>Scheduler<');
     expect(markup).not.toContain('>Docs<');

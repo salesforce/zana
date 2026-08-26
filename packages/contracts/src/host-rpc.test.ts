@@ -235,6 +235,57 @@ describe('host-rpc contract', () => {
     }).models[0]?.displayName).toBe('GPT-5.5');
   });
 
+  it('parses provider CLI status and install commands', () => {
+    expect(HostRpcCommandSchema.parse({ type: 'provider.cli_status' }).type).toBe('provider.cli_status');
+    expect(HostRpcCommandSchema.parse({
+      type: 'provider.cli_install',
+      provider: 'codex',
+      actionKind: 'install'
+    }).type).toBe('provider.cli_install');
+    expect(parseHostRpcResult('provider.cli_status', {
+      codex: {
+        displayName: 'Codex',
+        executableName: 'codex',
+        executablePath: null,
+        installed: false,
+        installSource: 'notInstalled',
+        currentVersion: null,
+        latestVersion: '0.149.1',
+        minimumSupportedVersion: '0.136.0',
+        npmPackageName: '@openai/codex',
+        npmGlobalPackageVersion: null,
+        installAction: {
+          kind: 'install',
+          label: 'Install',
+          commandKind: 'exec',
+          command: 'npm install -g @openai/codex@latest'
+        },
+        needsUpdate: false,
+        versionUnsupported: false
+      }
+    }).codex?.displayName).toBe('Codex');
+    expect(parseHostRpcResult('provider.cli_install', {
+      events: [{ type: 'started', provider: 'pi', command: 'npm install -g @earendil-works/pi-coding-agent@latest' }]
+    }).events).toHaveLength(1);
+  });
+
+  it('parses global CLI skill install and status commands', () => {
+    expect(HostRpcCommandSchema.parse({
+      type: 'host.install_global_skills',
+      skills: [{ name: 'zcc-cli', content: '# zcc\n' }]
+    }).type).toBe('host.install_global_skills');
+    expect(HostRpcCommandSchema.parse({
+      type: 'host.global_skills_status',
+      names: ['zcc-cli']
+    }).type).toBe('host.global_skills_status');
+    expect(parseHostRpcResult('host.global_skills_status', {
+      entries: [{ name: 'zcc-cli', path: '/tmp/.claude/skills/zcc-cli', installed: false, hash: null }]
+    }).entries).toHaveLength(1);
+    expect(parseHostRpcResult('host.install_global_skills', {
+      installations: [{ name: 'zcc-cli', path: '/tmp/.agents/skills/zcc-cli' }]
+    }).installations[0]?.name).toBe('zcc-cli');
+  });
+
   it('parses provider.status results by command type', () => {
     expect(parseHostRpcResult('provider.status', { providers: [] })).toEqual({ providers: [] });
     expect(parseHostRpcResult('thread.resize', { threadId, resized: true })).toEqual({

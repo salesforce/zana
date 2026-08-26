@@ -999,6 +999,12 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.remoteMcpEnabled === 'boolean') {
     normalized.remoteMcpEnabled = input.remoteMcpEnabled;
   }
+  if (typeof input.steerActiveThreadOnEnter === 'boolean') {
+    normalized.steerActiveThreadOnEnter = input.steerActiveThreadOnEnter;
+  }
+  if (typeof input.showUnhandledProviderEvents === 'boolean') {
+    normalized.showUnhandledProviderEvents = input.showUnhandledProviderEvents;
+  }
   if (typeof input.enableUpdateSimulation === 'boolean') {
     normalized.enableUpdateSimulation = input.enableUpdateSimulation;
   }

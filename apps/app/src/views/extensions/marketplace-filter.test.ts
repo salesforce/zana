@@ -63,10 +63,21 @@ describe('MarketplaceView presentation', () => {
 
   it('uses a compact trust note, pill filters, and a single provenance chip', () => {
     expect(source).toContain('ext-market-note');
+    expect(source).toContain('Official plugins install offline from the app');
     expect(source).toContain('ext-market-tag');
     expect(source).toContain('ext-market-item-icon-wrap');
     expect(source).toContain("provenance === 'official' ? 'Official' : 'Community'");
     expect(source).not.toContain('marketplaceTags(entry)');
     expect(source).not.toContain("? 'Bundled' : 'Marketplace'");
+  });
+
+  it('keeps the browse toolbar to search, install, and create', () => {
+    expect(source).toContain('ext-market-search-refresh');
+    expect(source).toContain('aria-label="Reload the catalog"');
+    expect(source).toContain('ext-market-toolbar-actions');
+    expect(source).toContain('{toolbarExtra}');
+    expect(source).not.toContain('Check for updates');
+    expect(source).not.toContain('settings-btn-group');
+    expect(source).not.toContain('aria-label="Sync catalog"');
   });
 });

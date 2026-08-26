@@ -60,8 +60,10 @@ export {
 export {
   marketplaceIndexSchema,
   marketplaceEntrySchema,
+  marketplaceCatalogRowSchema,
   type MarketplaceIndex,
-  type MarketplaceEntry
+  type MarketplaceEntry,
+  type MarketplaceCatalogRow
 } from './plugin-marketplace.js';
 
 export type * from './harness.js';

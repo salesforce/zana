@@ -39,6 +39,21 @@ export function sendNoContent(response: ServerResponse): void {
   response.writeHead(204, headersWithCors(response, { 'Cache-Control': 'no-store' })).end();
 }
 
+export function sendNdjson(response: ServerResponse, events: unknown[]): void {
+  response.writeHead(
+    200,
+    headersWithCors(response, {
+      'Cache-Control': 'no-store',
+      'Content-Type': 'application/x-ndjson; charset=utf-8',
+      'X-Content-Type-Options': 'nosniff'
+    })
+  );
+  for (const event of events) {
+    response.write(`${JSON.stringify(event)}\n`);
+  }
+  response.end();
+}
+
 export async function readJsonBody(request: IncomingMessage, limit = 1_000_000): Promise<unknown> {
   const chunks: Buffer[] = [];
   let size = 0;

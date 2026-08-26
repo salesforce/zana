@@ -53,12 +53,14 @@ import {
 import { spawnEnvironmentChoiceSchema } from '@zana-ai/zcc-domain';
 import { jsonValueSchema, pendingInteractionResolutionSchema, reasoningLevelSchema, type ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
+import { systemInstallCliSkillsRequestSchema } from '@zana-ai/zcc-server-contract';
 import { normalizeRepoUrl } from '../services/projects/git-clone.js';
 import { harnessDescriptors, harnessEffectiveDefault, harnessVerify } from './harness-via-rpc.js';
 import { isSafeRelPath, listLibraryDocs, listQuickPrompts, readLibraryDoc } from './library-via-host.js';
 import { listProjectDir, listProjectPaths, readProjectFile } from './project-fs-via-host.js';
 import { getConversationThread, getEnvironment, listConversationThreadEvents, listConversationThreadsByProject, listVisibleConversationThreads, nextConversationEventSequence, updateConversationThreadTitle } from '@zana-ai/zcc-db';
 import { handleHostsApi } from './hosts-api.js';
+import type { MarketplaceCatalogRow } from '../plugins/marketplace-store.js';
 import { resolvePublicAppUrl } from './public-app-url.js';
 import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
 import { parseMultipartVoiceForm, readVoiceBody } from './multipart-voice.js';
@@ -67,6 +69,7 @@ import {
   VoiceTranscriptionError,
   voiceTranscriptionEnabled
 } from '../services/threads/voice-transcription.js';
+import { cliSkillsStatus, installCliSkills } from '../services/skills/cli-skills.js';
 
 const VALID_FOLLOW_UP_STATUS: FollowUpStatus[] = ['open', 'resolved', 'dismissed'];
 
@@ -78,6 +81,21 @@ function parseReasoningLevel(value: unknown): ReasoningLevel | undefined {
 function isContained(root: string, candidate: string): boolean {
   const path = relative(root, candidate);
   return path === '' || (!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`));
+}
+
+function publicMarketplaceCatalog(row: MarketplaceCatalogRow) {
+  return {
+    source: row.source,
+    sourceKind: row.sourceKind,
+    name: row.name,
+    displayName: row.displayName,
+    addedAt: row.addedAt,
+    entryCount: row.entryCount,
+    lastRefreshAt: row.lastRefreshAt,
+    lastAttemptAt: row.lastAttemptAt,
+    lastError: row.lastError,
+    official: row.official
+  };
 }
 
 function confineCwd(projectPath: string, cwd: string | undefined): string | null {
@@ -1156,8 +1174,85 @@ export async function handleProductHttp(
       return true;
     }
 
+    if (path === '/api/v1/marketplaces' && method === 'GET') {
+      sendJson(response, 200, {
+        catalogs: (ctx.plugins?.listMarketplaces() ?? []).map(publicMarketplaceCatalog)
+      });
+      return true;
+    }
+
+    if (path === '/api/v1/marketplaces' && method === 'POST') {
+      if (!ctx.plugins) {
+        sendJson(response, 503, { error: 'plugin host is unavailable' });
+        return true;
+      }
+      const body = (await readJsonBody(request)) as { source?: unknown };
+      const source = typeof body.source === 'string' ? body.source.trim() : '';
+      if (!source) {
+        sendJson(response, 400, { error: 'source required' });
+        return true;
+      }
+      try {
+        sendJson(response, 201, publicMarketplaceCatalog(await ctx.plugins.addMarketplace(source)));
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
+      }
+      return true;
+    }
+
+    if (path === '/api/v1/marketplaces/refresh' && method === 'POST') {
+      if (!ctx.plugins) {
+        sendJson(response, 503, { error: 'plugin host is unavailable' });
+        return true;
+      }
+      const body = (await readJsonBody(request)) as { source?: unknown };
+      const source = typeof body.source === 'string' ? body.source.trim() : '';
+      if (!source) {
+        sendJson(response, 400, { error: 'source required' });
+        return true;
+      }
+      try {
+        sendJson(response, 200, publicMarketplaceCatalog(await ctx.plugins.refreshMarketplace(source)));
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
+      }
+      return true;
+    }
+
+    if (path === '/api/v1/marketplaces/remove' && method === 'POST') {
+      if (!ctx.plugins) {
+        sendJson(response, 503, { error: 'plugin host is unavailable' });
+        return true;
+      }
+      const body = (await readJsonBody(request)) as { source?: unknown };
+      const source = typeof body.source === 'string' ? body.source.trim() : '';
+      if (!source) {
+        sendJson(response, 400, { error: 'source required' });
+        return true;
+      }
+      try {
+        const removed = await ctx.plugins.removeMarketplace(source);
+        if (!removed) {
+          sendJson(response, 404, { error: 'marketplace not found' });
+          return true;
+        }
+        sendJson(response, 200, { ok: true as const });
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
+      }
+      return true;
+    }
+
     if (path === '/api/v1/plugins/contributions' && method === 'GET') {
-      sendJson(response, 200, { cliCommands: ctx.plugins?.cliContributions() ?? [] });
+      sendJson(response, 200, {
+        cliCommands: ctx.plugins?.cliContributions() ?? [],
+        mentionProviders: typeof ctx.plugins?.mentionProviders === 'function'
+          ? ctx.plugins.mentionProviders()
+          : [],
+        themes: typeof ctx.plugins?.snapshot === 'function'
+          ? (ctx.plugins.snapshot() ?? []).flatMap((row) => ('themes' in row ? row.themes ?? [] : []))
+          : []
+      });
       return true;
     }
 
@@ -1446,6 +1541,37 @@ export async function handleProductHttp(
         }
       }
       sendJson(response, 200, buildThreadExecutionOptions({ providerId, availability, listed, listError }));
+      return true;
+    }
+
+    if (path === '/api/v1/system/cli-skills' && method === 'GET') {
+      const hostIds = requestUrl.searchParams.get('hostIds')?.split(',').map((id) => id.trim()).filter(Boolean);
+      try {
+        sendJson(response, 200, await cliSkillsStatus(ctx, hostIds));
+      } catch (error) {
+        sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) });
+      }
+      return true;
+    }
+
+    if (path === '/api/v1/system/cli-skills/install' && method === 'POST') {
+      let body: unknown;
+      try {
+        body = await readJsonBody(request);
+      } catch {
+        sendJson(response, 400, { error: 'invalid JSON' });
+        return true;
+      }
+      const parsed = systemInstallCliSkillsRequestSchema.safeParse(body);
+      if (!parsed.success) {
+        sendJson(response, 400, { error: 'hostIds required' });
+        return true;
+      }
+      try {
+        sendJson(response, 200, await installCliSkills(ctx, parsed.data.hostIds));
+      } catch (error) {
+        sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) });
+      }
       return true;
     }
 

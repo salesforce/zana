@@ -7,6 +7,12 @@ import { MermaidDiagram } from './MermaidDiagram.js';
 import { unwrapBareFence } from '../lib/markdown.js';
 import { parseFrontMatter, type ParsedFrontMatter } from '@zana-ai/zcc-extension-sdk/helpers';
 import { highlightForPath } from '../lib/highlightCode.js';
+import { useBooleanPreference } from '../lib/use-boolean-preference.js';
+import {
+  REWRITE_LOCALHOST_LINKS_DEFAULT,
+  REWRITE_LOCALHOST_LINKS_STORAGE_KEY,
+  rewriteLocalhostLinkHref
+} from '../lib/localhost-link-rewrite-preference.js';
 
 /**
  * Shared markdown / doc rendering for the inbox.
@@ -122,6 +128,11 @@ export function MarkdownContent({
   exportable?: boolean;
 }) {
   const body = unwrapBareFence(text);
+  const [rewriteLocalhost] = useBooleanPreference(
+    REWRITE_LOCALHOST_LINKS_STORAGE_KEY,
+    REWRITE_LOCALHOST_LINKS_DEFAULT
+  );
+  const hostname = typeof window !== 'undefined' ? window.location.hostname : undefined;
   return (
     <div className="inbox-md">
       <ReactMarkdown
@@ -134,7 +145,18 @@ export function MarkdownContent({
           // Open links in a new window — Electron treats that as the OS
           // default browser. Avoid destructuring `node` (deprecated in
           // react-markdown v10).
-          a: (props) => <a {...props} target="_blank" rel="noreferrer" />,
+          a: (props) => (
+            <a
+              {...props}
+              href={rewriteLocalhostLinkHref({
+                currentHostname: hostname,
+                enabled: rewriteLocalhost,
+                href: typeof props.href === 'string' ? props.href : undefined
+              })}
+              target="_blank"
+              rel="noreferrer"
+            />
+          ),
           // GFM tables get a wrapper so horizontal overflow scrolls within
           // the comments block instead of stretching the whole panel.
           table: (props) => (

@@ -52,9 +52,9 @@ describe('fleet items', () => {
     expect(fleetMatchesLane(item, 'idle', () => false)).toBe(false);
   });
 
-  it('maps idle and error threads onto Idle and Needs you', () => {
+  it('maps idle and error threads onto Idle, not Needs you', () => {
     expect(fleetThreadLane(threadFleetItem(thread({ id: 't1', status: 'idle' })))).toBe('idle');
-    expect(fleetThreadLane(threadFleetItem(thread({ id: 't1', status: 'error' })))).toBe('blocked');
+    expect(fleetThreadLane(threadFleetItem(thread({ id: 't1', status: 'error' })))).toBe('idle');
   });
 
   it('treats busy and failed threads as live for the Projects rail', () => {
@@ -69,14 +69,15 @@ describe('fleet items', () => {
       thread({ id: 'archived', status: 'idle', archivedAt: 1 }),
       thread({ id: 'idle-a', status: 'idle' }),
       thread({ id: 'live', status: 'active' }),
-      thread({ id: 'blocked', status: 'error' }),
+      thread({ id: 'failed', status: 'error' }),
       ...Array.from({ length: 10 }, (_, i) => thread({ id: `idle-${i}`, status: 'idle' }))
     ]);
-    expect(rows.map((row) => row.id).slice(0, 2)).toEqual(['live', 'blocked']);
+    expect(rows.map((row) => row.id).slice(0, 2)).toEqual(['live', 'failed']);
     expect(rows.some((row) => row.id === 'archived')).toBe(false);
     expect(rows.filter((row) => row.status === 'idle')).toHaveLength(RAIL_IDLE_THREAD_LIMIT);
-    expect(threadRailDetail(thread({ id: 't1', status: 'error' }))).toBe('Needs you · Thread');
-    expect(threadRailStatus(thread({ id: 't1', status: 'error' }))).toBe('Needs you');
+    expect(threadRailDetail(thread({ id: 't1', status: 'error' }))).toBe('Error · Thread');
+    expect(threadRailStatus(thread({ id: 't1', status: 'error' }))).toBe('Error');
+    expect(threadRailStatus(thread({ id: 't1', status: 'error', hasPendingInteraction: true }))).toBe('Error');
     expect(threadRailDetail(thread({ id: 't1', status: 'active' }))).toBe('Working · Thread');
     expect(threadRailDetail(thread({ id: 't1', status: 'active', hasPendingInteraction: true }))).toBe('Needs you · Thread');
     expect(threadFleetItem(thread({ id: 't1', status: 'active', hasPendingInteraction: true })).state).toBe('blocked');

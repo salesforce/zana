@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { flattenThreadInput, requestAutoThreadTitle, threadTitle } from './conversation-create.js';
 import {
+  bridgeLaunchForProvider,
   canonicalThreadProviderId,
   getThreadProvider,
   listThreadProviders,
@@ -81,6 +82,62 @@ describe('thread provider catalog', () => {
     expect(getThreadProvider('acp-opencode')?.displayName).toBe('OpenCode overlay');
     handle.unregister();
     expect(getThreadProvider('acp-opencode')).toBeUndefined();
+  });
+
+  it('keeps a newer registration when the previous handle unregisters', () => {
+    const first = registerThreadProvider('provider-acp', {
+      id: 'acp-opencode',
+      displayName: 'first',
+      capabilities: {
+        supportsServiceTier: true,
+        fork: 'tip',
+        supportsManualCompaction: true,
+        supportsThreadArchive: false,
+        supportsThreadRename: false,
+        permissionModes: ['accept-edits', 'full']
+      },
+      composerActions: []
+    });
+    const second = registerThreadProvider('provider-acp', {
+      id: 'acp-opencode',
+      displayName: 'second',
+      capabilities: {
+        supportsServiceTier: true,
+        fork: 'tip',
+        supportsManualCompaction: true,
+        supportsThreadArchive: false,
+        supportsThreadRename: false,
+        permissionModes: ['accept-edits', 'full']
+      },
+      composerActions: []
+    });
+    first.unregister();
+    expect(getThreadProvider('acp-opencode')?.displayName).toBe('second');
+    second.unregister();
+    expect(getThreadProvider('acp-opencode')).toBeUndefined();
+  });
+
+  it('does not prefix pluginRoot onto an absolute host entry', () => {
+    const hostEntry = '/tmp/provider-acp/src/bridge/bridge.ts';
+    const handle = registerThreadProvider('provider-acp', {
+      id: 'acp-opencode',
+      displayName: 'OpenCode',
+      capabilities: {
+        supportsServiceTier: true,
+        fork: 'tip',
+        supportsManualCompaction: true,
+        supportsThreadArchive: false,
+        supportsThreadRename: false,
+        permissionModes: ['accept-edits', 'full']
+      },
+      composerActions: []
+    }, hostEntry);
+    try {
+      const launch = bridgeLaunchForProvider('acp-opencode', '/tmp/data');
+      expect(launch.source).toMatchObject({ kind: 'artifact', artifactPath: hostEntry });
+    } finally {
+      handle.unregister();
+    }
   });
 
   it('maps ZCC launch-profile aliases onto thread providers', () => {

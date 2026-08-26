@@ -11,7 +11,12 @@ import { createTerminalExecutionService, type TerminalExecutionService } from '.
 import { TerminalSessionService } from './terminal-session-service.js';
 import { createRuntimeDatabase, type TerminalSessionRepository } from './runtime-database.js';
 import { createTerminalLaunchAuthority } from './terminal-launch-authority.js';
-import { createPluginService, type PluginService } from './plugins/plugin-service.js';
+import type { PluginService } from './plugins/plugin-service.js';
+import {
+  attachProductPluginService,
+  bundledPluginsRootFromDataDir,
+  toPluginAppSnapshot
+} from './http/product-plugins.js';
 
 interface ParentPortLike {
   on(event: 'message', listener: (event: { data: unknown }) => void): void;
@@ -53,13 +58,8 @@ parentPort.on('message', async ({ data }) => {
         origins: { serverPort: 0, devAppPort: DEFAULT_DEV_APP_PORT },
         projects: projects ?? undefined
       });
-      plugins = createPluginService({
-        dataDir: message.dataDir,
-        bundledRoot: message.bundledPluginsRoot ?? join(message.dataDir, '..', 'plugins'),
-        requestPluginInteraction: (args) => product.pendingInteractions.requestPluginInteraction(args),
-        interruptPluginInteractions: (pluginId) => {
-          product.pendingInteractions.interruptPluginInteractions(pluginId);
-        },
+      plugins = await attachProductPluginService(product, {
+        bundledRoot: bundledPluginsRootFromDataDir(message.dataDir, message.bundledPluginsRoot),
         onAgentCapabilitiesChanged: (contributors) => {
           parentPort.postMessage({
             type: 'plugin-capabilities',
@@ -71,19 +71,10 @@ parentPort.on('message', async ({ data }) => {
           parentPort.postMessage({
             type: 'plugin-apps-changed',
             protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
-            apps: apps.map(({ id, name, icon, status, appUrl, projectTab }) => ({
-              id,
-              name,
-              icon,
-              status,
-              appUrl,
-              projectTab
-            }))
+            apps: apps.map(toPluginAppSnapshot)
           });
         }
       });
-      product.plugins = plugins;
-      await plugins.start();
       const host = await startStaticHost({
         rootDir: message.rendererRoot,
         browserBootstrap: () => ({
@@ -256,7 +247,12 @@ parentPort.on('message', async ({ data }) => {
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: await plugins.reload(message.pluginId) });
     }
     if (message.operation === 'plugins-snapshot') {
-      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: plugins?.snapshot() ?? [] });
+      parentPort.postMessage({
+        type: 'result',
+        protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+        id: message.id,
+        value: (plugins?.snapshot() ?? []).map(toPluginAppSnapshot)
+      });
     }
     if (message.operation === 'plugins-search') {
       if (!plugins) {
@@ -329,6 +325,20 @@ parentPort.on('message', async ({ data }) => {
         return;
       }
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: await plugins.addMarketplace(message.url) });
+    }
+    if (message.operation === 'marketplace-refresh') {
+      if (!plugins) {
+        parentPort.postMessage({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, message: 'plugin host is unavailable' });
+        return;
+      }
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: await plugins.refreshMarketplace(message.url) });
+    }
+    if (message.operation === 'marketplace-remove') {
+      if (!plugins) {
+        parentPort.postMessage({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, message: 'plugin host is unavailable' });
+        return;
+      }
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: await plugins.removeMarketplace(message.url) });
     }
     if (message.operation === 'plugins-cli-contributions') {
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: plugins?.cliContributions() ?? [] });

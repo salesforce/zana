@@ -6322,6 +6322,8 @@ async function bootstrapNormal() {
           update: (id) => runtimeSupervisor!.updatePlugin(id),
           listMarketplaces: () => runtimeSupervisor!.listMarketplaces(),
           addMarketplace: (url) => runtimeSupervisor!.addMarketplace(url),
+          refreshMarketplace: (url) => runtimeSupervisor!.refreshMarketplace(url),
+          removeMarketplace: (url) => runtimeSupervisor!.removeMarketplace(url),
           cliContributions: () => runtimeSupervisor!.pluginCliContributions(),
           runCliCommand: (id, argv) => runtimeSupervisor!.runPluginCli(id, argv)
         }

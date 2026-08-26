@@ -1,0 +1,21 @@
+{
+  "name": "@zcc-ext/keep-awake",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Prevent the local machine from sleeping while ZCC is running.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "zcc": {
+    "name": "Keep awake",
+    "description": "Prevent the local machine from sleeping while ZCC is running.",
+    "branding": {
+      "icon": "Coffee"
+    },
+    "server": "./server.mjs",
+    "app": "./app.js",
+    "host": "./host.mjs"
+  }
+}

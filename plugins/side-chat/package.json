@@ -1,0 +1,20 @@
+{
+  "name": "@zcc-ext/side-chat",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Fork a compact chat beside the current thread.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "zcc": {
+    "name": "Side chat",
+    "description": "Fork a compact chat beside the current thread.",
+    "branding": {
+      "icon": "MessagesSquare"
+    },
+    "server": "./server.mjs",
+    "app": "./app.js"
+  }
+}

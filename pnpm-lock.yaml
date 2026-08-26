@@ -496,6 +496,9 @@ importers:
       '@zana-ai/zcc-domain':
         specifier: workspace:*
         version: link:../domain
+      '@zana-ai/zcc-host-daemon-contract':
+        specifier: workspace:*
+        version: link:../host-daemon-contract
       zod:
         specifier: ^4.0.0
         version: 4.4.3
@@ -895,9 +898,21 @@ importers:
 
   plugins/ask-user-question: {}
 
+  plugins/automations: {}
+
+  plugins/connect: {}
+
   plugins/custom-instructions: {}
 
   plugins/docs: {}
+
+  plugins/github: {}
+
+  plugins/inline-vis: {}
+
+  plugins/keep-awake: {}
+
+  plugins/memory: {}
 
   plugins/provider-acp:
     dependencies:
@@ -1019,7 +1034,15 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
+  plugins/provider-retry: {}
+
+  plugins/secrets: {}
+
+  plugins/side-chat: {}
+
   plugins/tasks: {}
+
+  plugins/workflows: {}
 
   website:
     dependencies:
@@ -8263,7 +8286,7 @@ snapshots:
       obug: 2.1.4
       std-env: 4.2.0
       tinyrainbow: 3.1.1
-      vitest: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
+      vitest: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.10)(vite@8.2.1(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
 
   '@vitest/expect@4.1.10':
     dependencies:

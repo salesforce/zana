@@ -121,21 +121,41 @@ describe('canOpenGlobalPanel', () => {
   });
 });
 
-describe('Plugin development guide', () => {
-  it('numbers the three authoring steps', () => {
+describe('Installed collection chrome', () => {
+  it('renders a BB-style collection instead of the authoring tutorial', () => {
     const source = readFileSync(new URL('./ExtensionsHub.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('ext-dev-guide-step-num');
-    expect(source).toContain('ext-hub-item-icon-wrap');
+    expect(source).toContain('ext-installed-row');
+    expect(source).toContain('Search installed plugins');
+    expect(source).toContain('New plugin');
+    expect(source).toContain('ext-install-menu-caret');
+    expect(source).toContain('Create plugin');
+    expect(source).toContain('ext-installed-switch-spacer');
+    expect(source).toContain("id: 'all', label: 'All'");
     expect(source).toContain('ext-hub-about-open');
+    expect(source).not.toContain('ext-dev-guide-step-num');
+    expect(source).not.toContain('ext-installed-new-chevron');
   });
 });
 
 describe('Extensions hub More menu', () => {
+  const source = readFileSync(new URL('./ExtensionsHub.tsx', import.meta.url), 'utf8');
+
   it('dismisses on outside mousedown and Escape', () => {
-    const source = readFileSync(new URL('./ExtensionsHub.tsx', import.meta.url), 'utf8');
     expect(source).toContain('if (!moreOpen) return;');
     expect(source).toContain('moreRef.current && !moreRef.current.contains(e.target as Node)');
     expect(source).toContain("if (e.key === 'Escape') setMoreOpen(false);");
     expect(source).toContain('<div className="ext-hub-more-wrap" ref={moreRef}>');
+    expect(source).toContain('aria-label="More"');
+    expect(source).toContain('<MoreHorizontal size={14} />');
+  });
+
+  it('holds catalog maintenance instead of crowding the browse toolbar', () => {
+    expect(source).toContain("checkingUpdates ? 'Checking for updates…' : 'Check for updates'");
+    expect(source).toContain('product.extensions');
+    expect(source).toContain('.checkUpdates()');
+    expect(
+      source.split('toolbarExtra={showTabs ? undefined : maintenanceActions}').length - 1
+    ).toBe(2);
+    expect(source).not.toContain('ext-hub-top-actions');
   });
 });

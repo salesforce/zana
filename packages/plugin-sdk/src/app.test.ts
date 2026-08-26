@@ -35,6 +35,72 @@ describe('definePluginApp', () => {
     const { callPluginRpc } = await import('./app.js');
     await expect(callPluginRpc('notes', 'ping')).rejects.toThrow(/plugin host is not available/);
   });
+
+  it('collects provider icons, composer, and content scripts without throwing', () => {
+    const def = definePluginApp((app) => {
+      app.slots.experimental_providerIcon({
+        providerId: 'claude-code',
+        icon: () => null
+      });
+      app.slots.threadPanelAction({
+        id: 'board',
+        title: 'Tasks',
+        component: () => null
+      });
+      app.slots.messageDirective({
+        id: 'task',
+        component: () => null
+      });
+      app.composer.customize({
+        id: 'retry',
+        actions: [{ id: 'retry-action', component: () => null }]
+      });
+      app.contentScripts.register({
+        id: 'boot',
+        mount() {}
+      });
+    });
+    const set = collectPluginApp('provider-claude-code', 1, def);
+    expect(set.providerIcons).toHaveLength(1);
+    expect(set.providerIcons[0]?.providerId).toBe('claude-code');
+    expect(set.threadPanelActions[0]?.id).toBe('board');
+    expect(set.messageDirectives[0]?.id).toBe('task');
+    expect(set.composerCustomizations[0]?.id).toBe('retry');
+    expect(set.contentScripts[0]?.id).toBe('boot');
+  });
+
+  it('defaults navPanel path to id and rejects duplicate slot ids', () => {
+    const def = definePluginApp((app) => {
+      app.slots.navPanel({
+        id: 'main',
+        title: 'Docs',
+        icon: 'Library',
+        component: () => null
+      });
+    });
+    const set = collectPluginApp('docs', 1, def);
+    expect(set.navPanels[0]?.path).toBe('main');
+    expect(() =>
+      collectPluginApp(
+        'docs',
+        2,
+        definePluginApp((app) => {
+          app.slots.navPanel({
+            id: 'main',
+            title: 'A',
+            icon: 'Box',
+            component: () => null
+          });
+          app.slots.navPanel({
+            id: 'main',
+            title: 'B',
+            icon: 'Box',
+            component: () => null
+          });
+        })
+      )
+    ).toThrow(/duplicate id/);
+  });
 });
 
 describe('shimLegacyExtensionManifest', () => {

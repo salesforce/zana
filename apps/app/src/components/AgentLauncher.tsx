@@ -2332,7 +2332,7 @@ export const AgentLauncher = memo(function AgentLauncher({
                 </div>
               )}
 
-              {worktreeEligible && (
+              {worktreeStructurallyEligible && (
                 <div className="launch-row launch-row-top">
                   <span className="launch-row-label">
                     <GitBranch size={12} aria-hidden="true" /> Workspace

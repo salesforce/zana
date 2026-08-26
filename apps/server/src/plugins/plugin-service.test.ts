@@ -3,7 +3,13 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createPluginService, installBundledPlugin, listBundledPluginCatalog } from './plugin-service.js';
+import {
+  createPluginService,
+  defaultPluginDataDir,
+  installBundledPlugin,
+  listBundledPluginCatalog,
+  toPluginAppSnapshot
+} from './plugin-service.js';
 import { containsNativeAddon } from './plugin-api.js';
 
 const roots: string[] = [];
@@ -89,6 +95,13 @@ describe('PluginService', () => {
     await service.install(pluginDir);
     await service.disable('keep');
     expect(service.get('keep')?.status).toBe('disabled');
+    expect(service.snapshot().find((row) => row.id === 'keep')).toMatchObject({
+      enabled: false,
+      provenance: 'direct',
+      status: 'disabled'
+    });
+    expect(toPluginAppSnapshot(service.snapshot().find((row) => row.id === 'keep')!)).not.toHaveProperty('rootDir');
+    expect(toPluginAppSnapshot(service.snapshot().find((row) => row.id === 'keep')!)).not.toHaveProperty('source');
     await service.enable('keep');
     expect(service.get('keep')?.status).toBe('running');
     await service.remove('keep');
@@ -139,6 +152,58 @@ describe('PluginService', () => {
     await expect(service.callRpc('sticky', 'ping', {})).resolves.toEqual({ ok: true, id: 'sticky' });
   });
 
+  it('keeps a registered thread provider after a successful reload', async () => {
+    const { getThreadProvider } = await import('../services/threads/thread-provider-catalog.js');
+    const dataDir = root();
+    const pluginDir = writePlugin(
+      join(root(), 'provider-acp'),
+      'provider-acp',
+      `export default function plugin(zcc) {
+        zcc.agents.experimental_registerProvider({
+          id: 'acp-opencode',
+          displayName: 'OpenCode',
+          capabilities: {
+            supportsServiceTier: true,
+            fork: 'tip',
+            supportsManualCompaction: true,
+            supportsThreadArchive: false,
+            supportsThreadRename: false,
+            permissionModes: ['accept-edits', 'full']
+          },
+          composerActions: []
+        });
+      }\n`
+    );
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    try {
+      await service.install(pluginDir);
+      expect(getThreadProvider('acp-opencode')?.displayName).toBe('OpenCode');
+      writeFileSync(
+        join(pluginDir, 'server.mjs'),
+        `export default function plugin(zcc) {
+          zcc.agents.experimental_registerProvider({
+            id: 'acp-opencode',
+            displayName: 'OpenCode reloaded',
+            capabilities: {
+              supportsServiceTier: true,
+              fork: 'tip',
+              supportsManualCompaction: true,
+              supportsThreadArchive: false,
+              supportsThreadRename: false,
+              permissionModes: ['accept-edits', 'full']
+            },
+            composerActions: []
+          });
+        }\n`
+      );
+      const reloaded = await service.reload('provider-acp');
+      expect(reloaded.status).toBe('running');
+      expect(getThreadProvider('acp-opencode')?.displayName).toBe('OpenCode reloaded');
+    } finally {
+      await service.remove('provider-acp').catch(() => undefined);
+    }
+  });
+
   it('adds a marketplace catalog of provenance pointers', async () => {
     const dataDir = root();
     const service = createPluginService({
@@ -164,6 +229,39 @@ describe('PluginService', () => {
     expect(service.listMarketplaces()).toHaveLength(1);
     const hits = await service.searchCatalog('from');
     expect(hits.some((h) => h.id === 'from-catalog' && h.marketplace === 'official')).toBe(true);
+  });
+
+  it('keeps the last-good catalog when refresh fails', async () => {
+    const dataDir = root();
+    let fail = false;
+    const service = createPluginService({
+      dataDir,
+      bundledRoot: root(),
+      fetchJson: async () => {
+        if (fail) throw new Error('catalog unreachable');
+        return {
+          schemaVersion: 1,
+          name: 'community',
+          displayName: 'Community',
+          plugins: [
+            {
+              id: 'kept',
+              displayName: 'Kept',
+              description: 'cached',
+              author: { name: 'zana' },
+              source: { npm: { package: '@zana/kept', range: '1.0.0' } }
+            }
+          ]
+        };
+      }
+    });
+    await service.addMarketplace('https://example.test/community.json');
+    fail = true;
+    const refreshed = await service.refreshMarketplace('https://example.test/community.json');
+    expect(refreshed.lastError).toMatch(/unreachable/);
+    expect(refreshed.cachedIndex?.plugins[0]?.id).toBe('kept');
+    const hits = await service.searchCatalog('kept');
+    expect(hits.some((h) => h.id === 'kept')).toBe(true);
   });
 
   it('exposes skill names, mcpServers without env values, and extra on snapshot', async () => {
@@ -247,6 +345,19 @@ describe('PluginService', () => {
     await service.install(pluginDir);
 
     expect(service.snapshot()[0]?.appUrl).toBe('/plugins/nested/assets/dist/app.js?v=42');
+    expect(service.snapshot()[0]?.provenance).toBe('direct');
+    expect(toPluginAppSnapshot(service.snapshot()[0]!)).toMatchObject({
+      id: 'nested',
+      name: 'Nested',
+      description: 'Nested plugin',
+      icon: 'Puzzle',
+      enabled: true,
+      provenance: 'direct',
+      status: 'running',
+      appUrl: '/plugins/nested/assets/dist/app.js?v=42'
+    });
+    expect(toPluginAppSnapshot(service.snapshot()[0]!)).not.toHaveProperty('rootDir');
+    expect(toPluginAppSnapshot(service.snapshot()[0]!)).not.toHaveProperty('source');
   });
 
   it('reconcileBuiltins auto-installs docs from bundledRoot/docs', async () => {
@@ -258,6 +369,8 @@ describe('PluginService', () => {
     expect(installed.map((row) => row.id)).toEqual(['docs']);
     expect(service.get('docs')?.provenance).toBe('builtin');
     expect(service.get('docs')?.sourceKind).toBe('builtin');
+    expect(service.snapshot()[0]?.provenance).toBe('builtin');
+    expect(service.snapshot()[0]?.enabled).toBe(true);
   });
 
   it('rejects a server entry that escapes the plugin root', async () => {
@@ -319,6 +432,24 @@ describe('PluginService', () => {
     expect(installed.map((row) => row.id)).toContain('docs');
     expect(installed.map((row) => row.id)).not.toContain('tasks');
     expect(service.get('tasks')).toBeUndefined();
+  });
+});
+
+describe('defaultPluginDataDir', () => {
+  const prevData = process.env.ZCC_DATA_DIR;
+  const prevCenter = process.env.ZCC_CENTER_DIR;
+
+  afterEach(() => {
+    if (prevData === undefined) delete process.env.ZCC_DATA_DIR;
+    else process.env.ZCC_DATA_DIR = prevData;
+    if (prevCenter === undefined) delete process.env.ZCC_CENTER_DIR;
+    else process.env.ZCC_CENTER_DIR = prevCenter;
+  });
+
+  it('prefers ZCC_DATA_DIR so Browse joins the same store the host writes', () => {
+    process.env.ZCC_DATA_DIR = '/tmp/zcc-data-dir';
+    process.env.ZCC_CENTER_DIR = '/tmp/zcc-center-dir';
+    expect(defaultPluginDataDir()).toBe('/tmp/zcc-data-dir');
   });
 });
 

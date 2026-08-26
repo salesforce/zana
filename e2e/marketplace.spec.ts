@@ -11,7 +11,7 @@ import { MarketplacePage } from './fixtures/marketplace.js';
 
 test.describe('marketplace — bundled catalog without a remote registry', () => {
   // No `useRegistry` → no ~/.zcc/extension-registry.json → remote channel stays off.
-  // First-party plugins under `plugins/` still populate Browse (VSCode-style).
+  // First-party plugins under `plugins/` still populate Browse (shipped-with-the-app).
   test('lists bundled first-party plugins with zero network', async ({ app }) => {
     const market = new MarketplacePage(app.window);
     await market.open();
@@ -49,8 +49,9 @@ test.describe('marketplace — signed registry configured', () => {
     const button = market.rowButton('E2E Dummy');
     await expect(button).toHaveText(/Install/);
 
-    // Click install → downloads, verifies sha256 + Ed25519, stages to disk.
+    // Click install → confirm full trust → downloads, verifies sha256 + Ed25519, stages to disk.
     await button.click();
+    await market.confirmInstall();
 
     // The onChanged push re-renders the row as installed.
     await expect(market.rowButton('E2E Dummy')).toHaveText(/Installed/, { timeout: 30_000 });

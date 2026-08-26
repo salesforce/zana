@@ -57,7 +57,21 @@ describe('ThreadListEntry', () => {
       </MemoryRouter>
     );
     expect(html).not.toContain('thread-list-entry-working');
-    expect(html).toContain('idle');
+    expect(html).toContain('Idle');
+    expect(html).not.toContain('Needs you');
+  });
+
+  it('shows Error instead of Needs you when the thread failed', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ThreadListEntry thread={{ ...thread, status: 'error', hasPendingInteraction: true }} />
+      </MemoryRouter>
+    );
+    expect(html).toContain('Error');
+    expect(html).toContain('agent-error');
+    expect(html).toContain('agents-row-needs-you');
+    expect(html).not.toContain('Needs you');
+    expect(html).not.toContain('thread-list-entry-working');
   });
 
   it('forwards a right-click handler onto the row', () => {

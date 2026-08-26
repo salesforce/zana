@@ -1,4 +1,11 @@
 import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
+import type { MarketplaceCatalogRow } from '@zana-ai/zcc-domain';
+import type {
+  ProviderCliInstallActionKind,
+  ProviderCliInstallEvent,
+  ProviderCliKey,
+  ProviderCliStatusResponse
+} from '@zana-ai/zcc-contracts/host-rpc';
 import type {
   AdoptLocalExtensionGitRequest,
   AgentMessage,
@@ -308,6 +315,11 @@ export interface CcApi {
       entries: Array<{ kind: 'file' | 'directory'; name: string; path: string }>;
     }>;
     cloneDefaultPath(id: string, projectId: string): Promise<{ path: string }>;
+    providerCliStatus(id: string): Promise<ProviderCliStatusResponse>;
+    installProviderCli(
+      id: string,
+      request: { provider: ProviderCliKey; actionKind: ProviderCliInstallActionKind }
+    ): Promise<ProviderCliInstallEvent[]>;
     onChanged(cb: (hosts: Host[] | undefined) => void): () => void;
   };
   /**
@@ -1163,9 +1175,31 @@ export interface CcApi {
     reveal(id: string): Promise<Result<true>>;
     onChanged(cb: (entries: PluginEntry[]) => void): () => void;
   };
+  marketplaces: {
+    list(): Promise<MarketplaceCatalogRow[]>;
+    add(source: string): Promise<MarketplaceCatalogRow>;
+    refresh(source: string): Promise<MarketplaceCatalogRow>;
+    remove(source: string): Promise<{ ok: true }>;
+  };
+  cliSkills: {
+    status(hostIds?: string[]): Promise<{
+      machines: Array<{
+        hostId: string;
+        hostName: string;
+        status: 'installed' | 'outdated' | 'missing' | 'unknown';
+      }>;
+    }>;
+    install(hostIds: string[]): Promise<{
+      results: Array<
+        | { ok: true; hostId: string; hostName: string; installations: Array<{ name: string; path: string }> }
+        | { ok: false; hostId: string; hostName: string; errorMessage: string }
+      >;
+    }>;
+  };
   pluginApps: {
     list(): Promise<PluginAppEntry[]>;
     onChanged(cb: (entries: PluginAppEntry[]) => void): () => void;
+    setEnabled(id: string, enabled: boolean): Promise<Result<true>>;
     callRpc(pluginId: string, method: string, args?: unknown): Promise<unknown>;
     getSettings(pluginId: string): Promise<PluginSettingsSnapshot>;
     setSettings(
@@ -1244,10 +1278,11 @@ export interface CcApi {
      */
     checkUpdates(): Promise<Result<ExtensionUpdateOutcome[]>>;
     /**
-     * Fetch the marketplace catalog: first-party bundled plugins (offline) unioned
-     * with the opt-in remote registry. Each row is stamped with installed /
-     * hasUpdate / compatible. Returns [] only when nothing is bundled and no
-     * registry is configured — the host never reaches the network by default.
+     * Fetch the marketplace catalog: first-party plugins the app ships (offline)
+     * unioned with configured community catalogs and the opt-in signed registry.
+     * Each row is stamped with installed / hasUpdate / compatible. Returns []
+     * only when nothing is bundled and no catalog or registry is configured —
+     * the host never reaches the network by default.
      */
     marketplaceList(): Promise<Result<MarketplaceEntry[]>>;
     /**
