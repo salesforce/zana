@@ -225,6 +225,18 @@ describe('threadSecondaryPanelLogic', () => {
       't',
       '/a.ts'
     )).resolves.toEqual({ error: 'Could not read file' });
+    await expect(loadFilePreview(
+      async () => ({ ok: false }),
+      undefined,
+      undefined,
+      '/a.ts'
+    )).resolves.toEqual({ error: 'Could not read file' });
+    await expect(loadFilePreview(
+      async () => { throw new Error('local'); },
+      undefined,
+      't',
+      '/a.ts'
+    )).resolves.toEqual({ error: 'Could not read file' });
     await expect(loadWalkedFiles(undefined, '/tmp')).resolves.toEqual([]);
     await expect(loadWalkedFiles(async () => [{ path: '/tmp/a.ts', rel: 'a.ts' }], '/tmp')).resolves.toEqual([
       { path: '/tmp/a.ts', rel: 'a.ts' }

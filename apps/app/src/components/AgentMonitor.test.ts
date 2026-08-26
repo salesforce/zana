@@ -17,7 +17,9 @@ describe('AgentMonitor thread selection', () => {
     const source = readFileSync(new URL('./AgentMonitor.tsx', import.meta.url), 'utf8');
     expect(source).toContain('<ThreadDetail threadId={thread.id} embedded />');
     expect(source).toContain("selected?.kind === 'thread' ? 'is-thread'");
-    expect(source).toContain("selected?.kind === 'agent' &&");
+    expect(source).toContain("selected?.kind === 'agent' ? 'is-agent-session'");
+    expect(source).toContain('<AgentSessionView');
+    expect(source).not.toContain('AgentMonitorAgentStatus');
     expect(source).not.toContain('agent-monitor-thread-placeholder');
     expect(source).not.toContain('Open thread');
     expect(source).not.toContain('getThreadRoutePath');

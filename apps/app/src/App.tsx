@@ -26,6 +26,7 @@ import { ResumePicker } from './components/ResumePicker.js';
 import { SearchPanel } from './components/SearchPanel.js';
 import { ShortcutsHelp } from './components/ShortcutsHelp.js';
 import { AgentTerminalModal } from './components/AgentTerminalModal.js';
+import { ThreadModal } from './components/ThreadModal.js';
 import { FavoriteAgentsDrawer } from './components/FavoriteAgentsDrawer.js';
 import { NotificationsDrawer } from './components/NotificationsDrawer.js';
 import { Walkthrough } from './components/Walkthrough.js';
@@ -734,6 +735,7 @@ export function App() {
       <SearchPanelHost />
       <ShortcutsHelpHost />
       <AgentModalHost />
+      <ThreadModalHost />
       <FavoriteAgentsDrawer />
       <NotificationsDrawer />
       <WalkthroughHost />
@@ -832,4 +834,11 @@ function AgentModalHost() {
       onClose={close}
     />
   );
+}
+
+function ThreadModalHost() {
+  const threadModal = useUi((s) => s.threadModal);
+  const close = () => useUi.getState().closeThreadModal();
+  if (!threadModal) return null;
+  return <ThreadModal threadId={threadModal.threadId} onClose={close} />;
 }

@@ -618,6 +618,9 @@ describe('expandable row and chips', () => {
     expect(source).toContain('export function ThreadDetail(');
     expect(source).toContain('embedded = false');
     expect(source).toContain('thread-detail-view--embedded');
+    expect(source).toContain('thread-detail-view--modal');
+    expect(source).toContain('data-testid="thread-modal-close"');
+    expect(source).toContain('data-testid="thread-modal-fullscreen"');
     expect(source).toContain("data-embedded={embedded ? 'true' : undefined}");
     expect(source).toContain('void copyText(text)');
     expect(source).not.toContain('navigator.clipboard');
@@ -626,7 +629,10 @@ describe('expandable row and chips', () => {
     expect(source).not.toContain('useThreads((s) => s.threads.filter');
     const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
     expect(css).toContain('.thread-detail-view--embedded');
+    expect(css).toContain('.thread-detail-view--modal');
     expect(css).toContain('.agent-monitor.is-thread');
+    expect(css).toContain('.agent-monitor.is-agent-session');
     expect(css).toContain('.agent-monitor-terminal.is-thread');
+    expect(css).toContain('.agent-monitor-terminal.is-agent-session');
   });
 });

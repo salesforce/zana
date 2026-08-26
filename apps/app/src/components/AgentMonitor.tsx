@@ -11,14 +11,14 @@ import {
   Terminal as TerminalIcon
 } from 'lucide-react';
 import type { AgentState } from '@zana-ai/zcc-domain/product';
-import { useData, useUi, usePersonas, useAgentPanel } from '../store.js';
+import { useData, useUi, usePersonas } from '../store.js';
 import { profileIcon, personaIcon } from '../lib/profileIcon.js';
 import { isClaudeProfile } from '../lib/launchProfile.js';
 import { AGENT_MONITOR_TERMINAL_ANCHOR_ID } from './TerminalSurface.js';
 import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from './agentCardActions.js';
 import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from './threadCardActions.js';
 import { PromptModal } from './PromptModal.js';
-import { AgentDetailPanel } from './AgentDetailPanel.js';
+import { AgentSessionView } from './AgentSessionView.js';
 import {
   LANES,
   cardCohort,
@@ -38,15 +38,9 @@ import { ThreadDetail } from '../views/threads/ThreadDetailView.js';
  * session (center), and status + actions (right). Replaces the old mesh/registry
  * panel as the List toggle target.
  *
- * Agents keep the existing 3-pane layout: TerminalSurface portals the selected
- * session's already-live xterm into {@link AGENT_MONITOR_TERMINAL_ANCHOR_ID}
- * (the one-xterm-per-session invariant), exactly like the agent-inspector modal
- * — so scrollback is shared with the agent's workspace tab and the prompt stays
- * interactive right here.
- *
- * Threads drop the status rail and mount {@link ThreadDetail} in the center so
- * the conversation, composer, and thread side panel are the thing you see —
- * not a placeholder that asks you to open the thread elsewhere. Selection is
+ * Agents and threads both drop the dedicated status column: the center pane
+ * mounts {@link AgentSessionView} (PTY + thread secondary panel) or
+ * {@link ThreadDetail} (conversation + the same chrome). Selection is
  * held in the UI store (`agentMonitor`); this component owns that selection's
  * lifecycle and CLEARS it on unmount, so a stale selection can never steal the
  * live terminal from the Projects workspace once the List view is off screen.
@@ -96,7 +90,6 @@ export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) 
   const selection = useUi((s) => s.agentMonitor);
   const selectMonitorAgent = useUi((s) => s.selectMonitorAgent);
   const clearMonitorAgent = useUi((s) => s.clearMonitorAgent);
-  const collapsed = useAgentPanel((s) => s.collapsed.monitor);
   const [pickedId, setPickedId] = useState<string | null>(null);
   const { menu, setMenu, actions, rename, closeRename, submitRename } = useAgentCardActions();
   const { menu: threadMenu, setMenu: setThreadMenu } = useThreadCardActions();
@@ -152,8 +145,8 @@ export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) 
 
   return (
     <div
-      className={`agent-monitor ${collapsed ? 'panel-collapsed' : ''} ${
-        selected?.kind === 'thread' ? 'is-thread' : ''
+      className={`agent-monitor ${
+        selected?.kind === 'thread' ? 'is-thread' : selected?.kind === 'agent' ? 'is-agent-session' : ''
       }`}
     >
       <nav className="agent-monitor-list" aria-label="Agents">
@@ -188,11 +181,8 @@ export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) 
         ))}
       </nav>
 
-      <AgentMonitorTerminal selected={selected} />
+      <AgentMonitorTerminal selected={selected} showProject={showProject} />
 
-      {selected?.kind === 'agent' && (
-        <AgentMonitorAgentStatus card={selected.card} showProject={showProject} />
-      )}
       {typeof document !== 'undefined' &&
         menu &&
         createPortal(
@@ -321,69 +311,66 @@ function AgentMonitorRow({ item, laneKey, active, showProject, onSelect, onConte
 
 // ── Center pane: the live terminal portal target + a header ─────────────────
 
-function AgentMonitorTerminal({ selected }: { selected: FleetItem | null }) {
+function AgentMonitorTerminal({
+  selected,
+  showProject
+}: {
+  selected: FleetItem | null;
+  showProject: boolean;
+}) {
   const agent = selected?.kind === 'agent' ? selected : null;
   const thread = selected?.kind === 'thread' ? selected : null;
   return (
     <section className="agent-monitor-main">
-      {!thread && (
+      {!thread && !agent && (
         <header className="agent-monitor-main-head">
           <TerminalIcon size={13} aria-hidden="true" />
-          {agent ? (
-            <>
-              <span className="agent-monitor-main-title">{agent.card.session.title}</span>
-              {agent.card.session.status !== 'exited' && (
-                <span className={`agent-monitor-main-state agent-${agent.state}`}>
-                  <span className={`tab-agent-dot agent-${agent.state}`} aria-hidden="true" />
-                  {STATE_LABEL[agent.state]}
-                </span>
-              )}
-            </>
-          ) : (
-            <span className="agent-monitor-main-title">No agent selected</span>
+          <span className="agent-monitor-main-title">No agent selected</span>
+        </header>
+      )}
+      {!thread && agent && (
+        <header className="agent-monitor-main-head">
+          <TerminalIcon size={13} aria-hidden="true" />
+          <span className="agent-monitor-main-title">{agent.card.session.title}</span>
+          {agent.card.session.status !== 'exited' && (
+            <span className={`agent-monitor-main-state agent-${agent.state}`}>
+              <span className={`tab-agent-dot agent-${agent.state}`} aria-hidden="true" />
+              {STATE_LABEL[agent.state]}
+            </span>
           )}
         </header>
       )}
-      {/* TerminalSurface portals the selected session's live xterm into this
-          anchor while the List view is on screen (see the monitor anchor id).
-          The anchor is positioned; the surface fills it via inset:0. Thread
+      {/* TerminalSurface portals the selected session's live xterm into the
+          AgentSessionView anchor while the List view is on screen. Thread
           selection clears the PTY store and mounts ThreadDetail here instead. */}
       <div
-        className={`agent-monitor-terminal${thread ? ' is-thread' : ''}`}
-        id={AGENT_MONITOR_TERMINAL_ANCHOR_ID}
+        className={`agent-monitor-terminal${thread ? ' is-thread' : agent ? ' is-agent-session' : ''}`}
       >
         {thread ? (
           <div className="agent-monitor-thread" data-testid="agent-monitor-thread">
             <ThreadDetail threadId={thread.id} embedded />
           </div>
-        ) : !agent ? (
+        ) : agent ? (
+          <AgentMonitorSession card={agent.card} showProject={showProject} />
+        ) : (
           <div className="agent-monitor-terminal-empty">
             <Bot size={24} aria-hidden="true" />
             <p>Select an agent to watch its output.</p>
           </div>
-        ) : null}
+        )}
       </div>
     </section>
   );
 }
 
-// ── Right pane: status + actions (agents only; threads use ThreadDetail) ──
-
-function AgentMonitorAgentStatus({ card, showProject }: { card: AgentCard; showProject: boolean }) {
+function AgentMonitorSession({ card, showProject }: { card: AgentCard; showProject: boolean }) {
   const { actions } = useAgentCardActions();
-  const toggleCollapse = useAgentPanel((s) => s.toggle);
-  const collapsed = useAgentPanel((s) => s.collapsed.monitor);
   const { session: t } = card;
   const exited = t.status === 'exited';
   const background = isBackgroundAgent(card);
   const cohort = cardCohort(card);
-
-  // "Open in workspace" — the escape hatch into the full split-pane view, same
-  // path the board card's context-menu "Open" uses.
+  const project = useData((s) => s.projects.find((row) => row.id === card.projectId));
   const openInWorkspace = () => openAgentInWorkspace(card);
-
-  // Summarize this agent's work to the inbox (claude-family only — a shell has
-  // no transcript). Guards against a double-click while the micro-call is live.
   const canSummarize = isClaudeProfile(t.profile);
   const [summarizing, setSummarizing] = useState(false);
   const summarize = async () => {
@@ -395,18 +382,12 @@ function AgentMonitorAgentStatus({ card, showProject }: { card: AgentCard; showP
       setSummarizing(false);
     }
   };
-  // Reset the transient summarizing flag whenever the selection changes, so a
-  // spinner from one agent doesn't bleed onto the next.
   const prevId = useRef(t.id);
   if (prevId.current !== t.id) {
     prevId.current = t.id;
     if (summarizing) setSummarizing(false);
   }
 
-  // Monitor action semantics: Stop is a NON-destructive Ctrl-C (session stays
-  // alive), distinct from the modal's kill-the-process Stop; Kill terminates and
-  // removes the card. Passed into the shared panel so its look matches the modal
-  // while each surface keeps its own behavior.
   const monitorActions = (
     <>
       {!exited && (
@@ -465,19 +446,18 @@ function AgentMonitorAgentStatus({ card, showProject }: { card: AgentCard; showP
   );
 
   return (
-    <AgentDetailPanel
-      variant="monitor"
+    <AgentSessionView
       session={t}
       projectId={card.projectId}
       projectName={card.projectName}
       projectColor={card.projectColor}
+      projectRemote={Boolean(project?.remote)}
       state={card.state}
+      terminalAnchorId={AGENT_MONITOR_TERMINAL_ANCHOR_ID}
       showProject={showProject}
       cohort={cohort}
       background={background}
-      actions={monitorActions}
-      collapsed={collapsed}
-      onToggleCollapse={() => toggleCollapse('monitor')}
+      footer={monitorActions}
     />
   );
 }

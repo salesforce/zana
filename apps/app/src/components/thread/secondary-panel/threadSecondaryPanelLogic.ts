@@ -201,8 +201,8 @@ export async function loadWorkspaceMeta(
 
 export async function loadFilePreview(
   readFile: (path: string) => Promise<unknown>,
-  hostFileContent: (threadId: string, path: string) => Promise<{ content: string }>,
-  threadId: string,
+  hostFileContent: ((threadId: string, path: string) => Promise<{ content: string }>) | undefined,
+  threadId: string | undefined,
   path: string
 ): Promise<{ content: string } | { error: string }> {
   try {
@@ -210,6 +210,9 @@ export async function loadFilePreview(
     if (fromLocal !== null) return { content: fromLocal };
   } catch {
     /* host */
+  }
+  if (!threadId || typeof hostFileContent !== 'function') {
+    return { error: 'Could not read file' };
   }
   try {
     const host = await hostFileContent(threadId, path);

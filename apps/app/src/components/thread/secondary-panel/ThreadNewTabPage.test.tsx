@@ -99,5 +99,20 @@ describe('ThreadNewTabPage', () => {
     );
     expect(desktop).toContain('data-testid="thread-new-tab-browser"');
     expect(desktop).toContain('Library');
+    const noSidecar = renderToStaticMarkup(
+      <ThreadNewTabView
+        query=""
+        onQueryChange={() => undefined}
+        matches={[]}
+        desktop={false}
+        modules={[]}
+        onOpenFile={() => undefined}
+        onOpenBrowser={() => undefined}
+        onOpenPlugin={() => undefined}
+        allowSidecarTerminal={false}
+      />
+    );
+    expect(noSidecar).not.toContain('data-testid="thread-new-tab-terminal"');
+    expect(noSidecar).not.toContain('Start terminal');
   });
 });

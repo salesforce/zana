@@ -176,7 +176,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
 
   const inspect = (item: FleetItem) => {
     if (item.kind === 'thread') {
-      navigate(getThreadRoutePath(item.id, threadProjectId));
+      useUi.getState().openThreadModal(item.id);
       return;
     }
     useUi.getState().openAgentModal(item.card.session.id, item.projectId);

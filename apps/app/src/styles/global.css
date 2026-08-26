@@ -11892,7 +11892,8 @@ body.resizing-col .explorer-resizer::after {
   min-height: 0;
 }
 
-.agent-monitor-thread > .thread-detail-view {
+.agent-monitor-thread > .thread-detail-view,
+.agent-monitor-terminal > .agent-session-view {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
@@ -24069,9 +24070,9 @@ body.resizing-col .library-split-resizer::after {
   border-color: color-mix(in srgb, var(--success, #3fa45b) 40%, transparent);
 }
 
-/* ─── Agents "List" view — the 3-pane live monitor ──────────────────────────
-   Agent list (left) → the selected agent's LIVE terminal (center, portaled in
-   by TerminalSurface) → status + actions (right). The List toggle target on the
+/* ─── Agents "List" view — the 2-pane live monitor ──────────────────────────
+   Agent list (left) → the selected session (center: live PTY or thread plus
+   the shared secondary panel). The List toggle target on the
    global and per-project Agents boards. */
 .agent-monitor {
   flex: 1;
@@ -24089,7 +24090,9 @@ body.resizing-col .library-split-resizer::after {
   grid-template-columns: 260px minmax(0, 1fr) 40px;
 }
 .agent-monitor.is-thread,
-.agent-monitor.is-thread.panel-collapsed {
+.agent-monitor.is-thread.panel-collapsed,
+.agent-monitor.is-agent-session,
+.agent-monitor.is-agent-session.panel-collapsed {
   grid-template-columns: 260px minmax(0, 1fr);
 }
 
@@ -24267,7 +24270,8 @@ body.resizing-col .library-split-resizer::after {
   background: var(--bg-panel);
   overflow: hidden;
 }
-.agent-monitor-terminal.is-thread {
+.agent-monitor-terminal.is-thread,
+.agent-monitor-terminal.is-agent-session {
   display: flex;
   flex-direction: column;
 }
@@ -24305,6 +24309,13 @@ body.resizing-col .library-split-resizer::after {
   flex: 0 0 260px;
   border-left: 1px solid var(--border);
   background: var(--bg-panel);
+}
+.agent-detail-panel--embedded {
+  flex: 1 1 auto;
+  border-left: none;
+  background: transparent;
+  padding: 12px;
+  overflow: visible;
 }
 
 /* Collapsed rail: a thin strip with just the expand button + a status dot. */
@@ -29180,8 +29191,53 @@ textarea.thread-command-editor {
   grid-column: 2 / -1;
 }
 
+.agent-modal-body > .agent-session-view,
+.agent-modal-body > .thread-detail-view,
+.agent-monitor-terminal > .agent-session-view {
+  grid-column: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  height: auto;
+}
+
+.agent-session-main {
+  position: relative;
+  padding: 0;
+  gap: 0;
+}
+
+.agent-session-terminal {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+
+.agent-session-show-panel {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
+}
+
+.agent-session-view:not(.is-secondary-open) .agent-modal-catchup {
+  right: 44px;
+}
+
 .thread-detail-view--embedded {
   grid-column: auto;
+}
+
+.thread-detail-view--modal {
+  grid-column: auto;
+}
+
+.thread-detail-view--modal .thread-detail-header {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border, #30363d);
 }
 
 .thread-detail-view--embedded .thread-detail-main {
@@ -29196,6 +29252,12 @@ textarea.thread-command-editor {
   min-height: 0;
   padding: 16px 20px 12px;
   gap: 12px;
+}
+
+.thread-detail-main.agent-session-main {
+  position: relative;
+  padding: 0;
+  gap: 0;
 }
 
 .thread-detail-view.is-secondary-maximized .thread-detail-main {
@@ -30242,6 +30304,15 @@ textarea.thread-command-editor {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+}
+
+.thread-secondary-footer {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--border);
 }
 
 .thread-info-content {
@@ -32074,9 +32145,9 @@ textarea.thread-command-editor {
   border-color: color-mix(in srgb, var(--accent-gold) 45%, transparent);
 }
 
-/* ─── Agents "List" view — the 3-pane live monitor ──────────────────────────
-   Agent list (left) → the selected agent's LIVE terminal (center, portaled in
-   by TerminalSurface) → status + actions (right). The List toggle target on the
+/* ─── Agents "List" view — the 2-pane live monitor ──────────────────────────
+   Agent list (left) → the selected session (center: live PTY or thread plus
+   the shared secondary panel). The List toggle target on the
    global and per-project Agents boards. */
 .agent-monitor {
   flex: 1;
@@ -32093,10 +32164,12 @@ textarea.thread-command-editor {
 .agent-monitor.panel-collapsed {
   grid-template-columns: 260px minmax(0, 1fr) 40px;
 }
-/* A selected thread owns the remaining columns: conversation + its own
-   secondary panel, so the agent status rail steps aside. */
+/* A selected thread or agent owns the remaining columns: conversation/PTY +
+   secondary panel, so the old dedicated status rail steps aside. */
 .agent-monitor.is-thread,
-.agent-monitor.is-thread.panel-collapsed {
+.agent-monitor.is-thread.panel-collapsed,
+.agent-monitor.is-agent-session,
+.agent-monitor.is-agent-session.panel-collapsed {
   grid-template-columns: 260px minmax(0, 1fr);
 }
 
@@ -32108,7 +32181,9 @@ textarea.thread-command-editor {
     grid-template-columns: minmax(160px, 28%) minmax(0, 1fr) 40px;
   }
   .agent-monitor.is-thread,
-  .agent-monitor.is-thread.panel-collapsed {
+  .agent-monitor.is-thread.panel-collapsed,
+  .agent-monitor.is-agent-session,
+  .agent-monitor.is-agent-session.panel-collapsed {
     grid-template-columns: minmax(160px, 28%) minmax(0, 1fr);
   }
 }

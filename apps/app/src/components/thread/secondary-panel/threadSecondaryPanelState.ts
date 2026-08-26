@@ -1,4 +1,5 @@
-export const SECONDARY_PANEL_STORAGE_PREFIX = 'zcc.thread.secondaryPanel.';
+export const SECONDARY_PANEL_STORAGE_PREFIX = 'zcc.secondaryPanel.';
+export const LEGACY_THREAD_STORAGE_PREFIX = 'zcc.thread.secondaryPanel.';
 export const SECONDARY_PANEL_DEFAULT_WIDTH_PX = 352;
 export const SECONDARY_PANEL_MIN_WIDTH_PX = 288;
 export const SECONDARY_PANEL_MAX_WIDTH_RATIO = 0.7;
@@ -34,10 +35,10 @@ export interface ThreadSecondaryPanelState {
 export const INFO_PIN_ID = 'info';
 export const DIFF_PIN_ID = 'diff';
 
-export function emptySecondaryPanelState(): ThreadSecondaryPanelState {
+export function emptySecondaryPanelState(options?: { isOpen?: boolean }): ThreadSecondaryPanelState {
   return {
     version: 1,
-    isOpen: false,
+    isOpen: options?.isOpen === true,
     isMaximized: false,
     widthPx: SECONDARY_PANEL_DEFAULT_WIDTH_PX,
     activeId: INFO_PIN_ID,
@@ -45,8 +46,12 @@ export function emptySecondaryPanelState(): ThreadSecondaryPanelState {
   };
 }
 
+export function storageKeyForOwner(ownerId: string): string {
+  return `${SECONDARY_PANEL_STORAGE_PREFIX}${ownerId}`;
+}
+
 export function storageKeyForThread(threadId: string): string {
-  return `${SECONDARY_PANEL_STORAGE_PREFIX}${threadId}`;
+  return storageKeyForOwner(threadId);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -103,21 +108,29 @@ export function clampWidth(widthPx: number, containerWidthPx = 1200): number {
   return Math.min(max, Math.max(SECONDARY_PANEL_MIN_WIDTH_PX, Math.round(widthPx)));
 }
 
-export function loadSecondaryPanelState(threadId: string): ThreadSecondaryPanelState {
-  if (typeof localStorage === 'undefined') return emptySecondaryPanelState();
+function readStoredPanelRaw(ownerId: string): string | null {
+  return localStorage.getItem(storageKeyForOwner(ownerId))
+    ?? localStorage.getItem(`${LEGACY_THREAD_STORAGE_PREFIX}${ownerId}`);
+}
+
+export function loadSecondaryPanelState(
+  ownerId: string,
+  fallback: ThreadSecondaryPanelState = emptySecondaryPanelState()
+): ThreadSecondaryPanelState {
+  if (typeof localStorage === 'undefined') return fallback;
   try {
-    const raw = localStorage.getItem(storageKeyForThread(threadId));
-    if (!raw) return emptySecondaryPanelState();
+    const raw = readStoredPanelRaw(ownerId);
+    if (!raw) return fallback;
     return parseSecondaryPanelState(JSON.parse(raw) as unknown);
   } catch {
-    return emptySecondaryPanelState();
+    return fallback;
   }
 }
 
-export function persistSecondaryPanelState(threadId: string, state: ThreadSecondaryPanelState): void {
+export function persistSecondaryPanelState(ownerId: string, state: ThreadSecondaryPanelState): void {
   if (typeof localStorage === 'undefined') return;
   try {
-    localStorage.setItem(storageKeyForThread(threadId), JSON.stringify(state));
+    localStorage.setItem(storageKeyForOwner(ownerId), JSON.stringify(state));
   } catch {
     /* quota / private mode */
   }
@@ -129,13 +142,28 @@ export function uniqueTabSuffix(randomUUID?: () => string): string {
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+export function restoreSecondaryPanel(
+  ownerId: string | undefined,
+  options?: { defaultOpen?: boolean }
+): ThreadSecondaryPanelState {
+  const fallback = emptySecondaryPanelState({ isOpen: options?.defaultOpen === true });
+  return loadSecondaryPanelState(ownerId ?? 'pending', fallback);
+}
+
+export function persistSecondaryPanel(
+  ownerId: string | undefined,
+  state: ThreadSecondaryPanelState
+): void {
+  if (!ownerId) return;
+  persistSecondaryPanelState(ownerId, state);
+}
+
 export function restoreIfThread(threadId: string | undefined): ThreadSecondaryPanelState {
-  return loadSecondaryPanelState(threadId ?? 'pending');
+  return restoreSecondaryPanel(threadId);
 }
 
 export function persistIfThread(threadId: string | undefined, state: ThreadSecondaryPanelState): void {
-  if (!threadId) return;
-  persistSecondaryPanelState(threadId, state);
+  persistSecondaryPanel(threadId, state);
 }
 
 function mintTabId(kind: ClosableSecondaryTabKind): string {

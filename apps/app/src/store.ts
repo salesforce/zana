@@ -362,6 +362,13 @@ interface UiState {
    */
   agentModal: { sessionId: string; projectId: string } | null;
   /**
+   * The thread-inspector modal: the conversation ThreadDetail surface in an
+   * overlay, opened from the Agents kanban without navigating to `/threads/:id`.
+   * `null` ⇒ closed. Mutually exclusive with {@link agentModal} so only one
+   * inspector overlay is up at a time.
+   */
+  threadModal: { threadId: string } | null;
+  /**
    * The agent selected in the Agents "List" view's 3-pane monitor (center-pane
    * live terminal). Like {@link agentModal} it drives TerminalSurface to portal
    * that session's real xterm into the monitor's anchor (one-xterm-per-session),
@@ -521,6 +528,10 @@ interface UiState {
   openAgentModal: (sessionId: string, projectId: string) => void;
   /** Close the agent-inspector modal. */
   closeAgentModal: () => void;
+  /** Open the thread-inspector modal without leaving the current view. */
+  openThreadModal: (threadId: string) => void;
+  /** Close the thread-inspector modal. */
+  closeThreadModal: () => void;
   /**
    * Which tab is active in the Settings panel. The fixed core tabs are
    * 'global' | 'project' | 'prompts'; a module with `placement: 'settings'`
@@ -861,6 +872,7 @@ export const useUi = create<UiState>((set, get) => ({
   searchOpen: false,
   findOpen: false,
   agentModal: null,
+  threadModal: null,
   agentMonitor: null,
   threadPanelTerminal: null,
   settingsTab: 'global',
@@ -1046,8 +1058,11 @@ export const useUi = create<UiState>((set, get) => ({
   setSetupOpen: (setupOpen) => set({ setupOpen }),
   setSearchOpen: (searchOpen) => set({ searchOpen }),
   setFindOpen: (findOpen) => set({ findOpen }),
-  openAgentModal: (sessionId, projectId) => set({ agentModal: { sessionId, projectId } }),
+  openAgentModal: (sessionId, projectId) =>
+    set({ agentModal: { sessionId, projectId }, threadModal: null }),
   closeAgentModal: () => set({ agentModal: null }),
+  openThreadModal: (threadId) => set({ threadModal: { threadId }, agentModal: null }),
+  closeThreadModal: () => set({ threadModal: null }),
   selectMonitorAgent: (sessionId, projectId) => set({ agentMonitor: { sessionId, projectId } }),
   clearMonitorAgent: () => set({ agentMonitor: null }),
   selectThreadPanelTerminal: (sessionId, projectId) => set({ threadPanelTerminal: { sessionId, projectId } }),

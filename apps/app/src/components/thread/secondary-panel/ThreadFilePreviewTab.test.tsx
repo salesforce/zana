@@ -19,6 +19,14 @@ describe('ThreadFilePreviewTab', () => {
     expect(html).toContain('Loading');
   });
 
+  it('renders a loading preview shell without a thread id', () => {
+    const html = renderToStaticMarkup(
+      <ThreadFilePreviewTab path="/tmp/README.md" />
+    );
+    expect(html).toContain('data-testid="thread-file-preview"');
+    expect(html).toContain('Loading');
+  });
+
   it('renders text, image, and error preview states', () => {
     expect(renderToStaticMarkup(
       <ThreadFilePreviewView path="/tmp/a.ts" content="const x = 1" error={null} />

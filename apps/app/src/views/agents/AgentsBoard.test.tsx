@@ -41,6 +41,7 @@ describe('AgentsBoard', () => {
     expect(board).toContain('threadFleetItem');
     expect(board).toContain('fleetAgentCards(visibleFleet)');
     expect(board).toContain('item.kind === \'thread\'');
+    expect(board).toContain('openThreadModal(item.id)');
     expect(board).toContain('getThreadRoutePath(item.id, threadProjectId)');
     expect(board).toContain('threadIdFromPath');
     expect(board).toContain('setCloseIdleTarget(reclaimableAgents)');

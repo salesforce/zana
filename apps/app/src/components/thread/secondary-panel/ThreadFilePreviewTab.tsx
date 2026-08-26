@@ -26,7 +26,7 @@ export function ThreadFilePreviewTab({
   threadId,
   path
 }: {
-  threadId: string;
+  threadId?: string;
   path: string;
 }) {
   const [content, setContent] = useState<string>('Loading…');
@@ -34,7 +34,12 @@ export function ThreadFilePreviewTab({
 
   useEffect(() => {
     let cancelled = false;
-    void loadFilePreview(product.fs.readFile, product.threads.hostFileContent, threadId, path).then((result) => {
+    void loadFilePreview(
+      product.fs.readFile,
+      threadId ? product.threads.hostFileContent : undefined,
+      threadId,
+      path
+    ).then((result) => {
       applyPreviewResult(cancelled, result, setError, setContent);
     });
     return () => { cancelled = true; };

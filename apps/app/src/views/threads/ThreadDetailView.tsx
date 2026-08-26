@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { PanelRight } from 'lucide-react';
+import { Maximize2, Minimize2, PanelRight, X } from 'lucide-react';
 import type { ActiveThinking, ThreadTimelineGoal, ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ThreadContextWindowUsage, TimelineRow } from '@zana-ai/zcc-server-contract';
 import type { TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
@@ -42,10 +42,17 @@ export function ThreadDetailView() {
 
 export function ThreadDetail({
   threadId,
-  embedded = false
+  embedded = false,
+  onClose,
+  fullScreen = false,
+  onToggleFullScreen
 }: {
   threadId: string;
   embedded?: boolean;
+  /** When set, this surface is hosted in the thread inspector modal. */
+  onClose?: () => void;
+  fullScreen?: boolean;
+  onToggleFullScreen?: () => void;
 }) {
   const navigate = useNavigate();
   const route = useRouteState();
@@ -213,6 +220,7 @@ export function ThreadDetail({
   const viewClass = [
     'thread-detail-view',
     embedded ? 'thread-detail-view--embedded' : '',
+    onClose ? 'thread-detail-view--modal' : '',
     panelOpen ? 'is-secondary-open' : '',
     panel.state.isMaximized ? 'is-secondary-maximized' : ''
   ].filter(Boolean).join(' ');
@@ -307,6 +315,29 @@ export function ThreadDetail({
                 onClick={panel.open}
               >
                 <PanelRight size={14} />
+              </button>
+            ) : null}
+            {onToggleFullScreen ? (
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={onToggleFullScreen}
+                aria-label={fullScreen ? 'Exit full screen' : 'Full screen'}
+                title={fullScreen ? 'Exit full screen' : 'Full screen'}
+                data-testid="thread-modal-fullscreen"
+              >
+                {fullScreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+              </button>
+            ) : null}
+            {onClose ? (
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={onClose}
+                aria-label="Close"
+                data-testid="thread-modal-close"
+              >
+                <X size={14} />
               </button>
             ) : null}
           </div>

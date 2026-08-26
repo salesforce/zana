@@ -12,6 +12,7 @@ export function ThreadSecondaryPanel({
   state,
   showDiffPin,
   children,
+  footer,
   onSelectInfo,
   onSelectDiff,
   onNewTab,
@@ -24,6 +25,7 @@ export function ThreadSecondaryPanel({
   state: ThreadSecondaryPanelState;
   showDiffPin?: boolean;
   children: ReactNode;
+  footer?: ReactNode;
   onSelectInfo: () => void;
   onSelectDiff: () => void;
   onNewTab: () => void;
@@ -137,6 +139,11 @@ export function ThreadSecondaryPanel({
         </div>
       </div>
       <div className="thread-secondary-body">{children}</div>
+      {footer ? (
+        <div className="thread-secondary-footer" data-testid="thread-secondary-footer">
+          {footer}
+        </div>
+      ) : null}
     </aside>
   );
 }

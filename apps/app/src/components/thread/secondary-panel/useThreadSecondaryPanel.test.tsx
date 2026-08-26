@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { useThreadSecondaryPanel } from './useThreadSecondaryPanel.js';
+import { useSecondaryPanel, useThreadSecondaryPanel } from './useThreadSecondaryPanel.js';
 
 function Probe({ threadId }: { threadId?: string }) {
   const panel = useThreadSecondaryPanel(threadId);
@@ -10,6 +10,11 @@ function Probe({ threadId }: { threadId?: string }) {
       {panel.state.activeId}
     </div>
   );
+}
+
+function AgentProbe({ ownerId }: { ownerId: string }) {
+  const panel = useSecondaryPanel(ownerId, { defaultOpen: true });
+  return <div>{panel.state.isOpen ? 'open' : 'closed'}</div>;
 }
 
 describe('useThreadSecondaryPanel', () => {
@@ -23,5 +28,10 @@ describe('useThreadSecondaryPanel', () => {
     const html = renderToStaticMarkup(<Probe />);
     expect(html).toContain('closed');
     expect(html).toContain('info');
+  });
+
+  it('defaults agent owners open', () => {
+    const html = renderToStaticMarkup(<AgentProbe ownerId="session-x" />);
+    expect(html).toContain('open');
   });
 });

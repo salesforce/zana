@@ -31,6 +31,27 @@ describe('ThreadSecondaryPanel chrome', () => {
     expect(html).toContain('aria-pressed="true"');
   });
 
+  it('renders a footer slot for inspector actions', () => {
+    const html = renderToStaticMarkup(
+      <ThreadSecondaryPanel
+        state={openSecondaryPanel(emptySecondaryPanelState())}
+        footer={<button type="button">Close Session</button>}
+        onSelectInfo={noop}
+        onSelectDiff={noop}
+        onNewTab={noop}
+        onCloseTab={noop}
+        onActivateTab={noop}
+        onToggleMaximized={noop}
+        onHide={noop}
+        onResize={noop}
+      >
+        <div>body</div>
+      </ThreadSecondaryPanel>
+    );
+    expect(html).toContain('data-testid="thread-secondary-footer"');
+    expect(html).toContain('Close Session');
+  });
+
   it('renders closable New Tab pills', () => {
     const html = renderToStaticMarkup(
       <ThreadSecondaryPanel

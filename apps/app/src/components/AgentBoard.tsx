@@ -547,7 +547,7 @@ interface AgentBoardLanesProps {
   /** Which session or thread id is the active tab (highlighted). */
   activeId?: string;
   /**
-   * Card click — peek at an agent (inspector modal) or open a thread.
+   * Card click — peek at an agent or thread (inspector modal).
    * The context-menu "Open"/"View" item uses {@link onPick} for the heavier
    * navigate-to-workspace path instead, so a glance and a jump stay distinct.
    */

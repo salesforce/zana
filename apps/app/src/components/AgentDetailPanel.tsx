@@ -18,11 +18,9 @@ import { formatDuration } from './AgentBoard.js';
  * modal. Both surfaces show the SAME information about one agent beside its live
  * terminal; this is the one component that renders it, so they can't drift.
  *
- * The panel is collapsible: collapsed, it shrinks to a thin rail (status dot +
- * expand button) so the terminal gets the width. The caller owns the collapsed
- * bit (persisted per-surface in {@link useAgentPanel}) and passes it in, since
- * the monitor collapses a CSS-grid column while the modal collapses a flex
- * child — the layout mechanics live with each caller, only the toggle is shared.
+ * Hide/show now lives on the thread secondary-panel chrome when the facts
+ * list is embedded there; this panel still supports a collapse-to-rail for any
+ * caller that hosts it as a dedicated column.
  *
  * Actions differ per surface (the monitor's "Stop" is a non-destructive Ctrl-C;
  * the modal's is a kill), so the caller passes its own action buttons as
@@ -65,10 +63,12 @@ interface Props {
   heartbeat?: DetailHeartbeat | null;
   /** Per-surface action buttons, stacked at the panel foot. */
   actions?: ReactNode;
-  collapsed: boolean;
-  onToggleCollapse: () => void;
+  /** When false, hide/show belongs to the surrounding secondary panel. */
+  collapsible?: boolean;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
   /** Which surface — drives the root class so each can size/scroll its own way. */
-  variant: 'monitor' | 'modal';
+  variant: 'monitor' | 'modal' | 'embedded';
   /** Show the icon/title/sub in the panel head. The monitor needs it (no other
    *  title); the modal already has a title bar, so it suppresses the duplicate
    *  and the head carries only the star + collapse control. Default true. */
@@ -111,7 +111,8 @@ export function AgentDetailPanel({
   background = false,
   heartbeat,
   actions,
-  collapsed,
+  collapsible = true,
+  collapsed = false,
   onToggleCollapse,
   variant,
   showIdentity = true,
@@ -144,8 +145,9 @@ export function AgentDetailPanel({
   const dur = formatDuration((exited ? t.finishedAt ?? t.createdAt : Date.now()) - t.createdAt);
   const statusLabel = exited ? (bad ? `Exited (code ${t.exitCode})` : 'Exited') : STATE_LABEL[state];
   const directoryFacts = agentDirectoryFacts(t, project?.path);
+  const showHead = showIdentity || collapsible;
 
-  if (collapsed) {
+  if (collapsible && collapsed) {
     // Thin rail: an expand affordance + a status dot, so the agent's state is
     // still legible at a glance while the terminal owns the width.
     return (
@@ -173,33 +175,37 @@ export function AgentDetailPanel({
 
   return (
     <aside className={`agent-detail-panel agent-detail-panel--${variant}`}>
-      <div className={`agent-detail-head ${showIdentity ? '' : 'no-identity'}`}>
-        {showIdentity && (
-          <>
-            <span
-              className={`agent-detail-icon tab-profile-icon profile-${t.profile}`}
-              style={projectColor ? ({ '--project-color': projectColor } as React.CSSProperties) : undefined}
+      {showHead ? (
+        <div className={`agent-detail-head ${showIdentity ? '' : 'no-identity'}`}>
+          {showIdentity && (
+            <>
+              <span
+                className={`agent-detail-icon tab-profile-icon profile-${t.profile}`}
+                style={projectColor ? ({ '--project-color': projectColor } as React.CSSProperties) : undefined}
+              >
+                {persona ? personaIcon(persona, 15) : profileIcon(t.profile, 15)}
+              </span>
+              <span className="agent-detail-heading">
+                <span className="agent-detail-title">{t.title}</span>
+                <span className="agent-detail-sub">{subtitle}</span>
+              </span>
+              <FavoriteStar session={t} size={15} className="agent-detail-fav" />
+            </>
+          )}
+          {collapsible ? (
+            <button
+              type="button"
+              className="agent-detail-collapse"
+              onClick={onToggleCollapse}
+              title="Collapse details"
+              aria-label="Collapse details"
+              aria-expanded
             >
-              {persona ? personaIcon(persona, 15) : profileIcon(t.profile, 15)}
-            </span>
-            <span className="agent-detail-heading">
-              <span className="agent-detail-title">{t.title}</span>
-              <span className="agent-detail-sub">{subtitle}</span>
-            </span>
-            <FavoriteStar session={t} size={15} className="agent-detail-fav" />
-          </>
-        )}
-        <button
-          type="button"
-          className="agent-detail-collapse"
-          onClick={onToggleCollapse}
-          title="Collapse details"
-          aria-label="Collapse details"
-          aria-expanded
-        >
-          <PanelRightClose size={15} />
-        </button>
-      </div>
+              <PanelRightClose size={15} />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <dl className="agent-detail-facts">
         <div className="agent-detail-fact">

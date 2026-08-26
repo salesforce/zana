@@ -80,13 +80,19 @@ export function installShortcuts(): () => void {
       ui.setNav(ui.nav === 'settings' ? 'home' : 'settings');
       return;
     }
-    // cmd+. — close the agent detail modal. Escape is reserved for the embedded
-    // terminal's interrupt (the only way to cancel Claude mid-task), so the
-    // inspector gets its own dismiss chord. No-op when no modal is open.
+    // cmd+. — close the agent or thread inspector modal. Escape is reserved
+    // for the embedded terminal's interrupt (the only way to cancel Claude
+    // mid-task), so the inspector gets its own dismiss chord. No-op when no
+    // modal is open.
     if (e.key === '.') {
-      if (!ui.agentModal) return;
+      if (ui.agentModal) {
+        e.preventDefault();
+        ui.closeAgentModal();
+        return;
+      }
+      if (!ui.threadModal) return;
       e.preventDefault();
-      ui.closeAgentModal();
+      ui.closeThreadModal();
       return;
     }
     // cmd+i — toggle Inbox. Returns to Home when already on inbox so it

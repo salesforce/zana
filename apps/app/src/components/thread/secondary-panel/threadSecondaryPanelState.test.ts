@@ -14,6 +14,7 @@ import {
   persistIfThread,
   persistSecondaryPanelState,
   restoreIfThread,
+  restoreSecondaryPanel,
   selectPinnedView,
   setSecondaryPanelWidth,
   storageKeyForThread,
@@ -208,6 +209,8 @@ describe('thread secondary panel state', () => {
     persistIfThread(undefined, emptySecondaryPanelState());
     persistIfThread('kept', opened);
     expect(loadSecondaryPanelState('kept').tabs).toHaveLength(1);
+    expect(restoreSecondaryPanel('missing', { defaultOpen: true }).isOpen).toBe(true);
+    expect(restoreSecondaryPanel('kept', { defaultOpen: true }).tabs).toHaveLength(1);
     const originalStorage = globalThis.localStorage;
     // @ts-expect-error -- simulate a worker without storage
     delete globalThis.localStorage;
@@ -215,5 +218,30 @@ describe('thread secondary panel state', () => {
     expect(() => persistSecondaryPanelState('x', emptySecondaryPanelState())).not.toThrow();
     persistIfThread('y', emptySecondaryPanelState());
     globalThis.localStorage = originalStorage;
+  });
+
+  it('loads a legacy thread storage key and defaults agents open', () => {
+    const memory = new Map<string, string>();
+    globalThis.localStorage = {
+      getItem: (key) => memory.get(key) ?? null,
+      setItem: (key, value) => { memory.set(key, value); },
+      removeItem: (key) => { memory.delete(key); },
+      clear: () => memory.clear(),
+      key: (index) => [...memory.keys()][index] ?? null,
+      get length() { return memory.size; }
+    } as Storage;
+    memory.set('zcc.thread.secondaryPanel.legacy-thread', JSON.stringify({
+      version: 1,
+      isOpen: true,
+      isMaximized: false,
+      widthPx: 400,
+      activeId: 'info',
+      tabs: []
+    }));
+    expect(loadSecondaryPanelState('legacy-thread')).toMatchObject({ isOpen: true, widthPx: 400 });
+    persistSecondaryPanelState('legacy-thread', emptySecondaryPanelState({ isOpen: true }));
+    expect(localStorage.getItem(storageKeyForThread('legacy-thread'))).toContain('"isOpen":true');
+    expect(emptySecondaryPanelState({ isOpen: true }).isOpen).toBe(true);
+    expect(emptySecondaryPanelState().isOpen).toBe(false);
   });
 });

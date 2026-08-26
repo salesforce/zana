@@ -1,19 +1,18 @@
 import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { X, Square, Inbox, Loader2, RefreshCw, TerminalSquare, FileDiff, FileText, Sparkles, MailCheck, BellOff, Maximize2, Minimize2 } from 'lucide-react';
+import { X, Square, Inbox, Loader2, RefreshCw, FileText, Sparkles, MailCheck, BellOff, Maximize2, Minimize2 } from 'lucide-react';
 import { inboxQuestions } from '@zana-ai/zcc-domain/product';
 import type { AgentState, InboxEntry, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { profileIcon, personaIcon } from '../lib/profileIcon.js';
 import { isClaudeProfile } from '../lib/launchProfile.js';
 import { providerCapabilities } from '@zana-ai/zcc-domain/launch-provider';
-import { useData, usePersonas, useAgentStatus, useCatchUpSummary, useAgentPanel, useSubagents, useOverseerActivity, useIdleTriage, useInbox, useInboxAnswered } from '../store.js';
+import { useData, usePersonas, useAgentStatus, useCatchUpSummary, useSubagents, useOverseerActivity, useIdleTriage, useInbox, useInboxAnswered } from '../store.js';
 import { idleSurfacesToNeedsYou } from './AgentBoard.js';
 import { inboxPrimaryTitle } from '../lib/inboxPresentation.js';
 import { QuestionBlock } from './InboxQuestionBlock.js';
 import { AGENT_MODAL_TERMINAL_ANCHOR_ID } from './TerminalSurface.js';
-import { AgentDetailPanel } from './AgentDetailPanel.js';
-import { AgentDiffPanel } from './AgentDiffPanel.js';
+import { AgentSessionView } from './AgentSessionView.js';
 import { AgentReportPanel } from './AgentReportPanel.js';
 import { useSessionStats } from './AgentInsights.js';
 import { FavoriteStar } from './FavoriteStar.js';
@@ -63,17 +62,13 @@ export function AgentTerminalModal({
   // array content is unchanged (personas is an array).
   const personas = usePersonas(useShallow((s) => s.personas));
   const heartbeatEnabled = useData((s) => s.heartbeatEnabled);
-  const panelCollapsed = useAgentPanel((s) => s.collapsed.modal);
-  const togglePanel = useAgentPanel((s) => s.toggle);
   const ref = useRef<HTMLDivElement | null>(null);
 
-  // The stage shows the live terminal, the working-tree diff, or this agent's
-  // reports. The terminal's xterm anchor stays mounted in every mode (the
-  // one-xterm-per-session invariant — TerminalSurface portals into it and
-  // re-parenting/unmounting it would tear down the live view); diff/report
-  // overlay the stage and the anchor is just hidden behind them. Default to
-  // the terminal.
-  const [stageView, setStageView] = useState<'terminal' | 'diff' | 'report'>('terminal');
+  // The stage is the live terminal. Working-tree changes live in the secondary
+  // panel's Diff pin; reports remain a header overlay so they stay agent-only.
+
+  const [showReport, setShowReport] = useState(false);
+  const [focusDiffKey, setFocusDiffKey] = useState(0);
 
   // Full screen: the modal already sizes to ~94vh, so the CSS side just
   // stretches it to fill the viewport and hides its rounded-corner chrome — no
@@ -140,12 +135,6 @@ export function AgentTerminalModal({
     : undefined;
   const subtitle = persona?.name ?? session.profile;
 
-  // The agent's transcript-derived write-set — the absolute paths it actually
-  // Wrote/Edited (op 'C'/'W'; a bare 'R' read doesn't change a file, so it's
-  // excluded). We pass this to the Changes tab so it shows only what THIS agent
-  // touched, not the whole repo's dirty tree. `null` when there's no transcript
-  // signal (a shell session, or stats not yet loaded) ⇒ the diff falls back to
-  // the full working tree rather than hiding everything.
   const stats = useSessionStats(session.id, projectId, exited);
   // Count of this agent's flagged reports (inbox_push({ report: true }) on the
   // session-scoped MCP route, which stamps sessionId) — shown as a badge on the
@@ -156,15 +145,6 @@ export function AgentTerminalModal({
     [inboxEntries, session.id]
   );
   const project = useData((s) => s.projects.find((p) => p.id === projectId) ?? null);
-  const writeScope = useMemo(() => {
-    // No stats object at all ⇒ no transcript signal (shell session, or the
-    // first read hasn't resolved) ⇒ null ⇒ full working tree. But a LOADED
-    // transcript that simply contains no writes is a real signal ("this agent
-    // changed nothing"), so we return an (empty) Set, not null — otherwise a
-    // read-only agent would fall back to showing the whole repo again.
-    if (!stats) return null;
-    return new Set(stats.files.filter((f) => f.op !== 'R').map((f) => f.path));
-  }, [stats]);
 
   // Task Shelves (afl-04): a compact ledger of this agent's Sources / Background
   // / Outputs, derived PURELY from signals the renderer already holds — the
@@ -187,7 +167,8 @@ export function AgentTerminalModal({
   // background rows are informational (no file target), so they're a no-op.
   const onSelectShelfRow = (row: { id: string }) => {
     if (row.id.startsWith('R:') || row.id.startsWith('C:') || row.id.startsWith('W:')) {
-      setStageView('diff');
+      setShowReport(false);
+      setFocusDiffKey((n) => n + 1);
     }
   };
 
@@ -345,33 +326,13 @@ export function AgentTerminalModal({
               {STATE_LABEL[state]}
             </span>
           )}
-          <div className="agent-modal-stage-toggle" role="tablist" aria-label="Stage view">
+          <div className="agent-modal-stage-toggle" role="tablist" aria-label="Agent reports">
             <button
               type="button"
               role="tab"
-              aria-selected={stageView === 'terminal'}
-              className={stageView === 'terminal' ? 'is-active' : ''}
-              onClick={() => setStageView('terminal')}
-              title="Live terminal"
-            >
-              <TerminalSquare size={13} /> Terminal
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={stageView === 'diff'}
-              className={stageView === 'diff' ? 'is-active' : ''}
-              onClick={() => setStageView('diff')}
-              title="Working-tree changes"
-            >
-              <FileDiff size={13} /> Changes
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={stageView === 'report'}
-              className={stageView === 'report' ? 'is-active' : ''}
-              onClick={() => setStageView('report')}
+              aria-selected={showReport}
+              className={showReport ? 'is-active' : ''}
+              onClick={() => setShowReport((open) => !open)}
               title="Reports this agent pushed to your inbox"
             >
               <FileText size={13} /> Report
@@ -393,49 +354,18 @@ export function AgentTerminalModal({
           </button>
         </header>
 
-        {/* Body: the live terminal (with its catch-up card) beside the shared
-            agent detail panel — the same panel the List-view monitor renders, so
-            the two surfaces can't drift. The panel is collapsible; collapsed, it
-            folds to a thin rail and the terminal claims the width. */}
-        <div className={`agent-modal-body ${panelCollapsed ? 'panel-collapsed' : ''}`}>
-          <section className="agent-modal-stage">
-            {/* A blocking inbox question this agent raised — surfaced IN the
-                modal so the user answers it in-context (the quiet-questions
-                feature: a held question flushes to the inbox on idle, and when
-                the user opens the agent it also appears right here). Answering
-                injects into this live session via the same channel the inbox
-                detail pane uses. Only shown on the terminal stage. */}
-            {stageView === 'terminal' && <ModalPendingQuestion session={session} />}
-            {/* TerminalSurface portals the session's live xterm into this anchor
-                while the modal is open (see AGENT_MODAL_TERMINAL_ANCHOR_ID). The
-                anchor stays mounted (and keeps its size) in both stage views —
-                the diff is an opaque overlay ON TOP of it rather than a swap, so
-                the live terminal is never torn down or forced to a zero-size
-                refit (one-xterm-per-session invariant). */}
-            <div className="agent-modal-terminal" id={AGENT_MODAL_TERMINAL_ANCHOR_ID} />
-            {stageView === 'diff' && (
-              <div className="agent-modal-diff">
-                <AgentDiffPanel cwd={session.cwd} isRemote={projectRemote} exited={exited} scope={writeScope} />
-              </div>
-            )}
-            {stageView === 'report' && (
-              <div className="agent-modal-diff agent-modal-report">
-                <AgentReportPanel sessionId={session.id} project={project} />
-              </div>
-            )}
-            {stageView === 'terminal' && (
-              <CatchUpSummaryCard sessionId={session.id} projectId={projectId} state={state} />
-            )}
-          </section>
-
-          <AgentDetailPanel
-            variant="modal"
-            showIdentity={false}
+        {/* Body: live PTY beside the shared thread secondary panel (Info / Diff /
+            extra tabs). Actions stay in the panel footer so Close Session remains
+            available while Diff or a tab is open. */}
+        <div className="agent-modal-body">
+          <AgentSessionView
             session={session}
             projectId={projectId}
             projectName={projectName}
             projectColor={projectColor}
+            projectRemote={projectRemote}
             state={state}
+            terminalAnchorId={AGENT_MODAL_TERMINAL_ANCHOR_ID}
             showProject
             background={session.scheduled}
             heartbeat={
@@ -443,12 +373,26 @@ export function AgentTerminalModal({
                 ? { checked: session.heartbeat ?? false, onToggle: toggleHeartbeat }
                 : null
             }
-            actions={modalActions}
-            collapsed={panelCollapsed}
-            onToggleCollapse={() => togglePanel('modal')}
+            footer={modalActions}
             maxFiles={6}
             maxQueue={5}
             stats={stats}
+            focusDiffKey={focusDiffKey}
+            stageChrome={
+              !showReport ? (
+                <>
+                  <ModalPendingQuestion session={session} />
+                  <CatchUpSummaryCard sessionId={session.id} projectId={projectId} state={state} />
+                </>
+              ) : null
+            }
+            stageOverlay={
+              showReport ? (
+                <div className="agent-modal-diff agent-modal-report">
+                  <AgentReportPanel sessionId={session.id} project={project} />
+                </div>
+              ) : null
+            }
           />
         </div>
       </div>

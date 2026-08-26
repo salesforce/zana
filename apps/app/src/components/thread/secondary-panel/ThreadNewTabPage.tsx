@@ -15,7 +15,8 @@ export function ThreadNewTabView({
   onOpenFile,
   onOpenBrowser,
   onStartTerminal,
-  onOpenPlugin
+  onOpenPlugin,
+  allowSidecarTerminal = true
 }: {
   query: string;
   onQueryChange: (query: string) => void;
@@ -24,8 +25,9 @@ export function ThreadNewTabView({
   modules: Array<{ id: string; title: string; projectTab?: { label?: string } }>;
   onOpenFile: (path: string, title: string) => void;
   onOpenBrowser: () => void;
-  onStartTerminal: () => void;
+  onStartTerminal?: () => void;
   onOpenPlugin: (moduleId: string, title: string) => void;
+  allowSidecarTerminal?: boolean;
 }) {
   return (
     <div className="thread-new-tab-page" data-testid="thread-new-tab-page">
@@ -61,9 +63,11 @@ export function ThreadNewTabView({
               <Globe size={14} /> Open browser
             </button>
           ) : null}
-          <button type="button" data-testid="thread-new-tab-terminal" onClick={onStartTerminal}>
-            <Terminal size={14} /> Start terminal
-          </button>
+          {allowSidecarTerminal ? (
+            <button type="button" data-testid="thread-new-tab-terminal" onClick={onStartTerminal}>
+              <Terminal size={14} /> Start terminal
+            </button>
+          ) : null}
           {modules.map((mod) => (
             <button
               key={mod.id}
@@ -85,14 +89,16 @@ export function ThreadNewTabPage({
   onOpenFile,
   onOpenBrowser,
   onStartTerminal,
-  onOpenPlugin
+  onOpenPlugin,
+  allowSidecarTerminal = true
 }: {
   projectId: string | null;
   cwd: string | null;
   onOpenFile: (path: string, title: string) => void;
   onOpenBrowser: () => void;
-  onStartTerminal: () => void;
+  onStartTerminal?: () => void;
   onOpenPlugin: (moduleId: string, title: string) => void;
+  allowSidecarTerminal?: boolean;
 }) {
   const project = useData((s) => s.projects.find((row) => row.id === projectId) ?? null);
   const modules = useProjectTabModules();
@@ -122,6 +128,7 @@ export function ThreadNewTabPage({
       onOpenBrowser={onOpenBrowser}
       onStartTerminal={onStartTerminal}
       onOpenPlugin={onOpenPlugin}
+      allowSidecarTerminal={allowSidecarTerminal}
     />
   );
 }

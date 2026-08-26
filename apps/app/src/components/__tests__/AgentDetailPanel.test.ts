@@ -38,3 +38,14 @@ describe('shouldShowTranscriptInsights', () => {
     expect(shouldShowTranscriptInsights('shell', { files: [], queue: [], model: 'host-provided' })).toBe(true);
   });
 });
+
+describe('AgentDetailPanel source', () => {
+  it('can suppress its own collapse rail when embedded in the secondary panel', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('../AgentDetailPanel.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('collapsible?: boolean');
+    expect(source).toContain("variant: 'monitor' | 'modal' | 'embedded'");
+    expect(source).toContain('if (collapsible && collapsed)');
+    expect(source).toContain('{collapsible ? (');
+  });
+});

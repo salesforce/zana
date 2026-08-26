@@ -1,22 +1,28 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createSecondaryPanelCommands } from './threadSecondaryPanelLogic.js';
 import {
-  persistIfThread,
-  restoreIfThread,
+  persistSecondaryPanel,
+  restoreSecondaryPanel,
   type ThreadSecondaryPanelState
 } from './threadSecondaryPanelState.js';
 
-export function useThreadSecondaryPanel(threadId: string | undefined) {
-  const [state, setState] = useState<ThreadSecondaryPanelState>(() => restoreIfThread(threadId));
+export function useSecondaryPanel(
+  ownerId: string | undefined,
+  options?: { defaultOpen?: boolean }
+) {
+  const defaultOpen = options?.defaultOpen === true;
+  const [state, setState] = useState<ThreadSecondaryPanelState>(() => (
+    restoreSecondaryPanel(ownerId, { defaultOpen })
+  ));
 
   useEffect(() => {
-    if (!threadId) return;
-    setState(restoreIfThread(threadId));
-  }, [threadId]);
+    if (!ownerId) return;
+    setState(restoreSecondaryPanel(ownerId, { defaultOpen }));
+  }, [defaultOpen, ownerId]);
 
   useEffect(() => {
-    persistIfThread(threadId, state);
-  }, [state, threadId]);
+    persistSecondaryPanel(ownerId, state);
+  }, [ownerId, state]);
 
   const update = useCallback((recipe: (current: ThreadSecondaryPanelState) => ThreadSecondaryPanelState) => {
     setState((current) => recipe(current));
@@ -26,4 +32,8 @@ export function useThreadSecondaryPanel(threadId: string | undefined) {
     state,
     ...createSecondaryPanelCommands(update)
   };
+}
+
+export function useThreadSecondaryPanel(threadId: string | undefined) {
+  return useSecondaryPanel(threadId);
 }

@@ -15,7 +15,9 @@ const { uiState, dataState } = vi.hoisted(() => ({
   uiState: {
     nav: 'home' as string,
     agentModal: null as unknown,
+    threadModal: null as unknown,
     closeAgentModal: vi.fn(),
+    closeThreadModal: vi.fn(),
     setNav: vi.fn(),
     exitProjectFocus: vi.fn()
   },
@@ -44,7 +46,9 @@ describe('shortcuts: ⌘. closes the agent detail modal', () => {
     uninstall = installShortcuts();
     uiState.nav = 'home';
     uiState.agentModal = null;
+    uiState.threadModal = null;
     uiState.closeAgentModal.mockClear();
+    uiState.closeThreadModal.mockClear();
     uiState.setNav.mockClear();
     uiState.exitProjectFocus.mockClear();
   });
@@ -61,9 +65,26 @@ describe('shortcuts: ⌘. closes the agent detail modal', () => {
     expect(preventDefault).toHaveBeenCalledTimes(1);
   });
 
+  it('closes the thread inspector when that overlay is open', () => {
+    uiState.threadModal = { threadId: 't1' };
+    const { preventDefault } = kb.press('.', { meta: true });
+    expect(uiState.closeThreadModal).toHaveBeenCalledTimes(1);
+    expect(uiState.closeAgentModal).not.toHaveBeenCalled();
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+  });
+
+  it('prefers the agent inspector when both overlays are set', () => {
+    uiState.agentModal = { sessionId: 's1', projectId: 'p1' };
+    uiState.threadModal = { threadId: 't1' };
+    kb.press('.', { meta: true });
+    expect(uiState.closeAgentModal).toHaveBeenCalledTimes(1);
+    expect(uiState.closeThreadModal).not.toHaveBeenCalled();
+  });
+
   it('is a no-op when no modal is open (does not swallow the keystroke)', () => {
     const { preventDefault } = kb.press('.', { meta: true });
     expect(uiState.closeAgentModal).not.toHaveBeenCalled();
+    expect(uiState.closeThreadModal).not.toHaveBeenCalled();
     expect(preventDefault).not.toHaveBeenCalled();
   });
 
@@ -83,6 +104,7 @@ describe('shortcuts: round-trip and dashboard chords', () => {
     uninstall = installShortcuts();
     uiState.nav = 'home';
     uiState.agentModal = null;
+    uiState.threadModal = null;
     uiState.setNav.mockClear();
     uiState.exitProjectFocus.mockClear();
   });
