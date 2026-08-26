@@ -1735,9 +1735,10 @@ export interface AppConfig {
    */
   sponsorPromptDismissed?: boolean;
   /**
-   * Auto-name a Claude tab from its first instruction via an LLM micro-call
-   * (the `tab-namer` prompt). Default true. When false, tabs fall back to the
-   * legacy OSC idle-title rename only.
+   * Auto-name a Claude tab or a conversation thread from its first instruction
+   * via an LLM micro-call (the `tab-namer` prompt). Default true. When false,
+   * tabs fall back to the legacy OSC idle-title rename, and threads keep the
+   * short prompt-snippet placeholder.
    */
   autoRenameTabs?: boolean;
   /**

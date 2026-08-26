@@ -283,11 +283,22 @@ describe("provider registry", () => {
               displayName: "OpenCode",
               command: "opencode",
               args: ["acp"],
+              env: {},
             },
           },
         },
       },
     });
+    const spec = (
+      plan as {
+        params: {
+          options: {
+            providerOptions: { acpLaunchSpec: Record<string, unknown> };
+          };
+        };
+      }
+    ).params.options.providerOptions.acpLaunchSpec;
+    expect(spec).not.toHaveProperty("modelCli");
   });
 
   it("creates a dynamic acp provider from a launch spec", () => {

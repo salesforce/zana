@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { mkdirSync } from 'node:fs';
 import type { Project, AppConfig, ProjectSettings } from '@zana-ai/zcc-domain/product';
 
 /**
@@ -11,11 +12,11 @@ import type { Project, AppConfig, ProjectSettings } from '@zana-ai/zcc-domain/pr
  * solely on the HTTP hook route), and the one-shot guard blocks a double-fire
  * for the same session id.
  *
- * Mirrors the mocking approach in create-terminal-confined.test.ts: `pty.js` is
- * mocked to capture `create()` calls and back `getSession()`, `store.js` seeds
- * one project + config, `@zana-ai/zcc-llm` is mocked so
- * the test never spawns a real `claude --print` process, and `electron` is
- * mocked so importing index.ts is side-effect-free.
+ * Mirrors the mocking approach in create-terminal-confined.test.ts: the
+ * host-daemon PtyManager is mocked to capture `create()` calls and back
+ * `getSession()`, the project store seeds one project + config, `@zana-ai/zcc-llm`
+ * is mocked so the test never spawns a real `claude --print` process, and
+ * `electron` is mocked so importing host.ts is side-effect-free.
  */
 
 const PROJECT: Project = {
@@ -23,6 +24,8 @@ const PROJECT: Project = {
   name: 'Proj',
   path: '/tmp/proj'
 } as Project;
+
+mkdirSync(PROJECT.path, { recursive: true });
 
 const CONFIG: AppConfig = {
   version: 1,
@@ -39,7 +42,7 @@ const createCalls: Array<{ id: string; extraArgs?: string[]; profile: string }> 
 const liveSessions = new Map<string, { id: string; profile: string; status: string }>();
 let sessionCounter = 0;
 
-vi.mock('../pty.js', () => {
+vi.mock('@zana-ai/zcc-host-daemon/pty', () => {
   class PtyManager {
     setMcpBaseUrl() {}
     setProjectRoots() {}
@@ -61,7 +64,7 @@ vi.mock('../pty.js', () => {
   };
 });
 
-vi.mock('../store.js', () => ({
+vi.mock('@zana-ai/zcc-server/services/projects/store', () => ({
   store: {
     listProjects: () => [PROJECT],
     getConfig: () => CONFIG,
@@ -74,6 +77,7 @@ vi.mock('../store.js', () => ({
 }));
 
 const llmRunCalls: Array<{ entryId: string; prompt: string; dedupeKey?: string }> = [];
+const tabNamerOnceCalls: Array<{ id: string; prompt: string }> = [];
 
 vi.mock('@zana-ai/zcc-llm', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@zana-ai/zcc-llm')>();
@@ -96,7 +100,15 @@ vi.mock('@zana-ai/zcc-llm', async (importOriginal) => {
         : null;
     }
   }
-  return { ...actual, LlmService, PromptRegistry };
+  return {
+    ...actual,
+    LlmService,
+    PromptRegistry,
+    runTabNamerOnce(args: Parameters<typeof actual.runTabNamerOnce>[0]) {
+      tabNamerOnceCalls.push({ id: args.id, prompt: args.prompt });
+      return actual.runTabNamerOnce(args);
+    }
+  };
 });
 
 vi.mock('electron', () => ({
@@ -155,6 +167,7 @@ describe('OpenCode spawn-time tab-namer trigger', () => {
   beforeEach(() => {
     createCalls.length = 0;
     llmRunCalls.length = 0;
+    tabNamerOnceCalls.length = 0;
     liveSessions.clear();
     tapRecordCalls.length = 0;
   });
@@ -168,9 +181,15 @@ describe('OpenCode spawn-time tab-namer trigger', () => {
       prompt: 'list all files in src'
     });
     expect(res.ok).toBe(true);
+    expect(tabNamerOnceCalls).toHaveLength(1);
+    expect(tabNamerOnceCalls[0]).toEqual({
+      id: res.ok ? res.value.id : undefined,
+      prompt: 'list all files in src'
+    });
     expect(llmRunCalls).toHaveLength(1);
     expect(llmRunCalls[0].entryId).toBe('builtin:tab-namer');
     expect(llmRunCalls[0].prompt).toBe('list all files in src');
+    expect(llmRunCalls[0].dedupeKey).toBe(res.ok ? res.value.id : undefined);
     // fireTabNamer's completion runs in a microtask after llmService.run()
     // resolves — flush it, then assert the SAME onTitle channel the OSC path
     // uses actually received the 'llm'-sourced title (not just that the LLM

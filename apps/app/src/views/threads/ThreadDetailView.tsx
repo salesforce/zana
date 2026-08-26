@@ -10,7 +10,8 @@ import { ThreadTimeline } from '../../components/thread/ThreadTimeline.js';
 import { ThreadDiffPanel } from '../../components/thread/ThreadDiffPanel.js';
 import { ThreadWorkspaceBanner } from '../../components/thread/ThreadWorkspaceBanner.js';
 import { isBusyThreadStatus, timelineRowsAwaitUser } from '../../components/thread/thread-timeline-model.js';
-import { ThreadStatusBadge } from '../../components/thread/timeline/ThreadBanners.js';
+import { ThreadDetailHeading } from '../../components/thread/timeline/ThreadBanners.js';
+import { ThreadDetailOverflow } from '../../components/thread/ThreadDetailOverflow.js';
 import { getProjectWorkspaceRoutePath, getThreadRoutePath } from '../../lib/route-paths.js';
 import { useRouteState } from '../../hooks/useRouteState.js';
 import { pendingChildThreads, useThreads } from '../../thread-store.js';
@@ -83,13 +84,15 @@ export function ThreadDetail({
     if (!threadId) return;
     let cancelled = false;
     let poll: number | null = null;
+    let gen = 0;
     const refresh = async () => {
+      const my = ++gen;
       try {
         const [detail, timeline] = await Promise.all([
           product.threads.get(threadId),
           product.threads.timeline(threadId, { segmentLimit })
         ]);
-        if (cancelled) return;
+        if (cancelled || my !== gen) return;
         const thread = detail.thread as {
           id?: string;
           title?: string | null;
@@ -277,63 +280,23 @@ export function ThreadDetail({
     >
       <div className="thread-detail-main">
         <header className="thread-detail-header">
-          <div className="thread-detail-heading">
-            <h1>{title}</h1>
-            <ThreadStatusBadge status={status} waitingOnUser={awaitingUser} />
-          </div>
+          <ThreadDetailHeading
+            title={title}
+            status={status}
+            waitingOnUser={awaitingUser}
+            thinking={thinking}
+            overflow={
+              <ThreadDetailOverflow
+                threadId={threadId}
+                title={title}
+                status={status}
+                projectId={projectId}
+                onRenamed={setTitle}
+                onUnread={() => setLastReadSeq(0)}
+              />
+            }
+          />
           <div className="thread-detail-actions">
-            {/* Fork / workspace shell / archive — parked until the chrome is useful
-                on the create and detail surfaces.
-            <button
-              type="button"
-              className="icon-btn"
-              title="Fork thread"
-              aria-label="Fork thread"
-              onClick={async () => {
-                const forked = await product.threads.fork(threadId);
-                if (forked.ok) {
-                  navigate(getThreadRoutePath(
-                    forked.value.id,
-                    route.isProjectWorkspace ? route.focusedProjectId : undefined
-                  ));
-                }
-              }}
-            >
-              <GitFork size={14} />
-            </button>
-            {hasDesktopBridge() && projectId && (
-              <button
-                type="button"
-                className="icon-btn"
-                title="Open workspace shell"
-                aria-label="Open workspace shell"
-                onClick={() => {
-                  void product.terminals.create({
-                    projectId,
-                    profile: 'shell',
-                    cwd: cwd ?? undefined,
-                    cols: 80,
-                    rows: 24
-                  });
-                }}
-              >
-                <Terminal size={14} />
-              </button>
-            )}
-            <button
-              type="button"
-              className="icon-btn"
-              title="Archive thread"
-              aria-label="Archive thread"
-              data-testid="thread-archive"
-              onClick={async () => {
-                await product.threads.archive(threadId);
-                navigate('/agents');
-              }}
-            >
-              <Archive size={14} />
-            </button>
-            */}
             {!panelOpen ? (
               <button
                 type="button"

@@ -389,6 +389,8 @@ export interface CcApi {
       };
     }>;
     read(threadId: string): Promise<{ thread: Record<string, unknown> }>;
+    unread(threadId: string): Promise<{ thread: Record<string, unknown> }>;
+    rename(threadId: string, title: string): Promise<{ thread: Record<string, unknown> }>;
     conversationOutline(threadId: string): Promise<{
       items: Array<{ id: string; role: 'user' | 'assistant'; preview: string; attachmentSummary: unknown }>;
       maxSeq: number;

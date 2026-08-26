@@ -74,6 +74,7 @@ export async function startProductServer(options: StartProductServerOptions): Pr
     close: () =>
       new Promise<void>((resolveClose, rejectClose) => {
         ctx.hostHub.close();
+        ctx.dispose();
         hostWss.close();
         wss.close();
         ctx.db.close();

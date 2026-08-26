@@ -31,6 +31,11 @@
  *                              advertising a thought_level config option
  * - FAKE_ACP_SET_CONFIG_MODEL_ERROR=1
  *                            → fail session/set_config_option for model values
+ * - FAKE_ACP_HANG_MODEL_SWITCH=1
+ *                            → never reply to model set_config_option / set_model
+ * - FAKE_ACP_DEFAULT_EFFORTS → comma-separated thought_level values for fake/default
+ * - FAKE_ACP_SESSION_READY_FILE
+ *                            → written when session/new succeeds
  * - FAKE_ACP_MODEL_COUNT=<n> → pad the catalog to n reasoning-capable models
  *                              (exercises large-catalog reasoning discovery)
  * - FAKE_ACP_AUTH_METHODS    → comma-separated auth method ids to advertise;
@@ -61,7 +66,12 @@ const unmappedReasoningConfig =
 const acceptNativeReasoning =
   process.env.FAKE_ACP_ACCEPT_NATIVE_REASONING === "1";
 const setConfigModelError = process.env.FAKE_ACP_SET_CONFIG_MODEL_ERROR === "1";
+const hangModelSwitch = process.env.FAKE_ACP_HANG_MODEL_SWITCH === "1";
 const hangInitialize = process.env.FAKE_ACP_HANG_INITIALIZE === "1";
+const defaultEfforts = (process.env.FAKE_ACP_DEFAULT_EFFORTS ?? "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
 const authMethods = (process.env.FAKE_ACP_AUTH_METHODS ?? "")
   .split(",")
   .map((method) => method.trim())
@@ -96,6 +106,9 @@ let currentMcpServers = [];
 const effortsByModel = new Map([
   ["fake/strong", ["none", "low", "medium", "high", "xhigh"]],
 ]);
+if (defaultEfforts.length > 0) {
+  effortsByModel.set("fake/default", defaultEfforts);
+}
 
 const modelCount = Number(process.env.FAKE_ACP_MODEL_COUNT ?? "0");
 for (let i = fakeModels.length; i < modelCount; i += 1) {
@@ -167,28 +180,32 @@ function effortOptionForModel(model) {
 }
 
 function configOptions() {
-  if (!modelConfig) {
-    return undefined;
+  const options = [];
+  if (modelConfig) {
+    options.push(
+      {
+        id: "mode",
+        name: "Mode",
+        category: "mode",
+        type: "select",
+        currentValue: true,
+        options: [{ value: "build", name: "Build" }],
+      },
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: selectedModel,
+        options: fakeModels,
+      },
+    );
   }
-  return [
-    {
-      id: "mode",
-      name: "Mode",
-      category: "mode",
-      type: "select",
-      currentValue: true,
-      options: [{ value: "build", name: "Build" }],
-    },
-    {
-      id: "model",
-      name: "Model",
-      category: "model",
-      type: "select",
-      currentValue: selectedModel,
-      options: fakeModels,
-    },
-    effortOptionForModel(selectedModel),
-  ].filter(Boolean);
+  const effort = effortOptionForModel(selectedModel);
+  if (effort) {
+    options.push(effort);
+  }
+  return options.length > 0 ? options : undefined;
 }
 
 function configState() {
@@ -422,6 +439,9 @@ async function handleMessage(message) {
           ...configState(),
         },
       });
+      if (process.env.FAKE_ACP_SESSION_READY_FILE) {
+        writeFileSync(process.env.FAKE_ACP_SESSION_READY_FILE, "ready\n");
+      }
       return;
     case "session/load":
       if (!requireAuthenticated(message)) {
@@ -485,6 +505,9 @@ async function handleMessage(message) {
       });
       return;
     case "session/set_model": {
+      if (hangModelSwitch) {
+        return;
+      }
       const modelId = message.params?.modelId;
       if (
         (!modelConfig && !modelsField) ||
@@ -506,6 +529,9 @@ async function handleMessage(message) {
       const configId = message.params?.configId;
       const value = message.params?.value;
       if (configId === "model") {
+        if (hangModelSwitch) {
+          return;
+        }
         if (setConfigModelError) {
           send({
             jsonrpc: "2.0",

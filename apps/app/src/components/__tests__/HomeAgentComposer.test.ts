@@ -172,6 +172,7 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain('mentionContentForDroppedPaths');
     expect(source).toContain('isComposerPathDrag');
     expect(source).toContain('handleDrop');
+    expect(source).toContain('handleDOMEvents');
     expect(source).toContain('is-drop-over');
     expect(source).toContain('product.files.pathForFile');
     expect(source).not.toContain('useFileDrop');

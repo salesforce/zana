@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
-import { flattenThreadInput } from './conversation-create.js';
+import { describe, expect, it, vi } from 'vitest';
+import { flattenThreadInput, requestAutoThreadTitle, threadTitle } from './conversation-create.js';
 import {
   canonicalThreadProviderId,
   getThreadProvider,
@@ -19,6 +19,43 @@ describe('flattenThreadInput', () => {
       mentions: [{ start: 4, end: 15, resource: { kind: 'path', path: 'src/foo.ts' } }]
     }])).toEqual(['see @src/foo.ts']);
     expect(flattenThreadInput(null)).toEqual([]);
+  });
+});
+
+describe('threadTitle', () => {
+  it('prefers an explicit title, then a short prompt snippet, then Thread', () => {
+    expect(threadTitle({ title: '  My Name  ' }, ['a long prompt'])).toBe('My Name');
+    expect(threadTitle({}, ['  Fix   the login  '])).toBe('Fix the login');
+    expect(threadTitle({}, ['a'.repeat(41)])).toBe(`${'a'.repeat(40)}…`);
+    expect(threadTitle({}, [])).toBe('Thread');
+  });
+});
+
+describe('requestAutoThreadTitle', () => {
+  it('requests the namer from the first prompt and reserves an explicit title', () => {
+    const namer = { request: vi.fn(), reserve: vi.fn() };
+    const ctx = { threadTitleNamer: namer } as unknown as import('../../http/product-context.js').ProductHttpContext;
+    requestAutoThreadTitle(ctx, { projectId: 'p', providerId: 'claude-code', input: ['work'] }, 'thr-1', ['work']);
+    expect(namer.request).toHaveBeenCalledWith('thr-1', 'work');
+    expect(namer.reserve).not.toHaveBeenCalled();
+
+    namer.request.mockClear();
+    requestAutoThreadTitle(ctx, {
+      projectId: 'p',
+      providerId: 'claude-code',
+      input: ['work'],
+      title: 'Pinned'
+    }, 'thr-2', ['work']);
+    expect(namer.reserve).toHaveBeenCalledWith('thr-2');
+    expect(namer.request).not.toHaveBeenCalled();
+  });
+
+  it('skips when the first prompt is empty', () => {
+    const namer = { request: vi.fn(), reserve: vi.fn() };
+    const ctx = { threadTitleNamer: namer } as unknown as import('../../http/product-context.js').ProductHttpContext;
+    requestAutoThreadTitle(ctx, { projectId: 'p', providerId: 'claude-code', input: [] }, 'thr-3', []);
+    expect(namer.request).not.toHaveBeenCalled();
+    expect(namer.reserve).not.toHaveBeenCalled();
   });
 });
 
@@ -73,8 +110,20 @@ describe('unmanaged environment reuse', () => {
     expect(source).toContain("choice.kind === 'unmanaged'");
     expect(source).toContain('needsHostAttach');
     expect(source).toContain("existing.workspaceProvisionType === 'unmanaged'");
+    expect(source).toContain('requestAutoThreadTitle(ctx, input, running.id, prompt)');
+    expect(source).toContain('titleFromPrompt');
     expect(source).toContain('reasoningLevel: args.input.reasoningLevel');
     expect(source).toContain("...(args.input.reasoningLevel ? { reasoningLevel: args.input.reasoningLevel } : {})");
+  });
+});
+
+describe('thread title namer wiring', () => {
+  it('persists a successful namer title and emits threads:updated', () => {
+    const source = readFileSync(new URL('../../http/product-context.ts', import.meta.url), 'utf8');
+    expect(source).toContain('updateConversationThreadTitle(db, threadId, title)');
+    expect(source).toContain("hub.emit('threads:updated', conversationThreadView(ctx, updated))");
+    expect(source).toContain('autoRenameTabs !== false');
+    expect(source).toContain('join(dataDir, \'llm-prompts\')');
   });
 });
 

@@ -67,9 +67,12 @@ export interface AcpModelListParams {
    */
   listCommand?: AcpAgentCommandParam;
   /**
-   * ACP-native model discovery command. Used only when `listCommand` is
-   * absent: the bridge starts a throwaway session and reads the model select
-   * from the `session/new` result's config state.
+   * ACP-native model discovery command. The bridge starts a throwaway session
+   * and reads models plus per-model `thought_level` from `session/new`. Used
+   * when `listCommand` is absent (OpenCode), and also when a list CLI has no
+   * select flag: those ids are bare `provider/model` and would otherwise
+   * collapse to a single medium effort. Cursor-style CLIs that encode effort
+   * in listed ids keep `selectFlag` and skip this path.
    */
   agent?: AcpAgentCommandParam;
   /**
@@ -195,7 +198,11 @@ function buildAcpModelListCommand(
 function buildAcpModelDiscoveryAgentCommand(
   profile: AcpAgentProfile,
 ): AcpAgentCommandParam | undefined {
-  if (buildAcpModelListCommand(profile) !== undefined) {
+  // A select flag means the list CLI is the whole discovery surface — effort
+  // lives in the listed ids (`gpt-5-high`) and an ACP session would duplicate
+  // that work. List-only CLIs still need a throwaway session so `thought_level`
+  // can be probed per model. OpenCode itself is ACP-native (no list CLI).
+  if (profile.modelCli?.selectFlag) {
     return undefined;
   }
   return {

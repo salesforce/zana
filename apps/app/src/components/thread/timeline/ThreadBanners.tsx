@@ -1,7 +1,7 @@
-import { Link } from 'react-router-dom';
+import type { ReactNode } from 'react';
+import { ChevronRight } from 'lucide-react';
 import type { ActiveThinking, ThreadTimelineGoal, ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
 import type { TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
-import { getAgentsRoutePath } from '../../../lib/route-paths.js';
 import { isBusyThreadStatus, threadStatusLabel, threadStatusToAgentState, visiblePendingTodos } from '../thread-timeline-model.js';
 
 export function ThreadTodoCard({ todos }: { todos: ThreadTimelinePendingTodos | null }) {
@@ -32,18 +32,22 @@ export function ThreadWorkingIndicator({
   waitingOnUser?: boolean;
 }) {
   if (waitingOnUser || (!isBusyThreadStatus(status) && !thinking)) return null;
+  const isThinking = thinking != null;
   const details = thinking?.text?.trim() ?? '';
-  const label = details || (thinking ? 'Thinking…' : 'Working…');
+  const label = isThinking ? 'Thinking…' : 'Working…';
   if (details) {
     return (
       <details className="thread-working-indicator" data-testid="thread-thinking">
-        <summary className="is-shimmer">{thinking ? 'Thinking…' : 'Working…'}</summary>
+        <summary className="thread-working-indicator-header">
+          <ChevronRight size={12} className="thread-timeline-work-chevron" aria-hidden="true" />
+          <span className="is-shimmer">{label}</span>
+        </summary>
         <pre className="thread-thinking-details">{details}</pre>
       </details>
     );
   }
   return (
-    <p className="thread-working-indicator is-shimmer" data-testid="thread-thinking">
+    <p className="thread-working-indicator thread-working-indicator-header is-shimmer" data-testid="thread-thinking">
       {label}
     </p>
   );
@@ -93,12 +97,14 @@ export function ThreadPromptModeChip({
 
 export function ThreadStatusBadge({
   status,
-  waitingOnUser
+  waitingOnUser,
+  thinking
 }: {
   status: string;
   waitingOnUser?: boolean;
+  thinking?: ActiveThinking | null;
 }) {
-  const label = threadStatusLabel(status, waitingOnUser);
+  const label = threadStatusLabel(status, waitingOnUser, thinking);
   if (!label) return null;
   const state = threadStatusToAgentState(status, waitingOnUser);
   return (
@@ -116,26 +122,21 @@ export function ThreadStatusBadge({
 export function ThreadDetailHeading({
   title,
   status,
-  waitingOnUser
+  waitingOnUser,
+  thinking,
+  overflow
 }: {
   title: string;
   status: string;
   waitingOnUser?: boolean;
+  thinking?: ActiveThinking | null;
+  overflow?: ReactNode;
 }) {
   return (
     <div className="thread-detail-heading">
-      <div className="thread-detail-title-row">
-        <Link
-          to={getAgentsRoutePath()}
-          className="thread-detail-crumb"
-          data-testid="thread-agents-crumb"
-        >
-          Agents
-        </Link>
-        <span className="thread-detail-crumb-sep" aria-hidden="true">›</span>
-        <h1>{title}</h1>
-      </div>
-      <ThreadStatusBadge status={status} waitingOnUser={waitingOnUser} />
+      <h1>{title}</h1>
+      {overflow}
+      <ThreadStatusBadge status={status} waitingOnUser={waitingOnUser} thinking={thinking} />
     </div>
   );
 }

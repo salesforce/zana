@@ -56,6 +56,7 @@ describe('sidebarSortable', () => {
     expect(source).toContain('transition: undefined');
     expect(source).toContain('localStorage.setItem(storageKey');
     expect(source).toContain('activationConstraint: { distance: 6 }');
+    expect(source).toContain('suppressPostDragClick()');
     expect(source).toContain('POST_DRAG_CLICK_SUPPRESS_MS');
   });
 });

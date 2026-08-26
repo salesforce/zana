@@ -36,16 +36,16 @@ const VALID_PROVIDERS: LlmProviderId[] = ['claude-cli', 'anthropic-sdk', 'openai
  * user can shadow one by dropping a JSON file with the same id in their own
  * `~/.zcc/llm-prompts/` dir (mirrors {@link QuickPromptStore}).
  *
- * `tab-namer` is the first consumer: it turns a session's first instruction
- * into a short tab label. Kept on `haiku` with a tight output clamp so the call
- * is fast and effectively free.
+ * `tab-namer` is the first consumer: it turns a session or thread's first
+ * instruction into a short tab label. Kept on `haiku` with a tight output clamp
+ * so the call is fast and effectively free.
  */
 const BUILTIN: LlmPromptEntry[] = [
   {
     id: 'builtin:tab-namer',
     label: 'Tab namer',
     description:
-      'Names a terminal tab from the first instruction you give a Claude session. Runs once per session, just after your first prompt.',
+      'Names a Claude tab or a conversation thread from the first instruction you give it. Runs once per session or thread, just after your first prompt.',
     provider: 'claude-cli',
     model: 'haiku',
     systemPrompt: [

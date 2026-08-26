@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { MemoryRouter } from 'react-router-dom';
 import type { WorkspaceFileStatus } from '@zana-ai/zcc-domain';
 import {
   ThreadWorkspaceBanner,
@@ -479,41 +478,82 @@ describe('expandable row and chips', () => {
     )).toContain('Build');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="active" />)).toContain('Working');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="active" />)).toContain('thread-status-badge is-working');
+    expect(renderToStaticMarkup(
+      <ThreadStatusBadge status="active" thinking={{ id: 'th', text: '', startedAt: 1, updatedAt: 1 }} />
+    )).toContain('Thinking');
+    expect(renderToStaticMarkup(
+      <ThreadStatusBadge status="active" thinking={{ id: 'th', text: '', startedAt: 1, updatedAt: 1 }} />
+    )).toContain('thread-status-badge is-working');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="idle" />)).toContain('is-idle');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="error" />)).toContain('is-blocked');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="error" />)).toContain('Error');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="" />)).toBe('');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="active" waitingOnUser />)).toContain('Needs you');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="active" waitingOnUser />)).toContain('is-blocked');
+    expect(renderToStaticMarkup(
+      <ThreadStatusBadge
+        status="active"
+        waitingOnUser
+        thinking={{ id: 'th', text: 'plan', startedAt: 1, updatedAt: 1 }}
+      />
+    )).toContain('Needs you');
   });
 
-  it('prefixes the thread title with a link back to Agents', () => {
+  it('keeps the thread title, overflow slot, and status on one header row', () => {
     const html = renderToStaticMarkup(
-      <MemoryRouter>
-        <ThreadDetailHeading title="Hello" status="active" />
-      </MemoryRouter>
+      <ThreadDetailHeading
+        title="Hello"
+        status="active"
+        overflow={<button type="button" data-testid="thread-overflow-trigger">…</button>}
+      />
     );
-    expect(html).toContain('data-testid="thread-agents-crumb"');
-    expect(html).toContain('href="/agents"');
-    expect(html).toContain('>Agents<');
     expect(html).toContain('<h1>Hello</h1>');
+    expect(html).toContain('data-testid="thread-overflow-trigger"');
     expect(html).toContain('data-testid="thread-detail-status"');
+    expect(html).not.toContain('data-testid="thread-agents-crumb"');
+
+    const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
+    const header = css.slice(
+      css.indexOf('.thread-detail-header {'),
+      css.indexOf('.thread-status-badge .tab-agent-dot {')
+    );
+    expect(header).toContain('align-items: center;');
+    expect(header).toContain('font-weight: 650;');
+    expect(header).toContain('.thread-detail-overflow-btn {');
+    expect(header).toContain('.thread-detail-overflow-menu {');
+    expect(header).toContain('z-index: 80;');
+    expect(header).not.toContain('position: absolute;');
   });
 
   it('passes waitingOnUser through the heading status badge', () => {
     const html = renderToStaticMarkup(
-      <MemoryRouter>
-        <ThreadDetailHeading title="Hello" status="active" waitingOnUser />
-      </MemoryRouter>
+      <ThreadDetailHeading title="Hello" status="active" waitingOnUser />
     );
     expect(html).toContain('Needs you');
     expect(html).toContain('is-blocked');
+  });
+
+  it('passes thinking through the heading status badge', () => {
+    const html = renderToStaticMarkup(
+      <ThreadDetailHeading
+        title="Hello"
+        status="active"
+        thinking={{ id: 'th', text: 'plan', startedAt: 1, updatedAt: 1 }}
+      />
+    );
+    expect(html).toContain('Thinking');
+    expect(html).toContain('is-working');
+    expect(html).not.toContain('Working');
   });
 
   it('opens the secondary panel Diff pin from Review', () => {
     const source = readFileSync(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)), 'utf8');
     expect(source).toContain("selectPin('diff')");
     expect(source).toContain('thread-secondary-show');
+    expect(source).toContain('<ThreadDetailHeading');
+    expect(source).toContain('thinking={thinking}');
+    expect(source).toContain('<ThreadDetailOverflow');
+    expect(source).toContain('if (cancelled || my !== gen) return;');
   });
 
   it('keeps the secondary panel a sibling of the main column', () => {

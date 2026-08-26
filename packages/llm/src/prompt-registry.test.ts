@@ -29,6 +29,7 @@ describe('PromptRegistry', () => {
     expect(tabNamer).not.toBeNull();
     expect(tabNamer?.source).toBe('builtin');
     expect(tabNamer?.userTemplate).toContain('{{prompt}}');
+    expect(tabNamer?.description).toMatch(/thread/i);
   });
 
   it('ships the built-in turn-summary (haiku, last-turn input)', () => {

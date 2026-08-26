@@ -39,6 +39,22 @@ export type ModelNavRow =
   | { kind: 'model'; option: ModelPickerOption }
   | { kind: 'more-toggle' };
 
+export function pinSelectedMoreModels(
+  modelOptions: readonly ModelPickerOption[],
+  moreModelOptions: readonly ModelPickerOption[],
+  selected: string
+): { modelOptions: readonly ModelPickerOption[]; moreModelOptions: readonly ModelPickerOption[] } {
+  if (!selected || modelOptions.some((option) => option.value === selected)) {
+    return { modelOptions, moreModelOptions };
+  }
+  const pinned = moreModelOptions.find((option) => option.value === selected);
+  if (!pinned) return { modelOptions, moreModelOptions };
+  return {
+    modelOptions: [...modelOptions, pinned],
+    moreModelOptions: moreModelOptions.filter((option) => option.value !== selected)
+  };
+}
+
 export function buildModelNavRows({
   modelOptions,
   moreModelOptions,

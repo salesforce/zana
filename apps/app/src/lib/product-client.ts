@@ -436,6 +436,13 @@ function httpProduct(): Pick<
       },
       read: async (threadId) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/read`, { method: 'POST', body: '{}' }),
+      unread: async (threadId) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/unread`, { method: 'POST', body: '{}' }),
+      rename: async (threadId, title) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ title })
+        }),
       conversationOutline: async (threadId) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/conversation-outline`),
       hostFileContent: async (threadId, path) =>

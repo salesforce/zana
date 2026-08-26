@@ -4,6 +4,11 @@ export {
   type PromptRegistryDeps
 } from './prompt-registry.js';
 export {
+  TAB_NAMER_PROMPT_ID,
+  runTabNamerOnce,
+  type RunTabNamerOnceArgs
+} from './tab-namer.js';
+export {
   resolveModelAlias,
   setSettingsFileResolver,
   type SettingsFileResolver

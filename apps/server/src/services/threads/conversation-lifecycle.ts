@@ -75,6 +75,7 @@ export async function sendConversationTurn(
   }
   const next = getConversationThread(ctx.db, live.id) ?? live;
   ctx.hub.emit('threads:updated', conversationThreadView(ctx, next));
+  if (prompt[0] && next.originKind !== 'fork') ctx.threadTitleNamer?.request(next.id, prompt[0]);
   return next;
 }
 
@@ -179,6 +180,9 @@ export async function forkConversation(
     originKind: 'fork'
   });
   ctx.hub.emit('threads:updated', conversationThreadView(ctx, forked));
+  // Forks already have an explicit "… (fork)" title; pin the id so a later
+  // follow-up cannot overwrite it via the retry path on sendConversationTurn.
+  ctx.threadTitleNamer?.reserve(forked.id);
   return forked;
 }
 

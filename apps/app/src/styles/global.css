@@ -27645,6 +27645,19 @@ body.resizing-col .library-split-resizer::after {
   overflow-y: auto;
 }
 
+/* Let the aurora show through the browse catalogue the way Home cards sit on
+ * the grid — the section chrome would otherwise paint an opaque slab. */
+.extensions-panel .ext-market.settings-section {
+  background: transparent;
+  border-color: transparent;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.extensions-panel .ext-market-item {
+  background: var(--bg-panel);
+}
+
 /* Home mirrors the above: ListPane returns null for the 'home' nav, so
  * without an explicit span the .settings-panel auto-flows into the narrow
  * list column (col 2) — collapsing the dashboard into a sliver. `aurora-host`
@@ -27705,8 +27718,8 @@ body.resizing-col .library-split-resizer::after {
 }
 
 /* AuroraGrid: a low-contrast grid, slow blue/gold drift, and occasional circuit
- * traces. Hosts (Home, empty Agents) add `.aurora-host`. Decorative; respects
- * reduced-motion. */
+ * traces. Hosts (Home, Plugins, empty Agents) add `.aurora-host`. Decorative;
+ * respects reduced-motion. */
 .aurora-host .aurora-grid {
   position: absolute;
   inset: 0;
@@ -29257,16 +29270,17 @@ textarea.thread-command-editor {
 
 .thread-detail-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-height: 32px;
 }
 
 .thread-detail-heading {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -29306,15 +29320,45 @@ textarea.thread-command-editor {
 .thread-detail-header h1 {
   margin: 0;
   min-width: 0;
-  font-size: 18px;
+  color: var(--text-primary);
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.thread-detail-overflow-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.thread-detail-overflow-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  color: var(--text-muted);
+}
+
+.thread-detail-overflow-btn:hover,
+.thread-detail-overflow-btn[aria-expanded="true"] {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.thread-detail-overflow-menu {
+  /* Keep the shared `.tab-context-menu` fixed stack. Absolute positioning let
+     the timeline (a later flex sibling) steal clicks on Rename / Fork / Archive. */
+  z-index: 80;
+}
+
 .thread-status-badge {
   margin: 0;
   gap: 6px;
+  flex: 0 0 auto;
 }
 
 .thread-status-badge .tab-agent-dot {
@@ -29615,6 +29659,26 @@ textarea.thread-command-editor {
   font-size: 14px;
 }
 
+.thread-working-indicator-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 1.75rem;
+}
+
+.thread-working-indicator > summary.thread-working-indicator-header {
+  cursor: pointer;
+  list-style: none;
+}
+
+.thread-working-indicator > summary.thread-working-indicator-header::-webkit-details-marker {
+  display: none;
+}
+
+.thread-working-indicator[open] > .thread-working-indicator-header .thread-timeline-work-chevron {
+  transform: rotate(90deg);
+}
+
 .is-shimmer {
   color: var(--text-muted, var(--ink-muted));
   background: linear-gradient(
@@ -29813,7 +29877,17 @@ textarea.thread-command-editor {
   justify-content: center;
 }
 
-.thread-thinking-details,
+.thread-thinking-details {
+  margin: 6px 0 0;
+  max-height: 18rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 13px;
+  font-style: italic;
+  line-height: 1.55;
+  color: var(--text-muted, var(--ink-muted));
+}
+
 .thread-file-hunk,
 .thread-timeline-work-body.is-danger {
   margin: 6px 0 0;

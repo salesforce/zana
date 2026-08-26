@@ -3,7 +3,13 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { AppConfig, Project, TerminalSession } from '@zana-ai/zcc-domain/product';
-import { openDatabase, type ZccDatabase } from '@zana-ai/zcc-db';
+import {
+  getConversationThread,
+  openDatabase,
+  updateConversationThreadTitle,
+  type ZccDatabase
+} from '@zana-ai/zcc-db';
+import { ClaudeCliProvider, LlmService, PromptRegistry } from '@zana-ai/zcc-llm';
 import { createProjectStore, type ProjectStore } from '../project-store.js';
 import { createConfigStore } from '../services/config/config-store.js';
 import { createInboxStore, type IInboxStore } from '../services/inbox/inbox-store.js';
@@ -13,6 +19,8 @@ import type { LocalAppOriginArgs } from './local-app-origins.js';
 import { createProductHub, type ProductHub } from './product-hub.js';
 import { createHostHub, type HostHub } from './host-hub.js';
 import { PendingInteractionLifecycle } from '../services/interactions/pending-interactions.js';
+import { conversationThreadView } from '../services/threads/conversation-create.js';
+import { createThreadTitleNamer, type ThreadTitleNamer } from '../services/threads/thread-title-namer.js';
 
 export interface ProductTerminalRecord extends TerminalSession {
   hostId: string;
@@ -31,8 +39,11 @@ export interface ProductHttpContext {
   saved: ISavedStore;
   hub: ProductHub;
   pendingInteractions: PendingInteractionLifecycle;
+  threadTitleNamer: ThreadTitleNamer;
   terminalSessions: Map<string, ProductTerminalRecord>;
   toProjects(): Project[];
+  /** Release long-lived watchers started with this context. */
+  dispose(): void;
 }
 
 export interface CreateProductHttpContextOptions {
@@ -102,7 +113,28 @@ export function createProductHttpContext(
   suggestions.onPruned((ids) => hub.emit('suggestions:pruned', ids));
   saved.onChanged((records) => hub.emit('saved:changed', records));
 
-  return {
+  // dataDir is ~/.zcc in production, so this is the same user-prompt dir the
+  // desktop PromptRegistry watches. Tests get an isolated dir under the tmp dataDir.
+  const promptRegistry = new PromptRegistry({ userDir: join(dataDir, 'llm-prompts') });
+  promptRegistry.start();
+  const llmService = new LlmService(new Map());
+  let ctx: ProductHttpContext;
+  const threadTitleNamer = createThreadTitleNamer({
+    autoRenameEnabled: () => config.getConfig().autoRenameTabs !== false,
+    getEntry: (id) => promptRegistry.get(id),
+    run: (entry, vars, dedupeKey) => {
+      llmService.setProvider(new ClaudeCliProvider(config.getConfig().claudeBinary || 'claude'));
+      return llmService.run(entry, vars, dedupeKey);
+    },
+    applyTitle: (threadId, title) => {
+      const updated = updateConversationThreadTitle(db, threadId, title);
+      if (!updated) return;
+      hub.emit('threads:updated', conversationThreadView(ctx, updated));
+    },
+    stillLive: (threadId) => Boolean(getConversationThread(db, threadId))
+  });
+
+  ctx = {
     origins: options.origins,
     dataDir,
     enrollToken,
@@ -115,7 +147,12 @@ export function createProductHttpContext(
     saved,
     hub,
     pendingInteractions,
+    threadTitleNamer,
     terminalSessions,
-    toProjects: () => projects.list() as unknown as Project[]
+    toProjects: () => projects.list() as unknown as Project[],
+    dispose: () => {
+      promptRegistry.stop();
+    }
   };
+  return ctx;
 }

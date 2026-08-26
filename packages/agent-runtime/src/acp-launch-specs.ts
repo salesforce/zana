@@ -43,9 +43,9 @@ export const BUILT_IN_ACP_LAUNCH_SPECS: Readonly<
     command: "opencode",
     args: ["acp"],
     env: {},
-    modelCli: {
-      listArgs: ["models"],
-      primaryModels: [],
-    },
+    // ACP-native: OpenCode advertises models and per-model `thought_level`
+    // (`effort`, including the family's "default" variant) over the protocol.
+    // A list CLI (`opencode models`) would print bare `provider/model` ids and
+    // collapse every family to a single medium effort.
   },
 };

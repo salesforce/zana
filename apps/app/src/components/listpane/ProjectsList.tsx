@@ -54,6 +54,7 @@ import { getThreadRoutePath } from '../../lib/route-paths.js';
 import { FleetKindChip } from '../FleetKindChip.js';
 import { ProviderIcon } from '../thread/pickers/ProviderIcon.js';
 import { railThreadsForProject, threadIsLiveForRail, threadRailStatus, threadTitle } from '../fleet-item.js';
+import { POST_DRAG_CLICK_SUPPRESS_MS, suppressPostDragClick } from '../../lib/suppress-post-drag-click.js';
 
 interface MenuState {
   projectId: string;
@@ -65,7 +66,6 @@ interface MenuState {
 
 const MENU_PAD = 8;
 const MENU_GAP = 4;
-const POST_DRAG_CLICK_SUPPRESS_MS = 80;
 
 /** Prefer below the trigger; flip above when the viewport has more room there. */
 function placeFixedMenu(
@@ -144,10 +144,12 @@ function SortableProject({
 
 export function ProjectsList({
   placement = 'pane',
-  dragHandle
+  dragHandle,
+  onNavigate
 }: {
   placement?: 'pane' | 'sidebar';
   dragHandle?: React.HTMLAttributes<HTMLElement>;
+  onNavigate?: (event: { preventDefault: () => void }) => void;
 }) {
   const inSidebar = placement === 'sidebar';
   const projects = useData((s) => s.projects);
@@ -254,6 +256,7 @@ export function ProjectsList({
     return true;
   };
   const releaseProjectClick = () => {
+    if (suppressClickRef.current) suppressPostDragClick();
     window.setTimeout(() => {
       suppressClickRef.current = false;
     }, POST_DRAG_CLICK_SUPPRESS_MS);
@@ -723,7 +726,10 @@ export function ProjectsList({
                         className="project-terminal-row is-thread"
                         data-kind="thread"
                         data-testid="project-thread-row"
-                        onClick={() => navigate(getThreadRoutePath(thread.id))}
+                        onClick={() => {
+                          if (consumeProjectClick()) return;
+                          navigate(getThreadRoutePath(thread.id));
+                        }}
                         onContextMenu={(e) => openThreadMenu(e, thread, setThreadMenu)}
                         aria-label={title}
                         title={`${title} · ${thread.status}`}
@@ -751,7 +757,10 @@ export function ProjectsList({
                       <button
                         type="button"
                         className={`project-terminal-row ${isUnread ? 'unread' : ''}`}
-                        onClick={() => useUi.getState().openAgentModal(t.id, p.id)}
+                        onClick={() => {
+                          if (consumeProjectClick()) return;
+                          useUi.getState().openAgentModal(t.id, p.id);
+                        }}
                         onContextMenu={(e) => openAgentCardMenu(e, t, p)}
                         aria-label={isUnread ? `${t.title}, unread output` : t.title}
                         title={isUnread ? `${t.title} · unread output` : t.title}
@@ -792,7 +801,11 @@ export function ProjectsList({
             className="sidebar-projects-heading"
             {...dragHandle}
             data-testid="sidebar-projects-heading"
-            onClick={() => toggleSection(SIDEBAR_PROJECTS_SECTION_KEY)}
+            onClick={(event) => {
+              onNavigate?.(event);
+              if (event.defaultPrevented) return;
+              toggleSection(SIDEBAR_PROJECTS_SECTION_KEY);
+            }}
             aria-label={`${sidebarProjectsCollapsed ? 'Expand' : 'Collapse'} Workspaces section`}
             aria-controls={SIDEBAR_PROJECTS_TREE_ID}
             aria-expanded={!sidebarProjectsCollapsed}

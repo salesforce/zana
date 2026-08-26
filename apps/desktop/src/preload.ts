@@ -133,7 +133,9 @@ const api: CcApi = {
         throw new Error('threads require the product server');
       }
     },
-    archive: async () => ({ ok: false })
+    archive: async () => ({ ok: false }),
+    unread: async () => ({ thread: {} }),
+    rename: async () => ({ thread: {} })
   },
     environments: {
       list: async () => [],

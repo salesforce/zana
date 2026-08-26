@@ -227,7 +227,10 @@ describe('conversation lifecycle', () => {
   });
 
   it('forks a child conversation thread without mixing PTY rows', async () => {
-    const forked = await forkConversation(ctx(async () => ({})), thread.id);
+    const namer = { request: vi.fn(), reserve: vi.fn() };
+    const product = ctx(async () => ({}));
+    product.threadTitleNamer = namer as unknown as ProductHttpContext['threadTitleNamer'];
+    const forked = await forkConversation(product, thread.id);
     expect(createConversationThread).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -237,6 +240,25 @@ describe('conversation lifecycle', () => {
     );
     expect(forked.originKind).toBe('fork');
     expect(forked.parentThreadId).toBe(thread.id);
+    expect(namer.reserve).toHaveBeenCalledWith(forked.id);
+    expect(namer.request).not.toHaveBeenCalled();
+  });
+
+  it('retries the tab namer from a later prompt on a still-unnamed thread', async () => {
+    const namer = { request: vi.fn(), reserve: vi.fn() };
+    const product = ctx(async () => ({ threadId: thread.id, accepted: true }));
+    product.threadTitleNamer = namer as unknown as ProductHttpContext['threadTitleNamer'];
+    await sendConversationTurn(product, thread.id, [{ type: 'text', text: 'follow up' }]);
+    expect(namer.request).toHaveBeenCalledWith(thread.id, 'follow up');
+  });
+
+  it('does not rename a forked thread from a later prompt', async () => {
+    const namer = { request: vi.fn(), reserve: vi.fn() };
+    vi.mocked(getConversationThread).mockReturnValue({ ...thread, originKind: 'fork', title: 'Hello (fork)' });
+    const product = ctx(async () => ({ threadId: thread.id, accepted: true }));
+    product.threadTitleNamer = namer as unknown as ProductHttpContext['threadTitleNamer'];
+    await sendConversationTurn(product, thread.id, [{ type: 'text', text: 'follow up' }]);
+    expect(namer.request).not.toHaveBeenCalled();
   });
 
   it('projects stored events into a timeline', () => {

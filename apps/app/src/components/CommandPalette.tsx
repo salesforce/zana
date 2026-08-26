@@ -12,6 +12,7 @@ import { highlightMatches } from './palette/highlight.js';
 import type { WhenContext } from './palette/whenContext.js';
 import { isScopedWindow } from '../lib/windowScope.js';
 import { recordUse, recencyBoost, getRecents } from '../lib/paletteRecents.js';
+import { titleFromPrompt } from '../lib/promptTitle.js';
 
 interface Props {
   onClose: () => void;
@@ -65,14 +66,6 @@ const LAUNCH_MAX_RESULTS = 40;
 
 const launchTargetLabel = (t: LaunchTarget): string =>
   t.kind === 'project' ? t.project.name : t.host.alias;
-
-/** Derive a short, meaningful tab title from the opening instruction. Mirrors
- *  AgentLauncher's titleFromPrompt so `#`-launched tabs read the same. */
-function titleFromPrompt(prompt: string): string {
-  const oneLine = prompt.replace(/\s+/g, ' ').trim();
-  if (!oneLine) return '';
-  return oneLine.length > 40 ? `${oneLine.slice(0, 40)}…` : oneLine;
-}
 
 // Per-project slash-command cache (keyed by project path; '' = no project),
 // so reopening the palette paints commands instantly while a fresh list loads.

@@ -4,7 +4,7 @@ import type { BuildEventProjectionMessagesOptions } from "./event-projection-typ
 import { finalizeProjectionKey } from "./assistant-stream-projection.js";
 import {
   createVisibleTextBuffer,
-  getVisibleTextBufferText,
+  getVisibleTextBufferFullText,
   type VisibleTextBuffer,
 } from "./visible-text-buffer.js";
 import {
@@ -79,14 +79,24 @@ function getActiveThinkingText(
   messageKey: string,
 ): string {
   const buffer = state.reasoningTextBuffersByKey.get(messageKey);
-  return (buffer ? getVisibleTextBufferText(buffer) : undefined) ?? "";
+  return buffer ? getVisibleTextBufferFullText(buffer) : "";
+}
+
+function shouldExposeActiveThinking(
+  threadStatus: BuildEventProjectionMessagesOptions["threadStatus"],
+): boolean {
+  return (
+    threadStatus === "starting" ||
+    threadStatus === "active" ||
+    threadStatus === "stopping"
+  );
 }
 
 export function buildProjectionActiveThinking(
   state: ReasoningProjectionState,
   threadStatus: BuildEventProjectionMessagesOptions["threadStatus"],
 ): ActiveThinking | null {
-  if (threadStatus !== "active") {
+  if (!shouldExposeActiveThinking(threadStatus)) {
     return null;
   }
 

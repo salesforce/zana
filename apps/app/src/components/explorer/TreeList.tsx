@@ -1,7 +1,7 @@
 import React from 'react';
 import { ChevronRight, ChevronDown, Folder, FileText } from 'lucide-react';
 import type { FsEntry, GitFileCode } from '@zana-ai/zcc-domain/product';
-import { FS_ENTRY_DRAG_MIME, serializeFsEntryDrag } from '../../lib/fs-entry-drag.js';
+import { beginFsEntryDrag, consumeFsEntryDragClick, endFsEntryDrag } from '../../lib/fs-entry-drag.js';
 
 interface TreeListProps {
   list: FsEntry[];
@@ -63,17 +63,18 @@ export const TreeList = React.memo(function TreeList({
             <div
               className={`tree-row ${isDir ? 'dir' : 'file'} ${isActive ? 'active' : ''} ${gitClass}`}
               style={{ paddingLeft: 6 + depth * 12 }}
-              onClick={() => (isDir ? onToggleDir(entry) : onFileClick(entry))}
+              onClick={() => {
+                if (consumeFsEntryDragClick()) return;
+                if (isDir) onToggleDir(entry);
+                else onFileClick(entry);
+              }}
               onContextMenu={(e) => onContext(e, entry)}
               draggable
-              onDragStart={(e) => {
-                e.dataTransfer.setData('text/plain', entry.path);
-                e.dataTransfer.setData(FS_ENTRY_DRAG_MIME, serializeFsEntryDrag({
-                  path: entry.path,
-                  kind: entry.kind
-                }));
-                e.dataTransfer.effectAllowed = 'copy';
-              }}
+              onDragStart={(e) => beginFsEntryDrag(e.dataTransfer, {
+                path: entry.path,
+                kind: entry.kind
+              })}
+              onDragEnd={endFsEntryDrag}
               title={gitTitle || undefined}
             >
               <span className={`tree-chevron ${isDir ? '' : 'empty'}`}>

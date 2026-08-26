@@ -413,9 +413,14 @@ describe('conversation and banners', () => {
   });
 
   it('shows thinking and goal chips', () => {
-    expect(renderToStaticMarkup(
+    const withText = renderToStaticMarkup(
       <ThreadWorkingIndicator status="active" thinking={{ id: 'th', text: 'Planning', startedAt: 1, updatedAt: 1 }} />
-    )).toContain('Planning');
+    );
+    expect(withText).toContain('Thinking…');
+    expect(withText).toContain('Planning');
+    expect(withText).toContain('<details');
+    expect(withText).toContain('thread-timeline-work-chevron');
+    expect(withText).toContain('thread-thinking-details');
     expect(renderToStaticMarkup(
       <ThreadWorkingIndicator
         status="active"
@@ -423,6 +428,18 @@ describe('conversation and banners', () => {
         waitingOnUser
       />
     )).toBe('');
+    expect(renderToStaticMarkup(
+      <ThreadWorkingIndicator status="active" thinking={{ id: 'th', text: '  ', startedAt: 1, updatedAt: 1 }} />
+    )).toContain('Thinking…');
+    expect(renderToStaticMarkup(
+      <ThreadWorkingIndicator status="starting" thinking={{ id: 'th', text: 'Plan first.', startedAt: 1, updatedAt: 1 }} />
+    )).toContain('Thinking…');
+    expect(renderToStaticMarkup(
+      <ThreadWorkingIndicator status="active" thinking={null} />
+    )).toContain('Working…');
+    expect(renderToStaticMarkup(
+      <ThreadWorkingIndicator status="active" thinking={null} />
+    )).not.toContain('thread-timeline-work-chevron');
     expect(renderToStaticMarkup(
       <ThreadGoalBanner goal={{
         sourceSeq: 1,

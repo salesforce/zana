@@ -484,7 +484,7 @@ const ACP_DEFAULT_MODEL: AvailableModel = {
 };
 
 const MODEL_LIST_TIMEOUT_MS = 30_000;
-const ACP_NATIVE_REASONING_DISCOVERY_TIMEOUT_MS = 5_000;
+const ACP_NATIVE_REASONING_DISCOVERY_TIMEOUT_MS = 15_000;
 const AUTH_REQUIRED_MODEL_LIST_ERROR_MESSAGE =
   "ACP agent is not authenticated.";
 
@@ -888,29 +888,41 @@ async function loadSessionDiscoveredModels(
 
     const modelOption = findAcpModelConfigOption(newSession.configOptions);
     const configOptionModels = buildModelCatalogFromConfigOptions(modelOption);
-    const sessionModels = buildModelCatalogFromSessionModels(newSession.models);
-    if (configOptionModels.length === 0 && sessionModels.length === 0) {
+    const sessionModelCatalog = buildModelCatalogFromSessionModels(
+      newSession.models,
+    );
+    if (configOptionModels.length === 0 && sessionModelCatalog.length === 0) {
       return null;
     }
 
-    if (configOptionModels.length === 0) {
-      cachedSessionDiscoveredModels = {
-        key,
-        models: sessionModels,
-        fetchedAt: Date.now(),
-      };
-      return sessionModels;
-    }
-
+    const useConfigOptions = configOptionModels.length > 0;
+    const modelIds = useConfigOptions
+      ? (modelOption?.options ?? []).map((option) => option.value)
+      : (newSession.models?.availableModels ?? []).map(
+          (model) => model.modelId,
+        );
+    const currentModelId = useConfigOptions
+      ? modelOption?.currentValue
+      : newSession.models?.currentModelId;
     const reasoningByModel = await discoverAcpNativeReasoningByModel({
       connection,
       sessionId: newSession.sessionId,
+      modelIds,
       modelOption,
+      initialConfigOptions: newSession.configOptions,
+      currentModelId,
     });
     const models =
       reasoningByModel === null
-        ? configOptionModels
-        : buildModelCatalogFromConfigOptions(modelOption, reasoningByModel);
+        ? useConfigOptions
+          ? configOptionModels
+          : sessionModelCatalog
+        : useConfigOptions
+          ? buildModelCatalogFromConfigOptions(modelOption, reasoningByModel)
+          : buildModelCatalogFromSessionModels(
+              newSession.models,
+              reasoningByModel,
+            );
     cachedSessionDiscoveredModels = {
       key,
       models,
@@ -932,23 +944,76 @@ async function loadSessionDiscoveredModels(
   }
 }
 
+/**
+ * Pin the ACP session to a model. Prefer the advertised "model" config option
+ * (`session/set_config_option`); fall back to `session/set_model` for agents
+ * such as OpenCode that historically only implement the legacy method.
+ */
+async function setAcpSessionModel(args: {
+  connection: AcpAgentConnection;
+  sessionId: string;
+  modelId: string;
+  modelOption: AcpConfigOption | undefined;
+}): Promise<AcpConfigStateResult | null> {
+  let configState: AcpConfigStateResult | null = null;
+  let useSetModel = true;
+  if (args.modelOption) {
+    try {
+      configState = await args.connection.request({
+        method: "session/set_config_option",
+        params: {
+          sessionId: args.sessionId,
+          configId: args.modelOption.id,
+          value: args.modelId,
+        },
+        resultSchema: z.union([acpConfigStateResultSchema, z.null()]),
+      });
+      useSetModel = false;
+    } catch {
+      useSetModel = true;
+    }
+  }
+  if (useSetModel) {
+    configState = await args.connection.request({
+      method: "session/set_model",
+      params: { sessionId: args.sessionId, modelId: args.modelId },
+      resultSchema: z.union([acpConfigStateResultSchema, z.null()]),
+    });
+  }
+  return configState;
+}
+
 async function discoverAcpNativeReasoningByModel(args: {
   connection: AcpAgentConnection;
   sessionId: string;
+  modelIds: readonly string[];
   modelOption: AcpConfigOption | undefined;
+  initialConfigOptions: readonly AcpConfigOption[] | undefined;
+  currentModelId: string | undefined;
 }): Promise<ReadonlyMap<string, AcpNativeReasoningSupport> | null> {
-  const modelOptions = args.modelOption?.options ?? [];
-  if (!args.modelOption || modelOptions.length === 0) {
+  if (args.modelIds.length === 0) {
     return null;
   }
-  const modelOption = args.modelOption;
 
-  // Each probe is one set_config_option round trip to the local agent, so
-  // work is bounded by the time budget rather than a model-count cutoff
-  // (omp's catalog alone is ~90 models). On timeout or a mid-probe error the
-  // partial map is kept: probed models surface their real reasoning levels
-  // and unprobed models fall back to the agent-managed default.
+  // Seed the current model from session/new before any switch. OpenCode
+  // advertises `thought_level` for the selected model immediately; if later
+  // probes time out, that model still keeps its real ladder instead of the
+  // agent-managed medium fallback.
   const supportByModel = new Map<string, AcpNativeReasoningSupport>();
+  if (args.currentModelId !== undefined) {
+    supportByModel.set(
+      args.currentModelId,
+      buildAcpNativeReasoningSupport(
+        findAcpThoughtLevelConfigOption(args.initialConfigOptions),
+      ),
+    );
+  }
+
+  // Each probe is one model-switch round trip to the local agent, so work is
+  // bounded by the time budget rather than a model-count cutoff (omp's catalog
+  // alone is ~90 models). On timeout or a mid-probe error the partial map is
+  // kept: probed models surface their real reasoning levels and unprobed
+  // models fall back to the agent-managed default.
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const timeoutReached = new Promise<
     ReadonlyMap<string, AcpNativeReasoningSupport>
@@ -962,20 +1027,17 @@ async function discoverAcpNativeReasoningByModel(args: {
   try {
     return await Promise.race([
       (async () => {
-        for (const model of modelOptions) {
-          const configState = await args.connection.request({
-            method: "session/set_config_option",
-            params: {
-              sessionId: args.sessionId,
-              configId: modelOption.id,
-              value: model.value,
-            },
-            resultSchema: acpConfigStateResultSchema,
+        for (const modelId of args.modelIds) {
+          const configState = await setAcpSessionModel({
+            connection: args.connection,
+            sessionId: args.sessionId,
+            modelId,
+            modelOption: args.modelOption,
           });
           supportByModel.set(
-            model.value,
+            modelId,
             buildAcpNativeReasoningSupport(
-              findAcpThoughtLevelConfigOption(configState.configOptions),
+              findAcpThoughtLevelConfigOption(configState?.configOptions),
             ),
           );
         }
@@ -1126,38 +1188,12 @@ async function selectAcpNativeModel(args: {
       sessionModelsIncludeSelection &&
       args.models?.currentModelId !== selection.modelId);
   if (shouldSetModel) {
-    // Agents that surface a "model" config option (e.g. omp) pin the model via
-    // the standard session/set_config_option and may not implement the legacy
-    // session/set_model method, while agents that only report session models
-    // state (e.g. opencode) support only session/set_model. Prefer the config
-    // option when the agent advertises one and fall back to set_model so
-    // option-advertising agents that only implement the legacy method keep
-    // working.
-    let configState: AcpConfigStateResult | null = null;
-    let setModel = true;
-    if (modelOption) {
-      try {
-        configState = await args.connection.request({
-          method: "session/set_config_option",
-          params: {
-            sessionId: args.sessionId,
-            configId: modelOption.id,
-            value: selection.modelId,
-          },
-          resultSchema: z.union([acpConfigStateResultSchema, z.null()]),
-        });
-        setModel = false;
-      } catch {
-        setModel = true;
-      }
-    }
-    if (setModel) {
-      configState = await args.connection.request({
-        method: "session/set_model",
-        params: { sessionId: args.sessionId, modelId: selection.modelId },
-        resultSchema: z.union([acpConfigStateResultSchema, z.null()]),
-      });
-    }
+    const configState = await setAcpSessionModel({
+      connection: args.connection,
+      sessionId: args.sessionId,
+      modelId: selection.modelId,
+      modelOption,
+    });
     configOptions = configState?.configOptions ?? configOptions;
   }
   await selectAcpNativeReasoning({
@@ -2125,6 +2161,23 @@ async function handleModelList(
   id: string | number,
   params: AcpModelListParams,
 ): Promise<void> {
+  // Prefer ACP-native discovery when the profile asked for it: that path
+  // probes per-model `thought_level` (OpenCode variants). A Cursor-style list
+  // CLI with a select flag never sets `agent`, so it still uses the catalog.
+  // If the throwaway session fails, fall through to the list CLI when present.
+  const sessionDiscoveredModels = params.agent
+    ? await loadSessionDiscoveredModels(params.agent)
+    : null;
+  if (sessionDiscoveredModels) {
+    sendResult(id, {
+      models: applyConfiguredReasoningToModels(sessionDiscoveredModels, {
+        reasoningCli: params.reasoningCli,
+        nativeReasoning: params.nativeReasoning,
+      }),
+      selectedOnlyModels: [],
+    });
+    return;
+  }
   const catalog = params.listCommand
     ? await loadAgentModelCatalog(params.listCommand)
     : null;
@@ -2139,20 +2192,6 @@ async function handleModelList(
         params.primaryModels,
       ),
     );
-    return;
-  }
-  const sessionDiscoveredModels =
-    params.listCommand === undefined && params.agent
-      ? await loadSessionDiscoveredModels(params.agent)
-      : null;
-  if (sessionDiscoveredModels) {
-    sendResult(id, {
-      models: applyConfiguredReasoningToModels(sessionDiscoveredModels, {
-        reasoningCli: params.reasoningCli,
-        nativeReasoning: params.nativeReasoning,
-      }),
-      selectedOnlyModels: [],
-    });
     return;
   }
   sendResult(id, {

@@ -87,6 +87,55 @@ describe('conversationTimeline', () => {
     expect(timeline.timelinePage.olderCursor).toEqual({ anchorSeq: 2, anchorId: 'evt-2' });
     expect(timeline.maxSeq).toBe(2);
   });
+
+  it('returns streamed reasoning as activeThinking on a live thread', () => {
+    const threadId = '11111111-1111-4111-8111-111111111111';
+    vi.mocked(getConversationThread).mockReturnValueOnce({
+      id: threadId,
+      projectId: 'proj-1',
+      hostId: 'host-1',
+      environmentId: null,
+      providerId: 'claude-code',
+      status: 'active',
+      title: 'Hello'
+    });
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValueOnce([
+      {
+        id: 'evt-1',
+        threadId,
+        sequence: 1,
+        type: 'turn/started',
+        payload: {
+          type: 'turn/started',
+          threadId,
+          providerThreadId: 'p1',
+          scope: { kind: 'turn', turnId: 'turn-1' }
+        },
+        createdAt: 1
+      },
+      {
+        id: 'evt-2',
+        threadId,
+        sequence: 2,
+        type: 'item/reasoning/textDelta',
+        payload: {
+          type: 'item/reasoning/textDelta',
+          threadId,
+          providerThreadId: 'p1',
+          scope: { kind: 'turn', turnId: 'turn-1' },
+          itemId: 'reasoning-1',
+          delta: 'Considering the approach.'
+        },
+        createdAt: 2
+      }
+    ]);
+    const timeline = conversationTimeline({ db: {}, dataDir: '/tmp' } as ProductHttpContext, threadId);
+    expect(timeline.activeThinking).toMatchObject({
+      id: 'reasoning-1',
+      text: 'Considering the approach.'
+    });
+    expect(timeline.rows).toEqual([]);
+  });
 });
 
 describe('conversationOutline', () => {

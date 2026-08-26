@@ -3,6 +3,7 @@ import {
   buildAgentModelCatalog,
   buildAcpNativeReasoningSupport,
   buildModelCatalogFromConfigOptions,
+  buildModelCatalogFromSessionModels,
   acpNativeReasoningLevelToValue,
   findAcpModelConfigOption,
   findAcpThoughtLevelConfigOption,
@@ -539,6 +540,96 @@ describe("acp configOptions model catalog", () => {
     const support = buildAcpNativeReasoningSupport(thoughtLevel);
     expect(support.defaultReasoningEffort).toBe("low");
     expect(acpNativeReasoningLevelToValue("low", thoughtLevel)).toBe("minimal");
+  });
+
+  it("maps OpenCode default variants onto bb medium", () => {
+    const thoughtLevel = {
+      id: "effort",
+      category: "thought_level",
+      type: "select",
+      currentValue: "default",
+      options: [
+        { value: "none", name: "None" },
+        { value: "default", name: "Default" },
+        { value: "high", name: "High" },
+        { value: "xhigh", name: "Xhigh" },
+      ],
+    };
+
+    const support = buildAcpNativeReasoningSupport(thoughtLevel);
+    expect(support.defaultReasoningEffort).toBe("medium");
+    expect(
+      support.supportedReasoningEfforts.map((e) => [
+        e.reasoningEffort,
+        e.description,
+      ]),
+    ).toEqual([
+      ["none", "None"],
+      ["medium", "Default"],
+      ["high", "High"],
+      ["xhigh", "Xhigh"],
+    ]);
+    expect(acpNativeReasoningLevelToValue("medium", thoughtLevel)).toBe(
+      "default",
+    );
+    expect(acpNativeReasoningLevelToValue("high", thoughtLevel)).toBe("high");
+  });
+
+  it("applies a session-models reasoning map the same way as configOptions", () => {
+    const reasoningByModel = new Map([
+      [
+        "opencode/deepseek-v4-flash-free",
+        buildAcpNativeReasoningSupport({
+          id: "effort",
+          category: "thought_level",
+          type: "select",
+          currentValue: "default",
+          options: [
+            { value: "none", name: "None" },
+            { value: "default", name: "Default" },
+            { value: "high", name: "High" },
+            { value: "xhigh", name: "Xhigh" },
+          ],
+        }),
+      ],
+    ]);
+
+    expect(
+      buildModelCatalogFromSessionModels(
+        {
+          currentModelId: "opencode/deepseek-v4-flash-free",
+          availableModels: [
+            {
+              modelId: "opencode/big-pickle",
+              name: "OpenCode Zen/Big Pickle",
+            },
+            {
+              modelId: "opencode/deepseek-v4-flash-free",
+              name: "OpenCode Zen/DeepSeek V4 Flash Free",
+            },
+          ],
+        },
+        reasoningByModel,
+      ),
+    ).toMatchObject([
+      {
+        id: "opencode/big-pickle",
+        defaultReasoningEffort: "medium",
+        supportedReasoningEfforts: [{ reasoningEffort: "medium" }],
+        isDefault: false,
+      },
+      {
+        id: "opencode/deepseek-v4-flash-free",
+        defaultReasoningEffort: "medium",
+        supportedReasoningEfforts: [
+          { reasoningEffort: "none" },
+          { reasoningEffort: "medium" },
+          { reasoningEffort: "high" },
+          { reasoningEffort: "xhigh" },
+        ],
+        isDefault: true,
+      },
+    ]);
   });
 
   it("falls back to the first model when currentValue is absent or stale", () => {

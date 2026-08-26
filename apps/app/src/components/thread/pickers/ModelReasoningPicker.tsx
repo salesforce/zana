@@ -8,6 +8,7 @@ import {
   buildModelNavRows,
   fuzzyFilter,
   modelSearchText,
+  pinSelectedMoreModels,
   splitModelLabelTag
 } from './model-picker-search.js';
 import { providerIconForId } from './provider-icon.js';
@@ -75,7 +76,11 @@ export function ModelReasoningPicker({
   const navId = useId();
   const canSwitchProviders = showHarnessTabs(onSelectedProviderChange, providerOptions.length);
   const selectedProvider = providerOptions.find((row) => row.value === selectedProviderId);
-  const selectedModel = modelOptions.concat(moreModelOptions).find((row) => row.value === modelValue);
+  const displayed = useMemo(
+    () => pinSelectedMoreModels(modelOptions, moreModelOptions, modelValue),
+    [modelOptions, moreModelOptions, modelValue]
+  );
+  const selectedModel = displayed.modelOptions.concat(displayed.moreModelOptions).find((row) => row.value === modelValue);
   const triggerModelLabel = modelIsLoading
     ? 'Loading models...'
     : stripModelBrandPrefix(selectedModel?.label ?? (modelValue || 'Select model'), selectedProviderId);
@@ -85,12 +90,12 @@ export function ModelReasoningPicker({
   const normalizedQuery = query.trim().toLowerCase();
   const isSearching = normalizedQuery.length > 0;
   const filteredModels = useMemo(
-    () => fuzzyFilter(modelOptions, normalizedQuery, (option) => modelSearchText(option, selectedProviderId)),
-    [modelOptions, normalizedQuery, selectedProviderId]
+    () => fuzzyFilter(displayed.modelOptions, normalizedQuery, (option) => modelSearchText(option, selectedProviderId)),
+    [displayed.modelOptions, normalizedQuery, selectedProviderId]
   );
   const filteredMore = useMemo(
-    () => fuzzyFilter(moreModelOptions, normalizedQuery, (option) => modelSearchText(option, selectedProviderId)),
-    [moreModelOptions, normalizedQuery, selectedProviderId]
+    () => fuzzyFilter(displayed.moreModelOptions, normalizedQuery, (option) => modelSearchText(option, selectedProviderId)),
+    [displayed.moreModelOptions, normalizedQuery, selectedProviderId]
   );
   const navRows = useMemo(
     () => buildModelNavRows({
@@ -101,7 +106,7 @@ export function ModelReasoningPicker({
     [filteredModels, filteredMore, isSearching]
   );
   const showSearch = !modelIsLoading
-    && modelOptions.length + moreModelOptions.length > MODEL_SEARCH_MIN_OPTIONS;
+    && displayed.modelOptions.length + displayed.moreModelOptions.length > MODEL_SEARCH_MIN_OPTIONS;
   const showMorePanel = open && showMoreModels && !isSearching && filteredMore.length > 0;
 
   useEffect(() => {
@@ -169,6 +174,7 @@ export function ModelReasoningPicker({
 
   const selectModel = (value: string) => {
     onModelChange(value);
+    setOpen(false);
   };
 
   const onSearchKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {

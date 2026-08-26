@@ -528,16 +528,49 @@ describe("acp bridge", () => {
     });
   });
 
-  it("uses the CLI model list before ACP-native session discovery when both are present", async () => {
+  it("uses the CLI model list when a select flag makes it the discovery surface", async () => {
     const modelListId = sendModelList({
-      // The agent could also answer session-discovery, but a list command
-      // wins: it is one process instead of a whole ACP session.
+      // Cursor-style: effort lives in listed ids, so the list command wins
+      // even though the agent could also answer session-discovery.
       envVars: { FAKE_ACP_MODEL_CONFIG: "1" },
       modelLines: "cli-model - CLI Model",
+      selectFlag: "--model",
     });
 
     expect((await waitForResponse(modelListId)).result).toMatchObject({
       models: [{ id: "cli-model", displayName: "CLI Model", isDefault: true }],
+      selectedOnlyModels: [],
+    });
+  });
+
+  it("probes ACP thought_level when a list CLI has no select flag", async () => {
+    const modelListId = sendModelList({
+      envVars: {
+        FAKE_ACP_MODEL_CONFIG: "1",
+        FAKE_ACP_THOUGHT_LEVEL_CONFIG: "1",
+      },
+      // OpenCode-shaped: `opencode models` lists bare ids, so a throwaway
+      // ACP session must still run to read per-model thought_level.
+      modelLines: "cli-model - CLI Model",
+    });
+
+    expect((await waitForResponse(modelListId)).result).toMatchObject({
+      models: [
+        {
+          id: "fake/default",
+          supportedReasoningEfforts: [{ reasoningEffort: "medium" }],
+        },
+        {
+          id: "fake/strong",
+          supportedReasoningEfforts: [
+            { reasoningEffort: "none" },
+            { reasoningEffort: "low" },
+            { reasoningEffort: "medium" },
+            { reasoningEffort: "high" },
+            { reasoningEffort: "xhigh" },
+          ],
+        },
+      ],
       selectedOnlyModels: [],
     });
   });
@@ -693,7 +726,7 @@ describe("acp bridge", () => {
     ]);
   });
 
-  it("keeps ACP-native discovered models when per-model reasoning discovery errors", async () => {
+  it("falls back to session/set_model when thought_level probing cannot use set_config_option", async () => {
     const modelListId = sendModelList({
       envVars: {
         FAKE_ACP_MODEL_CONFIG: "1",
@@ -717,12 +750,94 @@ describe("acp bridge", () => {
           model: "fake/strong",
           displayName: "Fake Strong",
           isDefault: false,
-          defaultReasoningEffort: "medium",
-          supportedReasoningEfforts: [{ reasoningEffort: "medium" }],
+          defaultReasoningEffort: "none",
+          supportedReasoningEfforts: [
+            { reasoningEffort: "none" },
+            { reasoningEffort: "low" },
+            { reasoningEffort: "medium" },
+            { reasoningEffort: "high" },
+            { reasoningEffort: "xhigh" },
+          ],
         },
       ],
       selectedOnlyModels: [],
     });
+  });
+
+  it("probes thought_level from session models via session/set_model", async () => {
+    const modelListId = sendModelList({
+      envVars: {
+        FAKE_ACP_MODELS_FIELD: "1",
+        FAKE_ACP_THOUGHT_LEVEL_CONFIG: "1",
+      },
+    });
+
+    expect((await waitForResponse(modelListId)).result).toMatchObject({
+      models: [
+        {
+          id: "fake/default",
+          supportedReasoningEfforts: [{ reasoningEffort: "medium" }],
+        },
+        {
+          id: "fake/strong",
+          defaultReasoningEffort: "none",
+          supportedReasoningEfforts: [
+            { reasoningEffort: "none" },
+            { reasoningEffort: "low" },
+            { reasoningEffort: "medium" },
+            { reasoningEffort: "high" },
+            { reasoningEffort: "xhigh" },
+          ],
+        },
+      ],
+      selectedOnlyModels: [],
+    });
+  });
+
+  it("keeps session/new thought_level on the current model when later probes time out", async () => {
+    const sessionReadyFile = join(workspaceDir, "discovery-session-ready.txt");
+    let modelListId: number;
+
+    vi.useFakeTimers();
+    try {
+      modelListId = sendModelList({
+        envVars: {
+          FAKE_ACP_MODEL_CONFIG: "1",
+          FAKE_ACP_THOUGHT_LEVEL_CONFIG: "1",
+          FAKE_ACP_DEFAULT_EFFORTS: "none,default,high,xhigh",
+          FAKE_ACP_HANG_MODEL_SWITCH: "1",
+          FAKE_ACP_SESSION_READY_FILE: sessionReadyFile,
+        },
+      });
+      await waitForFileWithRealTimer(sessionReadyFile);
+      await new Promise((resolveTick) => realSetTimeout(resolveTick, 100));
+      await vi.advanceTimersByTimeAsync(15_000);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const result = (
+      await waitFor(
+        () => findResponse(modelListId),
+        `response ${modelListId}`,
+        5_000,
+      )
+    ).result as {
+      models: {
+        id: string;
+        defaultReasoningEffort: string;
+        supportedReasoningEfforts: { reasoningEffort: string }[];
+      }[];
+    };
+    const current = result.models.find((model) => model.id === "fake/default");
+    expect(current?.defaultReasoningEffort).toBe("none");
+    expect(current?.supportedReasoningEfforts.map((e) => e.reasoningEffort)).toEqual(
+      ["none", "medium", "high", "xhigh"],
+    );
+    expect(
+      result.models.find((model) => model.id === "fake/strong")
+        ?.supportedReasoningEfforts,
+    ).toEqual([{ reasoningEffort: "medium", description: expect.any(String) }]);
   });
 
   it("times out hung ACP-native discovery, kills the child, and falls back to the synthetic model", async () => {
@@ -1029,6 +1144,25 @@ describe("acp bridge", () => {
     await waitForTurnCompleted();
 
     expect(agentMessageTexts()).toContain("selected-effort:xhigh");
+  });
+
+  it("applies OpenCode default as bb medium over session/set_config_option", async () => {
+    const { providerThreadId } = await startThread({
+      envVars: {
+        FAKE_ACP_MODEL_CONFIG: "1",
+        FAKE_ACP_THOUGHT_LEVEL_CONFIG: "1",
+        FAKE_ACP_DEFAULT_EFFORTS: "none,default,high,xhigh",
+      },
+      model: "fake/default",
+      reasoningLevel: "medium",
+    });
+
+    sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "echo-selected-effort", mentions: [] }],
+    });
+    await waitForTurnCompleted();
+
+    expect(agentMessageTexts()).toContain("selected-effort:default");
   });
 
   it("applies configured native reasoning when the ACP agent does not advertise thought_level", async () => {

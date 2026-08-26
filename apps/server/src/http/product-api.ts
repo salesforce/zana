@@ -57,7 +57,7 @@ import { normalizeRepoUrl } from '../services/projects/git-clone.js';
 import { harnessDescriptors, harnessEffectiveDefault, harnessVerify } from './harness-via-rpc.js';
 import { isSafeRelPath, listLibraryDocs, listQuickPrompts, readLibraryDoc } from './library-via-host.js';
 import { listProjectDir, listProjectPaths, readProjectFile } from './project-fs-via-host.js';
-import { getConversationThread, getEnvironment, listConversationThreadEvents, listConversationThreadsByProject, listVisibleConversationThreads, nextConversationEventSequence } from '@zana-ai/zcc-db';
+import { getConversationThread, getEnvironment, listConversationThreadEvents, listConversationThreadsByProject, listVisibleConversationThreads, nextConversationEventSequence, updateConversationThreadTitle } from '@zana-ai/zcc-db';
 import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
 import { parseMultipartVoiceForm, readVoiceBody } from './multipart-voice.js';
 import {
@@ -532,6 +532,24 @@ export async function handleProductHttp(
       });
       return true;
     }
+    if (threadById && method === 'PATCH') {
+      const thread = getConversationThread(ctx.db, threadById.id);
+      if (!thread) {
+        sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
+        return true;
+      }
+      const body = (await readJsonBody(request)) as { title?: unknown };
+      const title = typeof body.title === 'string' ? body.title.trim().slice(0, 120) : '';
+      if (!title) {
+        sendJson(response, 400, { error: 'invalid-input', message: 'title is required' });
+        return true;
+      }
+      const updated = updateConversationThreadTitle(ctx.db, thread.id, title) ?? thread;
+      ctx.threadTitleNamer?.reserve(thread.id);
+      ctx.hub.emit('threads:updated', conversationThreadView(ctx, updated));
+      sendJson(response, 200, { thread: conversationThreadView(ctx, updated) });
+      return true;
+    }
 
     const threadEvents = routeParams(path, '/api/v1/threads/:id/events');
     if (threadEvents && method === 'GET') {
@@ -571,6 +589,18 @@ export async function handleProductHttp(
       }
       const maxSeq = Math.max(0, nextConversationEventSequence(ctx.db, thread.id) - 1);
       const lastReadSeq = markThreadRead(ctx.dataDir, thread.id, maxSeq);
+      sendJson(response, 200, { thread: { ...conversationThreadView(ctx, thread), lastReadSeq } });
+      return true;
+    }
+
+    const threadUnread = routeParams(path, '/api/v1/threads/:id/unread');
+    if (threadUnread && method === 'POST') {
+      const thread = getConversationThread(ctx.db, threadUnread.id);
+      if (!thread) {
+        sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
+        return true;
+      }
+      const lastReadSeq = markThreadRead(ctx.dataDir, thread.id, 0);
       sendJson(response, 200, { thread: { ...conversationThreadView(ctx, thread), lastReadSeq } });
       return true;
     }

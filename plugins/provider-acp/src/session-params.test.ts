@@ -49,6 +49,7 @@ describe("buildAcpModelListParams", () => {
       },
       primaryModels: ["model-a"],
     });
+    expect(params).not.toHaveProperty("agent");
   });
 
   it("passes launch-time reasoning CLI config through to discovery", () => {
@@ -102,6 +103,47 @@ describe("buildAcpModelListParams", () => {
       expect(params).not.toHaveProperty("listCommand");
     },
   );
+
+  it("probes ACP thought_level when a list CLI has no select flag", () => {
+    const params = buildAcpModelListParams(
+      profileFor({
+        displayName: "Custom ACP",
+        command: "custom-agent",
+        args: ["serve"],
+        env: {},
+        modelCli: {
+          listArgs: ["models"],
+          primaryModels: [],
+        },
+      }),
+    );
+
+    expect(params).toEqual({
+      listCommand: {
+        command: "custom-agent",
+        args: ["models"],
+      },
+      agent: { command: "custom-agent", args: ["serve"] },
+      primaryModels: [],
+    });
+  });
+
+  it("discovers OpenCode over ACP without a list command", () => {
+    const params = buildAcpModelListParams(
+      profileFor({
+        displayName: "OpenCode",
+        command: "opencode",
+        args: ["acp"],
+        env: {},
+      }),
+    );
+
+    expect(params).toEqual({
+      agent: { command: "opencode", args: ["acp"] },
+      primaryModels: [],
+    });
+    expect(params).not.toHaveProperty("listCommand");
+  });
 });
 
 describe("buildAcpSessionParams", () => {

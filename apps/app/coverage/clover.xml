@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1787697040344" clover="3.2.0">
+  <project timestamp="1787697040344" name="All files">
+    <metrics statements="38" coveredstatements="38" conditionals="22" coveredconditionals="22" methods="11" coveredmethods="11" elements="71" coveredelements="71" complexity="0" loc="38" ncloc="38" packages="1" files="2" classes="2"/>
+    <file name="fs-entry-drag.ts" path="/Users/grebmann/zcc-workspace/zana-command-center/apps/app/src/lib/fs-entry-drag.ts">
+      <metrics statements="21" coveredstatements="21" conditionals="15" coveredconditionals="15" methods="7" coveredmethods="7"/>
+      <line num="4" count="1" type="stmt"/>
+      <line num="12" count="7" type="cond" truecount="5" falsecount="0"/>
+      <line num="13" count="6" type="stmt"/>
+      <line num="14" count="6" type="stmt"/>
+      <line num="22" count="6" type="stmt"/>
+      <line num="25" count="1" type="stmt"/>
+      <line num="28" count="3" type="stmt"/>
+      <line num="29" count="3" type="stmt"/>
+      <line num="30" count="3" type="stmt"/>
+      <line num="31" count="3" type="stmt"/>
+      <line num="36" count="8" type="cond" truecount="2" falsecount="0"/>
+      <line num="37" count="2" type="stmt"/>
+      <line num="38" count="2" type="stmt"/>
+      <line num="42" count="2" type="stmt"/>
+      <line num="43" count="1" type="stmt"/>
+      <line num="48" count="6" type="cond" truecount="2" falsecount="0"/>
+      <line num="49" count="5" type="stmt"/>
+      <line num="50" count="5" type="stmt"/>
+      <line num="51" count="5" type="cond" truecount="2" falsecount="0"/>
+      <line num="52" count="6" type="stmt"/>
+      <line num="54" count="1" type="stmt"/>
+    </file>
+    <file name="suppress-post-drag-click.ts" path="/Users/grebmann/zcc-workspace/zana-command-center/apps/app/src/lib/suppress-post-drag-click.ts">
+      <metrics statements="17" coveredstatements="17" conditionals="7" coveredconditionals="7" methods="4" coveredmethods="4"/>
+      <line num="2" count="2" type="stmt"/>
+      <line num="13" count="4" type="cond" truecount="2" falsecount="0"/>
+      <line num="15" count="3" type="stmt"/>
+      <line num="16" count="3" type="stmt"/>
+      <line num="17" count="3" type="cond" truecount="2" falsecount="0"/>
+      <line num="18" count="1" type="stmt"/>
+      <line num="19" count="1" type="stmt"/>
+      <line num="20" count="1" type="stmt"/>
+      <line num="21" count="1" type="stmt"/>
+      <line num="23" count="3" type="stmt"/>
+      <line num="24" count="4" type="cond" truecount="2" falsecount="0"/>
+      <line num="25" count="3" type="stmt"/>
+      <line num="26" count="3" type="stmt"/>
+      <line num="27" count="3" type="stmt"/>
+      <line num="29" count="3" type="stmt"/>
+      <line num="30" count="3" type="stmt"/>
+      <line num="31" count="3" type="stmt"/>
+    </file>
+  </project>
+</coverage>

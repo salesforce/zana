@@ -3,6 +3,7 @@ import {
   buildFuzzyRegex,
   buildModelNavRows,
   fuzzyFilter,
+  pinSelectedMoreModels,
   splitModelLabelTag
 } from './model-picker-search.js';
 
@@ -19,6 +20,19 @@ describe('model picker search', () => {
       'sn',
       (option) => option.label
     )).toEqual([{ value: 'claude-sonnet-5', label: 'Sonnet 5' }]);
+  });
+
+  it('pins a selected more-model into the primary list', () => {
+    const models = [{ value: 'a', label: 'A' }];
+    const more = [{ value: 'b', label: 'B' }, { value: 'c', label: 'C' }];
+    expect(pinSelectedMoreModels(models, more, 'c')).toEqual({
+      modelOptions: [models[0], more[1]],
+      moreModelOptions: [more[0]]
+    });
+    expect(pinSelectedMoreModels(models, more, 'a')).toEqual({
+      modelOptions: models,
+      moreModelOptions: more
+    });
   });
 
   it('folds more-models into the list while searching', () => {

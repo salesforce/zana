@@ -92,8 +92,10 @@ describe('project-row compact chrome', () => {
     expect(source).toContain('{...attributes}');
     expect(source).toContain('project-label--sortable');
     expect(source).toContain('consumeProjectClick()');
+    expect(source).toContain('suppressPostDragClick()');
     expect(source).toContain('POST_DRAG_CLICK_SUPPRESS_MS');
     expect(source).toContain('onDragStart={onProjectDragStart}');
+    expect(source).toContain('onNavigate?.(event)');
   });
 
   it('renders project actions before the new-agent control', () => {

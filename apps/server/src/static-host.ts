@@ -265,6 +265,7 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
   return {
     url,
     close: () => new Promise<void>((resolveClose, rejectClose) => {
+      options.product?.dispose();
       hostWss?.close();
       productWss?.close();
       server.close((error) => (error ? rejectClose(error) : resolveClose()));

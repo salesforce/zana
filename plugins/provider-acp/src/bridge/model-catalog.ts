@@ -155,6 +155,8 @@ const ACP_NATIVE_REASONING_LEVEL_BY_VALUE: Readonly<
   none: "none",
   minimal: "low",
   low: "low",
+  // OpenCode's model variants use "default" for the family's ordinary effort.
+  default: "medium",
   medium: "medium",
   high: "high",
   xhigh: "xhigh",
@@ -168,7 +170,7 @@ const ACP_NATIVE_REASONING_VALUE_CANDIDATES_BY_LEVEL: Readonly<
 > = {
   none: ["none"],
   low: ["low", "minimal"],
-  medium: ["medium"],
+  medium: ["medium", "default"],
   high: ["high"],
   xhigh: ["xhigh"],
   ultracode: ["ultracode", "xhigh"],
@@ -295,6 +297,7 @@ export function buildModelCatalogFromConfigOptions(
 
 export function buildModelCatalogFromSessionModels(
   sessionModels: AcpSessionModels | undefined,
+  reasoningByModel?: ReadonlyMap<string, AcpNativeReasoningSupport>,
 ): AvailableModel[] {
   const availableModels = sessionModels?.availableModels ?? [];
   if (availableModels.length === 0) {
@@ -306,13 +309,17 @@ export function buildModelCatalogFromSessionModels(
       currentModelId !== undefined
         ? model.modelId === currentModelId
         : index === 0;
+    const reasoning = reasoningByModel?.get(model.modelId) ?? {
+      supportedReasoningEfforts: ACP_NATIVE_REASONING_EFFORTS,
+      defaultReasoningEffort: "medium" as ReasoningLevel,
+    };
     return {
       id: model.modelId,
       model: model.modelId,
       displayName: model.name ?? model.modelId,
       description: model.description ?? "",
-      supportedReasoningEfforts: ACP_NATIVE_REASONING_EFFORTS,
-      defaultReasoningEffort: "medium",
+      supportedReasoningEfforts: reasoning.supportedReasoningEfforts,
+      defaultReasoningEffort: reasoning.defaultReasoningEffort,
       isDefault,
     };
   });

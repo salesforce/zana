@@ -337,6 +337,66 @@ describe('product HTTP', () => {
     expect(body.threads).toEqual([expect.objectContaining({ id: thread.id, status: 'idle' })]);
   });
 
+  it('renames a thread and marks it unread', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-thread-header-'));
+    server = await startProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: '/tmp/proj'
+    });
+    const thread = createConversationThread(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code',
+      title: 'Hello'
+    });
+
+    const reserve = vi.spyOn(server.ctx.threadTitleNamer, 'reserve');
+    const renamed = await fetch(`${server.url}api/v1/threads/${thread.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: '  Hello 2  ' })
+    });
+    expect(renamed.status).toBe(200);
+    await expect(renamed.json()).resolves.toMatchObject({ thread: { id: thread.id, title: 'Hello 2' } });
+    expect(reserve).toHaveBeenCalledWith(thread.id);
+
+    const blank = await fetch(`${server.url}api/v1/threads/${thread.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: '   ' })
+    });
+    expect(blank.status).toBe(400);
+
+    const unread = await fetch(`${server.url}api/v1/threads/${thread.id}/unread`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    });
+    expect(unread.status).toBe(200);
+    await expect(unread.json()).resolves.toMatchObject({ thread: { id: thread.id, lastReadSeq: 0 } });
+
+    const missingRename = await fetch(`${server.url}api/v1/threads/missing/`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'Nope' })
+    });
+    expect(missingRename.status).toBe(404);
+
+    const missingUnread = await fetch(`${server.url}api/v1/threads/missing/unread`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    });
+    expect(missingUnread.status).toBe(404);
+  });
+
   it('rejects explorer list-dir outside a registered project', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-fs-'));
     const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-product-fs-proj-'));

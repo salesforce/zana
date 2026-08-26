@@ -75,6 +75,7 @@ export type * from './settings.js';
 export type * from './fs.js';
 export type * from './schedule.js';
 export type * from './llm.js';
+export { titleFromPrompt } from './prompt-title.js';
 export type * from './voice.js';
 export * from './persona.js';
 export type * from './goal.js';

@@ -2337,7 +2337,37 @@ describe("timeline CLI rendering snapshots", () => {
     ]);
 
     expect(timeline.rows).toEqual([]);
+    expect(timeline.projection.state.activeThinking).toMatchObject({
+      id: "reasoning-1",
+      text: "Checking the current state.",
+    });
     expect(timeline.text).toMatchInlineSnapshot(`""`);
+  });
+
+  it("exposes live reasoning while starting or stopping, but not when idle", () => {
+    const event = createTimelineEventFactory({ threadId: "thread-1" });
+    const events = [
+      event.turnStarted(),
+      event.reasoningDelta({
+        itemId: "reasoning-1",
+        delta: "Checking the current state.",
+      }),
+    ];
+
+    for (const threadStatus of ["starting", "active", "stopping"] as const) {
+      const timeline = renderTimelineFixture({
+        events,
+        projectionOptions: { threadStatus, turnMessageDetail: "summary" },
+      });
+      expect(timeline.projection.state.activeThinking).toMatchObject({
+        id: "reasoning-1",
+        text: "Checking the current state.",
+      });
+    }
+
+    expect(
+      renderIdleTimeline(events).projection.state.activeThinking,
+    ).toBeNull();
   });
 
   it("shows web search, file edit, and assistant output without task updates", () => {

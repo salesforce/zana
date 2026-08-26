@@ -57,6 +57,7 @@ export {
   listVisibleConversationThreads,
   updateConversationThreadStatus,
   updateConversationThreadParent,
+  updateConversationThreadTitle,
   setConversationProviderThreadId,
   archiveConversationThread,
   countLiveConversationThreadsForEnvironment,

@@ -1,5 +1,5 @@
 import type { AgentState } from '@zana-ai/zcc-domain/product';
-import type { ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
+import type { ActiveThinking, ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
 import type { TimelineRow } from '@zana-ai/zcc-server-contract';
 
 export function isBusyThreadStatus(status: string): boolean {
@@ -18,11 +18,15 @@ export function threadStatusToAgentState(status: string, waitingOnUser = false):
   return 'idle';
 }
 
-export function threadStatusLabel(status: string, waitingOnUser = false): string {
+export function threadStatusLabel(
+  status: string,
+  waitingOnUser = false,
+  thinking?: ActiveThinking | null
+): string {
   if (waitingOnUser) return 'Needs you';
   const trimmed = status.trim();
   if (!trimmed) return '';
-  if (isBusyThreadStatus(trimmed)) return 'Working';
+  if (isBusyThreadStatus(trimmed)) return thinking ? 'Thinking' : 'Working';
   if (trimmed === 'error') return 'Error';
   if (trimmed === 'idle') return 'Idle';
   return trimmed.replace(/-/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());

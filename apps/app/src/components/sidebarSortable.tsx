@@ -12,13 +12,13 @@ import {
 } from '@dnd-kit/core';
 import { sortableKeyboardCoordinates, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { POST_DRAG_CLICK_SUPPRESS_MS, suppressPostDragClick } from '../lib/suppress-post-drag-click.js';
 import { normalizeSidebarNavOrder, reorderSidebarNavItems } from './sidebarNavOrder.js';
 
 export const WORKSPACES_SECTION_SORT_ID = 'sidebar-section:workspaces';
 export const GLOBAL_NAV_ORDER_KEY = 'zcc.sidebarNavOrder';
 export const PROJECT_NAV_ORDER_KEY = 'zcc.projectSidebarNavOrder';
 export const PINNED_PROJECT_NAV_IDS = ['inbox'] as const;
-const POST_DRAG_CLICK_SUPPRESS_MS = 80;
 
 /** Dropping with dnd-kit's default layout transition animates the node back to
  *  its pre-drag slot, then React commits the new order — a one-frame blink. */
@@ -127,8 +127,10 @@ export function useSortableSidebarNav(
   const sortableNavIds = orderedNavIds.filter((id) => !pinnedSet.has(id));
 
   const onDragEnd = ({ active, over }: DragEndEvent) => {
-    // pointerup is followed by a click on the destination <Link>. Clearing on
-    // a 0ms timeout races that click and remounts the main view (a window blink).
+    // pointerup is followed by a click on the source/destination <Link>.
+    // dnd-kit only stopPropagation's that click, so the native href still
+    // navigates — preventDefault at capture, then drop the React fallback.
+    if (suppressNavClickRef.current) suppressPostDragClick();
     window.setTimeout(() => {
       suppressNavClickRef.current = false;
     }, POST_DRAG_CLICK_SUPPRESS_MS);
@@ -150,6 +152,7 @@ export function useSortableSidebarNav(
   };
 
   const onDragCancel = () => {
+    if (suppressNavClickRef.current) suppressPostDragClick();
     window.setTimeout(() => {
       suppressNavClickRef.current = false;
     }, POST_DRAG_CLICK_SUPPRESS_MS);

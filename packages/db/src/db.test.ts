@@ -19,6 +19,7 @@ import {
   threadOutputTail,
   updateConversationThreadParent,
   updateConversationThreadStatus,
+  updateConversationThreadTitle,
   upsertHost,
   type ZccDatabase
 } from './index.js';
@@ -186,6 +187,28 @@ describe('packages/db', () => {
     expect(updated?.parentThreadId).toBe(parent.id);
     expect(getConversationThread(db, child.id)?.parentThreadId).toBe(parent.id);
     expect(updateConversationThreadParent(db, child.id, null)?.parentThreadId).toBeNull();
+  });
+
+  it('renames a conversation thread title', () => {
+    dir = mkdtempSync(join(tmpdir(), 'zcc-db-rename-'));
+    db = openDatabase(join(dir, 'zcc.sqlite'));
+    const host = upsertHost(db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: '/tmp/proj'
+    });
+    const thread = createConversationThread(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code',
+      title: 'Hello'
+    });
+    const updated = updateConversationThreadTitle(db, thread.id, 'Hello 2');
+    expect(updated?.title).toBe('Hello 2');
+    expect(getConversationThread(db, thread.id)?.title).toBe('Hello 2');
+    expect(updateConversationThreadTitle(db, 'missing', 'Nope')).toBeNull();
   });
 
   it('lists only starting and running threads as live', () => {

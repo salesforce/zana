@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import {
   reconcileReasoningLevel,
   reasoningLevelSchema,
@@ -13,6 +13,11 @@ import {
   fallbackProviderOption,
   type ThreadComposerProviderOption
 } from './fallback-models.js';
+import {
+  rememberComposerSelection,
+  rememberedProviderId,
+  rememberedSelectionFor
+} from './composer-selection-preference.js';
 import {
   ensureThreadProviderModels,
   getThreadModelCatalog,
@@ -32,6 +37,21 @@ function defaultFallbackModel(providerId: string): AvailableModel | undefined {
   return rows.find((row) => row.isDefault) ?? rows[0];
 }
 
+function restoreProviderSelection(nextProviderId: string): {
+  model: string;
+  reasoningLevel: ReasoningLevel;
+} {
+  const remembered = rememberedSelectionFor(nextProviderId);
+  const fallback = defaultFallbackModel(nextProviderId);
+  return {
+    model: remembered?.model ?? fallback?.model ?? '',
+    reasoningLevel: asReasoningLevel(
+      remembered?.reasoningLevel,
+      fallback?.defaultReasoningEffort ?? 'medium'
+    )
+  };
+}
+
 export function useThreadComposerOptions(input: {
   threadId?: string;
   lockedProviderId?: string;
@@ -43,27 +63,56 @@ export function useThreadComposerOptions(input: {
     getThreadModelCatalog,
     getThreadModelCatalog
   );
-  const [providerId, setProviderId] = useState(input.lockedProviderId ?? 'claude-code');
-  const [model, setModel] = useState(
-    input.initialModel
-      ?? defaultFallbackModel(input.lockedProviderId ?? 'claude-code')?.model
-      ?? ''
+  const [providerId, setProviderIdState] = useState(
+    () => input.lockedProviderId ?? rememberedProviderId() ?? 'claude-code'
   );
-  const [reasoningLevel, setReasoningLevel] = useState<ReasoningLevel>(
-    asReasoningLevel(
-      input.initialReasoningLevel ?? undefined,
-      defaultFallbackModel(input.lockedProviderId ?? 'claude-code')?.defaultReasoningEffort ?? 'medium'
-    )
-  );
+  const [model, setModelState] = useState(() => {
+    if (input.initialModel) return input.initialModel;
+    const provider = input.lockedProviderId ?? rememberedProviderId() ?? 'claude-code';
+    return restoreProviderSelection(provider).model;
+  });
+  const [reasoningLevel, setReasoningLevelState] = useState<ReasoningLevel>(() => {
+    if (input.initialReasoningLevel) {
+      return asReasoningLevel(input.initialReasoningLevel, 'medium');
+    }
+    const provider = input.lockedProviderId ?? rememberedProviderId() ?? 'claude-code';
+    return restoreProviderSelection(provider).reasoningLevel;
+  });
+
+  const setModel = useCallback((value: string) => {
+    setModelState(value);
+    rememberComposerSelection({ providerId, model: value, reasoningLevel });
+  }, [providerId, reasoningLevel]);
+
+  const setReasoningLevel = useCallback((value: ReasoningLevel) => {
+    setReasoningLevelState(value);
+    rememberComposerSelection({ providerId, model, reasoningLevel: value });
+  }, [model, providerId]);
+
+  const setProviderId = useCallback((value: string) => {
+    if (value === providerId) return;
+    rememberComposerSelection({ providerId, model, reasoningLevel });
+    setProviderIdState(value);
+    const restored = restoreProviderSelection(value);
+    setModelState(restored.model);
+    setReasoningLevelState(restored.reasoningLevel);
+    if (restored.model) {
+      rememberComposerSelection({
+        providerId: value,
+        model: restored.model,
+        reasoningLevel: restored.reasoningLevel
+      });
+    }
+  }, [model, providerId, reasoningLevel]);
 
   useEffect(() => {
-    if (input.lockedProviderId) setProviderId(input.lockedProviderId);
+    if (input.lockedProviderId) setProviderIdState(input.lockedProviderId);
   }, [input.lockedProviderId]);
 
   useEffect(() => {
-    if (input.initialModel) setModel(input.initialModel);
+    if (input.initialModel) setModelState(input.initialModel);
     if (input.initialReasoningLevel) {
-      setReasoningLevel(asReasoningLevel(input.initialReasoningLevel, 'medium'));
+      setReasoningLevelState(asReasoningLevel(input.initialReasoningLevel, 'medium'));
     }
   }, [input.initialModel, input.initialReasoningLevel]);
 
@@ -88,7 +137,13 @@ export function useThreadComposerOptions(input: {
     if (input.threadId || input.lockedProviderId) return;
     if (catalog.providers.length === 0) return;
     const offered = catalog.providers.some((row) => row.id === providerId);
-    if (!offered && catalog.providers[0]) setProviderId(catalog.providers[0].id);
+    if (!offered && catalog.providers[0]) {
+      const next = catalog.providers[0].id;
+      setProviderIdState(next);
+      const restored = restoreProviderSelection(next);
+      setModelState(restored.model);
+      setReasoningLevelState(restored.reasoningLevel);
+    }
   }, [input.threadId, input.lockedProviderId, catalog.providers, providerId]);
 
   const activeModel = useMemo(
@@ -99,15 +154,20 @@ export function useThreadComposerOptions(input: {
   useEffect(() => {
     if (!activeModel) return;
     if (!model) {
-      setModel(activeModel.model);
+      setModelState(activeModel.model);
       const supported = visibleComposerReasoningLevels(
         activeModel.supportedReasoningEfforts.map((effort) => effort.reasoningEffort)
       );
-      setReasoningLevel(
+      setReasoningLevelState(
         supported.length > 0
           ? reconcileReasoningLevel(activeModel.defaultReasoningEffort, supported)
           : activeModel.defaultReasoningEffort
       );
+      return;
+    }
+    const offered = models.concat(moreModels).some((row) => row.model === model);
+    if (!loading && models.length + moreModels.length > 0 && !offered) {
+      setModelState(activeModel.model);
       return;
     }
     const supported = visibleComposerReasoningLevels(
@@ -115,8 +175,8 @@ export function useThreadComposerOptions(input: {
     );
     if (supported.length === 0) return;
     const next = reconcileReasoningLevel(reasoningLevel, supported);
-    if (next !== reasoningLevel) setReasoningLevel(next);
-  }, [activeModel, model, reasoningLevel]);
+    if (next !== reasoningLevel) setReasoningLevelState(next);
+  }, [activeModel, loading, model, models, moreModels, reasoningLevel]);
 
   const providerOptions: PickerOption<string>[] = providers.map((row) => ({
     value: row.id,

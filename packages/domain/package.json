@@ -49,6 +49,11 @@
       "source": "./src/llm.ts",
       "default": "./src/llm.ts"
     },
+    "./prompt-title": {
+      "types": "./src/prompt-title.ts",
+      "source": "./src/prompt-title.ts",
+      "default": "./src/prompt-title.ts"
+    },
     "./parse-cron": {
       "types": "./src/parse-cron.ts",
       "source": "./src/parse-cron.ts",

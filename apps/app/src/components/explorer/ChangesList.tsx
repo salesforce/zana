@@ -1,7 +1,7 @@
 import React from 'react';
 import { FileText, Undo2 } from 'lucide-react';
 import type { GitFileCode } from '@zana-ai/zcc-domain/product';
-import { FS_ENTRY_DRAG_MIME, serializeFsEntryDrag } from '../../lib/fs-entry-drag.js';
+import { beginFsEntryDrag, consumeFsEntryDragClick, endFsEntryDrag } from '../../lib/fs-entry-drag.js';
 
 interface ChangesListProps {
   files: Array<{ path: string; rel: string; code: GitFileCode }>;
@@ -34,17 +34,17 @@ export const ChangesList = React.memo(function ChangesList({ files, activeFile, 
             key={f.path}
             className={`tree-row file changes-row ${isActive ? 'active' : ''} ${gitClass}`}
             style={{ paddingLeft: 6 }}
-            onClick={() => onClick(f.path)}
+            onClick={() => {
+              if (consumeFsEntryDragClick()) return;
+              onClick(f.path);
+            }}
             title={`${GIT_TITLES[f.code]} · ${f.rel}`}
             draggable
-            onDragStart={(e) => {
-              e.dataTransfer.setData('text/plain', f.path);
-              e.dataTransfer.setData(FS_ENTRY_DRAG_MIME, serializeFsEntryDrag({
-                path: f.path,
-                kind: 'file'
-              }));
-              e.dataTransfer.effectAllowed = 'copy';
-            }}
+            onDragStart={(e) => beginFsEntryDrag(e.dataTransfer, {
+              path: f.path,
+              kind: 'file'
+            })}
+            onDragEnd={endFsEntryDrag}
           >
             <span className="tree-chevron empty" />
             <span className="tree-icon">

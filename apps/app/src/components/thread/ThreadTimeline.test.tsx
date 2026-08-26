@@ -53,6 +53,10 @@ describe('thread timeline model', () => {
     expect(threadStatusLabel('error')).toBe('Error');
     expect(threadStatusLabel('')).toBe('');
     expect(threadStatusLabel('active', true)).toBe('Needs you');
+    expect(threadStatusLabel('active', false, { id: 'th', text: '', startedAt: 1, updatedAt: 1 })).toBe('Thinking');
+    expect(threadStatusLabel('starting', false, { id: 'th', text: 'plan', startedAt: 1, updatedAt: 1 })).toBe('Thinking');
+    expect(threadStatusLabel('active', true, { id: 'th', text: 'plan', startedAt: 1, updatedAt: 1 })).toBe('Needs you');
+    expect(threadStatusLabel('idle', false, { id: 'th', text: 'plan', startedAt: 1, updatedAt: 1 })).toBe('Idle');
   });
 
   it('treats pending questions and approvals as waiting on the user', () => {
@@ -216,6 +220,20 @@ describe('ThreadTimeline', () => {
     expect(html).toContain('List files');
   });
 
+  it('shows Thinking… for empty thought text and Working… when thinking is absent', () => {
+    const empty = renderToStaticMarkup(
+      <ThreadTimeline rows={[]} status="active" thinking={{ id: 'th', text: '  ', startedAt: 1, updatedAt: 1 }} todos={null} />
+    );
+    expect(empty).toContain('data-testid="thread-thinking"');
+    expect(empty).toContain('Thinking…');
+    expect(empty).not.toContain('<details');
+    const working = renderToStaticMarkup(
+      <ThreadTimeline rows={[]} status="active" thinking={null} todos={null} />
+    );
+    expect(working).toContain('Working…');
+    expect(working).not.toContain('Thinking…');
+  });
+
   it('renders completed command output, file-change stats, and system lines', () => {
     const rows: TimelineRow[] = [
       {
@@ -304,6 +322,21 @@ describe('ThreadTimeline', () => {
     expect(html).toContain('data-testid="thread-assistant-text"');
     expect(html).toContain('Done.');
     expect(html).toContain('Working…');
+  });
+
+  it('shows expandable Thinking when reasoning text is streaming', () => {
+    const html = renderToStaticMarkup(
+      <ThreadTimeline
+        rows={[]}
+        status="active"
+        thinking={{ id: 'th', text: 'I should inspect nearby files.', startedAt: 1, updatedAt: 1 }}
+        todos={null}
+      />
+    );
+    expect(html).toContain('Thinking…');
+    expect(html).toContain('I should inspect nearby files.');
+    expect(html).toContain('thread-timeline-work-chevron');
+    expect(html).not.toContain('Working…');
   });
 
   it('shows the empty waiting state', () => {

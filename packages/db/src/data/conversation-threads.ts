@@ -172,6 +172,16 @@ export function updateConversationThreadParent(
   return getConversationThread(db, id);
 }
 
+export function updateConversationThreadTitle(
+  db: ZccDatabase,
+  id: string,
+  title: string
+): ConversationThreadRow | null {
+  const now = Date.now();
+  db.sqlite.prepare('UPDATE threads SET title = ?, updated_at = ? WHERE id = ?').run(title, now, id);
+  return getConversationThread(db, id);
+}
+
 export function setConversationProviderThreadId(
   db: ZccDatabase,
   id: string,

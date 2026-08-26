@@ -18,6 +18,7 @@ import {
 import {
   DEFAULT_SETUP_TIMEOUT_MS,
   buildManagedBranchName,
+  titleFromPrompt,
   type SpawnEnvironmentChoice
 } from '@zana-ai/zcc-domain';
 import type { Project } from '@zana-ai/zcc-domain/product';
@@ -117,10 +118,27 @@ function provisionCommandFor(
   };
 }
 
-function threadTitle(input: CreateConversationInput, prompt: string[]): string {
+export function threadTitle(input: Pick<CreateConversationInput, 'title'>, prompt: string[]): string {
   if (input.title?.trim()) return input.title.trim().slice(0, 120);
-  if (prompt[0]) return prompt[0].slice(0, 120);
+  if (prompt[0]) return titleFromPrompt(prompt[0]) || 'Thread';
   return 'Thread';
+}
+
+export function requestAutoThreadTitle(
+  ctx: ProductHttpContext,
+  input: CreateConversationInput,
+  threadId: string,
+  prompt: string[]
+): void {
+  const namer = ctx.threadTitleNamer;
+  if (!namer) return;
+  if (input.title?.trim()) {
+    namer.reserve(threadId);
+    return;
+  }
+  const text = prompt[0]?.trim();
+  if (!text) return;
+  namer.request(threadId, text);
 }
 
 async function startConversationOnHost(
@@ -299,6 +317,7 @@ export async function createConversationFromRequest(
       await startConversationOnHost(ctx, { hostId, project, thread, prompt, environmentId: existing.id, input });
       const running = updateConversationThreadStatus(ctx.db, thread.id, 'active') ?? thread;
       ctx.hub.emit('threads:updated', conversationThreadView(ctx, running));
+      requestAutoThreadTitle(ctx, input, running.id, prompt);
       return running;
     } catch (error) {
       failConversationStart(ctx, thread);
@@ -386,6 +405,7 @@ export async function createConversationFromRequest(
     });
     const running = updateConversationThreadStatus(ctx.db, created.thread.id, 'active') ?? created.thread;
     ctx.hub.emit('threads:updated', conversationThreadView(ctx, running));
+    requestAutoThreadTitle(ctx, input, running.id, prompt);
     return running;
   } catch (error) {
     failConversationStart(ctx, created.thread);

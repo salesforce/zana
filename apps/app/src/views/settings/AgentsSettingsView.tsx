@@ -156,7 +156,7 @@ export function AgentsSettingsView({
       >
         <CheckboxField
           label="Auto-name tabs"
-          help="Name a claude tab from its first instruction via the tab-namer prompt (edit it under Prompts). Off falls back to Claude’s idle title."
+          help="Name a Claude tab or a conversation thread from its first instruction via the tab-namer prompt (edit it under Prompts). Off falls back to Claude’s idle title for tabs, and to a short prompt snippet for threads."
           checked={config.autoRenameTabs ?? true}
           onChange={(v) => onUpdate({ autoRenameTabs: v })}
         />

@@ -9,7 +9,10 @@ describe('useThreadComposerOptions', () => {
     expect(source).toContain('getThreadModelCatalog');
     expect(source).toContain('reconcileReasoningLevel');
     expect(source).toContain('if (input.threadId || input.lockedProviderId) return');
-    expect(source).toContain('setProviderId(catalog.providers[0].id)');
+    expect(source).toContain('rememberComposerSelection');
+    expect(source).toContain('rememberedProviderId');
+    expect(source).toContain('rememberedSelectionFor');
+    expect(source).toContain('setProviderIdState(next)');
     expect(source).toContain('fallbackModelsForProvider');
     expect(source).toContain('fallbackMoreModelsForProvider');
     expect(source).toContain('visibleComposerReasoningLevels');
@@ -17,5 +20,6 @@ describe('useThreadComposerOptions', () => {
     expect(source).toContain('modelLoadError');
     expect(source).not.toContain('AgentLauncher');
     expect(source).not.toContain('list_models');
+    expect(source).toContain('rememberComposerSelection({ providerId, model: value, reasoningLevel })');
   });
 });

@@ -70,6 +70,19 @@ describe('ModelReasoningPicker', () => {
     expect(html).toMatch(/model-reasoning-picker-trigger-icon"[^>]*>F</);
   });
 
+  it('closes the menu after a model is chosen, including Enter from search', () => {
+    const source = readFileSync(new URL('./ModelReasoningPicker.tsx', import.meta.url), 'utf8');
+    expect(source).toMatch(
+      /const selectModel = \(value: string\) => \{\s*onModelChange\(value\);\s*setOpen\(false\);/
+    );
+  });
+
+  it('keeps the last selected more-model in the primary list', () => {
+    const source = readFileSync(new URL('./ModelReasoningPicker.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('pinSelectedMoreModels');
+    expect(source).toContain('displayed.modelOptions');
+  });
+
   it('keeps extra models behind a More models row instead of dumping them in the primary list', () => {
     const source = readFileSync(new URL('./ModelReasoningPicker.tsx', import.meta.url), 'utf8');
     expect(source).toContain('More models');

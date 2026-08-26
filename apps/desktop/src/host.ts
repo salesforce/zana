@@ -179,7 +179,7 @@ import { createDoctor, hasMissingDeps, type Doctor } from '@zana-ai/zcc-server/s
 import { TemplateStore } from '@zana-ai/zcc-server/services/library/template-store';
 import { QuickPromptStore } from '@zana-ai/zcc-server/services/library/quick-prompt-store';
 import { resolveRulesGuidance } from '@zana-ai/zcc-server/services/projects/rules-file';
-import { PromptRegistry, LlmService, ClaudeCliProvider, OpenAiProvider, GeminiProvider, type LlmProvider } from '@zana-ai/zcc-llm';
+import { PromptRegistry, LlmService, ClaudeCliProvider, OpenAiProvider, GeminiProvider, runTabNamerOnce, type LlmProvider } from '@zana-ai/zcc-llm';
 import { VoiceService } from './native/voice/voice-service.js';
 import { OpenAiVoiceProvider } from './native/voice/openai-provider.js';
 import { getOpenAiKey, getGeminiKey } from './native/voice/secrets.js';
@@ -1531,46 +1531,33 @@ function cacheSessionTitle(sessionId: string, title: string): void {
 }
 
 /**
- * Name a tab from its opening instruction via the `tab-namer` LLM
- * micro-call. Shared by the Claude `UserPromptSubmit` hook route AND the
- * OpenCode spawn-time trigger (OpenCode has no hook surface to deliver this
- * over — see CLAUDE.md's harness-provider notes — so main fires it directly
- * from the prompt text it already has at spawn). One-shot per session via
- * `llmNamedSessions`; safe to call repeatedly (bails once fired, until the
- * call resolves failed/thrown and releases the guard for a retry).
+ * Name a tab from its opening instruction via `runTabNamerOnce` (`builtin:tab-namer`).
+ * Shared by the Claude `UserPromptSubmit` hook route AND the OpenCode spawn-time
+ * trigger (OpenCode has no hook surface to deliver this over — see CLAUDE.md's
+ * harness-provider notes — so main fires it directly from the prompt text it
+ * already has at spawn). One-shot per session via `llmNamedSessions`; safe to
+ * call repeatedly (bails once fired, until the call resolves failed/thrown and
+ * releases the guard for a retry).
  */
 function fireTabNamer(sessionId: string, text: string): void {
-  if (llmNamedSessions.has(sessionId)) return;
   if (store.getConfig().autoRenameTabs === false) return;
   const session = ptys.getSession(sessionId);
   if (!session || session.status === 'exited') return;
   if (session.profile === 'shell') return;
-  const entry = promptRegistry.get('builtin:tab-namer');
-  if (!entry) return;
-  llmNamedSessions.add(sessionId);
-  void llmService
-    .run(entry, { prompt: text }, sessionId)
-    .then((r) => {
-      // A resolved-but-failed call (timeout / non-zero exit / empty output —
-      // the provider never throws, so these land HERE, not in .catch) must
-      // release the one-shot so a later prompt can retry. Cold `claude
-      // --print` can exceed the timeout; without this, the most common
-      // failure would silently disable naming for the tab forever. The tab
-      // still falls back to the OSC idle-title until a retry succeeds.
-      if (!r.ok || !r.text.trim()) {
-        llmNamedSessions.delete(sessionId);
-        return;
-      }
-      // Re-check liveness: the call takes ~10–20s, the tab may have closed.
-      if (!ptys.getSession(sessionId)) return;
-      cacheSessionTitle(sessionId, r.text.trim());
-      safeSend(IPC.terminals.onTitle, sessionId, r.text.trim(), 'llm');
-    })
-    .catch((err) => {
-      // Allow a retry on a later prompt if the call threw outright.
-      llmNamedSessions.delete(sessionId);
-      logMainError('tab-namer', err);
-    });
+  void runTabNamerOnce({
+    id: sessionId,
+    prompt: text,
+    namedIds: llmNamedSessions,
+    enabled: true,
+    getEntry: (id) => promptRegistry.get(id),
+    run: (entry, vars, dedupeKey) => llmService.run(entry, vars, dedupeKey),
+    stillLive: () => Boolean(ptys.getSession(sessionId)),
+    onError: (err) => logMainError('tab-namer', err)
+  }).then((title) => {
+    if (!title) return;
+    cacheSessionTitle(sessionId, title);
+    safeSend(IPC.terminals.onTitle, sessionId, title, 'llm');
+  });
 }
 /**
  * Host-resolved resume coordinates for an inbox entry (Rule 1) — the shared

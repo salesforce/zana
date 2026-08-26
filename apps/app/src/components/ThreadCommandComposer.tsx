@@ -140,6 +140,8 @@ export function ThreadCommandComposer({
   }) => boolean>(() => false);
   const insertDroppedMentionsRef = useRef<(event: DragEvent) => boolean>(() => false);
   const [dropOver, setDropOver] = useState(false);
+  const dropOverRef = useRef(false);
+  dropOverRef.current = dropOver;
   const selectedProject = pinnedProject ?? projects.find((row) => row.id === projectId);
 
   const syncTrigger = useCallback((editor: Parameters<typeof findActiveTrigger>[0]) => {
@@ -213,6 +215,18 @@ export function ThreadCommandComposer({
         if (!insertDroppedMentionsRef.current(event)) return false;
         event.stopPropagation();
         return true;
+      },
+      handleDOMEvents: {
+        dragover: (_view, event) => {
+          if (!isComposerPathDrag(Array.from(event.dataTransfer?.types ?? []))) return false;
+          event.preventDefault();
+          if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+          if (!dropOverRef.current) {
+            dropOverRef.current = true;
+            setDropOver(true);
+          }
+          return false;
+        }
       },
       handleKeyDown: (_view, event) => {
         if (cycleComposerModeRef.current(event)) return true;
@@ -293,7 +307,10 @@ export function ThreadCommandComposer({
 
   insertDroppedMentionsRef.current = (event) => {
     const inserted = insertDroppedMentions(event, true);
-    if (inserted) setDropOver(false);
+    if (inserted) {
+      dropOverRef.current = false;
+      setDropOver(false);
+    }
     return inserted;
   };
 
@@ -302,14 +319,21 @@ export function ThreadCommandComposer({
       if (!isComposerPathDrag(Array.from(event.dataTransfer.types))) return;
       event.preventDefault();
       event.dataTransfer.dropEffect = 'copy';
-      if (!dropOver) setDropOver(true);
+      if (!dropOverRef.current) {
+        dropOverRef.current = true;
+        setDropOver(true);
+      }
     },
     onDragLeave: (event: ReactDragEvent) => {
-      if (event.currentTarget === event.target) setDropOver(false);
+      if (event.currentTarget === event.target) {
+        dropOverRef.current = false;
+        setDropOver(false);
+      }
     },
     onDrop: (event: ReactDragEvent) => {
       if (!insertDroppedMentions(event.nativeEvent, false)) return;
       event.preventDefault();
+      dropOverRef.current = false;
       setDropOver(false);
     }
   };
