@@ -1,3 +1,4 @@
+import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
 import type {
   AdoptLocalExtensionGitRequest,
   AgentMessage,
@@ -205,7 +206,7 @@ export interface CcApi {
   };
   projects: {
     list(): Promise<Project[]>;
-    add(path: string): Promise<Result<Project>>;
+    add(path: string, opts?: { hostId?: string }): Promise<Result<Project>>;
     remove(id: string): Promise<void>;
     update(
       id: string,
@@ -285,6 +286,29 @@ export interface CcApi {
     listHosts(): Promise<SshHostEntry[]>;
     /** Re-read the user's SSH configuration and return discovered hosts. */
     syncHosts(): Promise<SshSyncResult>;
+  };
+  /**
+   * Enrolled host-daemon machines. HTTP to the product server — join codes,
+   * live connected status, permission ceiling, and remote directory browse.
+   */
+  hosts: {
+    createJoinCode(): Promise<{ joinCode: string; hostId: string; expiresAt: number }>;
+    list(): Promise<Host[]>;
+    get(id: string): Promise<Host>;
+    update(id: string, patch: { name: string }): Promise<Host>;
+    updatePermissionCeiling(
+      id: string,
+      maxPermissionMode: 'accept-edits' | 'auto' | 'full'
+    ): Promise<Host>;
+    retryUpdate(id: string): Promise<{ ok: true }>;
+    remove(id: string): Promise<{ ok: true }>;
+    directory(id: string, path?: string): Promise<{
+      directory: string;
+      parent: string | null;
+      entries: Array<{ kind: 'file' | 'directory'; name: string; path: string }>;
+    }>;
+    cloneDefaultPath(id: string, projectId: string): Promise<{ path: string }>;
+    onChanged(cb: (hosts: Host[] | undefined) => void): () => void;
   };
   /**
    * Thread control plane is HTTP to the product server (create/send/events).

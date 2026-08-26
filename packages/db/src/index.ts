@@ -11,9 +11,15 @@ export {
 export {
   getHost,
   listHosts,
+  getPrimaryHost,
   upsertHost,
   markHostSeen,
-  type HostRow
+  renameHost,
+  updateHostPermissionCeiling,
+  markHostProtocolRejected,
+  destroyHost,
+  type HostRow,
+  type HostPermissionMode
 } from './data/hosts.js';
 export {
   getActiveSessionForHost,

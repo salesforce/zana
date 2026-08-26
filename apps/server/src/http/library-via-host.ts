@@ -30,6 +30,7 @@ export interface LibraryRoot {
   scope: LibraryScope;
   projectId?: string;
   projectName?: string;
+  hostId?: string;
 }
 
 export function authorizedLibraryRoots(ctx: ProductHttpContext): LibraryRoot[] {
@@ -40,7 +41,8 @@ export function authorizedLibraryRoots(ctx: ProductHttpContext): LibraryRoot[] {
       root: `${project.path}/.zcc/library`,
       scope: 'project',
       projectId: project.id,
-      projectName: project.name
+      projectName: project.name,
+      hostId: project.hostId
     });
   }
   return roots;
@@ -62,40 +64,47 @@ function mapHostError(error: unknown): never {
 
 export async function listLibraryDocs(ctx: ProductHttpContext, hostId?: string): Promise<LibraryDoc[]> {
   const roots = authorizedLibraryRoots(ctx);
-  let result: HostListFilesResult;
-  try {
-    const resolved = ctx.hostHub.resolveHostId(hostId);
-    result = await ctx.hostHub.callHostOnlineRpc<HostListFilesResult>({
-      hostId: resolved,
-      command: { type: 'host.list_files', roots: roots.map((row) => row.root) }
-    });
-  } catch (error) {
-    mapHostError(error);
+  const groups = new Map<string | undefined, typeof roots>();
+  for (const root of roots) {
+    const key = hostId ?? root.hostId;
+    const list = groups.get(key) ?? [];
+    list.push(root);
+    groups.set(key, list);
   }
   const byRoot = new Map(roots.map((row) => [row.root, row]));
   const docs: LibraryDoc[] = [];
-  for (const file of result.files) {
-    if (file.kind !== 'file') continue;
-    if (file.relPath === 'index.json' || file.relPath.endsWith('/index.json')) continue;
-    const meta = byRoot.get(file.root);
-    if (!meta) continue;
-    const ext = posix.extname(file.relPath);
-    docs.push({
-      id: `${meta.scope}:${meta.projectId ?? 'global'}:${file.relPath}`,
-      relPath: file.relPath,
-      title: posix.basename(file.relPath),
-      kind: kindFromExt(ext),
-      createdAt: 0,
-      updatedAt: 0,
-      bytes: file.bytes,
-      scope: meta.scope,
-      // Preview, @-mentions, and binary viewers still key off this stamp —
-      // same contract as library-store.list(). The renderer never uses it to
-      // authorize a read; library.read takes scope + relPath.
-      absPath: posix.join(file.root, file.relPath),
-      projectId: meta.projectId,
-      projectName: meta.projectName
-    });
+  for (const [groupHost, groupRoots] of groups) {
+    let result: HostListFilesResult;
+    try {
+      const resolved = ctx.hostHub.resolveHostId(groupHost);
+      result = await ctx.hostHub.callHostOnlineRpc<HostListFilesResult>({
+        hostId: resolved,
+        command: { type: 'host.list_files', roots: groupRoots.map((row) => row.root) }
+      });
+    } catch (error) {
+      if (groups.size === 1) mapHostError(error);
+      continue;
+    }
+    for (const file of result.files) {
+      if (file.kind !== 'file') continue;
+      if (file.relPath === 'index.json' || file.relPath.endsWith('/index.json')) continue;
+      const meta = byRoot.get(file.root);
+      if (!meta) continue;
+      const ext = posix.extname(file.relPath);
+      docs.push({
+        id: `${meta.scope}:${meta.projectId ?? 'global'}:${file.relPath}`,
+        relPath: file.relPath,
+        title: posix.basename(file.relPath),
+        kind: kindFromExt(ext),
+        createdAt: 0,
+        updatedAt: 0,
+        bytes: file.bytes,
+        scope: meta.scope,
+        absPath: posix.join(file.root, file.relPath),
+        projectId: meta.projectId,
+        projectName: meta.projectName
+      });
+    }
   }
   return docs;
 }
@@ -116,7 +125,7 @@ export async function readLibraryDoc(
   );
   if (!root) return { ok: false, message: 'library root is not authorized' };
   try {
-    const resolved = ctx.hostHub.resolveHostId(hostId);
+    const resolved = ctx.hostHub.resolveHostId(hostId ?? root.hostId);
     const result = await ctx.hostHub.callHostOnlineRpc<HostReadFileResult>({
       hostId: resolved,
       command: { type: 'host.read_file', root: root.root, relPath }

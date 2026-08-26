@@ -22,6 +22,8 @@ export const hostSchema = z.object({
   maxPermissionMode: permissionModeSchema,
   lastSeenAt: z.number().nullable(),
   lastRejectedProtocolVersion: z.number().int().positive().nullable(),
+  /** True for the co-started local daemon. It cannot be removed. */
+  isPrimary: z.boolean(),
   createdAt: z.number(),
   updatedAt: z.number(),
 });

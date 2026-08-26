@@ -559,12 +559,30 @@ describe('expandable row and chips', () => {
   it('keeps the secondary panel a sibling of the main column', () => {
     const source = readFileSync(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)), 'utf8');
     expect(source).toContain('thread-detail-main');
+    expect(source).toContain('thread-detail-split');
     const panelAt = source.indexOf('<ThreadSecondaryPanel');
     const bodyAt = source.indexOf('className="thread-detail-body"');
     expect(panelAt).toBeGreaterThan(-1);
     expect(bodyAt).toBeGreaterThan(-1);
     expect(source.slice(bodyAt, panelAt)).not.toContain('<ThreadSecondaryPanel');
     expect(source.indexOf('thread-detail-main')).toBeLessThan(panelAt);
+  });
+
+  it('keeps the modal header outside the split so maximize cannot hide it', () => {
+    const source = readFileSync(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)), 'utf8');
+    const headerAt = source.indexOf('className="thread-detail-header"');
+    const splitAt = source.indexOf('className="thread-detail-split"');
+    const mainAt = source.indexOf('className="thread-detail-main"');
+    expect(headerAt).toBeGreaterThan(-1);
+    expect(splitAt).toBeGreaterThan(headerAt);
+    expect(mainAt).toBeGreaterThan(splitAt);
+
+    const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
+    expect(css).toContain('.thread-detail-split {');
+    expect(css).toContain('.thread-detail-view.is-secondary-maximized .thread-detail-main {\n  display: none;');
+    expect(css).not.toContain('.thread-detail-view.is-secondary-maximized .thread-detail-header');
+    expect(css).toContain('.thread-detail-view.is-secondary-open:not(.is-secondary-maximized) .thread-detail-split');
+    expect(css).toContain('.agent-terminal-modal > .modal-header');
   });
 
   it('keeps the transcript, workspace banner, and composer in one column', () => {
@@ -619,8 +637,9 @@ describe('expandable row and chips', () => {
     expect(source).toContain('embedded = false');
     expect(source).toContain('thread-detail-view--embedded');
     expect(source).toContain('thread-detail-view--modal');
-    expect(source).toContain('data-testid="thread-modal-close"');
-    expect(source).toContain('data-testid="thread-modal-fullscreen"');
+    expect(source).toContain('modal = false');
+    expect(source).not.toContain('data-testid="thread-modal-close"');
+    expect(source).not.toContain('data-testid="thread-modal-fullscreen"');
     expect(source).toContain("data-embedded={embedded ? 'true' : undefined}");
     expect(source).toContain('void copyText(text)');
     expect(source).not.toContain('navigator.clipboard');

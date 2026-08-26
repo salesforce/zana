@@ -698,7 +698,8 @@ export const HostEnrollRequestSchema = z.object({
   protocolVersion: ProtocolVersionSchema,
   hostId: UuidSchema.optional(),
   hostName: HostNameSchema,
-  instanceId: UuidSchema
+  instanceId: UuidSchema,
+  homeDir: PathSchema.optional()
 }).strict();
 export type HostEnrollRequest = z.infer<typeof HostEnrollRequestSchema>;
 

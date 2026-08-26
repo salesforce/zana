@@ -142,6 +142,7 @@ test('launching an agent through the real UI opens its terminal and it goes work
     //    status. The stub emits the braille spinner first → `working`.
     const stateChip = agentModal.locator('[data-testid="agent-modal-state"]');
     await expect(stateChip).toHaveAttribute('data-state', 'working', { timeout: 15_000 });
+    await expect(agentModal.getByTestId('agent-modal-header')).toBeVisible();
     await expect(agentModal.getByTestId('agent-session-view')).toBeVisible();
     await expect(agentModal.getByTestId('thread-secondary-panel')).toBeVisible();
     await expect(agentModal.getByTestId('thread-info-pin')).toBeVisible();

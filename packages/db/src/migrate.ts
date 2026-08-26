@@ -112,6 +112,16 @@ const MIGRATE_V4 = [
   `CREATE INDEX conversation_thread_events_thread_seq_idx ON thread_events(thread_id, sequence)`
 ];
 
+const MIGRATE_V6 = [
+  `ALTER TABLE hosts ADD COLUMN max_permission_mode TEXT NOT NULL DEFAULT 'full'`,
+  `ALTER TABLE hosts ADD COLUMN last_rejected_protocol_version INTEGER`,
+  `ALTER TABLE hosts ADD COLUMN is_primary INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE hosts ADD COLUMN home_dir TEXT`,
+  `UPDATE hosts SET is_primary = 1 WHERE id = (
+        SELECT id FROM hosts WHERE destroyed_at IS NULL ORDER BY created_at ASC LIMIT 1
+      )`
+];
+
 const MIGRATE_V5 = [
   `CREATE TABLE pending_interactions (
         id TEXT PRIMARY KEY,
@@ -208,6 +218,7 @@ export function migrate(database: SqliteDatabase): void {
   if (!applied.has(3)) applyVersion(database, 3, MIGRATE_V3);
   if (!applied.has(4)) applyVersion(database, 4, MIGRATE_V4);
   if (!applied.has(5)) applyVersion(database, 5, MIGRATE_V5);
+  if (!applied.has(6)) applyVersion(database, 6, MIGRATE_V6);
 }
 
 export { CREATE_TABLES_V1 as SCHEMA_STATEMENTS_V1 };

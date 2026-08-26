@@ -24,6 +24,7 @@ import {
   getHost,
   getLatestSessionForHost,
   getThread,
+  markHostProtocolRejected,
   openHostSession,
   updateConversationThreadStatus,
   updateThreadStatus,
@@ -134,6 +135,7 @@ export function createHostHub(
     if (!session) return;
     sessions.delete(hostId);
     closeHostSession(db, hostId, reason);
+    hub.emit('hosts:changed', undefined);
     for (const [requestId, waiter] of pending) {
       if (requestId.startsWith(`${hostId}:`)) {
         clearTimeout(waiter.timer);
@@ -159,6 +161,7 @@ export function createHostHub(
     }
     openHostSession(db, { hostId, instanceId, hostName: getHost(db, hostId)?.name ?? 'host' });
     sessions.set(hostId, { hostId, instanceId, socket });
+    hub.emit('hosts:changed', undefined);
     socket.on('close', () => {
       const current = sessions.get(hostId);
       if (current?.socket === socket) detach(hostId, 'socket-closed');
@@ -377,10 +380,16 @@ export function createHostHub(
   }
 
   function acceptHello(socket: WebSocket, hostId: string, raw: unknown): boolean {
+    if (raw && typeof raw === 'object' && (raw as { type?: unknown }).type === 'host.hello') {
+      const version = (raw as { protocolVersion?: unknown }).protocolVersion;
+      if (typeof version === 'number' && version !== HOST_RPC_PROTOCOL_VERSION) {
+        markHostProtocolRejected(db, hostId, version);
+        return false;
+      }
+    }
     const hello = HostHelloMessageSchema.safeParse(raw);
     if (!hello.success) return false;
     if (hello.data.hostId !== hostId) return false;
-    if (hello.data.protocolVersion !== HOST_RPC_PROTOCOL_VERSION) return false;
     attach(socket, hostId, hello.data.instanceId);
     return true;
   }
@@ -404,6 +413,12 @@ export function createHostHub(
     resolveHostId,
     callHostOnlineRpc,
     acceptHello,
+    requestRetryUpdate(hostId: string): void {
+      const session = sessions.get(hostId);
+      if (session && session.socket.readyState === session.socket.OPEN) {
+        session.socket.close(4001, 'retry-update');
+      }
+    },
     detach,
     close
   };

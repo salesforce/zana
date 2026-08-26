@@ -50,7 +50,7 @@ describe('ThreadCommandComposer chrome', () => {
     expect(threadComposer).toContain('justify-self: center;');
     expect(threadComposer).toContain('flex: 0 0 auto;');
     const timeline = css.slice(
-      css.indexOf('.thread-detail-timeline {'),
+      css.indexOf('.thread-detail-timeline-shell {'),
       css.indexOf('.thread-timeline-turn {')
     );
     expect(timeline).not.toContain('max-width:');
@@ -102,6 +102,7 @@ describe('ThreadCommandComposer submit path', () => {
   it('creates and follows up through the Thread HTTP API', () => {
     const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
     expect(source).toContain('product.threads.create');
+    expect(source).toContain('hostId,');
     expect(source).toContain('serializePromptEditor');
     expect(source).toContain('mentions: serialized.mentions');
     expect(source).toContain('Enter a message first');

@@ -25,33 +25,18 @@ vi.mock('../views/threads/ThreadDetailView.js', () => ({
   ThreadDetail: ({
     threadId,
     embedded,
-    onClose,
-    fullScreen,
-    onToggleFullScreen
+    modal
   }: {
     threadId: string;
     embedded?: boolean;
-    onClose?: () => void;
-    fullScreen?: boolean;
-    onToggleFullScreen?: () => void;
+    modal?: boolean;
   }) => (
     <div
       data-testid="thread-detail"
       data-thread-id={threadId}
       data-embedded={embedded ? 'true' : undefined}
-      data-fullscreen={fullScreen ? 'true' : undefined}
-    >
-      {onToggleFullScreen ? (
-        <button type="button" data-testid="thread-modal-fullscreen" onClick={onToggleFullScreen}>
-          Full screen
-        </button>
-      ) : null}
-      {onClose ? (
-        <button type="button" data-testid="thread-modal-close" onClick={onClose}>
-          Close
-        </button>
-      ) : null}
-    </div>
+      data-modal={modal ? 'true' : undefined}
+    />
   )
 }));
 
@@ -75,14 +60,18 @@ const css = readFileSync(fileURLToPath(new URL('../styles/global.css', import.me
 describe('ThreadModal', () => {
   it('hosts ThreadDetail in the agent-inspector overlay chrome', () => {
     expect(modalSource).toContain('data-testid="thread-modal"');
+    expect(modalSource).toContain('data-testid="thread-modal-header"');
     expect(modalSource).toContain('inspectorModalClassName(fullScreen)');
     expect(modalSource).toContain('className="modal-backdrop"');
+    expect(modalSource).toContain('className="modal-header agent-modal-header"');
     expect(modalSource).toContain('className="agent-modal-body"');
     expect(modalSource).toContain('embedded');
-    expect(modalSource).toContain('onClose={onClose}');
-    expect(modalSource).toContain('onToggleFullScreen={toggleFullScreen}');
+    expect(modalSource).toContain('<ThreadDetail threadId={threadId} embedded modal />');
+    expect(modalSource).not.toContain('onToggleFullScreen={toggleFullScreen}');
     expect(css).toContain('.agent-modal-body > .thread-detail-view');
     expect(css).toContain('.thread-detail-view--modal');
+    expect(css).toContain('.thread-detail-split {');
+    expect(css).toContain('.agent-terminal-modal > .modal-header');
   });
 
   it('is opened from the kanban inspect path and hosted beside the agent modal', () => {
@@ -104,11 +93,16 @@ describe('ThreadModal', () => {
     const html = renderToStaticMarkup(<ThreadModal threadId="t1" onClose={() => undefined} />);
     expect(html).toContain('data-testid="thread-modal"');
     expect(html).toContain('aria-label="Review the board"');
+    expect(html).toContain('data-testid="thread-modal-header"');
     expect(html).toContain('data-testid="thread-detail"');
     expect(html).toContain('data-thread-id="t1"');
     expect(html).toContain('data-embedded="true"');
+    expect(html).toContain('data-modal="true"');
     expect(html).toContain('data-testid="thread-modal-close"');
     expect(html).toContain('data-testid="thread-modal-fullscreen"');
+    expect(html.indexOf('data-testid="thread-modal-header"')).toBeLessThan(
+      html.indexOf('data-testid="thread-detail"')
+    );
   });
 
   it('falls back to Thread when the roster has no title', () => {

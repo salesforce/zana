@@ -21,7 +21,7 @@ describe('Settings subsection navigation', () => {
 
   it('includes Personas, Squads, and Usage in focused Settings navigation', () => {
     expect(SETTINGS_SECTIONS.map((section) => section.id)).toEqual(
-      expect.arrayContaining(['personas', 'squads', 'usage'])
+      expect.arrayContaining(['personas', 'squads', 'usage', 'machines'])
     );
   });
 

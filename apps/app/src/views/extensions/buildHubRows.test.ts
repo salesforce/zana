@@ -121,6 +121,15 @@ describe('canOpenGlobalPanel', () => {
   });
 });
 
+describe('Plugin development guide', () => {
+  it('numbers the three authoring steps', () => {
+    const source = readFileSync(new URL('./ExtensionsHub.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('ext-dev-guide-step-num');
+    expect(source).toContain('ext-hub-item-icon-wrap');
+    expect(source).toContain('ext-hub-about-open');
+  });
+});
+
 describe('Extensions hub More menu', () => {
   it('dismisses on outside mousedown and Escape', () => {
     const source = readFileSync(new URL('./ExtensionsHub.tsx', import.meta.url), 'utf8');

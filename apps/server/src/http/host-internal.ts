@@ -12,7 +12,7 @@ import {
   hostDaemonInteractiveInterruptRequestSchema,
   hostDaemonInteractiveRequestSchema
 } from '@zana-ai/zcc-host-daemon-contract';
-import { isLoopbackHttpHost } from '../browser-bootstrap.js';
+import { isAllowedHostInternalHost, requestHostHeader, resolvePublicAppUrl } from './public-app-url.js';
 import { generateHostKey, hashHostKey, hostKeyMatches } from './host-hub.js';
 import { headerValue } from './browser-request-guard.js';
 import { readJsonBody, sendJson } from './json.js';
@@ -32,6 +32,14 @@ function bearerToken(headers: IncomingMessage['headers']): string | null {
   if (!value.toLowerCase().startsWith(prefix.toLowerCase())) return null;
   const token = value.slice(prefix.length).trim();
   return token.length > 0 ? token : null;
+}
+
+function publicOrigin(ctx: ProductHttpContext): string | undefined {
+  return resolvePublicAppUrl({ configUrl: ctx.config.getConfig().publicAppUrl });
+}
+
+function hostInternalAllowed(request: IncomingMessage, ctx: ProductHttpContext): boolean {
+  return isAllowedHostInternalHost(requestHostHeader(request), publicOrigin(ctx));
 }
 
 function hasBrowserOrigin(request: IncomingMessage): boolean {
@@ -68,7 +76,7 @@ async function handleHostEnroll(
   response: ServerResponse,
   ctx: ProductHttpContext
 ): Promise<boolean> {
-  if (!isLoopbackHttpHost(headerValue(request.headers, 'host'))) {
+  if (!hostInternalAllowed(request, ctx)) {
     sendJson(response, 403, { error: 'host is not a loopback app origin' });
     return true;
   }
@@ -78,7 +86,9 @@ async function handleHostEnroll(
   }
 
   const token = bearerToken(request.headers);
-  if (!token || !tokenMatches(token, ctx.enrollToken)) {
+  const joinPeek = token ? ctx.joinCodes.peek(token) : null;
+  const loopback = Boolean(token && tokenMatches(token, ctx.enrollToken));
+  if (!joinPeek && !loopback) {
     sendJson(response, 401, { error: 'unauthorized' });
     return true;
   }
@@ -96,22 +106,34 @@ async function handleHostEnroll(
     return true;
   }
 
+  const reportedVersion = body && typeof body === 'object' && 'protocolVersion' in body
+    ? (body as { protocolVersion?: unknown }).protocolVersion
+    : undefined;
+  if (typeof reportedVersion === 'number' && reportedVersion !== HOST_RPC_PROTOCOL_VERSION) {
+    sendJson(response, 409, { error: 'incompatible host-rpc protocol version' });
+    return true;
+  }
+
   const parsed = HostEnrollRequestSchema.safeParse(body);
   if (!parsed.success) {
     sendJson(response, 400, { error: 'invalid enroll request' });
     return true;
   }
-  if (parsed.data.protocolVersion !== HOST_RPC_PROTOCOL_VERSION) {
-    sendJson(response, 409, { error: 'incompatible host-rpc protocol version' });
+  if (joinPeek && parsed.data.hostId && parsed.data.hostId !== joinPeek.hostId) {
+    sendJson(response, 400, { error: 'join code hostId mismatch' });
     return true;
   }
 
+  const join = token && joinPeek ? ctx.joinCodes.redeem(token) : null;
   const hostKey = generateHostKey();
   const host = upsertHost(ctx.db, {
-    id: parsed.data.hostId,
+    id: join?.hostId ?? parsed.data.hostId,
     name: parsed.data.hostName,
-    hostKeyHash: hashHostKey(hostKey)
+    hostKeyHash: hashHostKey(hostKey),
+    isPrimary: join ? false : undefined,
+    homeDir: parsed.data.homeDir
   });
+  ctx.hub.emit('hosts:changed', undefined);
   sendJson(response, 201, HostEnrollResponseSchema.parse({
     protocolVersion: HOST_RPC_PROTOCOL_VERSION,
     hostId: host.id,
@@ -125,7 +147,7 @@ function authenticateHostCall(
   requestUrl: URL,
   ctx: ProductHttpContext
 ): { hostId: string } | { error: string; status: number } {
-  if (!isLoopbackHttpHost(headerValue(request.headers, 'host'))) {
+  if (!hostInternalAllowed(request, ctx)) {
     return { error: 'host is not a loopback app origin', status: 403 };
   }
   if (hasBrowserOrigin(request)) {
@@ -219,7 +241,7 @@ export function handleHostInternalUpgrade(
     return false;
   }
 
-  if (!isLoopbackHttpHost(headerValue(request.headers, 'host'))) {
+  if (!hostInternalAllowed(request, ctx)) {
     socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
     socket.destroy();
     return true;
@@ -258,7 +280,7 @@ export function handleHostInternalUpgrade(
         return;
       }
       if (!ctx.hostHub.acceptHello(ws, hostId, parsed)) {
-        ws.close();
+        ws.close(4002, 'protocol-mismatch');
       }
     });
   });

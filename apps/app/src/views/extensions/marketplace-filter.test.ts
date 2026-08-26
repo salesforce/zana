@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { MarketplaceEntry } from '@zana-ai/zcc-domain/product';
 import { filterMarketplaceEntries, marketplaceTags } from './marketplace-filter.js';
@@ -54,5 +55,18 @@ describe('marketplaceTags', () => {
   it('marks bundled rows official and updates as update', () => {
     expect(marketplaceTags(sampleEntries[0]!)).toEqual(['official']);
     expect(marketplaceTags(sampleEntries[1]!)).toEqual(['community', 'update']);
+  });
+});
+
+describe('MarketplaceView presentation', () => {
+  const source = readFileSync(new URL('./MarketplaceView.tsx', import.meta.url), 'utf8');
+
+  it('uses a compact trust note, pill filters, and a single provenance chip', () => {
+    expect(source).toContain('ext-market-note');
+    expect(source).toContain('ext-market-tag');
+    expect(source).toContain('ext-market-item-icon-wrap');
+    expect(source).toContain("provenance === 'official' ? 'Official' : 'Community'");
+    expect(source).not.toContain('marketplaceTags(entry)');
+    expect(source).not.toContain("? 'Bundled' : 'Marketplace'");
   });
 });

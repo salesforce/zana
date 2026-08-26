@@ -1,3 +1,4 @@
+import { homedir } from 'node:os';
 import {
   HOST_RPC_PROTOCOL_VERSION,
   HostEnrollRequestSchema,
@@ -11,6 +12,7 @@ export async function enrollDaemonHost(input: {
   hostName: string;
   instanceId: string;
   hostId?: string;
+  homeDir?: string;
   fetchFn?: typeof fetch;
 }): Promise<HostEnrollResponse> {
   const fetchFn = input.fetchFn ?? fetch;
@@ -24,6 +26,7 @@ export async function enrollDaemonHost(input: {
       protocolVersion: HOST_RPC_PROTOCOL_VERSION,
       hostName: input.hostName,
       instanceId: input.instanceId,
+      homeDir: input.homeDir ?? homedir(),
       ...(input.hostId ? { hostId: input.hostId } : {})
     }))
   });

@@ -81,7 +81,7 @@ const api: CcApi = {
   },
   projects: {
     list: () => ipcRenderer.invoke(IPC.projects.list),
-    add: (path) => ipcRenderer.invoke(IPC.projects.add, path),
+    add: (path, _opts) => ipcRenderer.invoke(IPC.projects.add, path),
     remove: (id) => ipcRenderer.invoke(IPC.projects.remove, id),
     update: (id, patch) => ipcRenderer.invoke(IPC.projects.update, id, patch),
     touch: (id) => ipcRenderer.invoke(IPC.projects.touch, id),
@@ -106,6 +106,26 @@ const api: CcApi = {
   ssh: {
     listHosts: () => ipcRenderer.invoke(IPC.ssh.listHosts),
     syncHosts: () => ipcRenderer.invoke(IPC.ssh.syncHosts)
+  },
+  hosts: {
+    createJoinCode: async () => {
+      throw new Error('hosts.createJoinCode is served over product HTTP');
+    },
+    list: async () => [],
+    get: async () => {
+      throw new Error('hosts.get is served over product HTTP');
+    },
+    update: async () => {
+      throw new Error('hosts.update is served over product HTTP');
+    },
+    updatePermissionCeiling: async () => {
+      throw new Error('hosts.updatePermissionCeiling is served over product HTTP');
+    },
+    retryUpdate: async () => ({ ok: true as const }),
+    remove: async () => ({ ok: true as const }),
+    directory: async () => ({ directory: '/', parent: null, entries: [] }),
+    cloneDefaultPath: async () => ({ path: '/' }),
+    onChanged: () => () => {}
   },
   threads: {
     spawn: async () => ({

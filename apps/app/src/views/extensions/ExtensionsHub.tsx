@@ -273,9 +273,29 @@ export function ExtensionsHub({
             </button>
           </div>
           <ol className="ext-dev-guide-steps">
-            <li>Open or create a plugin.</li>
-            <li>Edit <code>server.ts</code> / <code>app.tsx</code> and run <code>zcc plugin dev</code>.</li>
-            <li>Reload from source, or save while the watcher is running — a failed reload keeps the last good panel.</li>
+            <li>
+              <span className="ext-dev-guide-step-num" aria-hidden="true">
+                1
+              </span>
+              <span>Open or create a plugin.</span>
+            </li>
+            <li>
+              <span className="ext-dev-guide-step-num" aria-hidden="true">
+                2
+              </span>
+              <span>
+                Edit <code>server.ts</code> / <code>app.tsx</code> and run <code>zcc plugin dev</code>.
+              </span>
+            </li>
+            <li>
+              <span className="ext-dev-guide-step-num" aria-hidden="true">
+                3
+              </span>
+              <span>
+                Reload from source, or save while the watcher is running — a failed reload keeps the last
+                good panel.
+              </span>
+            </li>
           </ol>
         </section>
       )}
@@ -294,7 +314,7 @@ export function ExtensionsHub({
 /** Persisted width (px) of the hub's list column; clamped to this range. */
 const EXT_HUB_LIST_MIN = 160;
 const EXT_HUB_LIST_MAX = 420;
-const EXT_HUB_LIST_DEFAULT = 220;
+const EXT_HUB_LIST_DEFAULT = 260;
 const EXT_HUB_LIST_KEY = 'ext-hub:list-width';
 
 function readHubListWidth(): number {
@@ -414,10 +434,12 @@ export function InstalledView() {
               className={`ext-hub-item ${selectedId === module.id ? 'active' : ''}`}
               onClick={() => setSelectedId(module.id)}
             >
-              <Icon size={15} className="ext-hub-item-icon" />
+              <span className="ext-hub-item-icon-wrap">
+                <Icon size={14} className="ext-hub-item-icon" />
+              </span>
               <span className="ext-hub-item-meta">
                 <span className="ext-hub-item-title">
-                  {module.title}
+                  <span className="ext-hub-item-name">{module.title}</span>
                   {entry?.source === 'local' && <span className="ext-local-chip">Local</span>}
                 </span>
                 <span className="ext-hub-item-sub">
@@ -731,6 +753,7 @@ function AboutCard({ row }: { row: HubRow }) {
 
   const isLocal = entry?.source === 'local';
   const isGit = entry?.source === 'git';
+  const status = rowStatus(module, entry);
   // Global panels are launched from this hub instead of earning a separate
   // sidebar row. Project-only and Settings-only modules remain in their native
   // project/settings surfaces.
@@ -826,7 +849,9 @@ function AboutCard({ row }: { row: HubRow }) {
   return (
     <section className="settings-section ext-hub-about">
       <div className="ext-hub-about-head">
-        <Icon size={20} className="ext-hub-about-icon" />
+        <span className="ext-hub-about-icon-wrap">
+          <Icon size={20} className="ext-hub-about-icon" />
+        </span>
         <div className="ext-hub-about-titles">
           <h3>
             {module.title}
@@ -840,10 +865,16 @@ function AboutCard({ row }: { row: HubRow }) {
                 : 'Built-in module'}
           </p>
         </div>
+        {canOpenPanel && (
+          <button type="button" className="settings-btn primary ext-hub-about-open" onClick={openPanel}>
+            <ExternalLink size={14} />
+            Open
+          </button>
+        )}
       </div>
       <div className="ext-hub-about-grid">
         <span className="ext-hub-about-key">Status</span>
-        <span className="ext-hub-about-val">{rowStatus(module, entry).label}</span>
+        <span className={`ext-hub-item-status ext-hub-item-status--${status.tone}`}>{status.label}</span>
         <span className="ext-hub-about-key">Surface</span>
         <span className="ext-hub-about-val" title={moduleSurface(module, entry).hint}>
           {moduleSurface(module, entry).label}
@@ -878,14 +909,6 @@ function AboutCard({ row }: { row: HubRow }) {
           </>
         )}
       </div>
-      {canOpenPanel && (
-        <div className="ext-actions">
-          <button type="button" className="settings-btn primary" onClick={openPanel}>
-            <ExternalLink size={14} />
-            Open
-          </button>
-        </div>
-      )}
       {/* Primary "build" cluster for a local extension — the two things you
           actually DO with source you're authoring. Kept visually distinct (a
           titled block with a filled primary + secondary) from the management

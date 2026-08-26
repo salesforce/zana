@@ -7,6 +7,9 @@ describe('AgentTerminalModal secondary panel', () => {
     expect(source).toContain('<AgentSessionView');
     expect(source).toContain('footer={modalActions}');
     expect(source).toContain('data-testid="agent-terminal-modal"');
+    expect(source).toContain('data-testid="agent-modal-header"');
+    expect(source.indexOf('agent-modal-header')).toBeLessThan(source.indexOf('<AgentSessionView'));
+    expect(source).toContain('showProject\n            modal');
     expect(source).toContain('Close Session');
     expect(source).toContain('Close with follow-up');
     expect(source).not.toContain('AgentDetailPanel');

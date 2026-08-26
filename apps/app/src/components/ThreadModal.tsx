@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Maximize2, Minimize2, X } from 'lucide-react';
 import { product } from '../lib/product-client.js';
 import { useThreads } from '../thread-store.js';
 import { ThreadDetail } from '../views/threads/ThreadDetailView.js';
@@ -76,14 +77,32 @@ export function ThreadModal({
         aria-label={title}
         tabIndex={-1}
       >
+        <header className="modal-header agent-modal-header" data-testid="thread-modal-header">
+          <span className="agent-modal-heading">
+            <span className="agent-modal-title">{title}</span>
+          </span>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={toggleFullScreen}
+            aria-label={fullScreen ? 'Exit full screen' : 'Full screen'}
+            title={fullScreen ? 'Exit full screen' : 'Full screen'}
+            data-testid="thread-modal-fullscreen"
+          >
+            {fullScreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={onClose}
+            aria-label="Close"
+            data-testid="thread-modal-close"
+          >
+            <X size={16} />
+          </button>
+        </header>
         <div className="agent-modal-body">
-          <ThreadDetail
-            threadId={threadId}
-            embedded
-            onClose={onClose}
-            fullScreen={fullScreen}
-            onToggleFullScreen={toggleFullScreen}
-          />
+          <ThreadDetail threadId={threadId} embedded modal />
         </div>
       </div>
     </div>

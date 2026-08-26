@@ -3122,7 +3122,9 @@ body.resizing-col {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
+  flex-direction: column;
   align-items: stretch;
+  overflow: hidden;
 }
 .agent-modal-stage {
   position: relative;
@@ -3136,6 +3138,14 @@ body.resizing-col {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+/* Title / close / fullscreen stay above the split: maximize and the narrow
+   overlay live in the body and must not eat this chrome. */
+.agent-terminal-modal > .modal-header {
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 8;
 }
 
 .agent-modal-icon {
@@ -4821,6 +4831,96 @@ body.resizing-col {
   background: var(--bg-panel);
 }
 
+.machines-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.machines-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+
+.machines-row-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.machines-row-copy strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.machines-row-copy p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.machines-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.machines-ceiling {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.machine-status-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex: 0 0 auto;
+}
+
+.machine-status-dot--on {
+  background: #3ecf8e;
+}
+
+.settings-badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.machines-join-command {
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 12px;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.host-directory-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 /* Flush section: no panel chrome, just the heading + intro above self-contained
    cards (the cards are the visual unit — avoids a card-in-a-card double border). */
 .settings-section--flush {
@@ -6418,7 +6518,7 @@ body.resizing-col {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) auto;
   gap: 12px 24px;
-  padding: 16px;
+  padding: 18px 20px;
   border: 1px solid color-mix(in srgb, var(--accent-blue) 34%, var(--border));
   border-radius: 10px;
   background: linear-gradient(112deg, color-mix(in srgb, var(--accent-blue) 10%, var(--bg-panel)), var(--bg-panel) 58%);
@@ -6453,12 +6553,33 @@ body.resizing-col {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   margin: 0;
-  padding: 11px 0 0;
+  padding: 14px 0 0;
   border-top: 1px solid color-mix(in srgb, var(--accent-blue) 19%, var(--border));
-  list-style-position: inside;
+  list-style: none;
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.4;
+}
+.ext-dev-guide-steps li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.ext-dev-guide-step-num {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 32%, transparent);
+  background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
+  color: var(--accent-blue);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
 }
 .ext-dev-guide-steps code {
   color: var(--text-primary);
@@ -6496,7 +6617,7 @@ body.resizing-col {
   /* list | drag-handle | detail. The list width is a draggable CSS variable
      (set inline by InstalledView, persisted to localStorage); the handle is a
      thin fixed track straddling the border. */
-  grid-template-columns: var(--ext-hub-list-w, 220px) 6px 1fr;
+  grid-template-columns: var(--ext-hub-list-w, 260px) 6px 1fr;
   gap: 0;
   align-items: stretch;
   flex: 1;
@@ -6561,9 +6682,21 @@ body.resizing-col .ext-hub-resizer::before {
   border-color: var(--border);
 }
 
+.ext-hub-item-icon-wrap {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent-blue) 12%, var(--bg-elevated));
+  color: var(--accent-blue);
+}
+
 .ext-hub-item-icon {
   flex: 0 0 auto;
-  color: var(--text-muted);
+  color: inherit;
 }
 
 .ext-hub-item-meta {
@@ -6574,8 +6707,24 @@ body.resizing-col .ext-hub-resizer::before {
 }
 
 .ext-hub-item-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   font-size: 13px;
   font-weight: 500;
+}
+
+.ext-hub-item-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ext-hub-item-title .ext-local-chip {
+  flex: 0 0 auto;
+  margin-left: 0;
 }
 
 /* Secondary metadata row under the title: status · version · surface. Keeps the
@@ -6758,22 +6907,36 @@ body.resizing-col .ext-hub-resizer::before {
 }
 
 .ext-hub-item-status {
-  font-size: 10px;
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 15px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 
 .ext-hub-item-status--ok {
   color: var(--success);
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+  border-color: color-mix(in srgb, var(--success) 40%, transparent);
 }
 .ext-hub-item-status--warn {
   color: var(--accent-gold);
+  background: color-mix(in srgb, var(--accent-gold) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent-gold) 40%, transparent);
 }
 .ext-hub-item-status--error {
   color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
 }
 .ext-hub-item-status--muted {
   color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  border-color: var(--border);
 }
 
 .ext-hub-detail {
@@ -6796,12 +6959,38 @@ body.resizing-col .ext-hub-resizer::before {
   margin-bottom: 10px;
 }
 
+.ext-hub-about-icon-wrap {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent-blue) 12%, var(--bg-elevated));
+  color: var(--accent-blue);
+}
+
 .ext-hub-about-icon {
-  color: var(--text-muted);
+  color: inherit;
+}
+
+.ext-hub-about-titles {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .ext-hub-about-titles h3 {
   margin: 0;
+}
+
+.ext-hub-about-titles .settings-help {
+  margin: 2px 0 0;
+}
+
+.ext-hub-about-open {
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
 .ext-hub-about-grid {
@@ -6810,6 +6999,11 @@ body.resizing-col .ext-hub-resizer::before {
   gap: 4px 16px;
   margin-bottom: 10px;
   font-size: 12px;
+}
+
+.ext-hub-about-grid .ext-hub-item-status {
+  justify-self: start;
+  align-self: center;
 }
 
 .ext-hub-about-key {
@@ -6930,15 +7124,55 @@ body.resizing-col .ext-hub-resizer::before {
   min-height: 0;
   overflow-y: auto;
 }
+.ext-market-note {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
 .ext-market-toolbar {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
 }
 .ext-market-toolbar .settings-btn-row {
   flex-wrap: wrap;
-  justify-content: flex-end;
+  margin-left: auto;
+}
+.ext-market-tags {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.ext-market-tag {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ext-market-tag:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+.ext-market-tag.is-active {
+  background: var(--accent-blue);
+  color: #fff;
+  border-color: transparent;
 }
 
 /* A visually-grouped cluster of related toolbar buttons — a thin shared
@@ -7007,9 +7241,11 @@ body.resizing-col .ext-hub-resizer::before {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 12px;
-  padding: 5px 10px;
-  background: var(--bg-base);
+  flex: 1 1 220px;
+  min-width: 180px;
+  margin-bottom: 0;
+  padding: 6px 10px;
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: 6px;
 }
@@ -7044,15 +7280,32 @@ body.resizing-col .ext-hub-resizer::before {
   display: grid;
   grid-template-columns: auto 1fr auto;
   gap: 12px;
-  align-items: start;
-  padding: 12px 14px;
+  align-items: center;
+  padding: 14px 16px;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: 10px;
   background: var(--surface-2, rgba(127, 127, 127, 0.04));
+  transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease;
+}
+.ext-market-item:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-elevated);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--border) 60%, transparent);
+}
+.ext-market-item-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-blue) 12%, var(--bg-elevated));
+  color: var(--accent-blue);
+  flex: 0 0 auto;
 }
 .ext-market-item-icon {
-  margin-top: 2px;
-  color: var(--text-muted);
+  margin-top: 0;
+  color: inherit;
 }
 .ext-market-item-body {
   min-width: 0;
@@ -7086,20 +7339,32 @@ body.resizing-col .ext-hub-resizer::before {
   border: 1px solid var(--border);
   color: var(--text-muted);
 }
-.ext-market-item-source--bundled {
+.ext-market-item-source--bundled,
+.ext-market-item-source--official {
   color: var(--accent-blue);
   border-color: color-mix(in srgb, var(--accent-blue) 40%, var(--border));
   background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
 }
-.ext-market-item-source--marketplace {
+.ext-market-item-source--marketplace,
+.ext-market-item-source--community {
   color: var(--accent-gold);
   border-color: color-mix(in srgb, var(--accent-gold) 40%, var(--border));
   background: color-mix(in srgb, var(--accent-gold) 12%, transparent);
+}
+.ext-market-item-source--update {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 40%, var(--border));
+  background: color-mix(in srgb, var(--success) 12%, transparent);
 }
 .ext-market-item-desc {
   margin: 4px 0 0;
   font-size: 13px;
   color: var(--text-muted);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .ext-market-item-perms {
   display: flex;
@@ -27025,7 +27290,9 @@ body.resizing-col .library-split-resizer::after {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
+  flex-direction: column;
   align-items: stretch;
+  overflow: hidden;
 }
 
 /* When the state chip is present it claims the margin-left:auto; otherwise the
@@ -27667,6 +27934,10 @@ body.resizing-col .library-split-resizer::after {
 
 .extensions-panel .ext-market-item {
   background: var(--bg-panel);
+}
+
+.extensions-panel .ext-market-item:hover {
+  background: var(--bg-elevated);
 }
 
 /* Home mirrors the above: ListPane returns null for the 'home' nav, so
@@ -29184,11 +29455,21 @@ textarea.thread-command-editor {
 
 .thread-detail-view {
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
   height: 100%;
   grid-column: 2 / -1;
+}
+
+.thread-detail-split {
+  display: flex;
+  flex-direction: row;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
 }
 
 .agent-modal-body > .agent-session-view,
@@ -29216,17 +29497,6 @@ textarea.thread-command-editor {
   overflow: hidden;
 }
 
-.agent-session-show-panel {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 5;
-}
-
-.agent-session-view:not(.is-secondary-open) .agent-modal-catchup {
-  right: 44px;
-}
-
 .thread-detail-view--embedded {
   grid-column: auto;
 }
@@ -29235,13 +29505,8 @@ textarea.thread-command-editor {
   grid-column: auto;
 }
 
-.thread-detail-view--modal .thread-detail-header {
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border, #30363d);
-}
-
 .thread-detail-view--embedded .thread-detail-main {
-  padding: 10px 14px 8px;
+  padding: 0 14px 8px;
 }
 
 .thread-detail-main {
@@ -29250,7 +29515,7 @@ textarea.thread-command-editor {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  padding: 16px 20px 12px;
+  padding: 12px 20px 12px;
   gap: 12px;
 }
 
@@ -29336,6 +29601,19 @@ textarea.thread-command-editor {
   justify-content: space-between;
   gap: 12px;
   min-height: 32px;
+  flex: 0 0 auto;
+  padding: 16px 20px 0;
+  position: relative;
+  z-index: 7;
+}
+
+.thread-detail-view--modal .thread-detail-header {
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--border, #30363d);
+}
+
+.thread-detail-view--embedded .thread-detail-header {
+  padding: 10px 14px 8px;
 }
 
 .thread-detail-heading {
@@ -30185,7 +30463,7 @@ textarea.thread-command-editor {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .thread-detail-view.is-secondary-open:not(.is-secondary-maximized) {
+  .thread-detail-view.is-secondary-open:not(.is-secondary-maximized) .thread-detail-split {
     position: relative;
   }
 

@@ -21,6 +21,7 @@ export type ProductEventType =
   | 'threads:event'
   | 'projects:cloneProgress'
   | 'library:changed'
+  | 'hosts:changed'
   | 'terminals:data'
   | 'terminals:exit'
   | 'terminals:updated';

@@ -25,6 +25,7 @@ export interface ProjectRecord {
   sortIndex?: number;
   tag?: string;
   category?: string;
+  hostId?: string;
   remote?: unknown;
 }
 
@@ -143,7 +144,7 @@ export interface ProjectStoreOptions {
 
 export interface ProjectStore {
   list(): ProjectRecord[];
-  add(path: string): Promise<ProjectRecord>;
+  add(path: string, options?: { hostId?: string }): Promise<ProjectRecord>;
   update(id: string, patch: ProjectMutationPatch): Promise<ProjectRecord | null>;
   reorder(orderedIds: string[]): Promise<ProjectRecord[]>;
   touch(id: string): Promise<ProjectRecord | null>;
@@ -249,15 +250,20 @@ export function createProjectStore({ projectsFile, remotePlaceholderRoot }: Proj
       return readSnapshot().file.projects;
     },
 
-    add(path: string): Promise<ProjectRecord> {
+    add(path: string, options?: { hostId?: string }): Promise<ProjectRecord> {
       return queue.run(async () => {
-        const canonicalPath = canonicalProjectPath(path);
+        const remoteHost = Boolean(options?.hostId);
+        const canonicalPath = remoteHost
+          ? (isAbsolute(path) ? path : (() => { throw new Error('project path must be absolute'); })())
+          : canonicalProjectPath(path);
 
         const { file, hash } = readSnapshot();
         const projects = file.projects;
-        const ext = detectExtensionSource(canonicalPath);
+        const ext = remoteHost ? null : detectExtensionSource(canonicalPath);
 
-        const existingIndex = projects.findIndex((p) => canonicalStoredLocalPath(p) === canonicalPath);
+        const existingIndex = remoteHost
+          ? projects.findIndex((p) => p.hostId === options?.hostId && p.path === canonicalPath)
+          : projects.findIndex((p) => canonicalStoredLocalPath(p) === canonicalPath);
         if (existingIndex !== -1) {
           const existing = { ...projects[existingIndex], path: canonicalPath, lastActiveAt: Date.now() };
           if (ext && existing.category !== EXTENSION_PROJECT_CATEGORY) {
@@ -282,7 +288,8 @@ export function createProjectStore({ projectsFile, remotePlaceholderRoot }: Proj
           createdAt: Date.now(),
           lastActiveAt: Date.now(),
           tag,
-          ...(ext ? { category: EXTENSION_PROJECT_CATEGORY } : {})
+          ...(ext ? { category: EXTENSION_PROJECT_CATEGORY } : {}),
+          ...(options?.hostId ? { hostId: options.hostId } : {})
         };
         writeProjects([...projects, project], hash);
         return project;

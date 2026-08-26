@@ -1274,8 +1274,8 @@ export function ProjectsList({
         <AddLocalProjectDialog
           onClose={() => setShowLocalDialog(false)}
           onBrowse={() => product.projects.pickDirectory()}
-          onSubmit={async (path) => {
-            const p = await addProjectByPath(path);
+          onSubmit={async (path, hostId) => {
+            const p = await addProjectByPath(path, hostId ? { hostId } : undefined);
             if (p) selectProject(p.id);
             return p;
           }}

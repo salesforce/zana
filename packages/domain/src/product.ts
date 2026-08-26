@@ -200,6 +200,11 @@ export interface Project {
    */
   category?: string;
   /**
+   * Enrolled host-daemon that owns this checkout. Absent means the primary
+   * (this-machine) host. Distinct from {@link remote} SSH projects.
+   */
+  hostId?: string;
+  /**
    * Pinned to the top of the Projects rail (above the Remote/Local groups),
    * in a dedicated "Favorites" section. Toggled from the project context menu.
    */
@@ -2205,6 +2210,12 @@ export interface AppConfig {
    * default `~/zcc-workspace` (the same scratch root the Quick Agent uses).
    */
   cloneRoot?: string;
+  /**
+   * Public origin (Tailscale Serve URL, etc.) used to render remote host-daemon
+   * join commands and to allowlist Host headers on enroll/WS. The product HTTP
+   * API stays loopback-only. Env `ZCC_APP_URL` overrides this when set.
+   */
+  publicAppUrl?: string;
   /**
    * Absolute directory that inbox "Download as PDF" writes into. Absent ⇒ the
    * OS Downloads folder. The export saves straight there (no save dialog),

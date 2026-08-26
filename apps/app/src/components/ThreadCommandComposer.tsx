@@ -17,6 +17,8 @@ import {
   ComposerToolbar
 } from './ui/CommandComposer.js';
 import { EnvironmentPicker, defaultWorkspaceChoice, type WorkspacePickerValue } from './EnvironmentPicker.js';
+import { HostMachinePicker } from './HostMachinePicker.js';
+import { defaultHostId, useHosts } from '../hooks/useHosts.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import { ComposerModePicker } from './thread/pickers/ComposerModePicker.js';
 import { ModelReasoningPicker } from './thread/pickers/ModelReasoningPicker.js';
@@ -143,6 +145,12 @@ export function ThreadCommandComposer({
   const dropOverRef = useRef(false);
   dropOverRef.current = dropOver;
   const selectedProject = pinnedProject ?? projects.find((row) => row.id === projectId);
+  const hosts = useHosts();
+  const [hostId, setHostId] = useState(() => defaultHostId(hosts, pinnedProject?.hostId));
+
+  useEffect(() => {
+    setHostId(defaultHostId(hosts, selectedProject?.hostId));
+  }, [hosts, selectedProject?.hostId]);
 
   const syncTrigger = useCallback((editor: Parameters<typeof findActiveTrigger>[0]) => {
     const next = findActiveTrigger(editor, COMPOSER_TRIGGERS);
@@ -451,6 +459,7 @@ export function ThreadCommandComposer({
         projectId: selected!.id,
         providerId: resolvedProviderId!,
         input,
+        hostId,
         environment: workspace,
         cwd: selected!.path,
         permissionMode: permissionMode as 'accept-edits' | 'auto' | 'full',
@@ -492,7 +501,8 @@ export function ThreadCommandComposer({
     sendMode,
     threadId,
     upsertThread,
-    workspace
+    workspace,
+    hostId
   ]);
 
   submitRef.current = () => {
@@ -660,6 +670,7 @@ export function ThreadCommandComposer({
                 />
               </div>
               <EnvironmentPicker projectId={projectId} value={workspace} onChange={setWorkspace} />
+              <HostMachinePicker hosts={hosts} value={hostId} onChange={setHostId} />
             </>
           )}
         </div>

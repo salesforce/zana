@@ -23,6 +23,7 @@ import {
 } from '@zana-ai/zcc-domain';
 import type { Project } from '@zana-ai/zcc-domain/product';
 import type { ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
+import { clampPermissionModeToHost } from '../hosts/permission-ceiling.js';
 import type { EnvironmentProvisionCommand, EnvironmentProvisionResult } from '@zana-ai/zcc-contracts/host-rpc';
 import { AmbiguousHostError, HostUnavailableError } from '../../http/host-hub.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
@@ -158,11 +159,13 @@ async function startConversationOnHost(
   }
   const dataDir = join(ctx.dataDir, 'thread-bridges', providerId);
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  const requestedMode = args.input.permissionMode ?? permissionModeForLaunchProfile(args.input.providerId);
+  const permissionMode = clampPermissionModeToHost(ctx.db, args.hostId, requestedMode) ?? requestedMode;
   appendClientTurnRequested(ctx, {
     threadId: args.thread.id,
     prompt: args.prompt,
     kind: 'thread-start',
-    permissionMode: args.input.permissionMode,
+    permissionMode,
     model: args.input.model,
     reasoningLevel: args.input.reasoningLevel
   });
@@ -178,7 +181,7 @@ async function startConversationOnHost(
       cwd: args.input.cwd,
       title: args.thread.title ?? undefined,
       bridgeLaunch: bridgeLaunchForProvider(providerId, dataDir),
-      permissionMode: args.input.permissionMode ?? permissionModeForLaunchProfile(args.input.providerId),
+      permissionMode,
       ...(args.input.model ? { model: args.input.model } : {}),
       ...(args.input.reasoningLevel ? { reasoningLevel: args.input.reasoningLevel } : {})
     }
@@ -238,7 +241,7 @@ export async function createConversationFromRequest(
   const project = requireProject(ctx, input.projectId);
   let hostId: string;
   try {
-    hostId = ctx.hostHub.resolveHostId(input.hostId);
+    hostId = ctx.hostHub.resolveHostId(input.hostId ?? project.hostId);
     ctx.hostHub.ensureHostSessionReady(hostId);
   } catch (error) {
     throw mapHostError(error);

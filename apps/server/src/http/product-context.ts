@@ -21,6 +21,7 @@ import { createHostHub, type HostHub } from './host-hub.js';
 import { PendingInteractionLifecycle } from '../services/interactions/pending-interactions.js';
 import { conversationThreadView } from '../services/threads/conversation-create.js';
 import { createThreadTitleNamer, type ThreadTitleNamer } from '../services/threads/thread-title-namer.js';
+import { createJoinCodeStore, type JoinCodeStore } from '../services/hosts/join-codes.js';
 
 export interface ProductTerminalRecord extends TerminalSession {
   hostId: string;
@@ -30,6 +31,7 @@ export interface ProductHttpContext {
   origins: LocalAppOriginArgs;
   dataDir: string;
   enrollToken: string;
+  joinCodes: JoinCodeStore;
   db: ZccDatabase;
   hostHub: HostHub;
   projects: ProjectStore;
@@ -138,6 +140,7 @@ export function createProductHttpContext(
     origins: options.origins,
     dataDir,
     enrollToken,
+    joinCodes: createJoinCodeStore(),
     db,
     hostHub,
     projects,

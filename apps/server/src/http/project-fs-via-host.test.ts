@@ -37,6 +37,17 @@ describe('authorizeProjectRelPath', () => {
       '/Users/me/proj/../.ssh'
     )).toBeNull();
   });
+
+  it('matches a remote-host checkout without resolving the path on this machine', () => {
+    expect(authorizeProjectRelPath(
+      [project({ id: 'remote', name: 'box', path: '/home/dev/app', hostId: 'host-2' })],
+      '/home/dev/app/src'
+    )).toEqual({
+      root: '/home/dev/app',
+      relPath: 'src',
+      hostId: 'host-2'
+    });
+  });
 });
 
 describe('listProjectDir / readProjectFile', () => {

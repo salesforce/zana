@@ -35,6 +35,7 @@ export function startEnrolledHostConnection(options: {
   instanceId?: string;
   runtime?: CommandRuntime;
   dataDir?: string;
+  onSocketClose?: (code: number) => void;
 }): EnrolledHostConnection {
   const instanceId = options.instanceId ?? randomUUID();
   const wsUrl = new URL('/internal/hosts/ws', options.serverUrl.replace(/^http/, 'ws'));
@@ -185,11 +186,12 @@ export function startEnrolledHostConnection(options: {
         if (next.readyState === WebSocket.OPEN) next.send(JSON.stringify(response));
       });
     });
-    next.addEventListener('close', () => {
+    next.addEventListener('close', (event) => {
       if (heartbeatTimer) {
         clearInterval(heartbeatTimer);
         heartbeatTimer = null;
       }
+      options.onSocketClose?.(event.code);
       if (closed) return;
       const delay = BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)]!;
       attempt += 1;

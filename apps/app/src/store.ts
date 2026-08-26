@@ -164,6 +164,7 @@ export type SettingsTab =
   | 'usage'
   | 'experimental'
   | 'about'
+  | 'machines'
   | (string & {});
 
 /** The focused top-level Extensions workspace page. */
@@ -1520,7 +1521,7 @@ interface DataState {
   loadProjects: () => Promise<void>;
   loadClaudeSessions: (projectId: string) => Promise<void>;
   addProject: () => Promise<Project | null>;
-  addProjectByPath: (path: string) => Promise<Project | null>;
+  addProjectByPath: (path: string, opts?: { hostId?: string }) => Promise<Project | null>;
   addRemoteProject: (input: {
     host: string;
     user?: string;
@@ -2680,9 +2681,9 @@ export const useData = create<DataState>((set, get) => ({
     }
   },
 
-  async addProjectByPath(path) {
+  async addProjectByPath(path, opts) {
     try {
-      const result = await product.projects.add(path);
+      const result = await product.projects.add(path, opts);
       if (!result.ok) {
         pushErrorToast(result.message);
         return null;

@@ -1,28 +1,38 @@
 import { useEffect, useRef, useState } from 'react';
 import { FolderOpen, X } from 'lucide-react';
+import { HostMachinePicker } from './HostMachinePicker.js';
+import { defaultHostId, useHosts } from '../hooks/useHosts.js';
+import { product } from '../lib/product-client.js';
 
 interface AddLocalProjectDialogProps {
   onClose: () => void;
   /** Browse via the native folder picker; null if the user cancels. */
   onBrowse: () => Promise<string | null>;
   /** Add a project at an arbitrary path (typed by hand, or filled in by Browse). */
-  onSubmit: (path: string) => Promise<{ id: string } | null>;
+  onSubmit: (path: string, hostId?: string) => Promise<{ id: string } | null>;
 }
 
 /**
  * Modal for adding a local-folder project: either browse via the native
- * dialog, or type a path directly. The manual field exists because
- * `dialog.showOpenDialog` can't be pointed at a location outside the app's
- * sandboxed picker roots on every OS/config, and because typing/pasting is
- * faster when the path is already known (e.g. copied from a terminal).
- * `store.addProject` (see main/store.ts) accepts any directory — this dialog
- * doesn't add its own location restriction.
+ * dialog, or type a path directly. When more than one host daemon is
+ * connected, pick the machine first — remote hosts browse via host-rpc
+ * instead of the laptop's native picker.
  */
 export function AddLocalProjectDialog({ onClose, onBrowse, onSubmit }: AddLocalProjectDialogProps) {
+  const hosts = useHosts();
+  const [hostId, setHostId] = useState<string | undefined>();
   const [path, setPath] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [entries, setEntries] = useState<Array<{ kind: 'file' | 'directory'; name: string; path: string }>>([]);
+  const [parent, setParent] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const selectedHost = hosts.find((host) => host.id === (hostId ?? defaultHostId(hosts)));
+  const remoteBrowse = Boolean(selectedHost && !selectedHost.isPrimary);
+
+  useEffect(() => {
+    setHostId(defaultHostId(hosts));
+  }, [hosts]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -38,7 +48,24 @@ export function AddLocalProjectDialog({ onClose, onBrowse, onSubmit }: AddLocalP
 
   const canSubmit = path.trim().length > 0 && !submitting;
 
+  const loadDirectory = async (nextPath?: string) => {
+    if (!selectedHost) return;
+    try {
+      const listing = await product.hosts.directory(selectedHost.id, nextPath);
+      setPath(listing.directory);
+      setParent(listing.parent);
+      setEntries(listing.entries.filter((entry) => entry.kind === 'directory'));
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not list that directory');
+    }
+  };
+
   const browse = async () => {
+    if (remoteBrowse) {
+      await loadDirectory(path.trim() || undefined);
+      return;
+    }
     const picked = await onBrowse();
     if (picked) {
       setPath(picked);
@@ -51,13 +78,14 @@ export function AddLocalProjectDialog({ onClose, onBrowse, onSubmit }: AddLocalP
     setSubmitting(true);
     setError(null);
     try {
-      const project = await onSubmit(path.trim());
+      const project = await onSubmit(
+        path.trim(),
+        selectedHost && !selectedHost.isPrimary ? selectedHost.id : undefined
+      );
       if (project) {
         onClose();
         return;
       }
-      // addProject/addProjectByPath already toast the failure reason; keep the
-      // dialog open so the user can adjust the path without retyping.
     } finally {
       setSubmitting(false);
     }
@@ -83,6 +111,8 @@ export function AddLocalProjectDialog({ onClose, onBrowse, onSubmit }: AddLocalP
             Pick a folder, or type/paste an absolute path (e.g. from a terminal).
           </div>
 
+          <HostMachinePicker hosts={hosts} value={hostId} onChange={setHostId} />
+
           <label className="remote-form-row local-path-row">
             <span>Folder path</span>
             <div className="local-path-input-group">
@@ -105,7 +135,7 @@ export function AddLocalProjectDialog({ onClose, onBrowse, onSubmit }: AddLocalP
               <button
                 type="button"
                 className="btn"
-                onClick={browse}
+                onClick={() => void browse()}
                 disabled={submitting}
                 aria-label="Browse for folder"
               >
@@ -115,6 +145,25 @@ export function AddLocalProjectDialog({ onClose, onBrowse, onSubmit }: AddLocalP
             </div>
           </label>
 
+          {remoteBrowse && entries.length > 0 && (
+            <ul className="host-directory-list" data-testid="host-directory-list">
+              {parent ? (
+                <li>
+                  <button type="button" className="btn" onClick={() => void loadDirectory(parent)}>
+                    ..
+                  </button>
+                </li>
+              ) : null}
+              {entries.map((entry) => (
+                <li key={entry.path}>
+                  <button type="button" className="btn" onClick={() => void loadDirectory(entry.path)}>
+                    {entry.name}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
           {error && <div className="modal-error">{error}</div>}
         </div>
 
@@ -122,7 +171,7 @@ export function AddLocalProjectDialog({ onClose, onBrowse, onSubmit }: AddLocalP
           <button className="btn" onClick={onClose} disabled={submitting}>
             Cancel
           </button>
-          <button className="btn primary" disabled={!canSubmit} onClick={submit}>
+          <button className="btn primary" disabled={!canSubmit} onClick={() => void submit()}>
             {submitting ? 'Adding…' : 'Add project'}
           </button>
         </div>

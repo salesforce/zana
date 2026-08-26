@@ -43,7 +43,7 @@ export function GlobalView({
       <AuthorizationsSection />
 
       {/* Connectivity — where remote (SSH) projects open + remote agent MCP. */}
-      <Section anchorId="connectivity" title="Connectivity" help="Remote (SSH) defaults.">
+      <Section anchorId="connectivity" title="Connectivity" help="Remote (SSH) defaults. Enrolled machines live under Settings → Machines.">
         <Field
           label="Default remote path"
           help="Optional start path for remote (SSH) projects that don't set their own. Both the terminal and the Explorer open here instead of the remote home directory. A per-project remote path still overrides this. Leave blank to start in the remote home directory."

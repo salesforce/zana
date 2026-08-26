@@ -32,12 +32,24 @@ function mapHostError(error: unknown): never {
 export function authorizeProjectRelPath(
   projects: Project[],
   candidate: string
-): { root: string; relPath: string } | null {
+): { root: string; relPath: string; hostId?: string } | null {
   if (typeof candidate !== 'string' || !isAbsolute(candidate)) return null;
-  const resolved = resolve(candidate);
-  let best: { root: string; relPath: string; len: number } | null = null;
+  let best: { root: string; relPath: string; hostId?: string; len: number } | null = null;
   for (const project of projects) {
     if (project.remote || !project.path) continue;
+    if (project.hostId) {
+      const root = project.path.replace(/\/+$/, '') || '/';
+      const path = candidate.replace(/\/+$/, '') || '/';
+      let relPath: string | null = null;
+      if (path === root) relPath = '';
+      else if (path.startsWith(`${root}/`)) relPath = path.slice(root.length + 1);
+      if (relPath === null) continue;
+      if (!best || root.length > best.len) {
+        best = { root: project.path, relPath, hostId: project.hostId, len: root.length };
+      }
+      continue;
+    }
+    const resolved = resolve(candidate);
     const root = resolve(project.path);
     const rel = relative(root, resolved);
     if (rel.startsWith('..') || isAbsolute(rel)) continue;
@@ -45,11 +57,12 @@ export function authorizeProjectRelPath(
       best = {
         root: project.path,
         relPath: rel.split(sep).join('/'),
+        hostId: undefined,
         len: root.length
       };
     }
   }
-  return best ? { root: best.root, relPath: best.relPath } : null;
+  return best ? { root: best.root, relPath: best.relPath, hostId: best.hostId } : null;
 }
 
 export async function listProjectDir(ctx: ProductHttpContext, path: string): Promise<FsEntry[]> {
@@ -62,7 +75,7 @@ export async function listProjectDir(ctx: ProductHttpContext, path: string): Pro
   }
   let result: HostListDirResult;
   try {
-    const hostId = ctx.hostHub.resolveHostId();
+    const hostId = ctx.hostHub.resolveHostId(authorized.hostId);
     result = await ctx.hostHub.callHostOnlineRpc<HostListDirResult>({
       hostId,
       command: {
@@ -89,7 +102,7 @@ export async function readProjectFile(ctx: ProductHttpContext, path: string): Pr
     return { ok: false, message: 'Path is not inside a known project' };
   }
   try {
-    const hostId = ctx.hostHub.resolveHostId();
+    const hostId = ctx.hostHub.resolveHostId(authorized.hostId);
     const result = await ctx.hostHub.callHostOnlineRpc<HostReadFileResult>({
       hostId,
       command: {
@@ -155,7 +168,7 @@ export async function listProjectPaths(
 
   let result: HostListFilesResult;
   try {
-    const hostId = ctx.hostHub.resolveHostId();
+    const hostId = ctx.hostHub.resolveHostId(project.hostId);
     result = await ctx.hostHub.callHostOnlineRpc<HostListFilesResult>({
       hostId,
       command: { type: 'host.list_files', roots: [project.path] }

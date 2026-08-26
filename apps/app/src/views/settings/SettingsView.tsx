@@ -11,6 +11,7 @@ import {
   Info,
   TerminalSquare,
   SquareArrowOutUpRight,
+  Laptop,
   type LucideIcon
 } from 'lucide-react';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
@@ -25,6 +26,7 @@ import { HarnessTab } from '@/views/settings/HarnessView';
 import { EditorTab } from '@/views/settings/EditorView';
 import { ExperimentalTab } from '@/views/settings/ExperimentalView';
 import { AboutTab } from '@/views/settings/AboutView';
+import { MachinesTab } from '@/views/settings/MachinesSettingsView';
 import { ProjectTab } from '@/views/settings/ProjectSettingsView';
 import { PersonasPanel } from '@/views/settings/PersonasView';
 import { SquadsPanel } from '@/views/settings/SquadsView';
@@ -67,6 +69,7 @@ export const SETTINGS_SECTIONS: Array<{
   { id: 'terminal', label: 'Terminal', icon: TerminalSquare, desc: 'Appearance, shell & tmux', group: 'config' },
   { id: 'harness', label: 'Code Harness', icon: Bot, desc: 'Verify & enable Claude Code, Cursor, Codex & PI', group: 'config' },
   { id: 'editor', label: 'Editor', icon: SquareArrowOutUpRight, desc: 'Open-in-editor & terminal buttons', group: 'config' },
+  { id: 'machines', label: 'Machines', icon: Laptop, desc: 'Pair remote host daemons', group: 'config' },
   { id: 'prompts', label: 'Prompts', icon: Sparkles, desc: 'LLM micro-call prompts', group: 'config' },
   { id: 'agents', label: 'Agents', icon: Bot, desc: 'Attention, automation, heartbeat & Overseer', group: 'agents' },
   { id: 'personas', label: 'Personas', icon: Drama, desc: 'Reusable launch profiles', group: 'agents' },
@@ -125,6 +128,9 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
     { id: 'editor-intellij', label: 'IntelliJ IDEA' },
     { id: 'editor-finder', label: 'Finder' },
     { id: 'editor-terminal', label: 'Terminal' }
+  ],
+  machines: [
+    { id: 'machines', label: 'Paired machines' }
   ],
 };
 
@@ -339,6 +345,12 @@ export function SettingsView() {
           />
         ) : tab === 'about' ? (
           <AboutTab config={config} onUpdate={update} />
+        ) : tab === 'machines' ? (
+          <MachinesTab
+            config={config}
+            onConfigDraft={setConfig}
+            onUpdate={update}
+          />
         ) : (
           <ProjectTab
             project={selectedProject}

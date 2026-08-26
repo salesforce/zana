@@ -1,4 +1,5 @@
 import type { CcApi } from '@zana-ai/zcc-desktop-contract';
+import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
 import type {
   AgentMessage,
   AgentRecord,
@@ -52,6 +53,7 @@ function httpProduct(): Pick<
   | 'updates'
   | 'app'
   | 'voice'
+  | 'hosts'
 > {
   return {
     projects: {
@@ -67,10 +69,10 @@ function httpProduct(): Pick<
         });
         return body.project;
       },
-      add: async (path: string) => {
+      add: async (path: string, opts?: { hostId?: string }) => {
         const body = await apiJson<{ project: Project }>('/projects', {
           method: 'POST',
-          body: JSON.stringify({ path })
+          body: JSON.stringify({ path, hostId: opts?.hostId })
         });
         return body.project;
       },
@@ -375,6 +377,35 @@ function httpProduct(): Pick<
         return response.ok;
       }
     } as CcApi['terminals'],
+    hosts: {
+      createJoinCode: async () => apiJson('/hosts/join-codes', { method: 'POST', body: '{}' }),
+      list: async () => apiJson<Host[]>('/hosts'),
+      get: async (id) => apiJson<Host>(`/hosts/${encodeURIComponent(id)}`),
+      update: async (id, patch) => apiJson<Host>(`/hosts/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch)
+      }),
+      updatePermissionCeiling: async (id, maxPermissionMode) => apiJson<Host>(
+        `/hosts/${encodeURIComponent(id)}/permission-ceiling`,
+        { method: 'PATCH', body: JSON.stringify({ maxPermissionMode }) }
+      ),
+      retryUpdate: async (id) => apiJson(`/hosts/${encodeURIComponent(id)}/retry-update`, {
+        method: 'POST',
+        body: '{}'
+      }),
+      remove: async (id) => apiJson(`/hosts/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        body: '{}'
+      }),
+      directory: async (id, path) => {
+        const query = path ? `?path=${encodeURIComponent(path)}` : '';
+        return apiJson(`/hosts/${encodeURIComponent(id)}/directory${query}`);
+      },
+      cloneDefaultPath: async (id, projectId) => apiJson(
+        `/hosts/${encodeURIComponent(id)}/clone-default-path?projectId=${encodeURIComponent(projectId)}`
+      ),
+      onChanged: (cb) => subscribeProductEvent<Host[] | undefined>('hosts:changed', cb)
+    } as CcApi['hosts'],
     threads: {
       create: async (input) => {
         const response = await fetchWithAppSurface('/api/v1/threads', {
@@ -702,7 +733,7 @@ function stubFamily(family: string): unknown {
 export const product: CcApi = new Proxy({} as CcApi, {
   get(_target, family: string | symbol) {
     const name = String(family);
-    if (name === 'threads' || name === 'environments') {
+    if (name === 'threads' || name === 'environments' || name === 'hosts') {
       const http = httpProduct() as unknown as Record<string, unknown>;
       return withStubs(name, http[name] as object);
     }
@@ -735,6 +766,13 @@ function wrapDesktopProjects(desktop: CcApi['projects']): CcApi['projects'] {
   const http = httpProduct().projects;
   return {
     ...desktop,
+    add: async (path, opts) => {
+      if (opts?.hostId) {
+        const project = await http.add(path, opts) as unknown as Project;
+        return { ok: true as const, value: project };
+      }
+      return desktop.add(path, opts);
+    },
     clone: http.clone,
     onCloneProgress: http.onCloneProgress,
     cloneRoot: async () => {

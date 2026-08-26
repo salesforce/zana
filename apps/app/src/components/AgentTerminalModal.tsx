@@ -306,7 +306,7 @@ export function AgentTerminalModal({
         aria-label={`Agent ${session.title}`}
         tabIndex={-1}
       >
-        <header className="modal-header agent-modal-header">
+        <header className="modal-header agent-modal-header" data-testid="agent-modal-header">
           <span
             className={`agent-modal-icon tab-profile-icon profile-${session.profile}`}
           >
@@ -367,6 +367,7 @@ export function AgentTerminalModal({
             state={state}
             terminalAnchorId={AGENT_MODAL_TERMINAL_ANCHOR_ID}
             showProject
+            modal
             background={session.scheduled}
             heartbeat={
               canHeartbeat

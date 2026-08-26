@@ -80,6 +80,9 @@ describe('AgentSessionView', () => {
       />
     );
     expect(html).toContain('data-testid="agent-session-view"');
+    expect(html).toContain('thread-detail-split');
+    expect(html).toContain('thread-detail-header');
+    expect(html).toContain('PTY agent');
     expect(html).toContain('data-testid="thread-secondary-panel"');
     expect(html).toContain('data-testid="thread-info-pin"');
     expect(html).toContain('data-testid="thread-diff-pin"');
@@ -185,6 +188,10 @@ describe('AgentSessionView', () => {
   it('omits the sidecar terminal path and uses AgentDiffPanel for the Diff pin', () => {
     const source = readFileSync(new URL('./AgentSessionView.tsx', import.meta.url), 'utf8');
     expect(source).toContain('allowSidecarTerminal={false}');
+    expect(source).toContain('thread-detail-split');
+    expect(source).toContain('thread-detail-header');
+    expect(source).toContain('thread-detail-view--modal');
+    expect(source).not.toContain('agent-session-show-panel');
     expect(source).toContain('<AgentDiffPanel');
     expect(source).toContain('<AgentDetailPanel');
     expect(source).toContain('variant="embedded"');

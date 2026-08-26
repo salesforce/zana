@@ -5,6 +5,7 @@ import { handleProductHttp } from './product-api.js';
 import { createProductHttpContext, type ProductHttpContext } from './product-context.js';
 import { createProductWebSocketServer, handleProductUpgrade } from './product-ws.js';
 import { createHostDaemonWebSocketServer, handleHostInternalHttp, handleHostInternalUpgrade } from './host-internal.js';
+import { handleInstallHttp } from './install-http.js';
 import type { LocalAppOriginArgs } from './local-app-origins.js';
 
 export interface ProductServer {
@@ -43,6 +44,7 @@ export async function startProductServer(options: StartProductServerOptions): Pr
 
   const server = createServer(async (request, response) => {
     if (await handleHostInternalHttp(request, response, ctx)) return;
+    if (handleInstallHttp(request, response, ctx)) return;
     if (await handleProductHttp(request, response, ctx)) return;
     if (options.fallback && (await options.fallback(request, response))) return;
     response.writeHead(404).end();

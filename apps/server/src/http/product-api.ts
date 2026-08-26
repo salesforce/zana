@@ -58,6 +58,8 @@ import { harnessDescriptors, harnessEffectiveDefault, harnessVerify } from './ha
 import { isSafeRelPath, listLibraryDocs, listQuickPrompts, readLibraryDoc } from './library-via-host.js';
 import { listProjectDir, listProjectPaths, readProjectFile } from './project-fs-via-host.js';
 import { getConversationThread, getEnvironment, listConversationThreadEvents, listConversationThreadsByProject, listVisibleConversationThreads, nextConversationEventSequence, updateConversationThreadTitle } from '@zana-ai/zcc-db';
+import { handleHostsApi } from './hosts-api.js';
+import { resolvePublicAppUrl } from './public-app-url.js';
 import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
 import { parseMultipartVoiceForm, readVoiceBody } from './multipart-voice.js';
 import {
@@ -180,18 +182,23 @@ export async function handleProductHttp(
       return true;
     }
 
+    if (await handleHostsApi(request, response, ctx, path, method, requestUrl)) {
+      return true;
+    }
+
     if (path === '/api/v1/projects' && method === 'GET') {
       sendJson(response, 200, { projects: ctx.projects.list() });
       return true;
     }
 
     if (path === '/api/v1/projects' && method === 'POST') {
-      const body = (await readJsonBody(request)) as { path?: unknown };
+      const body = (await readJsonBody(request)) as { path?: unknown; hostId?: unknown };
       if (typeof body.path !== 'string' || body.path.length === 0) {
         sendJson(response, 400, { error: 'path is required' });
         return true;
       }
-      const project = await ctx.projects.add(body.path);
+      const hostId = typeof body.hostId === 'string' && body.hostId.length > 0 ? body.hostId : undefined;
+      const project = await ctx.projects.add(body.path, hostId ? { hostId } : undefined);
       ctx.hub.emit('projects:changed', ctx.projects.list());
       sendJson(response, 200, { project });
       return true;
@@ -238,7 +245,13 @@ export async function handleProductHttp(
     }
 
     if (path === '/api/v1/config' && method === 'GET') {
-      sendJson(response, 200, { config: ctx.config.getConfig() });
+      const config = ctx.config.getConfig();
+      sendJson(response, 200, {
+        config: {
+          ...config,
+          publicAppUrl: resolvePublicAppUrl({ configUrl: config.publicAppUrl }) ?? config.publicAppUrl
+        }
+      });
       return true;
     }
 
@@ -419,7 +432,8 @@ export async function handleProductHttp(
         return true;
       }
       try {
-        const result = await readLibraryDoc(ctx, scope as LibraryScope, relPath, projectId);
+        const project = projectId ? ctx.toProjects().find((row) => row.id === projectId) : undefined;
+        const result = await readLibraryDoc(ctx, scope as LibraryScope, relPath, projectId, project?.hostId);
         sendJson(response, result.ok ? 200 : 404, result);
       } catch (error) {
         sendHostFailure(response, error);
@@ -461,7 +475,7 @@ export async function handleProductHttp(
 
     if (path === '/api/v1/harness/verify' && method === 'GET') {
       try {
-        sendJson(response, 200, { results: await harnessVerify(ctx.hostHub) });
+        sendJson(response, 200, { results: await harnessVerify(ctx.hostHub, requestUrl.searchParams.get('hostId') ?? undefined) });
       } catch (error) {
         sendHostFailure(response, error);
       }
@@ -470,7 +484,7 @@ export async function handleProductHttp(
 
     if (path === '/api/v1/harness/descriptors' && method === 'GET') {
       try {
-        sendJson(response, 200, { descriptors: await harnessDescriptors(ctx.hostHub) });
+        sendJson(response, 200, { descriptors: await harnessDescriptors(ctx.hostHub, requestUrl.searchParams.get('hostId') ?? undefined) });
       } catch (error) {
         sendHostFailure(response, error);
       }
@@ -485,7 +499,8 @@ export async function handleProductHttp(
           hub: ctx.hostHub,
           project,
           config: ctx.config.getConfig(),
-          personas: listJsonFiles(join(ctx.dataDir, 'personas')) as Persona[]
+          personas: listJsonFiles(join(ctx.dataDir, 'personas')) as Persona[],
+          hostId: requestUrl.searchParams.get('hostId') ?? project?.hostId
         });
         sendJson(response, 200, result);
       } catch (error) {
@@ -1060,7 +1075,9 @@ export async function handleProductHttp(
         return true;
       }
       try {
-        const hostId = ctx.hostHub.resolveHostId(requestUrl.searchParams.get('hostId') ?? undefined);
+        const hostId = ctx.hostHub.resolveHostId(
+          requestUrl.searchParams.get('hostId') ?? project.hostId ?? undefined
+        );
         const result = await ctx.hostHub.callHostOnlineRpc<{ branches: string[]; truncated: boolean }>({
           hostId,
           command: {
@@ -1112,7 +1129,7 @@ export async function handleProductHttp(
           },
           timeoutMs: 20 * 60 * 1000
         });
-        const project = await ctx.projects.add(cloned.path);
+        const project = await ctx.projects.add(cloned.path, { hostId });
         ctx.hub.emit('projects:changed', ctx.projects.list());
         sendJson(response, 201, { ok: true, project, path: cloned.path, gitRemoteUrl: cloned.gitRemoteUrl });
       } catch (error) {
@@ -1331,9 +1348,10 @@ export async function handleProductHttp(
 
     if (path === '/api/v1/system/execution-options' && method === 'GET') {
       const providerId = requestUrl.searchParams.get('providerId') ?? undefined;
+      const requestedHostId = requestUrl.searchParams.get('hostId') ?? undefined;
       let availability: Awaited<ReturnType<typeof harnessVerify>> = [];
       try {
-        availability = await harnessVerify(ctx.hostHub);
+        availability = await harnessVerify(ctx.hostHub, requestedHostId);
       } catch {
         availability = [];
       }
@@ -1341,7 +1359,7 @@ export async function handleProductHttp(
       let listError: ThreadModelLoadErrorCode | null = null;
       if (providerId) {
         try {
-          const hostId = ctx.hostHub.resolveHostId();
+          const hostId = ctx.hostHub.resolveHostId(requestedHostId);
           const dataDir = join(ctx.dataDir, 'thread-bridges', providerId);
           mkdirSync(dataDir, { recursive: true, mode: 0o700 });
           listed = await ctx.hostHub.callHostOnlineRpc<ProviderListModelsResult>({

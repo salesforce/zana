@@ -35,7 +35,14 @@ import type { MarketplaceEntry } from '@zana-ai/zcc-domain/product';
 import { resolveIcon } from '@/lib/resolveIcon';
 import { PERMISSION_LABELS, pluginCapabilityLines } from '@/components/ExtensionConsent';
 import { InstallFromGitDialog } from '@/components/InstallFromGitDialog';
-import { filterMarketplaceEntries, marketplaceTags, type MarketplaceTag } from './marketplace-filter.js';
+import { filterMarketplaceEntries, type MarketplaceTag } from './marketplace-filter.js';
+
+const MARKET_FILTERS: { id: MarketplaceTag | 'all'; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'official', label: 'Official' },
+  { id: 'community', label: 'Community' },
+  { id: 'update', label: 'Update' }
+];
 
 export function MarketplaceView({ onCreate }: { onCreate?: () => void } = {}) {
   const [entries, setEntries] = useState<MarketplaceEntry[] | null>(null);
@@ -163,23 +170,32 @@ export function MarketplaceView({ onCreate }: { onCreate?: () => void } = {}) {
     return filterMarketplaceEntries(entries, query, tag);
   }, [entries, query, tag]);
 
+  const hasCatalog = !!entries && entries.length > 0;
+
   return (
     <section className="settings-section ext-market">
-      <div className="ext-market-hero">
-        <p className="settings-help">
-          Browse and install plugins. Official plugins install offline from the app
-          binary. Community catalogs are provenance-only (npm/git pointers — refresh
-          never runs plugin code). Plugins run in-process on the server after install:
-          confirm each install, and only install from publishers you trust.
-        </p>
-        {onCreate && (
-          <button type="button" className="settings-btn primary" onClick={onCreate}>
-            <Plus size={14} />
-            Create
-          </button>
-        )}
-      </div>
+      <p className="ext-market-note">
+        Official plugins install offline from the app. Community catalogs are
+        provenance-only — refresh never runs plugin code. Plugins run in-process
+        after install: only install from publishers you trust.
+      </p>
       <div className="ext-market-toolbar">
+        {hasCatalog && (
+          <div className="ext-market-search">
+            <Search size={14} className="ext-market-search-icon" />
+            <input
+              type="text"
+              className="ext-market-search-input"
+              placeholder="Search plugins…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              aria-label="Search plugins"
+            />
+            <span className="ext-market-search-count">
+              {filtered?.length ?? 0} of {entries?.length ?? 0}
+            </span>
+          </div>
+        )}
         <div className="settings-btn-row">
           <div className="settings-btn-group" role="group" aria-label="Sync catalog">
             <button
@@ -269,8 +285,29 @@ export function MarketplaceView({ onCreate }: { onCreate?: () => void } = {}) {
               </div>
             )}
           </div>
+          {onCreate && (
+            <button type="button" className="settings-btn" onClick={onCreate}>
+              <Plus size={14} />
+              Create
+            </button>
+          )}
         </div>
       </div>
+
+      {hasCatalog && (
+        <div className="ext-market-tags" role="group" aria-label="Filter by tag">
+          {MARKET_FILTERS.map((filter) => (
+            <button
+              key={filter.id}
+              type="button"
+              className={`ext-market-tag ${tag === filter.id ? 'is-active' : ''}`}
+              onClick={() => setTag(filter.id)}
+            >
+              {filter.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {gitOpen && <InstallFromGitDialog onClose={() => setGitOpen(false)} />}
       {npmOpen && (
@@ -317,34 +354,6 @@ export function MarketplaceView({ onCreate }: { onCreate?: () => void } = {}) {
       )}
 
       {error && <p className="modal-error">{error}</p>}
-
-      {entries && entries.length > 0 && (
-        <div className="ext-market-search">
-          <Search size={14} className="ext-market-search-icon" />
-          <input
-            type="text"
-            className="ext-market-search-input"
-            placeholder="Search plugins…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          <span className="ext-market-search-count">
-            {filtered?.length ?? 0} of {entries.length}
-          </span>
-          <div className="ext-market-tags" role="group" aria-label="Filter by tag">
-            {(['all', 'official', 'community', 'update'] as const).map((id) => (
-              <button
-                key={id}
-                type="button"
-                className={`settings-btn ${tag === id ? 'primary' : ''}`}
-                onClick={() => setTag(id)}
-              >
-                {id === 'all' ? 'All' : id}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
 
       {entries === null ? (
         <p className="settings-help settings-help--muted">Loading marketplace…</p>
@@ -440,30 +449,31 @@ function MarketRow({
 }) {
   const Icon = resolveIcon(entry.icon ?? 'Package');
   const action = rowAction(entry, busy);
+  const provenance = entry.source === 'bundled' ? 'official' : 'community';
 
   return (
     <li className="ext-market-item">
-      <Icon size={18} className="ext-market-item-icon" />
+      <span className="ext-market-item-icon-wrap">
+        <Icon size={16} className="ext-market-item-icon" />
+      </span>
       <div className="ext-market-item-body">
         <div className="ext-market-item-head">
           <span className="ext-market-item-title">{entry.title}</span>
           <span className="ext-market-item-version">v{entry.version}</span>
           <span
-            className={`ext-market-item-source ext-market-item-source--${entry.source}`}
+            className={`ext-market-item-source ext-market-item-source--${provenance}`}
             title={
               entry.source === 'bundled'
                 ? 'First-party plugin shipped with the app'
                 : 'From a configured plugin catalog'
             }
           >
-            {entry.source === 'bundled' ? 'Bundled' : 'Marketplace'}
+            {provenance === 'official' ? 'Official' : 'Community'}
           </span>
+          {entry.hasUpdate && (
+            <span className="ext-market-item-source ext-market-item-source--update">Update</span>
+          )}
           {entry.author && <span className="ext-market-item-author">by {entry.author}</span>}
-          {marketplaceTags(entry).map((itemTag) => (
-            <span key={itemTag} className={`ext-market-item-source ext-market-item-source--${itemTag}`}>
-              {itemTag}
-            </span>
-          ))}
         </div>
         {entry.description && (
           <p className="ext-market-item-desc">{entry.description}</p>

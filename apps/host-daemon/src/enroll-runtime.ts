@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { enrollDaemonHost } from './enroll.js';
 import { detectHostName, persistHostId, resolveHostId } from './identity.js';
 import { acquireDaemonLock } from './lock.js';
+import { readHostAuth, writeHostAuth } from './machine-auth.js';
 import { startEnrolledHostConnection, type EnrolledHostConnection } from './server-connection.js';
 
 export interface EnrolledHostDaemon {
@@ -16,27 +17,48 @@ export interface EnrolledHostDaemon {
 export async function startEnrolledHostDaemon(options: {
   dataDir: string;
   serverUrl: string;
-  token: string;
+  token?: string;
+  hostId?: string;
   hostName?: string;
+  onSocketClose?: (code: number) => void;
 }): Promise<EnrolledHostDaemon> {
   const releaseLock = acquireDaemonLock(options.dataDir);
   try {
     const instanceId = randomUUID();
-    const requestedHostId = resolveHostId(options.dataDir);
-    const enrolled = await enrollDaemonHost({
-      serverUrl: options.serverUrl,
-      token: options.token,
-      hostName: options.hostName ?? detectHostName(),
-      instanceId,
-      hostId: requestedHostId
-    });
-    persistHostId(options.dataDir, enrolled.hostId);
+    const existing = readHostAuth(options.dataDir);
+    let hostId: string;
+    let hostKey: string;
+    if (existing) {
+      hostId = existing.hostId;
+      hostKey = existing.hostKey;
+    } else {
+      if (!options.token) {
+        throw new Error('host enroll token is missing and auth.json is absent');
+      }
+      const requestedHostId = options.hostId ?? resolveHostId(options.dataDir);
+      const enrolled = await enrollDaemonHost({
+        serverUrl: options.serverUrl,
+        token: options.token,
+        hostName: options.hostName ?? detectHostName(),
+        instanceId,
+        hostId: requestedHostId
+      });
+      persistHostId(options.dataDir, enrolled.hostId);
+      writeHostAuth(options.dataDir, {
+        hostId: enrolled.hostId,
+        hostKey: enrolled.hostKey,
+        hostName: options.hostName ?? detectHostName()
+      });
+      hostId = enrolled.hostId;
+      hostKey = enrolled.hostKey;
+    }
     const connection = startEnrolledHostConnection({
       serverUrl: options.serverUrl,
-      hostId: enrolled.hostId,
-      hostKey: enrolled.hostKey,
+      hostId,
+      hostKey,
       instanceId,
-      dataDir: options.dataDir
+      dataDir: options.dataDir,
+      onSocketClose: options.onSocketClose
     });
     void connection.ready.catch(() => {
       /* close() may reject after a timeout wins the race */
@@ -49,8 +71,6 @@ export async function startEnrolledHostDaemon(options: {
           openTimer = setTimeout(() => reject(new Error('host websocket did not open')), 10_000);
         })
       ]);
-      // Hello is processed on the server in another process; wait one local RTT
-      // so hostHub.sessions is populated before the first thread.create.
       await new Promise((resolve) => setTimeout(resolve, 100));
     } catch (error) {
       await connection.close();
@@ -59,7 +79,7 @@ export async function startEnrolledHostDaemon(options: {
       if (openTimer) clearTimeout(openTimer);
     }
     return {
-      hostId: enrolled.hostId,
+      hostId,
       instanceId,
       connection,
       async close() {

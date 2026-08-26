@@ -49,7 +49,8 @@ export function AgentSessionView({
   maxQueue,
   stageChrome,
   stageOverlay,
-  focusDiffKey = 0
+  focusDiffKey = 0,
+  modal = false
 }: {
   session: TerminalSession;
   projectId: string;
@@ -70,6 +71,7 @@ export function AgentSessionView({
   stageChrome?: ReactNode;
   stageOverlay?: ReactNode;
   focusDiffKey?: number;
+  modal?: boolean;
 }) {
   const panel = useSecondaryPanel(session.id, { defaultOpen: true });
   const exited = session.status === 'exited';
@@ -90,6 +92,7 @@ export function AgentSessionView({
   const viewClass = [
     'thread-detail-view',
     'agent-session-view',
+    modal ? 'thread-detail-view--modal' : '',
     panelOpen ? 'is-secondary-open' : '',
     panel.state.isMaximized ? 'is-secondary-maximized' : ''
   ].filter(Boolean).join(' ');
@@ -160,19 +163,27 @@ export function AgentSessionView({
       data-testid="agent-session-view"
       style={panelOpen ? { ['--thread-secondary-width' as string]: `${panel.state.widthPx}px` } : undefined}
     >
+      <header className="thread-detail-header">
+        <div className="thread-detail-heading">
+          <h1>{session.title}</h1>
+        </div>
+        <div className="thread-detail-actions">
+          {!panelOpen ? (
+            <button
+              type="button"
+              className="icon-btn"
+              title="Show right panel"
+              aria-label="Show right panel"
+              data-testid="thread-secondary-show"
+              onClick={panel.open}
+            >
+              <PanelRight size={14} />
+            </button>
+          ) : null}
+        </div>
+      </header>
+      <div className="thread-detail-split">
       <div className="thread-detail-main agent-session-main">
-        {!panelOpen ? (
-          <button
-            type="button"
-            className="icon-btn agent-session-show-panel"
-            title="Show right panel"
-            aria-label="Show right panel"
-            data-testid="thread-secondary-show"
-            onClick={panel.open}
-          >
-            <PanelRight size={14} />
-          </button>
-        ) : null}
         {stageChrome}
         <div className="agent-session-terminal" id={terminalAnchorId} />
         {stageOverlay}
@@ -194,6 +205,7 @@ export function AgentSessionView({
           {panelBody}
         </ThreadSecondaryPanel>
       ) : null}
+      </div>
     </section>
   );
 }
