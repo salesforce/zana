@@ -25,7 +25,7 @@ export function InboxGuidance() {
         className="inbox-guidance-dismiss"
         onClick={() => {
           setNav('settings');
-          setSettingsTab('global');
+          setSettingsTab('inbox');
         }}
       >
         Hide in Settings →

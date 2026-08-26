@@ -62,9 +62,9 @@ async function waitForProductServer(port, timeoutMs = 20_000) {
   throw new Error(`product server did not become ready on ${url}`);
 }
 
-run('pnpm', ['exec', 'tsx', 'apps/server/src/http/listen.ts']);
+run(process.execPath, ['--conditions=source', '--import', 'tsx', 'apps/server/src/http/listen.ts']);
 await waitForProductServer(serverPort);
-run('pnpm', ['exec', 'tsx', 'apps/host-daemon/src/enroll-entry.ts']);
+run(process.execPath, ['--conditions=source', '--import', 'tsx', 'apps/host-daemon/src/enroll-entry.ts']);
 
 if (skipDesktop) {
   run('pnpm', ['exec', 'vite', '--config', 'apps/app/vite.dev.config.ts']);

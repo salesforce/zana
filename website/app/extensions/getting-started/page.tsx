@@ -9,10 +9,10 @@ export const metadata: Metadata = {
 };
 
 const STEPS = [
-  ['1', 'Scaffold a plugin', 'Run `zcc plugin new hello` or Create in Plugins → Browse. The starter writes package.json zcc, server.ts, and app.tsx.'],
-  ['2', 'Describe the plugin', 'The manifest lives in package.json → zcc (name, app/server entries, skills, MCP). engines.zcc pins the running app.'],
+  ['1', 'Seed a thread', 'Plugins → New plugin (or Browse → Create a plugin) inserts “Create a new zcc plugin that …”. Send it from the current project — not a dedicated Extensions folder. Folder/git/npm install stays install, not create.'],
+  ['2', 'Scaffold, install, iterate', 'The agent runs `zcc plugin new hello --app`, then `cd zcc-plugin-hello`, `zcc plugin install .`, and `zcc plugin dev`. That writes package.json zcc, server.ts, and app.tsx.'],
   ['3', 'Return a panel', 'Default-export definePluginApp and register app.slots.navPanel. The host React instance is globalThis.__ZCC_HOST_REACT__.'],
-  ['4', 'Build and install', 'zcc plugin dev watches, rebuilds, and reloads. Or install from Plugins → Browse (folder, git, or npm).'],
+  ['4', 'Watch and reload', '`zcc plugin dev` rebuilds the app and reloads. Path installs load server.ts from source. Install an existing tree from Plugins → Browse (folder, git, or npm).'],
   ['5', 'Reload and refine', 'A failed reload keeps the last good generation. Plugins are full-trust in-process on the server after a loud confirm.']
 ] as const;
 
@@ -21,8 +21,8 @@ const MANIFEST = `{
   "engines": { "zcc": ">=1.0.0", "zccPluginSdk": ">=0.1.0" },
   "zcc": {
     "name": "Hello",
-    "app": "./app.js",
-    "server": "./server.mjs",
+    "app": "./app.tsx",
+    "server": "./server.ts",
     "skills": ["skills"]
   }
 }`;

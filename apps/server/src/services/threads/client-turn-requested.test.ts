@@ -35,10 +35,11 @@ describe('appendClientTurnRequested', () => {
       })
     );
     const payload = vi.mocked(appendConversationThreadEvent).mock.calls[0]![1].payload as {
-      input: Array<{ text: string }>;
+      input: Array<{ text: string; mentions?: unknown[] }>;
       target: { kind: string };
     };
     expect(payload.input[0]?.text).toBe('Read README.md');
+    expect(payload.input[0]?.mentions).toEqual([]);
     expect(payload.target.kind).toBe('thread-start');
     expect(emit).toHaveBeenCalledWith('threads:event', expect.objectContaining({
       type: 'client/turn/requested'
@@ -73,5 +74,41 @@ describe('appendClientTurnRequested', () => {
       { threadId: '11111111-1111-4111-8111-111111111111', prompt: ['  '], kind: 'new-turn' }
     );
     expect(appendConversationThreadEvent).not.toHaveBeenCalled();
+  });
+
+  it('keeps command mentions from structured prompt input', () => {
+    vi.mocked(appendConversationThreadEvent).mockClear();
+    const requestId = appendClientTurnRequested(
+      { db: {}, hub: { emit: vi.fn() } } as never,
+      {
+        threadId: '11111111-1111-4111-8111-111111111111',
+        prompt: ['/plan inspect the failing command'],
+        promptInput: [{
+          type: 'text',
+          text: '/plan inspect the failing command',
+          mentions: [{
+            start: 0,
+            end: 5,
+            resource: {
+              kind: 'command',
+              trigger: '/',
+              name: 'plan',
+              source: 'command',
+              origin: 'builtin',
+              label: 'plan',
+              argumentHint: null
+            }
+          }]
+        }],
+        kind: 'new-turn'
+      }
+    );
+    const payload = vi.mocked(appendConversationThreadEvent).mock.calls[0]![1].payload as {
+      input: Array<{ text: string; mentions: Array<{ resource: { name: string } }> }>;
+      requestId: string;
+    };
+    expect(payload.input[0]?.mentions[0]?.resource.name).toBe('plan');
+    expect(requestId).toMatch(/^creq_/);
+    expect(requestId).toBe(payload.requestId);
   });
 });

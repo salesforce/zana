@@ -19,7 +19,9 @@ describe('PluginSettingsForm', () => {
     );
     expect(html).toContain('Plugin settings');
     expect(html).toContain('Enabled');
-    expect(html).toContain('type="checkbox"');
+    expect(html).toContain('role="switch"');
+    expect(html).toContain('aria-checked="true"');
+    expect(html).not.toContain('type="checkbox"');
     expect(html).toContain('fast');
     expect(html).toContain('type="password"');
   });

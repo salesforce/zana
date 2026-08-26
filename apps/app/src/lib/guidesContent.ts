@@ -8,33 +8,39 @@ export const GUIDE_CONTENT: Record<string, string> = {
   'create-extension': `
 A plugin is your own panel or tool, running inside Zana.
 
-## 1. Open the Plugin Creator
+## 1. Seed a thread
 
-Click **Create a plugin** on Home (or **Plugins → Browse → Create**).
-Give it a name and pick a kind:
+Click **Plugins → New plugin** (or **Browse → Create a plugin**, or the composer
+**Plugin** button). That inserts the same prompt: *Create a new zcc plugin that …*
+Send it from the current project — not a dedicated Extensions folder.
 
-- **Panel** — app-only UI slot.
-- **Panel + backend** — server factory plus a panel.
-- **MCP consumer** — declares \`zcc.mcpServers\`.
-- **Agent preset** — skills / agent instructions, not a UI panel.
+## 2. Scaffold, install, iterate
 
-## 2. Build it with the agent
+The agent loads the plugin-authoring skill and runs:
 
-Submitting the dialog scaffolds a \`package.json\` \`zcc\` starter into its own
-working directory and opens a Claude agent there, already primed with the plugin
-SDK. Describe what you want — the agent edits the source.
+\`\`\`
+zcc plugin new hello --app
+cd zcc-plugin-hello
+zcc plugin install .
+zcc plugin dev
+\`\`\`
 
-## 3. Reload and iterate
+Edits to \`server.ts\` reload from source. App changes remount live. Use
+\`zcc plugin list\` and \`zcc plugin logs <id> -f\` to verify.
 
-Call **Reload from source**, \`install_local_extension\`, or \`zcc plugin dev .\`.
+## 3. Install from source (not create)
+
+**Install from folder / repository** and **Open existing plugin** stay in the
+hub overflow menu. Those install an existing tree; they never start a create
+thread.
+
 A failed reload keeps the last good generation running. Plugins are full-trust
-in-process on the server after install — the hub names skills, MCP servers, and
-that trust model before you confirm.
+in-process on the server after install.
 
 ## Where things live
 
-- Source: \`~/zcc-workspace/extensions/<id>\` — yours to edit freely.
-- Installed copy: managed by PluginService; don't hand-edit it.
+- New plugins: \`./zcc-plugin-<id>\` inside the project you authored from.
+- Already-local leftovers: \`~/zcc-workspace/extensions/<id>\`.
 - \`package.json\` → \`zcc\` is the manifest (name, app/server entries, skills, MCP).
 `,
   scheduler: `

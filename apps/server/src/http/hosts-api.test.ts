@@ -276,4 +276,153 @@ createServer((_req, res) => {
     expect(JSON.parse(lines[0]!)).toMatchObject({ type: 'started', provider: 'codex' });
     expect(JSON.parse(lines[1]!)).toMatchObject({ type: 'completed', success: true });
   });
+
+  it('refuses bootstrap without a public URL or when the primary daemon is offline', async () => {
+    const dataDir = await start();
+    writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({
+      version: 1,
+      projects: [{
+        id: 'p-ssh',
+        name: 'Remote',
+        path: '/tmp/placeholder',
+        createdAt: 1,
+        lastActiveAt: 1,
+        remote: { host: 'devbox', user: 'me', remotePath: '/home/me/app' }
+      }]
+    }));
+    const missingUrl = await fetch(`${server!.url}api/v1/hosts/bootstrap`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: 'p-ssh' })
+    });
+    expect(missingUrl.status).toBe(200);
+    expect(JSON.parse((await missingUrl.text()).trim())).toMatchObject({
+      type: 'error',
+      code: 'public_url_required'
+    });
+
+    await server!.close();
+    server = null;
+    const loopbackDir = await start('http://127.0.0.1:8780');
+    writeFileSync(join(loopbackDir, 'projects.json'), JSON.stringify({
+      version: 1,
+      projects: [{
+        id: 'p-ssh',
+        name: 'Remote',
+        path: '/tmp/placeholder',
+        createdAt: 1,
+        lastActiveAt: 1,
+        remote: { host: 'devbox' }
+      }]
+    }));
+    const loopback = await fetch(`${server!.url}api/v1/hosts/bootstrap`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: 'p-ssh' })
+    });
+    expect(JSON.parse((await loopback.text()).trim())).toMatchObject({
+      type: 'error',
+      code: 'public_url_required'
+    });
+
+    await server!.close();
+    server = null;
+    const offlineDir = await start('https://box.tailnet.ts.net');
+    writeFileSync(join(offlineDir, 'projects.json'), JSON.stringify({
+      version: 1,
+      projects: [{
+        id: 'p-ssh',
+        name: 'Remote',
+        path: '/tmp/placeholder',
+        createdAt: 1,
+        lastActiveAt: 1,
+        remote: { host: 'devbox' }
+      }]
+    }));
+    const offline = await fetch(`${server!.url}api/v1/hosts/bootstrap`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: 'p-ssh' })
+    });
+    expect(JSON.parse((await offline.text()).trim())).toMatchObject({
+      type: 'error',
+      code: 'primary_disconnected'
+    });
+  });
+
+  it('stores SSH identity for repair and refuses to repair the primary host', async () => {
+    await start('https://box.tailnet.ts.net');
+    const primary = await fetch(`${server!.url}internal/hosts/enroll`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer enroll-token-enroll-token-enroll',
+        'content-type': 'application/json',
+        'x-forwarded-host': 'box.tailnet.ts.net'
+      },
+      body: JSON.stringify({
+        protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+        hostName: 'laptop',
+        instanceId: '11111111-1111-4111-8111-111111111111'
+      })
+    }).then((response) => response.json()) as { hostId: string };
+
+    const primaryRepair = await fetch(`${server!.url}api/v1/hosts/${primary.hostId}/repair`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    });
+    expect(JSON.parse((await primaryRepair.text()).trim())).toMatchObject({
+      type: 'error',
+      code: 'primary_host'
+    });
+
+    const minted = await fetch(`${server!.url}api/v1/hosts/join-codes`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    }).then((response) => response.json()) as { joinCode: string; hostId: string };
+    const enrolled = await fetch(`${server!.url}internal/hosts/enroll`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${minted.joinCode}`,
+        'content-type': 'application/json',
+        'x-forwarded-host': 'box.tailnet.ts.net'
+      },
+      body: JSON.stringify({
+        protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+        hostName: 'devbox',
+        instanceId: '22222222-2222-4222-8222-222222222222',
+        hostId: minted.hostId
+      })
+    });
+    expect(enrolled.status).toBe(201);
+
+    const needsSsh = await fetch(`${server!.url}api/v1/hosts/${minted.hostId}/repair`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    });
+    expect(JSON.parse((await needsSsh.text()).trim())).toMatchObject({
+      type: 'error',
+      code: 'ssh_identity_required'
+    });
+
+    const patched = await fetch(`${server!.url}api/v1/hosts/${minted.hostId}/ssh-identity`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ host: 'devbox', user: 'me' })
+    });
+    expect(patched.status).toBe(200);
+    await expect(patched.json()).resolves.toMatchObject({
+      id: minted.hostId,
+      canRepairViaSsh: true
+    });
+
+    const rejected = await fetch(`${server!.url}api/v1/hosts/${minted.hostId}/ssh-identity`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ host: '-evil' })
+    });
+    expect(rejected.status).toBe(400);
+  });
 });

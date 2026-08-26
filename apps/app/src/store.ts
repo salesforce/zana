@@ -165,6 +165,8 @@ export type SettingsTab =
   | 'experimental'
   | 'about'
   | 'machines'
+  | 'connectivity'
+  | 'inbox'
   | (string & {});
 
 /** The focused top-level Extensions workspace page. */

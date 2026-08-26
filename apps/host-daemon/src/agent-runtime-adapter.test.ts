@@ -9,7 +9,8 @@ import {
   createFakeAdapter,
   fakeProviderScriptPath
 } from '@zana-ai/zcc-agent-runtime/test';
-import { createAgentRuntimeAdapter, threadExecutionOptions } from './agent-runtime-adapter.js';
+import { createAgentRuntimeAdapter, mapRuntimeThreadEvent, threadExecutionOptions } from './agent-runtime-adapter.js';
+import type { ThreadEvent } from '@zana-ai/zcc-domain/thread-runtime';
 
 describe('agent runtime thread adapter', () => {
   let cwd: string;
@@ -117,6 +118,50 @@ describe('agent runtime thread adapter', () => {
     adapter.dispose();
     expect(started[0]).toMatchObject({ model: 'claude-sonnet-5', reasoningLevel: 'high' });
     expect(turned[0]).toMatchObject({ model: 'claude-sonnet-5', reasoningLevel: 'xhigh' });
+  });
+
+  it('forwards clientRequestId into startThread and runTurn', async () => {
+    const started: string[] = [];
+    const turned: string[] = [];
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined,
+      dataDir: cwd,
+      createRuntime: (options) => {
+        const runtime = createAgentRuntimeWithAdapters({
+          ...options,
+          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+        });
+        return {
+          ...runtime,
+          startThread: async (input) => {
+            started.push(input.clientRequestId);
+            return runtime.startThread(input);
+          },
+          runTurn: async (input) => {
+            turned.push(input.clientRequestId);
+            return runtime.runTurn(input);
+          }
+        };
+      }
+    });
+    const threadId = randomUUID();
+    await adapter.startWork({
+      threadId,
+      environmentId: randomUUID(),
+      projectId: 'p1',
+      providerId: 'fake',
+      input: ['hello'],
+      cwd,
+      clientRequestId: 'creq_23456789ab'
+    });
+    await adapter.submitTurn({
+      threadId,
+      input: ['follow up'],
+      clientRequestId: 'creq_23456789ac'
+    });
+    adapter.dispose();
+    expect(started).toEqual(['creq_23456789ab']);
+    expect(turned).toEqual(['creq_23456789ac']);
   });
 
   it('resumes a thread through AgentRuntime', async () => {
@@ -251,5 +296,73 @@ describe('threadExecutionOptions', () => {
       model: 'claude-sonnet-5',
       reasoningLevel: 'high'
     });
+  });
+});
+
+describe('mapRuntimeThreadEvent', () => {
+  const threadId = '11111111-1111-4111-8111-111111111111';
+  const scope = { kind: 'turn' as const, turnId: 'turn-1' };
+
+  it('keeps retrying provider errors in-flight instead of failing the turn', () => {
+    const event = {
+      type: 'provider/error',
+      threadId,
+      providerThreadId: '',
+      scope,
+      message: 'Provider error',
+      detail: 'Claude Code API retry 5/10 after 9168ms: HTTP 401 authentication_failed',
+      willRetry: true,
+      errorInfo: {
+        category: 'unauthorized',
+        providerCode: 'authentication_failed',
+        httpStatusCode: 401
+      }
+    } as ThreadEvent;
+    expect(mapRuntimeThreadEvent(event)).toEqual({
+      threadId,
+      kind: 'thread.event',
+      payload: event
+    });
+  });
+
+  it('keeps reconnecting system errors in-flight', () => {
+    const event = {
+      type: 'system/error',
+      threadId,
+      providerThreadId: '',
+      scope,
+      message: 'stream disconnected',
+      reconnectAttempt: 3,
+      reconnectTotal: 5
+    } as ThreadEvent;
+    expect(mapRuntimeThreadEvent(event).kind).toBe('thread.event');
+  });
+
+  it('maps a terminal provider error as turn.failed', () => {
+    const event = {
+      type: 'provider/error',
+      threadId,
+      providerThreadId: '',
+      scope,
+      message: 'Provider error',
+      willRetry: false,
+      errorInfo: {
+        category: 'unauthorized',
+        providerCode: 'authentication_failed',
+        httpStatusCode: 401
+      }
+    } as ThreadEvent;
+    expect(mapRuntimeThreadEvent(event).kind).toBe('turn.failed');
+  });
+
+  it('maps turn completion as turn.completed', () => {
+    const event = {
+      type: 'turn/completed',
+      threadId,
+      providerThreadId: '',
+      scope,
+      status: 'completed'
+    } as ThreadEvent;
+    expect(mapRuntimeThreadEvent(event).kind).toBe('turn.completed');
   });
 });

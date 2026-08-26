@@ -14,8 +14,8 @@ import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
  * Terminal settings — everything scoped to the embedded terminal itself
  * (appearance, the shell/binary it launches, and tmux-backed durability).
  * These moved out of the Global tab so the terminal has one home; app-wide
- * appearance (the light/dark Theme) and the remote-SSH connectivity defaults
- * stay in Global.
+ * appearance (the light/dark Theme) stays in Global. Remote SSH defaults live
+ * under Settings → Connectivity.
  */
 export function TerminalSettingsView({
   config,

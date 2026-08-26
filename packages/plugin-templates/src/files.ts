@@ -23,11 +23,10 @@ Id: \`${opts.id}\`.
 
 ## Loop
 
-1. Edit \`server.ts\` / \`app.tsx\` (or the generated \`.mjs\` / \`.js\` entries).
-2. Reload with **Reload from source** in Plugins, or call \`install_local_extension\`.
-3. From a shell: \`zcc plugin dev .\` watches, rebuilds, and reloads.
+1. Edit \`server.ts\` / \`app.tsx\`.
+2. \`zcc plugin install .\` then \`zcc plugin dev .\`
 
-Plugins are full-trust in-process on the server after install. Do not request host-daemon tokens.
+Path installs load \`server.ts\` from source. \`zcc plugin dev\` rebuilds the app bundle and reloads; a failed build keeps the last good generation. Plugins are full-trust in-process on the server after install. Do not request host-daemon tokens.
 Fill the host panel slot (\`height: 100%\`). Skills live in \`skills/<name>/SKILL.md\`.
 MCP servers belong in \`zcc.mcpServers\`. Author against \`@zana-ai/zcc-plugin-sdk\` (\`definePluginApp\`, \`ZccPluginApi\`).
 
@@ -56,29 +55,11 @@ export default function plugin(zcc: ZccPluginApi) {
 `;
 }
 
-function serverMjs(opts: PluginScaffoldFiles): string {
-  return `/** @typedef {import('@zana-ai/zcc-plugin-sdk/server').ZccPluginApi} ZccPluginApi */
-export default function plugin(zcc) {
-  zcc.log.info(${JSON.stringify(`${opts.id} loaded`)});
-  zcc.rpc.method('ping', () => ({ ok: true, pluginId: zcc.pluginId }));
-}
-`;
-}
-
 function mcpServerTs(opts: PluginScaffoldFiles): string {
   return `import type { ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 
 export default function plugin(zcc: ZccPluginApi) {
   zcc.log.info('${opts.id} loaded — replace zcc.mcpServers placeholder with a real server id');
-  zcc.rpc.method('ping', () => ({ ok: true, pluginId: zcc.pluginId }));
-}
-`;
-}
-
-function mcpServerMjs(opts: PluginScaffoldFiles): string {
-  return `/** @typedef {import('@zana-ai/zcc-plugin-sdk/server').ZccPluginApi} ZccPluginApi */
-export default function plugin(zcc) {
-  zcc.log.info(${JSON.stringify(`${opts.id} loaded — replace zcc.mcpServers placeholder with a real server id`)});
   zcc.rpc.method('ping', () => ({ ok: true, pluginId: zcc.pluginId }));
 }
 `;
@@ -147,7 +128,7 @@ function serverTest(opts: PluginScaffoldFiles): string {
 const { zcc, harness } = createFakePluginHost({ pluginId: ${JSON.stringify(opts.id)} });
 
 export async function testPing() {
-  const plugin = (await import('./server.mjs')).default;
+  const plugin = (await import('./server.ts')).default;
   await plugin(zcc);
   return harness.callRpc('ping');
 }
@@ -175,7 +156,10 @@ function packageJson(opts: PluginScaffoldFiles, zcc: Record<string, unknown>): s
       zcc: `>=${opts.zccVersion}`,
       zccPluginSdk: `>=${opts.pluginSdkVersion}`
     },
-    zcc
+    zcc,
+    devDependencies: {
+      '@zana-ai/zcc-plugin-sdk': opts.pluginSdkVersion
+    }
   });
 }
 
@@ -202,7 +186,7 @@ export function pluginScaffoldFileMap(opts: PluginScaffoldFiles): Record<string,
       name: opts.name,
       description: opts.description,
       branding: { icon: 'Puzzle' },
-      app: './app.js',
+      app: './app.tsx',
       skills: ['skills']
     });
     files['app.tsx'] = appTsx(opts);
@@ -212,8 +196,8 @@ export function pluginScaffoldFileMap(opts: PluginScaffoldFiles): Record<string,
       name: opts.name,
       description: opts.description,
       branding: { icon: 'Puzzle' },
-      server: './server.mjs',
-      app: './app.js',
+      server: './server.ts',
+      app: './app.tsx',
       skills: ['skills'],
       mcpServers: {
         example: {
@@ -228,7 +212,6 @@ export function pluginScaffoldFileMap(opts: PluginScaffoldFiles): Record<string,
       }
     });
     files['server.ts'] = mcpServerTs(opts);
-    files['server.mjs'] = mcpServerMjs(opts);
     files['app.tsx'] = appTsx(opts);
     files['app.js'] = appJs(opts);
   } else if (opts.kind === 'agent-preset') {
@@ -236,22 +219,20 @@ export function pluginScaffoldFileMap(opts: PluginScaffoldFiles): Record<string,
       name: opts.name,
       description: opts.description,
       branding: { icon: 'Puzzle' },
-      server: './server.mjs',
+      server: './server.ts',
       skills: ['skills']
     });
     files['server.ts'] = serverTs(opts);
-    files['server.mjs'] = serverMjs(opts);
   } else {
     files['package.json'] = packageJson(opts, {
       name: opts.name,
       description: opts.description,
       branding: { icon: 'Puzzle' },
-      server: './server.mjs',
-      app: './app.js',
+      server: './server.ts',
+      app: './app.tsx',
       skills: ['skills']
     });
     files['server.ts'] = serverTs(opts);
-    files['server.mjs'] = serverMjs(opts);
     files['app.tsx'] = appTsx(opts);
     files['app.js'] = appJs(opts);
   }

@@ -1,5 +1,5 @@
 import { type MouseEvent, type ReactNode, useRef } from 'react';
-import { GitCompare, Info, Maximize2, Minimize2, PanelRight, Plus, X } from 'lucide-react';
+import { GitCompare, Info, ListTodo, Maximize2, Minimize2, PanelRight, Plus, X } from 'lucide-react';
 import {
   activeClosableTab,
   activePinnedView,
@@ -11,10 +11,12 @@ import { startColumnResize } from './threadSecondaryPanelLogic.js';
 export function ThreadSecondaryPanel({
   state,
   showDiffPin,
+  showPlanPin,
   children,
   footer,
   onSelectInfo,
   onSelectDiff,
+  onSelectPlan,
   onNewTab,
   onCloseTab,
   onActivateTab,
@@ -24,10 +26,12 @@ export function ThreadSecondaryPanel({
 }: {
   state: ThreadSecondaryPanelState;
   showDiffPin?: boolean;
+  showPlanPin?: boolean;
   children: ReactNode;
   footer?: ReactNode;
   onSelectInfo: () => void;
   onSelectDiff: () => void;
+  onSelectPlan?: () => void;
   onNewTab: () => void;
   onCloseTab: (tabId: string) => void;
   onActivateTab: (tabId: string) => void;
@@ -77,6 +81,18 @@ export function ThreadSecondaryPanel({
           >
             <Info size={15} />
           </button>
+          {showPlanPin ? (
+            <button
+              type="button"
+              className="thread-secondary-pin"
+              aria-label="Show plan"
+              aria-pressed={pin === 'plan'}
+              data-testid="thread-plan-pin"
+              onClick={() => onSelectPlan?.()}
+            >
+              <ListTodo size={15} />
+            </button>
+          ) : null}
           {showDiffPin ? (
             <button
               type="button"

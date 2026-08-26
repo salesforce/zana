@@ -16,7 +16,16 @@ import {
 } from './ui/CommandComposer.js';
 import { EnvironmentPicker, defaultWorkspaceChoice, type WorkspacePickerValue } from './EnvironmentPicker.js';
 import { HostMachinePicker } from './HostMachinePicker.js';
+import { HostSshIdentityDialog } from './HostSshIdentityDialog.js';
+import { ComposerHostActionChip } from './ComposerHostActionChip.js';
+import {
+  bootstrapOutcome,
+  resolveComposerHostAction,
+  shouldBlockComposerSend,
+  shouldShowHostPicker
+} from './composer-host-status.js';
 import { defaultHostId, useHosts } from '../hooks/useHosts.js';
+import { usePublicAppUrl } from '../hooks/usePublicAppUrl.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import { ComposerModePicker } from './thread/pickers/ComposerModePicker.js';
 import { ModelReasoningPicker } from './thread/pickers/ModelReasoningPicker.js';
@@ -71,6 +80,8 @@ export interface ThreadCommandComposerProps {
   project?: Project;
   threadId?: string;
   status?: string;
+  /** Provider is retrying a transient error; keep Stop available even if status is `error`. */
+  inFlightRetry?: boolean;
   environmentLabel?: string;
   sendBlocked?: boolean;
   contextWindowUsage?: ThreadContextWindowUsage | null;
@@ -78,8 +89,9 @@ export interface ThreadCommandComposerProps {
   model?: string | null;
   reasoningLevel?: string | null;
   initialText?: string;
+  /** Focus the prompt after mounting (hub/browse create-plugin seed). */
+  autoFocus?: boolean;
   onCreated?: (threadId: string) => void;
-  onOpenExplorer?: () => void;
   /** Home-only: add Legacy Agent to the mode picker. Does not spawn a PTY. */
   onSelectLegacyAgent?: () => void;
 }
@@ -88,6 +100,7 @@ export function ThreadCommandComposer({
   project: pinnedProject,
   threadId,
   status,
+  inFlightRetry = false,
   environmentLabel,
   sendBlocked = false,
   contextWindowUsage,
@@ -95,8 +108,8 @@ export function ThreadCommandComposer({
   model: initialModel,
   reasoningLevel: initialReasoningLevel,
   initialText,
+  autoFocus = false,
   onCreated,
-  onOpenExplorer,
   onSelectLegacyAgent
 }: ThreadCommandComposerProps) {
   const navigate = useNavigate();
@@ -150,16 +163,35 @@ export function ThreadCommandComposer({
     stopPropagation: () => void;
   }) => boolean>(() => false);
   const insertDroppedMentionsRef = useRef<(event: DragEvent) => boolean>(() => false);
+  const restoreFocusAfterSubmitRef = useRef(false);
   const [dropOver, setDropOver] = useState(false);
   const dropOverRef = useRef(false);
   dropOverRef.current = dropOver;
   const selectedProject = pinnedProject ?? projects.find((row) => row.id === projectId);
   const hosts = useHosts();
+  const publicAppUrl = usePublicAppUrl();
+  const threads = useThreads((s) => s.threads);
+  const currentThread = threadId ? threads.find((row) => row.id === threadId) : undefined;
   const [hostId, setHostId] = useState(() => defaultHostId(hosts, pinnedProject?.hostId));
+  const [hostBusy, setHostBusy] = useState<string | null>(null);
+  const [pairingCommand, setPairingCommand] = useState<string | null>(null);
+  const [sshPick, setSshPick] = useState<{ hostId: string; name: string } | null>(null);
 
   useEffect(() => {
     setHostId(defaultHostId(hosts, selectedProject?.hostId));
   }, [hosts, selectedProject?.hostId]);
+
+  const hostAction = useMemo(
+    () => resolveComposerHostAction({
+      hosts,
+      project: selectedProject,
+      selectedHostId: currentThread?.hostId ?? hostId,
+      publicAppUrl
+    }),
+    [currentThread?.hostId, hostId, hosts, publicAppUrl, selectedProject]
+  );
+  const hostSendBlocked = shouldBlockComposerSend(hostAction, selectedProject);
+  const showHostPicker = shouldShowHostPicker(hosts, selectedProject);
 
   const syncTrigger = useCallback((editor: Parameters<typeof findActiveTrigger>[0]) => {
     const next = findActiveTrigger(editor, COMPOSER_TRIGGERS);
@@ -295,11 +327,26 @@ export function ThreadCommandComposer({
   useEffect(() => {
     if (!editor || seededInitialText.current || !initialText) return;
     seededInitialText.current = true;
-    editor.chain().insertContent(initialText).run();
-  }, [editor, initialText]);
+    const chain = editor.chain().insertContent(initialText);
+    if (autoFocus) chain.focus();
+    chain.run();
+  }, [autoFocus, editor, initialText]);
 
   useEffect(() => {
-    editor?.setEditable(!busy);
+    if (!editor || !autoFocus || initialText) return;
+    editor.commands.focus();
+  }, [autoFocus, editor, initialText]);
+
+  useEffect(() => {
+    if (!editor) return;
+    editor.setEditable(!busy);
+    if (busy || !restoreFocusAfterSubmitRef.current) return;
+    const frame = requestAnimationFrame(() => {
+      if (editor.isDestroyed) return;
+      restoreFocusAfterSubmitRef.current = false;
+      editor.commands.focus('end', { scrollIntoView: false });
+    });
+    return () => cancelAnimationFrame(frame);
   }, [busy, editor]);
 
   const insertDroppedMentions = useCallback((event: DragEvent, atDropPoint: boolean): boolean => {
@@ -435,29 +482,75 @@ export function ThreadCommandComposer({
     if (!composerModes.includes(composerMode)) setComposerMode('agent');
   }, [composerMode, composerModes]);
 
+  const runPeerDaemon = useCallback(async (kind: 'install' | 'fix', targetHostId?: string) => {
+    const project = pinnedProject ?? projects.find((row) => row.id === projectId);
+    setPairingCommand(null);
+    setHostBusy(kind === 'install' ? 'Installing…' : 'Reconnecting…');
+    setError(null);
+    try {
+      const events = kind === 'install'
+        ? await product.hosts.bootstrap(project!.id)
+        : await product.hosts.repair(targetHostId!);
+      const outcome = bootstrapOutcome(events);
+      if (!outcome.ok) {
+        setError(outcome.message);
+        if (outcome.pairingCommand) setPairingCommand(outcome.pairingCommand);
+        if (outcome.code === 'ssh_identity_required' && targetHostId) {
+          const host = hosts.find((row) => row.id === targetHostId);
+          setSshPick({ hostId: targetHostId, name: host?.name ?? 'machine' });
+        }
+        return;
+      }
+      setHostId(outcome.hostId);
+      await loadProjects();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not update host daemon');
+    } finally {
+      setHostBusy(null);
+    }
+  }, [hosts, loadProjects, pinnedProject, projectId, projects]);
+
+  const onHostAction = useCallback(() => {
+    if (hostAction.kind === 'install') {
+      void runPeerDaemon('install');
+      return;
+    }
+    if (hostAction.kind !== 'fix') return;
+    if (hostAction.needsSshPick) {
+      const host = hosts.find((row) => row.id === hostAction.hostId);
+      setSshPick({ hostId: hostAction.hostId, name: host?.name ?? 'machine' });
+      return;
+    }
+    void runPeerDaemon('fix', hostAction.hostId);
+  }, [hostAction, hosts, runPeerDaemon]);
+
   const submit = useCallback(async (opts?: { modifierEnter?: boolean }) => {
-    if (busy || sendBlocked || typeaheadRef.current.open) return;
+    if (busy || sendBlocked || hostSendBlocked || typeaheadRef.current.open) return;
     const serialized = serializePromptEditor(editor?.getJSON());
     if (!serialized.text.trim()) {
       setError('Enter a message first');
+      editor?.commands.focus();
       return;
     }
     const selected = pinnedProject ?? projects.find((row) => row.id === projectId);
     if (!threadId && !selected) {
       setError('Select a project first');
+      editor?.commands.focus();
       return;
     }
     if (!threadId && !resolvedProviderId) {
       setError('No thread provider is available');
+      editor?.commands.focus();
       return;
     }
     const sendMode = resolveThreadSendMode({
       steerOnEnter,
-      threadRunning: isBusyThreadStatus(status ?? ''),
+      threadRunning: isBusyThreadStatus(status ?? '') || inFlightRetry,
       modifierEnter: opts?.modifierEnter === true
     });
     const text = applyComposerModePrefix(serialized.text, composerMode);
     const input = [{ type: 'text' as const, text, mentions: serialized.mentions }];
+    restoreFocusAfterSubmitRef.current = true;
     setError(null);
     setBusy(true);
     try {
@@ -501,6 +594,7 @@ export function ThreadCommandComposer({
   }, [
     busy,
     sendBlocked,
+    hostSendBlocked,
     composerMode,
     editor,
     navigate,
@@ -516,6 +610,7 @@ export function ThreadCommandComposer({
     route.focusedProjectId,
     route.isProjectWorkspace,
     status,
+    inFlightRetry,
     steerOnEnter,
     threadId,
     upsertThread,
@@ -543,10 +638,15 @@ export function ThreadCommandComposer({
     <ComposerIconButton
       className={`thread-command-send${busy ? ' is-sending' : ''}`}
       aria-label={busy ? 'Sending' : 'Send'}
-      title={busy ? 'Sending' : 'Send'}
+      title={
+        hostSendBlocked && hostAction.kind !== 'ready'
+          ? hostAction.reason
+          : busy ? 'Sending' : 'Send'
+      }
       aria-busy={busy}
       data-testid="thread-command-send"
-      disabled={busy || sendBlocked || !canSend}
+      disabled={busy || sendBlocked || hostSendBlocked || !canSend}
+      onMouseDown={(event) => event.preventDefault()}
       onClick={() => void submit()}
     >
       {busy ? (
@@ -566,6 +666,7 @@ export function ThreadCommandComposer({
   }, [editor]);
 
   return (
+    <>
     <PluginComposerChrome
       scope={threadId ? { kind: 'thread', threadId } : { kind: 'new-thread', projectId: projectId ?? null }}
       text={composerText}
@@ -664,7 +765,7 @@ export function ThreadCommandComposer({
                 >
                   <Mic size={14} />
                 </ComposerIconButton>
-                {threadId && shouldShowThreadStop(threadId, status) && (
+                {threadId && shouldShowThreadStop(threadId, status, inFlightRetry) && (
                   <ComposerIconButton
                     className="thread-command-stop"
                     aria-label="Stop"
@@ -684,15 +785,21 @@ export function ThreadCommandComposer({
       <div className="thread-command-composer-meta">
         <div className="thread-command-composer-meta-start">
           {threadId ? (
-            <button
-              type="button"
-              className="thread-command-chip"
-              data-testid="thread-env-label"
-              onClick={onOpenExplorer}
-            >
-              <Laptop size={14} aria-hidden="true" />
-              {environmentLabel ?? 'Local'}
-            </button>
+            <>
+              <span className="thread-command-chip thread-command-env" data-testid="thread-env-label">
+                <Laptop size={14} aria-hidden="true" />
+                {environmentLabel ?? 'Local'}
+              </span>
+              <ComposerHostActionChip
+                action={hostAction}
+                busyLabel={hostBusy}
+                pairingCommand={pairingCommand}
+                onAction={onHostAction}
+                onCopyPairing={pairingCommand
+                  ? () => void navigator.clipboard.writeText(pairingCommand)
+                  : undefined}
+              />
+            </>
           ) : (
             <>
               <div className="thread-command-chip">
@@ -708,7 +815,27 @@ export function ThreadCommandComposer({
                 />
               </div>
               <EnvironmentPicker projectId={projectId} value={workspace} onChange={setWorkspace} />
-              <HostMachinePicker hosts={hosts} value={hostId} onChange={setHostId} />
+              {showHostPicker && hosts.length > 0 && (
+                <div className="thread-command-chip">
+                  <Laptop size={14} aria-hidden="true" />
+                  <HostMachinePicker
+                    hosts={hosts}
+                    value={hostId}
+                    onChange={setHostId}
+                    includeDisconnected
+                    alwaysShow
+                  />
+                </div>
+              )}
+              <ComposerHostActionChip
+                action={hostAction}
+                busyLabel={hostBusy}
+                pairingCommand={pairingCommand}
+                onAction={onHostAction}
+                onCopyPairing={pairingCommand
+                  ? () => void navigator.clipboard.writeText(pairingCommand)
+                  : undefined}
+              />
             </>
           )}
         </div>
@@ -733,5 +860,18 @@ export function ThreadCommandComposer({
       </div>
     </div>
     </PluginComposerChrome>
+    {sshPick && (
+      <HostSshIdentityDialog
+        hostName={sshPick.name}
+        onClose={() => setSshPick(null)}
+        onSubmit={async (identity) => {
+          const hostIdToRepair = sshPick.hostId;
+          await product.hosts.updateSshIdentity(hostIdToRepair, identity);
+          setSshPick(null);
+          await runPeerDaemon('fix', hostIdToRepair);
+        }}
+      />
+    )}
+    </>
   );
 }

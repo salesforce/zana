@@ -127,13 +127,13 @@ export function MachinesSettingsView({
           />
         </Field>
         <div className="machines-toolbar">
-          <button type="button" className="btn" onClick={() => setAdding(true)}>
+          <button type="button" className="settings-btn" onClick={() => setAdding(true)}>
             Add machine
           </button>
           {actionable.length > 0 ? (
             <button
               type="button"
-              className="btn btn-primary"
+              className="settings-btn primary"
               disabled={busyKey !== null}
               onClick={() => {
                 void (async () => {
@@ -199,7 +199,7 @@ export function MachinesSettingsView({
                             {row.status.installAction ? (
                               <button
                                 type="button"
-                                className="btn"
+                                className="settings-btn"
                                 disabled={busyKey !== null}
                                 onClick={() => void runInstall(host.id, row.provider, row.status.installAction!.kind)}
                               >
@@ -230,7 +230,7 @@ export function MachinesSettingsView({
                     <option value="full">Full</option>
                   </select>
                 </label>
-                <button type="button" className="btn" onClick={() => {
+                <button type="button" className="settings-btn" onClick={() => {
                   setRenameId(host.id);
                   setRenameValue(host.name);
                 }}
@@ -240,7 +240,7 @@ export function MachinesSettingsView({
                 {host.lastRejectedProtocolVersion ? (
                   <button
                     type="button"
-                    className="btn"
+                    className="settings-btn"
                     onClick={() => void product.hosts.retryUpdate(host.id)}
                   >
                     Retry update
@@ -249,7 +249,7 @@ export function MachinesSettingsView({
                 {host.isPrimary ? null : (
                   <button
                     type="button"
-                    className="btn"
+                    className="settings-btn"
                     onClick={() => {
                       if (window.confirm(`Remove ${host.name}?`)) {
                         void product.hosts.remove(host.id);

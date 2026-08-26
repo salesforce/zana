@@ -9,9 +9,11 @@ import {
 } from '@zana-ai/zcc-db';
 import {
   buildThreadTimelineFromEvents,
+  extractThreadTimelineActivePlanTurn,
   EMPTY_ACCEPTED_CLIENT_REQUEST_CONTEXT,
   type ThreadEventWithMeta
 } from '@zana-ai/zcc-thread-view';
+import { planCommandForProvider } from './thread-provider-catalog.js';
 import type { ThreadEvent } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
@@ -98,7 +100,8 @@ function projectTimeline(
         threadStatus: thread.status,
         threadName: thread.title ?? '',
         turnMessageDetail: 'full',
-        workspaceRoot: environment?.path ?? null
+        workspaceRoot: environment?.path ?? null,
+        planCommand: planCommandForProvider(thread.providerId)
       }
     });
     return {
@@ -212,11 +215,22 @@ export function conversationOutline(ctx: ProductHttpContext, threadId: string) {
       threadStatus: thread.status,
       threadName: thread.title ?? '',
       turnMessageDetail: 'full',
-      workspaceRoot: environment?.path ?? null
+      workspaceRoot: environment?.path ?? null,
+      planCommand: planCommandForProvider(thread.providerId)
     }
   });
   return {
     items: conversationItemsFromRows(timeline.rows),
     maxSeq: rows[rows.length - 1]?.sequence ?? 0
   };
+}
+
+export function resolveActivePlanTurn(ctx: ProductHttpContext, thread: ConversationThreadRow) {
+  const events = storedEventsToMeta(listConversationThreadEvents(ctx.db, thread.id));
+  return extractThreadTimelineActivePlanTurn({
+    events,
+    planCommand: planCommandForProvider(thread.providerId),
+    providerId: thread.providerId,
+    threadStatus: thread.status
+  });
 }

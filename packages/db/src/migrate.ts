@@ -122,6 +122,12 @@ const MIGRATE_V6 = [
       )`
 ];
 
+const MIGRATE_V7 = [
+  `ALTER TABLE hosts ADD COLUMN ssh_host TEXT`,
+  `ALTER TABLE hosts ADD COLUMN ssh_user TEXT`,
+  `ALTER TABLE hosts ADD COLUMN ssh_proxy_jump TEXT`
+];
+
 const MIGRATE_V5 = [
   `CREATE TABLE pending_interactions (
         id TEXT PRIMARY KEY,
@@ -219,6 +225,7 @@ export function migrate(database: SqliteDatabase): void {
   if (!applied.has(4)) applyVersion(database, 4, MIGRATE_V4);
   if (!applied.has(5)) applyVersion(database, 5, MIGRATE_V5);
   if (!applied.has(6)) applyVersion(database, 6, MIGRATE_V6);
+  if (!applied.has(7)) applyVersion(database, 7, MIGRATE_V7);
 }
 
 export { CREATE_TABLES_V1 as SCHEMA_STATEMENTS_V1 };

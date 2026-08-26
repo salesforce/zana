@@ -1,15 +1,18 @@
 # Using Zana on multiple machines
 
-There are two separate ways to use another computer with Zana Command Center.
-They are not interchangeable:
+There are two ways to use another computer with Zana Command Center.
+They work together after you install a host daemon:
 
-- **Enrolled machines** run a host daemon. Settings → Machines pairs the box;
-  projects and threads can then execute there. This is the pull-model path.
-- **SSH remotes** stay a different path: this machine's daemon `ssh`s into the
-  box. Pairing a host daemon does not replace SSH, and SSH does not enroll a
-  daemon.
+- **Enrolled machines** run a host daemon. The other box outbound-connects to
+  this app. Projects and threads then execute there.
+- **SSH remotes** start as a different path: this machine's daemon `ssh`s into
+  the box. The composer **Install** control uses that SSH channel to bootstrap
+  a host daemon, then converts the project so later threads run on the enrolled
+  machine instead of SSH PTY.
 
-This page is the enrolled-machines path.
+SSH is the bootstrap and repair channel. The enrolled daemon is the execution
+path after Install. Copy-paste join remains for boxes you cannot SSH to from
+this machine.
 
 ---
 
@@ -51,9 +54,10 @@ curl -fL ${publicAppUrl}/install.sh | sh -s -- \
    **15 minutes** and can be redeemed once. The Machines list turns the new row
    online when the daemon's websocket is open.
 
-The installer requires **Node.js 22 or newer** on the remote box. It downloads
-the exact host-daemon artifact this server exposes at `/install/zcc-host.tgz`,
-so the remote stays on the same protocol as the app you are running.
+The installer requires **Node.js 22 or newer** on the remote box. Manual
+pairing downloads the host-daemon tarball from `/install/zcc-host.tgz`. Composer
+**Install** / **Fix** pipes that same tarball over SSH from this machine
+instead of asking the remote to `curl` it.
 
 Each joined server gets its own daemon instance and data directory
 (`~/.zcc-machines/<server-host>`). Joining never touches a full local install's
@@ -66,12 +70,33 @@ unit. Both start the daemon with `--auto-update`.
 
 ---
 
+## Install or Fix from the composer
+
+When the selected project is an SSH remote, the composer shows **Install**.
+That SSHs from this machine, unpacks the host daemon, joins it to the app, and
+rewrites the project to run on that enrolled host.
+
+When an already-paired machine is offline, the composer shows **Fix**. If Zana
+stored an SSH alias for that host, Fix restarts the LaunchAgent or systemd user
+unit and reinstalls if restart does not reconnect. If no SSH alias is stored,
+Fix asks you to pick a host from `~/.ssh/config`, then retries.
+
+Install and Fix need the same **Public app URL** as Add machine (not loopback).
+This machine's host daemon must be connected — it owns `~/.ssh` and performs
+the SSH. If SSH cannot run, copy the Settings → Add machine join command.
+
+Send is blocked only when the *execution* host is an enrolled machine that is
+offline. SSH remotes keep working over SSH PTY until you install a daemon.
+
+---
+
 ## After it connects
 
 1. **New project** — pick the machine in the host picker and browse its disk
    (or paste a path on that box).
 2. **New thread / home composer** — pick the machine when more than one host is
-   connected. A project remembers the host it was created on.
+   connected, or when an enrolled machine is offline (Online/Offline in the
+   picker). A project remembers the host it was created on.
 3. **Permission ceiling** — Settings → Machines can cap that box at accept-edits
    or auto. Owner-session only; a thread cannot exceed the ceiling.
 

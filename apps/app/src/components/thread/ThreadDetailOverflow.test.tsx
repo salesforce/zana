@@ -57,6 +57,7 @@ describe('ThreadDetailOverflow wiring', () => {
     expect(source).toContain('product.threads.stop');
     expect(source).toContain('<PromptModal');
     expect(source).toContain('shouldShowThreadStop');
+    expect(source).toContain('inFlightRetry');
     expect(source).toContain('createPortal(menu, document.body)');
     expect(source).toContain('threadOverflowMenuPosition');
     expect(source).toContain('queueMicrotask(() => setRenaming(true))');

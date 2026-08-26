@@ -129,6 +129,34 @@ describe('host command dispatch', () => {
     expect(startedWork).toEqual([{ providerId: 'shell', input: [] }]);
   });
 
+  it('forwards clientRequestId from thread.start into startWork', async () => {
+    const project = mkdtempSync(join(tmpdir(), 'zcc-thread-creq-'));
+    const startedWork: Array<{ clientRequestId?: string }> = [];
+    const runtime = createCommandRuntime({
+      verifyProviders: async () => installedClaude,
+      startWork: async (input) => {
+        startedWork.push({ clientRequestId: input.clientRequestId });
+      }
+    });
+    const environmentId = randomUUID();
+    await dispatchHostCommand(runtime, {
+      type: 'environment.provision',
+      environmentId,
+      workspaceProvisionType: 'unmanaged',
+      path: project
+    });
+    await expect(dispatchHostCommand(runtime, {
+      type: 'thread.start',
+      threadId: randomUUID(),
+      environmentId,
+      projectId: 'proj-1',
+      providerId: 'claude',
+      input: ['/plan inspect'],
+      clientRequestId: 'creq_23456789ab'
+    })).resolves.toMatchObject({ started: true });
+    expect(startedWork).toEqual([{ clientRequestId: 'creq_23456789ab' }]);
+  });
+
   it('forwards remote reconnect fields into startWork', async () => {
     const project = mkdtempSync(join(tmpdir(), 'zcc-thread-remote-'));
     const started: Array<{ remote?: unknown; reconnectTmuxId?: string }> = [];
@@ -224,6 +252,36 @@ describe('host command dispatch', () => {
     if (!response.ok) expect(response.error.code).toBe('unknown_command');
   });
 
+  it('cancels plan mode without dropping the running thread', async () => {
+    const stopped: string[] = [];
+    const runtime = createCommandRuntime({
+      verifyProviders: async () => installedClaude,
+      stopWork: async (input) => {
+        stopped.push(input.threadId);
+      }
+    });
+    const threadId = randomUUID();
+    const missingId = randomUUID();
+    runtime.threads.set(threadId, { environmentId: randomUUID(), providerId: 'claude' });
+    await expect(dispatchHostCommand(runtime, {
+      type: 'thread.plan.cancel',
+      threadId: missingId,
+      expectedTurnId: 'turn-plan-1'
+    })).resolves.toMatchObject({ threadId: missingId, cancelled: false });
+    await expect(dispatchHostCommand(runtime, {
+      type: 'thread.plan.cancel',
+      threadId,
+      expectedTurnId: 'turn-plan-1'
+    })).resolves.toMatchObject({ threadId, cancelled: true });
+    expect(stopped).toEqual([threadId]);
+    expect(runtime.threads.has(threadId)).toBe(true);
+    await expect(dispatchHostCommand(runtime, {
+      type: 'thread.stop',
+      threadId
+    })).resolves.toMatchObject({ stopped: true });
+    expect(runtime.threads.has(threadId)).toBe(false);
+  });
+
   it('delivers interactive.resolve through the runtime registry', async () => {
     const delivered: Array<{ interactionId: string }> = [];
     const runtime = createCommandRuntime({
@@ -307,14 +365,14 @@ describe('host command dispatch', () => {
   it('lazily resumes a missing thread runtime before turn.submit', async () => {
     const project = mkdtempSync(join(tmpdir(), 'zcc-lazy-resume-'));
     const resumed: Array<{ threadId: string; providerThreadId: string }> = [];
-    const submitted: string[][] = [];
+    const submitted: Array<{ input: string[]; clientRequestId?: string }> = [];
     const runtime = createCommandRuntime({
       verifyProviders: async () => installedClaude,
       resumeWork: async (input) => {
         resumed.push({ threadId: input.threadId, providerThreadId: input.providerThreadId });
       },
       submitTurn: async (input) => {
-        submitted.push(input.input);
+        submitted.push({ input: input.input, clientRequestId: input.clientRequestId });
       }
     });
     const environmentId = randomUUID();
@@ -337,6 +395,7 @@ describe('host command dispatch', () => {
       threadId,
       environmentId,
       input: ['hello again'],
+      clientRequestId: 'creq_23456789ab',
       resume: {
         projectId: 'proj-1',
         providerId: 'claude',
@@ -345,7 +404,7 @@ describe('host command dispatch', () => {
       }
     })).resolves.toMatchObject({ accepted: true });
     expect(resumed).toEqual([{ threadId, providerThreadId: 'prov-1' }]);
-    expect(submitted).toEqual([['hello again']]);
+    expect(submitted).toEqual([{ input: ['hello again'], clientRequestId: 'creq_23456789ab' }]);
     expect(runtime.threads.has(threadId)).toBe(true);
   });
 
@@ -429,6 +488,25 @@ describe('host command dispatch', () => {
       }
     });
     expect(listed).toMatchObject({ models: [{ displayName: 'Live Model' }] });
+  });
+
+  it('dispatches peer_daemon.status through injectable SSH', async () => {
+    const runtime = createCommandRuntime({
+      verifyProviders: async () => installedClaude,
+      peerSsh: {
+        async run() {
+          return { code: 0, stdout: 'connected\n', stderr: '' };
+        },
+        async pipeFile() {
+          return { code: 0, stdout: '', stderr: '' };
+        }
+      }
+    });
+    await expect(dispatchHostCommand(runtime, {
+      type: 'peer_daemon.status',
+      remote: { host: 'devbox' },
+      serverHost: 'box.tailnet.ts.net'
+    })).resolves.toEqual({ state: 'connected' });
   });
 });
 

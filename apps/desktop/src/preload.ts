@@ -616,9 +616,6 @@ const api: CcApi = {
     read: (projectId) => ipcRenderer.invoke(IPC.openCodeSettings.read, projectId),
     write: (projectId, patch, expectedHash) => ipcRenderer.invoke(IPC.openCodeSettings.write, projectId, patch, expectedHash)
   },
-  authorizations: {
-    apply: (input) => ipcRenderer.invoke(IPC.authorizations.apply, input)
-  },
   skills: {
     list: (projectPath?: string) => ipcRenderer.invoke(IPC.skills.list, projectPath),
     setEnabled: (name: string, enabled: boolean) =>

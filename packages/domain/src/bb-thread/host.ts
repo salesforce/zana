@@ -24,6 +24,11 @@ export const hostSchema = z.object({
   lastRejectedProtocolVersion: z.number().int().positive().nullable(),
   /** True for the co-started local daemon. It cannot be removed. */
   isPrimary: z.boolean(),
+  /**
+   * True when the server stored an SSH alias for this machine so Fix can
+   * restart or reinstall the daemon without asking the renderer for a host.
+   */
+  canRepairViaSsh: z.boolean().default(false),
   createdAt: z.number(),
   updatedAt: z.number(),
 });

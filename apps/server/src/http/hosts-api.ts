@@ -3,18 +3,22 @@ import {
   createHostJoinCodeRequestSchema,
   hostDirectoryQuerySchema,
   hostProviderCliInstallRequestSchema,
+  hostBootstrapRequestSchema,
+  hostSshIdentityRequestSchema,
   updateHostPermissionCeilingRequestSchema
 } from '@zana-ai/zcc-server-contract';
 import {
   destroyHost,
   getHost,
   renameHost,
-  updateHostPermissionCeiling
+  updateHostPermissionCeiling,
+  updateHostSshIdentity
 } from '@zana-ai/zcc-db';
 import { readJsonBody, sendJson, sendNdjson } from './json.js';
 import type { ProductHttpContext } from './product-context.js';
 import { listPublicHosts, parseHostRename, toPublicHost } from '../services/hosts/host-public.js';
 import { HostUnavailableError } from './host-hub.js';
+import { bootstrapHostForProject, parseSshIdentity, repairHost } from '../services/hosts/host-bootstrap.js';
 
 function routeParams(pathname: string, pattern: string): Record<string, string> | null {
   const pathParts = pathname.split('/').filter(Boolean);
@@ -74,6 +78,24 @@ export async function handleHostsApi(
     return true;
   }
 
+  if (path === '/api/v1/hosts/bootstrap' && method === 'POST') {
+    let body: unknown = {};
+    try {
+      body = await readJsonBody(request);
+    } catch {
+      sendJson(response, 400, { error: 'invalid JSON' });
+      return true;
+    }
+    const parsed = hostBootstrapRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      sendJson(response, 400, { error: 'invalid bootstrap request' });
+      return true;
+    }
+    const events = await bootstrapHostForProject(ctx, parsed.data.projectId);
+    sendNdjson(response, events);
+    return true;
+  }
+
   if (path === '/api/v1/hosts' && method === 'GET') {
     sendJson(response, 200, listPublicHosts(ctx.db, ctx.hostHub));
     return true;
@@ -88,6 +110,54 @@ export async function handleHostsApi(
     }
     ctx.hostHub.requestRetryUpdate(host.id);
     sendJson(response, 200, { ok: true as const });
+    return true;
+  }
+
+  const repair = routeParams(path, '/api/v1/hosts/:id/repair');
+  if (repair && method === 'POST') {
+    const host = requireHost(ctx, repair.id);
+    if (!host) {
+      sendJson(response, 404, { error: 'host not found' });
+      return true;
+    }
+    const events = await repairHost(ctx, host.id);
+    sendNdjson(response, events);
+    return true;
+  }
+
+  const sshIdentity = routeParams(path, '/api/v1/hosts/:id/ssh-identity');
+  if (sshIdentity && method === 'PATCH') {
+    const host = requireHost(ctx, sshIdentity.id);
+    if (!host) {
+      sendJson(response, 404, { error: 'host not found' });
+      return true;
+    }
+    let body: unknown;
+    try {
+      body = await readJsonBody(request);
+    } catch {
+      sendJson(response, 400, { error: 'invalid JSON' });
+      return true;
+    }
+    const parsed = hostSshIdentityRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      sendJson(response, 400, { error: 'invalid SSH identity' });
+      return true;
+    }
+    let identity: ReturnType<typeof parseSshIdentity>;
+    try {
+      identity = parseSshIdentity(parsed.data);
+    } catch (error) {
+      sendJson(response, 400, { error: error instanceof Error ? error.message : 'invalid SSH identity' });
+      return true;
+    }
+    const updated = updateHostSshIdentity(ctx.db, host.id, identity);
+    if (!updated || updated.destroyedAt) {
+      sendJson(response, 404, { error: 'host not found' });
+      return true;
+    }
+    emitHostsChanged(ctx);
+    sendJson(response, 200, toPublicHost(updated, connectedSet(ctx)));
     return true;
   }
 

@@ -11,6 +11,7 @@ import {
 } from './plugin-slot-resolvers.js';
 import { setActiveComposerApi } from './plugin-composer-api.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
+import { CREATE_PLUGIN_PROMPT } from '../lib/create-resource-prompts.js';
 
 export function PluginComposerChrome({
   scope,
@@ -64,6 +65,50 @@ export function PluginComposerChrome({
     };
   }, [api]);
 
+  const pluginActions = matching.flatMap((row) =>
+    (row.actions ?? []).map((action) => {
+      const Action = action.component;
+      return (
+        <PluginSlotBoundary
+          key={composerContributionKey(row.pluginId, row.generation, row.id, action.id)}
+          pluginId={row.pluginId}
+          generation={row.generation}
+        >
+          <Action />
+        </PluginSlotBoundary>
+      );
+    })
+  );
+  const plusItems = matching.flatMap((row) =>
+    (row.plusMenu ?? []).map((item) => {
+      const Icon = item.icon ? resolveIcon(item.icon) : null;
+      return (
+        <button
+          key={composerContributionKey(row.pluginId, row.generation, row.id, item.id)}
+          type="button"
+          className="plugin-composer-plus"
+          disabled={typeof item.disabled === 'boolean' ? item.disabled : false}
+          onClick={() => {
+            void item.run({
+              composer: api,
+              view: {
+                scope,
+                layout: 'expanded',
+                draft: { text, isEmpty: !text, attachmentCount: 0 },
+                run: { isRunning: false, isSubmitting: false }
+              }
+            });
+          }}
+        >
+          {Icon ? <Icon size={12} /> : null}
+          {item.label}
+        </button>
+      );
+    })
+  );
+  const showCreatePlugin = scope.kind === 'new-thread';
+  const hasActions = pluginActions.length > 0 || plusItems.length > 0 || showCreatePlugin;
+
   return (
     <div className="plugin-composer-chrome">
       {matching.flatMap((row) =>
@@ -83,49 +128,29 @@ export function PluginComposerChrome({
         })
       )}
       {children}
-      <div className="plugin-composer-actions">
-        {matching.flatMap((row) =>
-          (row.actions ?? []).map((action) => {
-            const Action = action.component;
-            return (
-              <PluginSlotBoundary
-                key={composerContributionKey(row.pluginId, row.generation, row.id, action.id)}
-                pluginId={row.pluginId}
-                generation={row.generation}
-              >
-                <Action />
-              </PluginSlotBoundary>
-            );
-          })
-        )}
-        {matching.flatMap((row) =>
-          (row.plusMenu ?? []).map((item) => {
-            const Icon = item.icon ? resolveIcon(item.icon) : null;
-            return (
-              <button
-                key={composerContributionKey(row.pluginId, row.generation, row.id, item.id)}
-                type="button"
-                className="plugin-composer-plus"
-                disabled={typeof item.disabled === 'boolean' ? item.disabled : false}
-                onClick={() => {
-                  void item.run({
-                    composer: api,
-                    view: {
-                      scope,
-                      layout: 'expanded',
-                      draft: { text, isEmpty: !text, attachmentCount: 0 },
-                      run: { isRunning: false, isSubmitting: false }
-                    }
-                  });
-                }}
-              >
-                {Icon ? <Icon size={12} /> : null}
-                {item.label}
-              </button>
-            );
-          })
-        )}
-      </div>
+      {hasActions ? (
+        <div className="plugin-composer-actions">
+          {pluginActions}
+          {plusItems}
+          {showCreatePlugin ? (
+            <button
+              type="button"
+              className="plugin-composer-plus"
+              data-testid="composer-create-plugin"
+              onClick={() => {
+                if (text.includes(CREATE_PLUGIN_PROMPT.trim())) {
+                  focus();
+                  return;
+                }
+                setText(text ? `${text}\n${CREATE_PLUGIN_PROMPT}` : CREATE_PLUGIN_PROMPT);
+                focus();
+              }}
+            >
+              Create plugin
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

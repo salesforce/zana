@@ -344,6 +344,8 @@ describe('zcc-plugin-authoring skill', () => {
     expect(skill).toContain('zcc plugin install');
     expect(skill).toContain('zcc plugin dev');
     expect(skill).toContain('zcc plugin types');
+    expect(skill).toContain('zcc plugin logs');
+    expect(skill).toContain('server.ts');
     expect(skill).toContain('plugin_cli_output_too_large');
   });
 

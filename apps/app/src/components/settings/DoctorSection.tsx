@@ -2,7 +2,7 @@ import { product } from '../../lib/product-client.js';
 import { useState, useCallback } from 'react';
 import { Stethoscope } from 'lucide-react';
 import { useData, useUi } from '../../store.js';
-import { Section } from './FormFields.js';
+import { Section, SettingsActionRow } from './FormFields.js';
 import { buildLaunchArgs } from '../AgentLauncher.js';
 import { DOCTOR_PROMPT } from '../../lib/doctorPrompt.js';
 
@@ -51,22 +51,22 @@ export function DoctorSection() {
   }, [busy, createTerminal]);
 
   return (
-    <Section
-      title="Doctor"
-      help="Spins up a focused repair agent whose only goal is to make this app run — it verifies your ~/.zcc setup, checks that runtime extensions are installed, enabled, and authorized (consented), and fixes what it safely can. It won’t add features or change behaviour; anything broader is a job for a normal agent."
-    >
+    <Section title="Doctor">
       {error && <p className="modal-error">{error}</p>}
-      <div className="settings-btn-row">
+      <SettingsActionRow
+        label="Call Doctor Agent"
+        help="Verifies ~/.zcc, runtime extensions, and consent — then fixes what it safely can. It won’t add features or change behaviour."
+      >
         <button
           type="button"
-          className="settings-btn"
+          className="settings-btn primary"
           onClick={() => void callDoctor()}
           disabled={busy}
         >
           <Stethoscope size={14} />
-          {busy ? 'Summoning…' : 'Call Doctor Agent'}
+          {busy ? 'Summoning…' : 'Call Doctor'}
         </button>
-      </div>
+      </SettingsActionRow>
     </Section>
   );
 }

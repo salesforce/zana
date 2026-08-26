@@ -61,6 +61,7 @@ export interface RuntimeSupervisor {
   disablePlugin(id: string): Promise<unknown>;
   removePlugin(id: string): Promise<unknown>;
   reloadPlugin(id: string): Promise<unknown>;
+  pluginLogs(id: string, n?: number): Promise<unknown>;
   searchPlugins(query: string): Promise<unknown>;
   outdatedPlugins(): Promise<unknown>;
   updatePlugin(id: string): Promise<unknown>;
@@ -180,6 +181,7 @@ export async function startRuntimeSupervisor(options: StartRuntimeSupervisorOpti
     disablePlugin: async () => { throw new Error('plugin host is unavailable'); },
     removePlugin: async () => { throw new Error('plugin host is unavailable'); },
     reloadPlugin: async () => { throw new Error('plugin host is unavailable'); },
+    pluginLogs: async () => [],
     searchPlugins: async () => [],
     outdatedPlugins: async () => [],
     updatePlugin: async () => { throw new Error('plugin host is unavailable'); },
@@ -228,6 +230,7 @@ interface UtilityRuntime {
   request(operation: 'plugins-disable', pluginId: string): Promise<unknown>;
   request(operation: 'plugins-remove', pluginId: string): Promise<unknown>;
   request(operation: 'plugins-reload', pluginId: string): Promise<unknown>;
+  request(operation: 'plugins-logs', pluginId: string, n?: number): Promise<unknown>;
   request(operation: 'plugins-search', query: string): Promise<unknown>;
   request(operation: 'plugins-outdated'): Promise<unknown>;
   request(operation: 'plugins-update', pluginId: string): Promise<unknown>;
@@ -485,6 +488,7 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
     disablePlugin: (id) => server.request('plugins-disable', id),
     removePlugin: (id) => server.request('plugins-remove', id),
     reloadPlugin: (id) => server.request('plugins-reload', id),
+    pluginLogs: (id, n) => server.request('plugins-logs', id, n),
     searchPlugins: (query) => server.request('plugins-search', query),
     outdatedPlugins: () => server.request('plugins-outdated'),
     updatePlugin: (id) => server.request('plugins-update', id),
@@ -536,7 +540,7 @@ function createUtilityRuntime(runtime: { child: UtilityChild; url: string }): Ut
   return {
     ...runtime,
     request(
-      operation: 'app-version' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-call-rpc' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
+      operation: 'app-version' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-call-rpc' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
        ...args: [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, Record<string, string | boolean | null>] | []
     ) {
       const id = randomUUID();
@@ -569,6 +573,7 @@ function createUtilityRuntime(runtime: { child: UtilityChild; url: string }): Ut
           } : {}),
           ...(operation === 'plugins-install' ? { source: args[0] as string } : {}),
           ...(operation === 'plugins-enable' || operation === 'plugins-disable' || operation === 'plugins-remove' || operation === 'plugins-reload' || operation === 'plugins-update' || operation === 'plugins-settings-get' ? { pluginId: args[0] as string } : {}),
+          ...(operation === 'plugins-logs' ? { pluginId: args[0] as string, n: args[1] as number | undefined } : {}),
           ...(operation === 'plugins-search' ? { query: args[0] as string } : {}),
           ...(operation === 'plugins-call-rpc' ? { pluginId: args[0] as string, method: args[1] as string, args: args[2] } : {}),
           ...(operation === 'plugins-settings-set' ? { pluginId: args[0] as string, values: args[1] as Record<string, string | boolean | null> } : {}),

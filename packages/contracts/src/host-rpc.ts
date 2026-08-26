@@ -12,7 +12,7 @@ import {
   workspaceStatusSchema
 } from '@zana-ai/zcc-domain';
 import { gitBranchNameSchema } from '@zana-ai/zcc-domain/git-checkout';
-import { availableModelSchema, pendingInteractionResolutionSchema, reasoningLevelSchema } from '@zana-ai/zcc-domain/thread-runtime';
+import { availableModelSchema, clientTurnRequestIdSchema, pendingInteractionResolutionSchema, reasoningLevelSchema } from '@zana-ai/zcc-domain/thread-runtime';
 import {
   providerCliInstallEventSchema,
   providerCliInstallRequestSchema,
@@ -23,7 +23,7 @@ import {
  * Bump when any enroll payload, daemon WS message, host-rpc command, or host
  * event envelope changes shape or meaning. Mismatch fails before dispatch.
  */
-export const HOST_RPC_PROTOCOL_VERSION = 12;
+export const HOST_RPC_PROTOCOL_VERSION = 15;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
 
 const UuidSchema = z.string().uuid();
@@ -42,6 +42,7 @@ export const HostRpcCommandTypeSchema = z.enum([
   'thread.resize',
   'thread.input',
   'thread.stop',
+  'thread.plan.cancel',
   'thread.resume',
   'turn.submit',
   'terminal.start',
@@ -70,7 +71,10 @@ export const HostRpcCommandTypeSchema = z.enum([
   'provider.cli_status',
   'provider.cli_install',
   'host.install_global_skills',
-  'host.global_skills_status'
+  'host.global_skills_status',
+  'peer_daemon.status',
+  'peer_daemon.restart',
+  'peer_daemon.install'
 ]);
 export type HostRpcCommandType = z.infer<typeof HostRpcCommandTypeSchema>;
 
@@ -232,7 +236,9 @@ export const ThreadStartCommandSchema = z.object({
   permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional(),
   model: z.string().min(1).max(200).optional(),
   reasoningLevel: reasoningLevelSchema.optional(),
-  providerThreadId: z.string().min(1).optional()
+  providerThreadId: z.string().min(1).optional(),
+  /** Correlates turn/input/accepted with the server's client/turn/requested. */
+  clientRequestId: clientTurnRequestIdSchema.optional()
 }).strict();
 
 export const ThreadResizeCommandSchema = z.object({
@@ -251,6 +257,12 @@ export const ThreadInputCommandSchema = z.object({
 export const ThreadStopCommandSchema = z.object({
   type: z.literal('thread.stop'),
   threadId: UuidSchema
+}).strict();
+
+export const ThreadPlanCancelCommandSchema = z.object({
+  type: z.literal('thread.plan.cancel'),
+  threadId: UuidSchema,
+  expectedTurnId: z.string().min(1).max(200)
 }).strict();
 
 export const ThreadResumeFieldsSchema = z.object({
@@ -273,7 +285,8 @@ export const TurnSubmitCommandSchema = z.object({
   mode: z.enum(['start', 'auto', 'steer', 'queue-if-active', 'steer-if-active']).optional(),
   resume: ThreadResumeFieldsSchema.optional(),
   model: z.string().min(1).max(200).optional(),
-  reasoningLevel: reasoningLevelSchema.optional()
+  reasoningLevel: reasoningLevelSchema.optional(),
+  clientRequestId: clientTurnRequestIdSchema.optional()
 }).strict();
 
 export const ThreadResumeCommandSchema = ThreadResumeFieldsSchema.extend({
@@ -459,6 +472,36 @@ export const HostGlobalSkillsStatusCommandSchema = z.object({
 }).strict();
 export type HostGlobalSkillsStatusCommand = z.infer<typeof HostGlobalSkillsStatusCommandSchema>;
 
+const PeerDaemonRemoteSchema = z.object({
+  host: z.string().min(1).max(256),
+  user: z.string().min(1).max(256).optional(),
+  proxyJump: z.string().min(1).max(256).optional()
+}).strict();
+
+export const PeerDaemonStatusCommandSchema = z.object({
+  type: z.literal('peer_daemon.status'),
+  remote: PeerDaemonRemoteSchema,
+  serverHost: z.string().min(1).max(256)
+}).strict();
+export type PeerDaemonStatusCommand = z.infer<typeof PeerDaemonStatusCommandSchema>;
+
+export const PeerDaemonRestartCommandSchema = z.object({
+  type: z.literal('peer_daemon.restart'),
+  remote: PeerDaemonRemoteSchema,
+  serverHost: z.string().min(1).max(256)
+}).strict();
+export type PeerDaemonRestartCommand = z.infer<typeof PeerDaemonRestartCommandSchema>;
+
+export const PeerDaemonInstallCommandSchema = z.object({
+  type: z.literal('peer_daemon.install'),
+  remote: PeerDaemonRemoteSchema,
+  joinCode: z.string().min(1).max(200),
+  hostId: UuidSchema,
+  serverUrl: z.string().url().max(512),
+  artifactPath: PathSchema
+}).strict();
+export type PeerDaemonInstallCommand = z.infer<typeof PeerDaemonInstallCommandSchema>;
+
 export const HostRpcCommandSchema = z.union([
   ProviderStatusCommandSchema,
   ProviderListModelsCommandSchema,
@@ -469,6 +512,7 @@ export const HostRpcCommandSchema = z.union([
   ThreadResizeCommandSchema,
   ThreadInputCommandSchema,
   ThreadStopCommandSchema,
+  ThreadPlanCancelCommandSchema,
   ThreadResumeCommandSchema,
   TurnSubmitCommandSchema,
   TerminalStartCommandSchema,
@@ -497,7 +541,10 @@ export const HostRpcCommandSchema = z.union([
   ProviderCliStatusCommandSchema,
   ProviderCliInstallCommandSchema,
   HostInstallGlobalSkillsCommandSchema,
-  HostGlobalSkillsStatusCommandSchema
+  HostGlobalSkillsStatusCommandSchema,
+  PeerDaemonStatusCommandSchema,
+  PeerDaemonRestartCommandSchema,
+  PeerDaemonInstallCommandSchema
 ]);
 export type HostRpcCommand = z.infer<typeof HostRpcCommandSchema>;
 
@@ -566,6 +613,12 @@ export const ThreadStopResultSchema = z.object({
   stopped: z.literal(true)
 }).strict();
 export type ThreadStopResult = z.infer<typeof ThreadStopResultSchema>;
+
+export const ThreadPlanCancelResultSchema = z.object({
+  threadId: UuidSchema,
+  cancelled: z.boolean()
+}).strict();
+export type ThreadPlanCancelResult = z.infer<typeof ThreadPlanCancelResultSchema>;
 
 export const TurnSubmitResultSchema = z.object({
   threadId: UuidSchema,
@@ -717,6 +770,24 @@ export const HostGlobalSkillsStatusResultSchema = z.object({
 }).strict();
 export type HostGlobalSkillsStatusResult = z.infer<typeof HostGlobalSkillsStatusResultSchema>;
 
+export const PeerDaemonStatusResultSchema = z.object({
+  state: z.enum(['connected', 'disconnected', 'not_installed']),
+  message: z.string().min(1).optional()
+}).strict();
+export type PeerDaemonStatusResult = z.infer<typeof PeerDaemonStatusResultSchema>;
+
+export const PeerDaemonRestartResultSchema = z.object({
+  ok: z.literal(true),
+  log: z.string()
+}).strict();
+export type PeerDaemonRestartResult = z.infer<typeof PeerDaemonRestartResultSchema>;
+
+export const PeerDaemonInstallResultSchema = z.object({
+  ok: z.literal(true),
+  log: z.string()
+}).strict();
+export type PeerDaemonInstallResult = z.infer<typeof PeerDaemonInstallResultSchema>;
+
 export type {
   ProviderCliInstallActionKind,
   ProviderCliInstallEvent,
@@ -735,6 +806,7 @@ export const HostRpcResultSchemaByType = {
   'thread.resize': ThreadResizeResultSchema,
   'thread.input': ThreadInputResultSchema,
   'thread.stop': ThreadStopResultSchema,
+  'thread.plan.cancel': ThreadPlanCancelResultSchema,
   'thread.resume': ThreadResumeResultSchema,
   'turn.submit': TurnSubmitResultSchema,
   'terminal.start': TerminalStartResultSchema,
@@ -763,7 +835,10 @@ export const HostRpcResultSchemaByType = {
   'provider.cli_status': ProviderCliStatusResultSchema,
   'provider.cli_install': ProviderCliInstallResultSchema,
   'host.install_global_skills': HostInstallGlobalSkillsResultSchema,
-  'host.global_skills_status': HostGlobalSkillsStatusResultSchema
+  'host.global_skills_status': HostGlobalSkillsStatusResultSchema,
+  'peer_daemon.status': PeerDaemonStatusResultSchema,
+  'peer_daemon.restart': PeerDaemonRestartResultSchema,
+  'peer_daemon.install': PeerDaemonInstallResultSchema
 } as const;
 
 export const HostRpcErrorSchema = z.object({

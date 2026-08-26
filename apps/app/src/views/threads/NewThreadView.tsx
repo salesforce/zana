@@ -1,10 +1,11 @@
 import { useMemo } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useLocation, useParams, useSearchParams } from 'react-router-dom';
 import type { Project } from '@zana-ai/zcc-domain/product';
 import { useData } from '@/store';
 import { AuroraGrid } from '@/components/AuroraGrid';
 import { HomeAgentComposer } from '@/components/HomeAgentComposer';
 import { PluginNewThreadActions } from '@/plugins/PluginNewThreadActions';
+import { composePromptSeedFrom } from '@/lib/compose-prompt-seed';
 
 /**
  * Composer-only create surface. Agents board and list navigate here instead of
@@ -16,7 +17,9 @@ import { PluginNewThreadActions } from '@/plugins/PluginNewThreadActions';
  */
 export function NewThreadView({ project: projectProp }: { project?: Project } = {}) {
   const { projectId: routeProjectId } = useParams();
+  const location = useLocation();
   const [search] = useSearchParams();
+  const seed = composePromptSeedFrom({ searchParams: search, state: location.state });
   const projectId = projectProp?.id ?? routeProjectId ?? search.get('project');
   const projects = useData((s) => s.projects);
   const project = useMemo(
@@ -29,7 +32,11 @@ export function NewThreadView({ project: projectProp }: { project?: Project } = 
       <AuroraGrid />
       <div className="new-thread-view-inner">
         <h1 className="new-thread-view-heading">New thread</h1>
-        <HomeAgentComposer project={project} />
+        <HomeAgentComposer
+          project={project}
+          initialText={seed.initialText}
+          autoFocus={seed.focusPrompt}
+        />
         <PluginNewThreadActions projectId={project?.id ?? null} />
       </div>
     </section>

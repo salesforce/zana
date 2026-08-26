@@ -15,7 +15,10 @@ describe('NewThreadView', () => {
     expect(view).toContain('<AuroraGrid />');
     expect(view).toContain('className="new-thread-view-inner"');
     expect(view.indexOf('<AuroraGrid />')).toBeLessThan(view.indexOf('className="new-thread-view-inner"'));
-    expect(view).toContain('<HomeAgentComposer project={project} />');
+    expect(view).toContain('<HomeAgentComposer');
+    expect(view).toContain('project={project}');
+    expect(view).toContain('initialText={seed.initialText}');
+    expect(view).toContain('autoFocus={seed.focusPrompt}');
     expect(view).toContain('PluginNewThreadActions');
     expect(view).not.toContain('allowLegacyAgent');
     expect(view).toContain('search.get(\'project\')');

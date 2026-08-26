@@ -73,7 +73,7 @@ export function AgentSessionView({
   focusDiffKey?: number;
   modal?: boolean;
 }) {
-  const panel = useSecondaryPanel(session.id, { defaultOpen: true });
+  const panel = useSecondaryPanel(modal ? `${session.id}:modal` : session.id, { defaultOpen: !modal });
   const exited = session.status === 'exited';
   const loadedStats = useSessionStats(session.id, projectId, exited, providedStats === undefined);
   const stats = providedStats ?? loadedStats;

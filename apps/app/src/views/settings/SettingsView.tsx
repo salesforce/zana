@@ -12,6 +12,8 @@ import {
   TerminalSquare,
   SquareArrowOutUpRight,
   Laptop,
+  Network,
+  Inbox,
   type LucideIcon
 } from 'lucide-react';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
@@ -27,6 +29,8 @@ import { EditorTab } from '@/views/settings/EditorView';
 import { ExperimentalTab } from '@/views/settings/ExperimentalView';
 import { AboutTab } from '@/views/settings/AboutView';
 import { MachinesTab } from '@/views/settings/MachinesSettingsView';
+import { ConnectivityTab } from '@/views/settings/ConnectivityView';
+import { InboxSettingsTab } from '@/views/settings/InboxSettingsView';
 import { ProjectTab } from '@/views/settings/ProjectSettingsView';
 import { PersonasPanel } from '@/views/settings/PersonasView';
 import { SquadsPanel } from '@/views/settings/SquadsView';
@@ -66,9 +70,11 @@ export const SETTINGS_SECTIONS: Array<{
   projectScoped?: boolean;
 }> = [
   { id: 'global', label: 'Global', icon: Settings2, desc: 'App-wide defaults', group: 'config' },
+  { id: 'inbox', label: 'Inbox', icon: Inbox, desc: 'Guidance, tool trust, and PDF export', group: 'config' },
   { id: 'terminal', label: 'Terminal', icon: TerminalSquare, desc: 'Appearance, shell & tmux', group: 'config' },
   { id: 'harness', label: 'Code Harness', icon: Bot, desc: 'Verify & enable Claude Code, Cursor, Codex & PI', group: 'config' },
   { id: 'editor', label: 'Editor', icon: SquareArrowOutUpRight, desc: 'Open-in-editor & terminal buttons', group: 'config' },
+  { id: 'connectivity', label: 'Connectivity', icon: Network, desc: 'Remote SSH defaults', group: 'config' },
   { id: 'machines', label: 'Machines', icon: Laptop, desc: 'Pair remote host daemons', group: 'config' },
   { id: 'prompts', label: 'Prompts', icon: Sparkles, desc: 'LLM micro-call prompts', group: 'config' },
   { id: 'agents', label: 'Agents', icon: Bot, desc: 'Attention, automation, heartbeat & Overseer', group: 'agents' },
@@ -96,16 +102,11 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
     { id: 'agent-automation', label: 'Agent automation' },
     { id: 'agent-heartbeat', label: 'Agent heartbeat' },
     { id: 'auto-close-idle', label: 'Idle handling & follow-ups' },
-    { id: 'overseer', label: 'Overseer' }
+    { id: 'overseer', label: 'Overseer' },
+    { id: 'legacy-agent', label: 'Legacy Agent' }
   ],
   global: [
     { id: 'appearance', label: 'Appearance' },
-    { id: 'files', label: 'Files' },
-    { id: 'authorizations', label: 'Authorizations' },
-    { id: 'connectivity', label: 'Connectivity' },
-    { id: 'performance', label: 'Performance & limits' },
-    { id: 'projects', label: 'Projects' },
-    { id: 'inbox', label: 'Inbox' },
     { id: 'threads', label: 'Threads' },
     { id: 'cli-skills', label: 'CLI skills' },
     { id: 'debug', label: 'Debug' }
@@ -136,6 +137,12 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
   machines: [
     { id: 'machines', label: 'Paired machines' }
   ],
+  connectivity: [
+    { id: 'connectivity-remote', label: 'Remote SSH' }
+  ],
+  inbox: [
+    { id: 'inbox-general', label: 'Inbox' }
+  ],
 };
 
 /** Catalogue sections that need room for their list/detail controls. */
@@ -161,13 +168,11 @@ export function SettingsView() {
   const projects = useData((s) => s.projects);
   const selectedProject = projects.find((p) => p.id === selectedProjectId) ?? null;
 
-  const [hooks, setHooks] = useState<unknown>(null);
   const [homedir, setHomedir] = useState<string>('');
 
   useEffect(() => {
     product.config.get().then(setConfig).catch(() => {});
     product.app.homedir().then(setHomedir).catch(() => {});
-    product.skills.readHooks().then(setHooks).catch(() => {});
   }, []);
 
   const markSaved = useCallback(() => {
@@ -314,8 +319,6 @@ export function SettingsView() {
             config={config}
             onConfigDraft={setConfig}
             onUpdate={update}
-            hooks={hooks}
-            onOpen={openFile}
           />
         ) : tab === 'terminal' ? (
           <TerminalTab config={config} onConfigDraft={setConfig} onUpdate={update} />
@@ -351,6 +354,18 @@ export function SettingsView() {
           <AboutTab config={config} onUpdate={update} />
         ) : tab === 'machines' ? (
           <MachinesTab
+            config={config}
+            onConfigDraft={setConfig}
+            onUpdate={update}
+          />
+        ) : tab === 'connectivity' ? (
+          <ConnectivityTab
+            config={config}
+            onConfigDraft={setConfig}
+            onUpdate={update}
+          />
+        ) : tab === 'inbox' ? (
+          <InboxSettingsTab
             config={config}
             onConfigDraft={setConfig}
             onUpdate={update}

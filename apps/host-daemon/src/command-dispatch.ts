@@ -38,6 +38,13 @@ import { HostCommandError } from './host-command-error.js';
 import { transcribeCodexVoice } from './codex-voice-transcribe.js';
 import { getProviderCliStatus, runProviderCliInstall } from './provider-cli-health.js';
 import { installGlobalSkills, readGlobalSkillsStatus } from './global-skills.js';
+import {
+  createSystemPeerDaemonSsh,
+  peerDaemonInstall,
+  peerDaemonRestart,
+  peerDaemonStatus,
+  type PeerDaemonSsh
+} from './peer-daemon.js';
 
 const MAX_LISTED_FILES = 500;
 const MAX_DIR_ENTRIES = 2000;
@@ -87,6 +94,7 @@ export interface CommandRuntime {
     mode?: string;
     model?: string;
     reasoningLevel?: ThreadWorkInput['reasoningLevel'];
+    clientRequestId?: ThreadWorkInput['clientRequestId'];
   }) => Promise<void>;
   resumeWork?: (input: ThreadResumeInput) => Promise<{ providerThreadId?: string } | void>;
   resizeWork?: (input: { threadId: string; cols: number; rows: number }) => Promise<void>;
@@ -110,6 +118,7 @@ export interface CommandRuntime {
     cwd?: string;
   }) => Promise<ProviderListModelsResult>;
   homeDir?: string;
+  peerSsh?: PeerDaemonSsh;
 }
 
 export function createCommandRuntime(options: {
@@ -124,6 +133,7 @@ export function createCommandRuntime(options: {
     mode?: string;
     model?: string;
     reasoningLevel?: ThreadWorkInput['reasoningLevel'];
+    clientRequestId?: ThreadWorkInput['clientRequestId'];
   }) => Promise<void>;
   resumeWork?: (input: ThreadResumeInput) => Promise<{ providerThreadId?: string } | void>;
   resizeWork?: (input: { threadId: string; cols: number; rows: number }) => Promise<void>;
@@ -147,6 +157,7 @@ export function createCommandRuntime(options: {
     cwd?: string;
   }) => Promise<ProviderListModelsResult>;
   homeDir?: string;
+  peerSsh?: PeerDaemonSsh;
 }): CommandRuntime {
   const loadConfig = options.loadConfig ?? (() => ({ version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null }) as AppConfig);
   return {
@@ -170,6 +181,7 @@ export function createCommandRuntime(options: {
     stopTerminal: options.stopTerminal,
     listModels: options.listModels,
     homeDir: options.homeDir,
+    peerSsh: options.peerSsh,
     verifyProviders: options.verifyProviders ?? (async () => {
       const results: HarnessVerifyResult[] = await verifyHarnesses(loadConfig());
       return { providers: results };
@@ -534,6 +546,15 @@ export async function dispatchHostCommand(
       runtime.threads.delete(command.threadId);
       return { threadId: command.threadId, stopped: true as const };
     }
+    case 'thread.plan.cancel': {
+      if (!runtime.threads.has(command.threadId)) {
+        return { threadId: command.threadId, cancelled: false as const };
+      }
+      if (runtime.stopWork) {
+        await runtime.stopWork({ threadId: command.threadId });
+      }
+      return { threadId: command.threadId, cancelled: true as const };
+    }
     case 'thread.resume':
       return applyThreadResume(runtime, command);
     case 'turn.submit': {
@@ -544,7 +565,8 @@ export async function dispatchHostCommand(
           input: command.input,
           mode: command.mode,
           model: command.model,
-          reasoningLevel: command.reasoningLevel
+          reasoningLevel: command.reasoningLevel,
+          clientRequestId: command.clientRequestId
         });
       } else {
         runtime.emit({ threadId: command.threadId, kind: 'turn.completed' });
@@ -773,6 +795,26 @@ export async function dispatchHostCommand(
       return readGlobalSkillsStatus({ names: command.names, homeDir: runtime.homeDir });
     case 'host.install_global_skills':
       return installGlobalSkills({ skills: command.skills, homeDir: runtime.homeDir });
+    case 'peer_daemon.status':
+      return peerDaemonStatus(runtime.peerSsh ?? createSystemPeerDaemonSsh(), command.remote, command.serverHost);
+    case 'peer_daemon.restart':
+      return peerDaemonRestart(runtime.peerSsh ?? createSystemPeerDaemonSsh(), command.remote, command.serverHost);
+    case 'peer_daemon.install': {
+      let serverHost: string;
+      try {
+        serverHost = new URL(command.serverUrl).hostname;
+      } catch {
+        throw new HostCommandError('invalid_server_url', 'server URL is invalid');
+      }
+      return peerDaemonInstall(runtime.peerSsh ?? createSystemPeerDaemonSsh(), {
+        remote: command.remote,
+        joinCode: command.joinCode,
+        hostId: command.hostId,
+        serverUrl: command.serverUrl,
+        serverHost,
+        artifactPath: command.artifactPath
+      });
+    }
     default: {
       const exhaustive: never = command;
       throw new HostCommandError('unknown_command', `unsupported command ${(exhaustive as { type: string }).type}`);

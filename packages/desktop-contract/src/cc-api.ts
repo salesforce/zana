@@ -1,4 +1,3 @@
-import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
 import type { MarketplaceCatalogRow } from '@zana-ai/zcc-domain';
 import type {
   ProviderCliInstallActionKind,
@@ -148,14 +147,16 @@ import type {
 } from '@zana-ai/zcc-domain/harness-adapter';
 import type { UsageSummary } from '@zana-ai/zcc-domain/telemetry-events';
 import type {
+  Host,
   JsonValue,
   PendingInteraction,
   PendingInteractionResolution
 } from '@zana-ai/zcc-domain/thread-runtime';
-import type {
-  ApplyAuthorizationInput,
-  AuthorizationApplyResult
-} from '@zana-ai/zcc-domain/authorizations';
+
+export type HostBootstrapEvent =
+  | { type: 'log'; text: string }
+  | { type: 'done'; hostId: string }
+  | { type: 'error'; code: string; message: string; pairingCommand?: string };
 
 export interface CcApi {
   startup: {
@@ -309,6 +310,12 @@ export interface CcApi {
     ): Promise<Host>;
     retryUpdate(id: string): Promise<{ ok: true }>;
     remove(id: string): Promise<{ ok: true }>;
+    bootstrap(projectId: string): Promise<HostBootstrapEvent[]>;
+    repair(id: string): Promise<HostBootstrapEvent[]>;
+    updateSshIdentity(
+      id: string,
+      patch: { host: string; user?: string; proxyJump?: string }
+    ): Promise<Host>;
     directory(id: string, path?: string): Promise<{
       directory: string;
       parent: string | null;
@@ -399,6 +406,7 @@ export interface CcApi {
       }
     ): Promise<{ ok: boolean }>;
     stop(threadId: string): Promise<{ ok: boolean }>;
+    cancelPlan(threadId: string): Promise<{ ok: boolean }>;
     resume(threadId: string): Promise<{ ok: boolean }>;
     timeline(threadId: string, query?: {
       segmentLimit?: number;
@@ -1363,10 +1371,6 @@ export interface CcApi {
   openCodeSettings: {
     read(projectId: string): Promise<OpenCodeSettingsResult>;
     write(projectId: string, patch: OpenCodeProjectSettings, expectedHash: string | null): Promise<OpenCodeSettingsResult>;
-  };
-  authorizations: {
-    /** Apply an authorization preset (tier) to the given agent CLIs. */
-    apply(input: ApplyAuthorizationInput): Promise<AuthorizationApplyResult[]>;
   };
   scheduler: {
     list(): Promise<ScheduledTask[]>;

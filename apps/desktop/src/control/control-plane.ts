@@ -197,6 +197,7 @@ export interface ControlPlaneDeps {
     removeMarketplace(url: string): Promise<unknown>;
     cliContributions(): Promise<unknown>;
     runCliCommand(id: string, argv: string[]): Promise<unknown>;
+    logs(id: string, n?: number): Promise<unknown>;
   };
   log?: (msg: string) => void;
 }
@@ -276,6 +277,7 @@ const KNOWN_OPS = new Set<string>([
   'plugin.disable',
   'plugin.remove',
   'plugin.reload',
+  'plugin.logs',
   'plugin.search',
   'plugin.outdated',
   'plugin.update',
@@ -617,6 +619,12 @@ export async function dispatchOp(
           const id = str(args.id);
           if (!id) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
           return { ok: true, value: await (host?.reload(id) ?? (await ensureFallbackPluginService()).reload(id)) };
+        }
+        if (op === 'plugin.logs') {
+          const id = str(args.id);
+          if (!id) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
+          const n = typeof args.n === 'number' && Number.isFinite(args.n) ? args.n : 100;
+          return { ok: true, value: await (host?.logs(id, n) ?? (await ensureFallbackPluginService()).readLogs(id, n)) };
         }
         if (op === 'plugin.search') {
           const query = str(args.query) ?? '';

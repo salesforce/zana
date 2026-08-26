@@ -1,21 +1,101 @@
 import { useCallback, useEffect, useState } from 'react';
+import { AlertTriangle, CheckCircle2, CircleDashed } from 'lucide-react';
 import { product } from '../../lib/product-client.js';
 import { Section } from '@/components/settings/FormFields';
 import { useHosts } from '@/hooks/useHosts';
+import {
+  cliSkillBulkLabel,
+  cliSkillInstallError,
+  cliSkillPresentation,
+  pendingCliSkillHostIds,
+  type CliSkillMachineRow,
+  type CliSkillTone
+} from './cli-skills-status.js';
 
 type MachineStatus = Awaited<ReturnType<typeof product.cliSkills.status>>['machines'][number];
 
-function statusLabel(status: MachineStatus['status']): string {
-  if (status === 'installed') return 'Installed';
-  if (status === 'outdated') return 'Needs update';
-  if (status === 'missing') return 'Not installed';
-  return 'Unknown';
+function StatusIcon({ tone }: { tone: CliSkillTone }) {
+  if (tone === 'ok') return <CheckCircle2 size={16} aria-hidden="true" />;
+  if (tone === 'warn') return <AlertTriangle size={16} aria-hidden="true" />;
+  return <CircleDashed size={16} aria-hidden="true" />;
+}
+
+export function CliSkillsMachinePanel({
+  machines,
+  busyKey,
+  error,
+  onInstall
+}: {
+  machines: CliSkillMachineRow[];
+  busyKey: string | null;
+  error: string | null;
+  onInstall: (hostIds: string[]) => void;
+}) {
+  const bulkLabel = cliSkillBulkLabel(machines);
+  const pendingIds = pendingCliSkillHostIds(machines);
+
+  return (
+    <>
+      {machines.length === 0 ? (
+        <p className="settings-help settings-help--muted">Pair a machine first, then install the skill there.</p>
+      ) : (
+        <ul className="cli-skills-list" data-testid="cli-skills-status">
+          {machines.map((row) => {
+            const copy = cliSkillPresentation(row.status);
+            const rowBusy = busyKey === row.hostId || busyKey === 'all';
+            return (
+              <li
+                key={row.hostId}
+                className={`cli-skills-row cli-skills-row--${copy.tone}`}
+              >
+                <span className="cli-skills-icon">
+                  <StatusIcon tone={copy.tone} />
+                </span>
+                <div className="cli-skills-row-copy">
+                  <strong title={row.hostName}>{row.hostName}</strong>
+                  <p>{copy.hint}</p>
+                </div>
+                <div className="cli-skills-row-actions">
+                  <span className={`settings-badge${copy.tone === 'warn' ? ' settings-badge--warn' : copy.tone === 'ok' ? ' settings-badge--ok' : ''}`}>
+                    {copy.label}
+                  </span>
+                  {copy.actionLabel ? (
+                    <button
+                      type="button"
+                      className="settings-btn"
+                      disabled={busyKey !== null}
+                      onClick={() => onInstall([row.hostId])}
+                    >
+                      {rowBusy ? 'Working…' : copy.actionLabel}
+                    </button>
+                  ) : null}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {error && <p className="modal-error">{error}</p>}
+      {bulkLabel ? (
+        <div className="cli-skills-toolbar">
+          <button
+            type="button"
+            className="settings-btn primary"
+            disabled={busyKey !== null}
+            onClick={() => onInstall(pendingIds)}
+          >
+            {busyKey === 'all' ? 'Installing…' : bulkLabel}
+          </button>
+        </div>
+      ) : null}
+    </>
+  );
 }
 
 export function CliSkillsSettings() {
   const hosts = useHosts();
   const [machines, setMachines] = useState<MachineStatus[]>([]);
-  const [busy, setBusy] = useState(false);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
@@ -29,57 +109,40 @@ export function CliSkillsSettings() {
     refresh();
   }, [hosts, refresh]);
 
-  const installable = machines.filter((row) => row.status !== 'unknown');
-  const install = () => {
-    const hostIds = (installable.length > 0 ? installable : machines).map((row) => row.hostId);
+  const install = (hostIds: string[]) => {
     if (hostIds.length === 0) {
       setError('Pair a machine first');
       return;
     }
-    setBusy(true);
+    setBusyKey(hostIds.length === 1 ? hostIds[0]! : 'all');
     setError(null);
     product.cliSkills
       .install(hostIds)
       .then((body) => {
-        const failed = body.results.filter((row) => !row.ok);
-        if (failed.length > 0) {
-          setError(failed.map((row) => `${row.hostName}: ${row.errorMessage}`).join(' · '));
-        }
+        setError(cliSkillInstallError(body.results));
         refresh();
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-      .finally(() => setBusy(false));
+      .finally(() => setBusyKey(null));
   };
 
   return (
     <Section
       anchorId="cli-skills"
       title="CLI skills"
-      help="Install the zcc-cli skill into ~/.agents/skills and ~/.claude/skills on each machine so agents outside Zana can drive the CLI."
+      help={
+        <>
+          Give agents outside Zana the <code>zcc-cli</code> skill. Each machine
+          stores a copy in <code>~/.agents/skills</code> and <code>~/.claude/skills</code>.
+        </>
+      }
     >
-      {machines.length === 0 ? (
-        <p className="settings-help settings-help--muted">No machines enrolled yet.</p>
-      ) : (
-        <ul className="cli-skills-list" data-testid="cli-skills-status">
-          {machines.map((row) => (
-            <li key={row.hostId} className="cli-skills-row">
-              <span>{row.hostName}</span>
-              <span className={`settings-badge${row.status === 'missing' || row.status === 'outdated' ? ' settings-badge--warn' : ''}`}>
-                {statusLabel(row.status)}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-      {error && <p className="modal-error">{error}</p>}
-      <button
-        type="button"
-        className="settings-btn primary"
-        disabled={busy || machines.length === 0}
-        onClick={install}
-      >
-        {busy ? 'Installing…' : 'Install'}
-      </button>
+      <CliSkillsMachinePanel
+        machines={machines}
+        busyKey={busyKey}
+        error={error}
+        onInstall={install}
+      />
     </Section>
   );
 }

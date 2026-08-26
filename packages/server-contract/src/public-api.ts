@@ -111,6 +111,9 @@ import type {
   HostProviderCliInstallRequest,
   HostProviderCliStatusResponse,
   HostRetryUpdateResponse,
+  HostBootstrapRequest,
+  HostBootstrapEvent,
+  HostSshIdentityRequest,
   ProjectAttachmentContentQuery,
   ProjectAttachmentUploadForm,
   ProjectBranchesQuery,
@@ -249,6 +252,8 @@ import {
   environmentStatusQuerySchema,
   hostDirectoryQuerySchema,
   hostCloneDefaultPathQuerySchema,
+  hostBootstrapRequestSchema,
+  hostSshIdentityRequestSchema,
   hostFileListRequestSchema,
   hostFileReadRequestSchema,
   hostFileWriteRequestSchema,
@@ -606,6 +611,14 @@ export const publicApiRoutes = {
       ),
       response: jsonResponse<CreateHostJoinCodeResponse>({ status: 201 }),
     }),
+    bootstrap: defineRoute({
+      path: "/hosts/bootstrap",
+      method: "post",
+      request: jsonRequest<EmptyInput, HostBootstrapRequest>(
+        hostBootstrapRequestSchema,
+      ),
+      response: textResponse<HostBootstrapEvent>(),
+    }),
     list: defineRoute({
       path: "/hosts",
       method: "get",
@@ -637,6 +650,20 @@ export const publicApiRoutes = {
       method: "post",
       request: noRequest<PathId>(),
       response: jsonResponse<HostRetryUpdateResponse>(),
+    }),
+    repair: defineRoute({
+      path: "/hosts/:id/repair",
+      method: "post",
+      request: noRequest<PathId>(),
+      response: textResponse<HostBootstrapEvent>(),
+    }),
+    updateSshIdentity: defineRoute({
+      path: "/hosts/:id/ssh-identity",
+      method: "patch",
+      request: jsonRequest<PathId, HostSshIdentityRequest>(
+        hostSshIdentityRequestSchema,
+      ),
+      response: jsonResponse<Host>(),
     }),
     delete: defineRoute({
       path: "/hosts/:id",

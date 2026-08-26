@@ -43,6 +43,7 @@ export interface CreateConversationInput {
   projectId: string;
   providerId: string;
   input: string[];
+  promptInput?: unknown;
   hostId?: string;
   id?: string;
   environment?: SpawnEnvironmentChoice;
@@ -162,9 +163,10 @@ async function startConversationOnHost(
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const requestedMode = args.input.permissionMode ?? permissionModeForLaunchProfile(args.input.providerId);
   const permissionMode = clampPermissionModeToHost(ctx.db, args.hostId, requestedMode) ?? requestedMode;
-  appendClientTurnRequested(ctx, {
+  const clientRequestId = appendClientTurnRequested(ctx, {
     threadId: args.thread.id,
     prompt: args.prompt,
+    promptInput: args.input.promptInput,
     kind: 'thread-start',
     permissionMode,
     model: args.input.model,
@@ -184,7 +186,8 @@ async function startConversationOnHost(
       bridgeLaunch: bridgeLaunchForProvider(providerId, dataDir),
       permissionMode,
       ...(args.input.model ? { model: args.input.model } : {}),
-      ...(args.input.reasoningLevel ? { reasoningLevel: args.input.reasoningLevel } : {})
+      ...(args.input.reasoningLevel ? { reasoningLevel: args.input.reasoningLevel } : {}),
+      ...(clientRequestId ? { clientRequestId } : {})
     }
   });
   if (started.providerThreadId) {

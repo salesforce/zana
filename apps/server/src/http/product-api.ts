@@ -24,6 +24,7 @@ import {
   type CreateConversationInput
 } from '../services/threads/conversation-create.js';
 import {
+  cancelConversationPlan,
   forkConversation,
   resumeConversation,
   sendConversationTurn,
@@ -700,6 +701,20 @@ export async function handleProductHttp(
       return true;
     }
 
+    const threadPlanCancel = routeParams(path, '/api/v1/threads/:id/plan/cancel');
+    if (threadPlanCancel && method === 'POST') {
+      try {
+        sendJson(response, 200, await cancelConversationPlan(ctx, threadPlanCancel.id));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
     const threadResume = routeParams(path, '/api/v1/threads/:id/resume');
     if (threadResume && method === 'POST') {
       try {
@@ -780,6 +795,7 @@ export async function handleProductHttp(
           projectId: typeof body.projectId === 'string' ? body.projectId : '',
           providerId: typeof body.providerId === 'string' ? body.providerId : 'claude-code',
           input: flattenThreadInput(body.input ?? body.prompt),
+          promptInput: body.input ?? body.prompt,
           hostId: typeof body.hostId === 'string' ? body.hostId : undefined,
           id: typeof body.id === 'string' ? body.id : undefined,
           environment: environmentChoice?.data,

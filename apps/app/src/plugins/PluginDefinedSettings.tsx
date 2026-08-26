@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { product } from '../lib/product-client.js';
 import type { PluginSettingsSnapshot } from '@zana-ai/zcc-domain/product';
+import { CheckboxField } from '../components/settings/FormFields.js';
 
 export function PluginSettingsForm({
   snap,
@@ -21,15 +22,13 @@ export function PluginSettingsForm({
         const value = snap.values[key];
         if (descriptor.type === 'boolean') {
           return (
-            <label key={key} className="settings-toggle">
-              <input
-                type="checkbox"
-                checked={value === true}
-                disabled={busy}
-                onChange={(event) => onSave(key, event.target.checked)}
-              />
-              {descriptor.label}
-            </label>
+            <CheckboxField
+              key={key}
+              label={descriptor.label}
+              checked={value === true}
+              disabled={busy}
+              onChange={(next) => onSave(key, next)}
+            />
           );
         }
         if (descriptor.type === 'select' && descriptor.options) {

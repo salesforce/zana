@@ -246,6 +246,18 @@ parentPort.on('message', async ({ data }) => {
       }
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: await plugins.reload(message.pluginId) });
     }
+    if (message.operation === 'plugins-logs') {
+      if (!plugins) {
+        parentPort.postMessage({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, message: 'plugin host is unavailable' });
+        return;
+      }
+      parentPort.postMessage({
+        type: 'result',
+        protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+        id: message.id,
+        value: await plugins.readLogs(message.pluginId, message.n)
+      });
+    }
     if (message.operation === 'plugins-snapshot') {
       parentPort.postMessage({
         type: 'result',

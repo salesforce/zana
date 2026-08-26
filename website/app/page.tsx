@@ -162,7 +162,7 @@ export default function Home() {
                 <Link className="bb-button bb-button-secondary" href="/marketplace/">Browse marketplace</Link>
               </div>
             </div>
-            <pre className="bb-code-window" aria-label="Example Zana plugin definition"><code><span className="bb-code-muted">package.json</span>{'\n'}{'{'}{'\n'}  <span className="bb-code-key">"name"</span>: <span className="bb-code-value">"zcc-plugin-team-tools"</span>,{'\n'}  <span className="bb-code-key">"zcc"</span>: {'{'} <span className="bb-code-key">"name"</span>: <span className="bb-code-value">"Team tools"</span>, <span className="bb-code-key">"app"</span>: <span className="bb-code-value">"./app.js"</span> {'}'}{'\n'}{'}'}</code></pre>
+            <pre className="bb-code-window" aria-label="Example Zana plugin definition"><code><span className="bb-code-muted">package.json</span>{'\n'}{'{'}{'\n'}  <span className="bb-code-key">"name"</span>: <span className="bb-code-value">"zcc-plugin-team-tools"</span>,{'\n'}  <span className="bb-code-key">"zcc"</span>: {'{'} <span className="bb-code-key">"name"</span>: <span className="bb-code-value">"Team tools"</span>, <span className="bb-code-key">"app"</span>: <span className="bb-code-value">"./app.tsx"</span> {'}'}{'\n'}{'}'}</code></pre>
           </div>
         </div>
       </section>

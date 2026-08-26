@@ -1,5 +1,5 @@
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
-import { AUTO_CLOSE_IDLE_DEFAULTS, HEARTBEAT_DEFAULTS } from '@zana-ai/zcc-domain/product';
+import { AUTO_CLOSE_IDLE_DEFAULTS, HEARTBEAT_DEFAULTS, SESSION_MEMORY_DEFAULTS } from '@zana-ai/zcc-domain/product';
 import { Section, Field, CheckboxField } from '@/components/settings/FormFields';
 import { OverseerRecentPane } from '@/components/settings/OverseerRecentPane';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
@@ -536,6 +536,71 @@ export function AgentsSettingsView({
             </Field>
           </>
         )}
+      </Section>
+
+      <Section
+        anchorId="legacy-agent"
+        title="Legacy Agent"
+        help="Resource ceilings for PTY (Legacy Agent) terminal sessions so many or runaway agents can't exhaust this machine."
+      >
+        <Field
+          label="Max live sessions"
+          help={`Hard cap on how many terminal sessions can run at once (visible, hidden, and scheduled alike). Leave blank to auto-size from this machine’s RAM — a long agent on a large-context model can hold several GB, so too many at once can exhaust memory. Range ${SESSION_MEMORY_DEFAULTS.minLiveSessions}–${SESSION_MEMORY_DEFAULTS.maxLiveSessionsCeiling}.`}
+        >
+          <input
+            type="number"
+            min={SESSION_MEMORY_DEFAULTS.minLiveSessions}
+            max={SESSION_MEMORY_DEFAULTS.maxLiveSessionsCeiling}
+            placeholder="auto"
+            value={config.maxLiveSessions ?? ''}
+            onChange={(e) => {
+              const raw = e.target.value;
+              if (raw === '') {
+                onConfigDraft({ ...config, maxLiveSessions: undefined });
+                return;
+              }
+              const n = parseInt(raw, 10);
+              if (!Number.isNaN(n)) onConfigDraft({ ...config, maxLiveSessions: n });
+            }}
+            onBlur={(e) => {
+              const raw = e.target.value.trim();
+              if (raw === '') {
+                onUpdate({ maxLiveSessions: undefined });
+                return;
+              }
+              const n = Math.max(
+                SESSION_MEMORY_DEFAULTS.minLiveSessions,
+                Math.min(SESSION_MEMORY_DEFAULTS.maxLiveSessionsCeiling, parseInt(raw, 10) || 0)
+              );
+              onUpdate({ maxLiveSessions: n });
+            }}
+          />
+        </Field>
+        <Field
+          label="Agent heap limit (MB)"
+          help={`Per-session memory ceiling for claude agents, passed via NODE_OPTIONS=--max-old-space-size and inherited by any subagents the session spawns. Bounds a runaway agent so it fails its own turn instead of taking the whole app down. Default ${SESSION_MEMORY_DEFAULTS.claudeMaxOldSpaceMB}. Set to 0 to disable (let V8 auto-size). Takes effect on the next session launch.`}
+        >
+          <input
+            type="number"
+            min={0}
+            max={32768}
+            step={512}
+            value={config.claudeMaxOldSpaceMB ?? SESSION_MEMORY_DEFAULTS.claudeMaxOldSpaceMB}
+            onChange={(e) => {
+              const n = parseInt(e.target.value, 10);
+              if (!Number.isNaN(n)) onConfigDraft({ ...config, claudeMaxOldSpaceMB: n });
+            }}
+            onBlur={(e) => {
+              const n = parseInt(e.target.value, 10);
+              const clamped = Number.isNaN(n)
+                ? SESSION_MEMORY_DEFAULTS.claudeMaxOldSpaceMB
+                : n <= 0
+                  ? 0
+                  : Math.max(512, Math.min(32768, n));
+              onUpdate({ claudeMaxOldSpaceMB: clamped });
+            }}
+          />
+        </Field>
       </Section>
     </>
   );

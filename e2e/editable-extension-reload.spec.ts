@@ -42,7 +42,7 @@ test('imported editable folder automatically reloads a rebuilt dist while its sh
     // This is the user-facing path: Extensions → Installed → Open existing extension.
     await app.window.locator('.nav-item', { hasText: 'Plugins' }).first().click();
     await app.window.getByTestId('extensions-nav-installed').click();
-    await app.window.getByRole('button', { name: 'New plugin' }).click();
+    await app.window.getByRole('button', { name: 'Install or open a plugin' }).click();
     const importButton = app.window.getByRole('menuitem', { name: 'Open existing plugin' });
     await expect(importButton).toBeVisible();
     await importButton.click();

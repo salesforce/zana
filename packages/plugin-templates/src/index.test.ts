@@ -26,12 +26,15 @@ describe('scaffoldPlugin', () => {
     };
     expect(pkg.name).toBe('zcc-plugin-hello-abcd');
     expect(pkg.zcc.name).toBe('Hello');
-    expect(pkg.zcc.app).toBe('./app.js');
+    expect(pkg.zcc.app).toBe('./app.tsx');
     expect(pkg.zcc.server).toBeUndefined();
     expect(pkg.zcc.skills).toEqual(['skills']);
     expect(readFileSync(join(dest, 'app.js'), 'utf8')).toContain('__zccPluginApp');
     expect(readFileSync(join(dest, 'app.test.js'), 'utf8')).toContain('collectTestPluginApp');
+    expect(readFileSync(join(dest, 'CLAUDE.md'), 'utf8')).toContain('zcc plugin install .');
     expect(readFileSync(join(dest, 'CLAUDE.md'), 'utf8')).toContain('zcc plugin dev');
+    expect(readFileSync(join(dest, 'README.md'), 'utf8')).toContain('zcc plugin install .');
+    expect(readFileSync(join(dest, 'README.md'), 'utf8')).toContain('zcc plugin dev');
     expect(readFileSync(join(dest, 'CLAUDE.md'), 'utf8')).not.toContain('extension.json');
     expect(readFileSync(join(dest, 'app.js'), 'utf8')).not.toMatch(/activate\s*\(/);
     expect(readFileSync(join(dest, 'skills', 'hello-abcd', 'SKILL.md'), 'utf8')).toMatch(/hello-abcd/);
@@ -61,7 +64,7 @@ describe('scaffoldPlugin', () => {
     const pkg = JSON.parse(readFileSync(join(dest, 'package.json'), 'utf8')) as {
       zcc: { mcpServers?: Record<string, unknown>; server?: string };
     };
-    expect(pkg.zcc.server).toBe('./server.mjs');
+    expect(pkg.zcc.server).toBe('./server.ts');
     expect(pkg.zcc.mcpServers).toBeTruthy();
     expect(readFileSync(join(dest, 'server.test.js'), 'utf8')).toContain('createFakePluginHost');
   });

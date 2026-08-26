@@ -14,6 +14,9 @@ export interface HostRow {
   lastRejectedProtocolVersion: number | null;
   isPrimary: boolean;
   homeDir: string | null;
+  sshHost: string | null;
+  sshUser: string | null;
+  sshProxyJump: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -29,6 +32,9 @@ interface HostSqlRow {
   last_rejected_protocol_version: number | null;
   is_primary: number | null;
   home_dir: string | null;
+  ssh_host: string | null;
+  ssh_user: string | null;
+  ssh_proxy_jump: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -49,6 +55,9 @@ function toHost(row: HostSqlRow): HostRow {
     lastRejectedProtocolVersion: row.last_rejected_protocol_version,
     isPrimary: row.is_primary === 1,
     homeDir: row.home_dir,
+    sshHost: row.ssh_host,
+    sshUser: row.ssh_user,
+    sshProxyJump: row.ssh_proxy_jump,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -158,6 +167,32 @@ export function markHostProtocolRejected(db: ZccDatabase, id: string, protocolVe
   db.sqlite.prepare(
     'UPDATE hosts SET last_rejected_protocol_version = ?, updated_at = ? WHERE id = ?'
   ).run(protocolVersion, now, id);
+}
+
+export function findHostBySsh(
+  db: ZccDatabase,
+  input: { host: string; user?: string }
+): HostRow | null {
+  const rows = listHosts(db);
+  return rows.find((row) => {
+    if (!row.sshHost || row.sshHost !== input.host) return false;
+    if (input.user) return row.sshUser === input.user;
+    return true;
+  }) ?? null;
+}
+
+export function updateHostSshIdentity(
+  db: ZccDatabase,
+  id: string,
+  input: { host: string; user?: string; proxyJump?: string }
+): HostRow | null {
+  const existing = getHost(db, id);
+  if (!existing || existing.destroyedAt) return null;
+  const now = Date.now();
+  db.sqlite.prepare(
+    `UPDATE hosts SET ssh_host = ?, ssh_user = ?, ssh_proxy_jump = ?, updated_at = ? WHERE id = ?`
+  ).run(input.host, input.user ?? null, input.proxyJump ?? null, now, id);
+  return getHost(db, id);
 }
 
 export function destroyHost(db: ZccDatabase, id: string): HostRow | null {

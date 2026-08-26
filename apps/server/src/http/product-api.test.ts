@@ -647,6 +647,8 @@ describe('product HTTP thread reasoning', () => {
     expect(source).toContain("from '@zana-ai/zcc-domain/thread-runtime'");
     expect(source).toContain('reasoningLevelSchema');
     expect(source).toContain('parseReasoningLevel(body.reasoningLevel)');
+    expect(source).toContain("routeParams(path, '/api/v1/threads/:id/plan/cancel')");
+    expect(source).toContain('cancelConversationPlan');
   });
 });
 

@@ -84,7 +84,7 @@ describe('scaffoldLocalExtension', () => {
     };
     expect(pkg.name).toBe('zcc-plugin-foo-abcd');
     expect(pkg.zcc.name).toBe('Foo Tool');
-    expect(pkg.zcc.app).toBe('./app.js');
+    expect(pkg.zcc.app).toBe('./app.tsx');
     expect(pkg.zcc.server).toBeUndefined();
     expect(pkg.zcc.skills).toEqual(['skills']);
     expect(existsSync(join(work, 'app.js'))).toBe(true);

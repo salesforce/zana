@@ -93,7 +93,6 @@ export * from './path-encoding.js';
 export * from './project-colors.js';
 export * from './terminal-themes.js';
 export * from './workflow-args.js';
-export * from './authorizations.js';
 export * from './telemetry-events.js';
 export * from './harness-adapter.js';
 export * from './launch-provider.js';

@@ -261,7 +261,7 @@ export function SchedulerOverview({
                     type="button"
                     className="overview-item-main"
                     onClick={() => onOpenTerminal(task, sessionId)}
-                    title="Jump into the running terminal"
+                    title="Peek the running session"
                   >
                     <div className="overview-item-name">{task.name}</div>
                     <div className="overview-item-meta">
@@ -272,7 +272,7 @@ export function SchedulerOverview({
                     type="button"
                     className="icon-button"
                     onClick={() => onOpenTerminal(task, sessionId)}
-                    title="Open running terminal"
+                    title="Open running session"
                     aria-label="Open running terminal"
                   >
                     <ExternalLink size={14} />
@@ -304,7 +304,7 @@ export function SchedulerOverview({
                     type="button"
                     className="overview-item-main"
                     onClick={() => onOpenTerminal(task, sessionId)}
-                    title="Agent finished — open the session to review or continue"
+                    title="Agent finished — peek the session"
                   >
                     <div className="overview-item-name">{task.name}</div>
                     <div className="overview-item-meta">
@@ -315,7 +315,7 @@ export function SchedulerOverview({
                     type="button"
                     className="icon-button"
                     onClick={() => onOpenTerminal(task, sessionId)}
-                    title="Open session"
+                    title="Peek session"
                     aria-label="Open session"
                   >
                     <ExternalLink size={14} />
@@ -486,7 +486,7 @@ export function SchedulerOverview({
                           type="button"
                           className="scheduler-icon-btn"
                           onClick={() => onOpenTerminal(t, liveSessionId)}
-                          title="Open live run"
+                          title="Peek live run"
                         >
                           <ExternalLink size={14} />
                         </button>

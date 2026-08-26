@@ -1,6 +1,5 @@
 import { product } from '../../lib/product-client.js';
-import { useEffect, useMemo, useState } from 'react';
-import type { ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { FolderOpen, Play, RotateCcw, Loader2 } from 'lucide-react';
 import type { LlmPromptEntry, LlmProviderId, LlmRunResult } from '@zana-ai/zcc-domain/product';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
@@ -209,6 +208,7 @@ export function PromptsView() {
                 <PField label="Label">
                   <input
                     type="text"
+                    className="settings-input-full"
                     value={draft.label}
                     onChange={(e) => setDraft({ ...draft, label: e.target.value })}
                     spellCheck={false}
@@ -218,6 +218,7 @@ export function PromptsView() {
                 <PField label="Description" help="Optional — shown to you, not the model.">
                   <input
                     type="text"
+                    className="settings-input-full"
                     value={draft.description ?? ''}
                     onChange={(e) => setDraft({ ...draft, description: e.target.value })}
                     spellCheck={false}
@@ -239,12 +240,13 @@ export function PromptsView() {
                       }))}
                     />
                   </PField>
-                  <PField label="Model" help="Alias (haiku/sonnet/opus) or full id. Blank = default.">
+                  <PField label="Model">
                     <input
                       type="text"
+                      className="settings-input-full"
                       value={draft.model ?? ''}
                       onChange={(e) => setDraft({ ...draft, model: e.target.value })}
-                      placeholder="haiku"
+                      placeholder="haiku, sonnet, opus, or a full id"
                       spellCheck={false}
                     />
                   </PField>
@@ -275,6 +277,7 @@ export function PromptsView() {
                   <PField label="Max output chars">
                     <input
                       type="number"
+                      className="settings-input-full"
                       min={1}
                       value={draft.maxOutputChars ?? ''}
                       onChange={(e) =>
@@ -288,6 +291,7 @@ export function PromptsView() {
                   <PField label="Timeout (ms)">
                     <input
                       type="number"
+                      className="settings-input-full"
                       min={1}
                       value={draft.timeoutMs ?? ''}
                       onChange={(e) =>
@@ -327,6 +331,7 @@ export function PromptsView() {
                 )}
 
                 <div className="prompts-test">
+                  <h4 className="prompts-test-heading">Test</h4>
                   {templateVars.length === 0 ? (
                     <p className="settings-help">
                       This template has no <code>{'{{placeholders}}'}</code> to fill — Test runs it
@@ -336,11 +341,11 @@ export function PromptsView() {
                     templateVars.map((v) => (
                       <PField
                         key={v}
-                        label={`Test input — {{${v}}}`}
+                        label={`{{${v}}}`}
                         help={VAR_HELP[v]}
                       >
                         <textarea
-                          rows={2}
+                          rows={3}
                           value={testVars[v] ?? ''}
                           onChange={(e) =>
                             setTestVars((prev) => ({ ...prev, [v]: e.target.value }))
@@ -350,15 +355,17 @@ export function PromptsView() {
                       </PField>
                     ))
                   )}
-                  <button
-                    type="button"
-                    className="btn"
-                    disabled={testing || templateVars.some((v) => !(testVars[v] ?? '').trim())}
-                    onClick={onTest}
-                  >
-                    {testing ? <Loader2 size={13} className="prompts-spin" /> : <Play size={13} />}
-                    {testing ? 'Running…' : 'Test'}
-                  </button>
+                  <div className="prompts-actions">
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={testing || templateVars.some((v) => !(testVars[v] ?? '').trim())}
+                      onClick={onTest}
+                    >
+                      {testing ? <Loader2 size={13} className="prompts-spin" /> : <Play size={13} />}
+                      {testing ? 'Running…' : 'Test'}
+                    </button>
+                  </div>
                   {testResult && (
                     <div
                       className={`prompts-test-result ${testResult.ok ? 'ok' : 'err'}`}

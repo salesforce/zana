@@ -110,11 +110,18 @@ function toRuntimeBridgeLaunch(launch: HostBridgeLaunch): AgentRuntimeBridgeLaun
   };
 }
 
-function mapThreadEvent(event: ThreadEvent): HostEventEnvelope {
+function isInFlightRetryEvent(event: ThreadEvent): boolean {
+  if (event.type === 'provider/error') return event.willRetry === true;
+  if (event.type === 'system/error') return event.reconnectAttempt !== undefined;
+  return false;
+}
+
+/** Host envelope for a runtime thread event. Retrying errors stay in-flight. */
+export function mapRuntimeThreadEvent(event: ThreadEvent): HostEventEnvelope {
   if (event.type === 'turn/completed') {
     return { threadId: event.threadId, kind: 'turn.completed', payload: event };
   }
-  if (event.type === 'turn/started') {
+  if (event.type === 'turn/started' || isInFlightRetryEvent(event)) {
     return { threadId: event.threadId, kind: 'thread.event', payload: event };
   }
   return {
@@ -157,7 +164,7 @@ export function createAgentRuntimeAdapter(options: {
       threadStorageRootPath: storageRoot,
       skillRoots: loadRuntimeSkillRoots(options.dataDir ?? storageRoot),
       onEvent: (event) => {
-        options.emit(mapThreadEvent(event));
+        options.emit(mapRuntimeThreadEvent(event));
       },
       onToolCall: async () => ({
         contentItems: [{ type: 'inputText', text: 'ok' }],
@@ -206,7 +213,7 @@ export function createAgentRuntimeAdapter(options: {
         projectId: input.projectId,
         providerId: input.providerId,
         input: textInput(input.input),
-        clientRequestId: encodeClientTurnRequestIdNumber({ value: Date.now() }),
+        clientRequestId: input.clientRequestId ?? encodeClientTurnRequestIdNumber({ value: Date.now() }),
         options: executionOptions({
           permissionMode: input.permissionMode,
           model: input.model,
@@ -221,7 +228,7 @@ export function createAgentRuntimeAdapter(options: {
       await runtime.runTurn({
         threadId: input.threadId,
         input: textInput(input.input),
-        clientRequestId: encodeClientTurnRequestIdNumber({ value: Date.now() }),
+        clientRequestId: input.clientRequestId ?? encodeClientTurnRequestIdNumber({ value: Date.now() }),
         options: executionOptions({
           model: input.model,
           reasoningLevel: input.reasoningLevel

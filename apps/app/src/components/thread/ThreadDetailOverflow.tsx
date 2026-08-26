@@ -95,6 +95,7 @@ export function ThreadDetailOverflow({
   threadId,
   title,
   status,
+  inFlightRetry = false,
   projectId,
   onRenamed,
   onUnread
@@ -102,6 +103,7 @@ export function ThreadDetailOverflow({
   threadId: string;
   title: string;
   status: string;
+  inFlightRetry?: boolean;
   projectId: string | null;
   onRenamed?: (title: string) => void;
   onUnread?: () => void;
@@ -115,7 +117,7 @@ export function ThreadDetailOverflow({
   const [open, setOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [menuPos, setMenuPos] = useState<CSSProperties>({});
-  const canStop = shouldShowThreadStop(threadId, status);
+  const canStop = shouldShowThreadStop(threadId, status, inFlightRetry);
   const scopedProjectId = projectId && route.isProjectWorkspace ? projectId : null;
 
   useEffect(() => {

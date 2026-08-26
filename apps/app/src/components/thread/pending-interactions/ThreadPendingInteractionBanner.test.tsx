@@ -215,4 +215,36 @@ describe('ThreadPendingInteractionBanner', () => {
     expect(html).not.toContain('>Action<');
     expect(html).not.toContain('thread-pending-banner-reason');
   });
+
+  it('renders plan markdown with Ready to code? and plan-specific decisions', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ThreadPendingInteractionBanner
+          interaction={{
+            ...commandInteraction(),
+            payload: {
+              kind: 'approval',
+              reason: null,
+              availableDecisions: ['allow_once', 'deny'],
+              subject: {
+                kind: 'plan',
+                itemId: 'item-plan',
+                plan: 'Ship it',
+                planFilePath: '/tmp/plan.md'
+              }
+            }
+          }}
+          threadId="thr-1"
+        />
+      </MemoryRouter>
+    );
+    expect(html).toContain('Ready to code?');
+    expect(html).toContain('data-testid="thread-pending-plan"');
+    expect(html).toContain('Ship it');
+    expect(html).toContain('/tmp/plan.md');
+    expect(html).toContain('Approve plan');
+    expect(html).toContain('Keep planning');
+    expect(html).not.toContain('Allow once');
+    expect(html).not.toContain('Deny');
+  });
 });

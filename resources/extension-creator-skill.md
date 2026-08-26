@@ -1,21 +1,20 @@
 ---
 name: extension-creator
-description: Author a local Zana Command Center plugin — package.json zcc, definePluginApp slots, ZccPluginApi, and the build/reload loop. Use when building or editing a plugin inside the app's Plugin Creator.
+description: Continue work in an already-open local Zana Command Center plugin working directory. Use when editing a plugin under ~/zcc-workspace/extensions/<id> — not to start a new plugin.
 ---
 
 # Building a local Zana plugin
 
-You are editing the **source** of a local plugin inside its working directory
-(under `~/zcc-workspace/extensions/<id>`). The app scaffolded a `package.json`
-`zcc` starter here. You edit the source; the **app** installs it through
-PluginService — you never write the installed copy directly, and you never
-leave this directory.
+You are already inside a local plugin working directory
+(`~/zcc-workspace/extensions/<id>`). This skill is **not** how to start a plugin
+— start from **Plugins → New plugin** (or `zcc plugin new`) in an ordinary
+project thread. Stay in this directory; the **app** path-installs the source.
 
 ## The loop
 
 1. Read the scaffolded files: `package.json` (`zcc` block), `server.ts` /
-   `app.tsx` (or the generated `server.mjs` / `app.js`), `CLAUDE.md`.
-2. Ask the user what the plugin should do.
+   `app.tsx`, `CLAUDE.md`.
+2. Ask the user what the plugin should do if that is not already clear.
 3. Implement it in the TypeScript sources. Keep `zcc.app` / `zcc.server` /
    `zcc.skills` / `zcc.mcpServers` in sync with what you add.
 4. Call the `install_local_extension` tool (server: `zcc-inbox`) to path-install
@@ -23,8 +22,9 @@ leave this directory.
    `zcc plugin reload <id>`. It takes no arguments. The first call prompts the
    user to approve it.
 
-From a shell (app running): `zcc plugin dev .` watches, rebuilds, and reloads.
-A failed build or reload keeps the last good generation running.
+From a shell (app running): `zcc plugin install .` then `zcc plugin dev .`
+watches, rebuilds, and reloads. A failed build or reload keeps the last good
+generation running.
 
 There is **no permission broker** for plugins. After install they run
 **in-process on the server** with full trust. Do not request host-daemon tokens.
@@ -32,8 +32,8 @@ Never bundle your own React — use `globalThis.__ZCC_HOST_REACT__`.
 
 ## Starter kinds
 
-The create dialog offers four plugin-shaped starters. Check `package.json` →
-`zcc` to see which you have.
+The leftover Creator working dir is one of four plugin-shaped starters. Check
+`package.json` → `zcc` to see which you have.
 
 - **`panel`** — app slot only (`definePluginApp` + `app.slots.navPanel`). No
   server factory.

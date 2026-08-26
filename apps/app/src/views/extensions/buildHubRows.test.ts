@@ -127,8 +127,9 @@ describe('Installed collection chrome', () => {
     expect(source).toContain('ext-installed-row');
     expect(source).toContain('Search installed plugins');
     expect(source).toContain('New plugin');
-    expect(source).toContain('ext-install-menu-caret');
-    expect(source).toContain('Create plugin');
+    expect(source).toContain('Install or open a plugin');
+    expect(source).toContain('CREATE_PLUGIN_PROMPT');
+    expect(source).not.toContain('Create plugin');
     expect(source).toContain('ext-installed-switch-spacer');
     expect(source).toContain("id: 'all', label: 'All'");
     expect(source).toContain('ext-hub-about-open');

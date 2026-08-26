@@ -14,6 +14,7 @@ import {
   type ThreadComposerProviderOption
 } from './fallback-models.js';
 import {
+  preferredComposerModel,
   rememberComposerSelection,
   rememberedProviderId,
   rememberedSelectionFor
@@ -78,32 +79,39 @@ export function useThreadComposerOptions(input: {
     const provider = input.lockedProviderId ?? rememberedProviderId() ?? 'claude-code';
     return restoreProviderSelection(provider).reasoningLevel;
   });
+  const persistSelection = !input.threadId;
 
   const setModel = useCallback((value: string) => {
     setModelState(value);
-    rememberComposerSelection({ providerId, model: value, reasoningLevel });
-  }, [providerId, reasoningLevel]);
+    if (persistSelection) {
+      rememberComposerSelection({ providerId, model: value, reasoningLevel });
+    }
+  }, [persistSelection, providerId, reasoningLevel]);
 
   const setReasoningLevel = useCallback((value: ReasoningLevel) => {
     setReasoningLevelState(value);
-    rememberComposerSelection({ providerId, model, reasoningLevel: value });
-  }, [model, providerId]);
+    if (persistSelection) {
+      rememberComposerSelection({ providerId, model, reasoningLevel: value });
+    }
+  }, [model, persistSelection, providerId]);
 
   const setProviderId = useCallback((value: string) => {
     if (value === providerId) return;
-    rememberComposerSelection({ providerId, model, reasoningLevel });
+    if (persistSelection) {
+      rememberComposerSelection({ providerId, model, reasoningLevel });
+    }
     setProviderIdState(value);
     const restored = restoreProviderSelection(value);
     setModelState(restored.model);
     setReasoningLevelState(restored.reasoningLevel);
-    if (restored.model) {
+    if (persistSelection && restored.model) {
       rememberComposerSelection({
         providerId: value,
         model: restored.model,
         reasoningLevel: restored.reasoningLevel
       });
     }
-  }, [model, providerId, reasoningLevel]);
+  }, [model, persistSelection, providerId, reasoningLevel]);
 
   useEffect(() => {
     if (input.lockedProviderId) setProviderIdState(input.lockedProviderId);
@@ -155,30 +163,26 @@ export function useThreadComposerOptions(input: {
 
   useEffect(() => {
     if (!activeModel) return;
-    if (!model) {
-      setModelState(activeModel.model);
-      const supported = visibleComposerReasoningLevels(
-        activeModel.supportedReasoningEfforts.map((effort) => effort.reasoningEffort)
-      );
-      setReasoningLevelState(
-        supported.length > 0
-          ? reconcileReasoningLevel(activeModel.defaultReasoningEffort, supported)
-          : activeModel.defaultReasoningEffort
-      );
+    const nextModel = preferredComposerModel({
+      rememberedModel: persistSelection ? rememberedSelectionFor(providerId)?.model : undefined,
+      currentModel: model,
+      persistRemembered: persistSelection,
+      offeredModels: models.concat(moreModels).map((row) => row.model),
+      fallbackModel: activeModel.model,
+      loading
+    });
+    if (nextModel !== model) {
+      setModelState(nextModel);
       return;
     }
-    const offered = models.concat(moreModels).some((row) => row.model === model);
-    if (!loading && models.length + moreModels.length > 0 && !offered) {
-      setModelState(activeModel.model);
-      return;
-    }
+    const row = models.concat(moreModels).find((item) => item.model === nextModel) ?? activeModel;
     const supported = visibleComposerReasoningLevels(
-      activeModel.supportedReasoningEfforts.map((effort) => effort.reasoningEffort)
+      row.supportedReasoningEfforts.map((effort) => effort.reasoningEffort)
     );
     if (supported.length === 0) return;
     const next = reconcileReasoningLevel(reasoningLevel, supported);
     if (next !== reasoningLevel) setReasoningLevelState(next);
-  }, [activeModel, loading, model, models, moreModels, reasoningLevel]);
+  }, [activeModel, loading, model, models, moreModels, persistSelection, providerId, reasoningLevel]);
 
   const providerOptions: PickerOption<string>[] = providers.map((row) => ({
     value: row.id,

@@ -37,6 +37,7 @@ import {
   isPluginHostEntryDefinition
 } from '@zana-ai/zcc-plugin-sdk/server';
 import { cronMatches, cronMinuteKey } from '@zana-ai/zcc-plugin-sdk';
+import { appendPluginLogLine } from './plugin-log.js';
 
 export const HOST_ZCC_VERSION = '1.0.10';
 export const HOST_PLUGIN_SDK_VERSION = '0.1.0';
@@ -109,6 +110,7 @@ export function createPluginApi(
     spawnThread?: (args: { pluginId: string; projectId: string; prompt: string; providerId?: string }) => Promise<{ id: string }>;
     hostEntryPath?: string | null;
     hostCall?: (method: string, input?: unknown, hostId?: string) => Promise<unknown>;
+    dataDir?: string;
   }
 ): PluginHandle {
   mkdirSync(kvDir, { recursive: true });
@@ -169,13 +171,22 @@ export function createPluginApi(
     await hostEntryLoaded;
   };
 
+  function emitLog(level: 'debug' | 'info' | 'warn' | 'error', message: string): void {
+    const line = `[plugin:${pluginId}] ${message}`;
+    if (level === 'debug') console.debug(line);
+    else if (level === 'info') console.info(line);
+    else if (level === 'warn') console.warn(line);
+    else console.error(line);
+    if (options?.dataDir) appendPluginLogLine(options.dataDir, pluginId, level, message);
+  }
+
   const api: ZccPluginApi = {
     pluginId,
     log: {
-      debug: (message) => console.debug(`[plugin:${pluginId}] ${message}`),
-      info: (message) => console.info(`[plugin:${pluginId}] ${message}`),
-      warn: (message) => console.warn(`[plugin:${pluginId}] ${message}`),
-      error: (message) => console.error(`[plugin:${pluginId}] ${message}`)
+      debug: (message) => emitLog('debug', message),
+      info: (message) => emitLog('info', message),
+      warn: (message) => emitLog('warn', message),
+      error: (message) => emitLog('error', message)
     },
     settings: {
       define: (descriptors) => {
@@ -589,8 +600,20 @@ function isMainModuleExport(value: unknown): value is { setup: (ctx: unknown) =>
 
 export async function importServerFactory(
   entryPath: string,
-  cacheBust?: string | number
+  cacheBust?: string | number,
+  _options?: { fromSource?: boolean }
 ): Promise<ZccPluginFactory> {
+  const loadFromSource = /\.tsx?$/.test(entryPath);
+  if (loadFromSource) {
+    const { createJiti } = await import('jiti');
+    const jiti = createJiti(import.meta.url, { moduleCache: false, fsCache: false });
+    const mod = (await jiti.import(entryPath)) as { default?: unknown };
+    if (typeof mod.default === 'function') return mod.default as ZccPluginFactory;
+    if (isMainModuleExport(mod.default)) {
+      return async () => undefined;
+    }
+    throw new Error(`plugin server entry must default-export a factory: ${entryPath}`);
+  }
   const href = `${pathToFileURL(entryPath).href}${cacheBust != null ? `?v=${cacheBust}` : ''}`;
   const mod = (await import(href)) as { default?: unknown };
   if (typeof mod.default === 'function') return mod.default as ZccPluginFactory;

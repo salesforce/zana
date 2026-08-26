@@ -9,12 +9,16 @@ describe('HomeView New Chat surface', () => {
     expect(view).toContain('className="settings-panel home-panel aurora-host"');
     expect(view).toContain('<AuroraGrid />');
     expect(view.indexOf('<AuroraGrid />')).toBeLessThan(view.indexOf('className="settings-inner"'));
-    expect(view).toContain('<HomeAgentComposer allowLegacyAgent />');
+    expect(view).toContain('composePromptSeedFrom');
+    expect(view).toContain('initialText={seed.initialText}');
+    expect(view).toContain('autoFocus={seed.focusPrompt}');
+    expect(view).toContain('allowLegacyAgent');
+    expect(view).toContain('HomeAgentComposer');
     expect(view).toContain('PluginNewThreadActions');
     expect(view).toContain('projectId={null}');
     expect(view).toContain('className="home-plugin-sections"');
     expect(view).toContain('listHomepageSections');
-    expect(view.indexOf('<HomeAgentComposer allowLegacyAgent />')).toBeLessThan(
+    expect(view.indexOf('HomeAgentComposer')).toBeLessThan(
       view.indexOf('<PluginNewThreadActions')
     );
     expect(view.indexOf('<PluginNewThreadActions')).toBeLessThan(view.indexOf('home-plugin-sections'));

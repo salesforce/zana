@@ -40,6 +40,7 @@ import {
 import { discoverPluginSkillNames } from './plugin-skills.js';
 import { BUILTIN_PLUGINS, OFFICIAL_PLUGINS, bundledPluginByName } from './builtin-registry.js';
 import { defaultCloneGit, defaultFetchJson, defaultSpawnNpm } from './plugin-process.js';
+import { readPluginLogTail } from './plugin-log.js';
 import {
   createPluginStore,
   pluginStorePath,
@@ -108,6 +109,7 @@ export interface PluginService {
   runCliCommand(id: string, argv: string[]): Promise<PluginCliExecutionResult>;
   dispatchHttp(pluginId: string, request: PluginHttpRequest): Promise<PluginHttpResponse>;
   emitThreadEvent(event: PluginThreadEvent): Promise<void>;
+  readLogs(id: string, tail?: number): Promise<string[]>;
 }
 
 export interface PluginUiSnapshot {
@@ -414,11 +416,19 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   function appUrlFor(row: InstalledPluginRow): string | null {
     if (!row.appEntry) return null;
     try {
-      // Resolve first so the URL retains nested entry paths without trusting a
-      // manifest path that could escape the installed plugin root.
       const root = resolveContainedEntry(row.rootDir, '.');
-      const entry = resolveContainedEntry(row.rootDir, row.appEntry);
-      const entryPath = relative(root, entry).split(sep).map(encodeURIComponent).join('/');
+      const declared = row.appEntry;
+      const served =
+        /\.tsx?$/.test(declared)
+          ? (() => {
+              try {
+                return resolveContainedEntry(row.rootDir, declared.replace(/\.tsx?$/, '.js'));
+              } catch {
+                return resolveContainedEntry(row.rootDir, declared);
+              }
+            })()
+          : resolveContainedEntry(row.rootDir, declared);
+      const entryPath = relative(root, served).split(sep).map(encodeURIComponent).join('/');
       return `/plugins/${encodeURIComponent(row.id)}/assets/${entryPath}?v=${row.updatedAt}`;
     } catch {
       return null;
@@ -470,6 +480,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     const handle = createPluginApi(row.id, join(kvRoot, row.id), {
       requestPluginInteraction: opts.requestPluginInteraction,
       interruptPluginInteractions: opts.interruptPluginInteractions,
+      dataDir: opts.dataDir,
       onNeedsConfiguration: (message) => {
         configurationMessage = message;
       },
@@ -500,7 +511,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     try {
       if (row.serverEntry) {
         const entry = resolveContainedEntry(row.rootDir, row.serverEntry);
-        const factory = await importServerFactory(entry, row.updatedAt);
+        const factory = await importServerFactory(entry, row.updatedAt, {
+          fromSource: row.sourceKind === 'path'
+        });
         await runFactoryTimeBoxed(factory, handle.api);
       }
       const running = {
@@ -841,6 +854,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await Promise.all(
         [...live.values()].map((current) => current.handle?.emitThreadEvent(event) ?? Promise.resolve())
       );
+    },
+    async readLogs(id, tail = 100) {
+      return readPluginLogTail(opts.dataDir, id, tail);
     },
     async callRpc(pluginId, method, args) {
       const current = live.get(pluginId);

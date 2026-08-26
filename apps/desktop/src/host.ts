@@ -145,7 +145,6 @@ import {
 } from '@zana-ai/zcc-server/services/mcp/mcp-catalogue';
 import { listPlugins, revealPlugin, setPluginEnabled } from '@zana-ai/zcc-server/services/extensions/plugins';
 import { claudeProjectFilePath, readClaudeProjectSettings, writeClaudeProjectSettings } from '@zana-ai/zcc-server/services/projects/claude-settings';
-import { applyAuthorizations } from '@zana-ai/zcc-server/services/projects/authorizations';
 import {
   listSkills,
   setSkillEnabled,
@@ -323,7 +322,6 @@ import type {
   CodexSettingsResult,
   OpenCodeProjectSettings,
   OpenCodeSettingsResult,
-  ApplyAuthorizationInput,
   ScheduleCreateInput,
   ScheduleUpdateInput,
   ScheduledTask,
@@ -6317,6 +6315,7 @@ async function bootstrapNormal() {
           disable: (id) => runtimeSupervisor!.disablePlugin(id),
           remove: (id) => runtimeSupervisor!.removePlugin(id),
           reload: (id) => runtimeSupervisor!.reloadPlugin(id),
+          logs: (id, n) => runtimeSupervisor!.pluginLogs(id, n),
           search: (query) => runtimeSupervisor!.searchPlugins(query),
           outdated: () => runtimeSupervisor!.outdatedPlugins(),
           update: (id) => runtimeSupervisor!.updatePlugin(id),

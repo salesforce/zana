@@ -173,6 +173,7 @@ describe('unmanaged environment reuse', () => {
     expect(source).toContain('titleFromPrompt');
     expect(source).toContain('reasoningLevel: args.input.reasoningLevel');
     expect(source).toContain("...(args.input.reasoningLevel ? { reasoningLevel: args.input.reasoningLevel } : {})");
+    expect(source).toContain('clientRequestId');
   });
 });
 

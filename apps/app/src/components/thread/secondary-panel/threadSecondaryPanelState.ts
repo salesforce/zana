@@ -6,7 +6,7 @@ export const SECONDARY_PANEL_DEFAULT_WIDTH_PX = 352;
 export const SECONDARY_PANEL_MIN_WIDTH_PX = 288;
 export const SECONDARY_PANEL_MAX_WIDTH_RATIO = 0.7;
 
-export type PinnedSecondaryView = 'info' | 'diff';
+export type PinnedSecondaryView = 'info' | 'diff' | 'plan';
 
 export type ClosableSecondaryTabKind =
   | 'new-tab'
@@ -41,6 +41,7 @@ export interface ThreadSecondaryPanelState {
 
 export const INFO_PIN_ID = 'info';
 export const DIFF_PIN_ID = 'diff';
+export const PLAN_PIN_ID = 'plan';
 
 export function emptySecondaryPanelState(options?: { isOpen?: boolean }): ThreadSecondaryPanelState {
   return {
@@ -110,7 +111,7 @@ export function parseSecondaryPanelState(raw: unknown): ThreadSecondaryPanelStat
     ? raw.tabs.map(parseTab).filter((tab): tab is ClosableSecondaryTab => tab !== null)
     : [];
   const activeId = typeof raw.activeId === 'string' ? raw.activeId : INFO_PIN_ID;
-  const known = new Set<string>([INFO_PIN_ID, DIFF_PIN_ID, ...tabs.map((tab) => tab.id)]);
+  const known = new Set<string>([INFO_PIN_ID, DIFF_PIN_ID, PLAN_PIN_ID, ...tabs.map((tab) => tab.id)]);
   return {
     version: 1,
     isOpen: raw.isOpen === true,
@@ -313,6 +314,7 @@ export function openNewTab(state: ThreadSecondaryPanelState): ThreadSecondaryPan
 export function activePinnedView(state: ThreadSecondaryPanelState): PinnedSecondaryView | null {
   if (state.activeId === INFO_PIN_ID) return 'info';
   if (state.activeId === DIFF_PIN_ID) return 'diff';
+  if (state.activeId === PLAN_PIN_ID) return 'plan';
   return null;
 }
 

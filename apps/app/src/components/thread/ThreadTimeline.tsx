@@ -7,7 +7,7 @@ import {
   type TimelineTitleLink,
   type TimelineViewWorkflowWorkRow
 } from '@zana-ai/zcc-thread-view';
-import type { ActiveThinking, ThreadTimelineGoal, ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
+import type { ActiveThinking, ThreadTimelineGoal } from '@zana-ai/zcc-domain/thread-runtime';
 import type { TimelineRow } from '@zana-ai/zcc-server-contract';
 import { isBusyThreadStatus, timelineRowsAwaitUser } from './thread-timeline-model.js';
 import { collectTimelineAutoExpansionRowIds } from './timeline/timeline-auto-expand.js';
@@ -20,8 +20,6 @@ import {
 } from './timeline/timeline-scroll.js';
 import {
   ThreadGoalBanner,
-  ThreadPromptModeChip,
-  ThreadTodoCard,
   ThreadWorkflowChips,
   ThreadWorkingIndicator
 } from './timeline/ThreadBanners.js';
@@ -31,10 +29,8 @@ export interface ThreadTimelineProps {
   rows: TimelineRow[];
   status: string;
   thinking: ActiveThinking | null;
-  todos: ThreadTimelinePendingTodos | null;
   goal?: ThreadTimelineGoal | null;
   activeWorkflows?: TimelineViewWorkflowWorkRow[] | null;
-  activePromptMode?: { mode: string; prompt?: string } | null;
   lastReadSeq?: number | null;
   hasOlderRows?: boolean;
   loadingOlder?: boolean;
@@ -69,10 +65,8 @@ export function ThreadTimeline({
   rows,
   status,
   thinking,
-  todos,
   goal,
   activeWorkflows,
-  activePromptMode,
   lastReadSeq,
   hasOlderRows,
   loadingOlder,
@@ -110,7 +104,7 @@ export function ThreadTimeline({
     const pane = paneRef.current;
     if (!pane || !stick) return;
     pane.scrollTop = pane.scrollHeight;
-  }, [stick, viewRows, thinking, todos]);
+  }, [stick, viewRows, thinking]);
 
   useEffect(() => () => {
     clearTransientScrollbarScrolling(paneRef.current, scrollbarIdleRef);
@@ -138,9 +132,6 @@ export function ThreadTimeline({
     <div className="thread-detail-timeline-shell">
       <div className="thread-banner-stack">
         <ThreadGoalBanner goal={goal} />
-        <div className="thread-banner-row">
-          <ThreadPromptModeChip mode={activePromptMode} />
-        </div>
         <ThreadWorkflowChips workflows={activeWorkflows} />
       </div>
       <div
@@ -176,7 +167,6 @@ export function ThreadTimeline({
           />
         )}
         <ThreadWorkingIndicator status={status} thinking={thinking} waitingOnUser={awaitingUser} />
-        <ThreadTodoCard todos={todos} />
       </div>
       {pinnedAway ? (
         <button
@@ -193,4 +183,4 @@ export function ThreadTimeline({
   );
 }
 
-export { ThreadTodoCard, ThreadWorkingIndicator } from './timeline/ThreadBanners.js';
+export { ThreadTodoCard, ThreadPromptModeCard, ThreadWorkingIndicator } from './timeline/ThreadBanners.js';

@@ -8,9 +8,26 @@ description: Extend Zana Command Center itself by writing a plugin — panel, CL
 ZCC grows by plugins. Core is the runtime (threads, hosts, auth, confinement).
 A new user-facing capability is a plugin unless it cannot be granted even scoped.
 
-Any thread can extend ZCC. The Creator dialog is convenience UX, not the only
-path. `zcc plugin new` + path install from an ordinary project thread is
-first-class.
+Start from **Plugins → New plugin**, Browse **Create a plugin**, or the composer
+**Plugin** action. All seed the same prompt. Send it as an ordinary project
+thread — not a dedicated Extensions project. Then:
+
+```bash
+zcc plugin new hello --app    # ./zcc-plugin-hello
+cd zcc-plugin-hello
+zcc plugin install .
+zcc plugin dev
+```
+
+- `zcc plugin new <name> [--app] [--dir]` — TypeScript scaffold (`package.json` `zcc` block). Default dest is `./zcc-plugin-<id>`. `--app` adds a frontend; default is server-only.
+- `zcc plugin types [dir]` — sync bundled SDK `.d.ts` (`--check` for CI). Look up the API here.
+- `zcc plugin install <source>` — `path:` | `git:` | `npm:` | `builtin:<name>`. Path installs load `server.ts` from source.
+- `zcc plugin dev [dir]` — requires an already-installed path plugin. Watch, rebuild the app, reload (`--once` skips watch). A failed build keeps the last good generation.
+- `zcc plugin list` / `zcc plugin logs <id> [-n] [-f]` — inspect status and persisted JSONL logs.
+- `zcc plugin run <pluginId> <args…>` — explicit equivalent of a contributed command.
+
+Keep `extension-creator` only for an already-open local working dir. This skill
+is the full SDK contract.
 
 A plugin that adds a verb also teaches the next agent: CLI contributions rewrite
 the generated `plugin-commands` skill, and plugin + generated skills are
@@ -18,21 +35,9 @@ runtime-injected for every provider (not only copies into `~/.claude/skills`).
 
 ## Scaffold, install, iterate
 
-```bash
-zcc plugin new hello --dir ./hello-plugin --app
-zcc plugin types ./hello-plugin
-zcc plugin install ./hello-plugin
-zcc plugin dev ./hello-plugin
-```
-
-- `zcc plugin new <name>` — TypeScript scaffold (`package.json` `zcc` block).
-- `zcc plugin types [dir]` — sync bundled SDK `.d.ts` (`--check` for CI).
-- `zcc plugin install <source>` — `path:` | `git:` | `npm:` | `builtin:<name>`.
-- `zcc plugin dev [dir]` — watch, rebuild, reload (`--once` skips watch).
-- `zcc plugin run <pluginId> <args…>` — explicit equivalent of a contributed command.
-
-Keep `extension-creator` for the short in-app Creator working-dir loop. This
-skill is the full SDK contract.
+Path installs load `./server.ts` via jiti. Published git/npm/builtin packages
+declare their JS entry (often under `dist`). `zcc plugin dev` rebuilds the app
+(and host if present); the backend path load does not require `plugin build`.
 
 ## Server factory
 

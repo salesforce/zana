@@ -3,12 +3,11 @@ import { ipcMain } from 'electron';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
 import { trustedProjectRoot } from './shared.js';
-import { applyAuthorizations } from '@zana-ai/zcc-server/services/projects/authorizations';
 import { claudeProjectFilePath, readClaudeProjectSettings, writeClaudeProjectSettings } from '@zana-ai/zcc-server/services/projects/claude-settings';
 import { readCodexProjectSettings, readOpenCodeProjectSettings, writeCodexProjectSettings, writeOpenCodeProjectSettings } from '@zana-ai/zcc-server/services/misc/harness-settings';
 import { store } from '@zana-ai/zcc-server/services/projects/store';
 import { dialog, shell } from 'electron';
-import type { ApplyAuthorizationInput, ClaudeProjectFileId, ClaudeProjectSettings, ClaudeSettingsResult, ClaudeSettingsScope, CodexProjectSettings, CodexSettingsResult, OpenCodeProjectSettings, OpenCodeSettingsResult, OpenResult } from '@zana-ai/zcc-domain/product';
+import type { ClaudeProjectFileId, ClaudeProjectSettings, ClaudeSettingsResult, ClaudeSettingsScope, CodexProjectSettings, CodexSettingsResult, OpenCodeProjectSettings, OpenCodeSettingsResult, OpenResult } from '@zana-ai/zcc-domain/product';
 
 export function registerSettingsIpc(): void {
   
@@ -116,16 +115,6 @@ export function registerSettingsIpc(): void {
       return root ? writeOpenCodeProjectSettings(root, patch, expectedHash) : { state: 'io-error' as const, message: 'Project root is unavailable' };
     },
     () => ({ state: 'io-error' as const, message: 'OpenCode settings write failed' })
-  );
-  ctx.safeHandle(
-    IPC.authorizations.apply,
-    (input: ApplyAuthorizationInput) => applyAuthorizations(input),
-    (err, input: ApplyAuthorizationInput) =>
-      (input?.providers ?? []).map((provider) => ({
-        provider,
-        ok: false,
-        message: err instanceof Error ? err.message : String(err)
-      }))
   );
 }
 

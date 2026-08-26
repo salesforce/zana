@@ -10,6 +10,7 @@ import {
   type PluginPendingInteraction,
   type UserQuestionPendingInteractionPayload
 } from '@zana-ai/zcc-domain/thread-runtime';
+import { MarkdownContent } from '../../MarkdownContent.js';
 import { product } from '../../../lib/product-client.js';
 import { listPendingInteractionSlots, subscribePluginSlots } from '../../../plugins/plugin-slots.js';
 import {
@@ -90,7 +91,7 @@ function BannerShell({
   children?: ReactNode;
 }) {
   return (
-    <div className="thread-pending-banner" data-testid="thread-pending-banner">
+    <div className="thread-pending-banner thread-composer-stack-card" data-testid="thread-pending-banner">
       {sourceThread ? (
         <Link className="thread-pending-banner-source" to={sourceThread.href}>
           From child thread: {sourceThread.title}
@@ -124,7 +125,9 @@ function ApprovalPendingInteractionBanner({
       ? 'Waiting for file approval'
       : payload.subject.kind === 'permission_grant'
         ? 'Waiting for permission'
-        : 'Waiting for approval';
+        : payload.subject.kind === 'plan'
+          ? (payload.reason ?? 'Ready to code?')
+          : 'Waiting for approval';
   const submit = (decision: PendingInteractionApprovalDecision) => {
     setBusy(true);
     setError(null);
@@ -150,20 +153,33 @@ function ApprovalPendingInteractionBanner({
           disabled={busy || interaction.status === 'resolving'}
           onClick={() => submit(decision)}
         >
-          {approvalDecisionLabel(decision)}
+          {approvalDecisionLabel(decision, payload.subject.kind)}
         </button>
       ))}
     >
-      {shouldShowPendingInteractionReason(payload.reason, details) ? (
-        <p className="thread-pending-banner-reason">{payload.reason}</p>
-      ) : null}
-      {details.length > 0 ? (
-        <div className="thread-pending-banner-details">
-          {details.map((detail, index) => (
-            <ApprovalDetailBlock key={`${detail.label}:${index}`} detail={detail} />
-          ))}
+      {payload.subject.kind === 'plan' ? (
+        <div className="thread-pending-banner-plan" data-testid="thread-pending-plan">
+          <div className="thread-pending-banner-plan-body">
+            <MarkdownContent text={payload.subject.plan} />
+          </div>
+          {payload.subject.planFilePath ? (
+            <p className="thread-pending-banner-plan-file">{payload.subject.planFilePath}</p>
+          ) : null}
         </div>
-      ) : null}
+      ) : (
+        <>
+          {shouldShowPendingInteractionReason(payload.reason, details) ? (
+            <p className="thread-pending-banner-reason">{payload.reason}</p>
+          ) : null}
+          {details.length > 0 ? (
+            <div className="thread-pending-banner-details">
+              {details.map((detail, index) => (
+                <ApprovalDetailBlock key={`${detail.label}:${index}`} detail={detail} />
+              ))}
+            </div>
+          ) : null}
+        </>
+      )}
     </BannerShell>
   );
 }

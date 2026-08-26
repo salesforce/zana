@@ -369,7 +369,7 @@ function requestUserQuestion(
   });
 }
 
-function beginTurn(threadId: string, input: unknown): void {
+function beginTurn(threadId: string, input: unknown, clientRequestId?: string): void {
   const thread = getThreadState(threadId);
   if (!thread) {
     return;
@@ -396,6 +396,18 @@ function beginTurn(threadId: string, input: unknown): void {
       providerThreadId: thread.providerThreadId,
     },
   });
+  if (clientRequestId) {
+    send({
+      jsonrpc: "2.0",
+      method: "turn/input/accepted",
+      params: {
+        threadId,
+        turnId,
+        providerThreadId: thread.providerThreadId,
+        clientRequestId,
+      },
+    });
+  }
   emitUserMessage(threadId, turnId, input);
 
   if (plan.questionRequested) {
@@ -447,7 +459,7 @@ function startTurn(message: JsonRecord): void {
     id: getJsonRpcId(message.id) ?? 0,
     result: { ok: true },
   });
-  beginTurn(threadId, params.input);
+  beginTurn(threadId, params.input, getString(params.clientRequestId) || undefined);
 }
 
 function startOrResumeThread(

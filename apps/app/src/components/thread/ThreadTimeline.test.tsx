@@ -8,6 +8,7 @@ import {
   threadStatusLabel,
   threadStatusToAgentState,
   threadStatusTone,
+  timelineHasInFlightRetry,
   timelineRowsAwaitUser,
   visiblePendingTodos,
   workRowBody
@@ -35,6 +36,71 @@ describe('thread timeline model', () => {
     expect(shouldShowThreadStop('t1', 'idle')).toBe(false);
     expect(shouldShowThreadStop('t1', 'error')).toBe(false);
     expect(shouldShowThreadStop(undefined, 'active')).toBe(false);
+    expect(shouldShowThreadStop('t1', 'error', true)).toBe(true);
+    expect(shouldShowThreadStop('t1', 'idle', true)).toBe(false);
+    expect(shouldShowThreadStop(undefined, 'error', true)).toBe(false);
+  });
+
+  it('treats a trailing reconnect row as an in-flight retry', () => {
+    const reconnect: TimelineRow = {
+      ...base,
+      id: 'retry-1',
+      kind: 'system',
+      systemKind: 'reconnect',
+      title: 'Provider authorization failed',
+      detail: 'Claude Code API retry 5/10 after 9168ms: HTTP 401 authentication_failed',
+      status: null
+    };
+    expect(timelineHasInFlightRetry([reconnect])).toBe(true);
+    expect(timelineHasInFlightRetry([{
+      ...base,
+      id: 'turn-1',
+      kind: 'turn',
+      turnId: 'turn-1',
+      status: 'pending',
+      summaryCount: 1,
+      completedAt: null,
+      children: [reconnect]
+    }])).toBe(true);
+    expect(timelineHasInFlightRetry([{
+      ...base,
+      id: 'err-retry',
+      kind: 'system',
+      systemKind: 'error',
+      title: 'Provider authorization failed',
+      detail: 'Claude Code API retry 5/10 after 9168ms: HTTP 401 authentication_failed',
+      status: 'error'
+    }])).toBe(true);
+    expect(timelineHasInFlightRetry([{
+      ...base,
+      id: 'err-1',
+      kind: 'system',
+      systemKind: 'error',
+      title: 'Provider authorization failed',
+      detail: 'HTTP 401 authentication_failed',
+      status: 'error'
+    }])).toBe(false);
+    expect(timelineHasInFlightRetry([{
+      ...base,
+      id: 'turn-done',
+      kind: 'turn',
+      turnId: 'turn-1',
+      status: 'completed',
+      summaryCount: 2,
+      completedAt: 2,
+      children: [
+        reconnect,
+        {
+          ...base,
+          id: 'a1',
+          kind: 'conversation',
+          role: 'assistant',
+          text: 'Done.',
+          attachments: null,
+          turnRequest: null
+        }
+      ]
+    }])).toBe(false);
   });
 
   it('maps conversation status onto agent lanes', () => {
@@ -181,7 +247,7 @@ describe('ThreadTimeline', () => {
       }
     ];
     const html = renderToStaticMarkup(
-      <ThreadTimeline rows={rows} status="idle" thinking={null} todos={null} />
+      <ThreadTimeline rows={rows} status="idle" thinking={null} />
     );
     expect(html).toContain('thread-detail-timeline thread-scrollbar');
     expect(html).toContain('data-testid="thread-user-text"');
@@ -192,7 +258,7 @@ describe('ThreadTimeline', () => {
     expect(html).toContain('<strong>world</strong>');
   });
 
-  it('renders pending command titles, thinking, and open todos', () => {
+  it('renders pending command titles and thinking without todos', () => {
     const rows: TimelineRow[] = [{
       ...base,
       id: 'c1',
@@ -214,11 +280,6 @@ describe('ThreadTimeline', () => {
         rows={rows}
         status="active"
         thinking={{ id: 'th1', text: 'Thinking…', startedAt: 1, updatedAt: 1 }}
-        todos={{
-          sourceSeq: 1,
-          updatedAt: 1,
-          items: [{ id: 'td1', text: 'List files', status: 'in_progress' }]
-        }}
       />
     );
     expect(html).toContain('data-testid="thread-work-row"');
@@ -226,19 +287,18 @@ describe('ThreadTimeline', () => {
     expect(html).toContain('README.md');
     expect(html).toContain('data-testid="thread-thinking"');
     expect(html).toContain('Thinking…');
-    expect(html).toContain('data-testid="thread-todos"');
-    expect(html).toContain('List files');
+    expect(html).not.toContain('data-testid="thread-todos"');
   });
 
   it('shows Thinking… for empty thought text and Working… when thinking is absent', () => {
     const empty = renderToStaticMarkup(
-      <ThreadTimeline rows={[]} status="active" thinking={{ id: 'th', text: '  ', startedAt: 1, updatedAt: 1 }} todos={null} />
+      <ThreadTimeline rows={[]} status="active" thinking={{ id: 'th', text: '  ', startedAt: 1, updatedAt: 1 }} />
     );
     expect(empty).toContain('data-testid="thread-thinking"');
     expect(empty).toContain('Thinking…');
     expect(empty).not.toContain('<details');
     const working = renderToStaticMarkup(
-      <ThreadTimeline rows={[]} status="active" thinking={null} todos={null} />
+      <ThreadTimeline rows={[]} status="active" thinking={null} />
     );
     expect(working).toContain('Working…');
     expect(working).not.toContain('Thinking…');
@@ -291,11 +351,7 @@ describe('ThreadTimeline', () => {
       }
     ];
     const html = renderToStaticMarkup(
-      <ThreadTimeline rows={rows} status="idle" thinking={null} todos={{
-        sourceSeq: 1,
-        updatedAt: 1,
-        items: [{ id: 'td1', text: 'done', status: 'completed' }]
-      }} />
+      <ThreadTimeline rows={rows} status="idle" thinking={null} />
     );
     expect(html).toContain('a.txt');
     expect(html).toContain('README.md');
@@ -327,7 +383,7 @@ describe('ThreadTimeline', () => {
       children: [assistant]
     }];
     const html = renderToStaticMarkup(
-      <ThreadTimeline rows={rows} status="starting" thinking={null} todos={null} />
+      <ThreadTimeline rows={rows} status="starting" thinking={null} />
     );
     expect(html).toContain('data-testid="thread-assistant-text"');
     expect(html).toContain('Done.');
@@ -340,7 +396,6 @@ describe('ThreadTimeline', () => {
         rows={[]}
         status="active"
         thinking={{ id: 'th', text: 'I should inspect nearby files.', startedAt: 1, updatedAt: 1 }}
-        todos={null}
       />
     );
     expect(html).toContain('Thinking…');
@@ -351,7 +406,7 @@ describe('ThreadTimeline', () => {
 
   it('shows the empty waiting state', () => {
     const html = renderToStaticMarkup(
-      <ThreadTimeline rows={[]} status="idle" thinking={null} todos={null} />
+      <ThreadTimeline rows={[]} status="idle" thinking={null} />
     );
     expect(html).toContain('Waiting for the first turn…');
   });
@@ -378,7 +433,6 @@ describe('ThreadTimeline', () => {
         rows={[command('c-a', 'ls'), command('c-b', 'pwd')]}
         status="active"
         thinking={null}
-        todos={null}
       />
     );
     expect(html).toContain('data-testid="thread-work-row"');
@@ -388,7 +442,6 @@ describe('ThreadTimeline', () => {
         rows={[command('c-a', 'ls'), command('c-b', 'pwd')]}
         status="active"
         thinking={null}
-        todos={null}
         waitingOnUser
       />
     )).not.toContain('Working…');
@@ -413,7 +466,6 @@ describe('ThreadTimeline', () => {
         }]}
         status="active"
         thinking={null}
-        todos={null}
       />
     )).not.toContain('Working…');
   });
@@ -440,7 +492,6 @@ describe('ThreadTimeline', () => {
         rows={rows}
         status="idle"
         thinking={null}
-        todos={null}
         goal={{
           sourceSeq: 1,
           updatedAt: 1,

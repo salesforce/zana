@@ -6,8 +6,36 @@ export function isBusyThreadStatus(status: string): boolean {
   return status === 'starting' || status === 'active' || status === 'stopping';
 }
 
-export function shouldShowThreadStop(threadId: string | undefined, status: string | undefined): boolean {
-  return Boolean(threadId) && isBusyThreadStatus(status ?? '');
+/** True when the latest timeline row is a retry/reconnect still in flight. */
+export function timelineHasInFlightRetry(rows: readonly TimelineRow[] | null | undefined): boolean {
+  if (!rows?.length) return false;
+  return rowEndsWithInFlightRetry(rows[rows.length - 1]!);
+}
+
+function rowEndsWithInFlightRetry(row: TimelineRow): boolean {
+  if (row.kind === 'turn') {
+    const last = row.children?.at(-1);
+    return last ? rowEndsWithInFlightRetry(last) : false;
+  }
+  if (row.kind !== 'system') return false;
+  if (row.systemKind === 'reconnect') return true;
+  return row.systemKind === 'error' && isProviderRetryDetail(row.detail);
+}
+
+function isProviderRetryDetail(detail: string | null): boolean {
+  return typeof detail === 'string' && /API retry \d+\/\d+/i.test(detail);
+}
+
+export function shouldShowThreadStop(
+  threadId: string | undefined,
+  status: string | undefined,
+  inFlightRetry = false
+): boolean {
+  if (!threadId) return false;
+  if (isBusyThreadStatus(status ?? '')) return true;
+  // Retrying provider errors can land as `error` while the SDK is still
+  // backing off. Keep Stop available so the user can abort the retry loop.
+  return status === 'error' && inFlightRetry;
 }
 
 /** Map a conversation-thread status onto the agent-board lanes. */

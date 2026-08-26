@@ -8,6 +8,7 @@ import { product } from '../../lib/product-client.js';
  */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   FolderOpen,
   ExternalLink,
@@ -37,7 +38,8 @@ import { getHost } from '@/modules/ModulePanelHost';
 import { resolveIcon } from '@/lib/resolveIcon';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { PERMISSION_LABELS, pluginCapabilityLines } from '@/components/ExtensionConsent';
-import { CreateExtensionDialog } from '@/components/CreateExtensionDialog';
+import { createPluginComposeNavigation } from '@/lib/compose-prompt-seed';
+import { CREATE_PLUGIN_PROMPT } from '@/lib/create-resource-prompts';
 import { InstallFromGitDialog } from '@/components/InstallFromGitDialog';
 import { Marketplace } from '@/views/extensions/MarketplaceView';
 import { PluginDefinedSettings } from '@/plugins/PluginDefinedSettings';
@@ -83,15 +85,16 @@ export function ExtensionsHub({
   onTabChange?: (tab: HubTab) => void;
   showTabs?: boolean;
 } = {}) {
+  const navigate = useNavigate();
   const [uncontrolledTab, setUncontrolledTab] = useState<HubTab>(initialTab);
   const tab = controlledTab ?? uncontrolledTab;
   const [reloading, setReloading] = useState(false);
   const [redeploying, setRedeploying] = useState(false);
   const [redeployNote, setRedeployNote] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
+  const selectedProjectId = useUi((s) => s.selectedProjectId);
 
   useEffect(() => {
     if (!moreOpen) return;
@@ -144,9 +147,10 @@ export function ExtensionsHub({
       .finally(() => setRedeploying(false));
   };
 
-  const openCreate = () => {
+  const startCreatePlugin = (prompt: string = CREATE_PLUGIN_PROMPT) => {
     setMoreOpen(false);
-    setCreating(true);
+    const target = createPluginComposeNavigation({ prompt, projectId: selectedProjectId });
+    void navigate(target.pathname, { state: target.state });
   };
 
   const checkUpdates = () => {
@@ -230,11 +234,10 @@ export function ExtensionsHub({
         <InstalledView toolbarExtra={showTabs ? undefined : maintenanceActions} />
       ) : (
         <Marketplace
-          onCreate={openCreate}
+          onCreate={startCreatePlugin}
           toolbarExtra={showTabs ? undefined : maintenanceActions}
         />
       )}
-      {creating && <CreateExtensionDialog onClose={() => setCreating(false)} />}
     </div>
   );
 }
@@ -248,13 +251,14 @@ const PUBLISHER_FILTERS: { id: InstalledPublisherFilter; label: string }[] = [
 ];
 
 export function InstalledView({ toolbarExtra }: { toolbarExtra?: ReactNode } = {}) {
+  const navigate = useNavigate();
   const modules = useMergedModules() as (AppModule & { loadError?: string })[];
   const [entries, setEntries] = useState<ExtensionEntry[]>([]);
   const [plugins, setPlugins] = useState<PluginAppEntry[]>([]);
+  const selectedProjectId = useUi((s) => s.selectedProjectId);
   const selectedId = useUi((s) => s.settingsExtensionId);
   const selectSettingsExtension = useUi((s) => s.selectSettingsExtension);
   const setExtensionsTab = useUi((s) => s.setExtensionsTab);
-  const [creating, setCreating] = useState(false);
   const [openExisting, setOpenExisting] = useState(false);
   const [installGit, setInstallGit] = useState(false);
   const [query, setQuery] = useState('');
@@ -262,6 +266,12 @@ export function InstalledView({ toolbarExtra }: { toolbarExtra?: ReactNode } = {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const newMenuRef = useRef<HTMLDivElement>(null);
+
+  const startCreatePlugin = (prompt: string = CREATE_PLUGIN_PROMPT) => {
+    setNewMenuOpen(false);
+    const target = createPluginComposeNavigation({ prompt, projectId: selectedProjectId });
+    void navigate(target.pathname, { state: target.state });
+  };
 
   useEffect(() => {
     if (!newMenuOpen) return;
@@ -387,29 +397,25 @@ export function InstalledView({ toolbarExtra }: { toolbarExtra?: ReactNode } = {
             <button
               type="button"
               className="settings-btn primary"
-              onClick={() => setNewMenuOpen((open) => !open)}
-              aria-haspopup="menu"
-              aria-expanded={newMenuOpen}
-              title="Create or install a plugin"
+              onClick={() => startCreatePlugin()}
+              title="Create a plugin"
             >
               <Plus size={14} />
               New plugin
+            </button>
+            <button
+              type="button"
+              className="settings-btn"
+              onClick={() => setNewMenuOpen((open) => !open)}
+              aria-haspopup="menu"
+              aria-expanded={newMenuOpen}
+              aria-label="Install or open a plugin"
+              title="Install or open a plugin"
+            >
               <ChevronDown size={12} className="ext-install-menu-caret" />
             </button>
             {newMenuOpen && (
-              <div className="ext-install-menu" role="menu" aria-label="New plugin">
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="ext-install-menu-item"
-                  onClick={() => {
-                    setNewMenuOpen(false);
-                    setCreating(true);
-                  }}
-                >
-                  <Plus size={14} />
-                  Create plugin
-                </button>
+              <div className="ext-install-menu" role="menu" aria-label="Install or open a plugin">
                 <button
                   type="button"
                   role="menuitem"
@@ -487,7 +493,6 @@ export function InstalledView({ toolbarExtra }: { toolbarExtra?: ReactNode } = {
           ))}
         </div>
       )}
-      {creating && <CreateExtensionDialog onClose={() => setCreating(false)} />}
       {openExisting && <InstallFromGitDialog mode="open" onClose={() => setOpenExisting(false)} />}
       {installGit && <InstallFromGitDialog onClose={() => setInstallGit(false)} />}
     </section>

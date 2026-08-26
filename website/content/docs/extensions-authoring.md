@@ -1,11 +1,15 @@
 # Plugin authoring
 
-Scaffold with `zcc plugin new <name>`, then install the directory:
+Scaffold with `zcc plugin new <name> [--app]`, then install in place:
 
 ```
-zcc plugin install ./my-plugin
-zcc plugin dev ./my-plugin
+cd zcc-plugin-<id>
+zcc plugin install .
+zcc plugin dev
 ```
+
+Path installs load `./server.ts` from source. Published git/npm/builtin packages
+declare their JS entry (often under `dist`).
 
 ## package.json
 
@@ -18,8 +22,8 @@ zcc plugin dev ./my-plugin
     "name": "Tasks",
     "description": "Task board",
     "branding": { "icon": "ListTodo" },
-    "server": "./server.mjs",
-    "app": "./app.js"
+    "server": "./server.ts",
+    "app": "./app.tsx"
   }
 }
 ```
@@ -34,8 +38,8 @@ Skills, MCP, and extra notes live in the same `zcc` block (BB’s `bb.skills` sh
     "name": "Docs",
     "description": "Project library",
     "branding": { "icon": "Library" },
-    "server": "./server.mjs",
-    "app": "./app.js",
+    "server": "./server.ts",
+    "app": "./app.tsx",
     "skills": ["skills"],
     "mcpServers": {
       "library": {

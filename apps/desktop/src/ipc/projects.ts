@@ -66,9 +66,9 @@ export function registerProjectsIpc(): void {
       }
     }
   );
-  // Clone-root: where `projects.clone` drops repos. Honors the configured
-  // `cloneRoot` (Global Settings) when it's a valid absolute path; otherwise
-  // falls back to `~/zcc-workspace` — the same scratch root the Quick Agent uses.
+  // Clone-root: where `projects.clone` drops repos. Honors a persisted
+  // `cloneRoot` when it's a valid absolute path; otherwise falls back to
+  // `~/zcc-workspace` — the same scratch root the Quick Agent uses.
   // The fallback goes through ensureScratchRoot so a clone-first upgrade still
   // runs the legacy `~/cc-workspace` migration before materializing the dir.
   const cloneRoot = () => {

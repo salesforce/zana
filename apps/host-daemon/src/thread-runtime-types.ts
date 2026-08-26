@@ -15,6 +15,7 @@ export interface ThreadRuntimeAdapter {
     mode?: string;
     model?: string;
     reasoningLevel?: ReasoningLevel;
+    clientRequestId?: string;
   }): Promise<void>;
   resumeWork(input: ThreadResumeInput): Promise<{ providerThreadId?: string } | void>;
   resizeWork(input: { threadId: string; cols: number; rows: number }): Promise<void>;

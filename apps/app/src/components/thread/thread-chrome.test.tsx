@@ -38,7 +38,8 @@ import { ExpandableTimelineRow } from './timeline/ExpandableTimelineRow.js';
 import {
   ThreadDetailHeading,
   ThreadWorkflowChips,
-  ThreadPromptModeChip,
+  ThreadPromptModeCard,
+  ThreadTodoCard,
   ThreadStatusBadge
 } from './timeline/ThreadBanners.js';
 
@@ -449,8 +450,55 @@ describe('expandable row and chips', () => {
       </ExpandableTimelineRow>
     )).toContain('out');
     expect(renderToStaticMarkup(
-      <ThreadPromptModeChip mode={{ mode: 'plan', prompt: 'Write a plan' }} />
-    )).toContain('plan');
+      <ThreadPromptModeCard
+        mode={{ mode: 'plan', prompt: 'Write a plan' }}
+        isExpanded
+        onToggle={() => undefined}
+        onExitPlanMode={() => undefined}
+      />
+    )).toContain('Write a plan');
+    expect(renderToStaticMarkup(
+      <ThreadPromptModeCard
+        mode={{ mode: 'plan', prompt: '' }}
+        isExpanded
+        onToggle={() => undefined}
+      />
+    )).toContain('No prompt text.');
+    expect(renderToStaticMarkup(
+      <ThreadPromptModeCard
+        mode={{ mode: 'plan' }}
+        isExpanded={false}
+        onToggle={() => undefined}
+        onExitPlanMode={() => undefined}
+      />
+    )).toContain('data-testid="thread-exit-plan"');
+    expect(renderToStaticMarkup(
+      <ThreadTodoCard
+        todos={{
+          sourceSeq: 1,
+          updatedAt: 1,
+          items: [
+            { id: '1', text: 'Ship it', status: 'completed' },
+            { id: '2', text: 'Still open', status: 'pending' }
+          ]
+        }}
+        isExpanded={false}
+        onToggle={() => undefined}
+      />
+    )).toContain('1/2 complete');
+    const allComplete = renderToStaticMarkup(
+      <ThreadTodoCard
+        todos={{
+          sourceSeq: 1,
+          updatedAt: 1,
+          items: [{ id: '1', text: 'Ship it', status: 'completed' }]
+        }}
+        isExpanded
+        onToggle={() => undefined}
+      />
+    );
+    expect(allComplete).toContain('1/1 complete');
+    expect(allComplete).toContain('Ship it');
     expect(renderToStaticMarkup(
       <ThreadWorkflowChips workflows={[{
         id: 'wf',
@@ -553,6 +601,9 @@ describe('expandable row and chips', () => {
   it('opens the secondary panel Diff pin from Review', () => {
     const source = readFileSync(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)), 'utf8');
     expect(source).toContain("selectPin('diff')");
+    expect(source).toContain("selectPin('plan')");
+    expect(source).toContain('<ThreadPlanPanel');
+    expect(source).toContain('showPlanPin={showPlanPin}');
     expect(source).toContain('thread-secondary-show');
     expect(source).toContain('<ThreadDetailHeading');
     expect(source).toContain('thinking={thinking}');
@@ -602,10 +653,20 @@ describe('expandable row and chips', () => {
     expect(column).toContain('<ThreadTimeline');
     expect(column).toContain('<ThreadWorkspaceBanner');
     expect(column).toContain('<ThreadCommandComposer');
+    expect(source).toContain('inFlightRetry={inFlightRetry}');
+    expect(source).toContain('autoFocus={!embedded}');
     expect(column).toContain('thread-composer-dock');
+    expect(column).toContain('<ThreadPromptModeCard');
+    expect(column).toContain('<ThreadTodoCard');
+    expect(source).toContain('product.threads.cancelPlan');
+    expect(source).not.toContain('ThreadPromptModeChip');
 
     const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
-    expect(css).toContain('.thread-timeline-row .inbox-md {\n  font-size: 15px;');
+    expect(css).toContain('.thread-composer-dock {');
+    expect(css).toContain('.thread-composer-stack-card');
+    expect(css).toContain('.thread-prompt-mode-card');
+    expect(css).toContain('.thread-pending-banner-plan');
+    expect(css).toContain('.thread-plan-panel');
     const mentionPopover = css.slice(
       css.indexOf('.thread-detail-view .mention-popover {'),
       css.indexOf('.composer-typeahead-heading {')

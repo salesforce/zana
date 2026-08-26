@@ -1,12 +1,9 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Field } from '../components/settings/FormFields.js';
 import { PopoverPicklist } from '../components/ui/PopoverPicklist.js';
-import { listFileOpeners, listThreadLists, subscribePluginSlots } from './plugin-slots.js';
+import { listThreadLists, subscribePluginSlots } from './plugin-slots.js';
 import {
-  fileOpenerKey,
-  readFileOpenerPins,
   readThreadListPin,
-  writeFileOpenerPin,
   writeThreadListPin
 } from './plugin-slot-resolvers.js';
 import {
@@ -78,54 +75,5 @@ export function PluginThreadListPicker() {
         ]}
       />
     </Field>
-  );
-}
-
-export function PluginFileOpenerSettings() {
-  const openers = useSyncExternalStore(subscribePluginSlots, listFileOpeners, listFileOpeners);
-  const pins = readFileOpenerPins();
-  const byExtension = useMemo(() => {
-    const map = new Map<string, typeof openers>();
-    for (const opener of openers) {
-      for (const extension of opener.extensions) {
-        const list = map.get(extension) ?? [];
-        list.push(opener);
-        map.set(extension, list);
-      }
-    }
-    return [...map.entries()].sort(([left], [right]) => left.localeCompare(right));
-  }, [openers]);
-  const [, bump] = useState(0);
-  if (byExtension.length === 0) {
-    return (
-      <p className="settings-hint">No plugin file openers are registered. The host preview is used for every file.</p>
-    );
-  }
-  return (
-    <div className="plugin-file-opener-settings" data-testid="plugin-file-opener-settings">
-      {byExtension.map(([extension, rows]) => {
-        const current = pins[extension] ?? fileOpenerKey(rows[0]!);
-        return (
-          <Field key={extension} label={`.${extension} files`}>
-            <PopoverPicklist
-              value={current}
-              ariaLabel={`Opener for .${extension} files`}
-              searchable={false}
-              onChange={(next) => {
-                writeFileOpenerPin(extension, next);
-                bump((n) => n + 1);
-              }}
-              options={[
-                { value: 'host', label: 'Host preview' },
-                ...rows.map((row) => ({
-                  value: fileOpenerKey(row),
-                  label: row.title
-                }))
-              ]}
-            />
-          </Field>
-        );
-      })}
-    </div>
   );
 }

@@ -7,7 +7,6 @@ import type { TerminalThemeId } from './terminal-themes.js';
 import type { WorkflowArgument } from './workflow-args.js';
 
 export type { WorkflowArgument } from './workflow-args.js';
-export type { ApplyAuthorizationInput, AuthorizationApplyResult } from './authorizations.js';
 export type { TerminalThemeId } from './terminal-themes.js';
 export type {
   Environment,

@@ -1,6 +1,7 @@
 import type {
   PendingInteraction,
   PendingInteractionApprovalDecision,
+  PendingInteractionApprovalSubject,
   PendingInteractionCommandAction,
   PendingInteractionGrantablePermissionProfile,
   PendingInteractionGrantedPermissionProfile,
@@ -226,7 +227,13 @@ export function buildPendingInteractionApprovalResolution(
   return { decision, grantedPermissions: null };
 }
 
-export function approvalDecisionLabel(decision: PendingInteractionApprovalDecision): string {
+export function approvalDecisionLabel(
+  decision: PendingInteractionApprovalDecision,
+  subjectKind?: PendingInteractionApprovalSubject['kind']
+): string {
+  if (subjectKind === 'plan') {
+    return decision === 'deny' ? 'Keep planning' : 'Approve plan';
+  }
   switch (decision) {
     case 'allow_once':
       return 'Allow once';

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  clientTurnRequestIdSchema,
   isUserQuestionPendingInteractionPayload,
   isUserQuestionPendingInteractionResolution,
   threadScope,
@@ -151,6 +152,7 @@ function buildCommandPlan(command: AdapterCommand): ProviderCommandPlan {
           options: command.options,
           providerThreadId: command.providerThreadId,
           threadId: command.threadId,
+          clientRequestId: command.clientRequestId,
         },
       };
     case "turn/steer":
@@ -341,6 +343,21 @@ function translateEventMessage(event: ProviderRuntimeEvent): ThreadEvent[] {
           scope: turnScope(turnId),
         },
       ];
+    case "turn/input/accepted": {
+      const parsedId = clientTurnRequestIdSchema.safeParse(
+        message.params.clientRequestId,
+      );
+      if (!parsedId.success || !turnId) return [];
+      return [
+        {
+          type: "turn/input/accepted",
+          threadId,
+          providerThreadId,
+          scope: turnScope(turnId),
+          clientRequestId: parsedId.data,
+        },
+      ];
+    }
     case "turn/completed": {
       const status = message.params.status;
       return [

@@ -751,22 +751,23 @@ button.statusbar-update {
   display: flex;
   flex-direction: column;
   padding: 8px 12px 10px;
-  /* Visible so the resize handle can sit on the column edge (it overhangs the
-     right padding). Inner `.sidebar-sections` still clips the scrollable list. */
+  /* Visible so the resize handle can sit in the right padding gutter on the
+     column edge. Inner `.sidebar-sections` still clips the scrollable list. */
   overflow: visible;
   position: relative;
-  /* Lift above the content track so the overhanging handle stays grabbable.
-     Overlays (modals, palettes) must portal to document.body — a descendant
-     z-index cannot paint above this stacking context. */
+  /* Lift above the content track so the handle on the column edge stays
+     grabbable. Overlays (modals, palettes) must portal to document.body — a
+     descendant z-index cannot paint above this stacking context. */
   z-index: 1;
 }
 
 .sidebar-resizer {
   position: absolute;
   top: 0;
-  /* `.sidebar` has 12px horizontal padding; `right: -12px` lands the handle on
-     the column border. Width 11px straddles that edge like `.list-pane-resizer`. */
-  right: -12px;
+  /* Absolute `right` is the padding edge (the inner border). Keep the handle
+     inside that 12px gutter so it sits on the column border instead of
+     overlapping the next track. Width 11px matches `.list-pane-resizer`. */
+  right: 0;
   width: 11px;
   height: 100%;
   cursor: col-resize;
@@ -777,7 +778,7 @@ button.statusbar-update {
   content: '';
   position: absolute;
   top: 0;
-  right: 4px;
+  right: 0;
   width: 3px;
   height: 100%;
 }
@@ -4589,8 +4590,15 @@ body.resizing-col {
      rail and would otherwise drop the workspace into the leftover nav column. */
   grid-column: 2 / -1;
   /* Topbar row is `auto`, not a fixed --tab-h: it now stacks two rows (the
-     mode switcher above the tab strip), so it must size to its own content. */
+     mode switcher above the tab strip), so it must size to its own content.
+     Named areas keep body + statusbar in their tracks when thread view omits
+     the topbar — auto-placement would otherwise put the body in `auto` and
+     the statusbar in `1fr`, leaving empty space below a mid-screen bar. */
   grid-template-rows: auto 1fr var(--status-h);
+  grid-template-areas:
+    "topbar"
+    "body"
+    "status";
   background: var(--bg-base);
   min-width: 0;
   /* Grid item of .app-shell's 1fr row track. Without min-height:0 its
@@ -4601,6 +4609,7 @@ body.resizing-col {
 }
 
 .workspace-topbar {
+  grid-area: topbar;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -4636,10 +4645,15 @@ body.resizing-col {
 }
 
 .workspace-body {
+  grid-area: body;
   position: relative;
   min-height: 0;
   min-width: 0;
   display: flex;
+}
+
+.workspace > .statusbar {
+  grid-area: status;
 }
 
 .workspace-body > .terminal-host,
@@ -4898,18 +4912,79 @@ body.resizing-col {
 
 .cli-skills-list {
   list-style: none;
-  margin: 0 0 12px;
+  margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-elevated);
 }
+
 .cli-skills-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 12px;
   font-size: 13px;
+}
+
+.cli-skills-row + .cli-skills-row {
+  border-top: 1px solid var(--border);
+}
+
+.cli-skills-row--warn {
+  background: color-mix(in srgb, var(--warn, #c27803) 7%, var(--bg-elevated));
+}
+
+.cli-skills-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.cli-skills-row--ok .cli-skills-icon {
+  color: var(--success);
+}
+
+.cli-skills-row--warn .cli-skills-icon {
+  color: var(--warn, #c27803);
+}
+
+.cli-skills-row-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.cli-skills-row-copy strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.cli-skills-row-copy p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.cli-skills-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.cli-skills-toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
 }
 
 .machine-cli-row {
@@ -4935,6 +5010,12 @@ body.resizing-col {
 .settings-badge--warn {
   background: color-mix(in srgb, var(--warn, #c27803) 18%, transparent);
   color: var(--warn, #c27803);
+}
+
+.settings-badge--ok {
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 40%, var(--border));
 }
 
 .machines-ceiling {
@@ -5730,6 +5811,14 @@ body.resizing-col {
 .opener-switch--on .opener-switch-knob {
   transform: translateX(14px);
 }
+.opener-switch:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.opener-switch:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+}
 .harness-status-bin {
   font-family: var(--font-mono, monospace);
   font-size: 11px;
@@ -6320,18 +6409,53 @@ body.resizing-col {
   color: var(--success);
 }
 
-.settings-field--check {
+.settings-field--toggle {
   margin-top: 4px;
 }
 
-.settings-check {
+.settings-toggle-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-direction: row !important;
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--text-primary);
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-toggle-row .settings-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-field--toggle > .settings-help {
+  margin-top: 4px;
+  padding-right: 46px;
+}
+
+.settings-field--action + .settings-field--action {
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-action-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.settings-action-copy .settings-help {
+  margin-top: 4px;
+}
+
+.settings-action-control {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
 }
 
 .settings-list {
@@ -7222,6 +7346,17 @@ body.resizing-col .ext-hub-resizer::before {
   flex-wrap: wrap;
   margin-bottom: 12px;
 }
+.create-plugin-examples {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+.create-plugin-examples-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .ext-market-tag {
   appearance: none;
   display: inline-flex;
@@ -7823,16 +7958,18 @@ body.resizing-col .ext-hub-resizer::before {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  line-height: 1;
+  line-height: 1.2;
   background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
   color: var(--text-primary);
   cursor: pointer;
-  font-size: 11px;
-  font-family: 'JetBrains Mono', 'SF Mono', monospace;
-  padding: 5px 10px;
-  transition: background 120ms ease, border-color 120ms ease;
+  font-size: 12px;
+  font-weight: 550;
+  font-family: inherit;
+  padding: 7px 12px;
+  white-space: nowrap;
+  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
 
 .settings-btn svg {
@@ -7840,9 +7977,19 @@ body.resizing-col .ext-hub-resizer::before {
   flex-shrink: 0;
 }
 
-.settings-btn:hover {
+.settings-btn:hover:not(:disabled) {
   background: var(--bg-hover);
-  border-color: var(--border-strong);
+  border-color: color-mix(in srgb, var(--accent-blue) 40%, var(--border-strong));
+}
+
+.settings-btn:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+
+.settings-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 .settings-textarea {
@@ -14998,16 +15145,21 @@ body.resizing-col .explorer-resizer::after {
 /* Report affordance — shown on a run row (and Overview item) when a run has
    an agent-authored report. Works regardless of session liveness. */
 .scheduler-run-report-btn {
-  display: inline-grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 22px;
   width: 22px;
   height: 22px;
+  padding: 0;
+  margin: 0;
   border-radius: 5px;
   border: 1px solid var(--border);
   background: var(--bg-panel);
   color: var(--accent-blue);
   cursor: pointer;
   justify-self: end;
+  appearance: none;
   transition: background-color 0.1s ease, border-color 0.1s ease;
 }
 
@@ -15359,13 +15511,16 @@ body.resizing-col .explorer-resizer::after {
   gap: 8px;
 }
 
-.settings-btn.primary {
+.settings-btn.primary,
+.settings-btn--primary {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+  font-weight: 600;
 }
 
-.settings-btn.primary:hover {
+.settings-btn.primary:hover:not(:disabled),
+.settings-btn--primary:hover:not(:disabled) {
   filter: brightness(1.08);
 }
 
@@ -16403,6 +16558,11 @@ body.resizing-col .explorer-resizer::after {
   width: 22px;
   height: 22px;
   border-radius: 6px;
+}
+
+.overview-result svg {
+  display: block;
+  flex-shrink: 0;
 }
 
 .overview-result--success {
@@ -24451,7 +24611,16 @@ body.resizing-col .library-split-resizer::after {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
+}
+.prompts-editor .settings-field {
+  margin-bottom: 0;
+}
+.prompts-editor input[type='text'],
+.prompts-editor input[type='number'] {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 .prompts-editor textarea {
   width: 100%;
@@ -24459,17 +24628,23 @@ body.resizing-col .library-split-resizer::after {
   font-family: inherit;
   font-size: 13px;
   line-height: 1.5;
+  box-sizing: border-box;
 }
 .prompts-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px 16px;
+  align-items: start;
+  min-width: 0;
+}
+.prompts-row > .settings-field {
+  min-width: 0;
 }
 .prompts-actions {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-  margin-top: 4px;
+  margin-top: 2px;
 }
 .prompts-actions .btn {
   display: inline-flex;
@@ -24477,13 +24652,24 @@ body.resizing-col .library-split-resizer::after {
   gap: 5px;
 }
 .prompts-test {
-  margin-top: 8px;
-  padding-top: 12px;
+  margin-top: 2px;
+  padding-top: 14px;
   border-top: 1px solid var(--border, rgba(127, 127, 127, 0.2));
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  align-items: flex-start;
+  gap: 12px;
+  align-items: stretch;
+}
+.prompts-test-heading {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.prompts-test .prompts-actions {
+  margin-top: 0;
 }
 .prompts-test-result {
   width: 100%;
@@ -28850,20 +29036,148 @@ textarea.ui-command-composer-input {
   font-size: 14px;
 }
 
-.thread-composer-dock:has(.thread-pending-banner) .thread-pending-banner {
+.thread-composer-stack-card {
+  min-width: 0;
+}
+
+.thread-composer-dock:has(.thread-composer-stack-card) .thread-composer-stack-card {
   margin: 0;
   border-bottom: 0;
   border-radius: 0;
 }
 
-.thread-composer-dock:has(.thread-pending-banner) .thread-pending-banner:first-child {
+.thread-composer-dock:has(.thread-composer-stack-card) .thread-composer-stack-card:first-child {
   border-top-left-radius: 12px;
   border-top-right-radius: 12px;
 }
 
-.thread-composer-dock:has(.thread-pending-banner) .thread-command-composer .ui-command-composer {
+.thread-composer-dock:has(.thread-composer-stack-card) .thread-command-composer .ui-command-composer {
   border-top-left-radius: 0;
   border-top-right-radius: 0;
+}
+
+.thread-prompt-mode-card,
+.thread-composer-dock .thread-todo-card {
+  border: 1px solid var(--border);
+  background: var(--bg-elevated, var(--bg-background));
+  overflow: hidden;
+}
+
+.thread-stack-card-header {
+  display: flex;
+  align-items: stretch;
+}
+
+.thread-stack-card-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  min-width: 0;
+  margin: 0;
+  padding: 6px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary, var(--ink));
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.thread-stack-card-toggle:hover {
+  background: color-mix(in srgb, var(--bg-background) 80%, transparent);
+}
+
+.thread-stack-card-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.thread-stack-card-chevron {
+  flex: 0 0 auto;
+  color: var(--ink-muted);
+  transition: transform 0.15s ease;
+}
+
+.thread-stack-card-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.thread-stack-card-exit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  flex: 0 0 32px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.thread-stack-card-exit:hover:not(:disabled) {
+  color: var(--text-primary, var(--ink));
+}
+
+.thread-stack-card-exit:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.thread-stack-card-exit .spin {
+  animation: icon-spin 1s linear infinite;
+}
+
+.thread-stack-card-body {
+  border-top: 1px solid var(--border);
+  background: var(--bg-popover, var(--bg-elevated, var(--bg-background)));
+}
+
+.thread-prompt-mode-prompt {
+  margin: 0;
+  padding: 8px 12px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  color: var(--text-primary, var(--ink));
+}
+
+.thread-pending-banner-plan {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card, var(--bg-elevated, var(--bg-background)));
+}
+
+.thread-pending-banner-plan-body {
+  max-height: 240px;
+  overflow: auto;
+  padding: 8px 12px;
+}
+
+.thread-pending-banner-plan-body .inbox-md {
+  font-size: 12px;
+}
+
+.thread-pending-banner-plan-file {
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  color: var(--text-muted, var(--ink-muted));
 }
 
 .thread-pending-banner-source {
@@ -29680,6 +29994,37 @@ textarea.ui-command-composer-input {
 .thread-command-chip {
   gap: 4px;
   color: var(--text-muted);
+}
+
+.thread-command-env {
+  cursor: default;
+}
+
+.thread-command-host-action {
+  gap: 6px;
+}
+
+.thread-command-host-action-btn,
+.thread-command-host-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
+.thread-command-host-action-btn:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.thread-command-host-action-btn:not(:disabled):hover,
+.thread-command-host-copy:hover {
+  color: var(--text);
 }
 
 .thread-command-composer .thread-command-stop {
@@ -30613,18 +30958,11 @@ textarea.thread-command-editor {
 .thread-todo-card {
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 8px 10px;
-}
-
-.thread-todo-card h2 {
-  margin: 0 0 6px;
-  font-size: 12px;
-  font-weight: 600;
 }
 
 .thread-todo-card ul {
   margin: 0;
-  padding: 0;
+  padding: 8px 12px 10px;
   list-style: none;
   display: flex;
   flex-direction: column;
@@ -31174,6 +31512,77 @@ textarea.thread-command-editor {
   flex-direction: column;
   gap: 10px;
   padding: 12px;
+}
+
+.thread-plan-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+}
+
+.thread-plan-panel-prompt,
+.thread-plan-panel-empty,
+.thread-plan-panel-file {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted, var(--ink-muted));
+}
+
+.thread-plan-panel-prompt {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card, var(--bg-elevated, var(--bg-background)));
+  color: var(--text-primary, var(--ink));
+  white-space: pre-wrap;
+}
+
+.thread-plan-panel-body .inbox-md {
+  font-size: 13px;
+}
+
+.thread-plan-panel-file {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.thread-plan-panel-file.is-button {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent, var(--text-primary));
+  cursor: pointer;
+  text-align: left;
+}
+
+.thread-plan-panel-todos-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--ink-muted, var(--text-dim));
+}
+
+.thread-plan-panel-todos ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.thread-plan-panel-todos li[data-status="completed"] {
+  color: var(--ink-muted);
+  text-decoration: line-through;
 }
 
 .thread-info-row {

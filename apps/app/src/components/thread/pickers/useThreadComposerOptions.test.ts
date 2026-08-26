@@ -23,5 +23,8 @@ describe('useThreadComposerOptions', () => {
     expect(source).not.toContain('AgentLauncher');
     expect(source).not.toContain('list_models');
     expect(source).toContain('rememberComposerSelection({ providerId, model: value, reasoningLevel })');
+    expect(source).toContain('const persistSelection = !input.threadId');
+    expect(source).toContain('preferredComposerModel');
+    expect(source).toContain('if (persistSelection)');
   });
 });

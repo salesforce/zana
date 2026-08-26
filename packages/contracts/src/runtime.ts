@@ -131,6 +131,11 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
     pluginId: z.string().min(1).max(128)
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('plugins-logs'),
+    pluginId: z.string().min(1).max(128),
+    n: z.number().int().min(1).max(10_000).optional()
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('plugins-snapshot')
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({

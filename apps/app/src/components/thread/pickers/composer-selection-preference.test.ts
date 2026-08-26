@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import {
   __clearComposerSelectionForTest,
   parseComposerSelectionPreference,
+  preferredComposerModel,
   readComposerSelectionPreference,
   rememberComposerSelection,
   rememberedProviderId,
@@ -72,5 +73,53 @@ describe('composer selection preference', () => {
       model: 'claude-sonnet-5'
     })).not.toThrow();
     expect(readComposerSelectionPreference()).toEqual({ byProvider: {} });
+  });
+});
+
+describe('preferredComposerModel', () => {
+  const offered = ['claude-opus-5[1m]', 'claude-sonnet-5'];
+
+  it('keeps a remembered new-thread model instead of the catalog default', () => {
+    expect(preferredComposerModel({
+      rememberedModel: 'claude-sonnet-5',
+      currentModel: 'claude-opus-5[1m]',
+      persistRemembered: true,
+      offeredModels: offered,
+      fallbackModel: 'claude-opus-5[1m]',
+      loading: false
+    })).toBe('claude-sonnet-5');
+  });
+
+  it('uses the remembered model while the catalog is still loading', () => {
+    expect(preferredComposerModel({
+      rememberedModel: 'claude-sonnet-5',
+      currentModel: 'claude-opus-5[1m]',
+      persistRemembered: true,
+      offeredModels: [],
+      fallbackModel: 'claude-opus-5[1m]',
+      loading: true
+    })).toBe('claude-sonnet-5');
+  });
+
+  it('does not apply the cache on an existing thread', () => {
+    expect(preferredComposerModel({
+      rememberedModel: 'claude-sonnet-5',
+      currentModel: 'claude-opus-5[1m]',
+      persistRemembered: false,
+      offeredModels: offered,
+      fallbackModel: 'claude-opus-5[1m]',
+      loading: false
+    })).toBe('claude-opus-5[1m]');
+  });
+
+  it('falls back when a remembered model is no longer offered', () => {
+    expect(preferredComposerModel({
+      rememberedModel: 'retired-model',
+      currentModel: '',
+      persistRemembered: true,
+      offeredModels: offered,
+      fallbackModel: 'claude-opus-5[1m]',
+      loading: false
+    })).toBe('claude-opus-5[1m]');
   });
 });

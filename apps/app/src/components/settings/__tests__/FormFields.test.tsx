@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { tokenizeArgsLine } from '../FormFields.js';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, it, expect, vi } from 'vitest';
+import { CheckboxField, SettingsActionRow, tokenizeArgsLine } from '../FormFields.js';
 
 /**
  * Pins the fix for "Extra args" splicing a whole `--flag value` string into
@@ -37,5 +38,48 @@ describe('tokenizeArgsLine', () => {
   it('collapses repeated whitespace and ignores empty input', () => {
     expect(tokenizeArgsLine('  --plugin-dir    /a/b  ')).toEqual(['--plugin-dir', '/a/b']);
     expect(tokenizeArgsLine('   ')).toEqual([]);
+  });
+});
+
+describe('CheckboxField', () => {
+  it('renders a harness-style switch instead of a checkbox', () => {
+    const html = renderToStaticMarkup(
+      <CheckboxField
+        label="Use auto mode by default"
+        help="When on, new agents launch in auto."
+        checked={true}
+        onChange={vi.fn()}
+      />
+    );
+    expect(html).toContain('role="switch"');
+    expect(html).toContain('aria-checked="true"');
+    expect(html).toContain('aria-label="Use auto mode by default"');
+    expect(html).toContain('opener-switch--on');
+    expect(html).toContain('When on, new agents launch in auto.');
+    expect(html).not.toContain('type="checkbox"');
+  });
+
+  it('disables the switch when the field is busy', () => {
+    const html = renderToStaticMarkup(
+      <CheckboxField label="Enabled" checked={false} disabled onChange={vi.fn()} />
+    );
+    expect(html).toContain('disabled=""');
+    expect(html).toContain('aria-checked="false"');
+    expect(html).not.toContain('opener-switch--on');
+  });
+});
+
+describe('SettingsActionRow', () => {
+  it('puts the label and help beside the action control', () => {
+    const html = renderToStaticMarkup(
+      <SettingsActionRow label="Replay walkthrough" help="Launching an agent, adding a project.">
+        <button type="button" className="settings-btn">Replay</button>
+      </SettingsActionRow>
+    );
+    expect(html).toContain('settings-field--action');
+    expect(html).toContain('Replay walkthrough');
+    expect(html).toContain('Launching an agent, adding a project.');
+    expect(html).toContain('settings-btn');
+    expect(html).toContain('Replay');
   });
 });

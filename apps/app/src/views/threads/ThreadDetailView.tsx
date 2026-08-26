@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { PanelRight } from 'lucide-react';
 import type { ActiveThinking, ThreadTimelineGoal, ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
@@ -9,11 +9,15 @@ import { ThreadCommandComposer } from '../../components/ThreadCommandComposer.js
 import { ThreadTimeline } from '../../components/thread/ThreadTimeline.js';
 import { ThreadDiffPanel } from '../../components/thread/ThreadDiffPanel.js';
 import { ThreadWorkspaceBanner } from '../../components/thread/ThreadWorkspaceBanner.js';
-import { isBusyThreadStatus, timelineRowsAwaitUser } from '../../components/thread/thread-timeline-model.js';
-import { ThreadDetailHeading } from '../../components/thread/timeline/ThreadBanners.js';
+import {
+  isBusyThreadStatus,
+  timelineHasInFlightRetry,
+  timelineRowsAwaitUser
+} from '../../components/thread/thread-timeline-model.js';
+import { ThreadDetailHeading, ThreadPromptModeCard, ThreadTodoCard } from '../../components/thread/timeline/ThreadBanners.js';
 import { ThreadDetailOverflow } from '../../components/thread/ThreadDetailOverflow.js';
 import { createCoalescedRunner } from '../../lib/coalesced-runner.js';
-import { getProjectWorkspaceRoutePath, getThreadRoutePath } from '../../lib/route-paths.js';
+import { getThreadRoutePath } from '../../lib/route-paths.js';
 import { useRouteState } from '../../hooks/useRouteState.js';
 import { pendingChildThreads, useThreads } from '../../thread-store.js';
 import { ThreadPendingInteractionBanner } from '../../components/thread/pending-interactions/ThreadPendingInteractionBanner.js';
@@ -24,6 +28,11 @@ import {
 } from '../../components/thread/pending-interactions/useOpenPendingInteractions.js';
 import { ThreadSecondaryPanel } from '../../components/thread/secondary-panel/ThreadSecondaryPanel.js';
 import { ThreadInfoContent } from '../../components/thread/secondary-panel/ThreadInfoContent.js';
+import { ThreadPlanPanel } from '../../components/thread/secondary-panel/ThreadPlanPanel.js';
+import {
+  planFileTabTitle,
+  resolveThreadPlanDocument
+} from '../../components/thread/secondary-panel/thread-plan-document.js';
 import { ThreadNewTabPage } from '../../components/thread/secondary-panel/ThreadNewTabPage.js';
 import { ThreadFilePreviewTab } from '../../components/thread/secondary-panel/ThreadFilePreviewTab.js';
 import { ThreadBrowserTab } from '../../components/thread/secondary-panel/ThreadBrowserTab.js';
@@ -87,6 +96,9 @@ export function ThreadDetail({
   const [segmentLimit, setSegmentLimit] = useState(INITIAL_SEGMENT_LIMIT);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [diffPath, setDiffPath] = useState<string | null>(null);
+  const [planExpanded, setPlanExpanded] = useState(false);
+  const [todoExpanded, setTodoExpanded] = useState(false);
+  const [planExitPending, setPlanExitPending] = useState(false);
 
   useEffect(() => {
     if (!threadId) return;
@@ -153,7 +165,7 @@ export function ThreadDetail({
             hasPendingInteraction: Boolean((thread as { hasPendingInteraction?: boolean }).hasPendingInteraction)
           });
         }
-        if (!isBusyThreadStatus(nextStatus) && poll !== null) {
+        if (!isBusyThreadStatus(nextStatus) && !timelineHasInFlightRetry(timeline.rows as TimelineRow[]) && poll !== null) {
           window.clearInterval(poll);
           poll = null;
         }
@@ -220,6 +232,28 @@ export function ThreadDetail({
   const pin = activePinnedView(panel.state);
   const closable = activeClosableTab(panel.state);
   const panelOpen = panel.state.isOpen;
+  const planDocument = useMemo(
+    () => resolveThreadPlanDocument({
+      promptMode,
+      pendingInteractions,
+      rows
+    }),
+    [pendingInteractions, promptMode, rows]
+  );
+  const showPlanPin = planDocument !== null;
+  const openedPlanPanel = useRef(false);
+
+  useEffect(() => {
+    if (!planDocument) {
+      openedPlanPanel.current = false;
+      if (pin === 'plan') panel.selectPin('info');
+      return;
+    }
+    if (planDocument.source !== 'approval' || openedPlanPanel.current) return;
+    openedPlanPanel.current = true;
+    panel.selectPin('plan');
+  }, [panel, pin, planDocument]);
+
   const viewClass = [
     'thread-detail-view',
     embedded ? 'thread-detail-view--embedded' : '',
@@ -241,6 +275,18 @@ export function ThreadDetail({
         model={threadModel}
         reasoningLevel={threadReasoning}
         providerId={threadProviderId}
+      />
+    );
+  } else if (pin === 'plan' && planDocument) {
+    panelBody = (
+      <ThreadPlanPanel
+        document={planDocument}
+        todos={todos}
+        onOpenFile={(path) => panel.addTab({
+          kind: 'file-preview',
+          title: planFileTabTitle(path),
+          path
+        })}
       />
     );
   } else if (pin === 'diff' && environmentId) {
@@ -306,6 +352,15 @@ export function ThreadDetail({
   }
 
   const awaitingUser = pendingInteractions.length > 0 || timelineRowsAwaitUser(rows);
+  const inFlightRetry = timelineHasInFlightRetry(rows);
+
+  const exitPlanMode = useCallback(() => {
+    if (!threadId || planExitPending) return;
+    setPlanExitPending(true);
+    void product.threads.cancelPlan(threadId).catch(() => undefined).finally(() => {
+      setPlanExitPending(false);
+    });
+  }, [planExitPending, threadId]);
 
   return (
     <section
@@ -327,6 +382,7 @@ export function ThreadDetail({
                 threadId={threadId}
                 title={title}
                 status={status}
+                inFlightRetry={inFlightRetry}
                 projectId={projectId}
                 onRenamed={setTitle}
                 onUnread={() => setLastReadSeq(0)}
@@ -357,10 +413,8 @@ export function ThreadDetail({
               status={status}
               waitingOnUser={awaitingUser}
               thinking={thinking}
-              todos={todos}
               goal={goal}
               activeWorkflows={workflows}
-              activePromptMode={promptMode}
               lastReadSeq={lastReadSeq}
               hasOlderRows={hasOlderRows}
               loadingOlder={loadingOlder}
@@ -398,16 +452,32 @@ export function ThreadDetail({
                   threadId={threadId}
                 />
               ))}
+              <ThreadPromptModeCard
+                mode={promptMode}
+                isExpanded={planExpanded}
+                isExitPending={planExitPending}
+                onToggle={() => {
+                  setPlanExpanded((value) => !value);
+                  if (showPlanPin) panel.selectPin('plan');
+                }}
+                onExitPlanMode={exitPlanMode}
+              />
+              <ThreadTodoCard
+                todos={todos}
+                isExpanded={todoExpanded}
+                onToggle={() => setTodoExpanded((value) => !value)}
+              />
               <ThreadCommandComposer
                 threadId={threadId}
+                autoFocus={!embedded}
                 status={status}
+                inFlightRetry={inFlightRetry}
                 sendBlocked={pendingInteractions.length > 0}
                 environmentLabel={isWorktree ? 'This checkout' : 'Local'}
                 contextWindowUsage={contextWindow}
                 providerId={threadProviderId ?? undefined}
                 model={threadModel}
                 reasoningLevel={threadReasoning}
-                onOpenExplorer={projectId ? () => navigate(getProjectWorkspaceRoutePath(projectId, 'explorer')) : undefined}
               />
             </div>
           </div>
@@ -417,8 +487,10 @@ export function ThreadDetail({
         <ThreadSecondaryPanel
           state={panel.state}
           showDiffPin={Boolean(environmentId)}
+          showPlanPin={showPlanPin}
           onSelectInfo={() => panel.selectPin('info')}
           onSelectDiff={() => panel.selectPin('diff')}
+          onSelectPlan={() => panel.selectPin('plan')}
           onNewTab={panel.openNewTab}
           onCloseTab={panel.closeTab}
           onActivateTab={panel.activateTab}

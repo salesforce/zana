@@ -7,7 +7,9 @@ import { spawnSync } from 'node:child_process';
 import { HOST_RPC_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/host-rpc';
 import { createRequire } from 'node:module';
 
-const require = createRequire(import.meta.url);
+// Electron-Vite emits an ESM `require` shim for the main bundle. Keep this
+// module-local resolver distinct so the bundled declarations cannot collide.
+const nodeRequire = createRequire(import.meta.url);
 
 export interface HostArtifactInfo {
   version: string;
@@ -17,7 +19,7 @@ export interface HostArtifactInfo {
 
 function hostDaemonVersion(): string {
   try {
-    const pkg = require('@zana-ai/zcc-host-daemon/package.json') as { version?: string };
+    const pkg = nodeRequire('@zana-ai/zcc-host-daemon/package.json') as { version?: string };
     return pkg.version ?? '0.1.0';
   } catch {
     return '0.1.0';

@@ -33,4 +33,18 @@ describe('workspace shell placement', () => {
       '.app-shell.sidebar-is-collapsed.scoped-no-list {\n  grid-template-columns: minmax(0, 1fr);\n}'
     );
   });
+
+  it('pins body and statusbar to named rows so omitting the topbar cannot shift them', () => {
+    const start = css.indexOf('\n.workspace {\n');
+    expect(start).toBeGreaterThan(-1);
+    const block = css.slice(start, css.indexOf('\n}', start));
+    expect(block).toContain('grid-template-rows: auto 1fr var(--status-h);');
+    expect(block).toContain('grid-template-areas:');
+    expect(block).toContain('"topbar"');
+    expect(block).toContain('"body"');
+    expect(block).toContain('"status"');
+    expect(css).toContain('.workspace-topbar {\n  grid-area: topbar;');
+    expect(css).toContain('.workspace-body {\n  grid-area: body;');
+    expect(css).toContain('.workspace > .statusbar {\n  grid-area: status;');
+  });
 });

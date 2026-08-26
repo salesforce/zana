@@ -26,4 +26,17 @@ describe('join codes', () => {
     expect(store.redeem(expired.joinCode, 10 + JOIN_CODE_TTL_MS)).toBeNull();
     expect(store.peek('missing', 10)).toBeNull();
   });
+
+  it('mints a join code bound to an existing hostId', () => {
+    const store = createJoinCodeStore();
+    const hostId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    const issued = store.mintForHost(hostId, 50);
+    expect(issued.hostId).toBe(hostId);
+    expect(store.redeem(issued.joinCode, 51)?.hostId).toBe(hostId);
+  });
+
+  it('rejects a non-UUID hostId for re-enroll', () => {
+    const store = createJoinCodeStore();
+    expect(() => store.mintForHost('not-a-uuid')).toThrow(/UUID/);
+  });
 });

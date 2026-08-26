@@ -62,3 +62,18 @@ test('top-level Extensions view fills the content area, not the narrow list colu
   expect(innerBox!.width).toBeGreaterThan(panelBox!.width * 0.9);
   expect(listBox!.width).toBeGreaterThan(innerBox!.width * 0.85);
 });
+
+test('Plugins New plugin seeds the home composer with the shared prefix', async ({ app }) => {
+  const win = app.window;
+  await win.locator('.nav-item').filter({ hasText: 'Plugins' }).first().click();
+  await win.waitForSelector('.ext-hub-shell', { timeout: 15_000 });
+  await win.getByTestId('extensions-nav-installed').click();
+  await expect(win.getByRole('button', { name: 'New plugin' })).toBeVisible();
+  await win.getByRole('button', { name: 'New plugin' }).click();
+  const composer = win.locator('.home-agent-composer, .thread-command-composer, .new-thread-view').first();
+  await expect(composer).toBeVisible({ timeout: 15_000 });
+  await expect(composer.locator('.ProseMirror, [contenteditable="true"]').first()).toContainText(
+    'Create a new zcc plugin that',
+    { timeout: 15_000 }
+  );
+});

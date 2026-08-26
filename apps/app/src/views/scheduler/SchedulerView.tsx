@@ -4,6 +4,7 @@ import { Clock, Plus, Sparkles, Pause, PlayCircle, AlertTriangle, Activity, Sett
 import type { ScheduledTask, ScheduleRun, ScheduleTemplate } from '@zana-ai/zcc-domain/product';
 import { useData, useScheduler, useScheduleGroups, useUi } from '@/store';
 import { EmptyStateWithFeatured } from '@/components/scheduler/EmptyStateWithFeatured';
+import { openScheduledLive } from '@/components/scheduler/openScheduledLive';
 import { ScheduleRow } from '@/components/scheduler/ScheduleRow';
 import { ScheduleModal } from '@/components/scheduler/ScheduleModal';
 import { DeleteConfirmModal } from '@/components/scheduler/DeleteConfirmModal';
@@ -137,15 +138,6 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
 
   // Shared SchedulerOverview handlers — used by both the cross-project overview
   // and the per-project overview (the scoped tab).
-  const openScheduledTerminal = (t: ScheduledTask, sessionId: string) => {
-    // Scheduled fires are headless — restoreTerminal un-hides the session
-    // before selecting it. enterProjectFocus (not selectProject) is required:
-    // the Workspace — and its tab strip — only mounts when focusedProjectId is
-    // set; setWorkspaceMode('terminals') lands on the tab, not the Agents board.
-    useUi.getState().enterProjectFocus(t.projectId);
-    void useData.getState().restoreTerminal(sessionId, t.projectId);
-    useUi.getState().setWorkspaceMode(t.projectId, 'terminals');
-  };
   const toggleSchedule = async (t: ScheduledTask) => {
     const result = await product.scheduler.setEnabled(t.id, !t.enabled);
     if (!result.ok) useUi.getState().pushToast(result.message, 'error');
@@ -283,7 +275,7 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
             hideByProject={Boolean(lockedProject)}
             onJump={lockedProject ? () => setView('schedules') : (t) => setEditing(t)}
             onOpenProject={lockedProject ? undefined : openProjectSchedules}
-            onOpenTerminal={openScheduledTerminal}
+            onOpenTerminal={(t, sessionId) => openScheduledLive(t.projectId, sessionId)}
             onEdit={(t) => setEditing(t)}
             onShowReport={showReport}
             onToggle={toggleSchedule}

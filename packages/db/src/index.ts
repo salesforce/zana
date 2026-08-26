@@ -16,6 +16,8 @@ export {
   markHostSeen,
   renameHost,
   updateHostPermissionCeiling,
+  updateHostSshIdentity,
+  findHostBySsh,
   markHostProtocolRejected,
   destroyHost,
   type HostRow,

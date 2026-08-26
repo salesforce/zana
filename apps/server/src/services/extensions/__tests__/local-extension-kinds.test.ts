@@ -56,9 +56,9 @@ describe('scaffoldLocalExtension (per kind)', () => {
     expect(res.ok).toBe(true);
     const pkg = JSON.parse(await readFile(join(workDir, 'package.json'), 'utf-8'));
     expect(pkg.name).toBe('zcc-plugin-my-back-a1b2');
-    expect(pkg.zcc.server).toBe('./server.mjs');
-    expect(pkg.zcc.app).toBe('./app.js');
-    expect(existsSync(join(workDir, 'server.mjs'))).toBe(true);
+    expect(pkg.zcc.server).toBe('./server.ts');
+    expect(pkg.zcc.app).toBe('./app.tsx');
+    expect(existsSync(join(workDir, 'server.ts'))).toBe(true);
     expect(existsSync(join(workDir, 'app.js'))).toBe(true);
     expect(existsSync(join(workDir, 'extension.json'))).toBe(false);
   });
@@ -73,7 +73,7 @@ describe('scaffoldLocalExtension (per kind)', () => {
     expect(res.ok).toBe(true);
     const pkg = JSON.parse(await readFile(join(workDir, 'package.json'), 'utf-8'));
     expect(pkg.zcc.mcpServers).toBeTruthy();
-    expect(pkg.zcc.server).toBe('./server.mjs');
+    expect(pkg.zcc.server).toBe('./server.ts');
   });
 
   it('scaffolds agent-preset without an app entry', async () => {
@@ -85,7 +85,7 @@ describe('scaffoldLocalExtension (per kind)', () => {
     });
     expect(res.ok).toBe(true);
     const pkg = JSON.parse(await readFile(join(workDir, 'package.json'), 'utf-8'));
-    expect(pkg.zcc.server).toBe('./server.mjs');
+    expect(pkg.zcc.server).toBe('./server.ts');
     expect(pkg.zcc.app).toBeUndefined();
     expect(existsSync(join(workDir, 'app.js'))).toBe(false);
   });

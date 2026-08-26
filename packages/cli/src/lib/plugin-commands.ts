@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, watch } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, watch } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { join, relative, resolve } from 'node:path';
 import { PLUGIN_SDK_VERSION, derivePluginId } from '@zana-ai/zcc-plugin-sdk';
 import { clampPluginStarterKind, scaffoldPlugin } from '@zana-ai/zcc-plugin-templates';
@@ -23,8 +24,54 @@ interface InstalledFile {
   }>;
 }
 
-function err(message: string, exitCode = 1): CliResult {
+function findInstalledPathPluginId(dataDir: string, dir: string): string | undefined {
+  let real: string;
+  try {
+    real = realpathSync(dir);
+  } catch {
+    real = resolve(dir);
+  }
+  for (const plugin of readInstalled(dataDir).plugins) {
+    const source = plugin.source.startsWith('path:') ? plugin.source.slice('path:'.length) : plugin.source;
+    try {
+      if (realpathSync(source) === real) return plugin.id;
+    } catch {
+      if (resolve(source) === real) return plugin.id;
+    }
+  }
+  return undefined;
+}
+
+async function readLogTail(dataDir: string, pluginId: string, tail: number): Promise<string[]> {
+  const files = [
+    join(dataDir, 'plugins', pluginId, 'logs', 'plugin.log.1'),
+    join(dataDir, 'plugins', pluginId, 'logs', 'plugin.log')
+  ];
+  const lines: string[] = [];
+  for (const file of files) {
+    if (!existsSync(file)) continue;
+    try {
+      lines.push(...readFileSync(file, 'utf8').split('\n').filter((line) => line.length > 0));
+    } catch {
+      // ignore unreadable rotated files
+    }
+  }
+  return tail <= 0 ? [] : lines.slice(-tail);
+}
+
+function err(message: string, exitCode: number): CliResult {
   return { exitCode, stdout: '', stderr: `Error: ${message}\n` };
+}
+
+function installScaffoldDeps(dest: string): string {
+  if (process.env.VITEST || process.env.ZCC_SKIP_PLUGIN_NPM === '1') return '';
+  const result = spawnSync('npm', ['install', '--include=dev', '--no-fund', '--no-audit'], {
+    cwd: dest,
+    encoding: 'utf8',
+    timeout: 60_000
+  });
+  if (result.status === 0) return '';
+  return `npm install skipped: ${result.stderr?.trim() || result.error?.message || 'failed'}\n`;
 }
 
 function readInstalled(dataDir: string): InstalledFile {
@@ -81,15 +128,19 @@ export async function runPluginCommand(
   if (subcommand === 'new') {
     const name = rest[0];
     if (!name) return err('plugin new requires a <name>', 2);
-    const dest = rest.includes('--dir')
-      ? rest[rest.indexOf('--dir') + 1]
-      : join(process.cwd(), name);
-    if (!dest) return err('plugin new --dir requires a path', 2);
-    const kindFlag = rest.includes('--kind') ? rest[rest.indexOf('--kind') + 1] : undefined;
-    const kind = rest.includes('--app') && !kindFlag ? 'panel' : clampPluginStarterKind(kindFlag ?? 'main-panel');
-    mkdirSync(dest, { recursive: true });
     const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'plugin';
     const id = derivePluginId(`zcc-plugin-${slug}`);
+    const dest = rest.includes('--dir')
+      ? rest[rest.indexOf('--dir') + 1]
+      : join(process.cwd(), `zcc-plugin-${id}`);
+    if (!dest) return err('plugin new --dir requires a path', 2);
+    const kindFlag = rest.includes('--kind') ? rest[rest.indexOf('--kind') + 1] : undefined;
+    const kind = kindFlag
+      ? clampPluginStarterKind(kindFlag)
+      : rest.includes('--app')
+        ? 'main-panel'
+        : 'agent-preset';
+    mkdirSync(dest, { recursive: true });
     await scaffoldPlugin({
       targetDir: dest,
       id,
@@ -97,7 +148,12 @@ export async function runPluginCommand(
       kind,
       pluginSdkVersion: PLUGIN_SDK_VERSION
     });
-    return { exitCode: 0, stdout: `Created plugin scaffold in ${dest}\n` };
+    await syncPluginTypes(dest).catch(() => undefined);
+    const npmNote = installScaffoldDeps(dest);
+    return {
+      exitCode: 0,
+      stdout: `${npmNote}Created plugin scaffold in ${dest}\nNext: cd ${dest} && zcc plugin install .\n`
+    };
   }
   if (subcommand === 'types') {
     const dir = resolve(rest[0] ?? process.cwd());
@@ -135,16 +191,17 @@ export async function runPluginCommand(
       name?: string;
       zcc?: { server?: string; app?: string };
     };
-    const id = derivePluginId(pkg.name ?? `zcc-plugin-${dir}`);
-    const installed = await live(dataDir, 'plugin.install', { source: dir }, jsonOutput);
-    if (installed.exitCode !== 0) return installed;
-    if (rest.includes('--once')) {
-      return { exitCode: 0, stdout: installed.stdout };
+    const id = findInstalledPathPluginId(dataDir, dir) ?? derivePluginId(pkg.name ?? `zcc-plugin-${dir}`);
+    if (!findInstalledPathPluginId(dataDir, dir)) {
+      return err(
+        `This directory is not installed as a plugin — run \`zcc plugin install ${rest[0] ?? '.'}\` first, then re-run \`zcc plugin dev\`.`,
+        2
+      );
     }
     const loop = createPluginDevLoop({
       pluginId: id,
       hasApp: Boolean(pkg.zcc?.app),
-      hasServer: Boolean(pkg.zcc?.server),
+      hasServer: Boolean(pkg.zcc?.server) && !/\.tsx?$/.test(pkg.zcc?.server ?? ''),
       buildApp: async () => {
         await buildPlugin(dir, '1.0.0');
       },
@@ -159,6 +216,12 @@ export async function runPluginCommand(
         process.stderr.write(`${line}\n`);
       }
     });
+    if (rest.includes('--once')) {
+      loop.handleChange('package.json');
+      await loop.settled();
+      loop.dispose();
+      return { exitCode: 0, stdout: `Reloaded ${id}\n` };
+    }
     const watcher = watch(dir, { recursive: true }, (_event, filename) => {
       if (typeof filename === 'string') loop.handleChange(relative(dir, join(dir, filename)));
     });
@@ -171,7 +234,50 @@ export async function runPluginCommand(
       process.once('SIGINT', stop);
       process.once('SIGTERM', stop);
     });
-    return { exitCode: 0, stdout: `${installed.stdout}Stopped watching ${dir}\n` };
+    return { exitCode: 0, stdout: `Stopped watching ${dir}\n` };
+  }
+  if (subcommand === 'logs') {
+    const id = rest[0];
+    if (!id) return err('plugin logs requires a <pluginId>', 2);
+    let n = 100;
+    const nFlag = rest.indexOf('-n');
+    if (nFlag >= 0) n = Number(rest[nFlag + 1]) || 100;
+    const follow = rest.includes('-f') || rest.includes('--follow');
+    const fetchLines = async (): Promise<string[] | CliResult> => {
+      if (isAppRunning(dataDir)) {
+        const result = await callControlPlane({ dataDir, op: 'plugin.logs', args: { id, n } });
+        if (!result.ok) return err(result.message ?? result.code ?? 'control plane error', 1);
+        return Array.isArray(result.value) ? result.value.map((row) => String(row)) : [];
+      }
+      return readLogTail(dataDir, id, n);
+    };
+    const format = (lines: string[], asJson: boolean) =>
+      asJson ? `${JSON.stringify(lines, null, 2)}\n` : lines.length === 0 ? '' : `${lines.join('\n')}\n`;
+    const first = await fetchLines();
+    if (!Array.isArray(first)) return first;
+    if (!follow) return { exitCode: 0, stdout: format(first, jsonOutput) };
+    process.stdout.write(format(first, false));
+    let seen = first.length;
+    await new Promise<void>((resolveWait) => {
+      const tick = async () => {
+        const next = await fetchLines();
+        if (!Array.isArray(next)) return;
+        if (next.length < seen) seen = 0;
+        const extra = next.slice(seen);
+        seen = next.length;
+        if (extra.length > 0) process.stdout.write(`${extra.join('\n')}\n`);
+      };
+      const timer = setInterval(() => {
+        void tick();
+      }, 500);
+      const stop = () => {
+        clearInterval(timer);
+        resolveWait();
+      };
+      process.once('SIGINT', stop);
+      process.once('SIGTERM', stop);
+    });
+    return { exitCode: 0, stdout: '' };
   }
   if (subcommand === 'search') {
     const query = rest.join(' ').trim();

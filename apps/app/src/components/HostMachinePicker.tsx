@@ -1,28 +1,40 @@
 import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
+import { hostPickerDescription, hostPickerLabel } from './composer-host-status.js';
 
 export function HostMachinePicker({
   hosts,
   value,
   onChange,
-  ariaLabel = 'Machine'
+  ariaLabel = 'Machine',
+  includeDisconnected = false,
+  alwaysShow = false
 }: {
   hosts: Host[];
   value?: string;
   onChange: (hostId: string) => void;
   ariaLabel?: string;
+  includeDisconnected?: boolean;
+  alwaysShow?: boolean;
 }) {
   const connected = hosts.filter((host) => host.status === 'connected');
-  if (connected.length <= 1) return null;
+  const visible = includeDisconnected ? hosts : connected;
+  if (!alwaysShow && connected.length <= 1) return null;
+  if (visible.length === 0) return null;
+  const selected = value && visible.some((host) => host.id === value)
+    ? value
+    : (visible.find((host) => host.status === 'connected') ?? visible[0])!.id;
   return (
     <PopoverPicklist
-      value={value ?? connected[0]!.id}
+      value={selected}
       ariaLabel={ariaLabel}
       searchable={false}
       onChange={onChange}
-      options={connected.map((host) => ({
+      options={visible.map((host) => ({
         value: host.id,
-        label: host.isPrimary ? `${host.name} (this machine)` : host.name
+        label: hostPickerLabel(host),
+        description: hostPickerDescription(host),
+        tone: host.status === 'disconnected' ? 'warning' : 'default'
       }))}
     />
   );

@@ -115,6 +115,8 @@ describe('pending interaction formatting', () => {
     expect(approvalDecisionLabel('allow_once')).toBe('Allow once');
     expect(approvalDecisionLabel('allow_for_session')).toBe('Allow for session');
     expect(approvalDecisionLabel('deny')).toBe('Deny');
+    expect(approvalDecisionLabel('allow_once', 'plan')).toBe('Approve plan');
+    expect(approvalDecisionLabel('deny', 'plan')).toBe('Keep planning');
     expect(approvalDecisionTone('allow_once')).toBe('primary');
     expect(approvalDecisionTone('allow_for_session')).toBe('secondary');
     expect(approvalDecisionTone('deny')).toBe('ghost');

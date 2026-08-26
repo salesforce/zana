@@ -38,6 +38,7 @@ import {
   interruptLiveConversationThreadsForHost,
   shouldInterruptLiveThreadsOnNewHostInstance
 } from '../services/threads/conversation-host-recovery.js';
+import { conversationStatusForHostEvent } from '../services/threads/conversation-host-event-status.js';
 import type { ProductHub } from './product-hub.js';
 
 export interface HostTerminalSessionRecord {
@@ -102,6 +103,11 @@ export function createHostHub(
 ) {
   const sessions = new Map<string, ConnectedHostSession>();
   const pending = new Map<string, PendingRpc>();
+  const connectWaiters = new Map<string, Array<{
+    resolve: () => void;
+    reject: (error: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>>();
 
   function connectedHostIds(): string[] {
     return [...sessions.keys()];
@@ -162,6 +168,14 @@ export function createHostHub(
     openHostSession(db, { hostId, instanceId, hostName: getHost(db, hostId)?.name ?? 'host' });
     sessions.set(hostId, { hostId, instanceId, socket });
     hub.emit('hosts:changed', undefined);
+    const waiters = connectWaiters.get(hostId);
+    if (waiters) {
+      connectWaiters.delete(hostId);
+      for (const waiter of waiters) {
+        clearTimeout(waiter.timer);
+        waiter.resolve();
+      }
+    }
     socket.on('close', () => {
       const current = sessions.get(hostId);
       if (current?.socket === socket) detach(hostId, 'socket-closed');
@@ -285,14 +299,12 @@ export function createHostHub(
           if (providerThreadId) {
             rememberConversationProviderThreadId(db, event.threadId, providerThreadId);
           }
-          if (event.kind === 'thread.started' || eventType === 'turn/started') {
-            updateConversationThreadStatus(db, event.threadId, 'active');
-          }
-          if (event.kind === 'turn.completed' || eventType === 'turn/completed') {
-            updateConversationThreadStatus(db, event.threadId, 'idle');
-          }
-          if (event.kind === 'turn.failed' || eventType === 'turn/failed') {
-            updateConversationThreadStatus(db, event.threadId, 'error');
+          const nextStatus = conversationStatusForHostEvent({
+            kind: event.kind,
+            payload: event.payload
+          });
+          if (nextStatus) {
+            updateConversationThreadStatus(db, event.threadId, nextStatus);
           }
           hub.emit('threads:event', {
             threadId: event.threadId,
@@ -342,6 +354,24 @@ export function createHostHub(
       ));
       if (statusChanged) hub.emit('threads:updated', { hostId: session.hostId });
     }
+  }
+
+  function waitUntilConnected(hostId: string, timeoutMs = 90_000): Promise<void> {
+    const session = sessions.get(hostId);
+    if (session && session.socket.readyState === session.socket.OPEN) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const remaining = (connectWaiters.get(hostId) ?? []).filter((row) => row.timer !== timer);
+        if (remaining.length > 0) connectWaiters.set(hostId, remaining);
+        else connectWaiters.delete(hostId);
+        reject(new HostUnavailableError(`host ${hostId} did not connect`));
+      }, timeoutMs);
+      const list = connectWaiters.get(hostId) ?? [];
+      list.push({ resolve, reject, timer });
+      connectWaiters.set(hostId, list);
+    });
   }
 
   async function callHostOnlineRpc<T = unknown>(input: {
@@ -404,6 +434,13 @@ export function createHostHub(
       waiter.reject(new HostUnavailableError('host hub closed'));
     }
     pending.clear();
+    for (const waiters of connectWaiters.values()) {
+      for (const waiter of waiters) {
+        clearTimeout(waiter.timer);
+        waiter.reject(new HostUnavailableError('host hub closed'));
+      }
+    }
+    connectWaiters.clear();
   }
 
   return {
@@ -412,6 +449,7 @@ export function createHostHub(
     ensureHostSessionReady,
     resolveHostId,
     callHostOnlineRpc,
+    waitUntilConnected,
     acceptHello,
     requestRetryUpdate(hostId: string): void {
       const session = sessions.get(hostId);

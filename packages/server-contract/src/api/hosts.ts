@@ -99,6 +99,43 @@ export type HostRetryUpdateResponse = z.infer<
   typeof hostRetryUpdateResponseSchema
 >;
 
+export const hostBootstrapRequestSchema = z
+  .object({
+    projectId: z.string().min(1),
+  })
+  .strict();
+export type HostBootstrapRequest = z.infer<typeof hostBootstrapRequestSchema>;
+
+export const hostSshIdentityRequestSchema = z
+  .object({
+    host: z.string().trim().min(1).max(256),
+    user: z.string().trim().min(1).max(256).optional(),
+    proxyJump: z.string().trim().min(1).max(256).optional(),
+  })
+  .strict();
+export type HostSshIdentityRequest = z.infer<typeof hostSshIdentityRequestSchema>;
+
+export const hostBootstrapLogEventSchema = z.object({
+  type: z.literal("log"),
+  text: z.string(),
+});
+export const hostBootstrapDoneEventSchema = z.object({
+  type: z.literal("done"),
+  hostId: z.string().min(1),
+});
+export const hostBootstrapErrorEventSchema = z.object({
+  type: z.literal("error"),
+  code: z.string().min(1),
+  message: z.string().min(1),
+  pairingCommand: z.string().min(1).optional(),
+});
+export const hostBootstrapEventSchema = z.discriminatedUnion("type", [
+  hostBootstrapLogEventSchema,
+  hostBootstrapDoneEventSchema,
+  hostBootstrapErrorEventSchema,
+]);
+export type HostBootstrapEvent = z.infer<typeof hostBootstrapEventSchema>;
+
 export const hostPathsExistRequestSchema = pathsExistRequestSchema;
 export type HostPathsExistRequest = PathsExistRequest;
 

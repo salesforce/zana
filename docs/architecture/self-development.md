@@ -16,9 +16,11 @@ any thread  →  zcc-plugin-authoring skill  →  zcc plugin new / install / dev
             →  later threads already know the verb
 ```
 
-1. **Any thread can extend ZCC.** The Creator dialog is convenience UX, not the
-   only authoring path. `zcc plugin new` plus path-install from an ordinary
-   project thread is first-class.
+1. **Any thread can extend ZCC.** Hub **New plugin** (and Browse / composer
+   Plugin) seeds a compose prompt. Send it as an ordinary project thread.
+   `zcc plugin new` → `install .` → `dev` is the authoring path. The Creator
+   dialog is leftover compatibility for already-local plugins, not how to
+   start one.
 2. **A plugin that adds a verb also teaches the next agent.** CLI contributions
    rewrite a generated skill. Manifest `zcc.skills` and
    `agents.contributeSkills` become runtime-injected roots for every provider,

@@ -53,6 +53,55 @@ function writePlugin(dir: string, id: string, serverSource?: string): string {
 }
 
 describe('PluginService', () => {
+  it('installs a path plugin from server.ts and reloads after an edit', async () => {
+    const dataDir = root();
+    const pluginDir = join(root(), 'typed');
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'package.json'),
+      JSON.stringify({
+        name: 'zcc-plugin-typed',
+        version: '0.1.0',
+        engines: { zcc: '>=1.0.0', zccPluginSdk: '>=0.1.0' },
+        zcc: {
+          name: 'typed',
+          description: 'typed plugin',
+          branding: { icon: 'Puzzle' },
+          server: './server.ts'
+        }
+      })
+    );
+    writeFileSync(
+      join(pluginDir, 'server.ts'),
+      `export default function plugin(zcc: { pluginId: string; log: { info: (m: string) => void }; rpc: { method: (name: string, handler: () => unknown) => void } }) {
+        zcc.log.info('typed-loaded');
+        zcc.rpc.method('ping', () => ({ ok: true, id: zcc.pluginId, n: 1 }));
+      }\n`
+    );
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    const row = await service.install(pluginDir);
+    expect(row.status).toBe('running');
+    await expect(service.callRpc('typed', 'ping', {})).resolves.toEqual({ ok: true, id: 'typed', n: 1 });
+    expect((await service.readLogs('typed')).join('\n')).toMatch(/typed-loaded/);
+    writeFileSync(
+      join(pluginDir, 'server.ts'),
+      `export default function plugin(zcc: { pluginId: string; rpc: { method: (name: string, handler: () => unknown) => void } }) {
+        zcc.rpc.method('ping', () => ({ ok: true, id: zcc.pluginId, n: 2 }));
+      }\n`
+    );
+    const reloaded = await service.reload('typed');
+    expect(reloaded.status).toBe('running');
+    await expect(service.callRpc('typed', 'ping', {})).resolves.toEqual({ ok: true, id: 'typed', n: 2 });
+    writeFileSync(
+      join(pluginDir, 'server.ts'),
+      'export default function plugin() { throw new Error("reload-boom"); }\n'
+    );
+    const kept = await service.reload('typed');
+    expect(kept.status).toBe('running');
+    expect(kept.statusDetail).toMatch(/reload-boom/);
+    await expect(service.callRpc('typed', 'ping', {})).resolves.toEqual({ ok: true, id: 'typed', n: 2 });
+  });
+
   it('installs a path plugin, loads the factory, and answers rpc', async () => {
     const dataDir = root();
     const pluginDir = writePlugin(join(root(), 'echo'), 'echo');

@@ -280,4 +280,36 @@ describe('createProjectStore', () => {
       { id: 'legacy-1', name: 'Legacy', path: '/tmp/legacy', createdAt: 1, lastActiveAt: 1 }
     ]);
   });
+
+  it('binds an SSH remote project to an enrolled host and drops project.remote', async () => {
+    const home = makeDir();
+    const placeholderRoot = join(home, 'remote-projects');
+    const placeholder = join(placeholderRoot, 'remote-1');
+    mkdirSync(placeholder, { recursive: true });
+    const projectsFile = join(home, '.zcc', 'projects.json');
+    mkdirSync(join(home, '.zcc'));
+    writeFileSync(projectsFile, JSON.stringify({
+      version: 1,
+      projects: [{
+        id: 'remote-1',
+        name: 'Remote',
+        path: placeholder,
+        createdAt: 1,
+        lastActiveAt: 1,
+        remote: { host: 'devbox', user: 'me', remotePath: '/home/me/app' }
+      }]
+    }));
+    const store = createProjectStore({ projectsFile, remotePlaceholderRoot: placeholderRoot });
+    const bound = await store.bindToHost('remote-1', {
+      hostId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      path: '/home/me/app'
+    });
+    expect(bound).toMatchObject({
+      id: 'remote-1',
+      hostId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      path: '/home/me/app'
+    });
+    expect(bound).not.toHaveProperty('remote');
+    expect(store.list()[0]).not.toHaveProperty('remote');
+  });
 });

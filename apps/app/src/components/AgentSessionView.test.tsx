@@ -68,6 +68,41 @@ describe('AgentSessionView', () => {
   afterEach(() => {
     if (typeof localStorage !== 'undefined') localStorage.clear();
   });
+  it('keeps the secondary panel closed by default in the inspector modal', () => {
+    const html = renderToStaticMarkup(
+      <AgentSessionView
+        session={session()}
+        projectId="p1"
+        projectName="demo-project"
+        state="idle"
+        terminalAnchorId="cc-terminal-anchor-agent-modal"
+        footer={<button type="button">Close Session</button>}
+        modal
+      />
+    );
+    expect(html).toContain('thread-detail-view--modal');
+    expect(html).toContain('data-testid="thread-secondary-show"');
+    expect(html).not.toContain('data-testid="thread-secondary-panel"');
+    expect(html).not.toContain('Close Session');
+  });
+
+  it('does not inherit a workspace-open panel into the inspector modal', () => {
+    installMemoryStorage();
+    persistPanel('s1', { isOpen: true });
+    const html = renderToStaticMarkup(
+      <AgentSessionView
+        session={session()}
+        projectId="p1"
+        projectName="demo-project"
+        state="idle"
+        terminalAnchorId="cc-terminal-anchor-agent-modal"
+        modal
+      />
+    );
+    expect(html).toContain('data-testid="thread-secondary-show"');
+    expect(html).not.toContain('data-testid="thread-secondary-panel"');
+  });
+
   it('opens the thread secondary panel by default with agent actions in the footer', () => {
     const html = renderToStaticMarkup(
       <AgentSessionView
@@ -88,6 +123,7 @@ describe('AgentSessionView', () => {
     expect(html).toContain('data-testid="thread-secondary-panel"');
     expect(html).toContain('data-testid="thread-info-pin"');
     expect(html).toContain('data-testid="thread-diff-pin"');
+    expect(html).not.toContain('data-testid="thread-plan-pin"');
     expect(html).toContain('data-testid="thread-secondary-footer"');
     expect(html).toContain('Close Session');
     expect(html).toContain('Status PID');
@@ -195,6 +231,7 @@ describe('AgentSessionView', () => {
     expect(source.indexOf('thread-detail-split')).toBeLessThan(source.indexOf('thread-detail-main agent-session-main'));
     expect(source.indexOf('thread-detail-main agent-session-main')).toBeLessThan(source.indexOf('className="thread-detail-header"'));
     expect(source).toContain('thread-detail-view--modal');
+    expect(source).toContain('defaultOpen: !modal');
     expect(source).not.toContain('agent-session-show-panel');
     expect(source).toContain('<AgentDiffPanel');
     expect(source).toContain('<AgentDetailPanel');

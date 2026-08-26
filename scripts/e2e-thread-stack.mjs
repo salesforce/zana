@@ -83,9 +83,9 @@ function waitForEnroll(child) {
   });
 }
 
-run('pnpm', ['exec', 'tsx', 'apps/server/src/http/listen.ts']);
+run(process.execPath, ['--conditions=source', '--import', 'tsx', 'apps/server/src/http/listen.ts']);
 await waitForUrl(`http://127.0.0.1:${serverPort}/api/v1/health`);
-const daemon = run('pnpm', ['exec', 'tsx', 'apps/host-daemon/src/enroll-entry.ts'], {
+const daemon = run(process.execPath, ['--conditions=source', '--import', 'tsx', 'apps/host-daemon/src/enroll-entry.ts'], {
   stdio: ['ignore', 'pipe', 'inherit']
 });
 await waitForEnroll(daemon);

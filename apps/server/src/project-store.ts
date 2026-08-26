@@ -146,6 +146,7 @@ export interface ProjectStore {
   list(): ProjectRecord[];
   add(path: string, options?: { hostId?: string }): Promise<ProjectRecord>;
   update(id: string, patch: ProjectMutationPatch): Promise<ProjectRecord | null>;
+  bindToHost(id: string, input: { hostId: string; path: string }): Promise<ProjectRecord | null>;
   reorder(orderedIds: string[]): Promise<ProjectRecord[]>;
   touch(id: string): Promise<ProjectRecord | null>;
   remove(id: string): Promise<ProjectRecord | null>;
@@ -309,6 +310,29 @@ export function createProjectStore({ projectsFile, remotePlaceholderRoot }: Proj
         const safePatch = sanitizeProjectPatch(patch);
 
         const next = { ...projects[index], ...safePatch };
+        const nextProjects = [...projects];
+        nextProjects[index] = next;
+        writeProjects(nextProjects, hash);
+        return next;
+      });
+    },
+
+    bindToHost(id: string, input: { hostId: string; path: string }): Promise<ProjectRecord | null> {
+      return queue.run(async () => {
+        const { file, hash } = readSnapshot();
+        const projects = file.projects;
+        const index = projects.findIndex((p) => p.id === id);
+        if (index === -1) return null;
+        if (!isAbsolute(input.path) || input.path.startsWith('-')) {
+          throw new Error('project path must be an absolute host path');
+        }
+        const next: ProjectRecord = {
+          ...projects[index],
+          hostId: input.hostId,
+          path: input.path,
+          lastActiveAt: Date.now()
+        };
+        delete next.remote;
         const nextProjects = [...projects];
         nextProjects[index] = next;
         writeProjects(nextProjects, hash);

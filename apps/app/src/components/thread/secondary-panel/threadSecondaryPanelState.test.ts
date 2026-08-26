@@ -34,6 +34,7 @@ describe('thread secondary panel state', () => {
     expect(next.activeId).toBe(INFO_PIN_ID);
     expect(activePinnedView(next)).toBe('info');
     expect(activePinnedView(selectPinnedView(next, 'diff'))).toBe('diff');
+    expect(activePinnedView(selectPinnedView(next, 'plan'))).toBe('plan');
     const withTab = addClosableTab(next, { kind: 'browser', title: 'Browser', url: 'https://example.com' });
     expect(activePinnedView(withTab)).toBeNull();
     expect(toggleSecondaryPanelMaximized(emptySecondaryPanelState())).toMatchObject({
@@ -46,6 +47,18 @@ describe('thread secondary panel state', () => {
     const next = selectPinnedView(emptySecondaryPanelState(), 'diff');
     expect(next.isOpen).toBe(true);
     expect(next.activeId).toBe('diff');
+  });
+
+  it('restores a persisted Plan pin', () => {
+    const parsed = parseSecondaryPanelState({
+      version: 1,
+      isOpen: true,
+      widthPx: 360,
+      activeId: 'plan',
+      tabs: []
+    });
+    expect(parsed.activeId).toBe('plan');
+    expect(activePinnedView(parsed)).toBe('plan');
   });
 
   it('replaces an active New Tab when opening a file preview', () => {

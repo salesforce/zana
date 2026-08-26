@@ -13,6 +13,7 @@ export function toPublicHost(row: HostRow, connectedHostIds: ReadonlySet<string>
     lastSeenAt: row.lastSeenAt,
     lastRejectedProtocolVersion: row.lastRejectedProtocolVersion,
     isPrimary: row.isPrimary,
+    canRepairViaSsh: Boolean(row.sshHost),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   };

@@ -89,11 +89,6 @@
       "source": "./src/workflow-args.ts",
       "default": "./src/workflow-args.ts"
     },
-    "./authorizations": {
-      "types": "./src/authorizations.ts",
-      "source": "./src/authorizations.ts",
-      "default": "./src/authorizations.ts"
-    },
     "./telemetry-events": {
       "types": "./src/telemetry-events.ts",
       "source": "./src/telemetry-events.ts",

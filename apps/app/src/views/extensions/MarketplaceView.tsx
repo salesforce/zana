@@ -39,6 +39,8 @@ import { PERMISSION_LABELS, pluginCapabilityLines } from '@/components/Extension
 import { InstallFromGitDialog } from '@/components/InstallFromGitDialog';
 import { Modal } from '@/components/Modal';
 import { PromptModal } from '@/components/PromptModal';
+import { CreatePluginExamples } from '@/components/plugin/CreatePluginExamples';
+import { CREATE_PLUGIN_PROMPT } from '@/lib/create-resource-prompts';
 import { filterMarketplaceEntries, type MarketplaceTag } from './marketplace-filter.js';
 import { catalogCountLabel, catalogErrorText, catalogKindLabel } from './marketplace-catalogs.js';
 
@@ -53,7 +55,7 @@ export function MarketplaceView({
   onCreate,
   toolbarExtra
 }: {
-  onCreate?: () => void;
+  onCreate?: (prompt?: string) => void;
   toolbarExtra?: ReactNode;
 } = {}) {
   const [entries, setEntries] = useState<MarketplaceEntry[] | null>(null);
@@ -393,14 +395,22 @@ export function MarketplaceView({
             )}
           </div>
           {onCreate && (
-            <button type="button" className="settings-btn" onClick={onCreate}>
+            <button
+              type="button"
+              className="settings-btn"
+              onClick={() => onCreate(CREATE_PLUGIN_PROMPT)}
+            >
               <Plus size={14} />
-              Create
+              Create a plugin
             </button>
           )}
           {toolbarExtra}
         </div>
       </div>
+
+      {onCreate && (
+        <CreatePluginExamples onSelect={(prompt) => onCreate(prompt)} />
+      )}
 
       {hasCatalog && (
         <div className="ext-market-tags" role="group" aria-label="Filter by tag">

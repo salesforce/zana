@@ -72,7 +72,8 @@ describe('ThreadCommandComposer initial text', () => {
     expect(source).toContain('initialText?: string');
     expect(source).toContain('initialText,');
     expect(source).toContain('seededInitialText');
-    expect(source).toContain('editor.chain().insertContent(initialText).run()');
+    expect(source).toContain('editor.chain().insertContent(initialText)');
+    expect(source).toContain('if (autoFocus) chain.focus()');
   });
 
   it('stays on the project thread URL after create from a workspace', () => {
@@ -127,7 +128,9 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain('thread-command-composer-meta');
     expect(source).toContain("<Laptop size={14}");
     expect(source).toContain("{threadId ? (");
-    expect(source).toContain('threadId && shouldShowThreadStop(threadId, status)');
+    expect(source).toContain('className="thread-command-chip thread-command-env"');
+    expect(source).not.toContain('onOpenExplorer');
+    expect(source).toContain('threadId && shouldShowThreadStop(threadId, status, inFlightRetry)');
     expect(source).toContain('data-testid="thread-command-stop"');
     expect(source).toContain('className="thread-command-stop"');
     expect(source).toContain('fill="currentColor"');
@@ -155,6 +158,9 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain('applyComposerModePrefix');
     expect(source).toContain('nextComposerWorkMode');
     expect(source).toContain("event.key !== 'Tab'");
+    expect(source).toContain('includeDisconnected');
+    expect(source).toContain('ComposerHostActionChip');
+    expect(source).toContain('HostSshIdentityDialog');
     expect(source.indexOf('<EnvironmentPicker')).toBeGreaterThan(metaIdx);
     expect(source.indexOf('ariaLabel="Permission mode"')).toBeGreaterThan(metaIdx);
 
@@ -165,6 +171,9 @@ describe('ThreadCommandComposer submit path', () => {
     expect(css).toContain('.launch-model-picker-option-description');
     expect(css).toContain('.launch-model-picker-option.is-warning');
     expect(css).toContain('.launch-model-picker-trigger.is-warning');
+    const envStart = css.indexOf('.thread-command-env {');
+    expect(envStart).toBeGreaterThan(-1);
+    expect(css.slice(envStart, css.indexOf('}', envStart))).toContain('cursor: default;');
   });
 
   it('shows a sending spinner and freezes the editor while submit is in flight', () => {
@@ -175,7 +184,10 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain('setEditable');
     expect(source).toContain('aria-busy={busy}');
     expect(source).toContain('thread-command-send-spin');
-    expect(source).toContain('editor?.setEditable(!busy)');
+    expect(source).toContain('editor.setEditable(!busy)');
+    expect(source).toContain('restoreFocusAfterSubmitRef');
+    expect(source).toContain("editor.commands.focus('end'");
+    expect(source).toContain('onMouseDown={(event) => event.preventDefault()}');
 
     const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
     const sendingStart = css.indexOf('.thread-command-composer .thread-command-send.is-sending,');
@@ -254,6 +266,8 @@ describe('browser product client thread API', () => {
     expect(source).toContain('reasoningLevel: input.reasoningLevel');
     expect(source).toContain('ensureMicAccess: desktop?.ensureMicAccess');
     expect(source).toContain('/threads/${encodeURIComponent(threadId)}/archive');
+    expect(source).toContain('/threads/${encodeURIComponent(threadId)}/plan/cancel');
+    expect(source).toContain('cancelPlan:');
     expect(source).not.toContain('/threads/${encodeURIComponent(sessionId)}/output');
     expect(source).not.toContain('/threads/${encodeURIComponent(sessionId)}/resize');
     expect(source).not.toContain('/threads/${encodeURIComponent(sessionId)}/input');

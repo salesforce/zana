@@ -433,6 +433,55 @@ function httpProduct(): Pick<
           .filter((line) => line.length > 0)
           .map((line) => JSON.parse(line) as Awaited<ReturnType<CcApi['hosts']['installProviderCli']>>[number]);
       },
+      bootstrap: async (projectId) => {
+        const response = await fetchWithAppSurface('/api/v1/hosts/bootstrap', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ projectId })
+        });
+        if (!response.ok) {
+          let detail = `${response.status}`;
+          try {
+            const body = (await response.json()) as { error?: string; message?: string };
+            detail = body.message ?? body.error ?? detail;
+          } catch {
+            /* keep status */
+          }
+          throw new Error(detail);
+        }
+        const text = await response.text();
+        return text
+          .split('\n')
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0)
+          .map((line) => JSON.parse(line) as Awaited<ReturnType<CcApi['hosts']['bootstrap']>>[number]);
+      },
+      repair: async (id) => {
+        const response = await fetchWithAppSurface(
+          `/api/v1/hosts/${encodeURIComponent(id)}/repair`,
+          { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }
+        );
+        if (!response.ok) {
+          let detail = `${response.status}`;
+          try {
+            const body = (await response.json()) as { error?: string; message?: string };
+            detail = body.message ?? body.error ?? detail;
+          } catch {
+            /* keep status */
+          }
+          throw new Error(detail);
+        }
+        const text = await response.text();
+        return text
+          .split('\n')
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0)
+          .map((line) => JSON.parse(line) as Awaited<ReturnType<CcApi['hosts']['repair']>>[number]);
+      },
+      updateSshIdentity: async (id, patch) => apiJson<Host>(
+        `/hosts/${encodeURIComponent(id)}/ssh-identity`,
+        { method: 'PATCH', body: JSON.stringify(patch) }
+      ),
       onChanged: (cb) => subscribeProductEvent<Host[] | undefined>('hosts:changed', cb)
     } as CcApi['hosts'],
     marketplaces: {
@@ -514,6 +563,8 @@ function httpProduct(): Pick<
         }),
       stop: async (threadId) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/stop`, { method: 'POST', body: '{}' }),
+      cancelPlan: async (threadId) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/plan/cancel`, { method: 'POST', body: '{}' }),
       resume: async (threadId) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/resume`, { method: 'POST', body: '{}' }),
       timeline: async (threadId, query) => {

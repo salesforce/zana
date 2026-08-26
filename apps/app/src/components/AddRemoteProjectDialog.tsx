@@ -32,9 +32,9 @@ export function AddRemoteProjectDialog({ onClose, onSubmit }: AddRemoteProjectDi
   const [user, setUser] = useState('');
   // Start path is left BLANK by default so an unedited submit sends no
   // `remotePath` and the start-path precedence chain applies as designed:
-  // per-project `remotePath` → global `AppConfig.remoteDefaultPath` (Settings)
-  // → remote `$HOME`. A hardcoded default here would silently override the
-  // global Settings value for every newly added remote.
+  // per-project `remotePath` → global `AppConfig.remoteDefaultPath`
+  // (Settings → Connectivity) → remote `$HOME`. A hardcoded default here
+  // would silently override the Connectivity value for every newly added remote.
   const [remotePath, setRemotePath] = useState('');
   // Bastion / jump host. Prefilled from the picked host's `ProxyJump` line when
   // ~/.ssh/config carries one; usually left as-is (ssh applies its own config

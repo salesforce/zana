@@ -23,6 +23,7 @@ import {
   formatCountdown,
   PROFILE_LABEL
 } from './schedulerUtils.js';
+import { openScheduledLive } from './openScheduledLive.js';
 
 interface ScheduleRowProps {
   task: ScheduledTask;
@@ -165,12 +166,9 @@ export const ScheduleRow = React.memo(function ScheduleRow({
   const openLive = (e?: ReactMouseEvent) => {
     e?.stopPropagation();
     if (!liveSessionId) return;
-    // Peek the running session in the agent-inspector modal — the same
-    // lightweight live-terminal peek the Agents list and board cards open. The
-    // modal portals the headless session's live xterm and offers "Open in
-    // workspace" as the escape hatch, so this no longer yanks the user out of
-    // the scheduler view just to glance at a background run.
-    useUi.getState().openAgentModal(liveSessionId, task.projectId);
+    // Peek without leaving Scheduler — agent modal for a pty run, thread
+    // modal when the live id is a conversation thread.
+    openScheduledLive(task.projectId, liveSessionId);
   };
 
   const statusKind = isWorking

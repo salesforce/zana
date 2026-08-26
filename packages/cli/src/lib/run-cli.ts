@@ -250,17 +250,20 @@ READ COMMANDS (work whether the app is running or not):
   plugin ls                List installed plugins (from ~/.zcc/plugins)
   plugin new <name>        Scaffold a TypeScript plugin (package.json zcc)
        [--dir PATH] [--app] [--kind panel|main-panel|mcp-consumer|agent-preset]
+                           Default dest is ./zcc-plugin-<id>; --app adds a panel
   plugin types [dir]       Sync bundled SDK .d.ts into the plugin
        [--check]
   plugin build [dir]       Bundle zcc.app / zcc.server for CI
+  plugin logs <id>         Print recent plugin.log JSONL [-n N] [-f]
 
 LIVE COMMANDS (require the app to be running):
   plugin install <source>  Install path: | git: | npm: | builtin:<name>
   plugin enable <id>       Enable and load a plugin
   plugin disable <id>      Unload a plugin
   plugin reload <id>       Dispose and load again
+  plugin logs <id>         Tail plugin logs (use -n N / -f)
   plugin remove <id>       Unregister (path sources stay on disk)
-  plugin dev [dir]         Watch, rebuild, and reload (use --once to skip watch)
+  plugin dev [dir]         Watch, rebuild, and reload (plugin must already be installed; --once skips watch)
   plugin search [query]    Search official shipped plugins + configured catalogs
   plugin outdated          List installed plugins with a newer catalog version
   plugin update <id>       Reinstall from the recorded catalog pointer

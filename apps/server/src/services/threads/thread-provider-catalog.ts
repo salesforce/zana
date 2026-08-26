@@ -87,6 +87,14 @@ export function permissionModeForLaunchProfile(providerId: string): 'accept-edit
   return providerId === 'claude-yolo' ? 'full' : 'accept-edits';
 }
 
+export const DEFAULT_PLAN_COMMAND = { trigger: '/', name: 'plan' } as const;
+
+export function planCommandForProvider(providerId: string): { trigger: string; name: string } | null {
+  const provider = getThreadProvider(providerId);
+  if (!provider?.composerActions?.includes('plan')) return null;
+  return DEFAULT_PLAN_COMMAND;
+}
+
 function pluginRoot(pluginId: string): string {
   const here = dirname(fileURLToPath(import.meta.url));
   const candidates = [

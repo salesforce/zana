@@ -144,6 +144,9 @@ test('launching an agent through the real UI opens its terminal and it goes work
     await expect(stateChip).toHaveAttribute('data-state', 'working', { timeout: 15_000 });
     await expect(agentModal.getByTestId('agent-modal-header')).toBeVisible();
     await expect(agentModal.getByTestId('agent-session-view')).toBeVisible();
+    await expect(agentModal.getByTestId('thread-secondary-show')).toBeVisible();
+    await expect(agentModal.getByTestId('thread-secondary-panel')).toHaveCount(0);
+    await agentModal.getByTestId('thread-secondary-show').click();
     await expect(agentModal.getByTestId('thread-secondary-panel')).toBeVisible();
     await expect(agentModal.getByTestId('thread-info-pin')).toBeVisible();
     await expect(agentModal.getByRole('button', { name: 'Close Session' })).toBeVisible();

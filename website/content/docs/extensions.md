@@ -33,8 +33,10 @@ Core must not hardcode those ids outside `apps/server/src/plugins/builtin-regist
 ## CLI
 
 ```
-zcc plugin new my-plugin
-zcc plugin install ./my-plugin
+zcc plugin new hello --app
+cd zcc-plugin-hello
+zcc plugin install .
+zcc plugin dev
 zcc plugin ls
 zcc plugin enable <id>
 zcc plugin reload <id>

@@ -20,6 +20,55 @@ describe('Settings subsection navigation', () => {
     ]));
   });
 
+  it('does not expose Authorizations, Files, or Projects clone-root on Global', () => {
+    const ids = SETTINGS_SUBSECTIONS.global?.map((section) => section.id) ?? [];
+    expect(ids).not.toContain('authorizations');
+    expect(ids).not.toContain('files');
+    expect(ids).not.toContain('projects');
+    expect(ids).not.toContain('connectivity');
+    expect(ids).not.toContain('inbox');
+    expect(ids).not.toContain('performance');
+    const source = readFileSync(
+      fileURLToPath(new URL('../../views/settings/GlobalView.tsx', import.meta.url)),
+      'utf8'
+    );
+    expect(source).not.toContain('AuthorizationsSection');
+    expect(source).not.toContain('PluginFileOpenerSettings');
+    expect(source).not.toContain('Clone root');
+    expect(source).not.toContain('~/.claude/settings.json');
+    expect(source).not.toContain('Quick open');
+    expect(source).not.toContain('remoteDefaultPath');
+    expect(source).not.toContain('inboxGuidanceEnabled');
+    expect(source).not.toContain('pdfExportDir');
+    expect(source).not.toContain('maxLiveSessions');
+  });
+
+  it('lists Legacy Agent resource ceilings under Agent settings', () => {
+    expect(SETTINGS_SUBSECTIONS.agents).toContainEqual({
+      id: 'legacy-agent',
+      label: 'Legacy Agent'
+    });
+    expect(SETTINGS_SUBSECTIONS.global?.map((section) => section.id)).not.toContain('performance');
+  });
+
+  it('lists Inbox as its own Settings section, after Global', () => {
+    const ids = SETTINGS_SECTIONS.map((section) => section.id);
+    expect(ids).toContain('inbox');
+    expect(ids.indexOf('global')).toBeLessThan(ids.indexOf('inbox'));
+    expect(SETTINGS_SUBSECTIONS.inbox).toEqual([
+      { id: 'inbox-general', label: 'Inbox' }
+    ]);
+  });
+
+  it('lists Connectivity as its own Settings section, next to Machines', () => {
+    const ids = SETTINGS_SECTIONS.map((section) => section.id);
+    expect(ids).toContain('connectivity');
+    expect(ids.indexOf('connectivity')).toBeLessThan(ids.indexOf('machines'));
+    expect(SETTINGS_SUBSECTIONS.connectivity).toEqual([
+      { id: 'connectivity-remote', label: 'Remote SSH' }
+    ]);
+  });
+
   it('lists Git worktrees under global Agent settings', () => {
     expect(SETTINGS_SUBSECTIONS.agents).toContainEqual({
       id: 'git-worktrees',

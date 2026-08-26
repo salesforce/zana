@@ -431,9 +431,6 @@ export const IPC = {
     read: 'openCodeSettings:read',
     write: 'openCodeSettings:write'
   },
-  authorizations: {
-    apply: 'authorizations:apply'
-  },
   skills: {
     list: 'skills:list',
     setEnabled: 'skills:setEnabled',

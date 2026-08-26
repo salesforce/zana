@@ -10,6 +10,7 @@ import type { ProductHttpContext } from '../../http/product-context.js';
 import type { ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import { conversationThreadView, flattenThreadInput } from './conversation-create.js';
+import { resolveActivePlanTurn } from './conversation-timeline.js';
 import { emitPluginThreadEvent } from '../../plugins/thread-events.js';
 import { appendClientTurnRequested } from './client-turn-requested.js';
 import { recoverConversationProviderThreadId } from './conversation-provider-identity.js';
@@ -50,9 +51,10 @@ export async function sendConversationTurn(
   if (prompt.length === 0) {
     throw new ThreadCreateError(400, 'invalid-input', 'input is required');
   }
-  appendClientTurnRequested(ctx, {
+  const clientRequestId = appendClientTurnRequested(ctx, {
     threadId: live.id,
     prompt,
+    promptInput: input,
     kind: 'new-turn',
     model: execution?.model,
     reasoningLevel: execution?.reasoningLevel
@@ -60,7 +62,7 @@ export async function sendConversationTurn(
   updateConversationThreadStatus(ctx.db, live.id, 'active');
   try {
     try {
-      await submitTurnOnHost(ctx, live, prompt, mode, execution);
+      await submitTurnOnHost(ctx, live, prompt, mode, execution, clientRequestId);
     } catch (error) {
       if (!isUnknownThreadHostError(error)) throw error;
       const current = recoverConversationProviderThreadId(
@@ -68,7 +70,7 @@ export async function sendConversationTurn(
         getConversationThread(ctx.db, live.id) ?? live
       );
       await resumeConversationOnHost(ctx, current);
-      await submitTurnOnHost(ctx, current, prompt, mode, execution);
+      await submitTurnOnHost(ctx, current, prompt, mode, execution, clientRequestId);
     }
   } catch (error) {
     failActiveConversationTurn(ctx, live);
@@ -130,6 +132,31 @@ export async function stopConversation(
     projectId: next.projectId
   });
   return next;
+}
+
+export async function cancelConversationPlan(
+  ctx: ProductHttpContext,
+  threadId: string
+): Promise<{ ok: true }> {
+  const thread = getConversationThread(ctx.db, threadId);
+  if (!thread) {
+    throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
+  }
+  const activePlanTurn = resolveActivePlanTurn(ctx, thread);
+  if (!activePlanTurn) {
+    throw new ThreadCreateError(409, 'invalid_request', 'Plan mode is not active');
+  }
+  await ctx.hostHub.callHostOnlineRpc({
+    hostId: thread.hostId,
+    command: {
+      type: 'thread.plan.cancel',
+      threadId: thread.id,
+      expectedTurnId: activePlanTurn.turnId
+    }
+  });
+  const next = getConversationThread(ctx.db, thread.id) ?? thread;
+  ctx.hub.emit('threads:updated', conversationThreadView(ctx, next));
+  return { ok: true };
 }
 
 export async function resumeConversation(
@@ -249,7 +276,8 @@ async function submitTurnOnHost(
   thread: ConversationThreadRow,
   prompt: string[],
   mode: ThreadSendMode,
-  execution?: { model?: string; reasoningLevel?: ReasoningLevel }
+  execution?: { model?: string; reasoningLevel?: ReasoningLevel },
+  clientRequestId?: string
 ): Promise<void> {
   if (!thread.environmentId) {
     throw new ThreadCreateError(409, 'environment_not_ready', 'thread has no environment');
@@ -265,7 +293,8 @@ async function submitTurnOnHost(
       mode,
       ...(resume ? { resume } : {}),
       ...(execution?.model ? { model: execution.model } : {}),
-      ...(execution?.reasoningLevel ? { reasoningLevel: execution.reasoningLevel } : {})
+      ...(execution?.reasoningLevel ? { reasoningLevel: execution.reasoningLevel } : {}),
+      ...(clientRequestId ? { clientRequestId } : {})
     }
   });
 }

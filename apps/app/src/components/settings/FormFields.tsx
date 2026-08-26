@@ -62,11 +62,13 @@ export function Field({
 export function ToggleSwitch({
   checked,
   onChange,
-  label
+  label,
+  disabled
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label: string;
+  disabled?: boolean;
 }) {
   return (
     <button
@@ -74,6 +76,7 @@ export function ToggleSwitch({
       role="switch"
       aria-checked={checked}
       aria-label={label}
+      disabled={disabled}
       className={`opener-switch${checked ? ' opener-switch--on' : ''}`}
       onClick={() => onChange(!checked)}
     >
@@ -82,28 +85,55 @@ export function ToggleSwitch({
   );
 }
 
+/** Boolean settings row: label + help on the left, harness-style switch on the right. */
 export function CheckboxField({
   label,
   help,
   checked,
-  onChange
+  onChange,
+  disabled
 }: {
   label: string;
   help?: React.ReactNode;
   checked: boolean;
   onChange: (v: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
-    <div className="settings-field settings-field--check">
-      <label className="settings-check">
-        <input
-          type="checkbox"
+    <div className="settings-field settings-field--toggle">
+      <div className="settings-toggle-row">
+        <span className="settings-label">{label}</span>
+        <ToggleSwitch
           checked={checked}
-          onChange={(e) => onChange(e.target.checked)}
+          onChange={onChange}
+          label={label}
+          disabled={disabled}
         />
-        <span>{label}</span>
-      </label>
+      </div>
       {help && <p className="settings-help">{help}</p>}
+    </div>
+  );
+}
+
+/** Label + help on the left, action button on the right — same rhythm as CheckboxField. */
+export function SettingsActionRow({
+  label,
+  help,
+  children
+}: {
+  label: string;
+  help?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="settings-field settings-field--action">
+      <div className="settings-action-row">
+        <div className="settings-action-copy">
+          <span className="settings-label">{label}</span>
+          {help && <p className="settings-help">{help}</p>}
+        </div>
+        <div className="settings-action-control">{children}</div>
+      </div>
     </div>
   );
 }

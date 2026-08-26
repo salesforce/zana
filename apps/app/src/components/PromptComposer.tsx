@@ -18,7 +18,7 @@ import { VoiceInputButton } from './VoiceInputButton.js';
 import { AttachmentPills } from './ui/AttachmentPills.js';
 import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
 import type { WalkedFile } from '@zana-ai/zcc-domain/product';
-import type { AutoGrowTextareaHandle } from './ui/CommandComposer.js';
+import { ComposerIconButton, type AutoGrowTextareaHandle } from './ui/CommandComposer.js';
 
 /**
  * The agent-instruction box, shared by every launcher that takes a typed prompt

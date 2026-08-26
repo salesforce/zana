@@ -88,6 +88,29 @@ export function rememberedSelectionFor(providerId: string): ComposerProviderSele
   return readComposerSelectionPreference().byProvider[providerId];
 }
 
+/**
+ * New-thread composers keep the last picked model (e.g. Sonnet) instead of
+ * snapping back to the catalog default (Opus) when the roster loads.
+ * Existing threads ignore the cache and keep whatever the thread already uses.
+ */
+export function preferredComposerModel(input: {
+  rememberedModel: string | undefined;
+  currentModel: string;
+  persistRemembered: boolean;
+  offeredModels: readonly string[];
+  fallbackModel: string;
+  loading: boolean;
+}): string {
+  const offered = (model: string) => input.loading || input.offeredModels.includes(model);
+  if (input.persistRemembered && input.rememberedModel && offered(input.rememberedModel)) {
+    return input.rememberedModel;
+  }
+  if (input.currentModel && offered(input.currentModel)) {
+    return input.currentModel;
+  }
+  return input.fallbackModel;
+}
+
 export function __clearComposerSelectionForTest(): void {
   try {
     localStorage.removeItem(STORAGE_KEY);

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { registerThreadProvider } from './thread-provider-catalog.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
-import { archiveConversation, forkConversation, resumeConversation, sendConversationTurn, stopConversation } from './conversation-lifecycle.js';
+import { archiveConversation, cancelConversationPlan, forkConversation, resumeConversation, sendConversationTurn, stopConversation } from './conversation-lifecycle.js';
 import { conversationTimeline } from './conversation-timeline.js';
 
 const thread = {
@@ -107,7 +107,8 @@ beforeEach(() => {
         supportsThreadArchive: false,
         supportsThreadRename: false,
         permissionModes: ['full']
-      }
+      },
+      composerActions: ['plan']
     })
   );
   vi.mocked(getConversationThread).mockReturnValue(thread);
@@ -138,6 +139,7 @@ describe('conversation lifecycle', () => {
         type: 'turn.submit',
         input: ['follow up'],
         mode: 'queue-if-active',
+        clientRequestId: expect.stringMatching(/^creq_/),
         resume: expect.objectContaining({
           providerThreadId: 'prov-1',
           providerId: 'claude-code',
@@ -489,6 +491,87 @@ describe('conversation lifecycle', () => {
     expect(context.pendingInteractions.interruptPendingInteractionsForThreadIds).toHaveBeenCalledWith({
       threadIds: [thread.id],
       reason: 'thread-deleted'
+    });
+  });
+
+  it('409s cancelPlan when plan mode is not active', async () => {
+    const callHostOnlineRpc = vi.fn(async () => ({ cancelled: true }));
+    await expect(cancelConversationPlan(ctx(callHostOnlineRpc), thread.id))
+      .rejects.toMatchObject({ status: 409, code: 'invalid_request', message: 'Plan mode is not active' });
+    expect(callHostOnlineRpc).not.toHaveBeenCalled();
+  });
+
+  it('cancels an active plan turn through thread.plan.cancel', async () => {
+    const requestId = 'creq_23456789ab';
+    vi.mocked(getConversationThread).mockReturnValue({ ...thread, status: 'active' });
+    vi.mocked(listConversationThreadEvents).mockReturnValue([
+      {
+        id: 'evt-req',
+        threadId: thread.id,
+        sequence: 1,
+        type: 'client/turn/requested',
+        payload: {
+          type: 'client/turn/requested',
+          threadId: thread.id,
+          scope: { kind: 'thread' },
+          direction: 'outbound',
+          requestId,
+          source: 'tell',
+          initiator: 'user',
+          senderThreadId: null,
+          input: [{
+            type: 'text',
+            text: '/plan inspect the failing command',
+            mentions: [{
+              start: 0,
+              end: 5,
+              resource: {
+                kind: 'command',
+                trigger: '/',
+                name: 'plan',
+                source: 'command',
+                origin: 'user',
+                label: 'plan',
+                argumentHint: null
+              }
+            }]
+          }],
+          target: { kind: 'new-turn' },
+          request: { method: 'turn/start', params: {} },
+          execution: {
+            model: 'default',
+            serviceTier: 'default',
+            reasoningLevel: 'medium',
+            permissionMode: 'accept-edits',
+            source: 'client/turn/requested'
+          }
+        },
+        createdAt: 1
+      },
+      {
+        id: 'evt-accepted',
+        threadId: thread.id,
+        sequence: 2,
+        type: 'turn/input/accepted',
+        payload: {
+          type: 'turn/input/accepted',
+          threadId: thread.id,
+          providerThreadId: 'prov-1',
+          clientRequestId: requestId,
+          scope: { kind: 'turn', turnId: 'turn-plan-1' }
+        },
+        createdAt: 2
+      }
+    ] as never);
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, cancelled: true }));
+    await expect(cancelConversationPlan(ctx(callHostOnlineRpc), thread.id)).resolves.toEqual({ ok: true });
+    expect(callHostOnlineRpc).toHaveBeenCalledWith({
+      hostId: thread.hostId,
+      command: {
+        type: 'thread.plan.cancel',
+        threadId: thread.id,
+        expectedTurnId: 'turn-plan-1'
+      }
     });
   });
 });

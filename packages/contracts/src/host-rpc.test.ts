@@ -80,8 +80,21 @@ describe('host-rpc contract', () => {
       environmentId,
       projectId: 'p1',
       providerId: 'claude',
-      input: ['hello']
-    }).type).toBe('thread.start');
+      input: ['hello'],
+      clientRequestId: 'creq_23456789ab'
+    })).toMatchObject({
+      type: 'thread.start',
+      clientRequestId: 'creq_23456789ab'
+    });
+    expect(HostRpcCommandSchema.safeParse({
+      type: 'thread.start',
+      threadId,
+      environmentId,
+      projectId: 'p1',
+      providerId: 'claude',
+      input: ['hello'],
+      clientRequestId: 'not-a-request-id'
+    }).success).toBe(false);
     expect(HostRpcCommandSchema.parse({
       type: 'thread.start',
       threadId,
@@ -106,12 +119,25 @@ describe('host-rpc contract', () => {
       threadId
     }).type).toBe('thread.stop');
     expect(HostRpcCommandSchema.parse({
+      type: 'thread.plan.cancel',
+      threadId,
+      expectedTurnId: 'turn-plan-1'
+    })).toMatchObject({
+      type: 'thread.plan.cancel',
+      expectedTurnId: 'turn-plan-1'
+    });
+    expect(HostRpcCommandSchema.safeParse({
+      type: 'thread.plan.cancel',
+      threadId
+    }).success).toBe(false);
+    expect(HostRpcCommandSchema.parse({
       type: 'turn.submit',
       threadId,
       environmentId,
       input: ['follow up'],
       model: 'claude-sonnet-5',
       reasoningLevel: 'high',
+      clientRequestId: 'creq_23456789ab',
       resume: {
         projectId: 'p1',
         providerId: 'claude',
@@ -121,6 +147,7 @@ describe('host-rpc contract', () => {
       type: 'turn.submit',
       model: 'claude-sonnet-5',
       reasoningLevel: 'high',
+      clientRequestId: 'creq_23456789ab',
       resume: { providerThreadId: 'prov-1' }
     });
     expect(HostRpcCommandSchema.parse({
@@ -292,6 +319,10 @@ describe('host-rpc contract', () => {
       threadId,
       resized: true
     });
+    expect(parseHostRpcResult('thread.plan.cancel', { threadId, cancelled: true })).toEqual({
+      threadId,
+      cancelled: true
+    });
     expect(() => parseHostRpcResult('thread.start', { providers: [] })).toThrow();
     expect(parseHostRpcResult('workspace.diffFiles', {
       files: [{
@@ -330,5 +361,34 @@ describe('host-rpc contract', () => {
       interactionId: 'pint_1',
       delivered: true
     })).toEqual({ interactionId: 'pint_1', delivered: true });
+    expect(HostRpcCommandSchema.parse({
+      type: 'peer_daemon.status',
+      remote: { host: 'devbox', user: 'me' },
+      serverHost: 'box.tailnet.ts.net'
+    }).type).toBe('peer_daemon.status');
+    expect(HostRpcCommandSchema.parse({
+      type: 'peer_daemon.restart',
+      remote: { host: 'devbox' },
+      serverHost: 'box.tailnet.ts.net'
+    }).type).toBe('peer_daemon.restart');
+    expect(HostRpcCommandSchema.parse({
+      type: 'peer_daemon.install',
+      remote: { host: 'devbox' },
+      joinCode: 'zcde_x',
+      hostId,
+      serverUrl: 'https://box.tailnet.ts.net',
+      artifactPath: '/tmp/zcc-host.tgz'
+    }).type).toBe('peer_daemon.install');
+    expect(parseHostRpcResult('peer_daemon.status', { state: 'not_installed' })).toEqual({
+      state: 'not_installed'
+    });
+    expect(parseHostRpcResult('peer_daemon.restart', { ok: true, log: 'restarted' })).toEqual({
+      ok: true,
+      log: 'restarted'
+    });
+    expect(parseHostRpcResult('peer_daemon.install', { ok: true, log: 'installed' })).toEqual({
+      ok: true,
+      log: 'installed'
+    });
   });
 });

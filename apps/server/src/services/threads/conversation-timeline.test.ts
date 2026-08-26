@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { storedEventsToMeta, conversationOutline, conversationTimeline } from './conversation-timeline.js';
+import { registerThreadProvider } from './thread-provider-catalog.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 
 vi.mock('@zana-ai/zcc-db', () => ({
@@ -266,5 +267,117 @@ describe('provider/unhandled timeline flag', () => {
       config: { getConfig: () => ({ showUnhandledProviderEvents: true }) }
     } as ProductHttpContext, threadId);
     expect(JSON.stringify(timeline.rows)).toMatch(/provider-unhandled/);
+  });
+});
+
+describe('activePromptMode plan detection', () => {
+  const threadId = '11111111-1111-4111-8111-111111111111';
+  const requestId = 'creq_23456789ab';
+  const planEvents = [
+    {
+      id: 'evt-req',
+      threadId,
+      sequence: 1,
+      type: 'client/turn/requested',
+      payload: {
+        type: 'client/turn/requested',
+        threadId,
+        scope: { kind: 'thread' as const },
+        direction: 'outbound' as const,
+        requestId,
+        source: 'tell' as const,
+        initiator: 'user' as const,
+        senderThreadId: null,
+        input: [{
+          type: 'text' as const,
+          text: '/plan inspect the failing command',
+          mentions: [{
+            start: 0,
+            end: 5,
+            resource: {
+              kind: 'command' as const,
+              trigger: '/',
+              name: 'plan',
+              source: 'command',
+              origin: 'user' as const,
+              label: 'plan',
+              argumentHint: null
+            }
+          }]
+        }],
+        target: { kind: 'new-turn' as const },
+        request: { method: 'turn/start' as const, params: {} },
+        execution: {
+          model: 'default',
+          serviceTier: 'default' as const,
+          reasoningLevel: 'medium' as const,
+          permissionMode: 'accept-edits' as const,
+          source: 'client/turn/requested' as const
+        }
+      },
+      createdAt: 1
+    },
+    {
+      id: 'evt-start',
+      threadId,
+      sequence: 2,
+      type: 'turn/started',
+      payload: {
+        type: 'turn/started',
+        threadId,
+        providerThreadId: 'p1',
+        scope: { kind: 'turn' as const, turnId: 'turn-plan-1' }
+      },
+      createdAt: 2
+    },
+    {
+      id: 'evt-accepted',
+      threadId,
+      sequence: 3,
+      type: 'turn/input/accepted',
+      payload: {
+        type: 'turn/input/accepted',
+        threadId,
+        providerThreadId: 'p1',
+        clientRequestId: requestId,
+        scope: { kind: 'turn' as const, turnId: 'turn-plan-1' }
+      },
+      createdAt: 3
+    }
+  ];
+
+  it('projects activePromptMode from a live /plan turn when the provider declares plan', () => {
+    const handle = registerThreadProvider('test', {
+      id: 'claude-code',
+      displayName: 'Claude Code',
+      capabilities: {
+        supportsServiceTier: false,
+        fork: 'checkpoint',
+        supportsThreadArchive: false,
+        supportsThreadRename: false,
+        permissionModes: ['full']
+      },
+      composerActions: ['plan']
+    });
+    try {
+      vi.mocked(getConversationThread).mockReturnValueOnce({
+        id: threadId,
+        projectId: 'proj-1',
+        hostId: 'host-1',
+        environmentId: null,
+        providerId: 'claude-code',
+        status: 'active',
+        title: 'Hello'
+      } as never);
+      vi.mocked(listConversationThreadEventsWindow).mockReturnValueOnce(planEvents as never);
+      const timeline = conversationTimeline({ db: {}, dataDir: '/tmp' } as ProductHttpContext, threadId);
+      expect(timeline.activePromptMode).toEqual({
+        mode: 'plan',
+        providerId: 'claude-code',
+        prompt: 'inspect the failing command'
+      });
+    } finally {
+      handle.unregister();
+    }
   });
 });
