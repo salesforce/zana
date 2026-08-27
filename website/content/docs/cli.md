@@ -33,8 +33,8 @@ the compiled entry point directly with `node`, or put it on your `PATH`.
 
 ```bash
 # From the monorepo root: install deps once, then build the CLI
-npm install
-cd packages/cli && npm run build && cd ../..
+pnpm install
+pnpm --filter @zcc/cli build
 
 # Run via node (from repo root)
 node packages/cli/dist/bin/zcc.js projects ls
@@ -51,10 +51,10 @@ Throughout this doc, `zcc` stands for either form
 
 | | Read tier | Live tier |
 |---|---|---|
-| Commands | `projects ls`, `personas ls`, `teams ls`, `schedule ls`, `inbox ls`, `inbox show` | `status`, `agent ls/send`, `term ls/close/close-summary`, `run`, `schedule run-now/enable/disable` |
-| Source | `~/.zcc/` store files on disk | the app's control socket |
+| Commands | `projects ls`, `personas ls`, `schedule ls`, `inbox ls`, `inbox show`, `followup ls`, `plugin ls` / `new` / `types` / `build` | `status`, `agent ls/send`, `term ls/close/reply/close-summary`, `run`, `schedule run-now/enable/disable`, `plugin install/enable/disable/reload/remove/dev/search/outdated/update/run`, `marketplace *`, `team ls` |
+| Source | `~/.zcc/` store files on disk (`plugin ls` reads `~/.zcc/plugins`) | the app's control socket |
 | App must be running? | **No** | **Yes** — else `APP_NOT_RUNNING` (exit 1) |
-| Mutates state? | No | Some (`agent send`, `term close*`, `run`, `schedule enable/disable/run-now`) |
+| Mutates state? | Scaffold/build helpers may write a plugin dir | Some (`agent send`, `term close*`, `run`, `schedule enable/disable/run-now`, plugin install/enable/remove, marketplace add/install) |
 
 The read tier is defensive: a missing or malformed store file never crashes the
 CLI — it returns an empty list plus a warning on **stderr** and still exits `0`.
@@ -70,16 +70,42 @@ READ COMMANDS (work whether the app is running or not):
   status                   Live dashboard: projects, agents, schedules
   projects ls              List projects
   personas ls              List personas
-  teams ls                 List teams
   schedule ls              List scheduled tasks
   inbox ls [--project ID]  List inbox entries
   inbox show <id>          Show full inbox entry
+  followup ls              List follow-ups (parked questions/decisions)
+  plugin ls                List installed plugins (from ~/.zcc/plugins)
+  plugin new <name>        Scaffold a TypeScript plugin (package.json zcc)
+  plugin types [dir]       Sync bundled SDK .d.ts into the plugin
+  plugin build [dir]       Bundle zcc.app / zcc.server for CI
 
 LIVE COMMANDS (require the app to be running):
+  plugin install <source>  Install path: | git: | npm: | builtin:<name>
+  plugin enable <id>       Enable and load a plugin
+  plugin disable <id>      Unload a plugin
+  plugin reload <id>       Dispose and load again
+  plugin logs <id>         Tail plugin logs (use -n N / -f)
+  plugin remove <id>       Unregister (path sources stay on disk)
+  plugin dev [dir]         Watch, rebuild, and reload
+  plugin search [query]    Search official shipped plugins + configured catalogs
+  plugin outdated          List installed plugins with a newer catalog version
+  plugin update <id>       Reinstall from the recorded catalog pointer
+  plugin run <id> <args…>  Run a plugin CLI contribution by plugin id
+  marketplace ls           List configured marketplace catalogs
+  marketplace add <source> Add a provenance-only marketplace index
+  marketplace refresh <source>
+                           Re-fetch a catalog; keeps the last good index on failure
+  marketplace remove <source>
+                           Drop a catalog (installed plugins keep running)
+  marketplace install <id@marketplace>
+                           Install through the catalog pointer
   agent ls                 List live agents + their state
+  team ls                  List the team catalogue
   agent send <h> <msg>     Send a message to agent <handle>
   term ls [--project ID]   List live terminal sessions
   term close <sessionId>   Close a live session
+  term reply <sessionId> <message>
+                           Inject a follow-up turn at a live session's prompt
   term close-summary <projectId> <sessionId...>
   run <project> <prompt>   Spawn a claude agent in a project
   schedule run-now <id>    Fire a schedule once now
@@ -191,28 +217,14 @@ extension's title for an extension-contributed persona (`source.extensionId`).
 zcc personas ls --json
 ```
 
-### `teams ls`
+### `team ls`
 
-List teams merged from the global store (`~/.zcc/teams/*.json`) and each
-project's `<project>/.zcc/teams/*.json`. **Read tier.**
-
-```bash
-zcc teams ls
-```
-
-```text
-ID          NAME         SLOTS  SOURCE
-----------  -----------  -----  ------
-review-crew Review Crew  2      global
-api-team    API Team     3      api
-```
-
-The `SOURCE` column reads `global` for user-level teams, `builtin` for builtin
-ones, the owning project's name for per-project teams, or the extension's title
-for an extension-contributed team (`source.extensionId`).
+List the team catalogue (builtins, file-backed teams, and plugin contributions).
+**Live tier — needs the app running.**
 
 ```bash
-zcc teams ls --json
+zcc team ls
+zcc team ls --json
 ```
 
 ### `schedule ls`
@@ -423,6 +435,42 @@ zcc schedule disable 9f8e7d6c
 ```
 
 A missing schedule id is exit `2` for all three `schedule` live verbs.
+
+### `plugin` / `marketplace`
+
+Plugins are full-trust TypeScript packages (`package.json` → `zcc`). Scaffold and
+inspect without the app; install, enable, and marketplace ops need it running.
+See the [Plugins overview](./extensions.md) and
+[plugin quickstart](./extensions-quickstart.md).
+
+```bash
+# Scaffold + path-install a local plugin
+zcc plugin new hello --app
+cd zcc-plugin-hello
+zcc plugin install .
+zcc plugin dev
+
+zcc plugin ls
+zcc plugin enable <id>
+zcc plugin reload <id>
+zcc plugin logs <id> -f
+zcc plugin search tasks
+zcc plugin outdated
+zcc plugin update <id>
+
+# Official catalog (the website serves this feed)
+zcc marketplace add https://<PUBLIC_BASE_URL>/marketplace/v1/marketplace.json
+zcc marketplace ls
+zcc marketplace install tasks@official
+```
+
+`plugin ls` / `new` / `types` / `build` work with the app down. `plugin install`,
+`enable`, `disable`, `reload`, `remove`, `dev`, `search`, `outdated`, `update`,
+`run`, and every `marketplace` verb are **live tier**.
+
+`plugin logs <id>` prints persisted JSONL from the plugin log (`-n N`, `-f` to
+follow). `plugin run <id> <args…>` runs a CLI contribution declared by that
+plugin.
 
 ---
 

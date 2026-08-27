@@ -28,38 +28,59 @@ this machine.
 
 ---
 
-## Reachability (Tailscale Serve)
+## Reachability (public origin)
 
 The product server still binds **loopback** (`127.0.0.1`). Another computer
-cannot enroll against `http://127.0.0.1:<port>`. Point a public HTTPS origin
-at that loopback port (Tailscale Serve, a Heroku proxy, …), then set the
-hostname in **one** of these places (first match wins):
+cannot enroll against `http://127.0.0.1:<port>`. The public door is Heroku
+app `zcc`: the same hostname serves the docs/marketplace site **and** pairing
+(`/install.sh`, enroll, host websocket). Zana on this Mac dials out to
+`wss://<origin>/_zcc/relay` — Heroku never inbound-connects to the laptop.
+
+Set the hostname in **one** of these places (first match wins):
 
 1. Env `ZCC_APP_URL`
 2. **Settings → Machines → Public app URL**
 3. The repo-root file [`public-app-url`](../public-app-url) (one URL, comments allowed)
+
+Set the matching **Relay token** (Settings or env `ZCC_RELAY_TOKEN`). It must
+equal Heroku config `ZCC_RELAY_TOKEN`. One laptop per token: a second desktop
+with the same token steals the tunnel.
 
 ```bash
 # public-app-url
 https://zcc-7808c5bc8f3d.herokuapp.com
 ```
 
-That origin is used in the join command and as the Host-header allowlist for
-enroll, the host websocket, and `/install.sh`. Change the file (or Settings)
-when the hostname changes — no code edits.
+Machines shows **Relay: Connected**, **Offline**, or **Not configured**. If the
+origin is set but the tunnel is down, Install fails with `relay_offline` (keep
+Zana running). If no token is configured, a Tailscale Serve origin still works
+as before.
 
-Do **not** use Tailscale Funnel or bind the product server to `0.0.0.0`. Those
-would put an unauthenticated control plane on a network. Tailscale ACLs or
-the proxy's access control are the access boundary.
+That origin is used in the join command and as the **Host-header allowlist**
+on the laptop (enroll, host websocket, `/install.sh`). Change the file (or
+Settings) when the hostname changes — no code edits.
+
+The Heroku dyno has a separate **path allowlist** (`website/relay/allowlist.json`,
+mirrored in the product server): `/install.sh`, `/install/version`,
+`/install/zcc-host.tgz`, enroll, interactive-request (and interrupt), and
+`/internal/hosts/ws`. Other product HTTP — including `/internal/hosts/tool-call`
+— is not relayed.
+
+Operator detail for the front door (`ZCC_RELAY_TOKEN`, `node relay/front-door.mjs`)
+is in [`website/README.md`](../website/README.md).
+
+Do **not** bind the product server to `0.0.0.0` or use Tailscale Funnel. Those
+would put an unauthenticated control plane on a network.
 
 Opening the full Zana UI in a browser through that URL is out of scope — the
-desktop app on this machine stays the control surface.
+desktop app on this machine stays the control surface. SSH reverse-tunnel
+copy-paste (below) remains the offline fallback.
 
 ---
 
 ## Add an execution machine
 
-1. Open **Settings → Machines** and choose **Add machine**.
+1. Open **Settings → Machines** and choose **Add a machine**.
 2. Copy the one-line installer. It looks like:
 
 ```bash
@@ -133,7 +154,10 @@ remote-tools toggle, until you install a daemon.
 2. **New thread / home composer** — pick the machine when more than one host is
    connected, or when an enrolled machine is offline (Online/Offline in the
    picker). A project remembers the host it was created on.
-3. **Permission ceiling** — Settings → Machines can cap that box at accept-edits
+3. **Provider CLIs** — each machine row lists Codex / Claude (and other)
+   CLI install state. Use **Update all** when any enrolled box is missing or
+   outdated.
+4. **Permission ceiling** — Settings → Machines can cap that box at accept-edits
    or auto. Owner-session only; a thread cannot exceed the ceiling.
 
 Machine names are labels and may be duplicated; the host id is the stable

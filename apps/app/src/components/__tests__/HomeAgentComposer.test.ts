@@ -23,9 +23,13 @@ describe('HomeAgentComposer layout', () => {
     expect(source).toContain('className="home-agent-composer"');
     expect(source).toContain('<ThreadCommandComposer');
     expect(source).toContain('allowLegacyAgent');
+    expect(source).toContain('<LaunchModeSegmented');
     expect(source).toContain('<LegacyAgentHomeComposer');
-    expect(source).toContain("kind === 'legacy'");
-    expect(source).toContain('onSelectLegacyAgent={allowLegacyAgent ? () => setKind(\'legacy\') : undefined}');
+    expect(source).toContain("kind === 'agent'");
+    expect(source).toContain('showAutonomousTeam={false}');
+    expect(source).not.toContain('HomeAutonomousComposer');
+    expect(source).not.toContain('Autonomous Team');
+    expect(source).not.toContain('onSelectLegacyAgent');
   });
 });
 
@@ -151,8 +155,8 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source.indexOf('<ModelReasoningPicker')).toBeLessThan(source.indexOf('<ReasoningEffortPicker'));
     expect(source.indexOf('<ReasoningEffortPicker')).toBeLessThan(metaIdx);
     expect(source).toContain('onSelectedProviderChange={threadId ? undefined : options.setProviderId}');
-    expect(source).toContain('showLegacyAgent={Boolean(onSelectLegacyAgent)}');
-    expect(source).toContain('onSelectLegacyAgent={onSelectLegacyAgent}');
+    expect(source).not.toContain('showLegacyAgent');
+    expect(source).not.toContain('onSelectLegacyAgent');
     expect(source).toContain('reasoningLevel: options.reasoningLevel');
     expect(source).toContain('moreModelOptions={options.moreModelOptions}');
     expect(source).toContain('applyComposerModePrefix');
@@ -210,6 +214,21 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain('deleteRange');
     expect(source).toContain("type: 'mention'");
     expect(source).not.toContain('thread-slash-menu');
+  });
+
+  it('seeds slash commands from the provider, installed plugin skills, and palette catalogs', () => {
+    const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('commandsFromComposerActions');
+    expect(source).toContain('commandsFromPluginSkills');
+    expect(source).toContain('mergeCommandCatalogs');
+    expect(source).toContain('product.threads.commands(projectId)');
+    expect(source).toContain("'/plugins/contributions'");
+    expect(source).toContain('product.commands.list(selectedProject?.path)');
+    expect(source).toContain('!row.providerId || row.providerId === options.providerId');
+    expect(source).toContain('COMPOSER_COMMANDS_RELOAD_EVENT');
+    expect(source).toContain('product.pluginApps.onChanged');
+    expect(source).toContain('product.skills.onChanged');
+    expect(source).not.toContain('setCommandsLoaded(false)');
   });
 
   it('drops files and explorer paths in as mention pills', () => {

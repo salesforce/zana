@@ -4,7 +4,12 @@ import {
   pluginEntryFromPackage,
   readFirstPartyPluginEntries
 } from '../../scripts/generate-marketplace.mjs';
-import { marketplaceCardsFromIndex, officialMarketplaceIndex } from '../official-marketplace';
+import {
+  marketplaceCardsFromIndex,
+  officialMarketplaceAddCommand,
+  officialMarketplaceFeedUrl,
+  officialMarketplaceIndex
+} from '../official-marketplace';
 
 describe('official marketplace.json', () => {
   it('builds pointer entries from first-party package.json files', () => {
@@ -46,6 +51,23 @@ describe('official marketplace.json', () => {
     const committed = officialMarketplaceIndex();
     expect(committed.plugins.map((plugin) => plugin.id).sort()).toEqual(
       fromDisk.plugins.map((plugin) => plugin.id).sort()
+    );
+  });
+});
+
+describe('officialMarketplaceAddCommand', () => {
+  it('builds the add command from PUBLIC_BASE_URL, stripping a trailing slash', () => {
+    expect(officialMarketplaceFeedUrl('https://zcc-7808c5bc8f3d.herokuapp.com/')).toBe(
+      'https://zcc-7808c5bc8f3d.herokuapp.com/marketplace/v1/marketplace.json'
+    );
+    expect(officialMarketplaceAddCommand('https://zcc-7808c5bc8f3d.herokuapp.com/')).toBe(
+      'zcc marketplace add https://zcc-7808c5bc8f3d.herokuapp.com/marketplace/v1/marketplace.json'
+    );
+  });
+
+  it('keeps a local origin when PUBLIC_BASE_URL is the dev default', () => {
+    expect(officialMarketplaceAddCommand('http://localhost:4321')).toBe(
+      'zcc marketplace add http://localhost:4321/marketplace/v1/marketplace.json'
     );
   });
 });

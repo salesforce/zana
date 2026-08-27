@@ -104,6 +104,8 @@ describe('Settings subsection navigation', () => {
       'utf8'
     );
     expect(source).toContain('PluginSettingsSections');
+    expect(source).toContain('reloadComposerCommandCatalog');
+    expect(source).toContain('Reload slash commands');
     expect(SETTINGS_SECTIONS.map((section) => section.id)).not.toContain('plugins');
   });
 

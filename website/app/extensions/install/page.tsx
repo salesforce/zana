@@ -55,7 +55,7 @@ export default function ExtensionInstallPage() {
       </section>
 
       <section className="guide-next-section">
-        <div className="wrap"><div className="guide-next-card" data-reveal><div><span className="eyebrow">Need deeper detail?</span><h2>Use the reference for exact install and publishing commands.</h2><p>The public docs retain the detailed artifact, registry, API, and plugin contract.</p></div><div className="guide-next-actions"><Link className="btn btn-primary" href="/docs/extensions-authoring/#install--dev-loop">Open authoring install guide</Link><Link className="btn btn-ghost" href="/docs/release-hosting/">Marketplace hosting</Link></div></div></div>
+        <div className="wrap"><div className="guide-next-card" data-reveal><div><span className="eyebrow">Need deeper detail?</span><h2>Use the reference for exact install and publishing commands.</h2><p>The public docs retain the detailed artifact, registry, API, and plugin contract.</p></div><div className="guide-next-actions"><Link className="btn btn-primary" href="/docs/extensions-authoring/#install--dev-loop">Open authoring install guide</Link><Link className="btn btn-ghost" href="/marketplace/">Browse the marketplace</Link></div></div></div>
       </section>
     </>
   );

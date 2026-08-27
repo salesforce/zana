@@ -60,7 +60,20 @@ import {
   collectPluginSkillDirectoryRoots,
   writeInjectedSkillRootManifest
 } from './injected-skill-roots.js';
-import type { PluginCliExecutionResult, PluginHttpRequest, PluginHttpResponse, PluginThreadEvent } from '@zana-ai/zcc-plugin-sdk/server';
+import type {
+  PluginAgentToolContext,
+  PluginCliExecutionResult,
+  PluginHttpRequest,
+  PluginHttpResponse,
+  PluginThreadEvent
+} from '@zana-ai/zcc-plugin-sdk/server';
+import type { ToolCallResponse } from '@zana-ai/zcc-domain/thread-runtime';
+import {
+  invokePluginAgentTool,
+  resolvePluginSessionTools,
+  type PluginAgentToolSource,
+  type PluginSessionTools
+} from './plugin-agent-tools.js';
 
 export interface CatalogSearchHit {
   marketplace: string;
@@ -90,6 +103,12 @@ export interface PluginService {
   start(): Promise<void>;
   snapshot(): PluginUiSnapshot[];
   agentContributions(): PluginAgentContribution[];
+  sessionTools(ctx: { threadId: string; projectId: string }): Promise<PluginSessionTools>;
+  invokeAgentTool(args: {
+    name: string;
+    input: unknown;
+    ctx: PluginAgentToolContext;
+  }): Promise<ToolCallResponse>;
   callRpc(pluginId: string, method: string, args: unknown): Promise<unknown>;
   getSettings(pluginId: string): {
     descriptors: Record<string, import('@zana-ai/zcc-plugin-sdk/server').PluginSettingDescriptor>;
@@ -368,6 +387,18 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         (current.handle?.extraInstructions ?? []).map((text) => ({ pluginId, text }))
       )
       .filter((row) => row.text.trim().length > 0);
+  }
+
+  function agentToolSources(): PluginAgentToolSource[] {
+    return [...live.entries()]
+      .filter(([, current]) => current.handle)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([pluginId, current]) => ({
+        pluginId,
+        tools: current.handle!.agentTools,
+        configurers: current.handle!.agentConfigurers,
+        extraInstructions: current.handle!.extraInstructions
+      }));
   }
 
   async function configuredInstructions(): Promise<Array<{ pluginId: string; text: string }>> {
@@ -906,6 +937,12 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     },
     snapshot,
     agentContributions,
+    sessionTools(ctx) {
+      return resolvePluginSessionTools(agentToolSources(), ctx);
+    },
+    invokeAgentTool(args) {
+      return invokePluginAgentTool(agentToolSources(), args.name, args.input, args.ctx);
+    },
     cliContributions,
     mentionProviders,
     async runCliCommand(id, argv) {

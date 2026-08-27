@@ -1,4 +1,4 @@
-const HARNESSES = ['Claude Code', 'OpenCode', 'Codex', 'Pi'] as const;
+const HARNESSES = ['Claude Code', 'Cursor', 'OpenCode', 'Codex', 'Pi'] as const;
 
 export function HarnessStrip() {
   return (

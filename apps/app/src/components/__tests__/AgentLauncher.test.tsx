@@ -96,16 +96,14 @@ describe('Quick Agent composer', () => {
 describe('launch mode', () => {
   it('offers Thread, Legacy Agent, and Autonomous Team without gating the whole control on teams', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
-    expect(source).toContain("useState<'thread' | 'agent' | 'autonomous'>('thread')");
-    expect(source).toContain('>\n                Thread\n              </button>');
-    expect(source).toContain('Legacy Agent');
-    expect(source).toContain('Autonomous Team');
+    expect(source).toContain("useState<LaunchMode>('thread')");
+    expect(source).toContain('<LaunchModeSegmented');
+    expect(source).toContain('showAutonomousTeam={teams.length > 0}');
     expect(source).not.toContain('Single agent');
     expect(source).toContain('<ThreadCommandComposer');
     expect(source).toContain('initialText={initialPrompt}');
     expect(source).toContain('onCreated={onClose}');
     expect(source).toContain("{mode !== 'thread' && (<>");
-    expect(source).toContain('{teams.length > 0 && (');
   });
 
   it('paints the thread composer on a panel surface distinct from the launch modal', () => {

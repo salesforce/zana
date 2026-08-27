@@ -2234,11 +2234,18 @@ export interface AppConfig {
    */
   cloneRoot?: string;
   /**
-   * Public origin (Tailscale Serve URL, etc.) used to render remote host-daemon
-   * join commands and to allowlist Host headers on enroll/WS. The product HTTP
-   * API stays loopback-only. Env `ZCC_APP_URL` overrides this when set.
+   * Public origin (Tailscale Serve URL, Heroku pairing relay, etc.) used to
+   * render remote host-daemon join commands and to allowlist Host headers on
+   * enroll/WS. The product HTTP API stays loopback-only. Env `ZCC_APP_URL`
+   * overrides this when set.
    */
   publicAppUrl?: string;
+  /**
+   * Shared secret for the outbound pairing-relay tunnel (`wss://<origin>/_zcc/relay`).
+   * Must match Heroku `ZCC_RELAY_TOKEN`. Env `ZCC_RELAY_TOKEN` overrides this
+   * when set. One laptop per token (last-wins).
+   */
+  relayToken?: string;
   /**
    * Absolute directory that inbox "Download as PDF" writes into. Absent ⇒ the
    * OS Downloads folder. The export saves straight there (no save dialog),

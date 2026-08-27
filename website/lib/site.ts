@@ -1,7 +1,7 @@
 /** Central site config — copy + env-driven endpoints, all in one place. */
 export const site = {
   name: 'Zana Command Center',
-  tagline: 'Run and orchestrate Claude Code, OpenCode, Codex, and Pi sessions across every project from one window.',
+  tagline: 'Run and orchestrate Claude Code, Cursor, OpenCode, Codex, and Pi sessions across every project from one window.',
   repo: 'https://github.com/salesforce/zana',
   /** PUBLIC release feed (github.com) — where the notarized artifacts +
    *  latest-mac.yml live and the auto-updater reads anonymously. */
@@ -17,10 +17,11 @@ export const site = {
   updateFeedUrl: process.env.NEXT_PUBLIC_UPDATE_FEED_URL,
   /** Latest published app version (fallback when the feed is unreachable).
    *  Keep in sync with the current release when the update feed can't be read. */
-  latestVersion: process.env.NEXT_PUBLIC_APP_VERSION ?? '1.0.9',
-  /** Base URL this deployment is served from — used by the dashboard's "how to
-   *  publish" CLI snippet (`--api <publicBaseUrl>`). Server-only env var (not
-   *  `NEXT_PUBLIC_*`): the dashboard route renders it server-side. */
+  latestVersion: process.env.NEXT_PUBLIC_APP_VERSION ?? '1.0.10',
+  /** Base URL this deployment is served from (`PUBLIC_BASE_URL`). Used by the
+   *  dashboard publish snippet, the marketplace `zcc marketplace add` command,
+   *  canonical URLs, robots, and sitemap. Server-only — pass into client
+   *  components as a prop so a config change does not require a client rebuild. */
   publicBaseUrl: process.env.PUBLIC_BASE_URL ?? 'http://localhost:4321'
 };
 

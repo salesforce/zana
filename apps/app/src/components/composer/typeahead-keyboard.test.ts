@@ -34,9 +34,9 @@ describe('typeaheadMenuOpen', () => {
     expect(typeaheadMenuOpen('mention', 0, true)).toBe(true);
   });
 
-  it('opens commands only after a nonempty loaded catalog', () => {
-    expect(typeaheadMenuOpen('command', 0, false)).toBe(false);
-    expect(typeaheadMenuOpen('command', 0, true)).toBe(false);
+  it('opens commands even before the catalog loads so slash is never silent', () => {
+    expect(typeaheadMenuOpen('command', 0, false)).toBe(true);
+    expect(typeaheadMenuOpen('command', 0, true)).toBe(true);
     expect(typeaheadMenuOpen('command', 2, true)).toBe(true);
     expect(typeaheadMenuOpen(null, 2, true)).toBe(false);
   });

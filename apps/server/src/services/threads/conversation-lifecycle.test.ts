@@ -248,6 +248,58 @@ describe('conversation lifecycle', () => {
     }));
   });
 
+  it('packs plugin tools onto thread.resume and turn.submit resume', async () => {
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, resumed: true, providerThreadId: 'prov-1' }));
+    const product = ctx(callHostOnlineRpc);
+    product.plugins = {
+      sessionTools: async () => ({
+        tools: [{ name: 'sf_soql', description: 'SOQL', inputSchema: { type: 'object' } }],
+        instructions: 'Use sf_soql.'
+      }),
+      emitThreadEvent: vi.fn(async () => undefined)
+    } as ProductHttpContext['plugins'];
+    await resumeConversation(product, thread.id);
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({
+        type: 'thread.resume',
+        dynamicTools: [expect.objectContaining({ name: 'sf_soql' })],
+        instructions: 'Use sf_soql.'
+      })
+    }));
+    callHostOnlineRpc.mockClear();
+    callHostOnlineRpc.mockResolvedValue({ threadId: thread.id, accepted: true });
+    await sendConversationTurn(product, thread.id, [{ type: 'text', text: 'follow up' }]);
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({
+        type: 'turn.submit',
+        resume: expect.objectContaining({
+          dynamicTools: [expect.objectContaining({ name: 'sf_soql' })],
+          instructions: 'Use sf_soql.'
+        })
+      })
+    }));
+  });
+
+  it('still resumes when plugin sessionTools throws', async () => {
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, resumed: true, providerThreadId: 'prov-1' }));
+    const product = ctx(callHostOnlineRpc);
+    product.plugins = {
+      sessionTools: async () => {
+        throw new Error('configure failed');
+      },
+      emitThreadEvent: vi.fn(async () => undefined)
+    } as ProductHttpContext['plugins'];
+    await resumeConversation(product, thread.id);
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({
+        type: 'thread.resume',
+        providerThreadId: 'prov-1'
+      })
+    }));
+    const command = callHostOnlineRpc.mock.calls[0]?.[0] as { command: { dynamicTools?: unknown } };
+    expect(command.command.dynamicTools).toBeUndefined();
+  });
+
   it('forks a child conversation thread without mixing PTY rows', async () => {
     const namer = { request: vi.fn(), reserve: vi.fn() };
     const product = ctx(async () => ({}));

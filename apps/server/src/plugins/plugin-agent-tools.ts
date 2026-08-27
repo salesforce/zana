@@ -22,6 +22,32 @@ export interface PluginSessionTools {
   instructions?: string;
 }
 
+export const HOST_SESSION_TOOLS_MAX = 128;
+export const HOST_SESSION_INSTRUCTIONS_MAX = 100_000;
+
+export function packHostSessionTooling(
+  session: PluginSessionTools | undefined | null
+): { dynamicTools?: DynamicTool[]; instructions?: string } {
+  if (!session) return {};
+  const tools = session.tools.slice(0, HOST_SESSION_TOOLS_MAX);
+  const instructions = session.instructions?.slice(0, HOST_SESSION_INSTRUCTIONS_MAX).trim();
+  return {
+    ...(tools.length > 0 ? { dynamicTools: tools } : {}),
+    ...(instructions ? { instructions } : {})
+  };
+}
+
+export async function safePackPluginSession(
+  load?: () => Promise<PluginSessionTools | undefined>
+): Promise<{ dynamicTools?: DynamicTool[]; instructions?: string }> {
+  if (!load) return {};
+  try {
+    return packHostSessionTooling(await load());
+  } catch {
+    return {};
+  }
+}
+
 export function toDynamicTool(registration: PluginAgentToolRegistration): DynamicTool {
   return {
     name: registration.name,

@@ -73,6 +73,7 @@ import {
 } from '../services/threads/voice-transcription.js';
 import { cliSkillsStatus, installCliSkills } from '../services/skills/cli-skills.js';
 import { toPluginAppSnapshot } from '../plugins/plugin-service.js';
+import { enabledPluginSkillCatalog, pluginSkillCommandRows } from './plugin-skill-commands.js';
 
 const VALID_FOLLOW_UP_STATUS: FollowUpStatus[] = ['open', 'resolved', 'dismissed'];
 
@@ -84,6 +85,11 @@ function parseReasoningLevel(value: unknown): ReasoningLevel | undefined {
 function isContained(root: string, candidate: string): boolean {
   const path = relative(root, candidate);
   return path === '' || (!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`));
+}
+
+function pluginSnapshot(plugins: ProductHttpContext['plugins']) {
+  if (!plugins || typeof plugins.snapshot !== 'function') return [];
+  return plugins.snapshot();
 }
 
 function publicMarketplaceCatalog(row: MarketplaceCatalogRow) {
@@ -300,8 +306,14 @@ export async function handleProductHttp(
     if (path === '/api/v1/config' && (method === 'PATCH' || method === 'POST')) {
       const patch = (await readJsonBody(request)) as Partial<AppConfig>;
       const config = ctx.config.setConfig(patch);
+      ctx.pairingRelay?.refresh();
       ctx.hub.emit('config:changed', config);
       sendJson(response, 200, { config });
+      return true;
+    }
+
+    if (path === '/api/v1/relay' && method === 'GET') {
+      sendJson(response, 200, { state: ctx.pairingRelay?.state() ?? 'unconfigured' });
       return true;
     }
 
@@ -1015,14 +1027,17 @@ export async function handleProductHttp(
     const projectCommands = routeParams(path, '/api/v1/projects/:id/commands');
     if (projectCommands && method === 'GET') {
       sendJson(response, 200, {
-        commands: listThreadProviders().flatMap((provider) =>
-          (provider.composerActions ?? []).map((name) => ({
-            id: `${provider.id}:${name}`,
-            name: `/${name}`,
-            providerId: provider.id,
-            description: `${provider.displayName} ${name}`
-          }))
-        )
+        commands: [
+          ...listThreadProviders().flatMap((provider) =>
+            (provider.composerActions ?? []).map((name) => ({
+              id: `${provider.id}:${name}`,
+              name: `/${name}`,
+              providerId: provider.id,
+              description: `${provider.displayName} ${name}`
+            }))
+          ),
+          ...pluginSkillCommandRows(pluginSnapshot(ctx.plugins))
+        ]
       });
       return true;
     }
@@ -1366,7 +1381,8 @@ export async function handleProductHttp(
           : [],
         themes: typeof ctx.plugins?.snapshot === 'function'
           ? (ctx.plugins.snapshot() ?? []).flatMap((row) => ('themes' in row ? row.themes ?? [] : []))
-          : []
+          : [],
+        pluginSkills: enabledPluginSkillCatalog(pluginSnapshot(ctx.plugins))
       });
       return true;
     }

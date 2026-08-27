@@ -74,11 +74,16 @@ describe('thread / legacy isolation', () => {
     const thread = stripComments(readFileSync(join(appRoot, 'components/ThreadCommandComposer.tsx'), 'utf8'));
     expect(home).toContain('allowLegacyAgent');
     expect(home).toContain('LegacyAgentHomeComposer');
+    expect(home).toContain('LaunchModeSegmented');
+    expect(home).toContain('showAutonomousTeam={false}');
+    expect(home).not.toContain('HomeAutonomousComposer');
     expect(home).not.toContain('createTerminal');
+    expect(home).not.toContain('launchAutonomous');
     expect(legacy).toContain('createTerminal');
     expect(legacy).toContain('buildLaunchArgs');
     expect(legacy).toContain("from './legacy-agent-home.js'");
-    expect(thread).toContain('onSelectLegacyAgent');
+    expect(legacy).not.toContain('ComposerModePicker');
+    expect(thread).not.toContain('onSelectLegacyAgent');
     expect(thread).not.toContain('createTerminal');
     expect(thread).not.toContain('LegacyAgentHomeComposer');
   });

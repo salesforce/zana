@@ -64,4 +64,17 @@ describe('composerPromptExtensions slash trigger', () => {
     editor.destroy();
     expect(trigger).toMatchObject({ char: '/', kind: 'command', query: '' });
   });
+
+  it('keeps /plan as plain text instead of an autolink', () => {
+    const editor = editorWithMarkdown(true);
+    editor.view.dispatch(editor.state.tr.insertText('/plan'));
+    const json = editor.getJSON();
+    const trigger = findActiveTrigger(editor, COMPOSER_TRIGGERS);
+    editor.destroy();
+    expect(trigger).toMatchObject({ char: '/', kind: 'command', query: 'plan' });
+    expect(json).toEqual({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: '/plan' }] }]
+    });
+  });
 });

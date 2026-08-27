@@ -333,6 +333,14 @@ export interface CcApi {
     onChanged(cb: (hosts: Host[] | undefined) => void): () => void;
   };
   /**
+   * Outbound pairing-relay tunnel to the public origin (Heroku front door).
+   * Status only — the origin and token live in AppConfig / env.
+   */
+  relay: {
+    status(): Promise<{ state: 'connected' | 'offline' | 'unconfigured' }>;
+    onChanged(cb: (payload: { state: 'connected' | 'offline' | 'unconfigured' }) => void): () => void;
+  };
+  /**
    * Thread control plane is HTTP to the product server (create/send/events).
    * Not a PTY spawn path. Desktop `terminals.create` remains legacyAgentSession.
    */

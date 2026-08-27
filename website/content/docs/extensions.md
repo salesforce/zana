@@ -16,6 +16,10 @@ Electron guests.
 Host-daemon tokens and signing keys never reach a plugin. Renderer input stays
 untrusted; the server still confines paths.
 
+The in-app **Plugins** hub (Installed + Browse) is ZCC's catalogue. It is not
+Claude Code's `~/.claude/plugins` folder — that remains a Claude Code
+compatibility surface and is not a competing Settings destination.
+
 ## Docs
 
 - Authoring: [`extensions-authoring.md`](./extensions-authoring.md)
@@ -24,11 +28,41 @@ untrusted; the server still confines paths.
 
 ## First-party plugins
 
+Ids live in `apps/server/src/plugins/builtin-registry.ts`. Core must not hardcode
+them elsewhere.
+
+**Auto-install builtins** (`autoInstall: true`):
+
 | Package | Role |
 | --- | --- |
-| `plugins/docs` | Builtin (`autoInstall: true`) — Docs rail, Library, library-curator skill |
+| `plugins/docs` | Docs rail, Library, library-curator skill |
+| `provider-claude-code` | Claude Code thread provider |
+| `provider-codex` | Codex thread provider |
+| `provider-pi` | Pi thread provider |
+| `provider-acp` | ACP thread provider (Cursor and other ACP harnesses) |
+| `custom-instructions` | Project custom instructions |
+| `ask-user-question` | Agent questions that surface in the Inbox |
 
-Core must not hardcode those ids outside `apps/server/src/plugins/builtin-registry.ts`.
+**Official store plugins** (`autoInstall: false` — install from Plugins → Browse
+or `zcc plugin install <name>`):
+
+| Package | Role |
+| --- | --- |
+| `tasks` | Workflow / task board |
+| `github` | GitHub developer tools |
+| `salesforce` | Salesforce DX inner loop |
+| `automations` | Automations |
+| `workflows` | Workflows |
+| `side-chat` | Side chat |
+| `inline-vis` | Inline visualizations |
+| `provider-retry` | Provider retry |
+| `memory` | Durable memory |
+| `keep-awake` | Host keep-awake |
+| `secrets` | Host secrets |
+| `connect` | Host connect |
+
+Packages that live under repo `plugins/` today include `docs` and `salesforce`;
+other official plugins may ship from the catalog without a tree copy.
 
 ## CLI
 

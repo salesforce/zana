@@ -45,6 +45,7 @@ export interface ProductHttpContext {
   threadTitleNamer: ThreadTitleNamer;
   terminalSessions: Map<string, ProductTerminalRecord>;
   plugins?: PluginService;
+  pairingRelay?: import('./pairing-relay-controller.js').PairingRelayHandle;
   toProjects(): Project[];
   /** Release long-lived watchers started with this context. */
   dispose(): void;

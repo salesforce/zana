@@ -110,6 +110,38 @@ describe('host-rpc contract', () => {
       remote: { host: 'box', user: 'me', remotePath: '/src' }
     });
     expect(HostRpcCommandSchema.parse({
+      type: 'thread.start',
+      threadId,
+      environmentId,
+      projectId: 'p1',
+      providerId: 'opencode',
+      input: ['hello'],
+      dynamicTools: [{
+        name: 'sf_soql',
+        description: 'Run SOQL',
+        inputSchema: { type: 'object', properties: { query: { type: 'string' } } }
+      }],
+      instructions: 'Use Salesforce tools.'
+    })).toMatchObject({
+      type: 'thread.start',
+      instructions: 'Use Salesforce tools.',
+      dynamicTools: [expect.objectContaining({ name: 'sf_soql' })]
+    });
+    expect(HostRpcCommandSchema.parse({
+      type: 'thread.resume',
+      threadId,
+      environmentId,
+      projectId: 'p1',
+      providerId: 'opencode',
+      providerThreadId: 'prov-1',
+      dynamicTools: [{ name: 'sf_apex', description: 'Run Apex', inputSchema: {} }],
+      instructions: 'Use sf_apex.'
+    })).toMatchObject({
+      type: 'thread.resume',
+      instructions: 'Use sf_apex.',
+      dynamicTools: [expect.objectContaining({ name: 'sf_apex' })]
+    });
+    expect(HostRpcCommandSchema.parse({
       type: 'thread.resize',
       threadId,
       cols: 120,

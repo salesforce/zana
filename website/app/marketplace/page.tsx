@@ -1,5 +1,9 @@
 import type { Metadata } from 'next';
+import { site } from '@/lib/site';
 import { MarketplaceClient } from './MarketplaceClient';
+
+/** Read `PUBLIC_BASE_URL` at request time so the add-command origin can change without a rebuild. */
+export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   title: 'Marketplace',
@@ -16,5 +20,5 @@ export const metadata: Metadata = {
 };
 
 export default function MarketplacePage() {
-  return <MarketplaceClient />;
+  return <MarketplaceClient publicBaseUrl={site.publicBaseUrl} />;
 }

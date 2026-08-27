@@ -19,7 +19,6 @@ import {
   ComposerToolbar
 } from './ui/CommandComposer.js';
 import { AttachmentPills } from './ui/AttachmentPills.js';
-import { ComposerModePicker } from './thread/pickers/ComposerModePicker.js';
 import { VoiceRecordingBar } from './thread/voice/VoiceRecordingBar.js';
 import { useVoiceInput } from './thread/voice/useVoiceInput.js';
 import { useData, usePersonas, useUi } from '../store.js';
@@ -43,11 +42,9 @@ const EMPTY_MODELS: readonly HarnessModelTarget[] = [];
  * this file is the only home-page caller of `createTerminal`.
  */
 export function LegacyAgentHomeComposer({
-  project: pinnedProject,
-  onSelectThread
+  project: pinnedProject
 }: {
   project?: Project;
-  onSelectThread: () => void;
 }) {
   const projects = useData((s) => s.projects);
   const loadProjects = useData((s) => s.loadProjects);
@@ -312,14 +309,6 @@ export function LegacyAgentHomeComposer({
           ) : (
             <>
               <div className="thread-command-footer-start">
-                <ComposerModePicker
-                  value="agent"
-                  modes={['agent']}
-                  onChange={onSelectThread}
-                  showLegacyAgent
-                  legacyAgentSelected
-                  onSelectLegacyAgent={() => undefined}
-                />
                 <PopoverPicklist
                   ariaLabel="Agent harness"
                   value={familyId}

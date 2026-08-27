@@ -114,13 +114,60 @@ export function buildMentionSuggestions(input: {
   return mentionOrder([...threads, ...projects, ...plugins, ...paths]).slice(0, COMPOSER_SUGGESTION_LIMIT);
 }
 
+export function commandName(name: string): string {
+  return name.startsWith('/') ? name : `/${name}`;
+}
+
+export function commandsFromComposerActions(
+  actions: readonly string[],
+  displayName?: string
+): Array<{ name: string; description: string }> {
+  return actions.map((action) => {
+    const name = commandName(action);
+    const label = action.replace(/^\//, '');
+    return {
+      name,
+      description: displayName ? `${displayName} ${label}` : label
+    };
+  });
+}
+
+export function commandsFromPluginSkills(
+  plugins: ReadonlyArray<{
+    name: string;
+    enabled?: boolean;
+    skillNames?: readonly string[];
+  }>
+): Array<{ name: string; description: string }> {
+  return plugins.flatMap((plugin) => {
+    if (plugin.enabled === false) return [];
+    return (plugin.skillNames ?? []).map((skillName) => ({
+      name: commandName(skillName),
+      description: plugin.name
+    }));
+  });
+}
+
+export function mergeCommandCatalogs(
+  groups: ReadonlyArray<ReadonlyArray<{ name: string; description: string }>>
+): Array<{ name: string; description: string }> {
+  const merged = new Map<string, { name: string; description: string }>();
+  for (const group of groups) {
+    for (const row of group) {
+      const name = commandName(row.name);
+      if (!merged.has(name)) merged.set(name, { name, description: row.description });
+    }
+  }
+  return [...merged.values()];
+}
+
 export function buildCommandSuggestions(
   commands: ReadonlyArray<{ name: string; description: string }>,
   query: string
 ): TypeaheadSuggestion[] {
   const items: TypeaheadSuggestion[] = commands.map((command) => ({
     kind: 'command',
-    name: command.name.startsWith('/') ? command.name : `/${command.name}`,
+    name: commandName(command.name),
     description: command.description
   }));
   return rankSuggestions(items, query.replace(/^\//, ''), COMPOSER_SUGGESTION_LIMIT);

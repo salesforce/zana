@@ -4,7 +4,7 @@ import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ProviderCliStatus } from '@zana-ai/zcc-contracts/host-rpc';
 import { MachineCard, MachineCliInventory } from './MachineCard.js';
-import { MachinesTab } from './MachinesSettingsView.js';
+import { MachinesTab, RelayStatusLine } from './MachinesSettingsView.js';
 
 const hostsState: { current: Host[] } = { current: [] };
 const projectsState: { current: Array<{ hostId?: string }> } = { current: [] };
@@ -20,6 +20,10 @@ vi.mock('../../lib/product-client.js', () => ({
       updatePermissionCeiling: async () => undefined,
       retryUpdate: async () => undefined,
       remove: async () => undefined
+    },
+    relay: {
+      status: async () => ({ state: 'unconfigured' }),
+      onChanged: () => () => {}
     }
   }
 }));
@@ -96,9 +100,11 @@ describe('MachinesTab', () => {
       />
     );
     expect(html).toContain('Public app URL');
+    expect(html).toContain('Relay token');
     expect(html).toContain('Add a machine');
     expect(html).toContain('https://box.tailnet.ts.net');
     expect(html).toContain('data-testid="machines-list"');
+    expect(html).toContain('data-testid="relay-status"');
     expect(html).not.toContain('data-testid="machines-empty"');
     expect(html).toContain('Connected machines follow the server version automatically');
   });
@@ -132,6 +138,14 @@ describe('MachinesTab', () => {
     expect(html).toContain('2 projects');
     expect(html).toContain('Permission ceiling');
     expect(html).not.toContain('data-testid="machines-empty"');
+  });
+});
+
+describe('RelayStatusLine', () => {
+  it('renders connected and offline as status, not a layout preference', () => {
+    expect(renderToStaticMarkup(<RelayStatusLine state="connected" />)).toContain('Connected');
+    expect(renderToStaticMarkup(<RelayStatusLine state="offline" />)).toContain('Offline');
+    expect(renderToStaticMarkup(<RelayStatusLine state="unconfigured" />)).toContain('Not configured');
   });
 });
 

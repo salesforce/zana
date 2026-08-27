@@ -18,6 +18,7 @@ export function createRuntimeManager(options: {
   createRuntime?: CreateAgentRuntimeFn;
   getRemoteDefaultPath?: Parameters<typeof createAgentRuntimeAdapter>[0]['getRemoteDefaultPath'];
   onInteractiveRequest?: Parameters<typeof createAgentRuntimeAdapter>[0]['onInteractiveRequest'];
+  onPluginToolCall?: Parameters<typeof createAgentRuntimeAdapter>[0]['onPluginToolCall'];
   onProcessExit?: Parameters<typeof createAgentRuntimeAdapter>[0]['onProcessExit'];
 }): ThreadRuntimeAdapter {
   return createAgentRuntimeAdapter(options);

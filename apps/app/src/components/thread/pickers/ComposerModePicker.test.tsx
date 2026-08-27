@@ -60,18 +60,16 @@ describe('ComposerModePicker', () => {
     expect(html).toContain('Shift+Tab');
   });
 
-  it('shows Legacy Agent on the trigger when that path is selected', () => {
+  it('does not offer Legacy Agent in the work-mode menu', () => {
     const html = renderToStaticMarkup(
       <ComposerModePicker
         value="agent"
         modes={['agent']}
         onChange={() => undefined}
-        showLegacyAgent
-        legacyAgentSelected
-        onSelectLegacyAgent={() => undefined}
       />
     );
-    expect(html).toContain('Legacy Agent');
     expect(html).toContain('data-testid="composer-mode-picker-trigger"');
+    expect(html).not.toContain('Legacy Agent');
+    expect(html).not.toContain('composer-mode-legacy');
   });
 });

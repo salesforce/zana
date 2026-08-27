@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   HostBootstrapError,
   parseSshIdentity,
+  requirePublicAppUrl,
   resolveHostBootstrapPlan,
   sshRemoteFromProject
 } from './host-bootstrap.js';
@@ -51,5 +52,35 @@ describe('host bootstrap helpers', () => {
       existing: { id: 'h-remote', isPrimary: false },
       connected: false
     })).toEqual({ kind: 'repair', hostId: 'h-remote' });
+  });
+
+  it('fails with relay_offline when a token is configured but the tunnel is down', () => {
+    const ctx = {
+      config: { getConfig: () => ({ publicAppUrl: 'https://zcc.herokuapp.com' }) },
+      pairingRelay: { state: () => 'offline' as const }
+    };
+    try {
+      requirePublicAppUrl(ctx as never);
+      throw new Error('expected relay_offline');
+    } catch (error) {
+      expect(error).toBeInstanceOf(HostBootstrapError);
+      expect(error).toMatchObject({ code: 'relay_offline' });
+    }
+  });
+
+  it('allows bootstrap against a public origin when the relay is unconfigured', () => {
+    const ctx = {
+      config: { getConfig: () => ({ publicAppUrl: 'https://box.tailnet.ts.net' }) },
+      pairingRelay: { state: () => 'unconfigured' as const }
+    };
+    expect(requirePublicAppUrl(ctx as never)).toBe('https://box.tailnet.ts.net');
+  });
+
+  it('returns the origin when the relay is connected', () => {
+    const ctx = {
+      config: { getConfig: () => ({ publicAppUrl: 'https://zcc.herokuapp.com' }) },
+      pairingRelay: { state: () => 'connected' as const }
+    };
+    expect(requirePublicAppUrl(ctx as never)).toBe('https://zcc.herokuapp.com');
   });
 });

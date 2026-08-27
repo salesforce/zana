@@ -550,3 +550,37 @@ describe('normalizeConfig — tmuxScope (tri-state, mirrors overseerMode)', () =
     expect(normalizeConfig({}).tmuxScope).toBeUndefined();
   });
 });
+
+describe('normalizeConfig — publicAppUrl / relayToken', () => {
+  it('trims a public origin and strips a trailing slash', () => {
+    expect(normalizeConfig({ publicAppUrl: ' https://zcc.herokuapp.com/ ' }).publicAppUrl).toBe(
+      'https://zcc.herokuapp.com'
+    );
+  });
+
+  it('clears a blank public origin and drops a non-http URL', () => {
+    expect(normalizeConfig({ publicAppUrl: '   ' }).publicAppUrl).toBeUndefined();
+    expect(normalizeConfig({ publicAppUrl: 'ftp://box.example' }).publicAppUrl).toBeUndefined();
+    expect(normalizeConfig({ publicAppUrl: 'not a url' }).publicAppUrl).toBeUndefined();
+  });
+
+  it('persists a relay token and clears a blank one', () => {
+    expect(normalizeConfig({ relayToken: '  secret-token-secret  ' }).relayToken).toBe(
+      'secret-token-secret'
+    );
+    expect(normalizeConfig({ relayToken: '' }).relayToken).toBeUndefined();
+    expect(normalizeConfig({ relayToken: 'x'.repeat(513) }).relayToken).toBeUndefined();
+  });
+
+  it('round-trips publicAppUrl and relayToken through setConfig', () => {
+    store.setConfig({
+      publicAppUrl: 'https://zcc.herokuapp.com/',
+      relayToken: ' relay-token-relay '
+    });
+    expect(store.getConfig().publicAppUrl).toBe('https://zcc.herokuapp.com');
+    expect(store.getConfig().relayToken).toBe('relay-token-relay');
+    store.setConfig({ publicAppUrl: undefined, relayToken: '' });
+    expect(store.getConfig().publicAppUrl).toBeUndefined();
+    expect(store.getConfig().relayToken).toBeUndefined();
+  });
+});

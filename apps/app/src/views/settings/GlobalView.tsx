@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { product } from '../../lib/product-client.js';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
-import { Play, ClipboardCheck } from 'lucide-react';
+import { Play, ClipboardCheck, RefreshCw } from 'lucide-react';
 import { useUi } from '@/store';
+import { reloadComposerCommandCatalog } from '@/lib/composer-commands-reload';
 import { Section, Field, CheckboxField, SettingsActionRow } from '@/components/settings/FormFields';
 import { PluginSettingsSections } from '@/plugins/PluginSettingsSections';
 import { PluginThemePicker, PluginThreadListPicker } from '@/plugins/PluginAppearanceSettings';
@@ -52,6 +54,8 @@ export function GlobalView({
     OPEN_LINKS_IN_APP_BROWSER_STORAGE_KEY,
     OPEN_LINKS_IN_APP_BROWSER_DEFAULT
   );
+  const [commandsReloadBusy, setCommandsReloadBusy] = useState(false);
+  const [commandsReloadNote, setCommandsReloadNote] = useState<string | null>(null);
   return (
     <>
       <Section anchorId="appearance" title="Appearance">
@@ -109,6 +113,28 @@ export function GlobalView({
             onChange={setOpenLinksInAppBrowser}
           />
         ) : null}
+        <SettingsActionRow
+          label="Reload slash commands"
+          help="Refresh the / menu from installed plugin skills. On desktop this also re-deploys bundled skills and project MCP configs."
+        >
+          <button
+            type="button"
+            className="settings-btn"
+            data-testid="reload-composer-commands"
+            disabled={commandsReloadBusy}
+            onClick={() => {
+              setCommandsReloadBusy(true);
+              setCommandsReloadNote(null);
+              void reloadComposerCommandCatalog()
+                .then((result) => setCommandsReloadNote(result.message))
+                .finally(() => setCommandsReloadBusy(false));
+            }}
+          >
+            <RefreshCw size={14} className={commandsReloadBusy ? 'ext-spin' : undefined} />
+            {commandsReloadBusy ? 'Reloading…' : 'Reload'}
+          </button>
+        </SettingsActionRow>
+        {commandsReloadNote ? <p className="settings-help">{commandsReloadNote}</p> : null}
       </Section>
 
       <CliSkillsSettings />

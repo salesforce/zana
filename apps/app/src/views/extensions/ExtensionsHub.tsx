@@ -40,6 +40,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { PERMISSION_LABELS, pluginCapabilityLines } from '@/components/ExtensionConsent';
 import { createPluginComposeNavigation } from '@/lib/compose-prompt-seed';
 import { CREATE_PLUGIN_PROMPT } from '@/lib/create-resource-prompts';
+import { requestComposerCommandsReload } from '@/lib/composer-commands-reload';
 import { InstallFromGitDialog } from '@/components/InstallFromGitDialog';
 import { Marketplace } from '@/views/extensions/MarketplaceView';
 import { PluginDefinedSettings } from '@/plugins/PluginDefinedSettings';
@@ -142,6 +143,7 @@ export function ExtensionsHub({
         setRedeployNote(
           `Deployed ${ok}/${res.value.skills.length} skills · synced MCP for ${res.value.mcpProjects} project${res.value.mcpProjects === 1 ? '' : 's'}`
         );
+        requestComposerCommandsReload();
       })
       .catch(() => setRedeployNote('Redeploy failed'))
       .finally(() => setRedeploying(false));

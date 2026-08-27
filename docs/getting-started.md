@@ -6,14 +6,15 @@ need you versus which are still working, reply to them, and drive multi-agent
 workflows — all from one window.
 
 This guide takes you from a fresh install to your first orchestrated agent in
-about five minutes. ZCC launches the native CLI for Claude Code, OpenCode,
-Codex, or Pi rather than wrapping the harness in a generic chat UI.
+about five minutes. **New Chat** defaults to a **Thread** with the native CLI
+for Claude Code, Cursor, OpenCode, Codex, or Pi — not a generic chat wrapper.
+**Legacy Agent** is still there when you want a real PTY.
 
 ```mermaid
 flowchart LR
     A["Install the app"] --> B["Add a project"]
-    B --> C["Spawn an agent"]
-    C --> D["Work in the terminal"]
+    B --> C["Start a thread"]
+    C --> D["Watch the Agents board"]
     D --> E["Reply from the Inbox"]
     E --> C
 ```
@@ -25,9 +26,11 @@ flowchart LR
 Download the app from the [**Download**](/download/) page and open it. macOS is
 available today; Windows and Linux are on the way.
 
-**Prerequisites:** [Node](https://nodejs.org) 20 or newer, `git`, and at least
-one supported harness CLI on your `PATH`: Claude Code, OpenCode, Codex, or Pi.
-If the harness works in your terminal, ZCC can launch its native session.
+**Prerequisites:** [Node](https://nodejs.org) 20 or newer on this Mac, `git`,
+and at least one supported harness CLI on your `PATH`: Claude Code, Cursor,
+OpenCode, Codex, or Pi. If the harness works in your terminal, ZCC can launch
+it. Remote execution hosts need **Node 22+** — see
+[Using Zana on multiple machines](/docs/multiple-devices/).
 
 On first launch the app opens to an empty cockpit — no projects yet. That's the
 next step.
@@ -54,21 +57,21 @@ navigable.
 
 ---
 
-## 3. Spawn your first agent
+## 3. Start your first session
 
-Open a project and start a session. Every tab is a **real PTY running the
-selected harness** with its native behavior, tools, and permissions.
+Open **New Chat** in the sidebar. The composer defaults to **Thread** — a
+conversation with the selected harness in the project you pick.
 
-- Hit **New agent** (or the `+` in the workspace) to open a session in the
-  current project.
-- The session starts in the project's directory, so the selected harness sees
-  the right files immediately.
-- On a local git project the composer can also open a **New worktree** instead
-  of sharing the checkout. See [Environments](/docs/using-zana/#environments).
-- Type your task and let it work — exactly as you would in a standalone
-  terminal.
+- Choose a project. On a local git repo the composer can also open a
+  **New worktree** instead of sharing the checkout. See
+  [Environments](/docs/using-zana/#environments).
+- Type your task and send. The thread starts in that directory so the harness
+  sees the right files.
+- Switch to **Legacy Agent** when you want a real PTY running the native CLI.
+- **Autonomous Team** launches a saved team of personas when the work needs
+  parallel roles.
 
-The difference is that you're not limited to one. Spawn several across
+The difference is that you're not limited to one. Start several across
 different projects and they run in parallel.
 
 ---
@@ -113,8 +116,9 @@ letting the agents carry the rest.
 - **[Using Zana Command Center](/docs/using-zana/)** — a fuller tour of the
   Inbox, Agents, Teams, and the day-to-day workflows.
 - **[Using Zana on multiple machines](/docs/multiple-devices/)** — pair another
-  computer as an execution host (Tailscale Serve, not SSH).
+  computer from Settings → Machines (public origin / relay; Tailscale Serve
+  remains a fallback when no relay token is set).
 - **[The `zcc` CLI](/docs/cli/)** — a command-line companion that reads the
   same stores and can drive the running app.
-- **[Extensions overview](/docs/extensions/)** — add panels, tabs, commands,
+- **[Plugins overview](/docs/extensions/)** — add panels, tabs, commands,
   personas, and teams without editing core.

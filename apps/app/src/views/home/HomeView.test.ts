@@ -53,6 +53,22 @@ describe('HomeView New Chat surface', () => {
     expect(inner).toContain('padding: 0;');
     expect(inner).toContain('gap: 16px;');
 
+    const stackedStart = css.indexOf('.home-agent-composer {\n  display: flex;');
+    expect(stackedStart).toBeGreaterThan(-1);
+    const stacked = css.slice(stackedStart, css.indexOf('}', stackedStart));
+    expect(stacked).toContain('flex-direction: column;');
+    expect(stacked).toContain('gap: 12px;');
+
+    const homeTabsStart = css.indexOf('.home-agent-composer > .launch-segmented {');
+    expect(homeTabsStart).toBeGreaterThan(-1);
+    const homeTabs = css.slice(homeTabsStart, css.indexOf('}', homeTabsStart));
+    expect(homeTabs).toContain('align-self: flex-start;');
+    const homeTabBtnStart = css.indexOf('.home-agent-composer > .launch-segmented button {');
+    expect(homeTabBtnStart).toBeGreaterThan(-1);
+    const homeTabBtn = css.slice(homeTabBtnStart, css.indexOf('}', homeTabBtnStart));
+    expect(homeTabBtn).toContain('font-size: 11px;');
+    expect(homeTabBtn).toContain('padding: 3px 8px;');
+
     const composerStart = css.indexOf('.home-panel .home-agent-composer {');
     const composer = css.slice(composerStart, css.indexOf('}', composerStart));
     expect(composer).toContain('flex: 0 0 auto;');

@@ -24,10 +24,12 @@ export function nextSuggestionIndex(current: number, length: number, delta: numb
 
 export function typeaheadMenuOpen(
   triggerKind: 'mention' | 'command' | null,
-  suggestionCount: number,
-  commandsLoaded: boolean
+  _suggestionCount: number,
+  _commandsLoaded: boolean
 ): boolean {
   if (triggerKind === 'mention') return true;
-  if (triggerKind === 'command') return commandsLoaded && suggestionCount > 0;
+  // Open as soon as `/` is the active trigger. An empty catalog still renders
+  // "No matching commands" so slash is never a silent no-op.
+  if (triggerKind === 'command') return true;
   return false;
 }

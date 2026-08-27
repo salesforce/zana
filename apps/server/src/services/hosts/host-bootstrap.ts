@@ -67,12 +67,12 @@ export function sshRemoteFromProject(project: ProjectRecord): ProjectRemote | nu
   return parsed;
 }
 
-function requirePublicAppUrl(ctx: ProductHttpContext): string {
+export function requirePublicAppUrl(ctx: ProductHttpContext): string {
   const url = resolvePublicAppUrl({ configUrl: ctx.config.getConfig().publicAppUrl });
   if (!url) {
     throw new HostBootstrapError(
       'public_url_required',
-      'Set a public app URL (Tailscale Serve) before installing a remote host daemon.'
+      'Set a public app URL before installing a remote host daemon.'
     );
   }
   let hostname: string;
@@ -84,7 +84,13 @@ function requirePublicAppUrl(ctx: ProductHttpContext): string {
   if (isLoopbackHttpHost(hostname)) {
     throw new HostBootstrapError(
       'public_url_required',
-      'A loopback address cannot enroll another computer. Set a Tailscale Serve URL first.'
+      'A loopback address cannot enroll another computer. Set a public app URL first.'
+    );
+  }
+  if (ctx.pairingRelay?.state() === 'offline') {
+    throw new HostBootstrapError(
+      'relay_offline',
+      'The pairing relay is offline. Keep Zana running so remotes can reach this machine.'
     );
   }
   return url;

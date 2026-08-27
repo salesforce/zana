@@ -9,7 +9,12 @@ import {
   createFakeAdapter,
   fakeProviderScriptPath
 } from '@zana-ai/zcc-agent-runtime/test';
-import { createAgentRuntimeAdapter, mapRuntimeThreadEvent, threadExecutionOptions } from './agent-runtime-adapter.js';
+import {
+  createAgentRuntimeAdapter,
+  mapRuntimeThreadEvent,
+  mergeSessionTooling,
+  threadExecutionOptions
+} from './agent-runtime-adapter.js';
 import type { ThreadEvent } from '@zana-ai/zcc-domain/thread-runtime';
 
 describe('agent runtime thread adapter', () => {
@@ -21,6 +26,29 @@ describe('agent runtime thread adapter', () => {
 
   afterEach(() => {
     rmSync(cwd, { recursive: true, force: true });
+  });
+
+  it('merges plugin tools with remote proxy tooling', () => {
+    expect(mergeSessionTooling({
+      remoteProxy: false,
+      dynamicTools: [{ name: 'sf_soql', description: 'SOQL', inputSchema: {} }],
+      instructions: 'Use sf_soql.'
+    })).toEqual({
+      dynamicTools: [{ name: 'sf_soql', description: 'SOQL', inputSchema: {} }],
+      instructions: 'Use sf_soql.'
+    });
+    expect(mergeSessionTooling({ remoteProxy: false })).toEqual({});
+    const remote = mergeSessionTooling({
+      remoteProxy: true,
+      dynamicTools: [{ name: 'sf_soql', description: 'SOQL', inputSchema: {} }],
+      instructions: 'Use Salesforce tools.'
+    });
+    expect(remote.disallowedTools).toEqual(expect.arrayContaining(['Bash', 'Read']));
+    expect(remote.dynamicTools?.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining(['remote_exec', 'sf_soql'])
+    );
+    expect(remote.instructions).toMatch(/remote_read/);
+    expect(remote.instructions).toMatch(/Use Salesforce tools/);
   });
 
   it('starts a thread through AgentRuntime without PtyManager', async () => {
@@ -276,6 +304,208 @@ describe('agent runtime thread adapter', () => {
     expect(started[0]?.disallowedTools).toEqual(expect.arrayContaining(['Bash', 'Read', 'Write']));
     expect(started[0]?.instructions).toMatch(/remote_read/);
     expect(started[0]?.dynamicTools?.map((tool) => tool.name)).toContain('remote_exec');
+  });
+
+  it('attaches plugin dynamicTools on start and resume', async () => {
+    const started: Array<{ dynamicTools?: Array<{ name: string }>; instructions?: string }> = [];
+    const resumed: Array<{ dynamicTools?: Array<{ name: string }>; instructions?: string }> = [];
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined,
+      dataDir: cwd,
+      createRuntime: (options) => {
+        const runtime = createAgentRuntimeWithAdapters({
+          ...options,
+          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+        });
+        return {
+          ...runtime,
+          startThread: async (input) => {
+            started.push({ dynamicTools: input.dynamicTools, instructions: input.instructions });
+            return runtime.startThread(input);
+          },
+          resumeThread: async (input) => {
+            resumed.push({ dynamicTools: input.dynamicTools, instructions: input.instructions });
+            return runtime.resumeThread(input);
+          }
+        };
+      }
+    });
+    const threadId = randomUUID();
+    const environmentId = randomUUID();
+    const pluginTool = {
+      name: 'sf_soql',
+      description: 'Run SOQL',
+      inputSchema: { type: 'object', properties: { query: { type: 'string' } } }
+    };
+    await adapter.startWork({
+      threadId,
+      environmentId,
+      projectId: 'p1',
+      providerId: 'fake',
+      input: ['hello'],
+      cwd,
+      dynamicTools: [pluginTool],
+      instructions: 'Use sf_soql.'
+    });
+    await adapter.resumeWork({
+      threadId,
+      environmentId,
+      projectId: 'p1',
+      providerId: 'fake',
+      providerThreadId: 'prov-1',
+      cwd,
+      dynamicTools: [pluginTool],
+      instructions: 'Use sf_soql.'
+    });
+    adapter.dispose();
+    expect(started[0]).toEqual({
+      dynamicTools: [pluginTool],
+      instructions: 'Use sf_soql.'
+    });
+    expect(resumed[0]).toEqual({
+      dynamicTools: [pluginTool],
+      instructions: 'Use sf_soql.'
+    });
+  });
+
+  it('merges plugin tools after remote proxy tools', async () => {
+    const started: Array<{ dynamicTools?: Array<{ name: string }>; instructions?: string }> = [];
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined,
+      dataDir: cwd,
+      createRuntime: (options) => {
+        const runtime = createAgentRuntimeWithAdapters({
+          ...options,
+          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+        });
+        return {
+          ...runtime,
+          startThread: async (input) => {
+            started.push({ dynamicTools: input.dynamicTools, instructions: input.instructions });
+            return runtime.startThread(input);
+          }
+        };
+      }
+    });
+    await adapter.startWork({
+      threadId: randomUUID(),
+      environmentId: randomUUID(),
+      projectId: 'p-ssh',
+      providerId: 'fake',
+      input: ['inspect remote'],
+      cwd,
+      remote: { host: 'devbox', user: 'me', remotePath: '/src' },
+      remoteToolProxy: true,
+      dynamicTools: [{ name: 'sf_soql', description: 'SOQL', inputSchema: {} }],
+      instructions: 'Use Salesforce tools.'
+    });
+    adapter.dispose();
+    expect(started[0]?.dynamicTools?.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining(['remote_exec', 'sf_soql'])
+    );
+    expect(started[0]?.instructions).toMatch(/remote_read/);
+    expect(started[0]?.instructions).toMatch(/Use Salesforce tools/);
+  });
+
+  it('dispatches non-remote tool calls through onPluginToolCall', async () => {
+    let onToolCall: ((request: {
+      threadId: string;
+      tool: string;
+      arguments?: unknown;
+      providerThreadId: string;
+      turnId: string;
+      callId: string;
+      requestId: string;
+    }) => Promise<{ success: boolean; contentItems: Array<{ type: 'inputText'; text: string }> }>) | undefined;
+    const pluginCalls: string[] = [];
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined,
+      dataDir: cwd,
+      onPluginToolCall: async (request) => {
+        pluginCalls.push(request.tool);
+        return {
+          success: true,
+          contentItems: [{ type: 'inputText', text: `ran ${request.tool}` }]
+        };
+      },
+      createRuntime: (options) => {
+        onToolCall = options.onToolCall as typeof onToolCall;
+        return createAgentRuntimeWithAdapters({
+          ...options,
+          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+        });
+      }
+    });
+    const threadId = randomUUID();
+    await adapter.startWork({
+      threadId,
+      environmentId: randomUUID(),
+      projectId: 'p1',
+      providerId: 'fake',
+      input: ['hello'],
+      cwd
+    });
+    await expect(onToolCall!({
+      requestId: '1',
+      threadId,
+      providerThreadId: 'prov-1',
+      turnId: 'turn-1',
+      callId: 'call-1',
+      tool: 'sf_soql',
+      arguments: { query: 'SELECT Id FROM Account' }
+    })).resolves.toEqual({
+      success: true,
+      contentItems: [{ type: 'inputText', text: 'ran sf_soql' }]
+    });
+    expect(pluginCalls).toEqual(['sf_soql']);
+    adapter.dispose();
+  });
+
+  it('maps onPluginToolCall throws to an unsuccessful tool result', async () => {
+    let onToolCall: ((request: {
+      threadId: string;
+      tool: string;
+      arguments?: unknown;
+      providerThreadId: string;
+      turnId: string;
+      callId: string;
+      requestId: string;
+    }) => Promise<{ success: boolean; contentItems: Array<{ type: 'inputText'; text: string }> }>) | undefined;
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined,
+      dataDir: cwd,
+      onPluginToolCall: async () => {
+        throw new Error('host offline');
+      },
+      createRuntime: (options) => {
+        onToolCall = options.onToolCall as typeof onToolCall;
+        return createAgentRuntimeWithAdapters({
+          ...options,
+          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+        });
+      }
+    });
+    const threadId = randomUUID();
+    await adapter.startWork({
+      threadId,
+      environmentId: randomUUID(),
+      projectId: 'p1',
+      providerId: 'fake',
+      input: ['hello'],
+      cwd
+    });
+    await expect(onToolCall!({
+      requestId: '1',
+      threadId,
+      providerThreadId: 'prov-1',
+      turnId: 'turn-1',
+      callId: 'call-1',
+      tool: 'sf_apex'
+    })).resolves.toMatchObject({
+      success: false,
+      contentItems: [{ type: 'inputText', text: expect.stringContaining('host offline') }]
+    });
+    adapter.dispose();
   });
 
   it('does not deny native tools when remoteToolProxy is off', async () => {

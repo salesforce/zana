@@ -4,22 +4,22 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import {
   marketplaceCardsFromIndex,
+  officialMarketplaceAddCommand,
   officialMarketplaceIndex,
   OFFICIAL_MARKETPLACE_FEED_PATH,
   type MarketplaceCard,
   type OfficialMarketplaceIndex
 } from '@/lib/official-marketplace';
-import { site } from '@/lib/site';
 
 type Status = 'loading' | 'live' | 'sample';
 
 const FALLBACK_CARDS = marketplaceCardsFromIndex(officialMarketplaceIndex());
 
-export function MarketplaceClient() {
+export function MarketplaceClient({ publicBaseUrl }: { publicBaseUrl: string }) {
   const [entries, setEntries] = useState<MarketplaceCard[]>(FALLBACK_CARDS);
   const [status, setStatus] = useState<Status>('loading');
   const [q, setQ] = useState('');
-  const addCommand = `zcc marketplace add ${site.publicBaseUrl.replace(/\/+$/, '')}${OFFICIAL_MARKETPLACE_FEED_PATH}`;
+  const addCommand = officialMarketplaceAddCommand(publicBaseUrl);
 
   useEffect(() => {
     let alive = true;

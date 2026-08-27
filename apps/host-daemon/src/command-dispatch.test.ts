@@ -445,6 +445,61 @@ describe('host command dispatch', () => {
     expect(runtime.threads.has(threadId)).toBe(true);
   });
 
+  it('forwards plugin dynamicTools from thread.start and thread.resume', async () => {
+    const project = mkdtempSync(join(tmpdir(), 'zcc-thread-tools-'));
+    const started: Array<{ dynamicTools?: Array<{ name: string }>; instructions?: string }> = [];
+    const resumed: Array<{ dynamicTools?: Array<{ name: string }>; instructions?: string }> = [];
+    const runtime = createCommandRuntime({
+      verifyProviders: async () => installedClaude,
+      startWork: async (input) => {
+        started.push({ dynamicTools: input.dynamicTools, instructions: input.instructions });
+      },
+      resumeWork: async (input) => {
+        resumed.push({ dynamicTools: input.dynamicTools, instructions: input.instructions });
+      }
+    });
+    const environmentId = randomUUID();
+    await dispatchHostCommand(runtime, {
+      type: 'environment.provision',
+      environmentId,
+      workspaceProvisionType: 'unmanaged',
+      path: project
+    });
+    const threadId = randomUUID();
+    const dynamicTools = [{
+      name: 'sf_soql',
+      description: 'SOQL',
+      inputSchema: { type: 'object' }
+    }];
+    await dispatchHostCommand(runtime, {
+      type: 'thread.start',
+      threadId,
+      environmentId,
+      projectId: 'proj-1',
+      providerId: 'claude',
+      input: ['hello'],
+      dynamicTools,
+      instructions: 'Use sf_soql.'
+    });
+    await dispatchHostCommand(runtime, {
+      type: 'thread.stop',
+      threadId
+    });
+    await dispatchHostCommand(runtime, {
+      type: 'thread.resume',
+      threadId,
+      environmentId,
+      projectId: 'proj-1',
+      providerId: 'claude',
+      providerThreadId: 'prov-1',
+      cwd: project,
+      dynamicTools,
+      instructions: 'Use sf_soql.'
+    });
+    expect(started).toEqual([{ dynamicTools, instructions: 'Use sf_soql.' }]);
+    expect(resumed).toEqual([{ dynamicTools, instructions: 'Use sf_soql.' }]);
+  });
+
   it('starts and drives a confined terminal session', async () => {
     const project = mkdtempSync(join(tmpdir(), 'zcc-term-'));
     const started: Array<{ cwd: string; cols: number; rows: number }> = [];

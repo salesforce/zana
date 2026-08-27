@@ -10,7 +10,9 @@ import {
 import { getConversationThread, getHost, upsertHost } from '@zana-ai/zcc-db';
 import {
   hostDaemonInteractiveInterruptRequestSchema,
-  hostDaemonInteractiveRequestSchema
+  hostDaemonInteractiveRequestSchema,
+  hostDaemonToolCallRequestSchema,
+  hostDaemonToolCallResponseSchema
 } from '@zana-ai/zcc-host-daemon-contract';
 import { isAllowedHostInternalHost, requestHostHeader, resolvePublicAppUrl } from './public-app-url.js';
 import { generateHostKey, hashHostKey, hostKeyMatches } from './host-hub.js';
@@ -67,6 +69,9 @@ export async function handleHostInternalHttp(
     || pathname === '/internal/hosts/interactive-request/interrupt'
   ) {
     return handleHostInteractiveRequest(request, response, ctx, pathname);
+  }
+  if (pathname === '/internal/hosts/tool-call') {
+    return handleHostToolCall(request, response, ctx);
   }
   return false;
 }
@@ -226,6 +231,81 @@ async function handleHostInteractiveRequest(
     return true;
   }
   sendJson(response, 200, ctx.pendingInteractions.registerPendingInteraction(parsed.data.interaction));
+  return true;
+}
+
+async function handleHostToolCall(
+  request: IncomingMessage,
+  response: ServerResponse,
+  ctx: ProductHttpContext
+): Promise<boolean> {
+  const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
+  const auth = authenticateHostCall(request, requestUrl, ctx);
+  if ('error' in auth) {
+    sendJson(response, auth.status, { error: auth.error });
+    return true;
+  }
+  if ((request.method ?? 'GET').toUpperCase() !== 'POST') {
+    sendJson(response, 405, { error: 'method not allowed' });
+    return true;
+  }
+  let body: unknown;
+  try {
+    body = await readJsonBody(request);
+  } catch {
+    sendJson(response, 400, { error: 'invalid JSON' });
+    return true;
+  }
+  const parsed = hostDaemonToolCallRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    sendJson(response, 400, { error: 'invalid tool call request' });
+    return true;
+  }
+  const thread = getConversationThread(ctx.db, parsed.data.threadId);
+  if (!thread) {
+    sendJson(response, 200, hostDaemonToolCallResponseSchema.parse({
+      success: false,
+      contentItems: [{ type: 'inputText', text: `Unknown thread: ${parsed.data.threadId}` }]
+    }));
+    return true;
+  }
+  if (thread.hostId !== auth.hostId) {
+    sendJson(response, 403, { error: 'thread does not belong to this host' });
+    return true;
+  }
+  if (!ctx.plugins) {
+    sendJson(response, 200, hostDaemonToolCallResponseSchema.parse({
+      success: false,
+      contentItems: [{ type: 'inputText', text: `Unsupported tool: ${parsed.data.tool}` }]
+    }));
+    return true;
+  }
+
+  const ac = new AbortController();
+  const onClose = () => ac.abort();
+  request.on('close', onClose);
+  try {
+    const result = await ctx.plugins.invokeAgentTool({
+      name: parsed.data.tool,
+      input: parsed.data.arguments,
+      ctx: {
+        threadId: thread.id,
+        projectId: thread.projectId,
+        signal: ac.signal
+      }
+    });
+    sendJson(response, 200, hostDaemonToolCallResponseSchema.parse(result));
+  } catch (error) {
+    sendJson(response, 200, hostDaemonToolCallResponseSchema.parse({
+      success: false,
+      contentItems: [{
+        type: 'inputText',
+        text: `Tool "${parsed.data.tool}" failed: ${error instanceof Error ? error.message : String(error)}`
+      }]
+    }));
+  } finally {
+    request.removeListener('close', onClose);
+  }
   return true;
 }
 

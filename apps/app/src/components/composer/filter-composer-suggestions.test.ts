@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   buildCommandSuggestions,
   buildMentionSuggestions,
+  commandsFromComposerActions,
+  commandsFromPluginSkills,
+  mergeCommandCatalogs,
   mentionOrder,
   rankSuggestions
 } from './filter-composer-suggestions.js';
@@ -85,5 +88,43 @@ describe('buildCommandSuggestions', () => {
       { name: 'goal', description: 'Set a goal' }
     ], 'goa').map((row) => row.kind === 'command' ? row.name : '')).toEqual(['/goal']);
     expect(buildCommandSuggestions([{ name: '/plan', description: 'Enter plan mode' }], 'xyz')).toEqual([]);
+  });
+});
+
+describe('commandsFromComposerActions', () => {
+  it('turns provider actions into slash catalog rows', () => {
+    expect(commandsFromComposerActions(['plan', '/goal'], 'Claude Code')).toEqual([
+      { name: '/plan', description: 'Claude Code plan' },
+      { name: '/goal', description: 'Claude Code goal' }
+    ]);
+  });
+});
+
+describe('commandsFromPluginSkills', () => {
+  it('turns enabled plugin skills into slash catalog rows', () => {
+    expect(commandsFromPluginSkills([
+      {
+        name: 'Salesforce',
+        enabled: true,
+        skillNames: ['salesforce-dx', 'salesforce-constitution']
+      },
+      { name: 'Disabled', enabled: false, skillNames: ['hidden'] },
+      { name: 'Empty', enabled: true, skillNames: [] }
+    ])).toEqual([
+      { name: '/salesforce-dx', description: 'Salesforce' },
+      { name: '/salesforce-constitution', description: 'Salesforce' }
+    ]);
+  });
+});
+
+describe('mergeCommandCatalogs', () => {
+  it('keeps the first description for a slash name across catalogs', () => {
+    expect(mergeCommandCatalogs([
+      [{ name: 'plan', description: 'Fallback plan' }],
+      [{ name: '/plan', description: 'HTTP plan' }, { name: '/commit', description: 'Commit' }]
+    ])).toEqual([
+      { name: '/plan', description: 'Fallback plan' },
+      { name: '/commit', description: 'Commit' }
+    ]);
   });
 });

@@ -82,6 +82,14 @@ export function createConfigStore(
           delete next[key];
         }
       }
+      for (const key of ['publicAppUrl', 'relayToken'] as const) {
+        if (Object.prototype.hasOwnProperty.call(patch, key) && !patch[key]) {
+          delete next[key];
+        }
+        if (Object.prototype.hasOwnProperty.call(normalizedPatch, key) && !normalizedPatch[key]) {
+          delete next[key];
+        }
+      }
       if (next.defaultHarness && !deps.harnessEnabled(next, next.defaultHarness)) {
         delete next.defaultHarness;
       }

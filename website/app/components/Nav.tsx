@@ -145,7 +145,7 @@ export function Footer() {
               Zana Command Center
             </span>
             <p className="foot-blurb">
-              A desktop control plane for Claude Code, OpenCode, Codex, and Pi sessions across every project.
+              A desktop control plane for Claude Code, Cursor, OpenCode, Codex, and Pi sessions across every project.
             </p>
           </div>
           <div className="foot-col">

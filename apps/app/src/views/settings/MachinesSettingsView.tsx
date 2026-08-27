@@ -21,6 +21,46 @@ import {
   orderedProviderCliRows
 } from './machine-provider-clis.js';
 
+type RelayState = 'connected' | 'offline' | 'unconfigured';
+
+function relayCopy(state: RelayState): { label: string; tone: 'ok' | 'warn' | 'muted' } {
+  if (state === 'connected') return { label: 'Connected', tone: 'ok' };
+  if (state === 'offline') return { label: 'Offline', tone: 'warn' };
+  return { label: 'Not configured', tone: 'muted' };
+}
+
+export function RelayStatusLine({ state }: { state?: RelayState }) {
+  const [live, setLive] = useState<RelayState>(state ?? 'unconfigured');
+  useEffect(() => {
+    if (state) {
+      setLive(state);
+      return;
+    }
+    let cancelled = false;
+    product.relay.status().then((row) => {
+      if (!cancelled) setLive(row.state);
+    }).catch(() => undefined);
+    const unsub = product.relay.onChanged((row) => {
+      if (!cancelled) setLive(row.state);
+    });
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, [state]);
+  const copy = relayCopy(live);
+  return (
+    <p className="settings-help" data-testid="relay-status">
+      Relay:{' '}
+      <span
+        className={`settings-badge${copy.tone === 'ok' ? ' settings-badge--ok' : copy.tone === 'warn' ? ' settings-badge--warn' : ''}`}
+      >
+        {copy.label}
+      </span>
+    </p>
+  );
+}
+
 interface MachinesTabProps {
   config: AppConfig;
   onConfigDraft: (config: AppConfig) => void;
@@ -96,7 +136,7 @@ export function MachinesSettingsView({
       >
         <Field
           label="Public app URL"
-          help="Hostname remotes use to reach this app (Heroku, Tailscale Serve, …). Change this field or the one-line public-app-url file at the repo root. Env ZCC_APP_URL wins over both. Product HTTP still binds loopback."
+          help="Hostname remotes use to reach this app (Heroku pairing relay, Tailscale Serve, …). Env ZCC_APP_URL wins over this field. Product HTTP still binds loopback; this laptop dials that origin outbound."
         >
           <input
             type="url"
@@ -106,6 +146,20 @@ export function MachinesSettingsView({
             onBlur={(event) => onUpdate({ publicAppUrl: event.target.value.trim() || undefined })}
           />
         </Field>
+        <Field
+          label="Relay token"
+          help="Must match Heroku config ZCC_RELAY_TOKEN. Env ZCC_RELAY_TOKEN wins over this field. One laptop per token (connecting a second desktop steals the tunnel)."
+        >
+          <input
+            type="password"
+            autoComplete="off"
+            placeholder="Heroku ZCC_RELAY_TOKEN"
+            value={config.relayToken ?? ''}
+            onChange={(event) => onConfigDraft({ ...config, relayToken: event.target.value })}
+            onBlur={(event) => onUpdate({ relayToken: event.target.value.trim() || undefined })}
+          />
+        </Field>
+        <RelayStatusLine />
         <div className="machines-toolbar">
           <button type="button" className="settings-btn" onClick={() => setAdding(true)}>
             <Plus size={13} aria-hidden="true" />

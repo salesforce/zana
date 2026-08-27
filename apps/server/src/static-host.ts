@@ -6,6 +6,8 @@ import { handleProductHttp } from './http/product-api.js';
 import type { ProductHttpContext } from './http/product-context.js';
 import { createProductWebSocketServer, handleProductUpgrade } from './http/product-ws.js';
 import { createHostDaemonWebSocketServer, handleHostInternalHttp, handleHostInternalUpgrade } from './http/host-internal.js';
+import { handleInstallHttp } from './http/install-http.js';
+import { attachPairingRelay } from './http/pairing-relay-controller.js';
 
 export interface BrowserProjectSummary {
   id: string;
@@ -103,6 +105,9 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
   const server = createServer(async (request, response) => {
     const requestUrl = new URL(request.url ?? '/', 'http://zcc.local');
     if (options.product && await handleHostInternalHttp(request, response, options.product)) {
+      return;
+    }
+    if (options.product && handleInstallHttp(request, response, options.product)) {
       return;
     }
     if (options.product && requestUrl.pathname.startsWith('/api/')) {
@@ -253,6 +258,7 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
   }
   const url = `http://${hostName}:${address.port}/`;
   expectedOrigin = url.slice(0, -1);
+  let pairingRelay: ReturnType<typeof attachPairingRelay> | undefined;
   if (options.product) {
     try {
       options.product.origins.serverPort = new URL(expectedOrigin).port
@@ -261,10 +267,12 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
     } catch {
       /* keep the configured port */
     }
+    pairingRelay = attachPairingRelay(options.product, address.port);
   }
   return {
     url,
     close: () => new Promise<void>((resolveClose, rejectClose) => {
+      pairingRelay?.stop();
       options.product?.dispose();
       hostWss?.close();
       productWss?.close();

@@ -76,6 +76,8 @@ export type ThreadResumeInput = {
   permissionMode?: ThreadStartFields['permissionMode'];
   model?: string;
   reasoningLevel?: ThreadWorkInput['reasoningLevel'];
+  dynamicTools?: ThreadStartFields['dynamicTools'];
+  instructions?: ThreadStartFields['instructions'];
 };
 
 export interface CommandRuntime {
@@ -269,7 +271,9 @@ async function applyThreadResume(
       bridgeLaunch: command.bridgeLaunch,
       permissionMode: command.permissionMode,
       model: command.model,
-      reasoningLevel: command.reasoningLevel
+      reasoningLevel: command.reasoningLevel,
+      dynamicTools: command.dynamicTools,
+      instructions: command.instructions
     });
     providerThreadId = resumed?.providerThreadId ?? providerThreadId;
   }

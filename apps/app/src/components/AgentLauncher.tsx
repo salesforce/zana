@@ -66,6 +66,7 @@ import { profileIcon, personaIcon } from '../lib/profileIcon.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
 import { PromptComposer, type PromptComposerHandle } from './PromptComposer.js';
 import { ThreadCommandComposer } from './ThreadCommandComposer.js';
+import { LaunchModeSegmented, type LaunchMode } from './LaunchModeSegmented.js';
 import { TextArgsField } from './settings/FormFields.js';
 import { AgentConversationHistory } from './AgentConversationHistory.js';
 import { titleFromPrompt } from '../lib/promptTitle.js';
@@ -1149,7 +1150,7 @@ export const AgentLauncher = memo(function AgentLauncher({
   // or an autonomous team run. Autonomous mode swaps the profile/persona/
   // framework pickers for a Team picker and launches via `teams.launchAutonomous`
   // instead of `createTerminal`. Thread create stays in ThreadCommandComposer.
-  const [mode, setMode] = useState<'thread' | 'agent' | 'autonomous'>('thread');
+  const [mode, setMode] = useState<LaunchMode>('thread');
   const [teamId, setTeamId] = useState<string | null>(null);
   const [harnessDescriptors, setHarnessDescriptors] = useState<HarnessAdapterDescriptor[]>([]);
   const [openCodeAgentDiscoverySnapshot, setOpenCodeAgentDiscoverySnapshot] = useState<OpenCodeAgentDiscoverySnapshot | null>(null);
@@ -1904,34 +1905,11 @@ export const AgentLauncher = memo(function AgentLauncher({
           {/* Launch mode: Thread (HTTP conversation) and Legacy Agent (PTY) are
               always offered. Autonomous Team only appears when teams exist. */}
           <div className="launch-row">
-            <div className="launch-segmented" role="group" aria-label="Launch mode">
-              <button
-                type="button"
-                className={mode === 'thread' ? 'active' : ''}
-                onClick={() => setMode('thread')}
-                aria-pressed={mode === 'thread'}
-              >
-                Thread
-              </button>
-              <button
-                type="button"
-                className={mode === 'agent' ? 'active' : ''}
-                onClick={() => setMode('agent')}
-                aria-pressed={mode === 'agent'}
-              >
-                Legacy Agent
-              </button>
-              {teams.length > 0 && (
-                <button
-                  type="button"
-                  className={mode === 'autonomous' ? 'active' : ''}
-                  onClick={() => setMode('autonomous')}
-                  aria-pressed={mode === 'autonomous'}
-                >
-                  <Zap size={13} /> Autonomous Team
-                </button>
-              )}
-            </div>
+            <LaunchModeSegmented
+              value={mode}
+              onChange={setMode}
+              showAutonomousTeam={teams.length > 0}
+            />
           </div>
 
           {mode === 'thread' && (

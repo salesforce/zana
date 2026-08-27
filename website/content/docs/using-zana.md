@@ -6,8 +6,24 @@ ones you'll live in as you scale from one session to a fleet.
 
 ZCC uses a **three-column layout**: the **sidebar** (projects and global
 surfaces) → a **list pane** (what's inside the selected surface) → the
-**workspace** (tabbed terminals and panels). Everything below is reachable from
-the sidebar.
+**workspace** (threads, terminals, and panels). Everything below is reachable
+from the sidebar.
+
+---
+
+## New Chat
+
+**New Chat** is the home composer. Pick a launch mode, then describe the work:
+
+- **Thread** *(default)* — a conversation with the selected harness in the
+  project you pick. This is the usual path for day-to-day work.
+- **Legacy Agent** — a real PTY running the native CLI, with the same tools and
+  permissions as a standalone terminal.
+- **Autonomous Team** — launch a saved team of personas against the project when
+  the work benefits from parallel roles.
+
+The composer also picks the workspace (this checkout, a new worktree, or
+personal scratch). See [Environments](#environments).
 
 ---
 
@@ -25,8 +41,9 @@ From the board you can:
   auto-close-idle.
 - **Close** a session when its work is done.
 
-Each tab is a real harness PTY, so the native Claude Code, OpenCode, Codex, or
-Pi workflow remains available inside Zana.
+A **Legacy Agent** tab is a real harness PTY, so the native Claude Code, Cursor,
+OpenCode, Codex, or Pi workflow remains available inside Zana. **Threads** are
+the default conversation surface from New Chat.
 
 ### Environments
 
@@ -108,7 +125,7 @@ several agents by hand, you launch the team and each member starts in its role.
 Use teams for recurring shapes of work: a *review* team (implementer +
 reviewer + security), a *research* team fanning out across sources, or a
 *council* that deliberates and returns a verdict. Teams and their member
-**personas** are edited from the sidebar, and extensions can contribute their
+**personas** are edited from the sidebar, and plugins can contribute their
 own.
 
 ---
@@ -126,21 +143,13 @@ These two surfaces capture work that outlives a single session:
 
 ---
 
-## Tickets
+## Plugins for tickets and more
 
-Each project has a built-in **kanban** with sprints and docs. Tickets give a
-fleet of agents a shared, persistent work list: you (or an agent) create
-tickets, agents claim and complete them, and progress is visible on the board.
-It's the coordination layer for work too big for one session.
-
----
-
-## Chat
-
-**Chat** talks to the app itself. It's a super-agent that can spawn teams, run
-agents, and drive the orchestration surfaces on your behalf — a conversational
-front door to everything above when you'd rather describe an outcome than click
-through it.
+Core does not ship a project ticket board. The Agents board is about *session
+state*, not sprints. Install workflow plugins from the **Plugins** hub (for
+example **tasks**, or a GUS/Tickets plugin) when you want a persistent work
+list that agents can claim. Browse official and community catalogs from
+**Plugins → Browse**. See the [Plugins overview](/docs/extensions/).
 
 ---
 
@@ -164,8 +173,10 @@ find something worth surfacing.
 - **Machines** — pair another computer so projects and threads can run there.
   See [Using Zana on multiple machines](/docs/multiple-devices/). SSH remotes
   stay a separate path.
-- **Extensions** — install from the marketplace or manage what's installed. See
-  the [Extensions overview](/docs/extensions/).
+- **Plugins** — the top-level **Plugins** hub (not a Settings page) installs
+  from the marketplace and manages what's installed. This is ZCC's catalogue,
+  not Claude Code's `~/.claude/plugins`. See the
+  [Plugins overview](/docs/extensions/).
 
 ---
 
@@ -176,5 +187,5 @@ find something worth surfacing.
 - **[Using Zana on multiple machines](/docs/multiple-devices/)** — enroll a
   host daemon on another computer.
 - **[The `zcc` CLI](/docs/cli/)** — drive ZCC from the command line.
-- **[Build your first extension](/docs/extensions-quickstart/)** — extend the
+- **[Build your first plugin](/docs/extensions-quickstart/)** — extend the
   cockpit in TypeScript.

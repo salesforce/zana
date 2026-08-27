@@ -1,0 +1,11 @@
+{
+  "http": [
+    { "methods": ["GET", "HEAD"], "path": "/install.sh" },
+    { "methods": ["GET", "HEAD"], "path": "/install/version" },
+    { "methods": ["GET", "HEAD"], "path": "/install/zcc-host.tgz" },
+    { "methods": ["POST"], "path": "/internal/hosts/enroll" },
+    { "methods": ["POST"], "path": "/internal/hosts/interactive-request" },
+    { "methods": ["POST"], "path": "/internal/hosts/interactive-request/interrupt" }
+  ],
+  "ws": ["/internal/hosts/ws"]
+}

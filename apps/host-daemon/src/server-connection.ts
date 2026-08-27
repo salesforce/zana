@@ -12,6 +12,7 @@ import { loadHostAppConfig } from './host-config.js';
 import { createRuntimeManager, type ThreadRuntimeAdapter } from './runtime-manager.js';
 import { createEnrolledPty, type EnrolledPty } from './enrolled-pty.js';
 import { createInteractiveRequestHttpClient } from './interactive-request-client.js';
+import { createPluginToolCallHttpClient } from './plugin-tool-call-client.js';
 import {
   InteractiveRequestRegistry,
   InteractiveRequestRegistryError
@@ -84,6 +85,12 @@ export function startEnrolledHostConnection(options: {
     hostKey: options.hostKey,
     sessionId: instanceId
   });
+  const pluginToolCalls = createPluginToolCallHttpClient({
+    serverUrl: options.serverUrl,
+    hostId: options.hostId,
+    hostKey: options.hostKey,
+    sessionId: instanceId
+  });
   const interactiveRequests = new InteractiveRequestRegistry({
     registerRequest: (request) => interactiveClient.registerRequest(request),
     onRegistrationFailure: ({ error, request }) => {
@@ -113,6 +120,7 @@ export function startEnrolledHostConnection(options: {
           throw error;
         }
       },
+      onPluginToolCall: (request) => pluginToolCalls.invoke(request),
       onProcessExit: (info) => {
         const threadIds = info.threads.map((thread) => thread.threadId);
         if (threadIds.length === 0) return;

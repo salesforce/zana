@@ -22,6 +22,7 @@ import {
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import type { ThreadResumeFields } from '@zana-ai/zcc-contracts/host-rpc';
+import { safePackPluginSession } from '../../plugins/plugin-agent-tools.js';
 
 export type ThreadSendMode = 'start' | 'auto' | 'steer' | 'queue-if-active' | 'steer-if-active';
 
@@ -253,21 +254,27 @@ function isUnknownThreadHostError(error: unknown): boolean {
   );
 }
 
-function threadResumeFields(
+async function threadResumeFields(
   ctx: ProductHttpContext,
   thread: ConversationThreadRow
-): ThreadResumeFields | undefined {
+): Promise<ThreadResumeFields | undefined> {
   if (!thread.providerThreadId) return undefined;
   const environment = thread.environmentId ? getEnvironment(ctx.db, thread.environmentId) : undefined;
   const dataDir = join(ctx.dataDir, 'thread-bridges', thread.providerId);
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  const sessionTooling = await safePackPluginSession(
+    ctx.plugins
+      ? () => ctx.plugins!.sessionTools({ threadId: thread.id, projectId: thread.projectId })
+      : undefined
+  );
   return {
     projectId: thread.projectId,
     providerId: thread.providerId,
     providerThreadId: thread.providerThreadId,
     cwd: environment?.path ?? undefined,
     bridgeLaunch: bridgeLaunchForProvider(thread.providerId, dataDir),
-    permissionMode: permissionModeForLaunchProfile(thread.providerId)
+    permissionMode: permissionModeForLaunchProfile(thread.providerId),
+    ...sessionTooling
   };
 }
 
@@ -282,7 +289,7 @@ async function submitTurnOnHost(
   if (!thread.environmentId) {
     throw new ThreadCreateError(409, 'environment_not_ready', 'thread has no environment');
   }
-  const resume = threadResumeFields(ctx, thread);
+  const resume = await threadResumeFields(ctx, thread);
   await ctx.hostHub.callHostOnlineRpc({
     hostId: thread.hostId,
     command: {
@@ -306,7 +313,7 @@ async function resumeConversationOnHost(
   if (!thread.environmentId || !thread.providerThreadId) {
     throw new ThreadCreateError(409, 'not_resumable', 'thread has no provider session to resume');
   }
-  const resume = threadResumeFields(ctx, thread);
+  const resume = await threadResumeFields(ctx, thread);
   if (!resume) {
     throw new ThreadCreateError(409, 'not_resumable', 'thread has no provider session to resume');
   }

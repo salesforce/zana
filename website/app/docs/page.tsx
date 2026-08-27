@@ -5,11 +5,11 @@ import { DOCS, renderDoc } from '@/lib/docs';
 
 export const metadata: Metadata = {
   title: 'Documentation',
-  description: 'Guides and reference for Zana Command Center — the CLI, plugins, and release hosting.',
+  description: 'Guides and reference for Zana Command Center — getting started, the CLI, and plugins.',
   alternates: { canonical: '/docs/' },
   openGraph: {
     title: 'Documentation — Zana Command Center',
-    description: 'Guides and reference: the zcc CLI, plugins, and release hosting.',
+    description: 'Guides and reference: getting started, the zcc CLI, and plugins.',
     url: '/docs/',
     type: 'website',
     images: ['/opengraph-image']

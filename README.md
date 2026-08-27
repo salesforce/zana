@@ -10,15 +10,16 @@
 </p>
 
 Zana Command Center is a desktop control plane for running, coordinating, and
-reviewing AI coding agents across your projects. It launches the coding CLIs you
-already use in real terminals, then gives you one place to see the fleet, answer
-questions, reuse proven workflows, and retain the outcome.
+reviewing AI coding agents across your projects. **New Chat** starts a Thread
+with the coding CLI you already use (Legacy Agent is a real PTY when you want
+it), then gives you one place to see the fleet, answer questions, reuse proven
+workflows, and retain the outcome.
 
 Work is not trapped in terminal scrollback. Agents can publish questions,
 reports, and durable artifacts to an Inbox and Library; you can answer or steer
-them without hunting for the right session. Local repositories, SSH projects,
-the desktop app, and the `zcc` CLI remain first-class ways to operate the same
-workspace.
+them without hunting for the right session. Local repositories, enrolled
+machines, SSH projects, the desktop app, and the `zcc` CLI remain first-class
+ways to operate the same workspace.
 
 > [!NOTE]
 > Zana is macOS-first. Signed and notarized releases are available for Apple
@@ -46,19 +47,21 @@ you quit the app.
 ```bash
 git clone https://github.com/salesforce/zana.git
 cd zana
-npm install
-npm run rebuild
-npm run dev
+pnpm install
+pnpm run rebuild
+pnpm dev
 ```
 
-`npm run dev` launches the Electron development app. The pre-dev step builds the
+`pnpm dev` launches the Electron development app. The pre-dev step builds the
 `zcc` CLI and seeds bundled plugins automatically.
 
 ## The Operating Loop
 
-1. **Connect real work.** Register a local repository or an SSH-hosted project.
-2. **Launch the right agent.** Start Claude Code, Codex, Pi, OpenCode, or a shell
-   in the project with the relevant persona, model, and execution mode.
+1. **Connect real work.** Register a local repository, an enrolled machine, or
+   an SSH-hosted project.
+2. **Launch the right agent.** From New Chat, start a Thread (or Legacy Agent)
+   with Claude Code, Cursor, Codex, Pi, OpenCode, or a shell — with the relevant
+   persona, model, and execution mode.
 3. **Operate the fleet.** See which sessions need you, are working, idle, or done
    instead of checking every terminal tab.
 4. **Keep decisions moving.** Agents publish questions, reports, and artifacts to
@@ -69,10 +72,12 @@ npm run dev
 
 ## What Zana Provides
 
-- **Real coding harnesses, not a replacement chat shell.** Run native PTY sessions
-  for Claude Code, Codex, Pi, OpenCode, and plain-shell workflows.
-- **One workspace for many environments.** Manage local folders and SSH projects
-  with their own terminals, agents, explorer, settings, and scoped views.
+- **Real coding harnesses, not a replacement chat shell.** New Chat defaults to
+  a Thread; Legacy Agent runs a native PTY for Claude Code, Cursor, Codex, Pi,
+  OpenCode, and plain-shell workflows.
+- **One workspace for many environments.** Manage local folders, enrolled
+  machines, and SSH projects with their own terminals, agents, explorer,
+  settings, and scoped views.
 - **An operational agent board.** Use Home, Agents, activity feeds, and
   notifications to find work that needs attention quickly.
 - **Durable human-agent handoffs.** The Inbox, reports, and Follow-ups keep
@@ -93,11 +98,11 @@ npm run dev
 
 | Surface | Purpose |
 | --- | --- |
-| **Home** | Workspace-wide view of active agents, open follow-ups, unread Inbox activity, and quick agent launch. |
-| **Projects** | Local and SSH project registry, file explorer, project tabs, skills, settings, and scoped agent work. |
+| **Home** | New Chat composer (Thread, Legacy Agent, Autonomous Team), active work, and quick launch. |
+| **Projects** | Local, enrolled-machine, and SSH project registry, file explorer, project tabs, skills, settings, and scoped agent work. |
 | **Terminals** | Tabbed PTY sessions for supported coding CLIs and shell workflows. |
 | **Agents** | Global and project boards for live state, session details, reports, transcripts, usage, and bulk actions. |
-| **Inbox and Notifications** | Questions, reports, saved deliverables, and links to the relevant project or extension view. |
+| **Inbox and Notifications** | Questions, reports, saved deliverables, and links to the relevant project or plugin view. |
 | **Goals and Follow-ups** | Autonomous objectives with verification criteria plus durable questions that survive agent restarts. |
 | **Personas and Teams** | Reusable agent roles, model and provider routing, and multi-agent team definitions that can be imported or exported. |
 | **Scheduler** | Recurring agent tasks, templates, run history, and per-run reports. |
@@ -119,7 +124,7 @@ Zana is extensible through [`@zana-ai/zcc-plugin-sdk`](packages/plugin-sdk). A p
 
 ```bash
 # Build the CLI from this repository
-npm run build:cli
+pnpm build:cli
 
 # List registered projects
 node packages/cli/dist/bin/zcc.js projects ls
@@ -133,7 +138,7 @@ See the complete [`zcc` CLI reference](docs/cli.md).
 ## Fork It. Make It Yours.
 
 Zana is MIT-licensed end to end. Fork the repository, tailor the agent harnesses,
-personas, extensions, tools, and interface to your engineering practice, then
+personas, plugins, tools, and interface to your engineering practice, then
 build and distribute your own version. Zana remains desktop-first: your team can
 operate its own build with the coding-agent CLI subscriptions and local or SSH
 environments it already uses.
@@ -147,12 +152,12 @@ environments it already uses.
 ## Development
 
 ```bash
-npm run typecheck
-npm test
-npm run build
+pnpm typecheck
+pnpm test
+pnpm build
 ```
 
-For end-to-end tests, run `npm run test:e2e`.
+For end-to-end tests, run `pnpm test:e2e`.
 
 ## Acknowledgements
 

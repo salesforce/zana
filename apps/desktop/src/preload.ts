@@ -267,6 +267,10 @@ const api: CcApi = {
     installProviderCli: async () => [],
     onChanged: () => () => {}
   },
+  relay: {
+    status: async () => ({ state: 'unconfigured' as const }),
+    onChanged: () => () => {}
+  },
   marketplaces: {
     list: async () => [],
     add: async () => {

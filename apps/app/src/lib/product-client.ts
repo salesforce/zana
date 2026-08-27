@@ -61,6 +61,7 @@ function httpProduct(): Pick<
   | 'app'
   | 'voice'
   | 'hosts'
+  | 'relay'
   | 'marketplaces'
   | 'cliSkills'
 > {
@@ -491,6 +492,10 @@ function httpProduct(): Pick<
       ),
       onChanged: (cb) => subscribeProductEvent<Host[] | undefined>('hosts:changed', cb)
     } as CcApi['hosts'],
+    relay: {
+      status: async () => apiJson<{ state: 'connected' | 'offline' | 'unconfigured' }>('/relay'),
+      onChanged: (cb) => subscribeProductEvent<{ state: 'connected' | 'offline' | 'unconfigured' }>('relay:changed', cb)
+    } as CcApi['relay'],
     marketplaces: {
       list: async () => {
         const body = await apiJson<{ catalogs: Awaited<ReturnType<CcApi['marketplaces']['list']>> }>('/marketplaces');
@@ -884,7 +889,7 @@ function stubFamily(family: string): unknown {
 export const product: CcApi = new Proxy({} as CcApi, {
   get(_target, family: string | symbol) {
     const name = String(family);
-    if (name === 'threads' || name === 'environments' || name === 'hosts' || name === 'marketplaces' || name === 'cliSkills') {
+    if (name === 'threads' || name === 'environments' || name === 'hosts' || name === 'relay' || name === 'marketplaces' || name === 'cliSkills') {
       const http = httpProduct() as unknown as Record<string, unknown>;
       return withStubs(name, http[name] as object);
     }

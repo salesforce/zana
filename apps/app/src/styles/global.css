@@ -29213,8 +29213,25 @@ body.resizing-col .library-split-resizer::after {
 /* Home command surface: intentionally broader and calmer than the modal launcher,
  * but it uses the exact same prompt, voice, and model picker components. */
 .home-agent-composer {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
   width: min(820px, 100%);
   margin: 0 auto 28px;
+}
+
+.home-agent-composer > .launch-segmented {
+  align-self: flex-start;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 7px;
+}
+
+.home-agent-composer > .launch-segmented button {
+  padding: 3px 8px;
+  border-radius: 5px;
+  font-size: 11px;
 }
 
 .home-agent-composer-heading {
@@ -34965,7 +34982,7 @@ textarea.thread-command-editor {
   gap: 4px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: transparent;
+  background: var(--bg-panel);
   color: var(--text-primary);
   padding: 4px 8px;
   font: inherit;

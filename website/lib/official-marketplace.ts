@@ -2,6 +2,15 @@ import officialIndex from '../content/marketplace/marketplace.json';
 
 export const OFFICIAL_MARKETPLACE_FEED_PATH = '/marketplace/v1/marketplace.json';
 
+/** Absolute catalog URL for `zcc marketplace add`. `publicBaseUrl` is `PUBLIC_BASE_URL`. */
+export function officialMarketplaceFeedUrl(publicBaseUrl: string): string {
+  return `${publicBaseUrl.replace(/\/+$/, '')}${OFFICIAL_MARKETPLACE_FEED_PATH}`;
+}
+
+export function officialMarketplaceAddCommand(publicBaseUrl: string): string {
+  return `zcc marketplace add ${officialMarketplaceFeedUrl(publicBaseUrl)}`;
+}
+
 export const MARKETPLACE_JSON_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Cache-Control': 'public, max-age=0, must-revalidate'

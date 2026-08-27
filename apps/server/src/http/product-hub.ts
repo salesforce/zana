@@ -23,6 +23,7 @@ export type ProductEventType =
   | 'projects:cloneProgress'
   | 'library:changed'
   | 'hosts:changed'
+  | 'relay:changed'
   | 'terminals:data'
   | 'terminals:exit'
   | 'terminals:updated';

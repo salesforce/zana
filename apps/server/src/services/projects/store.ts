@@ -1059,6 +1059,32 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
         : trimmed;
     if (expanded === '' || isAbsolute(expanded)) normalized.pdfExportDir = expanded;
   }
+  if ('publicAppUrl' in input) {
+    if (typeof input.publicAppUrl !== 'string' || !input.publicAppUrl.trim()) {
+      normalized.publicAppUrl = undefined;
+    } else {
+      const trimmed = input.publicAppUrl.trim().replace(/\/$/u, '');
+      try {
+        const parsed = new URL(trimmed);
+        if (
+          (parsed.protocol === 'http:' || parsed.protocol === 'https:')
+          && trimmed.length <= 2048
+        ) {
+          normalized.publicAppUrl = trimmed;
+        }
+      } catch {
+        /* keep the previous value */
+      }
+    }
+  }
+  if ('relayToken' in input) {
+    if (typeof input.relayToken !== 'string' || !input.relayToken.trim()) {
+      normalized.relayToken = undefined;
+    } else {
+      const trimmed = input.relayToken.trim();
+      if (trimmed.length <= 512) normalized.relayToken = trimmed;
+    }
+  }
   if (Object.prototype.hasOwnProperty.call(input, 'windowBounds')) {
     normalized.windowBounds = normalizeBounds(input.windowBounds);
   }

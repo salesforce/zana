@@ -28,7 +28,7 @@ server process and must not be given host-daemon tokens.
 v1 slots:
 
 - `navPanel` — sidebar entry + full view
-- `settingsSection` — Settings → Extensions detail
+- `settingsSection` — plugin settings in the Plugins hub / plugin detail
 - `homepageSection` — Home dashboard
 - `projectTab` — per-project tab (`global: false` hides the sidebar entry)
 - `sidebarFooterAction` — host-rendered footer icon

@@ -6,6 +6,7 @@ import { createProductHttpContext, type ProductHttpContext } from './product-con
 import { createProductWebSocketServer, handleProductUpgrade } from './product-ws.js';
 import { createHostDaemonWebSocketServer, handleHostInternalHttp, handleHostInternalUpgrade } from './host-internal.js';
 import { handleInstallHttp } from './install-http.js';
+import { attachPairingRelay } from './pairing-relay-controller.js';
 import type { LocalAppOriginArgs } from './local-app-origins.js';
 
 export interface ProductServer {
@@ -68,6 +69,7 @@ export async function startProductServer(options: StartProductServerOptions): Pr
 
   const boundPort = address.port;
   ctx.origins.serverPort = boundPort;
+  const pairingRelay = attachPairingRelay(ctx, boundPort);
 
   return {
     url: `http://${hostName}:${boundPort}/`,
@@ -75,6 +77,7 @@ export async function startProductServer(options: StartProductServerOptions): Pr
     ctx,
     close: () =>
       new Promise<void>((resolveClose, rejectClose) => {
+        pairingRelay.stop();
         ctx.hostHub.close();
         ctx.dispose();
         hostWss.close();

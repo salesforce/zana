@@ -1,8 +1,8 @@
 /**
  * Detailed catalog of the CORE app's capabilities, drawn from the repo README +
- * the renderer surfaces (src/renderer/components/*). Used by the landing
- * highlights and the dedicated /features page. Keep grounded in real features —
- * do not invent capabilities the app doesn't ship.
+ * the renderer surfaces (apps/app). Used by the landing highlights and the
+ * dedicated /features page. Keep grounded in real features — do not invent
+ * capabilities the app doesn't ship.
  */
 
 export type FeatureSlug =
@@ -31,9 +31,9 @@ export const FEATURES: FeatureDetail[] = [
     title: 'Multi-project cockpit',
     tagline: 'One window for every project and every session.',
     body:
-      'A workspace of real Claude Code, OpenCode, Codex, and Pi terminals, not a generic chat wrapper. Switch projects or harnesses without losing anything that is running.',
+      'New Chat starts a Thread with Claude Code, Cursor, OpenCode, Codex, or Pi. Legacy Agent is still a real PTY when you want the native terminal. Switch projects or harnesses without losing anything that is running.',
     points: [
-      'Real terminals — full shell, not a chat box',
+      'Thread is the default; Legacy Agent is a real PTY',
       'Tabbed workspace with a command palette',
       'Switch projects without losing a session'
     ]
@@ -65,13 +65,13 @@ export const FEATURES: FeatureDetail[] = [
   {
     slug: 'orchestration',
     title: 'Multi-agent orchestration',
-    tagline: 'Run a fleet — teams, sprints, and autopilot.',
+    tagline: 'Run a fleet — teams, goals, and autonomous runs.',
     body:
-      'Go beyond single sessions: spin up curated teams, run sprints against a ticket board, and let goal-driven autopilot loop until the job is done — while you stay in the loop.',
+      'Go beyond single sessions: spin up curated teams, launch an Autonomous Team from New Chat, and let goal-driven autopilot loop until the job is done — while you stay in the loop. Ticket boards live in plugins, not core.',
     points: [
       'Curated teams of agents, spawned on demand',
-      'Sprints and a kanban ticket board per project',
-      'Autopilot that loops toward a goal'
+      'Autonomous Team launch from New Chat',
+      'Goals that loop toward an outcome'
     ]
   },
   {

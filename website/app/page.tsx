@@ -17,7 +17,7 @@ const WORKFLOW = [
   {
     n: '02',
     title: 'Launch the right crew',
-    body: 'Start Claude Code, OpenCode, Codex, Pi, or a shell. Use personas and teams when work benefits from parallel effort.'
+    body: 'Start a Thread from New Chat with Claude Code, Cursor, OpenCode, Codex, Pi, or a shell. Use personas, teams, or Autonomous Team when work benefits from parallel effort.'
   },
   {
     n: '03',
@@ -26,7 +26,7 @@ const WORKFLOW = [
   }
 ];
 
-const HARNESSES = ['Claude Code', 'OpenCode', 'Codex', 'Pi', 'Shell'];
+const HARNESSES = ['Claude Code', 'Cursor', 'OpenCode', 'Codex', 'Pi', 'Shell'];
 
 const JSON_LD = {
   '@context': 'https://schema.org',

@@ -17,7 +17,10 @@ import {
   type PromptInput,
   type ReasoningLevel,
   type RuntimeThreadExecutionOptions,
-  type ThreadEvent
+  type ThreadEvent,
+  type ToolCallRequest,
+  type ToolCallResponse,
+  type DynamicTool
 } from '@zana-ai/zcc-domain/thread-runtime';
 import { HostCommandError } from './host-command-error.js';
 import type { ThreadRuntimeAdapter } from './thread-runtime-types.js';
@@ -43,6 +46,31 @@ export const DEFAULT_THREAD_EXECUTION_OPTIONS: RuntimeThreadExecutionOptions = {
   approvalReviewer: null,
   permissionEscalation: null
 };
+
+export function mergeSessionTooling(input: {
+  remoteProxy: boolean;
+  dynamicTools?: DynamicTool[];
+  instructions?: string;
+}): {
+  disallowedTools?: readonly string[];
+  instructions?: string;
+  dynamicTools?: DynamicTool[];
+} {
+  const pluginTools = input.dynamicTools ?? [];
+  const pluginInstructions = input.instructions?.trim();
+  if (input.remoteProxy) {
+    return {
+      disallowedTools: REMOTE_TOOL_PROXY_DISALLOWED_TOOLS,
+      instructions: [REMOTE_TOOL_PROXY_INSTRUCTIONS, pluginInstructions].filter(Boolean).join('\n\n'),
+      dynamicTools: [...REMOTE_TOOL_PROXY_DYNAMIC_TOOLS, ...pluginTools]
+    };
+  }
+  if (pluginTools.length === 0 && !pluginInstructions) return {};
+  return {
+    ...(pluginInstructions ? { instructions: pluginInstructions } : {}),
+    ...(pluginTools.length > 0 ? { dynamicTools: pluginTools } : {})
+  };
+}
 
 export type CreateAgentRuntimeFn = (options: AgentRuntimeOptions) => AgentRuntime;
 
@@ -152,6 +180,7 @@ export function createAgentRuntimeAdapter(options: {
   /** Global `AppConfig.remoteDefaultPath` — same fallback Explorer / ssh -t use. */
   getRemoteDefaultPath?: () => string | undefined;
   onInteractiveRequest?: (request: PendingInteractionCreate) => Promise<PendingInteractionResolution>;
+  onPluginToolCall?: (request: ToolCallRequest) => Promise<ToolCallResponse>;
   onProcessExit?: (info: {
     providerId: string;
     threads: Array<{ threadId: string }>;
@@ -188,6 +217,19 @@ export function createAgentRuntimeAdapter(options: {
             request.tool,
             request.arguments
           );
+        }
+        if (options.onPluginToolCall) {
+          try {
+            return await options.onPluginToolCall(request);
+          } catch (error) {
+            return {
+              success: false,
+              contentItems: [{
+                type: 'inputText',
+                text: `Tool "${request.tool}" failed: ${error instanceof Error ? error.message : String(error)}`
+              }]
+            };
+          }
         }
         return {
           contentItems: [{ type: 'inputText', text: 'ok' }],
@@ -253,11 +295,11 @@ export function createAgentRuntimeAdapter(options: {
           reasoningLevel: input.reasoningLevel
         }),
         ...(input.bridgeLaunch ? { bridgeLaunch: toRuntimeBridgeLaunch(input.bridgeLaunch) } : {}),
-        ...(remoteProxy ? {
-          disallowedTools: REMOTE_TOOL_PROXY_DISALLOWED_TOOLS,
-          instructions: REMOTE_TOOL_PROXY_INSTRUCTIONS,
-          dynamicTools: REMOTE_TOOL_PROXY_DYNAMIC_TOOLS
-        } : {})
+        ...mergeSessionTooling({
+          remoteProxy,
+          dynamicTools: input.dynamicTools,
+          instructions: input.instructions
+        })
       });
       return { providerThreadId: result.providerThreadId };
     },
@@ -287,7 +329,12 @@ export function createAgentRuntimeAdapter(options: {
           model: input.model,
           reasoningLevel: input.reasoningLevel
         }),
-        ...(input.bridgeLaunch ? { bridgeLaunch: toRuntimeBridgeLaunch(input.bridgeLaunch) } : {})
+        ...(input.bridgeLaunch ? { bridgeLaunch: toRuntimeBridgeLaunch(input.bridgeLaunch) } : {}),
+        ...mergeSessionTooling({
+          remoteProxy: false,
+          dynamicTools: input.dynamicTools,
+          instructions: input.instructions
+        })
       });
       return { providerThreadId: result.providerThreadId };
     },

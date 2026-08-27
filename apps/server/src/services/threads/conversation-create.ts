@@ -44,6 +44,7 @@ import {
   readRemoteToolProxySetting,
   threadLaunchRemote
 } from './remote-tool-proxy.js';
+import { safePackPluginSession } from '../../plugins/plugin-agent-tools.js';
 
 export interface CreateConversationInput {
   projectId: string;
@@ -179,6 +180,11 @@ async function startConversationOnHost(
     model: args.input.model,
     reasoningLevel: args.input.reasoningLevel
   });
+  const sessionTooling = await safePackPluginSession(
+    ctx.plugins
+      ? () => ctx.plugins!.sessionTools({ threadId: args.thread.id, projectId: args.project.id })
+      : undefined
+  );
   const started = await ctx.hostHub.callHostOnlineRpc<ThreadStartResult>({
     hostId: args.hostId,
     command: {
@@ -195,6 +201,7 @@ async function startConversationOnHost(
       ...(args.input.model ? { model: args.input.model } : {}),
       ...(args.input.reasoningLevel ? { reasoningLevel: args.input.reasoningLevel } : {}),
       ...(clientRequestId ? { clientRequestId } : {}),
+      ...sessionTooling,
       ...(args.remoteToolProxy ? {
         remote: threadLaunchRemote(args.project),
         remoteToolProxy: true

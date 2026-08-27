@@ -4,6 +4,8 @@ import { ArrowUp, Folder, Laptop, Loader2, Maximize2, Mic, Minimize2, Square } f
 import { useNavigate } from 'react-router-dom';
 import type { Project } from '@zana-ai/zcc-domain/product';
 import type { ThreadContextWindowUsage } from '@zana-ai/zcc-server-contract';
+import { apiJson } from '../lib/fetch-with-app-surface.js';
+import { COMPOSER_COMMANDS_RELOAD_EVENT } from '../lib/composer-commands-reload.js';
 import { product } from '../lib/product-client.js';
 import { useData } from '../store.js';
 import { useThreads } from '../thread-store.js';
@@ -38,8 +40,14 @@ import {
   nextComposerWorkMode,
   type ComposerWorkMode
 } from './thread/pickers/composer-mode.js';
+import { fallbackProviderOption } from './thread/pickers/fallback-models.js';
 import { useThreadComposerOptions } from './thread/pickers/useThreadComposerOptions.js';
 import { ComposerTypeaheadMenu } from './composer/ComposerTypeaheadMenu.js';
+import {
+  commandsFromComposerActions,
+  commandsFromPluginSkills,
+  mergeCommandCatalogs
+} from './composer/filter-composer-suggestions.js';
 import { VoiceRecordingBar } from './thread/voice/VoiceRecordingBar.js';
 import { useVoiceInput } from './thread/voice/useVoiceInput.js';
 import {
@@ -94,8 +102,6 @@ export interface ThreadCommandComposerProps {
   /** Focus the prompt after mounting (hub/browse create-plugin seed). */
   autoFocus?: boolean;
   onCreated?: (threadId: string) => void;
-  /** Home-only: add Legacy Agent to the mode picker. Does not spawn a PTY. */
-  onSelectLegacyAgent?: () => void;
 }
 
 export function ThreadCommandComposer({
@@ -111,8 +117,7 @@ export function ThreadCommandComposer({
   reasoningLevel: initialReasoningLevel,
   initialText,
   autoFocus = false,
-  onCreated,
-  onSelectLegacyAgent
+  onCreated
 }: ThreadCommandComposerProps) {
   const navigate = useNavigate();
   const route = useRouteState();
@@ -121,6 +126,7 @@ export function ThreadCommandComposer({
   const upsertThread = useThreads((s) => s.upsert);
   const [commands, setCommands] = useState<Array<{ name: string; description: string }>>([]);
   const [commandsLoaded, setCommandsLoaded] = useState(false);
+  const [commandsEpoch, setCommandsEpoch] = useState(0);
   const [projectId, setProjectId] = useState(pinnedProject?.id ?? '');
   const ensureScratchRef = useRef(false);
   const projectOptions = useMemo(() => composerProjectOptions(projects), [projects]);
@@ -253,16 +259,49 @@ export function ThreadCommandComposer({
   }, [loadProjects, pinnedProject, projectId, projects]);
 
   useEffect(() => {
-    if (!projectId) return;
-    setCommandsLoaded(false);
-    void product.threads.commands(projectId).then((body) => {
-      setCommands(body.commands.filter((row) => row.providerId === options.providerId));
-      setCommandsLoaded(true);
-    }).catch(() => {
-      setCommands([]);
-      setCommandsLoaded(true);
+    const bump = () => setCommandsEpoch((current) => current + 1);
+    const offApps = product.pluginApps.onChanged(() => bump());
+    const offSkills = product.skills.onChanged(() => bump());
+    window.addEventListener(COMPOSER_COMMANDS_RELOAD_EVENT, bump);
+    return () => {
+      offApps();
+      offSkills();
+      window.removeEventListener(COMPOSER_COMMANDS_RELOAD_EVENT, bump);
+    };
+  }, []);
+
+  useEffect(() => {
+    const provider = options.provider ?? fallbackProviderOption(options.providerId);
+    const fallback = commandsFromComposerActions(provider.composerActions, provider.displayName);
+    setCommands(fallback);
+    setCommandsLoaded(true);
+
+    let cancelled = false;
+    const fromHttp = projectId
+      ? product.threads.commands(projectId)
+        .then((body) => body.commands.filter((row) => !row.providerId || row.providerId === options.providerId))
+        .catch(() => [])
+      : Promise.resolve([]);
+    const fromPlugins = apiJson<{
+      pluginSkills?: Array<{ name: string; enabled?: boolean; skillNames?: string[] }>;
+    }>('/plugins/contributions')
+      .then((body) => commandsFromPluginSkills(body.pluginSkills ?? []))
+      .catch(() => []);
+    const fromPalette = product.commands.list(selectedProject?.path).catch(() => []);
+
+    void Promise.all([fromHttp, fromPlugins, fromPalette]).then(([httpRows, pluginRows, paletteRows]) => {
+      if (cancelled) return;
+      setCommands(mergeCommandCatalogs([
+        fallback,
+        pluginRows,
+        httpRows.map((row) => ({ name: row.name, description: row.description ?? '' })),
+        paletteRows.map((row) => ({ name: row.invocation, description: row.description ?? '' }))
+      ]));
     });
-  }, [projectId, options.providerId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [options.provider, options.providerId, projectId, selectedProject?.path, commandsEpoch]);
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -752,8 +791,6 @@ export function ThreadCommandComposer({
                   value={composerMode}
                   modes={composerModes}
                   onChange={setComposerMode}
-                  showLegacyAgent={Boolean(onSelectLegacyAgent)}
-                  onSelectLegacyAgent={onSelectLegacyAgent}
                 />
                 <ModelReasoningPicker
                   providerOptions={options.providerOptions}

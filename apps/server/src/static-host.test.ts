@@ -119,6 +119,7 @@ describe('startStaticHost', () => {
     await expect(fetch(`${host.url}api/v1/health`).then((response) => response.json())).resolves.toEqual({
       ok: true
     });
+    await expect(fetch(`${host.url}install.sh`).then((response) => response.status)).resolves.toBe(200);
     await expect(fetch(host.url).then((response) => response.text())).resolves.toContain('zana');
     expect(readFileSync(join(dataDir, 'host-enroll.token'), 'utf8').trim()).toBe(product.enrollToken);
     product.hostHub.close();

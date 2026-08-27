@@ -10,8 +10,10 @@ test('Home Thread composer uses the TipTap editor and provider controls', async 
   await expect(homeComposer.getByLabel('Provider')).toBeVisible();
   await expect(homeComposer.getByLabel('Permission mode')).toBeVisible();
   await expect(homeComposer.getByTestId('thread-command-send')).toBeVisible();
-  await homeComposer.getByTestId('composer-mode-picker-trigger').click();
-  await expect(window.getByTestId('composer-mode-legacy')).toBeVisible();
+  await expect(homeComposer.getByTestId('composer-mode-picker-trigger')).toBeVisible();
+  const launchMode = window.getByRole('group', { name: 'Launch mode' });
+  await expect(launchMode.getByRole('button', { name: 'Thread' })).toBeVisible();
+  await expect(launchMode.getByRole('button', { name: 'Legacy Agent' })).toBeVisible();
 });
 
 test('Agents + opens the launch modal for a new thread or agent', async ({ app }) => {
@@ -21,8 +23,10 @@ test('Agents + opens the launch modal for a new thread or agent', async ({ app }
   const newThread = window.locator('[data-testid="agents-new"]');
   if (await newThread.count()) {
     await newThread.click();
-  } else {
+  } else if (await window.locator('[data-testid="agents-new-empty"]').count()) {
     await window.locator('[data-testid="agents-new-empty"]').click();
+  } else {
+    await window.locator('[data-testid="agents-board-new-thread"]').click();
   }
 
   const modal = window.locator('[data-testid="launch-modal"]');

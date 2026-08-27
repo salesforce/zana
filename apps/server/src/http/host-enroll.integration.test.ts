@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import {
   HOST_RPC_PROTOCOL_VERSION,
@@ -13,11 +13,34 @@ import {
   listConversationThreadEvents
 } from '@zana-ai/zcc-db';
 import { startProductServer, type ProductServer } from './product-server.js';
+import type { ProductHttpContext } from './product-context.js';
+import { registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
 
 let server: ProductServer | null = null;
 const sockets: WebSocket[] = [];
+const providerHandles: Array<{ unregister(): void }> = [];
+
+beforeEach(() => {
+  for (const id of ['claude-code', 'acp-opencode'] as const) {
+    providerHandles.push(
+      registerThreadProvider('test', {
+        id,
+        displayName: id,
+        capabilities: {
+          supportsServiceTier: false,
+          fork: 'checkpoint',
+          supportsThreadArchive: false,
+          supportsThreadRename: false,
+          permissionModes: ['full']
+        },
+        composerActions: []
+      })
+    );
+  }
+});
 
 afterEach(async () => {
+  for (const handle of providerHandles.splice(0)) handle.unregister();
   for (const socket of sockets) socket.close();
   sockets.length = 0;
   await server?.close();
@@ -254,7 +277,6 @@ describe('host enroll hub and thread create', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ projectId: 'proj-1', providerId: 'claude', input: ['ship it'] })
     }).then(async (response) => ({ status: response.status, body: await response.json() }));
-    console.error('DEBUG BODY', JSON.stringify(spawned.body));
     expect(spawned.status).toBe(201);
     expect(spawned.body.ok).toBe(true);
     expect(spawned.body.value.hostId).toBe(hostA.hostId);
@@ -720,5 +742,71 @@ describe('host enroll hub and thread create', () => {
     const afterRestart = await fetch(`${server!.url}api/v1/threads/${spawned.value.id}/interactions`)
       .then((response) => response.json()) as unknown[];
     expect(afterRestart).toEqual([]);
+  });
+
+  it('dispatches plugin tool calls over host-key HTTP', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-proj-'));
+    const { enrollToken } = await startServer(projectRoot);
+    const instanceId = randomUUID();
+    const enrolled = await enrollHost(enrollToken, 'alpha', instanceId);
+    await openHostSocket(enrolled, instanceId, defaultRpcHandler(projectRoot));
+    await waitForHost(enrolled.hostId);
+
+    const spawned = await fetch(`${server!.url}api/v1/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: 'proj-1', providerId: 'claude', input: ['hello'] })
+    }).then((response) => response.json()) as { value: { id: string; hostId: string } };
+
+    server!.ctx.plugins = {
+      invokeAgentTool: async ({ name, input, ctx }) => ({
+        success: true,
+        contentItems: [{
+          type: 'inputText',
+          text: JSON.stringify({ name, input, threadId: ctx.threadId, projectId: ctx.projectId })
+        }]
+      })
+    } as ProductHttpContext['plugins'];
+
+    const invoked = await fetch(`${server!.url}internal/hosts/tool-call`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${enrolled.hostKey}`,
+        'content-type': 'application/json',
+        'x-zcc-host-id': enrolled.hostId
+      },
+      body: JSON.stringify({
+        sessionId: instanceId,
+        threadId: spawned.value.id,
+        providerThreadId: `prov-${spawned.value.id}`,
+        turnId: 'turn-1',
+        callId: 'call-1',
+        tool: 'sf_soql',
+        arguments: { query: 'SELECT Id FROM Account' }
+      })
+    }).then(async (response) => ({ status: response.status, body: await response.json() }));
+    expect(invoked.status).toBe(200);
+    expect(invoked.body.success).toBe(true);
+    expect(invoked.body.contentItems[0].text).toContain('sf_soql');
+    expect(invoked.body.contentItems[0].text).toContain(spawned.value.id);
+
+    const rejected = await fetch(`${server!.url}internal/hosts/tool-call`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${enrolled.hostKey}`,
+        'content-type': 'application/json',
+        origin: 'http://localhost:5173',
+        'x-zcc-host-id': enrolled.hostId
+      },
+      body: JSON.stringify({
+        sessionId: instanceId,
+        threadId: spawned.value.id,
+        providerThreadId: 'prov-1',
+        turnId: 'turn-1',
+        callId: 'call-1',
+        tool: 'sf_soql'
+      })
+    }).then((response) => response.status);
+    expect(rejected).toBe(403);
   });
 });

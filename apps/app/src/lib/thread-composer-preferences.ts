@@ -32,7 +32,10 @@ export function composerPromptExtensions(markdownEnabled: boolean, placeholder: 
       bulletList: markdownEnabled ? undefined : false,
       orderedList: markdownEnabled ? undefined : false,
       listItem: markdownEnabled ? undefined : false,
-      horizontalRule: markdownEnabled ? undefined : false
+      horizontalRule: markdownEnabled ? undefined : false,
+      // Prompt box: don't autolink paths or turn `/plan` into an <a>.
+      link: false,
+      trailingNode: false
     }),
     Placeholder.configure({ placeholder }),
     PromptMentionExtension

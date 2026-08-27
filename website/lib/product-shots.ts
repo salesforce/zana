@@ -36,10 +36,10 @@ export const PRODUCT_SHOTS: Record<ProductShotId, ProductShotDefinition> = {
     id: 'cockpit-overview',
     title: 'Zana Command Center',
     caption: 'A single workspace for projects, terminals, agents, and the work that needs attention.',
-    alt: 'Zana Command Center showing projects, active agent sessions, and a terminal workspace.',
+    alt: 'Zana Command Center Agents board with sessions grouped into Needs you, Working, Idle, and Done.',
     capture: 'Show the three-column cockpit with several active projects and a focused terminal.',
     aspectRatio: 'wide',
-    src: '/demo.gif'
+    src: '/product-shots/agents-board.jpg'
   },
   'project-setup': {
     id: 'project-setup',
@@ -52,8 +52,8 @@ export const PRODUCT_SHOTS: Record<ProductShotId, ProductShotDefinition> = {
   'agent-terminal': {
     id: 'agent-terminal',
     title: 'Focused execution',
-    caption: 'Each tab is a real harness terminal, opened in the project that provides its context.',
-    alt: 'A coding agent task running in a Zana terminal tab.',
+    caption: 'Threads are the default from New Chat; Legacy Agent tabs are real harness terminals in the project that provides their context.',
+    alt: 'A coding agent task running in a Zana thread or terminal tab.',
     capture: 'Show a focused supported-harness task running in the correct project directory.',
     aspectRatio: 'standard'
   },
@@ -63,7 +63,8 @@ export const PRODUCT_SHOTS: Record<ProductShotId, ProductShotDefinition> = {
     caption: 'See which sessions are working, waiting, idle, or complete without inspecting every tab.',
     alt: 'The Zana Agents board showing sessions grouped by status.',
     capture: 'Show a realistic mix of needs-you, working, idle, and done sessions.',
-    aspectRatio: 'wide'
+    aspectRatio: 'wide',
+    src: '/product-shots/agents-board.jpg'
   },
   'inbox-decision': {
     id: 'inbox-decision',
@@ -83,10 +84,10 @@ export const PRODUCT_SHOTS: Record<ProductShotId, ProductShotDefinition> = {
   },
   'goal-or-ticket': {
     id: 'goal-or-ticket',
-    title: 'Goals and tickets',
-    caption: 'Keep work that outlives a single session visible through goals, follow-ups, and project tickets.',
-    alt: 'A Zana goal or project ticket board with progress and ownership.',
-    capture: 'Show a goal or ticket board with progress, ownership, and a clear next action.',
+    title: 'Goals and follow-ups',
+    caption: 'Keep work that outlives a single session visible through goals and follow-ups.',
+    alt: 'A Zana goal with progress and ownership.',
+    capture: 'Show a goal with progress, ownership, and a clear next action.',
     aspectRatio: 'wide'
   },
   'marketplace-catalog': {

@@ -681,7 +681,8 @@ describe('product HTTP plugins', () => {
     await expect(contributions.json()).resolves.toEqual({
       cliCommands: [{ pluginId: 'hello', name: 'hello', summary: 'Say hello', commands: [] }],
       mentionProviders: [],
-      themes: []
+      themes: [],
+      pluginSkills: []
     });
 
     const cli = await fetch(`${server.url}api/v1/plugins/hello/cli`, {
@@ -693,6 +694,57 @@ describe('product HTTP plugins', () => {
 
     const http = await fetch(`${server.url}api/v1/plugins/hello/http/ping`);
     await expect(http.json()).resolves.toEqual({ path: '/ping' });
+  });
+
+  it('lists enabled plugin skills on contributions and the project command catalog', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-skills-'));
+    server = await startProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    server.ctx.plugins = {
+      snapshot: () => [
+        {
+          id: 'salesforce',
+          name: 'Salesforce',
+          enabled: true,
+          skillNames: ['salesforce-dx', 'salesforce-constitution'],
+          themes: []
+        },
+        {
+          id: 'off',
+          name: 'Off',
+          enabled: false,
+          skillNames: ['hidden'],
+          themes: []
+        }
+      ]
+    } as never;
+
+    const contributions = await fetch(`${server.url}api/v1/plugins/contributions`);
+    await expect(contributions.json()).resolves.toMatchObject({
+      pluginSkills: [{
+        pluginId: 'salesforce',
+        name: 'Salesforce',
+        skillNames: ['salesforce-dx', 'salesforce-constitution']
+      }]
+    });
+
+    const commands = await fetch(`${server.url}api/v1/projects/proj-1/commands`);
+    const body = await commands.json() as { commands: Array<{ name: string; pluginId?: string; description?: string }> };
+    expect(body.commands).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: '/salesforce-dx',
+        pluginId: 'salesforce',
+        description: 'Salesforce'
+      }),
+      expect.objectContaining({
+        name: '/salesforce-constitution',
+        pluginId: 'salesforce',
+        description: 'Salesforce'
+      })
+    ]));
+    expect(body.commands.some((row) => row.name === '/hidden')).toBe(false);
   });
 
   it('lists redacted plugin-app snapshots and toggles enable/disable', async () => {

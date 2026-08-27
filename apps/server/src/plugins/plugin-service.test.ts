@@ -667,6 +667,57 @@ describe('listBundledPluginCatalog', () => {
       expect.arrayContaining(['docs', 'tasks', 'custom-instructions', 'ask-user-question', 'salesforce'])
     );
   });
+
+  it('lists and invokes plugin agent tools after configure()', async () => {
+    const dataDir = root();
+    const pluginDir = writePlugin(
+      join(root(), 'sf-tools'),
+      'sf-tools',
+      `export default function plugin(zcc) {
+        zcc.agents.registerTool({
+          name: 'echo_tool',
+          description: 'Echo',
+          inputSchema: { type: 'object', properties: { text: { type: 'string' } } },
+          execute: async (input) => ({ ok: true, input })
+        });
+        zcc.agents.registerTool({
+          name: 'hidden_tool',
+          description: 'Hidden',
+          execute: async () => ({ ok: true })
+        });
+        zcc.agents.configure(({ projectId }) => {
+          if (projectId === 'skip') return {};
+          return { tools: ['echo_tool'], instructions: 'Use echo_tool.' };
+        });
+      }\n`
+    );
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    await service.install(pluginDir);
+    const configured = await service.sessionTools({ threadId: 'thr-1', projectId: 'proj-1' });
+    expect(configured.tools.map((row) => row.name)).toEqual(['echo_tool']);
+    expect(configured.instructions).toBe('Use echo_tool.');
+    const skipped = await service.sessionTools({ threadId: 'thr-1', projectId: 'skip' });
+    expect(skipped.tools).toEqual([]);
+    const invoked = await service.invokeAgentTool({
+      name: 'echo_tool',
+      input: { text: 'hi' },
+      ctx: { threadId: 'thr-1', projectId: 'proj-1', signal: new AbortController().signal }
+    });
+    expect(invoked.success).toBe(true);
+    expect(invoked.contentItems[0]?.text).toContain('"text":"hi"');
+    const missing = await service.invokeAgentTool({
+      name: 'hidden_tool',
+      input: {},
+      ctx: { threadId: 'thr-1', projectId: 'proj-1', signal: new AbortController().signal }
+    });
+    expect(missing.success).toBe(true);
+    const unknown = await service.invokeAgentTool({
+      name: 'nope',
+      input: {},
+      ctx: { threadId: 'thr-1', projectId: 'proj-1', signal: new AbortController().signal }
+    });
+    expect(unknown.success).toBe(false);
+  });
 });
 
 describe('installBundledPlugin', () => {

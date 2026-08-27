@@ -12,7 +12,7 @@ import {
   workspaceStatusSchema
 } from '@zana-ai/zcc-domain';
 import { gitBranchNameSchema } from '@zana-ai/zcc-domain/git-checkout';
-import { availableModelSchema, clientTurnRequestIdSchema, pendingInteractionResolutionSchema, reasoningLevelSchema } from '@zana-ai/zcc-domain/thread-runtime';
+import { availableModelSchema, clientTurnRequestIdSchema, dynamicToolSchema, pendingInteractionResolutionSchema, reasoningLevelSchema } from '@zana-ai/zcc-domain/thread-runtime';
 import {
   providerCliInstallEventSchema,
   providerCliInstallRequestSchema,
@@ -244,7 +244,10 @@ export const ThreadStartCommandSchema = z.object({
   reasoningLevel: reasoningLevelSchema.optional(),
   providerThreadId: z.string().min(1).optional(),
   /** Correlates turn/input/accepted with the server's client/turn/requested. */
-  clientRequestId: clientTurnRequestIdSchema.optional()
+  clientRequestId: clientTurnRequestIdSchema.optional(),
+  /** Plugin-registered ACP tools attached via bb-bridge for this session. */
+  dynamicTools: z.array(dynamicToolSchema).max(128).optional(),
+  instructions: z.string().max(100_000).optional()
 }).strict();
 
 export const ThreadResizeCommandSchema = z.object({
@@ -279,7 +282,9 @@ export const ThreadResumeFieldsSchema = z.object({
   bridgeLaunch: HostBridgeLaunchSchema.optional(),
   permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional(),
   model: z.string().min(1).max(200).optional(),
-  reasoningLevel: reasoningLevelSchema.optional()
+  reasoningLevel: reasoningLevelSchema.optional(),
+  dynamicTools: z.array(dynamicToolSchema).max(128).optional(),
+  instructions: z.string().max(100_000).optional()
 }).strict();
 export type ThreadResumeFields = z.infer<typeof ThreadResumeFieldsSchema>;
 
