@@ -23,6 +23,78 @@ export function environmentLabel(isWorktree: boolean, environmentName?: string |
   return isWorktree ? 'This checkout' : 'Local';
 }
 
+export type ThreadSshStatus = 'checking' | 'connected' | 'unreachable';
+
+export function sshTargetLabel(remote?: { host: string; user?: string } | null): string | null {
+  const host = remote?.host?.trim();
+  if (!host) return null;
+  const user = remote?.user?.trim();
+  return user ? `${user}@${host}` : host;
+}
+
+export function sshStatusText(status: ThreadSshStatus | null | undefined): string | null {
+  if (status === 'connected') return 'Connected';
+  if (status === 'unreachable') return 'Unreachable';
+  if (status === 'checking') return 'Checking';
+  return null;
+}
+
+export function sshRowValue(target: string, status: ThreadSshStatus | null | undefined): string {
+  const label = sshStatusText(status);
+  return label ? `${target} · ${label}` : target;
+}
+
+export function threadInfoEnvironmentLabel(
+  isWorktree: boolean,
+  environmentName: string | null | undefined,
+  remoteToolProxy: boolean
+): string {
+  if (remoteToolProxy) return 'Local agent · remote tools';
+  return environmentLabel(isWorktree, environmentName);
+}
+
+export async function hydrateRemoteToolProxyInfo(
+  project: {
+    id: string;
+    remote?: { host: string; user?: string } | null;
+    hostId?: string | null;
+  } | null,
+  deps: {
+    getSettings: (id: string) => Promise<{ remoteToolProxy?: boolean }>;
+    remoteRoot: (id: string) => Promise<{ ok: boolean; root?: string; message?: string }>;
+  }
+): Promise<{
+  active: boolean;
+  sshTarget: string | null;
+  sshStatus: 'connected' | 'unreachable' | null;
+  remoteDirectory: string | null;
+}> {
+  const empty = {
+    active: false,
+    sshTarget: null as string | null,
+    sshStatus: null as 'connected' | 'unreachable' | null,
+    remoteDirectory: null as string | null
+  };
+  if (!project?.remote || project.hostId) return empty;
+  const sshTarget = sshTargetLabel(project.remote);
+  let settings: { remoteToolProxy?: boolean } = {};
+  try {
+    settings = await deps.getSettings(project.id);
+  } catch {
+    return empty;
+  }
+  if (settings.remoteToolProxy !== true) return empty;
+  try {
+    const root = await deps.remoteRoot(project.id);
+    if (root.ok && root.root) {
+      return { active: true, sshTarget, sshStatus: 'connected', remoteDirectory: root.root };
+    }
+    return { active: true, sshTarget, sshStatus: 'unreachable', remoteDirectory: null };
+  } catch {
+    return { active: true, sshTarget, sshStatus: 'unreachable', remoteDirectory: null };
+  }
+}
+
 export function environmentNameFromList(
   environments: Array<{ id: string; name?: string | null }>,
   environmentId: string

@@ -22,6 +22,16 @@ import {
 import { HostCommandError } from './host-command-error.js';
 import type { ThreadRuntimeAdapter } from './thread-runtime-types.js';
 import type { ThreadResumeInput, ThreadWorkInput } from './command-dispatch.js';
+import {
+  REMOTE_TOOL_PROXY_DISALLOWED_TOOLS,
+  REMOTE_TOOL_PROXY_DYNAMIC_TOOLS,
+  REMOTE_TOOL_PROXY_INSTRUCTIONS,
+  isRemoteProxyTool,
+  buildThreadRemoteProxy,
+  remoteProxyToolCallResponse,
+  usesRemoteToolProxy,
+  type ThreadRemoteProxy
+} from './remote-tool-proxy.js';
 
 export const DEFAULT_THREAD_EXECUTION_OPTIONS: RuntimeThreadExecutionOptions = {
   model: 'default',
@@ -139,6 +149,8 @@ export function createAgentRuntimeAdapter(options: {
   emit: (event: HostEventEnvelope) => void;
   dataDir?: string;
   createRuntime?: CreateAgentRuntimeFn;
+  /** Global `AppConfig.remoteDefaultPath` — same fallback Explorer / ssh -t use. */
+  getRemoteDefaultPath?: () => string | undefined;
   onInteractiveRequest?: (request: PendingInteractionCreate) => Promise<PendingInteractionResolution>;
   onProcessExit?: (info: {
     providerId: string;
@@ -151,6 +163,7 @@ export function createAgentRuntimeAdapter(options: {
 }): ThreadRuntimeAdapter {
   const runtimes = new Map<string, AgentRuntime>();
   const threadLocation = new Map<string, { environmentId: string; cwd: string }>();
+  const remoteProxyByThread = new Map<string, ThreadRemoteProxy>();
   const createRuntime = options.createRuntime
     ?? (fakeProviderEnabled() ? createFakeAgentRuntime : createAgentRuntime);
   const storageRoot = join(options.dataDir ?? '/tmp/zcc-thread-runtime', 'thread-storage');
@@ -166,10 +179,21 @@ export function createAgentRuntimeAdapter(options: {
       onEvent: (event) => {
         options.emit(mapRuntimeThreadEvent(event));
       },
-      onToolCall: async () => ({
-        contentItems: [{ type: 'inputText', text: 'ok' }],
-        success: true
-      }),
+      onToolCall: async (request) => {
+        const proxy = remoteProxyByThread.get(request.threadId);
+        if (proxy && isRemoteProxyTool(request.tool)) {
+          return remoteProxyToolCallResponse(
+            proxy.remote,
+            proxy.defaultPath,
+            request.tool,
+            request.arguments
+          );
+        }
+        return {
+          contentItems: [{ type: 'inputText', text: 'ok' }],
+          success: true
+        };
+      },
       ...(options.onInteractiveRequest ? { onInteractiveRequest: options.onInteractiveRequest } : {}),
       ...(options.onProcessExit ? { onProcessExit: options.onProcessExit } : {})
     });
@@ -207,6 +231,15 @@ export function createAgentRuntimeAdapter(options: {
     async startWork(input: ThreadWorkInput) {
       const runtime = runtimeFor(input.environmentId, input.cwd);
       threadLocation.set(input.threadId, { environmentId: input.environmentId, cwd: input.cwd });
+      const remoteProxy = usesRemoteToolProxy(input);
+      if (remoteProxy && input.remote) {
+        remoteProxyByThread.set(
+          input.threadId,
+          buildThreadRemoteProxy(input.remote, options.getRemoteDefaultPath?.())
+        );
+      } else {
+        remoteProxyByThread.delete(input.threadId);
+      }
       const result = await runtime.startThread({
         environmentId: input.environmentId,
         threadId: input.threadId,
@@ -219,7 +252,12 @@ export function createAgentRuntimeAdapter(options: {
           model: input.model,
           reasoningLevel: input.reasoningLevel
         }),
-        ...(input.bridgeLaunch ? { bridgeLaunch: toRuntimeBridgeLaunch(input.bridgeLaunch) } : {})
+        ...(input.bridgeLaunch ? { bridgeLaunch: toRuntimeBridgeLaunch(input.bridgeLaunch) } : {}),
+        ...(remoteProxy ? {
+          disallowedTools: REMOTE_TOOL_PROXY_DISALLOWED_TOOLS,
+          instructions: REMOTE_TOOL_PROXY_INSTRUCTIONS,
+          dynamicTools: REMOTE_TOOL_PROXY_DYNAMIC_TOOLS
+        } : {})
       });
       return { providerThreadId: result.providerThreadId };
     },
@@ -263,6 +301,7 @@ export function createAgentRuntimeAdapter(options: {
       const runtime = runtimeForThread(input.threadId);
       await runtime.stopThread({ threadId: input.threadId });
       threadLocation.delete(input.threadId);
+      remoteProxyByThread.delete(input.threadId);
     },
     dispose() {
       for (const runtime of runtimes.values()) {
@@ -270,6 +309,7 @@ export function createAgentRuntimeAdapter(options: {
       }
       runtimes.clear();
       threadLocation.clear();
+      remoteProxyByThread.clear();
     }
   };
 }

@@ -34,23 +34,25 @@ type PromptState =
 
 interface Props {
   project: Project;
+  /** Narrower tree defaults when hosted in a thread / legacy-agent side panel. */
+  embedded?: boolean;
 }
 
 // Width of the Explorer tree column. Persisted as a renderer-only UI preference
-// (localStorage), matching the Library splitter behavior.
-const EXPLORER_TREE_MIN = 220;
-const EXPLORER_TREE_MAX = 560;
-const EXPLORER_TREE_DEFAULT = 260;
-const EXPLORER_TREE_KEY = 'zcc.explorerTreeWidth';
+// (localStorage), matching the Library splitter behavior. The side-panel host
+// uses its own key so a wide workspace tree does not overflow a 352px panel.
+const WORKSPACE_TREE = { min: 220, max: 560, default: 260, key: 'zcc.explorerTreeWidth' } as const;
+const PANEL_TREE = { min: 140, max: 360, default: 168, key: 'zcc.threadExplorerTreeWidth' } as const;
+type TreeWidthPreset = typeof WORKSPACE_TREE;
 
-function loadExplorerTreeWidth(): number {
-  if (typeof localStorage === 'undefined') return EXPLORER_TREE_DEFAULT;
-  const raw = Number(localStorage.getItem(EXPLORER_TREE_KEY));
-  if (!Number.isFinite(raw) || raw <= 0) return EXPLORER_TREE_DEFAULT;
-  return Math.max(EXPLORER_TREE_MIN, Math.min(EXPLORER_TREE_MAX, raw));
+function loadExplorerTreeWidth(preset: TreeWidthPreset): number {
+  if (typeof localStorage === 'undefined') return preset.default;
+  const raw = Number(localStorage.getItem(preset.key));
+  if (!Number.isFinite(raw) || raw <= 0) return preset.default;
+  return Math.max(preset.min, Math.min(preset.max, raw));
 }
 
-export function ExplorerView({ project }: Props) {
+export function ExplorerView({ project, embedded = false }: Props) {
   const pushToast = useUi((s) => s.pushToast);
   const explorerFile = useUi((s) => s.explorerFile[project.id]);
   const goto = useUi((s) => s.explorerGoto[project.id]);
@@ -230,7 +232,8 @@ export function ExplorerView({ project }: Props) {
   const [headLoading, setHeadLoading] = useState(false);
   const treeBodyRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const [treeWidth, setTreeWidth] = useState(loadExplorerTreeWidth);
+  const treePreset = embedded ? PANEL_TREE : WORKSPACE_TREE;
+  const [treeWidth, setTreeWidth] = useState(() => loadExplorerTreeWidth(treePreset));
   // Monaco editor instance + last applied goto nonce, so we can replay a
   // pending goto once the editor is mounted *and* the file has loaded.
   const editorRef = useRef<{
@@ -856,8 +859,8 @@ export function ExplorerView({ project }: Props) {
     let latest = treeWidth;
     const onMove = (ev: MouseEvent) => {
       latest = Math.max(
-        EXPLORER_TREE_MIN,
-        Math.min(EXPLORER_TREE_MAX, Math.round(ev.clientX - left))
+        treePreset.min,
+        Math.min(treePreset.max, Math.round(ev.clientX - left))
       );
       setTreeWidth(latest);
     };
@@ -866,7 +869,7 @@ export function ExplorerView({ project }: Props) {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       try {
-        localStorage.setItem(EXPLORER_TREE_KEY, String(latest));
+        localStorage.setItem(treePreset.key, String(latest));
       } catch {
         /* localStorage write is best-effort */
       }
@@ -876,9 +879,9 @@ export function ExplorerView({ project }: Props) {
   };
 
   const onResizeDoubleClick = () => {
-    setTreeWidth(EXPLORER_TREE_DEFAULT);
+    setTreeWidth(treePreset.default);
     try {
-      localStorage.setItem(EXPLORER_TREE_KEY, String(EXPLORER_TREE_DEFAULT));
+      localStorage.setItem(treePreset.key, String(treePreset.default));
     } catch {
       /* best-effort */
     }
@@ -909,7 +912,7 @@ export function ExplorerView({ project }: Props) {
   return (
     <div
       ref={rootRef}
-      className="explorer-view"
+      className={`explorer-view${embedded ? ' is-embedded' : ''}`}
       style={{ gridTemplateColumns: `${treeWidth}px minmax(0, 1fr)` }}
     >
       <aside className="explorer-tree">
@@ -985,8 +988,8 @@ export function ExplorerView({ project }: Props) {
         className="explorer-resizer"
         role="separator"
         aria-orientation="vertical"
-        aria-valuemin={EXPLORER_TREE_MIN}
-        aria-valuemax={EXPLORER_TREE_MAX}
+        aria-valuemin={treePreset.min}
+        aria-valuemax={treePreset.max}
         aria-valuenow={treeWidth}
         title="Drag to resize · double-click to reset"
         style={{ left: `${treeWidth}px` }}

@@ -1,5 +1,5 @@
 import { Loader2 } from 'lucide-react';
-import type { ComposerHostAction } from './composer-host-status.js';
+import { composerHostActionChipLabel, type ComposerHostAction } from './composer-host-status.js';
 
 export function ComposerHostActionChip({
   action,
@@ -14,9 +14,8 @@ export function ComposerHostActionChip({
   onAction: () => void;
   onCopyPairing?: () => void;
 }) {
-  if (action.kind === 'ready') return null;
-  const label = busyLabel
-    ?? (action.kind === 'blocked' ? 'Unavailable' : action.label);
+  const label = busyLabel ?? composerHostActionChipLabel(action);
+  if (!label) return null;
   const clickable = (action.kind === 'install' || action.kind === 'fix') && !busyLabel;
   return (
     <div className="thread-command-chip thread-command-host-action">

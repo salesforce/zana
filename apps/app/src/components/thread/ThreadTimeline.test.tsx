@@ -3,16 +3,20 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { TimelineRow } from '@zana-ai/zcc-server-contract';
 import { ThreadTimeline } from './ThreadTimeline.js';
 import {
+  THREAD_WORKING_PHRASES,
   isBusyThreadStatus,
   shouldShowThreadStop,
   threadStatusLabel,
   threadStatusToAgentState,
   threadStatusTone,
+  threadWorkingIndicatorLabel,
   timelineHasInFlightRetry,
   timelineRowsAwaitUser,
   visiblePendingTodos,
   workRowBody
 } from './thread-timeline-model.js';
+
+const workingCopy = threadWorkingIndicatorLabel(false, THREAD_WORKING_PHRASES[0]);
 
 const base = {
   threadId: 't1',
@@ -121,9 +125,9 @@ describe('thread timeline model', () => {
   });
 
   it('titles status badges with a readable label', () => {
-    expect(threadStatusLabel('active')).toBe('Working');
-    expect(threadStatusLabel('starting')).toBe('Working');
-    expect(threadStatusLabel('stopping')).toBe('Working');
+    expect(threadStatusLabel('active')).toBe('Planning next move');
+    expect(threadStatusLabel('starting')).toBe('Planning next move');
+    expect(threadStatusLabel('stopping')).toBe('Planning next move');
     expect(threadStatusLabel('idle')).toBe('Idle');
     expect(threadStatusLabel('error')).toBe('Error');
     expect(threadStatusLabel('error', true)).toBe('Error');
@@ -290,7 +294,7 @@ describe('ThreadTimeline', () => {
     expect(html).not.toContain('data-testid="thread-todos"');
   });
 
-  it('shows Thinking… for empty thought text and Working… when thinking is absent', () => {
+  it('shows Thinking… for empty thought text and a planning phrase when thinking is absent', () => {
     const empty = renderToStaticMarkup(
       <ThreadTimeline rows={[]} status="active" thinking={{ id: 'th', text: '  ', startedAt: 1, updatedAt: 1 }} />
     );
@@ -300,7 +304,7 @@ describe('ThreadTimeline', () => {
     const working = renderToStaticMarkup(
       <ThreadTimeline rows={[]} status="active" thinking={null} />
     );
-    expect(working).toContain('Working…');
+    expect(working).toContain(workingCopy);
     expect(working).not.toContain('Thinking…');
   });
 
@@ -362,7 +366,7 @@ describe('ThreadTimeline', () => {
     expect(html).not.toContain('data-testid="thread-thinking"');
   });
 
-  it('unwraps turn children and shows Working when busy without thinking text', () => {
+  it('unwraps turn children and shows a planning phrase when busy without thinking text', () => {
     const assistant: TimelineRow = {
       ...base,
       id: 'a2',
@@ -387,7 +391,7 @@ describe('ThreadTimeline', () => {
     );
     expect(html).toContain('data-testid="thread-assistant-text"');
     expect(html).toContain('Done.');
-    expect(html).toContain('Working…');
+    expect(html).toContain(workingCopy);
   });
 
   it('shows expandable Thinking when reasoning text is streaming', () => {
@@ -401,7 +405,7 @@ describe('ThreadTimeline', () => {
     expect(html).toContain('Thinking…');
     expect(html).toContain('I should inspect nearby files.');
     expect(html).toContain('thread-timeline-work-chevron');
-    expect(html).not.toContain('Working…');
+    expect(html).not.toContain(workingCopy);
   });
 
   it('shows the empty waiting state', () => {
@@ -436,7 +440,7 @@ describe('ThreadTimeline', () => {
       />
     );
     expect(html).toContain('data-testid="thread-work-row"');
-    expect(html).toContain('Working…');
+    expect(html).toContain(workingCopy);
     expect(renderToStaticMarkup(
       <ThreadTimeline
         rows={[command('c-a', 'ls'), command('c-b', 'pwd')]}
@@ -444,7 +448,7 @@ describe('ThreadTimeline', () => {
         thinking={null}
         waitingOnUser
       />
-    )).not.toContain('Working…');
+    )).not.toContain(workingCopy);
     expect(renderToStaticMarkup(
       <ThreadTimeline
         rows={[{
@@ -467,7 +471,7 @@ describe('ThreadTimeline', () => {
         status="active"
         thinking={null}
       />
-    )).not.toContain('Working…');
+    )).not.toContain(workingCopy);
   });
 
   it('renders goal, context, unread divider, and load-older', () => {

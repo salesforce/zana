@@ -2240,7 +2240,8 @@ describe("bridge", () => {
       PATH: binDir,
     });
     // The curated catalog is always offered, so a probe reporting only Opus and
-    // Sonnet still yields every curated row; the probe's default wins.
+    // Sonnet still yields every curated row; ZCC's product default (Sonnet) wins
+    // over the probe's recommended default.
     expect(models.map((model) => model.model)).toEqual([
       "claude-fable-5",
       "claude-opus-5[1m]",
@@ -2250,8 +2251,8 @@ describe("bridge", () => {
     ]);
     expect(models.filter((model) => model.isDefault)).toEqual([
       expect.objectContaining({
-        model: "claude-opus-5[1m]",
-        displayName: "Opus 5 (1M)",
+        model: "claude-sonnet-5",
+        displayName: "Sonnet 5",
       }),
     ]);
     expect(selectedOnlyModels.map((model) => model.model)).toEqual([

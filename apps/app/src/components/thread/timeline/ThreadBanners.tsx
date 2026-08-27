@@ -7,7 +7,13 @@ import type {
   ThreadTimelinePendingTodos
 } from '@zana-ai/zcc-domain/thread-runtime';
 import type { TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
-import { isBusyThreadStatus, threadStatusLabel, threadStatusTone } from '../thread-timeline-model.js';
+import {
+  isBusyThreadStatus,
+  threadStatusLabel,
+  threadStatusTone,
+  threadWorkingIndicatorLabel
+} from '../thread-timeline-model.js';
+import { useThreadWorkingPhrase } from '../useThreadWorkingPhrase.js';
 
 const TODO_STATUS_SORT_RANK: Record<ThreadTimelinePendingTodoItemStatus, number> = {
   in_progress: 0,
@@ -139,10 +145,12 @@ export function ThreadWorkingIndicator({
   thinking: ActiveThinking | null;
   waitingOnUser?: boolean;
 }) {
-  if (waitingOnUser || (!isBusyThreadStatus(status) && !thinking)) return null;
   const isThinking = thinking != null;
+  const visible = !waitingOnUser && (isBusyThreadStatus(status) || isThinking);
+  const phrase = useThreadWorkingPhrase(visible && !isThinking);
+  if (!visible) return null;
   const details = thinking?.text?.trim() ?? '';
-  const label = isThinking ? 'Thinking…' : 'Working…';
+  const label = threadWorkingIndicatorLabel(isThinking, phrase);
   if (details) {
     return (
       <details className="thread-working-indicator" data-testid="thread-thinking">
@@ -198,7 +206,9 @@ export function ThreadStatusBadge({
   waitingOnUser?: boolean;
   thinking?: ActiveThinking | null;
 }) {
-  const label = threadStatusLabel(status, waitingOnUser, thinking);
+  const rotate = isBusyThreadStatus(status) && !waitingOnUser && thinking == null;
+  const phrase = useThreadWorkingPhrase(rotate);
+  const label = threadStatusLabel(status, waitingOnUser, thinking, phrase);
   if (!label) return null;
   const tone = threadStatusTone(status, waitingOnUser);
   return (

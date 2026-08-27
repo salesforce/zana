@@ -43,6 +43,7 @@ describe('project settings store', () => {
     await store.set('p1', { model: 'sonnet', permissionMode: 'plan', piModel: 'provider/model' });
     await store.set('p1', { model: 'opus' });
     await store.set('p2', { worktreeIsolation: true });
+    await store.set('p3', { remoteToolProxy: true });
 
     const disk = JSON.parse(readFileSync(file, 'utf8'));
     expect(disk.p1.harnesses.byId.claude.compatibility).toMatchObject({ model: 'opus', permissionMode: 'plan' });
@@ -50,6 +51,8 @@ describe('project settings store', () => {
     expect(disk.p1.harnesses.byId.pi.compatibility).toMatchObject({ model: 'provider/model' });
     expect(disk.p1).not.toHaveProperty('model');
     expect(disk.p2).toEqual({ worktreeIsolation: true });
+    expect(disk.p3).toEqual({ remoteToolProxy: true });
+    expect(store.get('p3')).toMatchObject({ remoteToolProxy: true });
   });
 
   it('removes only the requested project settings entry', async () => {

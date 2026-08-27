@@ -24,6 +24,9 @@ vi.mock('./thread/secondary-panel/ThreadBrowserTab.js', () => ({
 vi.mock('./thread/secondary-panel/ThreadPluginTab.js', () => ({
   ThreadPluginTab: () => <div data-testid="thread-plugin-tab" />
 }));
+vi.mock('./thread/secondary-panel/ThreadExplorerTab.js', () => ({
+  ThreadExplorerTab: () => <div data-testid="thread-explorer-tab" />
+}));
 
 import { AgentSessionView, agentWriteScope } from './AgentSessionView.js';
 
@@ -174,6 +177,11 @@ describe('AgentSessionView', () => {
       <AgentSessionView session={session({ id: 's-plugin' })} projectId="p1" projectName="demo" state="working" terminalAnchorId="a" />
     )).toContain('data-testid="thread-plugin-tab"');
 
+    persistPanel('s-explorer', { activeId: 'explorer:1', tabs: [{ id: 'explorer:1', kind: 'explorer', title: 'Explorer' }] });
+    expect(renderToStaticMarkup(
+      <AgentSessionView session={session({ id: 's-explorer' })} projectId="p1" projectName="demo" state="working" terminalAnchorId="a" />
+    )).toContain('data-testid="thread-explorer-tab"');
+
     persistPanel('s-term', { activeId: 'term:1', tabs: [{ id: 'term:1', kind: 'terminal', title: 'Terminal', sessionId: 'other' }] });
     expect(renderToStaticMarkup(
       <AgentSessionView session={session({ id: 's-term' })} projectId="p1" projectName="demo" state="working" terminalAnchorId="a" />
@@ -226,6 +234,8 @@ describe('AgentSessionView', () => {
   it('omits the sidecar terminal path and uses AgentDiffPanel for the Diff pin', () => {
     const source = readFileSync(new URL('./AgentSessionView.tsx', import.meta.url), 'utf8');
     expect(source).toContain('allowSidecarTerminal={false}');
+    expect(source).toContain("kind: 'explorer'");
+    expect(source).toContain('<ThreadExplorerTab');
     expect(source).toContain('thread-detail-split');
     expect(source).toContain('thread-detail-header');
     expect(source.indexOf('thread-detail-split')).toBeLessThan(source.indexOf('thread-detail-main agent-session-main'));

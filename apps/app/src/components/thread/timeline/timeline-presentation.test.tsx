@@ -436,7 +436,7 @@ describe('conversation and banners', () => {
     )).toContain('Thinking…');
     expect(renderToStaticMarkup(
       <ThreadWorkingIndicator status="active" thinking={null} />
-    )).toContain('Working…');
+    )).toContain('Planning next move…');
     expect(renderToStaticMarkup(
       <ThreadWorkingIndicator status="active" thinking={null} />
     )).not.toContain('thread-timeline-work-chevron');

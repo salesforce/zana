@@ -61,6 +61,18 @@ describe('thread secondary panel state', () => {
     expect(activePinnedView(parsed)).toBe('plan');
   });
 
+  it('restores a persisted Explorer tab', () => {
+    const parsed = parseSecondaryPanelState({
+      version: 1,
+      isOpen: true,
+      widthPx: 360,
+      activeId: 'explorer:1',
+      tabs: [{ id: 'explorer:1', kind: 'explorer', title: 'Explorer' }]
+    });
+    expect(parsed.activeId).toBe('explorer:1');
+    expect(parsed.tabs[0]?.kind).toBe('explorer');
+  });
+
   it('replaces an active New Tab when opening a file preview', () => {
     const withNew = openNewTab(emptySecondaryPanelState());
     const next = addClosableTab(withNew, { kind: 'file-preview', title: 'README.md', path: '/tmp/README.md' });
@@ -186,6 +198,8 @@ describe('thread secondary panel state', () => {
     });
     expect(addClosableTab(browser, { kind: 'browser', title: 'Browser', url: 'https://example.com' }).tabs).toHaveLength(1);
     expect(addClosableTab(browser, { kind: 'browser', title: 'Browser', url: 'https://zana.ai' }).tabs).toHaveLength(2);
+    const explorer = addClosableTab(emptySecondaryPanelState(), { kind: 'explorer', title: 'Explorer' });
+    expect(addClosableTab(explorer, { kind: 'explorer', title: 'Explorer' }).tabs).toHaveLength(1);
   });
 
   it('leaves inactive tabs in place when closing another tab', () => {

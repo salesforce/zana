@@ -25,7 +25,7 @@ describe('ThreadListEntry', () => {
       </MemoryRouter>
     );
     expect(html).toContain('data-testid="thread-list-entry-working"');
-    expect(html).toContain('Working');
+    expect(html).toContain('Planning next move');
     expect(html).toContain('data-kind="thread"');
     expect(html).toContain('Thread');
     expect(html).toContain('<svg');

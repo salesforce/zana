@@ -160,6 +160,8 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain("event.key !== 'Tab'");
     expect(source).toContain('includeDisconnected');
     expect(source).toContain('ComposerHostActionChip');
+    expect(source).toContain('composerRemoteToolsMark');
+    expect(source).toContain('composer-remote-tools-mark');
     expect(source).toContain('HostSshIdentityDialog');
     expect(source.indexOf('<EnvironmentPicker')).toBeGreaterThan(metaIdx);
     expect(source.indexOf('ariaLabel="Permission mode"')).toBeGreaterThan(metaIdx);

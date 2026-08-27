@@ -99,7 +99,10 @@ function requirePrimaryHost(ctx: ProductHttpContext): HostRow {
 }
 
 function pairingCommand(server: string, joinCode: string, hostId: string): string {
-  return `curl -fL ${server}/install.sh | sh -s -- --join-code ${joinCode} --host-id ${hostId} --server ${server}`;
+  return (
+    `curl -fL --progress-meter --connect-timeout 10 --max-time 60 --retry 2 ${server}/install.sh` +
+    ` | sh -s -- --join-code ${joinCode} --host-id ${hostId} --server ${server}`
+  );
 }
 
 function executionPath(remote: ProjectRemote, homeDir: string | null): string {

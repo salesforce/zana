@@ -12,12 +12,34 @@ export type HostBootstrapOutcome =
   | { ok: true; hostId: string }
   | { ok: false; code: string; message: string; pairingCommand?: string };
 
+/** First DNS label, keeping IPv4/IPv6 intact so FQDNs fit a compact chip. */
+export function shortHostName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return name;
+  if (trimmed.includes(':')) return trimmed;
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(trimmed)) return trimmed;
+  return trimmed.split('.')[0] || trimmed;
+}
+
 export function hostPickerLabel(host: Host): string {
-  return host.isPrimary ? `${host.name} (this machine)` : host.name;
+  return host.isPrimary ? 'This machine' : shortHostName(host.name);
 }
 
 export function hostPickerDescription(host: Host): string {
-  return host.status === 'connected' ? 'Online' : 'Offline';
+  const status = host.status === 'connected' ? 'Online' : 'Offline';
+  if (!host.isPrimary) return status;
+  const shortName = shortHostName(host.name);
+  if (!shortName || shortName.toLowerCase() === 'this machine') return status;
+  return `${shortName} · ${status}`;
+}
+
+export function composerHostActionChipLabel(action: ComposerHostAction): string | null {
+  if (action.kind === 'ready') return null;
+  if (action.kind === 'blocked' && action.needsPublicUrl) {
+    return action.hostId ? 'Set URL' : null;
+  }
+  if (action.kind === 'blocked') return 'Unavailable';
+  return action.label;
 }
 
 export function resolveComposerHostAction(input: {
@@ -84,7 +106,10 @@ export function shouldBlockComposerSend(
   action: ComposerHostAction,
   project?: Project
 ): boolean {
-  if (action.kind === 'blocked') return true;
+  if (action.kind === 'blocked') {
+    if (action.needsPublicUrl && project?.remote && !project.hostId) return false;
+    return true;
+  }
   if (project?.remote) return false;
   return action.kind === 'fix';
 }
@@ -97,6 +122,15 @@ export function shouldShowHostPicker(
   const connected = hosts.filter((host) => host.status === 'connected');
   if (hosts.some((host) => host.status === 'disconnected' && !host.isPrimary)) return true;
   return connected.length > 1;
+}
+
+/** Short composer mark when an SSH project runs the local harness with remote tools. */
+export function composerRemoteToolsMark(
+  project: Project | undefined,
+  remoteToolProxy: boolean
+): string | null {
+  if (!project?.remote || project.hostId || !remoteToolProxy) return null;
+  return 'Local agent · remote tools';
 }
 
 export function bootstrapOutcome(

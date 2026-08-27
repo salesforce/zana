@@ -1,3 +1,4 @@
+import { Laptop, Monitor } from 'lucide-react';
 import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
 import { hostPickerDescription, hostPickerLabel } from './composer-host-status.js';
@@ -24,17 +25,26 @@ export function HostMachinePicker({
   const selected = value && visible.some((host) => host.id === value)
     ? value
     : (visible.find((host) => host.status === 'connected') ?? visible[0])!.id;
+  const selectedHost = visible.find((host) => host.id === selected);
   return (
     <PopoverPicklist
       value={selected}
       ariaLabel={ariaLabel}
-      searchable={false}
+      searchable={visible.length > 5}
+      minWidth={280}
+      title={selectedHost?.name}
       onChange={onChange}
       options={visible.map((host) => ({
         value: host.id,
         label: hostPickerLabel(host),
         description: hostPickerDescription(host),
-        tone: host.status === 'disconnected' ? 'warning' : 'default'
+        tone: host.status === 'disconnected' ? 'warning' : 'default',
+        content: (
+          <span className="host-machine-picker-option">
+            {host.isPrimary ? <Laptop size={14} aria-hidden="true" /> : <Monitor size={14} aria-hidden="true" />}
+            {hostPickerLabel(host)}
+          </span>
+        )
       }))}
     />
   );

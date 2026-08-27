@@ -257,13 +257,15 @@ function markDefaultModel(
   models: AvailableModel[],
   discoveredModels: readonly ModelInfo[],
 ): AvailableModel[] {
+  // Product default (Sonnet) wins over the CLI's recommended "default" row so
+  // a probe that still names Opus cannot snap new threads away from Sonnet.
   const discoveredDefault = resolveDiscoveredDefaultModel(discoveredModels);
   const defaultModel =
-    discoveredDefault &&
-    models.some((model) => model.model === discoveredDefault)
-      ? discoveredDefault
-      : models.some((model) => model.model === DEFAULT_CLAUDE_CODE_MODEL)
-        ? DEFAULT_CLAUDE_CODE_MODEL
+    models.some((model) => model.model === DEFAULT_CLAUDE_CODE_MODEL)
+      ? DEFAULT_CLAUDE_CODE_MODEL
+      : discoveredDefault &&
+          models.some((model) => model.model === discoveredDefault)
+        ? discoveredDefault
         : models[0]?.model;
   return models.map((model) =>
     model.model === defaultModel ? { ...model, isDefault: true } : model,

@@ -11,7 +11,7 @@ describe('fallback thread catalogs', () => {
       'Opus 4.7 (1M)',
       'Sonnet 5'
     ]);
-    expect(models.find((row) => row.isDefault)?.model).toBe('claude-opus-5[1m]');
+    expect(models.find((row) => row.isDefault)?.model).toBe('claude-sonnet-5');
     expect(models[0]?.supportedReasoningEfforts.map((effort) => effort.reasoningEffort)).toEqual([
       'none',
       'low',

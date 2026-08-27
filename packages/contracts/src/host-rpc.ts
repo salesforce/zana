@@ -23,7 +23,7 @@ import {
  * Bump when any enroll payload, daemon WS message, host-rpc command, or host
  * event envelope changes shape or meaning. Mismatch fails before dispatch.
  */
-export const HOST_RPC_PROTOCOL_VERSION = 15;
+export const HOST_RPC_PROTOCOL_VERSION = 16;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
 
 const UuidSchema = z.string().uuid();
@@ -228,6 +228,12 @@ export const ThreadStartCommandSchema = z.object({
   microVmCpus: z.number().int().positive().max(32).optional(),
   microVmMemoryMib: z.number().int().positive().max(65536).optional(),
   remote: threadLaunchRemoteSchema.optional(),
+  /**
+   * Local harness, remote tools. When true the host must start the provider
+   * CLI locally (no `ssh -t`) and deny native fs/shell tools in favor of
+   * remote MCP / dynamic tools over the existing SSH ControlMaster path.
+   */
+  remoteToolProxy: z.boolean().optional(),
   reconnectTmuxId: UuidSchema.optional(),
   resume: z.boolean().optional(),
   cohort: threadLaunchCohortSchema.optional(),

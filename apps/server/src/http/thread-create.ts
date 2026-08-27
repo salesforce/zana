@@ -8,6 +8,7 @@ import {
   createEnvironment,
   createThread,
   getEnvironment,
+  getPrimaryHost,
   getThread,
   updateEnvironmentDiscovery,
   updateEnvironmentStatus,
@@ -32,6 +33,10 @@ import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
 import type { ProductHttpContext } from './product-context.js';
 import { unmanagedAttachRefusal } from '../services/threads/workspace-path-claims.js';
 import { resolveManagedTargetPath, resolvePersonalTargetPath } from '../services/threads/worktree-paths.js';
+import {
+  isRemoteToolProxyActive,
+  readRemoteToolProxySetting
+} from '../services/threads/remote-tool-proxy.js';
 import { listJsonFiles } from './disk-json.js';
 import { join } from 'node:path';
 
@@ -208,11 +213,23 @@ export async function createThreadFromRequest(
   const prompt = input.input.map((part) => part.trim()).filter((part) => part.length > 0);
 
   const project = requireProject(ctx, input.projectId);
+  const remoteToolProxy = isRemoteToolProxyActive(project, {
+    remoteToolProxy: readRemoteToolProxySetting(ctx.dataDir, project.id)
+  });
   let hostId: string;
   try {
-    hostId = ctx.hostHub.resolveHostId(input.hostId);
+    if (remoteToolProxy) {
+      const primary = getPrimaryHost(ctx.db);
+      if (!primary) {
+        throw new ThreadCreateError(503, 'host-unavailable', 'This machine’s host daemon is not connected.');
+      }
+      hostId = ctx.hostHub.resolveHostId(primary.id);
+    } else {
+      hostId = ctx.hostHub.resolveHostId(input.hostId);
+    }
     ctx.hostHub.ensureHostSessionReady(hostId);
   } catch (error) {
+    if (error instanceof ThreadCreateError) throw error;
     throw mapHostError(error);
   }
 
@@ -364,6 +381,9 @@ async function startThreadOnHost(
         proxyJump: args.project.remote.proxyJump
       }
     : undefined;
+  const remoteToolProxy = isRemoteToolProxyActive(args.project, {
+    remoteToolProxy: readRemoteToolProxySetting(ctx.dataDir, args.project.id)
+  });
   await ctx.hostHub.callHostOnlineRpc<ThreadStartResult>({
     hostId: args.hostId,
     command: {
@@ -373,7 +393,7 @@ async function startThreadOnHost(
       projectId: args.project.id,
       providerId: args.input.providerId,
       input: args.prompt,
-      cwd: remote ? undefined : args.input.cwd,
+      cwd: remote && !remoteToolProxy ? undefined : args.input.cwd,
       title: args.thread.title ?? undefined,
       extraArgs: args.input.extraArgs,
       harnessRouting: args.input.harnessRouting,
@@ -384,12 +404,13 @@ async function startThreadOnHost(
       inboxLevel: args.input.inboxLevel,
       autonomous: args.input.autonomous,
       resumeSessionId: args.input.resumeSessionId,
-      environment: remote ? undefined : args.input.executionEnvironment,
+      environment: remote && !remoteToolProxy ? undefined : args.input.executionEnvironment,
       sandboxDenyNetwork: args.input.sandboxDenyNetwork,
       microVmImage: args.input.microVmImage,
       microVmCpus: args.input.microVmCpus,
       microVmMemoryMib: args.input.microVmMemoryMib,
       remote,
+      ...(remoteToolProxy ? { remoteToolProxy: true } : {}),
       reconnectTmuxId: args.input.reconnectTmuxId,
       resume: args.input.resume,
       cohort: args.input.cohort

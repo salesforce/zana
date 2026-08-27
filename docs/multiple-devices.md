@@ -10,6 +10,18 @@ They work together after you install a host daemon:
   a host daemon, then converts the project so later threads run on the enrolled
   machine instead of SSH PTY.
 
+An SSH remote has **three execution modes**:
+
+1. **SSH PTY (default)** — the coding CLI itself runs on the box via `ssh -t`.
+   Send stays allowed; this machine's host daemon must be connected (it owns
+   `~/.ssh`).
+2. **Local agent, remote tools** — a per-project toggle on the Remote workspace.
+   The LLM/harness stays on this machine; Read, Write, Edit, Glob, Grep, and
+   Shell run on the remote over the existing SSH ControlMaster path. Composer
+   shows **Local agent · remote tools**. Install remains available.
+3. **Enrolled daemon** — composer **Install** puts a host-daemon on the box and
+   binds the project to it. Later threads run there over RPC, not SSH.
+
 SSH is the bootstrap and repair channel. The enrolled daemon is the execution
 path after Install. Copy-paste join remains for boxes you cannot SSH to from
 this machine.
@@ -86,7 +98,8 @@ This machine's host daemon must be connected — it owns `~/.ssh` and performs
 the SSH. If SSH cannot run, copy the Settings → Add machine join command.
 
 Send is blocked only when the *execution* host is an enrolled machine that is
-offline. SSH remotes keep working over SSH PTY until you install a daemon.
+offline. SSH remotes keep working over SSH PTY, or over the local-agent /
+remote-tools toggle, until you install a daemon.
 
 ---
 

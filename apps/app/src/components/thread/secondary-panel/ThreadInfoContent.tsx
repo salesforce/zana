@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Box, Copy, Cpu, Folder, Gauge, GitBranch, GitPullRequest } from 'lucide-react';
+import { Box, Copy, Cpu, Folder, Gauge, GitBranch, GitPullRequest, Server } from 'lucide-react';
 import type { GitHostPullRequest, WorkspaceStatus } from '@zana-ai/zcc-domain';
 import { product } from '../../../lib/product-client.js';
+import { useData } from '../../../store.js';
 import {
   workspaceFileBasename,
   workspaceFileKindLetter,
@@ -11,7 +12,12 @@ import {
   applyIfCurrent,
   copyText,
   environmentLabel,
-  hydrateThreadInfo
+  hydrateRemoteToolProxyInfo,
+  hydrateThreadInfo,
+  sshRowValue,
+  sshStatusText,
+  threadInfoEnvironmentLabel,
+  type ThreadSshStatus
 } from './threadSecondaryPanelLogic.js';
 import {
   humanThreadModelLabel,
@@ -29,7 +35,11 @@ export function ThreadInfoRows({
   pullRequest,
   model,
   reasoningLevel,
-  providerId
+  providerId,
+  remoteToolProxy = false,
+  sshTarget = null,
+  sshStatus = null,
+  remoteDirectory = null
 }: {
   isWorktree: boolean;
   environmentName?: string | null;
@@ -40,28 +50,51 @@ export function ThreadInfoRows({
   model?: string | null;
   reasoningLevel?: string | null;
   providerId?: string | null;
+  remoteToolProxy?: boolean;
+  sshTarget?: string | null;
+  sshStatus?: ThreadSshStatus | null;
+  remoteDirectory?: string | null;
 }) {
-  const gitLabel = workspaceStatusPresentation(workspaceStatus).label;
-  const files = workspaceStatus?.files ?? [];
+  const gitLabel = remoteToolProxy ? null : workspaceStatusPresentation(workspaceStatus).label;
+  const files = remoteToolProxy ? [] : (workspaceStatus?.files ?? []);
   const modelLabel = model ? humanThreadModelLabel(model, providerId ?? undefined) : null;
   const reasoningLabel = humanThreadReasoningLabel(reasoningLevel);
+  const directory = remoteDirectory || cwd;
+  const sshLabel = sshTarget ? sshRowValue(sshTarget, sshStatus) : null;
+  const sshTone = sshStatus === 'connected' ? 'connected' : sshStatus === 'unreachable' ? 'unreachable' : null;
 
   return (
     <div className="thread-info-content" data-testid="thread-info-tab">
       <InfoRow icon={<Box size={14} />} label="Environment" testId="thread-info-environment">
-        {environmentLabel(isWorktree, environmentName)}
+        {threadInfoEnvironmentLabel(isWorktree, environmentName, remoteToolProxy)}
       </InfoRow>
 
-      {cwd ? (
+      {sshLabel ? (
+        <InfoRow icon={<Server size={14} />} label="SSH" testId="thread-info-ssh">
+          <span className="thread-info-directory" title={sshLabel}>
+            <span className="thread-info-truncate">{sshTarget}</span>
+            {sshStatusText(sshStatus) ? (
+              <span
+                className={`thread-info-ssh-status${sshTone ? ` is-${sshTone}` : ''}`}
+                data-testid="thread-info-ssh-status"
+              >
+                {sshStatusText(sshStatus)}
+              </span>
+            ) : null}
+          </span>
+        </InfoRow>
+      ) : null}
+
+      {directory ? (
         <InfoRow icon={<Folder size={14} />} label="Directory" testId="thread-info-directory">
           <span className="thread-info-directory">
-            <span className="thread-info-truncate" title={cwd}>{cwd}</span>
+            <span className="thread-info-truncate" title={directory}>{directory}</span>
             <button
               type="button"
               className="thread-info-copy"
               aria-label="Copy directory"
               data-testid="thread-info-copy-directory"
-              onClick={() => { void copyText(cwd); }}
+              onClick={() => { void copyText(directory); }}
             >
               <Copy size={12} />
             </button>
@@ -69,7 +102,7 @@ export function ThreadInfoRows({
         </InfoRow>
       ) : null}
 
-      {branchName ? (
+      {branchName && !remoteToolProxy ? (
         <InfoRow icon={<GitBranch size={14} />} label="Branch" testId="thread-info-branch">
           {branchName}
         </InfoRow>
@@ -162,9 +195,14 @@ export function ThreadInfoContent({
   reasoningLevel?: string | null;
   providerId?: string | null;
 }) {
+  const project = useData((s) => s.projects.find((row) => row.id === projectId) ?? null);
   const [environmentName, setEnvironmentName] = useState<string | null>(null);
   const [workspaceStatus, setWorkspaceStatus] = useState<WorkspaceStatus | null>(null);
   const [pullRequest, setPullRequest] = useState<GitHostPullRequest | null>(null);
+  const [remoteToolProxy, setRemoteToolProxy] = useState(false);
+  const [sshTarget, setSshTarget] = useState<string | null>(null);
+  const [sshStatus, setSshStatus] = useState<ThreadSshStatus | null>(null);
+  const [remoteDirectory, setRemoteDirectory] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -182,6 +220,27 @@ export function ThreadInfoContent({
     return () => { cancelled = true; };
   }, [environmentId, projectId, threadId]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setRemoteToolProxy(false);
+    setSshTarget(null);
+    setSshStatus(null);
+    setRemoteDirectory(null);
+    if (!project?.remote || project.hostId) return;
+    void hydrateRemoteToolProxyInfo(project, {
+      getSettings: (id) => product.projectSettings.get(id),
+      remoteRoot: (id) => product.fs.remoteRoot(id)
+    }).then((next) => {
+      applyIfCurrent(cancelled, next, (info) => {
+        setRemoteToolProxy(info.active);
+        setSshTarget(info.sshTarget);
+        setSshStatus(info.active ? (info.sshStatus ?? 'unreachable') : null);
+        setRemoteDirectory(info.remoteDirectory);
+      });
+    });
+    return () => { cancelled = true; };
+  }, [project?.id, project?.hostId, project?.remote?.host, project?.remote?.user]);
+
   return (
     <ThreadInfoRows
       isWorktree={isWorktree}
@@ -193,6 +252,10 @@ export function ThreadInfoContent({
       model={model}
       reasoningLevel={reasoningLevel}
       providerId={providerId}
+      remoteToolProxy={remoteToolProxy}
+      sshTarget={sshTarget}
+      sshStatus={sshStatus}
+      remoteDirectory={remoteDirectory}
     />
   );
 }

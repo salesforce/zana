@@ -3,9 +3,12 @@ import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
 import type { Project } from '@zana-ai/zcc-domain/product';
 import {
   bootstrapOutcome,
+  composerHostActionChipLabel,
+  composerRemoteToolsMark,
   hostPickerDescription,
   hostPickerLabel,
   resolveComposerHostAction,
+  shortHostName,
   shouldBlockComposerSend,
   shouldShowHostPicker
 } from './composer-host-status.js';
@@ -54,6 +57,19 @@ describe('composer host status', () => {
     expect(shouldShowHostPicker([primary], sshProject)).toBe(true);
   });
 
+  it('marks local-agent remote-tools mode without blocking send or hiding Install', () => {
+    expect(composerRemoteToolsMark(sshProject, true)).toBe('Local agent · remote tools');
+    expect(composerRemoteToolsMark(sshProject, false)).toBeNull();
+    expect(composerRemoteToolsMark({ ...sshProject, hostId: 'h-remote' }, true)).toBeNull();
+    const action = resolveComposerHostAction({
+      hosts: [primary],
+      project: sshProject,
+      publicAppUrl: 'https://box.tailnet.ts.net'
+    });
+    expect(action.kind).toBe('install');
+    expect(shouldBlockComposerSend(action, sshProject)).toBe(false);
+  });
+
   it('asks to pick SSH when an enrolled host cannot be repaired yet', () => {
     const offline = host({ id: 'h-remote', name: 'Devbox', status: 'disconnected' });
     const project: Project = {
@@ -81,6 +97,8 @@ describe('composer host status', () => {
       publicAppUrl: 'http://127.0.0.1:8780'
     });
     expect(action).toMatchObject({ kind: 'blocked', needsPublicUrl: true });
+    expect(shouldBlockComposerSend(action, sshProject)).toBe(false);
+    expect(composerHostActionChipLabel(action)).toBeNull();
   });
 
   it('offers Fix and blocks send when an enrolled host is offline', () => {
@@ -117,10 +135,34 @@ describe('composer host status', () => {
   });
 
   it('labels this machine and online/offline status', () => {
-    expect(hostPickerLabel(primary)).toBe('Laptop (this machine)');
-    expect(hostPickerDescription(primary)).toBe('Online');
+    expect(shortHostName('grebmann-ltmmfjc.internal.salesforce.com')).toBe('grebmann-ltmmfjc');
+    expect(shortHostName('MacBook-Pro.local')).toBe('MacBook-Pro');
+    expect(shortHostName('10.0.0.5')).toBe('10.0.0.5');
+    expect(shortHostName('fe80::1')).toBe('fe80::1');
+    expect(shortHostName('Laptop')).toBe('Laptop');
+    expect(shortHostName('')).toBe('');
+    expect(hostPickerLabel(primary)).toBe('This machine');
+    expect(hostPickerDescription(primary)).toBe('Laptop · Online');
+    expect(hostPickerLabel(host({
+      id: 'h-fqdn',
+      name: 'grebmann-ltmmfjc.internal.salesforce.com',
+      isPrimary: true
+    }))).toBe('This machine');
+    expect(hostPickerDescription(host({
+      id: 'h-fqdn',
+      name: 'grebmann-ltmmfjc.internal.salesforce.com',
+      isPrimary: true
+    }))).toBe('grebmann-ltmmfjc · Online');
     expect(hostPickerLabel(remoteHost)).toBe('Devbox');
     expect(hostPickerDescription(remoteHost)).toBe('Offline');
+    expect(composerHostActionChipLabel({ kind: 'ready' })).toBeNull();
+    expect(composerHostActionChipLabel({ kind: 'blocked', reason: 'down' })).toBe('Unavailable');
+    expect(composerHostActionChipLabel({
+      kind: 'blocked',
+      needsPublicUrl: true,
+      hostId: 'h-remote',
+      reason: 'Set a public app URL'
+    })).toBe('Set URL');
   });
 
   it('reads done and error events from bootstrap NDJSON', () => {

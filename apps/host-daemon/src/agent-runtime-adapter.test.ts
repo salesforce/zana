@@ -235,6 +235,81 @@ describe('agent runtime thread adapter', () => {
     expect(created).toEqual([cwd]);
   });
 
+  it('denies native fs/shell tools and attaches remote dynamic tools without ssh -t', async () => {
+    const started: Array<{
+      disallowedTools?: readonly string[];
+      instructions?: string;
+      dynamicTools?: Array<{ name: string }>;
+    }> = [];
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined,
+      dataDir: cwd,
+      createRuntime: (options) => {
+        const runtime = createAgentRuntimeWithAdapters({
+          ...options,
+          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+        });
+        return {
+          ...runtime,
+          startThread: async (input) => {
+            started.push({
+              disallowedTools: input.disallowedTools,
+              instructions: input.instructions,
+              dynamicTools: input.dynamicTools
+            });
+            return runtime.startThread(input);
+          }
+        };
+      }
+    });
+    await adapter.startWork({
+      threadId: randomUUID(),
+      environmentId: randomUUID(),
+      projectId: 'p-ssh',
+      providerId: 'fake',
+      input: ['inspect remote'],
+      cwd,
+      remote: { host: 'devbox', user: 'me', remotePath: '/src' },
+      remoteToolProxy: true
+    });
+    adapter.dispose();
+    expect(started[0]?.disallowedTools).toEqual(expect.arrayContaining(['Bash', 'Read', 'Write']));
+    expect(started[0]?.instructions).toMatch(/remote_read/);
+    expect(started[0]?.dynamicTools?.map((tool) => tool.name)).toContain('remote_exec');
+  });
+
+  it('does not deny native tools when remoteToolProxy is off', async () => {
+    const started: Array<{ disallowedTools?: readonly string[] }> = [];
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined,
+      dataDir: cwd,
+      createRuntime: (options) => {
+        const runtime = createAgentRuntimeWithAdapters({
+          ...options,
+          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+        });
+        return {
+          ...runtime,
+          startThread: async (input) => {
+            started.push({ disallowedTools: input.disallowedTools });
+            return runtime.startThread(input);
+          }
+        };
+      }
+    });
+    await adapter.startWork({
+      threadId: randomUUID(),
+      environmentId: randomUUID(),
+      projectId: 'p-ssh',
+      providerId: 'fake',
+      input: ['hello'],
+      cwd,
+      remote: { host: 'devbox' }
+    });
+    adapter.dispose();
+    expect(started[0]?.disallowedTools).toBeUndefined();
+  });
+
   it('lists fake provider models through AgentRuntime', async () => {
     const adapter = createAgentRuntimeAdapter({
       emit: () => undefined,

@@ -14,9 +14,13 @@ import {
   renameRemote,
   deleteRemote,
   execRemote,
+  globRemote,
+  grepRemote,
   resolveAndExecRemote,
+  resolveAndReadRemote,
   sshBaseArgs,
-  type RemoteExecResolveDeps
+  type RemoteExecResolveDeps,
+  type RemoteFsResolveDeps
 } from './remote-fs.js';
 import type { ProjectRemote, RemoteExecResult, RemoteRootResult } from '@zana-ai/zcc-domain/product';
 
@@ -462,6 +466,46 @@ describe('resolveAndExecRemote (gating, mocked deps)', () => {
   });
 });
 
+describe('resolveAndReadRemote (gating, mocked deps)', () => {
+  const REMOTE: ProjectRemote = { host: 'fake-host', remotePath: '/home/sfwork/core' };
+  const okRoot: RemoteRootResult = { ok: true, root: '/home/sfwork/core' };
+
+  function deps(over: Partial<RemoteFsResolveDeps> = {}): RemoteFsResolveDeps {
+    return {
+      findRemote: () => REMOTE,
+      defaultPath: '/home/sfwork/core',
+      resolveRoot: async () => okRoot,
+      exec: async () => ({ ok: true, code: 0, stdout: '', stderr: '' }),
+      readFile: async () => ({ ok: true, content: 'hi', bytes: 2, binary: false }),
+      writeFile: async () => ({ ok: true, bytes: 1 }),
+      createFile: async () => ({ ok: true }),
+      listDir: async () => [],
+      glob: async () => ({ ok: true, files: [] }),
+      grep: async () => ({ ok: true, output: '', truncated: false }),
+      ...over
+    };
+  }
+
+  it('rejects an unknown / non-remote projectId BEFORE reading', async () => {
+    const readFile = vi.fn(async () => ({ ok: true as const, content: 'hi', bytes: 2, binary: false }));
+    const res = await resolveAndReadRemote(
+      deps({ findRemote: () => null, readFile }),
+      'local-or-unknown',
+      'README.md'
+    );
+    expect(res.ok).toBe(false);
+    expect(res.message).toBe('Not a remote project');
+    expect(readFile).not.toHaveBeenCalled();
+  });
+
+  it('passes the store-resolved remote + root through to read', async () => {
+    const readFile = vi.fn(async () => ({ ok: true as const, content: 'hi', bytes: 2, binary: false }));
+    const res = await resolveAndReadRemote(deps({ readFile }), 'prj', '/home/sfwork/core/README.md');
+    expect(res.ok).toBe(true);
+    expect(readFile).toHaveBeenCalledWith(REMOTE, '/home/sfwork/core', '/home/sfwork/core/README.md');
+  });
+});
+
 // End-to-end over the fake ssh: the SAME resolveAndExecRemote chain, but with the
 // REAL remoteRoot + execRemote as deps, proving the full path (store hit →
 // realpath root via `pwd -P` → confined `cd` → command) works against a real
@@ -531,5 +575,29 @@ describe('resolveAndExecRemote (end-to-end over fake ssh)', () => {
     expect(res.ok).toBe(false);
     expect(res.message).toBeTruthy();
     expect(res.stdout).toBeUndefined();
+  });
+
+  it('globs under the confined root and greps without escaping', async () => {
+    await mkdir(join(workDir, 'src'));
+    await writeFile(join(workDir, 'src', 'app.ts'), 'export const hit = 1;\n');
+    await writeFile(join(workDir, 'secret.ts'), 'nope\n');
+    const root = await realpath(workDir);
+    const remote: ProjectRemote = { host: 'fake-host', remotePath: workDir };
+    const files = await globRemote(remote, root, '*.ts', `${root}/src`);
+    expect(files.ok).toBe(true);
+    if (files.ok) {
+      expect(files.files.some((path) => path.endsWith('src/app.ts'))).toBe(true);
+      expect(files.files.some((path) => path.endsWith('secret.ts'))).toBe(false);
+    }
+    const grepped = await grepRemote(remote, root, 'hit', `${root}/src`);
+    expect(grepped.ok).toBe(true);
+    if (grepped.ok) expect(grepped.output).toMatch(/hit/);
+    await writeFile(join(workDir, 'src', 'AGENTS.md'), '# Salesforce Core Repository\n');
+    const fileGrep = await grepRemote(remote, root, 'Salesforce Core', 'src/AGENTS.md');
+    expect(fileGrep.ok).toBe(true);
+    if (fileGrep.ok) expect(fileGrep.output).toMatch(/Salesforce Core/);
+    const escaped = await globRemote(remote, root, '*', '/etc');
+    expect(escaped.ok).toBe(false);
+    expect(escaped.ok === false && escaped.message).toMatch(/outside the project/);
   });
 });

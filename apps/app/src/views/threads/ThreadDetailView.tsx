@@ -38,6 +38,7 @@ import { ThreadFilePreviewTab } from '../../components/thread/secondary-panel/Th
 import { ThreadBrowserTab } from '../../components/thread/secondary-panel/ThreadBrowserTab.js';
 import { ThreadTerminalTab } from '../../components/thread/secondary-panel/ThreadTerminalTab.js';
 import { ThreadPluginTab } from '../../components/thread/secondary-panel/ThreadPluginTab.js';
+import { ThreadExplorerTab } from '../../components/thread/secondary-panel/ThreadExplorerTab.js';
 import { PluginThreadHeaderActions } from '../../plugins/PluginThreadHeaderActions.js';
 import { copyText } from '../../components/thread/secondary-panel/threadSecondaryPanelLogic.js';
 import { useThreadSecondaryPanel } from '../../components/thread/secondary-panel/useThreadSecondaryPanel.js';
@@ -305,6 +306,7 @@ export function ThreadDetail({
         cwd={cwd}
         onOpenFile={(path, title) => panel.addTab({ kind: 'file-preview', title, path })}
         onOpenBrowser={() => panel.addTab({ kind: 'browser', title: 'Browser', url: 'https://example.com' })}
+        onOpenExplorer={() => panel.addTab({ kind: 'explorer', title: 'Explorer' })}
         onStartTerminal={() => { void startPanelTerminal(); }}
         onOpenPlugin={(moduleId, title, options) =>
           panel.addTab({
@@ -336,6 +338,8 @@ export function ThreadDetail({
     );
   } else if (closable?.kind === 'terminal' && closable.sessionId && projectId) {
     panelBody = <ThreadTerminalTab sessionId={closable.sessionId} projectId={projectId} />;
+  } else if (closable?.kind === 'explorer') {
+    panelBody = <ThreadExplorerTab projectId={projectId} />;
   } else if (closable?.kind === 'plugin' && closable.moduleId) {
     panelBody = (
       <ThreadPluginTab

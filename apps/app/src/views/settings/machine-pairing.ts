@@ -3,9 +3,31 @@ export function pairingCommand(input: {
   joinCode: string;
   hostId: string;
 }): string | null {
-  const server = input.publicAppUrl?.replace(/\/$/, '');
-  if (!server || isLoopbackOrigin(server)) return null;
-  return `curl -fL ${server}/install.sh | sh -s -- --join-code ${input.joinCode} --host-id ${input.hostId} --server ${server}`;
+  const server = resolvePairingServerUrl(input.publicAppUrl);
+  if (!server) return null;
+  return (
+    `curl -fL --progress-meter --connect-timeout 10 --max-time 60 --retry 2 ${server}/install.sh` +
+    ` | sh -s -- --join-code ${input.joinCode} --host-id ${input.hostId} --server ${server}`
+  );
+}
+
+/** Prefer a reachable public origin; otherwise the local product server, like BB. */
+export function resolvePairingServerUrl(publicAppUrl?: string | null): string | null {
+  const trimmed = publicAppUrl?.trim().replace(/\/$/, '') || undefined;
+  if (trimmed && !isLoopbackOrigin(trimmed)) return trimmed;
+  return localProductOrigin() ?? trimmed ?? null;
+}
+
+export function localProductOrigin(): string | null {
+  const devPort =
+    typeof __ZCC_DEV_WS_PORT__ === 'number' && Number.isFinite(__ZCC_DEV_WS_PORT__)
+      ? __ZCC_DEV_WS_PORT__
+      : undefined;
+  if (devPort) return `http://127.0.0.1:${devPort}`;
+  if (typeof window !== 'undefined' && window.location?.origin && window.location.protocol !== 'file:') {
+    return window.location.origin;
+  }
+  return null;
 }
 
 export function isLoopbackOrigin(url: string): boolean {

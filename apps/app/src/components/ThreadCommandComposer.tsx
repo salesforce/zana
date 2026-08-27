@@ -20,6 +20,7 @@ import { HostSshIdentityDialog } from './HostSshIdentityDialog.js';
 import { ComposerHostActionChip } from './ComposerHostActionChip.js';
 import {
   bootstrapOutcome,
+  composerRemoteToolsMark,
   resolveComposerHostAction,
   shouldBlockComposerSend,
   shouldShowHostPicker
@@ -176,10 +177,27 @@ export function ThreadCommandComposer({
   const [hostBusy, setHostBusy] = useState<string | null>(null);
   const [pairingCommand, setPairingCommand] = useState<string | null>(null);
   const [sshPick, setSshPick] = useState<{ hostId: string; name: string } | null>(null);
+  const [remoteToolProxy, setRemoteToolProxy] = useState(false);
 
   useEffect(() => {
     setHostId(defaultHostId(hosts, selectedProject?.hostId));
   }, [hosts, selectedProject?.hostId]);
+
+  useEffect(() => {
+    if (!selectedProject?.remote || selectedProject.hostId) {
+      setRemoteToolProxy(false);
+      return;
+    }
+    let cancelled = false;
+    product.projectSettings.get(selectedProject.id)
+      .then((settings) => {
+        if (!cancelled) setRemoteToolProxy(settings.remoteToolProxy === true);
+      })
+      .catch(() => {
+        if (!cancelled) setRemoteToolProxy(false);
+      });
+    return () => { cancelled = true; };
+  }, [selectedProject?.id, selectedProject?.remote, selectedProject?.hostId]);
 
   const hostAction = useMemo(
     () => resolveComposerHostAction({
@@ -192,6 +210,7 @@ export function ThreadCommandComposer({
   );
   const hostSendBlocked = shouldBlockComposerSend(hostAction, selectedProject);
   const showHostPicker = shouldShowHostPicker(hosts, selectedProject);
+  const remoteToolsMark = composerRemoteToolsMark(selectedProject, remoteToolProxy);
 
   const syncTrigger = useCallback((editor: Parameters<typeof findActiveTrigger>[0]) => {
     const next = findActiveTrigger(editor, COMPOSER_TRIGGERS);
@@ -799,6 +818,11 @@ export function ThreadCommandComposer({
                   ? () => void navigator.clipboard.writeText(pairingCommand)
                   : undefined}
               />
+              {remoteToolsMark ? (
+                <span className="thread-command-chip" data-testid="composer-remote-tools-mark">
+                  {remoteToolsMark}
+                </span>
+              ) : null}
             </>
           ) : (
             <>
@@ -836,6 +860,11 @@ export function ThreadCommandComposer({
                   ? () => void navigator.clipboard.writeText(pairingCommand)
                   : undefined}
               />
+              {remoteToolsMark ? (
+                <span className="thread-command-chip" data-testid="composer-remote-tools-mark">
+                  {remoteToolsMark}
+                </span>
+              ) : null}
             </>
           )}
         </div>

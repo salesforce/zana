@@ -81,7 +81,14 @@ import {
   renameRemote as fsRenameRemote,
   deleteRemote as fsDeleteRemote,
   execRemote as fsExecRemote,
-  resolveAndExecRemote
+  globRemote as fsGlobRemote,
+  grepRemote as fsGrepRemote,
+  resolveAndExecRemote,
+  resolveAndReadRemote,
+  resolveAndWriteRemote,
+  resolveAndListRemote,
+  resolveAndGlobRemote,
+  resolveAndGrepRemote
 } from '@zana-ai/zcc-host-daemon/remote-fs';
 import { uploadToRemote as fsUploadToRemote, downloadFromRemote as fsDownloadFromRemote } from '@zana-ai/zcc-host-daemon/remote-transfer';
 import { openIn } from './native/openers.js';
@@ -5503,6 +5510,18 @@ async function bootstrapNormal() {
   // Boot the local MCP server, then plumb its URL into PtyManager so any
   // claude-family terminal spawns get `ZCC_MCP_URL` injected. Errors here
   // are logged but non-fatal — the app still works without inbox push.
+  const remoteFsDeps = () => ({
+    findRemote: (id: string) => store.listProjects().find((p) => p.id === id)?.remote ?? null,
+    defaultPath: store.getConfig().remoteDefaultPath,
+    resolveRoot: fsRemoteRoot,
+    exec: fsExecRemote,
+    readFile: fsReadFileRemote,
+    writeFile: fsWriteFileRemote,
+    createFile: fsCreateFileRemote,
+    listDir: fsListDirRemote,
+    glob: fsGlobRemote,
+    grep: fsGrepRemote
+  });
   startMcpServer({
     // OpenCode bakes this URL into process config. Persist the selected port so
     // tmux-surviving agents reconnect to the new main process after an app restart.
@@ -5945,6 +5964,18 @@ async function bootstrapNormal() {
         command,
         execOpts
       ),
+    remoteFs: {
+      readFile: (projectId, path) =>
+        resolveAndReadRemote(remoteFsDeps(), projectId, path),
+      writeFile: (projectId, path, content) =>
+        resolveAndWriteRemote(remoteFsDeps(), projectId, path, content),
+      listDir: (projectId, path) =>
+        resolveAndListRemote(remoteFsDeps(), projectId, path),
+      glob: (projectId, pattern, searchPath) =>
+        resolveAndGlobRemote(remoteFsDeps(), projectId, pattern, searchPath),
+      grep: (projectId, pattern, searchPath) =>
+        resolveAndGrepRemote(remoteFsDeps(), projectId, pattern, searchPath)
+    },
     // microvm_exec / microvm_reset — run a shell command inside a project's
     // SANDBOXED microVM playground. The agent supplies a projectId (the guest
     // key) + command; the host-owned `microVmPool` authorizes the image (closed

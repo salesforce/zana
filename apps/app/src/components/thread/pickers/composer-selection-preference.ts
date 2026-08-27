@@ -89,8 +89,8 @@ export function rememberedSelectionFor(providerId: string): ComposerProviderSele
 }
 
 /**
- * New-thread composers keep the last picked model (e.g. Sonnet) instead of
- * snapping back to the catalog default (Opus) when the roster loads.
+ * New-thread composers keep the last picked model (e.g. Opus) instead of
+ * snapping back to the catalog default (Sonnet) when the roster loads.
  * Existing threads ignore the cache and keep whatever the thread already uses.
  */
 export function preferredComposerModel(input: {

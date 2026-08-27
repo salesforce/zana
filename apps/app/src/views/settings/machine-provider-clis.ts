@@ -12,6 +12,15 @@ export interface MachineProviderCliRow {
   status: ProviderCliStatus;
 }
 
+export type ProviderCliTone = 'ok' | 'warn';
+
+export interface ProviderCliPresentation {
+  tone: ProviderCliTone;
+  badge: string;
+  currentLabel: string;
+  latestLabel: string | null;
+}
+
 export function orderedProviderCliRows(status: ProviderCliStatusResponse | undefined): MachineProviderCliRow[] {
   if (!status) return [];
   return PROVIDER_CLI_ORDER.flatMap((provider) => {
@@ -34,9 +43,48 @@ export function actionableProviderCliRows(
   return out;
 }
 
+export function providerCliPresentation(status: ProviderCliStatus): ProviderCliPresentation {
+  if (!status.installed) {
+    return {
+      tone: 'warn',
+      badge: 'Not installed',
+      currentLabel: 'Not installed',
+      latestLabel: null
+    };
+  }
+  const currentLabel = status.currentVersion ?? 'Installed';
+  if (status.versionUnsupported) {
+    return {
+      tone: 'warn',
+      badge: 'Unsupported',
+      currentLabel,
+      latestLabel: status.latestVersion
+    };
+  }
+  if (status.needsUpdate) {
+    return {
+      tone: 'warn',
+      badge: 'Update',
+      currentLabel,
+      latestLabel: status.latestVersion
+    };
+  }
+  return {
+    tone: 'ok',
+    badge: 'Current',
+    currentLabel,
+    latestLabel: null
+  };
+}
+
+export function machineCliInventorySummary(rows: MachineProviderCliRow[]): string | null {
+  if (rows.length === 0) return null;
+  const pending = rows.filter((row) => row.status.installAction).length;
+  if (pending === 0) return 'Up to date';
+  return pending === 1 ? '1 update' : `${pending} updates`;
+}
+
 export function providerCliBadge(status: ProviderCliStatus): string | null {
-  if (!status.installed) return 'Not installed';
-  if (status.versionUnsupported) return 'Unsupported';
-  if (status.needsUpdate) return 'Available';
-  return null;
+  const copy = providerCliPresentation(status);
+  return copy.tone === 'ok' ? null : copy.badge;
 }

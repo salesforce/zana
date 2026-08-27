@@ -22,8 +22,13 @@ import {
   applyPreviewResult,
   attachColumnResize,
   commitBrowserUrl,
+  hydrateRemoteToolProxyInfo,
   hydrateThreadInfo,
-  startColumnResize
+  sshRowValue,
+  sshStatusText,
+  sshTargetLabel,
+  startColumnResize,
+  threadInfoEnvironmentLabel
 } from './threadSecondaryPanelLogic.js';
 import { emptySecondaryPanelState } from './threadSecondaryPanelState.js';
 
@@ -34,6 +39,19 @@ describe('threadSecondaryPanelLogic', () => {
     expect(environmentLabel(false, ' Staging ')).toBe('Staging');
     expect(environmentNameFromList([{ id: 'e1', name: 'Dev' }], 'e1')).toBe('Dev');
     expect(environmentNameFromList([{ id: 'e1' }], 'missing')).toBeNull();
+  });
+
+  it('labels SSH targets, connection status, and remote-tool-proxy environment', () => {
+    expect(sshTargetLabel(null)).toBeNull();
+    expect(sshTargetLabel({ host: 'limited-pony' })).toBe('limited-pony');
+    expect(sshTargetLabel({ host: 'limited-pony', user: 'sfwork' })).toBe('sfwork@limited-pony');
+    expect(sshStatusText('connected')).toBe('Connected');
+    expect(sshStatusText('unreachable')).toBe('Unreachable');
+    expect(sshStatusText('checking')).toBe('Checking');
+    expect(sshRowValue('limited-pony', 'connected')).toBe('limited-pony · Connected');
+    expect(threadInfoEnvironmentLabel(false, null, false)).toBe('Local');
+    expect(threadInfoEnvironmentLabel(false, null, true)).toBe('Local agent · remote tools');
+    expect(threadInfoEnvironmentLabel(true, 'Staging', true)).toBe('Local agent · remote tools');
   });
 
   it('re-exports copyText for thread callers', async () => {
@@ -266,6 +284,41 @@ describe('threadSecondaryPanelLogic', () => {
       environmentName: 'Dev',
       status: { dirty: true },
       pullRequest: { number: 1 }
+    });
+  });
+
+  it('hydrates ControlMaster SSH status only when remote-tool-proxy is on', async () => {
+    const ssh = { id: 'p-ssh', remote: { host: 'limited-pony', user: 'sfwork' } };
+    await expect(hydrateRemoteToolProxyInfo(ssh, {
+      getSettings: async () => ({}),
+      remoteRoot: async () => ({ ok: true, root: '/home/sfwork/core' })
+    })).resolves.toEqual({
+      active: false,
+      sshTarget: null,
+      sshStatus: null,
+      remoteDirectory: null
+    });
+    await expect(hydrateRemoteToolProxyInfo({ ...ssh, hostId: 'h1' }, {
+      getSettings: async () => ({ remoteToolProxy: true }),
+      remoteRoot: async () => ({ ok: true, root: '/home/sfwork/core' })
+    })).resolves.toMatchObject({ active: false });
+    await expect(hydrateRemoteToolProxyInfo(ssh, {
+      getSettings: async () => ({ remoteToolProxy: true }),
+      remoteRoot: async () => ({ ok: true, root: '/opt/workspace/core-public' })
+    })).resolves.toEqual({
+      active: true,
+      sshTarget: 'sfwork@limited-pony',
+      sshStatus: 'connected',
+      remoteDirectory: '/opt/workspace/core-public'
+    });
+    await expect(hydrateRemoteToolProxyInfo(ssh, {
+      getSettings: async () => ({ remoteToolProxy: true }),
+      remoteRoot: async () => ({ ok: false, message: 'timeout' })
+    })).resolves.toEqual({
+      active: true,
+      sshTarget: 'sfwork@limited-pony',
+      sshStatus: 'unreachable',
+      remoteDirectory: null
     });
   });
 });

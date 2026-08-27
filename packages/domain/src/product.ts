@@ -2494,6 +2494,13 @@ export interface ProjectSettings {
    */
   worktreeIsolation?: boolean;
   /**
+   * SSH remotes only. When true, new threads run the harness on this machine
+   * and execute file/shell tools on the remote over the existing SSH
+   * ControlMaster path. Off (default) keeps SSH PTY (`ssh -t`) for the CLI.
+   * Ignored once the project is bound to an enrolled host daemon.
+   */
+  remoteToolProxy?: boolean;
+  /**
    * Per-project default microVM image for agents launched in the `'microvm'`
    * environment (an allowlist key or allowlisted ref). ADVISORY: main
    * re-authorizes it against the closed image allowlist before spawn (Rule 1).

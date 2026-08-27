@@ -10,6 +10,7 @@ import type {
   RemoteRootResult
 } from '@zana-ai/zcc-domain/product';
 
+
 /**
  * File browsing + editing over SSH for remote-backed Projects.
  *
@@ -564,11 +565,170 @@ export async function resolveAndExecRemote(
   command: string,
   opts?: { cwd?: string; timeoutMs?: number }
 ): Promise<RemoteExecResult> {
+  const anchored = await resolveRemoteAnchor(deps, projectId);
+  if (!anchored.ok) return { ok: false, message: anchored.message };
+  return deps.exec(anchored.remote, anchored.root, command, opts);
+}
+
+export type RemoteAnchor =
+  | { ok: true; remote: ProjectRemote; root: string }
+  | { ok: false; message: string };
+
+/** Store-resolve a remote project and realpath its root. Never throws. */
+export async function resolveRemoteAnchor(
+  deps: Pick<RemoteExecResolveDeps, 'findRemote' | 'defaultPath' | 'resolveRoot'>,
+  projectId: string
+): Promise<RemoteAnchor> {
   const remote = deps.findRemote(projectId);
   if (!remote) return { ok: false, message: 'Not a remote project' };
   const rootRes = await deps.resolveRoot(remote, deps.defaultPath);
   if (!rootRes.ok || !rootRes.root) {
     return { ok: false, message: rootRes.message || 'Remote host unreachable or start path missing' };
   }
-  return deps.exec(remote, rootRes.root, command, opts);
+  return { ok: true, remote, root: rootRes.root };
+}
+
+export interface RemoteFsResolveDeps extends RemoteExecResolveDeps {
+  readFile: (remote: ProjectRemote, root: string, absPath: string) => Promise<FsReadResult>;
+  writeFile: (remote: ProjectRemote, root: string, absPath: string, content: string) => Promise<FsWriteResult>;
+  createFile: (remote: ProjectRemote, root: string, absPath: string) => Promise<FsMutateResult>;
+  listDir: (remote: ProjectRemote, root: string, absPath: string) => Promise<FsEntry[]>;
+  glob: (
+    remote: ProjectRemote,
+    root: string,
+    pattern: string,
+    searchPath?: string
+  ) => Promise<{ ok: true; files: string[] } | { ok: false; message: string }>;
+  grep: (
+    remote: ProjectRemote,
+    root: string,
+    pattern: string,
+    searchPath?: string
+  ) => Promise<{ ok: true; output: string; truncated: boolean } | { ok: false; message: string }>;
+}
+
+export async function resolveAndReadRemote(
+  deps: RemoteFsResolveDeps,
+  projectId: string,
+  path: string
+): Promise<FsReadResult> {
+  const anchored = await resolveRemoteAnchor(deps, projectId);
+  if (!anchored.ok) return { ok: false, message: anchored.message };
+  return deps.readFile(anchored.remote, anchored.root, path);
+}
+
+export async function resolveAndWriteRemote(
+  deps: RemoteFsResolveDeps,
+  projectId: string,
+  path: string,
+  content: string
+): Promise<FsWriteResult> {
+  const anchored = await resolveRemoteAnchor(deps, projectId);
+  if (!anchored.ok) return { ok: false, message: anchored.message };
+  const written = await deps.writeFile(anchored.remote, anchored.root, path, content);
+  if (written.ok) return written;
+  if (written.message !== 'Not a regular file') return written;
+  const created = await deps.createFile(anchored.remote, anchored.root, path);
+  if (!created.ok) return { ok: false, message: created.message };
+  return deps.writeFile(anchored.remote, anchored.root, path, content);
+}
+
+export async function resolveAndListRemote(
+  deps: RemoteFsResolveDeps,
+  projectId: string,
+  path: string
+): Promise<{ ok: true; entries: FsEntry[] } | { ok: false; message: string }> {
+  const anchored = await resolveRemoteAnchor(deps, projectId);
+  if (!anchored.ok) return { ok: false, message: anchored.message };
+  const confined = confineRemote(anchored.root, path || anchored.root);
+  if (!confined) return { ok: false, message: 'Path is outside the project' };
+  return { ok: true, entries: await deps.listDir(anchored.remote, anchored.root, confined) };
+}
+
+export async function resolveAndGlobRemote(
+  deps: RemoteFsResolveDeps,
+  projectId: string,
+  pattern: string,
+  searchPath?: string
+): Promise<{ ok: true; files: string[] } | { ok: false; message: string }> {
+  const anchored = await resolveRemoteAnchor(deps, projectId);
+  if (!anchored.ok) return { ok: false, message: anchored.message };
+  return deps.glob(anchored.remote, anchored.root, pattern, searchPath);
+}
+
+export async function resolveAndGrepRemote(
+  deps: RemoteFsResolveDeps,
+  projectId: string,
+  pattern: string,
+  searchPath?: string
+): Promise<{ ok: true; output: string; truncated: boolean } | { ok: false; message: string }> {
+  const anchored = await resolveRemoteAnchor(deps, projectId);
+  if (!anchored.ok) return { ok: false, message: anchored.message };
+  return deps.grep(anchored.remote, anchored.root, pattern, searchPath);
+}
+
+const GLOB_MAX_FILES = 2000;
+const GREP_MAX_LINES = 200;
+
+/**
+ * Bounded remote glob via `find`. `pattern` is matched with `-name` when it
+ * has no `/`, otherwise `-path`. Results are confined under `root`.
+ */
+export async function globRemote(
+  remote: ProjectRemote,
+  root: string,
+  pattern: string,
+  searchPath?: string
+): Promise<{ ok: true; files: string[] } | { ok: false; message: string }> {
+  const trimmed = pattern.trim();
+  if (!trimmed) return { ok: false, message: 'Empty glob pattern' };
+  if (trimmed.includes('\0')) return { ok: false, message: 'Pattern contains a NUL byte' };
+  const target = confineRemote(root, searchPath ?? root);
+  if (!target) return { ok: false, message: 'Path is outside the project' };
+  const nameExpr = trimmed.includes('/')
+    ? `-path ${shellQuote(`*/${trimmed.replace(/^\*\*\//, '')}`)}`
+    : `-name ${shellQuote(trimmed)}`;
+  const cmd =
+    `find ${shellQuote(target)} \\( -name node_modules -o -name .git -o -name dist -o -name build \\) ` +
+    `-prune -o -type f ${nameExpr} -print 2>/dev/null | head -n ${GLOB_MAX_FILES}`;
+  // Run from the project root: `target` may be a file, and execRemote cds into cwd.
+  const res = await execRemote(remote, root, cmd, { cwd: root });
+  if (!res.ok) return { ok: false, message: res.message ?? 'glob failed' };
+  if (res.code === 127) return { ok: false, message: res.stderr?.trim() || 'glob failed' };
+  const files = (res.stdout ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && confineRemote(root, line));
+  return { ok: true, files };
+}
+
+/**
+ * Bounded remote grep via POSIX `grep -R`. Pattern is a basic regex passed
+ * as a single quoted argv element; output is capped at {@link GREP_MAX_LINES}.
+ */
+export async function grepRemote(
+  remote: ProjectRemote,
+  root: string,
+  pattern: string,
+  searchPath?: string
+): Promise<{ ok: true; output: string; truncated: boolean } | { ok: false; message: string }> {
+  const trimmed = pattern.trim();
+  if (!trimmed) return { ok: false, message: 'Empty grep pattern' };
+  if (trimmed.includes('\0')) return { ok: false, message: 'Pattern contains a NUL byte' };
+  const target = confineRemote(root, searchPath ?? root);
+  if (!target) return { ok: false, message: 'Path is outside the project' };
+  const cmd =
+    `grep -R -n -I --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist --exclude-dir=build ` +
+    `-E ${shellQuote(trimmed)} ${shellQuote(target)} 2>/dev/null | head -n ${GREP_MAX_LINES}`;
+  // Run from the project root: `path` may be a file, and cd into a file is a silent miss.
+  const res = await execRemote(remote, root, cmd, { cwd: root });
+  if (!res.ok) return { ok: false, message: res.message ?? 'grep failed' };
+  if (res.code === 127) return { ok: false, message: res.stderr?.trim() || 'grep failed' };
+  const output = res.stdout ?? '';
+  const lines = output === '' ? [] : output.replace(/\n$/, '').split('\n');
+  return {
+    ok: true,
+    output,
+    truncated: lines.length >= GREP_MAX_LINES || res.truncated === true
+  };
 }

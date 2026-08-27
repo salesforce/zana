@@ -37,6 +37,14 @@ test('thread secondary panel opens Info, hides, and shows New Tab actions', asyn
   await expect(window.getByTestId('thread-new-tab-page')).toBeVisible();
   await expect(window.getByTestId('thread-new-tab-terminal')).toBeVisible();
 
+  const explorer = window.getByTestId('thread-new-tab-explorer');
+  if (await explorer.count()) {
+    await explorer.click();
+    await expect(window.getByTestId('thread-explorer-tab')).toBeVisible();
+    await window.getByTestId('thread-secondary-new-tab').click();
+    await expect(window.getByTestId('thread-new-tab-page')).toBeVisible();
+  }
+
   const browser = window.getByTestId('thread-new-tab-browser');
   if (await browser.count()) {
     await browser.click();

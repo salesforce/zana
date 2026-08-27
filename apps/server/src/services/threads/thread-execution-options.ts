@@ -291,7 +291,7 @@ export function modelsForThreadProvider(
   _reasoningLevels: readonly string[]
 ): AvailableModel[] {
   if (providerId === 'claude-code') {
-    return withClaudeEfforts(CLAUDE_FALLBACK_MODELS, 'claude-opus-5[1m]');
+    return withClaudeEfforts(CLAUDE_FALLBACK_MODELS, 'claude-sonnet-5');
   }
   if (providerId === 'codex') {
     return withCatalogEfforts(CODEX_FALLBACK_MODELS, CODEX_REASONING_LEVELS, 'gpt-5.5');

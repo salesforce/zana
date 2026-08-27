@@ -72,6 +72,7 @@ export const ProjectSettingsPatchSchema = z.object({
   codexSandbox: CodexSandboxSchema.optional(),
   codexApproval: CodexApprovalSchema.optional(),
   worktreeIsolation: z.boolean().optional(),
+  remoteToolProxy: z.boolean().optional(),
   microVmImage: z.string().max(4_096).optional(),
   harnessRouting: HarnessRoutingSchema.optional(),
   harnesses: HarnessesSchema.optional()

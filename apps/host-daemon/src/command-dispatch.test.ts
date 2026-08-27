@@ -191,6 +191,43 @@ describe('host command dispatch', () => {
     }]);
   });
 
+  it('forwards remoteToolProxy into startWork without spawning ssh -t', async () => {
+    const project = mkdtempSync(join(tmpdir(), 'zcc-thread-proxy-'));
+    const started: Array<{ remoteToolProxy?: boolean; remote?: unknown; cwd: string }> = [];
+    const runtime = createCommandRuntime({
+      verifyProviders: async () => installedClaude,
+      startWork: async (input) => {
+        started.push({
+          remoteToolProxy: input.remoteToolProxy,
+          remote: input.remote,
+          cwd: input.cwd
+        });
+      }
+    });
+    const environmentId = randomUUID();
+    await dispatchHostCommand(runtime, {
+      type: 'environment.provision',
+      environmentId,
+      workspaceProvisionType: 'unmanaged',
+      path: project
+    });
+    await dispatchHostCommand(runtime, {
+      type: 'thread.start',
+      threadId: randomUUID(),
+      environmentId,
+      projectId: 'proj-1',
+      providerId: 'claude',
+      input: ['hello'],
+      cwd: project,
+      remote: { host: 'box.example', user: 'me', remotePath: '/src' },
+      remoteToolProxy: true
+    });
+    expect(started).toHaveLength(1);
+    expect(started[0]?.remoteToolProxy).toBe(true);
+    expect(started[0]?.remote).toEqual({ host: 'box.example', user: 'me', remotePath: '/src' });
+    expect(started[0]?.cwd).toBe(realpathSync(project));
+  });
+
   it('lists a seeded library file and rejects a path escape', async () => {
     const root = mkdtempSync(join(tmpdir(), 'zcc-lib-root-'));
     writeFileSync(join(root, 'note.md'), '# hello\n');

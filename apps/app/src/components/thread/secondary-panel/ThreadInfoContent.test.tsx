@@ -45,10 +45,49 @@ describe('ThreadInfoRows', () => {
     expect(html).not.toContain('data-testid="thread-info-files"');
   });
 
-  it('uses This checkout vs Local from isWorktree', () => {
-    expect(environmentLabel(false)).toBe('Local');
-    expect(environmentLabel(true)).toBe('This checkout');
-    expect(environmentLabel(false, 'Staging')).toBe('Staging');
+  it('renders SSH host and status for remote-tool-proxy threads', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ThreadInfoRows
+          isWorktree={false}
+          cwd="/Users/me/.zcc/remote-projects/abc"
+          branchName="main"
+          workspaceStatus={{ dirty: false, files: [] } as never}
+          pullRequest={null}
+          remoteToolProxy
+          sshTarget="limited-pony"
+          sshStatus="connected"
+          remoteDirectory="/opt/workspace/core-public"
+        />
+      </MemoryRouter>
+    );
+    expect(html).toContain('Local agent · remote tools');
+    expect(html).toContain('data-testid="thread-info-ssh"');
+    expect(html).toContain('limited-pony');
+    expect(html).toContain('Connected');
+    expect(html).toContain('/opt/workspace/core-public');
+    expect(html).not.toContain('data-testid="thread-info-git"');
+    expect(html).not.toContain('data-testid="thread-info-branch"');
+    expect(html).not.toContain('/Users/me/.zcc/remote-projects/abc');
+  });
+
+  it('marks an unreachable ControlMaster without swapping in a remote directory', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ThreadInfoRows
+          isWorktree={false}
+          cwd="/Users/me/.zcc/remote-projects/abc"
+          branchName={null}
+          workspaceStatus={null}
+          pullRequest={null}
+          remoteToolProxy
+          sshTarget="limited-pony"
+          sshStatus="unreachable"
+        />
+      </MemoryRouter>
+    );
+    expect(html).toContain('Unreachable');
+    expect(html).toContain('/Users/me/.zcc/remote-projects/abc');
   });
 
   it('renders git, PR, and changed-file rows when present', () => {

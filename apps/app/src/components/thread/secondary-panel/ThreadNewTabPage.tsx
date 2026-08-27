@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { FileText, Globe, Puzzle, Search, Terminal } from 'lucide-react';
+import { FileText, FolderTree, Globe, Puzzle, Search, Terminal } from 'lucide-react';
 import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
 import { product } from '../../../lib/product-client.js';
 import { hasDesktopBridge } from '../../../lib/app-surface.js';
@@ -21,9 +21,11 @@ export function ThreadNewTabView({
   actions,
   onOpenFile,
   onOpenBrowser,
+  onOpenExplorer,
   onStartTerminal,
   onOpenPlugin,
-  allowSidecarTerminal = true
+  allowSidecarTerminal = true,
+  allowExplorer = true
 }: {
   query: string;
   onQueryChange: (query: string) => void;
@@ -32,9 +34,11 @@ export function ThreadNewTabView({
   actions: Array<{ pluginId: string; id: string; title: string; layout?: 'padded' | 'flush' }>;
   onOpenFile: (path: string, title: string) => void;
   onOpenBrowser: () => void;
+  onOpenExplorer?: () => void;
   onStartTerminal?: () => void;
   onOpenPlugin: (moduleId: string, title: string, options?: OpenPluginOptions) => void;
   allowSidecarTerminal?: boolean;
+  allowExplorer?: boolean;
 }) {
   return (
     <div className="thread-new-tab-page" data-testid="thread-new-tab-page">
@@ -70,6 +74,11 @@ export function ThreadNewTabView({
               <Globe size={14} /> Open browser
             </button>
           ) : null}
+          {allowExplorer ? (
+            <button type="button" data-testid="thread-new-tab-explorer" onClick={onOpenExplorer}>
+              <FolderTree size={14} /> Open Explorer
+            </button>
+          ) : null}
           {allowSidecarTerminal ? (
             <button type="button" data-testid="thread-new-tab-terminal" onClick={onStartTerminal}>
               <Terminal size={14} /> Start terminal
@@ -101,6 +110,7 @@ export function ThreadNewTabPage({
   cwd,
   onOpenFile,
   onOpenBrowser,
+  onOpenExplorer,
   onStartTerminal,
   onOpenPlugin,
   allowSidecarTerminal = true
@@ -109,6 +119,7 @@ export function ThreadNewTabPage({
   cwd: string | null;
   onOpenFile: (path: string, title: string) => void;
   onOpenBrowser: () => void;
+  onOpenExplorer?: () => void;
   onStartTerminal?: () => void;
   onOpenPlugin: (moduleId: string, title: string, options?: OpenPluginOptions) => void;
   allowSidecarTerminal?: boolean;
@@ -154,9 +165,11 @@ export function ThreadNewTabPage({
       }))}
       onOpenFile={onOpenFile}
       onOpenBrowser={onOpenBrowser}
+      onOpenExplorer={onOpenExplorer}
       onStartTerminal={onStartTerminal}
       onOpenPlugin={onOpenPlugin}
       allowSidecarTerminal={allowSidecarTerminal}
+      allowExplorer={Boolean(projectId)}
     />
   );
 }

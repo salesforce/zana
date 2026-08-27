@@ -19,7 +19,7 @@ import type {
 import type { HarnessAdapterDescriptor } from '@zana-ai/zcc-domain/harness-adapter';
 import { providerUiSchema } from '@zana-ai/zcc-domain/launch-provider';
 import { useData, useUi } from '@/store';
-import { Section, Field, ChipField, TextArgsField } from '@/components/settings/FormFields';
+import { Section, Field, ChipField, TextArgsField, CheckboxField } from '@/components/settings/FormFields';
 import { HarnessOptionSelect } from '@/components/HarnessOptionSelect';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
 import { profileIcon } from '@/lib/profileIcon';
@@ -858,18 +858,75 @@ function ProjectRemoteSettings({
   onSaved: () => void;
 }) {
   const updateProject = useData((s) => s.updateProject);
+  const pushToast = useUi((s) => s.pushToast);
   // Local draft mirrors the persisted value; committed on blur (same pattern as
   // the global "Default remote path" field).
   const [draft, setDraft] = useState(project.remote?.remotePath ?? '');
+  const [remoteToolProxy, setRemoteToolProxy] = useState(false);
+  const [proxyLoaded, setProxyLoaded] = useState(false);
+  const [savingProxy, setSavingProxy] = useState(false);
+  const savingProxyRef = useRef(false);
+  const currentProjectId = useRef(project.id);
   // Re-sync when the selected project changes underneath us.
   useEffect(() => {
     setDraft(project.remote?.remotePath ?? '');
   }, [project.id, project.remote?.remotePath]);
 
+  useEffect(() => {
+    let cancelled = false;
+    currentProjectId.current = project.id;
+    setProxyLoaded(false);
+    product.projectSettings.get(project.id)
+      .then((settings) => {
+        if (!cancelled) {
+          setRemoteToolProxy(settings.remoteToolProxy === true);
+          setProxyLoaded(true);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setProxyLoaded(true);
+      });
+    return () => { cancelled = true; };
+  }, [project.id]);
+
+  useEffect(() => product.projectSettings.onChanged((projectId) => {
+    if (projectId !== project.id || savingProxyRef.current) return;
+    void product.projectSettings.get(projectId).then((settings) => {
+      if (projectId === currentProjectId.current) {
+        setRemoteToolProxy(settings.remoteToolProxy === true);
+      }
+    }).catch(() => {
+      // A background refresh is advisory and must not replace an already-rendered value.
+    });
+  }), [project.id]);
+
   const commit = () => {
     const trimmed = draft.trim();
     if (trimmed === (project.remote?.remotePath ?? '')) return;
     void updateProject(project.id, { remotePath: trimmed }).then(() => onSaved());
+  };
+
+  const saveProxy = async (next: boolean) => {
+    if (savingProxy) return;
+    const previous = remoteToolProxy;
+    setRemoteToolProxy(next);
+    savingProxyRef.current = true;
+    setSavingProxy(true);
+    try {
+      const canonical = await persistProjectSettings(
+        project.id,
+        { remoteToolProxy: next },
+        (id, patch) => product.projectSettings.set(id, patch)
+      );
+      setRemoteToolProxy(canonical.remoteToolProxy === true);
+      onSaved();
+    } catch (cause) {
+      setRemoteToolProxy(previous);
+      pushToast(projectSettingsErrorMessage(cause), 'error');
+    } finally {
+      savingProxyRef.current = false;
+      setSavingProxy(false);
+    }
   };
 
   return (
@@ -893,6 +950,15 @@ function ProjectRemoteSettings({
           }}
         />
       </Field>
+      {proxyLoaded ? (
+        <CheckboxField
+          label="Local agent, remote tools"
+          help="Run the coding agent on this machine and execute Read, Write, Edit, Glob, Grep, and Shell on the remote over SSH. Off keeps the default: the CLI itself runs on the box (`ssh -t`). Install a host daemon later if you want the whole agent on that machine."
+          checked={remoteToolProxy}
+          onChange={(v) => void saveProxy(v)}
+          disabled={savingProxy || Boolean(project.hostId)}
+        />
+      ) : null}
     </Section>
   );
 }

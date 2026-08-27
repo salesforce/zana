@@ -146,6 +146,14 @@ describe('ProjectHarnessSettings', () => {
     expect(write).toHaveBeenCalledWith('p1', { piProvider: 'draft' });
   });
 
+  it('round-trips remoteToolProxy like other project settings', async () => {
+    const write = vi.fn().mockResolvedValue({ remoteToolProxy: true });
+    await expect(persistProjectSettings('p-ssh', { remoteToolProxy: true }, write)).resolves.toEqual({
+      remoteToolProxy: true
+    });
+    expect(write).toHaveBeenCalledWith('p-ssh', { remoteToolProxy: true });
+  });
+
   it('propagates write failures for the component to announce', async () => {
     const write = vi.fn().mockRejectedValue(new Error('disk full'));
 
@@ -156,5 +164,15 @@ describe('ProjectHarnessSettings', () => {
     );
     expect(html).toContain('role="alert"');
     expect(html).toContain('Could not save project harness settings: disk full');
+  });
+});
+
+describe('ProjectRemoteSettings', () => {
+  it('exposes the local-agent remote-tools toggle only in remote project settings', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('./ProjectSettingsView.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('remoteToolProxy');
+    expect(source).toContain('Local agent, remote tools');
+    expect(source).toContain('disabled={savingProxy || Boolean(project.hostId)}');
   });
 });

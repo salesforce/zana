@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { ProviderCliStatus, ProviderCliStatusResponse } from '@zana-ai/zcc-contracts/host-rpc';
 import {
   actionableProviderCliRows,
+  machineCliInventorySummary,
   orderedProviderCliRows,
-  providerCliBadge
+  providerCliBadge,
+  providerCliPresentation
 } from './machine-provider-clis.js';
 
 function status(overrides: Partial<ProviderCliStatus>): ProviderCliStatus {
@@ -62,9 +64,67 @@ describe('machine provider CLI rows', () => {
       'claudeCode',
       'pi'
     ]);
-    expect(providerCliBadge(inventory.codex!)).toBe('Available');
+    expect(providerCliBadge(inventory.codex!)).toBe('Update');
     expect(providerCliBadge(inventory.claudeCode!)).toBeNull();
     expect(providerCliBadge(inventory.pi!)).toBe('Not installed');
     expect(actionableProviderCliRows({ 'host-1': inventory })).toHaveLength(2);
+  });
+
+  it('presents current, update, unsupported, and missing CLIs', () => {
+    expect(providerCliPresentation(status({
+      installAction: null,
+      needsUpdate: false,
+      latestVersion: '0.145.0'
+    }))).toEqual({
+      tone: 'ok',
+      badge: 'Current',
+      currentLabel: '0.145.0',
+      latestLabel: null
+    });
+    expect(providerCliPresentation(status({}))).toEqual({
+      tone: 'warn',
+      badge: 'Update',
+      currentLabel: '0.145.0',
+      latestLabel: '0.149.1'
+    });
+    expect(providerCliPresentation(status({
+      versionUnsupported: true,
+      latestVersion: '0.150.0'
+    }))).toEqual({
+      tone: 'warn',
+      badge: 'Unsupported',
+      currentLabel: '0.145.0',
+      latestLabel: '0.150.0'
+    });
+    expect(providerCliPresentation(status({
+      installed: false,
+      currentVersion: null,
+      installAction: null
+    }))).toEqual({
+      tone: 'warn',
+      badge: 'Not installed',
+      currentLabel: 'Not installed',
+      latestLabel: null
+    });
+  });
+
+  it('summarizes inventory updates', () => {
+    expect(machineCliInventorySummary([])).toBeNull();
+    expect(machineCliInventorySummary([
+      { provider: 'claudeCode', status: status({ installAction: null, needsUpdate: false }) }
+    ])).toBe('Up to date');
+    expect(machineCliInventorySummary([
+      { provider: 'codex', status: status({}) }
+    ])).toBe('1 update');
+    expect(machineCliInventorySummary([
+      { provider: 'codex', status: status({}) },
+      { provider: 'pi', status: status({ displayName: 'PI' }) }
+    ])).toBe('2 updates');
+    expect(orderedProviderCliRows(undefined)).toEqual([]);
+    expect(providerCliPresentation(status({
+      currentVersion: null,
+      installAction: null,
+      needsUpdate: false
+    })).currentLabel).toBe('Installed');
   });
 });

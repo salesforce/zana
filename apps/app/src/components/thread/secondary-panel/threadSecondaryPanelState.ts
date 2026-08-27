@@ -13,6 +13,7 @@ export type ClosableSecondaryTabKind =
   | 'file-preview'
   | 'browser'
   | 'terminal'
+  | 'explorer'
   | 'plugin';
 
 export interface ClosableSecondaryTab {
@@ -81,6 +82,7 @@ function isTabKind(value: unknown): value is ClosableSecondaryTabKind {
     || value === 'file-preview'
     || value === 'browser'
     || value === 'terminal'
+    || value === 'explorer'
     || value === 'plugin'
   );
 }
@@ -250,6 +252,7 @@ function matchExistingTab(
 ): ClosableSecondaryTab | undefined {
   return tabs.find((tab) => {
     if (tab.kind !== input.kind) return false;
+    if (input.kind === 'explorer') return true;
     if (input.kind === 'file-preview') return tab.path === input.path;
     if (input.kind === 'terminal') return tab.sessionId === input.sessionId;
     if (input.kind === 'plugin') {

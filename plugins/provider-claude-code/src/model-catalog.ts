@@ -40,7 +40,7 @@ export const CLAUDE_XHIGH_CAPABLE_REASONING_EFFORTS: readonly ModelReasoningEffo
     MAX_REASONING_EFFORT,
   ];
 
-export const DEFAULT_CLAUDE_CODE_MODEL = "claude-opus-5[1m]";
+export const DEFAULT_CLAUDE_CODE_MODEL = "claude-sonnet-5";
 
 /**
  * BB's curated, version-pinned Claude Code models. Lives here rather than in the
@@ -66,8 +66,8 @@ export const CLAUDE_CODE_ACTIVE_CATALOG: readonly ClaudeCodeCatalogEntry[] = [
     defaultReasoningEffort: "high",
   },
   {
-    id: DEFAULT_CLAUDE_CODE_MODEL,
-    model: DEFAULT_CLAUDE_CODE_MODEL,
+    id: "claude-opus-5[1m]",
+    model: "claude-opus-5[1m]",
     displayName: "Opus 5 (1M)",
     description: "Opus 5 with 1M context for complex long coding sessions",
     supportedReasoningEfforts: CLAUDE_XHIGH_CAPABLE_REASONING_EFFORTS,
@@ -90,8 +90,8 @@ export const CLAUDE_CODE_ACTIVE_CATALOG: readonly ClaudeCodeCatalogEntry[] = [
     defaultReasoningEffort: "medium",
   },
   {
-    id: "claude-sonnet-5",
-    model: "claude-sonnet-5",
+    id: DEFAULT_CLAUDE_CODE_MODEL,
+    model: DEFAULT_CLAUDE_CODE_MODEL,
     displayName: "Sonnet 5",
     description: "Sonnet 5 for everyday coding tasks with deeper reasoning",
     supportedReasoningEfforts: CLAUDE_XHIGH_CAPABLE_REASONING_EFFORTS,

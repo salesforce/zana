@@ -524,7 +524,7 @@ describe('expandable row and chips', () => {
         completedAt: null
       }]} />
     )).toContain('Build');
-    expect(renderToStaticMarkup(<ThreadStatusBadge status="active" />)).toContain('Working');
+    expect(renderToStaticMarkup(<ThreadStatusBadge status="active" />)).toContain('Planning next move');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="active" />)).toContain('thread-status-badge is-working');
     expect(renderToStaticMarkup(
       <ThreadStatusBadge status="active" thinking={{ id: 'th', text: '', startedAt: 1, updatedAt: 1 }} />
@@ -595,7 +595,7 @@ describe('expandable row and chips', () => {
     );
     expect(html).toContain('Thinking');
     expect(html).toContain('is-working');
-    expect(html).not.toContain('Working');
+    expect(html).not.toContain('Planning next move');
   });
 
   it('opens the secondary panel Diff pin from Review', () => {
@@ -603,6 +603,7 @@ describe('expandable row and chips', () => {
     expect(source).toContain("selectPin('diff')");
     expect(source).toContain("selectPin('plan')");
     expect(source).toContain('<ThreadPlanPanel');
+    expect(source).toContain('<ThreadExplorerTab');
     expect(source).toContain('showPlanPin={showPlanPin}');
     expect(source).toContain('thread-secondary-show');
     expect(source).toContain('<ThreadDetailHeading');

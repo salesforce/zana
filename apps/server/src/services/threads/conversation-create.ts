@@ -7,6 +7,7 @@ import {
   findProjectEnvironmentByHostPath,
   getConversationThread,
   getEnvironment,
+  getPrimaryHost,
   hasPendingInteractionForThread,
   updateConversationThreadStatus,
   updateEnvironmentDiscovery,
@@ -38,6 +39,11 @@ import {
 } from './thread-provider-catalog.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import { appendClientTurnRequested } from './client-turn-requested.js';
+import {
+  isRemoteToolProxyActive,
+  readRemoteToolProxySetting,
+  threadLaunchRemote
+} from './remote-tool-proxy.js';
 
 export interface CreateConversationInput {
   projectId: string;
@@ -153,6 +159,7 @@ async function startConversationOnHost(
     prompt: string[];
     environmentId: string;
     input: CreateConversationInput;
+    remoteToolProxy: boolean;
   }
 ): Promise<void> {
   const providerId = canonicalThreadProviderId(args.input.providerId);
@@ -187,7 +194,11 @@ async function startConversationOnHost(
       permissionMode,
       ...(args.input.model ? { model: args.input.model } : {}),
       ...(args.input.reasoningLevel ? { reasoningLevel: args.input.reasoningLevel } : {}),
-      ...(clientRequestId ? { clientRequestId } : {})
+      ...(clientRequestId ? { clientRequestId } : {}),
+      ...(args.remoteToolProxy ? {
+        remote: threadLaunchRemote(args.project),
+        remoteToolProxy: true
+      } : {})
     }
   });
   if (started.providerThreadId) {
@@ -243,11 +254,24 @@ export async function createConversationFromRequest(
   }
 
   const project = requireProject(ctx, input.projectId);
+  const remoteToolProxy = isRemoteToolProxyActive(
+    project,
+    { remoteToolProxy: readRemoteToolProxySetting(ctx.dataDir, project.id) }
+  );
   let hostId: string;
   try {
-    hostId = ctx.hostHub.resolveHostId(input.hostId ?? project.hostId);
+    if (remoteToolProxy) {
+      const primary = getPrimaryHost(ctx.db);
+      if (!primary) {
+        throw new ThreadCreateError(503, 'host-unavailable', 'This machine’s host daemon is not connected.');
+      }
+      hostId = ctx.hostHub.resolveHostId(primary.id);
+    } else {
+      hostId = ctx.hostHub.resolveHostId(input.hostId ?? project.hostId);
+    }
     ctx.hostHub.ensureHostSessionReady(hostId);
   } catch (error) {
+    if (error instanceof ThreadCreateError) throw error;
     throw mapHostError(error);
   }
 
@@ -326,7 +350,7 @@ export async function createConversationFromRequest(
           mergeBaseBranch: provisioned.defaultBranch
         });
       }
-      await startConversationOnHost(ctx, { hostId, project, thread, prompt, environmentId: existing.id, input });
+      await startConversationOnHost(ctx, { hostId, project, thread, prompt, environmentId: existing.id, input, remoteToolProxy });
       const running = updateConversationThreadStatus(ctx.db, thread.id, 'active') ?? thread;
       ctx.hub.emit('threads:updated', conversationThreadView(ctx, running));
       requestAutoThreadTitle(ctx, input, running.id, prompt);
@@ -428,7 +452,8 @@ export async function createConversationFromRequest(
       thread: created.thread,
       prompt,
       environmentId: created.environment.id,
-      input
+      input,
+      remoteToolProxy
     });
     const running = updateConversationThreadStatus(ctx.db, created.thread.id, 'active') ?? created.thread;
     ctx.hub.emit('threads:updated', conversationThreadView(ctx, running));

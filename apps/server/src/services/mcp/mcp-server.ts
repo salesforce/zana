@@ -43,6 +43,10 @@ import { registerInboxPushTool } from '../inbox/inbox-mcp-tool.js';
 import { registerInboxAskTool } from '../inbox/inbox-ask-mcp-tool.js';
 import { registerInboxSearchTool } from '../inbox/inbox-search-mcp-tool.js';
 import { registerRemoteExecTool, type RegisterRemoteExecOpts } from '@zana-ai/zcc-host-daemon/remote-exec-mcp-tool';
+import {
+  registerRemoteFsTools,
+  type RegisterRemoteFsToolsOpts
+} from '@zana-ai/zcc-host-daemon/remote-fs-mcp-tools';
 import { registerMicrovmExecTool, type RegisterMicrovmExecOpts } from '@zana-ai/zcc-host-daemon/microvm-exec-mcp-tool';
 import { registerSuggestActionTool } from '../suggestions/suggest-action-mcp-tool.js';
 import type { ISuggestionsStore } from '../suggestions/suggestions-store.js';
@@ -395,6 +399,13 @@ export interface McpServerOptions {
    */
   runRemoteCommand?: RegisterRemoteExecOpts['runRemoteCommand'];
   /**
+   * Route-scoped remote file tools (`remote_read` / `remote_write` / `remote_edit`
+   * / `remote_glob` / `remote_grep`). The MCP URL's projectId is closed over so
+   * the model cannot pick an arbitrary host. Absent ⇒ tools aren't registered.
+   * Keep `remote_exec` as Shell (agent-supplied projectId).
+   */
+  remoteFs?: Omit<RegisterRemoteFsToolsOpts, 'projectId'>;
+  /**
    * Run a shell command inside a project's SANDBOXED microVM playground (the
    * `microvm_exec` tool). The impl (in index.ts) closes over the host-owned
    * `MicroVmPool`, which lazily boots + reuses a per-project guest, authorizes
@@ -486,6 +497,7 @@ function buildProjectMcpServer(opts: {
   validateTeamRouteIdentity?: McpServerOptions['validateTeamRouteIdentity'];
   listProjects?: McpServerOptions['listProjects'];
   runRemoteCommand?: McpServerOptions['runRemoteCommand'];
+  remoteFs?: McpServerOptions['remoteFs'];
   runMicrovmCommand?: McpServerOptions['runMicrovmCommand'];
   resetMicrovm?: McpServerOptions['resetMicrovm'];
   libraryAgentApi?: McpServerOptions['libraryAgentApi'];
@@ -711,6 +723,9 @@ function buildProjectMcpServer(opts: {
   // available on both route shapes. Gated on the dep being wired.
   if (opts.runRemoteCommand) {
     registerRemoteExecTool(mcp, { runRemoteCommand: opts.runRemoteCommand });
+  }
+  if (opts.remoteFs) {
+    registerRemoteFsTools(mcp, { projectId: opts.projectId, ...opts.remoteFs });
   }
   // microvm_exec / microvm_reset: run a shell command inside a project's
   // SANDBOXED microVM playground (isolated guest, no host mount). Identity-free
@@ -1598,6 +1613,7 @@ async function handleRequest(
     validateTeamRouteIdentity: opts.validateTeamRouteIdentity,
     listProjects: opts.listProjects,
     runRemoteCommand: opts.runRemoteCommand,
+    remoteFs: opts.remoteFs,
     runMicrovmCommand: opts.runMicrovmCommand,
     resetMicrovm: opts.resetMicrovm,
     libraryAgentApi: opts.libraryAgentApi,

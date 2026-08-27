@@ -2,6 +2,35 @@ import type { AgentState } from '@zana-ai/zcc-domain/product';
 import type { ActiveThinking, ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
 import type { TimelineRow } from '@zana-ai/zcc-server-contract';
 
+/** Live copy while a thread is busy and not streaming a thought. */
+export const THREAD_WORKING_PHRASES = [
+  'Planning next move',
+  'Weighing the options',
+  'Mapping the next step',
+  'Choosing an approach',
+  'Lining up the work',
+  'Gathering context',
+  'Charting a course',
+  'Sorting the pieces',
+  'Finding the angle',
+  'Setting the next play'
+] as const;
+
+export const THREAD_WORKING_PHRASE_INTERVAL_MS = 3500;
+
+export function threadWorkingPhraseIndex(tick: number): number {
+  const count = THREAD_WORKING_PHRASES.length;
+  return ((tick % count) + count) % count;
+}
+
+export function threadWorkingPhrase(tick: number): string {
+  return THREAD_WORKING_PHRASES[threadWorkingPhraseIndex(tick)]!;
+}
+
+export function threadWorkingIndicatorLabel(thinking: boolean, phrase: string): string {
+  return thinking ? 'Thinking…' : `${phrase}…`;
+}
+
 export function isBusyThreadStatus(status: string): boolean {
   return status === 'starting' || status === 'active' || status === 'stopping';
 }
@@ -59,13 +88,14 @@ export function threadStatusTone(
 export function threadStatusLabel(
   status: string,
   waitingOnUser = false,
-  thinking?: ActiveThinking | null
+  thinking?: ActiveThinking | null,
+  workingPhrase: string = THREAD_WORKING_PHRASES[0]
 ): string {
   const trimmed = status.trim();
   if (!trimmed) return '';
   if (trimmed === 'error') return 'Error';
   if (waitingOnUser) return 'Needs you';
-  if (isBusyThreadStatus(trimmed)) return thinking ? 'Thinking' : 'Working';
+  if (isBusyThreadStatus(trimmed)) return thinking ? 'Thinking' : workingPhrase;
   if (trimmed === 'idle') return 'Idle';
   return trimmed.replace(/-/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 }

@@ -9,6 +9,7 @@ import { ThreadNewTabPage } from './thread/secondary-panel/ThreadNewTabPage.js';
 import { ThreadFilePreviewTab } from './thread/secondary-panel/ThreadFilePreviewTab.js';
 import { ThreadBrowserTab } from './thread/secondary-panel/ThreadBrowserTab.js';
 import { ThreadPluginTab } from './thread/secondary-panel/ThreadPluginTab.js';
+import { ThreadExplorerTab } from './thread/secondary-panel/ThreadExplorerTab.js';
 import { useSecondaryPanel } from './thread/secondary-panel/useThreadSecondaryPanel.js';
 import {
   activeClosableTab,
@@ -135,6 +136,7 @@ export function AgentSessionView({
         allowSidecarTerminal={false}
         onOpenFile={(path, title) => panel.addTab({ kind: 'file-preview', title, path })}
         onOpenBrowser={() => panel.addTab({ kind: 'browser', title: 'Browser', url: 'https://example.com' })}
+        onOpenExplorer={() => panel.addTab({ kind: 'explorer', title: 'Explorer' })}
         onOpenPlugin={(moduleId, title, options) =>
           panel.addTab({
             kind: 'plugin',
@@ -172,6 +174,8 @@ export function AgentSessionView({
         layout={closable.layout}
       />
     );
+  } else if (closable?.kind === 'explorer') {
+    panelBody = <ThreadExplorerTab projectId={projectId} />;
   } else if (closable?.kind === 'terminal') {
     panelBody = (
       <p className="thread-detail-empty">

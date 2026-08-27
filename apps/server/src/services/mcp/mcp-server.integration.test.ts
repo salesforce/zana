@@ -853,4 +853,49 @@ describe('inbox MCP server (end-to-end)', () => {
     // The agent-supplied target id reaches the impl (which re-authorizes it against the store).
     expect(seen).toBe('some-other-remote');
   });
+
+  it('9. remote_read: closes over the URL projectId and is absent without remoteFs', async () => {
+    const store = createMemoryInboxStore();
+    const seen: string[] = [];
+    handle = await startMcpServer({
+      inboxStore: store,
+      suggestionsStore: createMemorySuggestionsStore(),
+      projects: { get: () => makeProject('proj-1', 'P1') },
+      remoteFs: {
+        readFile: async (projectId, path) => {
+          seen.push(`${projectId}:${path}`);
+          return { ok: true, content: 'from-remote', bytes: 11, binary: false };
+        },
+        writeFile: async () => ({ ok: true, bytes: 0 }),
+        listDir: async () => ({ ok: true, entries: [] }),
+        glob: async () => ({ ok: true, files: [] }),
+        grep: async () => ({ ok: true, output: '', truncated: false })
+      },
+      log: () => {}
+    });
+    const client = await connectClient(handle.url, 'proj-1/sess-A');
+    clients.push(client);
+    const tools = await client.listTools();
+    expect(tools.tools.find((t) => t.name === 'remote_read')).toBeTruthy();
+    expect(tools.tools.find((t) => t.name === 'remote_exec')).toBeFalsy();
+    const res = await client.callTool({
+      name: 'remote_read',
+      arguments: { path: 'README.md', projectId: 'forged' }
+    });
+    expect((res as { isError?: boolean }).isError).toBeFalsy();
+    expect(seen).toEqual(['proj-1:README.md']);
+    const text = (res as { content?: Array<{ text?: string }> }).content?.[0]?.text;
+    expect(text).toBe('from-remote');
+
+    await client.close();
+    clients.pop();
+    await handle.close();
+    handle = null;
+
+    const bare = await boot(store, [makeProject('proj-1', 'P1')]);
+    const other = await connectClient(bare.url, 'proj-1/sess-A');
+    clients.push(other);
+    const listed = await other.listTools();
+    expect(listed.tools.find((t) => t.name === 'remote_read')).toBeFalsy();
+  });
 });

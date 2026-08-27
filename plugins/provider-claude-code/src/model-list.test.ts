@@ -54,7 +54,7 @@ describe("buildClaudeCodeModels", () => {
       "claude-haiku-4-5-20251001",
     ]);
     expect(result.models.find((model) => model.isDefault)?.model).toBe(
-      "claude-opus-5[1m]",
+      "claude-sonnet-5",
     );
     // Selected-only rows stay discovery-gated — they only label a selection the
     // user already has.
@@ -77,7 +77,7 @@ describe("buildClaudeCodeModels", () => {
 
     expect(result.models.map((model) => model.model)).toEqual(CURATED_MODELS);
     expect(result.models.find((model) => model.isDefault)?.model).toBe(
-      "claude-opus-5[1m]",
+      "claude-sonnet-5",
     );
     expect(result.selectedOnlyModels).toEqual([]);
   });
@@ -137,15 +137,16 @@ describe("buildClaudeCodeModels", () => {
     );
   });
 
-  // The account's own default wins over BB's product default when the probe
-  // reports one, so a curated row can never override the provider's choice.
-  it("prefers the discovered default model", () => {
+  // ZCC's product default (Sonnet) wins over the CLI's recommended default, so
+  // a probe that still reports Opus as "Default (recommended)" cannot snap new
+  // threads back to Opus.
+  it("keeps the product default even when the probe recommends another model", () => {
     const result = buildClaudeCodeModels([
       {
         value: "default",
-        resolvedModel: "claude-sonnet-5",
+        resolvedModel: "claude-opus-5[1m]",
         displayName: "Default (recommended)",
-        description: "Sonnet 5",
+        description: "Opus 5 with 1M context",
       },
     ]);
 

@@ -39,7 +39,22 @@ describe('ThreadNewTabPage', () => {
     expect(html).toContain('data-testid="thread-new-tab-terminal"');
     expect(html).toContain('Start terminal');
     expect(html).not.toContain('data-testid="thread-new-tab-browser"');
+    expect(html).not.toContain('data-testid="thread-new-tab-explorer"');
     expect(html).toContain('Tasks');
+
+    const withProject = renderToStaticMarkup(
+      <ThreadNewTabPage
+        projectId="p1"
+        cwd={null}
+        onOpenFile={() => undefined}
+        onOpenBrowser={() => undefined}
+        onOpenExplorer={() => undefined}
+        onStartTerminal={() => undefined}
+        onOpenPlugin={() => undefined}
+      />
+    );
+    expect(withProject).toContain('data-testid="thread-new-tab-explorer"');
+    expect(withProject).toContain('Open Explorer');
   });
 
   it('lists matching files and an empty search state', () => {
@@ -86,6 +101,7 @@ describe('ThreadNewTabPage', () => {
       />
     );
     expect(desktop).toContain('data-testid="thread-new-tab-browser"');
+    expect(desktop).toContain('data-testid="thread-new-tab-explorer"');
     expect(desktop).toContain('Tasks');
     const noSidecar = renderToStaticMarkup(
       <ThreadNewTabView
@@ -98,9 +114,11 @@ describe('ThreadNewTabPage', () => {
         onOpenBrowser={() => undefined}
         onOpenPlugin={() => undefined}
         allowSidecarTerminal={false}
+        allowExplorer={false}
       />
     );
     expect(noSidecar).not.toContain('data-testid="thread-new-tab-terminal"');
     expect(noSidecar).not.toContain('Start terminal');
+    expect(noSidecar).not.toContain('data-testid="thread-new-tab-explorer"');
   });
 });

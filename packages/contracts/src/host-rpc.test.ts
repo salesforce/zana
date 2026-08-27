@@ -100,9 +100,15 @@ describe('host-rpc contract', () => {
       threadId,
       environmentId,
       projectId: 'p1',
-      providerId: 'shell',
-      input: []
-    }).input).toEqual([]);
+      providerId: 'claude',
+      input: ['hello'],
+      remote: { host: 'box', user: 'me', remotePath: '/src' },
+      remoteToolProxy: true
+    })).toMatchObject({
+      type: 'thread.start',
+      remoteToolProxy: true,
+      remote: { host: 'box', user: 'me', remotePath: '/src' }
+    });
     expect(HostRpcCommandSchema.parse({
       type: 'thread.resize',
       threadId,
