@@ -63,6 +63,18 @@ describe('sf CLI process wrappers', () => {
     });
   });
 
+  it('passes cwd and a longer timeout for agent CLI calls', async () => {
+    mocked.mockImplementation((_cmd, _args, opts, cb) => {
+      expect(opts).toMatchObject({ cwd: '/proj', timeout: 120_000 });
+      const fn = cb as (error: Error | null, stdout: string, stderr: string) => void;
+      fn(null, '{"status":0}', '');
+      return undefined as never;
+    });
+    await expect(
+      createExecSf()(['agent', 'validate', 'authoring-bundle'], { cwd: '/proj', timeoutMs: 120_000 })
+    ).resolves.toMatchObject({ code: 0 });
+  });
+
   it('defaults to exit 1 when the process error has no code', async () => {
     mocked.mockImplementation((_cmd, _args, _opts, cb) => {
       const fn = cb as (error: Error | null, stdout: string, stderr: string) => void;
@@ -95,6 +107,21 @@ describe('Salesforce REST transport', () => {
       query: { q: 'SELECT Id FROM Account' }
     });
     expect(response).toEqual({ status: 200, json: { totalSize: 1 }, text: '{"totalSize":1}' });
+  });
+
+  it('honors a per-request API version override', async () => {
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      expect(String(input)).toContain('/services/data/v63.0/einstein/ai-evaluations/runs');
+      return { status: 200, text: async () => '{"id":"run-1"}' };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const response = await salesforceRestRequest(org(), {
+      method: 'POST',
+      path: '/einstein/ai-evaluations/runs',
+      body: { aiEvaluationDefinitionName: 'My_Eval' },
+      apiVersion: '63.0'
+    });
+    expect(response.json).toEqual({ id: 'run-1' });
   });
 
   it('keeps non-JSON bodies as text', async () => {

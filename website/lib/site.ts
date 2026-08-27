@@ -11,6 +11,8 @@ export const site = {
   readmeUrl: 'https://github.com/salesforce/zana/blob/main/README.md',
   /** Public plugin registry index.json (the same feed the app reads). */
   registryUrl: process.env.NEXT_PUBLIC_REGISTRY_URL,
+  /** BB-shaped official plugin marketplace (pointers only). */
+  marketplaceFeedPath: '/marketplace/v1/marketplace.json',
   /** electron-updater generic feed base (where latest-mac.yml + artifacts live). */
   updateFeedUrl: process.env.NEXT_PUBLIC_UPDATE_FEED_URL,
   /** Latest published app version (fallback when the feed is unreachable).

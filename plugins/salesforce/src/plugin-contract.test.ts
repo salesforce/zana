@@ -47,6 +47,9 @@ function mockDeps(kind: 'sandbox' | 'production' = 'sandbox', rest?: (req: Sales
       if (args[0] === 'agent' && args[1] === '--help') {
         return { code: 0, stdout: 'validate preview publish activate\n', stderr: '' };
       }
+      if (args[0] === 'agent' && args[1] === 'test') {
+        return { code: 0, stdout: 'USAGE\n  $ sf agent test run-eval --spec <value>\n', stderr: '' };
+      }
       return { code: 1, stdout: '', stderr: `unexpected ${args.join(' ')}` };
     },
     request: async (_org, req) =>

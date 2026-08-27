@@ -72,6 +72,7 @@ import {
   voiceTranscriptionEnabled
 } from '../services/threads/voice-transcription.js';
 import { cliSkillsStatus, installCliSkills } from '../services/skills/cli-skills.js';
+import { toPluginAppSnapshot } from '../plugins/plugin-service.js';
 
 const VALID_FOLLOW_UP_STATUS: FollowUpStatus[] = ['open', 'resolved', 'dismissed'];
 
@@ -98,6 +99,27 @@ function publicMarketplaceCatalog(row: MarketplaceCatalogRow) {
     lastError: row.lastError,
     official: row.official
   };
+}
+
+async function handlePluginAppEnabled(
+  response: ServerResponse,
+  ctx: ProductHttpContext,
+  id: string,
+  enabled: boolean
+): Promise<void> {
+  if (!ctx.plugins) {
+    sendJson(response, 503, { error: 'plugin host is unavailable' });
+    return;
+  }
+  try {
+    if (enabled) await ctx.plugins.enable(id);
+    else await ctx.plugins.disable(id);
+    sendJson(response, 200, { ok: true as const, value: true as const });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const notFound = /not installed/i.test(message);
+    sendJson(response, notFound ? 404 : 400, { error: message });
+  }
 }
 
 function confineCwd(projectPath: string, cwd: string | undefined): string | null {
@@ -1244,6 +1266,26 @@ export async function handleProductHttp(
 
     if (path === '/api/v1/plugins' && method === 'GET') {
       sendJson(response, 200, { plugins: ctx.plugins?.list() ?? [] });
+      return true;
+    }
+
+    if (path === '/api/v1/plugin-apps' && method === 'GET') {
+      const apps = typeof ctx.plugins?.snapshot === 'function'
+        ? ctx.plugins.snapshot().map(toPluginAppSnapshot)
+        : [];
+      sendJson(response, 200, { apps });
+      return true;
+    }
+
+    const pluginAppEnable = routeParams(path, '/api/v1/plugin-apps/:id/enable');
+    if (pluginAppEnable && method === 'POST') {
+      await handlePluginAppEnabled(response, ctx, pluginAppEnable.id, true);
+      return true;
+    }
+
+    const pluginAppDisable = routeParams(path, '/api/v1/plugin-apps/:id/disable');
+    if (pluginAppDisable && method === 'POST') {
+      await handlePluginAppEnabled(response, ctx, pluginAppDisable.id, false);
       return true;
     }
 

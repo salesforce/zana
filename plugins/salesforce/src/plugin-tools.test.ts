@@ -31,6 +31,8 @@ function baseFs() {
     '/proj/force-app/main/default/classes/Widget.cls': 'public class Widget {}',
     '/proj/force-app/main/default/agents/MyBot.agent': 'config {\n  name: "MyBot"\n}\nstart_agent {\n}\n',
     '/proj/evals/spec.json': JSON.stringify({ tests: [{ utterance: 'hello' }] }),
+    '/proj/evals/spec.yaml': 'subjectType: AGENT\ntests:\n  - utterance: hello\n',
+    '/proj/evals/spec.yaml': 'subjectName: MyBot\ntests:\n  - utterance: hello\n',
     '/proj/node_modules/.bin/sfdx-lwc-jest': '#!/usr/bin/env node'
   };
   const dirs: Record<string, string[]> = {
@@ -42,7 +44,7 @@ function baseFs() {
     '/proj/force-app/main/default/lwc/hello': ['hello.js-meta.xml', 'hello.js', 'hello.html'],
     '/proj/force-app/main/default/classes': ['Widget.cls'],
     '/proj/force-app/main/default/agents': ['MyBot.agent'],
-    '/proj/evals': ['spec.json'],
+    '/proj/evals': ['spec.json', 'spec.yaml'],
     '/proj/node_modules': ['.bin'],
     '/proj/node_modules/.bin': ['sfdx-lwc-jest']
   };
@@ -89,6 +91,19 @@ function mockDeps(options?: {
       }
       if (args[0] === 'agent' && args[1] === 'activate') {
         return { code: 0, stdout: JSON.stringify({ status: 0, result: { success: true } }), stderr: '' };
+      }
+      if (args[0] === 'agent' && args[1] === 'test') {
+        if (args.includes('--help')) {
+          return { code: 0, stdout: 'USAGE\n  $ sf agent test run-eval --spec <value>\n', stderr: '' };
+        }
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            status: 0,
+            result: { success: true, passedCount: 1, failedCount: 0, subjectName: 'MyBot', botVersionId: 'bv-1' }
+          }),
+          stderr: ''
+        };
       }
       return { code: 1, stdout: '', stderr: 'unexpected' };
     },
@@ -400,6 +415,11 @@ describe('salesforce family tools', () => {
       ok: true,
       summary: expect.stringMatching(/cli/)
     });
+    await expect(agent.execute({ action: 'compile', apiName: 'MyBot' }, ctx)).resolves.toMatchObject({ ok: true });
+    harness.setSettings({ defaultOrg: '', projectRoot: '/proj' });
+    await expect(agent.execute({ action: 'compile', apiName: 'MyBot' }, ctx)).resolves.toMatchObject({
+      code: 'not_configured'
+    });
     await expect(agent.execute({ action: 'nope' }, ctx)).resolves.toMatchObject({ code: 'invalid_input' });
   });
 
@@ -452,8 +472,17 @@ describe('salesforce family tools', () => {
   });
 
   it('runs preview and eval with compact artifacts', async () => {
+    const calls: Array<{ args: string[]; cwd?: string; timeoutMs?: number }> = [];
+    const base = mockDeps();
+    const deps: SalesforceDeps = {
+      ...base,
+      execSf: async (args, opts) => {
+        calls.push({ args, cwd: opts?.cwd, timeoutMs: opts?.timeoutMs });
+        return base.execSf(args, opts);
+      }
+    };
     const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
-    await createSalesforcePlugin(zcc, mockDeps());
+    await createSalesforcePlugin(zcc, deps);
     harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const agent = harness.agentTools.find((row) => row.name === 'sf_agent')!;
     await expect(agent.execute({ action: 'preview.start', apiName: 'MyBot' }, ctx)).resolves.toMatchObject({
@@ -461,15 +490,45 @@ describe('salesforce family tools', () => {
       artifactId: expect.any(String),
       data: { sessionId: 'sess-1' }
     });
+    expect(calls.find((row) => row.args[1] === 'preview' && row.args[2] === 'start')?.args).toEqual(
+      expect.arrayContaining(['--authoring-bundle', 'MyBot', '--simulate-actions'])
+    );
+    expect(calls.find((row) => row.args[1] === 'preview')?.cwd).toBe('/proj');
+    expect(calls.find((row) => row.args[1] === 'preview')?.timeoutMs).toBe(120_000);
     await expect(
-      agent.execute({ action: 'preview.send', sessionId: 'sess-1', utterance: 'hi' }, ctx)
+      agent.execute({ action: 'preview.send', sessionId: 'sess-1', utterance: 'hi', apiName: 'MyBot' }, ctx)
     ).resolves.toMatchObject({ ok: true });
-    await expect(agent.execute({ action: 'preview.end', sessionId: 'sess-1' }, ctx)).resolves.toMatchObject({
+    await expect(agent.execute({ action: 'preview.end', sessionId: 'sess-1', apiName: 'MyBot' }, ctx)).resolves.toMatchObject({
       ok: true
     });
+    const restHits: string[] = [];
+    const evalCalls: Array<{ args: string[]; cwd?: string }> = [];
+    const evalDeps: SalesforceDeps = {
+      ...base,
+      execSf: async (args, opts) => {
+        evalCalls.push({ args, cwd: opts?.cwd });
+        return base.execSf(args, opts);
+      },
+      request: async (org, req) => {
+        restHits.push(req.path);
+        return base.request(org, req);
+      }
+    };
+    const { zcc: zccEval, harness: harnessEval } = createFakePluginHost({ pluginId: 'salesforce' });
+    await createSalesforcePlugin(zccEval, evalDeps);
+    harnessEval.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
+    const agentEval = harnessEval.agentTools.find((row) => row.name === 'sf_agent')!;
     await expect(
-      agent.execute({ action: 'eval.run', specPath: 'evals/spec.json', botVersionId: 'bv-1' }, ctx)
+      agentEval.execute({ action: 'eval.run', specPath: 'evals/spec.json', botVersionId: 'bv-1' }, ctx)
     ).resolves.toMatchObject({ ok: true, summary: expect.stringMatching(/passed/) });
+    expect(restHits.some((path) => path.includes('einstein'))).toBe(false);
+    expect(evalCalls.find((row) => row.args.includes('run-eval'))).toMatchObject({
+      cwd: '/proj',
+      args: expect.arrayContaining(['agent', 'test', 'run-eval', '--spec', '/proj/evals/spec.json'])
+    });
+    await expect(agentEval.execute({ action: 'eval.run', specPath: 'evals/spec.yaml' }, ctx)).resolves.toMatchObject({
+      ok: true
+    });
     await expect(agent.execute({ action: 'eval.run', specPath: '../secret.json' }, ctx)).resolves.toMatchObject({
       code: 'path_refused'
     });
@@ -538,27 +597,150 @@ describe('salesforce family tools', () => {
     ).resolves.toMatchObject({ code: 'refused' });
   });
 
-  it('falls back to the v1 evaluation path after a 404', async () => {
+  it('evals an org definition via Connect POST+poll and keeps evidence after reload', async () => {
+    let polls = 0;
+    const restCalls: Array<{ method: string; path: string; apiVersion?: string; body?: unknown }> = [];
+    const deps = mockDeps({
+      rest: (req) => {
+        restCalls.push({ method: req.method, path: req.path, apiVersion: req.apiVersion, body: req.body });
+        if (req.path === '/einstein/ai-evaluations/runs' && req.method === 'POST') {
+          return { status: 201, json: { id: 'run-1', status: 'NEW' }, text: '{}' };
+        }
+        if (req.path === '/einstein/ai-evaluations/runs/run-1' && req.method === 'GET') {
+          polls += 1;
+          if (polls === 1) return { status: 200, json: { id: 'run-1', status: 'IN_PROGRESS' }, text: '{}' };
+          return { status: 200, json: { id: 'run-1', status: 'COMPLETED' }, text: '{}' };
+        }
+        if (req.path === '/einstein/ai-evaluations/runs/run-1/results') {
+          return {
+            status: 200,
+            json: { success: true, passedCount: 2, failedCount: 0, botVersionId: 'bv-1' },
+            text: '{}'
+          };
+        }
+        return { status: 200, json: { records: [] }, text: '{}' };
+      }
+    });
+    deps.sleep = async () => undefined;
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    await createSalesforcePlugin(zcc, deps);
+    harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
+    const agent = harness.agentTools.find((row) => row.name === 'sf_agent')!;
+    await expect(
+      agent.execute({ action: 'eval.run', aiEvaluationDefinitionName: 'My_Eval', botVersionId: 'bv-1' }, ctx)
+    ).resolves.toMatchObject({ ok: true, summary: expect.stringMatching(/passed/) });
+    expect(restCalls[0]).toMatchObject({
+      method: 'POST',
+      path: '/einstein/ai-evaluations/runs',
+      apiVersion: '63.0',
+      body: { aiEvaluationDefinitionName: 'My_Eval' }
+    });
+    expect(polls).toBe(2);
+
+    await harness.reload((api) => createSalesforcePlugin(api, deps));
+    harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
+    const agentReloaded = [...harness.agentTools].reverse().find((row) => row.name === 'sf_agent')!;
+    const activate = agentReloaded.execute(
+      { action: 'lifecycle.activate', apiName: 'MyBot', botVersionId: 'bv-1' },
+      ctx
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    harness.submitInteraction({ approved: true });
+    await expect(activate).resolves.toMatchObject({ ok: true });
+  });
+
+  it('previews a published agent with --api-name and no action-mode flags', async () => {
+    const seen: string[] = [];
+    const base = mockDeps();
+    const deps: SalesforceDeps = {
+      ...base,
+      execSf: async (args, opts) => {
+        if (args[1] === 'preview') seen.push(...args);
+        return base.execSf(args, opts);
+      }
+    };
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
+    await createSalesforcePlugin(zcc, deps);
+    harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
+    const agent = harness.agentTools.find((row) => row.name === 'sf_agent')!;
+    await expect(agent.execute({ action: 'preview.start', apiName: 'PublishedBot' }, ctx)).resolves.toMatchObject({
+      ok: true
+    });
+    await expect(
+      agent.execute({ action: 'preview.start', apiName: 'MyBot', published: true }, ctx)
+    ).resolves.toMatchObject({ ok: true });
+    expect(seen.filter((flag) => flag === '--api-name').length).toBeGreaterThanOrEqual(2);
+    expect(seen).toContain('--api-name');
+    expect(seen).toContain('PublishedBot');
+    expect(seen).not.toContain('--simulate-actions');
+    expect(seen).not.toContain('--authoring-bundle');
+  });
+
+  it('surfaces Connect eval poll failures and published preview identity errors', async () => {
     const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce' });
     await createSalesforcePlugin(
       zcc,
       mockDeps({
         rest: (req) => {
-          if (req.path === '/einstein/ai-evaluations/runs') {
-            return { status: 404, json: null, text: 'missing' };
-          }
-          if (req.path === '/einstein/evaluation/v1/tests') {
-            return { status: 200, json: { success: true, passedCount: 1, failedCount: 0, botVersionId: 'bv-1' }, text: '{}' };
+          if (req.path === '/einstein/ai-evaluations/runs' && req.method === 'POST') {
+            return { status: 201, json: { status: 'NEW' }, text: '{}' };
           }
           return { status: 200, json: { records: [] }, text: '{}' };
         }
       })
     );
-    harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
+    harness.setSettings({ defaultOrg: 'dev' });
     const agent = harness.agentTools.find((row) => row.name === 'sf_agent')!;
     await expect(
-      agent.execute({ action: 'eval.run', specPath: 'evals/spec.json', botVersionId: 'bv-1' }, ctx)
-    ).resolves.toMatchObject({ ok: true, summary: expect.stringMatching(/passed/) });
+      agent.execute({ action: 'eval.run', aiEvaluationDefinitionName: 'My_Eval' }, ctx)
+    ).resolves.toMatchObject({ code: 'api_error' });
+
+    const pollFail = mockDeps({
+      rest: (req) => {
+        if (req.path === '/einstein/ai-evaluations/runs' && req.method === 'POST') {
+          return { status: 201, json: { id: 'run-1' }, text: '{}' };
+        }
+        if (req.path.includes('/einstein/ai-evaluations/runs/run-1')) {
+          return { status: 400, json: { message: 'poll failed' }, text: '' };
+        }
+        return { status: 200, json: { records: [] }, text: '{}' };
+      }
+    });
+    const { zcc: zccP, harness: harnessP } = createFakePluginHost({ pluginId: 'salesforce' });
+    await createSalesforcePlugin(zccP, pollFail);
+    harnessP.setSettings({ defaultOrg: 'dev' });
+    const agentP = harnessP.agentTools.find((row) => row.name === 'sf_agent')!;
+    await expect(
+      agentP.execute({ action: 'eval.run', aiEvaluationDefinitionName: 'My_Eval' }, ctx)
+    ).resolves.toMatchObject({ code: 'api_error' });
+
+    const stuck = mockDeps({
+      rest: (req) => {
+        if (req.path === '/einstein/ai-evaluations/runs' && req.method === 'POST') {
+          return { status: 201, json: { id: 'run-9' }, text: '{}' };
+        }
+        if (req.path === '/einstein/ai-evaluations/runs/run-9') {
+          return { status: 200, json: { id: 'run-9', status: 'IN_PROGRESS' }, text: '{}' };
+        }
+        return { status: 200, json: { records: [] }, text: '{}' };
+      }
+    });
+    stuck.sleep = async () => undefined;
+    const { zcc: zccT, harness: harnessT } = createFakePluginHost({ pluginId: 'salesforce' });
+    await createSalesforcePlugin(zccT, stuck);
+    harnessT.setSettings({ defaultOrg: 'dev' });
+    const agentT = harnessT.agentTools.find((row) => row.name === 'sf_agent')!;
+    await expect(
+      agentT.execute({ action: 'eval.run', aiEvaluationDefinitionName: 'My_Eval' }, ctx)
+    ).resolves.toMatchObject({ code: 'eval_timeout' });
+
+    const { zcc: zccS, harness: harnessS } = createFakePluginHost({ pluginId: 'salesforce' });
+    await createSalesforcePlugin(zccS, mockDeps());
+    harnessS.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
+    const agentS = harnessS.agentTools.find((row) => row.name === 'sf_agent')!;
+    await expect(
+      agentS.execute({ action: 'preview.send', sessionId: 'sess-1', utterance: 'hi', published: true }, ctx)
+    ).resolves.toMatchObject({ code: 'invalid_input' });
   });
 
   it('surfaces Agent Script compile, preview, eval, and lifecycle failures', async () => {
@@ -585,9 +767,23 @@ describe('salesforce family tools', () => {
     await expect(agent.execute({ action: 'eval.run', specPath: 'evals/missing.json' }, ctx)).resolves.toMatchObject({
       code: 'not_found'
     });
-    await expect(
-      agent.execute({ action: 'eval.run', specPath: 'force-app/main/default/classes/Widget.cls' }, ctx)
-    ).resolves.toMatchObject({ code: 'invalid_input' });
+
+    const evalCliFail: SalesforceDeps = {
+      ...base,
+      execSf: async (args, opts) => {
+        if (args[0] === 'agent' && args[1] === 'test' && !args.includes('--help')) {
+          return { code: 1, stdout: JSON.stringify({ status: 1, message: 'bad spec' }), stderr: '' };
+        }
+        return base.execSf(args, opts);
+      }
+    };
+    const { zcc: zccSpec, harness: harnessSpec } = createFakePluginHost({ pluginId: 'salesforce' });
+    await createSalesforcePlugin(zccSpec, evalCliFail);
+    harnessSpec.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
+    const agentSpec = harnessSpec.agentTools.find((row) => row.name === 'sf_agent')!;
+    await expect(agentSpec.execute({ action: 'eval.run', specPath: 'evals/spec.json' }, ctx)).resolves.toMatchObject({
+      code: 'eval_failed'
+    });
 
     const thrown: SalesforceDeps = {
       ...base,
@@ -632,7 +828,7 @@ describe('salesforce family tools', () => {
     harnessE.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const agentE = harnessE.agentTools.find((row) => row.name === 'sf_agent')!;
     await expect(
-      agentE.execute({ action: 'eval.run', specPath: 'evals/spec.json' }, ctx)
+      agentE.execute({ action: 'eval.run', aiEvaluationDefinitionName: 'My_Eval' }, ctx)
     ).resolves.toMatchObject({ code: 'api_error' });
 
     const { zcc: zccL, harness: harnessL } = createFakePluginHost({ pluginId: 'salesforce' });

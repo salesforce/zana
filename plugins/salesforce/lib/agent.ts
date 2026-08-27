@@ -1,5 +1,12 @@
 import { basename, join } from 'node:path';
-import type { AgentCompilerKind, EvalEvidence, ExecResult, SalesforceDeps } from './types.js';
+import {
+  SF_AGENT_CLI_TIMEOUT_MS,
+  type AgentCompilerKind,
+  type EvalEvidence,
+  type ExecResult,
+  type ExecSfOptions,
+  type SalesforceDeps
+} from './types.js';
 import { fingerprint, listFilesRecursive, parsePackageDirectories, readJsonObject, resolveUnderRoot } from './dx-project.js';
 
 export type AgentAction =
@@ -20,9 +27,11 @@ export interface AgentInput {
   sessionId?: string;
   utterance?: string;
   specPath?: string;
+  aiEvaluationDefinitionName?: string;
   botVersionId?: string;
   versionNumber?: number;
   allow_untested?: boolean;
+  published?: boolean;
 }
 
 export interface AgentPlan {
@@ -32,9 +41,11 @@ export interface AgentPlan {
   sessionId?: string;
   utterance?: string;
   specPath?: string;
+  aiEvaluationDefinitionName?: string;
   botVersionId?: string;
   versionNumber?: number;
   allowUntested: boolean;
+  published: boolean;
 }
 
 export interface AgentBundle {
@@ -44,6 +55,16 @@ export interface AgentBundle {
   hasConfig: boolean;
   hasStartAgent: boolean;
 }
+
+export type AgentPreviewIdentity = {
+  flag: 'authoring-bundle' | 'api-name';
+  apiName: string;
+};
+
+export type EvidenceKv = {
+  get<T>(key: string): Promise<T | undefined>;
+  set(key: string, value: unknown): Promise<void>;
+};
 
 const ACTIONS: readonly AgentAction[] = [
   'compile',
@@ -59,6 +80,10 @@ const ACTIONS: readonly AgentAction[] = [
 
 const COMPILER_BINS = ['agent-script', 'agentscript'];
 
+export const EVAL_RUNS_PATH = '/einstein/ai-evaluations/runs';
+export const EVAL_POLL_INTERVAL_MS = 400;
+export const EVAL_POLL_MAX_ATTEMPTS = 30;
+
 export function parseAgentInput(input: unknown): { ok: true; plan: AgentPlan } | { ok: false; error: string } {
   const raw = input && typeof input === 'object' ? (input as AgentInput) : {};
   const action = typeof raw.action === 'string' ? raw.action.trim() : '';
@@ -70,6 +95,8 @@ export function parseAgentInput(input: unknown): { ok: true; plan: AgentPlan } |
   const sessionId = typeof raw.sessionId === 'string' ? raw.sessionId.trim() : '';
   const utterance = typeof raw.utterance === 'string' ? raw.utterance : '';
   const specPath = typeof raw.specPath === 'string' ? raw.specPath.trim() : '';
+  const aiEvaluationDefinitionName =
+    typeof raw.aiEvaluationDefinitionName === 'string' ? raw.aiEvaluationDefinitionName.trim() : '';
   const botVersionId = typeof raw.botVersionId === 'string' ? raw.botVersionId.trim() : '';
   const versionNumber =
     typeof raw.versionNumber === 'number' && Number.isFinite(raw.versionNumber)
@@ -85,8 +112,11 @@ export function parseAgentInput(input: unknown): { ok: true; plan: AgentPlan } |
   if (action === 'preview.end' && !sessionId) {
     return { ok: false, error: 'preview.end requires sessionId.' };
   }
-  if (action === 'eval.run' && !specPath) {
-    return { ok: false, error: 'eval.run requires specPath to a confined eval spec JSON file.' };
+  if (action === 'eval.run' && !specPath && !aiEvaluationDefinitionName) {
+    return {
+      ok: false,
+      error: 'eval.run requires specPath (confined YAML/JSON) or aiEvaluationDefinitionName.'
+    };
   }
   if (action === 'lifecycle.activate' && !apiName && !botVersionId) {
     return { ok: false, error: 'lifecycle.activate requires apiName or botVersionId.' };
@@ -101,9 +131,11 @@ export function parseAgentInput(input: unknown): { ok: true; plan: AgentPlan } |
       sessionId: sessionId || undefined,
       utterance: utterance || undefined,
       specPath: specPath || undefined,
+      aiEvaluationDefinitionName: aiEvaluationDefinitionName || undefined,
       botVersionId: botVersionId || undefined,
       versionNumber,
-      allowUntested: raw.allow_untested === true
+      allowUntested: raw.allow_untested === true,
+      published: raw.published === true
     }
   };
 }
@@ -180,6 +212,13 @@ export function agentPluginAvailable(result: ExecResult): boolean {
   return result.code === 0 || /validate|preview|publish|activate/i.test(text);
 }
 
+export function agentEvalHelpAvailable(result: ExecResult): boolean {
+  if (result.code === 127) return false;
+  const text = `${result.stdout}\n${result.stderr}`;
+  if (/command .* not found|is not a sf command|unknown topic/i.test(text) && result.code !== 0) return false;
+  return result.code === 0 || /run-eval/i.test(text);
+}
+
 export async function probeAgentCapabilities(
   projectRoot: string,
   deps: SalesforceDeps
@@ -252,39 +291,47 @@ export function parseEvalSpec(text: string): { ok: true; spec: unknown; testCoun
   return { ok: true, spec: parsed, testCount: tests.length };
 }
 
+export function evalCaseCount(text: string): number {
+  const parsed = parseEvalSpec(text);
+  return parsed.ok ? parsed.testCount : 0;
+}
+
 export function summarizeEvalRun(json: unknown, testCount: number): { passed: boolean; passedCount: number; failedCount: number } {
-  const row = json && typeof json === 'object' ? (json as Record<string, unknown>) : {};
+  const row = unwrapRecord(json);
   const passedCount =
     typeof row.passedCount === 'number'
       ? row.passedCount
       : typeof row.passCount === 'number'
         ? row.passCount
         : row.success === true
-          ? testCount
+          ? testCount || 1
           : 0;
   const failedCount =
     typeof row.failedCount === 'number'
       ? row.failedCount
       : typeof row.failCount === 'number'
         ? row.failCount
-        : Math.max(0, testCount - passedCount);
+        : Math.max(0, (testCount || passedCount) - passedCount);
   const passed = row.success === true || (failedCount === 0 && passedCount > 0);
   return { passed, passedCount, failedCount };
 }
 
 export function evidenceKey(orgId: string, botVersionId: string): string {
-  return `${orgId}:${botVersionId}`;
+  return `eval-evidence:${orgId}:${botVersionId}`;
 }
 
 export class EvalEvidenceStore {
-  private readonly items = new Map<string, EvalEvidence>();
+  constructor(private readonly kv: EvidenceKv) {}
 
-  record(evidence: EvalEvidence): void {
-    this.items.set(evidenceKey(evidence.orgId, evidence.botVersionId), evidence);
+  async record(evidence: EvalEvidence): Promise<void> {
+    await this.kv.set(evidenceKey(evidence.orgId, evidence.botVersionId), evidence);
   }
 
-  get(orgId: string, botVersionId: string): EvalEvidence | null {
-    return this.items.get(evidenceKey(orgId, botVersionId)) ?? null;
+  async get(orgId: string, botVersionId: string): Promise<EvalEvidence | null> {
+    const row = await this.kv.get<EvalEvidence>(evidenceKey(orgId, botVersionId));
+    if (!row || typeof row !== 'object') return null;
+    if (typeof row.orgId !== 'string' || typeof row.botVersionId !== 'string') return null;
+    return row;
   }
 }
 
@@ -325,35 +372,106 @@ export function specFingerprint(specText: string): string {
   return fingerprint(specText);
 }
 
+export function agentCliOpts(projectRoot?: string | null): ExecSfOptions {
+  return {
+    timeoutMs: SF_AGENT_CLI_TIMEOUT_MS,
+    ...(projectRoot ? { cwd: projectRoot } : {})
+  };
+}
+
 export function previewArgs(
   verb: 'start' | 'send' | 'end',
-  plan: AgentPlan,
-  alias: string
+  plan: Pick<AgentPlan, 'sessionId' | 'utterance'>,
+  alias: string,
+  identity?: AgentPreviewIdentity
 ): string[] {
   const args = ['agent', 'preview', verb, '--json', '--target-org', alias];
-  if (plan.apiName) args.push('--authoring-bundle', plan.apiName);
+  if (identity?.flag === 'authoring-bundle') {
+    args.push('--authoring-bundle', identity.apiName);
+    if (verb === 'start') args.push('--simulate-actions');
+  } else if (identity?.flag === 'api-name') {
+    args.push('--api-name', identity.apiName);
+  }
   if (plan.sessionId && verb !== 'start') args.push('--session-id', plan.sessionId);
   if (verb === 'send') args.push('--utterance', plan.utterance ?? '');
   return args;
 }
 
 export function publishArgs(apiName: string, alias: string): string[] {
-  return ['agent', 'publish', 'authoring-bundle', '--json', '--api-name', apiName, '--target-org', alias];
+  return [
+    'agent',
+    'publish',
+    'authoring-bundle',
+    '--json',
+    '--api-name',
+    apiName,
+    '--target-org',
+    alias,
+    '--skip-retrieve'
+  ];
 }
 
 export function activateArgs(apiName: string, alias: string, versionNumber?: number): string[] {
   const args = ['agent', 'activate', '--json', '--api-name', apiName, '--target-org', alias];
-  if (versionNumber !== undefined) args.push('--version-number', String(versionNumber));
+  if (versionNumber !== undefined) args.push('--version', String(versionNumber));
   return args;
 }
 
-export function validateArgs(apiName: string, alias?: string): string[] {
-  const args = ['agent', 'validate', 'authoring-bundle', '--json', '--api-name', apiName];
-  if (alias) args.push('--target-org', alias);
-  return args;
+export function validateArgs(apiName: string, alias: string): string[] {
+  return ['agent', 'validate', 'authoring-bundle', '--json', '--api-name', apiName, '--target-org', alias];
+}
+
+export function runEvalArgs(specPath: string, alias: string): string[] {
+  return ['agent', 'test', 'run-eval', '--spec', specPath, '--json', '--target-org', alias];
 }
 
 export const BOT_VERSION_SOQL =
   'SELECT Id, Status, VersionNumber, BotDefinition.DeveloperName FROM BotVersion ORDER BY LastModifiedDate DESC LIMIT 25';
 
-export const EVAL_RUN_PATHS = ['/einstein/ai-evaluations/runs', '/einstein/evaluation/v1/tests'] as const;
+export function evalResultsPath(runId: string): string {
+  return `${EVAL_RUNS_PATH}/${runId}/results`;
+}
+
+export function evalRunPath(runId: string): string {
+  return `${EVAL_RUNS_PATH}/${runId}`;
+}
+
+export function extractEvalRunId(payload: unknown): string | null {
+  const row = unwrapRecord(payload);
+  for (const key of ['id', 'runId', 'evaluationRunId']) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+export function evalRunStatus(payload: unknown): string {
+  const row = unwrapRecord(payload);
+  const status = row.status ?? row.state;
+  return typeof status === 'string' ? status.trim() : '';
+}
+
+export function isEvalTerminal(status: string): boolean {
+  return /^(completed|complete|failed|error|cancelled|canceled|succeeded|success)$/i.test(status.trim());
+}
+
+export function extractEvalBotVersionId(payload: unknown, fallback?: string): string {
+  const row = unwrapRecord(payload);
+  for (const key of ['botVersionId', 'subjectName', 'agentId', 'apiName']) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  const version = row.versionNumber ?? row.version;
+  if (typeof version === 'number' && Number.isFinite(version)) return String(version);
+  if (typeof version === 'string' && version.trim()) return version.trim();
+  return fallback || 'latest';
+}
+
+function unwrapRecord(payload: unknown): Record<string, unknown> {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return {};
+  const row = payload as Record<string, unknown>;
+  if (row.result && typeof row.result === 'object' && !Array.isArray(row.result)) {
+    return row.result as Record<string, unknown>;
+  }
+  return row;
+}

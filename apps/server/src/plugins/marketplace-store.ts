@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { atomicDurableWrite, createSerializedTransactionQueue } from '../durable-store.js';
-import { parseMarketplaceIndex, marketplaceInstallSpec, type MarketplaceIndex } from './marketplace.js';
+import { parseMarketplaceIndex, marketplaceInstallSpec, type MarketplaceIndex, type MarketplaceEntry } from './marketplace.js';
 import { defaultFetchJson } from './plugin-process.js';
 import {
   marketplaceSourceDisplay,
@@ -191,12 +191,12 @@ export async function fetchMarketplaceIndex(
   return materializeMarketplaceIndex(parseMarketplaceSource(url), fetchJson);
 }
 
-export async function resolveCatalogSource(
+export async function resolveCatalogEntry(
   marketplace: string,
   entryId: string,
   catalogs: MarketplaceCatalogRow[],
   fetchJson: (url: string) => Promise<unknown>
-): Promise<string> {
+): Promise<MarketplaceEntry> {
   const matching = catalogs.filter(
     (row) => row.name === marketplace || row.source === marketplace || row.url === marketplace || row.displayName === marketplace
   );
@@ -205,7 +205,18 @@ export async function resolveCatalogSource(
     const index = catalog.cachedIndex
       ?? await materializeMarketplaceIndex(parseMarketplaceSource(catalog.source), fetchJson);
     const entry = index.plugins.find((plugin) => plugin.id === entryId);
-    if (entry) return marketplaceInstallSpec(entry);
+    if (entry) return entry;
   }
   throw new Error(`marketplace entry ${entryId}@${marketplace} not found`);
+}
+
+export async function resolveCatalogSource(
+  marketplace: string,
+  entryId: string,
+  catalogs: MarketplaceCatalogRow[],
+  fetchJson: (url: string) => Promise<unknown>
+): Promise<string> {
+  return marketplaceInstallSpec(
+    await resolveCatalogEntry(marketplace, entryId, catalogs, fetchJson)
+  );
 }

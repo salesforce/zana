@@ -17,18 +17,26 @@ export const marketplaceSourceGitSchema = z
   })
   .strict();
 
+const marketplaceIconObjectSchema = z
+  .object({
+    url: z.string().min(1).optional(),
+    lucide: z.string().min(1).optional()
+  })
+  .strict();
+
+/** Lucide name string (BB) or `{ url?, lucide? }`. */
+export const marketplaceIconSchema = z.preprocess(
+  (value) => (typeof value === 'string' && value.length > 0 ? { lucide: value } : value),
+  marketplaceIconObjectSchema.optional()
+);
+
 export const marketplaceEntrySchema = z
   .object({
     id: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
     displayName: z.string().min(1),
     description: z.string().min(1),
-    icon: z
-      .object({
-        url: z.string().min(1).optional(),
-        lucide: z.string().min(1).optional()
-      })
-      .strict()
-      .optional(),
+    icon: marketplaceIconSchema,
+    tags: z.array(z.string().min(1).max(64)).max(24).optional(),
     author: z
       .object({
         name: z.string().min(1),
@@ -51,6 +59,7 @@ export const marketplaceEntrySchema = z
 export const marketplaceIndexSchema = z
   .object({
     schemaVersion: z.literal(1),
+    $schema: z.string().min(1).optional(),
     name: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
     displayName: z.string().min(1),
     description: z.string().min(1).optional(),

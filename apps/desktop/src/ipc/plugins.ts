@@ -7,6 +7,10 @@ import { listMcpServers, setMcpServerEnabled } from '@zana-ai/zcc-server/service
 import { listPlugins, revealPlugin, setPluginEnabled } from '@zana-ai/zcc-server/services/extensions/plugins';
 import { store } from '@zana-ai/zcc-server/services/projects/store';
 import type { Result } from '@zana-ai/zcc-domain/product';
+import {
+  listPluginAppsFromProductServer,
+  setPluginAppEnabledOnProductServer
+} from './plugin-apps-loopback.js';
 
 export function registerPluginsIpc(): void {
   
@@ -77,26 +81,34 @@ export function registerPluginsIpc(): void {
   );
   ctx.safeHandle(
     IPC.pluginApps.list,
-    async () => ctx.runtimeSupervisor?.listPluginApps() ?? [],
+    async () => {
+      if (ctx.runtimeSupervisor) return ctx.runtimeSupervisor.listPluginApps();
+      return listPluginAppsFromProductServer();
+    },
     () => []
   );
   ctx.safeHandle(
     IPC.pluginApps.setEnabled,
     async (id: string, enabled: boolean) => {
-      if (!ctx.runtimeSupervisor) {
-        return { ok: false, code: 'UNAVAILABLE', message: 'plugin host is unavailable' };
+      if (ctx.runtimeSupervisor) {
+        try {
+          if (enabled) await ctx.runtimeSupervisor.enablePlugin(id);
+          else await ctx.runtimeSupervisor.disablePlugin(id);
+          return { ok: true as const, value: true as const };
+        } catch (err) {
+          return {
+            ok: false as const,
+            code: 'WRITE_FAILED',
+            message: err instanceof Error ? err.message : String(err)
+          };
+        }
       }
-      try {
-        if (enabled) await ctx.runtimeSupervisor.enablePlugin(id);
-        else await ctx.runtimeSupervisor.disablePlugin(id);
-        return { ok: true as const, value: true as const };
-      } catch (err) {
-        return {
-          ok: false as const,
-          code: 'WRITE_FAILED',
-          message: err instanceof Error ? err.message : String(err)
-        };
+      const result = await setPluginAppEnabledOnProductServer(id, enabled);
+      if (result.ok) {
+        const apps = await listPluginAppsFromProductServer();
+        ctx.safeSend(IPC.pluginApps.onChanged, apps);
       }
+      return result;
     },
     (err): Result<true> => ({
       ok: false,

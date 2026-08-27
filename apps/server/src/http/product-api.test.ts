@@ -695,6 +695,74 @@ describe('product HTTP plugins', () => {
     await expect(http.json()).resolves.toEqual({ path: '/ping' });
   });
 
+  it('lists redacted plugin-app snapshots and toggles enable/disable', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-apps-'));
+    server = await startProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const enabled = new Map<string, boolean>([['docs', true]]);
+    const snapshotRow = {
+      id: 'docs',
+      name: 'Docs',
+      description: 'library',
+      icon: 'Library',
+      enabled: true,
+      provenance: 'builtin' as const,
+      status: 'running' as const,
+      appEntry: './app.js',
+      appUrl: '/plugins/docs/app.js',
+      npmResolvedVersion: null,
+      gitResolvedCommit: null,
+      source: 'builtin:docs',
+      projectTab: { label: 'Library', global: true },
+      skillNames: [],
+      mcpServers: [],
+      extra: {},
+      themes: []
+    };
+    server.ctx.plugins = {
+      list: () => [{ id: 'docs', rootDir: '/secret/plugins/docs' }],
+      snapshot: () => [{ ...snapshotRow, enabled: enabled.get('docs') === true }],
+      enable: async (id: string) => {
+        if (!enabled.has(id)) throw new Error(`plugin not installed: ${id}`);
+        enabled.set(id, true);
+        return { id };
+      },
+      disable: async (id: string) => {
+        if (!enabled.has(id)) throw new Error(`plugin not installed: ${id}`);
+        enabled.set(id, false);
+        return { id };
+      }
+    } as never;
+
+    const listed = await fetch(`${server.url}api/v1/plugin-apps`);
+    const body = await listed.json() as { apps: Array<{ id: string; source?: string; rootDir?: string }> };
+    expect(body.apps).toEqual([
+      {
+        id: 'docs',
+        name: 'Docs',
+        description: 'library',
+        icon: 'Library',
+        enabled: true,
+        provenance: 'builtin',
+        status: 'running',
+        appUrl: '/plugins/docs/app.js',
+        projectTab: { label: 'Library', global: true }
+      }
+    ]);
+    expect(body.apps[0]).not.toHaveProperty('rootDir');
+    expect(body.apps[0]).not.toHaveProperty('source');
+
+    const disable = await fetch(`${server.url}api/v1/plugin-apps/docs/disable`, { method: 'POST' });
+    await expect(disable.json()).resolves.toEqual({ ok: true, value: true });
+    const after = await fetch(`${server.url}api/v1/plugin-apps`);
+    await expect(after.json()).resolves.toMatchObject({ apps: [{ id: 'docs', enabled: false }] });
+
+    const missing = await fetch(`${server.url}api/v1/plugin-apps/missing/enable`, { method: 'POST' });
+    expect(missing.status).toBe(404);
+  });
+
   it('adds, lists, refreshes, and removes marketplace catalogs', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-mp-'));
     server = await startProductServer({

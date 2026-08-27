@@ -335,6 +335,104 @@ describe('PluginService', () => {
     expect(hits.some((h) => h.id === 'kept')).toBe(true);
   });
 
+  it('installs a catalog git plugin from subdir and refuses an escaping subdir', async () => {
+    const dataDir = root();
+    const service = createPluginService({
+      dataDir,
+      bundledRoot: root(),
+      fetchJson: async () => ({
+        schemaVersion: 1,
+        name: 'official',
+        displayName: 'Official',
+        plugins: [
+          {
+            id: 'notes',
+            displayName: 'Notes',
+            description: 'notes plugin',
+            author: { name: 'zana' },
+            source: {
+              git: {
+                url: 'https://example.test/zana.git',
+                subdir: 'plugins/notes',
+                ref: 'HEAD'
+              }
+            }
+          },
+          {
+            id: 'evil',
+            displayName: 'Evil',
+            description: 'escape',
+            author: { name: 'zana' },
+            source: {
+              git: {
+                url: 'https://example.test/zana.git',
+                subdir: '../outside',
+                ref: 'HEAD'
+              }
+            }
+          }
+        ]
+      }),
+      cloneGit: async (_url, dest) => {
+        mkdirSync(dest, { recursive: true });
+        writePlugin(join(dest, 'plugins', 'notes'), 'notes');
+        return { commit: 'abc1234' };
+      }
+    });
+    await service.addMarketplace('https://example.test/marketplace.json');
+    const row = await service.install('notes@official');
+    expect(row.id).toBe('notes');
+    expect(row.provenance).toBe('catalog');
+    expect(row.rootDir).toMatch(/plugins[\\/]notes$/);
+    expect(row.gitResolvedCommit).toBe('abc1234');
+    await expect(service.install('evil@official')).rejects.toThrow(/not contained/);
+  });
+
+  it('seeds an official marketplace from ZCC_OFFICIAL_MARKETPLACE_URL and stays up if fetch fails', async () => {
+    const dataDir = root();
+    const previous = process.env.ZCC_OFFICIAL_MARKETPLACE_URL;
+    process.env.ZCC_OFFICIAL_MARKETPLACE_URL = 'https://example.test/marketplace/v1/marketplace.json';
+    try {
+      const ok = createPluginService({
+        dataDir,
+        bundledRoot: root(),
+        fetchJson: async () => ({
+          schemaVersion: 1,
+          name: 'official',
+          displayName: 'Zana official plugins',
+          plugins: [
+            {
+              id: 'tasks',
+              displayName: 'Tasks',
+              description: 'tasks',
+              author: { name: 'Zana' },
+              source: { git: { url: 'https://github.com/salesforce/zana', subdir: 'plugins/tasks', ref: 'HEAD' } }
+            }
+          ]
+        })
+      });
+      await ok.start();
+      const catalogs = ok.listMarketplaces();
+      expect(catalogs).toHaveLength(1);
+      expect(catalogs[0]?.official).toBe(true);
+      expect(catalogs[0]?.name).toBe('official');
+      await expect(ok.removeMarketplace(catalogs[0]!.source)).rejects.toThrow(/cannot be removed/);
+
+      const failing = createPluginService({
+        dataDir: root(),
+        bundledRoot: root(),
+        fetchJson: async () => {
+          throw new Error('unreachable');
+        }
+      });
+      await expect(failing.start()).resolves.toBeUndefined();
+      expect(failing.listMarketplaces()).toEqual([]);
+    } finally {
+      if (previous === undefined) delete process.env.ZCC_OFFICIAL_MARKETPLACE_URL;
+      else process.env.ZCC_OFFICIAL_MARKETPLACE_URL = previous;
+    }
+  });
+
   it('exposes skill names, mcpServers without env values, and extra on snapshot', async () => {
     const dataDir = root();
     const pluginDir = writePlugin(join(root(), 'docs'), 'docs');

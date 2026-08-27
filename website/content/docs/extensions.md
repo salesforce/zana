@@ -40,7 +40,7 @@ zcc plugin dev
 zcc plugin ls
 zcc plugin enable <id>
 zcc plugin reload <id>
-zcc marketplace add https://example/index.json
+zcc marketplace add https://<PUBLIC_BASE_URL>/marketplace/v1/marketplace.json
 zcc marketplace install tasks@official
 ```
 

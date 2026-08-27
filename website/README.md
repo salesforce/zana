@@ -19,7 +19,8 @@ npm run build        # production standalone build in .next/
 | Page | Source of truth |
 | --- | --- |
 | `/` landing | Curated copy in `app/page.tsx` (mirrors repo `README.md`) |
-| `/marketplace` | Live fetch of `NEXT_PUBLIC_REGISTRY_URL` — the **same `index.json`** the app reads (`apps/server/src/services/extensions/extension-registry.ts`). Types mirror `packages/extension-sdk`. Falls back to bundled plugins. |
+| `/marketplace` | Same-origin `GET /marketplace/v1/marketplace.json` — official first-party plugin pointers (`schemaVersion: 1`). Generated from repo `plugins/*/package.json`. |
+| `/marketplace/v1/marketplace.json` | Public catalog for `zcc marketplace add` (CORS `*`). Alias: `/plugins/index.json`. |
 | `/docs/*` | Rendered at build time from the repo's `docs/` + `README.md`, via a **curated allowlist** in `scripts/sync-docs.mjs` (internal audits are NOT published) |
 | `/download` | Parses `latest-mac.yml` from `NEXT_PUBLIC_UPDATE_FEED_URL`; links to GitHub Releases |
 
@@ -65,3 +66,11 @@ Edit the `DOCS` allowlist in `scripts/sync-docs.mjs`, then run
 `npm run sync-docs` (also a `predev` / `prebuild` hook). Only listed files are
 published; this is deliberate so internal `docs/*` (audits, plans, reviews)
 stay private. `lib/docs.ts` reads the generated `content/docs/_manifest.json`.
+
+## Official plugin marketplace
+
+`scripts/generate-marketplace.mjs` writes `content/marketplace/marketplace.json`
+from the repo `plugins/` tree (git pointers with `subdir: plugins/<id>`). The
+site serves it at `/marketplace/v1/marketplace.json`. Point a packaged app at
+that HTTPS URL with `ZCC_OFFICIAL_MARKETPLACE_URL` so PluginService can seed
+the official catalog on boot (fail-soft if the feed is unreachable).

@@ -27,6 +27,7 @@ export function createNodeDeps(): SalesforceDeps {
     },
     readdir: (path) => readdirSync(path),
     realpath: (path) => realpathSync(path),
-    spawnContained: createContainedSpawner()
+    spawnContained: createContainedSpawner(),
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
   };
 }

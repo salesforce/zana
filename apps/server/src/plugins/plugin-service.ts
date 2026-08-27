@@ -2,11 +2,12 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } fr
 import { homedir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { marketplaceInstallSpec } from './marketplace.js';
+import { marketplaceInstallSpec, type MarketplaceEntry } from './marketplace.js';
 import {
   createMarketplaceStore,
   fetchMarketplaceIndex,
   marketplaceStorePath,
+  resolveCatalogEntry,
   resolveCatalogSource,
   type MarketplaceCatalogRow,
   type MarketplaceStore
@@ -26,6 +27,7 @@ import {
   type PluginMcpServerContribution,
   type PluginManifest
 } from '@zana-ai/zcc-domain';
+import { resolveContainedReal } from '@zana-ai/zcc-path-confine';
 import { shimLegacyExtensionManifest } from '@zana-ai/zcc-plugin-sdk';
 import {
   HOST_PLUGIN_SDK_VERSION,
@@ -98,7 +100,7 @@ export interface PluginService {
     values: Record<string, import('@zana-ai/zcc-plugin-sdk/server').PluginSettingValue | undefined>
   ): Promise<void>;
   listMarketplaces(): MarketplaceCatalogRow[];
-  addMarketplace(source: string): Promise<MarketplaceCatalogRow>;
+  addMarketplace(source: string, opts?: { official?: boolean }): Promise<MarketplaceCatalogRow>;
   refreshMarketplace(source: string): Promise<MarketplaceCatalogRow>;
   removeMarketplace(source: string): Promise<boolean>;
   searchCatalog(query: string): Promise<CatalogSearchHit[]>;
@@ -614,13 +616,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       };
     }
     if (source.kind === 'git') {
-      const clone = cloneGit;
-      const dest = join(opts.dataDir, 'plugins', 'git', Buffer.from(source.url).toString('hex').slice(0, 24));
-      rmSync(dest, { recursive: true, force: true });
-      mkdirSync(dirname(dest), { recursive: true });
-      const cloned = await clone(source.url, dest, source.spec);
+      const cloned = await cloneGitTree(source.url, source.spec);
       return {
-        rootDir: dest,
+        rootDir: cloned.rootDir,
         provenance: 'direct',
         sourceKind: 'git',
         display: `git:${source.url}@${source.spec}`,
@@ -634,8 +632,65 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     throw new Error(`unsupported source ${source.kind}`);
   }
 
+  async function cloneGitTree(
+    url: string,
+    spec: string,
+    subdir?: string
+  ): Promise<{ rootDir: string; commit: string }> {
+    const dest = join(opts.dataDir, 'plugins', 'git', Buffer.from(url).toString('hex').slice(0, 24));
+    rmSync(dest, { recursive: true, force: true });
+    mkdirSync(dirname(dest), { recursive: true });
+    const cloned = await cloneGit(url, dest, spec);
+    if (!subdir) return { rootDir: dest, commit: cloned.commit };
+    const contained = await resolveContainedReal(dest, subdir);
+    if (!contained) throw new Error(`marketplace git subdir is not contained: ${subdir}`);
+    return { rootDir: contained, commit: cloned.commit };
+  }
+
+  async function materializeMarketplaceEntry(entry: MarketplaceEntry): Promise<{
+    rootDir: string;
+    provenance: InstalledPluginRow['provenance'];
+    sourceKind: InstalledPluginRow['sourceKind'];
+    display: string;
+    npmResolvedVersion: string | null;
+    npmIntegrity: string | null;
+    gitResolvedCommit: string | null;
+    catalogMarketplace: string | null;
+    catalogEntryId: string | null;
+  }> {
+    if (entry.source.npm) {
+      return materialize({
+        kind: 'npm',
+        name: entry.source.npm.package,
+        spec: entry.source.npm.range,
+        specKind: 'range'
+      });
+    }
+    const git = entry.source.git;
+    if (!git) throw new Error(`marketplace entry ${entry.id} has no installable source`);
+    const spec = git.range ? `semver:${git.range}` : git.ref ?? 'HEAD';
+    const cloned = await cloneGitTree(git.url, spec, git.subdir);
+    return {
+      rootDir: cloned.rootDir,
+      provenance: 'direct',
+      sourceKind: 'git',
+      display: `git:${git.url}@${spec}`,
+      npmResolvedVersion: null,
+      npmIntegrity: null,
+      gitResolvedCommit: cloned.commit,
+      catalogMarketplace: null,
+      catalogEntryId: null
+    };
+  }
+
   async function installParsed(source: ParsedPluginSource, enable: boolean): Promise<InstalledPluginRow> {
-    const materialized = await materialize(source);
+    return installFromMaterialized(await materialize(source), enable);
+  }
+
+  async function installFromMaterialized(
+    materialized: Awaited<ReturnType<typeof materialize>>,
+    enable: boolean
+  ): Promise<InstalledPluginRow> {
     const manifest = loadManifestFromDir(materialized.rootDir);
     assertEngines(manifest, hostVersion, sdkVersion);
     const ts = now();
@@ -732,6 +787,19 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     });
   }
 
+  async function seedOfficialMarketplace(): Promise<void> {
+    const url = process.env.ZCC_OFFICIAL_MARKETPLACE_URL?.trim();
+    if (!url || !url.startsWith('https://')) return;
+    if (marketplaces.list().some((row) => row.official || row.source === url)) return;
+    try {
+      const parsed = parseMarketplaceSource(url);
+      const index = await materializeMarketplaceIndex(parsed, fetchJson);
+      await marketplaces.add(marketplaceSourceDisplay(parsed), index, { official: true });
+    } catch {
+      /* fail-soft: bundled Browse still works offline */
+    }
+  }
+
   return {
     list: () => store.list(),
     get: (id) => store.get(id),
@@ -739,13 +807,16 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     async install(source, options) {
       const parsed = parsePluginSource(source);
       if (parsed.kind === 'catalog') {
-        const resolved = await resolveCatalogSource(
+        const entry = await resolveCatalogEntry(
           parsed.marketplace,
           parsed.entryId,
           marketplaces.list(),
           fetchJson
         );
-        const row = await installParsed(parsePluginSource(resolved), options?.enable !== false);
+        const row = await installFromMaterialized(
+          await materializeMarketplaceEntry(entry),
+          options?.enable !== false
+        );
         const stamped = {
           ...row,
           provenance: 'catalog' as const,
@@ -825,6 +896,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     async start() {
       await migrateLegacySidecars(opts.dataDir, installParsed, store);
       await this.reconcileBuiltins();
+      await seedOfficialMarketplace();
       for (const row of store.list()) {
         if (!live.has(row.id)) await loadOne(row);
       }
@@ -874,10 +946,10 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await syncCliSkill();
     },
     listMarketplaces: () => marketplaces.list(),
-    async addMarketplace(source) {
+    async addMarketplace(source, extra) {
       const parsed = parseMarketplaceSource(source);
       const index = await materializeMarketplaceIndex(parsed, fetchJson);
-      return marketplaces.add(marketplaceSourceDisplay(parsed), index);
+      return marketplaces.add(marketplaceSourceDisplay(parsed), index, extra);
     },
     async refreshMarketplace(source) {
       const parsed = parseMarketplaceSource(source);

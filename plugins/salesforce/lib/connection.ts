@@ -55,23 +55,23 @@ export class ConnectionManager {
     return org;
   }
 
-  async request(path: string, init: { method?: 'GET' | 'POST'; query?: Record<string, string>; body?: unknown }) {
+  async request(
+    path: string,
+    init: { method?: 'GET' | 'POST'; query?: Record<string, string>; body?: unknown; apiVersion?: string }
+  ) {
     let org = await this.connect();
-    let response = await this.deps.request(org, {
-      method: init.method ?? 'GET',
+    const req = {
+      method: init.method ?? ('GET' as const),
       path,
       query: init.query,
-      body: init.body
-    });
+      body: init.body,
+      apiVersion: init.apiVersion
+    };
+    let response = await this.deps.request(org, req);
     if (response.status === 401) {
       this.invalidate(org.alias);
       org = await this.connect(true);
-      response = await this.deps.request(org, {
-        method: init.method ?? 'GET',
-        path,
-        query: init.query,
-        body: init.body
-      });
+      response = await this.deps.request(org, req);
     }
     return { org, response };
   }

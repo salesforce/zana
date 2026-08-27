@@ -34,6 +34,6 @@ zcc sf org
 
 - `compile` / `inspect` a confined `.agent` authoring bundle (source edits stay with file tools)
 - `preview.start` / `preview.send` / `preview.end` for live preview; compact digest + artifact
-- `eval.run` against a local eval spec JSON file
-- `lifecycle.list` / `lifecycle.publish` (inactive version) / `lifecycle.activate`
+- `eval.run` with a confined YAML/JSON `specPath` (`sf agent test run-eval`) or an org `aiEvaluationDefinitionName` (Connect Testing API)
+- `lifecycle.list` / `lifecycle.publish` (inactive version, no retrieve) / `lifecycle.activate`
 - Publish and activate always confirm. `allow_untested` is intent, not approval. Activate needs matching eval evidence unless the operator confirms untested activation.

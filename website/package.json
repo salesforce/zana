@@ -5,9 +5,10 @@
   "description": "Marketing, marketplace, docs, and download site for Zana Command Center",
   "scripts": {
     "sync-docs": "node scripts/sync-docs.mjs",
-    "predev": "node scripts/sync-docs.mjs",
+    "generate-marketplace": "node scripts/generate-marketplace.mjs",
+    "predev": "node scripts/sync-docs.mjs && node scripts/generate-marketplace.mjs",
     "dev": "next dev -p 4321",
-    "prebuild": "node scripts/sync-docs.mjs",
+    "prebuild": "node scripts/sync-docs.mjs && node scripts/generate-marketplace.mjs",
     "build": "next build",
     "start": "next start -p 4321",
     "lint": "next lint",

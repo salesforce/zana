@@ -1,28 +1,18 @@
 import { NextResponse } from 'next/server';
+import {
+  MARKETPLACE_JSON_HEADERS,
+  OFFICIAL_MARKETPLACE_FEED_PATH,
+  officialMarketplaceIndex
+} from '@/lib/official-marketplace';
 
 /**
- * Marketplace-as-provenance: npm/git pointers, never file-bundle archives.
- * `zcc marketplace add` fetches this index. Refresh does not execute code.
+ * Alias of `/marketplace/v1/marketplace.json` so older
+ * `zcc marketplace add …/plugins/index.json` URLs keep working.
  */
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  const index = {
-    schemaVersion: 1,
-    name: 'official',
-    displayName: 'Zana official plugins',
-    description: 'First-party plugins shipped with Zana Command Center',
-    plugins: [
-      {
-        id: 'docs',
-        displayName: 'Docs',
-        description: 'Durable project knowledge: Docs rail, per-project Library, and the library-curator skill',
-        author: { name: 'Zana' },
-        source: { git: { url: 'https://github.com/salesforce/zana', subdir: 'plugins/docs', ref: 'HEAD' } }
-      }
-    ]
-  };
-  return NextResponse.json(index, {
-    headers: { 'Cache-Control': 'public, max-age=0, must-revalidate' }
-  });
+  const headers = new Headers(MARKETPLACE_JSON_HEADERS);
+  headers.set('Link', `<${OFFICIAL_MARKETPLACE_FEED_PATH}>; rel="canonical"`);
+  return NextResponse.json(officialMarketplaceIndex(), { headers });
 }

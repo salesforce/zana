@@ -104,6 +104,7 @@ export interface SalesforceDeps {
     argv: string[],
     cwd: string
   ): Promise<ExecResult>;
+  sleep?(ms: number): Promise<void>;
 }
 
 export interface PluginSettingsValues {

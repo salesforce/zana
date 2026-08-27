@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
   activateArgs,
+  agentCliOpts,
+  agentEvalHelpAvailable,
   agentPluginAvailable,
   canActivate,
   compactPreviewDigest,
   diagnoseAgentBundle,
   EvalEvidenceStore,
+  evalRunStatus,
+  extractEvalBotVersionId,
+  extractEvalRunId,
   extractSessionId,
   findAgentBundle,
+  isEvalTerminal,
   parseAgentInput,
   parseEvalSpec,
   parseSfJson,
@@ -15,6 +21,7 @@ import {
   probeAgentCapabilities,
   publishArgs,
   resolveAgentCompilerBin,
+  runEvalArgs,
   scanAgentBundles,
   specFingerprint,
   summarizeEvalRun,
@@ -65,6 +72,11 @@ describe('sf_agent parse and inspect', () => {
     expect(parseAgentInput({ action: 'lifecycle.list' }).ok).toBe(true);
     expect(parseAgentInput({ action: 'preview.start', path: 'force-app/MyBot.agent' }).ok).toBe(true);
     expect(parseAgentInput({ action: 'eval.run', specPath: 'evals/spec.json' }).ok).toBe(true);
+    expect(parseAgentInput({ action: 'eval.run', aiEvaluationDefinitionName: 'My_Eval' }).ok).toBe(true);
+    expect(parseAgentInput({ action: 'preview.start', apiName: 'Published', published: true })).toMatchObject({
+      ok: true,
+      plan: { published: true }
+    });
     expect(parseAgentInput({ action: 'lifecycle.activate', botVersionId: 'bv-1', allow_untested: true })).toMatchObject({
       ok: true,
       plan: { allowUntested: true }
@@ -163,24 +175,28 @@ describe('sf_agent compile probes and CLI parsing', () => {
       '--target-org',
       'dev'
     ]);
-    expect(previewArgs('send', {
-      action: 'preview.send',
-      sessionId: 'sess-1',
-      utterance: 'hi',
-      allowUntested: false
-    }, 'dev')).toEqual([
+    expect(
+      previewArgs('send', { sessionId: 'sess-1', utterance: 'hi' }, 'dev', {
+        flag: 'authoring-bundle',
+        apiName: 'MyBot'
+      })
+    ).toEqual([
       'agent',
       'preview',
       'send',
       '--json',
       '--target-org',
       'dev',
+      '--authoring-bundle',
+      'MyBot',
       '--session-id',
       'sess-1',
       '--utterance',
       'hi'
     ]);
-    expect(publishArgs('MyBot', 'dev')).toContain('authoring-bundle');
+    expect(publishArgs('MyBot', 'dev')).toEqual(
+      expect.arrayContaining(['authoring-bundle', '--skip-retrieve', '--target-org', 'dev'])
+    );
     expect(activateArgs('MyBot', 'dev', 2)).toEqual([
       'agent',
       'activate',
@@ -189,17 +205,62 @@ describe('sf_agent compile probes and CLI parsing', () => {
       'MyBot',
       '--target-org',
       'dev',
-      '--version-number',
+      '--version',
       '2'
     ]);
     expect(parseAgentInput({ action: 'lifecycle.activate', apiName: 'MyBot', versionNumber: 3 })).toMatchObject({
       ok: true,
       plan: { versionNumber: 3 }
     });
-    expect(validateArgs('MyBot')).toEqual(['agent', 'validate', 'authoring-bundle', '--json', '--api-name', 'MyBot']);
-    expect(previewArgs('start', { action: 'preview.start', apiName: 'MyBot', allowUntested: false }, 'dev')).toContain(
-      '--authoring-bundle'
+    expect(
+      previewArgs('start', {}, 'dev', { flag: 'authoring-bundle', apiName: 'MyBot' })
+    ).toEqual([
+      'agent',
+      'preview',
+      'start',
+      '--json',
+      '--target-org',
+      'dev',
+      '--authoring-bundle',
+      'MyBot',
+      '--simulate-actions'
+    ]);
+    expect(previewArgs('start', {}, 'dev', { flag: 'api-name', apiName: 'PublishedBot' })).toEqual([
+      'agent',
+      'preview',
+      'start',
+      '--json',
+      '--target-org',
+      'dev',
+      '--api-name',
+      'PublishedBot'
+    ]);
+    expect(previewArgs('start', {}, 'dev', { flag: 'api-name', apiName: 'PublishedBot' })).not.toContain(
+      '--simulate-actions'
     );
+    expect(runEvalArgs('/proj/evals/spec.yaml', 'dev')).toEqual([
+      'agent',
+      'test',
+      'run-eval',
+      '--spec',
+      '/proj/evals/spec.yaml',
+      '--json',
+      '--target-org',
+      'dev'
+    ]);
+    expect(agentCliOpts('/proj')).toEqual({ cwd: '/proj', timeoutMs: 120_000 });
+    expect(extractEvalRunId({ id: 'run-9' })).toBe('run-9');
+    expect(extractEvalRunId({ result: { runId: 'run-2' } })).toBe('run-2');
+    expect(extractEvalRunId({})).toBeNull();
+    expect(evalRunStatus({ status: 'IN_PROGRESS' })).toBe('IN_PROGRESS');
+    expect(isEvalTerminal('COMPLETED')).toBe(true);
+    expect(isEvalTerminal('IN_PROGRESS')).toBe(false);
+    expect(extractEvalBotVersionId({ subjectName: 'MyBot' })).toBe('MyBot');
+    expect(extractEvalBotVersionId({ versionNumber: 4 })).toBe('4');
+    expect(extractEvalBotVersionId({ version: 'v3' })).toBe('v3');
+    expect(extractEvalBotVersionId({}, 'fallback')).toBe('fallback');
+    expect(agentEvalHelpAvailable({ code: 0, stdout: 'USAGE\n  $ sf agent test run-eval\n', stderr: '' })).toBe(true);
+    expect(agentEvalHelpAvailable({ code: 1, stdout: '', stderr: 'Command test:run-eval not found' })).toBe(false);
   });
 });
 
@@ -226,7 +287,7 @@ describe('sf_agent activation gate', () => {
     ).toMatchObject({ ok: false, code: 'eval_required' });
   });
 
-  it('allows activate with passing evidence, or untested intent as a flag only', () => {
+  it('allows activate with passing evidence, or untested intent as a flag only', async () => {
     const evidence = { orgId: '00D', botVersionId: 'bv-1', specFingerprint: 'abc', passed: true, at: 1 };
     expect(canActivate({ evidence, orgId: '00D', botVersionId: 'bv-1', allowUntested: false })).toEqual({
       ok: true,
@@ -235,9 +296,22 @@ describe('sf_agent activation gate', () => {
     expect(
       canActivate({ evidence: null, orgId: '00D', botVersionId: 'bv-1', allowUntested: true })
     ).toEqual({ ok: true, untested: true });
-    const store = new EvalEvidenceStore();
-    store.record(evidence);
-    expect(store.get('00D', 'bv-1')).toEqual(evidence);
-    expect(store.get('00D', 'missing')).toBeNull();
+    const kv = new Map<string, unknown>();
+    const store = new EvalEvidenceStore({
+      get: async (key) => kv.get(key) as never,
+      set: async (key, value) => {
+        kv.set(key, value);
+      }
+    });
+    await store.record(evidence);
+    expect(await store.get('00D', 'bv-1')).toEqual(evidence);
+    expect(await store.get('00D', 'missing')).toBeNull();
+    const reloaded = new EvalEvidenceStore({
+      get: async (key) => kv.get(key) as never,
+      set: async (key, value) => {
+        kv.set(key, value);
+      }
+    });
+    expect(await reloaded.get('00D', 'bv-1')).toEqual(evidence);
   });
 });

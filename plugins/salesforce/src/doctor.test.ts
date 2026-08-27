@@ -4,9 +4,9 @@ import { ConnectionError } from '../lib/connection.js';
 import type { DoctorReport, SalesforceDeps } from '../lib/types.js';
 
 function agentFields(
-  overrides?: Partial<Pick<DoctorReport, 'agentCompiler' | 'agentPluginOk' | 'agentBundleCount'>>
-): Pick<DoctorReport, 'agentCompiler' | 'agentPluginOk' | 'agentBundleCount'> {
-  return { agentCompiler: 'missing', agentPluginOk: false, agentBundleCount: 0, ...overrides };
+  overrides?: Partial<Pick<DoctorReport, 'agentCompiler' | 'agentPluginOk' | 'agentEvalOk' | 'agentBundleCount'>>
+): Pick<DoctorReport, 'agentCompiler' | 'agentPluginOk' | 'agentEvalOk' | 'agentBundleCount'> {
+  return { agentCompiler: 'missing', agentPluginOk: false, agentEvalOk: false, agentBundleCount: 0, ...overrides };
 }
 
 function deps(exec: SalesforceDeps['execSf']): SalesforceDeps {
@@ -112,6 +112,8 @@ describe('doctor', () => {
     expect(report.agentCompiler).toBe('cli');
     expect(report.agentPluginOk).toBe(true);
     expect(formatDoctor(report)).toContain('Agent Script:');
+    expect(formatDoctor(report)).toContain('run-eval ok');
+    expect(formatDoctor(report)).toContain('Agent CLI cwd:');
     expect(formatDoctor(report)).toContain('Publish/activate:');
     expect(formatDoctor(report)).not.toContain('SECRET');
     expect(JSON.stringify(report)).not.toContain('SECRET');
@@ -160,6 +162,8 @@ describe('doctor', () => {
     expect(text).toContain('(unknown)');
     expect(text).toContain('other');
     expect(text).toContain('2 .agent');
+    expect(text).toContain('run-eval missing');
+    expect(text).toContain('Agent CLI cwd:');
   });
 
   it('maps connection errors for callers', () => {

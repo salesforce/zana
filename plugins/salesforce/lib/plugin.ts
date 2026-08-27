@@ -1,26 +1,37 @@
 import type { PluginAgentToolContext, PluginInteractionResult, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import {
   activateArgs,
+  agentCliOpts,
   BOT_VERSION_SOQL,
   canActivate,
   compactPreviewDigest,
   diagnoseAgentBundle,
-  EVAL_RUN_PATHS,
+  evalCaseCount,
+  EVAL_POLL_INTERVAL_MS,
+  EVAL_POLL_MAX_ATTEMPTS,
+  EVAL_RUNS_PATH,
+  evalResultsPath,
+  evalRunPath,
+  evalRunStatus,
   EvalEvidenceStore,
+  extractEvalBotVersionId,
+  extractEvalRunId,
   extractSessionId,
   findAgentBundle,
+  isEvalTerminal,
   parseAgentInput,
-  parseEvalSpec,
   parseSfJson,
   previewArgs,
   probeAgentCapabilities,
   publishArgs,
   resolveAgentCompilerBin,
+  runEvalArgs,
   scanAgentBundles,
   specFingerprint,
   summarizeEvalRun,
   validateArgs,
-  type AgentPlan
+  type AgentPlan,
+  type AgentPreviewIdentity
 } from './agent.js';
 import { diagnoseApexSource, parseApexInput } from './apex.js';
 import { createKvArtifactStore, type ArtifactStore } from './artifacts.js';
@@ -35,6 +46,7 @@ import { publicOrgView } from './org-resolution.js';
 import { applyLimit, parseSoqlInput, previewRecords } from './soql.js';
 import {
   DEFAULT_API_VERSION,
+  EVAL_API_VERSION,
   GUARDRAIL_RENDERER_ID,
   LOG_BODY_PREVIEW_CHARS,
   SETTING_API_VERSION,
@@ -83,7 +95,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     };
   });
   const guardrail = new Guardrail(async (envelope, threadId) => confirmEnvelope(zcc, envelope, threadId));
-  const evalEvidence = new EvalEvidenceStore();
+  const evalEvidence = new EvalEvidenceStore(zcc.storage.kv);
   let lastDoctor: DoctorReport | null = null;
 
   const readSettings = async (): Promise<PluginSettingsValues> => {
@@ -241,7 +253,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   zcc.agents.registerTool({
     name: 'sf_agent',
     description:
-      'Agentforce Agent Script lifecycle: compile/inspect a confined .agent file, live preview, eval against a local spec, and fail-closed publish/activate. Source edits stay with file tools. Publish and activate always confirm.',
+      'Agentforce Agent Script lifecycle: compile/inspect a confined .agent file, live preview, eval via a confined spec (sf agent test run-eval) or an org AiEvaluationDefinition, and fail-closed publish/activate. Source edits stay with file tools. Publish and activate always confirm.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -264,9 +276,11 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
         sessionId: { type: 'string' },
         utterance: { type: 'string' },
         specPath: { type: 'string' },
+        aiEvaluationDefinitionName: { type: 'string' },
         botVersionId: { type: 'string' },
         versionNumber: { type: 'number' },
-        allow_untested: { type: 'boolean' }
+        allow_untested: { type: 'boolean' },
+        published: { type: 'boolean' }
       },
       required: ['action']
     },
@@ -615,7 +629,7 @@ async function runAgent(
     if (parsed.plan.action === 'lifecycle.publish') {
       return await runAgentPublish(parsed.plan, ctx, connections, guardrail, artifacts, deps, snapshot);
     }
-    return await runAgentActivate(parsed.plan, ctx, connections, guardrail, artifacts, deps, evalEvidence);
+    return await runAgentActivate(parsed.plan, ctx, connections, guardrail, artifacts, deps, snapshot, evalEvidence);
   } catch (error) {
     return connectionFailure(error);
   }
@@ -676,8 +690,11 @@ async function runAgentLocal(
       data: { source: 'library', apiName: loaded.bundle.apiName }
     };
   }
-  const alias = snapshot.defaultOrg.trim() || undefined;
-  const result = await deps.execSf(validateArgs(loaded.bundle.apiName, alias));
+  const alias = snapshot.defaultOrg.trim();
+  if (!alias) {
+    return fail('not_configured', 'Set a default org alias under Plugins → Salesforce to compile with sf agent validate.');
+  }
+  const result = await deps.execSf(validateArgs(loaded.bundle.apiName, alias), agentCliOpts(loaded.projectRoot));
   const parsedCli = parseSfJson(result.stdout);
   const cliText = `${result.stdout}\n${result.stderr}`;
   if (result.code === 127 || /command agent not found|is not a sf command|unknown topic:? agent/i.test(cliText)) {
@@ -751,21 +768,20 @@ async function runAgentPreview(
   snapshot: PluginSettingsValues
 ): Promise<ToolResult> {
   const verb = plan.action === 'preview.start' ? 'start' : plan.action === 'preview.send' ? 'send' : 'end';
-  let apiName = plan.apiName;
-  if (verb === 'start' && plan.path) {
-    const loaded = await loadAgentBundles(plan, snapshot, deps);
-    if (!('projectRoot' in loaded)) return loaded;
-    if (!loaded.bundle) return fail('not_found', `Agent Script bundle not found: ${plan.path}`);
-    apiName = loaded.bundle.apiName;
-  }
+  const resolved = await resolvePreviewIdentity(plan, snapshot, deps, verb === 'start');
+  if ('code' in resolved) return resolved;
+  const label = resolved.identity?.apiName ?? plan.sessionId ?? '';
   const { org, mediated } = await mediateOrgRead(
     ctx,
     connections,
     guardrail,
-    (connected) => `${plan.action} ${apiName ?? plan.sessionId ?? ''} on ${connected.alias} (${connected.kind})`
+    (connected) => `${plan.action} ${label} on ${connected.alias} (${connected.kind})`
   );
   if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} ${plan.action}.`);
-  const result = await deps.execSf(previewArgs(verb, { ...plan, apiName }, org.alias));
+  const result = await deps.execSf(
+    previewArgs(verb, plan, org.alias, resolved.identity),
+    agentCliOpts(resolved.projectRoot ?? dxProjectRoot(snapshot, deps))
+  );
   const parsedCli = parseSfJson(result.stdout);
   if (result.code !== 0 || parsedCli.status !== 0) {
     return fail(
@@ -799,14 +815,28 @@ async function runAgentEval(
   snapshot: PluginSettingsValues,
   evalEvidence: EvalEvidenceStore
 ): Promise<ToolResult> {
+  if (plan.specPath) {
+    return runAgentEvalSpec(plan, ctx, connections, guardrail, artifacts, deps, snapshot, evalEvidence);
+  }
+  return runAgentEvalDefinition(plan, ctx, connections, guardrail, artifacts, deps, evalEvidence);
+}
+
+async function runAgentEvalSpec(
+  plan: AgentPlan,
+  ctx: PluginAgentToolContext,
+  connections: ConnectionManager,
+  guardrail: Guardrail,
+  artifacts: ArtifactStore,
+  deps: SalesforceDeps,
+  snapshot: PluginSettingsValues,
+  evalEvidence: EvalEvidenceStore
+): Promise<ToolResult> {
   const root = await requireDxRoot(snapshot, deps);
   if (!('projectRoot' in root)) return root;
   const specFile = resolveUnderRoot(root.projectRoot, plan.specPath ?? '', deps.realpath);
   if (!specFile) return fail('path_refused', 'Eval spec must stay inside the configured DX project root.');
   const specText = deps.readFile(specFile);
   if (specText === null) return fail('not_found', `Eval spec not found: ${plan.specPath}`);
-  const spec = parseEvalSpec(specText);
-  if (!spec.ok) return fail('invalid_input', spec.error);
   const { org, mediated } = await mediateOrgRead(
     ctx,
     connections,
@@ -814,35 +844,116 @@ async function runAgentEval(
     (connected) => `eval.run ${plan.specPath} on ${connected.alias} (${connected.kind})`
   );
   if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} eval.run.`);
-  let response = await connections.request(EVAL_RUN_PATHS[0], { method: 'POST', body: spec.spec });
-  if (response.response.status === 404) {
-    response = await connections.request(EVAL_RUN_PATHS[1], { method: 'POST', body: spec.spec });
+  const result = await deps.execSf(runEvalArgs(specFile, org.alias), agentCliOpts(root.projectRoot));
+  const parsedCli = parseSfJson(result.stdout);
+  if (result.code !== 0 || parsedCli.status !== 0) {
+    return fail(
+      'eval_failed',
+      parsedCli.message || result.stderr.trim() || result.stdout.trim() || 'sf agent test run-eval failed'
+    );
   }
-  if (response.response.status >= 400) {
-    return fail('api_error', compactError(response.response.status, response.response.json, response.response.text));
-  }
-  const summary = summarizeEvalRun(response.response.json, spec.testCount);
-  const botVersionId =
-    plan.botVersionId ||
-    (typeof (response.response.json as { botVersionId?: string } | null)?.botVersionId === 'string'
-      ? (response.response.json as { botVersionId: string }).botVersionId
-      : plan.apiName || 'latest');
-  evalEvidence.record({
+  const testCount = evalCaseCount(specText);
+  const summary = summarizeEvalRun(parsedCli.result ?? parsedCli, testCount);
+  const botVersionId = plan.botVersionId || extractEvalBotVersionId(parsedCli.result, plan.apiName);
+  await evalEvidence.record({
     orgId: org.orgId,
     botVersionId,
     specFingerprint: specFingerprint(specText),
     passed: summary.passed,
     at: deps.now()
   });
-  const artifactId = await artifacts.put('agent-eval', response.response.json);
+  const artifactId = await artifacts.put('agent-eval', parsedCli.result ?? { stdout: result.stdout });
   return {
     ok: true,
     summary: summary.passed
-      ? `Eval passed (${summary.passedCount}/${spec.testCount}) for ${botVersionId}`
+      ? `Eval passed (${summary.passedCount}/${testCount || summary.passedCount}) for ${botVersionId}`
       : `Eval failed (${summary.failedCount} failure(s)) for ${botVersionId}`,
-    data: { ...summary, botVersionId, orgId: org.orgId, testCount: spec.testCount },
+    data: { ...summary, botVersionId, orgId: org.orgId, testCount },
     artifactId
   };
+}
+
+async function runAgentEvalDefinition(
+  plan: AgentPlan,
+  ctx: PluginAgentToolContext,
+  connections: ConnectionManager,
+  guardrail: Guardrail,
+  artifacts: ArtifactStore,
+  deps: SalesforceDeps,
+  evalEvidence: EvalEvidenceStore
+): Promise<ToolResult> {
+  const definition = plan.aiEvaluationDefinitionName ?? '';
+  const { org, mediated } = await mediateOrgRead(
+    ctx,
+    connections,
+    guardrail,
+    (connected) => `eval.run ${definition} on ${connected.alias} (${connected.kind})`
+  );
+  if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} eval.run.`);
+  const created = await connections.request(EVAL_RUNS_PATH, {
+    method: 'POST',
+    body: { aiEvaluationDefinitionName: definition },
+    apiVersion: EVAL_API_VERSION
+  });
+  if (created.response.status >= 400) {
+    return fail('api_error', compactError(created.response.status, created.response.json, created.response.text));
+  }
+  const runId = extractEvalRunId(created.response.json);
+  if (!runId) {
+    return fail('api_error', 'Eval run did not return a run id.');
+  }
+  const polled = await pollEvalRun(connections, deps, runId);
+  if (!polled.ok) return polled;
+  const results = await connections.request(evalResultsPath(runId), {
+    method: 'GET',
+    apiVersion: EVAL_API_VERSION
+  });
+  const payload = results.response.status < 400 ? results.response.json : polled.payload;
+  if (results.response.status >= 400 && !polled.payload) {
+    return fail('api_error', compactError(results.response.status, results.response.json, results.response.text));
+  }
+  const summary = summarizeEvalRun(payload, 0);
+  const botVersionId = plan.botVersionId || extractEvalBotVersionId(payload, plan.apiName || definition);
+  await evalEvidence.record({
+    orgId: org.orgId,
+    botVersionId,
+    specFingerprint: specFingerprint(definition),
+    passed: summary.passed,
+    at: deps.now()
+  });
+  const artifactId = await artifacts.put('agent-eval', payload);
+  return {
+    ok: true,
+    summary: summary.passed
+      ? `Eval passed (${summary.passedCount}) for ${botVersionId}`
+      : `Eval failed (${summary.failedCount} failure(s)) for ${botVersionId}`,
+    data: { ...summary, botVersionId, orgId: org.orgId, runId, definition },
+    artifactId
+  };
+}
+
+async function pollEvalRun(
+  connections: ConnectionManager,
+  deps: SalesforceDeps,
+  runId: string
+): Promise<{ ok: true; payload: unknown } | { ok: false; error: string; code: string }> {
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  let payload: unknown = null;
+  for (let attempt = 0; attempt < EVAL_POLL_MAX_ATTEMPTS; attempt += 1) {
+    const { response } = await connections.request(evalRunPath(runId), {
+      method: 'GET',
+      apiVersion: EVAL_API_VERSION
+    });
+    if (response.status >= 400) {
+      return fail('api_error', compactError(response.status, response.json, response.text));
+    }
+    payload = response.json;
+    if (isEvalTerminal(evalRunStatus(payload))) {
+      return { ok: true, payload };
+    }
+    if (attempt < EVAL_POLL_MAX_ATTEMPTS - 1) await sleep(EVAL_POLL_INTERVAL_MS);
+  }
+  return fail('eval_timeout', `Eval run ${runId} did not complete.`);
 }
 
 async function runAgentList(
@@ -886,7 +997,7 @@ async function runAgentPublish(
     { preview: apiName }
   );
   if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} lifecycle.publish.`);
-  const result = await deps.execSf(publishArgs(apiName, org.alias));
+  const result = await deps.execSf(publishArgs(apiName, org.alias), agentCliOpts(loaded.projectRoot));
   const parsedCli = parseSfJson(result.stdout);
   if (result.code !== 0 || parsedCli.status !== 0) {
     return fail(
@@ -910,6 +1021,7 @@ async function runAgentActivate(
   guardrail: Guardrail,
   artifacts: ArtifactStore,
   deps: SalesforceDeps,
+  snapshot: PluginSettingsValues,
   evalEvidence: EvalEvidenceStore
 ): Promise<ToolResult> {
   const apiName = plan.apiName ?? '';
@@ -917,7 +1029,7 @@ async function runAgentActivate(
   if (!botVersionId) return fail('invalid_input', 'lifecycle.activate requires apiName or botVersionId.');
   const org = await connections.connect();
   const gate = canActivate({
-    evidence: evalEvidence.get(org.orgId, botVersionId),
+    evidence: await evalEvidence.get(org.orgId, botVersionId),
     orgId: org.orgId,
     botVersionId,
     allowUntested: plan.allowUntested
@@ -933,7 +1045,10 @@ async function runAgentActivate(
     { preview: apiName || botVersionId }
   );
   if (!mediated.approved) return fail('refused', `Operator ${mediated.reason} lifecycle.activate.`);
-  const result = await deps.execSf(activateArgs(apiName || botVersionId, org.alias, plan.versionNumber));
+  const result = await deps.execSf(
+    activateArgs(apiName || botVersionId, org.alias, plan.versionNumber),
+    agentCliOpts(dxProjectRoot(snapshot, deps))
+  );
   const parsedCli = parseSfJson(result.stdout);
   if (result.code !== 0 || parsedCli.status !== 0) {
     return fail(
@@ -948,6 +1063,45 @@ async function runAgentActivate(
     data: parsedCli.result,
     artifactId
   };
+}
+
+function dxProjectRoot(snapshot: PluginSettingsValues, deps: SalesforceDeps): string | undefined {
+  if (!snapshot.projectRoot.trim() || !isDxProject(snapshot.projectRoot, deps.exists)) return undefined;
+  return deps.realpath(snapshot.projectRoot);
+}
+
+async function resolvePreviewIdentity(
+  plan: AgentPlan,
+  snapshot: PluginSettingsValues,
+  deps: SalesforceDeps,
+  requireIdentity: boolean
+): Promise<{ identity?: AgentPreviewIdentity; projectRoot?: string } | ToolResult> {
+  if (plan.published) {
+    const apiName = plan.apiName;
+    if (!apiName) return fail('invalid_input', 'published preview requires apiName.');
+    return { identity: { flag: 'api-name', apiName }, projectRoot: dxProjectRoot(snapshot, deps) };
+  }
+  if (plan.path) {
+    const loaded = await loadAgentBundles(plan, snapshot, deps);
+    if (!('projectRoot' in loaded)) return loaded;
+    if (!loaded.bundle) return fail('not_found', `Agent Script bundle not found: ${plan.path}`);
+    return {
+      identity: { flag: 'authoring-bundle', apiName: loaded.bundle.apiName },
+      projectRoot: loaded.projectRoot
+    };
+  }
+  if (plan.apiName) {
+    const projectRoot = dxProjectRoot(snapshot, deps);
+    if (projectRoot) {
+      const bundle = findAgentBundle(scanAgentBundles(projectRoot, deps), plan.apiName);
+      if (bundle) {
+        return { identity: { flag: 'authoring-bundle', apiName: bundle.apiName }, projectRoot };
+      }
+    }
+    return { identity: { flag: 'api-name', apiName: plan.apiName }, projectRoot };
+  }
+  if (requireIdentity) return fail('invalid_input', 'preview.start requires apiName or path.');
+  return { projectRoot: dxProjectRoot(snapshot, deps) };
 }
 
 function readConfinedFile(projectRoot: string, relativePath: string, deps: SalesforceDeps): string | null {

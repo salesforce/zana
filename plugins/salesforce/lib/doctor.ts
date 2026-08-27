@@ -3,10 +3,10 @@ import { isDxProject } from './dx-project.js';
 import { publicOrgView } from './org-resolution.js';
 import { parseCliVersion, parseOrgDisplay, parseOrgList } from './sf-cli.js';
 import { ConnectionError } from './connection.js';
-import { probeAgentCapabilities, scanAgentBundles } from './agent.js';
+import { agentEvalHelpAvailable, probeAgentCapabilities, scanAgentBundles } from './agent.js';
 
 function emptyAgentFields() {
-  return { agentCompiler: 'missing' as const, agentPluginOk: false, agentBundleCount: 0 };
+  return { agentCompiler: 'missing' as const, agentPluginOk: false, agentEvalOk: false, agentBundleCount: 0 };
 }
 
 async function agentDoctorFields(deps: SalesforceDeps, settings: PluginSettingsValues, cliOk: boolean) {
@@ -17,9 +17,13 @@ async function agentDoctorFields(deps: SalesforceDeps, settings: PluginSettingsV
     return { ...emptyAgentFields(), agentBundleCount: bundles.length };
   }
   const probed = await probeAgentCapabilities(dx ? deps.realpath(projectRoot) : '', deps);
+  const evalHelp = probed.pluginOk
+    ? await deps.execSf(['agent', 'test', 'run-eval', '--help'])
+    : { code: 1, stdout: '', stderr: '' };
   return {
     agentCompiler: probed.compiler,
     agentPluginOk: probed.pluginOk,
+    agentEvalOk: probed.pluginOk && agentEvalHelpAvailable(evalHelp),
     agentBundleCount: bundles.length
   };
 }
@@ -101,7 +105,8 @@ export function formatDoctor(report: DoctorReport): string {
     `CLI: ${report.cliOk ? report.cliVersion ?? 'ok' : report.cliError ?? 'missing'}`,
     `DX project: ${report.dxProject ? report.projectRoot ?? 'yes' : 'not detected'}`,
     `Target org: ${report.defaultOrg ?? '(none)'}`,
-    `Agent Script: compiler ${report.agentCompiler}${report.agentPluginOk ? ', sf agent ok' : ', sf agent missing'} (${report.agentBundleCount} .agent)`,
+    `Agent Script: compiler ${report.agentCompiler}${report.agentPluginOk ? ', sf agent ok' : ', sf agent missing'}${report.agentEvalOk ? ', run-eval ok' : ', run-eval missing'} (${report.agentBundleCount} .agent)`,
+    `Agent CLI cwd: ${report.dxProject ? report.projectRoot ?? 'projectRoot' : '(no DX project)'}`,
     'Publish/activate: confirmation required (headless skipped)'
   ];
   if (report.org) {

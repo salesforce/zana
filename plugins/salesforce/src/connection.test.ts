@@ -93,6 +93,29 @@ describe('connection manager', () => {
     expect(displays).toBe(2);
   });
 
+  it('forwards a per-request API version to the REST transport', async () => {
+    const seen: string[] = [];
+    const manager = new ConnectionManager(
+      deps({
+        exec: (args) => {
+          if (args.includes('display')) return { code: 0, stdout: displayJson(), stderr: '' };
+          return { code: 1, stdout: '', stderr: 'no' };
+        },
+        request: (req) => {
+          seen.push(req.apiVersion ?? '');
+          return { status: 200, json: { id: 'run-1' }, text: '{}' };
+        }
+      }),
+      async () => ({ defaultOrg: 'dev', apiVersion: '62.0' })
+    );
+    await manager.request('/einstein/ai-evaluations/runs', {
+      method: 'POST',
+      body: { aiEvaluationDefinitionName: 'My_Eval' },
+      apiVersion: '63.0'
+    });
+    expect(seen).toEqual(['63.0']);
+  });
+
   it('fails closed when CLI is missing', async () => {
     const manager = new ConnectionManager(
       deps({

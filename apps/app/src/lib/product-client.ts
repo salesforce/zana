@@ -18,7 +18,8 @@ import type {
   Team,
   TerminalSession,
   FsEntry,
-  FsReadResult
+  FsReadResult,
+  PluginAppEntry
 } from '@zana-ai/zcc-domain/product';
 import { hasDesktopBridge } from './app-surface.js';
 import { apiJson, fetchWithAppSurface } from './fetch-with-app-surface.js';
@@ -26,6 +27,12 @@ import { subscribeProductEvent } from './product-ws.js';
 
 function noopSubscribe(_cb: unknown): () => void {
   return () => {};
+}
+
+const pluginAppListeners = new Set<(entries: PluginAppEntry[]) => void>();
+
+function emitPluginApps(apps: PluginAppEntry[]): void {
+  for (const listener of pluginAppListeners) listener(apps);
 }
 
 function httpProduct(): Pick<
@@ -748,18 +755,37 @@ function httpProduct(): Pick<
       }
     } as CcApi['fs'],
     pluginApps: {
-      list: async () => [],
-      setEnabled: async () => ({
-        ok: false as const,
-        code: 'UNAVAILABLE',
-        message: 'plugin host is not available on this origin'
-      }),
+      list: async () => {
+        const body = await apiJson<{ apps?: PluginAppEntry[] }>('/plugin-apps');
+        return Array.isArray(body.apps) ? body.apps : [];
+      },
+      setEnabled: async (id, enabled) => {
+        try {
+          await apiJson(`/plugin-apps/${encodeURIComponent(id)}/${enabled ? 'enable' : 'disable'}`, {
+            method: 'POST'
+          });
+          const body = await apiJson<{ apps?: PluginAppEntry[] }>('/plugin-apps');
+          emitPluginApps(Array.isArray(body.apps) ? body.apps : []);
+          return { ok: true as const, value: true as const };
+        } catch (error) {
+          return {
+            ok: false as const,
+            code: 'WRITE_FAILED',
+            message: error instanceof Error ? error.message : String(error)
+          };
+        }
+      },
       callRpc: async () => {
         throw new Error('plugin rpc is not available on this origin');
       },
       getSettings: async () => ({ descriptors: {}, values: {} }),
       setSettings: async () => ({ descriptors: {}, values: {} }),
-      onChanged: noopSubscribe
+      onChanged: (cb) => {
+        pluginAppListeners.add(cb);
+        return () => {
+          pluginAppListeners.delete(cb);
+        };
+      }
     } as CcApi['pluginApps'],
     voice: {
       hasApiKey: async () => {
