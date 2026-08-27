@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Box, Copy, Cpu, Folder, Gauge, GitBranch, GitPullRequest, Server } from 'lucide-react';
 import type { GitHostPullRequest, WorkspaceStatus } from '@zana-ai/zcc-domain';
+import { handleHttpLinkClick } from '../../../lib/in-app-browser-link-preference.js';
 import { product } from '../../../lib/product-client.js';
 import { useData } from '../../../store.js';
 import {
@@ -23,6 +24,7 @@ import {
   humanThreadModelLabel,
   humanThreadReasoningLabel
 } from '../pickers/thread-execution-labels.js';
+import { ThreadStorageBrowser } from './ThreadStorageBrowser.js';
 
 export { environmentLabel };
 
@@ -116,7 +118,16 @@ export function ThreadInfoRows({
 
       {pullRequest ? (
         <InfoRow icon={<GitPullRequest size={14} />} label="Pull request" testId="thread-info-pr">
-          <a className="thread-info-link" href={pullRequest.url} target="_blank" rel="noreferrer">
+          <a
+            className="thread-info-link"
+            href={pullRequest.url}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(event) => {
+              if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+              if (handleHttpLinkClick(pullRequest.url)) event.preventDefault();
+            }}
+          >
             #{pullRequest.number} {pullRequest.state}
           </a>
         </InfoRow>
@@ -183,7 +194,8 @@ export function ThreadInfoContent({
   environmentId,
   model,
   reasoningLevel,
-  providerId
+  providerId,
+  onOpenStorageFile
 }: {
   threadId: string;
   projectId: string | null;
@@ -194,6 +206,7 @@ export function ThreadInfoContent({
   model?: string | null;
   reasoningLevel?: string | null;
   providerId?: string | null;
+  onOpenStorageFile?: (path: string, title: string) => void;
 }) {
   const project = useData((s) => s.projects.find((row) => row.id === projectId) ?? null);
   const [environmentName, setEnvironmentName] = useState<string | null>(null);
@@ -242,20 +255,23 @@ export function ThreadInfoContent({
   }, [project?.id, project?.hostId, project?.remote?.host, project?.remote?.user]);
 
   return (
-    <ThreadInfoRows
-      isWorktree={isWorktree}
-      environmentName={environmentName}
-      cwd={cwd}
-      branchName={branchName}
-      workspaceStatus={workspaceStatus}
-      pullRequest={pullRequest}
-      model={model}
-      reasoningLevel={reasoningLevel}
-      providerId={providerId}
-      remoteToolProxy={remoteToolProxy}
-      sshTarget={sshTarget}
-      sshStatus={sshStatus}
-      remoteDirectory={remoteDirectory}
-    />
+    <>
+      <ThreadInfoRows
+        isWorktree={isWorktree}
+        environmentName={environmentName}
+        cwd={cwd}
+        branchName={branchName}
+        workspaceStatus={workspaceStatus}
+        pullRequest={pullRequest}
+        model={model}
+        reasoningLevel={reasoningLevel}
+        providerId={providerId}
+        remoteToolProxy={remoteToolProxy}
+        sshTarget={sshTarget}
+        sshStatus={sshStatus}
+        remoteDirectory={remoteDirectory}
+      />
+      <ThreadStorageBrowser threadId={threadId} onOpenFile={onOpenStorageFile} />
+    </>
   );
 }

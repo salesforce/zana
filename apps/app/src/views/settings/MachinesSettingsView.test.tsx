@@ -112,7 +112,7 @@ describe('MachinesTab', () => {
         onUpdate={vi.fn().mockResolvedValue(undefined)}
       />
     );
-    expect(html).toContain('placeholder="https://box.tailnet.ts.net"');
+    expect(html).toContain('placeholder="https://your-app.herokuapp.com"');
     expect(html).toContain('value=""');
   });
 

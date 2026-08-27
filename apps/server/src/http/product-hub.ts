@@ -19,6 +19,7 @@ export type ProductEventType =
   | 'personas:changed'
   | 'threads:updated'
   | 'threads:event'
+  | 'threads:open'
   | 'projects:cloneProgress'
   | 'library:changed'
   | 'hosts:changed'

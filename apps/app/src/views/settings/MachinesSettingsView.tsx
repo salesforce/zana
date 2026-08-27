@@ -12,7 +12,10 @@ import { Field, Section } from '@/components/settings/FormFields';
 import { useHosts } from '../../hooks/useHosts.js';
 import { AddMachineDialog } from './AddMachineDialog.js';
 import { MachineCard } from './MachineCard.js';
-import { TAILSCALE_SERVE_HINT } from './machine-pairing.js';
+import {
+  defaultSshHost,
+  sshHostOptionsFromProjects
+} from './machine-pairing.js';
 import {
   actionableProviderCliRows,
   orderedProviderCliRows
@@ -93,11 +96,11 @@ export function MachinesSettingsView({
       >
         <Field
           label="Public app URL"
-          help={`Used in the join command and to allowlist Tailscale Serve Host headers. Product HTTP still binds loopback. Example: ${TAILSCALE_SERVE_HINT}`}
+          help="Hostname remotes use to reach this app (Heroku, Tailscale Serve, …). Change this field or the one-line public-app-url file at the repo root. Env ZCC_APP_URL wins over both. Product HTTP still binds loopback."
         >
           <input
             type="url"
-            placeholder="https://box.tailnet.ts.net"
+            placeholder="https://your-app.herokuapp.com"
             value={config.publicAppUrl ?? ''}
             onChange={(event) => onConfigDraft({ ...config, publicAppUrl: event.target.value })}
             onBlur={(event) => onUpdate({ publicAppUrl: event.target.value.trim() || undefined })}
@@ -167,6 +170,8 @@ export function MachinesSettingsView({
         open={adding}
         onClose={() => setAdding(false)}
         publicAppUrl={config.publicAppUrl}
+        sshHosts={sshHostOptionsFromProjects(projects)}
+        defaultSshHost={defaultSshHost(projects, config.lastProjectId)}
       />
     </>
   );

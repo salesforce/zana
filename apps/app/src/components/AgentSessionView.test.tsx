@@ -18,8 +18,8 @@ vi.mock('./thread/secondary-panel/ThreadNewTabPage.js', () => ({
 vi.mock('./thread/secondary-panel/ThreadFilePreviewTab.js', () => ({
   ThreadFilePreviewTab: () => <div data-testid="thread-file-preview" />
 }));
-vi.mock('./thread/secondary-panel/ThreadBrowserTab.js', () => ({
-  ThreadBrowserTab: () => <div data-testid="thread-browser-tab" />
+vi.mock('./thread/secondary-panel/BrowserTabDeck.js', () => ({
+  BrowserTabDeck: () => <div data-testid="thread-browser-tab" />
 }));
 vi.mock('./thread/secondary-panel/ThreadPluginTab.js', () => ({
   ThreadPluginTab: () => <div data-testid="thread-plugin-tab" />

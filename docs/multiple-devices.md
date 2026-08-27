@@ -31,21 +31,26 @@ this machine.
 ## Reachability (Tailscale Serve)
 
 The product server still binds **loopback** (`127.0.0.1`). Another computer
-cannot enroll against `http://127.0.0.1:<port>`. Publish a private HTTPS origin
-with Tailscale Serve, then tell Zana that origin:
+cannot enroll against `http://127.0.0.1:<port>`. Point a public HTTPS origin
+at that loopback port (Tailscale Serve, a Heroku proxy, …), then set the
+hostname in **one** of these places (first match wins):
+
+1. Env `ZCC_APP_URL`
+2. **Settings → Machines → Public app URL**
+3. The repo-root file [`public-app-url`](../public-app-url) (one URL, comments allowed)
 
 ```bash
-tailscale serve --bg --https=443 http://127.0.0.1:<zcc-port>
+# public-app-url
+https://zcc-7808c5bc8f3d.herokuapp.com
 ```
 
-In **Settings → Machines**, set **Public app URL** to
-`https://<machine>.<tailnet>.ts.net` (or restart with `ZCC_APP_URL` set to the
-same origin). That URL is used in the join command and as the Host-header
-allowlist for enroll, the host websocket, and `/install.sh`.
+That origin is used in the join command and as the Host-header allowlist for
+enroll, the host websocket, and `/install.sh`. Change the file (or Settings)
+when the hostname changes — no code edits.
 
 Do **not** use Tailscale Funnel or bind the product server to `0.0.0.0`. Those
-would put an unauthenticated control plane on a network. Tailscale ACLs are the
-access boundary for Serve.
+would put an unauthenticated control plane on a network. Tailscale ACLs or
+the proxy's access control are the access boundary.
 
 Opening the full Zana UI in a browser through that URL is out of scope — the
 desktop app on this machine stays the control surface.
@@ -65,6 +70,20 @@ curl -fL ${publicAppUrl}/install.sh | sh -s -- \
 3. Run it on the computer that should execute work. The join code expires in
    **15 minutes** and can be redeemed once. The Machines list turns the new row
    online when the daemon's websocket is open.
+
+If the machine is an SSH workspace (for example `limited-pony`) and you have
+not set a public app URL, Add machine copies a **laptop-side** command instead:
+
+```bash
+ssh -o ExitOnForwardFailure=yes -R 18782:127.0.0.1:<zcc-port> limited-pony \
+  'curl -fL … http://127.0.0.1:18782/install.sh | sh -s -- --join-code … --host-id … --server http://127.0.0.1:18782'
+```
+
+Paste that in a terminal **on this computer**. It reverse-tunnels product HTTP
+to the workspace and runs the installer there. Leave the SSH session open so
+the daemon can keep that tunnel. The installer looks for **Node 22+** on PATH,
+then nix / nvm / fnm / volta (a Node 20 PATH entry is skipped). Override with
+`ZCC_NODE=/path/to/node`.
 
 The installer requires **Node.js 22 or newer** on the remote box. Manual
 pairing downloads the host-daemon tarball from `/install/zcc-host.tgz`. Composer
@@ -96,6 +115,10 @@ Fix asks you to pick a host from `~/.ssh/config`, then retries.
 Install and Fix need the same **Public app URL** as Add machine (not loopback).
 This machine's host daemon must be connected — it owns `~/.ssh` and performs
 the SSH. If SSH cannot run, copy the Settings → Add machine join command.
+
+**Add remote project** runs that same Install by default. Uncheck **Install
+host daemon** to keep SSH PTY only. If the SSH host is already enrolled,
+the new project binds to that machine instead of installing again.
 
 Send is blocked only when the *execution* host is an enrolled machine that is
 offline. SSH remotes keep working over SSH PTY, or over the local-agent /

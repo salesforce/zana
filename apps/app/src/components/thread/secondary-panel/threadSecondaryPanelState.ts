@@ -11,6 +11,7 @@ export type PinnedSecondaryView = 'info' | 'diff' | 'plan';
 export type ClosableSecondaryTabKind =
   | 'new-tab'
   | 'file-preview'
+  | 'storage-preview'
   | 'browser'
   | 'terminal'
   | 'explorer'
@@ -29,6 +30,7 @@ export interface ClosableSecondaryTab {
   params?: JsonValue | null;
   layout?: 'padded' | 'flush';
   openerKey?: string | null;
+  automationTargetId?: string | null;
 }
 
 export interface ThreadSecondaryPanelState {
@@ -80,6 +82,7 @@ function isTabKind(value: unknown): value is ClosableSecondaryTabKind {
   return (
     value === 'new-tab'
     || value === 'file-preview'
+    || value === 'storage-preview'
     || value === 'browser'
     || value === 'terminal'
     || value === 'explorer'
@@ -102,6 +105,9 @@ function parseTab(value: unknown): ClosableSecondaryTab | null {
     ...(typeof value.pluginId === 'string' ? { pluginId: value.pluginId } : {}),
     ...(value.layout === 'padded' || value.layout === 'flush' ? { layout: value.layout } : {}),
     ...(value.openerKey === null || typeof value.openerKey === 'string' ? { openerKey: value.openerKey } : {}),
+    ...(value.automationTargetId === null || typeof value.automationTargetId === 'string'
+      ? { automationTargetId: value.automationTargetId }
+      : {}),
     ...('params' in value ? { params: parseJsonValue(value.params) } : {})
   };
 }
@@ -253,7 +259,7 @@ function matchExistingTab(
   return tabs.find((tab) => {
     if (tab.kind !== input.kind) return false;
     if (input.kind === 'explorer') return true;
-    if (input.kind === 'file-preview') return tab.path === input.path;
+    if (input.kind === 'file-preview' || input.kind === 'storage-preview') return tab.path === input.path;
     if (input.kind === 'terminal') return tab.sessionId === input.sessionId;
     if (input.kind === 'plugin') {
       if (input.actionId) {

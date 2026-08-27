@@ -35,6 +35,7 @@ import { conversationOutline, conversationTimeline } from '../services/threads/c
 import { readLastThreadExecution } from '../services/threads/thread-last-execution.js';
 import { markThreadRead } from '../services/threads/thread-reads.js';
 import { readThreadHostFile } from '../services/threads/thread-host-file.js';
+import { listThreadStorageFiles, readThreadStorageFile } from '../services/threads/thread-storage.js';
 import { listThreadProviders, bridgeLaunchForProvider } from '../services/threads/thread-provider-catalog.js';
 import {
   buildThreadExecutionOptions,
@@ -54,7 +55,7 @@ import {
 import { spawnEnvironmentChoiceSchema } from '@zana-ai/zcc-domain';
 import { jsonValueSchema, pendingInteractionResolutionSchema, reasoningLevelSchema, type ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
-import { systemInstallCliSkillsRequestSchema } from '@zana-ai/zcc-server-contract';
+import { systemInstallCliSkillsRequestSchema, threadOpenRequestSchema } from '@zana-ai/zcc-server-contract';
 import { normalizeRepoUrl } from '../services/projects/git-clone.js';
 import { harnessDescriptors, harnessEffectiveDefault, harnessVerify } from './harness-via-rpc.js';
 import { isSafeRelPath, listLibraryDocs, listQuickPrompts, readLibraryDoc } from './library-via-host.js';
@@ -663,6 +664,62 @@ export async function handleProductHttp(
           sendJson(response, error.status, { error: error.code, message: error.message });
           return true;
         }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadStorageFiles = routeParams(path, '/api/v1/threads/:id/thread-storage/files');
+    if (threadStorageFiles && method === 'GET') {
+      try {
+        sendJson(response, 200, await listThreadStorageFiles(ctx, threadStorageFiles.id));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadStorageContent = routeParams(path, '/api/v1/threads/:id/thread-storage/content');
+    if (threadStorageContent && method === 'GET') {
+      try {
+        const pathParam = requestUrl.searchParams.get('path') ?? '';
+        sendJson(response, 200, await readThreadStorageFile(ctx, threadStorageContent.id, pathParam));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadOpen = routeParams(path, '/api/v1/threads/:id/open');
+    if (threadOpen && method === 'POST') {
+      try {
+        const thread = getConversationThread(ctx.db, threadOpen.id);
+        if (!thread) {
+          sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
+          return true;
+        }
+        const parsed = threadOpenRequestSchema.safeParse(await readJsonBody(request));
+        if (!parsed.success) {
+          sendJson(response, 400, { error: 'invalid-request', message: 'invalid thread-open payload' });
+          return true;
+        }
+        ctx.hub.emit('threads:open', {
+          type: 'thread-open',
+          projectId: thread.projectId,
+          threadId: thread.id,
+          split: parsed.data.split ?? 'right',
+          file: parsed.data.file
+        });
+        sendJson(response, 200, { delivered: ctx.hub.size() });
+      } catch (error) {
         sendHostFailure(response, error);
       }
       return true;

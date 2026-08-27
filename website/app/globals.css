@@ -963,6 +963,8 @@ main:has(.bb-hero) + footer { margin-top: 0; border-top-color: #e3e2dd; backgrou
 .foot-col a:hover { color: var(--text); }
 .foot-blurb { color: var(--muted); font-size: 13.5px; max-width: 300px; line-height: 1.6; }
 .foot-bottom { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; padding-top: 28px; border-top: 1px solid var(--border-soft); color: var(--muted-2); font-size: 13px; }
+.foot-bottom a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.foot-bottom a:hover { color: var(--text); }
 
 @media (max-width: 820px) { .marketplace-install-guide, .docs-hub-hero .wrap, .docs-next-step { grid-template-columns: 1fr; }.marketplace-install-actions { min-width: 0; grid-template-columns: repeat(2, 1fr); }.docs-hub-hero { padding-top: 68px; }.docs-hub-paths { max-width: 620px; } }
 @media (max-width: 520px) { .marketplace-install-guide { padding: 22px; }.marketplace-install-actions { grid-template-columns: 1fr; }.docs-hub-hero h1 { font-size: 40px; }.docs-next-step .btn { width: 100%; } }

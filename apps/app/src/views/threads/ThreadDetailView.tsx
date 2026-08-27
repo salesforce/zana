@@ -35,17 +35,22 @@ import {
 } from '../../components/thread/secondary-panel/thread-plan-document.js';
 import { ThreadNewTabPage } from '../../components/thread/secondary-panel/ThreadNewTabPage.js';
 import { ThreadFilePreviewTab } from '../../components/thread/secondary-panel/ThreadFilePreviewTab.js';
-import { ThreadBrowserTab } from '../../components/thread/secondary-panel/ThreadBrowserTab.js';
+import { BrowserTabDeck } from '../../components/thread/secondary-panel/BrowserTabDeck.js';
 import { ThreadTerminalTab } from '../../components/thread/secondary-panel/ThreadTerminalTab.js';
 import { ThreadPluginTab } from '../../components/thread/secondary-panel/ThreadPluginTab.js';
 import { ThreadExplorerTab } from '../../components/thread/secondary-panel/ThreadExplorerTab.js';
 import { PluginThreadHeaderActions } from '../../plugins/PluginThreadHeaderActions.js';
 import { copyText } from '../../components/thread/secondary-panel/threadSecondaryPanelLogic.js';
 import { useThreadSecondaryPanel } from '../../components/thread/secondary-panel/useThreadSecondaryPanel.js';
+import { useInAppBrowserPanel } from '../../components/thread/secondary-panel/useInAppBrowserPanel.js';
+import { useThreadOpenFileSignal } from '../../components/thread/secondary-panel/useThreadOpenFileSignal.js';
+import { appendThreadRecentItem, tabInputFromRecentItem } from '../../components/thread/secondary-panel/threadRecentItems.js';
 import {
   activeClosableTab,
   activePinnedView
 } from '../../components/thread/secondary-panel/threadSecondaryPanelState.js';
+import { getDesktopBrowserApi } from '../../lib/desktop-browser.js';
+import { getBrowserUrlHost } from '../../lib/browser-url.js';
 
 const INITIAL_SEGMENT_LIMIT = 200;
 
@@ -75,6 +80,7 @@ export function ThreadDetail({
   );
   const pendingInteractions = useOpenPendingInteractions(threadId);
   const panel = useThreadSecondaryPanel(threadId);
+  useInAppBrowserPanel(threadId, panel);
   const [title, setTitle] = useState('Thread');
   const [status, setStatus] = useState('starting');
   const [cwd, setCwd] = useState<string | null>(null);
@@ -100,6 +106,18 @@ export function ThreadDetail({
   const [planExpanded, setPlanExpanded] = useState(false);
   const [todoExpanded, setTodoExpanded] = useState(false);
   const [planExitPending, setPlanExitPending] = useState(false);
+  useThreadOpenFileSignal({
+    threadId,
+    environmentId,
+    openTab: (tab) => {
+      if (tab.kind === 'file-preview' && tab.path) {
+        appendThreadRecentItem(threadId, { kind: 'file', source: 'workspace', path: tab.path });
+      } else if (tab.kind === 'storage-preview' && tab.path) {
+        appendThreadRecentItem(threadId, { kind: 'file', source: 'thread-storage', path: tab.path });
+      }
+      panel.addTab(tab);
+    }
+  });
 
   useEffect(() => {
     if (!threadId) return;
@@ -276,6 +294,10 @@ export function ThreadDetail({
         model={threadModel}
         reasoningLevel={threadReasoning}
         providerId={threadProviderId}
+        onOpenStorageFile={(path, title) => {
+          appendThreadRecentItem(threadId, { kind: 'file', source: 'thread-storage', path });
+          panel.addTab({ kind: 'storage-preview', title, path });
+        }}
       />
     );
   } else if (pin === 'plan' && planDocument) {
@@ -293,6 +315,7 @@ export function ThreadDetail({
   } else if (pin === 'diff' && environmentId) {
     panelBody = (
       <ThreadDiffPanel
+        threadId={threadId}
         environmentId={environmentId}
         path={diffPath}
         embedded
@@ -304,11 +327,16 @@ export function ThreadDetail({
       <ThreadNewTabPage
         projectId={projectId}
         cwd={cwd}
-        onOpenFile={(path, title) => panel.addTab({ kind: 'file-preview', title, path })}
-        onOpenBrowser={() => panel.addTab({ kind: 'browser', title: 'Browser', url: 'https://example.com' })}
+        threadId={threadId}
+        onOpenFile={(path, title) => {
+          appendThreadRecentItem(threadId, { kind: 'file', source: 'workspace', path });
+          panel.addTab({ kind: 'file-preview', title, path });
+        }}
+        onOpenBrowser={() => panel.addTab({ kind: 'browser', title: 'Browser', url: '' })}
         onOpenExplorer={() => panel.addTab({ kind: 'explorer', title: 'Explorer' })}
         onStartTerminal={() => { void startPanelTerminal(); }}
-        onOpenPlugin={(moduleId, title, options) =>
+        onOpenPlugin={(moduleId, title, options) => {
+          appendThreadRecentItem(threadId, { kind: 'plugin', moduleId, actionId: options?.actionId, title });
           panel.addTab({
             kind: 'plugin',
             title,
@@ -316,26 +344,23 @@ export function ThreadDetail({
             actionId: options?.actionId,
             params: options?.params ?? null,
             layout: options?.layout
-          })
-        }
+          });
+        }}
+        onOpenRecent={(item) => panel.addTab(tabInputFromRecentItem(item))}
       />
     );
-  } else if (closable?.kind === 'file-preview' && closable.path) {
+  } else if ((closable?.kind === 'file-preview' || closable?.kind === 'storage-preview') && closable.path) {
     panelBody = (
       <ThreadFilePreviewTab
         threadId={threadId}
         path={closable.path}
         openerKey={closable.openerKey}
         projectId={projectId}
+        storage={closable.kind === 'storage-preview'}
       />
     );
   } else if (closable?.kind === 'browser') {
-    panelBody = (
-      <ThreadBrowserTab
-        initialUrl={closable.url ?? 'https://example.com'}
-        onUrlChange={(url) => panel.patchTab(closable.id, { url })}
-      />
-    );
+    panelBody = null;
   } else if (closable?.kind === 'terminal' && closable.sessionId && projectId) {
     panelBody = <ThreadTerminalTab sessionId={closable.sessionId} projectId={projectId} />;
   } else if (closable?.kind === 'explorer') {
@@ -503,6 +528,22 @@ export function ThreadDetail({
           onResize={panel.setWidth}
         >
           {panelBody}
+          <BrowserTabDeck
+            browserTabs={panel.state.tabs.filter((tab) => tab.kind === 'browser')}
+            activeBrowserTabId={closable?.kind === 'browser' ? closable.id : null}
+            canShowNativeBrowserView={panelOpen && !modal}
+            threadId={threadId}
+            onUpdate={({ tabId, url, title }) => {
+              const nextTitle = title && title.length > 0 ? title : getBrowserUrlHost(url) || 'Browser';
+              panel.patchTab(tabId, { url, title: nextTitle });
+              if (url) appendThreadRecentItem(threadId, { kind: 'browser', url, title: nextTitle });
+            }}
+            onStopAutomation={(targetId) => {
+              void getDesktopBrowserApi()?.stopAutomation?.(targetId);
+              const tab = panel.state.tabs.find((row) => row.automationTargetId === targetId);
+              if (tab) panel.patchTab(tab.id, { automationTargetId: null });
+            }}
+          />
         </ThreadSecondaryPanel>
       ) : null}
       </div>

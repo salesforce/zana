@@ -29,10 +29,15 @@ import { existsSync, realpathSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, relative } from 'node:path';
 import { isTrustedRendererUrl, productServerUrl, rendererUrl, setProductionRendererOrigin } from './window/renderer-url.js';
+import { resolveIconPath } from './resolve-icon-path.js';
 import { startRuntimeSupervisor, type RuntimeSupervisor } from './runtime/runtime-supervisor.js';
 import { applyPluginAgentCapabilities } from '@zana-ai/zcc-server/services/extensions/plugin-agent-sync';
 import { runtimeHostAvailable, setRuntimeHostSupervisor } from '@zana-ai/zcc-host-daemon/harness/execution-environment';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
+import { createDesktopBrowserViewManager } from './desktop-browser-view.js';
+import { registerDesktopBrowserIpc } from './desktop-browser-main-ipc.js';
+import { createDesktopBrowserAutomationHost } from './desktop-browser-automation.js';
+import { setBrowserAutomationHost } from '@zana-ai/zcc-server/services/threads/browser-automation';
 import { registerIpcFamilies } from './ipc/register.js';
 import type { IpcCtx } from './ipc/ctx.js';
 import { sanitizeExtraArgs } from '@zana-ai/zcc-domain/launch-sanitize';
@@ -127,7 +132,7 @@ import { createAgentMessageLog, type IAgentMessageLog } from '@zana-ai/zcc-serve
 import { killLocalTmuxSession, listLocalTmuxSessionIds, reapOrphanTmuxSessions, verifyTmux } from '@zana-ai/zcc-host-daemon/tmux';
 import { exportInboxPdf } from './native/inbox-pdf.js';
 import { createSavedStore, type ISavedStore } from '@zana-ai/zcc-server';
-import type { SavedRecord, SavedRecordInput } from '@zana-ai/zcc-domain/product';
+import { ABOUT_CREDITS, type SavedRecord, type SavedRecordInput } from '@zana-ai/zcc-domain/product';
 import type { ConversationHistorySnapshot } from '@zana-ai/zcc-domain/product';
 import type { CancelTeamLaunchResult, LaunchTeamResult, TeamLaunchAuthorizationInputSlot, TeamLaunchAuthorizationResult, TeamLaunchRequestInput, TeamFailedWorkerSlot, TeamLaunchedWorker } from '@zana-ai/zcc-domain/product';
 import type { SubagentChild } from '@zana-ai/zcc-domain/product';
@@ -734,6 +739,8 @@ function anyWindow(): BrowserWindow | null {
   return null;
 }
 const ptys = new PtyManager();
+const desktopBrowserViewManager = createDesktopBrowserViewManager();
+setBrowserAutomationHost(createDesktopBrowserAutomationHost(desktopBrowserViewManager));
 const conversationHistory = new ConversationHistoryService({
   projects: () => store.listProjects(),
   claude: (project, limit) => listClaudeSessions(project.path, limit),
@@ -2465,21 +2472,40 @@ async function getAuthoritativeProjectSettings(projectId: string): Promise<Proje
     : store.getProjectSettings(projectId);
 }
 
-// Resolve packaged or unpackaged icon location. In dev electron-vite runs from
-// repo root with __dirname=out/main, so the parent is the project root. Once
-// packaged, electron-builder copies resources/ next to app.asar via `extraResources`,
-// surfaced as process.resourcesPath.
-function resolveIconPath(): string | null {
-  const candidates = [
-    process.resourcesPath ? join(process.resourcesPath, 'icon.icns') : null,
-    process.resourcesPath ? join(process.resourcesPath, 'icon-1024.png') : null,
-    join(__dirname, '../../resources/icon.icns'),
-    join(__dirname, '../../resources/icon-1024.png')
-  ].filter((p): p is string => !!p);
-  for (const p of candidates) {
-    if (existsSync(p)) return p;
+function productIconLookup() {
+  return {
+    packaged: app.isPackaged,
+    moduleDir: __dirname,
+    resourcesPath: process.resourcesPath,
+    cwd: process.cwd()
+  };
+}
+
+function productIconPath(): string | null {
+  return resolveIconPath(productIconLookup());
+}
+
+function productIconImage() {
+  const iconFile = productIconPath();
+  if (!iconFile) return undefined;
+  const image = nativeImage.createFromPath(iconFile);
+  return image.isEmpty() ? undefined : image;
+}
+
+function applyDockIcon() {
+  // Packaged builds must not call dock.setIcon: it replaces the bundle icon
+  // (already channel-correct via electron-builder) with a raw NSImage that
+  // bypasses the macOS appearance pipeline, so dark mode shows the light
+  // rendering. Dev runs still need it to show icon-dev.png instead of the
+  // stock Electron icon.
+  if (process.platform !== 'darwin' || !app.dock || app.isPackaged) return;
+  const image = productIconImage();
+  if (!image) return;
+  try {
+    app.dock.setIcon(image);
+  } catch (err) {
+    logMainError('dock.setIcon', err);
   }
-  return null;
 }
 
 function safeSend(channel: string, ...args: unknown[]) {
@@ -4366,7 +4392,6 @@ function createWindow(projectId?: string, repairOnly = false) {
     screen.getPrimaryDisplay()
   );
 
-  const iconPath = resolveIconPath();
   const win = new BrowserWindow({
     width: projectId || repairOnly ? 1400 : restored.bounds.width,
     height: projectId || repairOnly ? 900 : restored.bounds.height,
@@ -4375,7 +4400,7 @@ function createWindow(projectId?: string, repairOnly = false) {
     minWidth: projectId || repairOnly ? 900 : restored.minWidth,
     minHeight: projectId || repairOnly ? 600 : restored.minHeight,
     title: 'Zana',
-    icon: iconPath ?? undefined,
+    icon: productIconImage(),
     backgroundColor: '#0b0f15',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 14 },
@@ -4397,7 +4422,27 @@ function createWindow(projectId?: string, repairOnly = false) {
   });
 
   windows.set(win.id, { win, projectId });
+  const hostWebContentsId = win.webContents.id;
+  let browserResizeSettleTimer: ReturnType<typeof setTimeout> | null = null;
+  const endBrowserWindowResize = () => {
+    if (browserResizeSettleTimer !== null) {
+      clearTimeout(browserResizeSettleTimer);
+      browserResizeSettleTimer = null;
+    }
+    if (!win.isDestroyed()) desktopBrowserViewManager.endWindowResize(win);
+  };
+  win.on('resize', () => {
+    desktopBrowserViewManager.beginWindowResize(win);
+    if (browserResizeSettleTimer !== null) clearTimeout(browserResizeSettleTimer);
+    browserResizeSettleTimer = setTimeout(endBrowserWindowResize, 200);
+  });
+  win.on('resized', endBrowserWindowResize);
   win.on('closed', () => {
+    if (browserResizeSettleTimer !== null) {
+      clearTimeout(browserResizeSettleTimer);
+      browserResizeSettleTimer = null;
+    }
+    desktopBrowserViewManager.releaseWindow(hostWebContentsId);
     conversationHistory.releaseWindow(win.id);
     windows.delete(win.id);
     boundsControllers.delete(win.id);
@@ -4826,6 +4871,7 @@ async function cloneAndRegisterProject(
 }
 
 function registerIpc() {
+  registerDesktopBrowserIpc(desktopBrowserViewManager);
   registerIpcFamilies({
     get E2E_TAP_ENABLED() { return E2E_TAP_ENABLED; },
     get MENUBAR_REPLY_MAX_CHARS() { return MENUBAR_REPLY_MAX_CHARS; },
@@ -5241,19 +5287,14 @@ async function bootstrapNormal() {
   // on every window surface via `showMainWindow` so it also recovers if the
   // policy drifts to accessory mid-session (see `claimDock`).
   claimDock();
-  const iconPath = resolveIconPath();
-  if (process.platform === 'darwin' && iconPath && app.dock) {
-    try {
-      app.dock.setIcon(nativeImage.createFromPath(iconPath));
-    } catch (err) {
-      logMainError('dock.setIcon', err);
-    }
-  }
+  const iconPath = productIconPath();
+  applyDockIcon();
   app.setAboutPanelOptions({
     applicationName: 'Zana',
     applicationVersion: app.getVersion(),
     version: app.getVersion(),
     copyright: '© 2026 grebmann',
+    credits: ABOUT_CREDITS,
     website: 'https://github.com/salesforce/zana',
     iconPath: iconPath ?? undefined
   });
@@ -6492,6 +6533,8 @@ app.on('before-quit', (event) => {
   // client naturally; explicitly killing it emits a false terminal exit that
   // marks Team lifecycle state dead before next launch can reattach.
   ptys.killAll({ preserveLocalTmux: true });
+  desktopBrowserViewManager.destroyAll();
+  setBrowserAutomationHost(null);
   if (mcpServer) {
     const handle = mcpServer;
     mcpServer = null;

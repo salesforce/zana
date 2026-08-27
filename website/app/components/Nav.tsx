@@ -172,6 +172,11 @@ export function Footer() {
         </div>
         <div className="foot-bottom">
           <span>© {year} Zana Command Center. Free &amp; open.</span>
+          <span>
+            Architecture rebased on{' '}
+            <a href="https://github.com/get-bb/bb" target="_blank" rel="noopener noreferrer">bb</a>. Inspired by bb,
+            Cursor, Codex, and Claude Code.
+          </span>
           <span>macOS today, Windows &amp; Linux soon — signed &amp; auto-updating.</span>
         </div>
       </div>

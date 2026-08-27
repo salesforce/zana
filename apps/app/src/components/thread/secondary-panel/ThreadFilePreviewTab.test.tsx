@@ -4,7 +4,10 @@ import { renderToStaticMarkup } from 'react-dom/server';
 vi.mock('../../../lib/product-client.js', () => ({
   product: {
     fs: { readFile: async () => ({ ok: false }) },
-    threads: { hostFileContent: async () => ({ content: '' }) }
+    threads: {
+      hostFileContent: async () => ({ content: '' }),
+      storageContent: async () => ({ content: '' })
+    }
   }
 }));
 

@@ -4490,6 +4490,11 @@ body.resizing-col {
   background: rgba(255, 255, 255, 0.04);
 }
 
+.remote-host-row:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .remote-host-row.active {
   background: rgba(47, 129, 247, 0.18);
 }
@@ -4535,6 +4540,43 @@ body.resizing-col {
 
 .remote-form-row input:disabled {
   opacity: 0.5;
+}
+
+.remote-install-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.remote-install-toggle input {
+  margin: 0;
+  cursor: pointer;
+}
+
+.remote-install-toggle:has(input:disabled) {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.remote-install-hint {
+  margin: 0;
+}
+
+.remote-install-log {
+  margin: 0;
+  max-height: 120px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--border, #30363d);
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  white-space: pre-wrap;
+  color: var(--text-muted);
 }
 
 .project-git {
@@ -5243,7 +5285,13 @@ body.resizing-col {
 }
 
 .add-machine-modal {
-  width: min(640px, 92vw);
+  width: min(720px, 92vw);
+}
+
+.add-machine-modal .modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .add-machine-lead {
@@ -5251,6 +5299,25 @@ body.resizing-col {
   font-size: 13px;
   line-height: 1.45;
   color: var(--text-muted);
+}
+
+.add-machine-ssh {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.add-machine-ssh-list {
+  max-height: 220px;
+}
+
+.add-machine-ssh-group-label {
+  padding: 6px 8px 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
 }
 
 .add-machine-command {
@@ -32065,18 +32132,31 @@ textarea.thread-command-editor {
   gap: 4px;
   padding: 6px 8px;
   border-bottom: 1px solid var(--border);
+  position: relative;
+}
+
+.thread-browser-address {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 8px;
+  background: color-mix(in srgb, var(--bg, var(--background)) 70%, transparent);
 }
 
 .thread-browser-chrome input {
   flex: 1 1 auto;
   min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: 0;
   background: transparent;
   color: var(--text-primary);
-  padding: 4px 8px;
+  padding: 4px 0;
   font: inherit;
   font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .thread-browser-chrome button {
@@ -32087,10 +32167,198 @@ textarea.thread-command-editor {
   cursor: pointer;
 }
 
+.thread-browser-chrome button:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
 .thread-browser-view {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
   border: 0;
+}
+
+.thread-browser-snapshot {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+}
+
+.thread-browser-empty,
+.thread-browser-newtab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 100%;
+  padding: 24px;
+  text-align: center;
+  color: var(--ink-muted, var(--text-dim));
+}
+
+.thread-browser-newtab {
+  align-items: stretch;
+  justify-content: flex-start;
+  text-align: left;
+  overflow: auto;
+}
+
+.thread-browser-newtab-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.thread-browser-newtab-header h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.thread-browser-newtab ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.thread-browser-newtab li button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 6px 4px;
+  text-align: left;
+}
+
+.thread-browser-recent-host,
+.thread-browser-recent-time {
+  color: var(--ink-muted, var(--text-dim));
+  font-size: 11px;
+}
+
+.thread-browser-recent-time {
+  margin-left: auto;
+}
+
+.thread-browser-automation {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+  background: color-mix(in srgb, var(--accent, #3b82f6) 18%, transparent);
+  color: var(--text-primary);
+}
+
+.thread-browser-error-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.thread-browser-error-detail {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.thread-info-storage {
+  margin-top: 16px;
+  min-height: 0;
+}
+
+.thread-info-storage h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.thread-info-storage ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.thread-info-storage button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 4px 0;
+  text-align: left;
+  font: inherit;
+  font-size: 12px;
+}
+
+.thread-browser-newtab-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-muted, var(--text-dim));
+}
+
+.thread-new-tab-recents {
+  margin-bottom: 12px;
+}
+
+.thread-new-tab-recents h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.thread-new-tab-recents ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.thread-new-tab-recents button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 6px 0;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+}
+
+.thread-selection-add {
+  position: fixed;
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg, var(--background));
+  color: var(--text-primary);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 18%);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
 }
 
 .thread-terminal-tab {

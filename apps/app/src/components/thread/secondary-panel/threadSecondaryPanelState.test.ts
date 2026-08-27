@@ -198,6 +198,8 @@ describe('thread secondary panel state', () => {
     });
     expect(addClosableTab(browser, { kind: 'browser', title: 'Browser', url: 'https://example.com' }).tabs).toHaveLength(1);
     expect(addClosableTab(browser, { kind: 'browser', title: 'Browser', url: 'https://zana.ai' }).tabs).toHaveLength(2);
+    const emptyBrowser = addClosableTab(emptySecondaryPanelState(), { kind: 'browser', title: 'Browser', url: '' });
+    expect(addClosableTab(emptyBrowser, { kind: 'browser', title: 'Browser', url: '' }).tabs).toHaveLength(2);
     const explorer = addClosableTab(emptySecondaryPanelState(), { kind: 'explorer', title: 'Explorer' });
     expect(addClosableTab(explorer, { kind: 'explorer', title: 'Explorer' }).tabs).toHaveLength(1);
   });

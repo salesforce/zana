@@ -15,7 +15,7 @@ extraResources:
   # NOTE: don't copy icon.icns here — `mac.icon` already places it at
   # Contents/Resources/icon.icns (== process.resourcesPath/icon.icns), so a
   # second copy collides (EEXIST hard-link during packaging). The runtime
-  # resolver in index.ts finds the mac.icon copy; win/linux fall back to the
+  # resolver in resolve-icon-path.ts finds the mac.icon copy; win/linux fall back to the
   # png below.
   - from: resources/icon-1024.png
     to: icon-1024.png
@@ -37,6 +37,8 @@ extraResources:
     to: harness-authoring-skill.md
   - from: resources/zcc-plugin-authoring-skill.md
     to: zcc-plugin-authoring-skill.md
+  - from: resources/zcc-browser-skill.md
+    to: zcc-browser-skill.md
   # Always-on injected skills (zcc-plugin-authoring). Canonical source is
   # apps/server/src/plugins/builtin-skills; packaged copies land at
   # process.resourcesPath/builtin-skills (see injected-skill-roots.ts).

@@ -10,7 +10,13 @@ import {
   Info,
   type LucideIcon
 } from 'lucide-react';
-import type { AppConfig } from '@zana-ai/zcc-domain/product';
+import {
+  BB_IDE_URL,
+  CLAUDE_CODE_URL,
+  CODEX_URL,
+  CURSOR_URL,
+  type AppConfig
+} from '@zana-ai/zcc-domain/product';
 import { useUpdates, openWhatsNewAll } from '@/store';
 import { Section, Field, CheckboxField } from '@/components/settings/FormFields';
 
@@ -185,8 +191,8 @@ function UpdateStatusCard() {
 }
 
 /**
- * About tab — app version, the update-status card, and links. Promoted out of
- * the Global tab into its own trailing "App" settings category (About is
+ * About tab — app version, the update-status card, credits, and links. Promoted
+ * out of the Global tab into its own trailing "App" settings category (About is
  * app-level meta, not configuration). The optional dev/QA "simulate update"
  * controls live here too, gated behind {@link AppConfig.enableUpdateSimulation}.
  */
@@ -221,6 +227,26 @@ export function AboutView({
             view them on GitHub
           </a>
           .
+        </p>
+      </Section>
+
+      <Section
+        title="Credits"
+        help="Where Zana’s architecture and product ideas come from."
+        anchorId="about-credits"
+      >
+        <p className="settings-help">
+          Zana’s architecture is rebased on the awesome{' '}
+          <a href={BB_IDE_URL} target="_blank" rel="noopener noreferrer">
+            bb
+          </a>{' '}
+          IDE.
+        </p>
+        <p className="settings-help">
+          Inspired by <a href={BB_IDE_URL} target="_blank" rel="noopener noreferrer">bb</a>,{' '}
+          <a href={CURSOR_URL} target="_blank" rel="noopener noreferrer">Cursor</a>,{' '}
+          <a href={CODEX_URL} target="_blank" rel="noopener noreferrer">Codex</a>, and{' '}
+          <a href={CLAUDE_CODE_URL} target="_blank" rel="noopener noreferrer">Claude Code</a>.
         </p>
       </Section>
 

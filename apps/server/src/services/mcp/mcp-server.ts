@@ -42,6 +42,7 @@ import { resolveDoc } from '../projects/fs.js';
 import { registerInboxPushTool } from '../inbox/inbox-mcp-tool.js';
 import { registerInboxAskTool } from '../inbox/inbox-ask-mcp-tool.js';
 import { registerInboxSearchTool } from '../inbox/inbox-search-mcp-tool.js';
+import { registerBrowserAutomationTools } from '../threads/browser-mcp-tools.js';
 import { registerRemoteExecTool, type RegisterRemoteExecOpts } from '@zana-ai/zcc-host-daemon/remote-exec-mcp-tool';
 import {
   registerRemoteFsTools,
@@ -560,6 +561,7 @@ function buildProjectMcpServer(opts: {
     projectId: opts.projectId,
     inboxStore: opts.inboxStore
   });
+  registerBrowserAutomationTools(mcp, { threadId: opts.sessionId ?? null });
   // suggest_action: propose a runnable next action for the operator's launcher.
   // Available on both route shapes (a suggestion needs no live originating
   // session); projectId/origin come from the route, never the agent (rule 1).

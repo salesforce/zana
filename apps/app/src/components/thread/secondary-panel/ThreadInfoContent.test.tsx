@@ -156,5 +156,6 @@ describe('ThreadInfoRows', () => {
     expect(html).not.toContain('None');
     expect(html).toContain('Local');
     expect(html).toContain('/tmp/proj');
+    expect(html).toContain('data-testid="thread-info-storage"');
   });
 });

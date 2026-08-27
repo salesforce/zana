@@ -1048,6 +1048,8 @@ importers:
 
   plugins/provider-retry: {}
 
+  plugins/salesforce: {}
+
   plugins/secrets: {}
 
   plugins/side-chat: {}

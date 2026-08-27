@@ -53,11 +53,15 @@ const HARNESS_AUTHORING_SKILL_FILE = join(HARNESS_AUTHORING_SKILL_DIR, 'SKILL.md
 const PLUGIN_AUTHORING_SKILL_DIR = join(homedir(), '.claude', 'skills', 'zcc-plugin-authoring');
 const PLUGIN_AUTHORING_SKILL_FILE = join(PLUGIN_AUTHORING_SKILL_DIR, 'SKILL.md');
 
+const BROWSER_SKILL_DIR = join(homedir(), '.claude', 'skills', 'zcc-browser');
+const BROWSER_SKILL_FILE = join(BROWSER_SKILL_DIR, 'SKILL.md');
+
 /**
  * Resolve a shipped resource file. In dev, electron-vite runs from the repo
  * root with `moduleDir = out/main`, so the source is `../../resources`. Once
  * packaged, electron-builder copies it next to app.asar via `extraResources`,
- * surfaced as `process.resourcesPath`. Mirrors `resolveIconPath` in index.ts.
+ * surfaced as `process.resourcesPath`. Mirrors `resolveIconPath` in
+ * `apps/desktop/src/resolve-icon-path.ts`.
  */
 function resolveShippedPath(fileName: string): string | null {
   const builtinSlug = fileName.replace(/-skill\.md$/, '');
@@ -209,6 +213,19 @@ async function installHarnessAuthoringSkill(
   );
 }
 
+/** Deploy the bundled `zcc-browser` skill (visible in-app browser MCP tools). */
+async function installBrowserSkill(
+  log?: (context: string, err: unknown) => void
+): Promise<string | null> {
+  return installSkill(
+    'installBrowserSkill',
+    'zcc-browser-skill.md',
+    BROWSER_SKILL_DIR,
+    BROWSER_SKILL_FILE,
+    log
+  );
+}
+
 /** Deploy the always-on plugin-authoring skill (all providers via catalog + Claude copy). */
 async function installPluginAuthoringSkill(
   log?: (context: string, err: unknown) => void
@@ -240,7 +257,8 @@ const BUNDLED_SKILLS: ReadonlyArray<{
   { name: 'extension-creator', install: installExtensionCreatorSkill },
   { name: 'submit-a-plugin', install: installSubmitPluginSkill },
   { name: 'harness-authoring', install: installHarnessAuthoringSkill },
-  { name: 'zcc-plugin-authoring', install: installPluginAuthoringSkill }
+  { name: 'zcc-plugin-authoring', install: installPluginAuthoringSkill },
+  { name: 'zcc-browser', install: installBrowserSkill }
 ];
 
 /** The bundled-skill names, for callers that only need the roster (e.g. boot). */

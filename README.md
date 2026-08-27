@@ -154,6 +154,11 @@ npm run build
 
 For end-to-end tests, run `npm run test:e2e`.
 
+## Acknowledgements
+
+Zana’s architecture is rebased on the awesome [bb](https://github.com/get-bb/bb) IDE.
+We also drew inspiration from bb, Cursor, Codex, and Claude Code.
+
 ## Contributing
 
 Contributions to code, documentation, tests, and issue reports are welcome. See

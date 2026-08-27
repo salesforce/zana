@@ -74,6 +74,7 @@ import {
   NAVIGATE_TO_THREAD_ON_CREATE_KEY,
   resolveThreadSendMode
 } from '../lib/thread-composer-preferences.js';
+import { COMPOSER_INSERT_EVENT } from './thread/secondary-panel/SecondaryPanelSelectionActions.js';
 
 export type ThreadSendMode = 'start' | 'auto' | 'steer' | 'queue-if-active' | 'steer-if-active';
 
@@ -425,6 +426,16 @@ export function ThreadCommandComposer({
   const insertVoiceTranscript = useCallback((text: string) => {
     editor?.chain().focus().insertContent(text.endsWith(' ') ? text : `${text} `).run();
   }, [editor]);
+  useEffect(() => {
+    if (!editor || !threadId) return;
+    const onInsert = (event: Event) => {
+      const detail = (event as CustomEvent<{ threadId?: string; text?: string }>).detail;
+      if (!detail?.text || detail.threadId !== threadId) return;
+      insertVoiceTranscript(detail.text);
+    };
+    window.addEventListener(COMPOSER_INSERT_EVENT, onInsert);
+    return () => window.removeEventListener(COMPOSER_INSERT_EVENT, onInsert);
+  }, [editor, insertVoiceTranscript, threadId]);
   const voice = useVoiceInput({ onTranscript: insertVoiceTranscript });
   const voiceBusy = voice.state === 'recording' || voice.state === 'transcribing';
 

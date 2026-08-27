@@ -76,6 +76,12 @@ describe('Settings subsection navigation', () => {
     });
   });
 
+  it('lists Credits under About', () => {
+    expect(SETTINGS_SUBSECTIONS.about).toEqual([
+      { id: 'about-credits', label: 'Credits' }
+    ]);
+  });
+
   it('includes Personas, Squads, and Usage in focused Settings navigation', () => {
     expect(SETTINGS_SECTIONS.map((section) => section.id)).toEqual(
       expect.arrayContaining(['personas', 'squads', 'usage', 'machines'])

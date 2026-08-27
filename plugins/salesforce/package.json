@@ -1,0 +1,21 @@
+{
+  "name": "@zcc-ext/salesforce",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Salesforce DX inner loop for ZCC: org identity, SOQL/Apex/LWC/Agent Script family tools, and fail-closed mutation confirms.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "zcc": {
+    "name": "Salesforce",
+    "description": "Org identity, doctor, and API-native SOQL/Apex/LWC/Agent Script tools with fail-closed approvals. Install with `zcc plugin install salesforce`.",
+    "branding": {
+      "icon": "Cloud"
+    },
+    "server": "./server.ts",
+    "app": "./app.js",
+    "skills": ["skills"]
+  }
+}

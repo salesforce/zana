@@ -13,6 +13,7 @@ import {
   REWRITE_LOCALHOST_LINKS_STORAGE_KEY,
   rewriteLocalhostLinkHref
 } from '../lib/localhost-link-rewrite-preference.js';
+import { handleHttpLinkClick } from '../lib/in-app-browser-link-preference.js';
 
 /**
  * Shared markdown / doc rendering for the inbox.
@@ -145,18 +146,27 @@ export function MarkdownContent({
           // Open links in a new window — Electron treats that as the OS
           // default browser. Avoid destructuring `node` (deprecated in
           // react-markdown v10).
-          a: (props) => (
-            <a
-              {...props}
-              href={rewriteLocalhostLinkHref({
-                currentHostname: hostname,
-                enabled: rewriteLocalhost,
-                href: typeof props.href === 'string' ? props.href : undefined
-              })}
-              target="_blank"
-              rel="noreferrer"
-            />
-          ),
+          a: (props) => {
+            const href = rewriteLocalhostLinkHref({
+              currentHostname: hostname,
+              enabled: rewriteLocalhost,
+              href: typeof props.href === 'string' ? props.href : undefined
+            });
+            return (
+              <a
+                {...props}
+                href={href}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(event) => {
+                  if (!href || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                  if (handleHttpLinkClick(href)) {
+                    event.preventDefault();
+                  }
+                }}
+              />
+            );
+          },
           // GFM tables get a wrapper so horizontal overflow scrolls within
           // the comments block instead of stretching the whole panel.
           table: (props) => (

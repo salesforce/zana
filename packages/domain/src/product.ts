@@ -8,6 +8,14 @@ import type { WorkflowArgument } from './workflow-args.js';
 
 export type { WorkflowArgument } from './workflow-args.js';
 export type { TerminalThemeId } from './terminal-themes.js';
+export {
+  ABOUT_CREDITS,
+  BB_IDE_URL,
+  CLAUDE_CODE_URL,
+  CODEX_URL,
+  CURSOR_URL
+} from './about-credits.js';
+
 export type {
   Environment,
   EnvironmentAction,

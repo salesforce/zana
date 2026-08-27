@@ -687,5 +687,29 @@ export const IPC = {
     snapshot: 'test:snapshot',
     /** () => void — clear the ring (seq stays monotonic). */
     reset: 'test:reset'
+  },
+  /**
+   * Isolated in-app browser overlay (WebContentsView). Renderer → main commands
+   * are fire-and-forget; main → renderer pushes carry navigation state, popups,
+   * resize snapshots, and agent-open requests.
+   */
+  browser: {
+    attach: 'desktop:browser:attach',
+    detach: 'desktop:browser:detach',
+    navigate: 'desktop:browser:navigate',
+    goBack: 'desktop:browser:go-back',
+    goForward: 'desktop:browser:go-forward',
+    reload: 'desktop:browser:reload',
+    stop: 'desktop:browser:stop',
+    setBounds: 'desktop:browser:set-bounds',
+    setVisible: 'desktop:browser:set-visible',
+    state: 'desktop:browser:state',
+    openTab: 'desktop:browser:open-tab',
+    scopedOpenTab: 'desktop:browser:scoped-open-tab',
+    snapshot: 'desktop:browser:snapshot',
+    automationOpen: 'desktop:browser:automation-open',
+    registerAutomationTarget: 'desktop:browser:register-automation-target',
+    unregisterAutomationTarget: 'desktop:browser:unregister-automation-target',
+    stopAutomation: 'desktop:browser:stop-automation'
   }
 } as const;

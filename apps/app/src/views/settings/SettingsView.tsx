@@ -54,7 +54,7 @@ export const SETTINGS_GROUPS: Array<{ id: SettingsGroup; label: string }> = [
   { id: 'agents', label: 'Agents & Automation' },
   { id: 'catalogues', label: 'Catalogues' },
   { id: 'labs', label: 'Labs' },
-  // Trailing group: app-level meta (version, updates, release notes) — not
+  // Trailing group: app-level meta (version, updates, credits, release notes) — not
   // configuration/behaviour, so it sits apart from the config groups, like the
   // Project group the picker appends after this loop.
   { id: 'app', label: 'App' }
@@ -82,16 +82,16 @@ export const SETTINGS_SECTIONS: Array<{
   { id: 'squads', label: 'Squads', icon: Users, desc: 'Reusable multi-agent teams', group: 'agents' },
   { id: 'usage', label: 'Usage', icon: BarChart3, desc: 'Session activity rollup', group: 'catalogues' },
   { id: 'experimental', label: 'Experimental', icon: FlaskConical, desc: 'Opt-in features under evaluation', group: 'labs' },
-  { id: 'about', label: 'About', icon: Info, desc: 'Version, updates & release notes', group: 'app' }
+  { id: 'about', label: 'About', icon: Info, desc: 'Version, updates, credits & release notes', group: 'app' }
 ];
 
 /**
  * Anchor sub-sections per settings tab — the inner `<Section>` blocks the picker
  * exposes as clickable jump targets. `id` matches the `anchorId` passed to the
  * corresponding `<Section>` (which renders `id="settings-anchor-<id>"`); the
- * picker switches to `tab` then scrolls that element into view. Only the two
- * config-heavy tabs have anchors — catalogue tabs (Personas/Squads/Usage) are
- * whole sub-components with no core `<Section>` blocks to target.
+ * picker switches to `tab` then scrolls that element into view. Catalogue tabs
+ * (Personas/Squads/Usage) are whole sub-components with no core `<Section>`
+ * blocks to target.
  */
 export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: string; label: string }>>> = {
   agents: [
@@ -143,6 +143,9 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
   inbox: [
     { id: 'inbox-general', label: 'Inbox' }
   ],
+  about: [
+    { id: 'about-credits', label: 'Credits' }
+  ]
 };
 
 /** Catalogue sections that need room for their list/detail controls. */

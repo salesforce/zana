@@ -86,6 +86,7 @@ export type * from './feed.js';
 export type * from './skills.js';
 export type * from './mcp.js';
 export type * from './updates.js';
+export * from './about-credits.js';
 export * from './parse-cron.js';
 export * from './parse-every.js';
 export * from './schedule-spec.js';

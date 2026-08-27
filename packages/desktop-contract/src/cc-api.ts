@@ -1,3 +1,4 @@
+import type { DesktopBrowserApi } from './browser.js';
 import type { MarketplaceCatalogRow } from '@zana-ai/zcc-domain';
 import type {
   ProviderCliInstallActionKind,
@@ -159,6 +160,8 @@ export type HostBootstrapEvent =
   | { type: 'error'; code: string; message: string; pairingCommand?: string };
 
 export interface CcApi {
+  /** Isolated in-app browser overlay. Present only in the desktop preload. */
+  browser: DesktopBrowserApi;
   startup: {
     state(): Promise<{ mode: 'ready' } | { mode: 'repair-required'; reason: 'harness-routing-migration' }>;
     retry(): Promise<{ mode: 'ready' } | { mode: 'repair-required'; reason: 'harness-routing-migration' }>;
@@ -446,6 +449,27 @@ export interface CcApi {
       encoding: 'utf8';
       contentType: string | null;
     }>;
+    storageFiles(threadId: string): Promise<{
+      files: Array<{ path: string; name: string }>;
+      truncated: boolean;
+      storageRootPath: string;
+    }>;
+    storageContent(threadId: string, path: string): Promise<{
+      path: string;
+      relPath: string;
+      content: string;
+      encoding: 'utf8';
+      contentType: string | null;
+    }>;
+    open(threadId: string, body: {
+      split?: 'right' | 'down' | 'left' | 'top' | 'replace';
+      file: {
+        source: 'workspace' | 'thread-storage';
+        path: string;
+        lineNumber: number | null;
+      } | null;
+    }): Promise<{ delivered: number }>;
+    onOpen(cb: (payload: unknown) => void): () => void;
     events(threadId: string): Promise<{ events: unknown[] }>;
     executionOptions(query?: { providerId?: string }): Promise<{
       providers: Array<{

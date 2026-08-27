@@ -85,6 +85,13 @@ export const OFFICIAL_PLUGINS: BundledPluginDefinition[] = [
     category: 'Developer tools'
   },
   {
+    name: 'salesforce',
+    pluginId: 'salesforce',
+    autoInstall: false,
+    defaultEnabled: true,
+    category: 'Developer tools'
+  },
+  {
     name: 'automations',
     pluginId: 'automations',
     autoInstall: false,

@@ -566,7 +566,7 @@ describe('listBundledPluginCatalog', () => {
     const out = listBundledPluginCatalog(pluginsRoot);
     expect(out.some((entry) => entry.id === 'docs' && entry.title === 'Docs')).toBe(true);
     expect(out.map((entry) => entry.id)).toEqual(
-      expect.arrayContaining(['docs', 'tasks', 'custom-instructions', 'ask-user-question'])
+      expect.arrayContaining(['docs', 'tasks', 'custom-instructions', 'ask-user-question', 'salesforce'])
     );
   });
 });

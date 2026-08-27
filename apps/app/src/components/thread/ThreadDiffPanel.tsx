@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { ChevronRight, ChevronsDown, ChevronsUp, Columns2, Copy, Rows2, Search, TextWrap } from 'lucide-react';
 import { formatDiffCount, formatDiffStatsText } from '@zana-ai/zcc-thread-view';
 import { product } from '../../lib/product-client.js';
+import { SecondaryPanelSelectionActions } from './secondary-panel/SecondaryPanelSelectionActions.js';
 import { PopoverPicklist } from '../ui/PopoverPicklist.js';
 import { ThreadDiffHunkView } from './ThreadDiffHunkView.js';
 import {
@@ -74,12 +75,14 @@ export function ThreadDiffPanel({
   environmentId,
   path,
   onClose,
-  embedded
+  embedded,
+  threadId
 }: {
   environmentId: string;
   path: string | null;
   onClose: () => void;
   embedded?: boolean;
+  threadId?: string;
 }) {
   const [files, setFiles] = useState<DiffFileEntry[] | null>(null);
   const [listTruncated, setListTruncated] = useState(false);
@@ -159,6 +162,7 @@ export function ThreadDiffPanel({
   }, [files, collapsedByPath]);
 
   return (
+    <SecondaryPanelSelectionActions threadId={threadId}>
     <aside className={`thread-diff-panel${embedded ? ' is-embedded' : ''}`} data-testid="thread-diff-panel">
       {embedded ? null : (
         <header className="thread-detail-header">
@@ -287,6 +291,7 @@ export function ThreadDiffPanel({
         <ThreadDiffSkeleton />
       )}
     </aside>
+    </SecondaryPanelSelectionActions>
   );
 }
 

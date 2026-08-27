@@ -1,26 +1,100 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { product } from '../../lib/product-client.js';
+import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { Modal } from '../../components/Modal.js';
 import { useHosts } from '../../hooks/useHosts.js';
 import {
   formatJoinCountdown,
   isLoopbackOrigin,
+  mergePairingSshHosts,
   pairingCommand,
   resolvePairingServerUrl,
-  TAILSCALE_SERVE_HINT
+  sanitizeSshHost,
+  sshPairingCommand,
+  TAILSCALE_SERVE_HINT,
+  type PairingSshHostOption
 } from './machine-pairing.js';
 
 interface AddMachineDialogProps {
   open: boolean;
   onClose: () => void;
   publicAppUrl?: string | null;
+  sshHosts?: PairingSshHostOption[];
+  defaultSshHost?: string;
 }
 
-export function AddMachineDialog({ open, onClose, publicAppUrl }: AddMachineDialogProps) {
+export function AddMachineDialog({
+  open,
+  onClose,
+  publicAppUrl,
+  sshHosts,
+  defaultSshHost
+}: AddMachineDialogProps) {
   if (!open) return null;
   return (
-    <AddMachineDialogContent onClose={onClose} publicAppUrl={publicAppUrl} />
+    <AddMachineDialogContent
+      onClose={onClose}
+      publicAppUrl={publicAppUrl}
+      sshHosts={sshHosts}
+      defaultSshHost={defaultSshHost}
+    />
+  );
+}
+
+function PairingSshHostRow({
+  host,
+  label,
+  detail,
+  selected,
+  onSelect
+}: {
+  host: string;
+  label: string;
+  detail?: string;
+  selected: boolean;
+  onSelect: (host: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="option"
+      aria-selected={selected}
+      className={`remote-host-row${selected ? ' active' : ''}`}
+      onClick={() => onSelect(host)}
+    >
+      <span className="remote-host-alias">{label}</span>
+      {detail ? <span className="remote-host-target">{detail}</span> : null}
+    </button>
+  );
+}
+
+function PairingSshHostGroup({
+  label,
+  options,
+  selectedHost,
+  onSelect
+}: {
+  label: string;
+  options: PairingSshHostOption[];
+  selectedHost: string;
+  onSelect: (host: string) => void;
+}) {
+  if (options.length === 0) return null;
+  return (
+    <div className="add-machine-ssh-group" role="group" aria-label={label}>
+      <div className="add-machine-ssh-group-label">{label}</div>
+      {options.map((option) => (
+        <PairingSshHostRow
+          key={option.host}
+          host={option.host}
+          label={option.label}
+          detail={option.detail}
+          selected={selectedHost === option.host}
+          onSelect={onSelect}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -31,7 +105,11 @@ export function AddMachineDialogView({
   expired,
   mintError,
   loopbackWarning,
+  viaSsh,
+  sshHost,
+  sshHosts,
   pairedName,
+  onSshHostChange,
   onCopy,
   onRetryMint,
   onClose
@@ -42,7 +120,11 @@ export function AddMachineDialogView({
   expired: boolean;
   mintError: string | null;
   loopbackWarning: boolean;
+  viaSsh: boolean;
+  sshHost: string;
+  sshHosts: PairingSshHostOption[];
   pairedName: string | null;
+  onSshHostChange: (value: string) => void;
   onCopy: () => void;
   onRetryMint: () => void;
   onClose: () => void;
@@ -59,9 +141,49 @@ export function AddMachineDialogView({
       )}
     >
       <p className="add-machine-lead">
-        Run this on the machine you want to add. It pairs the machine to this
-        server and keeps it available for your projects.
+        {viaSsh
+          ? 'Run this in a terminal on this computer. It SSHs to the workspace with a reverse tunnel and installs the host daemon there.'
+          : 'Run this on the machine you want to add. It pairs the machine to this server and keeps it available for your projects.'}
       </p>
+
+      {loopbackWarning ? (
+        <div className="add-machine-ssh settings-field">
+          <span className="settings-label" id="add-machine-ssh-label">SSH host</span>
+          <div
+            className="remote-host-list add-machine-ssh-list"
+            role="listbox"
+            aria-labelledby="add-machine-ssh-label"
+            data-testid="add-machine-ssh-host"
+          >
+            {sshHost && !sshHosts.some((option) => option.host === sshHost) ? (
+              <PairingSshHostRow
+                host={sshHost}
+                label={sshHost}
+                selected
+                onSelect={onSshHostChange}
+              />
+            ) : null}
+            <PairingSshHostGroup
+              label="Remote projects"
+              options={sshHosts.filter((option) => option.group === 'project')}
+              selectedHost={sshHost}
+              onSelect={onSshHostChange}
+            />
+            <PairingSshHostGroup
+              label="SSH config"
+              options={sshHosts.filter((option) => option.group === 'ssh-config')}
+              selectedHost={sshHost}
+              onSelect={onSshHostChange}
+            />
+            {sshHosts.length === 0 && !sshHost ? (
+              <div className="list-empty">No remote projects or SSH hosts found.</div>
+            ) : null}
+          </div>
+          <span className="settings-help">
+            Registered remotes, plus other hosts from ~/.ssh/config.
+          </span>
+        </div>
+      ) : null}
 
       {mintError ? (
         <div className="add-machine-error">
@@ -96,13 +218,15 @@ export function AddMachineDialogView({
             ) : null}
           </div>
           <p className="add-machine-help">
-            This installs the host daemon, enrolls it, and configures it to
-            reconnect automatically on the other machine.
+            {viaSsh
+              ? 'Paste it locally (not on the remote). The installer finds Node 22+ on PATH, nix, or nvm. Leave the terminal open so the reverse tunnel stays up.'
+              : 'This installs the host daemon, enrolls it, and configures it to reconnect automatically on the other machine.'}
           </p>
-          {loopbackWarning ? (
+          {loopbackWarning && !viaSsh ? (
             <p className="modal-warning">
-              This address is only reachable on this computer. Set a public app URL
-              (Tailscale Serve) to pair a remote machine. Example: {TAILSCALE_SERVE_HINT}
+              This address is only reachable on this computer. Enter an SSH host
+              from ~/.ssh/config, or set a public app URL (Tailscale Serve). Example:{' '}
+              {TAILSCALE_SERVE_HINT}
             </p>
           ) : null}
         </div>
@@ -136,10 +260,14 @@ export function AddMachineDialogView({
 
 function AddMachineDialogContent({
   onClose,
-  publicAppUrl
+  publicAppUrl,
+  sshHosts = [],
+  defaultSshHost = ''
 }: {
   onClose: () => void;
   publicAppUrl?: string | null;
+  sshHosts?: PairingSshHostOption[];
+  defaultSshHost?: string;
 }) {
   const hosts = useHosts();
   const [join, setJoin] = useState<{ joinCode: string; hostId: string; expiresAt: number } | null>(null);
@@ -147,12 +275,20 @@ function AddMachineDialogContent({
   const [now, setNow] = useState(Date.now());
   const [copied, setCopied] = useState(false);
   const [mintNonce, setMintNonce] = useState(0);
+  const [sshHost, setSshHost] = useState(defaultSshHost);
+  const [configHosts, setConfigHosts] = useState<Array<{
+    alias: string;
+    hostname?: string;
+    user?: string;
+  }>>([]);
   const copiedTimer = useRef<number | null>(null);
   const baseline = useRef<Set<string> | null>(null);
   if (baseline.current === null && hosts.length > 0) {
     baseline.current = new Set(hosts.map((host) => host.id));
   }
   const serverUrl = resolvePairingServerUrl(publicAppUrl);
+  const loopbackWarning = Boolean(serverUrl && isLoopbackOrigin(serverUrl));
+  const viaSsh = Boolean(loopbackWarning && serverUrl && join && sanitizeSshHost(sshHost));
 
   const remint = useCallback(() => {
     setMintNonce((value) => value + 1);
@@ -177,6 +313,36 @@ function AddMachineDialogContent({
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    if (!hasDesktopBridge()) return;
+    let cancelled = false;
+    product.ssh.listHosts().then((rows) => {
+      if (!cancelled) {
+        setConfigHosts(rows.map((row) => ({
+          alias: row.alias,
+          hostname: row.hostname,
+          user: row.user
+        })));
+      }
+    }).catch(() => {
+      if (!cancelled) setConfigHosts([]);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const sshOptions = useMemo(
+    () => mergePairingSshHosts(sshHosts, configHosts),
+    [configHosts, sshHosts]
+  );
+
+  useEffect(() => {
+    if (sanitizeSshHost(sshHost)) return;
+    const first = sshOptions[0]?.host;
+    if (first) setSshHost(first);
+  }, [sshHost, sshOptions]);
+
   useEffect(() => () => {
     if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
   }, []);
@@ -187,7 +353,14 @@ function AddMachineDialogContent({
     : hosts.find((host) => baseline.current !== null && !baseline.current.has(host.id) && host.status === 'connected');
 
   const command = join
-    ? pairingCommand({ publicAppUrl: serverUrl, joinCode: join.joinCode, hostId: join.hostId })
+    ? viaSsh
+      ? sshPairingCommand({
+        sshHost,
+        localServerUrl: serverUrl!,
+        joinCode: join.joinCode,
+        hostId: join.hostId
+      })
+      : pairingCommand({ publicAppUrl: serverUrl, joinCode: join.joinCode, hostId: join.hostId })
     : null;
   const remaining = join ? join.expiresAt - now : null;
   const expired = remaining !== null && remaining <= 0;
@@ -211,8 +384,12 @@ function AddMachineDialogContent({
       remainingMs={remaining}
       expired={expired}
       mintError={error}
-      loopbackWarning={Boolean(serverUrl && isLoopbackOrigin(serverUrl))}
+      loopbackWarning={loopbackWarning}
+      viaSsh={viaSsh}
+      sshHost={sshHost}
+      sshHosts={sshOptions}
       pairedName={paired?.name ?? null}
+      onSshHostChange={setSshHost}
       onCopy={() => void copy()}
       onRetryMint={remint}
       onClose={onClose}

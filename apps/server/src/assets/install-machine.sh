@@ -8,9 +8,74 @@ Usage: install.sh --join-code <code> --host-id <host-id> --server <url> [--host-
 
 Installs an enrolled ZCC host daemon for one server. Data lives in
 ~/.zcc-machines/<server-host> and never touches ~/.zcc.
+
+Looks for Node >= 22 on PATH, then nix/nvm/fnm/volta (Salesforce workspaces
+often expose Node 20 on PATH while Node 22 lives in the nix store). Override
+with ZCC_NODE=/path/to/node.
 EOF
   exit 2
 }
+
+node_major() {
+  bin=$1
+  [ -n "$bin" ] && [ -x "$bin" ] || return 1
+  major=$("$bin" -p "parseInt(process.versions.node,10)" 2>/dev/null) || return 1
+  case "$major" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  printf '%s\n' "$major"
+}
+
+consider_node() {
+  major=$(node_major "$1") || return 1
+  if [ "$major" -ge 22 ]; then
+    printf '%s\n' "$1"
+    return 0
+  fi
+  return 1
+}
+
+resolve_node() {
+  if [ -n "${ZCC_NODE:-}" ]; then
+    consider_node "$ZCC_NODE" && return 0
+    echo "ZCC_NODE is not Node.js >= 22: $ZCC_NODE" >&2
+    return 1
+  fi
+  if command -v node >/dev/null 2>&1; then
+    consider_node "$(command -v node)" && return 0
+  fi
+  for cand in \
+    "$HOME/.nix-profile/bin/node" \
+    "$HOME/.local/share/fnm/aliases/default/bin/node" \
+    "$HOME/.volta/bin/node"
+  do
+    consider_node "$cand" && return 0
+  done
+  nvm_root=${NVM_DIR:-$HOME/.nvm}
+  if [ -d "$nvm_root/versions/node" ]; then
+    for cand in "$nvm_root"/versions/node/v*/bin/node; do
+      consider_node "$cand" && return 0
+    done
+  fi
+  if [ "${ZCC_SKIP_NIX_STORE:-}" != 1 ]; then
+    for cand in \
+      /nix/store/*-nodejs-22.*/bin/node \
+      /nix/store/*-nodejs-23.*/bin/node \
+      /nix/store/*-nodejs-24.*/bin/node \
+      /nix/store/*-nodejs-slim-22.*/bin/node \
+      /nix/store/*-nodejs-slim-24.*/bin/node
+    do
+      consider_node "$cand" && return 0
+    done
+  fi
+  echo "Node.js >= 22 is required (PATH node is too old or missing). Install Node 22+, or set ZCC_NODE." >&2
+  return 1
+}
+
+if [ "${1:-}" = '--resolve-node' ]; then
+  resolve_node || exit 1
+  exit 0
+fi
 
 join_code=
 host_id=
@@ -55,7 +120,10 @@ fi
 printf '%s\n' "$port" > "$port_file"
 printf '%s\n' "$data_dir" > "$port_dir/$port"
 
-command -v node >/dev/null || { echo "Node.js >= 22 is required" >&2; exit 1; }
+NODE_BIN=$(resolve_node)
+PATH="$(dirname "$NODE_BIN"):$PATH"
+export PATH
+echo "Using $($NODE_BIN -v) at $NODE_BIN"
 
 package_dir="$data_dir/runtime"
 mkdir -p "$package_dir"
@@ -75,7 +143,7 @@ fi
 
 run_join() {
   ZCC_DATA_DIR="$data_dir" ZCC_SERVER_URL="$server_url" \
-    node "$join_bin" join \
+    "$NODE_BIN" "$join_bin" join \
       --join-code "$join_code" \
       --host-id "$host_id" \
       --server-url "$server_url" \
@@ -134,7 +202,7 @@ if [ "$uname_s" = Darwin ]; then
   <string>ai.zana.zcc-host-daemon.$server_host</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$(command -v node)</string>
+    <string>$NODE_BIN</string>
     <string>$join_bin</string>
     <string>join</string>
     <string>--host-id</string>
@@ -171,7 +239,7 @@ Description=ZCC host daemon ($server_host)
 After=network-online.target
 
 [Service]
-ExecStart=$(command -v node) $join_bin join --host-id $host_id --server-url $server_url --host-daemon-port $port --auto-update
+ExecStart=$NODE_BIN $join_bin join --host-id $host_id --server-url $server_url --host-daemon-port $port --auto-update
 Environment=ZCC_DATA_DIR=$data_dir
 Environment=ZCC_SERVER_URL=$server_url
 Restart=always

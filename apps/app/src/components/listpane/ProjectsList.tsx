@@ -1269,11 +1269,8 @@ export function ProjectsList({
       {showRemoteDialog && (
         <AddRemoteProjectDialog
           onClose={() => setShowRemoteDialog(false)}
-          onSubmit={async (input) => {
-            const p = await addRemoteProject(input);
-            setShowRemoteDialog(false);
-            if (p) selectProject(p.id);
-          }}
+          onSubmit={addRemoteProject}
+          onSuccess={(id) => selectProject(id)}
         />
       )}
       {showGitDialog && (

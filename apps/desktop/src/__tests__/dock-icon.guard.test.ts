@@ -32,22 +32,22 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
-const __dirname = fileURLToPath(new URL('.', import.meta.url));
-const repoRoot = join(__dirname, '..', '..', '..');
-const indexSrc = readFileSync(join(repoRoot, 'src', 'main', 'index.ts'), 'utf8');
+const here = fileURLToPath(new URL('.', import.meta.url));
+const repoRoot = join(here, '../../../..');
+const hostSrc = readFileSync(join(repoRoot, 'apps/desktop/src/host.ts'), 'utf8');
 const builderYml = readFileSync(join(repoRoot, 'apps/desktop/electron-builder.yml'), 'utf8');
 
 describe('macOS Dock-icon guarantee', () => {
   it('boot forces the regular (Dock-present) activation policy on darwin', () => {
-    expect(indexSrc).toMatch(/setActivationPolicy\(\s*['"]regular['"]\s*\)/);
+    expect(hostSrc).toMatch(/setActivationPolicy\(\s*['"]regular['"]\s*\)/);
   });
 
   it('never sets the accessory (menu-bar-only, no-Dock) policy anywhere in main', () => {
-    expect(indexSrc).not.toMatch(/setActivationPolicy\(\s*['"]accessory['"]\s*\)/);
+    expect(hostSrc).not.toMatch(/setActivationPolicy\(\s*['"]accessory['"]\s*\)/);
   });
 
   it('explicitly shows the Dock at boot', () => {
-    expect(indexSrc).toMatch(/app\.dock\?\.show\(\)/);
+    expect(hostSrc).toMatch(/app\.dock\?\.show\(\)/);
   });
 
   it('the Dock claim is gated on darwin (no-op on other platforms)', () => {
@@ -56,7 +56,7 @@ describe('macOS Dock-icon guarantee', () => {
     // early-return guard (`if (process.platform !== 'darwin') return;`) at the
     // top of `claimDock()`, immediately before the `setActivationPolicy` call.
     const claim = /process\.platform !== 'darwin'[\s\S]{0,200}?setActivationPolicy\(\s*'regular'\s*\)/;
-    expect(indexSrc).toMatch(claim);
+    expect(hostSrc).toMatch(claim);
   });
 
   it('the packaged bundle declares no LSUIElement key (would hide the Dock icon)', () => {
@@ -68,7 +68,15 @@ describe('macOS Dock-icon guarantee', () => {
 
   it('the build config points mac.icon at the shipped icon file', () => {
     // The Dock icon is always claimed; this keeps it the BRANDED icon rather than
-    // Electron's default (setIcon in index.ts resolves the same file at runtime).
+    // Electron's default (setIcon in host.ts resolves the same file at runtime).
     expect(builderYml).toMatch(/icon:\s*resources\/icon\.icns/);
+  });
+
+  it('boot applies the branded icon via dock.setIcon only when unpackaged', () => {
+    // Packaged builds must not call setIcon (it bypasses macOS dark-mode
+    // appearance). Dev still needs it so icon-dev.png replaces Electron's atom.
+    expect(hostSrc).toMatch(/app\.isPackaged\) return;/);
+    expect(hostSrc).toMatch(/app\.dock\.setIcon\(/);
+    expect(hostSrc).toMatch(/from '\.\/resolve-icon-path\.js'/);
   });
 });

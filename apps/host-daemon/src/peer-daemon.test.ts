@@ -47,6 +47,8 @@ describe('peer-daemon commands', () => {
     expect(script).toContain('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
     expect(script).not.toContain('--join-code zcde_');
     expect(script).toContain('ai.zana.zcc-host-daemon.box.tailnet.ts.net');
+    expect(script).toContain('/nix/store/*-nodejs-22.*/bin/node');
+    expect(script).toContain('"$node_bin" "$join_bin" join');
   });
 
   it('keeps ssh argv BatchMode and rejects a leading-dash remote host', () => {

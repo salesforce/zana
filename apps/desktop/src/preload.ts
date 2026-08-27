@@ -1,6 +1,22 @@
-import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
-import type { CcApi } from '@zana-ai/zcc-desktop-contract';
+import type {
+  CcApi,
+  DesktopBrowserApi,
+  DesktopBrowserAutomationOpenRequest,
+  DesktopBrowserOpenTabRequest,
+  DesktopBrowserScopedOpenTabRequest,
+  DesktopBrowserSnapshot,
+  DesktopBrowserState,
+  DesktopBrowserViewBounds
+} from '@zana-ai/zcc-desktop-contract';
+import {
+  parseDesktopBrowserAutomationOpenRequest,
+  parseDesktopBrowserOpenTabRequest,
+  parseDesktopBrowserScopedOpenTabRequest,
+  parseDesktopBrowserSnapshot,
+  parseDesktopBrowserState
+} from '@zana-ai/zcc-desktop-contract';
 
 // `ipcRenderer` is a single process-wide EventEmitter shared by every subscriber
 // in the renderer. High-fan-out channels — chiefly `terminals:onData`/`onExit`,
@@ -43,6 +59,128 @@ import type {
   SetupStatus,
   DependencyProgress
 } from '@zana-ai/zcc-domain/product';
+
+const browserStateListeners = new Set<(state: DesktopBrowserState) => void>();
+const browserOpenTabListeners = new Set<(request: DesktopBrowserOpenTabRequest) => void>();
+const browserScopedOpenTabListeners = new Set<(request: DesktopBrowserScopedOpenTabRequest) => void>();
+const browserSnapshotListeners = new Set<(snapshot: DesktopBrowserSnapshot) => void>();
+const browserAutomationOpenListeners = new Set<(request: DesktopBrowserAutomationOpenRequest) => void>();
+
+function browserViewBoundsAtWindowScale(bounds: DesktopBrowserViewBounds): DesktopBrowserViewBounds {
+  const zoomFactor = webFrame.getZoomFactor();
+  if (zoomFactor === 1) return bounds;
+  const x = Math.round(bounds.x * zoomFactor);
+  const y = Math.round(bounds.y * zoomFactor);
+  return {
+    x,
+    y,
+    width: Math.max(0, Math.round((bounds.x + bounds.width) * zoomFactor) - x),
+    height: Math.max(0, Math.round((bounds.y + bounds.height) * zoomFactor) - y)
+  };
+}
+
+function createDesktopBrowserApi(): DesktopBrowserApi {
+  return {
+    attach(request) {
+      ipcRenderer.send(IPC.browser.attach, {
+        ...request,
+        bounds: browserViewBoundsAtWindowScale(request.bounds)
+      });
+    },
+    detach(tabId) {
+      ipcRenderer.send(IPC.browser.detach, { tabId });
+    },
+    navigate(request) {
+      ipcRenderer.send(IPC.browser.navigate, request);
+    },
+    goBack(tabId) {
+      ipcRenderer.send(IPC.browser.goBack, { tabId });
+    },
+    goForward(tabId) {
+      ipcRenderer.send(IPC.browser.goForward, { tabId });
+    },
+    reload(tabId) {
+      ipcRenderer.send(IPC.browser.reload, { tabId });
+    },
+    stop(tabId) {
+      ipcRenderer.send(IPC.browser.stop, { tabId });
+    },
+    setBounds(request) {
+      ipcRenderer.send(IPC.browser.setBounds, {
+        ...request,
+        bounds: browserViewBoundsAtWindowScale(request.bounds)
+      });
+    },
+    setVisible(request) {
+      ipcRenderer.send(IPC.browser.setVisible, request);
+    },
+    onState(listener) {
+      browserStateListeners.add(listener);
+      return () => {
+        browserStateListeners.delete(listener);
+      };
+    },
+    onOpenTab(listener) {
+      browserOpenTabListeners.add(listener);
+      return () => {
+        browserOpenTabListeners.delete(listener);
+      };
+    },
+    onScopedOpenTab(listener) {
+      browserScopedOpenTabListeners.add(listener);
+      return () => {
+        browserScopedOpenTabListeners.delete(listener);
+      };
+    },
+    onSnapshot(listener) {
+      browserSnapshotListeners.add(listener);
+      return () => {
+        browserSnapshotListeners.delete(listener);
+      };
+    },
+    onAutomationOpen(listener) {
+      browserAutomationOpenListeners.add(listener);
+      return () => {
+        browserAutomationOpenListeners.delete(listener);
+      };
+    },
+    registerAutomationTarget(request) {
+      return ipcRenderer.invoke(IPC.browser.registerAutomationTarget, request);
+    },
+    unregisterAutomationTarget(targetId) {
+      return ipcRenderer.invoke(IPC.browser.unregisterAutomationTarget, targetId);
+    },
+    stopAutomation(targetId) {
+      return ipcRenderer.invoke(IPC.browser.stopAutomation, targetId);
+    }
+  };
+}
+
+ipcRenderer.on(IPC.browser.state, (_event, payload: unknown) => {
+  const parsed = parseDesktopBrowserState(payload);
+  if (!parsed.success) return;
+  for (const listener of browserStateListeners) listener(parsed.data);
+});
+ipcRenderer.on(IPC.browser.openTab, (_event, payload: unknown) => {
+  const parsed = parseDesktopBrowserOpenTabRequest(payload);
+  if (!parsed.success) return;
+  for (const listener of browserOpenTabListeners) listener(parsed.data);
+});
+ipcRenderer.on(IPC.browser.scopedOpenTab, (_event, payload: unknown) => {
+  const parsed = parseDesktopBrowserScopedOpenTabRequest(payload);
+  if (!parsed.success) return;
+  for (const listener of browserScopedOpenTabListeners) listener(parsed.data);
+});
+ipcRenderer.on(IPC.browser.snapshot, (_event, payload: unknown) => {
+  const parsed = parseDesktopBrowserSnapshot(payload);
+  if (!parsed.success) return;
+  for (const listener of browserSnapshotListeners) listener(parsed.data);
+});
+ipcRenderer.on(IPC.browser.automationOpen, (_event, payload: unknown) => {
+  const parsed = parseDesktopBrowserAutomationOpenRequest(payload);
+  if (!parsed.success) return;
+  for (const listener of browserAutomationOpenListeners) listener(parsed.data);
+});
 
 const api: CcApi = {
   startup: {
@@ -171,7 +309,16 @@ const api: CcApi = {
     },
     archive: async () => ({ ok: false }),
     unread: async () => ({ thread: {} }),
-    rename: async () => ({ thread: {} })
+    rename: async () => ({ thread: {} }),
+    storageFiles: async () => ({ files: [], truncated: false, storageRootPath: '' }),
+    storageContent: async () => {
+      throw new Error('threads require the product server');
+    },
+    open: async () => ({ delivered: 0 }),
+    onOpen: (cb) => {
+      void cb;
+      return () => {};
+    }
   },
     environments: {
       list: async () => [],
@@ -879,7 +1026,8 @@ const api: CcApi = {
       ipcRenderer.on(IPC.deps.onProgress, handler);
       return () => ipcRenderer.off(IPC.deps.onProgress, handler);
     }
-  }
+  },
+  browser: createDesktopBrowserApi()
 };
 
 contextBridge.exposeInMainWorld('cc', api);

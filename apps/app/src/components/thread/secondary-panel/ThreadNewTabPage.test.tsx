@@ -103,6 +103,27 @@ describe('ThreadNewTabPage', () => {
     expect(desktop).toContain('data-testid="thread-new-tab-browser"');
     expect(desktop).toContain('data-testid="thread-new-tab-explorer"');
     expect(desktop).toContain('Tasks');
+    const withRecents = renderToStaticMarkup(
+      <ThreadNewTabView
+        query=""
+        onQueryChange={() => undefined}
+        matches={[]}
+        desktop={false}
+        recents={[
+          { kind: 'file', source: 'workspace', path: 'src/a.ts', openedAt: Date.now() },
+          { kind: 'browser', url: 'https://a.test', title: 'A', openedAt: Date.now() }
+        ]}
+        actions={[]}
+        onOpenFile={() => undefined}
+        onOpenBrowser={() => undefined}
+        onOpenPlugin={() => undefined}
+        allowSidecarTerminal={false}
+        allowExplorer={false}
+      />
+    );
+    expect(withRecents).toContain('data-testid="thread-new-tab-recents"');
+    expect(withRecents).toContain('a.ts');
+    expect(withRecents).toContain('A');
     const noSidecar = renderToStaticMarkup(
       <ThreadNewTabView
         query=""

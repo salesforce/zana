@@ -275,13 +275,16 @@ export async function loadFilePreview(
   readFile: (path: string) => Promise<unknown>,
   hostFileContent: ((threadId: string, path: string) => Promise<{ content: string }>) | undefined,
   threadId: string | undefined,
-  path: string
+  path: string,
+  options?: { skipLocal?: boolean }
 ): Promise<{ content: string } | { error: string }> {
-  try {
-    const fromLocal = contentFromLocalRead(await readFile(path));
-    if (fromLocal !== null) return { content: fromLocal };
-  } catch {
-    /* host */
+  if (!options?.skipLocal) {
+    try {
+      const fromLocal = contentFromLocalRead(await readFile(path));
+      if (fromLocal !== null) return { content: fromLocal };
+    } catch {
+      /* host */
+    }
   }
   if (!threadId || typeof hostFileContent !== 'function') {
     return { error: 'Could not read file' };

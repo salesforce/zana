@@ -3,6 +3,8 @@ import { hasDesktopBridge } from '../lib/app-surface.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw, Search, X } from 'lucide-react';
 import type { SshHostEntry } from '@zana-ai/zcc-domain/product';
+import { bootstrapOutcome } from './composer-host-status.js';
+import { collectBootstrapLogs, remoteAddSubmitLabel } from './add-remote-project.js';
 
 interface AddRemoteProjectDialogProps {
   onClose: () => void;
@@ -12,7 +14,8 @@ interface AddRemoteProjectDialogProps {
     remotePath?: string;
     proxyJump?: string;
     name?: string;
-  }) => Promise<void> | void;
+  }) => Promise<{ id: string } | null>;
+  onSuccess: (projectId: string) => void;
 }
 
 /**
@@ -20,7 +23,7 @@ interface AddRemoteProjectDialogProps {
  * one to register as a remote-backed Project. No mutation of the user's
  * ssh config — read-only list.
  */
-export function AddRemoteProjectDialog({ onClose, onSubmit }: AddRemoteProjectDialogProps) {
+export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemoteProjectDialogProps) {
   const [hosts, setHosts] = useState<SshHostEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Non-fatal note when a refresh could not update the config but existing hosts
@@ -41,11 +44,18 @@ export function AddRemoteProjectDialog({ onClose, onSubmit }: AddRemoteProjectDi
   // jump transparently), but set/overridden here when the config doesn't and
   // the reverse tunnel needs `-J` to reach the final host.
   const [proxyJump, setProxyJump] = useState('');
+  const [installHost, setInstallHost] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [installLogs, setInstallLogs] = useState<string[]>([]);
+  const [pairingCommand, setPairingCommand] = useState<string | null>(null);
+  const [createdId, setCreatedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   // Bumped on each reload; lets an in-flight load ignore its result if a newer
   // load (or unmount) supersedes it.
   const loadSeq = useRef(0);
+
+  const busy = submitting || installing;
 
   // `sync=true` asks an optional host provider to refresh before parsing; the
   // on-mount load just reads the existing configuration.
@@ -94,11 +104,11 @@ export function AddRemoteProjectDialog({ onClose, onSubmit }: AddRemoteProjectDi
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape' && !busy) onClose();
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [busy, onClose]);
 
   const filtered = useMemo(() => {
     if (!hosts) return [];
@@ -113,6 +123,7 @@ export function AddRemoteProjectDialog({ onClose, onSubmit }: AddRemoteProjectDi
   }, [hosts, filter]);
 
   const pickHost = (alias: string) => {
+    if (busy || createdId) return;
     setPicked(alias);
     if (!name.trim()) setName(alias);
     // Prefill the bastion field from the host's ~/.ssh/config ProxyJump, if any,
@@ -121,35 +132,176 @@ export function AddRemoteProjectDialog({ onClose, onSubmit }: AddRemoteProjectDi
     setProxyJump(entry?.proxyJump ?? '');
   };
 
-  const canSubmit = picked !== null && !submitting;
+  const finish = (projectId: string) => {
+    onSuccess(projectId);
+    onClose();
+  };
+
+  const installDaemon = async (projectId: string) => {
+    setInstalling(true);
+    setError(null);
+    setPairingCommand(null);
+    setInstallLogs(['Installing host daemon over SSH…']);
+    try {
+      const events = await product.hosts.bootstrap(projectId);
+      setInstallLogs(collectBootstrapLogs(events));
+      const outcome = bootstrapOutcome(events);
+      if (outcome.ok) {
+        finish(projectId);
+        return;
+      }
+      setError(outcome.message);
+      setPairingCommand(outcome.pairingCommand ?? null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not install host daemon');
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const canSubmit = picked !== null && !busy;
 
   const submit = async () => {
-    if (!picked) return;
+    if (!picked || busy) return;
+    if (createdId) {
+      if (installHost) await installDaemon(createdId);
+      else finish(createdId);
+      return;
+    }
     setSubmitting(true);
+    setError(null);
+    setPairingCommand(null);
     try {
-      await onSubmit({
+      const project = await onSubmit({
         host: picked,
         user: user.trim() || undefined,
         remotePath: remotePath.trim() || undefined,
         proxyJump: proxyJump.trim() || undefined,
         name: name.trim() || undefined
       });
+      if (!project) {
+        setError('Could not add remote project');
+        return;
+      }
+      setCreatedId(project.id);
+      if (!installHost) {
+        finish(project.id);
+        return;
+      }
+      await installDaemon(project.id);
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
+    <AddRemoteProjectDialogView
+      hosts={hosts}
+      filtered={filtered}
+      filter={filter}
+      loading={loading}
+      warning={warning}
+      error={error}
+      picked={picked}
+      name={name}
+      user={user}
+      remotePath={remotePath}
+      proxyJump={proxyJump}
+      installHost={installHost}
+      created={Boolean(createdId)}
+      busy={busy}
+      installing={installing}
+      installLogs={installLogs}
+      pairingCommand={pairingCommand}
+      canSubmit={canSubmit}
+      onFilterChange={setFilter}
+      onRefresh={() => loadHosts(true)}
+      onPickHost={pickHost}
+      onNameChange={setName}
+      onUserChange={setUser}
+      onRemotePathChange={setRemotePath}
+      onProxyJumpChange={setProxyJump}
+      onInstallHostChange={setInstallHost}
+      onSubmit={() => void submit()}
+      onSkip={() => createdId && finish(createdId)}
+      onClose={onClose}
+    />
+  );
+}
+
+export function AddRemoteProjectDialogView({
+  hosts,
+  filtered,
+  filter,
+  loading,
+  warning,
+  error,
+  picked,
+  name,
+  user,
+  remotePath,
+  proxyJump,
+  installHost,
+  created,
+  busy,
+  installing,
+  installLogs,
+  pairingCommand,
+  canSubmit,
+  onFilterChange,
+  onRefresh,
+  onPickHost,
+  onNameChange,
+  onUserChange,
+  onRemotePathChange,
+  onProxyJumpChange,
+  onInstallHostChange,
+  onSubmit,
+  onSkip,
+  onClose
+}: {
+  hosts: SshHostEntry[] | null;
+  filtered: SshHostEntry[];
+  filter: string;
+  loading: boolean;
+  warning: string | null;
+  error: string | null;
+  picked: string | null;
+  name: string;
+  user: string;
+  remotePath: string;
+  proxyJump: string;
+  installHost: boolean;
+  created: boolean;
+  busy: boolean;
+  installing: boolean;
+  installLogs: string[];
+  pairingCommand: string | null;
+  canSubmit: boolean;
+  onFilterChange: (value: string) => void;
+  onRefresh: () => void;
+  onPickHost: (alias: string) => void;
+  onNameChange: (value: string) => void;
+  onUserChange: (value: string) => void;
+  onRemotePathChange: (value: string) => void;
+  onProxyJumpChange: (value: string) => void;
+  onInstallHostChange: (value: boolean) => void;
+  onSubmit: () => void;
+  onSkip: () => void;
+  onClose: () => void;
+}) {
+  const fieldsLocked = busy || created;
+  return (
     <div
       className="modal-backdrop"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget && !busy) onClose();
       }}
     >
       <div className="modal remote-project-modal" role="dialog" aria-modal="true" aria-label="Add remote project">
         <div className="modal-header">
           <h3>Add remote project</h3>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">
+          <button className="icon-btn" onClick={onClose} aria-label="Close" disabled={busy}>
             <X size={14} />
           </button>
         </div>
@@ -160,8 +312,9 @@ export function AddRemoteProjectDialog({ onClose, onSubmit }: AddRemoteProjectDi
             <input
               placeholder="Filter hosts"
               value={filter}
-              onChange={(e) => setFilter(e.target.value)}
+              onChange={(e) => onFilterChange(e.target.value)}
               autoFocus
+              disabled={fieldsLocked}
             />
           </div>
 
@@ -172,8 +325,8 @@ export function AddRemoteProjectDialog({ onClose, onSubmit }: AddRemoteProjectDi
             <button
               type="button"
               className="remote-host-refresh"
-              onClick={() => loadHosts(true)}
-              disabled={loading}
+              onClick={onRefresh}
+              disabled={loading || fieldsLocked}
                title="Refresh SSH hosts from the configured provider"
                aria-label="Refresh SSH hosts"
             >
@@ -196,7 +349,8 @@ export function AddRemoteProjectDialog({ onClose, onSubmit }: AddRemoteProjectDi
                 key={h.alias}
                 type="button"
                 className={`remote-host-row ${picked === h.alias ? 'active' : ''}`}
-                onClick={() => pickHost(h.alias)}
+                onClick={() => onPickHost(h.alias)}
+                disabled={fieldsLocked}
               >
                 <span className="remote-host-alias">{h.alias}</span>
                 {h.hostname && <span className="remote-host-target">{h.hostname}</span>}
@@ -213,47 +367,82 @@ export function AddRemoteProjectDialog({ onClose, onSubmit }: AddRemoteProjectDi
               <span>Project name</span>
               <input
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => onNameChange(e.target.value)}
                 placeholder={picked ?? 'pick a host first'}
-                disabled={!picked}
+                disabled={!picked || fieldsLocked}
               />
             </label>
             <label className="remote-form-row">
               <span>User (optional)</span>
               <input
                 value={user}
-                onChange={(e) => setUser(e.target.value)}
+                onChange={(e) => onUserChange(e.target.value)}
                 placeholder="defaults to ~/.ssh/config"
-                disabled={!picked}
+                disabled={!picked || fieldsLocked}
               />
             </label>
             <label className="remote-form-row">
               <span>Start path (optional)</span>
               <input
                 value={remotePath}
-                onChange={(e) => setRemotePath(e.target.value)}
+                onChange={(e) => onRemotePathChange(e.target.value)}
                 placeholder="defaults to Settings remote path, else remote $HOME"
-                disabled={!picked}
+                disabled={!picked || fieldsLocked}
               />
             </label>
             <label className="remote-form-row">
               <span>Jump host (optional)</span>
               <input
                 value={proxyJump}
-                onChange={(e) => setProxyJump(e.target.value)}
+                onChange={(e) => onProxyJumpChange(e.target.value)}
                 placeholder="bastion for double-hop SSH, e.g. user@bastion"
-                disabled={!picked}
+                disabled={!picked || fieldsLocked}
               />
             </label>
+            <label className="remote-install-toggle">
+              <input
+                type="checkbox"
+                checked={installHost}
+                data-testid="remote-install-host"
+                onChange={(e) => onInstallHostChange(e.target.checked)}
+                disabled={fieldsLocked}
+              />
+              <span>Install host daemon on this machine</span>
+            </label>
+            <p className="modal-hint remote-install-hint">
+              SSHs from this computer, enrolls the daemon, and runs later threads there.
+              Uncheck to keep SSH-only for now.
+            </p>
           </div>
+
+          {installLogs.length > 0 ? (
+            <pre className="remote-install-log" data-testid="remote-install-log">
+              {installLogs.join('\n')}
+            </pre>
+          ) : null}
+          {pairingCommand ? (
+            <pre className="remote-install-log" data-testid="remote-pairing-command">
+              {pairingCommand}
+            </pre>
+          ) : null}
         </div>
 
         <div className="modal-footer">
-          <button className="btn" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="btn primary" disabled={!canSubmit} onClick={submit}>
-            {submitting ? 'Adding…' : 'Add project'}
+          {created && error && !installing ? (
+            <button className="btn" onClick={onSkip}>
+              Continue without daemon
+            </button>
+          ) : (
+            <button className="btn" onClick={onClose} disabled={busy}>
+              Cancel
+            </button>
+          )}
+          <button className="btn primary" disabled={!canSubmit} onClick={onSubmit}>
+            {remoteAddSubmitLabel({
+              installHost,
+              installing,
+              retry: created && installHost
+            })}
           </button>
         </div>
       </div>

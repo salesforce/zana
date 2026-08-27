@@ -898,4 +898,20 @@ describe('inbox MCP server (end-to-end)', () => {
     const listed = await other.listTools();
     expect(listed.tools.find((t) => t.name === 'remote_read')).toBeFalsy();
   });
+
+  it('registers browser automation tools that fail closed without a desktop host', async () => {
+    const store = createMemoryInboxStore();
+    const h = await boot(store, [makeProject('proj-1', 'My Project')]);
+    const client = await connectClient(h.url, 'proj-1/sess-A');
+    clients.push(client);
+    const tools = await client.listTools();
+    expect(tools.tools.find((t) => t.name === 'browser_open'), 'browser_open tool is registered').toBeTruthy();
+    const res = await client.callTool({
+      name: 'browser_open',
+      arguments: { url: 'https://example.com' }
+    });
+    expect((res as { isError?: boolean }).isError).toBe(true);
+    const text = (res as { content?: Array<{ text?: string }> }).content?.[0]?.text ?? '';
+    expect(text).toContain('desktop app');
+  });
 });

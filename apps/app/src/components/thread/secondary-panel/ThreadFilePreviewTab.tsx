@@ -7,6 +7,7 @@ import {
   matchingFileOpeners,
   resolveFileOpener
 } from '../../../plugins/plugin-slot-resolvers.js';
+import { SecondaryPanelSelectionActions } from './SecondaryPanelSelectionActions.js';
 import { applyPreviewResult, loadFilePreview, previewKind } from './threadSecondaryPanelLogic.js';
 
 export function ThreadFilePreviewView({
@@ -33,31 +34,40 @@ export function ThreadFilePreviewTab({
   threadId,
   path,
   openerKey,
-  projectId
+  projectId,
+  storage = false
 }: {
   threadId?: string;
   path: string;
   openerKey?: string | null;
   projectId?: string | null;
+  storage?: boolean;
 }) {
   const [override, setOverride] = useState<string | null>(openerKey ?? null);
   const [content, setContent] = useState<string>('Loading…');
   const [error, setError] = useState<string | null>(null);
   const openers = useSyncExternalStore(subscribePluginSlots, listFileOpeners, listFileOpeners);
   const opener = resolveFileOpener(path, openers, override);
+  const OpenerComponent = opener?.component;
 
   useEffect(() => {
     let cancelled = false;
+    const hostReader = storage
+      ? product.threads.storageContent
+      : threadId
+        ? product.threads.hostFileContent
+        : undefined;
     void loadFilePreview(
       product.fs.readFile,
-      threadId ? product.threads.hostFileContent : undefined,
+      hostReader,
       threadId,
-      path
+      path,
+      storage ? { skipLocal: true } : undefined
     ).then((result) => {
       applyPreviewResult(cancelled, result, setError, setContent);
     });
     return () => { cancelled = true; };
-  }, [path, threadId]);
+  }, [path, storage, threadId]);
 
   const hostPreview = <ThreadFilePreviewView path={path} content={content} error={error} />;
   const matches = matchingFileOpeners(path, openers);
@@ -81,24 +91,20 @@ export function ThreadFilePreviewTab({
       </select>
     </label>
   ) : null;
-  if (!opener) {
-    return (
-      <div className="thread-file-preview-host">
-        {openWith}
-        {hostPreview}
-      </div>
-    );
-  }
-  const Component = opener.component;
-  return (
+  const preview = !opener || !OpenerComponent ? (
+    <div className="thread-file-preview-host">
+      {openWith}
+      {hostPreview}
+    </div>
+  ) : (
     <div className="thread-file-preview-host">
       {openWith}
       <PluginSlotBoundary pluginId={opener.pluginId} generation={opener.generation}>
-        <Component
+        <OpenerComponent
           pluginId={opener.pluginId}
           path={path}
           source={{
-            kind: 'workspace',
+            kind: storage ? 'thread-storage' : 'workspace',
             threadId: threadId ?? null,
             environmentId: null,
             projectId: projectId ?? null
@@ -107,5 +113,10 @@ export function ThreadFilePreviewTab({
         />
       </PluginSlotBoundary>
     </div>
+  );
+  return (
+    <SecondaryPanelSelectionActions threadId={threadId}>
+      {preview}
+    </SecondaryPanelSelectionActions>
   );
 }

@@ -98,11 +98,12 @@ function makeWrapper(name: string): LucideIcon {
   return Wrapper as unknown as LucideIcon;
 }
 
-export function resolveIcon(name: string): LucideIcon {
-  let wrapper = wrappers.get(name);
+export function resolveIcon(name: string | null | undefined): LucideIcon {
+  const resolvedName = typeof name === 'string' && name.length > 0 ? name : 'HelpCircle';
+  let wrapper = wrappers.get(resolvedName);
   if (!wrapper) {
-    wrapper = makeWrapper(name);
-    wrappers.set(name, wrapper);
+    wrapper = makeWrapper(resolvedName);
+    wrappers.set(resolvedName, wrapper);
   }
   return wrapper;
 }

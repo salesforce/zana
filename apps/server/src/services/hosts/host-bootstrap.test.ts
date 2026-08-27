@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   HostBootstrapError,
   parseSshIdentity,
+  resolveHostBootstrapPlan,
   sshRemoteFromProject
 } from './host-bootstrap.js';
 
@@ -34,5 +35,21 @@ describe('host bootstrap helpers', () => {
       createdAt: 1,
       lastActiveAt: 1
     })).toBeNull();
+  });
+
+  it('reuses a connected enrolled host instead of installing again', () => {
+    expect(resolveHostBootstrapPlan({ existing: null, connected: false })).toEqual({ kind: 'install' });
+    expect(resolveHostBootstrapPlan({
+      existing: { id: 'h-primary', isPrimary: true },
+      connected: true
+    })).toEqual({ kind: 'install' });
+    expect(resolveHostBootstrapPlan({
+      existing: { id: 'h-remote', isPrimary: false },
+      connected: true
+    })).toEqual({ kind: 'bind', hostId: 'h-remote' });
+    expect(resolveHostBootstrapPlan({
+      existing: { id: 'h-remote', isPrimary: false },
+      connected: false
+    })).toEqual({ kind: 'repair', hostId: 'h-remote' });
   });
 });

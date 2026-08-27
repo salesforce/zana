@@ -1,0 +1,5 @@
+# Public origin remotes use to curl /install.sh and enroll (Host-header allowlist).
+# Product HTTP still binds loopback; this hostname must reverse-proxy to it.
+# Change this one line when the domain changes.
+# Precedence: env ZCC_APP_URL > Settings → Machines → Public app URL > this file.
+https://zcc-7808c5bc8f3d.herokuapp.com

@@ -588,6 +588,16 @@ function httpProduct(): Pick<
         apiJson(`/threads/${encodeURIComponent(threadId)}/conversation-outline`),
       hostFileContent: async (threadId, path) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/host-files/content?path=${encodeURIComponent(path)}`),
+      storageFiles: async (threadId) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/thread-storage/files`),
+      storageContent: async (threadId, path) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/thread-storage/content?path=${encodeURIComponent(path)}`),
+      open: async (threadId, body) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/open`, {
+          method: 'POST',
+          body: JSON.stringify(body)
+        }),
+      onOpen: (cb) => subscribeProductEvent('threads:open', cb),
       events: async (threadId) => apiJson(`/threads/${encodeURIComponent(threadId)}/events`),
       executionOptions: async (query) => {
         const params = new URLSearchParams();

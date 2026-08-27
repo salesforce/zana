@@ -6,6 +6,13 @@ import { hasDesktopBridge } from '../../../lib/app-surface.js';
 import { useData } from '../../../store.js';
 import { listNewThreadPanelActions, listThreadPanelActions, subscribePluginSlots } from '../../../plugins/plugin-slots.js';
 import { applyIfCurrent, loadWalkedFiles, matchNewTabFiles, newTabFileTitle } from './threadSecondaryPanelLogic.js';
+import {
+  formatRecentRelativeTime,
+  readThreadRecentItems,
+  recentItemLabel,
+  THREAD_RECENT_ITEMS_VISIBLE_LIMIT,
+  type ThreadRecentItem
+} from './threadRecentItems.js';
 
 export type OpenPluginOptions = {
   actionId?: string;
@@ -13,17 +20,25 @@ export type OpenPluginOptions = {
   layout?: 'padded' | 'flush';
 };
 
+function RecentItemIcon({ item }: { item: ThreadRecentItem }) {
+  if (item.kind === 'browser') return <Globe size={14} />;
+  if (item.kind === 'plugin') return <Puzzle size={14} />;
+  return <FileText size={14} />;
+}
+
 export function ThreadNewTabView({
   query,
   onQueryChange,
   matches,
   desktop,
   actions,
+  recents = [],
   onOpenFile,
   onOpenBrowser,
   onOpenExplorer,
   onStartTerminal,
   onOpenPlugin,
+  onOpenRecent,
   allowSidecarTerminal = true,
   allowExplorer = true
 }: {
@@ -32,14 +47,18 @@ export function ThreadNewTabView({
   matches: Array<{ path: string; rel?: string }>;
   desktop: boolean;
   actions: Array<{ pluginId: string; id: string; title: string; layout?: 'padded' | 'flush' }>;
+  recents?: readonly ThreadRecentItem[];
   onOpenFile: (path: string, title: string) => void;
   onOpenBrowser: () => void;
   onOpenExplorer?: () => void;
   onStartTerminal?: () => void;
   onOpenPlugin: (moduleId: string, title: string, options?: OpenPluginOptions) => void;
+  onOpenRecent?: (item: ThreadRecentItem) => void;
   allowSidecarTerminal?: boolean;
   allowExplorer?: boolean;
 }) {
+  const now = Date.now();
+  const visibleRecents = recents.slice(0, THREAD_RECENT_ITEMS_VISIBLE_LIMIT);
   return (
     <div className="thread-new-tab-page" data-testid="thread-new-tab-page">
       <label className="thread-new-tab-search">
@@ -68,38 +87,56 @@ export function ThreadNewTabView({
           {matches.length === 0 ? <li className="thread-new-tab-empty">No matching files</li> : null}
         </ul>
       ) : (
-        <div className="thread-new-tab-actions">
-          {desktop ? (
-            <button type="button" data-testid="thread-new-tab-browser" onClick={onOpenBrowser}>
-              <Globe size={14} /> Open browser
-            </button>
+        <>
+          {visibleRecents.length > 0 ? (
+            <div className="thread-new-tab-recents" data-testid="thread-new-tab-recents">
+              <h3>Recent</h3>
+              <ul>
+                {visibleRecents.map((item, index) => (
+                  <li key={`${item.kind}:${index}:${recentItemLabel(item)}`}>
+                    <button type="button" onClick={() => onOpenRecent?.(item)}>
+                      <RecentItemIcon item={item} />
+                      <span className="thread-info-truncate">{recentItemLabel(item)}</span>
+                      <span className="thread-browser-recent-time">{formatRecentRelativeTime(item.openedAt, now)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
           ) : null}
-          {allowExplorer ? (
-            <button type="button" data-testid="thread-new-tab-explorer" onClick={onOpenExplorer}>
-              <FolderTree size={14} /> Open Explorer
-            </button>
-          ) : null}
-          {allowSidecarTerminal ? (
-            <button type="button" data-testid="thread-new-tab-terminal" onClick={onStartTerminal}>
-              <Terminal size={14} /> Start terminal
-            </button>
-          ) : null}
-          {actions.map((action) => (
-            <button
-              key={`${action.pluginId}/${action.id}`}
-              type="button"
-              data-testid={`thread-new-tab-plugin-${action.pluginId}-${action.id}`}
-              onClick={() =>
-                onOpenPlugin(action.pluginId, action.title, {
-                  actionId: action.id,
-                  layout: action.layout
-                })
-              }
-            >
-              <Puzzle size={14} /> {action.title}
-            </button>
-          ))}
-        </div>
+          <div className="thread-new-tab-actions">
+            {desktop ? (
+              <button type="button" data-testid="thread-new-tab-browser" onClick={onOpenBrowser}>
+                <Globe size={14} /> Open browser
+              </button>
+            ) : null}
+            {allowExplorer ? (
+              <button type="button" data-testid="thread-new-tab-explorer" onClick={onOpenExplorer}>
+                <FolderTree size={14} /> Open Explorer
+              </button>
+            ) : null}
+            {allowSidecarTerminal ? (
+              <button type="button" data-testid="thread-new-tab-terminal" onClick={onStartTerminal}>
+                <Terminal size={14} /> Start terminal
+              </button>
+            ) : null}
+            {actions.map((action) => (
+              <button
+                key={`${action.pluginId}/${action.id}`}
+                type="button"
+                data-testid={`thread-new-tab-plugin-${action.pluginId}-${action.id}`}
+                onClick={() =>
+                  onOpenPlugin(action.pluginId, action.title, {
+                    actionId: action.id,
+                    layout: action.layout
+                  })
+                }
+              >
+                <Puzzle size={14} /> {action.title}
+              </button>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
@@ -108,20 +145,24 @@ export function ThreadNewTabView({
 export function ThreadNewTabPage({
   projectId,
   cwd,
+  threadId,
   onOpenFile,
   onOpenBrowser,
   onOpenExplorer,
   onStartTerminal,
   onOpenPlugin,
+  onOpenRecent,
   allowSidecarTerminal = true
 }: {
   projectId: string | null;
   cwd: string | null;
+  threadId?: string | null;
   onOpenFile: (path: string, title: string) => void;
   onOpenBrowser: () => void;
   onOpenExplorer?: () => void;
   onStartTerminal?: () => void;
   onOpenPlugin: (moduleId: string, title: string, options?: OpenPluginOptions) => void;
+  onOpenRecent?: (item: ThreadRecentItem) => void;
   allowSidecarTerminal?: boolean;
 }) {
   const project = useData((s) => s.projects.find((row) => row.id === projectId) ?? null);
@@ -140,6 +181,7 @@ export function ThreadNewTabPage({
   const [files, setFiles] = useState<Array<{ path: string; rel?: string }>>([]);
   const desktop = hasDesktopBridge();
   const root = cwd || project?.path || null;
+  const recents = threadId ? readThreadRecentItems(threadId) : [];
 
   useEffect(() => {
     let cancelled = false;
@@ -157,6 +199,7 @@ export function ThreadNewTabPage({
       onQueryChange={setQuery}
       matches={matches}
       desktop={desktop}
+      recents={recents}
       actions={actions.map((action) => ({
         pluginId: action.pluginId,
         id: action.id,
@@ -168,6 +211,7 @@ export function ThreadNewTabPage({
       onOpenExplorer={onOpenExplorer}
       onStartTerminal={onStartTerminal}
       onOpenPlugin={onOpenPlugin}
+      onOpenRecent={onOpenRecent}
       allowSidecarTerminal={allowSidecarTerminal}
       allowExplorer={Boolean(projectId)}
     />

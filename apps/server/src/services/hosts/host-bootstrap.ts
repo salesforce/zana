@@ -1,4 +1,10 @@
-import { getHost, getPrimaryHost, updateHostSshIdentity, type HostRow } from '@zana-ai/zcc-db';
+import {
+  findHostBySsh,
+  getHost,
+  getPrimaryHost,
+  updateHostSshIdentity,
+  type HostRow
+} from '@zana-ai/zcc-db';
 import type { ProjectRemote } from '@zana-ai/zcc-domain/product';
 import { isLoopbackHttpHost } from '../../browser-bootstrap.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
@@ -105,6 +111,21 @@ function pairingCommand(server: string, joinCode: string, hostId: string): strin
   );
 }
 
+export type HostBootstrapPlan =
+  | { kind: 'install' }
+  | { kind: 'bind'; hostId: string }
+  | { kind: 'repair'; hostId: string };
+
+export function resolveHostBootstrapPlan(input: {
+  existing: { id: string; isPrimary: boolean } | null;
+  connected: boolean;
+}): HostBootstrapPlan {
+  const existing = input.existing;
+  if (!existing || existing.isPrimary) return { kind: 'install' };
+  if (input.connected) return { kind: 'bind', hostId: existing.id };
+  return { kind: 'repair', hostId: existing.id };
+}
+
 function executionPath(remote: ProjectRemote, homeDir: string | null): string {
   if (remote.remotePath && remote.remotePath.startsWith('/')) return remote.remotePath;
   if (homeDir && homeDir.startsWith('/')) return homeDir;
@@ -145,6 +166,23 @@ async function installPeer(
   await ctx.hostHub.waitUntilConnected(input.hostId, CONNECT_WAIT_MS);
 }
 
+async function bindRemoteProject(
+  ctx: ProductHttpContext,
+  input: {
+    projectId: string;
+    remote: ProjectRemote;
+    hostId: string;
+    events: HostBootstrapEvent[];
+  }
+): Promise<void> {
+  const host = getHost(ctx.db, input.hostId);
+  const path = executionPath(input.remote, host?.homeDir ?? null);
+  await ctx.projects.bindToHost(input.projectId, { hostId: input.hostId, path });
+  ctx.hub.emit('projects:changed', ctx.projects.list());
+  ctx.hub.emit('hosts:changed', undefined);
+  input.events.push({ type: 'done', hostId: input.hostId });
+}
+
 export async function bootstrapHostForProject(
   ctx: ProductHttpContext,
   projectId: string
@@ -155,6 +193,25 @@ export async function bootstrapHostForProject(
     if (!project) throw new HostBootstrapError('unknown_project', 'Project not found.');
     const remote = sshRemoteFromProject(project);
     if (!remote) throw new HostBootstrapError('not_remote_project', 'This project is not an SSH remote.');
+    const existing = findHostBySsh(ctx.db, {
+      host: remote.host,
+      ...(remote.user ? { user: remote.user } : {})
+    });
+    const connected = Boolean(existing && ctx.hostHub.connectedHostIds().includes(existing.id));
+    const plan = resolveHostBootstrapPlan({ existing, connected });
+    if (plan.kind === 'bind') {
+      events.push({ type: 'log', text: 'Reusing the enrolled daemon for this SSH host…' });
+      await bindRemoteProject(ctx, { projectId: project.id, remote, hostId: plan.hostId, events });
+      return events;
+    }
+    if (plan.kind === 'repair') {
+      const repaired = await repairHost(ctx, plan.hostId);
+      events.push(...repaired);
+      if (repaired.some((event) => event.type === 'error')) return events;
+      events.push({ type: 'log', text: 'Binding this project to the enrolled machine…' });
+      await bindRemoteProject(ctx, { projectId: project.id, remote, hostId: plan.hostId, events });
+      return events;
+    }
     const serverUrl = requirePublicAppUrl(ctx);
     const issued = ctx.joinCodes.mint();
     const command = pairingCommand(serverUrl, issued.joinCode, issued.hostId);
@@ -182,11 +239,7 @@ export async function bootstrapHostForProject(
         proxyJump: remote.proxyJump
       });
     }
-    const path = executionPath(remote, host?.homeDir ?? null);
-    await ctx.projects.bindToHost(project.id, { hostId: issued.hostId, path });
-    ctx.hub.emit('projects:changed', ctx.projects.list());
-    ctx.hub.emit('hosts:changed', undefined);
-    events.push({ type: 'done', hostId: issued.hostId });
+    await bindRemoteProject(ctx, { projectId: project.id, remote, hostId: issued.hostId, events });
     return events;
   } catch (error) {
     if (error instanceof HostBootstrapError) {
