@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { storedEventsToMeta, conversationOutline, conversationTimeline } from './conversation-timeline.js';
+import { storedEventsToMeta, conversationOutline, conversationTimeline, resetTimelineLatestRowsCache } from './conversation-timeline.js';
 import { registerThreadProvider } from './thread-provider-catalog.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 
@@ -20,6 +20,10 @@ vi.mock('@zana-ai/zcc-db', () => ({
 }));
 
 import { getConversationThread, listConversationThreadEvents, listConversationThreadEventsWindow, countConversationThreadEvents } from '@zana-ai/zcc-db';
+
+afterEach(() => {
+  resetTimelineLatestRowsCache();
+});
 
 describe('storedEventsToMeta', () => {
   it('unwraps nested event payloads and skips junk', () => {
@@ -184,6 +188,22 @@ describe('conversationTimeline', () => {
     expect(timeline.status).toBe('idle');
     expect(timeline.activeThinking).toBeNull();
     expect(JSON.stringify(timeline.rows)).toContain('Hello from the tail of a long turn.');
+  });
+
+  it('returns a row delta when afterSequence matches the previous snapshot', () => {
+    const threadId = '11111111-1111-4111-8111-111111111111';
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValue([]);
+    vi.mocked(countConversationThreadEvents).mockReturnValue(0);
+    const first = conversationTimeline({ db: {}, dataDir: '/tmp' } as ProductHttpContext, threadId);
+    expect(first.delta).toBeUndefined();
+    expect(first.rows).toEqual([]);
+    const second = conversationTimeline(
+      { db: {}, dataDir: '/tmp' } as ProductHttpContext,
+      threadId,
+      { afterSequence: String(first.maxSeq) }
+    );
+    expect(second.rows).toEqual([]);
+    expect(second.delta).toEqual({ upsertRows: [] });
   });
 });
 

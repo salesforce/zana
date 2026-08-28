@@ -31,6 +31,16 @@ export function isWorkRowExpandable(row: TimelineViewWorkRow): boolean {
       return !hasTimelineExplorationIntent(row);
     case 'file-change':
       return true;
+    case 'file-read':
+    case 'search':
+      return false;
+    case 'plan-steps':
+      return row.steps.length > 0;
+    case 'extension':
+      return (
+        row.presentation.detail !== undefined
+        && row.presentation.detail.trim().length > 0
+      );
     case 'delegation':
       return row.childRows.length > 0 || row.output.trim().length > 0;
     case 'workflow':

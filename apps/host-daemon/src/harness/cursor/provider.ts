@@ -35,7 +35,7 @@ import type {
 } from '../launch-provider.js';
 import type { HarnessAuthCredential, HarnessAuthKey } from '../../harness-auth.js';
 import { BaseLaunchProvider } from '../base-provider.js';
-import type { ModelLevel } from "@zana-ai/zcc-domain/harness-adapter";
+import type { HarnessModelTarget, ModelLevel } from "@zana-ai/zcc-domain/harness-adapter";
 import { facetSupport, type TrustedHarnessAdapter } from '../adapter-contract.js';
 
 const CURSOR_EVIDENCE_VERSION = '2026.01.23';
@@ -45,9 +45,9 @@ const cursorEvidence = (id: string, observed: string) => ({
 });
 
 const CURSOR_ADAPTER: TrustedHarnessAdapter = {
-  // Release-maintained snapshot: refresh from `cursor-agent models` whenever a
-  // ZCC version changes its supported Cursor CLI or account inventory. Keep
-  // catalog, level mapping, and cursor-provider.test.ts in sync.
+  // Fallback snapshot used until `cursor-agent --list-models` succeeds.
+  // Live discovery (`refreshCatalog`) replaces this the same way Codex overlays
+  // its JSON-RPC catalog.
   descriptor: {
     id: 'cursor', label: 'Cursor', agentDefaultEligible: true, terminalEligible: false, defaultProfileId: 'cursor',
     profiles: [{ id: 'cursor', posture: 'default' }, { id: 'cursor-resume', posture: 'resume' }, { id: 'cursor-yolo', posture: 'unrestricted' }],
@@ -65,7 +65,8 @@ const CURSOR_ADAPTER: TrustedHarnessAdapter = {
       ],
       providerModelRelationship: 'combined-provider-model',
       models: [
-        { id: 'cursor-grok-4.5-high', label: 'Cursor Grok 4.5 High', provider: 'cursor', level: 'high', scope: ['local'], evidenceVersion: CURSOR_EVIDENCE_VERSION },
+        { id: 'cursor-grok-4.6-high', label: 'Cursor Grok 4.6', provider: 'cursor', level: 'high', scope: ['local'], evidenceVersion: CURSOR_EVIDENCE_VERSION },
+        { id: 'cursor-grok-4.5-high', label: 'Cursor Grok 4.5', provider: 'cursor', level: 'high', scope: ['local'], evidenceVersion: CURSOR_EVIDENCE_VERSION },
         { id: 'claude-opus-5-high', label: 'Opus 5 High', provider: 'anthropic', level: 'high', scope: ['local'], evidenceVersion: CURSOR_EVIDENCE_VERSION },
         { id: 'gpt-5.6-sol-medium', label: 'GPT-5.6 Sol Medium', provider: 'openai', level: 'high', scope: ['local'], evidenceVersion: CURSOR_EVIDENCE_VERSION },
         { id: 'claude-sonnet-5-high', label: 'Sonnet 5 High', provider: 'anthropic', level: 'medium', scope: ['local'], evidenceVersion: CURSOR_EVIDENCE_VERSION },
@@ -107,7 +108,7 @@ const CURSOR_ADAPTER: TrustedHarnessAdapter = {
   status: { mode: 'output-activity' },
   evidence: [
     cursorEvidence('cursor.facet.opening-prompt', 'CLI accepts opening prompt as spawn argument.'),
-    ...['cursor-grok-4.5-high', 'claude-opus-5-high', 'gpt-5.6-sol-medium', 'claude-sonnet-5-high',
+    ...['cursor-grok-4.6-high', 'cursor-grok-4.5-high', 'claude-opus-5-high', 'gpt-5.6-sol-medium', 'claude-sonnet-5-high',
       'gpt-5.6-terra-medium', 'claude-4.5-opus-high', 'claude-4.5-sonnet']
       .map((id) => cursorEvidence(id, 'Cursor model catalog and --model contribution verified.'))
   ]
@@ -120,9 +121,33 @@ function cursorBinary(config: AppConfig): string {
 
 export class CursorProvider extends BaseLaunchProvider {
   readonly id = 'cursor-agent';
-  readonly adapter = CURSOR_ADAPTER;
+  private discoveredModels: readonly HarnessModelTarget[] = [];
 
+  get adapter(): TrustedHarnessAdapter {
+    if (!this.discoveredModels.length) return CURSOR_ADAPTER;
+    const models = this.discoveredModels;
+    const defaultModel = models[0]?.id;
+    return {
+      ...CURSOR_ADAPTER,
+      descriptor: {
+        ...CURSOR_ADAPTER.descriptor,
+        targets: {
+          ...CURSOR_ADAPTER.descriptor.targets!,
+          models,
+          modelLevelMapping: {
+            low: models.find((model) => /mini|haiku|low/i.test(model.id))?.id,
+            medium: models.find((model) => /sonnet|terra|medium/i.test(model.id))?.id ?? defaultModel,
+            high: models.find((model) => /grok-4\.6|opus|sol/i.test(model.id))?.id ?? defaultModel,
+            'extra-high': undefined
+          }
+        }
+      }
+    };
+  }
 
+  setDiscoveredModels(models: readonly HarnessModelTarget[]): void {
+    this.discoveredModels = models;
+  }
 
   modelContribution(targetId: string, level?: ModelLevel) {
     return { args: ['--model', targetId] };

@@ -27,7 +27,8 @@ describe('ThreadExplorerTab', () => {
       <ThreadExplorerTab projectId="p1" />
     );
     expect(html).toContain('data-testid="thread-explorer-tab"');
-    expect(html).toContain('Loading Explorer');
+    expect(html).toContain('aria-label="Loading Explorer"');
+    expect(html).toContain('zcc-skeleton');
     projects.current = [];
   });
 });

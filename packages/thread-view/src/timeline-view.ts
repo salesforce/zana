@@ -276,6 +276,23 @@ export function summarizeTimelineWork(
       case "image-view":
         counts.imageViews += 1;
         break;
+      case "file-read":
+        counts.files += 1;
+        noteExplorationKind("files");
+        break;
+      case "search":
+        if (row.mode === "list") {
+          counts.lists += 1;
+          noteExplorationKind("lists");
+        } else {
+          counts.searches += 1;
+          noteExplorationKind("searches");
+        }
+        break;
+      case "plan-steps":
+      case "extension":
+        counts.tools += 1;
+        break;
       case "delegation":
         counts.delegations += 1;
         break;
@@ -360,6 +377,10 @@ function approvalStatusSummaryLabel(
       case "web-fetch":
       case "web-search":
       case "workflow":
+      case "file-read":
+      case "search":
+      case "plan-steps":
+      case "extension":
         return null;
       default:
         assertNever(row);
@@ -403,6 +424,13 @@ function getTimelineWorkSummaryCategory(
       return "webResearch";
     case "image-view":
       return "imageViews";
+    case "file-read":
+      return "exploration";
+    case "search":
+      return "exploration";
+    case "plan-steps":
+    case "extension":
+      return "tools";
     case "delegation":
       return "delegations";
     case "approval":
@@ -725,6 +753,13 @@ function rowConcept(row: TimelineViewWorkRow): TimelineWorkSummaryCategory {
       return "webResearch";
     case "image-view":
       return "imageViews";
+    case "file-read":
+      return "exploration";
+    case "search":
+      return "exploration";
+    case "plan-steps":
+    case "extension":
+      return "tools";
     case "approval":
     case "question":
     case "workflow":

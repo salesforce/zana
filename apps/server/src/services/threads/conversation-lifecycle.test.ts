@@ -642,7 +642,10 @@ describe('conversation lifecycle', () => {
         createdAt: 4
       }
     ]);
-    const timeline = conversationTimeline(ctx(async () => ({})), thread.id);
+    const timeline = conversationTimeline(ctx(async () => ({})), thread.id, {
+      includeNestedRows: 'true',
+      summaryOnly: 'false'
+    });
     const work: string[] = [];
     const walk = (rows: Array<{ kind?: string; workKind?: string; command?: string; toolName?: string; children?: unknown; childRows?: unknown }>) => {
       for (const row of rows) {

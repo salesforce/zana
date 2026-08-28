@@ -248,10 +248,31 @@ describe("provider registry", () => {
               command: "cursor-agent",
               args: ["acp"],
             },
+            acpDialect: "cursor",
+            parameterizedModelPicker: true,
+            primaryModels: [
+              "default",
+              "grok-4.6",
+              "gpt-5.6-sol",
+              "claude-opus-5",
+              "claude-fable-5",
+              "composer-2.5",
+            ],
+            reasoningProbePriorityModelIds: ["grok-4.6", "grok-4.5"],
           },
         },
       },
     });
+    const spec = (
+      plan as {
+        params: {
+          options: {
+            providerOptions: { acpLaunchSpec: Record<string, unknown> };
+          };
+        };
+      }
+    ).params.options.providerOptions.acpLaunchSpec;
+    expect(spec).not.toHaveProperty("modelCli");
   });
 
   it("carries the built-in OpenCode launch spec to the acp bridge", () => {

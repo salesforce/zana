@@ -4,6 +4,7 @@ import { formatDiffCount, formatDiffStatsText } from '@zana-ai/zcc-thread-view';
 import { product } from '../../lib/product-client.js';
 import { SecondaryPanelSelectionActions } from './secondary-panel/SecondaryPanelSelectionActions.js';
 import { PopoverPicklist } from '../ui/PopoverPicklist.js';
+import { Skeleton } from '../ui/Skeleton.js';
 import { ThreadDiffHunkView } from './ThreadDiffHunkView.js';
 import {
   areAllDiffCardsCollapsed,
@@ -309,15 +310,15 @@ export function ThreadDiffSkeleton({ count = DIFF_SKELETON_CARD_COUNT }: { count
       {Array.from({ length: count }, (_, index) => (
         <div key={index} className="thread-diff-card is-skeleton" aria-hidden="true">
           <div className="thread-diff-card-header">
-            <span className="thread-diff-skel thread-diff-skel-icon" />
-            <span className="thread-diff-skel thread-diff-skel-path" />
-            <span className="thread-diff-skel thread-diff-skel-stat" />
+            <Skeleton className="thread-diff-skel thread-diff-skel-icon" />
+            <Skeleton className="thread-diff-skel thread-diff-skel-path" />
+            <Skeleton className="thread-diff-skel thread-diff-skel-stat" />
           </div>
           <div className="thread-diff-card-body thread-diff-skel-body">
-            <span className="thread-diff-skel" />
-            <span className="thread-diff-skel is-wide" />
-            <span className="thread-diff-skel is-mid" />
-            <span className="thread-diff-skel is-short" />
+            <Skeleton className="thread-diff-skel" />
+            <Skeleton className="thread-diff-skel is-wide" />
+            <Skeleton className="thread-diff-skel is-mid" />
+            <Skeleton className="thread-diff-skel is-short" />
           </div>
         </div>
       ))}
@@ -328,10 +329,10 @@ export function ThreadDiffSkeleton({ count = DIFF_SKELETON_CARD_COUNT }: { count
 function ThreadDiffCardBodySkeleton() {
   return (
     <div className="thread-diff-skel-body" aria-hidden="true">
-      <span className="thread-diff-skel" />
-      <span className="thread-diff-skel is-wide" />
-      <span className="thread-diff-skel is-mid" />
-      <span className="thread-diff-skel is-short" />
+      <Skeleton className="thread-diff-skel" />
+      <Skeleton className="thread-diff-skel is-wide" />
+      <Skeleton className="thread-diff-skel is-mid" />
+      <Skeleton className="thread-diff-skel is-short" />
     </div>
   );
 }

@@ -9,6 +9,7 @@ import {
 } from '../../../plugins/plugin-slot-resolvers.js';
 import { SecondaryPanelSelectionActions } from './SecondaryPanelSelectionActions.js';
 import { applyPreviewResult, loadFilePreview, previewKind } from './threadSecondaryPanelLogic.js';
+import { StencilLines } from '../../ui/Skeleton.js';
 
 export function ThreadFilePreviewView({
   path,
@@ -16,10 +17,19 @@ export function ThreadFilePreviewView({
   error
 }: {
   path: string;
-  content: string;
+  content: string | null;
   error: string | null;
 }) {
   if (error) return <p className="thread-detail-empty">{error}</p>;
+  if (content === null) {
+    return (
+      <StencilLines
+        label="Loading file"
+        widths={['75%', '100%', '83%', '67%']}
+        className="zcc-stencil-padded"
+      />
+    );
+  }
   if (previewKind(path, content) === 'image') {
     return <img className="thread-file-preview-image" src={content} alt={path} />;
   }
@@ -44,7 +54,7 @@ export function ThreadFilePreviewTab({
   storage?: boolean;
 }) {
   const [override, setOverride] = useState<string | null>(openerKey ?? null);
-  const [content, setContent] = useState<string>('Loading…');
+  const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const openers = useSyncExternalStore(subscribePluginSlots, listFileOpeners, listFileOpeners);
   const opener = resolveFileOpener(path, openers, override);

@@ -2,6 +2,7 @@ import { useCallback, useEffect } from 'react';
 import { Trash2 } from 'lucide-react';
 import { deleteSavedRecord, useSaved, useSavedSelection, useUi } from '../store.js';
 import { DocContent, MarkdownContent } from './MarkdownContent.js';
+import { DelayedStencilLines } from './ui/Skeleton.js';
 import type { SavedDoc, SavedRecord } from '@zana-ai/zcc-domain/product';
 
 interface SavedDetailProps {
@@ -54,7 +55,7 @@ export function SavedDetail({ visible }: SavedDetailProps) {
   }, [visible, selectedId, handleDelete]);
 
   if (loading && records.length === 0) {
-    return <div className="inbox-detail-empty">Loading…</div>;
+    return <DelayedStencilLines label="Loading saved report" className="zcc-stencil-padded" />;
   }
   if (records.length === 0) {
     return (

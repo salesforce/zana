@@ -1,4 +1,5 @@
 import { product } from '../../lib/product-client.js';
+import { DelayedStencilList } from '../../components/ui/Skeleton.js';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import { Users, Search, FolderOpen, Play, ChevronDown, ChevronRight, Plus, Download, Upload, Copy, Pencil, Trash2 } from 'lucide-react';
 import type { CancelTeamLaunchResult, LaunchTeamResult, Project, Result, Team, Persona } from '@zana-ai/zcc-domain/product';
@@ -277,7 +278,7 @@ export function SquadsView() {
             </div>
 
             {loading ? (
-              <div className="scheduler-empty">Loading…</div>
+              <DelayedStencilList label="Loading teams" className="scheduler-empty" />
             ) : filtered.length === 0 ? (
               <div className="scheduler-empty">
                 <Users size={28} className="scheduler-empty-icon" />
@@ -618,9 +619,7 @@ function TeamRow({
               No agents configured for this team
             </div>
           ) : slotPersonas.length === 0 ? (
-            <div className="teams-agents-empty">
-              Loading agent information...
-            </div>
+            <DelayedStencilList label="Loading agents" className="teams-agents-empty" />
           ) : (
             <ul className="teams-agents">
               {slotPersonas.map((item, idx) => {

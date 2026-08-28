@@ -7,6 +7,7 @@ import {
   inboxContentSignature
 } from '../store.js';
 import { InboxSummaryModal } from './InboxSummaryModal.js';
+import { StencilLines } from './ui/Skeleton.js';
 
 /**
  * The "AI Summary" card at the top of the Inbox list — a standup-style digest of
@@ -112,11 +113,11 @@ export function InboxSummaryCard({
           )}
         </div>
       ) : loading ? (
-        <div className="inbox-ai-card-body inbox-ai-card-skeleton" aria-hidden>
-          <div className="inbox-ai-skel-line" />
-          <div className="inbox-ai-skel-line short" />
-          <div className="inbox-ai-skel-line" />
-        </div>
+        <StencilLines
+          label="Generating summary"
+          widths={['100%', '60%', '100%']}
+          className="inbox-ai-card-body inbox-ai-card-skeleton"
+        />
       ) : (
         <div className="inbox-ai-card-body inbox-ai-card-fallback">
           {error === 'failed'

@@ -220,10 +220,19 @@ describe('nested live threads', () => {
     expect(source).not.toContain('p.id === selectedId && projectHasNestableSessions(p)');
     expect(source).toContain('<ProviderIcon providerId={thread.providerId}');
     expect(source).toContain('threadRailStatus');
-    expect(source).toContain('agents-row-needs-you');
-    expect(source).toContain('status === \'Needs you\' || status === \'Error\'');
+    expect(source).toContain('threadRailStatusClass');
+    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const working = css.slice(
+      css.indexOf('.agents-row-working {'),
+      css.indexOf('.agents-row-badge {')
+    );
+    expect(working).toContain('color: var(--accent-gold);');
+    expect(working).toContain('animation: nav-badge-pulse');
     expect(source).not.toContain('MessageSquare');
     expect(source).not.toContain('<FleetKindChip kind="thread" />');
+    expect(readFileSync(new URL('./AgentRowDetail.tsx', import.meta.url), 'utf8')).toContain(
+      'agentRowStateClass'
+    );
   });
 });
 

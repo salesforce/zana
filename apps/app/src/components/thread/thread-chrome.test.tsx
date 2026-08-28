@@ -524,7 +524,7 @@ describe('expandable row and chips', () => {
         completedAt: null
       }]} />
     )).toContain('Build');
-    expect(renderToStaticMarkup(<ThreadStatusBadge status="active" />)).toContain('Planning next move');
+    expect(renderToStaticMarkup(<ThreadStatusBadge status="active" />)).toContain('Working');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="active" />)).toContain('thread-status-badge is-working');
     expect(renderToStaticMarkup(
       <ThreadStatusBadge status="active" thinking={{ id: 'th', text: '', startedAt: 1, updatedAt: 1 }} />
@@ -532,7 +532,8 @@ describe('expandable row and chips', () => {
     expect(renderToStaticMarkup(
       <ThreadStatusBadge status="active" thinking={{ id: 'th', text: '', startedAt: 1, updatedAt: 1 }} />
     )).toContain('thread-status-badge is-working');
-    expect(renderToStaticMarkup(<ThreadStatusBadge status="idle" />)).toContain('is-idle');
+    expect(renderToStaticMarkup(<ThreadStatusBadge status="idle" />)).toBe('');
+    expect(renderToStaticMarkup(<ThreadStatusBadge status="idle" waitingOnUser />)).toContain('Needs you');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="error" />)).toContain('is-error');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="error" />)).not.toContain('is-blocked');
     expect(renderToStaticMarkup(<ThreadStatusBadge status="error" />)).not.toContain('Needs you');
@@ -551,17 +552,17 @@ describe('expandable row and chips', () => {
     )).toContain('Needs you');
   });
 
-  it('keeps the thread title, overflow slot, and status on one header row', () => {
+  it('keeps the thread title and overflow on the left, with search and status as actions', () => {
     const html = renderToStaticMarkup(
       <ThreadDetailHeading
         title="Hello"
-        status="active"
         overflow={<button type="button" data-testid="thread-overflow-trigger">…</button>}
       />
     );
-    expect(html).toContain('<h1>Hello</h1>');
+    expect(html).toContain('<h1 title="Hello">Hello</h1>');
     expect(html).toContain('data-testid="thread-overflow-trigger"');
-    expect(html).toContain('data-testid="thread-detail-status"');
+    expect(html).not.toContain('data-testid="thread-detail-status"');
+    expect(html).not.toContain('data-testid="thread-detail-search"');
     expect(html).not.toContain('data-testid="thread-agents-crumb"');
 
     const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
@@ -570,25 +571,26 @@ describe('expandable row and chips', () => {
       css.indexOf('.thread-status-badge .tab-agent-dot {')
     );
     expect(header).toContain('align-items: center;');
-    expect(header).toContain('font-weight: 650;');
+    expect(header).toContain('flex: 1 1 auto;');
+    expect(header).toContain('font-weight: 500;');
+    expect(header).toContain('.thread-detail-search:focus-within input,');
     expect(header).toContain('.thread-detail-overflow-btn {');
     expect(header).toContain('.thread-detail-overflow-menu {');
     expect(header).toContain('z-index: 80;');
     expect(header).not.toContain('position: absolute;');
   });
 
-  it('passes waitingOnUser through the heading status badge', () => {
+  it('passes waitingOnUser through the status badge', () => {
     const html = renderToStaticMarkup(
-      <ThreadDetailHeading title="Hello" status="active" waitingOnUser />
+      <ThreadStatusBadge status="active" waitingOnUser />
     );
     expect(html).toContain('Needs you');
     expect(html).toContain('is-blocked');
   });
 
-  it('passes thinking through the heading status badge', () => {
+  it('passes thinking through the status badge', () => {
     const html = renderToStaticMarkup(
-      <ThreadDetailHeading
-        title="Hello"
+      <ThreadStatusBadge
         status="active"
         thinking={{ id: 'th', text: 'plan', startedAt: 1, updatedAt: 1 }}
       />
@@ -607,11 +609,16 @@ describe('expandable row and chips', () => {
     expect(source).toContain('showPlanPin={showPlanPin}');
     expect(source).toContain('thread-secondary-show');
     expect(source).toContain('<ThreadDetailHeading');
+    expect(source).toContain('<ThreadDetailSearch');
+    expect(source).toContain('<ThreadStatusBadge');
     expect(source).toContain('thinking={thinking}');
     expect(source).toContain('<ThreadDetailOverflow');
     expect(source).toContain('createCoalescedRunner');
     expect(source).toContain('<ThreadDetail key={threadId} threadId={threadId} />');
-    expect(source).toContain("if ((payload as { id: unknown }).id === threadId) runner.run()");
+    expect(source).toContain('applyTimelineDelta');
+    expect(source).toContain('afterSequence');
+    expect(source).toContain("if ((payload as { id: unknown }).id === threadId) scheduleDelta()");
+    expect(source).not.toContain('setInterval');
     expect(source).not.toContain('if (cancelled || my !== gen) return;');
   });
 
@@ -650,6 +657,8 @@ describe('expandable row and chips', () => {
     const columnAt = source.indexOf('className="thread-detail-column"');
     expect(columnAt).toBeGreaterThan(-1);
     expect(source).not.toContain('ThreadConversationToc');
+    expect(source).not.toContain('ThreadTableOfContents');
+    expect(source).not.toContain('thread-toc');
     const column = source.slice(columnAt);
     expect(column).toContain('<ThreadTimeline');
     expect(column).toContain('<ThreadWorkspaceBanner');
@@ -680,8 +689,29 @@ describe('expandable row and chips', () => {
     );
     expect(assistantActions).toContain('position: absolute;');
     expect(assistantActions).toContain('left: 0;');
+    expect(css).toContain('.thread-timeline-item.is-assistant {\n  align-items: flex-start;');
+    const bubbles = css.slice(
+      css.indexOf('.thread-timeline-row.is-user .thread-timeline-bubble,'),
+      css.indexOf('.thread-timeline-row .inbox-md,')
+    );
+    expect(bubbles).toContain('.thread-timeline-row.is-assistant .thread-timeline-bubble');
+    expect(bubbles).toContain('border-radius: 16px;');
+    expect(bubbles).toContain('border: 1px solid var(--border);');
     expect(css).toContain('.thread-timeline-item:hover,\n.thread-timeline-item:focus-within {\n  z-index: 1;');
     expect(css).toContain('.thread-detail-timeline {\n  user-select: text;');
+  });
+
+  it('gives mermaid diagrams a definite thread-bubble width so they cannot resize-loop', () => {
+    const mermaid = readFileSync(fileURLToPath(new URL('../MermaidDiagram.tsx', import.meta.url)), 'utf8');
+    expect(mermaid).toContain('mermaidSvgLayout');
+    expect(mermaid).toContain('inbox-mermaid-frame');
+    expect(mermaid).toContain('flowchart: { useMaxWidth: false }');
+    expect(mermaid).not.toMatch(/setSvg\(null\)/);
+
+    const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
+    expect(css).toContain('.thread-timeline-row:has(.inbox-mermaid)');
+    expect(css).toContain('.inbox-mermaid-frame.is-sized svg');
+    expect(css).toContain('position: absolute;');
   });
 
   it('keeps the transcript scrollbar invisible at rest and paints it only while scrolling', () => {

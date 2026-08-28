@@ -334,9 +334,14 @@ describe('product HTTP', () => {
       body: JSON.stringify({ data: 'x' })
     });
     expect(input.status).toBe(410);
-    const timeline = await fetch(`${server.url}api/v1/threads/${thread.id}/timeline`).then((response) => response.json());
+    const timelineResponse = await fetch(`${server.url}api/v1/threads/${thread.id}/timeline`);
+    expect(timelineResponse.status).toBe(200);
+    const timeline = await timelineResponse.json();
     expect(timeline.threadId).toBe(thread.id);
     expect(timeline.rows).toEqual([]);
+    const outlineResponse = await fetch(`${server.url}api/v1/threads/${thread.id}/conversation-outline`);
+    expect(outlineResponse.status).toBe(200);
+    await expect(outlineResponse.json()).resolves.toMatchObject({ items: [], maxSeq: 0 });
     expect(timeline).toMatchObject({
       activeThinking: null,
       pendingTodos: null,

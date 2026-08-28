@@ -22,6 +22,7 @@ import { useData, useUi } from '@/store';
 import { Section, Field, ChipField, TextArgsField } from '@/components/settings/FormFields';
 import { HarnessOptionSelect } from '@/components/HarnessOptionSelect';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
+import { StencilForm, Skeleton } from '@/components/ui/Skeleton';
 import { profileIcon } from '@/lib/profileIcon';
 
 const USE_DEFAULT = { id: '', label: 'Use default' } as const;
@@ -222,7 +223,7 @@ export function ProjectWorktreeSettings({
           onChange={(next) => void save(next)}
         />
       ) : (
-        <p className="settings-help" role="status">Loading worktree settings...</p>
+        <StencilForm label="Loading worktree settings" />
       )}
       {error && <ProjectSettingsError message={error} />}
     </Section>
@@ -248,7 +249,7 @@ export function ProjectExecutionConsentList({
   onRevoke: (grant: ProjectExecutionConsentGrant) => void;
 }) {
   if (grants === null) {
-    return <p className="settings-help" role="status">Loading execution grants...</p>;
+    return <StencilForm label="Loading execution grants" />;
   }
   if (grants.length === 0) {
     return <p className="settings-help" role="status">No active project execution grants.</p>;
@@ -431,7 +432,7 @@ export function ProjectHarnessSettings({
     >
       <Field label="Default harness">
         {descriptors === null || !settingsReady ? (
-          <span className="settings-help" role="status">Loading project harness settings...</span>
+          <Skeleton width="180px" height="28px" />
         ) : (
           <PopoverPicklist
             ariaLabel="Default harness"
@@ -1110,7 +1111,7 @@ export function ProjectCodexSettings({
     setResult(next);
     if (next.state === 'valid') onSaved();
   };
-  if (!result) return <p className="settings-help">Loading Codex settings...</p>;
+  if (!result) return <StencilForm label="Loading Codex settings" />;
   if (result.state === 'invalid' || result.state === 'io-error') return <p className="modal-error">{result.message}</p>;
   const settings = result.settings;
   return <>
@@ -1153,7 +1154,7 @@ export function ProjectOpenCodeSettings({
     setResult(next);
     if (next.state === 'valid') onSaved();
   };
-  if (!result) return <p className="settings-help">Loading OpenCode settings...</p>;
+  if (!result) return <StencilForm label="Loading OpenCode settings" />;
   if (result.state === 'invalid' || result.state === 'io-error') return <p className="modal-error">{result.message}</p>;
   const settings = result.settings;
   const modelField = (label: string, key: 'model' | 'smallModel', help: string) => (
@@ -1208,7 +1209,7 @@ function ClaudeScopeCard({
           <h4>{title}</h4>
           <p className="settings-help">{subtitle}</p>
         </header>
-        <p className="settings-help">Loading…</p>
+        <StencilForm label="Loading settings" />
       </div>
     );
   }

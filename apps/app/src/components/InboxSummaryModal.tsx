@@ -35,6 +35,7 @@ import {
   useUi
 } from '../store.js';
 import { useDialogFocusTrap } from '../hooks/useDialogFocusTrap.js';
+import { StencilLines } from './ui/Skeleton.js';
 
 export function InboxSummaryModal({
   scopeProjectId,
@@ -129,12 +130,11 @@ export function InboxSummaryModal({
               )}
             </>
           ) : loading ? (
-            <div className="inbox-summary-modal-loading">
-              <div className="inbox-ai-skel-line" />
-              <div className="inbox-ai-skel-line short" />
-              <div className="inbox-ai-skel-line" />
-              <div className="inbox-ai-skel-line short" />
-            </div>
+            <StencilLines
+              label="Generating detailed summary"
+              widths={['100%', '60%', '100%', '60%']}
+              className="inbox-summary-modal-loading"
+            />
           ) : (
             <div className="inbox-summary-modal-empty">
               {error === 'failed'

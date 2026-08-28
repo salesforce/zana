@@ -13,6 +13,7 @@ import type {
   TimelineTurnRow,
   TimelineUserConversationRow,
   TimelineWorkflowWorkRow,
+  TimelineRowPresentation,
 } from "@zana-ai/zcc-server-contract";
 import {
   isBackgroundAgentTaskType,
@@ -366,6 +367,7 @@ function buildWorkflowWorkRow(
     summary: message.summary,
     error: message.error,
     completedAt: message.completedAt,
+    ...rowPresentation(message),
   };
 }
 
@@ -401,6 +403,12 @@ function toConversationAttachments(
     localImagePaths: attachments.localImagePaths ?? [],
     localFilePaths: attachments.localFilePaths ?? [],
   };
+}
+
+function rowPresentation(message: {
+  presentation?: TimelineRowPresentation;
+}): { presentation?: TimelineRowPresentation } {
+  return message.presentation ? { presentation: message.presentation } : {};
 }
 
 function convertActivityIntent(
@@ -600,12 +608,64 @@ function convertMessage(
           completedAt: message.completedAt,
           approvalStatus: message.approvalStatus,
           activityIntents: message.parsedIntents.map(convertActivityIntent),
+          ...rowPresentation(message),
         },
       ];
-    case "tool-call":
+    case "tool-call": {
+      const base = buildTimelineRowBase(message, options.rowIdPrefix);
+      const only = message.parsedIntents.length === 1 ? message.parsedIntents[0] : null;
+      if (only?.type === "read" && only.path) {
+        return [
+          {
+            ...base,
+            kind: "work",
+            workKind: "file-read",
+            status: message.status,
+            callId: message.callId,
+            path: only.path,
+            cmd: only.cmd || null,
+            completedAt: message.completedAt,
+            ...rowPresentation(message),
+          },
+        ];
+      }
+      if (only?.type === "search") {
+        return [
+          {
+            ...base,
+            kind: "work",
+            workKind: "search",
+            status: message.status,
+            callId: message.callId,
+            mode: "content",
+            query: only.query ?? "",
+            path: only.path,
+            cmd: only.cmd || null,
+            completedAt: message.completedAt,
+            ...rowPresentation(message),
+          },
+        ];
+      }
+      if (only?.type === "list_files") {
+        return [
+          {
+            ...base,
+            kind: "work",
+            workKind: "search",
+            status: message.status,
+            callId: message.callId,
+            mode: "list",
+            query: "",
+            path: only.path,
+            cmd: only.cmd || null,
+            completedAt: message.completedAt,
+            ...rowPresentation(message),
+          },
+        ];
+      }
       return [
         {
-          ...buildTimelineRowBase(message, options.rowIdPrefix),
+          ...base,
           kind: "work",
           workKind: "tool",
           status: message.status,
@@ -619,8 +679,10 @@ function convertMessage(
           completedAt: message.completedAt,
           approvalStatus: message.approvalStatus,
           activityIntents: message.parsedIntents.map(convertActivityIntent),
+          ...rowPresentation(message),
         },
       ];
+    }
     case "file-edit":
       if (message.changes.length === 0 && message.approvalStatus !== null) {
         return [
@@ -653,6 +715,7 @@ function convertMessage(
           stdout: message.stdout ?? null,
           stderr: message.stderr ?? null,
           approvalStatus: message.approvalStatus,
+          ...rowPresentation(message),
         };
       });
     case "web-search":
@@ -665,6 +728,7 @@ function convertMessage(
           callId: message.callId,
           queries: message.queries,
           completedAt: message.completedAt,
+          ...rowPresentation(message),
         },
       ];
     case "web-fetch":
@@ -679,6 +743,7 @@ function convertMessage(
           prompt: message.prompt,
           pattern: message.pattern,
           completedAt: message.completedAt,
+          ...rowPresentation(message),
         },
       ];
     case "image-view":
@@ -691,6 +756,65 @@ function convertMessage(
           callId: message.callId,
           path: message.path,
           completedAt: message.completedAt,
+          ...rowPresentation(message),
+        },
+      ];
+    case "file-read":
+      return [
+        {
+          ...buildTimelineRowBase(message, options.rowIdPrefix),
+          kind: "work",
+          workKind: "file-read",
+          status: message.status,
+          callId: message.callId,
+          path: message.path,
+          cmd: message.cmd,
+          completedAt: message.completedAt,
+          ...rowPresentation(message),
+        },
+      ];
+    case "search":
+      return [
+        {
+          ...buildTimelineRowBase(message, options.rowIdPrefix),
+          kind: "work",
+          workKind: "search",
+          status: message.status,
+          callId: message.callId,
+          mode: message.mode,
+          query: message.query,
+          path: message.path,
+          cmd: message.cmd,
+          completedAt: message.completedAt,
+          ...rowPresentation(message),
+        },
+      ];
+    case "plan-steps":
+      return [
+        {
+          ...buildTimelineRowBase(message, options.rowIdPrefix),
+          kind: "work",
+          workKind: "plan-steps",
+          status: message.status,
+          callId: message.callId,
+          steps: message.steps,
+          explanation: message.explanation,
+          completedAt: message.completedAt,
+          ...rowPresentation(message),
+        },
+      ];
+    case "extension":
+      return [
+        {
+          ...buildTimelineRowBase(message, options.rowIdPrefix),
+          kind: "work",
+          workKind: "extension",
+          status: message.status,
+          callId: message.callId,
+          extensionKind: message.extensionKind,
+          payload: message.payload,
+          completedAt: message.completedAt,
+          presentation: message.presentation,
         },
       ];
     case "delegation": {
@@ -707,6 +831,7 @@ function convertMessage(
           description: message.description ?? null,
           output: message.output,
           completedAt: message.completedAt,
+          ...rowPresentation(message),
           childRows: filterDelegationChildRows(
             buildTimelineRows(message.childProjection, {
               includeNestedRows: true,

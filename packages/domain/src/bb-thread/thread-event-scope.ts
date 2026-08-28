@@ -99,6 +99,11 @@ export const threadEventScopeDefinitionByType = {
     rationale:
       "Thread goal state is current thread metadata, not part of a specific turn transcript.",
   },
+  "thread/extensionState/updated": {
+    policy: "thread",
+    rationale:
+      "Plugin thread state is current thread metadata, not part of a specific turn transcript.",
+  },
   "item/started": { policy: "turn" },
   "item/completed": { policy: "turn" },
   "item/agentMessage/delta": { policy: "turn" },
@@ -109,6 +114,8 @@ export const threadEventScopeDefinitionByType = {
   "item/plan/delta": { policy: "turn" },
   "item/mcpToolCall/progress": { policy: "turn" },
   "item/toolCall/progress": { policy: "turn" },
+  "item/delegation/progress": { policy: "turn" },
+  "item/delegation/completed": { policy: "turn" },
   "item/backgroundTask/progress": {
     policy: "thread",
     rationale:
@@ -191,6 +198,11 @@ export const threadEventScopeDefinitionByType = {
     policy: "thread-or-turn",
     rationale:
       "Thread-management operations use thread scope outside provider turns; tool-owned operations use turn scope so the operation stays with the tool call that caused it.",
+  },
+  "system/interaction/lifecycle": {
+    policy: "thread-or-turn",
+    rationale:
+      "Pending approvals and questions can be thread-scoped when they arrive outside a turn, or turn-scoped when they belong to one.",
   },
   "system/permissionGrant/lifecycle": { policy: "turn" },
   "system/userQuestion/lifecycle": { policy: "turn" },

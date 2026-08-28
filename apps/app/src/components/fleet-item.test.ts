@@ -4,6 +4,7 @@ import type { AgentCard } from './AgentBoard.js';
 import type { ThreadListItem } from '../thread-store.js';
 import {
   agentFleetItem,
+  agentRowStateClass,
   fleetMatchesLane,
   fleetThreadLane,
   resolveMonitorSelection,
@@ -15,7 +16,8 @@ import {
   threadHarnessLabel,
   threadIsLiveForRail,
   threadRailDetail,
-  threadRailStatus
+  threadRailStatus,
+  threadRailStatusClass
 } from './fleet-item.js';
 
 function thread(over: Partial<ThreadListItem> & Pick<ThreadListItem, 'id' | 'status'>): ThreadListItem {
@@ -82,6 +84,14 @@ describe('fleet items', () => {
     expect(threadRailDetail(thread({ id: 't1', status: 'active', hasPendingInteraction: true }))).toBe('Needs you · Agent');
     expect(threadFleetItem(thread({ id: 't1', status: 'active', hasPendingInteraction: true })).state).toBe('blocked');
     expect(threadRailDetail(thread({ id: 't1', status: 'idle' }))).toBe('Idle · Agent');
+    expect(threadRailStatusClass('Working')).toBe('agents-row-working');
+    expect(threadRailStatusClass('Error')).toBe('agents-row-needs-you');
+    expect(threadRailStatusClass('Needs you')).toBe('agents-row-needs-you');
+    expect(threadRailStatusClass('Idle')).toBeUndefined();
+    expect(agentRowStateClass('working', false)).toBe('agents-row-working');
+    expect(agentRowStateClass('blocked', false)).toBe('agents-row-needs-you');
+    expect(agentRowStateClass('idle', false)).toBeUndefined();
+    expect(agentRowStateClass('working', true)).toBeUndefined();
   });
 
   it('labels a thread card with harness and runtime instead of the project slug', () => {

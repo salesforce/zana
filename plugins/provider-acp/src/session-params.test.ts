@@ -19,6 +19,11 @@ const BASE_OPTIONS = {
   permissionEscalation: null,
 } as const;
 
+const NO_PICKER = {
+  parameterizedModelPicker: false,
+  reasoningProbePriorityModelIds: [] as const,
+} as const;
+
 function profileFor(spec: HostDaemonAcpLaunchSpec) {
   return acpProfileFromLaunchSpec(spec, "acp-custom");
 }
@@ -38,6 +43,7 @@ describe("buildAcpModelListParams", () => {
           primaryModels: ["model-a"],
         },
       }),
+      NO_PICKER,
     );
 
     expect(params).toEqual({
@@ -48,6 +54,8 @@ describe("buildAcpModelListParams", () => {
         envVars: { CUSTOM_AGENT_TOKEN: "token" },
       },
       primaryModels: ["model-a"],
+      reasoningProbePriorityModelIds: [],
+      parameterizedModelPicker: false,
     });
     expect(params).not.toHaveProperty("agent");
   });
@@ -69,10 +77,13 @@ describe("buildAcpModelListParams", () => {
           env: {},
           reasoningCli,
         }),
+        NO_PICKER,
       ),
     ).toEqual({
       agent: { command: "custom-agent", args: ["serve"] },
       primaryModels: [],
+      reasoningProbePriorityModelIds: [],
+      parameterizedModelPicker: false,
       reasoningCli,
     });
   });
@@ -94,11 +105,14 @@ describe("buildAcpModelListParams", () => {
           env: {},
           ...(modelCli !== undefined ? { modelCli } : {}),
         }),
+        NO_PICKER,
       );
 
       expect(params).toEqual({
         agent: { command: "custom-agent", args: ["serve"] },
         primaryModels: [],
+        reasoningProbePriorityModelIds: [],
+        parameterizedModelPicker: false,
       });
       expect(params).not.toHaveProperty("listCommand");
     },
@@ -116,6 +130,7 @@ describe("buildAcpModelListParams", () => {
           primaryModels: [],
         },
       }),
+      NO_PICKER,
     );
 
     expect(params).toEqual({
@@ -125,6 +140,8 @@ describe("buildAcpModelListParams", () => {
       },
       agent: { command: "custom-agent", args: ["serve"] },
       primaryModels: [],
+      reasoningProbePriorityModelIds: [],
+      parameterizedModelPicker: false,
     });
   });
 
@@ -136,13 +153,39 @@ describe("buildAcpModelListParams", () => {
         args: ["acp"],
         env: {},
       }),
+      NO_PICKER,
     );
 
     expect(params).toEqual({
       agent: { command: "opencode", args: ["acp"] },
       primaryModels: [],
+      reasoningProbePriorityModelIds: [],
+      parameterizedModelPicker: false,
     });
     expect(params).not.toHaveProperty("listCommand");
+  });
+
+  it("discovers parameterized Cursor session models with Grok first", () => {
+    expect(
+      buildAcpModelListParams(
+        profileFor({
+          displayName: "Cursor",
+          command: "cursor-agent",
+          args: ["acp"],
+          env: {},
+        }),
+        {
+          parameterizedModelPicker: true,
+          primaryModels: ["default", "composer-2.5", "grok-4.6"],
+          reasoningProbePriorityModelIds: ["grok-4.6", "grok-4.5"],
+        },
+      ),
+    ).toEqual({
+      agent: { command: "cursor-agent", args: ["acp"] },
+      parameterizedModelPicker: true,
+      primaryModels: ["default", "composer-2.5", "grok-4.6"],
+      reasoningProbePriorityModelIds: ["grok-4.6", "grok-4.5"],
+    });
   });
 });
 
@@ -169,6 +212,7 @@ describe("buildAcpSessionParams", () => {
           },
         }),
         providerLabel: "acp-custom",
+        parameterizedModelPicker: false,
         threadId: "thread-1",
       }),
     ).toMatchObject({
@@ -195,6 +239,7 @@ describe("buildAcpSessionParams", () => {
           env: {},
         }),
         providerLabel: "acp-custom",
+        parameterizedModelPicker: false,
         threadId: "thread-1",
       }),
     ).toMatchObject({
@@ -216,6 +261,7 @@ describe("buildAcpSessionParams", () => {
           env: {},
         }),
         providerLabel: "acp-opencode",
+        parameterizedModelPicker: false,
         threadId: "thread-1",
       }),
     ).not.toHaveProperty("modelSelection");
@@ -233,6 +279,7 @@ describe("buildAcpSessionParams", () => {
       cwd: "/workspace",
       options: { ...BASE_OPTIONS, reasoningLevel: "max" },
       providerLabel: "acp-custom",
+      parameterizedModelPicker: false,
       threadId: "thread-1",
     } as const;
 
@@ -293,6 +340,7 @@ describe("buildAcpSessionParams model selection", () => {
       options: { ...BASE_OPTIONS, ...options },
       profile: acpProfileFromLaunchSpec(cursorSpec, "acp-cursor"),
       providerLabel: "acp-cursor",
+      parameterizedModelPicker: false,
       threadId: "thread-1",
     });
   }
@@ -364,6 +412,7 @@ describe("buildAcpSessionParams model selection", () => {
         "acp-custom",
       ),
       providerLabel: "acp-custom",
+      parameterizedModelPicker: false,
       threadId: "thread-1",
     });
 
@@ -374,6 +423,81 @@ describe("buildAcpSessionParams model selection", () => {
     expect(() => cursorSessionParams({ permissionMode: "auto" })).toThrow(
       'does not support permission mode "auto"',
     );
+  });
+});
+
+describe("buildAcpSessionParams parameterized model selection", () => {
+  const cursorSpec: HostDaemonAcpLaunchSpec = {
+    displayName: "Cursor",
+    command: "cursor-agent",
+    args: ["acp"],
+    env: {},
+  };
+
+  function cursorSessionParams(
+    options: Partial<AcpSessionExecutionOptions>,
+  ): AcpSessionParams {
+    return buildAcpSessionParams({
+      additionalWorkspaceWriteRoots: [],
+      cwd: "/workspace",
+      dialectId: "cursor",
+      options: { ...BASE_OPTIONS, ...options },
+      parameterizedModelPicker: true,
+      profile: acpProfileFromLaunchSpec(cursorSpec, "acp-cursor"),
+      providerLabel: "acp-cursor",
+      threadId: "thread-1",
+    });
+  }
+
+  it("forwards Cursor's bare ACP model and reasoning level", () => {
+    expect(
+      cursorSessionParams({ model: "grok-4.6", reasoningLevel: "high" }),
+    ).toMatchObject({
+      agent: { command: "cursor-agent", args: ["acp"] },
+      modelSelection: {
+        modelId: "grok-4.6",
+        reasoningLevel: "high",
+      },
+      parameterizedModelPicker: true,
+    });
+  });
+
+  it("maps Cursor Auto sentinels onto the live auto-smart family", () => {
+    expect(cursorSessionParams({ model: "default" }).modelSelection).toEqual({
+      modelId: "auto-smart",
+    });
+  });
+
+  it("strips the cursor- prefix and effort token from a persisted CLI id", () => {
+    expect(
+      cursorSessionParams({
+        model: "cursor-grok-4.6-medium",
+        reasoningLevel: "high",
+        serviceTier: "fast",
+      }).modelSelection,
+    ).toEqual({
+      modelId: "grok-4.6",
+      reasoningLevel: "high",
+      serviceTier: "fast",
+    });
+  });
+
+  it("maps a legacy Cursor family onto the parameterized session id", () => {
+    expect(
+      cursorSessionParams({
+        model: "claude-4.6-sonnet-medium-thinking",
+        reasoningLevel: "high",
+      }).modelSelection,
+    ).toEqual({
+      modelId: "claude-sonnet-4-6",
+      reasoningLevel: "high",
+    });
+  });
+
+  it("maps auto onto Cursor's live Auto family", () => {
+    expect(cursorSessionParams({ model: "auto" }).modelSelection).toEqual({
+      modelId: "auto-smart",
+    });
   });
 });
 
@@ -395,6 +519,7 @@ describe("buildAcpSessionParams skill instructions", () => {
         env: {},
       }),
       providerLabel: "acp-custom",
+      parameterizedModelPicker: false,
       threadId: "thread-1",
     });
   }

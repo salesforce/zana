@@ -103,14 +103,31 @@ export function railThreadsForProject(threads: ThreadListItem[]): ThreadListItem
   return [...live, ...idle.slice(0, RAIL_IDLE_THREAD_LIMIT)];
 }
 
+export type ThreadRailStatus = 'Needs you' | 'Working' | 'Idle' | 'Error';
+
 export function threadRailStatus(
   thread: Pick<ThreadListItem, 'status' | 'hasPendingInteraction'>
-): 'Needs you' | 'Working' | 'Idle' | 'Error' {
+): ThreadRailStatus {
   if (thread.status === 'error') return 'Error';
   const state = threadStatusToAgentState(thread.status, thread.hasPendingInteraction);
   if (state === 'blocked') return 'Needs you';
   if (state === 'working') return 'Working';
   return 'Idle';
+}
+
+/** Tone class for the rail status word. Idle stays muted; Working pulses gold. */
+export function threadRailStatusClass(status: ThreadRailStatus): string | undefined {
+  if (status === 'Needs you' || status === 'Error') return 'agents-row-needs-you';
+  if (status === 'Working') return 'agents-row-working';
+  return undefined;
+}
+
+/** Tone class for a PTY agent's rail state word. Mirrors {@link threadRailStatusClass}. */
+export function agentRowStateClass(state: AgentState, exited: boolean): string | undefined {
+  if (exited) return undefined;
+  if (state === 'blocked') return 'agents-row-needs-you';
+  if (state === 'working') return 'agents-row-working';
+  return undefined;
 }
 
 export function threadRailDetail(thread: Pick<ThreadListItem, 'status' | 'hasPendingInteraction'>): string {

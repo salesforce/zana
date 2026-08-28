@@ -7,6 +7,7 @@ import { useLibrary, useUi, useData } from '@/store';
 import { AgentLauncher } from '@/components/AgentLauncher';
 import { PromptModal } from '@/components/PromptModal';
 import { DocPreview } from './library/DocPreview.js';
+import { DelayedStencilList } from '@/components/ui/Skeleton';
 import { LibraryTreeRows } from './library/LibraryTreeRows.js';
 import {
   buildLibraryTree,
@@ -410,7 +411,7 @@ export function LibraryPanel() {
 
         <div className="explorer-tree-body library-tree">
           {loading ? (
-            <div className="tree-loading">Loading…</div>
+            <DelayedStencilList label="Loading library" className="tree-loading" />
           ) : tree.length === 0 ? (
             <div className="tree-pane-empty">
               {docs.length === 0 ? 'No documents yet' : 'No matches'}

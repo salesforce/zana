@@ -14,6 +14,7 @@ import { ThreadDetail } from '@/views/threads/ThreadDetailView';
 import { ProjectExtensionTab } from '@/views/project/ProjectExtensionTab';
 import { useProjectTabModules } from '@/modules';
 import { resolveProjectTabModule } from '@/lib/libraryPlugin';
+import { DelayedStencilList } from '@/components/ui/Skeleton';
 
 // Lazy-load the editor surface. monaco-editor registers default editor
 // extensions into a global `RegistryImpl` singleton, so it's lazy-loaded to
@@ -358,27 +359,27 @@ export function WorkspaceView() {
             ) : null}
           </div>
           {isExplorer && project && (
-            <Suspense fallback={<div className="workbench-status">Loading explorer…</div>}>
+            <Suspense fallback={<DelayedStencilList label="Loading explorer" className="zcc-stencil-padded" />}>
               <ExplorerView project={project} />
             </Suspense>
           )}
           {isScheduler && project && (
-            <Suspense fallback={<div className="workbench-status">Loading scheduler…</div>}>
+            <Suspense fallback={<DelayedStencilList label="Loading scheduler" className="zcc-stencil-padded" />}>
               <SchedulerPanel projectId={project.id} />
             </Suspense>
           )}
           {isGoals && project && (
-            <Suspense fallback={<div className="workbench-status">Loading goals…</div>}>
+            <Suspense fallback={<DelayedStencilList label="Loading goals" className="zcc-stencil-padded" />}>
               <ProjectGoalsView project={project} />
             </Suspense>
           )}
           {isFollowups && project && (
-            <Suspense fallback={<div className="workbench-status">Loading follow-ups…</div>}>
+            <Suspense fallback={<DelayedStencilList label="Loading follow-ups" className="zcc-stencil-padded" />}>
               <ProjectFollowUpsView project={project} />
             </Suspense>
           )}
           {isFeed && project && (
-            <Suspense fallback={<div className="workbench-status">Loading feed…</div>}>
+            <Suspense fallback={<DelayedStencilList label="Loading feed" className="zcc-stencil-padded" />}>
               <ProjectFeedView project={project} />
             </Suspense>
           )}

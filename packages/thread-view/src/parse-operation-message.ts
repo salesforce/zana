@@ -3,7 +3,11 @@ import type {
   SystemThreadProvisioningStatus,
   SystemThreadInterruptedReason,
 } from "@zana-ai/zcc-domain/thread-runtime";
-import { ownershipChangeOperationMetadataSchema } from "@zana-ai/zcc-domain/thread-runtime";
+import {
+  isApprovalInteractionLifecycle,
+  isUserQuestionInteractionLifecycle,
+  ownershipChangeOperationMetadataSchema,
+} from "@zana-ai/zcc-domain/thread-runtime";
 import { assertNever } from "./assert-never.js";
 import { getCompactionKey } from "./compaction-lifecycle.js";
 import { OWNERSHIP_CHANGE_VERBS } from "./family-a-verbs.js";
@@ -52,6 +56,10 @@ type PermissionGrantLifecycleEvent = Extract<
 type UserQuestionLifecycleEvent = Extract<
   ThreadEvent,
   { type: "system/userQuestion/lifecycle" }
+>;
+type InteractionLifecycleEvent = Extract<
+  ThreadEvent,
+  { type: "system/interaction/lifecycle" }
 >;
 
 /**
@@ -373,6 +381,53 @@ function buildUserQuestionLifecycleMessage(
   };
 }
 
+function buildInteractionLifecycleMessage(
+  decoded: InteractionLifecycleEvent,
+  meta: EventMeta,
+):
+  | EventProjectionPermissionGrantLifecycleMessage
+  | EventProjectionUserQuestionLifecycleMessage
+  | null {
+  const { interaction } = decoded;
+  if (isUserQuestionInteractionLifecycle(interaction)) {
+    return buildUserQuestionLifecycleMessage(
+      {
+        ...decoded,
+        type: "system/userQuestion/lifecycle",
+        interactionId: interaction.id,
+        providerId: interaction.origin.providerId,
+        providerRequestId: interaction.origin.providerRequestId,
+        status: interaction.status,
+        resolution: interaction.resolution,
+        statusReason: interaction.statusReason,
+        payload: interaction.payload,
+      },
+      meta,
+    );
+  }
+  if (!isApprovalInteractionLifecycle(interaction)) {
+    return null;
+  }
+  const subject = interaction.payload.subject;
+  if (subject.kind !== "permission_grant") {
+    return null;
+  }
+  return buildPermissionGrantLifecycleMessage(
+    {
+      ...decoded,
+      type: "system/permissionGrant/lifecycle",
+      interactionId: interaction.id,
+      providerId: interaction.origin.providerId,
+      providerRequestId: interaction.origin.providerRequestId,
+      status: interaction.status,
+      resolution: interaction.resolution,
+      statusReason: interaction.statusReason,
+      subject,
+    },
+    meta,
+  );
+}
+
 /** Build the common scaffolding shared by all operation messages. */
 function op(
   decoded: ThreadEvent,
@@ -555,6 +610,10 @@ export function parseOperationMessage(
       status: threadOperationStatus(threadOperation),
       threadOperation,
     });
+  }
+
+  if (decoded.type === "system/interaction/lifecycle") {
+    return buildInteractionLifecycleMessage(decoded, meta);
   }
 
   if (decoded.type === "system/permissionGrant/lifecycle") {

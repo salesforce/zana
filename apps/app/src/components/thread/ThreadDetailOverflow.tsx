@@ -8,6 +8,7 @@ import { useRouteState } from '../../hooks/useRouteState.js';
 import { useThreads } from '../../thread-store.js';
 import { PromptModal } from '../PromptModal.js';
 import { shouldShowThreadStop } from './thread-timeline-model.js';
+import { dispatchThreadStopRequested } from './timeline/thread-optimistic-events.js';
 
 /** Viewport coords for the overflow menu. Fixed + portaled so the timeline cannot steal clicks. */
 export function threadOverflowMenuPosition(rect: Pick<DOMRect, 'bottom' | 'left'>): CSSProperties {
@@ -15,10 +16,10 @@ export function threadOverflowMenuPosition(rect: Pick<DOMRect, 'bottom' | 'left'
 }
 
 /** Fork stays wired; hide the menu item until the flow is ready. */
-export const SHOW_THREAD_FORK = false;
+export const SHOW_THREAD_FORK = true;
 
 /** Mark unread stays wired; hide the menu item until the flow is ready. */
-export const SHOW_THREAD_UNREAD = false;
+export const SHOW_THREAD_UNREAD = true;
 
 export function ThreadDetailOverflowMenu({
   canStop,
@@ -162,6 +163,7 @@ export function ThreadDetailOverflow({
       }}
       onStop={() => {
         close();
+        dispatchThreadStopRequested(threadId);
         void product.threads.stop(threadId);
       }}
       onArchive={() => {

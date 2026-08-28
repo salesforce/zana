@@ -1,4 +1,5 @@
 import { product } from '../../lib/product-client.js';
+import { DelayedStencilList } from '../../components/ui/Skeleton.js';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Clock, Plus, Sparkles, Pause, PlayCircle, AlertTriangle, Activity, Settings } from 'lucide-react';
 import type { ScheduledTask, ScheduleRun, ScheduleTemplate } from '@zana-ai/zcc-domain/product';
@@ -266,7 +267,7 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
             </div>
           </div>
         ) : loading ? (
-          <div className="scheduler-empty">Loading…</div>
+          <DelayedStencilList label="Loading schedules" className="scheduler-empty" />
         ) : view === 'overview' && (!lockedProject || scopedTasks.length > 0) ? (
           <SchedulerOverview
             tasks={lockedProject ? scopedTasks : tasks}

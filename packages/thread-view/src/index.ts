@@ -14,6 +14,14 @@ export {
   findTimelineFrontierRow,
 } from "./timeline-row-title.js";
 export {
+  activityIntentTitleGlyph,
+  isTimelineWorkRowGlyph,
+  workRowGlyph,
+  workRowPluginGlyph,
+  workRowPresentation,
+} from "./timeline-work-row-glyph.js";
+export type { TimelineWorkRowGlyph } from "./timeline-work-row-glyph.js";
+export {
   hasTimelineExplorationIntent,
   primaryTimelineActivityIntent,
 } from "./timeline-activity-intents.js";

@@ -254,7 +254,8 @@ export async function unarchiveConversation(
 
 export async function forkConversation(
   ctx: ProductHttpContext,
-  threadId: string
+  threadId: string,
+  options?: { sourceSeqEnd?: number }
 ): Promise<ConversationThreadRow> {
   const thread = getConversationThread(ctx.db, threadId);
   if (!thread) {
@@ -275,7 +276,8 @@ export async function forkConversation(
   });
   copyForkSourceHistory(ctx.db, {
     sourceThreadId: thread.id,
-    targetThreadId: forked.id
+    targetThreadId: forked.id,
+    sourceSeqEnd: options?.sourceSeqEnd
   });
   ctx.hub.emit('threads:updated', conversationThreadView(ctx, forked));
   emitPluginThreadEvent(ctx, {

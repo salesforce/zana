@@ -22,9 +22,9 @@ describe('ThreadDetailOverflowMenu', () => {
       />
     );
     expect(html).toContain('data-testid="thread-overflow-menu"');
-    expect(html).not.toContain('Mark unread');
+    expect(html).toContain('Mark unread');
     expect(html).toContain('Rename');
-    expect(html).not.toContain('Fork');
+    expect(html).toContain('Fork');
     expect(html).toContain('Archive');
     expect(html).not.toContain('Stop');
     expect(html).toContain('tab-context-danger');
@@ -49,7 +49,7 @@ describe('ThreadDetailOverflow wiring', () => {
   it('opens from the header trigger and persists rename through product.threads.rename', () => {
     const source = readFileSync(new URL('./ThreadDetailOverflow.tsx', import.meta.url), 'utf8');
     expect(source).toContain('data-testid="thread-overflow-trigger"');
-    expect(source).toContain('SHOW_THREAD_UNREAD = false');
+    expect(source).toContain('SHOW_THREAD_UNREAD = true');
     expect(source).toContain('product.threads.unread');
     expect(source).toContain('product.threads.rename');
     expect(source).toContain('product.threads.fork');

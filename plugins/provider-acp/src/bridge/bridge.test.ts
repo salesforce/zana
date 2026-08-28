@@ -168,12 +168,16 @@ function executionOptions(args: {
 }
 
 interface AgentLaunchArgs {
+  dialectId?: string;
+  parameterizedModelPicker?: boolean;
   agent?: { command: string; args: string[] };
   envVars?: Record<string, string>;
   /** `listArgs` the agent binary itself understands (see the fake agent). */
   modelListArgs?: string[];
   selectFlag?: string;
   primaryModels?: string[];
+  reasoningProbePriorityModelIds?: string[];
+  modelPickerPrimaryModels?: string[];
   reasoningCli?: {
     flag: string;
     supportedLevels: ReasoningLevel[];
@@ -250,6 +254,19 @@ async function startThread(args?: StartThreadArgs): Promise<{
     options: executionOptions({
       ...args,
       providerOptions: {
+        ...(args?.dialectId ? { acpDialect: args.dialectId } : {}),
+        ...(args?.parameterizedModelPicker === true
+          ? { parameterizedModelPicker: true }
+          : {}),
+        ...(args?.reasoningProbePriorityModelIds
+          ? {
+              reasoningProbePriorityModelIds:
+                args.reasoningProbePriorityModelIds,
+            }
+          : {}),
+        ...(args?.modelPickerPrimaryModels
+          ? { primaryModels: args.modelPickerPrimaryModels }
+          : {}),
         acpLaunchSpec: acpLaunchSpec(args ?? {}),
         ...(args?.additionalWorkspaceWriteRoots
           ? {
@@ -296,6 +313,19 @@ function sendModelList(
   const { modelLines, ...launch } = args;
   return sendRequest("model/list", {
     providerOptions: {
+      ...(launch.dialectId ? { acpDialect: launch.dialectId } : {}),
+      ...(launch.parameterizedModelPicker === true
+        ? { parameterizedModelPicker: true }
+        : {}),
+      ...(launch.reasoningProbePriorityModelIds
+        ? {
+            reasoningProbePriorityModelIds:
+              launch.reasoningProbePriorityModelIds,
+          }
+        : {}),
+      ...(launch.modelPickerPrimaryModels
+        ? { primaryModels: launch.modelPickerPrimaryModels }
+        : {}),
       acpLaunchSpec: acpLaunchSpec(
         modelLines === undefined
           ? launch
@@ -337,6 +367,19 @@ function compactCommandInput(): unknown[] {
 }
 
 /** Prompt texts the fake agent recorded, oldest first. */
+function loggedAcpRequests(path: string): {
+  method?: string;
+  params?: Record<string, unknown>;
+}[] {
+  if (!existsSync(path)) {
+    return [];
+  }
+  return readFileSync(path, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> });
+}
+
 function loggedPrompts(path: string): string[] {
   if (!existsSync(path)) {
     return [];
@@ -604,6 +647,85 @@ describe("acp bridge", () => {
       ],
       selectedOnlyModels: [],
     });
+  });
+
+  it("advertises Cursor's parameterized model picker during discovery", async () => {
+    const requestLog = join(workspaceDir, "cursor-discovery-requests.jsonl");
+    const modelListId = sendModelList({
+      dialectId: "cursor",
+      parameterizedModelPicker: true,
+      reasoningProbePriorityModelIds: ["grok-4.6", "grok-4.5"],
+      modelPickerPrimaryModels: ["default", "composer-2.5", "grok-4.6"],
+      envVars: {
+        FAKE_ACP_CURSOR_PARAMETERIZED_MODELS: "1",
+        FAKE_ACP_REQUEST_LOG: requestLog,
+      },
+    });
+
+    const result = (await waitForResponse(modelListId)).result as {
+      models: {
+        id: string;
+        supportedReasoningEfforts: { reasoningEffort: string }[];
+      }[];
+      selectedOnlyModels: { id: string }[];
+    };
+    const initialize = loggedAcpRequests(requestLog).find(
+      (request) => request.method === "initialize",
+    );
+    expect.soft(initialize?.params).toMatchObject({
+      clientCapabilities: {
+        _meta: { parameterizedModelPicker: true },
+      },
+    });
+    expect.soft(result.models.map((model) => model.id)).toContain("grok-4.6");
+    expect(
+      result.models
+        .find((model) => model.id === "grok-4.6")
+        ?.supportedReasoningEfforts.map((effort) => effort.reasoningEffort),
+    ).toEqual(["low", "medium", "high", "xhigh"]);
+    expect(
+      loggedAcpRequests(requestLog)
+        .filter((request) => request.method === "session/set_config_option")
+        .map((request) => request.params?.["value"])
+        .slice(0, 2),
+    ).toEqual(["grok-4.6", "grok-4.5"]);
+    expect(result.models.map((model) => model.id)).toEqual([
+      "default",
+      "composer-2.5",
+      "grok-4.6",
+    ]);
+    expect(result.selectedOnlyModels.map((model) => model.id)).toEqual([
+      "grok-4.5",
+      "claude-sonnet-4-6",
+    ]);
+  });
+
+  it("pins a parameterized Cursor family over session/set_config_option", async () => {
+    const requestLog = join(workspaceDir, "cursor-session-requests.jsonl");
+    await startThread({
+      dialectId: "cursor",
+      parameterizedModelPicker: true,
+      envVars: {
+        FAKE_ACP_CURSOR_PARAMETERIZED_MODELS: "1",
+        FAKE_ACP_REQUEST_LOG: requestLog,
+      },
+      model: "grok-4.6",
+      reasoningLevel: "high",
+      serviceTier: "fast",
+    });
+
+    expect(
+      loggedAcpRequests(requestLog)
+        .filter((request) => request.method === "session/set_config_option")
+        .map((request) => ({
+          configId: request.params?.["configId"],
+          value: request.params?.["value"],
+        })),
+    ).toEqual([
+      { configId: "model", value: "grok-4.6" },
+      { configId: "effort", value: "high" },
+      { configId: "fast", value: "true" },
+    ]);
   });
 
   it("discovers ACP-native models from session models state", async () => {
@@ -1120,6 +1242,24 @@ describe("acp bridge", () => {
     await waitForTurnCompleted();
 
     expect(agentMessageTexts()).toContain("selected-model:fake/strong");
+  });
+
+  it("keeps the session when both native model pins fail", async () => {
+    const { providerThreadId } = await startThread({
+      envVars: {
+        FAKE_ACP_MODEL_CONFIG: "1",
+        FAKE_ACP_SET_CONFIG_MODEL_ERROR: "1",
+      },
+      model: "missing/model",
+    });
+
+    sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "echo-selected-model", mentions: [] }],
+    });
+    await waitForTurnCompleted();
+
+    expect(providerThreadId).toMatch(/^fake-sess-/);
+    expect(agentMessageTexts()).toContain("selected-model:fake/default");
   });
 
   it("selects ACP-native models from session models state", async () => {

@@ -255,6 +255,10 @@ function finalizePendingMessageForInterruptedTurn(
     case "web-search":
     case "web-fetch":
     case "image-view":
+    case "file-read":
+    case "search":
+    case "plan-steps":
+    case "extension":
       return;
     case "file-edit":
       if (message.status === "pending") {
@@ -281,6 +285,7 @@ function finalizePendingMessageForInterruptedTurn(
     case "delegation":
     case "error":
     case "user":
+    case "workflow":
       return;
   }
 }

@@ -12,6 +12,7 @@ import {
 } from '@zana-ai/zcc-domain/launch-provider';
 import { useUi, useData } from '../store.js';
 import { ImprovePromptButton } from './ImprovePromptButton.js';
+import { StencilForm } from './ui/Skeleton.js';
 import { HarnessOptionSelect } from './HarnessOptionSelect.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import { effectivePersonaRouting } from '../lib/personaRouting.js';
@@ -728,7 +729,7 @@ function PersonaForm({ persona, onClose }: { persona: Persona | null; onClose: (
             onChange={updateSelectedRouting}
           />
         ) : (
-          <p className="settings-help" role="status">Loading {profileLabel(baseProfile as LaunchProfileId)} settings...</p>
+          <StencilForm label={`Loading ${profileLabel(baseProfile as LaunchProfileId)} settings`} />
         )}
         </div>
 

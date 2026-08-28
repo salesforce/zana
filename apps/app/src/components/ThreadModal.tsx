@@ -77,10 +77,7 @@ export function ThreadModal({
         aria-label={title}
         tabIndex={-1}
       >
-        <header className="modal-header agent-modal-header" data-testid="thread-modal-header">
-          <span className="agent-modal-heading">
-            <span className="agent-modal-title">{title}</span>
-          </span>
+        <header className="modal-header agent-modal-header thread-modal-header" data-testid="thread-modal-header">
           <button
             type="button"
             className="icon-button"

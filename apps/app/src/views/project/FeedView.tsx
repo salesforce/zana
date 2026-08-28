@@ -1,4 +1,5 @@
 import { product } from '../../lib/product-client.js';
+import { DelayedStencilList } from '../../components/ui/Skeleton.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   GitCommit,
@@ -284,9 +285,7 @@ export function FeedView({ project }: { project: Project }) {
           />
 
           {loading ? (
-            <div className="feed-empty">
-              <p className="feed-empty-copy">Loading feed…</p>
-            </div>
+            <DelayedStencilList label="Loading feed" className="feed-empty" />
           ) : events.length === 0 ? (
             <div className="feed-empty">
               <p className="feed-empty-copy">

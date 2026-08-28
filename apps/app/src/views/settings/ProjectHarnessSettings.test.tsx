@@ -134,8 +134,8 @@ describe('ProjectHarnessSettings', () => {
       value: { cc: { codexSettings: { read: vi.fn() }, openCodeSettings: { read: vi.fn() } } }
     });
 
-    expect(renderToStaticMarkup(<ProjectCodexSettings projectId="p1" descriptor={descriptor} onSaved={() => {}} />)).toContain('Loading Codex settings...');
-    expect(renderToStaticMarkup(<ProjectOpenCodeSettings projectId="p1" descriptor={descriptor} onSaved={() => {}} />)).toContain('Loading OpenCode settings...');
+    expect(renderToStaticMarkup(<ProjectCodexSettings projectId="p1" descriptor={descriptor} onSaved={() => {}} />)).toContain('Loading Codex settings');
+    expect(renderToStaticMarkup(<ProjectOpenCodeSettings projectId="p1" descriptor={descriptor} onSaved={() => {}} />)).toContain('Loading OpenCode settings');
   });
 
   it('uses canonical settings returned by the awaited write', async () => {

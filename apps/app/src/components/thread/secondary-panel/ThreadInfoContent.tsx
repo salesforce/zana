@@ -44,7 +44,8 @@ export function ThreadInfoRows({
   remoteToolProxy = false,
   sshTarget = null,
   sshStatus = null,
-  remoteDirectory = null
+  remoteDirectory = null,
+  children
 }: {
   isWorktree: boolean;
   environmentName?: string | null;
@@ -59,6 +60,7 @@ export function ThreadInfoRows({
   sshTarget?: string | null;
   sshStatus?: ThreadSshStatus | null;
   remoteDirectory?: string | null;
+  children?: ReactNode;
 }) {
   const gitLabel = remoteToolProxy ? null : workspaceStatusPresentation(workspaceStatus).label;
   const files = remoteToolProxy ? [] : (workspaceStatus?.files ?? []);
@@ -134,7 +136,7 @@ export function ThreadInfoRows({
             </li>
           ))}
           {filePreview.extraLabel ? (
-            <li className="thread-info-file-more">{filePreview.extraLabel}</li>
+            <li key="thread-info-files-more" className="thread-info-file-more">{filePreview.extraLabel}</li>
           ) : null}
         </ul>
       ) : null}
@@ -167,6 +169,8 @@ export function ThreadInfoRows({
           {reasoningLabel}
         </InfoRow>
       ) : null}
+
+      {children}
     </div>
   );
 }
@@ -264,23 +268,22 @@ export function ThreadInfoContent({
   }, [project?.id, project?.hostId, project?.remote?.host, project?.remote?.user, threadHostId]);
 
   return (
-    <>
-      <ThreadInfoRows
-        isWorktree={isWorktree}
-        environmentName={environmentName}
-        cwd={cwd}
-        branchName={branchName}
-        workspaceStatus={workspaceStatus}
-        pullRequest={pullRequest}
-        model={model}
-        reasoningLevel={reasoningLevel}
-        providerId={providerId}
-        remoteToolProxy={remoteToolProxy}
-        sshTarget={sshTarget}
-        sshStatus={sshStatus}
-        remoteDirectory={remoteDirectory}
-      />
+    <ThreadInfoRows
+      isWorktree={isWorktree}
+      environmentName={environmentName}
+      cwd={cwd}
+      branchName={branchName}
+      workspaceStatus={workspaceStatus}
+      pullRequest={pullRequest}
+      model={model}
+      reasoningLevel={reasoningLevel}
+      providerId={providerId}
+      remoteToolProxy={remoteToolProxy}
+      sshTarget={sshTarget}
+      sshStatus={sshStatus}
+      remoteDirectory={remoteDirectory}
+    >
       <ThreadStorageBrowser threadId={threadId} onOpenFile={onOpenStorageFile} />
-    </>
+    </ThreadInfoRows>
   );
 }

@@ -1,4 +1,5 @@
 import { product } from '../../lib/product-client.js';
+import { DelayedStencilList } from '../../components/ui/Skeleton.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   MessageCircleQuestion,
@@ -200,7 +201,7 @@ export function FollowUpsView({ projectId }: { projectId?: string } = {}) {
             </div>
           </div>
         ) : loading ? (
-          <div className="scheduler-empty">Loading…</div>
+          <DelayedStencilList label="Loading follow-ups" className="scheduler-empty" />
         ) : !hasAny ? (
           <div className="scheduler-empty">
             <MessageCircleQuestion size={28} className="scheduler-empty-icon" />

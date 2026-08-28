@@ -12,6 +12,10 @@ import type { TimelineRow } from '@zana-ai/zcc-server-contract';
 import { isBusyThreadStatus, timelineRowsAwaitUser } from './thread-timeline-model.js';
 import { collectTimelineAutoExpansionRowIds } from './timeline/timeline-auto-expand.js';
 import {
+  findStreamingAssistantMessageId,
+  streamingContentIdentity
+} from './timeline/streaming-assistant.js';
+import {
   clearTransientScrollbarScrolling,
   firstUnreadRowId,
   isNearBottom,
@@ -24,6 +28,11 @@ import {
   ThreadWorkingIndicator
 } from './timeline/ThreadBanners.js';
 import { TimelineRows } from './timeline/TimelineRows.js';
+import {
+  olderHistoryAction,
+  retainTerminalExpansionIds,
+  windowTimelineRows
+} from './timeline/timeline-window.js';
 
 export interface ThreadTimelineProps {
   rows: TimelineRow[];
@@ -42,6 +51,12 @@ export interface ThreadTimelineProps {
   onOpenDiff?: (path: string) => void;
   threadId?: string;
   waitingOnUser?: boolean;
+  streamingContentKey?: string;
+  projectId?: string | null;
+  parentThreadId?: string | null;
+  onFork?: (sourceSeqEnd?: number) => void;
+  forceExpandedRowIds?: ReadonlySet<string>;
+  searchHitRowId?: string | null;
 }
 
 function flattenForUnread(rows: ThreadTimelineViewRow[]): Array<{ id: string; sourceSeqStart?: number }> {
@@ -77,9 +92,21 @@ export function ThreadTimeline({
   onTitleLink,
   onOpenDiff,
   threadId,
-  waitingOnUser = false
+  waitingOnUser = false,
+  streamingContentKey,
+  projectId,
+  parentThreadId,
+  onFork,
+  forceExpandedRowIds,
+  searchHitRowId
 }: ThreadTimelineProps) {
-  const [now] = useState(() => Date.now());
+  const [now, setNow] = useState(() => Date.now());
+  const [retainedTerminalIds, setRetainedTerminalIds] = useState<string[]>([]);
+  const [showAllWindow, setShowAllWindow] = useState(false);
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
   const paneRef = useRef<HTMLDivElement>(null);
   const scrollbarIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [pinnedAway, setPinnedAway] = useState(false);
@@ -92,19 +119,59 @@ export function ThreadTimeline({
     }),
     [awaitingUser, status, viewRows]
   );
+  useEffect(() => {
+    setRetainedTerminalIds((current) => retainTerminalExpansionIds(current, expansion.terminalFrontierRowIds));
+  }, [expansion.terminalFrontierRowIds]);
+  const expansionWithRetention = useMemo(() => ({
+    liveFrontierRowIds: expansion.liveFrontierRowIds,
+    terminalFrontierRowIds: new Set([
+      ...expansion.terminalFrontierRowIds,
+      ...retainedTerminalIds
+    ])
+  }), [expansion.liveFrontierRowIds, expansion.terminalFrontierRowIds, retainedTerminalIds]);
+  const windowed = useMemo(
+    () => windowTimelineRows(viewRows, undefined, {
+      showAll: showAllWindow,
+      keepId: searchHitRowId
+    }),
+    [searchHitRowId, showAllWindow, viewRows]
+  );
   const unreadRowId = useMemo(
     () => firstUnreadRowId(flattenForUnread(viewRows), lastReadSeq),
     [lastReadSeq, viewRows]
   );
   const busy = isBusyThreadStatus(status);
-
-  const stick = shouldStickToBottom({ isBusy: busy, userPinnedAway: pinnedAway });
+  const streamingAssistantMessageId = useMemo(
+    () => (busy ? findStreamingAssistantMessageId(viewRows) : null),
+    [busy, viewRows]
+  );
+  const contentKey = streamingContentKey
+    ?? streamingContentIdentity(viewRows, streamingAssistantMessageId, thinking?.updatedAt);
+  const stick = shouldStickToBottom({
+    isBusy: busy,
+    streaming: streamingAssistantMessageId !== null,
+    userPinnedAway: pinnedAway
+  });
 
   useEffect(() => {
     const pane = paneRef.current;
     if (!pane || !stick) return;
     pane.scrollTop = pane.scrollHeight;
-  }, [stick, viewRows, thinking]);
+  }, [stick, viewRows, thinking, contentKey]);
+
+  useEffect(() => {
+    if (!searchHitRowId) return;
+    const pane = paneRef.current;
+    if (!pane) return;
+    const el = pane.querySelector(`[data-row-id="${CSS.escape(searchHitRowId)}"]`);
+    if (!(el instanceof HTMLElement)) return;
+    el.classList.add('thread-timeline-search-hit');
+    el.scrollIntoView({ block: 'center' });
+    const timer = window.setTimeout(() => {
+      el.classList.remove('thread-timeline-search-hit');
+    }, 1600);
+    return () => window.clearTimeout(timer);
+  }, [searchHitRowId, viewRows]);
 
   useEffect(() => () => {
     clearTransientScrollbarScrolling(paneRef.current, scrollbarIdleRef);
@@ -128,6 +195,20 @@ export function ThreadTimeline({
     onReachedBottom?.();
   };
 
+  const olderAction = olderHistoryAction({
+    hiddenCount: windowed.hiddenCount,
+    hasOlderRows: Boolean(hasOlderRows),
+    loadingOlder: Boolean(loadingOlder)
+  });
+  const revealOlderHistory = () => {
+    if (olderAction.kind === 'show-earlier') {
+      setShowAllWindow(true);
+      return;
+    }
+    setShowAllWindow(true);
+    onLoadOlder?.();
+  };
+
   return (
     <div className="thread-detail-timeline-shell">
       <div className="thread-banner-stack">
@@ -140,30 +221,45 @@ export function ThreadTimeline({
         ref={paneRef}
         onScroll={onScroll}
       >
-        {hasOlderRows ? (
+        {olderAction.kind === 'show-earlier' ? (
+          <button
+            type="button"
+            className="thread-load-older"
+            data-testid="thread-show-earlier"
+            onClick={revealOlderHistory}
+          >
+            Show earlier ({olderAction.hiddenCount})
+          </button>
+        ) : olderAction.kind === 'load-older' ? (
           <button
             type="button"
             className="thread-load-older"
             data-testid="thread-load-older"
-            disabled={loadingOlder}
-            onClick={() => onLoadOlder?.()}
+            disabled={olderAction.loading}
+            onClick={revealOlderHistory}
           >
-            {loadingOlder ? 'Loading…' : 'Load older'}
+            {olderAction.loading ? 'Loading…' : 'Load older'}
           </button>
         ) : null}
         {viewRows.length === 0 ? (
           <p className="thread-detail-empty">Waiting for the first turn…</p>
         ) : (
           <TimelineRows
-            rows={viewRows}
+            rows={windowed.visible}
             now={now}
-            expansion={expansion}
+            expansion={expansionWithRetention}
             unreadRowId={unreadRowId}
             onCopy={onCopy}
             onTitleAction={onTitleAction}
             onTitleLink={onTitleLink}
             onOpenDiff={onOpenDiff}
             threadId={threadId}
+            streamingAssistantMessageId={streamingAssistantMessageId}
+            forceExpandedRowIds={forceExpandedRowIds}
+            projectId={projectId}
+            parentThreadId={parentThreadId}
+            threadIdle={!busy && !awaitingUser}
+            onFork={onFork}
           />
         )}
         <ThreadWorkingIndicator status={status} thinking={thinking} waitingOnUser={awaitingUser} />

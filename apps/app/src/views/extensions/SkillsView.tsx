@@ -1,4 +1,5 @@
 import { product } from '../../lib/product-client.js';
+import { DelayedStencilList } from '../../components/ui/Skeleton.js';
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   BookOpen,
@@ -287,7 +288,7 @@ export function SkillsBody({
             </div>
 
             {loading ? (
-              <div className="scheduler-empty">Loading…</div>
+              <DelayedStencilList label="Loading skills" className="scheduler-empty" />
             ) : filtered.length === 0 ? (
               <div className="scheduler-empty">
                 <BookOpen size={28} className="scheduler-empty-icon" />

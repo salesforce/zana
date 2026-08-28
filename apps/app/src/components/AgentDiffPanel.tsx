@@ -16,6 +16,8 @@ import {
 import type { GitFileCode, GitShowResult, FsReadResult } from '@zana-ai/zcc-domain/product';
 import { DiffViewer } from './DiffViewer.js';
 import { languageFromPath } from '../lib/monacoLanguage.js';
+import { ThreadDiffSkeleton } from './thread/ThreadDiffPanel.js';
+import { StencilLines } from './ui/Skeleton.js';
 
 /**
  * The "Changes" surface of the agent-inspector modal: a live view of what the
@@ -335,11 +337,7 @@ export function AgentDiffPanel({ cwd, isRemote, exited, scope }: Props) {
   }
 
   if (files === null) {
-    return (
-      <div className="agent-diff-empty">
-        <p>Loading changes…</p>
-      </div>
-    );
+    return <ThreadDiffSkeleton />;
   }
 
   if (files.length === 0) {
@@ -484,7 +482,7 @@ export function AgentDiffPanel({ cwd, isRemote, exited, scope }: Props) {
           {!selectedFile ? (
             <div className="agent-diff-empty-inline">Select a changed file to preview its diff.</div>
           ) : !selectedDiff || selectedDiff.loading ? (
-            <div className="agent-diff-empty-inline">Loading diff…</div>
+            <StencilLines label="Loading diff" widths={['100%', '93%', '87%']} />
           ) : selectedDiff.head?.binary || selectedDiff.work?.binary ? (
             <div className="agent-diff-empty-inline">
               {CODE_LABEL[selectedFile.code]} — binary file, no text diff.

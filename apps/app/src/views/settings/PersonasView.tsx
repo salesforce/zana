@@ -1,4 +1,5 @@
 import { product } from '../../lib/product-client.js';
+import { DelayedStencilList } from '../../components/ui/Skeleton.js';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import { Bot, ChevronRight, Copy, FolderOpen, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import type { Persona } from '@zana-ai/zcc-domain/product';
@@ -166,7 +167,7 @@ export function PersonasView() {
             </div>
 
             {loading ? (
-              <div className="scheduler-empty">Loading…</div>
+              <DelayedStencilList label="Loading personas" className="scheduler-empty" />
             ) : filtered.length === 0 ? (
               <div className="scheduler-empty">
                 <Bot size={28} className="scheduler-empty-icon" />

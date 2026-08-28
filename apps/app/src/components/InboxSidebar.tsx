@@ -46,6 +46,7 @@ import {
 } from '@zana-ai/zcc-domain/inbox-grouping';
 import { inboxPrimaryTitle, inboxSecondaryLine, inboxPreview, inboxContextLine } from '../lib/inboxPresentation.js';
 import { isReport } from '@zana-ai/zcc-domain/feed-categories';
+import { DelayedStencilList } from './ui/Skeleton.js';
 
 /**
  * Map a registry icon NAME (from `feedCategories.ts`) to a lucide component.
@@ -356,7 +357,7 @@ export function InboxSidebar({
   }, [visibleIds, selectedId]);
 
   if (loading && entries.length === 0) {
-    return <div className="inbox-sidebar-empty">Loading…</div>;
+    return <DelayedStencilList label="Loading inbox" className="zcc-stencil-padded" />;
   }
 
   if (entries.length === 0) {

@@ -1,5 +1,6 @@
 import type { HarnessRegistration } from '../registration.js';
 import { CursorProvider } from './provider.js';
+import { discoverCursorModels } from '../cursor-model-catalog.js';
 
 const implementation = new CursorProvider();
 
@@ -19,5 +20,10 @@ export const cursorHarness: HarnessRegistration = {
     enabledConfigKey: 'harnessCursorEnabled',
     installHint: 'https://cursor.com/cli',
     versionArgs: ['--version']
+  },
+  async refreshCatalog({ binary, normalizedVersion }) {
+    implementation.setDiscoveredModels(
+      await discoverCursorModels(binary, `${binary}:${normalizedVersion ?? ''}`)
+    );
   }
 };

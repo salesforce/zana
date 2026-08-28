@@ -158,7 +158,7 @@ export function ThreadWorkingIndicator({
           <ChevronRight size={12} className="thread-timeline-work-chevron" aria-hidden="true" />
           <span className="is-shimmer">{label}</span>
         </summary>
-        <pre className="thread-thinking-details">{details}</pre>
+        <div className="thread-thinking-details">{details}</div>
       </details>
     );
   }
@@ -206,10 +206,10 @@ export function ThreadStatusBadge({
   waitingOnUser?: boolean;
   thinking?: ActiveThinking | null;
 }) {
-  const rotate = isBusyThreadStatus(status) && !waitingOnUser && thinking == null;
-  const phrase = useThreadWorkingPhrase(rotate);
-  const label = threadStatusLabel(status, waitingOnUser, thinking, phrase);
-  if (!label) return null;
+  const label = threadStatusLabel(status, waitingOnUser, thinking, 'Working');
+  // Idle is the resting state — the list already shows it. Keep the header
+  // chip for states that ask for attention or show work in flight.
+  if (!label || label === 'Idle') return null;
   const tone = threadStatusTone(status, waitingOnUser);
   return (
     <span
@@ -225,22 +225,15 @@ export function ThreadStatusBadge({
 
 export function ThreadDetailHeading({
   title,
-  status,
-  waitingOnUser,
-  thinking,
   overflow
 }: {
   title: string;
-  status: string;
-  waitingOnUser?: boolean;
-  thinking?: ActiveThinking | null;
   overflow?: ReactNode;
 }) {
   return (
     <div className="thread-detail-heading">
-      <h1>{title}</h1>
+      <h1 title={title}>{title}</h1>
       {overflow}
-      <ThreadStatusBadge status={status} waitingOnUser={waitingOnUser} thinking={thinking} />
     </div>
   );
 }

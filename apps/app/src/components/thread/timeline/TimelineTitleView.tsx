@@ -1,5 +1,6 @@
+import { Fragment } from 'react';
 import type { TimelineTitle, TimelineTitleAction, TimelineTitleLink } from '@zana-ai/zcc-thread-view';
-import { decorationText, titleSegmentClass } from './timeline-title.js';
+import { decorationClass, decorationText, titleSegmentClass } from './timeline-title.js';
 
 export type TimelineTitleActionHandler = (action: TimelineTitleAction) => void;
 export type TimelineTitleLinkHandler = (link: TimelineTitleLink) => void;
@@ -62,9 +63,9 @@ export function TimelineTitleView({
       })}
       {title.decorations.map((decoration, index) => {
         const text = decorationText(decoration, now);
-        if (!text) return null;
+        if (!text) return <Fragment key={`${decoration.kind}-${index}`} />;
         return (
-          <span key={`${decoration.kind}-${index}`} className="thread-timeline-title-deco">
+          <span key={`${decoration.kind}-${index}`} className={decorationClass(decoration)}>
             {text}
           </span>
         );

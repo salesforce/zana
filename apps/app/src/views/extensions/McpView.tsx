@@ -1,4 +1,5 @@
 import { product } from '../../lib/product-client.js';
+import { DelayedStencilList } from '../../components/ui/Skeleton.js';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ChevronDown,
@@ -180,7 +181,7 @@ export function McpBody({ showHeader = true }: { showHeader?: boolean } = {}) {
             </div>
 
             {loading ? (
-              <div className="scheduler-empty">Loading…</div>
+              <DelayedStencilList label="Loading MCP servers" className="scheduler-empty" />
             ) : filtered.length === 0 ? (
               <div className="scheduler-empty">
                 <Plug size={28} className="scheduler-empty-icon" />

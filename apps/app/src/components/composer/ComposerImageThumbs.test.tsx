@@ -33,6 +33,17 @@ describe('ComposerImageThumbs', () => {
       .toContain('onClick={() => onRemove(image.id)}');
   });
 
+  it('opens a lightbox control when onOpen is provided', () => {
+    const html = renderToStaticMarkup(
+      <ComposerImageThumbs
+        onOpen={() => undefined}
+        images={[{ id: '1', name: 'shot.png', src: 'blob:shot' }]}
+      />
+    );
+    expect(html).toContain('composer-image-thumb-preview');
+    expect(html).toContain('<button');
+  });
+
   it('renders nothing when empty', () => {
     expect(renderToStaticMarkup(<ComposerImageThumbs images={[]} />)).toBe('');
   });

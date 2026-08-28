@@ -79,4 +79,17 @@ describe('selectInheritedForkEventRows', () => {
       'turn/completed'
     ]);
   });
+
+  it('truncates inherited history at the completed turn that contains sourceSeqEnd', () => {
+    const rows = [
+      event(1, 'turn/started', { scope: { kind: 'turn', turnId: 't1' } }),
+      event(2, 'item/completed', { scope: { kind: 'turn', turnId: 't1' } }),
+      event(3, 'turn/completed', { scope: { kind: 'turn', turnId: 't1' } }),
+      event(4, 'turn/started', { scope: { kind: 'turn', turnId: 't2' } }),
+      event(5, 'item/completed', { scope: { kind: 'turn', turnId: 't2' } }),
+      event(6, 'turn/completed', { scope: { kind: 'turn', turnId: 't2' } })
+    ];
+    expect(selectInheritedForkEventRows(rows, 2).map((row) => row.sequence)).toEqual([1, 2, 3]);
+    expect(selectInheritedForkEventRows(rows, 5).map((row) => row.sequence)).toEqual([1, 2, 3, 4, 5, 6]);
+  });
 });

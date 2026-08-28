@@ -56,6 +56,7 @@ import {
   resolveThreadSendMode
 } from '../lib/thread-composer-preferences.js';
 import { COMPOSER_INSERT_EVENT } from './thread/secondary-panel/SecondaryPanelSelectionActions.js';
+import { dispatchOptimisticUserMessage, dispatchThreadStopRequested } from './thread/timeline/thread-optimistic-events.js';
 import { ComposerPromptField } from './composer/ComposerPromptField.js';
 import { useComposerPromptField } from './composer/use-composer-prompt-field.js';
 
@@ -361,11 +362,17 @@ export function ThreadCommandComposer({
         return;
       }
       if (threadId) {
-        await product.threads.send(threadId, input, sendMode, {
-          model: options.model,
-          reasoningLevel: options.reasoningLevel
-        });
-        field.clear();
+        dispatchOptimisticUserMessage(threadId, text);
+        try {
+          await product.threads.send(threadId, input, sendMode, {
+            model: options.model,
+            reasoningLevel: options.reasoningLevel
+          });
+          field.clear();
+        } catch (error) {
+          dispatchOptimisticUserMessage(threadId, null);
+          throw error;
+        }
         return;
       }
       const created = await product.threads.create({
@@ -563,7 +570,10 @@ export function ThreadCommandComposer({
                     aria-label="Stop"
                     title="Stop"
                     data-testid="thread-command-stop"
-                    onClick={() => void product.threads.stop(threadId)}
+                    onClick={() => {
+                      dispatchThreadStopRequested(threadId);
+                      void product.threads.stop(threadId);
+                    }}
                   >
                     <Square size={14} fill="currentColor" />
                   </ComposerIconButton>

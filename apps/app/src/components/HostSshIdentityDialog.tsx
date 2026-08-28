@@ -3,6 +3,7 @@ import { hasDesktopBridge } from '../lib/app-surface.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw, Search, X } from 'lucide-react';
 import type { SshHostEntry } from '@zana-ai/zcc-domain/product';
+import { StencilList } from './ui/Skeleton.js';
 
 export function HostSshIdentityDialog({
   hostName,
@@ -148,7 +149,7 @@ export function HostSshIdentityDialog({
             </button>
           </div>
           <div className="remote-host-list">
-            {hosts === null && <div className="list-empty">Loading hosts…</div>}
+            {hosts === null && <StencilList label="Loading hosts" className="list-empty" />}
             {hosts !== null && filtered.length === 0 && (
               <div className="list-empty">
                 {hosts.length === 0

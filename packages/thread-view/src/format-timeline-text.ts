@@ -315,6 +315,29 @@ function formatWorkBody(
       return lines;
     case "image-view":
       return lines;
+    case "file-read":
+      if (row.cmd) {
+        lines.push(dim(`  ${row.cmd}`, context.color));
+      }
+      return lines;
+    case "search":
+      if (row.cmd) {
+        lines.push(dim(`  ${row.cmd}`, context.color));
+      }
+      return lines;
+    case "plan-steps":
+      if (row.explanation) {
+        lines.push(dim(`  ${row.explanation}`, context.color));
+      }
+      for (const step of row.steps) {
+        lines.push(`  ${step.step}`);
+      }
+      return lines;
+    case "extension":
+      if (row.presentation.detail) {
+        lines.push(dim(indentBlock(row.presentation.detail, "  "), context.color));
+      }
+      return lines;
     case "approval":
     case "question":
     case "workflow":

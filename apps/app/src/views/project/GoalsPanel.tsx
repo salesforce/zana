@@ -1,4 +1,5 @@
 import { product } from '../../lib/product-client.js';
+import { DelayedStencilList } from '../../components/ui/Skeleton.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Target,
@@ -172,7 +173,7 @@ export function GoalsPanel({ projectId }: { projectId?: string } = {}) {
             </div>
           </div>
         ) : loading ? (
-          <div className="scheduler-empty">Loading…</div>
+          <DelayedStencilList label="Loading goals" className="scheduler-empty" />
         ) : !hasProjectGoals ? (
           <div className="scheduler-empty">
             <Target size={28} className="scheduler-empty-icon" />

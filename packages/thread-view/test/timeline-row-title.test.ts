@@ -1850,3 +1850,24 @@ describe("buildTimelineRowTitle question rows", () => {
     ]);
   });
 });
+
+describe("presentation-driven titles", () => {
+  it("uses the bridge label and headline for a completed tool", () => {
+    const title = buildTimelineRowTitle(
+      {
+        ...toolRow(),
+        activityIntents: [],
+        toolArgs: null,
+        presentation: {
+          label: { pending: "Reading file", completed: "Read file" },
+          icon: { glyph: "FileText" },
+          title: "app.ts",
+        },
+      },
+      DEFAULT_OPTIONS,
+    );
+    expect(title.plain).toContain("Read file");
+    expect(title.plain).toContain("app.ts");
+    expect(title.plain).not.toContain("Ran tool");
+  });
+});

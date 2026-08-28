@@ -8,19 +8,32 @@ export interface ComposerImageThumb {
 
 export function ComposerImageThumbs({
   images,
-  onRemove
+  onRemove,
+  onOpen
 }: {
   images: readonly ComposerImageThumb[];
   onRemove?: (id: string) => void;
+  onOpen?: (image: ComposerImageThumb) => void;
 }) {
   if (images.length === 0) return null;
   return (
     <div className="composer-image-thumbs" aria-label="Attached images">
       {images.map((image) => (
         <div key={image.id} className="composer-image-thumb">
-          <span className="composer-image-thumb-preview" title={image.name}>
-            <img src={image.src} alt={image.name} loading="lazy" decoding="async" />
-          </span>
+          {onOpen ? (
+            <button
+              type="button"
+              className="composer-image-thumb-preview"
+              title={image.name}
+              onClick={() => onOpen(image)}
+            >
+              <img src={image.src} alt={image.name} loading="lazy" decoding="async" />
+            </button>
+          ) : (
+            <span className="composer-image-thumb-preview" title={image.name}>
+              <img src={image.src} alt={image.name} loading="lazy" decoding="async" />
+            </span>
+          )}
           {onRemove ? (
             <button
               type="button"

@@ -4,6 +4,7 @@ import type { ClaudeSessionSummary, Project } from '@zana-ai/zcc-domain/product'
 import { profileLabel } from '@zana-ai/zcc-domain/launch-provider';
 import { useData, useUi } from '../store.js';
 import { fuzzyScore } from '../lib/fuzzy.js';
+import { StencilList } from './ui/Skeleton.js';
 
 interface Props {
   project: Project;
@@ -148,7 +149,7 @@ export function ResumePicker({ project, onClose }: Props) {
         />
         <div className="palette-list" ref={listRef}>
           {sessions === undefined ? (
-            <div className="palette-empty">Loading…</div>
+            <StencilList label="Loading sessions" className="palette-empty" />
           ) : sessions.length === 0 ? (
             <div className="palette-empty">No previous Claude sessions for this folder.</div>
           ) : filtered.length === 0 ? (

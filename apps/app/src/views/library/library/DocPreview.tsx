@@ -13,6 +13,7 @@ import { useUi } from '@/store';
 import { MermaidDiagram } from '@/components/MermaidDiagram';
 import { useMonacoTheme } from '@/hooks/useMonacoTheme';
 import { useAiEnhanceSelection } from '@/components/AiEnhanceSelection';
+import { StencilLines } from '@/components/ui/Skeleton';
 import { parseFrontMatter } from '@zana-ai/zcc-extension-sdk/helpers';
 
 export interface DocPreviewProps {
@@ -192,7 +193,7 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProp
   };
 
   if (loading) {
-    return <div className="explorer-viewer-empty">Loading…</div>;
+    return <StencilLines label="Loading document" className="explorer-viewer-empty" />;
   }
 
   if (error) {

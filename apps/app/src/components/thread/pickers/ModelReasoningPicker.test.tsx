@@ -115,6 +115,32 @@ describe('ModelReasoningPicker', () => {
       /\.model-reasoning-picker-menu--models \.model-reasoning-picker-section\s*\{[^}]*overflow:\s*auto/
     );
   });
+
+  it('holds the trigger and model-list layout with skeletons while loading', () => {
+    const html = renderToStaticMarkup(
+      <ModelReasoningPicker
+        providerOptions={providers}
+        selectedProviderId="claude-code"
+        modelValue=""
+        modelOptions={[]}
+        modelIsLoading
+        onModelChange={() => undefined}
+      />
+    );
+    expect(html).toContain('data-model-loading-placeholder="trigger-model"');
+    expect(html).toContain('data-model-loading-placeholder="trigger-reasoning"');
+    expect(html).toContain('sr-only');
+    expect(html).toContain('Loading models');
+    expect(html).not.toContain('model-reasoning-picker-trigger-model');
+    const source = readFileSync(new URL('./ModelReasoningPicker.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('data-model-loading-row');
+    expect(source).toContain('aria-label="Loading models"');
+    expect(source).toContain("['80px', '112px', '96px', '128px']");
+    expect(source).not.toContain('Loading models…');
+    const css = readFileSync(new URL('../../../styles/global.css', import.meta.url), 'utf8');
+    expect(css).toContain('.model-reasoning-picker-loading-row');
+    expect(css).toContain('.zcc-skeleton');
+  });
 });
 
 describe('thread execution labels', () => {

@@ -31,6 +31,13 @@
  *                              advertising a thought_level config option
  * - FAKE_ACP_SET_CONFIG_MODEL_ERROR=1
  *                            → fail session/set_config_option for model values
+ * - FAKE_ACP_SET_CONFIG_FAST_ERROR=1
+ *                            → fail session/set_config_option for Fast values
+ * - FAKE_ACP_CURSOR_PARAMETERIZED_MODELS=1
+ *                            → mirror Cursor compatibility-vs-parameterized
+ *                              model/config-option responses
+ * - FAKE_ACP_INITIAL_FAST    → set the initial Fast mode value
+ * - FAKE_ACP_REQUEST_LOG     → append each client request as JSON
  * - FAKE_ACP_HANG_MODEL_SWITCH=1
  *                            → never reply to model set_config_option / set_model
  * - FAKE_ACP_DEFAULT_EFFORTS → comma-separated thought_level values for fake/default
@@ -66,6 +73,10 @@ const unmappedReasoningConfig =
 const acceptNativeReasoning =
   process.env.FAKE_ACP_ACCEPT_NATIVE_REASONING === "1";
 const setConfigModelError = process.env.FAKE_ACP_SET_CONFIG_MODEL_ERROR === "1";
+const setConfigFastError = process.env.FAKE_ACP_SET_CONFIG_FAST_ERROR === "1";
+const cursorParameterizedModels =
+  process.env.FAKE_ACP_CURSOR_PARAMETERIZED_MODELS === "1";
+const requestLog = process.env.FAKE_ACP_REQUEST_LOG;
 const hangModelSwitch = process.env.FAKE_ACP_HANG_MODEL_SWITCH === "1";
 const hangInitialize = process.env.FAKE_ACP_HANG_INITIALIZE === "1";
 const defaultEfforts = (process.env.FAKE_ACP_DEFAULT_EFFORTS ?? "")
@@ -98,6 +109,8 @@ let activePromptId = null;
 let nextAgentRequestId = 1000;
 let selectedModel = "fake/default";
 let selectedEffort = "none";
+let selectedFast = process.env.FAKE_ACP_INITIAL_FAST ?? "false";
+let clientSupportsParameterizedModels = false;
 let authenticatedMethod = null;
 let activeSessionId = sessionId;
 const pendingClientRequests = new Map();
@@ -179,7 +192,79 @@ function effortOptionForModel(model) {
   };
 }
 
+function cursorModelOptions() {
+  return clientSupportsParameterizedModels
+    ? [
+        { value: "default", name: "Auto" },
+        { value: "composer-2.5", name: "Composer 2.5" },
+        { value: "grok-4.6", name: "Cursor Grok 4.6" },
+        { value: "grok-4.5", name: "Cursor Grok 4.5" },
+        { value: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+      ]
+    : [
+        { value: "default[]", name: "Auto" },
+        {
+          value: "composer-2.5[fast=true]",
+          name: "composer-2.5",
+        },
+        {
+          value: "grok-4.6[effort=high,fast=true]",
+          name: "grok-4.6",
+        },
+        {
+          value: "grok-4.5[effort=high,fast=true]",
+          name: "grok-4.5",
+        },
+      ];
+}
+
+function cursorConfigOptions() {
+  const models = cursorModelOptions();
+  if (!models.some((model) => model.value === selectedModel)) {
+    selectedModel = models[0].value;
+  }
+  const options = [
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue: selectedModel,
+      options: models,
+    },
+  ];
+  if (
+    clientSupportsParameterizedModels &&
+    (selectedModel.startsWith("grok-") || selectedModel === "claude-sonnet-4-6")
+  ) {
+    options.push(
+      {
+        id: "effort",
+        name: "Effort",
+        category: "thought_level",
+        type: "select",
+        currentValue: selectedEffort,
+        options: ["low", "medium", "high", "xhigh"].map((value) => ({
+          value,
+        })),
+      },
+      {
+        id: "fast",
+        name: "Fast",
+        category: "model_config",
+        type: "select",
+        currentValue: selectedFast,
+        options: [{ value: "false" }, { value: "true" }],
+      },
+    );
+  }
+  return options;
+}
+
 function configOptions() {
+  if (cursorParameterizedModels) {
+    return cursorConfigOptions();
+  }
   const options = [];
   if (modelConfig) {
     options.push(
@@ -214,7 +299,16 @@ function configState() {
   if (options !== undefined) {
     state.configOptions = options;
   }
-  if (modelsField) {
+  if (cursorParameterizedModels) {
+    const availableModels = cursorModelOptions();
+    state.models = {
+      currentModelId: selectedModel,
+      availableModels: availableModels.map((model) => ({
+        modelId: model.value,
+        name: model.name,
+      })),
+    };
+  } else if (modelsField) {
     state.models = {
       currentModelId: selectedModel,
       availableModels: fakeModels.map((model) => ({
@@ -345,6 +439,8 @@ async function handlePrompt(message) {
     notifyUpdate(messageChunk(`selected-model:${selectedModel}`));
   } else if (text.includes("echo-selected-effort")) {
     notifyUpdate(messageChunk(`selected-effort:${selectedEffort}`));
+  } else if (text.includes("echo-selected-fast")) {
+    notifyUpdate(messageChunk(`selected-fast:${selectedFast}`));
   } else if (text.includes("echo-auth-method")) {
     notifyUpdate(messageChunk(`auth-method:${authenticatedMethod ?? "none"}`));
   } else if (text.includes("echo-electron-run-as-node")) {
@@ -382,10 +478,21 @@ async function handlePrompt(message) {
 }
 
 async function handleMessage(message) {
+  if (requestLog) {
+    appendFileSync(requestLog, `${JSON.stringify(message)}\n`);
+  }
   switch (message.method) {
     case "initialize":
       if (hangInitialize) {
         return;
+      }
+      if (cursorParameterizedModels) {
+        clientSupportsParameterizedModels =
+          message.params?.clientCapabilities?._meta
+            ?.parameterizedModelPicker === true;
+        selectedModel = clientSupportsParameterizedModels
+          ? "default"
+          : "default[]";
       }
       send({
         jsonrpc: "2.0",
@@ -509,10 +616,13 @@ async function handleMessage(message) {
         return;
       }
       const modelId = message.params?.modelId;
+      const availableModels = cursorParameterizedModels
+        ? cursorModelOptions()
+        : fakeModels;
       if (
-        (!modelConfig && !modelsField) ||
+        (!cursorParameterizedModels && !modelConfig && !modelsField) ||
         typeof modelId !== "string" ||
-        !fakeModels.some((model) => model.value === modelId)
+        !availableModels.some((model) => model.value === modelId)
       ) {
         send({
           jsonrpc: "2.0",
@@ -540,10 +650,13 @@ async function handleMessage(message) {
           });
           return;
         }
+        const availableModels = cursorParameterizedModels
+          ? cursorModelOptions()
+          : fakeModels;
         if (
-          !modelConfig ||
+          (!cursorParameterizedModels && !modelConfig) ||
           typeof value !== "string" ||
-          !fakeModels.some((model) => model.value === value)
+          !availableModels.some((model) => model.value === value)
         ) {
           send({
             jsonrpc: "2.0",
@@ -557,9 +670,11 @@ async function handleMessage(message) {
         return;
       }
       if (configId === "effort") {
-        const efforts = effortsByModel.get(selectedModel);
+        const efforts = cursorParameterizedModels
+          ? ["low", "medium", "high", "xhigh"]
+          : effortsByModel.get(selectedModel);
         if (
-          !thoughtLevelConfig ||
+          (!cursorParameterizedModels && !thoughtLevelConfig) ||
           typeof value !== "string" ||
           !efforts?.includes(value)
         ) {
@@ -571,6 +686,27 @@ async function handleMessage(message) {
           return;
         }
         selectedEffort = value;
+        send({ jsonrpc: "2.0", id: message.id, result: configState() });
+        return;
+      }
+      if (configId === "fast" && cursorParameterizedModels) {
+        if (setConfigFastError) {
+          send({
+            jsonrpc: "2.0",
+            id: message.id,
+            error: { code: -32603, message: "fast config update failed" },
+          });
+          return;
+        }
+        if (value !== "false" && value !== "true") {
+          send({
+            jsonrpc: "2.0",
+            id: message.id,
+            error: { code: -32602, message: `fast mode not found: ${value}` },
+          });
+          return;
+        }
+        selectedFast = value;
         send({ jsonrpc: "2.0", id: message.id, result: configState() });
         return;
       }

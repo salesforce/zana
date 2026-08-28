@@ -13,9 +13,11 @@ import {
 } from './model-picker-search.js';
 import { providerIconForId } from './provider-icon.js';
 import { emptyModelsHint } from './harness-login.js';
+import { Skeleton } from '../../ui/Skeleton.js';
 
 const MODEL_SEARCH_MIN_OPTIONS = 5;
 const MENU_MIN_WIDTH = 208;
+const MODEL_LOADING_ROW_WIDTHS = ['80px', '112px', '96px', '128px'] as const;
 
 function ProviderMark({
   providerId,
@@ -218,10 +220,28 @@ export function ModelReasoningPicker({
           size={14}
         />
       </span>
-      <span className="model-reasoning-picker-trigger-model">{triggerModelBase}</span>
-      {triggerModelTag ? (
-        <span className="model-reasoning-picker-trigger-tag">{triggerModelTag}</span>
-      ) : null}
+      {modelIsLoading ? (
+        <>
+          <span className="sr-only">Loading models</span>
+          <Skeleton
+            data-model-loading-placeholder="trigger-model"
+            className="model-reasoning-picker-trigger-skel"
+            width="40px"
+          />
+          <Skeleton
+            data-model-loading-placeholder="trigger-reasoning"
+            className="model-reasoning-picker-trigger-skel"
+            width="32px"
+          />
+        </>
+      ) : (
+        <>
+          <span className="model-reasoning-picker-trigger-model">{triggerModelBase}</span>
+          {triggerModelTag ? (
+            <span className="model-reasoning-picker-trigger-tag">{triggerModelTag}</span>
+          ) : null}
+        </>
+      )}
       {disabled ? null : <ChevronDown size={14} aria-hidden="true" />}
     </button>
   );
@@ -284,7 +304,7 @@ export function ModelReasoningPicker({
           <div className="model-reasoning-picker-section">
             <div className="model-reasoning-picker-section-label">Model</div>
             {modelIsLoading ? (
-              <div className="model-reasoning-picker-hint">Loading models…</div>
+              <ModelPickerLoadingRows />
             ) : navRows.length === 0 ? (
               <div className="model-reasoning-picker-hint">{emptyModelsHint(selectedProviderId, modelLoadError)}</div>
             ) : navRows.map((row, index) => {
@@ -353,5 +373,23 @@ export function ModelReasoningPicker({
         document.body
       )}
     </>
+  );
+}
+
+function ModelPickerLoadingRows() {
+  return (
+    <div role="status" aria-label="Loading models" className="model-reasoning-picker-loading">
+      <span className="sr-only">Loading models</span>
+      {MODEL_LOADING_ROW_WIDTHS.map((width) => (
+        <div
+          key={width}
+          data-model-loading-row=""
+          aria-hidden
+          className="model-reasoning-picker-loading-row"
+        >
+          <Skeleton width={width} />
+        </div>
+      ))}
+    </div>
   );
 }

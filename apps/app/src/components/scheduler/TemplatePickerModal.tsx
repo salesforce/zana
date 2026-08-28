@@ -5,6 +5,7 @@ import type { ScheduleTemplate } from '@zana-ai/zcc-domain/product';
 import { useScheduleTemplates } from '../../store.js';
 import { Modal } from '../Modal.js';
 import { templateIcon, sourceLabel, PROFILE_LABEL } from './schedulerUtils.js';
+import { DelayedStencilList } from '../ui/Skeleton.js';
 
 interface TemplatePickerModalProps {
   onClose: () => void;
@@ -78,7 +79,7 @@ export function TemplatePickerModal({ onClose, onPick }: TemplatePickerModalProp
       }
     >
       {loading ? (
-        <div className="scheduler-empty">Loading templates…</div>
+        <DelayedStencilList label="Loading templates" className="scheduler-empty" />
       ) : filtered.length === 0 ? (
         <div className="scheduler-empty">
           <Sparkles size={28} className="scheduler-empty-icon" />

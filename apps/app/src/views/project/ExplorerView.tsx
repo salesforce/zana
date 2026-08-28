@@ -7,6 +7,7 @@ import type { FsEntry, GitBranch as GitBranchInfo, GitFileCode, GitShowResult, G
 import { useData, useUi } from '@/store';
 import { PromptModal } from '@/components/PromptModal';
 import { useAiEnhanceSelection } from '@/components/AiEnhanceSelection';
+import { DelayedStencilList } from '@/components/ui/Skeleton';
 import { useFileDrop } from '@/hooks/useFileDrop';
 import { useMonacoTheme } from '@/hooks/useMonacoTheme';
 import {
@@ -964,7 +965,7 @@ export function ExplorerView({ project, embedded = false }: Props) {
               />
             )
           ) : rootList === undefined ? (
-            <div className="tree-loading">Loading…</div>
+            <DelayedStencilList label="Loading files" className="tree-loading" />
           ) : rootList.length === 0 ? (
             <div className="tree-pane-empty">Empty directory.</div>
           ) : (

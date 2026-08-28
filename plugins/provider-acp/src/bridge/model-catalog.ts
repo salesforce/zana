@@ -377,6 +377,10 @@ function splitVariant(id: string): {
   };
 }
 
+export function agentModelFamilyId(id: string): string {
+  return splitVariant(id).familyKey;
+}
+
 // How the agent's display names spell each effort token, for stripping the
 // default variant's effort word out of the family display name.
 const EFFORT_DISPLAY_WORDS: Readonly<Record<string, string>> = {
@@ -569,26 +573,38 @@ export interface SplitPrimaryModelsResult {
 /**
  * Split the catalog into the picker's default list (families named in
  * `primaryModels`, by family id, in the declared order) and the collapsed
- * "more models" pool. Falls back to everything-primary when no name matches
- * — a renamed agent catalog must degrade to a full picker, never an empty
- * one. The default flag is re-anchored onto the primary list so the
- * picker's preselection never points at a hidden entry.
+ * "more models" pool. A primary id matches the family's default-variant id
+ * or any other variant of the same family (`cursor-grok-4.6-medium` still
+ * pins Grok 4.6 when the catalog's default variant is `-high`). Falls back
+ * to everything-primary when no name matches — a renamed agent catalog must
+ * degrade to a full picker, never an empty one. The default flag is
+ * re-anchored onto the primary list so the picker's preselection never
+ * points at a hidden entry.
  */
+function modelMatchesPrimary(modelId: string, primaryId: string): boolean {
+  if (modelId === primaryId) return true;
+  return splitVariant(modelId).familyKey === splitVariant(primaryId).familyKey;
+}
+
 export function splitPrimaryModels(
   catalogModels: readonly AvailableModel[],
   primaryModels: readonly string[],
 ): SplitPrimaryModelsResult {
-  const primaryIds = new Set(primaryModels);
   const modelsById = new Map(catalogModels.map((model) => [model.id, model]));
+  const seen = new Set<string>();
   const models = primaryModels.flatMap((id) => {
-    const model = modelsById.get(id);
-    return model ? [model] : [];
+    const model =
+      modelsById.get(id) ??
+      catalogModels.find((row) => modelMatchesPrimary(row.id, id));
+    if (!model || seen.has(model.id)) return [];
+    seen.add(model.id);
+    return [model];
   });
   if (models.length === 0) {
     return { models: [...catalogModels], selectedOnlyModels: [] };
   }
   const selectedOnlyModels = catalogModels.filter(
-    (model) => !primaryIds.has(model.id),
+    (model) => !primaryModels.some((id) => modelMatchesPrimary(model.id, id)),
   );
   if (models.some((model) => model.isDefault)) {
     return {

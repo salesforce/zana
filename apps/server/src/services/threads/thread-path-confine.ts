@@ -18,8 +18,8 @@ export function confinePathToRoot(root: string, candidate: string): string | nul
   return normalized;
 }
 
-export const DEFAULT_TIMELINE_SEGMENT_LIMIT = 200;
-export const MAX_TIMELINE_SEGMENT_LIMIT = 500;
+export const DEFAULT_TIMELINE_SEGMENT_LIMIT = 400;
+export const MAX_TIMELINE_SEGMENT_LIMIT = 2000;
 
 export function parseTimelineSegmentLimit(raw: string | null): number {
   if (!raw) return DEFAULT_TIMELINE_SEGMENT_LIMIT;
@@ -31,6 +31,13 @@ export function parseTimelineSegmentLimit(raw: string | null): number {
 export function parsePositiveInt(raw: string | null): number | undefined {
   if (!raw) return undefined;
   if (!/^[1-9]\d*$/.test(raw)) return undefined;
+  return Number(raw);
+}
+
+/** `afterSequence` is a high-water mark and may be `0` on an empty thread. */
+export function parseNonNegativeInt(raw: string | null): number | undefined {
+  if (!raw) return undefined;
+  if (!/^\d+$/.test(raw)) return undefined;
   return Number(raw);
 }
 

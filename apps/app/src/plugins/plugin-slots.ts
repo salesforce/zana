@@ -24,7 +24,8 @@ import type {
   PluginSidebarFooterActionRegistration,
   PluginThreadHeaderActionRegistration,
   PluginThreadListRegistration,
-  PluginThreadPanelActionRegistration
+  PluginThreadPanelActionRegistration,
+  PluginTimelineRendererRegistration
 } from '@zana-ai/zcc-plugin-sdk';
 import { collectPluginApp, emptyRegistrationSet, isPluginAppDefinition } from '@zana-ai/zcc-plugin-sdk';
 
@@ -55,6 +56,7 @@ function emptySnapshot() {
     fileOpeners: [] as PluginFileOpenerRegistration[],
     messageDirectives: [] as PluginMessageDirectiveRegistration[],
     messageActions: [] as PluginMessageActionRegistration[],
+    timelineRenderers: [] as PluginTimelineRendererRegistration[],
     commandPaletteActions: [] as PluginCommandPaletteActionRegistration[],
     providerIcons: [] as PluginProviderIconRegistration[],
     composerCustomizations: [] as ComposerCustomization[],
@@ -79,6 +81,7 @@ function rebuildSnapshot(): void {
     fileOpeners: orderedSets.flatMap((set) => set.fileOpeners),
     messageDirectives: orderedSets.flatMap((set) => set.messageDirectives),
     messageActions: orderedSets.flatMap((set) => set.messageActions),
+    timelineRenderers: orderedSets.flatMap((set) => set.timelineRenderers),
     commandPaletteActions: orderedSets.flatMap((set) => set.commandPaletteActions),
     providerIcons: orderedSets.flatMap((set) => set.providerIcons),
     composerCustomizations: orderedSets.flatMap((set) => set.composerCustomizations),
@@ -181,6 +184,10 @@ export function listMessageDirectives(): PluginMessageDirectiveRegistration[] {
 
 export function listMessageActions(): PluginMessageActionRegistration[] {
   return snapshot.messageActions;
+}
+
+export function listTimelineRenderers(): PluginTimelineRendererRegistration[] {
+  return snapshot.timelineRenderers;
 }
 
 export function listCommandPaletteActions(): PluginCommandPaletteActionRegistration[] {

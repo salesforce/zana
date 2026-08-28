@@ -118,6 +118,8 @@ export type {
   PluginFileOpenerRegistration,
   PluginMessageDirectiveRegistration,
   PluginMessageActionRegistration,
+  PluginTimelineRendererProps,
+  PluginTimelineRendererRegistration,
   PluginCommandPaletteActionRegistration,
   PluginCommandPaletteActionContext,
   PluginProviderIconRegistration,

@@ -28,6 +28,13 @@ export function consumePendingOpenFile(threadId: string): ThreadOpenFileIntent |
   return next;
 }
 
+export const THREAD_OPEN_FILE_EVENT = 'zcc-thread-open-file';
+
+export function dispatchThreadOpenFile(threadId: string, path: string, lineNumber: number | null = null): void {
+  if (typeof window === 'undefined' || !threadId || !path) return;
+  bufferThreadOpenFile(threadId, { source: 'workspace', path, lineNumber });
+  window.dispatchEvent(new CustomEvent(THREAD_OPEN_FILE_EVENT, { detail: { threadId } }));
+}
 export function parseThreadOpenFilePayload(payload: unknown): {
   threadId: string;
   file: ThreadOpenFileIntent | null;
@@ -86,9 +93,18 @@ export function useThreadOpenFileSignal({
       if (file) openTabRef.current(tabFromOpenFile(file));
     };
     drain();
-    return product.threads.onOpen((payload) => {
+    const onLocal = (event: Event) => {
+      const detail = (event as CustomEvent<{ threadId?: string }>).detail;
+      if (detail?.threadId === threadId) drain();
+    };
+    window.addEventListener(THREAD_OPEN_FILE_EVENT, onLocal);
+    const stopHost = product.threads.onOpen((payload) => {
       const parsed = parseThreadOpenFilePayload(payload);
       if (parsed?.threadId === threadId) drain();
     });
+    return () => {
+      window.removeEventListener(THREAD_OPEN_FILE_EVENT, onLocal);
+      stopHost();
+    };
   }, [environmentId, threadId]);
 }

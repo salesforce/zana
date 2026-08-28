@@ -63,7 +63,8 @@ describe('ThreadModal', () => {
     expect(modalSource).toContain('data-testid="thread-modal-header"');
     expect(modalSource).toContain('inspectorModalClassName(fullScreen)');
     expect(modalSource).toContain('className="modal-backdrop"');
-    expect(modalSource).toContain('className="modal-header agent-modal-header"');
+    expect(modalSource).toContain('className="modal-header agent-modal-header thread-modal-header"');
+    expect(modalSource).not.toContain('agent-modal-title');
     expect(modalSource).toContain('className="agent-modal-body"');
     expect(modalSource).toContain('embedded');
     expect(modalSource).toContain('<ThreadDetail threadId={threadId} embedded modal />');
@@ -72,6 +73,7 @@ describe('ThreadModal', () => {
     expect(css).toContain('.thread-detail-view--modal');
     expect(css).toContain('.thread-detail-split {');
     expect(css).toContain('.agent-terminal-modal > .modal-header');
+    expect(css).toContain('.agent-modal-header.thread-modal-header');
   });
 
   it('is opened from the kanban inspect path and hosted beside the agent modal', () => {
@@ -94,6 +96,8 @@ describe('ThreadModal', () => {
     expect(html).toContain('data-testid="thread-modal"');
     expect(html).toContain('aria-label="Review the board"');
     expect(html).toContain('data-testid="thread-modal-header"');
+    expect(html).not.toContain('agent-modal-title');
+    expect(html).not.toContain('Review the board</span>');
     expect(html).toContain('data-testid="thread-detail"');
     expect(html).toContain('data-thread-id="t1"');
     expect(html).toContain('data-embedded="true"');

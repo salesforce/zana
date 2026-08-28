@@ -1,8 +1,12 @@
-import { isValidElement, type ReactNode } from 'react';
-import ReactMarkdown from 'react-markdown';
+import { Children, isValidElement, type ReactNode } from 'react';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
+import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
 import rehypeHighlight from 'rehype-highlight';
+import rehypeKatex from 'rehype-katex';
 import 'highlight.js/styles/github-dark.css';
+import 'katex/dist/katex.min.css';
 import { MermaidDiagram } from './MermaidDiagram.js';
 import { unwrapBareFence } from '../lib/markdown.js';
 import { parseFrontMatter, type ParsedFrontMatter } from '@zana-ai/zcc-extension-sdk/helpers';
@@ -14,6 +18,10 @@ import {
   rewriteLocalhostLinkHref
 } from '../lib/localhost-link-rewrite-preference.js';
 import { handleHttpLinkClick } from '../lib/in-app-browser-link-preference.js';
+import { parseLocalFileMarkdownHref } from './markdown-local-file.js';
+import { parseThreadMentionHref, remarkThreadMentions } from './markdown-thread-mentions.js';
+import { dispatchThreadOpenFile } from './thread/secondary-panel/useThreadOpenFileSignal.js';
+import { getThreadRoutePath } from '../lib/route-paths.js';
 
 /**
  * Shared markdown / doc rendering for the inbox.
@@ -122,11 +130,19 @@ function formatCreatedAt(ms: number | undefined): string {
 export function MarkdownContent({
   text,
   mermaidTheme,
-  exportable = false
+  exportable = false,
+  breaks = false,
+  threadMentions = false,
+  threadId,
+  projectId
 }: {
   text: string;
   mermaidTheme?: 'dark' | 'default';
   exportable?: boolean;
+  breaks?: boolean;
+  threadMentions?: boolean;
+  threadId?: string;
+  projectId?: string | null;
 }) {
   const body = unwrapBareFence(text);
   const [rewriteLocalhost] = useBooleanPreference(
@@ -134,19 +150,62 @@ export function MarkdownContent({
     REWRITE_LOCALHOST_LINKS_DEFAULT
   );
   const hostname = typeof window !== 'undefined' ? window.location.hostname : undefined;
+  const remarkPlugins = [
+    remarkGfm,
+    remarkMath,
+    ...(breaks ? [remarkBreaks] : []),
+    ...(threadMentions ? [remarkThreadMentions] : [])
+  ];
   return (
     <div className="inbox-md">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={remarkPlugins}
+        urlTransform={(url) => {
+          if (url.startsWith('zcc-thread:') || url.startsWith('file:')) return url;
+          return defaultUrlTransform(url);
+        }}
         // Syntax-highlight fenced code blocks. `ignoreMissing` keeps unknown
         // languages (incl. ```mermaid, which the pre override intercepts
         // before this matters) from throwing — they just render unhighlighted.
-        rehypePlugins={[[rehypeHighlight, { ignoreMissing: true }]]}
+        rehypePlugins={[
+          [rehypeHighlight, { ignoreMissing: true }],
+          // html-only avoids KaTeX's sibling MathML+HTML trees, which React
+          // warns about as an unkeyed list.
+          [rehypeKatex, { throwOnError: false, output: 'html' }]
+        ]}
         components={{
           // Open links in a new window — Electron treats that as the OS
           // default browser. Avoid destructuring `node` (deprecated in
           // react-markdown v10).
           a: (props) => {
+            const mentionId = parseThreadMentionHref(
+              typeof props.href === 'string' ? props.href : undefined
+            );
+            if (mentionId) {
+              return (
+                <a
+                  className="thread-mention-pill"
+                  href={getThreadRoutePath(mentionId, projectId ?? undefined)}
+                >
+                  {props.children}
+                </a>
+              );
+            }
+            const localPath = parseLocalFileMarkdownHref(
+              typeof props.href === 'string' ? props.href : undefined
+            );
+            if (localPath) {
+              return (
+                <a
+                  {...props}
+                  href={props.href}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    if (threadId) dispatchThreadOpenFile(threadId, localPath);
+                  }}
+                />
+              );
+            }
             const href = rewriteLocalhostLinkHref({
               currentHostname: hostname,
               enabled: rewriteLocalhost,
@@ -169,9 +228,9 @@ export function MarkdownContent({
           },
           // GFM tables get a wrapper so horizontal overflow scrolls within
           // the comments block instead of stretching the whole panel.
-          table: (props) => (
+          table: ({ children, ...props }) => (
             <div className="inbox-md-table-wrap">
-              <table {...props} />
+              <table {...props}>{Children.toArray(children)}</table>
             </div>
           ),
           // Intercept ```mermaid fences and render them as diagrams. A

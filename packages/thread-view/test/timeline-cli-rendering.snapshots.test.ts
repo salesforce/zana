@@ -2451,12 +2451,17 @@ describe("timeline CLI rendering snapshots", () => {
     ]);
 
     expect(messageKinds(timeline.messages)).toEqual([
+      "plan-steps",
       "web-search",
       "file-edit",
       "assistant-text",
     ]);
     expect(timeline.text).toMatchInlineSnapshot(`
-      "── Researched 1 search query, edited 1 file ────────────────
+      "── Ran 1 tool, researched 1 search query, edited 1 file ────
+        ── Updated plan Patch the projection
+          Read the route
+          Patch the projection
+          Run focused tests
         ── Ran web search: React suspense docs
         ── Edited /repo/packages/core-ui/src/timeline.ts +1 -1
           @@ -1 +1 @@

@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Code2, Download, Expand, FileImage, Minus, Plus, RotateCcw, X } from 'lucide-react';
 import { rasterizeSvgString, downloadBlob } from '../lib/mermaidExport.js';
+import { mermaidSvgLayout } from '../lib/mermaid-svg-layout.js';
 import { Modal } from './Modal.js';
 
 /**
@@ -52,10 +53,20 @@ async function renderToSvg(theme: MermaidTheme, id: string, code: string): Promi
     startOnLoad: false,
     theme,
     securityLevel: 'strict',
-    fontFamily: 'inherit'
+    fontFamily: 'inherit',
+    // Pixel-sized SVG (not width=100%). Combined with mermaidSvgLayout this
+    // keeps the graph from oscillating inside a fit-content thread bubble.
+    flowchart: { useMaxWidth: false },
+    sequence: { useMaxWidth: false },
+    suppressErrorRendering: true
   });
-  const { svg } = await mermaid.render(id, code);
-  return svg;
+  try {
+    const { svg } = await mermaid.render(id, code);
+    return svg;
+  } finally {
+    document.getElementById(id)?.remove();
+    document.getElementById(`d${id}`)?.remove();
+  }
 }
 
 /**
@@ -111,17 +122,23 @@ export function MermaidDiagram({
   const [showSource, setShowSource] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const layout = useMemo(() => (svg ? mermaidSvgLayout(svg) : null), [svg]);
 
   useEffect(() => {
     let cancelled = false;
-    setSvg(null);
+    // Keep the last good SVG on screen while a new render runs. Clearing it
+    // flashes "Rendering diagram…" (and a height jump) on every streaming
+    // token or theme pass — the blink the thread transcript was showing.
     setError(false);
 
     void (async () => {
       try {
         const id = `inbox-mermaid-${renderSeq++}`;
         const rendered = await renderToSvg(theme ?? currentTheme(), id, code);
-        if (!cancelled) setSvg(rendered);
+        if (!cancelled) {
+          setSvg(rendered);
+          setError(false);
+        }
       } catch {
         if (!cancelled) setError(true);
       }
@@ -137,14 +154,14 @@ export function MermaidDiagram({
   // export counts these to know when ALL expected diagrams have finished — a
   // plain "no loading node visible" check can't tell "done" from "not yet
   // mounted" and would snapshot the placeholder. See renderReportHtml.
-  if (error) {
+  if (error && svg === null) {
     return (
       <pre className="inbox-md-code" data-mermaid="1" data-mermaid-state="settled">
         {code}
       </pre>
     );
   }
-  if (svg === null) {
+  if (svg === null || layout === null) {
     return (
       <div className="inbox-mermaid-loading" data-mermaid="1" data-mermaid-state="loading">
         Rendering diagram…
@@ -167,8 +184,13 @@ export function MermaidDiagram({
         <pre className="inbox-md-code inbox-mermaid-source">{code}</pre>
       ) : (
         // mermaid output is its own trusted SVG (securityLevel 'strict'
-        // sanitizes the diagram source); inject it as markup.
-        <div dangerouslySetInnerHTML={{ __html: svg }} />
+        // sanitizes the diagram source); inject it as markup. Aspect-ratio
+        // on the frame is the layout lock: the SVG cannot change the box.
+        <div
+          className={`inbox-mermaid-frame${layout.aspectRatio ? ' is-sized' : ''}`}
+          style={layout.aspectRatio ? { aspectRatio: layout.aspectRatio } : undefined}
+          dangerouslySetInnerHTML={{ __html: layout.svg }}
+        />
       )}
       {expanded && (
         <MermaidExpandedView

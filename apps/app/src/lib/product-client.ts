@@ -606,6 +606,9 @@ function httpProduct(): Pick<
         if (query?.segmentLimit) params.set('segmentLimit', String(query.segmentLimit));
         if (query?.beforeAnchorSeq) params.set('beforeAnchorSeq', String(query.beforeAnchorSeq));
         if (query?.beforeAnchorId) params.set('beforeAnchorId', query.beforeAnchorId);
+        if (query?.afterSequence) params.set('afterSequence', query.afterSequence);
+        if (query?.includeNestedRows) params.set('includeNestedRows', query.includeNestedRows);
+        if (query?.summaryOnly) params.set('summaryOnly', query.summaryOnly);
         const suffix = params.size ? `?${params.toString()}` : '';
         return apiJson(`/threads/${encodeURIComponent(threadId)}/timeline${suffix}`);
       },
@@ -620,6 +623,44 @@ function httpProduct(): Pick<
         }),
       conversationOutline: async (threadId) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/conversation-outline`),
+      timelineTurnSummaryDetails: async (threadId, query) => {
+        const params = new URLSearchParams();
+        params.set('turnId', query.turnId);
+        params.set('sourceSeqStart', query.sourceSeqStart);
+        params.set('sourceSeqEnd', query.sourceSeqEnd);
+        return apiJson(`/threads/${encodeURIComponent(threadId)}/timeline/turn-summary-details?${params.toString()}`);
+      },
+      queuedMessages: async (threadId) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/queued-messages`),
+      createQueuedMessage: async (threadId, body) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/queued-messages`, {
+          method: 'POST',
+          body: JSON.stringify(body)
+        }),
+      updateQueuedMessage: async (threadId, queuedMessageId, body) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/queued-messages/${encodeURIComponent(queuedMessageId)}`, {
+          method: 'PATCH',
+          body: JSON.stringify(body)
+        }),
+      deleteQueuedMessage: async (threadId, queuedMessageId) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/queued-messages/${encodeURIComponent(queuedMessageId)}`, {
+          method: 'DELETE'
+        }),
+      sendQueuedMessage: async (threadId, queuedMessageId, mode) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/queued-messages/${encodeURIComponent(queuedMessageId)}/send`, {
+          method: 'POST',
+          body: JSON.stringify({ mode })
+        }),
+      reorderQueuedMessage: async (threadId, queuedMessageId, previousQueuedMessageId) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/queued-messages/${encodeURIComponent(queuedMessageId)}/order`, {
+          method: 'PATCH',
+          body: JSON.stringify({ previousQueuedMessageId })
+        }),
+      editMessage: async (threadId, body) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/edit-message`, {
+          method: 'POST',
+          body: JSON.stringify(body)
+        }),
       hostFileContent: async (threadId, path) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/host-files/content?path=${encodeURIComponent(path)}`),
       storageFiles: async (threadId) =>
@@ -672,11 +713,11 @@ function httpProduct(): Pick<
         });
         return body;
       },
-      fork: async (threadId) => {
+      fork: async (threadId, options) => {
         const response = await fetchWithAppSurface(`/api/v1/threads/${encodeURIComponent(threadId)}/fork`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: '{}'
+          body: JSON.stringify(options?.sourceSeqEnd != null ? { sourceSeqEnd: options.sourceSeqEnd } : {})
         });
         return (await response.json()) as Awaited<ReturnType<CcApi['threads']['fork']>>;
       }

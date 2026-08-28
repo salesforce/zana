@@ -1,44 +1,52 @@
 import { useEffect, useState } from 'react';
-import { FileText } from 'lucide-react';
+import { FileText, HardDrive } from 'lucide-react';
 import { product } from '../../../lib/product-client.js';
 import { applyIfCurrent } from './threadSecondaryPanelLogic.js';
+import { StencilList } from '../../ui/Skeleton.js';
 
-export function ThreadStorageBrowser({
-  threadId,
+export type ThreadStorageFile = { path: string; name: string };
+
+export function storageStatusLabel(
+  files: ThreadStorageFile[] | null,
+  error: string | null,
+  truncated = false
+): string {
+  if (error) return error;
+  if (files === null) return 'Loading…';
+  if (files.length === 0) return 'No files yet.';
+  if (truncated) return `${files.length}+ files`;
+  return files.length === 1 ? '1 file' : `${files.length} files`;
+}
+
+export function ThreadStorageView({
+  files,
+  error = null,
+  truncated = false,
   onOpenFile
 }: {
-  threadId: string;
+  files: ThreadStorageFile[] | null;
+  error?: string | null;
+  truncated?: boolean;
   onOpenFile?: (path: string, title: string) => void;
 }) {
-  const [files, setFiles] = useState<Array<{ path: string; name: string }> | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setError(null);
-    void product.threads.storageFiles(threadId).then((next) => {
-      applyIfCurrent(cancelled, next.files, setFiles);
-    }).catch((err: unknown) => {
-      if (!cancelled) {
-        setError(err instanceof Error ? err.message : 'Could not load storage');
-        setFiles([]);
-      }
-    });
-    return () => { cancelled = true; };
-  }, [threadId]);
-
   const rows = files ?? [];
+  const loading = files === null && !error;
+  const status = storageStatusLabel(files, error, truncated);
   return (
     <div className="thread-info-storage" data-testid="thread-info-storage">
-      <h3>Storage</h3>
-      {error ? (
-        <p className="thread-detail-empty">{error}</p>
-      ) : files === null ? (
-        <p className="thread-detail-empty">Loading files…</p>
-      ) : rows.length === 0 ? (
-        <p className="thread-detail-empty">No files yet.</p>
-      ) : (
-        <ul>
+      <div className="thread-info-row">
+        <div className="thread-info-label">
+          <span className="thread-info-icon" aria-hidden="true"><HardDrive size={14} /></span>
+          <span>Storage</span>
+        </div>
+        <div className="thread-info-value" title={error ?? undefined}>
+          {loading ? null : status}
+        </div>
+      </div>
+      {loading ? (
+        <StencilList label="Loading storage" widths={['72%', '58%', '80%']} />
+      ) : rows.length > 0 ? (
+        <ul className="thread-info-storage-files" aria-label="Storage files">
           {rows.map((file) => (
             <li key={file.path}>
               <button
@@ -51,8 +59,49 @@ export function ThreadStorageBrowser({
               </button>
             </li>
           ))}
+          {truncated ? <li key="thread-storage-more" className="thread-info-file-more">More files…</li> : null}
         </ul>
-      )}
+      ) : null}
     </div>
+  );
+}
+
+export function ThreadStorageBrowser({
+  threadId,
+  onOpenFile
+}: {
+  threadId: string;
+  onOpenFile?: (path: string, title: string) => void;
+}) {
+  const [files, setFiles] = useState<ThreadStorageFile[] | null>(null);
+  const [truncated, setTruncated] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setError(null);
+    setFiles(null);
+    setTruncated(false);
+    void product.threads.storageFiles(threadId).then((next) => {
+      applyIfCurrent(cancelled, next, (listing) => {
+        setFiles(listing.files);
+        setTruncated(listing.truncated);
+      });
+    }).catch((err: unknown) => {
+      if (!cancelled) {
+        setError(err instanceof Error ? err.message : 'Could not load storage');
+        setFiles([]);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [threadId]);
+
+  return (
+    <ThreadStorageView
+      files={files}
+      truncated={truncated}
+      error={error}
+      onOpenFile={onOpenFile}
+    />
   );
 }

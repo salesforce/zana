@@ -54,7 +54,13 @@ import { copyText } from '../../lib/copy-text.js';
 import { getThreadRoutePath } from '../../lib/route-paths.js';
 import { FleetKindChip } from '../FleetKindChip.js';
 import { ProviderIcon } from '../thread/pickers/ProviderIcon.js';
-import { railThreadsForProject, threadIsLiveForRail, threadRailStatus, threadTitle } from '../fleet-item.js';
+import {
+  railThreadsForProject,
+  threadIsLiveForRail,
+  threadRailStatus,
+  threadRailStatusClass,
+  threadTitle
+} from '../fleet-item.js';
 import { POST_DRAG_CLICK_SUPPRESS_MS, suppressPostDragClick } from '../../lib/suppress-post-drag-click.js';
 import { composerProjectLabel } from '../composer-project-default.js';
 
@@ -750,9 +756,7 @@ export function ProjectsList({
                         <span className="project-terminal-text">
                           <span className="project-terminal-name">{title}</span>
                           <span className="project-terminal-detail">
-                            <span className={
-                              status === 'Needs you' || status === 'Error' ? 'agents-row-needs-you' : undefined
-                            }>
+                            <span className={threadRailStatusClass(status)}>
                               {status}
                             </span>
                             {' · Agent'}

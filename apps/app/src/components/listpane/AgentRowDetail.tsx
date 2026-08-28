@@ -1,5 +1,6 @@
 import { useAgentStatus, useSubagents } from '../../store.js';
 import type { TerminalSession, AgentState } from '@zana-ai/zcc-domain/product';
+import { agentRowStateClass } from '../fleet-item.js';
 
 /** Compact state words for an agent's detail subtitle (the verbose
  *  AGENT_STATE_LABEL reads as a tooltip; the inline line stays terse). */
@@ -48,11 +49,7 @@ export function AgentRowDetail({ session }: { session: TerminalSession }) {
   if (!stateText && detailParts.length === 0) return null;
   return (
     <span className="project-terminal-detail">
-      {stateText ? (
-        <span className={state === 'blocked' && !exited ? 'agents-row-needs-you' : undefined}>
-          {stateText}
-        </span>
-      ) : null}
+      {stateText ? <span className={agentRowStateClass(state, exited)}>{stateText}</span> : null}
       {stateText && detailParts.length > 0 ? ' · ' : null}
       {detailParts.join(' · ')}
     </span>

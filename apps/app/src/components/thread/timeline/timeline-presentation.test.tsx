@@ -29,11 +29,16 @@ describe('timeline title helpers', () => {
       errorCount: 1,
       interruptedCount: 2
     }, 0)).toBe('1 error, 2 interrupted');
+    expect(decorationText({
+      kind: 'summary-status',
+      errorCount: 2,
+      interruptedCount: 0
+    }, 0)).toBe('2 errors');
     expect(decorationText({ kind: 'duration', startedAt: 0, completedAt: 1000, em: false }, 0)).toEqual(expect.any(String));
     expect(titleSegmentClass({ em: true, accent: 'file', truncate: true, shimmer: true }))
       .toBe('is-em is-shimmer is-truncate accent-file');
     expect(isPastWorkRow({ kind: 'work', status: 'completed' })).toBe(true);
-    expect(isPastWorkRow({ kind: 'system', status: 'error' })).toBe(true);
+    expect(isPastWorkRow({ kind: 'system', status: 'error' })).toBe(false);
     expect(isPastWorkRow({ kind: 'conversation' })).toBe(false);
   });
 });
@@ -248,7 +253,8 @@ describe('WorkRowBody', () => {
             id: 'q',
             prompt: 'Continue?',
             multiSelect: false,
-            allowFreeText: true
+            allowFreeText: true,
+            options: [{ value: 'yes', label: 'Yes, ship it' }]
           }],
           answers: { q: { selected: ['yes'], freeText: 'ship it' } },
           statusReason: null
@@ -256,7 +262,7 @@ describe('WorkRowBody', () => {
       />
     );
     expect(answered).toContain('Continue?');
-    expect(answered).toContain('yes');
+    expect(answered).toContain('Yes, ship it');
     expect(answered).toContain('ship it');
     const approval = renderToStaticMarkup(
       <WorkRowBody row={{
@@ -270,8 +276,7 @@ describe('WorkRowBody', () => {
         target: { itemId: 'item', toolName: 'Edit' }
       }} />
     );
-    expect(approval).toContain('Waiting for approval');
-    expect(approval).toContain('thread-approval-row');
+    expect(approval).toBe('');
   });
 
   it('renders tool args and denied approvals without a fake approve control', () => {
@@ -303,7 +308,7 @@ describe('WorkRowBody', () => {
         target: { itemId: 'item', toolName: null }
       }} />
     );
-    expect(denied).toContain('Denied');
+    expect(denied).toBe('');
     expect(denied).not.toContain('Approve');
   });
 
@@ -426,6 +431,56 @@ describe('conversation and banners', () => {
     );
     expect(html).toContain('composer-image-thumbs');
     expect(html).toContain('/api/v1/projects/proj-1/attachments/content?path=shot-1.png');
+  });
+
+  it('offers edit on idle user messages and fork/send-to-main on assistant child threads', () => {
+    const user = renderToStaticMarkup(
+      <ConversationRow
+        threadId="t1"
+        threadIdle
+        onCopy={() => undefined}
+        row={{
+          ...workBase,
+          id: 'u-edit',
+          kind: 'conversation',
+          role: 'user',
+          text: 'Fix it',
+          attachments: null,
+          initiator: 'user',
+          senderThreadId: null,
+          systemMessageKind: 'unlabeled',
+          systemMessageSubject: null,
+          turnRequest: { isGrouped: false, kind: 'message', status: 'accepted' },
+          mentions: []
+        }}
+      />
+    );
+    expect(user).toContain('thread-edit-message');
+    expect(user).not.toContain('thread-fork-message');
+    const assistant = renderToStaticMarkup(
+      <ConversationRow
+        threadId="t1"
+        parentThreadId="parent"
+        row={{
+          ...workBase,
+          id: 'a-fork',
+          kind: 'conversation',
+          role: 'assistant',
+          text: 'Done.',
+          attachments: null,
+          initiator: 'agent',
+          senderThreadId: null,
+          systemMessageKind: 'unlabeled',
+          systemMessageSubject: null,
+          turnRequest: { isGrouped: false, kind: 'message', status: 'accepted' },
+          mentions: []
+        }}
+      />
+    );
+    expect(assistant).toContain('thread-fork-message');
+    expect(assistant).toContain('thread-send-to-main');
+    expect(assistant).toContain('thread-timeline-bubble');
+    expect(assistant).toContain('thread-timeline-row is-assistant');
   });
 
   it('skips absolute local image paths that the renderer cannot fetch', () => {

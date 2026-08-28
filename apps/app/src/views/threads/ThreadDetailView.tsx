@@ -1,21 +1,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { PanelRight } from 'lucide-react';
-import type { ActiveThinking, ThreadTimelineGoal, ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
-import type { ThreadContextWindowUsage, TimelineRow } from '@zana-ai/zcc-server-contract';
-import type { TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
+import type { ActiveThinking, ThreadTimelineGoal, ThreadTimelineModelFallback, ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
+import { applyTimelineDelta, type ThreadContextWindowUsage, type TimelineDelta, type TimelineRow } from '@zana-ai/zcc-server-contract';
+import { buildTimelineViewRows, type TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
 import { product } from '../../lib/product-client.js';
 import { ThreadCommandComposer } from '../../components/ThreadCommandComposer.js';
 import { ThreadTimeline } from '../../components/thread/ThreadTimeline.js';
 import { ThreadDiffPanel } from '../../components/thread/ThreadDiffPanel.js';
 import { ThreadWorkspaceBanner } from '../../components/thread/ThreadWorkspaceBanner.js';
 import {
-  isBusyThreadStatus,
   timelineHasInFlightRetry,
   timelineRowsAwaitUser
 } from '../../components/thread/thread-timeline-model.js';
-import { ThreadDetailHeading, ThreadPromptModeCard, ThreadTodoCard } from '../../components/thread/timeline/ThreadBanners.js';
+import { ThreadDetailHeading, ThreadPromptModeCard, ThreadStatusBadge, ThreadTodoCard } from '../../components/thread/timeline/ThreadBanners.js';
+import {
+  BackgroundCommandsCard,
+  ModelFallbackCard,
+  PromptContextBanner,
+  QueuedMessagesCard
+} from '../../components/thread/timeline/ComposerStackCards.js';
 import { ThreadDetailOverflow } from '../../components/thread/ThreadDetailOverflow.js';
+import { ThreadDetailSearch } from '../../components/thread/ThreadDetailSearch.js';
 import { createCoalescedRunner } from '../../lib/coalesced-runner.js';
 import { getThreadRoutePath } from '../../lib/route-paths.js';
 import { useRouteState } from '../../hooks/useRouteState.js';
@@ -53,8 +59,25 @@ import {
 } from '../../components/thread/secondary-panel/threadSecondaryPanelState.js';
 import { getDesktopBrowserApi } from '../../lib/desktop-browser.js';
 import { getBrowserUrlHost } from '../../lib/browser-url.js';
+import {
+  buildOptimisticUserTimelineRow,
+  hasConfirmedStopRow,
+  mergeOptimisticTimelineRows,
+  mergePendingStopRow
+} from '../../components/thread/timeline/optimistic-timeline-row.js';
+import {
+  THREAD_OPTIMISTIC_USER_EVENT,
+  THREAD_STOP_REQUESTED_EVENT
+} from '../../components/thread/timeline/thread-optimistic-events.js';
+import {
+  SEARCH_LOAD_OLDER_CAP,
+  findDeepestTimelineSearchHit,
+  timelineContainsRowId,
+  type TimelineSearchHit
+} from '../../components/thread/timeline/thread-search.js';
 
-const INITIAL_SEGMENT_LIMIT = 200;
+const INITIAL_SEGMENT_LIMIT = 400;
+const TIMELINE_DELTA_DEBOUNCE_MS = 100;
 
 export function ThreadDetailView() {
   const { threadId } = useParams<{ threadId: string }>();
@@ -99,6 +122,9 @@ export function ThreadDetail({
   const [todos, setTodos] = useState<ThreadTimelinePendingTodos | null>(null);
   const [goal, setGoal] = useState<ThreadTimelineGoal | null>(null);
   const [workflows, setWorkflows] = useState<TimelineViewWorkflowWorkRow[]>([]);
+  const [backgroundCommands, setBackgroundCommands] = useState<TimelineViewWorkflowWorkRow[]>([]);
+  const [modelFallback, setModelFallback] = useState<ThreadTimelineModelFallback | null>(null);
+  const [parentThreadId, setParentThreadId] = useState<string | null>(null);
   const [promptMode, setPromptMode] = useState<{ mode: string; prompt?: string } | null>(null);
   const [contextWindow, setContextWindow] = useState<ThreadContextWindowUsage | null>(null);
   const [lastReadSeq, setLastReadSeq] = useState<number | null>(null);
@@ -109,6 +135,16 @@ export function ThreadDetail({
   const [planExpanded, setPlanExpanded] = useState(false);
   const [todoExpanded, setTodoExpanded] = useState(false);
   const [planExitPending, setPlanExitPending] = useState(false);
+  const [optimisticRow, setOptimisticRow] = useState<TimelineRow | null>(null);
+  const [isStopping, setIsStopping] = useState(false);
+  const [stoppingAnchorAt, setStoppingAnchorAt] = useState(0);
+  const [searchDraft, setSearchDraft] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchHit, setSearchHit] = useState<TimelineSearchHit | null>(null);
+  const [searchLoadAttempts, setSearchLoadAttempts] = useState(0);
+  const rowsRef = useRef<TimelineRow[]>([]);
+  const maxSeqRef = useRef(0);
+  const loadedRef = useRef(false);
   useThreadOpenFileSignal({
     threadId,
     environmentId,
@@ -122,17 +158,128 @@ export function ThreadDetail({
     }
   });
 
+  const displayRows = useMemo(() => {
+    const withOptimistic = mergeOptimisticTimelineRows(rows, optimisticRow);
+    return mergePendingStopRow(withOptimistic, { threadId, isStopping, stoppingAnchorAt });
+  }, [isStopping, optimisticRow, rows, stoppingAnchorAt, threadId]);
+
+  const forceExpandedRowIds = useMemo(() => {
+    if (!searchHit) return undefined;
+    return new Set([...searchHit.ancestorIds, searchHit.id]);
+  }, [searchHit]);
+
+  useEffect(() => {
+    const onOptimistic = (event: Event) => {
+      const detail = (event as CustomEvent<{ threadId?: string; text?: string | null }>).detail;
+      if (detail?.threadId !== threadId) return;
+      if (!detail.text) {
+        setOptimisticRow(null);
+        return;
+      }
+      setOptimisticRow(buildOptimisticUserTimelineRow({ threadId, text: detail.text }));
+    };
+    const onStop = (event: Event) => {
+      const detail = (event as CustomEvent<{ threadId?: string }>).detail;
+      if (detail?.threadId !== threadId) return;
+      setIsStopping(true);
+      setStoppingAnchorAt(Date.now());
+    };
+    window.addEventListener(THREAD_OPTIMISTIC_USER_EVENT, onOptimistic);
+    window.addEventListener(THREAD_STOP_REQUESTED_EVENT, onStop);
+    return () => {
+      window.removeEventListener(THREAD_OPTIMISTIC_USER_EVENT, onOptimistic);
+      window.removeEventListener(THREAD_STOP_REQUESTED_EVENT, onStop);
+    };
+  }, [threadId]);
+
+  useEffect(() => {
+    if (!optimisticRow) return;
+    const stillShown = mergeOptimisticTimelineRows(rows, optimisticRow).some((row) => row.id === optimisticRow.id);
+    if (!stillShown) setOptimisticRow(null);
+  }, [optimisticRow, rows]);
+
+  useEffect(() => {
+    if (isStopping && hasConfirmedStopRow(rows)) setIsStopping(false);
+  }, [isStopping, rows]);
+
+  useEffect(() => {
+    if (!searchHit || !searchQuery) return;
+    const viewRows = buildTimelineViewRows(displayRows);
+    const next = findDeepestTimelineSearchHit(viewRows, searchQuery);
+    if (next && (next.id !== searchHit.id || next.ancestorIds.join() !== searchHit.ancestorIds.join())) {
+      setSearchHit(next);
+    }
+  }, [displayRows, searchHit, searchQuery]);
+
+  useEffect(() => {
+    if (!searchHit || searchLoadAttempts <= 0) return;
+    if (timelineContainsRowId(buildTimelineViewRows(displayRows), searchHit.id)) return;
+    if (!hasOlderRows || searchLoadAttempts >= SEARCH_LOAD_OLDER_CAP) return;
+    setSearchLoadAttempts((current) => current + 1);
+    setLoadingOlder(true);
+    setSegmentLimit((current) => current + INITIAL_SEGMENT_LIMIT);
+  }, [displayRows, hasOlderRows, searchHit]);
+
   useEffect(() => {
     if (!threadId) return;
     let cancelled = false;
-    let poll: number | null = null;
+    let debounceTimer: number | null = null;
+    rowsRef.current = [];
+    maxSeqRef.current = 0;
+    loadedRef.current = false;
+
+    const applyTimeline = (
+      timeline: Awaited<ReturnType<typeof product.threads.timeline>>,
+      nextRows: TimelineRow[]
+    ) => {
+      rowsRef.current = nextRows;
+      maxSeqRef.current = typeof timeline.maxSeq === 'number' ? timeline.maxSeq : 0;
+      loadedRef.current = true;
+      setRows(nextRows);
+      setThinking((timeline.activeThinking as ActiveThinking | null) ?? null);
+      setTodos((timeline.pendingTodos as ThreadTimelinePendingTodos | null) ?? null);
+      setGoal((timeline.goal as ThreadTimelineGoal | null) ?? null);
+      setWorkflows((timeline.activeWorkflows as TimelineViewWorkflowWorkRow[]) ?? []);
+      setBackgroundCommands((timeline.activeBackgroundCommands as TimelineViewWorkflowWorkRow[]) ?? []);
+      setModelFallback((timeline.modelFallback as ThreadTimelineModelFallback | null) ?? null);
+      setPromptMode((timeline.activePromptMode as { mode: string; prompt?: string } | null) ?? null);
+      setContextWindow((timeline.contextWindowUsage as ThreadContextWindowUsage | null) ?? null);
+      setLastReadSeq(typeof timeline.lastReadSeq === 'number' ? timeline.lastReadSeq : null);
+      setHasOlderRows(Boolean(timeline.timelinePage?.hasOlderRows));
+      return nextRows;
+    };
+
+    const loadTimeline = async (forceFull: boolean): Promise<{
+      timeline: Awaited<ReturnType<typeof product.threads.timeline>>;
+      nextRows: TimelineRow[];
+    }> => {
+      const useDelta = !forceFull && loadedRef.current;
+      const timeline = await product.threads.timeline(threadId, {
+        segmentLimit,
+        afterSequence: useDelta ? String(maxSeqRef.current) : undefined,
+        includeNestedRows: 'false',
+        summaryOnly: 'true'
+      });
+      if (useDelta && timeline.delta) {
+        const merged = applyTimelineDelta(rowsRef.current, timeline.delta as TimelineDelta);
+        if (merged == null) return loadTimeline(true);
+        return { timeline, nextRows: merged };
+      }
+      if (useDelta && Array.isArray(timeline.rows) && timeline.rows.length === 0 && !timeline.delta) {
+        return loadTimeline(true);
+      }
+      return { timeline, nextRows: (timeline.rows as TimelineRow[]) ?? [] };
+    };
+
     const runner = createCoalescedRunner(async () => {
       try {
-        const [detail, timeline] = await Promise.all([
+        const [detail, loaded] = await Promise.all([
           product.threads.get(threadId),
-          product.threads.timeline(threadId, { segmentLimit })
+          loadTimeline(false)
         ]);
         if (cancelled) return;
+        const timeline = loaded.timeline;
+        const nextRows = applyTimeline(timeline, loaded.nextRows);
         const thread = detail.thread as {
           id?: string;
           title?: string | null;
@@ -160,15 +307,7 @@ export function ThreadDetail({
         setThreadProviderId(typeof thread.providerId === 'string' ? thread.providerId : null);
         setThreadModel(typeof thread.model === 'string' ? thread.model : null);
         setThreadReasoning(typeof thread.reasoningLevel === 'string' ? thread.reasoningLevel : null);
-        setRows((timeline.rows as TimelineRow[]) ?? []);
-        setThinking((timeline.activeThinking as ActiveThinking | null) ?? null);
-        setTodos((timeline.pendingTodos as ThreadTimelinePendingTodos | null) ?? null);
-        setGoal((timeline.goal as ThreadTimelineGoal | null) ?? null);
-        setWorkflows((timeline.activeWorkflows as TimelineViewWorkflowWorkRow[]) ?? []);
-        setPromptMode((timeline.activePromptMode as { mode: string; prompt?: string } | null) ?? null);
-        setContextWindow((timeline.contextWindowUsage as ThreadContextWindowUsage | null) ?? null);
-        setLastReadSeq(typeof timeline.lastReadSeq === 'number' ? timeline.lastReadSeq : null);
-        setHasOlderRows(Boolean(timeline.timelinePage?.hasOlderRows));
+        setParentThreadId((thread as { parentThreadId?: string | null }).parentThreadId ?? null);
         if (thread.id) {
           upsertThread({
             id: thread.id,
@@ -192,38 +331,34 @@ export function ThreadDetail({
               : undefined
           });
         }
-        if (!isBusyThreadStatus(nextStatus) && !timelineHasInFlightRetry(timeline.rows as TimelineRow[]) && poll !== null) {
-          window.clearInterval(poll);
-          poll = null;
-        }
       } catch {
         /* keep last */
       } finally {
         if (!cancelled) setLoadingOlder(false);
       }
     });
+    const scheduleDelta = () => {
+      if (debounceTimer !== null) window.clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(() => {
+        debounceTimer = null;
+        runner.run();
+      }, TIMELINE_DELTA_DEBOUNCE_MS);
+    };
     runner.run();
-    poll = window.setInterval(() => {
-      if (cancelled) {
-        if (poll !== null) window.clearInterval(poll);
-        return;
-      }
-      runner.run();
-    }, 400);
     const stopUpdated = product.threads.onUpdated((payload) => {
       if (payload && typeof payload === 'object' && 'id' in payload) {
-        if ((payload as { id: unknown }).id === threadId) runner.run();
+        if ((payload as { id: unknown }).id === threadId) scheduleDelta();
         return;
       }
-      runner.run();
+      scheduleDelta();
     });
     const stopEvents = product.threads.onEvent((payload) => {
-      if (isOpenThreadEvent(payload, threadId)) runner.run();
+      if (isOpenThreadEvent(payload, threadId)) scheduleDelta();
     });
     return () => {
       cancelled = true;
       runner.dispose();
-      if (poll !== null) window.clearInterval(poll);
+      if (debounceTimer !== null) window.clearTimeout(debounceTimer);
       stopUpdated();
       stopEvents();
     };
@@ -402,6 +537,24 @@ export function ThreadDetail({
     });
   }, [planExitPending, threadId]);
 
+  const runThreadSearch = useCallback((needle: string) => {
+    setSearchQuery(needle);
+    if (!needle) {
+      setSearchHit(null);
+      setSearchLoadAttempts(0);
+      return;
+    }
+    const viewRows = buildTimelineViewRows(displayRows);
+    void product.threads.conversationOutline(threadId).then((outline) => {
+      const hit = findDeepestTimelineSearchHit(viewRows, needle, outline.items);
+      setSearchHit(hit);
+      setSearchLoadAttempts(hit && !timelineContainsRowId(viewRows, hit.id) && hasOlderRows ? 1 : 0);
+    }).catch(() => {
+      setSearchHit(findDeepestTimelineSearchHit(viewRows, needle));
+      setSearchLoadAttempts(0);
+    });
+  }, [displayRows, hasOlderRows, threadId]);
+
   return (
     <section
       className={viewClass}
@@ -414,9 +567,6 @@ export function ThreadDetail({
         <header className="thread-detail-header">
           <ThreadDetailHeading
             title={title}
-            status={status}
-            waitingOnUser={awaitingUser}
-            thinking={thinking}
             overflow={
               <ThreadDetailOverflow
                 threadId={threadId}
@@ -430,6 +580,12 @@ export function ThreadDetail({
             }
           />
           <div className="thread-detail-actions">
+            <ThreadDetailSearch
+              value={searchDraft}
+              onChange={setSearchDraft}
+              onSubmit={runThreadSearch}
+            />
+            <ThreadStatusBadge status={status} waitingOnUser={awaitingUser} thinking={thinking} />
             <PluginThreadHeaderActions threadId={threadId} projectId={projectId} />
             {!panelOpen ? (
               <button
@@ -449,7 +605,7 @@ export function ThreadDetail({
           <div className="thread-detail-column">
             <ThreadTimeline
               threadId={threadId}
-              rows={rows}
+              rows={displayRows}
               status={status}
               waitingOnUser={awaitingUser}
               thinking={thinking}
@@ -478,12 +634,37 @@ export function ThreadDetail({
                 }
               }}
               onOpenDiff={(path) => openDiff(path)}
+              projectId={projectId}
+              parentThreadId={parentThreadId}
+              forceExpandedRowIds={forceExpandedRowIds}
+              searchHitRowId={searchHit?.id ?? null}
+              onFork={(sourceSeqEnd) => {
+                void product.threads.fork(threadId, sourceSeqEnd != null ? { sourceSeqEnd } : undefined).then((forked) => {
+                  if (forked.ok && forked.value?.id) {
+                    navigate(getThreadRoutePath(
+                      forked.value.id,
+                      route.isProjectWorkspace ? route.focusedProjectId : projectId ?? undefined
+                    ));
+                  }
+                });
+              }}
             />
             <ThreadWorkspaceBanner
               environmentId={environmentId}
               onOpenDiff={(path) => openDiff(path)}
             />
             <div className="thread-composer-dock">
+              <PromptContextBanner
+                branchName={branchName}
+                isWorktree={isWorktree}
+                parentThreadId={parentThreadId}
+                childCount={childThreads.length}
+                environmentId={environmentId}
+                onReview={() => openDiff()}
+              />
+              <QueuedMessagesCard threadId={threadId} />
+              <ModelFallbackCard fallback={modelFallback} />
+              <BackgroundCommandsCard commands={backgroundCommands} />
               <ChildThreadPendingBanners childThreads={childThreads} projectId={projectId} />
               {pendingInteractions.map((interaction) => (
                 <ThreadPendingInteractionBanner

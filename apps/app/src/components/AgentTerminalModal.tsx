@@ -21,6 +21,7 @@ import { buildShelves } from '../lib/taskShelves.js';
 import { MarkdownContent } from './MarkdownContent.js';
 import { mdToPlainText } from '../lib/plainText.js';
 import { isReport } from '@zana-ai/zcc-domain/feed-categories';
+import { StencilLines } from './ui/Skeleton.js';
 
 /**
  * Agent-inspector modal: a peek at one agent's LIVE terminal plus its metadata,
@@ -606,10 +607,11 @@ function CatchUpSummaryCard({
               </button>
             </div>
           ) : pending ? (
-            <div className="agent-modal-catchup-shimmer" aria-hidden>
-              <div className="agent-modal-catchup-skel-line" />
-              <div className="agent-modal-catchup-skel-line short" />
-            </div>
+            <StencilLines
+              label="Loading catch-up"
+              widths={['100%', '65%']}
+              className="agent-modal-catchup-shimmer"
+            />
           ) : (
             <>
               <div className="agent-modal-catchup-head">

@@ -982,7 +982,7 @@ describe("buildThreadTimelineFromEvents", () => {
 
   it.each(lowercaseStructuredToolCases)(
     "humanizes Pi's lowercase $tool tool calls",
-    ({ expectedIntent, expectedTitle, tool, toolArgs }) => {
+    ({ expectedTitle, tool, toolArgs }) => {
       const rows = buildTimelineRows([
         turnStartedEvent({ seq: 1 }),
         toolCallItemEvent({
@@ -999,17 +999,19 @@ describe("buildThreadTimelineFromEvents", () => {
           type: "item/completed",
         }),
       ]);
-      const [row] = collectToolRows(rows);
+      const work = rows.flatMap((row) => {
+        if (row.kind === "turn") return row.children ?? [];
+        return [row];
+      }).find((row) => row.kind === "work" && (
+        row.workKind === "file-read" || row.workKind === "search" || row.workKind === "tool"
+      ));
 
-      expect(row).toBeDefined();
-      if (!row) {
-        throw new Error(`Expected a projected ${tool} tool row`);
+      expect(work).toBeDefined();
+      if (!work || work.kind !== "work") {
+        throw new Error(`Expected a projected ${tool} exploration row`);
       }
-      expect(row.activityIntents).toEqual([
-        expect.objectContaining(expectedIntent),
-      ]);
       expect(
-        buildTimelineRowTitle(row, {
+        buildTimelineRowTitle(work, {
           summaryStyle: "bundle",
           workStyle: "default",
         }).plain,

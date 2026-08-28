@@ -14,7 +14,10 @@ import {
   resolveBridgeWorkerProcessArgs,
   resolveBundledBridgeModulePath,
 } from "./shared/bridge-path.js";
-import { BUILT_IN_ACP_LAUNCH_SPECS } from "./acp-launch-specs.js";
+import {
+  BUILT_IN_ACP_LAUNCH_SPECS,
+  BUILT_IN_ACP_MODEL_PICKER,
+} from "./acp-launch-specs.js";
 import type {
   ProviderAdapter,
   ProviderAdapterFactoryOptions,
@@ -139,8 +142,25 @@ function buildPluginStaticProviderOptions(
   const additionalWorkspaceWriteRoots =
     options.additionalWorkspaceWriteRoots ?? [];
   const acpLaunchSpec = resolveAcpLaunchSpec(providerId, options);
+  const modelPicker = BUILT_IN_ACP_MODEL_PICKER[providerId];
   const staticProviderOptions = {
     ...(acpLaunchSpec !== undefined ? { acpLaunchSpec } : {}),
+    ...(modelPicker?.acpDialect !== undefined
+      ? { acpDialect: modelPicker.acpDialect }
+      : {}),
+    ...(modelPicker?.parameterizedModelPicker === true
+      ? { parameterizedModelPicker: true }
+      : {}),
+    ...(modelPicker?.primaryModels !== undefined
+      ? { primaryModels: [...modelPicker.primaryModels] }
+      : {}),
+    ...(modelPicker?.reasoningProbePriorityModelIds !== undefined
+      ? {
+          reasoningProbePriorityModelIds: [
+            ...modelPicker.reasoningProbePriorityModelIds,
+          ],
+        }
+      : {}),
     ...(additionalWorkspaceWriteRoots.length > 0
       ? { additionalWorkspaceWriteRoots: [...additionalWorkspaceWriteRoots] }
       : {}),

@@ -441,6 +441,9 @@ export interface CcApi {
       segmentLimit?: number;
       beforeAnchorSeq?: number;
       beforeAnchorId?: string;
+      afterSequence?: string;
+      includeNestedRows?: 'true' | 'false';
+      summaryOnly?: 'true' | 'false';
     }): Promise<{
       rows: unknown[];
       events: unknown[];
@@ -450,9 +453,15 @@ export interface CcApi {
       activeThinking?: unknown;
       activePromptMode?: unknown;
       activeWorkflows?: unknown;
+      activeBackgroundCommands?: unknown;
+      modelFallback?: unknown;
       contextWindowUsage?: unknown;
       lastReadSeq?: number;
       maxSeq?: number;
+      delta?: {
+        upsertRows: unknown[];
+        rowOrder?: string[];
+      };
       timelinePage?: {
         kind: 'latest' | 'older';
         segmentLimit: number;
@@ -468,6 +477,23 @@ export interface CcApi {
       items: Array<{ id: string; role: 'user' | 'assistant'; preview: string; attachmentSummary: unknown }>;
       maxSeq: number;
     }>;
+    timelineTurnSummaryDetails(
+      threadId: string,
+      query: { turnId: string; sourceSeqStart: string; sourceSeqEnd: string }
+    ): Promise<{ rows: unknown[] }>;
+    queuedMessages(threadId: string): Promise<unknown[]>;
+    createQueuedMessage(threadId: string, body: { text?: string; input?: unknown[]; model?: string }): Promise<unknown>;
+    updateQueuedMessage(threadId: string, queuedMessageId: string, body: { input: unknown[]; expectedUpdatedAt: number }): Promise<unknown>;
+    deleteQueuedMessage(threadId: string, queuedMessageId: string): Promise<{ ok: true }>;
+    sendQueuedMessage(threadId: string, queuedMessageId: string, mode: 'auto' | 'steer'): Promise<unknown>;
+    reorderQueuedMessage(threadId: string, queuedMessageId: string, previousQueuedMessageId: string | null): Promise<unknown[]>;
+    editMessage(threadId: string, body: {
+      operationId: string;
+      input: unknown[];
+      expectedRequestSequence?: number;
+      model?: string;
+      reasoningLevel?: string;
+    }): Promise<{ ok: true; operationId: string; requestSequence: number }>;
     hostFileContent(threadId: string, path: string): Promise<{
       path: string;
       relPath: string;
@@ -543,7 +569,7 @@ export interface CcApi {
       cancel(threadId: string, interactionId: string): Promise<PendingInteraction>;
     };
     archive(threadId: string): Promise<{ ok: boolean }>;
-    fork(threadId: string): Promise<Result<{
+    fork(threadId: string, options?: { sourceSeqEnd?: number }): Promise<Result<{
       id: string;
       projectId: string;
       hostId: string;

@@ -1,4 +1,5 @@
 import { product } from '../../lib/product-client.js';
+import { DelayedStencilList } from '../../components/ui/Skeleton.js';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   Settings2,
@@ -211,7 +212,7 @@ export function SettingsView() {
     return (
       <div className="settings-panel" aria-label="Settings" aria-busy="true">
         <div className="settings-inner">
-          <div className="settings-empty">Loading…</div>
+          <DelayedStencilList label="Loading settings" className="settings-empty" />
         </div>
       </div>
     );

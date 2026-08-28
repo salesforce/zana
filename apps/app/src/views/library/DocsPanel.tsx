@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react';
 import type { ModuleHost } from '@zana-ai/zcc-extension-sdk/renderer';
 import { useData } from '@/store';
+import { DelayedStencilList } from '@/components/ui/Skeleton';
 
 const LibraryPanel = lazy(() =>
   import('./LibraryPanel.js').then((m) => ({ default: m.LibraryPanel }))
@@ -9,7 +10,7 @@ const LibraryView = lazy(() =>
   import('./LibraryView.js').then((m) => ({ default: m.LibraryView }))
 );
 
-const loading = <div className="workbench-status">Loading library…</div>;
+const loading = <DelayedStencilList label="Loading library" className="zcc-stencil-padded" />;
 
 /**
  * One panel, two scopes — the documented projectTab contract. The sidebar Docs

@@ -2,6 +2,10 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNo
 
 export const COMPOSER_INSERT_EVENT = 'zcc:composer-insert';
 
+export function quoteForComposer(text: string): string {
+  return text.trim().split('\n').map((line) => `> ${line}`).join('\n');
+}
+
 export function dispatchComposerInsert(threadId: string, text: string): void {
   if (typeof window === 'undefined') return;
   const next = text.trim();
@@ -9,6 +13,10 @@ export function dispatchComposerInsert(threadId: string, text: string): void {
   window.dispatchEvent(new CustomEvent(COMPOSER_INSERT_EVENT, {
     detail: { threadId, text: next }
   }));
+}
+
+export function dispatchComposerQuote(threadId: string, text: string): void {
+  dispatchComposerInsert(threadId, quoteForComposer(text));
 }
 
 export function readTrimmedSelection(): string | null {
@@ -61,7 +69,7 @@ export function SecondaryPanelSelectionActions({
           style={{ left: anchor.x, top: anchor.y }}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => {
-            dispatchComposerInsert(threadId, selected);
+            dispatchComposerQuote(threadId, selected);
             clear();
           }}
         >

@@ -34,6 +34,8 @@ export type {
   PluginHomepageSectionRegistration,
   PluginMessageActionContext,
   PluginMessageActionRegistration,
+  PluginTimelineRendererProps,
+  PluginTimelineRendererRegistration,
   PluginCommandPaletteActionContext,
   PluginCommandPaletteActionRegistration,
   PluginMessageDirectiveProps,

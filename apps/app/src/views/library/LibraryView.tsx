@@ -6,6 +6,7 @@ import type { Project, LibraryDoc, LibraryScope, LibrarySearchHit } from '@zana-
 import { useLibrary, useUi } from '@/store';
 import { AgentLauncher } from '@/components/AgentLauncher';
 import { DocPreview } from './library/DocPreview.js';
+import { DelayedStencilList } from '@/components/ui/Skeleton';
 import { LibraryTreeRows } from './library/LibraryTreeRows.js';
 import { PromptModal } from '@/components/PromptModal';
 import {
@@ -607,7 +608,7 @@ export function LibraryView({ project }: Props) {
             bucket), same model + row component as the global LibraryPanel. */}
         <div className="explorer-tree-body library-tree">
           {loading ? (
-            <div className="tree-loading">Loading…</div>
+            <DelayedStencilList label="Loading library" className="tree-loading" />
           ) : tree.length === 0 ? (
             <div className="tree-pane-empty">
               {docs.length === 0

@@ -39,9 +39,10 @@ export function isNearBottom(
 
 export function shouldStickToBottom(opts: {
   isBusy: boolean;
+  streaming?: boolean;
   userPinnedAway: boolean;
 }): boolean {
-  return opts.isBusy && !opts.userPinnedAway;
+  return (opts.isBusy || Boolean(opts.streaming)) && !opts.userPinnedAway;
 }
 
 export function firstUnreadRowId(

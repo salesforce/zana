@@ -1,4 +1,4 @@
-import type { JsonObject, ThreadEventScope } from "@zana-ai/zcc-domain/thread-runtime";
+import type { JsonObject, ThreadEventScope, ThreadEventItemPresentation } from "@zana-ai/zcc-domain/thread-runtime";
 import type {
   EventProjectionApprovalLifecycleStatus,
   EventProjectionMessage,
@@ -71,6 +71,7 @@ interface RunningExecutionBase {
   completedAt: number | null;
   status: ViewProviderExecutionMessage["status"];
   outputBuffer: VisibleTextBuffer;
+  presentation?: ThreadEventItemPresentation;
 }
 
 interface PendingExecutionOutput {
@@ -302,6 +303,9 @@ function createRunningExecutionBase({
     createdAt: meta.createdAt,
     startedAt: meta.createdAt,
     outputBuffer,
+    ...("presentation" in incoming && incoming.presentation
+      ? { presentation: incoming.presentation }
+      : {}),
   };
 }
 
@@ -485,6 +489,9 @@ function mergeRunningExecutionMetadata(
   existing: RunningExecCall,
   incoming: ProviderExecutionUpdate,
 ): void {
+  if ("presentation" in incoming && incoming.presentation) {
+    existing.presentation = incoming.presentation;
+  }
   switch (incoming.kind) {
     case "command":
       if (existing.kind !== "command") return;
@@ -713,6 +720,10 @@ function interruptPendingToolMessage(
     case "web-search":
     case "web-fetch":
     case "image-view":
+    case "file-read":
+    case "search":
+    case "plan-steps":
+    case "extension":
       if (message.status === "pending") {
         message.status = "interrupted";
         message.completedAt = completedAt;
@@ -728,7 +739,11 @@ function isInterruptibleToolMessage(
     isProviderExecutionMessage(message) ||
     message.kind === "web-search" ||
     message.kind === "web-fetch" ||
-    message.kind === "image-view"
+    message.kind === "image-view" ||
+    message.kind === "file-read" ||
+    message.kind === "search" ||
+    message.kind === "plan-steps" ||
+    message.kind === "extension"
   );
 }
 
@@ -912,6 +927,7 @@ function createExecMessage(
     output: call.output,
     completedAt: call.completedAt,
     status: call.status,
+    ...(call.presentation ? { presentation: call.presentation } : {}),
   };
 
   if (call.kind === "command") {

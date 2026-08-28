@@ -1,4 +1,5 @@
 import { product } from '../../lib/product-client.js';
+import { DelayedStencilList } from '../../components/ui/Skeleton.js';
 import { useMemo, useState, type ReactNode } from 'react';
 import {
   Sparkles,
@@ -223,7 +224,7 @@ export function SuggestionsView() {
       )}
 
       {loading ? (
-        <p className="suggestions-empty">Loading…</p>
+        <DelayedStencilList label="Loading suggestions" className="suggestions-empty" />
       ) : entries.length === 0 ? (
         <div className="suggestions-empty-state">
           <Sparkles size={44} strokeWidth={1.5} className="suggestions-empty-icon" aria-hidden />

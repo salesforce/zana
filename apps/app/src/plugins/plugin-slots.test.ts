@@ -8,7 +8,8 @@ import {
   listNavPanels,
   listPendingInteractionSlots,
   listCommandPaletteActions,
-  listSidebarFooterActions
+  listSidebarFooterActions,
+  listTimelineRenderers
 } from './plugin-slots.js';
 
 describe('plugin slot registry', () => {
@@ -33,12 +34,17 @@ describe('plugin slot registry', () => {
           title: 'Open Tasks',
           run: () => undefined
         });
+        app.slots.experimental_timelineRenderer({
+          kind: 'tasks/card',
+          component: () => null
+        });
       })
     );
     expect(listNavPanels()).toHaveLength(1);
     expect(listHomepageSections()).toHaveLength(1);
     expect(listPendingInteractionSlots()).toHaveLength(1);
     expect(listCommandPaletteActions()).toHaveLength(1);
+    expect(listTimelineRenderers()).toHaveLength(1);
     expect(listNavPanels()[0]?.generation).toBe(2);
   });
 

@@ -703,4 +703,53 @@ describe("acp primary model split", () => {
     expect(split.models).toEqual(catalog.models);
     expect(split.selectedOnlyModels).toEqual([]);
   });
+
+  it("keeps Cursor Grok 4.6 in the default picker when primary names the family", () => {
+    const catalog = buildAgentModelCatalog(
+      parseAgentModelLines(
+        [
+          "auto - Auto",
+          "cursor-grok-4.5-high - Cursor Grok 4.5",
+          "cursor-grok-4.5-medium - Cursor Grok 4.5 Medium",
+          "cursor-grok-4.6-low - Cursor Grok 4.6 Low",
+          "cursor-grok-4.6-medium - Cursor Grok 4.6 Medium",
+          "cursor-grok-4.6-high - Cursor Grok 4.6",
+          "gpt-5.6-sol-medium - GPT-5.6 Sol",
+        ].join("\n"),
+      ),
+    );
+    expect(catalog?.models.find((m) => m.displayName === "Cursor Grok 4.6")?.id).toBe(
+      "cursor-grok-4.6-medium",
+    );
+    const split = splitPrimaryModels(catalog?.models ?? [], [
+      "auto",
+      "cursor-grok-4.6-medium",
+      "cursor-grok-4.5-medium",
+      "gpt-5.6-sol-medium",
+    ]);
+    expect(split.models.map((m) => m.displayName)).toEqual([
+      "Auto",
+      "Cursor Grok 4.6",
+      "Cursor Grok 4.5",
+      "GPT-5.6 Sol",
+    ]);
+    expect(split.selectedOnlyModels).toEqual([]);
+  });
+
+  it("still pins a Grok family when the primary names a non-default variant", () => {
+    const catalog = buildAgentModelCatalog(
+      parseAgentModelLines(
+        [
+          "cursor-grok-4.6-low - Cursor Grok 4.6 Low",
+          "cursor-grok-4.6-medium - Cursor Grok 4.6 Medium",
+          "cursor-grok-4.6-high - Cursor Grok 4.6",
+        ].join("\n"),
+      ),
+    );
+    const split = splitPrimaryModels(catalog?.models ?? [], [
+      "cursor-grok-4.6-high",
+    ]);
+    expect(split.models.map((m) => m.id)).toEqual(["cursor-grok-4.6-medium"]);
+    expect(split.selectedOnlyModels).toEqual([]);
+  });
 });

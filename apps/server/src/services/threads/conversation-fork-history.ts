@@ -47,13 +47,32 @@ function requestedClientRequestId(payload: unknown): string | null {
 }
 
 export function lastCompletedTurnSequence(
-  rows: readonly ConversationThreadEventRow[]
+  rows: readonly ConversationThreadEventRow[],
+  atOrBefore?: number
 ): number | null {
+  const cap = atOrBefore ?? Number.POSITIVE_INFINITY;
   let last: number | null = null;
   for (const row of rows) {
-    if (row.type === 'turn/completed') last = row.sequence;
+    if (row.type === 'turn/completed' && row.sequence <= cap) last = row.sequence;
   }
   return last;
+}
+
+function historyEndSequenceForFork(
+  rows: readonly ConversationThreadEventRow[],
+  sourceSeqEnd?: number
+): number | null {
+  if (sourceSeqEnd == null) return lastCompletedTurnSequence(rows);
+  const atOrBefore = rows.filter((row) => row.sequence <= sourceSeqEnd);
+  const last = atOrBefore[atOrBefore.length - 1];
+  const turnId = last ? eventTurnId(last.payload) : null;
+  if (turnId) {
+    const completed = rows.find(
+      (row) => row.type === 'turn/completed' && eventTurnId(row.payload) === turnId
+    );
+    if (completed) return completed.sequence;
+  }
+  return lastCompletedTurnSequence(atOrBefore);
 }
 
 /**
@@ -62,9 +81,10 @@ export function lastCompletedTurnSequence(
  * (unaccepted) prompts stay on the source.
  */
 export function selectInheritedForkEventRows(
-  rows: readonly ConversationThreadEventRow[]
+  rows: readonly ConversationThreadEventRow[],
+  sourceSeqEnd?: number
 ): ConversationThreadEventRow[] {
-  const historyEndSequence = lastCompletedTurnSequence(rows);
+  const historyEndSequence = historyEndSequenceForFork(rows, sourceSeqEnd);
   if (historyEndSequence == null) return [];
   const window = rows.filter(
     (row) => row.sequence <= historyEndSequence && inheritedTypeSet.has(row.type)
@@ -91,10 +111,11 @@ export function selectInheritedForkEventRows(
 
 export function copyForkSourceHistory(
   db: ZccDatabase,
-  args: { sourceThreadId: string; targetThreadId: string }
+  args: { sourceThreadId: string; targetThreadId: string; sourceSeqEnd?: number }
 ): ConversationThreadEventRow[] {
   const inherited = selectInheritedForkEventRows(
-    listConversationThreadEvents(db, args.sourceThreadId)
+    listConversationThreadEvents(db, args.sourceThreadId),
+    args.sourceSeqEnd
   );
   if (inherited.length === 0) return [];
   return copyConversationThreadEvents(db, {

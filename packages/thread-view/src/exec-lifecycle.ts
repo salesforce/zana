@@ -3,6 +3,7 @@ import {
   type JsonObject,
   ThreadEvent,
   ThreadEventItemApprovalStatus,
+  ThreadEventItemPresentation,
   ThreadEventItemStatus,
 } from "@zana-ai/zcc-domain/thread-runtime";
 import { getEventParentToolCallId, type EventMeta } from "./event-decode.js";
@@ -44,7 +45,7 @@ function parseToolArgs(
 
 type ExecItemViewStatus = EventProjectionToolCallMessage["status"];
 
-function itemStatusToExecStatus(
+export function itemStatusToExecStatus(
   status: ThreadEventItemStatus,
 ): ExecItemViewStatus {
   switch (status) {
@@ -105,6 +106,7 @@ export interface CommandExecutionUpdate extends ExecutionUpdateBase {
   source?: string | null;
   exitCode?: number | null;
   approvalStatus?: EventProjectionApprovalLifecycleStatus | null;
+  presentation?: ThreadEventItemPresentation;
 }
 
 export interface ToolCallExecutionUpdate extends ExecutionUpdateBase {
@@ -114,12 +116,14 @@ export interface ToolCallExecutionUpdate extends ExecutionUpdateBase {
   statusLabels?: { pending: string; completed: string };
   parsedIntents?: EventProjectionToolParsedIntent[];
   approvalStatus?: EventProjectionApprovalLifecycleStatus | null;
+  presentation?: ThreadEventItemPresentation;
 }
 
 export interface DelegationExecutionUpdate
   extends ExecutionUpdateBase, DelegationMetadata {
   kind: "delegation";
   toolName?: string;
+  presentation?: ThreadEventItemPresentation;
 }
 
 export type ProviderExecutionUpdate =
@@ -145,6 +149,12 @@ export type ExecLifecycleEvent =
       appendOutput?: boolean;
       replaceOutput?: boolean;
     };
+
+function maybePresentation(item: {
+  presentation?: ThreadEventItemPresentation;
+}): { presentation?: ThreadEventItemPresentation } {
+  return item.presentation ? { presentation: item.presentation } : {};
+}
 
 function toExecDefaultStatus(
   kind: "begin" | "end",
@@ -306,6 +316,7 @@ export function parseExecLifecycleEvent(
         completedAt,
         approvalStatus: itemStatusToApprovalStatus(decoded.item.approvalStatus),
         status,
+        ...maybePresentation(decoded.item),
         ...(parentToolCallId ? { parentToolCallId } : {}),
       },
     };
@@ -381,6 +392,7 @@ export function parseToolCallLifecycleEvent(
       output: kind === "end" ? (output ?? errorField) : undefined,
       completedAt,
       status,
+      ...maybePresentation(decoded.item),
       ...(parentToolCallId ? { parentToolCallId } : {}),
     };
 

@@ -1,4 +1,5 @@
 import { product } from '../../lib/product-client.js';
+import { DelayedStencilList } from '../../components/ui/Skeleton.js';
 import { useEffect } from 'react';
 import { BarChart3, RefreshCw } from 'lucide-react';
 import type { UsageRollupEvent, UsageSessionEvent } from '@zana-ai/zcc-domain/telemetry-events';
@@ -56,7 +57,7 @@ export function UsageView() {
         </div>
 
         {!loaded && !summary ? (
-          <div className="scheduler-empty">Loading…</div>
+          <DelayedStencilList label="Loading usage" className="scheduler-empty" />
         ) : empty ? (
           <div className="scheduler-empty">
             <BarChart3 size={28} className="scheduler-empty-icon" />

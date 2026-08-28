@@ -9,9 +9,13 @@ import type {
   TimelineCommandWorkRow,
   TimelineFileChange,
   TimelineFileChangeWorkRow,
+  TimelineFileReadWorkRow,
   TimelineImageViewWorkRow,
   TimelineParentChangeSystemRow,
+  TimelinePlanStepsWorkRow,
+  TimelineRowPresentation,
   TimelineRowStatus,
+  TimelineSearchWorkRow,
   TimelineToolWorkRow,
   TimelineWebFetchWorkRow,
   TimelineWebSearchWorkRow,
@@ -36,7 +40,7 @@ import {
   hasTimelineExplorationIntent,
   type TimelineExplorationWorkRow,
 } from "./timeline-activity-intents.js";
-import { fileNameFromPath } from "./timeline-path-display.js";
+import { fileNameFromPath, formatTimelinePath } from "./timeline-path-display.js";
 import {
   buildTimelineWorkSummaryLabelParts,
   type ThreadTimelineViewRow,
@@ -413,6 +417,60 @@ function displayStatus({
   return status;
 }
 
+function presentationLabel(
+  presentation: TimelineRowPresentation,
+  status: TimelineRowStatus,
+): string {
+  return status === "pending"
+    ? presentation.label.pending
+    : presentation.label.completed;
+}
+
+interface PresentedTitleArgs {
+  presentation: TimelineRowPresentation;
+  status: TimelineRowStatus;
+  startedAt: number;
+  completedAt: number | null;
+  content?: string | null;
+  plainContent?: string;
+  em?: boolean;
+}
+
+function presentedTitle({
+  presentation,
+  status,
+  startedAt,
+  completedAt,
+  content,
+  plainContent,
+  em = true,
+}: PresentedTitleArgs): TimelineTitle {
+  const resolvedContent = content === undefined ? presentation.title : content;
+  const segments: TimelineTitleSegment[] = [
+    segment(presentationLabel(presentation, status), {
+      shimmer: status === "pending",
+      truncate: resolvedContent ? false : true,
+    }),
+  ];
+  if (resolvedContent) {
+    segments.push(
+      segment(resolvedContent, {
+        em,
+        truncate: true,
+        ...(plainContent === undefined ? {} : { plainText: plainContent }),
+      }),
+    );
+  }
+  const durationMs = completedAt !== null ? completedAt - startedAt : null;
+  const decorations: TimelineTitleDecoration[] =
+    status === "error"
+      ? [statusDecoration("error", durationMs)]
+      : status === "interrupted"
+        ? [statusDecoration("interrupted", durationMs)]
+        : filterNull([durationDecoration(startedAt, completedAt)]);
+  return makeTitle({ segments, decorations });
+}
+
 // ---------------------------------------------------------------------------
 // Mappers — one per row kind. Each produces a structured Title.
 // ---------------------------------------------------------------------------
@@ -423,9 +481,19 @@ function mapExecutionTitle(row: TimelineExecutionWorkRow): TimelineTitle {
     status: row.status,
   });
   const isCommand = row.workKind === "command";
-  // Keyed by BB's own row status, so a state with no plugin label (error,
-  // interrupted, waiting, denied) falls through to the standard rendering
-  // and the failing tool stays identifiable.
+  if (
+    row.presentation &&
+    status !== "waiting" &&
+    status !== "denied" &&
+    !isCommand
+  ) {
+    return presentedTitle({
+      presentation: row.presentation,
+      status,
+      startedAt: row.startedAt,
+      completedAt: row.completedAt,
+    });
+  }
   const statusLabels = isCommand ? undefined : row.statusLabels;
   const label =
     statusLabels && (status === "pending" || status === "completed")
@@ -1193,6 +1261,105 @@ function mapQuestionTitle(row: TimelineQuestionViewWorkRow): TimelineTitle {
   }
 }
 
+function mapFileReadTitle(row: TimelineFileReadWorkRow): TimelineTitle {
+  if (row.presentation) {
+    return presentedTitle({
+      presentation: row.presentation,
+      status: row.status,
+      startedAt: row.startedAt,
+      completedAt: row.completedAt,
+      content: formatTimelinePath({ path: row.path, mode: "compact" }),
+      plainContent: row.path,
+    });
+  }
+  return makeTitle({
+    segments: [
+      segment(row.status === "pending" ? "Reading" : "Read", {
+        shimmer: row.status === "pending",
+      }),
+      segment(row.path, { em: true, truncate: true }),
+    ],
+  });
+}
+
+function searchContent(row: TimelineSearchWorkRow): string {
+  const root = row.path ? ` in ${row.path}` : "";
+  switch (row.mode) {
+    case "content":
+      return `for ${row.query}${root}`;
+    case "path":
+      return `matching ${row.query}${root}`;
+    case "list":
+      return row.path
+        ? `files in ${row.path}`
+        : row.query.length > 0
+          ? `files in ${row.query}`
+          : "files";
+    default:
+      return assertNever(row.mode);
+  }
+}
+
+function mapSearchTitle(row: TimelineSearchWorkRow): TimelineTitle {
+  if (row.presentation) {
+    return presentedTitle({
+      presentation: row.presentation,
+      status: row.status,
+      startedAt: row.startedAt,
+      completedAt: row.completedAt,
+      content: searchContent(row),
+      em: false,
+    });
+  }
+  return makeTitle({
+    segments: [
+      segment(
+        row.mode === "list"
+          ? row.status === "pending"
+            ? "Listing"
+            : "Listed"
+          : row.status === "pending"
+            ? "Searching"
+            : "Searched",
+        { shimmer: row.status === "pending" },
+      ),
+      segment(searchContent(row), { truncate: true }),
+    ],
+  });
+}
+
+function activePlanStep(row: TimelinePlanStepsWorkRow): string | null {
+  const active = row.steps.find((step) => step.status === "active");
+  return active?.step ?? row.explanation;
+}
+
+function mapPlanStepsTitle(row: TimelinePlanStepsWorkRow): TimelineTitle {
+  const content = activePlanStep(row);
+  if (row.presentation) {
+    return presentedTitle({
+      presentation: row.presentation,
+      status: row.status,
+      startedAt: row.startedAt,
+      completedAt: row.completedAt,
+      content: row.presentation.title ?? content,
+      em: false,
+    });
+  }
+  const completedSteps = row.steps.filter(
+    (step) => step.status === "completed",
+  ).length;
+  return makeTitle({
+    segments: [
+      segment(row.status === "pending" ? "Updating plan" : "Updated plan", {
+        shimmer: row.status === "pending",
+      }),
+      segment(content ?? `${completedSteps}/${row.steps.length} steps done`, {
+        truncate: true,
+      }),
+    ],
+  });
+}
+
 function mapWorkTitle(
   row: TimelineViewWorkRow,
   options: BuildTimelineRowTitleOptions,
@@ -1210,6 +1377,20 @@ function mapWorkTitle(
         return mapWebFetchTitle(row);
       case "image-view":
         return mapImageViewTitle(row);
+      case "file-read":
+        return mapFileReadTitle(row);
+      case "search":
+        return mapSearchTitle(row);
+      case "plan-steps":
+        return mapPlanStepsTitle(row);
+      case "extension":
+        return presentedTitle({
+          presentation: row.presentation,
+          status: row.status,
+          startedAt: row.startedAt,
+          completedAt: row.completedAt,
+          em: false,
+        });
       case "delegation":
         return mapDelegationTitle(row);
       case "workflow":

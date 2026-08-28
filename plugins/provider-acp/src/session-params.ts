@@ -14,6 +14,7 @@ import {
 import path from "node:path";
 
 import { ACP_DEFAULT_MODEL_ID } from "./bridge-protocol.js";
+import { agentModelFamilyId } from "./bridge/model-catalog.js";
 import type {
   AcpAgentNativeReasoning,
   AcpAgentPermissionCli,
@@ -67,20 +68,22 @@ export interface AcpModelListParams {
    */
   listCommand?: AcpAgentCommandParam;
   /**
-   * ACP-native model discovery command. The bridge starts a throwaway session
-   * and reads models plus per-model `thought_level` from `session/new`. Used
-   * when `listCommand` is absent (OpenCode), and also when a list CLI has no
-   * select flag: those ids are bare `provider/model` and would otherwise
-   * collapse to a single medium effort. Cursor-style CLIs that encode effort
-   * in listed ids keep `selectFlag` and skip this path.
+   * ACP-native model discovery command. Used only when `listCommand` is
+   * absent: the bridge starts a throwaway session and reads the model select
+   * from the `session/new` result's config state. Cursor's parameterized
+   * picker also takes this path so family ids such as `grok-4.6` surface
+   * instead of CLI variant ids.
    */
   agent?: AcpAgentCommandParam;
-  /**
-   * Family ids served in the picker's default list; the rest become
-   * selected-only "more models". No matches (or an empty list) serves
-   * everything as primary.
-   */
+  /** Family ids served in the CLI catalog's default list. */
   primaryModels: string[];
+  /**
+   * Model ids to probe first within ACP-native reasoning discovery's fixed
+   * deadline. Discovery still returns every advertised model in agent order.
+   */
+  reasoningProbePriorityModelIds: string[];
+  /** Enables separate model, reasoning, and service-tier ACP options. */
+  parameterizedModelPicker: boolean;
   reasoningCli?: AcpAgentReasoningCli;
   nativeReasoning?: AcpAgentNativeReasoning;
 }
@@ -102,7 +105,11 @@ export type AcpModelSelection =
       reasoningLevel?: ReasoningLevel;
       serviceTier?: ServiceTier;
     }
-  | { modelId: string; reasoningLevel?: ReasoningLevel };
+  | {
+      modelId: string;
+      reasoningLevel?: ReasoningLevel;
+      serviceTier?: ServiceTier;
+    };
 
 /** Everything the bridge needs to construct one ACP agent session. */
 export interface AcpSessionParams {
@@ -117,6 +124,8 @@ export interface AcpSessionParams {
   launchReasoningLevel?: ReasoningLevel;
   reasoningCli?: AcpAgentReasoningCli;
   nativeReasoning?: AcpAgentNativeReasoning;
+  /** Enables the agent's separate model configuration options. */
+  parameterizedModelPicker: boolean;
   /**
    * Launch-time permission flags for agents whose own prompt policy must be
    * selected by CLI args rather than by ACP permission responses.
@@ -202,6 +211,7 @@ function buildAcpModelDiscoveryAgentCommand(
   // lives in the listed ids (`gpt-5-high`) and an ACP session would duplicate
   // that work. List-only CLIs still need a throwaway session so `thought_level`
   // can be probed per model. OpenCode itself is ACP-native (no list CLI).
+  // Cursor's parameterized picker has no modelCli, so this path still runs.
   if (profile.modelCli?.selectFlag) {
     return undefined;
   }
@@ -213,6 +223,12 @@ function buildAcpModelDiscoveryAgentCommand(
   };
 }
 
+interface AcpModelListOptions {
+  parameterizedModelPicker: boolean;
+  primaryModels?: readonly string[];
+  reasoningProbePriorityModelIds: readonly string[];
+}
+
 /**
  * Model-discovery params derived from the profile. A null profile means the
  * request carried no launch spec; the bridge then serves its synthetic
@@ -220,16 +236,29 @@ function buildAcpModelDiscoveryAgentCommand(
  */
 export function buildAcpModelListParams(
   profile: AcpAgentProfile | null,
+  options: AcpModelListOptions,
 ): AcpModelListParams {
+  const primaryModels = [
+    ...(options.primaryModels ?? profile?.modelCli?.primaryModels ?? []),
+  ];
+  const reasoningProbePriorityModelIds = [
+    ...options.reasoningProbePriorityModelIds,
+  ];
   if (profile === null) {
-    return { primaryModels: [] };
+    return {
+      primaryModels,
+      reasoningProbePriorityModelIds,
+      parameterizedModelPicker: options.parameterizedModelPicker,
+    };
   }
   const listCommand = buildAcpModelListCommand(profile);
   const agent = buildAcpModelDiscoveryAgentCommand(profile);
   return {
     ...(listCommand !== undefined ? { listCommand } : {}),
     ...(agent !== undefined ? { agent } : {}),
-    primaryModels: [...(profile.modelCli?.primaryModels ?? [])],
+    primaryModels,
+    reasoningProbePriorityModelIds,
+    parameterizedModelPicker: options.parameterizedModelPicker,
     ...(profile.reasoningCli !== undefined
       ? { reasoningCli: profile.reasoningCli }
       : {}),
@@ -239,33 +268,91 @@ export function buildAcpModelListParams(
   };
 }
 
+interface CursorParameterizedSelection {
+  modelId: string;
+  reasoningLevel?: ReasoningLevel;
+}
+
+const CURSOR_LEGACY_FAMILY_SELECTIONS: Readonly<
+  Record<string, CursorParameterizedSelection>
+> = {
+  "claude-4-sonnet": { modelId: "claude-sonnet-4" },
+  "claude-4.5-opus": { modelId: "claude-opus-4-5" },
+  "claude-4.5-sonnet": { modelId: "claude-sonnet-4-5" },
+  "claude-4.6-opus": { modelId: "claude-opus-4-6" },
+  "claude-4.6-sonnet": { modelId: "claude-sonnet-4-6" },
+  "gemini-3.6-flash-minimal": {
+    modelId: "gemini-3.6-flash",
+    reasoningLevel: "low",
+  },
+  "gpt-5.1-codex-max": { modelId: "gpt-5.1" },
+};
+
+function cursorParameterizedSelection(
+  model: string,
+  reasoningLevel: ReasoningLevel | undefined,
+): CursorParameterizedSelection {
+  // Live Cursor ACP advertises Auto as `auto-smart`. The host picker still
+  // persists `default` / `auto` from the parameterized catalog; forwarding
+  // those sentinels as session/set_config_option makes cursor-agent reject
+  // the session with JSON-RPC Invalid params.
+  const familyId =
+    model === "auto" || model === "default"
+      ? "auto-smart"
+      : agentModelFamilyId(model);
+  const bareFamilyId = familyId.startsWith("cursor-")
+    ? familyId.slice("cursor-".length)
+    : familyId;
+  const selection = CURSOR_LEGACY_FAMILY_SELECTIONS[bareFamilyId] ?? {
+    modelId: bareFamilyId,
+  };
+  return selection.reasoningLevel !== undefined || reasoningLevel === undefined
+    ? selection
+    : { ...selection, reasoningLevel };
+}
+
 /** Sentinels that mean "leave the agent's own default pinned". Never forwarded. */
 function buildAcpModelSelectionParam(
   profile: AcpAgentProfile,
   options: AcpSessionExecutionOptions,
+  parameterizedModelPicker: boolean,
+  dialectId: string | undefined,
 ): { modelSelection?: AcpModelSelection } {
   const model = options.model;
   const listCommand = buildAcpModelListCommand(profile);
-  // `"acp-default"` is the synthetic catalog row; `"default"` is the runtime
-  // execution-options placeholder when no model was chosen. Forwarding either
-  // as `session/set_model` makes OpenCode reject the session with
-  // `model not found: default`.
-  if (!model || model === ACP_DEFAULT_MODEL_ID || model === "default") {
+  // `"acp-default"` is the synthetic catalog row. `"default"` is Cursor's Auto
+  // family when the parameterized picker is on, and the host placeholder when
+  // it is off — forwarding the placeholder as `session/set_model` makes
+  // OpenCode reject the session with `model not found: default`.
+  if (!model || model === ACP_DEFAULT_MODEL_ID) {
     return {};
   }
-  if (!listCommand || !profile.modelCli?.selectFlag) {
+  if (!parameterizedModelPicker && model === "default") {
+    return {};
+  }
+  if (
+    parameterizedModelPicker ||
+    !listCommand ||
+    !profile.modelCli?.selectFlag
+  ) {
+    const modelSelection =
+      parameterizedModelPicker && dialectId === "cursor"
+        ? cursorParameterizedSelection(model, options.reasoningLevel)
+        : {
+            modelId: model,
+            ...(options.reasoningLevel !== undefined
+              ? { reasoningLevel: options.reasoningLevel }
+              : {}),
+          };
     return {
       modelSelection: {
-        modelId: model,
-        ...(options.reasoningLevel !== undefined
-          ? { reasoningLevel: options.reasoningLevel }
+        ...modelSelection,
+        ...(parameterizedModelPicker && options.serviceTier !== undefined
+          ? { serviceTier: options.serviceTier }
           : {}),
       },
     };
   }
-  // Cursor encodes reasoning in the selected model id and has no ACP
-  // `thought_level` option; keep that CLI variant path separate from native
-  // ACP config-option reasoning.
   return {
     modelSelection: {
       listCommand,
@@ -274,7 +361,6 @@ function buildAcpModelSelectionParam(
       ...(options.reasoningLevel !== undefined
         ? { reasoningLevel: options.reasoningLevel }
         : {}),
-      // Only "fast" changes resolution; "default" is the catalog's normal id.
       ...(options.serviceTier === "fast"
         ? { serviceTier: options.serviceTier }
         : {}),
@@ -285,12 +371,15 @@ function buildAcpModelSelectionParam(
 export interface BuildAcpSessionParamsArgs {
   additionalWorkspaceWriteRoots: readonly string[];
   cwd: string;
+  /** The dialect the registering plugin named for this agent, if any. */
+  dialectId?: string | undefined;
   dynamicTools?: readonly DynamicTool[] | undefined;
   options: AcpSessionExecutionOptions;
   profile: AcpAgentProfile;
   /** Provider label used in user-facing capability errors. */
   providerLabel: string;
   threadId: string;
+  parameterizedModelPicker: boolean;
 }
 
 /** The bridge's session-construction params for a thread start/resume/fork. */
@@ -316,7 +405,13 @@ export function buildAcpSessionParams(
       command: profile.agentCommand.command,
       args: [...profile.agentCommand.args],
     },
-    ...buildAcpModelSelectionParam(profile, options),
+    ...buildAcpModelSelectionParam(
+      profile,
+      options,
+      args.parameterizedModelPicker,
+      args.dialectId,
+    ),
+    parameterizedModelPicker: args.parameterizedModelPicker,
     ...(profile.reasoningCli !== undefined
       ? { reasoningCli: profile.reasoningCli }
       : {}),

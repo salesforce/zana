@@ -7,6 +7,7 @@ import type { FsReadResult, GitShowResult, Project } from '@zana-ai/zcc-domain/p
 import { DiffViewer } from '../DiffViewer.js';
 import { OpenerButtons } from '../OpenerButtons.js';
 import { languageFromPath } from '../../lib/monacoLanguage.js';
+import { StencilLines } from '../ui/Skeleton.js';
 
 interface FileViewerProps {
   project: Project;
@@ -97,7 +98,9 @@ export function FileViewer({
   if (fileLoading) {
     return (
       <section className="explorer-viewer">
-        <div className="explorer-viewer-empty">Loading…</div>
+        <div className="explorer-viewer-empty">
+          <StencilLines label="Loading file" />
+        </div>
       </section>
     );
   }
@@ -140,7 +143,9 @@ export function FileViewer({
       }
       return (
         <section className="explorer-viewer">
-          <div className="explorer-viewer-empty">Loading image…</div>
+          <div className="explorer-viewer-empty">
+            <StencilLines label="Loading image" />
+          </div>
         </section>
       );
     }
@@ -235,7 +240,9 @@ export function FileViewer({
           </div>
         ) : showDiff ? (
           headLoading || !headResult ? (
-            <div className="explorer-viewer-empty">Loading HEAD…</div>
+            <div className="explorer-viewer-empty">
+              <StencilLines label="Loading HEAD" />
+            </div>
           ) : !headResult.ok ? (
             <div className="explorer-viewer-empty">
               <p>Failed to read HEAD:</p>

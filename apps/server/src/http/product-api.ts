@@ -34,7 +34,12 @@ import {
   unarchiveConversation,
   type ThreadSendMode
 } from '../services/threads/conversation-lifecycle.js';
-import { conversationOutline, conversationTimeline } from '../services/threads/conversation-timeline.js';
+import {
+  conversationOutline,
+  conversationTimeline,
+  conversationTimelineTurnSummaryDetails
+} from '../services/threads/conversation-timeline.js';
+import { listQueuedMessages, createQueuedMessage, updateQueuedMessage, deleteQueuedMessage, reorderQueuedMessage } from '../services/threads/queued-messages.js';
 import { readLastThreadExecution } from '../services/threads/thread-last-execution.js';
 import { markThreadRead } from '../services/threads/thread-reads.js';
 import { readThreadHostFile } from '../services/threads/thread-host-file.js';
@@ -825,7 +830,10 @@ export async function handleProductHttp(
         sendJson(response, 200, conversationTimeline(ctx, threadTimeline.id, {
           segmentLimit: requestUrl.searchParams.get('segmentLimit'),
           beforeAnchorSeq: requestUrl.searchParams.get('beforeAnchorSeq'),
-          beforeAnchorId: requestUrl.searchParams.get('beforeAnchorId')
+          beforeAnchorId: requestUrl.searchParams.get('beforeAnchorId'),
+          afterSequence: requestUrl.searchParams.get('afterSequence'),
+          includeNestedRows: requestUrl.searchParams.get('includeNestedRows'),
+          summaryOnly: requestUrl.searchParams.get('summaryOnly')
         }));
       } catch (error) {
         if (error instanceof ThreadCreateError) {
@@ -863,6 +871,24 @@ export async function handleProductHttp(
       const view = conversationThreadView(ctx, thread);
       ctx.hub.emit('threads:updated', view);
       sendJson(response, 200, { thread: view });
+      return true;
+    }
+
+    const threadTurnDetails = routeParams(path, '/api/v1/threads/:id/timeline/turn-summary-details');
+    if (threadTurnDetails && method === 'GET') {
+      try {
+        sendJson(response, 200, conversationTimelineTurnSummaryDetails(ctx, threadTurnDetails.id, {
+          turnId: requestUrl.searchParams.get('turnId') ?? '',
+          sourceSeqStart: requestUrl.searchParams.get('sourceSeqStart') ?? '',
+          sourceSeqEnd: requestUrl.searchParams.get('sourceSeqEnd') ?? ''
+        }));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
       return true;
     }
 
@@ -1016,8 +1042,123 @@ export async function handleProductHttp(
     const threadFork = routeParams(path, '/api/v1/threads/:id/fork');
     if (threadFork && method === 'POST') {
       try {
-        const thread = await forkConversation(ctx, threadFork.id);
+        const body = (await readJsonBody(request)) as { sourceSeqEnd?: unknown } | null;
+        const sourceSeqEnd = body && typeof body.sourceSeqEnd === 'number' && Number.isInteger(body.sourceSeqEnd) && body.sourceSeqEnd >= 0
+          ? body.sourceSeqEnd
+          : undefined;
+        const thread = await forkConversation(ctx, threadFork.id, { sourceSeqEnd });
         sendJson(response, 201, { ok: true, thread: conversationThreadView(ctx, thread), value: conversationThreadView(ctx, thread) });
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const queuedList = routeParams(path, '/api/v1/threads/:id/queued-messages');
+    if (queuedList && method === 'GET') {
+      sendJson(response, 200, listQueuedMessages(ctx.dataDir, queuedList.id));
+      return true;
+    }
+    if (queuedList && method === 'POST') {
+      try {
+        const body = (await readJsonBody(request)) as { input?: unknown; text?: unknown; model?: unknown };
+        const input = Array.isArray(body.input)
+          ? body.input
+          : typeof body.text === 'string'
+            ? [{ type: 'text', text: body.text, mentions: [] }]
+            : [];
+        const message = await createQueuedMessage(ctx.dataDir, queuedList.id, input as never, {
+          model: typeof body.model === 'string' ? body.model : undefined
+        });
+        sendJson(response, 201, message);
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const queuedOne = routeParams(path, '/api/v1/threads/:id/queued-messages/:queuedMessageId');
+    if (queuedOne && method === 'PATCH') {
+      try {
+        const body = (await readJsonBody(request)) as { input?: unknown; expectedUpdatedAt?: unknown };
+        const message = await updateQueuedMessage(
+          ctx.dataDir,
+          queuedOne.id,
+          queuedOne.queuedMessageId,
+          (Array.isArray(body.input) ? body.input : []) as never,
+          typeof body.expectedUpdatedAt === 'number' ? body.expectedUpdatedAt : 0
+        );
+        sendJson(response, 200, message);
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+    if (queuedOne && method === 'DELETE') {
+      try {
+        await deleteQueuedMessage(ctx.dataDir, queuedOne.id, queuedOne.queuedMessageId);
+        sendJson(response, 200, { ok: true });
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const queuedSend = routeParams(path, '/api/v1/threads/:id/queued-messages/:queuedMessageId/send');
+    if (queuedSend && method === 'POST') {
+      try {
+        const body = (await readJsonBody(request)) as { mode?: unknown };
+        const list = listQueuedMessages(ctx.dataDir, queuedSend.id);
+        const queued = list.find((row) => row.id === queuedSend.queuedMessageId);
+        if (!queued) {
+          sendJson(response, 404, { error: 'unknown-queued-message', message: 'queued message not found' });
+          return true;
+        }
+        const mode = body.mode === 'steer' ? 'steer' : 'auto';
+        const thread = await sendConversationTurn(ctx, queuedSend.id, queued.content, mode, {
+          model: queued.model === 'default' ? undefined : queued.model,
+          reasoningLevel: queued.reasoningLevel
+        });
+        await deleteQueuedMessage(ctx.dataDir, queuedSend.id, queued.id);
+        sendJson(response, 200, { ok: true, thread: conversationThreadView(ctx, thread) });
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const queuedOrder = routeParams(path, '/api/v1/threads/:id/queued-messages/:queuedMessageId/order');
+    if (queuedOrder && method === 'PATCH') {
+      try {
+        const body = (await readJsonBody(request)) as { previousQueuedMessageId?: unknown };
+        const previous = typeof body.previousQueuedMessageId === 'string' ? body.previousQueuedMessageId : null;
+        const messages = await reorderQueuedMessage(
+          ctx.dataDir,
+          queuedOrder.id,
+          queuedOrder.queuedMessageId,
+          previous
+        );
+        sendJson(response, 200, messages);
       } catch (error) {
         if (error instanceof ThreadCreateError) {
           sendJson(response, error.status, { error: error.code, message: error.message });

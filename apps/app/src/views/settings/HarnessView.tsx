@@ -10,6 +10,7 @@ import { providerIconForId } from '@/components/thread/pickers/provider-icon';
 import { Section, Field, ToggleSwitch, ChipField, TextArgsField } from '@/components/settings/FormFields';
 import { HarnessOptionSelect } from '@/components/HarnessOptionSelect';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
+import { StencilForm, Skeleton } from '@/components/ui/Skeleton';
 import { providerUiSchema } from '@zana-ai/zcc-domain/launch-provider';
 import {
   getThreadModelCatalog,
@@ -505,7 +506,7 @@ function ThreadProvidersPanel() {
     };
   }, []);
   if (providers === null) {
-    return <p className="settings-help" role="status">Loading Modern providers…</p>;
+    return <StencilForm label="Loading Modern providers" />;
   }
   return <ThreadProviderCatalog providers={providers} />;
 }
@@ -811,7 +812,7 @@ export function HarnessView({
           help="Used for defaulted new-agent launches. Explicit profile selections and pinned personas keep their profile."
         >
           {descriptors === null ? (
-            <span className="settings-help" role="status">Loading harness default…</span>
+            <Skeleton width="180px" height="28px" />
           ) : (
             <PopoverPicklist
               value={config.defaultHarness ?? 'claude'}

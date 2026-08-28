@@ -1,4 +1,4 @@
-import { useSyncExternalStore, type ComponentType } from 'react';
+import { Fragment, useSyncExternalStore, type ComponentType } from 'react';
 import { MarkdownContent } from '../components/MarkdownContent.js';
 import { PluginSlotBoundary } from './PluginSlotBoundary.js';
 import { listMessageDirectives, subscribePluginSlots } from './plugin-slots.js';
@@ -11,12 +11,14 @@ export function PluginMarkdownDirectives({
   text,
   threadId,
   projectId,
-  messageId
+  messageId,
+  threadMentions = false
 }: {
   text: string;
   threadId?: string;
   projectId?: string | null;
   messageId: string;
+  threadMentions?: boolean;
 }) {
   const registrations = useSyncExternalStore(
     subscribePluginSlots,
@@ -25,7 +27,14 @@ export function PluginMarkdownDirectives({
   );
   const parsed = parseMessageDirectives(text);
   if (parsed.length === 0 || registrations.length === 0) {
-    return <MarkdownContent text={text} />;
+    return (
+      <MarkdownContent
+        text={text}
+        threadId={threadId}
+        projectId={projectId}
+        threadMentions={threadMentions}
+      />
+    );
   }
   const byName = new Map(registrations.map((row) => [row.id, row]));
   const segments: Array<{ kind: 'md'; text: string } | { kind: 'dir'; dir: ParsedMessageDirective }> = [];
@@ -38,13 +47,30 @@ export function PluginMarkdownDirectives({
   }
   if (cursor < text.length) segments.push({ kind: 'md', text: text.slice(cursor) });
   if (segments.every((segment) => segment.kind === 'md')) {
-    return <MarkdownContent text={text} />;
+    return (
+      <MarkdownContent
+        text={text}
+        threadId={threadId}
+        projectId={projectId}
+        threadMentions={threadMentions}
+      />
+    );
   }
   return (
     <>
       {segments.map((segment, index) => {
         if (segment.kind === 'md') {
-          return segment.text.trim() ? <MarkdownContent key={`md-${index}`} text={segment.text} /> : null;
+          return segment.text.trim() ? (
+            <MarkdownContent
+              key={`md-${index}`}
+              text={segment.text}
+              threadId={threadId}
+              projectId={projectId}
+              threadMentions={threadMentions}
+            />
+          ) : (
+            <Fragment key={`md-${index}`} />
+          );
         }
         const registration = byName.get(segment.dir.name);
         if (!registration) return <code key={`dir-${index}`}>{segment.dir.source}</code>;

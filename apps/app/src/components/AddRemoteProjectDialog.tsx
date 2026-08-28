@@ -5,6 +5,7 @@ import { RefreshCw, Search, X } from 'lucide-react';
 import type { SshHostEntry } from '@zana-ai/zcc-domain/product';
 import { bootstrapOutcome } from './composer-host-status.js';
 import { collectBootstrapLogs, remoteAddSubmitLabel } from './add-remote-project.js';
+import { StencilList } from './ui/Skeleton.js';
 
 interface AddRemoteProjectDialogProps {
   onClose: () => void;
@@ -315,7 +316,7 @@ export function AddRemoteProjectDialogView({
           </div>
 
           <div className="remote-host-list">
-            {hosts === null && <div className="list-empty">Loading hosts…</div>}
+            {hosts === null && <StencilList label="Loading hosts" className="list-empty" />}
             {hosts !== null && filtered.length === 0 && (
               <div className="list-empty">
                 {hosts.length === 0

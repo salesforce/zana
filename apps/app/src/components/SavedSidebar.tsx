@@ -3,6 +3,7 @@ import { Bookmark } from 'lucide-react';
 import { useData, useSaved, useSavedSelection } from '../store.js';
 import type { SavedRecord } from '@zana-ai/zcc-domain/product';
 import { mdToPlainText } from '../lib/plainText.js';
+import { DelayedStencilList } from './ui/Skeleton.js';
 
 /**
  * Saved-reports list — the "Saved" tab twin of {@link InboxSidebar}. Renders the
@@ -66,7 +67,7 @@ export function SavedSidebar({
   }, [filtered]);
 
   if (loading && records.length === 0) {
-    return <div className="inbox-sidebar-empty">Loading…</div>;
+    return <DelayedStencilList label="Loading saved reports" className="zcc-stencil-padded" />;
   }
 
   if (records.length === 0) {

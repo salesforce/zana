@@ -206,6 +206,32 @@ export interface PluginMessageActionRegistration extends PluginSlotBase {
   run: (context: PluginMessageActionContext) => void | Promise<void>;
 }
 
+export type PluginTimelineRowStatus = 'pending' | 'completed' | 'error' | 'interrupted';
+
+export interface PluginTimelineRendererRow {
+  id: string;
+  threadId: string;
+  turnId: string | null;
+  kind: string;
+  toolName: string | null;
+  status: PluginTimelineRowStatus;
+  startedAt: number;
+  completedAt: number | null;
+}
+
+export interface PluginTimelineRendererProps {
+  row: PluginTimelineRendererRow;
+  payload: JsonValue;
+  presentation: { label: { pending: string; completed: string }; title?: string; detail?: string } | null;
+  thread: { id: string; providerId: string | null };
+  Original: ComponentType<Record<never, never>>;
+}
+
+export interface PluginTimelineRendererRegistration extends PluginSlotBase {
+  kind: string;
+  component: ComponentType<PluginTimelineRendererProps>;
+}
+
 /** Context handed to a `commandPaletteAction`'s `isAvailable` and `run`. */
 export interface PluginCommandPaletteActionContext {
   threadId: string | null;
@@ -369,6 +395,9 @@ export interface PluginAppSlots {
   fileOpener(registration: Omit<PluginFileOpenerRegistration, 'generation' | 'pluginId'>): void;
   messageDirective(registration: Omit<PluginMessageDirectiveRegistration, 'generation' | 'pluginId'>): void;
   messageAction(registration: Omit<PluginMessageActionRegistration, 'generation' | 'pluginId'>): void;
+  experimental_timelineRenderer(
+    registration: Omit<PluginTimelineRendererRegistration, 'generation' | 'pluginId' | 'id'>
+  ): void;
   commandPaletteAction(
     registration: Omit<PluginCommandPaletteActionRegistration, 'generation' | 'pluginId'>
   ): void;
@@ -404,6 +433,7 @@ export interface PluginRegistrationSet {
   fileOpeners: PluginFileOpenerRegistration[];
   messageDirectives: PluginMessageDirectiveRegistration[];
   messageActions: PluginMessageActionRegistration[];
+  timelineRenderers: PluginTimelineRendererRegistration[];
   commandPaletteActions: PluginCommandPaletteActionRegistration[];
   providerIcons: PluginProviderIconRegistration[];
   composerCustomizations: ComposerCustomization[];
@@ -506,6 +536,7 @@ export function emptyRegistrationSet(pluginId: string, generation: number): Plug
     fileOpeners: [],
     messageDirectives: [],
     messageActions: [],
+    timelineRenderers: [],
     commandPaletteActions: [],
     providerIcons: [],
     composerCustomizations: [],
@@ -580,6 +611,7 @@ export function collectPluginApp(
     fileOpener: new Set<string>(),
     messageDirective: new Set<string>(),
     messageAction: new Set<string>(),
+    timelineRenderer: new Set<string>(),
     commandPaletteAction: new Set<string>(),
     providerIcon: new Set<string>(),
     contentScript: new Set<string>()
@@ -810,6 +842,18 @@ export function collectPluginApp(
               ? { icon: requireNonEmptyString(kind, 'icon', registration.icon) }
               : {}),
             run: registration.run
+          })
+        );
+      },
+      experimental_timelineRenderer: (registration) => {
+        const kind = 'slots.experimental_timelineRenderer';
+        const rendererKind = requireNonEmptyString(kind, 'kind', registration.kind);
+        requireUniqueId(kind, seen.timelineRenderer, rendererKind);
+        set.timelineRenderers.push(
+          stamp({
+            id: rendererKind,
+            kind: rendererKind,
+            component: requireComponent(kind, 'component', registration.component)
           })
         );
       },

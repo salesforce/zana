@@ -1,4 +1,5 @@
 import { product } from '../../lib/product-client.js';
+import { DelayedStencilList } from '../../components/ui/Skeleton.js';
 /**
  * Plugins → Browse (Marketplace). Lists first-party plugins the app ships
  * (offline) plus configured community catalogs and, when opted in, the signed
@@ -447,7 +448,7 @@ export function MarketplaceView({
         {error && <p className="modal-error">{error}</p>}
 
         {entries === null ? (
-          <p className="settings-help settings-help--muted">Loading marketplace…</p>
+          <DelayedStencilList label="Loading marketplace" className="zcc-stencil-padded" />
         ) : entries.length === 0 ? (
           <p className="settings-help settings-help--muted">
             No plugins to show. First-party plugins ship with the app; if this list is empty,

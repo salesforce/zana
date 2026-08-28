@@ -15,6 +15,7 @@ import { recordUse, recencyBoost, getRecents } from '../lib/paletteRecents.js';
 import { titleFromPrompt } from '../lib/promptTitle.js';
 import { useRouteState } from '../hooks/useRouteState.js';
 import { listCommandPaletteActions, subscribePluginSlots } from '../plugins/plugin-slots.js';
+import { StencilList } from './ui/Skeleton.js';
 
 interface Props {
   onClose: () => void;
@@ -717,7 +718,7 @@ function renderLaunchRows(
   }
   // Picker (`#par`): fuzzy list of destinations.
   if (hosts === null && launchRows.length === 0) {
-    return <div className="palette-empty">Loading hosts…</div>;
+    return <StencilList label="Loading hosts" className="palette-empty" />;
   }
   if (launchRows.length === 0) return <div className="palette-empty">No matching project or host</div>;
   return launchRows.map((r, i) => {

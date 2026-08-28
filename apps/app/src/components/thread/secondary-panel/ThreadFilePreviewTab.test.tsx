@@ -18,16 +18,18 @@ describe('ThreadFilePreviewTab', () => {
     const html = renderToStaticMarkup(
       <ThreadFilePreviewTab threadId="t1" path="/tmp/README.md" />
     );
-    expect(html).toContain('data-testid="thread-file-preview"');
-    expect(html).toContain('Loading');
+    expect(html).toContain('aria-label="Loading file"');
+    expect(html).toContain('zcc-skeleton');
+    expect(html).not.toContain('data-testid="thread-file-preview"');
   });
 
   it('renders a loading preview shell without a thread id', () => {
     const html = renderToStaticMarkup(
       <ThreadFilePreviewTab path="/tmp/README.md" />
     );
-    expect(html).toContain('data-testid="thread-file-preview"');
-    expect(html).toContain('Loading');
+    expect(html).toContain('aria-label="Loading file"');
+    expect(html).toContain('zcc-skeleton');
+    expect(html).not.toContain('data-testid="thread-file-preview"');
   });
 
   it('renders text, image, and error preview states', () => {

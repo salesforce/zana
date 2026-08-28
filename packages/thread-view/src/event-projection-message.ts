@@ -1,7 +1,9 @@
 import type {
   BackgroundTaskStatus,
   BackgroundTaskUsage,
+  ExtensionKind,
   JsonObject,
+  JsonValue,
   OwnershipChangeOperationMetadata,
   PendingInteractionUserAnswer,
   PendingInteractionUserQuestionQuestion,
@@ -10,8 +12,11 @@ import type {
   SystemMessageKind,
   SystemMessageSubject,
   Thread,
+  ThreadEventItemPresentation,
+  ThreadEventPlanStep,
   ThreadEventRow,
   ThreadEventScope,
+  ThreadEventSearchMode,
   ThreadTurnInitiator,
   WorkflowProgressSnapshot,
 } from "@zana-ai/zcc-domain/thread-runtime";
@@ -61,6 +66,11 @@ export interface EventProjectionMessageBase {
   scope: ThreadEventScope;
   startedAt?: number;
   parentToolCallId?: string;
+  /**
+   * Bridge grammar-v3 presentation when the persisted item had one. Absent on
+   * pre-presentation rows; those render through the kind's legacy title.
+   */
+  presentation?: ThreadEventItemPresentation;
 }
 
 export const eventProjectionTurnRequestKindValues = [
@@ -208,6 +218,54 @@ export interface EventProjectionImageViewMessage extends EventProjectionMessageB
     EventProjectionMessageStatus,
     "pending" | "completed" | "interrupted"
   >;
+}
+
+type EventProjectionItemActivityStatus = Extract<
+  EventProjectionMessageStatus,
+  "pending" | "completed" | "error" | "interrupted"
+>;
+
+/** A grammar v3 `fileRead` item. */
+export interface EventProjectionFileReadMessage extends EventProjectionMessageBase {
+  kind: "file-read";
+  callId: string;
+  path: string;
+  cmd: string | null;
+  completedAt: number | null;
+  status: EventProjectionItemActivityStatus;
+}
+
+/** A grammar v3 `search` item (content search, path match, or listing). */
+export interface EventProjectionSearchMessage extends EventProjectionMessageBase {
+  kind: "search";
+  callId: string;
+  mode: ThreadEventSearchMode;
+  query: string;
+  path: string | null;
+  cmd: string | null;
+  completedAt: number | null;
+  status: EventProjectionItemActivityStatus;
+}
+
+/** A grammar v3 `planSteps` snapshot. */
+export interface EventProjectionPlanStepsMessage extends EventProjectionMessageBase {
+  kind: "plan-steps";
+  callId: string;
+  steps: ThreadEventPlanStep[];
+  explanation: string | null;
+  completedAt: number | null;
+  status: EventProjectionItemActivityStatus;
+}
+
+/** A plugin extension item; `presentation` is mandatory on the item. */
+export interface EventProjectionExtensionMessage extends EventProjectionMessageBase {
+  kind: "extension";
+  callId: string;
+  extensionKind: ExtensionKind;
+  payload: JsonValue;
+  presentation: ThreadEventItemPresentation;
+  completedAt: number | null;
+  status: EventProjectionItemActivityStatus;
 }
 
 export interface EventProjectionFileEditChange {
@@ -415,6 +473,10 @@ export type EventProjectionMessage =
   | EventProjectionWebSearchMessage
   | EventProjectionWebFetchMessage
   | EventProjectionImageViewMessage
+  | EventProjectionFileReadMessage
+  | EventProjectionSearchMessage
+  | EventProjectionPlanStepsMessage
+  | EventProjectionExtensionMessage
   | EventProjectionFileEditMessage
   | EventProjectionOperationMessage
   | EventProjectionPermissionGrantLifecycleMessage

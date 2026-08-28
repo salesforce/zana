@@ -52,6 +52,28 @@ describe('timeline auto-expand', () => {
       queries: ['alpha'],
       completedAt: 2
     })).toBe(false);
+    expect(isWorkRowExpandable({
+      ...base,
+      id: 'fr',
+      kind: 'work',
+      workKind: 'file-read',
+      status: 'completed',
+      callId: 'fr',
+      path: 'README.md',
+      cmd: null,
+      completedAt: 2
+    })).toBe(false);
+    expect(isWorkRowExpandable({
+      ...base,
+      id: 'ps',
+      kind: 'work',
+      workKind: 'plan-steps',
+      status: 'completed',
+      callId: 'ps',
+      steps: [{ step: 'Ship it' }],
+      explanation: null,
+      completedAt: 2
+    })).toBe(true);
   });
 
   it('auto-opens the live pending frontier while the thread is active', () => {

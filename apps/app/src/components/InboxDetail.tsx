@@ -18,6 +18,7 @@ import {
   useSuggestions,
   useUi
 } from '../store.js';
+import { DelayedStencilLines, StencilLines } from './ui/Skeleton.js';
 import { AgentLauncher } from './AgentLauncher.js';
 import { QuestionBlock } from './InboxQuestionBlock.js';
 import { InboxGuidance } from './InboxGuidance.js';
@@ -107,7 +108,7 @@ export function InboxDetail({ visible }: InboxDetailProps) {
   }, [visible, selectedId, handleDelete]);
 
   if (loading && entries.length === 0) {
-    return <div className="inbox-detail-empty">Loading…</div>;
+    return <DelayedStencilLines label="Loading inbox" className="zcc-stencil-padded" />;
   }
   if (entries.length === 0) {
     return <EmptyState />;
@@ -1077,7 +1078,7 @@ function DocPreview({
       </div>
       <div className="inbox-doc-body">
         {result === null ? (
-          <div className="inbox-doc-loading">Loading…</div>
+          <StencilLines label="Loading document" widths={['75%', '100%', '83%', '67%']} />
         ) : canPreview ? (
           <DocContent path={resolvedPath} content={result!.content as string} exportable />
         ) : (
