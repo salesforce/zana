@@ -100,7 +100,7 @@ cat <<'EOF'
 zcc-docker is idle (no join code).
 
   Enroll through Heroku (Settings → Add a machine, then):
-    docker exec -it zcc-docker zcc-join --join-code <zcde_…> --host-id <id> --server https://zcc-7808c5bc8f3d.herokuapp.com
+    docker exec -it zcc-docker zcc-join --join-code <zcde_…> --host-id <id> --server https://<origin>/t/<sessionId>
 
   Or one-shot from the repo:
     pnpm docker:host-daemon

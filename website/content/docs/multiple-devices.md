@@ -180,15 +180,16 @@ zcc-join --join-code <zcde_...> --host-id <id> --server <url>
 ```
 
 Or mint and enroll in one step (`pnpm dev` must be running). If the laptop
-relay is connected, this uses the Heroku origin; otherwise it publishes a
-loopback proxy so Docker can reach `127.0.0.1` (and temporarily points Public
-app URL at that proxy):
+relay is connected, this uses `https://<origin>/t/<sessionId>`; otherwise it
+publishes a loopback proxy so Docker can reach `127.0.0.1` (and temporarily
+points Public app URL at that proxy):
 
 ```bash
 pnpm docker:host-daemon
 ```
 
-Force a door with `--relay` or `--local`. Stop with
+Force a door with `--relay` or `--local`. Prove a Linux box can enroll through
+the session join URL with `pnpm test:docker:pairing` (needs Docker). Stop with
 `pnpm docker:remote-machine down`.
 
 Settings → Machines should show hostname `zcc-docker`. Add a project at

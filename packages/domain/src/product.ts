@@ -2209,6 +2209,13 @@ export interface AppConfig {
    */
   showUnhandledProviderEvents?: boolean;
   /**
+   * Tee provider-bridge runtime/ACP wires to NDJSON under the data dir
+   * (`provider-recordings/raw`). Default off. A non-empty
+   * `ZCC_PROVIDER_BRIDGE_RECORD_DIR` in the host-daemon environment still
+   * wins. Raw files can contain prompts and paths.
+   */
+  providerBridgeRecordingEnabled?: boolean;
+  /**
    * Hard ceiling on concurrently-live terminal sessions. Absent ⇒ a
    * memory-aware default derived from physical RAM (see `computeMaxLiveSessions`
    * in `pty.ts`), so the cap scales down on smaller machines instead of the old

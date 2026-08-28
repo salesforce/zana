@@ -106,6 +106,8 @@ describe('Settings subsection navigation', () => {
     expect(source).toContain('PluginSettingsSections');
     expect(source).toContain('reloadComposerCommandCatalog');
     expect(source).toContain('Reload slash commands');
+    expect(source).toContain('Record provider traffic');
+    expect(source).toContain('providerBridgeRecordingEnabled');
     expect(SETTINGS_SECTIONS.map((section) => section.id)).not.toContain('plugins');
   });
 

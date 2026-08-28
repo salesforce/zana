@@ -1,4 +1,5 @@
 import { createServer, type Server } from 'node:http';
+import { connect as netConnect } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { startFrontDoor } from './front-door.mjs';
 import { FLAG, TYPE, decodeFrame, encodeFrame, encodeJsonPayload } from './protocol.mjs';
@@ -164,6 +165,46 @@ describe('pairing front door', () => {
 
     first.laptop.close();
     second.laptop.close();
+  });
+
+  it('answers a curl-style keep-alive GET without Content-Length', async () => {
+    const nextOrigin = await listenNext();
+    door = await startFrontDoor({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'relay-token-relay-token',
+      spawnNext: false,
+      nextOrigin
+    });
+    const attached = await connectEchoLaptop(door.port, 'curl-ok');
+    const body = await new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('curl-style GET timed out')), 3_000);
+      const socket = netConnect(door.port, '127.0.0.1', () => {
+        socket.write(
+          `GET /t/${attached.hello.sessionId}/install.sh HTTP/1.1\r\n` +
+            `Host: 127.0.0.1:${door.port}\r\n` +
+            'User-Agent: curl/7.88.1\r\n' +
+            'Accept: */*\r\n' +
+            '\r\n'
+        );
+      });
+      let received = '';
+      socket.on('data', (chunk) => {
+        received += chunk.toString();
+        if (received.includes('curl-ok')) {
+          clearTimeout(timer);
+          socket.end();
+          resolve(received);
+        }
+      });
+      socket.on('error', (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+    });
+    expect(body).toContain('HTTP/1.1 200');
+    expect(body).toContain('curl-ok');
+    attached.laptop.close();
   });
 
   it('reclaims a session after disconnect and 409s a live id', async () => {

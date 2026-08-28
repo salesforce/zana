@@ -46,7 +46,8 @@ Join options:
   --join-code CODE   From Settings → Machines → Add a machine
   --host-id ID       Host id from that dialog (required with --join-code)
   --local            Enroll via loopback proxy (hits this machine's pnpm dev)
-  --relay            Enroll via the configured public origin (Heroku)
+  --relay            Enroll via https://<origin>/t/<sessionId> (Heroku)
+                     Fails if the join window has closed (renew in Settings)
                      Default: --relay when the laptop tunnel is connected, else --local
   --follow           Stay attached to logs after start
   --server-port N    Product server port (default ${SERVER_PORT})
@@ -274,7 +275,19 @@ cmd_join() {
       printf 'Relay is %s. Connect the laptop tunnel (or use --local against pnpm dev).\n' "$relay_state" >&2
       exit 1
     fi
-    door_url=${public_url%/}
+    local session_id join_until now_ms
+    session_id=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).sessionId ?? "")' "$relay_json")
+    join_until=$(node -e 'process.stdout.write(String(JSON.parse(process.argv[1]).joinUntil ?? 0))' "$relay_json")
+    if [[ -z "$session_id" ]]; then
+      printf 'Relay is connected but has no session id yet. Retry in a second.\n' >&2
+      exit 1
+    fi
+    now_ms=$(($(date +%s) * 1000))
+    if [[ "$join_until" =~ ^[0-9]+$ && "$join_until" -gt 0 && "$now_ms" -ge "$join_until" ]]; then
+      printf 'Join window closed. Renew it in Settings → Machines, then retry.\n' >&2
+      exit 1
+    fi
+    door_url="${public_url%/}/t/${session_id}"
   else
     door_url="http://host.docker.internal:${PROXY_PORT}"
     start_proxy

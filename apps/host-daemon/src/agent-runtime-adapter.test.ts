@@ -77,6 +77,51 @@ describe('agent runtime thread adapter', () => {
     adapter.dispose();
   });
 
+  it('applies Settings provider-bridge recording to process env before start', async () => {
+    const { resetProviderBridgeRecordDirEnvSync } = await import('./provider-bridge-record-env.js');
+    const previous = process.env.ZCC_PROVIDER_BRIDGE_RECORD_DIR;
+    delete process.env.ZCC_PROVIDER_BRIDGE_RECORD_DIR;
+    resetProviderBridgeRecordDirEnvSync();
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined,
+      dataDir: cwd,
+      loadConfig: () => ({
+        version: 1,
+        theme: 'dark',
+        shell: '/bin/zsh',
+        claudeBinary: 'claude',
+        fontSize: 13,
+        lastProjectId: null,
+        providerBridgeRecordingEnabled: true
+      }),
+      createRuntime: (options) =>
+        createAgentRuntimeWithAdapters({
+          ...options,
+          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+        })
+    });
+    const threadId = randomUUID();
+    try {
+      await adapter.startWork({
+        threadId,
+        environmentId: randomUUID(),
+        projectId: 'p1',
+        providerId: 'fake',
+        input: ['hello'],
+        cwd
+      });
+      expect(process.env.ZCC_PROVIDER_BRIDGE_RECORD_DIR).toBe(
+        join(cwd, 'provider-recordings', 'raw')
+      );
+      await adapter.stopWork({ threadId });
+    } finally {
+      adapter.dispose();
+      resetProviderBridgeRecordDirEnvSync();
+      if (previous === undefined) delete process.env.ZCC_PROVIDER_BRIDGE_RECORD_DIR;
+      else process.env.ZCC_PROVIDER_BRIDGE_RECORD_DIR = previous;
+    }
+  });
+
   it('runs a follow-up turn on the same AgentRuntime', async () => {
     const events: HostEventEnvelope[] = [];
     const adapter = createAgentRuntimeAdapter({

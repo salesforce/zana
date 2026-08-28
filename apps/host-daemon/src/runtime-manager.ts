@@ -22,6 +22,7 @@ export const IDLE_PROVIDER_SESSION_REAP_INTERVAL_MS = 5 * 60 * 1000;
 export function createRuntimeManager(options: {
   emit: (event: HostEventEnvelope) => void;
   dataDir?: string;
+  loadConfig?: Parameters<typeof createAgentRuntimeAdapter>[0]['loadConfig'];
   createRuntime?: CreateAgentRuntimeFn;
   bridgeBundleDir?: string;
   getRemoteDefaultPath?: Parameters<typeof createAgentRuntimeAdapter>[0]['getRemoteDefaultPath'];

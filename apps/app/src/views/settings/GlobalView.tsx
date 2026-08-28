@@ -142,13 +142,19 @@ export function GlobalView({
       <Section
         anchorId="debug"
         title="Debug"
-        help="Diagnostics for agent timelines. Off by default."
+        help="Diagnostics for agent timelines and provider wires. Off by default."
       >
         <CheckboxField
           label="Show unhandled provider events"
           help="Surface provider/unhandled timeline rows. Development builds also force this on."
           checked={config.showUnhandledProviderEvents ?? false}
           onChange={(v) => onUpdate({ showUnhandledProviderEvents: v })}
+        />
+        <CheckboxField
+          label="Record provider traffic"
+          help="Write raw provider/ACP lines as NDJSON under the app data directory (provider-recordings/raw). Can include prompts and paths. New agent turns pick this up; already-running sessions keep their current setting."
+          checked={config.providerBridgeRecordingEnabled ?? false}
+          onChange={(v) => onUpdate({ providerBridgeRecordingEnabled: v })}
         />
       </Section>
 

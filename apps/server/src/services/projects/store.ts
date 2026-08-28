@@ -1005,6 +1005,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.showUnhandledProviderEvents === 'boolean') {
     normalized.showUnhandledProviderEvents = input.showUnhandledProviderEvents;
   }
+  if (typeof input.providerBridgeRecordingEnabled === 'boolean') {
+    normalized.providerBridgeRecordingEnabled = input.providerBridgeRecordingEnabled;
+  }
   if (typeof input.enableUpdateSimulation === 'boolean') {
     normalized.enableUpdateSimulation = input.enableUpdateSimulation;
   }

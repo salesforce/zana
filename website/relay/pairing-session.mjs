@@ -9,6 +9,35 @@ const PONG_GRACE_MS = 40_000;
 const MAX_HTTP = 16;
 const MAX_WS = 8;
 const MAX_REQ_BODY = 1_000_000;
+const BODYLESS = new Set(['GET', 'HEAD']);
+
+function requestHasBody(request) {
+  const method = (request.method ?? 'GET').toUpperCase();
+  if (BODYLESS.has(method)) return false;
+  const length = request.headers['content-length'];
+  if (length === '0') return false;
+  if (typeof length === 'string' && length.length > 0) return true;
+  return String(request.headers['transfer-encoding'] ?? '').length > 0;
+}
+
+async function readHttpBody(request) {
+  if (!requestHasBody(request)) {
+    return Buffer.alloc(0);
+  }
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buf.length;
+    if (size > MAX_REQ_BODY) {
+      const error = new Error('payload_too_large');
+      error.code = 'payload_too_large';
+      throw error;
+    }
+    chunks.push(buf);
+  }
+  return chunks.length > 0 ? Buffer.concat(chunks) : Buffer.alloc(0);
+}
 
 /**
  * @param {() => void} [onChange]
@@ -184,25 +213,19 @@ export function createPairingSession(onChange, options = {}) {
       response.end(JSON.stringify({ error: 'relay_offline' }));
       return;
     }
-    const chunks = [];
-    let size = 0;
+    let body;
     try {
-      for await (const chunk of request) {
-        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        size += buf.length;
-        if (size > MAX_REQ_BODY) {
-          response.writeHead(413, { 'content-type': 'application/json; charset=utf-8' });
-          response.end(JSON.stringify({ error: 'payload_too_large' }));
-          return;
-        }
-        chunks.push(buf);
+      body = await readHttpBody(request);
+    } catch (error) {
+      if (error && error.code === 'payload_too_large') {
+        response.writeHead(413, { 'content-type': 'application/json; charset=utf-8' });
+        response.end(JSON.stringify({ error: 'payload_too_large' }));
+        return;
       }
-    } catch {
       response.writeHead(400);
       response.end();
       return;
     }
-    const body = chunks.length > 0 ? Buffer.concat(chunks) : Buffer.alloc(0);
     const streamId = allocId();
     const url = request.url ?? '/';
     const meta = {
@@ -214,11 +237,6 @@ export function createPairingSession(onChange, options = {}) {
       res: response,
       headersSent: false,
       timeout: setTimeout(() => failHttp(streamId, 504, { error: 'relay_timeout' }), FIRST_RES_MS)
-    });
-    response.on('close', () => {
-      if (httpStreams.has(streamId)) {
-        httpStreams.delete(streamId);
-      }
     });
     send(TYPE.HTTP_REQ, FLAG.META | (body.length === 0 ? FLAG.FIN : 0), streamId, encodeJsonPayload(meta));
     if (body.length === 0) return;

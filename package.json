@@ -37,6 +37,7 @@
     "test:watch": "vitest",
     "test:e2e": "pnpm run build:legacy && playwright test",
     "test:e2e:docker": "bash scripts/e2e-docker.sh",
+    "test:docker:pairing": "ZCC_DOCKER_E2E=1 vitest run docker/remote-machine/pairing-session.e2e.test.ts",
     "docker:host-daemon": "bash scripts/docker-remote-machine.sh --join",
     "docker:remote-machine": "bash scripts/docker-remote-machine.sh",
     "docker:remote-machine:down": "bash scripts/docker-remote-machine.sh down",

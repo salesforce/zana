@@ -54,6 +54,7 @@ describe('docker remote machine', () => {
     expect(pkg.scripts['docker:remote-machine']).toContain('docker-remote-machine.sh');
     expect(pkg.scripts['docker:host-daemon']).toContain('--join');
     expect(pkg.scripts['docker:remote-machine:down']).toContain(' down');
+    expect(pkg.scripts['test:docker:pairing']).toContain('ZCC_DOCKER_E2E=1');
 
     const helper = join(repoRoot, 'scripts/docker-remote-machine.sh');
     chmodSync(helper, 0o755);
@@ -63,6 +64,7 @@ describe('docker remote machine', () => {
     expect(help.stdout).toContain('--local');
     expect(help.stdout).toContain('--join-code');
     expect(readFileSync(helper, 'utf8')).toContain('DOOR=auto');
+    expect(readFileSync(helper, 'utf8')).toContain('/t/${session_id}');
     expect(help.stdout).toContain('ssh -p');
 
     const missingHost = spawnSync('bash', [helper, '--join-code', 'zcde_test'], { encoding: 'utf8' });

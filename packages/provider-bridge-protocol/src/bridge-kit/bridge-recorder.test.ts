@@ -7,6 +7,7 @@ import {
   BRIDGE_RECORDING_PROCESS_SCOPE,
   createBridgeRecorder,
   createRecordingLineSplitter,
+  resolveProviderBridgeRecordDir,
   type BridgeRecordingEntry,
 } from "./bridge-recorder.js";
 
@@ -147,5 +148,36 @@ describe("bridge recorder", () => {
     splitter.push("this line is far too long");
     splitter.push(" and keeps going\nafter\n");
     expect(lines).toEqual(["short", "after"]);
+  });
+});
+
+describe("resolveProviderBridgeRecordDir", () => {
+  it("prefers a non-empty env override over Settings", () => {
+    expect(
+      resolveProviderBridgeRecordDir({
+        enabled: false,
+        dataDir: "/tmp/zcc-data",
+        envDir: " /tmp/from-shell ",
+      }),
+    ).toBe("/tmp/from-shell");
+  });
+
+  it("uses the data-dir default when Settings is on", () => {
+    expect(
+      resolveProviderBridgeRecordDir({
+        enabled: true,
+        dataDir: "/tmp/zcc-data",
+      }),
+    ).toBe("/tmp/zcc-data/provider-recordings/raw");
+  });
+
+  it("returns undefined when Settings is off and env is empty", () => {
+    expect(
+      resolveProviderBridgeRecordDir({
+        enabled: false,
+        dataDir: "/tmp/zcc-data",
+        envDir: "  ",
+      }),
+    ).toBeUndefined();
   });
 });

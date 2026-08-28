@@ -431,6 +431,16 @@ describe('normalizeConfig — worktree isolation default', () => {
   });
 });
 
+describe('normalizeConfig — providerBridgeRecordingEnabled', () => {
+  it('passes through a boolean, drops non-booleans', () => {
+    expect(normalizeConfig({ providerBridgeRecordingEnabled: true }).providerBridgeRecordingEnabled).toBe(true);
+    expect(normalizeConfig({ providerBridgeRecordingEnabled: false }).providerBridgeRecordingEnabled).toBe(false);
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ providerBridgeRecordingEnabled: 'yes' }).providerBridgeRecordingEnabled).toBeUndefined();
+    expect(normalizeConfig({}).providerBridgeRecordingEnabled).toBeUndefined();
+  });
+});
+
 describe('normalizeConfig — lastSeenVersion (What\'s New baseline)', () => {
   it('passes through a trimmed version string', () => {
     expect(normalizeConfig({ lastSeenVersion: '1.0.4' }).lastSeenVersion).toBe('1.0.4');

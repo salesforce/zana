@@ -112,6 +112,7 @@ export function startEnrolledHostConnection(options: {
     adapter = createRuntimeManager({
       emit: (event) => sink.emit(event),
       dataDir: options.dataDir,
+      loadConfig,
       getRemoteDefaultPath: () => loadConfig().remoteDefaultPath,
       onInteractiveRequest: async (request) => {
         try {

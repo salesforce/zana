@@ -1,4 +1,5 @@
 import { mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { HostBridgeLaunch, HostEventEnvelope, ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
 import {
@@ -25,7 +26,9 @@ import {
   type ToolCallResponse,
   type DynamicTool
 } from '@zana-ai/zcc-domain/thread-runtime';
+import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { HostCommandError } from './host-command-error.js';
+import { syncProviderBridgeRecordDirEnv } from './provider-bridge-record-env.js';
 import type { ThreadRuntimeAdapter } from './thread-runtime-types.js';
 import type { ThreadArchiveInput, ThreadResumeInput, ThreadRewindPrepareInput, ThreadWorkInput } from './command-dispatch.js';
 import { packedBridgeBundleDir } from './packed-bridge-dir.js';
@@ -220,6 +223,8 @@ export function mapRuntimeThreadEvent(event: ThreadEvent): HostEventEnvelope {
 export function createAgentRuntimeAdapter(options: {
   emit: (event: HostEventEnvelope) => void;
   dataDir?: string;
+  /** Live Settings read so provider-bridge record mode can follow the Debug toggle. */
+  loadConfig?: () => AppConfig;
   createRuntime?: CreateAgentRuntimeFn;
   /**
    * Packed join artifact directory (worker + Pi bridge). Defaults to the
@@ -253,6 +258,15 @@ export function createAgentRuntimeAdapter(options: {
   mkdirSync(storageRoot, { recursive: true });
   const skillDataDir = options.dataDir ?? storageRoot;
   const daemonDataDir = options.dataDir ?? '/tmp/zcc-thread-runtime';
+
+  function syncProviderBridgeRecording(): void {
+    if (!options.loadConfig) return;
+    syncProviderBridgeRecordDirEnv({
+      enabled: options.loadConfig().providerBridgeRecordingEnabled === true,
+      dataDir: options.dataDir ?? join(homedir(), '.zcc'),
+      env: process.env
+    });
+  }
 
   function resolveLaunch(launch: HostBridgeLaunch): Promise<AgentRuntimeBridgeLaunch> {
     return resolveRuntimeBridgeLaunch({
@@ -344,6 +358,7 @@ export function createAgentRuntimeAdapter(options: {
       bridgeLaunch: HostBridgeLaunch;
       cwd?: string;
     }): Promise<ProviderListModelsResult> {
+      syncProviderBridgeRecording();
       const workspaceCwd = input.cwd ?? join(storageRoot, 'model-list', input.providerId);
       if (!input.cwd) mkdirSync(workspaceCwd, { recursive: true });
       const runtime = runtimeFor(`model-list:${input.providerId}`, workspaceCwd);
@@ -358,6 +373,7 @@ export function createAgentRuntimeAdapter(options: {
       };
     },
     async startWork(input: ThreadWorkInput) {
+      syncProviderBridgeRecording();
       const runtime = runtimeFor(input.environmentId, input.cwd);
       threadLocation.set(input.threadId, { environmentId: input.environmentId, cwd: input.cwd });
       const remoteProxy = usesRemoteToolProxy(input);
@@ -403,6 +419,7 @@ export function createAgentRuntimeAdapter(options: {
       });
     },
     async resumeWork(input: ThreadResumeInput) {
+      syncProviderBridgeRecording();
       const runtime = runtimeFor(input.environmentId, input.cwd);
       threadLocation.set(input.threadId, { environmentId: input.environmentId, cwd: input.cwd });
       const result = await runtime.resumeThread({

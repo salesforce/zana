@@ -73,6 +73,7 @@ describe('config — boolean feature flags round-trip through setConfig', () => 
     'remoteMcpEnabled',
     'steerActiveThreadOnEnter',
     'showUnhandledProviderEvents',
+    'providerBridgeRecordingEnabled',
     'enableUpdateSimulation',
     'microVmEnabled',
     'followupsFromIdle'
