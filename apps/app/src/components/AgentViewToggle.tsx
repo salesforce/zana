@@ -6,7 +6,7 @@ import type { AgentsBoardView } from '../store.js';
  * Segmented kanban/list switch for the Agents boards. Flips the single global
  * {@link AgentsBoardView} preference (persisted), so both the cross-project and
  * per-project boards stay in the layout you last chose. Sits in the board
- * header, just left of the filter.
+ * toolbar, just left of the filter.
  */
 
 const OPTIONS: Array<{ view: AgentsBoardView; icon: typeof LayoutGrid; label: string }> = [

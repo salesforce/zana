@@ -1,7 +1,9 @@
 import { product } from '../lib/product-client.js';
 import { useEffect, useState } from 'react';
+import { Trash2 } from 'lucide-react';
 import { useData, useIdleTriage } from '../store.js';
 import { cardNeedsAttention, type AgentCard } from './AgentBoard.js';
+import type { TerminalSession } from '@zana-ai/zcc-domain/product';
 
 /**
  * Shared agent-card lifecycle actions + right-click menu, used by the kanban
@@ -249,6 +251,35 @@ export function AgentCardMenu({ menu, setMenu, actions, onPick }: AgentCardMenuP
         {exited ? 'Dismiss' : 'Delete'}
       </button>
     </div>
+  );
+}
+
+/** Hover-revealed one-click delete. Closes the PTY with no confirm, matching thread archive. */
+export function AgentDeleteQuickAction({
+  session,
+  projectId
+}: {
+  session: Pick<TerminalSession, 'id' | 'title' | 'status'>;
+  projectId: string;
+}) {
+  const closeTerminal = useData((s) => s.closeTerminal);
+  const exited = session.status === 'exited';
+  return (
+    <button
+      type="button"
+      className="project-terminal-close agent-delete-quick"
+      data-testid="agent-delete-quick"
+      aria-label={exited ? `Dismiss ${session.title}` : `Delete ${session.title}`}
+      title={exited ? 'Dismiss' : 'Delete agent'}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void closeTerminal(session.id, projectId);
+      }}
+    >
+      <Trash2 size={12} />
+    </button>
   );
 }
 

@@ -15,6 +15,7 @@
  */
 
 import { useEffect, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useUi } from '../store.js';
 import { useMergedModules } from './index.js';
 import { createModuleHost, createMountScopedHost, clearModuleCache } from './host.js';
@@ -23,7 +24,8 @@ import type { ModuleHost } from '@zana-ai/zcc-extension-sdk/renderer';
 import { listNavPanels } from '../plugins/plugin-slots.js';
 import { PluginSlotBoundary } from '../plugins/PluginSlotBoundary.js';
 import { useRouteState } from '../hooks/useRouteState.js';
-import { PluginNavPanelHost, useHasPluginNavPanel } from '../plugins/PluginNavPanelHost.js';
+import { useHasPluginNavPanel } from '../plugins/PluginNavPanelHost.js';
+import { isSplitWorkspacePath } from '../lib/split-layout/splitThreadNavigation.js';
 
 function generationFor(pluginId: string): number {
   return listNavPanels().find((panel) => panel.pluginId === pluginId)?.generation ?? 0;
@@ -32,6 +34,7 @@ function generationFor(pluginId: string): number {
 export function ModulePanelHost() {
   const nav = useUi((s) => s.nav);
   const route = useRouteState();
+  const location = useLocation();
   const modules = useMergedModules();
   const pluginPanel = useHasPluginNavPanel(route.nav || nav);
   const mod = useMemo(() => modules.find((m) => m.id === nav), [modules, nav]);
@@ -44,7 +47,7 @@ export function ModulePanelHost() {
   const host: ModuleHost | null = scoped?.host ?? null;
   useEffect(() => () => scoped?.dispose(), [scoped]);
 
-  if (pluginPanel) return <PluginNavPanelHost />;
+  if (isSplitWorkspacePath(location.pathname) || pluginPanel) return null;
 
   if (!mod || !host) return null;
 

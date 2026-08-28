@@ -31,6 +31,14 @@ describe('project-row workspace actions', () => {
     expect(source).toContain('enterProjectFocus(p.id);');
   });
 
+  it('drags a thread row into a split and shows a mini-map when it is already open', () => {
+    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('useThreadRowSplitDrag');
+    expect(source).toContain('openInSplit()');
+    expect(source).toContain('<SplitPaneMiniMap');
+    expect(source).toContain('e.metaKey || e.ctrlKey');
+  });
+
   it('shows Default Workspace for the scratch folder without renaming the tag', () => {
     const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
     expect(source).toContain('composerProjectLabel');
@@ -210,8 +218,9 @@ describe('nested live threads', () => {
     expect(source).toContain('threadIsLiveForRail');
     expect(source).toContain('data-testid="project-thread-row"');
     expect(source).toContain('navigate(getThreadRoutePath(thread.id, scopedProjectId))');
-    expect(source).toContain('onPointerDown={(e) => e.stopPropagation()}');
-    expect(source).toContain("activeThreadId === thread.id ? ' active' : ''");
+    expect(source).toContain('onPointerDown={(e) => {');
+    expect(source).toContain('active={activeThreadId === thread.id}');
+    expect(source).toContain("active ? ' active' : ''");
     expect(source).toContain('useRouteState()');
     expect(source).toContain('railThreadsByProject.get(p.id)');
     expect(source).toContain('liveList.length === 0 && railThreads.length === 0');
@@ -232,6 +241,10 @@ describe('nested live threads', () => {
     expect(source).not.toContain('FleetKindChip');
     expect(source).toContain("fleetKindLabel('thread')");
     expect(source).toContain('data-kind="agent"');
+    expect(source).toContain('<AgentDeleteQuickAction session={session} projectId={projectId} />');
+    expect(source).not.toContain('AgentStatusDot');
+    expect(css).toContain('.project-thread-row-wrap .project-terminal-close {\n  visibility: hidden;\n}');
+    expect(css).toContain('.project-thread-row-wrap:hover .project-terminal-close,');
     expect(readFileSync(new URL('./AgentRowDetail.tsx', import.meta.url), 'utf8')).toContain(
       'agentRowStateClass'
     );

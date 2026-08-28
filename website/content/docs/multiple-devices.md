@@ -114,8 +114,10 @@ Each joined server gets its own daemon instance and data directory
 `~/.zcc-machines/host-daemon-ports/`; pass `--host-daemon-port <port>` to
 override.
 
-On macOS the installer loads a LaunchAgent; on Linux it enables a systemd user
-unit. Both start the daemon with `--auto-update`.
+On macOS the installer loads a LaunchAgent. On Linux it enables a systemd user
+unit when that bus is available; Salesforce workspaces and other boxes without
+user systemd keep the daemon running in the background instead of hanging.
+Both start the daemon with `--auto-update`.
 
 ---
 

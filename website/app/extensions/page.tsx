@@ -1,6 +1,5 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import { ProductShot } from '../components/ProductShot';
 
 export const metadata: Metadata = {
   title: 'Plugins',
@@ -58,7 +57,6 @@ export default function ExtensionsPage() {
               <Link className="btn btn-ghost btn-lg" href="/marketplace/">Browse marketplace</Link>
             </div>
           </div>
-          <ProductShot id="extension-panel-result" priority />
         </div>
       </section>
 
@@ -84,7 +82,7 @@ export default function ExtensionsPage() {
 
       <section>
         <div className="wrap">
-          <div className="product-proof" data-reveal>
+          <div className="product-proof solo" data-reveal>
             <div className="product-proof-copy">
               <span className="eyebrow">Install with confidence</span>
               <h2>Discover a capability, then confirm full trust.</h2>
@@ -99,14 +97,13 @@ export default function ExtensionsPage() {
               </ul>
               <p style={{ marginTop: 20 }}><Link className="text-link" href="/extensions/install/">Read the install guide <span aria-hidden="true">→</span></Link></p>
             </div>
-            <ProductShot id="extension-install" />
           </div>
         </div>
       </section>
 
       <section style={{ paddingTop: 0 }}>
         <div className="wrap">
-          <div className="product-proof reverse" data-reveal>
+          <div className="product-proof solo" data-reveal>
             <div className="product-proof-copy">
               <span className="eyebrow">A safe authoring loop</span>
               <h2>Build locally. Reload live. Keep core untouched.</h2>
@@ -122,7 +119,6 @@ export default function ExtensionsPage() {
               </ul>
               <p style={{ marginTop: 20 }}><Link className="text-link" href="/extensions/getting-started/">Follow the five-minute quickstart <span aria-hidden="true">→</span></Link></p>
             </div>
-            <ProductShot id="local-extension-workspace" />
           </div>
         </div>
       </section>
@@ -133,7 +129,7 @@ export default function ExtensionsPage() {
             <div>
               <span className="eyebrow">Reference when you need it</span>
               <h2>Short path to action. Deep documentation behind it.</h2>
-              <p>Use the task guides for a visual workflow, then move into the maintained reference for contracts, permissions, lifecycle details, and publishing.</p>
+              <p>Use the task guides for a focused workflow, then move into the maintained reference for contracts, permissions, lifecycle details, and publishing.</p>
             </div>
             <div className="extension-reference-links">
               <Link href="/docs/extensions-quickstart/">Build your first plugin <span aria-hidden="true">→</span></Link>

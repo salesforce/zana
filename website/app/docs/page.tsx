@@ -31,7 +31,7 @@ export default async function DocsIndex() {
           </div>
           <div className="docs-hub-paths" data-reveal-stagger>
             <Link href="/docs/getting-started/"><span>New to Zana</span><strong>Set up your first project <b aria-hidden="true">→</b></strong></Link>
-            <Link href="/how-it-works/"><span>Understand the product</span><strong>Take the visual tour <b aria-hidden="true">→</b></strong></Link>
+            <Link href="/docs/using-zana/"><span>Using Zana</span><strong>Operate projects and agents <b aria-hidden="true">→</b></strong></Link>
             <Link href="/extensions/"><span>Build or install</span><strong>Open the plugins hub <b aria-hidden="true">→</b></strong></Link>
           </div>
         </div>

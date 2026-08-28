@@ -38,20 +38,22 @@ import { ListPaneResizer } from '../ListPaneResizer.js';
 import { AddRemoteProjectDialog } from '../AddRemoteProjectDialog.js';
 import { AddGitProjectDialog } from '../AddGitProjectDialog.js';
 import { AddLocalProjectDialog } from '../AddLocalProjectDialog.js';
-import { AgentStatusDot } from './AgentStatusDot.js';
 import { AgentRowDetail } from './AgentRowDetail.js';
 import { ProjectRollupDot } from './ProjectRollupDot.js';
 import { reorderProjectIds } from './projectReordering.js';
 import { isWorkspaceRailExpanded, pinFavoriteProjectsFirst } from './workspace-rail.js';
-import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from '../agentCardActions.js';
+import { useAgentCardActions, AgentCardMenu, AgentDeleteQuickAction, clampMenuAnchor } from '../agentCardActions.js';
 import { useThreadCardActions, ThreadCardMenu, ThreadArchiveQuickAction, openThreadMenu } from '../threadCardActions.js';
 import { PromptModal } from '../PromptModal.js';
 import type { AgentCard } from '../AgentBoard.js';
-import { useThreads } from '../../thread-store.js';
+import { useThreads, type ThreadListItem } from '../../thread-store.js';
 import { useEnsureThreads } from '../../hooks/useEnsureThreads.js';
 import { useRouteState } from '../../hooks/useRouteState.js';
 import { copyText } from '../../lib/copy-text.js';
 import { getThreadRoutePath } from '../../lib/route-paths.js';
+import { useThreadRowSplitDrag } from '../sidebar/useThreadRowSplitDrag.js';
+import { usePaneContentSplitIndicator } from '../sidebar/paneContentSplitIndicator.js';
+import { SplitPaneMiniMap } from '../sidebar/SplitPaneMiniMap.js';
 import { ProviderIcon } from '../thread/pickers/ProviderIcon.js';
 import {
   fleetKindLabel,
@@ -730,72 +732,32 @@ export function ProjectsList({
             const activeTab = selectedId === p.id ? selectedTabId[p.id] : undefined;
             return (
               <div className="project-terminals" role="list" aria-label={`Sessions in ${displayName}`}>
-                {railThreads.map((thread) => {
-                  const title = threadTitle(thread);
-                  const status = threadRailStatus(thread);
-                  return (
-                    <div key={thread.id} role="listitem" className="project-thread-row-wrap">
-                      <button
-                        type="button"
-                        className={`project-terminal-row is-thread${activeThreadId === thread.id ? ' active' : ''}`}
-                        data-kind="thread"
-                        data-testid="project-thread-row"
-                        onPointerDown={(e) => e.stopPropagation()}
-                        onClick={() => {
-                          if (consumeProjectClick()) return;
-                          navigate(getThreadRoutePath(thread.id, scopedProjectId));
-                        }}
-                        onContextMenu={(e) => openThreadMenu(e, thread, setThreadMenu)}
-                        aria-label={title}
-                        aria-current={activeThreadId === thread.id ? 'true' : undefined}
-                        title={`${title} · ${thread.status}`}
-                      >
-                        <span className="tab-profile-icon" aria-hidden="true">
-                          <ProviderIcon providerId={thread.providerId} size={14} />
-                        </span>
-                        <span className="project-terminal-text">
-                          <span className="project-terminal-name">{title}</span>
-                          <span className="project-terminal-detail">
-                            <span className={threadRailStatusClass(status)}>
-                              {status}
-                            </span>
-                            {` · ${fleetKindLabel('thread')}`}
-                          </span>
-                        </span>
-                      </button>
-                      <ThreadArchiveQuickAction thread={thread} />
-                    </div>
-                  );
-                })}
-                {liveList.map((t) => {
-                  const isUnread = !!unread[t.id] && activeTab !== t.id;
-                  return (
-                    <div key={t.id} role="listitem">
-                      <button
-                        type="button"
-                        className={`project-terminal-row ${isUnread ? 'unread' : ''}`}
-                        data-kind="agent"
-                        onPointerDown={(e) => e.stopPropagation()}
-                        onClick={() => {
-                          if (consumeProjectClick()) return;
-                          useUi.getState().openAgentModal(t.id, p.id);
-                        }}
-                        onContextMenu={(e) => openAgentCardMenu(e, t, p)}
-                        aria-label={isUnread ? `${t.title}, unread output` : t.title}
-                        title={isUnread ? `${t.title} · unread output` : t.title}
-                      >
-                        <span className={`tab-profile-icon profile-${t.profile}`} aria-hidden="true">
-                          {profileIcon(t.profile)}
-                        </span>
-                        <span className="project-terminal-text">
-                          <span className="project-terminal-name">{t.title}</span>
-                          <AgentRowDetail session={t} />
-                        </span>
-                        <AgentStatusDot sessionId={t.id} />
-                      </button>
-                    </div>
-                  );
-                })}
+                {railThreads.map((thread) => (
+                  <ProjectThreadRailRow
+                    key={thread.id}
+                    thread={thread}
+                    active={activeThreadId === thread.id}
+                    projectId={scopedProjectId ?? p.id}
+                    onOpen={() => {
+                      if (consumeProjectClick()) return;
+                      navigate(getThreadRoutePath(thread.id, scopedProjectId));
+                    }}
+                    onContextMenu={(e) => openThreadMenu(e, thread, setThreadMenu)}
+                  />
+                ))}
+                {liveList.map((t) => (
+                  <ProjectAgentRailRow
+                    key={t.id}
+                    session={t}
+                    isUnread={!!unread[t.id] && activeTab !== t.id}
+                    onOpen={() => {
+                      if (consumeProjectClick()) return;
+                      useUi.getState().openAgentModal(t.id, p.id);
+                    }}
+                    onContextMenu={(e) => openAgentCardMenu(e, t, p)}
+                    projectId={p.id}
+                  />
+                ))}
               </div>
             );
           })()}
@@ -1297,5 +1259,111 @@ export function ProjectsList({
         />
       )}
     </section>
+  );
+}
+
+function ProjectAgentRailRow({
+  session,
+  projectId,
+  isUnread,
+  onOpen,
+  onContextMenu
+}: {
+  session: TerminalSession;
+  projectId: string;
+  isUnread: boolean;
+  onOpen: () => void;
+  onContextMenu: (e: MouseEvent) => void;
+}) {
+  return (
+    <div role="listitem" className="project-thread-row-wrap">
+      <button
+        type="button"
+        className={`project-terminal-row ${isUnread ? 'unread' : ''}`}
+        data-kind="agent"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={onOpen}
+        onContextMenu={onContextMenu}
+        aria-label={isUnread ? `${session.title}, unread output` : session.title}
+        title={isUnread ? `${session.title} · unread output` : session.title}
+      >
+        <span className={`tab-profile-icon profile-${session.profile}`} aria-hidden="true">
+          {profileIcon(session.profile)}
+        </span>
+        <span className="project-terminal-text">
+          <span className="project-terminal-name">{session.title}</span>
+          <AgentRowDetail session={session} />
+        </span>
+      </button>
+      <AgentDeleteQuickAction session={session} projectId={projectId} />
+    </div>
+  );
+}
+
+function ProjectThreadRailRow({
+  thread,
+  active,
+  projectId,
+  onOpen,
+  onContextMenu
+}: {
+  thread: ThreadListItem;
+  active: boolean;
+  projectId: string;
+  onOpen: () => void;
+  onContextMenu: (e: MouseEvent) => void;
+}) {
+  const title = threadTitle(thread);
+  const status = threadRailStatus(thread);
+  const { onPointerDown, openInSplit } = useThreadRowSplitDrag({
+    projectId,
+    threadId: thread.id,
+    title
+  });
+  const indicator = usePaneContentSplitIndicator({
+    kind: 'thread',
+    projectId,
+    threadId: thread.id
+  });
+  return (
+    <div role="listitem" className="project-thread-row-wrap">
+      <button
+        type="button"
+        className={`project-terminal-row is-thread${active ? ' active' : ''}`}
+        data-kind="thread"
+        data-testid="project-thread-row"
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          onPointerDown?.(e);
+        }}
+        onClick={(e) => {
+          if (e.metaKey || e.ctrlKey) {
+            e.preventDefault();
+            openInSplit();
+            return;
+          }
+          onOpen();
+        }}
+        onContextMenu={onContextMenu}
+        aria-label={title}
+        aria-current={active ? 'true' : undefined}
+        title={`${title} · ${thread.status}`}
+      >
+        <span className="tab-profile-icon" aria-hidden="true">
+          <ProviderIcon providerId={thread.providerId} size={14} />
+        </span>
+        <span className="project-terminal-text">
+          <span className="project-terminal-name">{title}</span>
+          <span className="project-terminal-detail">
+            <span className={threadRailStatusClass(status)}>{status}</span>
+            {` · ${fleetKindLabel('thread')}`}
+          </span>
+        </span>
+        {indicator.miniMap ? (
+          <SplitPaneMiniMap slots={indicator.miniMap} label={`${title} split position`} />
+        ) : null}
+      </button>
+      <ThreadArchiveQuickAction thread={thread} />
+    </div>
   );
 }

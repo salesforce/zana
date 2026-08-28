@@ -230,6 +230,7 @@ input {
 .app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .agents-board--global,
 .app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .thread-detail-view,
 .app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .new-thread-view,
+.app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .split-workspace,
 .app-shell.sidebar-is-collapsed.scoped-no-list .shell-main > .module-panel-slot {
   grid-column: 1 / -1;
 }
@@ -2625,7 +2626,7 @@ body.resizing-col {
 }
 
 /* Title + detail subtitle stack. Takes the flexible middle of the row so the
-   status dot and close button stay pinned right. */
+   archive/delete button stays pinned right. */
 .project-terminal-text {
   flex: 1;
   min-width: 0;
@@ -2705,12 +2706,12 @@ body.resizing-col {
   flex: 1;
 }
 
-.project-thread-row-wrap .thread-archive-quick {
+.project-thread-row-wrap .project-terminal-close {
   visibility: hidden;
 }
 
-.project-thread-row-wrap:hover .thread-archive-quick,
-.project-thread-row-wrap:focus-within .thread-archive-quick {
+.project-thread-row-wrap:hover .project-terminal-close,
+.project-thread-row-wrap:focus-within .project-terminal-close {
   visibility: visible;
 }
 .project-terminal-close:hover {
@@ -12082,54 +12083,24 @@ body.resizing-col .explorer-resizer::after {
   overflow: hidden;
 }
 
-.agents-board-header {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-  min-height: var(--titlebar-h);
-  gap: 10px;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-panel);
-  transition: padding-left 200ms linear;
-}
-
-.app-shell.sidebar-is-collapsed .agents-board-header {
-  padding-left: var(--shell-leading-reserve);
-}
-
-.agents-board-header-actions {
+/* Actions strip — not a page header. Title/count live on the sidebar and
+   lane badges; this row only holds view toggle, filter, and New. */
+.agents-board-toolbar {
   display: flex;
   min-width: 0;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 8px;
+  padding: 8px 12px 0;
 }
 
-.agents-board-header h1 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-  flex: 0 0 auto;
+.app-shell.sidebar-is-collapsed .agents-board-toolbar {
+  padding-left: var(--shell-leading-reserve);
 }
 
-.agents-board-count {
-  font-size: 11px;
-  color: var(--text-muted);
-  background: var(--bg-elevated);
-  border-radius: 10px;
-  padding: 1px 8px;
-  flex: 0 1 auto;
-  white-space: nowrap;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Filter box in the global board header — mirrors .list-filter. */
+/* Filter box in the global board toolbar — mirrors .list-filter. */
 .agents-board-filter {
   position: relative;
   display: flex;
@@ -12184,7 +12155,7 @@ body.resizing-col .explorer-resizer::after {
 }
 
 /* Segmented kanban/list switch — two icon buttons sharing one pill, sitting
-   just left of the filter. Matches the board header's quiet chrome. */
+   just left of the filter. Matches the board toolbar's quiet chrome. */
 .agents-view-toggle {
   display: inline-flex;
   flex: 0 0 auto;
@@ -12227,20 +12198,11 @@ body.resizing-col .explorer-resizer::after {
 }
 
 /* Compact Agents chrome: drop verbose labels, shrink the filter, then wrap
-   the filter onto its own row before the header overflows. Named container
+   the filter onto its own row before the toolbar overflows. Named container
    so a nested inbox/list container query can't steal these rules. */
 @container agents-board (max-width: 820px) {
-  .agents-board-header {
-    gap: 8px;
-    padding: 0 12px;
-  }
-
-  .agents-board-header-actions {
+  .agents-board-toolbar {
     gap: 6px;
-  }
-
-  .agents-board-count-extra {
-    display: none;
   }
 
   .agents-board-btn-label {
@@ -12260,10 +12222,9 @@ body.resizing-col .explorer-resizer::after {
 }
 
 @container agents-board (max-width: 560px) {
-  .agents-board-header {
+  .agents-board-toolbar {
     flex-wrap: wrap;
     row-gap: 6px;
-    padding: 6px 12px;
   }
 
   .agents-board-filter {
@@ -29200,7 +29161,7 @@ body.resizing-col .library-split-resizer::after {
 }
 
 /* Segmented kanban/list switch — two icon buttons sharing one pill, sitting
-   just left of the filter. Matches the board header's quiet chrome. */
+   just left of the filter. Matches the board toolbar's quiet chrome. */
 .agents-view-toggle {
   display: inline-flex;
   flex: 0 0 auto;
@@ -31394,6 +31355,268 @@ textarea.thread-command-editor {
   overflow: hidden;
 }
 
+.split-workspace {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  grid-column: 2 / -1;
+}
+
+.split-workspace-host {
+  display: flex;
+  flex-direction: row;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.split-workspace-main {
+  position: relative;
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.split-tree {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.split-tree--row {
+  flex-direction: row;
+}
+
+.split-tree--col {
+  flex-direction: column;
+}
+
+.split-tree-child {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.split-pane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.split-pane > *:not(.split-pane-scrim) {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.split-pane.is-maximized {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+}
+
+.split-pane.is-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.split-pane-scrim {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+}
+
+.split-pane-scrim.is-dimmed {
+  background: color-mix(in oklab, var(--bg-base) 30%, transparent);
+}
+
+.split-pane-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: var(--text-muted);
+  padding: 24px;
+}
+
+.split-plugin-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.split-divider {
+  position: relative;
+  z-index: 25;
+  flex-shrink: 0;
+  background: var(--border);
+}
+
+.split-divider--row {
+  width: 1px;
+  cursor: col-resize;
+}
+
+.split-divider--col {
+  height: 1px;
+  cursor: row-resize;
+}
+
+.split-divider.is-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.split-divider:hover,
+.split-divider[data-dragging='true'] {
+  background: var(--accent);
+}
+
+.split-divider-hit {
+  position: absolute;
+  z-index: 10;
+  touch-action: none;
+}
+
+.split-divider--row .split-divider-hit {
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 9px;
+  cursor: col-resize;
+}
+
+.split-divider--col .split-divider-hit {
+  left: 0;
+  right: 0;
+  top: -4px;
+  height: 9px;
+  cursor: row-resize;
+}
+
+.split-pane-drag-handle {
+  cursor: grab;
+}
+
+.split-pane-drag-handle:active {
+  cursor: grabbing;
+}
+
+.split-drag-ghost {
+  position: fixed;
+  z-index: 100;
+  pointer-events: none;
+  left: -9999px;
+  top: -9999px;
+  max-width: 260px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 20px color-mix(in oklab, var(--ink) 22%, transparent);
+}
+
+.split-drag-overlay {
+  position: fixed;
+  z-index: 90;
+  display: none;
+  pointer-events: none;
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--accent) 12%, transparent);
+  border: 2px solid color-mix(in oklab, var(--accent) 55%, transparent);
+  transition: left 0.09s ease-out, top 0.09s ease-out, width 0.09s ease-out, height 0.09s ease-out;
+}
+
+.split-drag-overlay-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.split-pane-minimap {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+
+.split-pane-minimap.is-idle {
+  opacity: 0.6;
+}
+
+.split-pane-minimap-me {
+  fill: var(--text-muted);
+}
+
+.split-pane-minimap-me.is-focused {
+  fill: var(--accent);
+}
+
+.split-pane-minimap-other {
+  fill: none;
+  stroke: var(--text-dim);
+}
+
+.thread-detail-view--split-pane {
+  grid-column: auto;
+  width: 100%;
+  height: 100%;
+}
+
+.thread-detail-view--split-pane .thread-detail-column {
+  max-width: none;
+}
+
+.split-workspace-host > .thread-secondary-panel {
+  flex: 0 0 var(--thread-secondary-width, 352px);
+}
+
+.split-workspace .home-panel,
+.split-workspace .new-thread-view,
+.split-workspace .thread-detail-view,
+.split-workspace .module-panel-host,
+.split-workspace .split-plugin-pane {
+  grid-column: auto;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
 .agent-modal-body > .agent-session-view,
 .agent-modal-body > .thread-detail-view,
 .agent-monitor-terminal > .agent-session-view {
@@ -32234,16 +32457,47 @@ textarea.thread-command-editor {
   text-decoration: underline;
 }
 
+.thread-timeline-row.is-editing {
+  width: min(36rem, 100%);
+  max-width: 100%;
+}
+
 .thread-message-edit {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  width: 100%;
+  min-width: min(16rem, 100%);
 }
 
 .thread-message-edit textarea {
+  box-sizing: border-box;
   min-height: 5rem;
   width: 100%;
   resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-base, var(--bg-panel));
+  color: var(--text-primary, var(--ink));
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.thread-message-edit textarea:focus {
+  outline: none;
+  border-color: var(--accent-blue, #4c8dff);
+}
+
+.thread-message-edit textarea:disabled {
+  opacity: 0.7;
+}
+
+.thread-message-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .thread-message-overflow-row {
@@ -32271,6 +32525,11 @@ textarea.thread-command-editor {
   cursor: pointer;
   padding: 4px;
   border-radius: 6px;
+}
+
+.thread-message-action:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary, var(--ink));
 }
 
 .thread-unread-divider {

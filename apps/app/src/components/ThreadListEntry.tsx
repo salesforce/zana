@@ -6,6 +6,9 @@ import { isBusyThreadStatus, threadStatusLabel, threadStatusTone } from './threa
 import { useThreadWorkingPhrase } from './thread/useThreadWorkingPhrase.js';
 import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
 import { FleetKindChip } from './FleetKindChip.js';
+import { useThreadRowSplitDrag } from './sidebar/useThreadRowSplitDrag.js';
+import { usePaneContentSplitIndicator } from './sidebar/paneContentSplitIndicator.js';
+import { SplitPaneMiniMap } from './sidebar/SplitPaneMiniMap.js';
 
 export function ThreadListEntry({
   thread,
@@ -26,6 +29,17 @@ export function ThreadListEntry({
   const workingPhrase = useThreadWorkingPhrase(working);
   const tone = threadStatusTone(thread.status, waitingOnUser);
   const statusLabel = threadStatusLabel(thread.status, waitingOnUser, null, workingPhrase);
+  const resolvedProjectId = projectId ?? thread.projectId;
+  const { onPointerDown, openInSplit } = useThreadRowSplitDrag({
+    projectId: resolvedProjectId,
+    threadId: thread.id,
+    title: thread.title ?? 'Untitled agent'
+  });
+  const indicator = usePaneContentSplitIndicator({
+    kind: 'thread',
+    projectId: resolvedProjectId,
+    threadId: thread.id
+  });
   return (
     <button
       type="button"
@@ -33,7 +47,15 @@ export function ThreadListEntry({
       data-testid="thread-list-entry"
       data-kind="thread"
       data-status={thread.status}
-      onClick={() => navigate(getThreadRoutePath(thread.id, projectId))}
+      onPointerDown={onPointerDown}
+      onClick={(e) => {
+        if (e.metaKey || e.ctrlKey) {
+          e.preventDefault();
+          openInSplit();
+          return;
+        }
+        navigate(getThreadRoutePath(thread.id, projectId));
+      }}
       onContextMenu={onContextMenu}
       aria-current={active ? 'true' : undefined}
       title={`${thread.title ?? 'Untitled agent'}${projectName ? ` — ${projectName}` : ''} · ${thread.status}`}
@@ -46,6 +68,9 @@ export function ThreadListEntry({
           <span className={`tab-agent-dot agent-${tone}`} aria-hidden="true" />
           <span className="agents-row-title">{thread.title ?? 'Untitled agent'}</span>
           <FleetKindChip kind="thread" />
+          {indicator.miniMap ? (
+            <SplitPaneMiniMap slots={indicator.miniMap} label="Split position" isWorking={working} />
+          ) : null}
         </span>
         <span className="agents-row-meta">
           {projectName && <span className="agents-row-project">{projectName}</span>}

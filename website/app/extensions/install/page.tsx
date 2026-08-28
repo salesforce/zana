@@ -1,6 +1,5 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import { ProductShot } from '../../components/ProductShot';
 
 export const metadata: Metadata = {
   title: 'Install plugins',
@@ -26,7 +25,6 @@ export default function ExtensionInstallPage() {
             <p>Plugins use one installation boundary whether they arrive from an official catalog, a community git marketplace, or a local folder. After install they run in-process on the server — confirm that full-trust step before you continue.</p>
             <div className="cta"><Link className="btn btn-primary btn-lg" href="/marketplace/">Browse marketplace</Link><Link className="btn btn-ghost btn-lg" href="/extensions/getting-started/">Build one instead</Link></div>
           </div>
-          <ProductShot id="extension-install" priority />
         </div>
       </section>
 
@@ -41,7 +39,7 @@ export default function ExtensionInstallPage() {
 
       <section style={{ paddingTop: 0 }}>
         <div className="wrap">
-          <div className="product-proof reverse" data-reveal>
+          <div className="product-proof solo" data-reveal>
             <div className="product-proof-copy">
               <span className="eyebrow">Install is the trust gate</span>
               <h2>Confirm full trust before the plugin loads.</h2>
@@ -49,7 +47,6 @@ export default function ExtensionInstallPage() {
               <ul><li>Official catalogs install offline</li><li>Community catalogs are npm/git pointers — refresh never executes plugin code</li><li>A failed reload keeps the last good generation</li></ul>
               <p style={{ marginTop: 20 }}><Link className="text-link" href="/extensions/sdk/#permissions">See how trust works <span aria-hidden="true">→</span></Link></p>
             </div>
-            <ProductShot id="extension-consent" />
           </div>
         </div>
       </section>

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { type PointerEvent, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, ListTodo, Loader2, X } from 'lucide-react';
 import type {
   ActiveThinking,
@@ -225,13 +225,20 @@ export function ThreadStatusBadge({
 
 export function ThreadDetailHeading({
   title,
-  overflow
+  overflow,
+  onPointerDown,
+  draggable
 }: {
   title: string;
   overflow?: ReactNode;
+  onPointerDown?: (event: PointerEvent<HTMLDivElement>) => void;
+  draggable?: boolean;
 }) {
   return (
-    <div className="thread-detail-heading">
+    <div
+      className={`thread-detail-heading${draggable ? ' split-pane-drag-handle' : ''}`}
+      onPointerDown={onPointerDown}
+    >
       <h1 title={title}>{title}</h1>
       {overflow}
     </div>

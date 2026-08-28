@@ -3,6 +3,10 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Archive } from 'lucide-react';
 import { product } from '../lib/product-client.js';
 import { getAgentsRoutePath, getProjectRoutePath, getThreadRoutePath, projectIdFromThreadPath, threadIdFromPath } from '../lib/route-paths.js';
+import { openThreadInSplit } from '../lib/split-layout/openThreadInSplit.js';
+import { useSplitWorkspace } from '../lib/split-layout/store.js';
+import { focusedPaneRoute } from '../lib/split-layout/splitThreadNavigation.js';
+import { isCompactViewport } from '../hooks/useIsCompactViewport.js';
 import { useRouteState } from '../hooks/useRouteState.js';
 import { useThreads, type ThreadListItem } from '../thread-store.js';
 import { SHOW_THREAD_FORK } from './thread/ThreadDetailOverflow.js';
@@ -16,7 +20,7 @@ export interface ThreadMenu {
   y: number;
 }
 
-export type ThreadMenuAction = 'open' | 'stop' | 'fork' | 'archive';
+export type ThreadMenuAction = 'open' | 'open-split' | 'stop' | 'fork' | 'archive';
 
 export interface ThreadMenuContext {
   navigate: (path: string) => void;
@@ -47,6 +51,15 @@ export async function runThreadMenuAction(
     ctx.navigate(getThreadRoutePath(thread.id, projectId));
     return;
   }
+  if (action === 'open-split') {
+    openThreadInSplit({
+      navigate: ctx.navigate,
+      projectId: projectId ?? null,
+      threadId: thread.id,
+      isCompact: isCompactViewport()
+    });
+    return;
+  }
   if (action === 'stop') {
     await ctx.stop(thread.id);
     return;
@@ -68,6 +81,14 @@ export async function archiveThreadWithoutConfirm(
   const result = await ctx.archive(thread.id);
   if (result && result.ok === false) return;
   ctx.remove(thread.id);
+  const closed = useSplitWorkspace.getState().closePanesForThreads([thread.id]);
+  if (closed.removedAny && closed.focusedRouteContent) {
+    const route = focusedPaneRoute(closed.focusedRouteContent);
+    if (route) {
+      ctx.navigate(route);
+      return;
+    }
+  }
   if (viewingThread(ctx.pathname, thread.id)) {
     const projectId = ctx.projectId || projectIdFromThreadPath(ctx.pathname) || undefined;
     ctx.navigate(projectId ? getProjectRoutePath(projectId) : getAgentsRoutePath());
@@ -151,6 +172,9 @@ export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
     >
       <button type="button" onClick={() => run('open')}>
         Open
+      </button>
+      <button type="button" onClick={() => run('open-split')}>
+        Open in split
       </button>
       {canStop && (
         <button

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { PanelRight } from 'lucide-react';
+import { Maximize2, Minimize2, PanelRight, X } from 'lucide-react';
 import type { ActiveThinking, ThreadTimelineGoal, ThreadTimelineModelFallback, ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
 import { applyTimelineDelta, type ThreadContextWindowUsage, type TimelineDelta, type TimelineRow } from '@zana-ai/zcc-server-contract';
 import { buildTimelineViewRows, type TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
@@ -35,6 +35,7 @@ import {
   useOpenPendingInteractions
 } from '../../components/thread/pending-interactions/useOpenPendingInteractions.js';
 import { ThreadSecondaryPanel } from '../../components/thread/secondary-panel/ThreadSecondaryPanel.js';
+import { useOptionalPaneContext, usePaneSecondaryPanelRegistration } from '../thread-detail/PaneContext.js';
 import { ThreadInfoContent } from '../../components/thread/secondary-panel/ThreadInfoContent.js';
 import { ThreadPlanPanel } from '../../components/thread/secondary-panel/ThreadPlanPanel.js';
 import {
@@ -106,6 +107,8 @@ export function ThreadDetail({
     [threadId, threads]
   );
   const pendingInteractions = useOpenPendingInteractions(threadId);
+  const pane = useOptionalPaneContext();
+  const hostedSecondary = pane?.secondaryPanelHost != null;
   const panel = useThreadSecondaryPanel(threadId);
   useInAppBrowserPanel(threadId, panel);
   const [title, setTitle] = useState('Agent');
@@ -382,7 +385,8 @@ export function ThreadDetail({
 
   const pin = activePinnedView(panel.state);
   const closable = activeClosableTab(panel.state);
-  const panelOpen = panel.state.isOpen;
+  const panelOpen = hostedSecondary ? false : panel.state.isOpen;
+  const bounded = embedded || pane?.isBoundedPane === true;
   const planDocument = useMemo(
     () => resolveThreadPlanDocument({
       promptMode,
@@ -407,10 +411,12 @@ export function ThreadDetail({
 
   const viewClass = [
     'thread-detail-view',
-    embedded ? 'thread-detail-view--embedded' : '',
+    bounded ? 'thread-detail-view--embedded' : '',
     modal ? 'thread-detail-view--modal' : '',
+    pane?.isSplitPane ? 'thread-detail-view--split-pane' : '',
+    pane?.isFocused === false ? 'is-pane-inactive' : '',
     panelOpen ? 'is-secondary-open' : '',
-    panel.state.isMaximized ? 'is-secondary-maximized' : ''
+    !hostedSecondary && panel.state.isMaximized ? 'is-secondary-maximized' : ''
   ].filter(Boolean).join(' ');
 
   let panelBody = null;
@@ -512,6 +518,55 @@ export function ThreadDetail({
     panelBody = <p className="thread-detail-empty">No environment is attached to this agent.</p>;
   }
 
+  const secondaryPanelNode: ReactNode = panel.state.isOpen ? (
+        <ThreadSecondaryPanel
+          state={panel.state}
+          showDiffPin={Boolean(environmentId)}
+          showPlanPin={showPlanPin}
+          onSelectInfo={() => panel.selectPin('info')}
+          onSelectDiff={() => panel.selectPin('diff')}
+          onSelectPlan={() => panel.selectPin('plan')}
+          onNewTab={panel.openNewTab}
+          onCloseTab={panel.closeTab}
+          onActivateTab={panel.activateTab}
+          onToggleMaximized={panel.toggleMaximized}
+          onHide={panel.close}
+          onResize={panel.setWidth}
+        >
+          {panelBody}
+          <BrowserTabDeck
+            browserTabs={panel.state.tabs.filter((tab) => tab.kind === 'browser')}
+            activeBrowserTabId={closable?.kind === 'browser' ? closable.id : null}
+            canShowNativeBrowserView={panel.state.isOpen && !modal && (hostedSecondary || pane?.isFocused !== false)}
+            threadId={threadId}
+            onUpdate={({ tabId, url, title: nextTitle }) => {
+              const resolvedTitle = nextTitle && nextTitle.length > 0 ? nextTitle : getBrowserUrlHost(url) || 'Browser';
+              panel.patchTab(tabId, { url, title: resolvedTitle });
+              if (url) appendThreadRecentItem(threadId, { kind: 'browser', url, title: resolvedTitle });
+            }}
+            onStopAutomation={(targetId) => {
+              void getDesktopBrowserApi()?.stopAutomation?.(targetId);
+              const tab = panel.state.tabs.find((row) => row.automationTargetId === targetId);
+              if (tab) panel.patchTab(tab.id, { automationTargetId: null });
+            }}
+          />
+        </ThreadSecondaryPanel>
+  ) : null;
+
+  usePaneSecondaryPanelRegistration(
+    hostedSecondary
+      ? {
+          contentKey: threadId,
+          isOpen: panel.state.isOpen,
+          panel: secondaryPanelNode,
+          onToggle: () => {
+            if (panel.state.isOpen) panel.close();
+            else panel.open();
+          }
+        }
+      : null
+  );
+
   const awaitingUser = pendingInteractions.length > 0 || timelineRowsAwaitUser(rows);
   const inFlightRetry = timelineHasInFlightRetry(rows);
 
@@ -549,6 +604,12 @@ export function ThreadDetail({
         <header className="thread-detail-header">
           <ThreadDetailHeading
             title={title}
+            draggable={Boolean(pane?.beginPaneDrag)}
+            onPointerDown={
+              pane?.beginPaneDrag
+                ? (event) => pane.beginPaneDrag?.(event, title)
+                : undefined
+            }
             overflow={
               <ThreadDetailOverflow
                 threadId={threadId}
@@ -569,7 +630,31 @@ export function ThreadDetail({
             />
             <ThreadStatusBadge status={status} waitingOnUser={awaitingUser} thinking={thinking} />
             <PluginThreadHeaderActions threadId={threadId} projectId={projectId} />
-            {!panelOpen ? (
+            {pane?.onToggleMaximize ? (
+              <button
+                type="button"
+                className="icon-btn"
+                title={pane.isMaximized ? 'Restore pane' : 'Maximize pane'}
+                aria-label={pane.isMaximized ? 'Restore pane' : 'Maximize pane'}
+                data-testid="split-pane-maximize"
+                onClick={pane.onToggleMaximize}
+              >
+                {pane.isMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+              </button>
+            ) : null}
+            {pane?.onRequestClose ? (
+              <button
+                type="button"
+                className="icon-btn"
+                title="Close pane"
+                aria-label="Close pane"
+                data-testid="split-pane-close"
+                onClick={pane.onRequestClose}
+              >
+                <X size={14} />
+              </button>
+            ) : null}
+            {!panel.state.isOpen ? (
               <button
                 type="button"
                 className="icon-btn"
@@ -604,10 +689,12 @@ export function ThreadDetail({
               }}
               onTitleLink={(link) => {
                 if (link.kind === 'thread') {
-                  navigate(getThreadRoutePath(
-                    link.threadId,
-                    route.isProjectWorkspace ? route.focusedProjectId : undefined
-                  ));
+                  const nextProjectId = route.isProjectWorkspace ? route.focusedProjectId : projectId;
+                  if (pane?.isSplitPane) {
+                    pane.navigateInPane(link.threadId, nextProjectId ?? null);
+                    return;
+                  }
+                  navigate(getThreadRoutePath(link.threadId, nextProjectId));
                 }
               }}
               onOpenDiff={(path) => openDiff(path)}
@@ -668,7 +755,7 @@ export function ThreadDetail({
               <ThreadCommandComposer
                 threadId={threadId}
                 project={project ?? undefined}
-                autoFocus={!embedded}
+                autoFocus={!embedded && pane?.isFocused !== false}
                 status={status}
                 inFlightRetry={inFlightRetry}
                 sendBlocked={pendingInteractions.length > 0}
@@ -685,40 +772,7 @@ export function ThreadDetail({
           </div>
         </div>
       </div>
-      {panelOpen ? (
-        <ThreadSecondaryPanel
-          state={panel.state}
-          showDiffPin={Boolean(environmentId)}
-          showPlanPin={showPlanPin}
-          onSelectInfo={() => panel.selectPin('info')}
-          onSelectDiff={() => panel.selectPin('diff')}
-          onSelectPlan={() => panel.selectPin('plan')}
-          onNewTab={panel.openNewTab}
-          onCloseTab={panel.closeTab}
-          onActivateTab={panel.activateTab}
-          onToggleMaximized={panel.toggleMaximized}
-          onHide={panel.close}
-          onResize={panel.setWidth}
-        >
-          {panelBody}
-          <BrowserTabDeck
-            browserTabs={panel.state.tabs.filter((tab) => tab.kind === 'browser')}
-            activeBrowserTabId={closable?.kind === 'browser' ? closable.id : null}
-            canShowNativeBrowserView={panelOpen && !modal}
-            threadId={threadId}
-            onUpdate={({ tabId, url, title }) => {
-              const nextTitle = title && title.length > 0 ? title : getBrowserUrlHost(url) || 'Browser';
-              panel.patchTab(tabId, { url, title: nextTitle });
-              if (url) appendThreadRecentItem(threadId, { kind: 'browser', url, title: nextTitle });
-            }}
-            onStopAutomation={(targetId) => {
-              void getDesktopBrowserApi()?.stopAutomation?.(targetId);
-              const tab = panel.state.tabs.find((row) => row.automationTargetId === targetId);
-              if (tab) panel.patchTab(tab.id, { automationTargetId: null });
-            }}
-          />
-        </ThreadSecondaryPanel>
-      ) : null}
+      {hostedSecondary ? null : secondaryPanelNode}
       </div>
     </section>
   );

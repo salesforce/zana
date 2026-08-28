@@ -7,8 +7,7 @@ import { useEffect, useState } from 'react';
 import { site } from '@/lib/site';
 
 const LINKS = [
-  { href: '/how-it-works/', label: 'How it works' },
-  { href: '/features/', label: 'Features' },
+  { href: '/', label: 'Home' },
   { href: '/extensions/', label: 'Plugins' },
   { href: '/marketplace/', label: 'Marketplace' },
   { href: '/docs/', label: 'Docs' },
@@ -150,8 +149,7 @@ export function Footer() {
           </div>
           <div className="foot-col">
             <h4>Product</h4>
-            <Link href="/how-it-works/">How it works</Link>
-            <Link href="/features/">Features</Link>
+            <Link href="/">Home</Link>
             <Link href="/extensions/">Plugins</Link>
             <Link href="/marketplace/">Marketplace</Link>
             <Link href="/download/">Download</Link>

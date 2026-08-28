@@ -9,8 +9,6 @@ import { PROJECTS_TERMINAL_ANCHOR_ID } from '@/components/TerminalSurface';
 import { AgentLauncher } from '@/components/AgentLauncher';
 import { FindBar } from '@/components/FindBar';
 import { AgentsBoard } from '@/views/agents/AgentsBoard';
-import { NewThreadView } from '@/views/threads/NewThreadView';
-import { ThreadDetail } from '@/views/threads/ThreadDetailView';
 import { ProjectExtensionTab } from '@/views/project/ProjectExtensionTab';
 import { useProjectTabModules } from '@/modules';
 import { resolveProjectTabModule } from '@/lib/libraryPlugin';
@@ -231,7 +229,7 @@ export function WorkspaceView() {
   // we visually swap the middle section to ExplorerView via display:none.
   return (
     <div className="workspace panel-body--full">
-      {!isThreadView && (
+      {!isThreadView && !isAgents && (
       <div className="workspace-topbar">
         {/* Layout picker only. Mode switching lives on ProjectScopedNav; mounting
             an empty modes row would leave a padded band where the old horizontal
@@ -285,10 +283,6 @@ export function WorkspaceView() {
         ) : isNewThread ? (
           <div className="explorer-topbar">
             <span className="explorer-topbar-label">New agent</span>
-          </div>
-        ) : isAgents ? (
-          <div className="explorer-topbar">
-            <span className="explorer-topbar-label">Agents</span>
           </div>
         ) : isExplorer ? (
           <div className="explorer-topbar">
@@ -391,8 +385,6 @@ export function WorkspaceView() {
               <ProjectExtensionTab moduleId={extModule.id} project={project} />
             </div>
           )}
-          {isNewThread && project && <NewThreadView project={project} />}
-          {isThreadView && route.threadId && <ThreadDetail key={route.threadId} threadId={route.threadId} />}
           {isAgents && project && (
             // Agents mode: a Kanban-style status board. Cards auto-flow across
             // lanes by live agent state; New agent opens the shared modal host.

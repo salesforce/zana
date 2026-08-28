@@ -1,6 +1,5 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import { ProductShot } from '../../components/ProductShot';
 
 export const metadata: Metadata = {
   title: 'Plugin SDK',
@@ -26,7 +25,6 @@ export default function ExtensionSdkPage() {
             <p>The plugin SDK is the public contract between your TypeScript package and Zana. After a loud full-trust confirm, plugins load in-process on the server and register UI slots in the app.</p>
             <div className="cta"><Link className="btn btn-primary btn-lg" href="/extensions/getting-started/">Start with a panel</Link><Link className="btn btn-ghost btn-lg" href="/docs/extensions-sdk-reference/">Open full SDK reference</Link></div>
           </div>
-          <ProductShot id="sdk-main-module" priority />
         </div>
       </section>
 
@@ -38,14 +36,55 @@ export default function ExtensionSdkPage() {
       </section>
 
       <section id="permissions" style={{ paddingTop: 0 }}>
-        <div className="wrap"><div className="product-proof" data-reveal><div className="product-proof-copy"><span className="eyebrow">Trust at install</span><h2>Full-trust in-process. Confirm it out loud.</h2><p>Plugins are not sandboxed Electron guests. The control is install/enable, exact version pinning, engines.zcc, and a loud confirm that lists skills, MCP, and extra the grant would add.</p><ul><li>Official catalogs install offline; community catalogs are npm/git pointers only</li><li>A failed reload keeps the last good generation running</li><li>Host-daemon tokens and signing keys never reach a plugin</li></ul><p style={{ marginTop: 20 }}><Link className="text-link" href="/docs/extensions-authoring/">Read the authoring guide <span aria-hidden="true">→</span></Link></p></div><ProductShot id="extension-consent" /></div></div>
+        <div className="wrap">
+          <div className="product-proof solo" data-reveal>
+            <div className="product-proof-copy">
+              <span className="eyebrow">Trust at install</span>
+              <h2>Full-trust in-process. Confirm it out loud.</h2>
+              <p>Plugins are not sandboxed Electron guests. The control is install/enable, exact version pinning, engines.zcc, and a loud confirm that lists skills, MCP, and extra the grant would add.</p>
+              <ul>
+                <li>Official catalogs install offline; community catalogs are npm/git pointers only</li>
+                <li>A failed reload keeps the last good generation running</li>
+                <li>Host-daemon tokens and signing keys never reach a plugin</li>
+              </ul>
+              <p style={{ marginTop: 20 }}><Link className="text-link" href="/docs/extensions-authoring/">Read the authoring guide <span aria-hidden="true">→</span></Link></p>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section style={{ paddingTop: 0 }}>
-        <div className="wrap"><div className="product-proof reverse" data-reveal><div className="product-proof-copy"><span className="eyebrow">Use the host surface</span><h2>Panels receive what they need from Zana.</h2><p>App entries register slots instead of importing core modules. That keeps plugins aligned with the host lifecycle and prevents fragile imports of implementation details.</p><ul><li>Register nav panels, homepage sections, and settings with definePluginApp</li><li>Use storage, RPC, realtime, and schedules through the SDK</li><li>Keep renderer input untrusted; the server still confines paths</li></ul></div><ProductShot id="extension-panel-result" /></div></div>
+        <div className="wrap">
+          <div className="product-proof solo" data-reveal>
+            <div className="product-proof-copy">
+              <span className="eyebrow">Use the host surface</span>
+              <h2>Panels receive what they need from Zana.</h2>
+              <p>App entries register slots instead of importing core modules. That keeps plugins aligned with the host lifecycle and prevents fragile imports of implementation details.</p>
+              <ul>
+                <li>Register nav panels, homepage sections, and settings with definePluginApp</li>
+                <li>Use storage, RPC, realtime, and schedules through the SDK</li>
+                <li>Keep renderer input untrusted; the server still confines paths</li>
+              </ul>
+            </div>
+          </div>
+        </div>
       </section>
 
-      <section className="guide-next-section"><div className="wrap"><div className="guide-next-card" data-reveal><div><span className="eyebrow">Go deeper</span><h2>The reference contains the exact types, events, and lifecycle behavior.</h2><p>Use it as the source of truth while implementing, and return to these visual guides when you need to orient a new contributor.</p></div><div className="guide-next-actions"><Link className="btn btn-primary" href="/docs/extensions-sdk-reference/">Read SDK reference</Link><Link className="btn btn-ghost" href="/docs/extensions-authoring/">Read authoring guide</Link></div></div></div></section>
+      <section className="guide-next-section">
+        <div className="wrap">
+          <div className="guide-next-card" data-reveal>
+            <div>
+              <span className="eyebrow">Go deeper</span>
+              <h2>The reference contains the exact types, events, and lifecycle behavior.</h2>
+              <p>Use it as the source of truth while implementing, and return to these guides when you need to orient a new contributor.</p>
+            </div>
+            <div className="guide-next-actions">
+              <Link className="btn btn-primary" href="/docs/extensions-sdk-reference/">Read SDK reference</Link>
+              <Link className="btn btn-ghost" href="/docs/extensions-authoring/">Read authoring guide</Link>
+            </div>
+          </div>
+        </div>
+      </section>
     </>
   );
 }

@@ -145,7 +145,7 @@
     {
       "id": "custom-instructions",
       "displayName": "Custom instructions",
-      "description": "A Settings section for host-wide agent instructions.",
+      "description": "Add persistent custom instructions to agent threads on this host.",
       "icon": {
         "lucide": "ScrollText"
       },
@@ -329,7 +329,7 @@
     {
       "id": "provider-retry",
       "displayName": "Provider retry",
-      "description": "Composer action to retry the last provider turn.",
+      "description": "Continue turns after provider subscription limits reset.",
       "icon": {
         "lucide": "RotateCcw"
       },

@@ -1,6 +1,5 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import { ProductShot } from '../../components/ProductShot';
 
 export const metadata: Metadata = {
   title: 'Build your first plugin',
@@ -41,7 +40,6 @@ export default function ExtensionGettingStartedPage() {
               <Link className="btn btn-ghost btn-lg" href="/extensions/sdk/">Understand the SDK</Link>
             </div>
           </div>
-          <ProductShot id="extension-panel-result" priority />
         </div>
       </section>
 
@@ -87,7 +85,7 @@ export default function ExtensionGettingStartedPage() {
 
       <section style={{ paddingTop: 0 }}>
         <div className="wrap">
-          <div className="product-proof" data-reveal>
+          <div className="product-proof solo" data-reveal>
             <div className="product-proof-copy">
               <span className="eyebrow">A live local loop</span>
               <h2>Keep the source editable and the result visible.</h2>
@@ -98,7 +96,6 @@ export default function ExtensionGettingStartedPage() {
                 <li>A failed reload keeps the last good generation</li>
               </ul>
             </div>
-            <ProductShot id="local-extension-workspace" />
           </div>
         </div>
       </section>

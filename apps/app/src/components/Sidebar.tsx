@@ -202,6 +202,7 @@ export function Sidebar() {
   return (
     <SidebarRail
       className="sidebar sidebar--global"
+      data-sidebar="sidebar"
       navAriaLabel="Main navigation"
       storageKey={GLOBAL_NAV_ORDER_KEY}
       pinnedIds={PINNED_SIDEBAR_NAV_IDS}

@@ -87,6 +87,10 @@ export const ConversationRow = memo(function ConversationRow({
     [row.role, row.text, streaming]
   );
   const requestLabel = userRequestLabel(row);
+  const cancelEdit = () => {
+    setEditing(false);
+    setDraft(row.text ?? '');
+  };
   const pluginActions = actions.map((action) => {
     const Icon = action.icon ? resolveIcon(action.icon) : null;
     return (
@@ -129,7 +133,7 @@ export const ConversationRow = memo(function ConversationRow({
   });
   return (
     <article
-      className={`thread-timeline-row is-${row.role}`}
+      className={`thread-timeline-row is-${row.role}${editing ? ' is-editing' : ''}`}
       data-testid={testId}
       data-row-id={row.id}
       data-streaming={streaming ? 'true' : undefined}
@@ -190,12 +194,28 @@ export const ConversationRow = memo(function ConversationRow({
               <textarea
                 value={draft}
                 aria-label="Edit message"
+                autoFocus
+                disabled={saving}
+                rows={3}
                 onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') {
+                    event.preventDefault();
+                    cancelEdit();
+                    return;
+                  }
+                  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+                    event.preventDefault();
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
               />
-              <button type="submit" disabled={saving}>Save</button>
-              <button type="button" onClick={() => { setEditing(false); setDraft(row.text ?? ''); }}>
-                Cancel
-              </button>
+              <div className="thread-message-edit-actions">
+                <button type="button" className="btn" disabled={saving} onClick={cancelEdit}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn primary" disabled={saving}>Save</button>
+              </div>
             </form>
           ) : text ? (
             row.role === 'assistant' ? (
@@ -256,22 +276,24 @@ export const ConversationRow = memo(function ConversationRow({
           ) : null}
         </div>
       </SecondaryPanelSelectionActions>
-      <MessageActionBar
-        text={text}
-        threadId={threadId}
-        sourceSeqEnd={row.sourceSeqEnd}
-        onCopy={onCopy}
-        onEdit={canEditConversationMessage(row, threadIdle) ? () => {
-          setDraft(row.text ?? '');
-          setEditing(true);
-        } : undefined}
-        onSendToMain={row.role === 'assistant' && parentThreadId ? () => {
-          void product.threads.createQueuedMessage(parentThreadId, { text });
-        } : undefined}
-        onFork={onFork}
-        showFork={row.role === 'assistant'}
-        pluginActions={pluginActions}
-      />
+      {editing ? null : (
+        <MessageActionBar
+          text={text}
+          threadId={threadId}
+          sourceSeqEnd={row.sourceSeqEnd}
+          onCopy={onCopy}
+          onEdit={canEditConversationMessage(row, threadIdle) ? () => {
+            setDraft(row.text ?? '');
+            setEditing(true);
+          } : undefined}
+          onSendToMain={row.role === 'assistant' && parentThreadId ? () => {
+            void product.threads.createQueuedMessage(parentThreadId, { text });
+          } : undefined}
+          onFork={onFork}
+          showFork={row.role === 'assistant'}
+          pluginActions={pluginActions}
+        />
+      )}
       {lightbox ? (
         <ThreadImageLightbox
           src={lightbox.src}

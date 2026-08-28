@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Bell, Star } from 'lucide-react';
 import { Sidebar } from './components/Sidebar.js';
 import { SidebarTriggerOverlay } from './components/SidebarTriggerOverlay.js';
@@ -9,14 +9,12 @@ import { ExtensionsPane } from './components/listpane/ExtensionsPane.js';
 import { WorkspaceView } from '@/views/project/WorkspaceView';
 import { TerminalSurface } from './components/TerminalSurface.js';
 import { AgentsView } from '@/views/agents/AgentsView';
-import { ThreadDetailView } from '@/views/threads/ThreadDetailView';
-import { NewThreadView } from '@/views/threads/NewThreadView';
+import { SplitWorkspaceRoute } from '@/views/SplitWorkspaceRoute';
 import { ProjectScopedNav } from './components/ProjectScopedNav.js';
 import { SettingsView } from '@/views/settings/SettingsView';
 import { SchedulerView } from '@/views/scheduler/SchedulerView';
 import { ExtensionsView } from '@/views/extensions/ExtensionsView';
 import { InboxView } from '@/views/inbox/InboxView';
-import { HomeView } from '@/views/home/HomeView';
 import { FollowUpsView } from '@/views/follow-ups/FollowUpsView';
 import { SuggestionsView } from '@/views/suggestions/SuggestionsView';
 import { GoalsPanel } from '@/views/project/GoalsPanel';
@@ -75,6 +73,7 @@ import { useShellChromeState } from './hooks/useShellChromeState.js';
 import { useRouteSync } from './hooks/useRouteSync.js';
 import { useRouteState } from './hooks/useRouteState.js';
 import { HashNavigationScroll } from './components/HashNavigationScroll.js';
+import { isSplitWorkspacePath } from './lib/split-layout/splitThreadNavigation.js';
 import { product } from './lib/product-client.js';
 import {
   AGENTS_ROUTE_PATH,
@@ -121,14 +120,18 @@ function SettingsProjectAliasRedirect() {
 
 function AppRoutes({ suggestionsEnabled }: { suggestionsEnabled: boolean }) {
   const route = useRouteState();
+  const location = useLocation();
+  const splitWorkspace = isSplitWorkspacePath(location.pathname);
+  const showProjectWorkspace =
+    route.nav === 'projects' && !!route.focusedProjectId && !splitWorkspace;
   return (
     <>
       <Routes>
-        <Route path={APP_ROOT_ROUTE_PATH} element={<HomeView />} />
+        <Route path={APP_ROOT_ROUTE_PATH} element={null} />
         <Route path={INBOX_ROUTE_PATH} element={<InboxView />} />
         <Route path={AGENTS_ROUTE_PATH} element={<AgentsView />} />
-        <Route path={NEW_THREAD_ROUTE_PATH} element={<NewThreadView />} />
-        <Route path={THREAD_ROUTE_PATH} element={<ThreadDetailView />} />
+        <Route path={NEW_THREAD_ROUTE_PATH} element={null} />
+        <Route path={THREAD_ROUTE_PATH} element={null} />
         <Route path={FOLLOWUPS_ROUTE_PATH} element={<FollowUpsView />} />
         <Route
           path={SUGGESTIONS_ROUTE_PATH}
@@ -154,10 +157,9 @@ function AppRoutes({ suggestionsEnabled }: { suggestionsEnabled: boolean }) {
         <Route path={PLUGIN_PANEL_ROUTE_PATH} element={null} />
         <Route path="*" element={<Navigate to={APP_ROOT_ROUTE_PATH} replace />} />
       </Routes>
+      <SplitWorkspaceRoute />
       <ModulePanelHost />
-      <div
-        className={`workspace-slot ${route.nav === 'projects' && route.focusedProjectId ? 'show' : 'hide'}`}
-      >
+      <div className={`workspace-slot ${showProjectWorkspace ? 'show' : 'hide'}`}>
         <WorkspaceView />
       </div>
       <TerminalSurface />
@@ -169,6 +171,8 @@ export function App() {
   useRouteSync();
   const init = useData((s) => s.init);
   const route = useRouteState();
+  const location = useLocation();
+  const splitWorkspaceShowing = isSplitWorkspacePath(location.pathname);
   const nav = route.nav;
   const sidebarCollapsed = useUi((s) => s.sidebarCollapsed);
   const storeFocusedProjectId = useUi((s) => s.focusedProjectId);
@@ -722,7 +726,7 @@ export function App() {
           Workspace continues to own project-scoped launches — but only while
           that slot is shown, so a CSS-hidden workspace cannot portal a second
           dialog on top of this one. */}
-      {launcherOpen && (nav !== 'projects' || !focusedProjectId) && (
+      {launcherOpen && (nav !== 'projects' || !focusedProjectId || splitWorkspaceShowing) && (
         <AgentLauncher
           onClose={() => useUi.getState().setLauncherOpen(false)}
           onLaunched={stayOnAgentsBoard}

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { readFileSync } from 'node:fs';
@@ -12,6 +12,9 @@ import {
   type ThreadMenuContext
 } from './threadCardActions.js';
 import type { ThreadListItem } from '../thread-store.js';
+import { countPanes, findPaneByThread } from '../lib/split-layout/ops.js';
+import { createSinglePaneLayout, threadPaneContent } from '../lib/split-layout/splitThreadNavigation.js';
+import { useSplitWorkspace } from '../lib/split-layout/store.js';
 
 const thread: ThreadListItem = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -66,6 +69,10 @@ describe('viewingThread', () => {
 });
 
 describe('runThreadMenuAction', () => {
+  afterEach(() => {
+    useSplitWorkspace.setState({ layout: null, maximizedPaneId: null });
+  });
+
   it('opens the thread', async () => {
     const c = ctx();
     await runThreadMenuAction('open', thread, c);
@@ -75,6 +82,21 @@ describe('runThreadMenuAction', () => {
   it('opens a project-scoped thread without leaving the workspace', async () => {
     const c = ctx({ projectId: 'p1' });
     await runThreadMenuAction('open', thread, c);
+    expect(c.navigate).toHaveBeenCalledWith(`/projects/p1/threads/${thread.id}`);
+  });
+
+  it('opens another thread in a right split', async () => {
+    useSplitWorkspace.setState({
+      layout: createSinglePaneLayout(threadPaneContent('other', 'p1')),
+      maximizedPaneId: null
+    });
+    const c = ctx({ projectId: 'p1' });
+    await runThreadMenuAction('open-split', thread, c);
+    const layout = useSplitWorkspace.getState().layout;
+    expect(layout).not.toBeNull();
+    if (!layout) return;
+    expect(countPanes(layout.root)).toBe(2);
+    expect(findPaneByThread(layout.root, 'p1', thread.id)).not.toBeNull();
     expect(c.navigate).toHaveBeenCalledWith(`/projects/p1/threads/${thread.id}`);
   });
 
@@ -157,6 +179,7 @@ describe('ThreadCardMenu', () => {
     );
     expect(idle).toContain('data-testid="thread-context-menu"');
     expect(idle).toContain('Open');
+    expect(idle).toContain('Open in split');
     expect(idle).toContain('Fork');
     expect(idle).toContain('Archive');
     expect(idle).not.toContain('Stop');

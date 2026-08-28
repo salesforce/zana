@@ -7,10 +7,12 @@ const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'u
 
 describe('NewThreadView', () => {
   it('is a composer-only create surface mounted at /threads/new', () => {
-    expect(app).toContain('<Route path={NEW_THREAD_ROUTE_PATH} element={<NewThreadView />} />');
+    expect(app).toContain('<Route path={NEW_THREAD_ROUTE_PATH} element={null} />');
+    expect(app).toContain('<Route path={THREAD_ROUTE_PATH} element={null} />');
     expect(app).toContain('<Route path={PROJECT_NEW_THREAD_ROUTE_PATH} element={null} />');
     expect(app).toContain('<Route path={PROJECT_THREAD_ROUTE_PATH} element={null} />');
-    expect(app.indexOf('NEW_THREAD_ROUTE_PATH')).toBeLessThan(app.indexOf('THREAD_ROUTE_PATH} element={<ThreadDetailView'));
+    expect(app).toContain('<SplitWorkspaceRoute />');
+    expect(app.indexOf('NEW_THREAD_ROUTE_PATH')).toBeLessThan(app.indexOf('THREAD_ROUTE_PATH} element={null}'));
     expect(view).toContain('className="new-thread-view aurora-host"');
     expect(view).toContain('<AuroraGrid />');
     expect(view).toContain('className="new-thread-view-inner"');

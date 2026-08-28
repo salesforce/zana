@@ -626,12 +626,16 @@ describe('expandable row and chips', () => {
     const source = readFileSync(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)), 'utf8');
     expect(source).toContain('thread-detail-main');
     expect(source).toContain('thread-detail-split');
-    const panelAt = source.indexOf('<ThreadSecondaryPanel');
+    expect(source).toContain('<ThreadSecondaryPanel');
+    const mountAt = source.indexOf('{hostedSecondary ? null : secondaryPanelNode}');
+    const splitAt = source.indexOf('className="thread-detail-split"');
+    const mainAt = source.indexOf('className="thread-detail-main"');
     const bodyAt = source.indexOf('className="thread-detail-body"');
-    expect(panelAt).toBeGreaterThan(-1);
-    expect(bodyAt).toBeGreaterThan(-1);
-    expect(source.slice(bodyAt, panelAt)).not.toContain('<ThreadSecondaryPanel');
-    expect(source.indexOf('thread-detail-main')).toBeLessThan(panelAt);
+    expect(mountAt).toBeGreaterThan(-1);
+    expect(splitAt).toBeGreaterThan(-1);
+    expect(mainAt).toBeGreaterThan(splitAt);
+    expect(bodyAt).toBeGreaterThan(mainAt);
+    expect(mountAt).toBeGreaterThan(bodyAt);
   });
 
   it('keeps the thread-detail-header in the left column of the split', () => {
@@ -667,7 +671,7 @@ describe('expandable row and chips', () => {
     expect(column).toContain('<ThreadWorkspaceBanner');
     expect(column).toContain('<ThreadCommandComposer');
     expect(source).toContain('inFlightRetry={inFlightRetry}');
-    expect(source).toContain('autoFocus={!embedded}');
+    expect(source).toContain('autoFocus={!embedded && pane?.isFocused !== false}');
     expect(column).toContain('thread-composer-dock');
     expect(column).toContain('<ThreadPromptModeCard');
     expect(column).toContain('<ThreadTodoCard');
