@@ -326,13 +326,23 @@ export function createProjectStore({ projectsFile, remotePlaceholderRoot }: Proj
         if (!isAbsolute(input.path) || input.path.startsWith('-')) {
           throw new Error('project path must be an absolute host path');
         }
+        const current = projects[index];
         const next: ProjectRecord = {
-          ...projects[index],
+          ...current,
           hostId: input.hostId,
-          path: input.path,
           lastActiveAt: Date.now()
         };
-        delete next.remote;
+        if (current.remote && typeof current.remote === 'object') {
+          // Keep the local placeholder path and SSH identity so this machine can
+          // still run threads with remote tools after a daemon is enrolled.
+          next.remote = {
+            ...(current.remote as Record<string, unknown>),
+            remotePath: input.path
+          };
+        } else {
+          next.path = input.path;
+          delete next.remote;
+        }
         const nextProjects = [...projects];
         nextProjects[index] = next;
         writeProjects(nextProjects, hash);

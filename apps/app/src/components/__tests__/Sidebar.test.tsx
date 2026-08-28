@@ -208,6 +208,40 @@ describe('Sidebar structure and compact accessibility', () => {
     );
   });
 
+  it('keeps failed, settings-only, and project-only plugin modules off the rail', () => {
+    h.state.sidebarCollapsed = false;
+    h.modules = [
+      {
+        id: 'ask-user-question',
+        title: 'Ask user question',
+        icon: 'CircleHelp',
+        panel: (() => null) as AppModule['panel'],
+        loadError: 'Failed to fetch dynamically imported module'
+      } as AppModule,
+      {
+        id: 'custom-instructions',
+        title: 'Custom instructions',
+        icon: 'ScrollText',
+        placement: 'settings',
+        panel: (() => null) as AppModule['panel']
+      },
+      {
+        id: 'salesforce',
+        title: 'Salesforce',
+        icon: 'Cloud',
+        panel: (() => null) as AppModule['panel'],
+        projectTab: { global: false }
+      }
+    ];
+
+    const markup = renderSidebar();
+    expect(markup).not.toContain('Ask user question');
+    expect(markup).not.toContain('Custom instructions');
+    expect(markup).not.toContain('Salesforce');
+    expect(markup).not.toContain('data-testid="nav-ask-user-question"');
+    expect(markup).toContain('data-testid="nav-extensions"');
+  });
+
   it('renders no rail when the shell overlay owns sidebar restoration', () => {
     h.state.sidebarCollapsed = true;
     h.modules = [];

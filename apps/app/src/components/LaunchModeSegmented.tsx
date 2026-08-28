@@ -19,7 +19,8 @@ export function LaunchModeSegmented({
         onClick={() => onChange('thread')}
         aria-pressed={value === 'thread'}
       >
-        Thread
+        Modern
+        <span className="launch-segmented-new" aria-hidden="true">NEW</span>
       </button>
       <button
         type="button"
@@ -27,7 +28,7 @@ export function LaunchModeSegmented({
         onClick={() => onChange('agent')}
         aria-pressed={value === 'agent'}
       >
-        Legacy Agent
+        CLI Agent
       </button>
       {showAutonomousTeam && (
         <button

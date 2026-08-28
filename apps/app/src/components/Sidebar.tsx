@@ -86,11 +86,13 @@ export function Sidebar() {
     if (suggestionsEnabled) extras.push(suggestionsNavItem);
     return extras;
   }, [followUpsEnabled, suggestionsEnabled]);
-  // Legacy disk modules keep a rail shortcut. Plugin navPanels are listed
-  // separately so every path (not only the first panel) is reachable.
+  // Built-ins and legacy disk modules with a real panel keep a rail shortcut.
+  // Plugin navPanels are listed separately so every path is reachable. A
+  // plugin-app load error must not grow a fake panel — those stay off this list.
   const moduleNavItems: NavEntry[] = modules
     .filter((module) =>
       !!module.panel &&
+      !('loadError' in module && (module as { loadError?: string }).loadError) &&
       module.placement !== 'settings' &&
       module.projectTab?.global !== false &&
       !pluginIds.has(module.id)

@@ -15,7 +15,7 @@ const TITLE_OPTIONS = { summaryStyle: 'bundle' as const, workStyle: 'default' as
 
 function systemRowLabel(row: Extract<ThreadTimelineViewRow, { kind: 'system' }>): string {
   if (row.systemKind === 'operation' && row.operationKind === 'thread-provisioning') {
-    return row.title?.trim() || 'Provisioned thread';
+    return row.title?.trim() || 'Provisioned agent';
   }
   return row.detail ? `${row.title} — ${row.detail}` : row.title;
 }

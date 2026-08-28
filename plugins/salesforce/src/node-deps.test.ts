@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -20,6 +20,9 @@ describe('node filesystem deps', () => {
       expect(deps.readFile(join(dir, 'missing'))).toBeNull();
       expect(deps.readdir(dir)).toContain('sfdx-project.json');
       expect(deps.realpath(file)).toContain('sfdx-project.json');
+      deps.writeFile(join(dir, 'Bot.agent'), 'agent');
+      expect(deps.readFile(join(dir, 'Bot.agent'))).toBe('agent');
+      expect(statSync(join(dir, 'Bot.agent')).mode & 0o777).toBe(0o600);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

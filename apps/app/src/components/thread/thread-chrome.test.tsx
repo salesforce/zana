@@ -716,6 +716,8 @@ describe('expandable row and chips', () => {
     expect(source).toContain('route.isProjectWorkspace ? route.focusedProjectId');
     expect(source).toContain('pendingChildThreads(threads, threadId)');
     expect(source).not.toContain('useThreads((s) => s.threads.filter');
+    expect(source).toContain('lastReadSeq: typeof timeline.lastReadSeq === \'number\' ? timeline.lastReadSeq : null');
+    expect(source).toContain('useThreads.getState().upsert({ ...existing, lastReadSeq: seq })');
     const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
     expect(css).toContain('.thread-detail-view--embedded');
     expect(css).toContain('.thread-detail-view--modal');

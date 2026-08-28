@@ -5,7 +5,7 @@ import { useThreads } from '../thread-store.js';
 import { ThreadDetail } from '../views/threads/ThreadDetailView.js';
 
 export function threadModalLabel(title: string | null | undefined): string {
-  return title?.trim() || 'Thread';
+  return title?.trim() || 'Agent';
 }
 
 export function inspectorModalClassName(fullScreen: boolean): string {
@@ -39,7 +39,7 @@ export function toggleInspectorFullScreen(
 }
 
 /**
- * Thread-inspector modal: the same overlay chrome as the legacy agent
+ * Thread-inspector modal: the same overlay chrome as the CLI agent
  * inspector, hosting the conversation ThreadDetail surface. Opened from the
  * Agents kanban so a card click peeks the thread without navigating away.
  */

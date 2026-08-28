@@ -48,7 +48,11 @@ describe('peer-daemon commands', () => {
     expect(script).not.toContain('--join-code zcde_');
     expect(script).toContain('ai.zana.zcc-host-daemon.box.tailnet.ts.net');
     expect(script).toContain('/nix/store/*-nodejs-22.*/bin/node');
-    expect(script).toContain('"$node_bin" "$join_bin" join');
+    expect(script).toContain('nohup "$node_bin" "$join_bin" join');
+    expect(script).toContain('host-daemon.pid');
+    expect(script).toContain('kill "$old_pid"');
+    expect(script).toContain('systemctl --user show-environment');
+    expect(script).toContain('No systemd user bus');
   });
 
   it('keeps ssh argv BatchMode and rejects a leading-dash remote host', () => {

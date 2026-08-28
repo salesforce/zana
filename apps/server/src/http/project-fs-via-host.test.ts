@@ -106,12 +106,23 @@ describe('listProjectPaths', () => {
         callHostOnlineRpc: async (input: { command: unknown }) => {
           commands.push(input.command);
           return {
-            files: [
-              { root: '/tmp/proj', relPath: 'README.md', bytes: 12, kind: 'file' },
-              { root: '/tmp/proj', relPath: 'src/foo.ts', bytes: 4, kind: 'file' },
-              { root: '/tmp/proj', relPath: 'node_modules/pkg/index.js', bytes: 1, kind: 'file' },
-              { root: '/tmp/proj', relPath: 'src', bytes: 0, kind: 'dir' }
-            ]
+            paths: [
+              {
+                kind: 'file',
+                path: 'src/foo.ts',
+                name: 'foo.ts',
+                score: 12,
+                positions: [4, 5, 6]
+              },
+              {
+                kind: 'file',
+                path: 'node_modules/pkg/index.js',
+                name: 'index.js',
+                score: 0,
+                positions: []
+              }
+            ],
+            truncated: false
           };
         }
       }
@@ -122,12 +133,19 @@ describe('listProjectPaths', () => {
         kind: 'file',
         path: 'src/foo.ts',
         name: 'foo.ts',
-        score: 0,
-        positions: []
+        score: 12,
+        positions: [4, 5, 6]
       }],
       truncated: false
     });
-    expect(commands).toEqual([{ type: 'host.list_files', roots: ['/tmp/proj'] }]);
+    expect(commands).toEqual([{
+      type: 'host.list_paths',
+      path: '/tmp/proj',
+      query: 'foo',
+      limit: 10,
+      includeFiles: true,
+      includeDirectories: true
+    }]);
   });
 
   it('does not RPC for an unknown project id', async () => {
@@ -143,6 +161,29 @@ describe('listProjectPaths', () => {
     await expect(listProjectPaths(ctx, 'other')).rejects.toMatchObject({
       code: 'unknown-project',
       status: 404
+    });
+  });
+
+  it('returns empty when both kinds are excluded and rejects a pathless project', async () => {
+    const ctx = {
+      toProjects: () => [
+        project({ id: 'zcc', name: 'zcc', path: '/tmp/proj' }),
+        project({ id: 'empty', name: 'empty', path: '' })
+      ],
+      hostHub: {
+        resolveHostId: () => 'host-1',
+        callHostOnlineRpc: async () => {
+          throw new Error('should not rpc');
+        }
+      }
+    } as unknown as ProductHttpContext;
+    await expect(listProjectPaths(ctx, 'zcc', {
+      includeFiles: false,
+      includeDirectories: false
+    })).resolves.toEqual({ paths: [], truncated: false });
+    await expect(listProjectPaths(ctx, 'empty')).rejects.toMatchObject({
+      code: 'path-unavailable',
+      status: 400
     });
   });
 

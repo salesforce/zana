@@ -220,7 +220,7 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   read-only and bounded (scans newest `INBOX_SEARCH_SCAN_CAP = 500`, filters
   in-process, paginates via `before` — rule 5), so it's pre-approved alongside
   `inbox_push` in `pty.ts`. The agent-facing contract lives in
-  `resources/inbox-skill.md`; keep the two in sync.
+  the `zcc-inbox` skill (`apps/server/src/plugins/builtin-skills/zcc-inbox/SKILL.md`); keep the two in sync.
 
 - **Inbox AI Summary reads main's store, not the renderer view.** `inbox:summarize`
   (`apps/server/src/services/inbox/inbox-summary.ts`) summarizes from main's own inbox store — the
@@ -331,19 +331,22 @@ The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
   non-template-literal code (the guard test documents this).
 
 - **Bundled skills + per-project MCP config are the app's runtime capability
-  artifacts — one roster, two triggers.** The five shipped SKILL.md files deploy
-  into `~/.claude/skills/<name>` at boot AND on demand via the "Reload skills &
-  MCP" button (`extensions:redeployCapabilities`). The roster lives in ONE place —
+  artifacts — one roster, two triggers.** Product skills live in
+  `apps/server/src/plugins/builtin-skills/` and are injected at thread spawn
+  (project > plugin > builtin). Only `zcc-cli` is also copied into
+  `~/.claude/skills` at boot and via the "Reload skills & MCP" button
+  (`extensions:redeployCapabilities`). The roster lives in ONE place —
   `skill-installer.ts` `BUNDLED_SKILLS` — which both `redeployBundledSkills()`
-  (boot fan-out + the button) iterate, so a new bundled skill is added there once
-  (not in index.ts's boot block, which now just calls the aggregate). Deploys are
+  (boot fan-out + the button) iterate, so a new *global* CLI skill is added there
+  once (not in index.ts's boot block, which now just calls the aggregate). Deploys are
   idempotent + edit-respecting (only rewrites when shipped content differs, so a
   user's local skill tweak survives until a version bump). The `redeployCapabilities`
   handler also re-runs `ensureMcpConfigForProject` for every project and fires
-  `skills:onChanged` so the catalogue refreshes. NOTE: extensions cannot yet
-  *contribute* skills/MCP directly (only personas/teams via `ctx.personas`/`ctx.teams`,
-  plus `mcpServers` string refs on a persona) — the button reloads the APP's
-  bundled artifacts, not extension-contributed ones. Covered by
+  `skills:onChanged` so the catalogue refreshes. Plugin-contributed skills/MCP sync
+  through the same choke points (`syncExtensionSkills` / `rebuildExtensionServers`).
+  `harness-authoring` stays in `resources/` for maintainers and is not injected into
+  user threads. Keep `zcc-cli`, `zcc guide` chapters, and CLI `--help` in lockstep
+  (`docs/cli-guide-and-skill.md`). Covered by
   `apps/server/src/services/skills/__tests__/redeploy-bundled-skills.test.ts`.
 
 - **Auto-close-idle depends on the human-vs-agent write split + a triage cache.**

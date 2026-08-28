@@ -7,15 +7,21 @@ import {
   X,
   ArrowRight,
   ArrowLeft,
+  MessageSquare
 } from 'lucide-react';
 import { useUi } from '../store.js';
+import {
+  WALKTHROUGH_STEP_IDS,
+  walkthroughShellFor,
+  type WalkthroughStepId
+} from './walkthrough-shell.js';
 
 /**
- * First-run walkthrough — a lightweight, three-step tour that introduces the
- * core loop of Command Center to a brand-new user:
- *   1. Launch an agent (a Quick Agent from the Agents view),
- *   2. Add a project (a folder to work in),
- *   3. Create a schedule (recurring agent runs).
+ * First-run walkthrough — a four-step tour of the core loop:
+ *   1. Start a Modern conversation (the BB-inspired composer on New Chat),
+ *   2. Flip to CLI Agent on the same page (the original PTY launcher),
+ *   3. Add a project (a folder to work in),
+ *   4. Create a schedule (recurring agent runs).
  *
  * Each step navigates the shell to the relevant view so the user sees the real
  * surface behind the card, then points at the control to use. Read and click
@@ -27,7 +33,7 @@ import { useUi } from '../store.js';
  */
 
 interface Step {
-  id: string;
+  id: WalkthroughStepId;
   icon: typeof Bot;
   title: string;
   body: ReactNode;
@@ -35,13 +41,24 @@ interface Step {
 
 const STEPS: Step[] = [
   {
-    id: 'agent',
-    icon: Bot,
-    title: 'Launch an agent',
+    id: 'thread',
+    icon: MessageSquare,
+    title: 'Start a conversation',
     body: (
       <p>
-        Open <strong>Agents</strong> in the left rail and hit <strong>＋</strong> to start a Quick
-        Agent — a Claude session in a scratch workspace, no project needed.
+        Open <strong>New Chat</strong> and stay on <strong>Modern</strong>. Type a prompt and send
+        — Zana starts a conversation with a chat timeline, tools, and a side panel.
+      </p>
+    )
+  },
+  {
+    id: 'legacy',
+    icon: Bot,
+    title: 'CLI Agent still works',
+    body: (
+      <p>
+        Need a terminal session instead? Flip to <strong>CLI Agent</strong> on the same page.
+        That still launches the original PTY agent in a workspace.
       </p>
     )
   },
@@ -51,8 +68,8 @@ const STEPS: Step[] = [
     title: 'Add a project',
     body: (
       <p>
-        Open <strong>Projects</strong> and click <strong>＋</strong> in the list header to point
-        Zana at a folder. Agents run there with its terminals, files, and git.
+        In <strong>Workspaces</strong> on the left rail, click <strong>＋</strong> to point Zana at
+        a folder. Agents run there with its files and git.
       </p>
     )
   },
@@ -76,18 +93,21 @@ interface Props {
 export function Walkthrough({ onClose }: Props) {
   const [index, setIndex] = useState(0);
   const setNav = useUi((s) => s.setNav);
+  const setWalkthroughHomeMode = useUi((s) => s.setWalkthroughHomeMode);
 
   const step = STEPS[index];
   const isFirst = index === 0;
   const isLast = index === STEPS.length - 1;
+  const composerStep = step.id === 'thread' || step.id === 'legacy';
 
   // Move the shell to the view each step describes, so the spotlight card sits
-  // over the real surface the user is being pointed at.
+  // over the real surface the user is being pointed at. Modern / CLI Agent
+  // also drive the New Chat switcher so that composer is actually on screen.
   useEffect(() => {
-    if (step.id === 'agent') setNav('agents');
-    else if (step.id === 'project') setNav('home');
-    else if (step.id === 'schedule') setNav('scheduler');
-  }, [step.id, setNav]);
+    const shell = walkthroughShellFor(step.id);
+    setNav(shell.nav);
+    setWalkthroughHomeMode(shell.homeMode);
+  }, [step.id, setNav, setWalkthroughHomeMode]);
 
   // Esc skips (same as the Skip button) — both mark the walkthrough done.
   useEffect(() => {
@@ -107,12 +127,17 @@ export function Walkthrough({ onClose }: Props) {
   const Icon = step.icon;
 
   return (
-    <div className="palette-backdrop walkthrough-backdrop" onMouseDown={onClose}>
+    <div
+      className={`palette-backdrop walkthrough-backdrop${composerStep ? ' walkthrough-backdrop--composer' : ''}`}
+      onMouseDown={onClose}
+    >
       <div
         className="walkthrough-card"
         role="dialog"
         aria-modal="true"
         aria-labelledby="walkthrough-title"
+        data-testid="walkthrough-dialog"
+        data-walkthrough-step={step.id}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <button className="walkthrough-skip" type="button" onClick={onClose}>
@@ -133,8 +158,8 @@ export function Walkthrough({ onClose }: Props) {
         <div className="walkthrough-body">{step.body}</div>
 
         <div className="walkthrough-dots" aria-hidden="true">
-          {STEPS.map((s, i) => (
-            <span key={s.id} className={`walkthrough-dot ${i === index ? 'active' : ''}`} />
+          {WALKTHROUGH_STEP_IDS.map((id, i) => (
+            <span key={id} className={`walkthrough-dot ${i === index ? 'active' : ''}`} />
           ))}
         </div>
 

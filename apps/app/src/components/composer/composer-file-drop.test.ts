@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { FS_ENTRY_DRAG_MIME, serializeFsEntryDrag } from '../../lib/fs-entry-drag.js';
 import {
+  droppedPathsFromAbsolutePaths,
   droppedPathsFromDataTransfer,
   isComposerPathDrag,
   mentionContentForDroppedPaths,
@@ -130,6 +131,25 @@ describe('droppedPathsFromDataTransfer', () => {
       pathForFile: () => '',
       projectRoot: '/repo'
     })).toEqual([{ path: 'a.ts', name: 'a.ts', entryKind: 'file' }]);
+  });
+});
+
+describe('droppedPathsFromAbsolutePaths', () => {
+  it('maps native picker paths onto workspace-relative mention rows', () => {
+    expect(droppedPathsFromAbsolutePaths(
+      ['/repo/src/foo.ts', '  /repo/README.md  ', '/other/a.ts', '', '/repo/src/foo.ts'],
+      '/repo'
+    )).toEqual([
+      { path: 'src/foo.ts', name: 'foo.ts', entryKind: 'file' },
+      { path: 'README.md', name: 'README.md', entryKind: 'file' },
+      { path: '/other/a.ts', name: 'a.ts', entryKind: 'file' }
+    ]);
+  });
+
+  it('keeps absolute paths when no project root is given', () => {
+    expect(droppedPathsFromAbsolutePaths(['/repo/a.ts'])).toEqual([
+      { path: '/repo/a.ts', name: 'a.ts', entryKind: 'file' }
+    ]);
   });
 });
 

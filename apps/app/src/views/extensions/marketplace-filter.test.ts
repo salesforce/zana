@@ -80,4 +80,13 @@ describe('MarketplaceView presentation', () => {
     expect(source).not.toContain('settings-btn-group');
     expect(source).not.toContain('aria-label="Sync catalog"');
   });
+
+  it('paints the catalog-source field with the theme input fill', () => {
+    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    expect(source).toContain('className="settings-input"');
+    expect(source).toContain('aria-label="Marketplace catalog source"');
+    expect(css).toContain(
+      '.settings-input {\n  appearance: none;\n  min-width: 0;\n  padding: 7px 10px;\n  border: 1px solid var(--border);\n  border-radius: 6px;\n  background: var(--bg-input);'
+    );
+  });
 });

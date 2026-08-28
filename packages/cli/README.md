@@ -1,18 +1,24 @@
 # @zcc/cli
 
-Thin, no-daemon CLI for reading Zana Command Center stores.
+Command-line interface to Zana Command Center.
 
 ## Scope
 
-**READ/AUTHOR TIER ONLY** (v1). This CLI reads the same `~/.zcc/*.json` files the Electron app uses. Live actions (launching sessions, IPC control) are deferred for future versions.
+`zcc` talks to the **running app** over the product HTTP API (`ZCC_SERVER_URL`,
+default `http://127.0.0.1:8780`). `zcc guide` is the only fully offline command.
+
+Prefer product nouns: `thread`, `machine`, `project`, `skill`, `settings`,
+`terminal`, `environment`. `zcc run` and `zcc agent send` are deprecated aliases
+of `thread spawn` and `thread tell`. `zcc term` aliases `terminal`.
+
+Agent callers (`ZCC_SESSION_ID` set by the app) are read/inspect only. Mutations
+return `FORBIDDEN_AGENT` (exit 5) except the host-stamped orchestrator spawn/close set.
 
 ## Installation
 
 ```bash
 # From the monorepo root
 npm install
-
-# Build the CLI
 cd packages/cli
 npm run build
 ```
@@ -20,76 +26,41 @@ npm run build
 ## Usage
 
 ```bash
-# Via node (from repo root)
-node packages/cli/dist/bin/zcc.js projects ls
-
-# Or add to PATH
+node packages/cli/dist/bin/zcc.js status --json
+# or
 export PATH="$PWD/packages/cli/dist/bin:$PATH"
-zcc projects ls
+zcc thread list --json
 ```
 
 ## Commands
 
 ```bash
-# Projects
-zcc projects ls              # List all projects
-zcc projects ls --json       # JSON output
-
-# Personas
-zcc personas ls              # List personas (disk files only)
-zcc personas ls --json
-
-# Schedules
-zcc schedule ls              # List scheduled tasks
-zcc schedule ls --json
-
-# Inbox
-zcc inbox ls                 # List recent inbox entries
-zcc inbox ls --project <id>  # Filter by project (accepts id or tag)
-zcc inbox show <id>          # Show full entry
+zcc status --json
+zcc thread spawn --project <id> --prompt "…" [--wait]
+zcc thread list|show|tell|wait|stop
+zcc machine list
+zcc project list
+zcc skill install-cli-skills
+zcc guide [chapter]
+zcc plugin new <name> [--app]
 ```
+
+`--json` for anything parsed. If the app is down, live commands exit 1 with
+`APP_NOT_RUNNING`.
 
 ## Configuration
 
-By default, reads from `~/.zcc/`. Override with:
-
-```bash
-ZCC_CENTER_DIR=/custom/path zcc projects ls
-```
-
-## Output Modes
-
-- **Human table** (default): Clean tables for terminal reading
-- **JSON** (`--json` flag): Machine-readable output for scripts/agents
+| Variable / flag | Meaning |
+| --- | --- |
+| `ZCC_SERVER_URL` | Product HTTP base (default `http://127.0.0.1:8780`) |
+| `ZCC_CENTER_DIR` / `--data-dir` | Data directory (default `~/.zcc`) — still used for inbox/followup/schedule file reads and the control-plane token |
+| `ZCC_SESSION_ID` | Injected by the app inside agent terminals. Do not set by hand. |
 
 ## Testing
 
 ```bash
-npm test              # Run vitest tests
-npm run test:watch    # Watch mode
+npm test
 ```
 
-## Architecture
-
-Follows CU's `runCli()` discipline:
-- Pure function returns `{ exitCode, stdout, stderr }` — never calls `process.exit` mid-logic
-- Never writes to console directly — returns strings
-- Testable with golden files (see `src/__tests__/run-cli.test.ts`)
-
-Store readers are defensive: missing files or malformed JSON return empty lists + warnings on stderr, never throw.
-
-## Store Format
-
-Reads the same stores as the Electron app:
-- `~/.zcc/projects.json` — project list (v0 array or v1 `{version, projects}`)
-- `~/.zcc/personas/<id>.json` — global personas
-- `<project>/.zcc/personas/<id>.json` — per-project personas
-- `~/.zcc/schedules/<id>.json` — global schedules
-- `<project>/.zcc/schedules/<id>.json` — per-project schedules
-- `~/.zcc/inbox/entries.jsonl` — inbox entries (JSONL: one JSON per line)
-
-Note: builtin personas (`builtin:reviewer`, `builtin:architect`) exist in code only and are not listed by the CLI.
-
-## Future (deferred)
-
-Live actions (launching sessions, run-now, IPC control) require the Electron app to be running and will use a localhost control socket. Scope guard: v1 is READ/AUTHOR only.
+Keep the skill, guide chapters, and `--help` in lockstep
+(`docs/cli-guide-and-skill.md`).

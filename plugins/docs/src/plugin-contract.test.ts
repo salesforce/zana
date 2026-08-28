@@ -4,8 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { derivePluginId, readPluginManifest } from '@zana-ai/zcc-domain';
 import { collectTestPluginApp } from '@zana-ai/zcc-plugin-sdk/testing/app';
+import { createFakePluginHost } from '@zana-ai/zcc-plugin-sdk/testing';
 import { discoverPluginSkillNames } from '@zana-ai/zcc-server/plugins/plugin-skills';
 import app from '../app.js';
+import plugin from '../server.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -32,12 +34,21 @@ describe('docs plugin contract', () => {
     expect(src).toMatch(/global:\s*true/);
   });
 
-  it('registers thread panel, file opener, and doc directive without replacing the compiled Docs rail', () => {
+  it('registers file opener and doc directive without replacing the compiled Docs rail', () => {
     const set = collectTestPluginApp(app, 'docs');
     expect(set.navPanels).toHaveLength(0);
-    expect(set.threadPanelActions[0]?.id).toBe('library');
+    expect(set.threadPanelActions).toHaveLength(0);
+    expect(set.newThreadPanelActions).toHaveLength(0);
     expect(set.fileOpeners[0]?.extensions).toEqual(['md', 'mdx']);
     expect(set.messageDirectives[0]?.id).toBe('doc');
+  });
+
+  it('registers a Docs mention provider with empty search until a vault exists', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'docs' });
+    await plugin(zcc);
+    expect(harness.mentionProviders[0]).toMatchObject({ id: 'note', label: 'Docs' });
+    await expect(harness.mentionProviders[0]!.search({ query: 'hello' })).resolves.toEqual([]);
+    await expect(harness.mentionProviders[0]!.resolve('missing')).rejects.toThrow(/unknown note/);
   });
 
   it('is the only shipped docs plugin (no bundled-extensions copy)', () => {

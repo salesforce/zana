@@ -44,7 +44,7 @@ export function ThreadDetailOverflowMenu({
       ref={menuRef}
       className="tab-context-menu thread-detail-overflow-menu"
       role="menu"
-      aria-label="Thread actions"
+      aria-label="Agent actions"
       data-testid="thread-overflow-menu"
       style={style}
       onMouseDown={(e) => e.stopPropagation()}
@@ -62,7 +62,7 @@ export function ThreadDetailOverflowMenu({
           type="button"
           role="menuitem"
           onClick={onFork}
-          title="Start a new thread from this conversation"
+          title="Start a new agent from this conversation"
         >
           <GitFork size={13} /> Fork
         </button>
@@ -72,7 +72,7 @@ export function ThreadDetailOverflowMenu({
           type="button"
           role="menuitem"
           onClick={onStop}
-          title="Stop this thread. The conversation stays in the list."
+          title="Stop this agent. The conversation stays in the list."
         >
           <Square size={13} /> Stop
         </button>
@@ -83,7 +83,7 @@ export function ThreadDetailOverflowMenu({
         role="menuitem"
         className="tab-context-danger"
         onClick={onArchive}
-        title="Archive this thread and remove it from the list"
+        title="Archive this agent and remove it from the list"
       >
         <Archive size={13} /> Archive
       </button>
@@ -182,7 +182,7 @@ export function ThreadDetailOverflow({
         ref={triggerRef}
         type="button"
         className="icon-btn thread-detail-overflow-btn"
-        aria-label="Thread actions"
+        aria-label="Agent actions"
         aria-haspopup="menu"
         aria-expanded={open}
         data-testid="thread-overflow-trigger"
@@ -197,7 +197,7 @@ export function ThreadDetailOverflow({
       {open ? (typeof document === 'undefined' ? menu : createPortal(menu, document.body)) : null}
       {renaming ? (
         <PromptModal
-          title="Rename thread"
+          title="Rename agent"
           label="Title"
           initialValue={title}
           confirmLabel="Rename"

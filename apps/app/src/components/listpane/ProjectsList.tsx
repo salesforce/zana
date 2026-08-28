@@ -44,7 +44,7 @@ import { ProjectRollupDot } from './ProjectRollupDot.js';
 import { reorderProjectIds } from './projectReordering.js';
 import { isWorkspaceRailExpanded, pinFavoriteProjectsFirst } from './workspace-rail.js';
 import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from '../agentCardActions.js';
-import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from '../threadCardActions.js';
+import { useThreadCardActions, ThreadCardMenu, ThreadArchiveQuickAction, openThreadMenu } from '../threadCardActions.js';
 import { PromptModal } from '../PromptModal.js';
 import type { AgentCard } from '../AgentBoard.js';
 import { useThreads } from '../../thread-store.js';
@@ -728,7 +728,7 @@ export function ProjectsList({
                   const title = threadTitle(thread);
                   const status = threadRailStatus(thread);
                   return (
-                    <div key={thread.id} role="listitem">
+                    <div key={thread.id} role="listitem" className="project-thread-row-wrap">
                       <button
                         type="button"
                         className={`project-terminal-row is-thread${activeThreadId === thread.id ? ' active' : ''}`}
@@ -755,10 +755,11 @@ export function ProjectsList({
                             }>
                               {status}
                             </span>
-                            {' · Thread'}
+                            {' · Agent'}
                           </span>
                         </span>
                       </button>
+                      <ThreadArchiveQuickAction thread={thread} />
                     </div>
                   );
                 })}

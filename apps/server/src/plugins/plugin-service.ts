@@ -35,10 +35,18 @@ import {
   containsNativeAddon,
   createPluginApi,
   importServerFactory,
+  mentionTriggersOf,
   resolveContainedEntry,
   runFactoryTimeBoxed,
   runPluginCli
 } from './plugin-api.js';
+import {
+  PLUGIN_MENTION_RESOLVE_TIMEOUT_MS,
+  splitPluginMentionItemId,
+  withDeadline
+} from './plugin-mentions.js';
+import { PluginHostArtifactRegistry } from './plugin-host-artifact-registry.js';
+import { loadPluginHostArtifactSnapshot } from './plugin-host-artifact.js';
 import { discoverPluginSkillNames } from './plugin-skills.js';
 import { BUILTIN_PLUGINS, OFFICIAL_PLUGINS, bundledPluginByName } from './builtin-registry.js';
 import { defaultCloneGit, defaultFetchJson, defaultSpawnNpm } from './plugin-process.js';
@@ -74,6 +82,7 @@ import {
   type PluginAgentToolSource,
   type PluginSessionTools
 } from './plugin-agent-tools.js';
+import { startPluginUpdateSweep } from './plugin-updates.js';
 
 export interface CatalogSearchHit {
   marketplace: string;
@@ -101,6 +110,8 @@ export interface PluginService {
   reload(id: string): Promise<InstalledPluginRow>;
   reconcileBuiltins(): Promise<InstalledPluginRow[]>;
   start(): Promise<void>;
+  /** Release the periodic catalog-update sweep. Safe to call more than once. */
+  stop(): void;
   snapshot(): PluginUiSnapshot[];
   agentContributions(): PluginAgentContribution[];
   sessionTools(ctx: { threadId: string; projectId: string }): Promise<PluginSessionTools>;
@@ -126,7 +137,17 @@ export interface PluginService {
   checkUpdates(): Promise<PluginUpdateRow[]>;
   applyUpdate(id: string): Promise<InstalledPluginRow>;
   cliContributions(): PluginCliContribution[];
-  mentionProviders(): Array<{ pluginId: string; id: string; trigger?: string }>;
+  mentionProviders(): Array<{
+    pluginId: string;
+    id: string;
+    label: string;
+    trigger?: string;
+    triggers: string[];
+  }>;
+  resolveMention(args: {
+    pluginId: string;
+    itemId: string;
+  }): Promise<{ ok: true; context: string } | { ok: false; error: string }>;
   runCliCommand(id: string, argv: string[]): Promise<PluginCliExecutionResult>;
   dispatchHttp(pluginId: string, request: PluginHttpRequest): Promise<PluginHttpResponse>;
   emitThreadEvent(event: PluginThreadEvent): Promise<void>;
@@ -151,6 +172,7 @@ export interface PluginUiSnapshot {
   mcpServers: PluginUiMcpServer[];
   extra: Record<string, unknown>;
   themes: PluginThemeSnapshot[];
+  availableVersion?: string;
 }
 
 export interface PluginThemeSnapshot {
@@ -172,6 +194,7 @@ export function toPluginAppSnapshot(row: PluginUiSnapshot) {
     provenance: row.provenance,
     status: row.status,
     appUrl: row.appUrl,
+    ...(row.availableVersion ? { availableVersion: row.availableVersion } : {}),
     projectTab: row.projectTab
   };
 }
@@ -218,6 +241,25 @@ export interface PluginServiceOptions {
     signal?: AbortSignal;
   }) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginInteractionResult>;
   interruptPluginInteractions?: (pluginId: string) => void;
+  spawnThread?: (args: { pluginId: string; projectId: string; prompt: string; providerId?: string }) => Promise<{ id: string }>;
+  getThread?: (args: { pluginId: string; threadId: string }) => Promise<
+    import('@zana-ai/zcc-plugin-sdk/server').PluginSdkThreadSummary | null
+  >;
+  listThreadEvents?: (args: {
+    pluginId: string;
+    threadId: string;
+    limit?: number;
+    types?: readonly string[];
+    order?: 'asc' | 'desc';
+  }) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginSdkThreadEventRow[]>;
+  sendThread?: (args: { pluginId: string; threadId: string; prompt: string }) => Promise<{ id: string }>;
+  archiveThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;
+  forkThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;
+  unarchiveThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;
+  pushInbox?: (args: { pluginId: string; projectId: string; comments: string }) => Promise<{ id: string }>;
+  listProjects?: (args: { pluginId: string }) => Promise<Array<{ id: string; name: string; path?: string }>>;
+  /** Shared live host-artifact map; omitted tests get a private registry. */
+  pluginHostArtifacts?: PluginHostArtifactRegistry;
 }
 
 interface LivePlugin {
@@ -297,6 +339,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     file: marketplaceStorePath(opts.dataDir)
   });
   const live = new Map<string, LivePlugin>();
+  const availableUpdates = new Map<string, string>();
   const hostVersion = opts.hostVersion ?? HOST_ZCC_VERSION;
   const sdkVersion = opts.pluginSdkVersion ?? HOST_PLUGIN_SDK_VERSION;
   const now = opts.now ?? Date.now;
@@ -304,7 +347,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   const spawnNpm = opts.spawnNpm ?? defaultSpawnNpm;
   const cloneGit = opts.cloneGit ?? defaultCloneGit;
   const fetchJson = opts.fetchJson ?? defaultFetchJson;
+  const hostArtifacts = opts.pluginHostArtifacts ?? new PluginHostArtifactRegistry();
   mkdirSync(kvRoot, { recursive: true });
+  let updateSweep: { stop(): void } | null = null;
 
   function agentContributions(): PluginAgentContribution[] {
     return store.list().map((row) => {
@@ -368,17 +413,56 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   }
 
   function mentionProviders() {
-    const out: Array<{ pluginId: string; id: string; trigger?: string }> = [];
+    const out: Array<{
+      pluginId: string;
+      id: string;
+      label: string;
+      trigger?: string;
+      triggers: string[];
+    }> = [];
     for (const [id, livePlugin] of live) {
       for (const provider of livePlugin.handle?.mentionProviders ?? []) {
+        const triggers = mentionTriggersOf(provider);
         out.push({
           pluginId: id,
           id: provider.id,
-          ...(provider.trigger ? { trigger: provider.trigger } : {})
+          label: provider.label,
+          trigger: triggers[0],
+          triggers
         });
       }
     }
     return out;
+  }
+
+  async function resolveMention(args: {
+    pluginId: string;
+    itemId: string;
+  }): Promise<{ ok: true; context: string } | { ok: false; error: string }> {
+    const livePlugin = live.get(args.pluginId);
+    if (!livePlugin?.handle) {
+      return { ok: false, error: `plugin "${args.pluginId}" is not running` };
+    }
+    const split = splitPluginMentionItemId(args.itemId);
+    const providerId = split?.providerId;
+    const nativeId = split?.nativeId ?? args.itemId.trim();
+    const provider = livePlugin.handle.mentionProviders.find((row) => row.id === providerId)
+      ?? (!split ? livePlugin.handle.mentionProviders.find((row) => row.id === args.itemId.trim()) : undefined);
+    if (!provider || typeof provider.resolve !== 'function') {
+      return { ok: false, error: `unknown mention provider "${providerId ?? args.itemId}"` };
+    }
+    try {
+      const result = await withDeadline(
+        Promise.resolve(provider.resolve(nativeId)),
+        PLUGIN_MENTION_RESOLVE_TIMEOUT_MS,
+        `mention resolve ${args.pluginId}/${provider.id}`
+      );
+      const context = typeof result?.context === 'string' ? result.context.trim() : '';
+      if (!context) return { ok: false, error: 'mention resolve returned empty context' };
+      return { ok: true, context };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   function instructionContributions() {
@@ -451,16 +535,13 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     try {
       const root = resolveContainedEntry(row.rootDir, '.');
       const declared = row.appEntry;
-      const served =
-        /\.tsx?$/.test(declared)
-          ? (() => {
-              try {
-                return resolveContainedEntry(row.rootDir, declared.replace(/\.tsx?$/, '.js'));
-              } catch {
-                return resolveContainedEntry(row.rootDir, declared);
-              }
-            })()
-          : resolveContainedEntry(row.rootDir, declared);
+      // Renderer `import(appUrl)` cannot execute TypeScript. Vite's transform
+      // pipeline also claims `.ts`/`.tsx` URLs (`?import`) and 404s them before
+      // the product-server proxy. Serve the compiled `.js` sibling, or nothing.
+      const served = /\.tsx?$/.test(declared)
+        ? resolveContainedEntry(row.rootDir, declared.replace(/\.tsx?$/, '.js'))
+        : resolveContainedEntry(row.rootDir, declared);
+      if (/\.tsx?$/.test(served)) return null;
       const entryPath = relative(root, served).split(sep).map(encodeURIComponent).join('/');
       return `/plugins/${encodeURIComponent(row.id)}/assets/${entryPath}?v=${row.updatedAt}`;
     } catch {
@@ -470,8 +551,12 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
 
   async function disposeOne(id: string): Promise<void> {
     const current = live.get(id);
-    if (!current) return;
+    if (!current) {
+      hostArtifacts.delete(id);
+      return;
+    }
     live.delete(id);
+    hostArtifacts.delete(id);
     await current.handle?.dispose();
   }
 
@@ -509,10 +594,55 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await store.upsert(degraded);
       return;
     }
+    let hostEntry: string | null = null;
+    let serverEntry = row.serverEntry;
+    try {
+      const manifest = loadManifestFromDir(row.rootDir);
+      hostEntry = manifest.hostEntry;
+      if (manifest.serverEntry) serverEntry = manifest.serverEntry;
+    } catch {
+      hostEntry = null;
+    }
+    let hostArtifact: Awaited<ReturnType<typeof loadPluginHostArtifactSnapshot>> = null;
+    try {
+      hostArtifact = await loadPluginHostArtifactSnapshot({
+        pluginId: row.id,
+        rootDir: row.rootDir,
+        hostEntry,
+        sourceKind: row.sourceKind,
+        zccVersion: hostVersion
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      if (previous?.handle && previous.row.status === 'running') {
+        const kept = {
+          ...previous.row,
+          status: 'running' as const,
+          statusDetail: `reload failed: ${detail}`
+        };
+        live.set(row.id, { ...previous, row: kept });
+        await store.upsert(kept);
+        return;
+      }
+      await disposeOne(row.id);
+      const degraded = { ...row, status: 'degraded' as const, statusDetail: detail };
+      live.set(row.id, { row: degraded, handle: null, rpc: new Map() });
+      await store.upsert(degraded);
+      return;
+    }
     let configurationMessage: string | null = null;
     const handle = createPluginApi(row.id, join(kvRoot, row.id), {
       requestPluginInteraction: opts.requestPluginInteraction,
       interruptPluginInteractions: opts.interruptPluginInteractions,
+      spawnThread: opts.spawnThread,
+      getThread: opts.getThread,
+      listThreadEvents: opts.listThreadEvents,
+      sendThread: opts.sendThread,
+      archiveThread: opts.archiveThread,
+      forkThread: opts.forkThread,
+      unarchiveThread: opts.unarchiveThread,
+      pushInbox: opts.pushInbox,
+      listProjects: opts.listProjects,
       dataDir: opts.dataDir,
       onNeedsConfiguration: (message) => {
         configurationMessage = message;
@@ -542,8 +672,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       }
     };
     try {
-      if (row.serverEntry) {
-        const entry = resolveContainedEntry(row.rootDir, row.serverEntry);
+      if (serverEntry) {
+        const entry = resolveContainedEntry(row.rootDir, serverEntry);
         const factory = await importServerFactory(entry, row.updatedAt, {
           fromSource: row.sourceKind === 'path'
         });
@@ -551,11 +681,14 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       }
       const running = {
         ...row,
+        serverEntry,
         status: (configurationMessage ? 'needs-configuration' : 'running') as InstalledPluginRow['status'],
         statusDetail: configurationMessage
       };
       live.set(row.id, { row: running, handle, rpc });
       await store.upsert(running);
+      if (hostArtifact) hostArtifacts.set(row.id, hostArtifact);
+      else hostArtifacts.delete(row.id);
       if (previous && previous.handle && previous.handle !== handle) {
         await previous.handle.dispose();
       }
@@ -572,6 +705,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         await store.upsert(kept);
         return;
       }
+      hostArtifacts.delete(row.id);
       const degraded = { ...row, status: 'degraded' as const, statusDetail: detail };
       live.set(row.id, { row: degraded, handle: null, rpc: new Map() });
       await store.upsert(degraded);
@@ -763,8 +897,14 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       let extra: Record<string, unknown> = {};
       let projectTab: PluginManifest['projectTab'];
       let themes: PluginThemeSnapshot[] = [];
+      let name = row.name;
+      let description = row.description;
+      let icon = row.icon;
       try {
         const manifest = loadManifestFromDir(row.rootDir);
+        name = manifest.name;
+        description = manifest.description;
+        icon = manifest.branding.icon ?? row.icon;
         skillNames = manifest.skillNames;
         extra = manifest.extra;
         projectTab = manifest.projectTab;
@@ -798,9 +938,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       }
       return {
         id: row.id,
-        name: row.name,
-        description: row.description,
-        icon: row.icon,
+        name,
+        description,
+        icon,
         enabled: row.enabled,
         provenance: row.provenance,
         status: row.status,
@@ -813,7 +953,10 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         skillNames,
         mcpServers,
         extra,
-        themes
+        themes,
+        ...(availableUpdates.has(row.id)
+          ? { availableVersion: availableUpdates.get(row.id) }
+          : {})
       };
     });
   }
@@ -831,7 +974,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     }
   }
 
-  return {
+  const service: PluginService = {
     list: () => store.list(),
     get: (id) => store.get(id),
     status: (id) => store.get(id)?.status,
@@ -888,6 +1031,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       return next;
     },
     async remove(id) {
+      availableUpdates.delete(id);
       await disposeOne(id);
       const row = await store.remove(id);
       if (row && row.sourceKind !== 'path' && row.rootDir.startsWith(join(opts.dataDir, 'plugins'))) {
@@ -934,6 +1078,14 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await emitCapabilities();
       await emitAppsChanged();
       await syncCliSkill();
+      updateSweep?.stop();
+      updateSweep = startPluginUpdateSweep({
+        checkUpdates: () => service.checkUpdates()
+      });
+    },
+    stop() {
+      updateSweep?.stop();
+      updateSweep = null;
     },
     snapshot,
     agentContributions,
@@ -945,6 +1097,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     },
     cliContributions,
     mentionProviders,
+    resolveMention,
     async runCliCommand(id, argv) {
       const byId = live.get(id)?.handle;
       if (byId) return runPluginCli(byId, argv);
@@ -1075,9 +1228,13 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
           /* skip */
         }
       }
+      availableUpdates.clear();
+      for (const update of updates) availableUpdates.set(update.id, update.available);
+      await emitAppsChanged();
       return updates;
     },
     async applyUpdate(id) {
+      availableUpdates.delete(id);
       const row = store.get(id);
       if (!row) throw new Error(`plugin not installed: ${id}`);
       if (row.catalogMarketplace && row.catalogEntryId) {
@@ -1104,6 +1261,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       return next;
     }
   };
+  return service;
 }
 
 async function migrateLegacySidecars(

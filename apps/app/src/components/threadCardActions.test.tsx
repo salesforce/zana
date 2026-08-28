@@ -3,9 +3,11 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { readFileSync } from 'node:fs';
 import {
+  archiveThreadWithoutConfirm,
   runThreadMenuAction,
   threadTitle,
   viewingThread,
+  ThreadArchiveQuickAction,
   ThreadCardMenu,
   type ThreadMenuContext
 } from './threadCardActions.js';
@@ -48,8 +50,8 @@ function ctx(overrides: Partial<ThreadMenuContext> = {}): ThreadMenuContext & {
 describe('threadTitle', () => {
   it('falls back when the title is missing or blank', () => {
     expect(threadTitle({ title: 'hello' })).toBe('hello');
-    expect(threadTitle({ title: '  ' })).toBe('Untitled thread');
-    expect(threadTitle({ title: null })).toBe('Untitled thread');
+    expect(threadTitle({ title: '  ' })).toBe('Untitled agent');
+    expect(threadTitle({ title: null })).toBe('Untitled agent');
   });
 });
 
@@ -136,6 +138,14 @@ describe('runThreadMenuAction', () => {
     expect(c.remove).not.toHaveBeenCalled();
     expect(c.navigate).not.toHaveBeenCalled();
   });
+
+  it('archives from the quick action without a confirm dialog', async () => {
+    const c = ctx({ confirm: vi.fn(() => false) });
+    await archiveThreadWithoutConfirm(thread, c);
+    expect(c.confirm).not.toHaveBeenCalled();
+    expect(c.archive).toHaveBeenCalledWith(thread.id);
+    expect(c.remove).toHaveBeenCalledWith(thread.id);
+  });
 });
 
 describe('ThreadCardMenu', () => {
@@ -161,6 +171,16 @@ describe('ThreadCardMenu', () => {
     );
     expect(busy).toContain('Stop');
   });
+
+  it('renders a one-click archive control', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ThreadArchiveQuickAction thread={thread} />
+      </MemoryRouter>
+    );
+    expect(html).toContain('data-testid="thread-archive-quick"');
+    expect(html).toContain('Archive hello');
+  });
 });
 
 describe('thread context-menu wiring', () => {
@@ -181,6 +201,7 @@ describe('thread context-menu wiring', () => {
     const projects = readFileSync(new URL('./listpane/ProjectsList.tsx', import.meta.url), 'utf8');
     expect(projects).toContain('onContextMenu={(e) => openThreadMenu(e, thread, setThreadMenu)}');
     expect(projects).toContain('<ThreadCardMenu menu={threadMenu}');
+    expect(projects).toContain('<ThreadArchiveQuickAction thread={thread} />');
 
     const tray = readFileSync(new URL('./AgentTray.tsx', import.meta.url), 'utf8');
     expect(tray).toContain('openThreadMenu(e, thread, setThreadMenu)');

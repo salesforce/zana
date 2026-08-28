@@ -259,6 +259,41 @@ export function extractClaudeCommandExecutionOutput(
   return normalizedContentOutput;
 }
 
+interface ClaudeResultTokenUsage {
+  last: ThreadEventTokenUsageBreakdown;
+  modelContextWindow: number | null;
+}
+
+/**
+ * The result's own (per-segment) token usage. Running thread totals are the
+ * delta assembler's accumulation; the bridge only reports the segment.
+ */
+export function extractClaudeResultTokenUsage(
+  message: ClaudeResultMessage | SDKResultMessage,
+): ClaudeResultTokenUsage | undefined {
+  const parsed = sdkUsageSchema.safeParse(message.usage);
+  const last = parsed.success ? toTokenUsageBreakdown(parsed.data) : undefined;
+  const parsedModelUsage = claudeModelUsageSchema.safeParse(message.modelUsage);
+  const modelContextWindow = parsedModelUsage.success
+    ? extractModelContextWindow(parsedModelUsage.data)
+    : null;
+
+  if (!last && modelContextWindow === null) {
+    return undefined;
+  }
+
+  return {
+    last: last ?? {
+      totalTokens: 0,
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningOutputTokens: 0,
+    },
+    modelContextWindow,
+  };
+}
+
 export function extractTokenUsage(
   message: ClaudeResultMessage | SDKResultMessage,
   cumulativeTokens: ThreadEventTokenUsageBreakdown,
@@ -304,7 +339,8 @@ export function extractClaudeContextWindowUsage(
     args.message.modelUsage,
   );
   const modelContextWindow = parsedModelUsage.success
-    ? extractModelContextWindow(parsedModelUsage.data)
+    ? (extractModelContextWindow(parsedModelUsage.data) ??
+      args.fallbackModelContextWindow)
     : args.fallbackModelContextWindow;
   const usedTokens = args.latestRequestContextTokens ?? null;
 

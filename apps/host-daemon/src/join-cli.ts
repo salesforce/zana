@@ -69,7 +69,8 @@ export async function runJoin(options: JoinCliOptions): Promise<{ close(): Promi
 
 const launchedDirectly = (() => {
   const entry = process.argv[1] ?? '';
-  return entry.endsWith('join-cli.ts') || entry.endsWith('join-cli.js') || entry.endsWith('join.mjs');
+  return entry.endsWith('join-cli.ts') || entry.endsWith('join-cli.js')
+    || entry.endsWith('join.mjs') || entry.endsWith('join.cjs');
 })();
 
 if (launchedDirectly && process.argv.includes('join')) {

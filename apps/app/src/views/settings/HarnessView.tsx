@@ -22,7 +22,7 @@ const CODEX_UI = providerUiSchema('codex');
 
 /**
  * Settings → Code Harness. The page leads with a verification list (install
- * probe + enable switch for each coding CLI), then Thread / Legacy Agent tabs
+ * probe + enable switch for each coding CLI), then Modern / CLI Agent tabs
  * for the settings that belong to each launch path.
  *
  * The install probe (`<binary> --version`) is folded into the status rows so
@@ -167,7 +167,7 @@ function LoginBadge({ login }: { login: HarnessLoginStatus }) {
 
 /**
  * One harness family as a compact row. `status` mode is install + enable only
- * (the verification list). `settings` mode is the Legacy Agent advanced
+ * (the verification list). `settings` mode is the CLI Agent advanced
  * disclosure (binary / routing) without a second enable switch.
  */
 function HarnessRow({
@@ -438,7 +438,7 @@ const THREAD_PROVIDER_PROFILE: Record<string, LaunchProfileId> = {
 };
 
 const THREAD_PROVIDER_BLURB: Record<string, string> = {
-  'claude-code': 'Anthropic’s Claude Code — the default thread provider.',
+  'claude-code': 'Anthropic’s Claude Code — the default Modern provider.',
   'acp-cursor': 'Cursor via the Agent Client Protocol (ACP).',
   cursor: 'Cursor via the Agent Client Protocol (ACP).',
   'acp-opencode': 'OpenCode via the Agent Client Protocol (ACP).',
@@ -456,7 +456,7 @@ function threadProviderGlyph(providerId: string) {
 }
 
 function threadProviderBlurb(providerId: string): string {
-  return THREAD_PROVIDER_BLURB[providerId] ?? 'Registered thread provider plugin.';
+  return THREAD_PROVIDER_BLURB[providerId] ?? 'Registered Modern provider plugin.';
 }
 
 export function ThreadProviderCatalog({
@@ -465,7 +465,7 @@ export function ThreadProviderCatalog({
   providers: ThreadProviderListItem[];
 }) {
   if (providers.length === 0) {
-    return <p className="settings-help">No thread providers registered.</p>;
+    return <p className="settings-help">No Modern providers registered.</p>;
   }
   return (
     <ul className="opener-list thread-provider-list" data-testid="thread-provider-catalog">
@@ -505,7 +505,7 @@ function ThreadProvidersPanel() {
     };
   }, []);
   if (providers === null) {
-    return <p className="settings-help" role="status">Loading thread providers…</p>;
+    return <p className="settings-help" role="status">Loading Modern providers…</p>;
   }
   return <ThreadProviderCatalog providers={providers} />;
 }
@@ -752,7 +752,7 @@ export function HarnessView({
     <Section
       anchorId="harness-status"
       title="Install status"
-      help="Coding CLIs used by Threads and legacy agents. Enable a family here to show it in launch UIs. Check re-probes each binary and, for Cursor and Codex, whether you are signed in — a successful check also refreshes their model lists."
+      help="Coding CLIs used by Modern and CLI agents. Enable a family here to show it in launch UIs. Check re-probes each binary and, for Cursor and Codex, whether you are signed in — a successful check also refreshes their model lists."
     >
       <div className={`harness-health harness-health--${health.ok ? 'ok' : 'warn'}`} role="status">
         {health.ok ? <CheckCircle2 size={16} aria-hidden /> : <AlertTriangle size={16} aria-hidden />}
@@ -790,9 +790,9 @@ export function HarnessView({
         data-testid="harness-thread-pane"
       >
         <p className="settings-help settings-section-help">
-          These plugins power Threads. They register through{' '}
+          These plugins power Modern conversations. They register through{' '}
           <code>experimental_registerProvider</code> and launch via AgentRuntime
-          — not the legacy PTY harness.
+          — not the CLI Agent PTY harness.
         </p>
         <ThreadProvidersPanel />
       </div>
@@ -871,7 +871,7 @@ export function HarnessSettingsTabs({
         className={`settings-tab${pane === 'thread' ? ' is-active' : ''}`}
         onClick={() => onPaneChange('thread')}
       >
-        Thread
+        Modern
       </button>
       <button
         type="button"
@@ -880,7 +880,7 @@ export function HarnessSettingsTabs({
         className={`settings-tab${pane === 'legacy' ? ' is-active' : ''}`}
         onClick={() => onPaneChange('legacy')}
       >
-        Legacy Agent
+        CLI Agent
       </button>
     </div>
   );

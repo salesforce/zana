@@ -4,19 +4,29 @@ import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  appendConversationThreadEvent,
   appendThreadEvent,
+  copyConversationThreadEvents,
+  archiveConversationThread,
+  countDeferredThreadMessages,
   createConversationThread,
+  createDeferredThreadMessage,
   createEnvironment,
   createThread,
+  deleteConversationThreadEventsAfter,
   getConversationThread,
   getThread,
+  listConversationThreadEvents,
+  listDeferredThreadMessages,
   listLiveConversationThreads,
   listLiveThreads,
   listThreadEvents,
   listVisibleConversationThreads,
+  maxConversationEventSequenceByThreadIds,
   openDatabase,
   completeThread,
   threadOutputTail,
+  unarchiveConversationThread,
   updateConversationThreadParent,
   updateConversationThreadStatus,
   updateConversationThreadTitle,
@@ -187,6 +197,155 @@ describe('packages/db', () => {
     expect(updated?.parentThreadId).toBe(parent.id);
     expect(getConversationThread(db, child.id)?.parentThreadId).toBe(parent.id);
     expect(updateConversationThreadParent(db, child.id, null)?.parentThreadId).toBeNull();
+  });
+
+  it('archives and unarchives a conversation thread', () => {
+    dir = mkdtempSync(join(tmpdir(), 'zcc-db-archive-'));
+    db = openDatabase(join(dir, 'zcc.sqlite'));
+    const host = upsertHost(db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: '/tmp/proj'
+    });
+    const thread = createConversationThread(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'codex',
+      status: 'active',
+      title: 'Work'
+    });
+    const archived = archiveConversationThread(db, thread.id);
+    expect(archived?.archivedAt).toEqual(expect.any(Number));
+    expect(archived?.status).toBe('idle');
+    expect(listVisibleConversationThreads(db).map((row) => row.id)).not.toContain(thread.id);
+    expect(unarchiveConversationThread(db, thread.id)?.archivedAt).toBeNull();
+    expect(listVisibleConversationThreads(db).map((row) => row.id)).toContain(thread.id);
+    expect(unarchiveConversationThread(db, thread.id)?.archivedAt).toBeNull();
+  });
+
+  it('copies conversation events onto a fork with remapped thread ids', () => {
+    dir = mkdtempSync(join(tmpdir(), 'zcc-db-copy-events-'));
+    db = openDatabase(join(dir, 'zcc.sqlite'));
+    const host = upsertHost(db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: '/tmp/proj'
+    });
+    const source = createConversationThread(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code'
+    });
+    const target = createConversationThread(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code',
+      originKind: 'fork',
+      parentThreadId: source.id
+    });
+    const first = appendConversationThreadEvent(db, {
+      threadId: source.id,
+      type: 'turn/started',
+      payload: { type: 'turn/started', threadId: source.id, scope: { kind: 'turn', turnId: 't1' } }
+    });
+    appendConversationThreadEvent(db, {
+      threadId: source.id,
+      type: 'turn/completed',
+      payload: { type: 'turn/completed', threadId: source.id, scope: { kind: 'turn', turnId: 't1' } }
+    });
+    const copied = copyConversationThreadEvents(db, {
+      targetThreadId: target.id,
+      rows: listConversationThreadEvents(db, source.id)
+    });
+    expect(copied).toHaveLength(2);
+    expect(copied[0]?.id).not.toBe(first.id);
+    expect(copied.map((event) => event.threadId)).toEqual([target.id, target.id]);
+    expect(copied[0]?.payload).toMatchObject({ threadId: target.id });
+    expect(listConversationThreadEvents(db, source.id)).toHaveLength(2);
+    expect(listConversationThreadEvents(db, target.id).map((event) => event.type)).toEqual([
+      'turn/started',
+      'turn/completed'
+    ]);
+  });
+
+  it('batches max conversation event sequences by thread id', () => {
+    dir = mkdtempSync(join(tmpdir(), 'zcc-db-max-seq-'));
+    db = openDatabase(join(dir, 'zcc.sqlite'));
+    const host = upsertHost(db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: '/tmp/proj'
+    });
+    const withEvents = createConversationThread(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code'
+    });
+    const empty = createConversationThread(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code'
+    });
+    appendConversationThreadEvent(db, { threadId: withEvents.id, type: 'turn/started' });
+    appendConversationThreadEvent(db, { threadId: withEvents.id, type: 'turn/completed' });
+    expect(maxConversationEventSequenceByThreadIds(db, [])).toEqual({});
+    expect(maxConversationEventSequenceByThreadIds(db, [withEvents.id, empty.id])).toEqual({
+      [withEvents.id]: 2
+    });
+  });
+
+  it('stores deferred thread messages oldest first', () => {
+    dir = mkdtempSync(join(tmpdir(), 'zcc-db-deferred-'));
+    db = openDatabase(join(dir, 'zcc.sqlite'));
+    const host = upsertHost(db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: '/tmp/proj'
+    });
+    const thread = createConversationThread(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code'
+    });
+    createDeferredThreadMessage(db, { threadId: thread.id, kind: 'send', payload: '{"n":1}' });
+    createDeferredThreadMessage(db, { threadId: thread.id, kind: 'send', payload: '{"n":2}' });
+    expect(countDeferredThreadMessages(db, thread.id)).toBe(2);
+    expect(listDeferredThreadMessages(db, thread.id).map((row) => row.payload)).toEqual([
+      '{"n":1}',
+      '{"n":2}'
+    ]);
+  });
+
+  it('deletes conversation events after a sequence', () => {
+    dir = mkdtempSync(join(tmpdir(), 'zcc-db-truncate-events-'));
+    db = openDatabase(join(dir, 'zcc.sqlite'));
+    const host = upsertHost(db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: '/tmp/proj'
+    });
+    const thread = createConversationThread(db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code'
+    });
+    const first = appendConversationThreadEvent(db, { threadId: thread.id, type: 'turn/started' });
+    appendConversationThreadEvent(db, { threadId: thread.id, type: 'turn/completed' });
+    appendConversationThreadEvent(db, { threadId: thread.id, type: 'turn/started' });
+    expect(deleteConversationThreadEventsAfter(db, thread.id, first.sequence)).toBe(2);
+    expect(listConversationThreadEvents(db, thread.id).map((event) => event.type)).toEqual(['turn/started']);
   });
 
   it('renames a conversation thread title', () => {

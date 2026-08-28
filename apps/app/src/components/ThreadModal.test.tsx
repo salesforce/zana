@@ -108,14 +108,14 @@ describe('ThreadModal', () => {
   it('falls back to Thread when the roster has no title', () => {
     h.threads = [];
     const html = renderToStaticMarkup(<ThreadModal threadId="missing" onClose={() => undefined} />);
-    expect(html).toContain('aria-label="Thread"');
+    expect(html).toContain('aria-label="Agent"');
   });
 
   it('labels the dialog from the thread title', () => {
     expect(threadModalLabel('Review the board')).toBe('Review the board');
-    expect(threadModalLabel('  ')).toBe('Thread');
-    expect(threadModalLabel(null)).toBe('Thread');
-    expect(threadModalLabel(undefined)).toBe('Thread');
+    expect(threadModalLabel('  ')).toBe('Agent');
+    expect(threadModalLabel(null)).toBe('Agent');
+    expect(threadModalLabel(undefined)).toBe('Agent');
   });
 
   it('toggles the shared inspector fullscreen class and OS flag', () => {

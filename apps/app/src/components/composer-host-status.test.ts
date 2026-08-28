@@ -4,9 +4,11 @@ import type { Project } from '@zana-ai/zcc-domain/product';
 import {
   bootstrapOutcome,
   composerHostActionChipLabel,
+  composerHostsForProject,
   composerRemoteToolsMark,
   hostPickerDescription,
   hostPickerLabel,
+  isForeignExecutionHost,
   resolveComposerHostAction,
   shortHostName,
   shouldBlockComposerSend,
@@ -46,7 +48,7 @@ const sshProject: Project = {
 };
 
 describe('composer host status', () => {
-  it('asks to install a daemon on an SSH project that is not bound to a host', () => {
+  it('offers Install on an unbound SSH project without blocking send', () => {
     const action = resolveComposerHostAction({
       hosts: [primary],
       project: sshProject,
@@ -54,20 +56,51 @@ describe('composer host status', () => {
     });
     expect(action).toMatchObject({ kind: 'install', label: 'Install' });
     expect(shouldBlockComposerSend(action, sshProject)).toBe(false);
-    expect(shouldShowHostPicker([primary], sshProject)).toBe(true);
+    expect(shouldShowHostPicker([primary], sshProject)).toBe(false);
+    expect(shouldShowHostPicker([primary, remoteHost], sshProject)).toBe(false);
+    expect(composerRemoteToolsMark(sshProject)).toBe('Local agent · remote tools');
   });
 
-  it('marks local-agent remote-tools mode without blocking send or hiding Install', () => {
-    expect(composerRemoteToolsMark(sshProject, true)).toBe('Local agent · remote tools');
-    expect(composerRemoteToolsMark(sshProject, false)).toBeNull();
-    expect(composerRemoteToolsMark({ ...sshProject, hostId: 'h-remote' }, true)).toBeNull();
+  it('keeps send available when install needs a public URL', () => {
     const action = resolveComposerHostAction({
       hosts: [primary],
       project: sshProject,
+      publicAppUrl: 'http://127.0.0.1:8780'
+    });
+    expect(action).toMatchObject({ kind: 'blocked', needsPublicUrl: true });
+    expect(shouldBlockComposerSend(action, sshProject)).toBe(false);
+    expect(composerHostActionChipLabel(action)).toBeNull();
+  });
+
+  it('lets a bound SSH project run on this machine while the remote daemon is offline', () => {
+    const project = { ...sshProject, hostId: 'h-remote' };
+    const action = resolveComposerHostAction({
+      hosts: [primary, remoteHost],
+      project,
+      selectedHostId: 'h-primary',
       publicAppUrl: 'https://box.tailnet.ts.net'
     });
-    expect(action.kind).toBe('install');
-    expect(shouldBlockComposerSend(action, sshProject)).toBe(false);
+    expect(action).toEqual({ kind: 'ready' });
+    expect(shouldBlockComposerSend(action, project)).toBe(false);
+    expect(shouldShowHostPicker([primary, remoteHost], project)).toBe(true);
+    expect(composerHostsForProject([primary, remoteHost, host({ id: 'h-other', name: 'Other' })], project))
+      .toEqual([primary, remoteHost]);
+    expect(composerRemoteToolsMark(project, 'h-primary')).toBe('Local agent · remote tools');
+    expect(composerRemoteToolsMark(project, 'h-remote')).toBeNull();
+    expect(hostPickerLabel(remoteHost, project)).toBe('Remote machine');
+    expect(hostPickerDescription(remoteHost, project)).toBe('Devbox · Offline');
+  });
+
+  it('blocks send when the remote machine is selected and offline', () => {
+    const project = { ...sshProject, hostId: 'h-remote' };
+    const action = resolveComposerHostAction({
+      hosts: [primary, remoteHost],
+      project,
+      selectedHostId: 'h-remote',
+      publicAppUrl: 'https://box.tailnet.ts.net'
+    });
+    expect(action).toMatchObject({ kind: 'fix', hostId: 'h-remote', label: 'Fix' });
+    expect(shouldBlockComposerSend(action, project)).toBe(true);
   });
 
   it('asks to pick SSH when an enrolled host cannot be repaired yet', () => {
@@ -90,15 +123,24 @@ describe('composer host status', () => {
     expect(shouldBlockComposerSend(action, project)).toBe(true);
   });
 
-  it('blocks install when the public URL is loopback', () => {
+  it('offers Fix on an enrolled offline host even without a public app URL', () => {
+    const project: Project = {
+      id: 'p-enrolled',
+      name: 'On box',
+      path: '/home/me/app',
+      createdAt: 1,
+      lastActiveAt: 1,
+      hostId: 'h-remote'
+    };
     const action = resolveComposerHostAction({
-      hosts: [primary],
-      project: sshProject,
+      hosts: [primary, remoteHost],
+      project,
+      selectedHostId: 'h-remote',
       publicAppUrl: 'http://127.0.0.1:8780'
     });
-    expect(action).toMatchObject({ kind: 'blocked', needsPublicUrl: true });
-    expect(shouldBlockComposerSend(action, sshProject)).toBe(false);
-    expect(composerHostActionChipLabel(action)).toBeNull();
+    expect(action).toMatchObject({ kind: 'fix', hostId: 'h-remote', label: 'Fix' });
+    expect(shouldBlockComposerSend(action, project)).toBe(true);
+    expect(composerHostActionChipLabel(action)).toBe('Fix');
   });
 
   it('offers Fix and blocks send when an enrolled host is offline', () => {
@@ -163,6 +205,49 @@ describe('composer host status', () => {
       hostId: 'h-remote',
       reason: 'Set a public app URL'
     })).toBe('Set URL');
+  });
+
+  it('lets Default Workspace run on another connected machine', () => {
+    const scratch: Project = {
+      id: 'p-scratch',
+      name: 'Default Workspace',
+      path: '/Users/me/zcc-workspace',
+      createdAt: 1,
+      lastActiveAt: 1,
+      quickAgent: true
+    };
+    const online = host({ id: 'h-remote', name: 'limited-pony', status: 'connected' });
+    const action = resolveComposerHostAction({
+      hosts: [primary, online],
+      project: scratch,
+      selectedHostId: 'h-remote'
+    });
+    expect(action).toEqual({ kind: 'ready' });
+    expect(shouldBlockComposerSend(action, scratch)).toBe(false);
+    expect(isForeignExecutionHost(scratch, [primary, online], 'h-remote')).toBe(true);
+    expect(isForeignExecutionHost(scratch, [primary, online], 'h-primary')).toBe(false);
+  });
+
+  it('blocks a local project aimed at another machine', () => {
+    const project: Project = {
+      id: 'p-local',
+      name: 'App',
+      path: '/Users/me/app',
+      createdAt: 1,
+      lastActiveAt: 1
+    };
+    const online = host({ id: 'h-remote', name: 'limited-pony', status: 'connected' });
+    const action = resolveComposerHostAction({
+      hosts: [primary, online],
+      project,
+      selectedHostId: 'h-remote'
+    });
+    expect(action).toMatchObject({
+      kind: 'blocked',
+      reason: 'This project lives on this machine. Add a folder on limited-pony first.'
+    });
+    expect(shouldBlockComposerSend(action, project)).toBe(true);
+    expect(isForeignExecutionHost(project, [primary, online], 'h-remote')).toBe(true);
   });
 
   it('reads done and error events from bootstrap NDJSON', () => {

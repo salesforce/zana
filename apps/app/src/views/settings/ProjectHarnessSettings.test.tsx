@@ -168,11 +168,12 @@ describe('ProjectHarnessSettings', () => {
 });
 
 describe('ProjectRemoteSettings', () => {
-  it('exposes the local-agent remote-tools toggle only in remote project settings', async () => {
+  it('keeps remote start path and does not expose a remote-tools toggle', async () => {
     const { readFileSync } = await import('node:fs');
     const source = readFileSync(new URL('./ProjectSettingsView.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('remoteToolProxy');
-    expect(source).toContain('Local agent, remote tools');
-    expect(source).toContain('disabled={savingProxy || Boolean(project.hostId)}');
+    expect(source).toContain('Remote start path');
+    expect(source).toContain('Agents run on this machine');
+    expect(source).not.toContain('Local agent, remote tools');
+    expect(source).not.toContain('savingProxy');
   });
 });

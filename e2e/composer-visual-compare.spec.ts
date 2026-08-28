@@ -12,11 +12,11 @@ test('Home Thread composer uses the TipTap editor and provider controls', async 
   await expect(homeComposer.getByTestId('thread-command-send')).toBeVisible();
   await expect(homeComposer.getByTestId('composer-mode-picker-trigger')).toBeVisible();
   const launchMode = window.getByRole('group', { name: 'Launch mode' });
-  await expect(launchMode.getByRole('button', { name: 'Thread' })).toBeVisible();
-  await expect(launchMode.getByRole('button', { name: 'Legacy Agent' })).toBeVisible();
+  await expect(launchMode.getByRole('button', { name: 'Modern' })).toBeVisible();
+  await expect(launchMode.getByRole('button', { name: 'CLI Agent' })).toBeVisible();
 });
 
-test('Agents + opens the launch modal for a new thread or agent', async ({ app }) => {
+test('Agents + opens the launch modal for a new agent', async ({ app }) => {
   const { window } = app;
 
   await window.locator('[data-testid="nav-agents"]').click();
@@ -31,7 +31,7 @@ test('Agents + opens the launch modal for a new thread or agent', async ({ app }
 
   const modal = window.locator('[data-testid="launch-modal"]');
   await expect(modal).toBeVisible();
-  await expect(modal.getByRole('button', { name: 'Thread' })).toBeVisible();
-  await expect(modal.getByRole('button', { name: 'Legacy Agent' })).toBeVisible();
+  await expect(modal.getByRole('button', { name: 'Modern' })).toBeVisible();
+  await expect(modal.getByRole('button', { name: 'CLI Agent' })).toBeVisible();
   await expect(modal.locator('.thread-command-composer')).toBeVisible();
 });

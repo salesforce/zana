@@ -16,9 +16,13 @@ import type {
   PluginInteractionRequest,
   PluginInteractionResult,
   PluginMentionProviderRegistration,
+  PluginMentionSearchContext,
   PluginMentionSuggestion,
+  PluginMentionTrigger,
   PluginSettingDescriptor,
   PluginSettingValue,
+  PluginSdkThreadEventRow,
+  PluginSdkThreadSummary,
   PluginThreadEvent,
   PluginThreadEventName,
   ZccPluginApi,
@@ -33,6 +37,7 @@ import {
 } from '@zana-ai/zcc-domain/thread-runtime';
 import { registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
 import {
+  PLUGIN_MENTION_TRIGGERS,
   enforcePluginCliOutputLimit,
   isPluginHostEntryDefinition
 } from '@zana-ai/zcc-plugin-sdk/server';
@@ -92,6 +97,44 @@ function writeJsonFile(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value)}\n`);
 }
 
+const MENTION_TRIGGER_SET = new Set<string>(PLUGIN_MENTION_TRIGGERS);
+
+export function mentionTriggersOf(
+  registration: Pick<PluginMentionProviderRegistration, 'trigger' | 'triggers'>
+): PluginMentionTrigger[] {
+  const raw = registration.triggers?.length
+    ? [...registration.triggers]
+    : registration.trigger
+      ? [registration.trigger]
+      : ['@'];
+  const next = [...new Set(raw.filter((char): char is PluginMentionTrigger => MENTION_TRIGGER_SET.has(char)))];
+  return next.length > 0 ? next : ['@'];
+}
+
+function mentionSearchContextFromBody(body: unknown): PluginMentionSearchContext {
+  const record = body && typeof body === 'object' && !Array.isArray(body)
+    ? (body as Record<string, unknown>)
+    : {};
+  const query = typeof record.query === 'string' ? record.query : '';
+  const trigger = typeof record.trigger === 'string' ? record.trigger : '@';
+  const projectId = typeof record.projectId === 'string' ? record.projectId.trim() : '';
+  const threadId = typeof record.threadId === 'string' ? record.threadId.trim() : '';
+  return {
+    query,
+    trigger,
+    ...(projectId ? { projectId } : {}),
+    ...(threadId ? { threadId } : {})
+  };
+}
+
+async function invokeMentionSearch(
+  search: PluginMentionProviderRegistration['search'],
+  ctx: PluginMentionSearchContext
+): Promise<PluginMentionSuggestion[]> {
+  const result = await search(ctx);
+  return Array.isArray(result) ? result : [];
+}
+
 export function createPluginApi(
   pluginId: string,
   kvDir: string,
@@ -108,6 +151,20 @@ export function createPluginApi(
     interruptPluginInteractions?: (pluginId: string) => void;
     onNeedsConfiguration?: (message: string) => void;
     spawnThread?: (args: { pluginId: string; projectId: string; prompt: string; providerId?: string }) => Promise<{ id: string }>;
+    getThread?: (args: { pluginId: string; threadId: string }) => Promise<PluginSdkThreadSummary | null>;
+    listThreadEvents?: (args: {
+      pluginId: string;
+      threadId: string;
+      limit?: number;
+      types?: readonly string[];
+      order?: 'asc' | 'desc';
+    }) => Promise<PluginSdkThreadEventRow[]>;
+    sendThread?: (args: { pluginId: string; threadId: string; prompt: string }) => Promise<{ id: string }>;
+    archiveThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;
+    forkThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;
+    unarchiveThread?: (args: { pluginId: string; threadId: string }) => Promise<{ id: string }>;
+    pushInbox?: (args: { pluginId: string; projectId: string; comments: string }) => Promise<{ id: string }>;
+    listProjects?: (args: { pluginId: string }) => Promise<Array<{ id: string; name: string; path?: string }>>;
     hostEntryPath?: string | null;
     hostCall?: (method: string, input?: unknown, hostId?: string) => Promise<unknown>;
     dataDir?: string;
@@ -135,6 +192,7 @@ export function createPluginApi(
     handler: (event: PluginThreadEvent) => void | Promise<void>;
   }> = [];
   const sqliteHandles: Array<{ close(): void }> = [];
+  let sharedDatabase: PluginDatabase | null = null;
   const assertLive = (): void => {
     if (stale) throw new Error(`plugin context is stale: ${pluginId}`);
   };
@@ -225,6 +283,7 @@ export function createPluginApi(
       },
       database: (): PluginDatabase => {
         assertLive();
+        if (sharedDatabase) return sharedDatabase;
         const dbPath = join(kvDir, 'data.db');
         // Lazy require keeps plugin-api importable in tests that never open a database.
         const require = createRequire(import.meta.url);
@@ -243,13 +302,14 @@ export function createPluginApi(
             db.prepare(statement).run();
           }
         };
-        return {
+        sharedDatabase = {
           runScript,
           prepare: (sql) => db.prepare(sql),
           migrate: (statements) => {
             for (const statement of statements) runScript(statement);
           }
         };
+        return sharedDatabase;
       }
     },
     http: {
@@ -314,6 +374,92 @@ export function createPluginApi(
             throw new Error('zcc.sdk is not available in this runtime');
           }
           return options.spawnThread({ pluginId, ...args });
+        },
+        get: async (args) => {
+          assertLive();
+          if (!options?.getThread) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          const threadId = typeof args?.threadId === 'string' ? args.threadId.trim() : '';
+          if (!threadId) throw new Error('threadId is required');
+          return options.getThread({ pluginId, threadId });
+        },
+        events: {
+          list: async (args) => {
+            assertLive();
+            if (!options?.listThreadEvents) {
+              throw new Error('zcc.sdk is not available in this runtime');
+            }
+            const threadId = typeof args?.threadId === 'string' ? args.threadId.trim() : '';
+            if (!threadId) throw new Error('threadId is required');
+            return options.listThreadEvents({
+              pluginId,
+              threadId,
+              limit: args?.limit,
+              types: args?.types,
+              order: args?.order
+            });
+          }
+        },
+        send: async (args) => {
+          assertLive();
+          if (!options?.sendThread) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          const threadId = typeof args?.threadId === 'string' ? args.threadId.trim() : '';
+          const prompt = typeof args?.prompt === 'string' ? args.prompt : '';
+          if (!threadId) throw new Error('threadId is required');
+          if (!prompt.trim()) throw new Error('prompt is required');
+          return options.sendThread({ pluginId, threadId, prompt });
+        },
+        archive: async (args) => {
+          assertLive();
+          if (!options?.archiveThread) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          const threadId = typeof args?.threadId === 'string' ? args.threadId.trim() : '';
+          if (!threadId) throw new Error('threadId is required');
+          return options.archiveThread({ pluginId, threadId });
+        },
+        fork: async (args) => {
+          assertLive();
+          if (!options?.forkThread) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          const threadId = typeof args?.threadId === 'string' ? args.threadId.trim() : '';
+          if (!threadId) throw new Error('threadId is required');
+          return options.forkThread({ pluginId, threadId });
+        },
+        unarchive: async (args) => {
+          assertLive();
+          if (!options?.unarchiveThread) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          const threadId = typeof args?.threadId === 'string' ? args.threadId.trim() : '';
+          if (!threadId) throw new Error('threadId is required');
+          return options.unarchiveThread({ pluginId, threadId });
+        }
+      },
+      inbox: {
+        push: async (args) => {
+          assertLive();
+          if (!options?.pushInbox) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          const projectId = typeof args?.projectId === 'string' ? args.projectId.trim() : '';
+          const comments = typeof args?.comments === 'string' ? args.comments : '';
+          if (!projectId) throw new Error('projectId is required');
+          if (!comments.trim()) throw new Error('comments is required');
+          return options.pushInbox({ pluginId, projectId, comments });
+        }
+      },
+      projects: {
+        list: async () => {
+          assertLive();
+          if (!options?.listProjects) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          return options.listProjects({ pluginId });
         }
       }
     },
@@ -438,19 +584,23 @@ export function createPluginApi(
       },
       registerMentionProvider: (registration) => {
         assertLive();
-        if (!registration?.id || typeof registration.search !== 'function') {
-          throw new Error('ui.registerMentionProvider requires id and search');
+        if (
+          !registration?.id
+          || typeof registration.label !== 'string'
+          || !registration.label.trim()
+          || typeof registration.search !== 'function'
+          || typeof registration.resolve !== 'function'
+        ) {
+          throw new Error('ui.registerMentionProvider requires id, label, search, and resolve');
         }
-        mentionProviders.push({ ...registration, pluginId });
+        const triggers = mentionTriggersOf(registration);
+        mentionProviders.push({ ...registration, triggers, pluginId });
         httpRoutes.push({
           method: 'POST',
           path: `/mentions/${registration.id}/search`,
           handler: async (request) => {
-            const query =
-              request.body && typeof request.body === 'object' && 'query' in request.body
-                ? String((request.body as { query?: unknown }).query ?? '')
-                : '';
-            const items: PluginMentionSuggestion[] = await registration.search(query);
+            const ctx = mentionSearchContextFromBody(request.body);
+            const items: PluginMentionSuggestion[] = await invokeMentionSearch(registration.search, ctx);
             return { json: { items } };
           }
         });
@@ -519,6 +669,7 @@ export function createPluginApi(
         }
       }
       sqliteHandles.length = 0;
+      sharedDatabase = null;
       for (const hook of [...disposeHooks].reverse()) {
         try {
           await hook();
@@ -598,6 +749,61 @@ function isMainModuleExport(value: unknown): value is { setup: (ctx: unknown) =>
   return typeof value === 'object' && value !== null && typeof (value as { setup?: unknown }).setup === 'function';
 }
 
+type CreateJitiFn = (
+  id: string,
+  opts?: { moduleCache?: boolean; fsCache?: boolean }
+) => { import: (id: string) => Promise<unknown> };
+
+/**
+ * Electron's CJS interop for `import('jiti')` often yields `{ default: fn }`
+ * (or the CJS function itself) and drops the named `createJiti` export.
+ * Calling that missing binding is the `createJiti is not a function` failure
+ * that leaves TypeScript plugin servers `degraded` with no sidebar panel.
+ */
+export function resolveCreateJiti(mod: unknown): CreateJitiFn {
+  const candidates: unknown[] = [mod];
+  if (mod && typeof mod === 'object' && 'default' in mod) {
+    candidates.push((mod as { default: unknown }).default);
+  }
+  for (const candidate of candidates) {
+    if (typeof candidate === 'function') {
+      const fn = candidate as CreateJitiFn & { createJiti?: unknown };
+      if (typeof fn.createJiti === 'function') return fn.createJiti as CreateJitiFn;
+      return fn;
+    }
+    if (
+      candidate &&
+      typeof candidate === 'object' &&
+      typeof (candidate as { createJiti?: unknown }).createJiti === 'function'
+    ) {
+      return (candidate as { createJiti: CreateJitiFn }).createJiti;
+    }
+  }
+  throw new Error('jiti createJiti is unavailable');
+}
+
+async function loadCreateJiti(): Promise<CreateJitiFn> {
+  const attempts: unknown[] = [];
+  try {
+    attempts.push(await import('jiti'));
+  } catch {
+    /* CJS utility-process bundles may not expose the ESM named export */
+  }
+  try {
+    attempts.push(createRequire(import.meta.url)('jiti'));
+  } catch {
+    /* ignore — resolveCreateJiti reports a single error below */
+  }
+  for (const attempt of attempts) {
+    try {
+      return resolveCreateJiti(attempt);
+    } catch {
+      /* try the next module shape */
+    }
+  }
+  throw new Error('jiti createJiti is unavailable');
+}
+
 export async function importServerFactory(
   entryPath: string,
   cacheBust?: string | number,
@@ -605,7 +811,7 @@ export async function importServerFactory(
 ): Promise<ZccPluginFactory> {
   const loadFromSource = /\.tsx?$/.test(entryPath);
   if (loadFromSource) {
-    const { createJiti } = await import('jiti');
+    const createJiti = await loadCreateJiti();
     const jiti = createJiti(import.meta.url, { moduleCache: false, fsCache: false });
     const mod = (await jiti.import(entryPath)) as { default?: unknown };
     if (typeof mod.default === 'function') return mod.default as ZccPluginFactory;

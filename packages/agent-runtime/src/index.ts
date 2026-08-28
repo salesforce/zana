@@ -1,4 +1,4 @@
-export { createAgentRuntime } from "./runtime.js";
+export { createAgentRuntime, AgentRuntimeRecoveryError } from "./runtime.js";
 export {
   fingerprintAcpLaunchSpec,
   bridgeLaunchProcessKey,
@@ -18,6 +18,7 @@ export type {
   AgentRuntimePiSkillRoot,
   AgentRuntimeProcessExitInfo,
   AgentRuntimeProcessExitThreadState,
+  AgentRuntimeProviderRecoveryHint,
   AgentRuntimeProviderSession,
   AgentRuntimeSkillRoot,
   EnsureProviderArgs,

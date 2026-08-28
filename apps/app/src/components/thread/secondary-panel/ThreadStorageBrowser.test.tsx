@@ -17,7 +17,7 @@ describe('ThreadStorageBrowser', () => {
       <ThreadStorageBrowser threadId="t1" onOpenFile={() => undefined} />
     );
     expect(html).toContain('data-testid="thread-info-storage"');
-    expect(html).toContain('Thread storage');
+    expect(html).toContain('Storage');
     expect(html).toContain('Loading files');
   });
 });

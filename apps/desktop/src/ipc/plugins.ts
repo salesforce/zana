@@ -9,7 +9,12 @@ import { store } from '@zana-ai/zcc-server/services/projects/store';
 import type { Result } from '@zana-ai/zcc-domain/product';
 import {
   listPluginAppsFromProductServer,
-  setPluginAppEnabledOnProductServer
+  setPluginAppEnabledOnProductServer,
+  checkPluginUpdatesFromProductServer,
+  applyPluginUpdateOnProductServer,
+  callPluginRpcOnProductServer,
+  getPluginSettingsFromProductServer,
+  setPluginSettingsOnProductServer
 } from './plugin-apps-loopback.js';
 
 export function registerPluginsIpc(): void {
@@ -117,10 +122,41 @@ export function registerPluginsIpc(): void {
     })
   );
   ctx.safeHandle(
+    IPC.pluginApps.checkUpdates,
+    async () => {
+      if (ctx.runtimeSupervisor) return ctx.runtimeSupervisor.outdatedPlugins();
+      return checkPluginUpdatesFromProductServer();
+    },
+    () => []
+  );
+  ctx.safeHandle(
+    IPC.pluginApps.applyUpdate,
+    async (id: string) => {
+      if (ctx.runtimeSupervisor) {
+        try {
+          await ctx.runtimeSupervisor.updatePlugin(id);
+          return { ok: true as const, value: true as const };
+        } catch (err) {
+          return {
+            ok: false as const,
+            code: 'WRITE_FAILED',
+            message: err instanceof Error ? err.message : String(err)
+          };
+        }
+      }
+      return applyPluginUpdateOnProductServer(id);
+    },
+    (err): Result<true> => ({
+      ok: false,
+      code: 'WRITE_FAILED',
+      message: err instanceof Error ? err.message : String(err)
+    })
+  );
+  ctx.safeHandle(
     IPC.pluginApps.callRpc,
     async (pluginId: string, method: string, args?: unknown) => {
-      if (!ctx.runtimeSupervisor) throw new Error('plugin host is unavailable');
-      return ctx.runtimeSupervisor.callPluginRpc(pluginId, method, args);
+      if (ctx.runtimeSupervisor) return ctx.runtimeSupervisor.callPluginRpc(pluginId, method, args);
+      return callPluginRpcOnProductServer(pluginId, method, args);
     },
     (err) => {
       throw err;
@@ -129,20 +165,20 @@ export function registerPluginsIpc(): void {
   ctx.safeHandle(
     IPC.pluginApps.getSettings,
     async (pluginId: string) => {
-      if (!ctx.runtimeSupervisor) return { descriptors: {}, values: {} };
-      return ctx.runtimeSupervisor.getPluginSettings(pluginId);
+      if (ctx.runtimeSupervisor) return ctx.runtimeSupervisor.getPluginSettings(pluginId);
+      return getPluginSettingsFromProductServer(pluginId);
     },
     () => ({ descriptors: {}, values: {} })
   );
   ctx.safeHandle(
     IPC.pluginApps.setSettings,
     async (pluginId: string, values: Record<string, string | boolean | undefined>) => {
-      if (!ctx.runtimeSupervisor) throw new Error('plugin host is unavailable');
       const payload: Record<string, string | boolean | null> = {};
       for (const [key, value] of Object.entries(values)) {
         payload[key] = value === undefined ? null : value;
       }
-      return ctx.runtimeSupervisor.setPluginSettings(pluginId, payload);
+      if (ctx.runtimeSupervisor) return ctx.runtimeSupervisor.setPluginSettings(pluginId, payload);
+      return setPluginSettingsOnProductServer(pluginId, payload);
     },
     (err) => {
       throw err;

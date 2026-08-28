@@ -569,6 +569,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
   // store): governs which triaged idle agents the "Needs you" lane pulls up.
   // Advisory per CLAUDE.md rule 1 — main owns/normalizes the value.
   const sensitivity = useData((s) => s.idleAttentionSensitivity);
+  const projects = useData((s) => s.projects);
   // Schedules, indexed by the session ids they've fired, so a scheduled card
   // can surface its next-run countdown. Memoized off the raw list so the 1s
   // tick below doesn't re-invert it every second.
@@ -872,7 +873,11 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
     laneKey: LaneKey,
     grouped = false
   ) => {
-    const runtime = threadCardRuntimeLabel(item.thread);
+    const project = projects.find((row) => row.id === item.projectId);
+    const runtime = threadCardRuntimeLabel(
+      item.thread,
+      Boolean(project?.remote && (!project.hostId || item.thread.hostId !== project.hostId))
+    );
     const showProjectChip = threadCardShowsProject(Boolean(showProject), grouped);
     return (
       <button

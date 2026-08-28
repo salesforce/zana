@@ -8,6 +8,8 @@ import { createHostDaemonWebSocketServer, handleHostInternalHttp, handleHostInte
 import { handleInstallHttp } from './install-http.js';
 import { attachPairingRelay } from './pairing-relay-controller.js';
 import type { LocalAppOriginArgs } from './local-app-origins.js';
+import { tryServePluginAsset } from './plugin-assets.js';
+import { pluginAssetRootFromService } from './product-plugins.js';
 
 export interface ProductServer {
   readonly url: string;
@@ -47,6 +49,9 @@ export async function startProductServer(options: StartProductServerOptions): Pr
     if (await handleHostInternalHttp(request, response, ctx)) return;
     if (handleInstallHttp(request, response, ctx)) return;
     if (await handleProductHttp(request, response, ctx)) return;
+    if (await tryServePluginAsset(request, response, (pluginId) => pluginAssetRootFromService(ctx.plugins, pluginId))) {
+      return;
+    }
     if (options.fallback && (await options.fallback(request, response))) return;
     response.writeHead(404).end();
   });

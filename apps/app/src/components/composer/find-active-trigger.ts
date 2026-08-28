@@ -17,15 +17,21 @@ interface ActiveTriggerEditor {
   };
 }
 
+function escapeRegexLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+}
+
 function triggerPattern(trigger: TypeaheadTrigger): RegExp {
-  const char = trigger.char;
-  const queryClass = trigger.kind === 'mention' ? `[^\\s${char}]*` : '\\S*';
+  const char = escapeRegexLiteral(trigger.char);
+  // Mentions keep spaces between words so thread titles like "Hello world"
+  // match. Tabs/newlines still end the query; a second trigger char does too.
+  const queryClass = trigger.kind === 'mention' ? `(?:[^\\s${char}]| )*` : '\\S*';
   return new RegExp(`(^|[\\s([{])${char}(${queryClass})$`, 'u');
 }
 
 /**
- * Resolves the typeahead trigger under the caret. Mentions stop at whitespace
- * or a second trigger char; commands capture the whole non-space token.
+ * Resolves the typeahead trigger under the caret. Mention queries keep
+ * ordinary spaces; commands capture the whole non-space token.
  */
 export function findActiveTrigger(
   editor: ActiveTriggerEditor,

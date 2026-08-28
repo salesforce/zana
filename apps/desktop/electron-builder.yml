@@ -19,31 +19,16 @@ extraResources:
   # png below.
   - from: resources/icon-1024.png
     to: icon-1024.png
-  # Bundled Claude Code skills, deployed to ~/.claude/skills/<name> on boot
-  # (see src/main/skill-installer.ts). Resolved via process.resourcesPath.
-  - from: resources/zcc-center-skill.md
-    to: zcc-center-skill.md
-  - from: resources/saved-reports-skill.md
-    to: saved-reports-skill.md
-  - from: resources/brainstorm-skill.md
-    to: brainstorm-skill.md
-  - from: resources/zcc-cli-skill.md
-    to: zcc-cli-skill.md
-  - from: resources/extension-creator-skill.md
-    to: extension-creator-skill.md
-  - from: resources/submit-a-plugin-skill.md
-    to: submit-a-plugin-skill.md
-  - from: resources/harness-authoring-skill.md
-    to: harness-authoring-skill.md
-  - from: resources/zcc-plugin-authoring-skill.md
-    to: zcc-plugin-authoring-skill.md
-  - from: resources/zcc-browser-skill.md
-    to: zcc-browser-skill.md
-  # Always-on injected skills (zcc-plugin-authoring). Canonical source is
+  # Always-on injected skills (builtin-skills/). Canonical source is
   # apps/server/src/plugins/builtin-skills; packaged copies land at
   # process.resourcesPath/builtin-skills (see injected-skill-roots.ts).
+  # Only zcc-cli is also copied to ~/.claude/skills at boot (skill-installer.ts).
   - from: apps/server/src/plugins/builtin-skills
     to: builtin-skills
+  # Maintainer-only skill (first-party harness authoring). Not injected into
+  # user threads and not copied to ~/.claude/skills.
+  - from: resources/harness-authoring-skill.md
+    to: harness-authoring-skill.md
   # The @zcc/cli build output, so a bare `zcc` resolves on PATH inside every pty
   # the packaged app spawns. `npm run build:cli` (chained ahead of electron-builder
   # in the dist/dist:mac/release:mac scripts) emits packages/cli/dist including an
@@ -71,6 +56,7 @@ extraResources:
       - "!README.md"
       - "!*/src/**"
       - "!*/scripts/**"
+      - "!*/node_modules/**"
       - "!**/*.{test,spec}.{ts,tsx,js,mjs}"
   # Bundled agent-detection manifests (herdr TOML format), read by
   # src/main/manifest-detector.ts via process.resourcesPath/manifests in packaged

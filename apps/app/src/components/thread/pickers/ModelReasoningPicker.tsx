@@ -35,7 +35,7 @@ export function showHarnessTabs(
   onSelectedProviderChange: ((value: string) => void) | undefined,
   providerCount: number
 ): boolean {
-  return Boolean(onSelectedProviderChange) && providerCount > 1;
+  return Boolean(onSelectedProviderChange) && providerCount >= 1;
 }
 
 export interface ModelReasoningPickerProps {
@@ -240,7 +240,9 @@ export function ModelReasoningPicker({
           data-testid="model-reasoning-picker-menu"
         >
           {canSwitchProviders ? (
-            <div className="model-reasoning-picker-tabs" role="tablist" aria-label="Harness">
+            <>
+              <div className="model-reasoning-picker-section-label">Harness</div>
+              <div className="model-reasoning-picker-tabs" role="tablist" aria-label="Harness">
               {providerOptions.map((provider) => {
                 const active = provider.value === selectedProviderId;
                 return (
@@ -260,7 +262,8 @@ export function ModelReasoningPicker({
                   </button>
                 );
               })}
-            </div>
+              </div>
+            </>
           ) : null}
           {showSearch ? (
             <div className="model-reasoning-picker-search">

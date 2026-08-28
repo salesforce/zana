@@ -75,13 +75,13 @@ describe('fleet items', () => {
     expect(rows.map((row) => row.id).slice(0, 2)).toEqual(['live', 'failed']);
     expect(rows.some((row) => row.id === 'archived')).toBe(false);
     expect(rows.filter((row) => row.status === 'idle')).toHaveLength(RAIL_IDLE_THREAD_LIMIT);
-    expect(threadRailDetail(thread({ id: 't1', status: 'error' }))).toBe('Error · Thread');
+    expect(threadRailDetail(thread({ id: 't1', status: 'error' }))).toBe('Error · Agent');
     expect(threadRailStatus(thread({ id: 't1', status: 'error' }))).toBe('Error');
     expect(threadRailStatus(thread({ id: 't1', status: 'error', hasPendingInteraction: true }))).toBe('Error');
-    expect(threadRailDetail(thread({ id: 't1', status: 'active' }))).toBe('Working · Thread');
-    expect(threadRailDetail(thread({ id: 't1', status: 'active', hasPendingInteraction: true }))).toBe('Needs you · Thread');
+    expect(threadRailDetail(thread({ id: 't1', status: 'active' }))).toBe('Working · Agent');
+    expect(threadRailDetail(thread({ id: 't1', status: 'active', hasPendingInteraction: true }))).toBe('Needs you · Agent');
     expect(threadFleetItem(thread({ id: 't1', status: 'active', hasPendingInteraction: true })).state).toBe('blocked');
-    expect(threadRailDetail(thread({ id: 't1', status: 'idle' }))).toBe('Idle · Thread');
+    expect(threadRailDetail(thread({ id: 't1', status: 'idle' }))).toBe('Idle · Agent');
   });
 
   it('labels a thread card with harness and runtime instead of the project slug', () => {
@@ -94,6 +94,9 @@ describe('fleet items', () => {
     expect(threadCardRuntimeLabel(thread({ id: 't1', status: 'idle' }))).toBe('Claude Code · Local');
     expect(threadCardRuntimeLabel(thread({ id: 't1', status: 'idle', isWorktree: true }))).toBe(
       'Claude Code · This checkout'
+    );
+    expect(threadCardRuntimeLabel(thread({ id: 't1', status: 'idle' }), true)).toBe(
+      'Claude Code · Local agent · remote tools'
     );
     expect(threadCardShowsProject(true, true)).toBe(false);
     expect(threadCardShowsProject(true, false)).toBe(true);

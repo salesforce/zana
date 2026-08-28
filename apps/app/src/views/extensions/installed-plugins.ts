@@ -95,6 +95,27 @@ export function rowEnabled(row: HubRow): boolean {
   return true;
 }
 
+/**
+ * True when `ModuleHost.call` can reach a live main module.
+ *
+ * PluginService plugins answer RPC, not `modules:call`. A leftover
+ * `extension.json` panel that calls `host.call` against a plugin-only row
+ * (or a disk extension whose main is not active) throws "Unknown module".
+ */
+export function moduleHostCallReady(row: HubRow): boolean {
+  if (row.entry) return row.entry.mainActive;
+  return row.plugin == null;
+}
+
+/** Settings UIs that take `host` and call `modules:call`. */
+export function hostSettingsPanelOf(row: HubRow): HubRow['module']['settingsPanel'] {
+  return row.module.settingsPanel ?? (row.module.placement === 'settings' ? row.module.panel : undefined);
+}
+
+export function shouldMountHostSettings(row: HubRow): boolean {
+  return !!hostSettingsPanelOf(row) && moduleHostCallReady(row);
+}
+
 export function rowDescription(row: HubRow): string {
   return row.plugin?.description?.trim() ?? '';
 }
@@ -137,8 +158,6 @@ export function filterInstalledRows(
     return hay.includes(q);
   });
   return filtered.sort((left, right) => {
-    const enabledCmp = Number(!rowEnabled(left)) - Number(!rowEnabled(right));
-    if (enabledCmp !== 0) return enabledCmp;
     const nameCmp =
       left.module.title.localeCompare(right.module.title) ||
       left.module.id.localeCompare(right.module.id);

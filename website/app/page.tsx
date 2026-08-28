@@ -2,6 +2,7 @@ import Link from 'next/link';
 import type { Metadata } from 'next';
 import { site } from '@/lib/site';
 import { ProductShot } from './components/ProductShot';
+import { MacFrame } from './components/MacFrame';
 
 export const metadata: Metadata = {
   alternates: { canonical: '/' },
@@ -68,7 +69,9 @@ export default function Home() {
           <p className="bb-install-note">Free and open source. macOS today; Windows and Linux are next.</p>
         </div>
         <div className="wrap bb-product-wrap">
-          <ProductShot id="cockpit-overview" priority frame={false} className="bb-product-shot" />
+          <MacFrame className="bb-mac-frame">
+            <ProductShot id="cockpit-overview" priority frame={false} />
+          </MacFrame>
           <div className="bb-product-glow" aria-hidden="true" />
         </div>
       </section>

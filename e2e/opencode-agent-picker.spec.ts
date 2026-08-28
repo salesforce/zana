@@ -25,7 +25,7 @@ async function openLegacyAgentLauncher(window: Page) {
   else await window.locator('[data-testid="agents-new-empty"]').click();
   const modal = window.locator('[data-testid="launch-modal"]');
   await expect(modal).toBeVisible();
-  await modal.getByRole('button', { name: 'Legacy Agent' }).click();
+  await modal.getByRole('button', { name: 'CLI Agent' }).click();
   return modal;
 }
 

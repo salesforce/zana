@@ -76,6 +76,23 @@ describe('appendClientTurnRequested', () => {
     expect(appendConversationThreadEvent).not.toHaveBeenCalled();
   });
 
+  it('persists image-only structured input without a text part', () => {
+    vi.mocked(appendConversationThreadEvent).mockClear();
+    appendClientTurnRequested(
+      { db: {}, hub: { emit: vi.fn() } } as never,
+      {
+        threadId: '11111111-1111-4111-8111-111111111111',
+        prompt: [],
+        promptInput: [{ type: 'localImage', path: 'shot-1.png' }],
+        kind: 'new-turn'
+      }
+    );
+    const payload = vi.mocked(appendConversationThreadEvent).mock.calls[0]![1].payload as {
+      input: Array<{ type: string; path?: string }>;
+    };
+    expect(payload.input).toEqual([{ type: 'localImage', path: 'shot-1.png' }]);
+  });
+
   it('keeps command mentions from structured prompt input', () => {
     vi.mocked(appendConversationThreadEvent).mockClear();
     const requestId = appendClientTurnRequested(
@@ -110,5 +127,22 @@ describe('appendClientTurnRequested', () => {
     expect(payload.input[0]?.mentions[0]?.resource.name).toBe('plan');
     expect(requestId).toMatch(/^creq_/);
     expect(requestId).toBe(payload.requestId);
+  });
+
+  it('skips invalid structured parts and invalid thread ids', () => {
+    vi.mocked(appendConversationThreadEvent).mockClear();
+    appendClientTurnRequested(
+      { db: {}, hub: { emit: vi.fn() } } as never,
+      {
+        threadId: '11111111-1111-4111-8111-111111111111',
+        prompt: ['keep'],
+        promptInput: [{ type: 'nope' }, { type: 'text', text: 'keep' }],
+        kind: 'new-turn'
+      }
+    );
+    const payload = vi.mocked(appendConversationThreadEvent).mock.calls[0]![1].payload as {
+      input: Array<{ type: string; text?: string }>;
+    };
+    expect(payload.input).toEqual([expect.objectContaining({ type: 'text', text: 'keep' })]);
   });
 });

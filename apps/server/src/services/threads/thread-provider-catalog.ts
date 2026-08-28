@@ -1,12 +1,10 @@
-import { existsSync } from 'node:fs';
-import { dirname, isAbsolute, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { createHash } from 'node:crypto';
+import { DAEMON_BUNDLED_PROVIDER_BRIDGE_IDS } from '@zana-ai/zcc-host-daemon-contract';
 import type { HostBridgeLaunch } from '@zana-ai/zcc-contracts/host-rpc';
 import type {
   PluginProviderDeclaration,
   PluginProviderHandle
 } from '@zana-ai/zcc-plugin-sdk/server';
+import type { PluginHostArtifactRegistry } from '../../plugins/plugin-host-artifact-registry.js';
 
 export interface ThreadProviderRecord extends PluginProviderDeclaration {
   pluginId: string;
@@ -95,50 +93,48 @@ export function planCommandForProvider(providerId: string): { trigger: string; n
   return DEFAULT_PLAN_COMMAND;
 }
 
-function pluginRoot(pluginId: string): string {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const candidates = [
-    join(here, '../../../../../plugins', pluginId),
-    join(process.cwd(), 'plugins', pluginId)
-  ];
-  return candidates.find((path) => existsSync(path)) ?? candidates[0]!;
+function isDaemonBundledProvider(providerId: string): boolean {
+  return providerId === 'fake' || DAEMON_BUNDLED_PROVIDER_BRIDGE_IDS.includes(providerId);
+}
+
+function launchCapabilities(provider: ThreadProviderRecord): HostBridgeLaunch['capabilities'] {
+  return {
+    supportsServiceTier: provider.capabilities.supportsServiceTier,
+    permissionModes: provider.capabilities.permissionModes,
+    supportsThreadArchive: provider.capabilities.supportsThreadArchive,
+    supportsThreadRename: provider.capabilities.supportsThreadRename,
+    fork: provider.capabilities.fork
+  };
 }
 
 export function bridgeLaunchForProvider(
   providerId: string,
-  dataDir: string
+  artifacts: Pick<PluginHostArtifactRegistry, 'get'>
 ): HostBridgeLaunch {
   const provider = getThreadProvider(providerId);
   if (!provider) {
     throw new Error(`unknown thread provider: ${providerId}`);
   }
-  const relative = provider.hostEntry ?? 'src/bridge/bridge.ts';
-  const artifactPath = isAbsolute(relative) ? relative : join(pluginRoot(provider.pluginId), relative);
-  const digest = createHash('sha256').update(artifactPath).digest('hex');
-  if (provider.id === 'pi' || provider.id === 'fake') {
+  if (isDaemonBundledProvider(provider.id)) {
     return {
       pluginId: provider.pluginId,
-      dataDir,
       source: { kind: 'daemon-bundled', id: provider.id },
-      capabilities: {
-        supportsServiceTier: provider.capabilities.supportsServiceTier,
-        permissionModes: provider.capabilities.permissionModes,
-        supportsThreadArchive: provider.capabilities.supportsThreadArchive,
-        supportsThreadRename: provider.capabilities.supportsThreadRename,
-        fork: provider.capabilities.fork
-      }
+      capabilities: launchCapabilities(provider)
     };
+  }
+  const artifact = artifacts.get(provider.pluginId);
+  if (artifact === undefined) {
+    throw new Error(
+      `Provider "${providerId}" has no host artifact to run. Its plugin may be disabled or still building.`
+    );
   }
   return {
     pluginId: provider.pluginId,
-    dataDir,
-    source: { kind: 'artifact', digest, artifactPath },
-    capabilities: {
-      supportsServiceTier: provider.capabilities.supportsServiceTier,
-      permissionModes: provider.capabilities.permissionModes,
-      supportsThreadArchive: provider.capabilities.supportsThreadArchive,
-      supportsThreadRename: provider.capabilities.supportsThreadRename,
-      fork: provider.capabilities.fork
-    }
+    source: {
+      kind: 'artifact',
+      digest: artifact.digest,
+      byteLength: artifact.byteLength
+    },
+    capabilities: launchCapabilities(provider)
   };
 }

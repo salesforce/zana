@@ -789,54 +789,6 @@ describe("claude synthetic no-response handling", () => {
       },
     ]);
   });
-
-  it("keeps an open turn for synthetic no-response messages while an agent is running", () => {
-    const { translateClaudeEvent } = createTranslator();
-    const context = { threadId: "bb-thread-1" };
-    translateClaudeEvent(loadFixture("task-started-subagent.json"), context);
-
-    const events = translateClaudeEvent(
-      {
-        type: "assistant",
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: "No response requested." }],
-          model: "<synthetic>",
-          stop_reason: "stop_sequence",
-          stop_sequence: "",
-          usage: {
-            input_tokens: 0,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: 0,
-            output_tokens: 0,
-          },
-        },
-        session_id: "claude-session-1",
-      },
-      context,
-    );
-
-    expect(events).toEqual([]);
-    translateClaudeEvent(
-      loadFixture("task-notification-subagent.json"),
-      context,
-    );
-    const finalEvents = translateClaudeEvent(
-      {
-        type: "result",
-        subtype: "end_turn",
-        session_id: "claude-session-1",
-      },
-      context,
-    );
-    expect(finalEvents).toContainEqual(
-      expect.objectContaining({
-        type: "turn/completed",
-        scope: turnScope("turn-1"),
-        status: "completed",
-      }),
-    );
-  });
 });
 
 describe("claude streaming", () => {

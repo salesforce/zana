@@ -3,12 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Run threads with Claude Code.",
+  "description": "Run Zana threads with Claude Code.",
   "engines": {
     "zcc": ">=1.0.0",
     "zccPluginSdk": ">=0.1.0"
   },
   "scripts": {
+    "build": "node ../../packages/plugin-build/scripts/build-app.mjs .",
     "test": "vitest run --config vitest.config.ts",
     "typecheck": "tsc --noEmit"
   },
@@ -29,7 +30,7 @@
   },
   "zcc": {
     "name": "Claude Code provider",
-    "description": "Run threads with Claude Code.",
+    "description": "Run Zana threads with Claude Code.",
     "branding": {
       "icon": "./icons/claude-code.svg"
     },

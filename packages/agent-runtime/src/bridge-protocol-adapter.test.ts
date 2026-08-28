@@ -26,7 +26,7 @@ function completeHandshake(
 ): void {
   const requests = adapter.buildPostInitializeRequests?.() ?? [];
   expect(requests).toHaveLength(1);
-  requests[0]?.onResult({ protocolVersion: 1, capabilities });
+  requests[0]?.onResult({ protocolVersion: 2, capabilities: { grammarVersions: [3, 3], ...capabilities } });
 }
 
 const fullModeOptions: ProviderExecutionContext = {
@@ -253,7 +253,7 @@ describe("translateEvent", () => {
     scope: { kind: "turn", turnId: "bturn_1" },
   };
 
-  it("passes valid thread/event payloads through and drops invalid ones", () => {
+  it("assembles valid thread/delta payloads and ignores retired thread/event", () => {
     const adapter = makeAdapter();
     expect(
       adapter.translateEvent({
@@ -261,17 +261,17 @@ describe("translateEvent", () => {
         method: "thread/event",
         params: { threadId: "thr_1", event: validEvent },
       }),
-    ).toStrictEqual([validEvent]);
+    ).toStrictEqual([]);
     expect(
       adapter.translateEvent({
         jsonrpc: "2.0",
-        method: "thread/event",
+        method: "thread/delta",
         params: {
           threadId: "thr_1",
-          event: { type: "not/a/real/event", threadId: "thr_1" },
+          deltas: [{ kind: "turn.open" }],
         },
       }),
-    ).toStrictEqual([]);
+    ).toMatchObject([{ type: "turn/started" }]);
   });
 
   // The reaper's only view of provider work bb cannot see in the timeline.

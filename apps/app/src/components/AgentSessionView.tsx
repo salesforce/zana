@@ -21,7 +21,7 @@ import { getDesktopBrowserApi } from '../lib/desktop-browser.js';
 import { getBrowserUrlHost } from '../lib/browser-url.js';
 
 /**
- * Legacy-agent inspector split: live PTY on the left, the same secondary-panel
+ * CLI-agent inspector split: live PTY on the left, the same secondary-panel
  * chrome threads use on the right (Info / Diff / extra tabs). Hide/show,
  * resize, and maximize are the thread chrome — not AgentDetailPanel's rail.
  *

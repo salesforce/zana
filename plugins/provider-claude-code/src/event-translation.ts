@@ -1076,16 +1076,12 @@ export function createClaudeEventTranslator(
         }
 
         const taskEvents = translateClaudeTaskMessage({
-          ensureTurnStarted: () =>
-            args.ensureTurnStarted({ events, state, threadId }),
           event: args.event,
-          now: Date.now(),
-          opaqueTaskIds: state.opaqueTaskIds,
           tasks: state.tasksById,
-          threadId,
+          turnStartSuppressed: false,
+          hasForwardedToolUse: () => true,
         });
         if (taskEvents !== null) {
-          events.push(...taskEvents);
           return events;
         }
 

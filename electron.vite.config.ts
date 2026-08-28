@@ -2,6 +2,7 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'node:path';
 import { zccBrowserBootstrapPlugin } from './apps/app/vite-plugin-browser-bootstrap';
+import { pluginAssetDevProxyPlugin, productDevProxy } from './apps/app/vite-product-proxy';
 import { DEFAULT_SERVER_PORT, serverPortFromEnv } from './apps/server/src/http/ports';
 
 // Resolve the extension SDK (`@zana-ai/zcc-extension-sdk` + subpaths) to its source
@@ -163,7 +164,11 @@ export default defineConfig({
       ],
       dedupe: ['monaco-editor']
     },
-    plugins: [react(), zccBrowserBootstrapPlugin()],
+    plugins: [
+      pluginAssetDevProxyPlugin(`http://127.0.0.1:${process.env.ZCC_SERVER_PORT ?? DEFAULT_SERVER_PORT}`),
+      react(),
+      zccBrowserBootstrapPlugin()
+    ],
     define: {
       __ZCC_DEV_WS_PORT__: JSON.stringify(serverPortFromEnv())
     },
@@ -173,17 +178,7 @@ export default defineConfig({
       // Vite root is apps/app; the slack built-in and other plugins live at
       // repo-root `plugins/`. Allow the workspace so those imports are served.
       fs: { allow: [resolve(__dirname)] },
-      proxy: {
-        '/api': {
-          target: `http://127.0.0.1:${process.env.ZCC_SERVER_PORT ?? DEFAULT_SERVER_PORT}`,
-          changeOrigin: true
-        },
-        '/ws': {
-          target: `http://127.0.0.1:${process.env.ZCC_SERVER_PORT ?? DEFAULT_SERVER_PORT}`,
-          changeOrigin: true,
-          ws: true
-        }
-      }
+      proxy: productDevProxy(`http://127.0.0.1:${process.env.ZCC_SERVER_PORT ?? DEFAULT_SERVER_PORT}`)
     },
     // Monaco workers are ESM side-effect scripts. Do not alias
     // `monaco-editor/esm/vs` to a filesystem path — that bypasses optimizeDeps

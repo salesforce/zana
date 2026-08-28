@@ -32,8 +32,9 @@
   --status-h: 24px;
   --titlebar-h: 38px;
   /* The trigger and global back/forward controls share Electron's native title
-     bar (trigger + 8px gap + two 28px chevrons). Collapsed route headers clear
-     that cluster's final edge. */
+     bar (trigger + 8px gap + two 28px chevrons). Collapsed route headers also
+     clear search / new-chat / unread, so --shell-leading-reserve grows under
+     `.sidebar-is-collapsed`. */
   --shell-trigger-size: 28px;
   --shell-trigger-left: 12px;
   --shell-leading-reserve: 112px;
@@ -187,10 +188,16 @@ input {
 }
 
 /* A collapsed sidebar is removed from the grid entirely. Its restore control is
- * rendered in the active content surface, rather than leaving a bordered rail. */
+ * rendered in the active content surface, rather than leaving a bordered rail.
+ * Extra overlay actions (unread / search / new) widen the title-bar reserve. */
 .app-shell:has(.sidebar.collapsed),
 .app-shell.sidebar-is-collapsed {
   --col-nav: 0px;
+  --shell-leading-reserve: 202px;
+}
+
+.app-shell.sidebar-is-collapsed[data-traffic-lights='true'] {
+  --shell-leading-reserve: 274px;
 }
 
 /* Historical class name retained for the E2E contract. It marks the
@@ -278,6 +285,118 @@ input {
 .sidebar-expand-control:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
+}
+
+.sidebar-trigger-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+
+.collapsed-unread {
+  position: relative;
+  -webkit-app-region: no-drag;
+}
+
+.collapsed-unread-trigger {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent-blue);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.collapsed-unread-trigger:hover,
+.collapsed-unread-trigger:focus-visible {
+  filter: brightness(1.08);
+}
+
+.collapsed-unread-trigger:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.collapsed-unread-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 80;
+  width: 280px;
+  max-height: min(420px, calc(100vh - var(--titlebar-h) - 24px));
+  overflow: auto;
+  padding: 8px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  box-shadow: 0 12px 40px color-mix(in srgb, #000 28%, transparent);
+}
+
+.collapsed-unread-heading {
+  padding: 4px 8px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.collapsed-unread-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.collapsed-unread-row:hover,
+.collapsed-unread-row:focus-visible {
+  background: var(--bg-hover);
+}
+
+.collapsed-unread-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--accent-blue);
+}
+
+.collapsed-unread-row-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.collapsed-unread-row-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.collapsed-unread-row-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 .app-page-header {
@@ -2573,6 +2692,25 @@ body.resizing-col {
 }
 .project-terminal-row:hover .project-terminal-close,
 .project-terminal-row.active .project-terminal-close {
+  visibility: visible;
+}
+
+.project-thread-row-wrap {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.project-thread-row-wrap .project-terminal-row {
+  flex: 1;
+}
+
+.project-thread-row-wrap .thread-archive-quick {
+  visibility: hidden;
+}
+
+.project-thread-row-wrap:hover .thread-archive-quick,
+.project-thread-row-wrap:focus-within .thread-archive-quick {
   visibility: visible;
 }
 .project-terminal-close:hover {
@@ -4992,6 +5130,10 @@ body.resizing-col {
   margin-left: auto;
 }
 
+.machine-card-actions .spinning {
+  animation: icon-spin 1s linear infinite;
+}
+
 .machine-status-pill {
   display: inline-flex;
   align-items: center;
@@ -5035,6 +5177,12 @@ body.resizing-col {
   color: var(--text-muted);
 }
 
+.machine-cli-offline-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .machine-cli-empty,
 .machine-cli-offline {
   margin: 0;
@@ -5044,6 +5192,16 @@ body.resizing-col {
   border: 1px dashed var(--border);
   border-radius: 8px;
   background: var(--bg-panel);
+}
+
+.machine-reconnect-error {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--danger, #c0392b);
+  border: 1px solid color-mix(in srgb, var(--danger, #c0392b) 35%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger, #c0392b) 8%, var(--bg-panel));
 }
 
 .machine-cli-list {
@@ -5152,6 +5310,10 @@ body.resizing-col {
   background: color-mix(in srgb, var(--warn, #c27803) 7%, var(--bg-elevated));
 }
 
+.machine-cli-row--error {
+  background: color-mix(in srgb, var(--danger, #c0392b) 8%, var(--bg-elevated));
+}
+
 .machine-cli-icon {
   display: inline-flex;
   flex: 0 0 auto;
@@ -5164,6 +5326,10 @@ body.resizing-col {
 
 .machine-cli-row--warn .machine-cli-icon {
   color: var(--warn, #c27803);
+}
+
+.machine-cli-row--error .machine-cli-icon {
+  color: var(--danger, #c0392b);
 }
 
 .machine-cli-copy {
@@ -5203,6 +5369,22 @@ body.resizing-col {
   gap: 8px;
   flex: 0 0 auto;
   margin-left: auto;
+}
+
+.machine-cli-row-error {
+  flex: 1 1 100%;
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--danger, #c0392b);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 8.5em;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--danger, #c0392b) 35%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger, #c0392b) 8%, var(--bg-panel));
 }
 
 .settings-badge--warn {
@@ -7638,12 +7820,27 @@ body.resizing-col .ext-hub-resizer::before {
 
 /* ── Marketplace ───────────────────────────────────────────────────────── */
 .ext-market {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
+}
+.ext-market-note,
+.ext-market-catalogs,
+.ext-market-toolbar,
+.create-plugin-examples,
+.ext-market-tags {
+  flex: 0 0 auto;
+}
+.ext-market-scroller {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
+  padding-bottom: 8px;
   scrollbar-width: none; /* Firefox — keep scrolling, hide the gutter */
 }
-.ext-market::-webkit-scrollbar {
+.ext-market-scroller::-webkit-scrollbar {
   width: 0;
   height: 0;
 }
@@ -7720,6 +7917,32 @@ body.resizing-col .ext-hub-resizer::before {
 }
 .ext-install-menu-caret {
   margin-left: 2px;
+}
+/* Installed hub: "New plugin" + overflow caret as one split control.
+   Selectors must beat `.settings-btn { border-radius }` later in this file
+   or the caret stays a separate rounded pill. */
+.ext-install-split {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0;
+}
+.ext-install-split > .settings-btn:first-of-type {
+  border-radius: 8px 0 0 8px;
+  padding-right: 10px;
+}
+.ext-install-split > .settings-btn.ext-install-split-toggle {
+  border-radius: 0 8px 8px 0;
+  margin-left: -1px;
+  padding-left: 8px;
+  padding-right: 8px;
+  min-width: 28px;
+  border-left-color: color-mix(in srgb, #fff 28%, var(--accent));
+}
+.ext-install-split > .settings-btn.primary:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.ext-install-split > .settings-btn.primary.ext-install-split-toggle:hover:not(:disabled) {
+  border-left-color: color-mix(in srgb, #fff 28%, var(--accent));
 }
 .ext-install-menu {
   position: absolute;
@@ -7938,10 +8161,29 @@ body.resizing-col .ext-hub-resizer::before {
   width: 100%;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
+}
+.ext-installed-header,
+.ext-installed-toolbar,
+.ext-installed-tags,
+.ext-installed-back {
+  flex: 0 0 auto;
+}
+.ext-installed-scroller {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   scrollbar-width: none;
 }
-.ext-installed::-webkit-scrollbar {
+.ext-installed-scroller::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+.ext-installed--detail {
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.ext-installed--detail::-webkit-scrollbar {
   width: 0;
   height: 0;
 }
@@ -8082,6 +8324,10 @@ body.resizing-col .ext-hub-resizer::before {
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+}
+.ext-installed-update {
+  font-size: 12px;
+  padding: 4px 8px;
 }
 .ext-installed-row-chevron {
   width: 16px;
@@ -8340,6 +8586,29 @@ body.resizing-col .ext-hub-resizer::before {
   border-color: var(--accent-blue);
 }
 .settings-textarea::placeholder {
+  color: var(--text-dim);
+}
+
+/* Standalone settings text field (not nested in `.settings-field`). Without
+   an explicit fill, Chromium keeps the native light control — the Browse
+   catalog-source URL looks white-hot in dark mode. */
+.settings-input {
+  appearance: none;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.4;
+  outline: none;
+}
+.settings-input:focus {
+  border-color: var(--accent-blue);
+}
+.settings-input::placeholder {
   color: var(--text-dim);
 }
 
@@ -19695,11 +19964,16 @@ body.resizing-col .gus-rail-resizer::after {
 
 /* ---- First-run walkthrough ---- */
 .walkthrough-backdrop {
-  /* Center the card vertically rather than the palette's top-anchored drop, and
-     sit above every other overlay (palette is z-index 100). */
-  align-items: center;
-  padding-top: 0;
+  /* Dock the card under the titlebar so the New Chat composer (vertically
+     centered) stays visible below the tour. Sit above every other overlay
+     (palette is z-index 100). */
+  align-items: flex-start;
+  padding-top: calc(var(--titlebar-h) + 16px);
+  padding-bottom: 0;
   z-index: 200;
+}
+.walkthrough-backdrop--composer {
+  background: rgba(0, 0, 0, 0.32);
 }
 .walkthrough-card {
   position: relative;
@@ -21584,10 +21858,14 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
 }
 
+.launch-model-picker-menu--split {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .launch-model-picker-search {
-  position: sticky;
-  top: 0;
-  z-index: 1;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -21595,6 +21873,12 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
   border-bottom: 1px solid var(--border);
   background: var(--bg-elevated);
   color: var(--text-muted);
+}
+
+.launch-model-picker-menu:not(.launch-model-picker-menu--split) .launch-model-picker-search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 
 .launch-model-picker-search input {
@@ -21606,6 +21890,19 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
   color: var(--text-primary);
   font: inherit;
   font-size: 13px;
+}
+
+.launch-model-picker-options {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.launch-model-picker-footer {
+  flex: 0 0 auto;
+  padding: 4px 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
 }
 
 .launch-model-picker-option {
@@ -22156,6 +22453,19 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
   cursor: pointer;
 }
 
+.launch-segmented-new {
+  flex: none;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+  padding: 1px 5px;
+  border-radius: 999px;
+  color: var(--accent-blue);
+  background: color-mix(in srgb, var(--accent-blue) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 40%, transparent);
+}
+
 /* Harness row can grow to 5 buttons (claude/cursor/codex/pi/opencode) — the
    only segmented control whose item count varies with installed harnesses, so
    it's the one that can genuinely run out of row width. Whether the full
@@ -22393,7 +22703,8 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
 }
 
 .environment-picker-option,
-.host-machine-picker-option {
+.host-machine-picker-option,
+.composer-project-picker-option {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -28987,6 +29298,11 @@ body.resizing-col .library-split-resizer::after {
   width: 0;
   height: 0;
 }
+/* Hub (Installed / Browse): pin chrome and scroll only the plugin list.
+   Skills / MCP keep the inner as the page scroller. */
+.extensions-panel .settings-inner:has(.ext-hub-shell) {
+  overflow: hidden;
+}
 
 /* Installed and Browse share the panel width — Installed must not sit in a
    narrower centered column than the marketplace catalogue. */
@@ -29002,6 +29318,7 @@ body.resizing-col .library-split-resizer::after {
 .extensions-panel .ext-market.settings-section {
   background: transparent;
   border-color: transparent;
+  margin-bottom: 0;
   padding-left: 0;
   padding-right: 0;
 }
@@ -29219,6 +29536,11 @@ body.resizing-col .library-split-resizer::after {
   gap: 12px;
   width: min(820px, 100%);
   margin: 0 auto 28px;
+}
+.home-agent-composer.is-walkthrough-spotlight {
+  border-radius: 16px;
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 8px;
 }
 
 .home-agent-composer > .launch-segmented {
@@ -29796,6 +30118,77 @@ textarea.ui-command-composer-input {
   box-shadow: 0 -4px 12px -4px rgb(0 0 0 / 18%);
 }
 
+.composer-image-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 40px 0 12px;
+}
+
+.composer-image-thumb {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.composer-image-thumb-preview {
+  display: block;
+  width: 96px;
+  height: 64px;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated, var(--bg-panel));
+}
+
+.composer-image-thumb-preview img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.composer-image-thumb-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 55%);
+  color: #fff;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.composer-image-thumb:hover .composer-image-thumb-remove,
+.composer-image-thumb:focus-within .composer-image-thumb-remove,
+.composer-image-thumb-remove:focus-visible {
+  opacity: 1;
+  background: rgb(0 0 0 / 72%);
+}
+
+@media (hover: none) {
+  .composer-image-thumb-remove {
+    opacity: 1;
+  }
+}
+
+.thread-timeline-bubble .composer-image-thumbs {
+  padding: 0 0 8px;
+}
+
+.home-panel .composer-image-thumbs {
+  padding: 12px 44px 0 14px;
+}
+
 .thread-command-editor-slot {
   position: relative;
   padding: 8px 40px 2px 12px;
@@ -29985,7 +30378,8 @@ textarea.ui-command-composer-input {
 }
 
 .model-reasoning-picker-menu--models .model-reasoning-picker-tabs,
-.model-reasoning-picker-menu--models .model-reasoning-picker-search {
+.model-reasoning-picker-menu--models .model-reasoning-picker-search,
+.model-reasoning-picker-menu--models > .model-reasoning-picker-section-label {
   flex: 0 0 auto;
 }
 
@@ -30870,6 +31264,10 @@ textarea.thread-command-editor {
 
   .thread-detail-view .thread-command-editor-slot {
     padding: 10px 44px 4px 14px;
+  }
+
+  .thread-detail-view .composer-image-thumbs {
+    padding: 12px 44px 0 14px;
   }
 
   .thread-detail-view .thread-command-editor.ProseMirror,
@@ -31949,10 +32347,6 @@ textarea.thread-command-editor {
   font-size: 12px;
 }
 
-.thread-info-row.is-start {
-  align-items: start;
-}
-
 .thread-info-label {
   display: inline-flex;
   align-items: center;
@@ -32009,19 +32403,68 @@ textarea.thread-command-editor {
 }
 
 .thread-info-files {
-  margin: 0;
+  margin: -6px 0 2px;
   padding: 0;
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .thread-info-file {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
+  font-size: 12px;
+}
+
+.thread-info-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  color: var(--text-primary);
+}
+
+.thread-info-file-kind {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--ink-muted, var(--text-dim));
+}
+
+.thread-info-file.is-modified .thread-info-file-name,
+.thread-info-file.is-modified .thread-info-file-kind {
+  color: var(--accent-gold);
+}
+
+.thread-info-file.is-added .thread-info-file-name,
+.thread-info-file.is-added .thread-info-file-kind,
+.thread-info-file.is-untracked .thread-info-file-name,
+.thread-info-file.is-untracked .thread-info-file-kind,
+.thread-info-file.is-copied .thread-info-file-name,
+.thread-info-file.is-copied .thread-info-file-kind {
+  color: var(--success);
+}
+
+.thread-info-file.is-deleted .thread-info-file-name,
+.thread-info-file.is-deleted .thread-info-file-kind {
+  color: var(--danger);
+  text-decoration: line-through;
+}
+
+.thread-info-file.is-renamed .thread-info-file-name,
+.thread-info-file.is-renamed .thread-info-file-kind {
+  color: var(--accent-blue);
+}
+
+.thread-info-file-more {
+  font-size: 11px;
+  color: var(--ink-muted, var(--text-dim));
 }
 
 .thread-new-tab-page {

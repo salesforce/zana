@@ -36,6 +36,7 @@
     "@zana-ai/zcc-llm": "workspace:*",
     "@zana-ai/zcc-path-confine": "workspace:*",
     "@zana-ai/zcc-plugin-sdk": "workspace:*",
+    "@zana-ai/zcc-plugin-build": "workspace:*",
     "@zana-ai/zcc-plugin-templates": "workspace:*",
     "@zana-ai/zcc-server-contract": "workspace:*",
     "@zana-ai/zcc-thread-view": "workspace:*",

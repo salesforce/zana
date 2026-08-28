@@ -3,26 +3,33 @@ import {
   createConversationThread,
   getConversationThread,
   getEnvironment,
+  unarchiveConversationThread,
   updateConversationThreadStatus,
   type ConversationThreadRow
 } from '@zana-ai/zcc-db';
+import { copyForkSourceHistory } from './conversation-fork-history.js';
+import {
+  deferConversationSend,
+  dropDeferredConversationMessages,
+  flushDeferredConversationMessages
+} from './conversation-deferred-messages.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import type { ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import { conversationThreadView, flattenThreadInput } from './conversation-create.js';
+import { hostPromptFromInput, resolvePromptAttachmentPath } from '../projects/attachments.js';
 import { resolveActivePlanTurn } from './conversation-timeline.js';
 import { emitPluginThreadEvent } from '../../plugins/thread-events.js';
 import { appendClientTurnRequested } from './client-turn-requested.js';
 import { recoverConversationProviderThreadId } from './conversation-provider-identity.js';
 import { destroyEnvironmentIfIdle } from '../environments/environment-cleanup.js';
 import {
-  bridgeLaunchForProvider,
-  permissionModeForLaunchProfile
-} from './thread-provider-catalog.js';
-import { join } from 'node:path';
-import { mkdirSync } from 'node:fs';
-import type { ThreadResumeFields } from '@zana-ai/zcc-contracts/host-rpc';
-import { safePackPluginSession } from '../../plugins/plugin-agent-tools.js';
+  isUnknownThreadHostError,
+  resumeConversationOnHost,
+  threadResumeFields
+} from './conversation-host-rpc.js';
+import { archiveConversationOnHost, unarchiveConversationOnHost } from './thread-host-commands.js';
+import { withResolvedPluginMentionContext } from '../../plugins/plugin-mentions.js';
 
 export type ThreadSendMode = 'start' | 'auto' | 'steer' | 'queue-if-active' | 'steer-if-active';
 
@@ -42,20 +49,30 @@ export async function sendConversationTurn(
     throw new ThreadCreateError(409, 'environment_not_ready', 'thread has no environment');
   }
   if (ctx.pendingInteractions.hasPendingThreadInteraction(threadId)) {
-    throw new ThreadCreateError(
-      409,
-      'awaiting_user_interaction',
-      'Thread is awaiting user interaction. Resolve the pending interaction before sending another prompt.'
-    );
+    if (mode === 'start') {
+      throw new ThreadCreateError(
+        409,
+        'awaiting_user_interaction',
+        'Thread is awaiting user interaction. Resolve the pending interaction before sending another prompt.'
+      );
+    }
+    deferConversationSend(ctx, { threadId: live.id, input, mode, execution });
+    return live;
   }
-  const prompt = flattenThreadInput(input).map((part) => part.trim()).filter((part) => part.length > 0);
+  const resolvedInput = await withResolvedPluginMentionContext(ctx.plugins, input);
+  const textPrompt = flattenThreadInput(resolvedInput).map((part) => part.trim()).filter((part) => part.length > 0);
+  const prompt = hostPromptFromInput(
+    resolvedInput,
+    textPrompt,
+    (path) => resolvePromptAttachmentPath(ctx.dataDir, live.projectId, path)
+  );
   if (prompt.length === 0) {
     throw new ThreadCreateError(400, 'invalid-input', 'input is required');
   }
   const clientRequestId = appendClientTurnRequested(ctx, {
     threadId: live.id,
-    prompt,
-    promptInput: input,
+    prompt: textPrompt,
+    promptInput: resolvedInput,
     kind: 'new-turn',
     model: execution?.model,
     reasoningLevel: execution?.reasoningLevel
@@ -79,7 +96,7 @@ export async function sendConversationTurn(
   }
   const next = getConversationThread(ctx.db, live.id) ?? live;
   ctx.hub.emit('threads:updated', conversationThreadView(ctx, next));
-  if (prompt[0] && next.originKind !== 'fork') ctx.threadTitleNamer?.request(next.id, prompt[0]);
+  if (textPrompt[0] && next.originKind !== 'fork') ctx.threadTitleNamer?.request(next.id, textPrompt[0]);
   emitPluginThreadEvent(ctx, {
     name: 'thread.active',
     threadId: next.id,
@@ -116,6 +133,7 @@ export async function stopConversation(
     threadIds: [thread.id],
     reason: 'thread-stopped'
   });
+  dropDeferredConversationMessages(ctx, thread.id);
   updateConversationThreadStatus(ctx.db, thread.id, 'stopping');
   try {
     await ctx.hostHub.callHostOnlineRpc({
@@ -188,6 +206,7 @@ export async function archiveConversation(
     threadIds: [thread.id],
     reason: 'thread-deleted'
   });
+  dropDeferredConversationMessages(ctx, thread.id);
   try {
     await ctx.hostHub.callHostOnlineRpc({
       hostId: thread.hostId,
@@ -208,8 +227,29 @@ export async function archiveConversation(
     threadId: archived.id,
     projectId: archived.projectId
   });
+  await archiveConversationOnHost(ctx, archived);
   if (thread.environmentId) await destroyEnvironmentIfIdle(ctx, thread.environmentId);
   return true;
+}
+
+export async function unarchiveConversation(
+  ctx: ProductHttpContext,
+  threadId: string
+): Promise<ConversationThreadRow> {
+  const thread = getConversationThread(ctx.db, threadId);
+  if (!thread) {
+    throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
+  }
+  if (!thread.archivedAt) {
+    throw new ThreadCreateError(409, 'not_archived', 'thread is not archived');
+  }
+  if (!thread.environmentId || !getEnvironment(ctx.db, thread.environmentId)) {
+    throw new ThreadCreateError(409, 'environment_not_ready', 'environment is not registered');
+  }
+  const restored = unarchiveConversationThread(ctx.db, threadId) ?? thread;
+  await unarchiveConversationOnHost(ctx, restored);
+  ctx.hub.emit('threads:updated', conversationThreadView(ctx, restored));
+  return restored;
 }
 
 export async function forkConversation(
@@ -233,6 +273,10 @@ export async function forkConversation(
     parentThreadId: thread.id,
     originKind: 'fork'
   });
+  copyForkSourceHistory(ctx.db, {
+    sourceThreadId: thread.id,
+    targetThreadId: forked.id
+  });
   ctx.hub.emit('threads:updated', conversationThreadView(ctx, forked));
   emitPluginThreadEvent(ctx, {
     name: 'thread.created',
@@ -245,37 +289,13 @@ export async function forkConversation(
   return forked;
 }
 
-function isUnknownThreadHostError(error: unknown): boolean {
-  return Boolean(
-    error
-    && typeof error === 'object'
-    && 'code' in error
-    && (error as { code: unknown }).code === 'unknown_thread'
-  );
-}
-
-async function threadResumeFields(
+export async function flushHeldConversationSends(
   ctx: ProductHttpContext,
-  thread: ConversationThreadRow
-): Promise<ThreadResumeFields | undefined> {
-  if (!thread.providerThreadId) return undefined;
-  const environment = thread.environmentId ? getEnvironment(ctx.db, thread.environmentId) : undefined;
-  const dataDir = join(ctx.dataDir, 'thread-bridges', thread.providerId);
-  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-  const sessionTooling = await safePackPluginSession(
-    ctx.plugins
-      ? () => ctx.plugins!.sessionTools({ threadId: thread.id, projectId: thread.projectId })
-      : undefined
-  );
-  return {
-    projectId: thread.projectId,
-    providerId: thread.providerId,
-    providerThreadId: thread.providerThreadId,
-    cwd: environment?.path ?? undefined,
-    bridgeLaunch: bridgeLaunchForProvider(thread.providerId, dataDir),
-    permissionMode: permissionModeForLaunchProfile(thread.providerId),
-    ...sessionTooling
-  };
+  threadId: string
+): Promise<void> {
+  await flushDeferredConversationMessages(ctx, threadId, async (payload) => {
+    await sendConversationTurn(ctx, threadId, payload.input, payload.mode, payload.execution);
+  });
 }
 
 async function submitTurnOnHost(
@@ -302,28 +322,6 @@ async function submitTurnOnHost(
       ...(execution?.model ? { model: execution.model } : {}),
       ...(execution?.reasoningLevel ? { reasoningLevel: execution.reasoningLevel } : {}),
       ...(clientRequestId ? { clientRequestId } : {})
-    }
-  });
-}
-
-async function resumeConversationOnHost(
-  ctx: ProductHttpContext,
-  thread: ConversationThreadRow
-): Promise<void> {
-  if (!thread.environmentId || !thread.providerThreadId) {
-    throw new ThreadCreateError(409, 'not_resumable', 'thread has no provider session to resume');
-  }
-  const resume = await threadResumeFields(ctx, thread);
-  if (!resume) {
-    throw new ThreadCreateError(409, 'not_resumable', 'thread has no provider session to resume');
-  }
-  await ctx.hostHub.callHostOnlineRpc({
-    hostId: thread.hostId,
-    command: {
-      type: 'thread.resume',
-      threadId: thread.id,
-      environmentId: thread.environmentId,
-      ...resume
     }
   });
 }

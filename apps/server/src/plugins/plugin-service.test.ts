@@ -11,6 +11,7 @@ import {
   toPluginAppSnapshot
 } from './plugin-service.js';
 import { containsNativeAddon } from './plugin-api.js';
+import { PluginHostArtifactRegistry } from './plugin-host-artifact-registry.js';
 
 const roots: string[] = [];
 
@@ -102,6 +103,61 @@ describe('PluginService', () => {
     await expect(service.callRpc('typed', 'ping', {})).resolves.toEqual({ ok: true, id: 'typed', n: 2 });
   });
 
+  it('reloads the live package.json server entry instead of a stale stored path', async () => {
+    const dataDir = root();
+    const pluginDir = join(root(), 'stale-entry');
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'package.json'),
+      JSON.stringify({
+        name: 'zcc-plugin-stale-entry',
+        version: '0.1.0',
+        engines: { zcc: '>=1.0.0', zccPluginSdk: '>=0.1.0' },
+        zcc: {
+          name: 'stale-entry',
+          description: 'stale entry',
+          branding: { icon: 'Puzzle' },
+          server: './server.ts'
+        }
+      })
+    );
+    writeFileSync(
+      join(pluginDir, 'server.ts'),
+      `export default function plugin(zcc: { rpc: { method: (name: string, handler: () => unknown) => void } }) {
+        zcc.rpc.method('ping', () => ({ from: 'ts' }));
+      }\n`
+    );
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    const row = await service.install(pluginDir);
+    expect(row.status).toBe('running');
+    expect(row.serverEntry).toBe('./server.ts');
+    await expect(service.callRpc('stale-entry', 'ping', {})).resolves.toEqual({ from: 'ts' });
+    writeFileSync(
+      join(pluginDir, 'server.mjs'),
+      `export default function plugin(zcc) {
+        zcc.rpc.method('ping', () => ({ from: 'mjs' }));
+      }\n`
+    );
+    writeFileSync(
+      join(pluginDir, 'package.json'),
+      JSON.stringify({
+        name: 'zcc-plugin-stale-entry',
+        version: '0.1.0',
+        engines: { zcc: '>=1.0.0', zccPluginSdk: '>=0.1.0' },
+        zcc: {
+          name: 'stale-entry',
+          description: 'stale entry',
+          branding: { icon: 'Puzzle' },
+          server: './server.mjs'
+        }
+      })
+    );
+    const reloaded = await service.reload('stale-entry');
+    expect(reloaded.status).toBe('running');
+    expect(reloaded.serverEntry).toBe('./server.mjs');
+    await expect(service.callRpc('stale-entry', 'ping', {})).resolves.toEqual({ from: 'mjs' });
+  });
+
   it('installs a path plugin, loads the factory, and answers rpc', async () => {
     const dataDir = root();
     const pluginDir = writePlugin(join(root(), 'echo'), 'echo');
@@ -156,6 +212,37 @@ describe('PluginService', () => {
     await service.remove('keep');
     expect(service.get('keep')).toBeUndefined();
     expect(existsSync(pluginDir)).toBe(true);
+  });
+
+  it('resolves mention providers and stamps contributions with label and triggers', async () => {
+    const dataDir = root();
+    const pluginDir = writePlugin(
+      join(root(), 'notes'),
+      'notes',
+      `export default function plugin(zcc) {
+        zcc.ui.registerMentionProvider({
+          id: 'note',
+          label: 'Notes',
+          triggers: ['@', '#'],
+          search: ({ query }) => [{ id: '1', label: query || 'One' }],
+          resolve: (itemId) => ({ context: 'body for ' + itemId })
+        });
+      }\n`
+    );
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    await service.install(pluginDir);
+    expect(service.mentionProviders()).toEqual([
+      { pluginId: 'notes', id: 'note', label: 'Notes', trigger: '@', triggers: ['@', '#'] }
+    ]);
+    await expect(
+      service.resolveMention({ pluginId: 'notes', itemId: 'note:1' })
+    ).resolves.toEqual({ ok: true, context: 'body for 1' });
+    await expect(
+      service.resolveMention({ pluginId: 'notes', itemId: 'missing:1' })
+    ).resolves.toMatchObject({ ok: false });
+    await expect(
+      service.resolveMention({ pluginId: 'gone', itemId: 'note:1' })
+    ).resolves.toMatchObject({ ok: false, error: expect.stringMatching(/not running/) });
   });
 
   it('rejects native addons and npm installs without ignore-scripts would be the spawn contract', async () => {
@@ -527,6 +614,59 @@ describe('PluginService', () => {
     });
     expect(toPluginAppSnapshot(service.snapshot()[0]!)).not.toHaveProperty('rootDir');
     expect(toPluginAppSnapshot(service.snapshot()[0]!)).not.toHaveProperty('source');
+    expect(toPluginAppSnapshot({
+      ...service.snapshot()[0]!,
+      availableVersion: '9.9.9'
+    })).toMatchObject({ availableVersion: '9.9.9' });
+  });
+
+  it('serves a compiled JS sibling for app.tsx and never a raw TypeScript URL', async () => {
+    const dataDir = root();
+    const pluginDir = join(root(), 'tsx-app');
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'package.json'),
+      JSON.stringify({
+        name: 'zcc-plugin-tsx-app',
+        version: '0.1.0',
+        engines: { zcc: '>=1.0.0', zccPluginSdk: '>=0.1.0' },
+        zcc: {
+          name: 'tsx-app',
+          description: 'tsx app',
+          branding: { icon: 'Puzzle' },
+          app: './app.tsx'
+        }
+      })
+    );
+    writeFileSync(join(pluginDir, 'app.tsx'), 'export default { __zccPluginApp: true, setup() {} }\n');
+    const service = createPluginService({ dataDir, bundledRoot: root(), now: () => 7 });
+    await service.install(pluginDir);
+    expect(service.snapshot()[0]?.appUrl).toBeNull();
+
+    writeFileSync(join(pluginDir, 'app.js'), 'export default { __zccPluginApp: true, setup() {} }\n');
+    expect(service.snapshot()[0]?.appUrl).toBe('/plugins/tsx-app/assets/app.js?v=7');
+    expect(service.snapshot()[0]?.appUrl).not.toMatch(/\.tsx(\?|$)/);
+  });
+
+  it('reads name and description from the live manifest, not a stale install snapshot', async () => {
+    const dataDir = root();
+    const pluginDir = writePlugin(join(root(), 'claude'), 'provider-claude-code');
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    await service.install(pluginDir);
+    expect(service.snapshot()[0]?.description).toBe('provider-claude-code plugin');
+
+    const pkg = JSON.parse(readFileSync(join(pluginDir, 'package.json'), 'utf8')) as {
+      zcc: { name: string; description: string };
+    };
+    pkg.zcc.name = 'Claude Code provider';
+    pkg.zcc.description = 'Run Zana threads with Claude Code.';
+    writeFileSync(join(pluginDir, 'package.json'), JSON.stringify(pkg));
+
+    expect(service.snapshot()[0]).toMatchObject({
+      name: 'Claude Code provider',
+      description: 'Run Zana threads with Claude Code.'
+    });
+    expect(service.get('provider-claude-code')?.description).toBe('provider-claude-code plugin');
   });
 
   it('reconcileBuiltins auto-installs docs from bundledRoot/docs', async () => {
@@ -664,7 +804,7 @@ describe('listBundledPluginCatalog', () => {
     const out = listBundledPluginCatalog(pluginsRoot);
     expect(out.some((entry) => entry.id === 'docs' && entry.title === 'Docs')).toBe(true);
     expect(out.map((entry) => entry.id)).toEqual(
-      expect.arrayContaining(['docs', 'tasks', 'custom-instructions', 'ask-user-question', 'salesforce'])
+      expect.arrayContaining(['docs', 'tasks', 'custom-instructions', 'ask-user-question', 'salesforce', 'pr-monitor'])
     );
   });
 
@@ -743,5 +883,37 @@ describe('installBundledPlugin', () => {
     expect(res).toEqual({ ok: true, value: { id: 'docs' } });
     const service = createPluginService({ dataDir, bundledRoot: bundled });
     expect(service.get('docs')?.sourceKind).toBe('builtin');
+  });
+
+  it('publishes a packed host artifact on load and drops it on disable', async () => {
+    const dataDir = root();
+    const pluginDir = join(root(), 'hosty');
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'package.json'),
+      JSON.stringify({
+        name: 'zcc-plugin-hosty',
+        version: '0.1.0',
+        engines: { zcc: '>=1.0.0', zccPluginSdk: '>=0.1.0' },
+        zcc: {
+          name: 'hosty',
+          description: 'host plugin',
+          branding: { icon: 'Puzzle' },
+          server: './server.mjs',
+          host: './host.ts'
+        }
+      })
+    );
+    writeFileSync(join(pluginDir, 'server.mjs'), 'export default function plugin() {}\n');
+    writeFileSync(join(pluginDir, 'host.ts'), 'export default { ready: true };\n');
+    const pluginHostArtifacts = new PluginHostArtifactRegistry();
+    const service = createPluginService({ dataDir, bundledRoot: root(), pluginHostArtifacts });
+    const row = await service.install(pluginDir);
+    expect(row.status).toBe('running');
+    const snapshot = pluginHostArtifacts.get('hosty');
+    expect(snapshot?.digest).toMatch(/^[a-f0-9]{64}$/u);
+    expect(snapshot?.path).toBe(join(pluginDir, 'dist', 'host.js'));
+    await service.disable('hosty');
+    expect(pluginHostArtifacts.get('hosty')).toBeUndefined();
   });
 });

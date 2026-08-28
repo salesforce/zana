@@ -87,6 +87,7 @@ it("passes the canonical protocol suite against the fake agent", async () => {
 
   const report = await runBridgeConformance({
     transport,
+    providerId: "acp",
     session: {
       cwd: workspaceDir,
       promptInput: [{ type: "text", text: "say hello", mentions: [] }],
@@ -104,7 +105,7 @@ it("passes the canonical protocol suite against the fake agent", async () => {
             displayName: "Fake ACP Agent",
             command: process.execPath,
             args: [FAKE_AGENT_PATH],
-            env: {},
+            env: { FAKE_ACP_FORK_SESSION: "1" },
           },
         },
       },
@@ -131,7 +132,9 @@ it("passes the canonical protocol suite against the fake agent", async () => {
     "events/schema-valid": "pass",
     "item/opens-before-delta": "pass",
     "stop/release-not-interrupted": "pass",
+    "session/resume-identity": "pass",
     "session/resume-id-uniqueness": "pass",
+    "session/fork-identity": "pass",
     "turn/settles-without-activity": "pass",
   });
 

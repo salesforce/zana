@@ -80,6 +80,37 @@ export interface PopoverPicklistOption<T extends string> {
   disabled?: boolean;
   /** Warning color on the trigger (when selected) and the option row. */
   tone?: 'default' | 'warning';
+  /** Stays visible while the menu is filtered — used for action rows. */
+  sticky?: boolean;
+}
+
+export function picklistOptionVisible(
+  option: Pick<PopoverPicklistOption<string>, 'label' | 'compactLabel' | 'description' | 'sticky'>,
+  query: string
+): boolean {
+  if (option.sticky) return true;
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return true;
+  const haystack = `${option.label} ${option.compactLabel ?? ''} ${option.description ?? ''}`.toLowerCase();
+  return haystack.includes(normalizedQuery);
+}
+
+/** Scrollable choices vs pinned action rows that stay on screen while the list moves. */
+export function splitPicklistOptions<T extends string>(
+  options: readonly PopoverPicklistOption<T>[],
+  query: string,
+  searchable = true
+): { items: PopoverPicklistOption<T>[]; sticky: PopoverPicklistOption<T>[] } {
+  const items: PopoverPicklistOption<T>[] = [];
+  const sticky: PopoverPicklistOption<T>[] = [];
+  for (const option of options) {
+    if (option.sticky) {
+      sticky.push(option);
+      continue;
+    }
+    if (!searchable || picklistOptionVisible(option, query)) items.push(option);
+  }
+  return { items, sticky };
 }
 
 export interface PopoverPicklistProps<T extends string> {
@@ -105,6 +136,57 @@ export interface PopoverPicklistProps<T extends string> {
    * trigger) where the popover's left edge should align with the whole field.
    */
   anchorToParent?: boolean;
+}
+
+function PicklistOptionRow<T extends string>({
+  option,
+  previousGroup,
+  optionId,
+  selected,
+  active,
+  onHover,
+  onSelect
+}: {
+  option: PopoverPicklistOption<T>;
+  previousGroup?: string;
+  optionId: string;
+  selected: boolean;
+  active: boolean;
+  onHover: () => void;
+  onSelect: () => void;
+}) {
+  return (
+    <div>
+      {option.group && option.group !== previousGroup && (
+        <div className="launch-model-picker-group-label">{option.group}</div>
+      )}
+      <button
+        type="button"
+        id={optionId}
+        className={`launch-model-picker-option${option.description ? ' launch-model-picker-option--stacked' : ''}${option.className ? ` ${option.className}` : ''}${selected ? ' is-selected' : ''}${active ? ' is-active' : ''}${option.tone === 'warning' ? ' is-warning' : ''}`}
+        role="option"
+        aria-selected={selected}
+        aria-disabled={option.disabled || undefined}
+        disabled={option.disabled}
+        tabIndex={-1}
+        onMouseEnter={onHover}
+        onFocus={onHover}
+        onClick={onSelect}
+      >
+        {option.content || option.description ? (
+          <span className="launch-model-picker-option-copy">
+            {option.content ?? <span>{option.label}</span>}
+            {option.description ? (
+              <span className="launch-model-picker-option-description">{option.description}</span>
+            ) : null}
+          </span>
+        ) : (
+          <span>{option.label}</span>
+        )}
+        {selected && <Check size={14} aria-hidden="true" />}
+      </button>
+    </div>
+  );
 }
 
 /**
@@ -141,16 +223,14 @@ export function PopoverPicklist<T extends string>({
   const menuId = useId();
   const [activeIndex, setActiveIndex] = useState(0);
   const selected = options.find((option) => option.value === value);
-  const visibleOptions = useMemo(() => {
-    if (!searchable) return options;
-    const normalizedQuery = query.trim().toLowerCase();
-    return normalizedQuery
-      ? options.filter((option) => {
-          const haystack = `${option.label} ${option.compactLabel ?? ''} ${option.description ?? ''}`.toLowerCase();
-          return haystack.includes(normalizedQuery);
-        })
-      : options;
-  }, [options, query, searchable]);
+  const { items: visibleItems, sticky: stickyOptions } = useMemo(
+    () => splitPicklistOptions(options, query, searchable),
+    [options, query, searchable]
+  );
+  const visibleOptions = useMemo(
+    () => [...visibleItems, ...stickyOptions],
+    [stickyOptions, visibleItems]
+  );
   const activeOption = visibleOptions[activeIndex];
 
   const optionId = (option: PopoverPicklistOption<T>) => `${menuId}-${option.value}`;
@@ -247,6 +327,12 @@ export function PopoverPicklist<T extends string>({
     if (activeIndex >= visibleOptions.length) setActiveIndex(0);
   }, [activeIndex, visibleOptions.length]);
 
+  useEffect(() => {
+    if (!open || !activeOption || activeOption.sticky) return;
+    const node = menuRef.current?.querySelector(`[id="${CSS.escape(optionId(activeOption))}"]`);
+    if (node instanceof HTMLElement) node.scrollIntoView({ block: 'nearest' });
+  }, [activeIndex, activeOption, open]);
+
   return (
     <>
       <button
@@ -274,7 +360,7 @@ export function PopoverPicklist<T extends string>({
       {open && createPortal(
         <div
           ref={menuRef}
-          className="launch-model-picker-menu"
+          className="launch-model-picker-menu launch-model-picker-menu--split"
           role="listbox"
           id={menuId}
           tabIndex={-1}
@@ -304,39 +390,40 @@ export function PopoverPicklist<T extends string>({
               />
             </div>
           )}
-          {visibleOptions.map((option, index) => (
-            <div key={option.value}>
-              {option.group && option.group !== visibleOptions[index - 1]?.group && (
-                <div className="launch-model-picker-group-label">{option.group}</div>
-              )}
-              <button
-                type="button"
-                id={optionId(option)}
-                className={`launch-model-picker-option${option.description ? ' launch-model-picker-option--stacked' : ''}${option.className ? ` ${option.className}` : ''}${value === option.value ? ' is-selected' : ''}${activeIndex === index ? ' is-active' : ''}${option.tone === 'warning' ? ' is-warning' : ''}`}
-                role="option"
-                aria-selected={value === option.value}
-                aria-disabled={option.disabled || undefined}
-                disabled={option.disabled}
-                tabIndex={-1}
-                onMouseEnter={() => setActiveIndex(index)}
-                onFocus={() => setActiveIndex(index)}
-                onClick={() => selectOption(option)}
-              >
-                {option.content || option.description ? (
-                  <span className="launch-model-picker-option-copy">
-                    {option.content ?? <span>{option.label}</span>}
-                    {option.description ? (
-                      <span className="launch-model-picker-option-description">{option.description}</span>
-                    ) : null}
-                  </span>
-                ) : (
-                  <span>{option.label}</span>
-                )}
-                {value === option.value && <Check size={14} aria-hidden="true" />}
-              </button>
+          <div className="launch-model-picker-options">
+            {visibleItems.map((option, index) => (
+              <PicklistOptionRow
+                key={option.value}
+                option={option}
+                previousGroup={visibleItems[index - 1]?.group}
+                optionId={optionId(option)}
+                selected={value === option.value}
+                active={activeIndex === index}
+                onHover={() => setActiveIndex(index)}
+                onSelect={() => selectOption(option)}
+              />
+            ))}
+            {visibleItems.length === 0 && <div className="launch-model-picker-hint">{emptyHint}</div>}
+          </div>
+          {stickyOptions.length > 0 && (
+            <div className="launch-model-picker-footer">
+              {stickyOptions.map((option, offset) => {
+                const index = visibleItems.length + offset;
+                return (
+                  <PicklistOptionRow
+                    key={option.value}
+                    option={option}
+                    previousGroup={offset === 0 ? undefined : stickyOptions[offset - 1]?.group}
+                    optionId={optionId(option)}
+                    selected={value === option.value}
+                    active={activeIndex === index}
+                    onHover={() => setActiveIndex(index)}
+                    onSelect={() => selectOption(option)}
+                  />
+                );
+              })}
             </div>
-          ))}
-          {visibleOptions.length === 0 && <div className="launch-model-picker-hint">{emptyHint}</div>}
+          )}
         </div>,
         document.body
       )}

@@ -1,0 +1,2672 @@
+/*
+ * PR Monitor — plugin-scoped styles. Everything here is prefixed with `.prm-`
+ * so it can never collide with core or another plugin. The UI is a full-width
+ * workbench: a kanban board (default) or a dense tile list.
+ *
+ * Colors are pulled from the app's CSS custom properties (`--bg-*`, `--text-*`,
+ * `--accent-*`, `--danger`, `--success`) so both light and dark themes work
+ * without a plugin-side theme switch.
+ */
+
+/* ── Panel shell ────────────────────────────────────────────────────────── */
+
+/*
+ * Root panel. The host `.module-panel-slot` already spans the shell content
+ * columns, so this root only needs to fill the slot: full height, flex column,
+ * min-height 0 so the tile list can scroll.
+ */
+.prm-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.prm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  gap: 12px;
+  flex-wrap: wrap;
+  flex-shrink: 0; /* Never shrink header - always visible */
+}
+
+.prm-header-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.prm-header-title h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.prm-header-icon {
+  color: var(--accent-blue);
+}
+
+.prm-count-pill {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  border-radius: 10px;
+  padding: 1px 8px;
+  font-weight: 500;
+  min-width: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.prm-header-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.prm-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto; /* Vertical scroll only — content word-wraps, never scrolls sideways */
+  overflow-x: hidden;
+}
+
+/* ── Buttons ────────────────────────────────────────────────────────────── */
+
+.prm-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  line-height: 1.2;
+  padding: 7px 12px;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  font-size: 12px;
+  font-weight: 550;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.prm-btn svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.prm-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: color-mix(in srgb, var(--accent-blue) 40%, var(--border-strong));
+}
+
+.prm-btn:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+
+.prm-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.prm-btn--primary {
+  background: var(--accent-blue);
+  color: white;
+  border-color: var(--accent-blue);
+}
+
+/* Opt a button out of flex-column stretch so it sizes to its own text
+   (e.g. "Sync All Now" inside .prm-subsection). */
+.prm-btn--inline {
+  align-self: flex-start;
+}
+
+.prm-btn--primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+  background: var(--accent-blue);
+}
+
+.prm-row-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border-radius: 4px;
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.prm-row-icon-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* The lucide <svg> fills the tiny (padding:2px) icon button, so the pointer is
+   always over the SVG child, never the button itself. In Electron/Chromium the
+   native `title` tooltip is flaky when the persistent hover target is a child
+   rather than the title-bearing element, so icon-only buttons showed no hover
+   text. Make the icon transparent to pointer events → the button is the stable
+   hover target and its `title` surfaces (clicks still land on the button). */
+.prm-row-icon-btn svg {
+  pointer-events: none;
+}
+
+.prm-row-icon-btn--danger:hover {
+  color: var(--danger);
+}
+
+/* Deterministic hover tooltip for icon-only buttons. The native `title` tooltip
+   is unreliable in Electron/Chromium for tiny icon buttons (it often never
+   surfaces even with the SVG made pointer-transparent), so we render our own
+   from a `data-tip` attribute. `title` stays on the element as an a11y/native
+   fallback; `data-tip` drives the visible bubble. The host tokens keep it on
+   theme. The positioned ancestor is the button itself. */
+.prm-tip {
+  position: relative;
+}
+.prm-tip::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  /* Tooltip text is plain mixed-case prose even when the element it labels is
+     CSS-uppercased (e.g. a status pill). text-transform inherits into ::after
+     content, so reset it here or the pill's uppercase leaks into the bubble. */
+  text-transform: none;
+  white-space: nowrap;
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: var(--bg-tooltip, #1f2430);
+  /* `--text-primary` is dark in ZCC's light theme, while this surface is
+     intentionally dark. Keep the tooltip foreground fixed to an inverse color
+     so check summaries remain readable in both host themes. */
+  color: #fff;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  font-size: 11px;
+  line-height: 1.3;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 20;
+  transition: opacity 0.1s ease;
+}
+.prm-tip:hover::after,
+.prm-tip:focus-visible::after {
+  opacity: 1;
+}
+
+/* ── Loading / errors ───────────────────────────────────────────────────── */
+
+.prm-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.prm-spin {
+  animation: prm-spin 0.9s linear infinite;
+}
+
+@keyframes prm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.prm-error {
+  margin: 8px 14px;
+  padding: 6px 10px;
+  border-radius: 5px;
+  background: rgba(248, 81, 73, 0.1);
+  color: var(--danger);
+  font-size: 12px;
+  border: 1px solid rgba(248, 81, 73, 0.3);
+}
+
+/* ── Sync-health clue + Remove/Keep prompt (R-REPO-013/015/016) ─────────────
+ * One consolidated clue banner (AC-REPO-13.5), colored by kind, plus a per-repo
+ * Remove/Keep prompt for confirmed remote-gone repos (R-REPO-016). */
+.prm-sync-clue {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 14px;
+  padding: 7px 10px;
+  border-radius: 5px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.prm-sync-clue--disconnect {
+  background: rgba(248, 81, 73, 0.1);
+  border-color: rgba(248, 81, 73, 0.3);
+  color: var(--danger);
+}
+
+.prm-sync-clue--remote-gone {
+  background: rgba(210, 153, 34, 0.1);
+  border-color: rgba(210, 153, 34, 0.35);
+  color: var(--warning, #d29922);
+}
+
+.prm-sync-clue--outage {
+  background: var(--bg-elevated);
+  border-color: var(--border);
+  color: var(--text-muted);
+}
+
+.prm-sync-clue-msg {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.prm-sync-clue-action {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border-radius: 5px;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.prm-sync-clue-action:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.prm-sync-prompt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 14px;
+  padding: 8px 10px;
+  border-radius: 5px;
+  font-size: 12px;
+  background: rgba(210, 153, 34, 0.08);
+  border: 1px solid rgba(210, 153, 34, 0.3);
+  color: var(--text-primary);
+}
+
+.prm-sync-prompt-msg {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.prm-sync-prompt-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+}
+
+.prm-btn--danger {
+  background: var(--danger);
+  color: white;
+  border-color: var(--danger);
+}
+
+.prm-btn--danger:hover:not(:disabled) {
+  filter: brightness(1.08);
+  background: var(--danger);
+}
+
+/* Transparent full-viewport backdrop that sits just BELOW the fixed menu. It
+ * catches every outside click and closes the menu structurally, so we don't
+ * need a window mousedown listener (which raced with item selection across the
+ * host-React boundary — see PrProjectControl). A click on a menu item
+ * lands on the item (higher z-index); a click anywhere else lands here. */
+.prm-project-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: transparent;
+}
+
+.prm-project-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.prm-project-menu-item:hover {
+  background: var(--bg-hover);
+}
+
+.prm-project-menu-item.is-active {
+  background: rgba(47, 129, 247, 0.15);
+  color: var(--accent-blue);
+  font-weight: 600;
+}
+
+.prm-project-menu-empty {
+  padding: 8px 10px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-style: italic;
+}
+
+/* ── Check summary ──────────────────────────────────────────────────────── */
+
+.prm-check-pip {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  line-height: 1.25;
+}
+
+.prm-check-pip--pass {
+  background: rgba(63, 185, 80, 0.15);
+  color: var(--success);
+  border-color: rgba(63, 185, 80, 0.3);
+}
+
+.prm-check-pip--fail {
+  background: rgba(248, 81, 73, 0.15);
+  color: var(--danger);
+  border-color: rgba(248, 81, 73, 0.3);
+}
+
+.prm-check-pip--pending {
+  background: rgba(212, 160, 23, 0.15);
+  color: var(--accent-gold);
+  border-color: rgba(212, 160, 23, 0.3);
+}
+
+.prm-checks-list {
+  list-style: none;
+  padding: 6px 0 0;
+  margin: 6px 0 0;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+}
+
+.prm-checks-empty {
+  padding: 6px 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.prm-check-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  color: var(--text-muted);
+}
+
+.prm-check-state-pip {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+
+.prm-check-state-pip--pass {
+  background: var(--success);
+}
+
+.prm-check-state-pip--fail {
+  background: var(--danger);
+}
+
+.prm-check-state-pip--pending {
+  background: var(--accent-gold);
+}
+
+.prm-check-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: 11px;
+}
+
+.prm-check-bucket {
+  font-size: 10px;
+  color: var(--text-dim);
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--bg-elevated);
+}
+
+.prm-check-state {
+  font-size: 10px;
+  text-transform: lowercase;
+  color: var(--text-dim);
+}
+
+/* ── Compact list view ──────────────────────────────────────────────────── */
+
+.prm-list {
+  flex: 1 1 auto;
+  min-height: 0; /* Allow flex shrinking */
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* ── Modal ──────────────────────────────────────────────────────────────── */
+
+.prm-modal {
+  width: min(440px, 90vw);
+  background: var(--bg-elevated);
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.prm-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.prm-modal-header h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.prm-modal-body {
+  padding: 14px;
+}
+
+/* Help popup body — readable prose with a tidy bulleted list. */
+.prm-help-body {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.prm-help-body p {
+  margin: 0 0 10px;
+}
+
+.prm-help-body ul {
+  margin: 0 0 10px;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.prm-help-body strong {
+  color: var(--text-primary);
+}
+
+.prm-modal-footer {
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.prm-modal-error {
+  margin-top: 10px;
+  padding: 6px 10px;
+  border-radius: 5px;
+  background: rgba(248, 81, 73, 0.1);
+  color: var(--danger);
+  font-size: 12px;
+  border: 1px solid rgba(248, 81, 73, 0.3);
+}
+
+/* ── Form fields ────────────────────────────────────────────────────────── */
+
+.prm-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.prm-field-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.prm-field-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+/* Emphasized field label — for text fields that should stand out like the
+   bold checkbox labels (AC-REPO-11 readability). */
+.prm-field-label--strong {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.prm-input {
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.prm-input:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 2px rgba(47, 129, 247, 0.2);
+}
+
+/* ── Settings view ──────────────────────────────────────────────────────── */
+
+.prm-radio-row,
+.prm-checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.prm-radio-row:hover,
+.prm-checkbox-row:hover {
+  background: var(--bg-hover);
+}
+
+.prm-radio-row input,
+.prm-checkbox-row input {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.prm-radio-row > span,
+.prm-checkbox-row > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.prm-radio-row strong,
+.prm-checkbox-row strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.prm-radio-row small,
+.prm-checkbox-row small {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ── Setup gate ─────────────────────────────────────────────────────────── */
+
+.prm-setup-gate {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+}
+
+.prm-setup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 460px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.prm-setup h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.prm-setup p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* ── Empty states ───────────────────────────────────────────────────────── */
+
+.prm-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.prm-empty h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.prm-empty p {
+  margin: 0;
+  font-size: 13px;
+}
+
+/* ── Tile UI (Phase 2) ──────────────────────────────────────────────────── */
+
+.prm-tile-list {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.prm-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  box-shadow: none;
+  /* Item 6: the tile root is NOT a click target for a READ PR — a whole-row
+     click only does something when unread (marks it seen). So the row shows the
+     default cursor; only an unread tile (below) opts into pointer. The dead
+     space right of the project / branch / Draft no longer looks clickable. */
+  cursor: default;
+  transition: background 0.12s, border-color 0.12s;
+  position: relative;
+}
+
+.prm-tile:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
+/* Favorite (R-LIST-026) — a find-faster marker: a light-yellow row tint mixed
+   from the gold accent over the base surface so it reads in both themes. The
+   explicit :hover rule is required — `.prm-tile:hover` at (0,2,0) specificity
+   would otherwise override the bare `--favorite` class (0,1,0) and wash the tint
+   away on hover. Declared BEFORE unread/selected so those stronger states win
+   the cascade (same specificity): a selected or unread favorite shows the
+   stronger tint, with the star + gold action icon still marking it a favorite. */
+.prm-tile--favorite {
+  background: color-mix(in srgb, var(--accent-gold, #d4a017) 22%, var(--bg-base));
+}
+
+.prm-tile--favorite:hover {
+  background: color-mix(in srgb, var(--accent-gold, #d4a017) 30%, var(--bg-base));
+}
+
+/* Unread — inbox-style: 2px left accent bar + bold title. The rest of the
+   row stays muted; no blue ring and no whole-row bold. */
+.prm-tile--unread {
+  border-left: 2px solid var(--accent-blue);
+  /* Unread rows ARE a click target (click marks seen), so they show pointer. */
+  cursor: pointer;
+}
+
+.prm-tile--unread .prm-tile-title {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.prm-tile--closed {
+  opacity: 0.7;
+}
+
+/* Selected in the bulk-select model (R-LIST-006). */
+.prm-tile--selected {
+  background: color-mix(in srgb, var(--accent-blue) 10%, var(--bg-base));
+  border-color: color-mix(in srgb, var(--accent-blue) 35%, var(--border));
+}
+
+/* Last sync errored (R-LIST-023) — subtle warning edge, retry lives inline. */
+.prm-tile--stale {
+  border-left: 3px solid var(--warning, var(--accent-gold, #d29922));
+}
+
+.prm-tile-line1 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.prm-tile-state-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.prm-tile-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.prm-tile-workitem-inline {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.prm-status-pill {
+  display: inline-block;
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  flex-shrink: 0;
+}
+
+.prm-status-pill--failed,
+.prm-status-pill--conflict {
+  background: rgba(248, 81, 73, 0.15);
+  color: var(--danger);
+  border: 1px solid rgba(248, 81, 73, 0.3);
+}
+
+.prm-status-pill--yellow,
+.prm-status-pill--pending {
+  background: rgba(212, 160, 23, 0.15);
+  color: var(--accent-gold);
+  border: 1px solid rgba(212, 160, 23, 0.3);
+}
+
+.prm-status-pill--review-required,
+.prm-status-pill--integrating {
+  background: rgba(47, 129, 247, 0.15);
+  color: var(--accent-blue);
+  border: 1px solid rgba(47, 129, 247, 0.3);
+}
+
+.prm-status-pill--green {
+  background: rgba(63, 185, 80, 0.15);
+  color: var(--success);
+  border: 1px solid rgba(63, 185, 80, 0.3);
+}
+
+.prm-status-pill--closed-merged {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+}
+
+.prm-status-pill--closed-abandoned {
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+
+/* Time-in-status pill (R-LIST-013): how long the PR has sat in its current
+ * rollup status, escalating ok → warn → danger. A text cue (prm-tis-cue,
+ * "Slow"/"Stalled") rides alongside the color for colorblind users (AC-LIST-13.2). */
+.prm-tis {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.prm-tis--ok {
+  color: var(--success);
+  background: rgba(63, 185, 80, 0.1);
+}
+
+.prm-tis--warn {
+  color: var(--accent-gold);
+  background: rgba(212, 160, 23, 0.1);
+}
+
+.prm-tis--danger {
+  color: var(--danger);
+  background: rgba(248, 81, 73, 0.1);
+}
+
+/* Passive done-state (Build ✓ / Review ✓) — the gate finished, so the pill is a
+ * calm neutral check, no alarm color (§3 two-pill model, extension Rule 6: a new
+ * rendered modifier needs its own rule). Both pills share this treatment. */
+.prm-tis--done {
+  color: var(--text-muted);
+  background: var(--bg-hover, rgba(127, 127, 127, 0.1));
+}
+
+/* The review pill is label-distinguished, not hue-distinguished (§6.4): it shares
+ * the ok/warn/danger/done colors. A hair more left margin sets it apart from the
+ * build pill when both sit inline. */
+.prm-tis--review {
+  margin-left: 1px;
+}
+
+.prm-tis-cue {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.prm-tile-line2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.prm-workitem-chip {
+  display: inline-block;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  flex-shrink: 0;
+}
+
+/* Work-item chip that resolves to a locator URL — rendered as a <button> that
+ * opens externally, so make it read as clickable (R-LIST-011 work-item link). */
+.prm-workitem-chip--link {
+  cursor: pointer;
+}
+
+.prm-workitem-chip--link:hover {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+
+.prm-tile-repo {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.prm-tile-number {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.prm-tile-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px;
+  border-radius: 3px;
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.prm-tile-icon-btn:hover {
+  background: var(--bg-hover);
+  color: var(--accent-blue);
+}
+
+.prm-author {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.prm-avatar {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.prm-avatar--initials {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-blue);
+  color: white;
+  font-size: 8px;
+  font-weight: 600;
+}
+
+.prm-author-name {
+  font-size: 11px;
+  color: var(--text-primary);
+}
+
+/* Draft pill (item 14): solid gray fill + bold white text, so it carries the
+   same visual weight as a status pill instead of reading as muted body text. */
+.prm-draft-pill {
+  display: inline-block;
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: var(--text-muted, #6e7681);
+  color: #fff;
+  border: 1px solid var(--text-muted, #6e7681);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  flex-shrink: 0;
+}
+
+.prm-tile-line3 {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.prm-branch-icon {
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.prm-branch {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.prm-desc {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ── Tile menu ──────────────────────────────────────────────────────────── */
+
+.prm-tile-menu {
+  position: absolute;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 10000;
+  min-width: 180px;
+  max-width: 240px;
+  padding: 4px;
+}
+
+/* Project-assign picker — a prm-tile-menu positioned fixed at the trigger and
+ * right-aligned (translateX(-100%)) in PrProjectControl. Only overrides sizing. */
+.prm-project-picker {
+  min-width: 160px;
+  max-width: 280px;
+  overflow-y: auto;
+}
+
+.prm-tile-menu-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+/* ── Settings shell (grouped left-nav, R-SET-*) ─────────────────────────────── */
+
+.prm-settings-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.prm-settings-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.prm-settings-nav {
+  width: 210px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  padding: 12px 8px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.prm-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.prm-nav-group-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 0 8px 4px;
+}
+
+.prm-nav-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s, color 0.12s;
+}
+
+.prm-nav-row:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.prm-nav-row.active {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  font-weight: 550;
+}
+
+.prm-nav-row.active svg {
+  color: var(--text-primary);
+}
+
+.prm-settings-pane {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 16px 20px;
+}
+
+/* ── Settings area (shared shell for the five areas) ────────────────────────── */
+
+.prm-area {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 760px;
+}
+
+.prm-area-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.prm-area-heading h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.prm-area-heading p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.prm-area-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.prm-area-explainer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.prm-area-explainer code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--bg-elevated);
+}
+
+.prm-area-empty {
+  padding: 24px 16px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.prm-subsection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.prm-subsection-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+/* ── Entity cards (orgs / repos / author) ───────────────────────────────────── */
+
+.prm-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.prm-entity-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+}
+
+.prm-entity-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.prm-entity-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.prm-entity-host {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.prm-entity-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.prm-entity-sub code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+}
+
+.prm-entity-side {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+}
+
+/* Org card lays main+side side-by-side */
+.prm-entity-card:not(.prm-repo-card):not(.prm-author-card) {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* ── Connection pill (R-ORG-005) ────────────────────────────────────────────── */
+
+.prm-conn-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+.prm-conn-pill--connected {
+  background: rgba(63, 185, 80, 0.15);
+  color: var(--success);
+  border: 1px solid rgba(63, 185, 80, 0.3);
+}
+
+.prm-conn-pill--disconnected {
+  background: rgba(248, 81, 73, 0.12);
+  color: var(--danger);
+  border: 1px solid rgba(248, 81, 73, 0.3);
+}
+
+.prm-conn-pill--checking {
+  background: rgba(47, 129, 247, 0.12);
+  color: var(--accent-blue);
+  border: 1px solid rgba(47, 129, 247, 0.3);
+}
+
+/* ── Repo card ──────────────────────────────────────────────────────────────── */
+
+.prm-repo-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.prm-repo-quick {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.prm-repo-meta {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.prm-repo-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.prm-active-badge {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 2px 7px;
+  border-radius: 9px;
+  background: rgba(63, 185, 80, 0.15);
+  color: var(--success);
+  border: 1px solid rgba(63, 185, 80, 0.3);
+}
+
+.prm-active-badge--off {
+  background: var(--bg-panel);
+  color: var(--text-dim);
+  border-color: var(--border);
+}
+
+/* Time-in-status preset pill on the repo card, next to the connection pill
+   (R-LIST/R-REPO — surface which TIS preset is selected). */
+.prm-tis-preset-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 2px 7px;
+  border-radius: 9px;
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.prm-btn--sm {
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
+.prm-btn--danger,
+.prm-btn--danger:hover:not(:disabled) {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: white;
+}
+
+.prm-btn--danger:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.prm-btn--danger-ghost:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* ── Author card ────────────────────────────────────────────────────────────── */
+
+.prm-author-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+}
+
+.prm-author-id {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Author-card expand/collapse chevron (rotates when the card is open). */
+.prm-disclosure {
+  color: var(--text-dim);
+  transition: transform 0.15s;
+}
+
+.prm-disclosure.is-open {
+  transform: rotate(90deg);
+}
+
+.prm-avatar--initials {
+  width: 28px;
+  height: 28px;
+  font-size: 11px;
+}
+
+.prm-author-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.prm-kv {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.prm-identity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.prm-identity-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.prm-identity-verified {
+  color: var(--success);
+}
+
+.prm-identity-disconnected {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--danger);
+  font-size: 11px;
+}
+
+/* ── Sync status (System area) ──────────────────────────────────────────────── */
+
+.prm-sync-status {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+}
+
+.prm-sync-counts {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.prm-sync-count strong {
+  color: var(--text-primary);
+}
+
+.prm-input--select {
+  width: auto;
+  min-width: 200px;
+  max-width: 100%;
+}
+
+/* ── Settings dialogs (Add / Suggested / Browse / Repo-settings / Test) ─────── */
+
+.prm-modal--wide {
+  width: min(600px, 92vw);
+}
+
+.prm-dialog-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.prm-dialog-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.prm-dialog-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 10px;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.prm-dialog-tab.active {
+  color: var(--accent-blue);
+  border-bottom-color: var(--accent-blue);
+  font-weight: 600;
+}
+
+.prm-modal-body .prm-field {
+  margin-bottom: 12px;
+}
+
+.prm-suggested-list,
+.prm-browse-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.prm-suggested-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.prm-suggested-row:hover {
+  background: var(--bg-hover);
+}
+
+.prm-suggested-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.prm-suggested-added {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--success);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.prm-added-tag {
+  color: var(--text-dim);
+}
+
+.prm-browse-controls {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.prm-browse-controls .prm-input:not(.prm-input--select) {
+  flex: 1 1 auto;
+}
+
+.prm-browse-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.prm-browse-group + .prm-browse-group {
+  margin-top: 4px;
+}
+
+.prm-browse-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 6px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: 6px;
+  text-align: left;
+}
+
+.prm-browse-group-header:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.prm-browse-group-name {
+  color: var(--text-primary);
+}
+
+.prm-browse-group-count {
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.prm-browse-repo-row {
+  margin-left: 16px;
+}
+
+/* An already-monitored repo renders as a non-selectable row with a "Connected"
+   pill in place of the checkbox (AC-REPO-9.3). */
+.prm-browse-repo-row--added {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: default;
+}
+
+.prm-browse-load-more {
+  align-self: center;
+  margin-top: 8px;
+}
+
+.prm-test-result {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.prm-test-result--ok {
+  background: rgba(63, 185, 80, 0.12);
+  color: var(--success);
+  border: 1px solid rgba(63, 185, 80, 0.3);
+}
+
+.prm-test-result--fail {
+  background: rgba(248, 81, 73, 0.1);
+  color: var(--danger);
+  border: 1px solid rgba(248, 81, 73, 0.3);
+}
+
+/* ==========================================================================
+ * List redesign (R-LIST-*) — header heading, split sync control, segment tabs,
+ * list toolbar, bulk bar, tile check-pips / mute / sync-error / reviewers,
+ * project control, Sync & Filter menu, project line, filtered-empty.
+ * All token-based; no shared Tickets board chrome.
+ * ========================================================================== */
+
+/* Header heading + subtitle (AC-LIST-1.1 / 1.2). */
+.prm-header-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.prm-header-heading h2 {
+  margin: 0;
+}
+
+.prm-header-subtitle {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+/* Split sync control (R-LIST-002). */
+.prm-split-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.prm-split-primary {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.prm-split-caret {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.25);
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+/* Segment tabs (R-LIST-005). Quiet cohort chips: muted until active. */
+.prm-segment-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.prm-segment-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.prm-segment-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.prm-segment-tab.active {
+  background: color-mix(in srgb, var(--accent-blue) 15%, transparent);
+  border-color: color-mix(in srgb, var(--accent-blue) 40%, var(--border));
+  color: var(--accent-blue);
+  font-weight: 600;
+}
+
+.prm-segment-count {
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  opacity: 0.8;
+}
+
+/* Status color only when the chip is the active filter. */
+.prm-segment-tab--failed.active,
+.prm-segment-tab--conflict.active {
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.prm-segment-tab--yellow.active,
+.prm-segment-tab--pending.active {
+  background: color-mix(in srgb, var(--accent-gold) 15%, transparent);
+  border-color: color-mix(in srgb, var(--accent-gold) 40%, var(--border));
+  color: var(--accent-gold);
+  font-weight: 600;
+}
+
+.prm-segment-tab--review-required.active,
+.prm-segment-tab--integrating.active {
+  background: color-mix(in srgb, var(--accent-blue) 15%, transparent);
+  border-color: color-mix(in srgb, var(--accent-blue) 40%, var(--border));
+  color: var(--accent-blue);
+  font-weight: 600;
+}
+
+.prm-segment-tab--green.active {
+  background: color-mix(in srgb, var(--success) 15%, transparent);
+  border-color: color-mix(in srgb, var(--success) 40%, var(--border));
+  color: var(--success);
+  font-weight: 600;
+}
+
+.prm-segment-tab--closed-merged.active {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.prm-segment-tab--closed-abandoned.active {
+  background: var(--bg-elevated);
+  border-color: var(--border);
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+/* List toolbar container + controls row. */
+.prm-list-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.prm-list-controls,
+.prm-segment-tabs {
+  width: 100%;
+  min-width: 0;
+}
+
+.prm-list-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.prm-select-all {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.prm-shown-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.prm-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1 1 140px;
+  min-width: 120px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-input, var(--bg-elevated));
+  color: var(--text-muted);
+}
+
+.prm-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.prm-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.prm-sort-select {
+  font-size: 11px;
+  padding: 3px 6px;
+}
+
+.prm-sort-dir {
+  padding: 4px 6px;
+}
+
+.prm-unread-count {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+/* Bulk-action bar (R-LIST-006). */
+.prm-bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(47, 129, 247, 0.1);
+  border: 1px solid var(--accent-blue);
+}
+
+.prm-bulk-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.prm-bulk-clear:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.prm-bulk-count {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.prm-bulk-actions {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* Tile selection checkbox (R-LIST-006). */
+.prm-tile-select {
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+/* Check-status summary pips container (R-LIST-021). */
+.prm-check-pips {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ── Item 2: cursor discipline ──────────────────────────────────────────────
+   The tile root is itself clickable (marks seen), so it carries cursor:pointer.
+   But its decorative/text children must NOT inherit the pointer — a label or a
+   status word is not itself a button. These read as default text; the genuinely
+   interactive surfaces (buttons, links, and the check-toggle pills below) opt
+   back into pointer explicitly. */
+.prm-status-pill,
+.prm-tis,
+.prm-check-pips,
+.prm-check-pip,
+.prm-mute-indicator,
+.prm-sync-error-text,
+.prm-sync-error-icon,
+.prm-tile-state-icon,
+.prm-tile-title,
+.prm-tile-repo,
+.prm-tile-number,
+.prm-author-name,
+.prm-avatar,
+.prm-reviewers-label,
+.prm-reviewer-avatar,
+.prm-branch,
+.prm-branch-icon,
+.prm-desc,
+.prm-workitem-chip {
+  cursor: default;
+}
+
+/* ── Item 6: the status pill / time-in-status pill / check pips double as the
+   per-check disclosure toggle when the PR has checks. `prm-checks-trigger` is
+   added to exactly those surfaces in that case — it restores pointer + a hover
+   affordance so they read as the clickable toggle they are. Without checks the
+   default cursor:default above stands. */
+.prm-checks-trigger,
+/* …and everything inside a trigger: the check pips carry cursor:default in the
+   discipline block above, which would otherwise win over the parent trigger and
+   leave the pass/fail counts showing no pointer even though they toggle. */
+.prm-checks-trigger * {
+  cursor: pointer;
+}
+
+.prm-checks-trigger:hover {
+  filter: brightness(1.12);
+}
+
+/* ── Item 10: trailing row-action set + a danger variant of the shared icon
+   button. `prm-tile-actions` groups the inline action icons and pushes them to
+   the row's end; `prm-tile-icon-btn--danger` tints the destructive dismiss
+   action on hover. */
+.prm-tile-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.prm-tile-icon-btn--danger:hover {
+  background: rgba(248, 81, 73, 0.15);
+  color: var(--danger);
+}
+
+/* Active (toggled-on) row action — the favorited star reads gold + filled
+   (R-LIST-026). Keeps the gold on hover so it never flips to the default blue. */
+.prm-tile-icon-btn--active,
+.prm-tile-icon-btn--active:hover {
+  /* A bright, unambiguous yellow-gold so the filled favorite star reads as
+     yellow at 13px — the darker `--accent-gold` (#d4a017) muddies to grey at
+     this size. Declared after the base `.prm-tile-icon-btn` rule so it wins
+     the cascade at equal specificity. */
+  color: #f5b400;
+}
+
+/* Mute indicator (AC-LIST-18.3). */
+.prm-mute-indicator {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+/* Per-PR sync-error indicator + retry (R-LIST-023). */
+.prm-sync-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--warning, var(--accent-yellow, #d29922));
+  font-size: 10px;
+}
+
+.prm-sync-error-icon {
+  flex-shrink: 0;
+}
+
+.prm-sync-error-text {
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-weight: 600;
+}
+
+/* Reviewers strip grouped by state (R-LIST-016). */
+.prm-reviewers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.prm-reviewers-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.prm-reviewers-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  /* Item 8: breathing room between the group label and its avatars. */
+  margin-right: 4px;
+}
+
+.prm-reviewers--changes .prm-reviewer-avatar {
+  background: var(--danger);
+}
+
+.prm-reviewers--requested .prm-reviewer-avatar {
+  background: var(--text-muted);
+}
+
+.prm-reviewers--approved .prm-reviewer-avatar {
+  background: var(--success);
+}
+
+.prm-reviewer-avatar {
+  margin-left: -4px;
+}
+
+.prm-reviewer-avatar:first-of-type {
+  margin-left: 0;
+}
+
+/* Project-association ROW (item 5; R-LIST-020). Always present: muted when
+   unassociated (optional), primary when associated. Meaning is carried by the
+   label text and hover title, never by hue alone (AC-LIST-20.2a). */
+.prm-project-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 2px 6px 2px 4px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+  max-width: 100%;
+}
+
+.prm-project-row:hover {
+  background: var(--bg-hover);
+  border-color: var(--border);
+}
+
+.prm-project-row-icon {
+  flex-shrink: 0;
+}
+
+.prm-project-row-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prm-project-row--associated {
+  color: var(--text-primary);
+}
+
+.prm-project-row--unassociated {
+  color: var(--text-muted);
+}
+
+/* Sync & Filter picker (R-LIST-002). Reuses prm-tile-menu base. */
+.prm-sync-filter {
+  min-width: 240px;
+  max-width: 320px;
+  padding: 6px;
+}
+
+.prm-sync-filter-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 8px 8px;
+}
+
+.prm-sync-filter-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.prm-sync-filter-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  color: var(--accent-blue);
+}
+
+.prm-sync-filter-host {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.prm-sync-filter-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 8px 4px 2px;
+}
+
+/* Host filter picker (R-LIST-027). Reuses prm-tile-menu + prm-sync-filter-*. */
+.prm-host-filter {
+  min-width: 200px;
+  max-width: 280px;
+  padding: 6px;
+}
+
+/* Toolbar toggle button — highlighted while the host filter narrows the list. */
+.prm-btn.is-active {
+  background: var(--accent-blue);
+  border-color: var(--accent-blue);
+  color: white;
+}
+
+.prm-tile-checks {
+  margin-top: 6px;
+}
+
+/* Filtered-empty state (AC-LIST-24.2). */
+.prm-empty--filtered {
+  padding: 32px 16px;
+}
+
+.prm-empty-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* Modal description line shared by Pull PR (and others). */
+.prm-modal-desc {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ── List / Board view toggle (BB-style segmented control) ─────────────── */
+
+.prm-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.prm-view-toggle-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 550;
+  font-family: inherit;
+  cursor: pointer;
+  line-height: 1.2;
+}
+
+.prm-view-toggle-btn svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.prm-view-toggle-btn:hover {
+  color: var(--text-primary);
+}
+
+.prm-view-toggle-btn[aria-pressed='true'] {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+.prm-view-toggle-btn:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 1px;
+}
+
+/* ── Kanban board ──────────────────────────────────────────────────────── */
+
+.prm-content--board {
+  overflow: hidden;
+}
+
+.prm-list--board {
+  overflow: hidden;
+  min-height: 0;
+  padding: 8px 10px 0;
+}
+
+.prm-list--board .prm-list-toolbar {
+  flex-shrink: 0;
+  margin-bottom: 0;
+  border-bottom: 0;
+  padding-bottom: 8px;
+}
+
+.prm-board {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0 2px 12px;
+}
+
+.prm-board-col {
+  display: flex;
+  flex-direction: column;
+  width: 260px;
+  min-width: 260px;
+  max-height: 100%;
+  background: color-mix(in srgb, var(--bg-elevated) 65%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.prm-board-col-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px 8px;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border);
+}
+
+.prm-board-col-icon {
+  flex-shrink: 0;
+}
+
+.prm-board-col-title {
+  min-width: 0;
+}
+
+.prm-board-col-count {
+  font-weight: 500;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.prm-board-col-unread {
+  min-width: 16px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--accent-blue);
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.prm-board-col-collapse {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.prm-board-col-collapse:hover {
+  background: var(--bg-hover, color-mix(in srgb, var(--text) 8%, transparent));
+  color: var(--text);
+}
+
+.prm-board-col--collapsed {
+  width: 44px;
+  min-width: 44px;
+  max-width: 44px;
+}
+
+.prm-board-col--collapsed .prm-board-col-header {
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 4px 12px;
+  border-bottom: 0;
+}
+
+.prm-board-col--collapsed .prm-board-col-title {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-size: 11px;
+}
+
+.prm-board-col--collapsed .prm-board-col-count,
+.prm-board-col--collapsed .prm-board-col-unread {
+  writing-mode: horizontal-tb;
+}
+
+.prm-board-col--collapsed .prm-board-col-collapse {
+  margin-left: 0;
+  margin-top: auto;
+}
+
+.prm-board-col--collapsed .prm-board-col-body {
+  display: none;
+}
+
+.prm-board-col-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+}
+
+.prm-board-col-empty {
+  padding: 18px 8px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.prm-board-col--conflict .prm-board-col-icon,
+.prm-board-col--failed .prm-board-col-icon {
+  color: var(--danger);
+}
+
+.prm-board-col--yellow .prm-board-col-icon,
+.prm-board-col--pending .prm-board-col-icon {
+  color: var(--accent-gold);
+}
+
+.prm-board-col--review-required .prm-board-col-icon,
+.prm-board-col--integrating .prm-board-col-icon {
+  color: var(--accent-blue);
+}
+
+.prm-board-col--green .prm-board-col-icon,
+.prm-board-col--closed-merged .prm-board-col-icon {
+  color: var(--success);
+}
+
+.prm-board-col--closed-abandoned .prm-board-col-icon {
+  color: var(--text-muted);
+}
+
+.prm-board-col--conflict,
+.prm-board-col--failed {
+  box-shadow: inset 0 2px 0 var(--danger);
+}
+
+.prm-board-col--yellow,
+.prm-board-col--pending {
+  box-shadow: inset 0 2px 0 var(--accent-gold);
+}
+
+.prm-board-col--review-required,
+.prm-board-col--integrating {
+  box-shadow: inset 0 2px 0 var(--accent-blue);
+}
+
+.prm-board-col--green,
+.prm-board-col--closed-merged {
+  box-shadow: inset 0 2px 0 var(--success);
+}
+
+.prm-board-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 10px 8px;
+  border-radius: 10px;
+  background: var(--bg-panel, var(--bg-base));
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  cursor: default;
+  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
+}
+
+.prm-board-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
+}
+
+.prm-board-card:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 1px;
+}
+
+.prm-board-card--unread {
+  border-left: 2px solid var(--accent-blue);
+  cursor: pointer;
+}
+
+.prm-board-card--unread .prm-board-card-title {
+  font-weight: 600;
+}
+
+.prm-board-card--favorite {
+  background: color-mix(in srgb, var(--accent-gold, #d4a017) 18%, var(--bg-base));
+}
+
+.prm-board-card--favorite:hover {
+  background: color-mix(in srgb, var(--accent-gold, #d4a017) 26%, var(--bg-base));
+}
+
+.prm-board-card--selected {
+  background: color-mix(in srgb, var(--accent-blue) 10%, var(--bg-base));
+  border-color: color-mix(in srgb, var(--accent-blue) 35%, var(--border));
+}
+
+.prm-board-card--closed {
+  opacity: 0.72;
+}
+
+.prm-board-card--stale {
+  border-left: 3px solid var(--warning, var(--accent-gold, #d29922));
+}
+
+.prm-board-card-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.prm-board-card-select {
+  flex-shrink: 0;
+  opacity: 0;
+  pointer-events: none;
+  margin: 0;
+}
+
+.prm-board-card:hover .prm-board-card-select,
+.prm-board-card:focus-within .prm-board-card-select,
+.prm-board-card--selected .prm-board-card-select,
+.prm-board-card--select-mode .prm-board-card-select,
+.prm-board-card--selectable .prm-board-card-select {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.prm-board-card--select-mode {
+  cursor: pointer;
+}
+
+.prm-board-card-id {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.prm-board-card-num {
+  flex-shrink: 0;
+  font-weight: 650;
+}
+
+.prm-board-card-repo {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--text-faint, var(--text-dim));
+}
+
+.prm-board-card-wi {
+  flex-shrink: 0;
+  font-size: 9px;
+  padding: 1px 5px;
+}
+
+.prm-board-card-draft {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint, var(--text-dim));
+}
+
+.prm-board-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: auto;
+  flex-shrink: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+
+.prm-board-card:hover .prm-board-card-actions,
+.prm-board-card:focus-within .prm-board-card-actions,
+.prm-board-card--selected .prm-board-card-actions,
+.prm-board-card--favorite .prm-board-card-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (hover: none) {
+  .prm-board-card-actions,
+  .prm-board-card-select {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.prm-board-card-title {
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--text-primary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+.prm-board-card-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.prm-board-card-time {
+  font-variant-numeric: tabular-nums;
+}
+
+.prm-board-card .prm-avatar {
+  width: 18px;
+  height: 18px;
+  font-size: 8px;
+}
+
+@media (max-width: 640px) {
+  .prm-view-toggle-btn span {
+    display: none;
+  }
+
+  .prm-board-col {
+    width: 220px;
+    min-width: 220px;
+  }
+}
+

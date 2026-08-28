@@ -137,7 +137,7 @@ describe('pairing front door', () => {
     laptop.close();
   });
 
-  it('replaces the previous laptop on a second authenticated connect (last-wins)', async () => {
+  it('keeps two laptops on isolated /t/<id> paths (no steal)', async () => {
     const nextOrigin = await listenNext();
     door = await startFrontDoor({
       host: '127.0.0.1',
@@ -146,34 +146,154 @@ describe('pairing front door', () => {
       spawnNext: false,
       nextOrigin
     });
-    const first = await connectWs({
-      hostname: '127.0.0.1',
-      port: door.port,
-      path: '/_zcc/relay',
-      headers: { Authorization: 'Bearer relay-token-relay-token' }
+    const first = await connectEchoLaptop(door.port, 'one');
+    const second = await connectEchoLaptop(door.port, 'two');
+    expect(first.hello.sessionId).not.toBe(second.hello.sessionId);
+    expect(door.sessionCount()).toBe(2);
+
+    const fromFirst = await fetch(new URL(`t/${first.hello.sessionId}/install.sh`, door.url));
+    expect(fromFirst.status).toBe(200);
+    await expect(fromFirst.text()).resolves.toBe('one');
+    const fromSecond = await fetch(new URL(`t/${second.hello.sessionId}/install.sh`, door.url));
+    expect(fromSecond.status).toBe(200);
+    await expect(fromSecond.text()).resolves.toBe('two');
+
+    const bare = await fetch(new URL('install.sh', door.url));
+    expect(bare.status).toBe(503);
+    await expect(bare.json()).resolves.toEqual({ error: 'relay_ambiguous' });
+
+    first.laptop.close();
+    second.laptop.close();
+  });
+
+  it('reclaims a session after disconnect and 409s a live id', async () => {
+    const nextOrigin = await listenNext();
+    door = await startFrontDoor({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'relay-token-relay-token',
+      spawnNext: false,
+      nextOrigin
     });
-    const firstClosed = new Promise<void>((resolve) => first.on('close', () => resolve()));
-    const second = await connectWs({
-      hostname: '127.0.0.1',
-      port: door.port,
-      path: '/_zcc/relay',
-      headers: { Authorization: 'Bearer relay-token-relay-token' }
-    });
+    const first = await connectEchoLaptop(door.port);
+    const sessionId = first.hello.sessionId;
+    const firstClosed = new Promise<void>((resolve) => first.laptop.on('close', () => resolve()));
+    first.laptop.close();
     await firstClosed;
-    expect(door.hasLaptop()).toBe(true);
-    second.on('message', (payload: Buffer) => {
-      const frame = decodeFrame(payload);
-      if (!frame || frame.type !== TYPE.HTTP_REQ || !(frame.flags & FLAG.META)) return;
-      second.send(encodeFrame(TYPE.HTTP_RES, FLAG.META | FLAG.FIN, frame.streamId, encodeJsonPayload({
-        status: 200,
-        headers: [['content-type', 'text/plain; charset=utf-8']]
-      })));
-    });
-    for (let i = 0; i < 50 && !door.hasLaptop(); i++) {
+    for (let i = 0; i < 50 && door.sessionCount() > 0; i++) {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
-    const script = await fetch(new URL('install.sh', door.url), { redirect: 'manual' });
+    expect(door.sessionCount()).toBe(0);
+
+    const reclaimed = await connectEchoLaptop(door.port, 'reclaim', sessionId);
+    expect(reclaimed.hello.sessionId).toBe(sessionId);
+
+    await expect(connectWs({
+      hostname: '127.0.0.1',
+      port: door.port,
+      path: '/_zcc/relay',
+      headers: {
+        Authorization: 'Bearer relay-token-relay-token',
+        'X-Zcc-Relay-Session': sessionId
+      }
+    })).rejects.toThrow(/409/);
+
+    reclaimed.laptop.close();
+  });
+
+  it('expires join paths after the join window while host ws still upgrades', async () => {
+    const nextOrigin = await listenNext();
+    let now = 1_000_000;
+    door = await startFrontDoor({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'relay-token-relay-token',
+      spawnNext: false,
+      nextOrigin,
+      now: () => now,
+      joinTtlMs: 5_000
+    });
+    const attached = await connectEchoLaptop(door.port);
+    const script = await fetch(new URL(`t/${attached.hello.sessionId}/install.sh`, door.url));
     expect(script.status).toBe(200);
-    second.close();
+
+    now += 6_000;
+    const expired = await fetch(new URL(`t/${attached.hello.sessionId}/install.sh`, door.url));
+    expect(expired.status).toBe(410);
+    await expect(expired.json()).resolves.toEqual({ error: 'join_expired' });
+    const enroll = await fetch(new URL(`t/${attached.hello.sessionId}/internal/hosts/enroll`, door.url), {
+      method: 'POST',
+      body: '{}'
+    });
+    expect(enroll.status).toBe(410);
+
+    const hostWs = await connectWs({
+      hostname: '127.0.0.1',
+      port: door.port,
+      path: `/t/${attached.hello.sessionId}/internal/hosts/ws`
+    });
+    hostWs.close();
+
+    attached.laptop.send(encodeFrame(TYPE.JOIN_RENEW, FLAG.FIN, 0));
+    for (let i = 0; i < 40; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const again = await fetch(new URL(`t/${attached.hello.sessionId}/install.sh`, door.url));
+      if (again.status === 200) {
+        attached.laptop.close();
+        return;
+      }
+    }
+    throw new Error('join window did not renew');
   });
 });
+
+async function waitForHello(
+  laptop: Awaited<ReturnType<typeof connectWs>>
+): Promise<{ sessionId: string; joinUntil: number }> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('no HELLO')), 3_000);
+    laptop.on('message', (payload: Buffer) => {
+      const frame = decodeFrame(payload);
+      if (!frame || frame.type !== TYPE.HELLO) return;
+      clearTimeout(timer);
+      resolve(JSON.parse(frame.payload.toString()) as { sessionId: string; joinUntil: number });
+    });
+  });
+}
+
+function echoInstall(laptop: Awaited<ReturnType<typeof connectWs>>, body: string): void {
+  laptop.on('message', (payload: Buffer) => {
+    const frame = decodeFrame(payload);
+    if (!frame) return;
+    if (frame.type === TYPE.PING) {
+      laptop.send(encodeFrame(TYPE.PONG, 0, frame.streamId));
+      return;
+    }
+    if (frame.type === TYPE.HELLO) return;
+    if (frame.type !== TYPE.HTTP_REQ || !(frame.flags & FLAG.META)) return;
+    laptop.send(encodeFrame(TYPE.HTTP_RES, FLAG.META, frame.streamId, encodeJsonPayload({
+      status: 200,
+      headers: [['content-type', 'text/plain; charset=utf-8']]
+    })));
+    laptop.send(encodeFrame(TYPE.HTTP_RES, FLAG.FIN, frame.streamId, Buffer.from(body)));
+  });
+}
+
+async function connectEchoLaptop(
+  port: number,
+  body = 'ok',
+  sessionId?: string
+): Promise<{ laptop: Awaited<ReturnType<typeof connectWs>>; hello: { sessionId: string; joinUntil: number } }> {
+  const headers: Record<string, string> = { Authorization: 'Bearer relay-token-relay-token' };
+  if (sessionId) headers['X-Zcc-Relay-Session'] = sessionId;
+  const laptop = await connectWs({
+    hostname: '127.0.0.1',
+    port,
+    path: '/_zcc/relay',
+    headers
+  });
+  const helloPromise = waitForHello(laptop);
+  echoInstall(laptop, body);
+  const hello = await helloPromise;
+  return { laptop, hello };
+}

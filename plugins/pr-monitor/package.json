@@ -1,0 +1,37 @@
+{
+  "name": "@zcc-ext/pr-monitor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Monitor your authored GitHub pull requests via the local gh CLI.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "scripts": {
+    "build": "node scripts/build-app.mjs",
+    "package": "node scripts/build-app.mjs"
+  },
+  "zcc": {
+    "name": "PR Monitor",
+    "description": "Keep your authored pull requests visible: CI, review, merge-readiness, and inbox alerts.",
+    "branding": {
+      "icon": "GitPullRequest"
+    },
+    "server": "./server.mjs",
+    "app": "./app.js"
+  },
+  "dependencies": {
+    "lucide-react": "^1.31.0"
+  },
+  "devDependencies": {
+    "@zana-ai/zcc-plugin-build": "workspace:*",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "happy-dom": "^20.10.6",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  }
+}

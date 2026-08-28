@@ -47,7 +47,11 @@ afterEach(async () => {
   server = null;
 });
 
-async function startServer(projectRoot: string, enrollToken = 'enroll-token-enroll-token-enroll') {
+async function startServer(
+  projectRoot: string,
+  enrollToken = 'enroll-token-enroll-token-enroll',
+  extras?: { quickAgent?: boolean; name?: string }
+) {
   const dataDir = mkdtempSync(join(tmpdir(), 'zcc-host-hub-'));
   writeFileSync(
     join(dataDir, 'projects.json'),
@@ -55,10 +59,11 @@ async function startServer(projectRoot: string, enrollToken = 'enroll-token-enro
       version: 1,
       projects: [{
         id: 'proj-1',
-        name: 'Alpha',
+        name: extras?.name ?? 'Alpha',
         path: projectRoot,
         createdAt: 1,
-        lastActiveAt: 1
+        lastActiveAt: 1,
+        ...(extras?.quickAgent ? { quickAgent: true } : {})
       }]
     })
   );
@@ -66,6 +71,12 @@ async function startServer(projectRoot: string, enrollToken = 'enroll-token-enro
     dataDir,
     enrollToken,
     origins: { serverPort: 0, devAppPort: 5173 }
+  });
+  server.ctx.pluginHostArtifacts.set('test', {
+    path: '/tmp/host.js',
+    digest: 'a'.repeat(64),
+    byteLength: 12,
+    generation: 'g1'
   });
   return { dataDir, enrollToken };
 }
@@ -199,6 +210,9 @@ function defaultRpcHandler(projectRoot: string) {
       case 'environment.destroy':
         reply(true, { environmentId: request.command.environmentId, destroyed: true });
         return;
+      case 'project.clone_default_path':
+        reply(true, { path: join(projectRoot, 'checkouts', request.command.projectSlug) });
+        return;
       case 'host.list_branches':
         reply(true, { branches: ['main'], truncated: false });
         return;
@@ -221,6 +235,13 @@ function defaultRpcHandler(projectRoot: string) {
         });
         return;
       }
+      case 'host.browse_directory':
+        reply(true, {
+          directory: request.command.path ?? projectRoot,
+          parent: null,
+          entries: [{ name: 'note.md', kind: 'file', path: `${request.command.path ?? projectRoot}/note.md` }]
+        });
+        return;
       case 'host.read_file':
         reply(true, { content: '# hello\n', encoding: 'utf8' });
         return;
@@ -307,6 +328,74 @@ describe('host enroll hub and thread create', () => {
     }).then(async (response) => ({ status: response.status, body: await response.json() }));
     expect(ambiguous.status).toBe(409);
     expect(ambiguous.body.code).toBe('ambiguous-host');
+  });
+
+  it('provisions a personal workspace when Default Workspace runs on another machine', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-proj-'));
+    const { enrollToken } = await startServer(projectRoot, 'enroll-token-enroll-token-enroll', {
+      quickAgent: true,
+      name: 'Default Workspace'
+    });
+    const instanceA = randomUUID();
+    const instanceB = randomUUID();
+    const hostA = await enrollHost(enrollToken, 'alpha', instanceA);
+    await openHostSocket(hostA, instanceA, defaultRpcHandler(projectRoot));
+    await waitForHost(hostA.hostId);
+
+    const hostB = await enrollHost(enrollToken, 'limited-pony', instanceB);
+    const bCommands: HostRpcRequestMessage[] = [];
+    await openHostSocket(hostB, instanceB, (request, reply) => {
+      bCommands.push(request);
+      defaultRpcHandler(projectRoot)(request, reply);
+    });
+    await waitForHost(hostB.hostId);
+
+    const spawned = await fetch(`${server!.url}api/v1/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'proj-1',
+        providerId: 'claude',
+        input: ['hello'],
+        hostId: hostB.hostId,
+        environment: { kind: 'unmanaged' },
+        cwd: projectRoot
+      })
+    }).then(async (response) => ({ status: response.status, body: await response.json() }));
+    expect(spawned.status).toBe(201);
+    const provision = bCommands.find((row) => row.command.type === 'environment.provision');
+    expect(provision?.command).toMatchObject({ workspaceProvisionType: 'personal' });
+    const targetPath = (provision?.command as { targetPath?: string }).targetPath;
+    expect(targetPath?.startsWith(`${join(projectRoot, 'personal-workspaces')}/`)).toBe(true);
+    const start = bCommands.find((row) => row.command.type === 'thread.start');
+    expect(start?.command).toMatchObject({ type: 'thread.start' });
+    expect((start?.command as { cwd?: string }).cwd).toBeUndefined();
+  });
+
+  it('rejects a local project folder on another machine', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-proj-'));
+    const { enrollToken } = await startServer(projectRoot);
+    const instanceA = randomUUID();
+    const instanceB = randomUUID();
+    const hostA = await enrollHost(enrollToken, 'alpha', instanceA);
+    await openHostSocket(hostA, instanceA, defaultRpcHandler(projectRoot));
+    await waitForHost(hostA.hostId);
+    const hostB = await enrollHost(enrollToken, 'limited-pony', instanceB);
+    await openHostSocket(hostB, instanceB, defaultRpcHandler(projectRoot));
+    await waitForHost(hostB.hostId);
+
+    const spawned = await fetch(`${server!.url}api/v1/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'proj-1',
+        providerId: 'claude',
+        input: ['hello'],
+        hostId: hostB.hostId
+      })
+    }).then(async (response) => ({ status: response.status, body: await response.json() }));
+    expect(spawned.status).toBe(400);
+    expect(spawned.body.code).toBe('host-workspace-mismatch');
   });
 
   it('provisions a managed worktree environment under the host data dir', async () => {
@@ -585,13 +674,13 @@ describe('host enroll hub and thread create', () => {
     expect(listed).toHaveLength(1);
     expect(listed[0]?.status).toBe('pending');
 
-    const blocked = await fetch(`${server!.url}api/v1/threads/${spawned.value.id}/send`, {
+    const queued = await fetch(`${server!.url}api/v1/threads/${spawned.value.id}/send`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ input: ['follow up'], mode: 'auto' })
     }).then(async (response) => ({ status: response.status, body: await response.json() }));
-    expect(blocked.status).toBe(409);
-    expect(blocked.body.code).toBe('awaiting_user_interaction');
+    expect(queued.status).toBe(200);
+    expect(queued.body.ok).toBe(true);
 
     const resolved = await fetch(`${server!.url}api/v1/threads/${spawned.value.id}/interactions/${listed[0]!.id}/resolve`, {
       method: 'POST',

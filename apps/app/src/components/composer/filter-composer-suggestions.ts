@@ -74,7 +74,7 @@ export function buildMentionSuggestions(input: {
       kind: 'thread' as const,
       threadId: thread.id,
       projectId: thread.projectId,
-      title: thread.title?.trim() || 'Untitled thread',
+      title: thread.title?.trim() || 'Untitled agent',
       projectName: thread.projectName?.trim() || null
     })),
     input.query,
@@ -159,6 +159,19 @@ export function mergeCommandCatalogs(
     }
   }
   return [...merged.values()];
+}
+
+const THREAD_WORK_MODE_COMMANDS = new Set(['/plan', '/goal']);
+
+/** Thread Agent/Plan/Goal prefixes — never offer these on the CLI Agent catalog. */
+export function isThreadWorkModeCommand(name: string): boolean {
+  return THREAD_WORK_MODE_COMMANDS.has(commandName(name).toLowerCase());
+}
+
+export function filterCliComposerCommands(
+  commands: ReadonlyArray<{ name: string; description: string }>
+): Array<{ name: string; description: string }> {
+  return commands.filter((row) => !isThreadWorkModeCommand(row.name));
 }
 
 export function buildCommandSuggestions(

@@ -4,6 +4,7 @@ import {
   Laptop,
   Monitor,
   Pencil,
+  RefreshCw,
   Trash2
 } from 'lucide-react';
 import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
@@ -14,9 +15,10 @@ import {
   type MachineProviderCliRow,
   type ProviderCliTone
 } from './machine-provider-clis.js';
+import { machineCanReconnect } from './machine-reconnect.js';
 import { machineConnectionCopy, permissionLabel } from './machine-status.js';
 
-function StatusIcon({ tone }: { tone: ProviderCliTone }) {
+function StatusIcon({ tone }: { tone: ProviderCliTone | 'error' }) {
   if (tone === 'ok') return <CheckCircle2 size={15} aria-hidden="true" />;
   return <AlertTriangle size={15} aria-hidden="true" />;
 }
@@ -25,11 +27,13 @@ export function MachineCliInventory({
   hostId,
   rows,
   busyKey,
+  installErrors = {},
   onInstall
 }: {
   hostId: string;
   rows: MachineProviderCliRow[];
   busyKey: string | null;
+  installErrors?: Record<string, string>;
   onInstall: (provider: ProviderCliKey, actionKind: ProviderCliInstallActionKind) => void;
 }) {
   const summary = machineCliInventorySummary(rows);
@@ -45,14 +49,17 @@ export function MachineCliInventory({
         <ul className="machine-cli-list" data-testid={`machine-cli-list-${hostId}`}>
           {rows.map((row) => {
             const copy = providerCliPresentation(row.status);
-            const busy = busyKey === `${hostId}:${row.provider}`;
+            const key = `${hostId}:${row.provider}`;
+            const busy = busyKey === key;
+            const error = installErrors[key];
+            const tone = error ? 'error' : copy.tone;
             return (
               <li
                 key={row.provider}
-                className={`machine-cli-row machine-cli-row--${copy.tone}`}
+                className={`machine-cli-row machine-cli-row--${tone}`}
               >
                 <span className="machine-cli-icon">
-                  <StatusIcon tone={copy.tone} />
+                  <StatusIcon tone={tone} />
                 </span>
                 <div className="machine-cli-copy">
                   <strong>{row.status.displayName}</strong>
@@ -84,6 +91,15 @@ export function MachineCliInventory({
                     </span>
                   )}
                 </div>
+                {error ? (
+                  <p
+                    className="machine-cli-row-error"
+                    role="alert"
+                    data-testid={`machine-cli-error-${hostId}-${row.provider}`}
+                  >
+                    {error}
+                  </p>
+                ) : null}
               </li>
             );
           })}
@@ -99,14 +115,18 @@ export function MachineCard({
   now,
   cliRows,
   busyKey,
+  installErrors = {},
   renaming,
   renameValue,
+  reconnecting,
+  reconnectError,
   onRenameValue,
   onRenameStart,
   onRenameCommit,
   onPermissionChange,
   onRetryUpdate,
   onRemove,
+  onReconnect,
   onInstall
 }: {
   host: Host;
@@ -114,19 +134,24 @@ export function MachineCard({
   now: number;
   cliRows: MachineProviderCliRow[];
   busyKey: string | null;
+  installErrors?: Record<string, string>;
   renaming: boolean;
   renameValue: string;
+  reconnecting: boolean;
+  reconnectError: string | null;
   onRenameValue: (value: string) => void;
   onRenameStart: () => void;
   onRenameCommit: () => void;
   onPermissionChange: (mode: Host['maxPermissionMode']) => void;
   onRetryUpdate: () => void;
   onRemove: () => void;
+  onReconnect: () => void;
   onInstall: (provider: ProviderCliKey, actionKind: ProviderCliInstallActionKind) => void;
 }) {
   const connection = machineConnectionCopy(host, now);
   const HostIcon = host.isPrimary ? Laptop : Monitor;
   const projectLabel = `${projectCount} ${projectCount === 1 ? 'project' : 'projects'}`;
+  const showReconnect = machineCanReconnect(host);
 
   return (
     <li className={`machine-card${host.status === 'connected' ? ' machine-card--online' : ''}`}>
@@ -168,7 +193,7 @@ export function MachineCard({
             <span>Permission ceiling</span>
             <select
               value={host.maxPermissionMode}
-              title={`Threads on this machine cannot exceed ${permissionLabel(host.maxPermissionMode)}`}
+              title={`Agents on this machine cannot exceed ${permissionLabel(host.maxPermissionMode)}`}
               onChange={(event) => {
                 onPermissionChange(event.target.value as Host['maxPermissionMode']);
               }}
@@ -187,6 +212,19 @@ export function MachineCard({
             <Pencil size={13} aria-hidden="true" />
             Rename
           </button>
+          {showReconnect ? (
+            <button
+              type="button"
+              className="settings-btn"
+              disabled={reconnecting}
+              onClick={onReconnect}
+              aria-label={`Reconnect ${host.name}`}
+              data-testid={`machine-reconnect-${host.id}`}
+            >
+              <RefreshCw size={13} aria-hidden="true" className={reconnecting ? 'spinning' : undefined} />
+              {reconnecting ? 'Reconnecting…' : 'Reconnect'}
+            </button>
+          ) : null}
           {host.lastRejectedProtocolVersion ? (
             <button type="button" className="settings-btn" onClick={onRetryUpdate}>
               Retry update
@@ -196,6 +234,7 @@ export function MachineCard({
             <button
               type="button"
               className="settings-btn danger"
+              disabled={reconnecting}
               onClick={onRemove}
               aria-label={`Remove ${host.name}`}
             >
@@ -210,10 +249,16 @@ export function MachineCard({
           hostId={host.id}
           rows={cliRows}
           busyKey={busyKey}
+          installErrors={installErrors}
           onInstall={onInstall}
         />
       ) : (
-        <p className="machine-cli-offline">Connect this machine to see harness CLI versions.</p>
+        <div className="machine-cli-offline-wrap">
+          <p className="machine-cli-offline">Connect this machine to see harness CLI versions.</p>
+          {reconnectError ? (
+            <p className="machine-reconnect-error" role="alert">{reconnectError}</p>
+          ) : null}
+        </div>
       )}
     </li>
   );

@@ -1103,6 +1103,54 @@ rl.on("line", (line) => {
     }
   });
 
+  it("retries a retryable rateLimited rejection on the bounded ladder", async () => {
+    const events: ThreadEvent[] = [];
+    const runtime = createAgentRuntimeWithAdapters({
+      workspacePath: tmpDir,
+      rateLimitRetry: { delaysMs: [1] },
+      onEvent: (event) => events.push(event),
+      onToolCall: async () => ({
+        contentItems: [{ type: "inputText", text: "ok" }],
+        success: true,
+      }),
+      adapterFactory: () => {
+        const adapter = createFakeAdapter(scriptPath);
+        return {
+          ...adapter,
+          process: {
+            ...adapter.process,
+            args: [...adapter.process.args, "--rate-limited-once"],
+          },
+        };
+      },
+    });
+
+    try {
+      await runtime.startThread({
+        environmentId: "env-1",
+        projectId: "p1",
+        providerId: "fake",
+        threadId: "t-rate-limited",
+        options: fullRuntimeOptions,
+      });
+      await runtime.runTurn({
+        clientRequestId: "creq_rate_limited01",
+        input: [promptTextInput({ text: "hello" })],
+        options: fullRuntimeOptions,
+        threadId: "t-rate-limited",
+      });
+      await waitForThreadTurnStarted({
+        events,
+        providerId: "fake",
+        runtime,
+        threadId: "t-rate-limited",
+        turnId: "turn-1",
+      });
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
   it("rejects turn steer when providerThreadId cannot be resolved", async () => {
     const events: ThreadEvent[] = [];
     const activeTurnScriptPath = join(tmpDir, "active-turn-provider.cjs");

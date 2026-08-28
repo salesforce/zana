@@ -108,6 +108,17 @@ describe('AddMachineDialogView', () => {
     expect(html).toContain('disabled=""');
   });
 
+  it('offers renew when the relay join window has closed', () => {
+    const html = renderToStaticMarkup(view({
+      remainingMs: 0,
+      expired: true,
+      joinWindowClosed: true
+    }));
+    expect(html).toContain('Join window closed');
+    expect(html).toContain('Renew join window');
+    expect(html).toContain('disabled=""');
+  });
+
   it('flips to connected when the new machine appears', () => {
     const html = renderToStaticMarkup(view({
       copied: true,

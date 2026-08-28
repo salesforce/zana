@@ -18,7 +18,7 @@ function promptInputForTurn(prompt: readonly string[], promptInput?: unknown): P
       const result = promptInputSchema.safeParse(part);
       if (result.success) parsed.push(result.data);
     }
-    if (parsed.some((part) => part.type === 'text')) return parsed;
+    if (parsed.length > 0) return parsed;
   }
   return prompt
     .map((text) => text.trim())

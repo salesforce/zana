@@ -41,6 +41,11 @@
         "types": "./src/provider-bridge.ts",
         "import": "./dist/provider-bridge.js",
         "default": "./dist/provider-bridge.js"
+      },
+      "./provider-bridge/testing": {
+        "types": "./src/provider-bridge-testing.ts",
+        "import": "./dist/provider-bridge-testing.js",
+        "default": "./dist/provider-bridge-testing.js"
       }
     }
   },
@@ -85,12 +90,18 @@
       "types": "./src/provider-bridge.ts",
       "import": "./dist/provider-bridge.js",
       "default": "./dist/provider-bridge.js"
+    },
+    "./provider-bridge/testing": {
+      "source": "./src/provider-bridge-testing.ts",
+      "types": "./src/provider-bridge-testing.ts",
+      "import": "./dist/provider-bridge-testing.js",
+      "default": "./dist/provider-bridge-testing.js"
     }
   },
   "scripts": {
     "build": "node scripts/build-runtime.mjs",
     "prepack": "node scripts/build-runtime.mjs",
-    "test": "vitest run --config ../../vitest.config.ts src/testing/index.test.ts src/app.test.ts",
+    "test": "vitest run --config ../../vitest.config.ts src/testing/index.test.ts src/app.test.ts src/provider-bridge.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "peerDependencies": {

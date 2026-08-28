@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   HOST_RPC_PROTOCOL_VERSION,
+  HostBridgeLaunchSchema,
   HostEnrollRequestSchema,
   HostEnrollResponseSchema,
   HostEventBatchMessageSchema,
@@ -221,7 +222,7 @@ describe('host-rpc contract', () => {
       cols: 0,
       rows: 24
     }).success).toBe(false);
-    expect(HostRpcCommandSchema.safeParse({ type: 'thread.rewind.prepare' }).success).toBe(false);
+    expect(HostRpcCommandSchema.safeParse({ type: 'not.a.command' }).success).toBe(false);
     expect(HostRpcCommandSchema.safeParse({
       type: 'environment.provision',
       environmentId,
@@ -274,7 +275,6 @@ describe('host-rpc contract', () => {
       providerId: 'codex',
       bridgeLaunch: {
         pluginId: 'provider-codex',
-        dataDir: '/tmp/bridge',
         source: { kind: 'daemon-bundled', id: 'codex' },
         capabilities: {
           supportsServiceTier: true,
@@ -286,6 +286,31 @@ describe('host-rpc contract', () => {
       }
     });
     expect(command.type).toBe('provider.list_models');
+    expect(
+      HostRpcCommandSchema.parse({
+        type: 'provider.list_models',
+        providerId: 'acp-opencode',
+        bridgeLaunch: {
+          pluginId: 'provider-acp',
+          source: {
+            kind: 'artifact',
+            digest: 'ab'.repeat(32),
+            byteLength: 2048
+          },
+          capabilities: {
+            supportsServiceTier: true,
+            permissionModes: ['full'],
+            supportsThreadArchive: false,
+            supportsThreadRename: false,
+            fork: 'tip'
+          }
+        }
+      }).bridgeLaunch.source
+    ).toEqual({
+      kind: 'artifact',
+      digest: 'ab'.repeat(32),
+      byteLength: 2048
+    });
     expect(parseHostRpcResult('provider.list_models', {
       models: [{
         id: 'gpt-5.5',
@@ -298,6 +323,28 @@ describe('host-rpc contract', () => {
       }],
       selectedOnlyModels: []
     }).models[0]?.displayName).toBe('GPT-5.5');
+  });
+
+  it('rejects leftover laptop artifactPath and dataDir on HostBridgeLaunch', () => {
+    const launch = {
+      pluginId: 'provider-acp',
+      source: {
+        kind: 'artifact' as const,
+        digest: 'ab'.repeat(32),
+        byteLength: 2048,
+        artifactPath: '/Users/me/plugins/provider-acp/src/bridge/bridge.ts'
+      },
+      dataDir: '/Users/me/.zcc/thread-bridges/acp-opencode',
+      capabilities: {
+        supportsServiceTier: true,
+        permissionModes: ['full'],
+        supportsThreadArchive: false,
+        supportsThreadRename: false,
+        fork: 'tip'
+      }
+    };
+    expect(HostBridgeLaunchSchema.safeParse(launch).success).toBe(false);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBeGreaterThanOrEqual(18);
   });
 
   it('parses provider CLI status and install commands', () => {
@@ -428,5 +475,146 @@ describe('host-rpc contract', () => {
       ok: true,
       log: 'installed'
     });
+  });
+
+  it('parses host filesystem mutations and thread lifecycle commands', () => {
+    expect(HostRpcCommandSchema.parse({
+      type: 'host.write_file',
+      path: '/tmp/proj/a.ts',
+      rootPath: '/tmp/proj',
+      content: 'hello',
+      contentEncoding: 'utf8',
+      createParents: true
+    }).type).toBe('host.write_file');
+    expect(parseHostRpcResult('host.write_file', {
+      outcome: 'written',
+      sha256: 'a'.repeat(64),
+      sizeBytes: 5
+    })).toMatchObject({ outcome: 'written', sizeBytes: 5 });
+    expect(parseHostRpcResult('host.write_file', {
+      outcome: 'conflict',
+      currentSha256: null
+    })).toEqual({ outcome: 'conflict', currentSha256: null });
+    expect(HostRpcCommandSchema.parse({
+      type: 'host.mkdir',
+      path: '/tmp/proj/dir',
+      recursive: true
+    }).type).toBe('host.mkdir');
+    expect(HostRpcCommandSchema.parse({
+      type: 'host.move_path',
+      sourcePath: '/tmp/proj/a.ts',
+      destinationPath: '/tmp/proj/b.ts',
+      rootPath: '/tmp/proj'
+    }).type).toBe('host.move_path');
+    expect(HostRpcCommandSchema.parse({
+      type: 'host.remove_path',
+      path: '/tmp/proj/b.ts',
+      recursive: false
+    }).type).toBe('host.remove_path');
+    expect(HostRpcCommandSchema.parse({
+      type: 'host.browse_directory'
+    }).type).toBe('host.browse_directory');
+    expect(HostRpcCommandSchema.parse({
+      type: 'host.paths_exist',
+      paths: ['/tmp/proj/a.ts']
+    }).type).toBe('host.paths_exist');
+    expect(parseHostRpcResult('host.paths_exist', {
+      existence: { '/tmp/proj/a.ts': true }
+    })).toEqual({ existence: { '/tmp/proj/a.ts': true } });
+    expect(HostRpcCommandSchema.parse({
+      type: 'host.list_paths',
+      path: '/tmp/proj',
+      query: 'foo',
+      limit: 80,
+      includeFiles: true,
+      includeDirectories: false
+    }).type).toBe('host.list_paths');
+    expect(HostRpcCommandSchema.safeParse({
+      type: 'host.list_paths',
+      path: '/tmp/proj',
+      limit: 80,
+      includeFiles: false,
+      includeDirectories: false
+    }).success).toBe(false);
+    expect(parseHostRpcResult('host.list_paths', {
+      paths: [{
+        kind: 'file',
+        path: 'src/foo.ts',
+        name: 'foo.ts',
+        score: 12,
+        positions: [4, 5, 6]
+      }],
+      truncated: false
+    })).toMatchObject({ truncated: false, paths: [{ path: 'src/foo.ts' }] });
+    expect(HostRpcCommandSchema.parse({
+      type: 'host.read_path',
+      path: '/tmp/proj/a.ts',
+      rootPath: '/tmp/proj'
+    }).type).toBe('host.read_path');
+    expect(parseHostRpcResult('host.read_path', {
+      path: '/tmp/proj/a.ts',
+      content: 'hello',
+      contentEncoding: 'utf8',
+      sizeBytes: 5,
+      sha256: 'a'.repeat(64)
+    })).toMatchObject({ contentEncoding: 'utf8', sizeBytes: 5 });
+    expect(HostRpcCommandSchema.parse({
+      type: 'host.file_metadata',
+      path: '/tmp/proj/a.ts'
+    }).type).toBe('host.file_metadata');
+    expect(parseHostRpcResult('host.file_metadata', {
+      path: '/tmp/proj/a.ts',
+      modifiedAtMs: 1,
+      sizeBytes: 5
+    })).toEqual({ path: '/tmp/proj/a.ts', modifiedAtMs: 1, sizeBytes: 5 });
+    expect(HostRpcCommandSchema.parse({
+      type: 'host.pick_folder'
+    }).type).toBe('host.pick_folder');
+    expect(parseHostRpcResult('host.pick_folder', { path: null })).toEqual({ path: null });
+    expect(HostRpcCommandSchema.parse({
+      type: 'thread.rewind.prepare',
+      threadId,
+      environmentId,
+      leaseId: 'lease-1',
+      projectId: 'p1',
+      providerId: 'codex',
+      sourceProviderThreadId: 'pt-1',
+      retainThroughProviderCheckpoint: 'cp-1'
+    }).type).toBe('thread.rewind.prepare');
+    expect(HostRpcCommandSchema.parse({
+      type: 'thread.rewind.discard',
+      threadId,
+      environmentId,
+      leaseId: 'lease-1'
+    }).type).toBe('thread.rewind.discard');
+    expect(HostRpcCommandSchema.parse({
+      type: 'thread.rename',
+      threadId,
+      environmentId,
+      title: 'New title'
+    }).type).toBe('thread.rename');
+    expect(HostRpcCommandSchema.parse({
+      type: 'thread.archive',
+      threadId,
+      environmentId,
+      providerId: 'claude',
+      providerThreadId: 'pt-1'
+    }).type).toBe('thread.archive');
+    expect(HostRpcCommandSchema.parse({
+      type: 'thread.unarchive',
+      threadId,
+      environmentId,
+      providerId: 'claude',
+      providerThreadId: 'pt-1'
+    }).type).toBe('thread.unarchive');
+    expect(HostRpcCommandSchema.parse({
+      type: 'thread.goal.clear',
+      threadId,
+      environmentId
+    }).type).toBe('thread.goal.clear');
+    expect(parseHostRpcResult('thread.goal.clear', {
+      threadId,
+      cleared: true
+    })).toEqual({ threadId, cleared: true });
   });
 });

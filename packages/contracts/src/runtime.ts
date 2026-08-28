@@ -273,6 +273,7 @@ export const PluginAppSnapshotSchema = z.object({
   provenance: z.enum(['builtin', 'direct', 'catalog']),
   status: z.enum(['running', 'disabled', 'degraded', 'needs-configuration']),
   appUrl: z.string().max(4096).nullable(),
+  availableVersion: z.string().min(1).max(256).optional(),
   projectTab: PluginAppProjectTabSchema.optional()
 }).strict();
 

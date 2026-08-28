@@ -281,7 +281,7 @@ describe('createProjectStore', () => {
     ]);
   });
 
-  it('binds an SSH remote project to an enrolled host and drops project.remote', async () => {
+  it('binds an SSH remote project to an enrolled host and keeps project.remote', async () => {
     const home = makeDir();
     const placeholderRoot = join(home, 'remote-projects');
     const placeholder = join(placeholderRoot, 'remote-1');
@@ -307,9 +307,12 @@ describe('createProjectStore', () => {
     expect(bound).toMatchObject({
       id: 'remote-1',
       hostId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
-      path: '/home/me/app'
+      path: placeholder,
+      remote: { host: 'devbox', user: 'me', remotePath: '/home/me/app' }
     });
-    expect(bound).not.toHaveProperty('remote');
-    expect(store.list()[0]).not.toHaveProperty('remote');
+    expect(store.list()[0]).toMatchObject({
+      path: placeholder,
+      remote: { host: 'devbox', user: 'me', remotePath: '/home/me/app' }
+    });
   });
 });

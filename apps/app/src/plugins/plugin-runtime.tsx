@@ -6,7 +6,7 @@ import type {
   PluginSettingsState,
   ZccNavigate
 } from '@zana-ai/zcc-plugin-sdk/app';
-import { callPluginRpc, definePluginApp, getPluginSettings } from '@zana-ai/zcc-plugin-sdk/app';
+import { callPluginRpc, getPluginSettings } from '@zana-ai/zcc-plugin-sdk/app';
 import { MarkdownContent } from '../components/MarkdownContent.js';
 import { useRouteState } from '../hooks/useRouteState.js';
 import { useThreads } from '../thread-store.js';
@@ -20,12 +20,7 @@ import {
 import { appNavigate } from '../lib/app-navigate.js';
 import { getActiveComposerApi } from './plugin-composer-api.js';
 import { usePluginRuntimeContext } from './PluginSlotBoundary.js';
-import { listThreadPanelActions } from './plugin-slots.js';
-import {
-  addClosableTab,
-  loadSecondaryPanelState,
-  persistSecondaryPanelState
-} from '../components/thread/secondary-panel/threadSecondaryPanelState.js';
+import { openPluginThreadPanel } from './plugin-thread-panel.js';
 
 const ThreadDetailLazy = lazy(async () => {
   const mod = await import('../views/threads/ThreadDetailView.js');
@@ -99,25 +94,13 @@ function useZccNavigateImpl(): ZccNavigate {
         void navigate(query ? `${NEW_THREAD_ROUTE_PATH}?${query}` : NEW_THREAD_ROUTE_PATH);
       },
       openThreadPanel(options) {
-        const threadId = route.threadId;
-        if (!threadId) return false;
-        const action = listThreadPanelActions().find(
-          (row) => row.pluginId === pluginId && row.id === options.actionId
-        );
-        if (!action) return false;
-        const state = loadSecondaryPanelState(threadId);
-        const next = addClosableTab(state, {
-          kind: 'plugin',
-          title: options.title ?? action.title,
-          moduleId: pluginId,
+        return openPluginThreadPanel({
           pluginId,
+          threadId: route.threadId,
           actionId: options.actionId,
-          params: options.params ?? null,
-          layout: action.layout
+          title: options.title,
+          params: options.params ?? null
         });
-        persistSecondaryPanelState(threadId, next);
-        window.dispatchEvent(new CustomEvent('zcc:secondary-panel-changed', { detail: { threadId } }));
-        return true;
       }
     }),
     [navigate, pluginId, route.threadId]
@@ -173,7 +156,7 @@ function NewThreadComposerImpl({
 
 export function installPluginRuntime(): void {
   const runtime: PluginSdkApp = {
-    definePluginApp,
+    definePluginApp: (setup) => ({ __zccPluginApp: true, setup }),
     useRpc: useRpcImpl,
     useRealtime: () => undefined,
     useRealtimeConnectionState: () => 'connected',
@@ -211,7 +194,12 @@ export function installPluginRuntime(): void {
     experimental_useSidebarThreadSplit: () => ({ isAvailable: false, splitProps: {}, layout: null }),
     ThreadChat: ThreadChatImpl as ComponentType<{ threadId: string }>,
     Markdown: MarkdownImpl as ComponentType<{ content: string; className?: string }>,
-    experimental_NewThreadComposer: NewThreadComposerImpl as never
+    experimental_NewThreadComposer: NewThreadComposerImpl as never,
+    toast: (message, kind = 'info') => {
+      void import('../store.js').then((mod) => {
+        mod.useUi.getState().pushToast(message, kind);
+      });
+    }
   };
   (globalThis as { __ZCC_PLUGIN_RUNTIME__?: PluginSdkApp }).__ZCC_PLUGIN_RUNTIME__ = runtime;
 }

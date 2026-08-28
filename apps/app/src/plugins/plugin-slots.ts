@@ -12,6 +12,7 @@ import type {
   PluginFileOpenerRegistration,
   PluginHomepageSectionRegistration,
   PluginMessageActionRegistration,
+  PluginCommandPaletteActionRegistration,
   PluginMessageDirectiveRegistration,
   PluginNavPanelRegistration,
   PluginNewThreadPanelActionRegistration,
@@ -54,6 +55,7 @@ function emptySnapshot() {
     fileOpeners: [] as PluginFileOpenerRegistration[],
     messageDirectives: [] as PluginMessageDirectiveRegistration[],
     messageActions: [] as PluginMessageActionRegistration[],
+    commandPaletteActions: [] as PluginCommandPaletteActionRegistration[],
     providerIcons: [] as PluginProviderIconRegistration[],
     composerCustomizations: [] as ComposerCustomization[],
     contentScripts: [] as PluginContentScriptRegistration[]
@@ -77,6 +79,7 @@ function rebuildSnapshot(): void {
     fileOpeners: orderedSets.flatMap((set) => set.fileOpeners),
     messageDirectives: orderedSets.flatMap((set) => set.messageDirectives),
     messageActions: orderedSets.flatMap((set) => set.messageActions),
+    commandPaletteActions: orderedSets.flatMap((set) => set.commandPaletteActions),
     providerIcons: orderedSets.flatMap((set) => set.providerIcons),
     composerCustomizations: orderedSets.flatMap((set) => set.composerCustomizations),
     contentScripts: orderedSets.flatMap((set) => set.contentScripts)
@@ -178,6 +181,10 @@ export function listMessageDirectives(): PluginMessageDirectiveRegistration[] {
 
 export function listMessageActions(): PluginMessageActionRegistration[] {
   return snapshot.messageActions;
+}
+
+export function listCommandPaletteActions(): PluginCommandPaletteActionRegistration[] {
+  return snapshot.commandPaletteActions;
 }
 
 export function listProviderIcons(): PluginProviderIconRegistration[] {

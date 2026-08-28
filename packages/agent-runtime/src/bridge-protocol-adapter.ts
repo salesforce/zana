@@ -19,17 +19,26 @@ import type {
   ThreadEvent,
 } from "@zana-ai/zcc-domain/thread-runtime";
 import { PROVIDER_FORK_VALUES } from "@zana-ai/zcc-domain/thread-runtime";
-import { pendingInteractionPayloadSchema, threadEventSchema } from "@zana-ai/zcc-domain/thread-runtime";
+import { pendingInteractionPayloadSchema } from "@zana-ai/zcc-domain/thread-runtime";
 import {
   BRIDGE_INBOUND_REQUEST_METHODS,
   BRIDGE_NOTIFICATION_METHODS,
   BRIDGE_REQUEST_METHODS,
   bridgeCapabilitiesSchema,
   initializeResultSchema,
+  negotiateGrammarVersion,
   PROVIDER_BRIDGE_PROTOCOL_VERSION,
+  THREAD_DELTA_NOTIFICATION_METHOD,
+  threadDeltaNotificationParamsSchema,
+  providerRecoveryNotificationSchema,
   type BridgeCapabilities,
+  type ProviderRecoveryHint,
   type SkillsConfigureRoot,
 } from "@zana-ai/zcc-provider-bridge-protocol";
+import {
+  ASSEMBLER_GRAMMAR_VERSIONS,
+  createDeltaAssembler,
+} from "@zana-ai/zcc-provider-bridge-protocol/assembler";
 import { z } from "zod";
 import type {
   AdapterCommand,
@@ -77,10 +86,6 @@ export interface BridgeProtocolAdapterOptions {
   staticProviderOptions?: Record<string, unknown>;
 }
 
-const threadEventNotificationParamsSchema = z
-  .object({ threadId: z.string().min(1), event: threadEventSchema })
-  .passthrough();
-
 const threadIdentityNotificationParamsSchema = z
   .object({
     threadId: z.string().min(1),
@@ -115,7 +120,12 @@ const interactionRequestParamsSchema = z.object({
   threadId: z.string().min(1).optional(),
   turnId: z.union([z.string().min(1), z.null()]),
   payload: pendingInteractionPayloadSchema,
+  providerNativeIds: z.boolean().optional(),
 });
+
+const providerNativeIdsParamsSchema = z
+  .object({ providerNativeIds: z.boolean().optional() })
+  .passthrough();
 
 /**
  * Execution options → canonical wire options. Core execution fields map
@@ -198,6 +208,7 @@ export function createBridgeProtocolAdapter(
     supportsFork: declaredFork !== "none",
     supportsSessionRewind: declaredFork === "checkpoint",
   };
+  const deltaAssembler = createDeltaAssembler({ providerId: options.id });
   /**
    * The operative fork ladder: the declaration is a ceiling and the handshake
    * may only narrow it, so the effective value is whichever of the two sits
@@ -458,14 +469,34 @@ export function createBridgeProtocolAdapter(
             method: BRIDGE_REQUEST_METHODS.initialize,
             params: {
               protocolVersion: PROVIDER_BRIDGE_PROTOCOL_VERSION,
-              client: { name: "bb", version: "1.0.0" },
+              client: { name: "zcc", version: "1.0.0" },
+              grammarVersions: ASSEMBLER_GRAMMAR_VERSIONS,
             },
           },
           onResult(result) {
             const parsed = initializeResultSchema.safeParse(result);
-            if (parsed.success) {
-              handshake = parsed.data.capabilities;
+            if (!parsed.success) {
+              throw new Error(
+                `Provider bridge "${options.id}" answered initialize with a malformed result.`,
+              );
             }
+            if (parsed.data.protocolVersion !== PROVIDER_BRIDGE_PROTOCOL_VERSION) {
+              throw new Error(
+                `Provider bridge "${options.id}" speaks Provider Bridge Protocol version ${parsed.data.protocolVersion}, but this runtime requires version ${PROVIDER_BRIDGE_PROTOCOL_VERSION}.`,
+              );
+            }
+            const grammarVersion = negotiateGrammarVersion(
+              ASSEMBLER_GRAMMAR_VERSIONS,
+              parsed.data.capabilities.grammarVersions,
+            );
+            if (grammarVersion === null) {
+              const [bridgeMin, bridgeMax] = parsed.data.capabilities.grammarVersions;
+              const [runtimeMin, runtimeMax] = ASSEMBLER_GRAMMAR_VERSIONS;
+              throw new Error(
+                `Provider bridge "${options.id}" speaks thread/delta grammar versions ${bridgeMin}-${bridgeMax}, but this runtime assembles versions ${runtimeMin}-${runtimeMax}.`,
+              );
+            }
+            handshake = parsed.data.capabilities;
           },
         },
       ];
@@ -487,11 +518,17 @@ export function createBridgeProtocolAdapter(
 
     translateEvent(event: ProviderRuntimeEvent): ThreadEvent[] {
       const method = event.method;
-      if (method === BRIDGE_NOTIFICATION_METHODS.threadEvent) {
-        const parsed = threadEventNotificationParamsSchema.safeParse(
+      if (method === THREAD_DELTA_NOTIFICATION_METHOD) {
+        const parsed = threadDeltaNotificationParamsSchema.safeParse(
           event.params,
         );
-        return parsed.success ? [parsed.data.event] : [];
+        if (!parsed.success) {
+          return [];
+        }
+        return deltaAssembler.assemble({
+          threadId: parsed.data.threadId,
+          deltas: parsed.data.deltas,
+        });
       }
       if (method === BRIDGE_NOTIFICATION_METHODS.threadIdentity) {
         const parsed = threadIdentityNotificationParamsSchema.safeParse(
@@ -574,17 +611,59 @@ export function createBridgeProtocolAdapter(
     // themselves; the adapter synthesizes nothing.
     translateAcceptedCommand: () => [],
 
+    decodeRecoveryHint(
+      event: ProviderRuntimeEvent,
+    ): ProviderRecoveryHint | null {
+      if (event.method !== BRIDGE_NOTIFICATION_METHODS.providerRecovery) {
+        return null;
+      }
+      const parsed = providerRecoveryNotificationSchema.safeParse(event.params);
+      if (!parsed.success) {
+        return null;
+      }
+      return {
+        ...(parsed.data.threadId === undefined
+          ? {}
+          : { threadId: parsed.data.threadId }),
+        kind: parsed.data.kind,
+        message: parsed.data.message,
+        retryable: parsed.data.retryable,
+      };
+    },
+
     decodeToolCallRequest(
       request: ProviderInboundRequest,
     ): DecodedToolCallRequest | null {
       if (typeof request.id !== "string" && typeof request.id !== "number") {
         return null;
       }
-      return decodeNormalizedProviderToolCallRequest(
+      const decoded = decodeNormalizedProviderToolCallRequest(
         request.id,
         request.method,
         request.params,
       );
+      if (decoded === null) {
+        return decoded;
+      }
+      const marker = providerNativeIdsParamsSchema.safeParse(request.params);
+      if (
+        marker.success !== true ||
+        marker.data.providerNativeIds !== true ||
+        decoded.threadId === undefined
+      ) {
+        return decoded;
+      }
+      return {
+        ...decoded,
+        turnId:
+          decoded.turnId === null
+            ? null
+            : (deltaAssembler.getBbTurnId(decoded.threadId, decoded.turnId) ??
+              decoded.turnId),
+        callId:
+          deltaAssembler.getBbItemId(decoded.threadId, decoded.callId) ??
+          decoded.callId,
+      };
     },
 
     decodeInteractiveRequest(
@@ -600,13 +679,33 @@ export function createBridgeProtocolAdapter(
       if (!parsed.success) {
         return null;
       }
+      const { providerNativeIds, threadId, ...decoded } = parsed.data;
+      let turnId = decoded.turnId;
+      let payload = decoded.payload;
+      if (providerNativeIds === true && threadId !== undefined) {
+        turnId =
+          turnId === null
+            ? null
+            : (deltaAssembler.getBbTurnId(threadId, turnId) ?? turnId);
+        if (payload.kind === "approval") {
+          payload = {
+            ...payload,
+            subject: {
+              ...payload.subject,
+              itemId:
+                deltaAssembler.getBbItemId(threadId, payload.subject.itemId) ??
+                payload.subject.itemId,
+            },
+          };
+        }
+      }
       return {
         requestId: request.id,
         method: request.method,
-        providerThreadId: parsed.data.providerThreadId,
-        turnId: parsed.data.turnId,
-        payload: parsed.data.payload,
-        ...(parsed.data.threadId ? { threadId: parsed.data.threadId } : {}),
+        providerThreadId: decoded.providerThreadId,
+        turnId,
+        payload,
+        ...(threadId ? { threadId } : {}),
       };
     },
 

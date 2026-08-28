@@ -572,6 +572,14 @@ describe('normalizeConfig — publicAppUrl / relayToken', () => {
     expect(normalizeConfig({ relayToken: 'x'.repeat(513) }).relayToken).toBeUndefined();
   });
 
+  it('persists a relay session id and drops a malformed one', () => {
+    expect(normalizeConfig({ relaySessionId: ' zcrs_abcdefghijklmnopqr1234 ' }).relaySessionId).toBe(
+      'zcrs_abcdefghijklmnopqr1234'
+    );
+    expect(normalizeConfig({ relaySessionId: 'not-a-session' }).relaySessionId).toBeUndefined();
+    expect(normalizeConfig({ relaySessionId: '' }).relaySessionId).toBeUndefined();
+  });
+
   it('round-trips publicAppUrl and relayToken through setConfig', () => {
     store.setConfig({
       publicAppUrl: 'https://zcc.herokuapp.com/',

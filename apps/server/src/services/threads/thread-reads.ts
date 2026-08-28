@@ -32,8 +32,18 @@ function saveReads(dataDir: string, map: ThreadReadMap): void {
   renameSync(tmp, dest);
 }
 
+export function loadThreadReads(dataDir: string): ThreadReadMap {
+  return loadReads(dataDir);
+}
+
+/** Absent records stay `null` so historical threads are not dumped as unread. */
+export function peekThreadReadSeq(dataDir: string, threadId: string): number | null {
+  const map = loadReads(dataDir);
+  return Object.prototype.hasOwnProperty.call(map, threadId) ? map[threadId]! : null;
+}
+
 export function getThreadReadSeq(dataDir: string, threadId: string): number {
-  return loadReads(dataDir)[threadId] ?? 0;
+  return peekThreadReadSeq(dataDir, threadId) ?? 0;
 }
 
 export function markThreadRead(dataDir: string, threadId: string, lastReadSeq: number): number {

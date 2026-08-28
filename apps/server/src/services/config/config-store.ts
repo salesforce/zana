@@ -82,7 +82,7 @@ export function createConfigStore(
           delete next[key];
         }
       }
-      for (const key of ['publicAppUrl', 'relayToken'] as const) {
+      for (const key of ['publicAppUrl', 'relayToken', 'relaySessionId'] as const) {
         if (Object.prototype.hasOwnProperty.call(patch, key) && !patch[key]) {
           delete next[key];
         }

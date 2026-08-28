@@ -31,6 +31,8 @@ export interface AcpPermissionToolCall {
   title?: string | undefined;
   kind?: string | undefined;
   command?: string | undefined;
+  locations?: readonly { path: string }[] | undefined;
+  content?: readonly { type: string; path?: string }[] | undefined;
 }
 
 export function buildAcpApprovalDecisions(
@@ -65,12 +67,47 @@ function buildOpaqueAcpPermissionCommand(toolCall: {
   );
 }
 
+function isNonBlank(value: string | undefined): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function extractAcpWritePaths(toolCall: AcpPermissionToolCall): string[] {
+  const paths: string[] = [];
+  for (const entry of toolCall.content ?? []) {
+    if (entry.type === "diff" && isNonBlank(entry.path)) paths.push(entry.path);
+  }
+  for (const location of toolCall.locations ?? []) {
+    if (isNonBlank(location.path)) paths.push(location.path);
+  }
+  return paths;
+}
+
+function isAcpFileChangePermission(toolCall: AcpPermissionToolCall): boolean {
+  if (toolCall.kind === "edit" || toolCall.kind === "delete") return true;
+  return (toolCall.content ?? []).some((entry) => entry.type === "diff");
+}
+
 /** The canonical approval payload for an ACP `session/request_permission`. */
 export function buildAcpPermissionInteractionPayload(args: {
   toolCall: AcpPermissionToolCall | undefined;
   options: readonly { kind: AcpPermissionOptionKind }[];
 }): PendingInteractionPayload {
   const toolCall = args.toolCall;
+  const availableDecisions = buildAcpApprovalDecisions(args.options);
+  if (toolCall && isAcpFileChangePermission(toolCall)) {
+    const paths = extractAcpWritePaths(toolCall);
+    return {
+      kind: "approval",
+      subject: {
+        kind: "file_change",
+        itemId: toolCall.toolCallId,
+        writeScope: paths[0] ?? null,
+        sessionGrant: null,
+      },
+      reason: null,
+      availableDecisions,
+    };
+  }
   const command = toolCall
     ? buildOpaqueAcpPermissionCommand(toolCall)
     : "ACP permission request";
@@ -85,7 +122,7 @@ export function buildAcpPermissionInteractionPayload(args: {
       sessionGrant: null,
     },
     reason: null,
-    availableDecisions: buildAcpApprovalDecisions(args.options),
+    availableDecisions,
   };
 }
 

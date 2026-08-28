@@ -121,6 +121,16 @@ export function droppedPathsFromDataTransfer(transfer: DroppedPathTransfer): Dro
   return uniqueDroppedPaths(fromText);
 }
 
+export function droppedPathsFromAbsolutePaths(
+  paths: readonly string[],
+  projectRoot?: string | null
+): DroppedPath[] {
+  return uniqueDroppedPaths(paths.flatMap((path) => {
+    const dropped = toDroppedPath(path.trim(), 'file', projectRoot);
+    return dropped ? [dropped] : [];
+  }));
+}
+
 export function mentionContentForDroppedPaths(paths: DroppedPath[]) {
   return paths.flatMap((row) => [
     {

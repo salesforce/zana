@@ -15,4 +15,13 @@ describe("bridge runtime env", () => {
     });
     expect(sourceEnv.ELECTRON_RUN_AS_NODE).toBe("1");
   });
+
+  it("keeps the record-mode directory out of provider children", () => {
+    expect(
+      withoutBridgeRuntimeEnv({
+        ZCC_PROVIDER_BRIDGE_RECORD_DIR: "/tmp/recordings/acp-opencode",
+        PATH: "/usr/bin",
+      }),
+    ).toEqual({ PATH: "/usr/bin" });
+  });
 });

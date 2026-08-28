@@ -401,7 +401,7 @@ function buildPiModelContextWindowLookup(
   return { byCanonicalId, byModelId };
 }
 
-function createPiModelContextWindowResolver(): PiModelContextWindowResolver {
+export function createPiModelContextWindowResolver(): PiModelContextWindowResolver {
   const models = getBuiltinProviders().flatMap((provider) =>
     getBuiltinModels(provider),
   );

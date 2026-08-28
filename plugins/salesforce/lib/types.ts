@@ -15,6 +15,16 @@ export const GUARDRAIL_RENDERER_ID = 'salesforce-guardrail';
 export const SETTING_DEFAULT_ORG = 'defaultOrg';
 export const SETTING_API_VERSION = 'apiVersion';
 export const SETTING_PROJECT_ROOT = 'projectRoot';
+export const SETTING_AGENT_SCRIPT_DIALECT = 'agentScriptDialect';
+export const AGENT_SCRIPT_DIALECTS = ['agentforce', 'agentscript', 'agentfabric'] as const;
+export type AgentScriptDialect = (typeof AGENT_SCRIPT_DIALECTS)[number];
+export const DEFAULT_AGENT_SCRIPT_DIALECT: AgentScriptDialect = 'agentforce';
+
+export function normalizeAgentScriptDialect(value: unknown): AgentScriptDialect {
+  return AGENT_SCRIPT_DIALECTS.includes(value as AgentScriptDialect)
+    ? (value as AgentScriptDialect)
+    : DEFAULT_AGENT_SCRIPT_DIALECT;
+}
 
 export type OrgKind = 'production' | 'sandbox' | 'scratch' | 'unknown';
 
@@ -99,6 +109,7 @@ export interface SalesforceDeps {
   readFile(path: string): string | null;
   readdir(path: string): string[];
   realpath(path: string): string;
+  writeFile(path: string, content: string): void;
   spawnContained(
     bin: string,
     argv: string[],
@@ -111,6 +122,7 @@ export interface PluginSettingsValues {
   defaultOrg: string;
   apiVersion: string;
   projectRoot: string;
+  agentScriptDialect: AgentScriptDialect;
 }
 
 export interface DoctorReport {

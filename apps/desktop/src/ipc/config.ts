@@ -3,6 +3,7 @@ import { ipcMain } from 'electron';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
 import { harnessVerifyState } from './shared.js';
+import { presentAppConfig } from '@zana-ai/zcc-server/http/public-app-url';
 import { store } from '@zana-ai/zcc-server/services/projects/store';
 import type { AppConfig, OverseerAuditEntry, ProjectSettings } from '@zana-ai/zcc-domain/product';
 
@@ -13,14 +14,14 @@ export function registerConfigIpc(): void {
   // Config remains on the compatibility owner until its normalizer, canonical
   // harness projection, and atomic write transaction move together. A raw JSON
   // server reader would silently change persisted compatibility semantics.
-  ctx.safeHandle(IPC.config.get, () => store.getConfig(), () => store.getConfig());
+  ctx.safeHandle(IPC.config.get, () => presentAppConfig(store.getConfig()), () => presentAppConfig(store.getConfig()));
   ctx.safeHandle<[Partial<AppConfig>], AppConfig>(
     IPC.config.set,
     (patch) => {
       // Window state is main-owned. Renderer config writes cannot alter shared
       // unscoped-window geometry or fullscreen monitor selection.
       const { windowBounds: _windowBounds, windowMaximized: _windowMaximized, ...safePatch } = patch;
-      const next = store.setConfig(safePatch);
+      const next = presentAppConfig(store.setConfig(safePatch));
       if (
         patch.harnessCursorEnabled !== undefined ||
         patch.harnessCodexEnabled !== undefined ||
@@ -70,7 +71,7 @@ export function registerConfigIpc(): void {
       ctx.safeSend(IPC.config.onChanged, next);
       return next;
     },
-    () => store.getConfig()
+    () => presentAppConfig(store.getConfig())
   );
 
   // Recent Overseer decisions for the dry-run review pane. Read-only; bounded by

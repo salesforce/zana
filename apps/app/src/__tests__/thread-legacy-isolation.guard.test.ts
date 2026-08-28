@@ -64,27 +64,55 @@ describe('thread / legacy isolation', () => {
   it('keeps AgentLauncher off the Thread HTTP create path', () => {
     const source = stripComments(readFileSync(join(appRoot, 'components/AgentLauncher.tsx'), 'utf8'));
     expect(source).toContain('ThreadCommandComposer');
+    expect(source).toContain('LegacyAgentHomeComposer');
+    expect(source).toContain('AutonomousTeamComposer');
+    expect(source).not.toContain('PromptComposer');
     expect(source).not.toContain('threads.create');
     expect(source).not.toContain('product.threads');
+    expect(source).not.toContain('product.teams.launchAutonomous');
+  });
+
+  it('keeps AutonomousTeamComposer on launchAutonomous only', () => {
+    const source = stripComments(readFileSync(join(appRoot, 'components/AutonomousTeamComposer.tsx'), 'utf8'));
+    expect(source).toContain('product.teams.launchAutonomous');
+    expect(source).not.toContain('threads.create');
+    expect(source).not.toContain('createTerminal');
+    expect(source).not.toContain('ModelReasoningPicker');
+    expect(source).not.toContain('ComposerModePicker');
+    expect(source).not.toContain('ReasoningEffortPicker');
   });
 
   it('keeps Home legacy launch on LegacyAgentHomeComposer, not ThreadCommandComposer', () => {
     const home = stripComments(readFileSync(join(appRoot, 'components/HomeAgentComposer.tsx'), 'utf8'));
     const legacy = stripComments(readFileSync(join(appRoot, 'components/LegacyAgentHomeComposer.tsx'), 'utf8'));
     const thread = stripComments(readFileSync(join(appRoot, 'components/ThreadCommandComposer.tsx'), 'utf8'));
+    const field = stripComments(readFileSync(join(appRoot, 'components/composer/use-composer-prompt-field.ts'), 'utf8'));
     expect(home).toContain('allowLegacyAgent');
     expect(home).toContain('LegacyAgentHomeComposer');
+    expect(home).toContain('AutonomousTeamComposer');
     expect(home).toContain('LaunchModeSegmented');
-    expect(home).toContain('showAutonomousTeam={false}');
+    expect(home).toContain('showAutonomousTeam={showAutonomousTeam}');
+    expect(home).toContain("kind === 'autonomous'");
     expect(home).not.toContain('HomeAutonomousComposer');
     expect(home).not.toContain('createTerminal');
-    expect(home).not.toContain('launchAutonomous');
+    expect(home).not.toContain('product.teams.launchAutonomous');
     expect(legacy).toContain('createTerminal');
     expect(legacy).toContain('buildLaunchArgs');
     expect(legacy).toContain("from './legacy-agent-home.js'");
+    expect(legacy).toContain('ModelReasoningPicker');
+    expect(legacy).toContain('useComposerPromptField');
+    expect(legacy).toContain("kind: 'cli'");
     expect(legacy).not.toContain('ComposerModePicker');
+    expect(legacy).not.toContain('LauncherModelPicker');
+    expect(legacy).not.toContain('ThreadCommandComposer');
     expect(thread).not.toContain('onSelectLegacyAgent');
     expect(thread).not.toContain('createTerminal');
     expect(thread).not.toContain('LegacyAgentHomeComposer');
+    expect(thread).toContain('useComposerPromptField');
+    expect(thread).toContain("kind: 'thread'");
+    expect(field).not.toContain('createTerminal');
+    expect(field).not.toContain('product.threads.create');
+    expect(field).not.toContain('ComposerModePicker');
+    expect(field).toContain('filterCliComposerCommands');
   });
 });

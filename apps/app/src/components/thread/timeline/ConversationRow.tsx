@@ -5,9 +5,10 @@ import type { ThreadTimelineViewRow } from '@zana-ai/zcc-thread-view';
 import { mentionPillLabel } from './mention-pills.js';
 import { PluginMarkdownDirectives } from '../../../plugins/PluginMarkdownDirectives.js';
 import { PluginSlotBoundary } from '../../../plugins/PluginSlotBoundary.js';
-import { listMessageActions, listThreadPanelActions, subscribePluginSlots } from '../../../plugins/plugin-slots.js';
-import { addClosableTab, loadSecondaryPanelState, persistSecondaryPanelState } from '../secondary-panel/threadSecondaryPanelState.js';
-import { resolveIcon } from '../../../lib/resolveIcon.js';
+import { listMessageActions, subscribePluginSlots } from '../../../plugins/plugin-slots.js';
+import { openPluginThreadPanel } from '../../../plugins/plugin-thread-panel.js';
+import { ComposerImageThumbs } from '../../composer/ComposerImageThumbs.js';
+import { conversationImageSrc } from '../../../lib/prompt-attachments.js';
 
 export function ConversationRow({
   row,
@@ -23,6 +24,19 @@ export function ConversationRow({
   const testId = row.role === 'assistant' ? 'thread-assistant-text' : 'thread-user-text';
   const mentions = row.role === 'user' ? row.mentions : [];
   const text = row.text?.trim() ?? '';
+  const imageThumbs = row.role === 'user'
+    ? [
+        ...(row.attachments?.imageUrls ?? []).map((src, index) => ({
+          id: `url-${index}`,
+          name: 'Attached image',
+          src
+        })),
+        ...(row.attachments?.localImagePaths ?? []).flatMap((path, index) => {
+          const src = conversationImageSrc(projectId, path);
+          return src ? [{ id: `local-${index}`, name: path.split(/[\\/]/u).pop() ?? 'Attached image', src }] : [];
+        })
+      ]
+    : [];
   const actions = useSyncExternalStore(subscribePluginSlots, listMessageActions, listMessageActions);
   return (
     <article
@@ -31,6 +45,7 @@ export function ConversationRow({
       data-row-id={row.id}
     >
       <div className="thread-timeline-bubble">
+        {imageThumbs.length > 0 ? <ComposerImageThumbs images={imageThumbs} /> : null}
         {mentions.length > 0 ? (
           <div className="thread-mention-pills">
             {mentions.map((mention, index) => (
@@ -91,28 +106,13 @@ export function ConversationRow({
                         sourceSeqEnd: row.sourceSeqEnd ?? 0
                       },
                       openPanel(options) {
-                        if (!threadId) return false;
-                        const panelAction = listThreadPanelActions().find(
-                          (rowAction) =>
-                            rowAction.pluginId === action.pluginId && rowAction.id === options.actionId
-                        );
-                        if (!panelAction) return false;
-                        const state = loadSecondaryPanelState(threadId);
-                        persistSecondaryPanelState(
+                        return openPluginThreadPanel({
+                          pluginId: action.pluginId,
                           threadId,
-                          addClosableTab(state, {
-                            kind: 'plugin',
-                            title: options.title ?? panelAction.title,
-                            moduleId: action.pluginId,
-                            actionId: options.actionId,
-                            params: options.params ?? null,
-                            layout: panelAction.layout
-                          })
-                        );
-                        window.dispatchEvent(
-                          new CustomEvent('zcc:secondary-panel-changed', { detail: { threadId } })
-                        );
-                        return true;
+                          actionId: options.actionId,
+                          title: options.title,
+                          params: options.params ?? null
+                        });
                       }
                     });
                   }}

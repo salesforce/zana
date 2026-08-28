@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { registerThreadProvider } from './thread-provider-catalog.js';
+import { PluginHostArtifactRegistry } from '../../plugins/plugin-host-artifact-registry.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
-import { archiveConversation, cancelConversationPlan, forkConversation, resumeConversation, sendConversationTurn, stopConversation } from './conversation-lifecycle.js';
+import { archiveConversation, cancelConversationPlan, forkConversation, resumeConversation, sendConversationTurn, stopConversation, unarchiveConversation } from './conversation-lifecycle.js';
 import { conversationTimeline } from './conversation-timeline.js';
 
 const thread = {
@@ -36,10 +37,12 @@ vi.mock('@zana-ai/zcc-db', () => {
     createdAt: 1
   }]);
   return {
+  DEFERRED_THREAD_MESSAGE_CAP: 50,
   getConversationThread: vi.fn(() => thread),
   updateConversationThreadStatus: vi.fn((_db, id, status) => ({ ...thread, id, status })),
   setConversationProviderThreadId: vi.fn(),
   archiveConversationThread: vi.fn(),
+  unarchiveConversationThread: vi.fn((_db, id) => ({ ...thread, id, archivedAt: null })),
   appendConversationThreadEvent: vi.fn((_db, input) => ({
     id: 'evt-client',
     threadId: input.threadId,
@@ -56,22 +59,45 @@ vi.mock('@zana-ai/zcc-db', () => {
     title: input.title,
     status: input.status ?? 'starting'
   })),
+  copyConversationThreadEvents: vi.fn((_db, input) => input.rows.map((row: { type: string }, index: number) => ({
+    ...row,
+    id: `fork-evt-${index + 1}`,
+    threadId: input.targetThreadId,
+    sequence: index + 1
+  }))),
+  countDeferredThreadMessages: vi.fn(() => 0),
+  createDeferredThreadMessage: vi.fn((_db, input) => ({
+    id: 'dmsg_1',
+    threadId: input.threadId,
+    kind: input.kind,
+    payload: input.payload,
+    createdAt: 1
+  })),
+  deleteDeferredThreadMessagesForThread: vi.fn(() => 0),
+  listDeferredThreadMessages: vi.fn(() => []),
+  deleteDeferredThreadMessage: vi.fn(() => false),
   getEnvironment: vi.fn(() => ({ id: thread.environmentId, path: '/tmp/proj' })),
   hasPendingInteractionForThread: vi.fn(() => false),
   countLiveThreadsForEnvironment: vi.fn(() => 1),
   countConversationThreadEvents: vi.fn(() => listConversationThreadEvents().length),
   listConversationThreadEventsWindow: vi.fn(() => listConversationThreadEvents()),
+  nextConversationEventSequence: vi.fn(() => 1),
+  maxConversationEventSequenceByThreadIds: vi.fn(() => ({})),
   listConversationThreadEvents
   };
 });
 
 import {
   appendConversationThreadEvent,
+  copyConversationThreadEvents,
   createConversationThread,
+  deleteDeferredThreadMessagesForThread,
   getConversationThread,
+  getEnvironment,
   listConversationThreadEvents,
   listConversationThreadEventsWindow,
   setConversationProviderThreadId,
+  unarchiveConversationThread,
   updateConversationThreadStatus
 } from '@zana-ai/zcc-db';
 
@@ -85,11 +111,22 @@ function pendingInteractionsStub(overrides?: {
 }
 
 function ctx(callHostOnlineRpc: (input: unknown) => Promise<unknown>): ProductHttpContext {
+  const pluginHostArtifacts = new PluginHostArtifactRegistry();
+  pluginHostArtifacts.set('test', {
+    path: '/tmp/host.js',
+    digest: 'a'.repeat(64),
+    byteLength: 12,
+    generation: 'g1'
+  });
   return {
     db: {},
     dataDir: '/tmp/zcc-data',
     hub: { emit: vi.fn() },
     hostHub: { callHostOnlineRpc },
+    pluginHostArtifacts,
+    plugins: {
+      emitThreadEvent: vi.fn().mockResolvedValue(undefined)
+    },
     pendingInteractions: pendingInteractionsStub()
   } as unknown as ProductHttpContext;
 }
@@ -145,6 +182,51 @@ describe('conversation lifecycle', () => {
           providerId: 'claude-code',
           cwd: '/tmp/proj'
         })
+      })
+    }));
+  });
+
+  it('appends agent-only plugin mention context before turn.submit', async () => {
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
+    const resolveMention = vi.fn(async () => ({ ok: true as const, context: 'Issue body' }));
+    const context = {
+      ...ctx(callHostOnlineRpc),
+      plugins: { resolveMention, emitThreadEvent: vi.fn(async () => undefined) }
+    } as unknown as ProductHttpContext;
+    await sendConversationTurn(context, thread.id, [{
+      type: 'text',
+      text: 'fix @bug',
+      mentions: [{
+        start: 4,
+        end: 8,
+        resource: { kind: 'plugin', pluginId: 'github', itemId: 'issue:acme/app#1', label: 'bug' }
+      }]
+    }]);
+    expect(resolveMention).toHaveBeenCalledWith({ pluginId: 'github', itemId: 'issue:acme/app#1' });
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({
+        type: 'turn.submit',
+        input: expect.arrayContaining([
+          'fix @bug',
+          expect.stringContaining('Issue body')
+        ])
+      })
+    }));
+  });
+
+  it('sends an image-only follow-up as a host disk marker', async () => {
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
+    await sendConversationTurn(
+      ctx(callHostOnlineRpc),
+      thread.id,
+      [{ type: 'localImage', path: 'shot.png' }]
+    );
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({
+        type: 'turn.submit',
+        input: [
+          '[Attached image. It is on disk at /tmp/zcc-data/attachments/proj-1/shot.png — use the Read tool to view it.]'
+        ]
       })
     }));
   });
@@ -316,6 +398,64 @@ describe('conversation lifecycle', () => {
     expect(forked.parentThreadId).toBe(thread.id);
     expect(namer.reserve).toHaveBeenCalledWith(forked.id);
     expect(namer.request).not.toHaveBeenCalled();
+  });
+
+  it('copies completed source history into a fork and leaves the source untouched', async () => {
+    const sourceEvents = [
+      {
+        id: 'evt-1',
+        threadId: thread.id,
+        sequence: 1,
+        type: 'turn/started',
+        payload: {
+          type: 'turn/started',
+          threadId: thread.id,
+          scope: { kind: 'turn', turnId: 'turn-1' }
+        },
+        createdAt: 1
+      },
+      {
+        id: 'evt-2',
+        threadId: thread.id,
+        sequence: 2,
+        type: 'turn/completed',
+        payload: {
+          type: 'turn/completed',
+          threadId: thread.id,
+          scope: { kind: 'turn', turnId: 'turn-1' }
+        },
+        createdAt: 2
+      },
+      {
+        id: 'evt-identity',
+        threadId: thread.id,
+        sequence: 3,
+        type: 'thread/identity',
+        payload: { type: 'thread/identity', threadId: thread.id, scope: { kind: 'thread' } },
+        createdAt: 3
+      }
+    ];
+    vi.mocked(listConversationThreadEvents).mockReturnValue(sourceEvents);
+    const product = ctx(async () => ({}));
+    const forked = await forkConversation(product, thread.id);
+    expect(copyConversationThreadEvents).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        targetThreadId: forked.id
+      })
+    );
+    const copied = vi.mocked(copyConversationThreadEvents).mock.calls.at(-1)?.[1] as {
+      rows: Array<{ type: string }>;
+    };
+    expect(copied.rows.map((row) => row.type)).toEqual(['turn/started', 'turn/completed']);
+    expect(listConversationThreadEvents).toHaveBeenCalledWith(expect.anything(), thread.id);
+  });
+
+  it('copies no events when the source thread is empty', async () => {
+    vi.mocked(listConversationThreadEvents).mockReturnValue([]);
+    vi.mocked(copyConversationThreadEvents).mockClear();
+    await forkConversation(ctx(async () => ({})), thread.id);
+    expect(copyConversationThreadEvents).not.toHaveBeenCalled();
   });
 
   it('retries the tab namer from a later prompt on a still-unnamed thread', async () => {
@@ -515,13 +655,29 @@ describe('conversation lifecycle', () => {
     expect(work).toEqual(expect.arrayContaining(['tool', 'command']));
   });
 
-  it('blocks send while a pending interaction is open', async () => {
+  it('queues a send while a pending interaction is open', async () => {
     const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
+    const { createDeferredThreadMessage } = await import('@zana-ai/zcc-db');
     const context = {
       ...ctx(callHostOnlineRpc),
       pendingInteractions: pendingInteractionsStub({ hasPendingThreadInteraction: true })
     };
     await expect(sendConversationTurn(context, thread.id, [{ type: 'text', text: 'follow up' }]))
+      .resolves.toMatchObject({ id: thread.id });
+    expect(callHostOnlineRpc).not.toHaveBeenCalled();
+    expect(createDeferredThreadMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ threadId: thread.id, kind: 'send' })
+    );
+  });
+
+  it('still 409s a start send while a pending interaction is open', async () => {
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
+    const context = {
+      ...ctx(callHostOnlineRpc),
+      pendingInteractions: pendingInteractionsStub({ hasPendingThreadInteraction: true })
+    };
+    await expect(sendConversationTurn(context, thread.id, [{ type: 'text', text: 'follow up' }], 'start'))
       .rejects.toMatchObject({ status: 409, code: 'awaiting_user_interaction' });
     expect(callHostOnlineRpc).not.toHaveBeenCalled();
   });
@@ -543,6 +699,17 @@ describe('conversation lifecycle', () => {
     expect(context.pendingInteractions.interruptPendingInteractionsForThreadIds).toHaveBeenCalledWith({
       threadIds: [thread.id],
       reason: 'thread-deleted'
+    });
+    expect(deleteDeferredThreadMessagesForThread).toHaveBeenCalledWith(context.db, thread.id);
+    expect(context.plugins?.emitThreadEvent).toHaveBeenNthCalledWith(1, {
+      name: 'thread.archived',
+      threadId: thread.id,
+      projectId: thread.projectId
+    });
+    expect(context.plugins?.emitThreadEvent).toHaveBeenNthCalledWith(2, {
+      name: 'thread.deleted',
+      threadId: thread.id,
+      projectId: thread.projectId
     });
   });
 
@@ -625,5 +792,20 @@ describe('conversation lifecycle', () => {
         expectedTurnId: 'turn-plan-1'
       }
     });
+  });
+
+  it('unarchives a conversation thread when the environment still exists', async () => {
+    vi.mocked(getConversationThread).mockReturnValue({ ...thread, archivedAt: 9 });
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, unarchived: true }));
+    const restored = await unarchiveConversation(ctx(callHostOnlineRpc), thread.id);
+    expect(unarchiveConversationThread).toHaveBeenCalled();
+    expect(restored.archivedAt).toBeNull();
+  });
+
+  it('409s unarchive when the environment is gone', async () => {
+    vi.mocked(getConversationThread).mockReturnValue({ ...thread, archivedAt: 9 });
+    vi.mocked(getEnvironment).mockReturnValueOnce(null);
+    await expect(unarchiveConversation(ctx(vi.fn()), thread.id))
+      .rejects.toMatchObject({ status: 409, code: 'environment_not_ready' });
   });
 });

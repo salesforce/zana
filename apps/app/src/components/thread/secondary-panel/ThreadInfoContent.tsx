@@ -4,6 +4,7 @@ import type { GitHostPullRequest, WorkspaceStatus } from '@zana-ai/zcc-domain';
 import { handleHttpLinkClick } from '../../../lib/in-app-browser-link-preference.js';
 import { product } from '../../../lib/product-client.js';
 import { useData } from '../../../store.js';
+import { useThreads } from '../../../thread-store.js';
 import {
   workspaceFileBasename,
   workspaceFileKindLetter,
@@ -18,6 +19,8 @@ import {
   sshRowValue,
   sshStatusText,
   threadInfoEnvironmentLabel,
+  threadInfoFilePreview,
+  threadInfoGitSummary,
   type ThreadSshStatus
 } from './threadSecondaryPanelLogic.js';
 import {
@@ -59,6 +62,12 @@ export function ThreadInfoRows({
 }) {
   const gitLabel = remoteToolProxy ? null : workspaceStatusPresentation(workspaceStatus).label;
   const files = remoteToolProxy ? [] : (workspaceStatus?.files ?? []);
+  const gitSummary = threadInfoGitSummary(
+    gitLabel,
+    files.length,
+    Boolean(workspaceStatus?.filesTruncated)
+  );
+  const filePreview = threadInfoFilePreview(files, Boolean(workspaceStatus?.filesTruncated));
   const modelLabel = model ? humanThreadModelLabel(model, providerId ?? undefined) : null;
   const reasoningLabel = humanThreadReasoningLabel(reasoningLevel);
   const directory = remoteDirectory || cwd;
@@ -110,10 +119,24 @@ export function ThreadInfoRows({
         </InfoRow>
       ) : null}
 
-      {gitLabel ? (
+      {gitSummary ? (
         <InfoRow icon={<GitBranch size={14} />} label="Git status" testId="thread-info-git">
-          {gitLabel}
+          {gitSummary}
         </InfoRow>
+      ) : null}
+
+      {filePreview.files.length > 0 ? (
+        <ul className="thread-info-files" data-testid="thread-info-files" aria-label="Changed files">
+          {filePreview.files.map((file) => (
+            <li key={file.path} className={`thread-info-file is-${file.kind}`} title={file.path}>
+              <span className="thread-info-file-name">{workspaceFileBasename(file.path)}</span>
+              <span className="thread-info-file-kind">{workspaceFileKindLetter(file.kind)}</span>
+            </li>
+          ))}
+          {filePreview.extraLabel ? (
+            <li className="thread-info-file-more">{filePreview.extraLabel}</li>
+          ) : null}
+        </ul>
       ) : null}
 
       {pullRequest ? (
@@ -130,19 +153,6 @@ export function ThreadInfoRows({
           >
             #{pullRequest.number} {pullRequest.state}
           </a>
-        </InfoRow>
-      ) : null}
-
-      {files.length > 0 ? (
-        <InfoRow icon={<Folder size={14} />} label="Changed files" testId="thread-info-files" alignStart>
-          <ul className="thread-info-files">
-            {files.slice(0, 12).map((file) => (
-              <li key={file.path} className={`thread-info-file is-${file.kind}`} title={file.path}>
-                <span>{workspaceFileKindLetter(file.kind)}</span>
-                <span className="thread-info-truncate">{workspaceFileBasename(file.path)}</span>
-              </li>
-            ))}
-          </ul>
         </InfoRow>
       ) : null}
 
@@ -165,17 +175,15 @@ function InfoRow({
   icon,
   label,
   children,
-  testId,
-  alignStart
+  testId
 }: {
   icon: ReactNode;
   label: string;
   children: ReactNode;
   testId?: string;
-  alignStart?: boolean;
 }) {
   return (
-    <div className={`thread-info-row${alignStart ? ' is-start' : ''}`} data-testid={testId}>
+    <div className="thread-info-row" data-testid={testId}>
       <div className="thread-info-label">
         <span className="thread-info-icon" aria-hidden="true">{icon}</span>
         <span>{label}</span>
@@ -209,6 +217,7 @@ export function ThreadInfoContent({
   onOpenStorageFile?: (path: string, title: string) => void;
 }) {
   const project = useData((s) => s.projects.find((row) => row.id === projectId) ?? null);
+  const threadHostId = useThreads((s) => s.threads.find((row) => row.id === threadId)?.hostId);
   const [environmentName, setEnvironmentName] = useState<string | null>(null);
   const [workspaceStatus, setWorkspaceStatus] = useState<WorkspaceStatus | null>(null);
   const [pullRequest, setPullRequest] = useState<GitHostPullRequest | null>(null);
@@ -239,10 +248,10 @@ export function ThreadInfoContent({
     setSshTarget(null);
     setSshStatus(null);
     setRemoteDirectory(null);
-    if (!project?.remote || project.hostId) return;
+    if (!project?.remote) return;
     void hydrateRemoteToolProxyInfo(project, {
-      getSettings: (id) => product.projectSettings.get(id),
-      remoteRoot: (id) => product.fs.remoteRoot(id)
+      remoteRoot: (id) => product.fs.remoteRoot(id),
+      executionHostId: threadHostId
     }).then((next) => {
       applyIfCurrent(cancelled, next, (info) => {
         setRemoteToolProxy(info.active);
@@ -252,7 +261,7 @@ export function ThreadInfoContent({
       });
     });
     return () => { cancelled = true; };
-  }, [project?.id, project?.hostId, project?.remote?.host, project?.remote?.user]);
+  }, [project?.id, project?.hostId, project?.remote?.host, project?.remote?.user, threadHostId]);
 
   return (
     <>

@@ -79,6 +79,40 @@ export function fallbackProviderOption(providerId: string): ThreadComposerProvid
     ?? { id: providerId, displayName: providerId, permissionModes: ['accept-edits', 'full'], composerActions: [] };
 }
 
+/** Builtin harnesses for a new thread before execution-options returns. Omits `fake`. */
+export function fallbackProvidersForNewThread(): ThreadComposerProviderOption[] {
+  return FALLBACK_PROVIDERS.filter((row) => row.id !== 'fake');
+}
+
+/** New-thread tabs always include the builtin harnesses; live catalog wins on collision. */
+export function composerProvidersFromCatalog(
+  catalogProviders: readonly ThreadComposerProviderOption[],
+  locked: boolean,
+  providerId: string
+): ThreadComposerProviderOption[] {
+  if (locked) {
+    if (catalogProviders.length > 0) return [...catalogProviders];
+    return [fallbackProviderOption(providerId)];
+  }
+  const builtins = fallbackProvidersForNewThread();
+  if (catalogProviders.length === 0) return builtins;
+  const byId = new Map(builtins.map((row) => [row.id, row]));
+  for (const row of catalogProviders) byId.set(row.id, row);
+  const builtinIds = new Set(builtins.map((row) => row.id));
+  const extras = catalogProviders.filter((row) => !builtinIds.has(row.id));
+  return [...builtins.map((row) => byId.get(row.id)!), ...extras];
+}
+
+/** New-thread tabs include builtin fallbacks that execution-options may omit. */
+export function snapNewThreadProviderId(
+  offeredIds: readonly string[],
+  providerId: string
+): string | null {
+  if (offeredIds.length === 0) return null;
+  if (offeredIds.includes(providerId)) return null;
+  return offeredIds[0] ?? null;
+}
+
 const CLAUDE_MORE_MODELS: ReadonlyArray<{
   id: string;
   model: string;

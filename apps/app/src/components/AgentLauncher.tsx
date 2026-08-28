@@ -17,7 +17,6 @@ import {
   ChevronDown,
   Blocks,
   UserCog,
-  Users,
   Plus,
   Pencil,
   Trash2,
@@ -64,8 +63,9 @@ import {
 import { useData, useUi, usePersonas, useTeams, sortProjectsAlphabetically } from '../store.js';
 import { profileIcon, personaIcon } from '../lib/profileIcon.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
-import { PromptComposer, type PromptComposerHandle } from './PromptComposer.js';
+import { AutonomousTeamComposer } from './AutonomousTeamComposer.js';
 import { ThreadCommandComposer } from './ThreadCommandComposer.js';
+import { LegacyAgentHomeComposer } from './LegacyAgentHomeComposer.js';
 import { LaunchModeSegmented, type LaunchMode } from './LaunchModeSegmented.js';
 import { TextArgsField } from './settings/FormFields.js';
 import { AgentConversationHistory } from './AgentConversationHistory.js';
@@ -1146,12 +1146,11 @@ export const AgentLauncher = memo(function AgentLauncher({
    * registered project instead. Unused in project mode (the target is fixed).
    */
   const [targetProjectId, setTargetProjectId] = useState<string | null>(null);
-  // Launch mode: Thread (HTTP conversation, default), Legacy Agent (PTY spawn),
-  // or an autonomous team run. Autonomous mode swaps the profile/persona/
-  // framework pickers for a Team picker and launches via `teams.launchAutonomous`
-  // instead of `createTerminal`. Thread create stays in ThreadCommandComposer.
+  // Launch mode: Modern (HTTP conversation, default), CLI Agent (PTY spawn),
+  // or an autonomous team run. Autonomous mode mounts AutonomousTeamComposer
+  // and launches via `teams.launchAutonomous`. Thread create stays in
+  // ThreadCommandComposer.
   const [mode, setMode] = useState<LaunchMode>('thread');
-  const [teamId, setTeamId] = useState<string | null>(null);
   const [harnessDescriptors, setHarnessDescriptors] = useState<HarnessAdapterDescriptor[]>([]);
   const [openCodeAgentDiscoverySnapshot, setOpenCodeAgentDiscoverySnapshot] = useState<OpenCodeAgentDiscoverySnapshot | null>(null);
   const [agentDescriptorsRefresh, setAgentDescriptorsRefresh] = useState(0);
@@ -1167,7 +1166,6 @@ export const AgentLauncher = memo(function AgentLauncher({
     if (mode === 'autonomous' && teams.length === 0) setMode('thread');
   }, [mode, teams.length]);
   const pushToast = useUi((s) => s.pushToast);
-  const composerRef = useRef<PromptComposerHandle>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   // Harness row icon-only fallback: whether the full labels ("claude",
   // "opencode", ...) fit depends on both the modal width and how many
@@ -1245,7 +1243,6 @@ export const AgentLauncher = memo(function AgentLauncher({
   // Renderer eligibility is advisory. Main still verifies Git state and confines
   // the worktree before changing cwd.
   const scratchIsTarget = !projectMode && targetProjectId === null;
-  const useQuickAgentHomeComposer = scratchIsTarget;
   const worktreeStructurallyEligible = isWorktreeEligible(target, scratchIsTarget);
   const worktreeEligible = worktreeStructurallyEligible && targetIsGitRepo;
   const personaProfileSelection = selectedPersona?.baseProfile
@@ -1561,10 +1558,6 @@ export const AgentLauncher = memo(function AgentLauncher({
     };
   }, [openCodeAgentDiscoveryProjectId, openCodeAgentDiscoveryProfile, agentDescriptorsRefresh]);
 
-  useEffect(() => {
-    composerRef.current?.focus();
-  }, []);
-
   useDialogFocusTrap(dialogRef, onClose);
 
   // Post-launch: the caller can override what happens (the Agents global view
@@ -1686,42 +1679,6 @@ export const AgentLauncher = memo(function AgentLauncher({
     }
   };
 
-  // Autonomous team launch: hand the goal + team to main, which spawns the
-  // orchestrator + workers and drives them via the AutonomousRunSupervisor. Needs
-  // a concrete target project (the run is scoped to it) — the Send button is
-  // disabled until both a team and a goal are present. Keeps the modal open on
-  // failure so the user can retry or pick another team.
-  const launchAutonomous = async () => {
-    const goal = prompt.trim();
-    if (!teamId || !goal || !target) return;
-    setLaunching(true);
-    try {
-      const attachmentPaths = await resolveAttachmentPaths();
-      if (attachmentPaths === null) return;
-      const res = await product.teams.launchAutonomous(
-        teamId,
-        target.id,
-        appendAttachmentContext(goal, attachmentPaths)
-      );
-      if (!res.ok) {
-        const message = `Autonomous launch failed: ${res.message ?? res.code}`;
-        setLaunchError(message);
-        pushToast(message, 'error');
-        return; // keep the modal open so the user can retry / pick another team
-      }
-      clearDraft();
-      setAttachments([]);
-      setLaunchError(null);
-      onClose();
-    } catch (err) {
-      const message = `Autonomous launch failed: ${err instanceof Error ? err.message : String(err)}`;
-      setLaunchError(message);
-      pushToast(message, 'error');
-    } finally {
-      setLaunching(false);
-    }
-  };
-
   // "Fix with AI" — spawns a narrowly-scoped repair agent seeded with the raw
   // launch-failure text (mirrors Settings → Doctor's spawn path: claude-yolo so
   // it can inspect/repair local tooling without a permission prompt per step).
@@ -1790,7 +1747,6 @@ export const AgentLauncher = memo(function AgentLauncher({
     }
     setPrompt(p.prompt);
     applyPresetProfile(p);
-    composerRef.current?.focus();
   };
 
   /** Commit the fill form: substitute values into the template, seed the composer. */
@@ -1800,7 +1756,6 @@ export const AgentLauncher = memo(function AgentLauncher({
     applyPresetProfile(argPreset);
     setArgPreset(null);
     setArgValues({});
-    composerRef.current?.focus();
   };
 
   /** Hand the agent the template + argument spec and let it interview the user
@@ -1811,7 +1766,6 @@ export const AgentLauncher = memo(function AgentLauncher({
     applyPresetProfile(argPreset);
     setArgPreset(null);
     setArgValues({});
-    composerRef.current?.focus();
   };
 
   const cancelArgForm = () => {
@@ -1868,7 +1822,7 @@ export const AgentLauncher = memo(function AgentLauncher({
         className="palette launch-modal"
         role="dialog"
         aria-modal
-        aria-label={mode === 'thread' ? 'New thread' : mode === 'autonomous' ? 'New autonomous team' : 'New agent'}
+        aria-label={mode === 'autonomous' ? 'New autonomous team' : 'New agent'}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="launch-panel">
@@ -1876,12 +1830,12 @@ export const AgentLauncher = memo(function AgentLauncher({
             <div>
               <h3>
                 {mode === 'thread'
-                  ? (projectMode ? project!.name : 'New thread')
+                  ? (projectMode ? project!.name : 'New agent')
                   : projectMode ? project!.name : scratchIsTarget ? 'Quick agent' : target?.name ?? 'New agent'}
               </h3>
               <p>
                 {mode === 'thread'
-                  ? 'Start a thread'
+                  ? 'Start an agent'
                   : projectMode
                     ? 'Start a session'
                     : scratchIsTarget
@@ -1902,7 +1856,7 @@ export const AgentLauncher = memo(function AgentLauncher({
               .launch-scroll / .launch-actions in global.css) so a long Advanced
               section or extra-args panel can never push Send off-screen. */}
           <div className="launch-scroll">
-          {/* Launch mode: Thread (HTTP conversation) and Legacy Agent (PTY) are
+          {/* Launch mode: Modern (HTTP conversation) and CLI Agent (PTY) are
               always offered. Autonomous Team only appears when teams exist. */}
           <div className="launch-row">
             <LaunchModeSegmented
@@ -1922,31 +1876,31 @@ export const AgentLauncher = memo(function AgentLauncher({
             </div>
           )}
 
-          {mode !== 'thread' && (<>
-          <PromptComposer
-            ref={composerRef}
-            value={prompt}
-            onChange={setPrompt}
-            mentionProjectPath={project?.path}
-            attachments={attachments}
-            onAddAttachments={addAttachments}
-            onRemoveAttachment={(path) => {
-              setAttachments((current) => current.filter((item) => item !== path));
-            }}
-            onSubmit={mode === 'autonomous' ? launchAutonomous : launch}
-            variant={useQuickAgentHomeComposer ? 'home' : 'default'}
-            submitLabel={mode === 'autonomous' ? 'Launch autonomous team' : 'Launch agent'}
-            submitDisabled={mode === 'autonomous'
-              ? !teamId || !prompt.trim() || !target || launching
-              : !target || !descriptor || !configLoaded || !worktreeDefaultLoaded || personaProfileConflict || launching}
-            placeholder={
-              mode === 'autonomous'
-                ? 'Describe the GOAL for the team to reach (⌘↵ to launch). Attach or drop supporting files.'
-                : 'Describe the task… (⌘↵ to launch). Attach or drop files. Leave empty to open an interactive session.'
-            }
-          />
+          {mode === 'agent' && (
+            <div className="launch-thread-composer">
+              <LegacyAgentHomeComposer
+                project={project}
+                initialText={initialPrompt}
+                onLaunched={onLaunched}
+                onClose={onClose}
+              />
+            </div>
+          )}
 
-          {scratchIsTarget && !argPreset && !editor && (
+          {mode === 'agent' && projectMode && (
+            <AgentConversationHistory projectId={project!.id} unavailableProviders={unavailableHistoryProviders} onResumed={onClose} />
+          )}
+
+          {mode === 'autonomous' && (<>
+          <div className="launch-thread-composer">
+            <AutonomousTeamComposer
+              project={project}
+              initialText={initialPrompt}
+              onClose={onClose}
+            />
+          </div>
+
+          {false && scratchIsTarget && !argPreset && !editor && (
             <div className="quick-prompt-chips" role="group" aria-label="Starter prompts">
               {(chipsExpanded ? presets : presets.slice(0, 2)).map((p) => (
                 <span key={p.id} className="quick-prompt-chip-wrap">
@@ -1995,7 +1949,7 @@ export const AgentLauncher = memo(function AgentLauncher({
             </div>
           )}
 
-          {editor && (
+          {false && editor && (
             <QuickPromptEditor
               initial={editor.mode === 'edit' ? editor.prompt : null}
               onSaved={() => setEditor(null)}
@@ -2003,7 +1957,7 @@ export const AgentLauncher = memo(function AgentLauncher({
             />
           )}
 
-          {argPreset && (
+          {false && argPreset && (
             <WorkflowArgForm
               preset={argPreset}
               values={argValues}
@@ -2014,7 +1968,7 @@ export const AgentLauncher = memo(function AgentLauncher({
             />
           )}
 
-          {!projectMode && (
+          {false && !projectMode && (
             <div className="launch-row">
               <span className="launch-row-label">Project</span>
               <div className="launch-folder">
@@ -2036,35 +1990,6 @@ export const AgentLauncher = memo(function AgentLauncher({
                     ...projectGroups.local.map((project) => ({ value: project.id, label: project.name, group: 'Local' }))
                   ]}
                 />
-              </div>
-            </div>
-          )}
-
-          {/* Autonomous mode: pick the Team to launch. The goal comes from the
-              prompt box above. Replaces the profile/persona/framework pickers —
-              those are per-agent and don't apply to a whole-team run. */}
-          {mode === 'autonomous' && (
-            <div className="launch-row">
-              <span className="launch-row-label">Team</span>
-              <div className="launch-personas" role="group" aria-label="Team">
-                {teams.length === 0 && (
-                  <span className="launch-squad-hint">No teams configured.</span>
-                )}
-                {teams.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    className={teamId === t.id ? 'launch-persona active' : 'launch-persona'}
-                    onClick={() => setTeamId((cur) => (cur === t.id ? null : t.id))}
-                    aria-pressed={teamId === t.id}
-                    title={t.description ?? t.name}
-                  >
-                    <span className="tab-profile-icon" aria-hidden="true">
-                      <Users size={13} />
-                    </span>
-                    {t.name}
-                  </button>
-                ))}
               </div>
             </div>
           )}
@@ -2548,35 +2473,6 @@ export const AgentLauncher = memo(function AgentLauncher({
           {projectMode && <AgentConversationHistory projectId={project!.id} unavailableProviders={unavailableHistoryProviders} onResumed={onClose} />}
           </>)}
           </div>
-
-          {mode !== 'thread' && !useQuickAgentHomeComposer && (
-            <div className="launch-actions">
-              {mode === 'autonomous' ? (
-                <button
-                  className="btn primary"
-                  onClick={launchAutonomous}
-                  disabled={!teamId || !prompt.trim() || !target || launching}
-                  aria-describedby={launchStatusA11y.describedBy}
-                  title="Launch autonomous team (⌘↵)"
-                >
-                  <Zap size={14} />
-                  Launch autonomous team
-                </button>
-              ) : (
-                <button
-                  data-testid="launch-send"
-                  className="btn primary"
-                  onClick={launch}
-                  disabled={!target || !descriptor || !configLoaded || !worktreeDefaultLoaded || personaProfileConflict || launching}
-                  aria-describedby={launchStatusA11y.describedBy}
-                  title="Send (⌘↵)"
-                >
-                  <TerminalIcon size={14} />
-                  Send
-                </button>
-              )}
-            </div>
-          )}
         </div>
       </div>
   );

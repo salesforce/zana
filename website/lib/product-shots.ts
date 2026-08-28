@@ -39,7 +39,7 @@ export const PRODUCT_SHOTS: Record<ProductShotId, ProductShotDefinition> = {
     alt: 'Zana Command Center Agents board with sessions grouped into Needs you, Working, Idle, and Done.',
     capture: 'Show the three-column cockpit with several active projects and a focused terminal.',
     aspectRatio: 'wide',
-    src: '/product-shots/agents-board.jpg'
+    src: '/product-shots/agents-board.gif'
   },
   'project-setup': {
     id: 'project-setup',
@@ -52,7 +52,7 @@ export const PRODUCT_SHOTS: Record<ProductShotId, ProductShotDefinition> = {
   'agent-terminal': {
     id: 'agent-terminal',
     title: 'Focused execution',
-    caption: 'Threads are the default from New Chat; Legacy Agent tabs are real harness terminals in the project that provides their context.',
+    caption: 'Threads are the default from New Chat; CLI Agent tabs are real harness terminals in the project that provides their context.',
     alt: 'A coding agent task running in a Zana thread or terminal tab.',
     capture: 'Show a focused supported-harness task running in the correct project directory.',
     aspectRatio: 'standard'
@@ -64,23 +64,25 @@ export const PRODUCT_SHOTS: Record<ProductShotId, ProductShotDefinition> = {
     alt: 'The Zana Agents board showing sessions grouped by status.',
     capture: 'Show a realistic mix of needs-you, working, idle, and done sessions.',
     aspectRatio: 'wide',
-    src: '/product-shots/agents-board.jpg'
+    src: '/product-shots/agents-board.gif'
   },
   'inbox-decision': {
     id: 'inbox-decision',
     title: 'Inbox',
     caption: 'Questions, reports, and follow-ups reach one decision surface where replies route back to the right session.',
-    alt: 'The Zana Inbox with an agent question and an inline reply action.',
+    alt: 'The Zana Inbox grouped into Questions, Reports, Ideas, and Goals.',
     capture: 'Show a high-context agent question and the inline reply action, with no private data.',
-    aspectRatio: 'standard'
+    aspectRatio: 'standard',
+    src: '/product-shots/inbox-decision.jpg'
   },
   'team-launch': {
     id: 'team-launch',
     title: 'Teams',
     caption: 'Launch a repeatable set of roles when a task needs research, implementation, and review in parallel.',
-    alt: 'A Zana team launch view showing multiple agent roles.',
+    alt: 'A Zana team graph showing a squad lead with Designer, Cloud Architect, and Developer roles working in parallel.',
     capture: 'Show a team with clearly named roles and an explicit project destination.',
-    aspectRatio: 'standard'
+    aspectRatio: 'standard',
+    src: '/product-shots/team-launch.gif'
   },
   'goal-or-ticket': {
     id: 'goal-or-ticket',
@@ -142,4 +144,9 @@ export const PRODUCT_SHOTS: Record<ProductShotId, ProductShotDefinition> = {
 
 export function productShot(id: ProductShotId): ProductShotDefinition {
   return PRODUCT_SHOTS[id];
+}
+
+/** Features keeps the capture-target cards even after a shot has a real `src`. */
+export function productShotShowsMedia(src: string | undefined, placeholder = false): boolean {
+  return Boolean(src) && !placeholder;
 }

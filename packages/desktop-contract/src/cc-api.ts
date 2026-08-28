@@ -324,6 +324,8 @@ export interface CcApi {
       parent: string | null;
       entries: Array<{ kind: 'file' | 'directory'; name: string; path: string }>;
     }>;
+    pathsExist(id: string, paths: string[]): Promise<{ existence: Record<string, boolean> }>;
+    pickFolder(id: string, clientHostId: string): Promise<{ path: string | null }>;
     cloneDefaultPath(id: string, projectId: string): Promise<{ path: string }>;
     providerCliStatus(id: string): Promise<ProviderCliStatusResponse>;
     installProviderCli(
@@ -337,8 +339,21 @@ export interface CcApi {
    * Status only — the origin and token live in AppConfig / env.
    */
   relay: {
-    status(): Promise<{ state: 'connected' | 'offline' | 'unconfigured' }>;
-    onChanged(cb: (payload: { state: 'connected' | 'offline' | 'unconfigured' }) => void): () => void;
+    status(): Promise<{
+      state: 'connected' | 'offline' | 'unconfigured';
+      sessionId?: string;
+      joinUntil?: number;
+    }>;
+    renewJoinWindow(): Promise<{
+      state: 'connected' | 'offline' | 'unconfigured';
+      sessionId?: string;
+      joinUntil?: number;
+    }>;
+    onChanged(cb: (payload: {
+      state: 'connected' | 'offline' | 'unconfigured';
+      sessionId?: string;
+      joinUntil?: number;
+    }) => void): () => void;
   };
   /**
    * Thread control plane is HTTP to the product server (create/send/events).
@@ -405,6 +420,9 @@ export interface CcApi {
       isWorktree: boolean;
       archivedAt?: number | null;
       parentThreadId?: string | null;
+      lastReadSeq?: number | null;
+      maxSeq?: number;
+      updatedAt?: number;
     }>>;
     get(threadId: string): Promise<{ thread: Record<string, unknown> }>;
     send(
@@ -944,6 +962,36 @@ export interface CcApi {
   };
   files: {
     pathForFile(file: File): string;
+    read(input: { hostId?: string; path: string; rootPath?: string }): Promise<{
+      path: string;
+      content: string;
+      contentEncoding: 'utf8' | 'base64';
+      mimeType?: string;
+      sizeBytes: number;
+      modifiedAtMs?: number;
+      sha256: string;
+    }>;
+    list(input: { hostId?: string; path: string; query?: string; limit?: number }): Promise<{
+      files: Array<{ path: string; name: string }>;
+      truncated: boolean;
+    }>;
+    listPaths(input: {
+      hostId?: string;
+      path: string;
+      query?: string;
+      limit?: number;
+      includeFiles: boolean;
+      includeDirectories: boolean;
+    }): Promise<{
+      paths: Array<{
+        kind: 'file' | 'directory';
+        path: string;
+        name: string;
+        score: number;
+        positions: number[];
+      }>;
+      truncated: boolean;
+    }>;
   };
   app: {
     onMenuEvent(cb: (event: string) => void): () => void;
@@ -1246,6 +1294,13 @@ export interface CcApi {
       pluginId: string,
       values: Record<string, string | boolean | undefined>
     ): Promise<PluginSettingsSnapshot>;
+    checkUpdates(): Promise<Array<{
+      id: string;
+      current: string;
+      available: string;
+      marketplace: string;
+    }>>;
+    applyUpdate(id: string): Promise<Result<true>>;
   };
   /**
    * Runtime extensions discovered under `~/.zcc/extensions/<id>/`.

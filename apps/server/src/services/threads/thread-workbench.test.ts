@@ -8,7 +8,7 @@ import {
   parsePositiveInt,
   parseTimelineSegmentLimit
 } from './thread-path-confine.js';
-import { getThreadReadSeq, markThreadRead } from './thread-reads.js';
+import { getThreadReadSeq, markThreadRead, peekThreadReadSeq } from './thread-reads.js';
 import { imageContentType } from './thread-host-file.js';
 
 let dir: string | null = null;
@@ -46,10 +46,14 @@ describe('thread reads', () => {
   it('persists last-read seq atomically', () => {
     dir = mkdtempSync(join(tmpdir(), 'zcc-thread-reads-'));
     expect(getThreadReadSeq(dir, 't1')).toBe(0);
+    expect(peekThreadReadSeq(dir, 't1')).toBeNull();
     expect(markThreadRead(dir, 't1', 4)).toBe(4);
     expect(getThreadReadSeq(dir, 't1')).toBe(4);
+    expect(peekThreadReadSeq(dir, 't1')).toBe(4);
+    expect(markThreadRead(dir, 't1', 0)).toBe(0);
+    expect(peekThreadReadSeq(dir, 't1')).toBe(0);
     const body = JSON.parse(readFileSync(join(dir, 'thread-reads.json'), 'utf8')) as { t1: number };
-    expect(body.t1).toBe(4);
+    expect(body.t1).toBe(0);
   });
 });
 

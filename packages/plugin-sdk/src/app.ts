@@ -34,6 +34,8 @@ export type {
   PluginHomepageSectionRegistration,
   PluginMessageActionContext,
   PluginMessageActionRegistration,
+  PluginCommandPaletteActionContext,
+  PluginCommandPaletteActionRegistration,
   PluginMessageDirectiveProps,
   PluginMessageDirectiveRegistration,
   PluginNavPanelProps,
@@ -46,6 +48,7 @@ export type {
   PluginProviderIconRegistration,
   PluginRegistrationSet,
   PluginSdkApp,
+  PluginSettingsState,
   PluginSettingsSectionRegistration,
   PluginSidebarFooterActionContext,
   PluginSidebarFooterActionRegistration,
@@ -105,7 +108,10 @@ export async function setPluginSettings(
 }
 
 export function definePluginApp(setup: PluginAppSetup): PluginAppDefinition {
-  return pluginRuntime().definePluginApp?.(setup) ?? { __zccPluginApp: true, setup };
+  // Pure factory. Do not delegate to `__ZCC_PLUGIN_RUNTIME__.definePluginApp`:
+  // the host installs this same function on the runtime, which would recurse
+  // until "Maximum call stack size exceeded".
+  return { __zccPluginApp: true, setup };
 }
 
 export function isPluginAppDefinition(value: unknown): value is PluginAppDefinition {

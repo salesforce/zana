@@ -6,9 +6,9 @@
  * in the UI and streams live output.
  *
  *   Agents nav (data-testid="nav-agents")
- *     → "New thread/agent" (data-testid="agents-new" / "agents-new-empty")
+ *     → "New agent" (data-testid="agents-new" / "agents-new-empty")
  *     → launcher modal (data-testid="launch-modal")
- *         → Legacy Agent
+ *         → CLI Agent
  *         → instruction textarea (data-testid="launch-instruction")
  *         → target project select (aria-label="Target project")
  *         → harness select (aria-label="Launch harness")
@@ -102,10 +102,10 @@ test('launching an agent through the real UI opens its terminal and it goes work
       await newEmptyBtn.click();
     }
 
-    // 3. The launcher modal is up; switch to Legacy Agent for the PTY path.
+    // 3. The launcher modal is up; switch to CLI Agent for the PTY path.
     const modal = window.locator('[data-testid="launch-modal"]');
     await expect(modal).toBeVisible();
-    await modal.getByRole('button', { name: 'Legacy Agent' }).click();
+    await modal.getByRole('button', { name: 'CLI Agent' }).click();
 
     // 4. Type an instruction into the real composer textarea.
     const instruction = modal.locator('[data-testid="launch-instruction"]');

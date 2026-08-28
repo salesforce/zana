@@ -2243,9 +2243,15 @@ export interface AppConfig {
   /**
    * Shared secret for the outbound pairing-relay tunnel (`wss://<origin>/_zcc/relay`).
    * Must match Heroku `ZCC_RELAY_TOKEN`. Env `ZCC_RELAY_TOKEN` overrides this
-   * when set. One laptop per token (last-wins).
+   * when set. Authenticates laptop attach; many desktops may share one token
+   * (each gets its own session id).
    */
   relayToken?: string;
+  /**
+   * Routing id for this laptop's pairing-relay session (`/t/<id>`). Persisted so
+   * enrolled daemons can reconnect after Zana restarts. Not a Settings field.
+   */
+  relaySessionId?: string;
   /**
    * Absolute directory that inbox "Download as PDF" writes into. Absent ⇒ the
    * OS Downloads folder. The export saves straight there (no save dialog),
@@ -4504,6 +4510,8 @@ export interface PluginAppEntry {
   provenance: 'builtin' | 'direct' | 'catalog';
   status: 'running' | 'disabled' | 'degraded' | 'needs-configuration';
   appUrl: string | null;
+  /** Newer catalog version from the last `checkUpdates()` sweep, when any. */
+  availableVersion?: string;
   projectTab?: {
     label?: string;
     icon?: string;

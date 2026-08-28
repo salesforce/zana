@@ -33,7 +33,10 @@ function deps(handlers: {
     readFile: () => null,
     readdir: () => [],
     realpath: (path) => path,
-    spawnContained: async () => ({ code: 1, stdout: '', stderr: 'no' })
+    spawnContained: async () => ({ code: 1, stdout: '', stderr: 'no' }),
+    writeFile: () => {
+      throw new Error('writeFile not stubbed');
+    }
   };
 }
 

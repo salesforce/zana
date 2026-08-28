@@ -177,6 +177,18 @@ export function createWsConnection(socket, options = {}) {
     }
   });
 
+  if (buf.length > 0) {
+    setImmediate(() => {
+      if (closed) return;
+      try {
+        pump();
+      } catch (error) {
+        emit('error', error);
+        close(1002);
+      }
+    });
+  }
+
   return {
     send,
     ping(payload = Buffer.alloc(0)) {

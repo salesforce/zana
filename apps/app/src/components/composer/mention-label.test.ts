@@ -7,7 +7,7 @@ import {
 
 describe('mentionDisplayLabel', () => {
   it('prefixes thread and project values with their kind title', () => {
-    expect(mentionDisplayLabel({ kind: 'thread', label: 'Hello' })).toBe('Thread: Hello');
+    expect(mentionDisplayLabel({ kind: 'thread', label: 'Hello' })).toBe('Agent: Hello');
     expect(mentionDisplayLabel({ kind: 'project', label: 'Zana' })).toBe('Project: Zana');
   });
 
@@ -17,7 +17,8 @@ describe('mentionDisplayLabel', () => {
   });
 
   it('does not double-prefix an already titled thread label', () => {
-    expect(mentionDisplayLabel({ kind: 'thread', label: 'Thread: Hello' })).toBe('Thread: Hello');
+    expect(mentionDisplayLabel({ kind: 'thread', label: 'Thread: Hello' })).toBe('Agent: Hello');
+    expect(mentionDisplayLabel({ kind: 'thread', label: 'Agent: Hello' })).toBe('Agent: Hello');
   });
 
   it('falls back through label, path, name, and kind', () => {

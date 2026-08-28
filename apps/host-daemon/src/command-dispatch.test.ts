@@ -283,10 +283,189 @@ describe('host command dispatch', () => {
       type: 'host-rpc.request',
       protocolVersion: HOST_RPC_PROTOCOL_VERSION,
       requestId: 'r1',
-      command: { type: 'thread.rewind.prepare' }
+      command: { type: 'not.a.command' }
     });
     expect(response.ok).toBe(false);
     if (!response.ok) expect(response.error.code).toBe('unknown_command');
+  });
+
+  it('writes, browses, and probes host paths through dispatch', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'zcc-host-fs-dispatch-'));
+    const runtime = createCommandRuntime({
+      verifyProviders: async () => installedClaude
+    });
+    const written = await dispatchHostCommand(runtime, {
+      type: 'host.write_file',
+      path: join(root, 'note.txt'),
+      rootPath: root,
+      content: 'hello',
+      contentEncoding: 'utf8',
+      createParents: false
+    }) as { outcome: string; sizeBytes: number };
+    expect(written).toMatchObject({ outcome: 'written', sizeBytes: 5 });
+    await expect(dispatchHostCommand(runtime, {
+      type: 'host.mkdir',
+      path: join(root, 'apps'),
+      rootPath: root,
+      recursive: false
+    })).resolves.toEqual({ ok: true });
+    const listed = await dispatchHostCommand(runtime, {
+      type: 'host.browse_directory',
+      path: root
+    }) as { entries: Array<{ name: string }> };
+    expect(listed.entries.map((entry) => entry.name).sort()).toEqual(['apps', 'note.txt']);
+    const existence = await dispatchHostCommand(runtime, {
+      type: 'host.paths_exist',
+      paths: [join(root, 'note.txt'), join(root, 'missing.txt')]
+    }) as { existence: Record<string, boolean> };
+    expect(existence.existence[join(root, 'note.txt')]).toBe(true);
+    expect(existence.existence[join(root, 'missing.txt')]).toBe(false);
+    const searched = await dispatchHostCommand(runtime, {
+      type: 'host.list_paths',
+      path: root,
+      query: 'note',
+      limit: 20,
+      includeFiles: true,
+      includeDirectories: true
+    }) as { paths: Array<{ path: string; kind: string }>; truncated: boolean };
+    expect(searched.truncated).toBe(false);
+    expect(searched.paths.some((entry) => entry.path === 'note.txt' && entry.kind === 'file')).toBe(true);
+    const read = await dispatchHostCommand(runtime, {
+      type: 'host.read_path',
+      path: join(root, 'note.txt'),
+      rootPath: root
+    }) as { content: string; contentEncoding: string; sizeBytes: number };
+    expect(read).toMatchObject({ content: 'hello', contentEncoding: 'utf8', sizeBytes: 5 });
+    const metadata = await dispatchHostCommand(runtime, {
+      type: 'host.file_metadata',
+      path: join(root, 'note.txt'),
+      rootPath: root
+    }) as { sizeBytes: number };
+    expect(metadata.sizeBytes).toBe(5);
+  });
+
+  it('rewinds, renames, archives, and clears a thread goal through dispatch', async () => {
+    const project = mkdtempSync(join(tmpdir(), 'zcc-thread-lifecycle-'));
+    const rewound: string[] = [];
+    const discarded: string[] = [];
+    const renamed: string[] = [];
+    const archived: string[] = [];
+    const unarchived: string[] = [];
+    const cleared: string[] = [];
+    const runtime = createCommandRuntime({
+      verifyProviders: async () => installedClaude,
+      prepareRewind: async (input) => {
+        rewound.push(input.leaseId);
+        return { providerThreadId: 'fork-1' };
+      },
+      discardRewind: async (input) => {
+        discarded.push(input.leaseId);
+      },
+      renameWork: async (input) => {
+        renamed.push(input.title);
+      },
+      archiveWork: async (input) => {
+        archived.push(input.providerThreadId);
+      },
+      unarchiveWork: async (input) => {
+        unarchived.push(input.providerThreadId);
+      },
+      clearGoal: async (input) => {
+        cleared.push(input.threadId);
+        return { cleared: true };
+      }
+    });
+    const environmentId = randomUUID();
+    const threadId = randomUUID();
+    await dispatchHostCommand(runtime, {
+      type: 'environment.provision',
+      environmentId,
+      workspaceProvisionType: 'unmanaged',
+      path: project
+    });
+    await dispatchHostCommand(runtime, {
+      type: 'thread.start',
+      threadId,
+      environmentId,
+      projectId: 'p1',
+      providerId: 'claude',
+      input: ['hello']
+    });
+    await expect(dispatchHostCommand(runtime, {
+      type: 'thread.rewind.prepare',
+      threadId,
+      environmentId,
+      leaseId: 'lease-1',
+      projectId: 'p1',
+      providerId: 'claude',
+      sourceProviderThreadId: 'pt-1',
+      retainThroughProviderCheckpoint: 'cp-1'
+    })).resolves.toMatchObject({
+      prepared: true,
+      providerThreadId: 'fork-1'
+    });
+    expect(rewound).toEqual(['lease-1']);
+    await expect(dispatchHostCommand(runtime, {
+      type: 'thread.rewind.discard',
+      threadId,
+      environmentId,
+      leaseId: 'lease-1'
+    })).resolves.toEqual({ leaseId: 'lease-1', discarded: true });
+    expect(discarded).toEqual(['lease-1']);
+    await expect(dispatchHostCommand(runtime, {
+      type: 'thread.rename',
+      threadId,
+      environmentId,
+      title: 'New title'
+    })).resolves.toEqual({ threadId, renamed: true });
+    expect(renamed).toEqual(['New title']);
+    await expect(dispatchHostCommand(runtime, {
+      type: 'thread.archive',
+      threadId,
+      environmentId,
+      providerId: 'claude',
+      providerThreadId: 'pt-1'
+    })).resolves.toEqual({ threadId, archived: true });
+    expect(archived).toEqual(['pt-1']);
+    await expect(dispatchHostCommand(runtime, {
+      type: 'thread.unarchive',
+      threadId,
+      environmentId,
+      providerId: 'claude',
+      providerThreadId: 'pt-1'
+    })).resolves.toEqual({ threadId, unarchived: true });
+    expect(unarchived).toEqual(['pt-1']);
+    await expect(dispatchHostCommand(runtime, {
+      type: 'thread.goal.clear',
+      threadId,
+      environmentId
+    })).resolves.toEqual({ threadId, cleared: true });
+    expect(cleared).toEqual([threadId]);
+    await expect(dispatchHostCommand(runtime, {
+      type: 'host.write_file',
+      path: join(project, '..', 'escape.txt'),
+      rootPath: project,
+      content: 'nope',
+      contentEncoding: 'utf8',
+      createParents: false
+    })).rejects.toBeInstanceOf(HostCommandError);
+  });
+
+  it('rejects rewind when the environment is not provisioned', async () => {
+    const runtime = createCommandRuntime({
+      verifyProviders: async () => installedClaude,
+      prepareRewind: async () => ({ providerThreadId: 'fork-1' })
+    });
+    await expect(dispatchHostCommand(runtime, {
+      type: 'thread.rewind.prepare',
+      threadId: randomUUID(),
+      environmentId: randomUUID(),
+      leaseId: 'lease-1',
+      projectId: 'p1',
+      providerId: 'claude',
+      sourceProviderThreadId: 'pt-1',
+      retainThroughProviderCheckpoint: 'cp-1'
+    })).rejects.toMatchObject({ code: 'environment_not_ready' });
   });
 
   it('cancels plan mode without dropping the running thread', async () => {
@@ -381,6 +560,39 @@ describe('host command dispatch', () => {
       workspaceProvisionType: 'managed-worktree'
     }) as { destroyed: boolean };
     expect(destroyed.destroyed).toBe(true);
+  });
+
+  it('places a personal workspace under the host data dir when the requested path is foreign', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-personal-data-'));
+    const environmentId = randomUUID();
+    const runtime = createCommandRuntime({
+      dataDir,
+      verifyProviders: async () => installedClaude
+    });
+    const provisioned = await dispatchHostCommand(runtime, {
+      type: 'environment.provision',
+      environmentId,
+      workspaceProvisionType: 'personal',
+      targetPath: join('/Users/me/.zcc/personal-workspaces', environmentId)
+    }) as { path: string };
+    expect(provisioned.path).toBe(realpathSync(join(dataDir, 'personal-workspaces', environmentId)));
+  });
+
+  it('keeps a personal workspace that already lives under the host data dir', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-personal-keep-'));
+    const environmentId = randomUUID();
+    const targetPath = join(dataDir, 'personal-workspaces', environmentId);
+    const runtime = createCommandRuntime({
+      dataDir,
+      verifyProviders: async () => installedClaude
+    });
+    const provisioned = await dispatchHostCommand(runtime, {
+      type: 'environment.provision',
+      environmentId,
+      workspaceProvisionType: 'personal',
+      targetPath
+    }) as { path: string };
+    expect(provisioned.path).toBe(realpathSync(targetPath));
   });
 
   it('fails PR actions closed when gh is missing', async () => {
@@ -568,7 +780,6 @@ describe('host command dispatch', () => {
       providerId: 'codex',
       bridgeLaunch: {
         pluginId: 'provider-codex',
-        dataDir: '/tmp/bridge',
         source: { kind: 'daemon-bundled', id: 'codex' },
         capabilities: {
           supportsServiceTier: true,

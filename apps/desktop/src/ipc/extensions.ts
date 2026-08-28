@@ -4,6 +4,7 @@ import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
 import { installFromArchiveFile, installFromBundled, installFromDir, installFromGit, locateManifestDir, uninstallExtension } from '@zana-ai/zcc-server/services/extensions/extension-installer';
 import {
+  bundledPluginByName,
   defaultBundledRoot,
   defaultPluginDataDir,
   installBundledPlugin,
@@ -361,7 +362,23 @@ export function registerExtensionsIpc(): void {
       } else if (source.kind === 'bundled') {
         // Reinstall a first-party plugin or leftover disk extension from the
         // app's own resources (no network, no picker). Plugin-model packages
-        // live under `plugins/`; `extension.json` artifacts still use installFromBundled.
+        // live under `plugins/` and MUST load in the live plugin host (same
+        // path as npm/path installs). A sidecar `installBundledPlugin()` would
+        // run the factory in Electron main, never emit plugin-apps, and leave
+        // Browse stuck on Install. `extension.json` artifacts still use
+        // installFromBundled.
+        const bundledDir = join(defaultBundledRoot(), source.id);
+        const bundledPkg = join(bundledDir, 'package.json');
+        if (existsSync(bundledPkg) && ctx.runtimeSupervisor) {
+          const spec = bundledPluginByName(source.id) ? `builtin:${source.id}` : bundledDir;
+          const row = await ctx.runtimeSupervisor.installPlugin(spec);
+          const id =
+            row && typeof row === 'object' && 'id' in row ? String((row as { id: unknown }).id) : '';
+          if (!id) {
+            return { ok: false, code: 'INSTALL_FAILED', message: 'plugin install did not return an id' };
+          }
+          return { ok: true, value: { id } };
+        }
         const pluginRes = await installBundledPlugin(source.id);
         if (pluginRes) {
           res = pluginRes;

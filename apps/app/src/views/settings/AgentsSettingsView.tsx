@@ -156,7 +156,7 @@ export function AgentsSettingsView({
       >
         <CheckboxField
           label="Auto-name tabs"
-          help="Name a Claude tab or a conversation thread from its first instruction via the tab-namer prompt (edit it under Prompts). Off falls back to Claude’s idle title for tabs, and to a short prompt snippet for threads."
+          help="Name a Claude tab or a conversation from its first instruction via the tab-namer prompt (edit it under Prompts). Off falls back to Claude’s idle title for tabs, and to a short prompt snippet for agents."
           checked={config.autoRenameTabs ?? true}
           onChange={(v) => onUpdate({ autoRenameTabs: v })}
         />
@@ -540,8 +540,8 @@ export function AgentsSettingsView({
 
       <Section
         anchorId="legacy-agent"
-        title="Legacy Agent"
-        help="Resource ceilings for PTY (Legacy Agent) terminal sessions so many or runaway agents can't exhaust this machine."
+        title="CLI Agent"
+        help="Resource ceilings for PTY (CLI Agent) terminal sessions so many or runaway agents can't exhaust this machine."
       >
         <Field
           label="Max live sessions"

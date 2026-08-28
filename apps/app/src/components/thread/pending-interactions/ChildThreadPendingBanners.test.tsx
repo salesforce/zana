@@ -68,13 +68,13 @@ describe('ChildThreadPendingBanners', () => {
         />
       </MemoryRouter>
     );
-    expect(html).toContain('From child thread: Investigate');
+    expect(html).toContain('From child agent: Investigate');
     expect(html).toContain('rm -rf');
     expect(html).toContain('/projects/proj-1/threads/thr-child');
     expect(html).not.toContain('Idle');
   });
 
-  it('falls back to Child thread when the title is empty', () => {
+  it('falls back to Child agent when the title is empty', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <ChildThreadPendingBanners
@@ -83,6 +83,6 @@ describe('ChildThreadPendingBanners', () => {
         />
       </MemoryRouter>
     );
-    expect(html).toContain('From child thread: Child thread');
+    expect(html).toContain('From child agent: Child agent');
   });
 });

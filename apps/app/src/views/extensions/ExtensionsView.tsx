@@ -15,7 +15,6 @@
 import { AuroraGrid } from '@/components/AuroraGrid';
 import { useUi } from '@/store';
 import { ExtensionsHub } from '@/views/extensions/ExtensionsHub';
-import { PluginSettingsSections } from '@/plugins/PluginSettingsSections';
 import { SkillsBody } from '@/views/extensions/SkillsView';
 import { McpBody } from '@/views/extensions/McpView';
 
@@ -33,14 +32,11 @@ export function ExtensionsView() {
         ) : tab === 'mcp' ? (
           <McpBody showHeader={false} />
         ) : (
-          <>
-            <ExtensionsHub
-              tab={tab}
-              onTabChange={(next) => setExtensionsTab(next)}
-              showTabs={false}
-            />
-            <PluginSettingsSections />
-          </>
+          <ExtensionsHub
+            tab={tab}
+            onTabChange={(next) => setExtensionsTab(next)}
+            showTabs={false}
+          />
         )}
       </div>
     </div>

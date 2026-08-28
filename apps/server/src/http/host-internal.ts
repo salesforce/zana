@@ -18,6 +18,7 @@ import { isAllowedHostInternalHost, requestHostHeader, resolvePublicAppUrl } fro
 import { generateHostKey, hashHostKey, hostKeyMatches } from './host-hub.js';
 import { headerValue } from './browser-request-guard.js';
 import { readJsonBody, sendJson } from './json.js';
+import { sendHostArtifactFile } from './host-artifact-response.js';
 import type { ProductHttpContext } from './product-context.js';
 
 function tokenMatches(received: string, expected: string): boolean {
@@ -72,6 +73,9 @@ export async function handleHostInternalHttp(
   }
   if (pathname === '/internal/hosts/tool-call') {
     return handleHostToolCall(request, response, ctx);
+  }
+  if (pathname.startsWith('/internal/plugins/')) {
+    return handlePluginHostArtifact(request, response, ctx, pathname);
   }
   return false;
 }
@@ -305,6 +309,55 @@ async function handleHostToolCall(
     }));
   } finally {
     request.removeListener('close', onClose);
+  }
+  return true;
+}
+
+const PLUGIN_HOST_ARTIFACT_PATH = /^\/internal\/plugins\/([^/]+)\/host\/([^/]+)$/u;
+const HOST_ARTIFACT_DIGEST = /^[a-f0-9]{64}$/u;
+
+async function handlePluginHostArtifact(
+  request: IncomingMessage,
+  response: ServerResponse,
+  ctx: ProductHttpContext,
+  pathname: string
+): Promise<boolean> {
+  const matched = PLUGIN_HOST_ARTIFACT_PATH.exec(pathname);
+  if (!matched) return false;
+  const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
+  const auth = authenticateHostCall(request, requestUrl, ctx);
+  if ('error' in auth) {
+    sendJson(response, auth.status, { error: auth.error });
+    return true;
+  }
+  const method = (request.method ?? 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD') {
+    sendJson(response, 405, { error: 'method not allowed' });
+    return true;
+  }
+  const pluginId = decodeURIComponent(matched[1] ?? '');
+  const digest = matched[2] ?? '';
+  const notFound = () => {
+    sendJson(response, 404, { error: 'not found' });
+  };
+  if (!HOST_ARTIFACT_DIGEST.test(digest)) {
+    notFound();
+    return true;
+  }
+  const artifact = ctx.pluginHostArtifacts.get(pluginId);
+  if (artifact === undefined || artifact.digest !== digest) {
+    notFound();
+    return true;
+  }
+  const sent = await sendHostArtifactFile(response, {
+    path: artifact.path,
+    byteLength: artifact.byteLength,
+    digest,
+    headOnly: method === 'HEAD'
+  });
+  if (!sent) {
+    notFound();
+    return true;
   }
   return true;
 }

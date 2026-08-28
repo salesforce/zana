@@ -8,7 +8,7 @@ workflows — all from one window.
 This guide takes you from a fresh install to your first orchestrated agent in
 about five minutes. **New Chat** defaults to a **Thread** with the native CLI
 for Claude Code, Cursor, OpenCode, Codex, or Pi — not a generic chat wrapper.
-**Legacy Agent** is still there when you want a real PTY.
+**CLI Agent** is still there when you want a real PTY.
 
 ```mermaid
 flowchart LR
@@ -67,7 +67,7 @@ conversation with the selected harness in the project you pick.
   [Environments](/docs/using-zana/#environments).
 - Type your task and send. The thread starts in that directory so the harness
   sees the right files.
-- Switch to **Legacy Agent** when you want a real PTY running the native CLI.
+- Switch to **CLI Agent** when you want a real PTY running the native CLI.
 - **Autonomous Team** launches a saved team of personas when the work needs
   parallel roles.
 

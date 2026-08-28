@@ -3,12 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Run threads with Pi.",
+  "description": "Run Zana threads with Pi.",
   "engines": {
     "zcc": ">=1.0.0",
     "zccPluginSdk": ">=0.1.0"
   },
   "scripts": {
+    "build": "node ../../packages/plugin-build/scripts/build-app.mjs .",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
@@ -19,13 +20,12 @@
   },
   "zcc": {
     "name": "Pi provider",
-    "description": "Run threads with Pi.",
+    "description": "Run Zana threads with Pi.",
     "branding": {
       "icon": "./icons/pi.svg"
     },
     "server": "./server.mjs",
     "app": "./app.tsx",
-    "host": "./src/bridge/bridge.ts",
     "extra": {
       "threadProvider": true
     }

@@ -1,30 +1,21 @@
 # Using Zana on multiple machines
 
-There are two ways to use another computer with Zana Command Center.
-They work together after you install a host daemon:
+There are two separate ways to use another computer with Zana Command Center:
 
 - **Enrolled machines** run a host daemon. The other box outbound-connects to
-  this app. Projects and threads then execute there.
-- **SSH remotes** start as a different path: this machine's daemon `ssh`s into
-  the box. The composer **Install** control uses that SSH channel to bootstrap
-  a host daemon, then converts the project so later threads run on the enrolled
-  machine instead of SSH PTY.
+  this app. Add a folder on that machine from **Settings → Machines** (or the
+  host picker when adding a local project). Threads then execute there.
+- **SSH remotes** are a workspace on a host from `~/.ssh/config`. New threads
+  default to **This machine**: the coding agent runs here and file/shell tools
+  (`remote_read`, `remote_write`, `remote_edit`, `remote_glob`, `remote_grep`,
+  `remote_exec`) run on the box over SSH. Composer shows **Local agent · remote
+  tools**. Optionally install a host daemon on that box (**Add remote**
+  checkbox, on by default, or composer **Install**). After it connects, pick
+  **This machine** (SSH tools) or **Remote machine** (threads execute on the
+  enrolled daemon). This machine's host daemon must be connected (it owns
+  `~/.ssh`).
 
-An SSH remote has **three execution modes**:
-
-1. **SSH PTY (default)** — the coding CLI itself runs on the box via `ssh -t`.
-   Send stays allowed; this machine's host daemon must be connected (it owns
-   `~/.ssh`).
-2. **Local agent, remote tools** — a per-project toggle on the Remote workspace.
-   The LLM/harness stays on this machine; Read, Write, Edit, Glob, Grep, and
-   Shell run on the remote over the existing SSH ControlMaster path. Composer
-   shows **Local agent · remote tools**. Install remains available.
-3. **Enrolled daemon** — composer **Install** puts a host-daemon on the box and
-   binds the project to it. Later threads run there over RPC, not SSH.
-
-SSH is the bootstrap and repair channel. The enrolled daemon is the execution
-path after Install. Copy-paste join remains for boxes you cannot SSH to from
-this machine.
+Copy-paste join remains for boxes you cannot SSH to from this machine.
 
 ---
 
@@ -43,8 +34,14 @@ Set the hostname in **one** of these places (first match wins):
 3. The repo-root file [`public-app-url`](../public-app-url) (one URL, comments allowed)
 
 Set the matching **Relay token** (Settings or env `ZCC_RELAY_TOKEN`). It must
-equal Heroku config `ZCC_RELAY_TOKEN`. One laptop per token: a second desktop
-with the same token steals the tunnel.
+equal Heroku config `ZCC_RELAY_TOKEN`. The token authenticates a laptop to
+open a session — several desktops may share it. Each connection gets its own
+session id. Join/enroll through that id expires after **5 minutes**; already
+connected host websockets keep working until this app quits. Renew the join
+window from Settings → Machines.
+
+Join commands use `https://<origin>/t/<sessionId>` so remotes route to the
+right laptop. A second desktop no longer steals the tunnel.
 
 ```bash
 # public-app-url
@@ -108,8 +105,8 @@ then nix / nvm / fnm / volta (a Node 20 PATH entry is skipped). Override with
 
 The installer requires **Node.js 22 or newer** on the remote box. Manual
 pairing downloads the host-daemon tarball from `/install/zcc-host.tgz`. Composer
-**Install** / **Fix** pipes that same tarball over SSH from this machine
-instead of asking the remote to `curl` it.
+**Fix** (enrolled machines that are offline) pipes that same tarball over SSH
+from this machine instead of asking the remote to `curl` it.
 
 Each joined server gets its own daemon instance and data directory
 (`~/.zcc-machines/<server-host>`). Joining never touches a full local install's
@@ -117,33 +114,31 @@ Each joined server gets its own daemon instance and data directory
 `~/.zcc-machines/host-daemon-ports/`; pass `--host-daemon-port <port>` to
 override.
 
-On macOS the installer loads a LaunchAgent; on Linux it enables a systemd user
-unit. Both start the daemon with `--auto-update`.
+On macOS the installer loads a LaunchAgent. On Linux it enables a systemd user
+unit when that bus is available; Salesforce workspaces and other boxes without
+user systemd keep the daemon running in the background instead of hanging.
+Both start the daemon with `--auto-update`.
 
 ---
 
-## Install or Fix from the composer
-
-When the selected project is an SSH remote, the composer shows **Install**.
-That SSHs from this machine, unpacks the host daemon, joins it to the app, and
-rewrites the project to run on that enrolled host.
+## Fix from the composer
 
 When an already-paired machine is offline, the composer shows **Fix**. If Zana
 stored an SSH alias for that host, Fix restarts the LaunchAgent or systemd user
 unit and reinstalls if restart does not reconnect. If no SSH alias is stored,
 Fix asks you to pick a host from `~/.ssh/config`, then retries.
 
-Install and Fix need the same **Public app URL** as Add machine (not loopback).
-This machine's host daemon must be connected — it owns `~/.ssh` and performs
-the SSH. If SSH cannot run, copy the Settings → Add machine join command.
+Fix needs the same **Public app URL** as Add machine (not loopback). This
+machine's host daemon must be connected — it owns `~/.ssh` and performs the
+SSH. If SSH cannot run, copy the Settings → Add machine join command.
 
-**Add remote project** runs that same Install by default. Uncheck **Install
-host daemon** to keep SSH PTY only. If the SSH host is already enrolled,
-the new project binds to that machine instead of installing again.
-
-Send is blocked only when the *execution* host is an enrolled machine that is
-offline. SSH remotes keep working over SSH PTY, or over the local-agent /
-remote-tools toggle, until you install a daemon.
+**Add remote project** registers the SSH workspace and, by default, installs a
+host daemon over SSH. Uncheck the install box (or skip after a failed install)
+to keep using this machine with SSH tools. Composer **Install** stays available
+until a daemon is bound. After install, pick **This machine** or **Remote
+machine**. Send is blocked only when **Remote machine** is selected and that
+daemon is offline. **This machine** keeps working as long as this machine's
+daemon is connected.
 
 ---
 
@@ -168,20 +163,39 @@ cannot be removed from the list.
 
 ## Local Docker trial
 
-To enroll a Linux host-daemon against a `pnpm dev` server on this machine:
+A Linux box lives in `docker/remote-machine`. It is
+the same enroll path as a real remote: Node 22, `/home/zcc/workspace`, SSH on
+port 2222, no systemd user bus (the installer nohups).
+
+Start it and leave it idle:
+
+```bash
+pnpm docker:remote-machine
+```
+
+Then either paste the Settings → Add a machine command inside the box:
+
+```bash
+docker exec -it zcc-docker bash
+# or: ssh -p 2222 zcc@127.0.0.1   (password: zcc)
+zcc-join --join-code <zcde_...> --host-id <id> --server <url>
+```
+
+Or mint and enroll in one step (`pnpm dev` must be running). If the laptop
+relay is connected, this uses the Heroku origin; otherwise it publishes a
+loopback proxy so Docker can reach `127.0.0.1` (and temporarily points Public
+app URL at that proxy):
 
 ```bash
 pnpm docker:host-daemon
 ```
 
-That script publishes a loopback-only TCP proxy so Docker Desktop can reach
-`127.0.0.1`, mints a join code (or takes `--join-code` / `--host-id` from
-**Add machine**), and leaves the container running. Settings → Machines should
-show hostname `zcc-docker` as online. Ctrl+C stops the container and restores
-the previous Public app URL.
+Force a door with `--relay` or `--local`. Stop with
+`pnpm docker:remote-machine down`.
 
-This is a pairing trial, not Tailscale Serve. Use Serve when the other box is a
-real machine on your tailnet.
+Settings → Machines should show hostname `zcc-docker`. Add a project at
+`/home/zcc/workspace` (sample app is in the repo under
+`docker/remote-machine/workspace`). This is a pairing trial, not Tailscale Serve.
 
 
 ---

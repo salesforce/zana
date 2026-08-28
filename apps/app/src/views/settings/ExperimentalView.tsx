@@ -76,7 +76,7 @@ export function ExperimentalView({
       >
         <CheckboxField
           label="Enable voice input (dictation)"
-          help="Shows the mic button in the prompt composer so you can dictate instead of type. The thread composer already includes a mic."
+          help="Shows the mic button in the prompt composer so you can dictate instead of type. The agent composer already includes a mic."
           checked={config.voiceInputEnabled ?? false}
           onChange={(v) => onUpdate({ voiceInputEnabled: v })}
         />

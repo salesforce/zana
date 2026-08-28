@@ -15,9 +15,10 @@ const models = [
 ];
 
 describe('showHarnessTabs', () => {
-  it('shows provider tabs only when the new-thread callback is present', () => {
+  it('shows provider tabs on a new thread whenever at least one harness is offered', () => {
     expect(showHarnessTabs(undefined, 2)).toBe(false);
-    expect(showHarnessTabs(() => undefined, 1)).toBe(false);
+    expect(showHarnessTabs(() => undefined, 0)).toBe(false);
+    expect(showHarnessTabs(() => undefined, 1)).toBe(true);
     expect(showHarnessTabs(() => undefined, 2)).toBe(true);
   });
 });
@@ -97,6 +98,8 @@ describe('ModelReasoningPicker', () => {
     const source = readFileSync(new URL('./ModelReasoningPicker.tsx', import.meta.url), 'utf8');
     const css = readFileSync(new URL('../../../styles/global.css', import.meta.url), 'utf8');
     expect(source).toContain('aria-label={provider.label}');
+    expect(source).toContain('aria-label="Harness"');
+    expect(source).toContain('model-reasoning-picker-section-label">Harness');
     expect(source).not.toContain('title={provider.label}');
     expect(css).toContain('.model-reasoning-picker-tab:hover::after');
     expect(css).toContain('content: attr(aria-label)');

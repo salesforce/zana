@@ -1,8 +1,8 @@
 import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isAllowedHttp, isAllowedWs, normalizePairingPath } from './allowlist.mjs';
-import { createPairingSession } from './pairing-session.mjs';
+import { normalizePairingPath } from './allowlist.mjs';
+import { createPairingHub } from './pairing-hub.mjs';
 import { bearerToken, relayTokenFromEnv, tokenMatches } from './token.mjs';
 import {
   createWsConnection,
@@ -28,7 +28,10 @@ function sendJson(response, status, body) {
  *   env?: NodeJS.ProcessEnv,
  *   cwd?: string,
  *   spawnNext?: boolean,
- *   nextOrigin?: string
+ *   nextOrigin?: string,
+ *   now?: () => number,
+ *   joinTtlMs?: number,
+ *   maxSessions?: number
  * }} [options]
  */
 export async function startFrontDoor(options = {}) {
@@ -40,17 +43,19 @@ export async function startFrontDoor(options = {}) {
   // Bind $PORT before Next is ready — Heroku kills dynos that do not listen in time.
   let nextReady = !spawn;
 
-  const session = createPairingSession();
+  const hub = createPairingHub({
+    env,
+    now: options.now,
+    joinTtlMs: options.joinTtlMs,
+    maxSessions: options.maxSessions
+  });
   const server = createServer((request, response) => {
     const pathname = normalizePairingPath(new URL(request.url ?? '/', 'http://127.0.0.1').pathname);
     if (pathname === '/_zcc/relay') {
       sendJson(response, 400, { error: 'websocket_required' });
       return;
     }
-    if (isAllowedHttp(request.method ?? 'GET', pathname)) {
-      void session.handleHttp(request, response);
-      return;
-    }
+    if (hub.handleHttp(request, response)) return;
     if (!nextReady) {
       sendJson(response, 503, { error: 'site_starting' });
       return;
@@ -72,6 +77,12 @@ export async function startFrontDoor(options = {}) {
         writeHttpError(socket, 401, 'Unauthorized');
         return;
       }
+      const reclaimId = String(request.headers['x-zcc-relay-session'] ?? '').trim() || undefined;
+      const allowed = hub.canAttach(reclaimId);
+      if (!allowed.ok) {
+        writeHttpError(socket, allowed.status, allowed.reason);
+        return;
+      }
       const key = request.headers['sec-websocket-key'];
       if (typeof key !== 'string' || key.length === 0) {
         writeHttpError(socket, 400, 'Bad Request');
@@ -79,14 +90,17 @@ export async function startFrontDoor(options = {}) {
       }
       writeServerHandshake(socket, key);
       const leftover = Buffer.isBuffer(head) ? head : Buffer.alloc(0);
-      session.attach(createWsConnection(socket, { leftover }));
+      hub.attach(createWsConnection(socket, { leftover }), reclaimId);
       return;
     }
-    if (isAllowedWs(pathname)) {
-      session.handleUpgrade(request, socket, head);
+    const routed = hub.handleUpgrade(request, socket, head);
+    if (routed === false) {
+      writeHttpError(socket, 404, 'Not Found');
       return;
     }
-    writeHttpError(socket, 404, 'Not Found');
+    if (routed && routed.handled && !routed.entry && routed.status) {
+      writeHttpError(socket, routed.status, routed.reason ?? 'Service Unavailable');
+    }
   });
 
   const port = options.port ?? Number(env.PORT ?? 4321);
@@ -121,10 +135,13 @@ export async function startFrontDoor(options = {}) {
     url: `http://127.0.0.1:${address.port}/`,
     nextOrigin,
     hasLaptop() {
-      return session.hasLaptop();
+      return hub.hasLaptop();
+    },
+    sessionCount() {
+      return hub.sessionCount();
     },
     close: async () => {
-      session.dispose();
+      hub.dispose();
       await new Promise((resolveClose, rejectClose) => {
         server.close((error) => (error ? rejectClose(error) : resolveClose()));
       });

@@ -94,7 +94,7 @@ function BannerShell({
     <div className="thread-pending-banner thread-composer-stack-card" data-testid="thread-pending-banner">
       {sourceThread ? (
         <Link className="thread-pending-banner-source" to={sourceThread.href}>
-          From child thread: {sourceThread.title}
+          From child agent: {sourceThread.title}
         </Link>
       ) : null}
       {title ? <h3 className="thread-pending-banner-title">{title}</h3> : null}

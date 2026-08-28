@@ -40,7 +40,11 @@ export function primaryHost(hosts: Host[]): Host | undefined {
   return hosts.find((host) => host.isPrimary) ?? hosts[0];
 }
 
-export function defaultHostId(hosts: Host[], projectHostId?: string): string | undefined {
-  if (projectHostId && hosts.some((host) => host.id === projectHostId)) return projectHostId;
+export function defaultHostId(
+  hosts: Host[],
+  project?: { hostId?: string; remote?: unknown }
+): string | undefined {
+  if (project?.remote) return primaryHost(hosts)?.id;
+  if (project?.hostId && hosts.some((host) => host.id === project.hostId)) return project.hostId;
   return primaryHost(hosts)?.id;
 }

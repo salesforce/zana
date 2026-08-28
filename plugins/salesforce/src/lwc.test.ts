@@ -12,7 +12,10 @@ function memFs(files: Record<string, string>, dirs: Record<string, string[]>): S
     readFile: (path) => files[path] ?? null,
     readdir: (path) => dirs[path] ?? [],
     realpath: (path) => path,
-    spawnContained: async () => ({ code: 0, stdout: 'ok', stderr: '' })
+    spawnContained: async () => ({ code: 0, stdout: 'ok', stderr: '' }),
+    writeFile: (path, content) => {
+      files[path] = content;
+    }
   };
 }
 

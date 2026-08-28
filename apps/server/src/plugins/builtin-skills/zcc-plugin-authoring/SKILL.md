@@ -83,11 +83,17 @@ this list fails CI):
   Payload fields: `threadId`, `projectId`.
 - `zcc.ui` — `ui.requestInput({ threadId, rendererId, title, payload, timeoutMs? })`.
   Pair with `pendingInteraction` so the thread workbench can render the form.
-  `ui.registerMentionProvider({ id, trigger?, search(query) })` feeds `@`
-  typeahead (`id`, `label`, optional `insertText`).
+  `ui.registerMentionProvider({ id, label, triggers?, search(ctx), resolve(itemId) })`
+  feeds `@` / `#` typeahead. `search` receives `{ query, trigger, projectId?,
+  threadId? }` and returns `{ id, label, insertText? }[]`. `resolve` returns
+  `{ context }` that the host appends as agent-only text at send.
 - `zcc.status` — `status.needsConfiguration(message)`.
 - `zcc.sdk` — product SDK. `sdk.threads.spawn({ projectId, prompt, providerId? })`
-  attributes the thread to this plugin. Throws when the host has not wired spawn.
+  attributes the thread to this plugin. `sdk.threads.archive` / `fork` /
+  `unarchive` take `{ threadId }`. `sdk.inbox.push({ projectId, comments })`
+  appends to the product inbox after the host confines `projectId` to a
+  registered project. `sdk.projects.list()` returns `{ id, name, path? }[]`.
+  Throws when the host has not wired the called member.
 - `zcc.host` — optional native bridge. `host.experimental_call(method, input?)`
   and `host.experimental_client()` (`call(method, input, { hostId? })`) dispatch
   to a `zcc.host` worker loaded via `experimental_defineHostEntry`. Throws

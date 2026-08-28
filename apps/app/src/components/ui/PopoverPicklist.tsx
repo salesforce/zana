@@ -1,4 +1,6 @@
 export {
+  picklistOptionVisible,
+  splitPicklistOptions,
   PopoverPicklist,
   placePopoverMenu,
   useExclusivePopover,

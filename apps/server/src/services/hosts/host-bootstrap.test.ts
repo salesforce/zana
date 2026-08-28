@@ -4,6 +4,7 @@ import {
   parseSshIdentity,
   requirePublicAppUrl,
   resolveHostBootstrapPlan,
+  resolveRepairPlan,
   sshRemoteFromProject
 } from './host-bootstrap.js';
 
@@ -54,10 +55,16 @@ describe('host bootstrap helpers', () => {
     })).toEqual({ kind: 'repair', hostId: 'h-remote' });
   });
 
+  it('refreshes a connected daemon instead of treating the websocket as healthy', () => {
+    expect(resolveRepairPlan('connected')).toBe('install');
+    expect(resolveRepairPlan('not_installed')).toBe('install');
+    expect(resolveRepairPlan('disconnected')).toBe('restart');
+  });
+
   it('fails with relay_offline when a token is configured but the tunnel is down', () => {
     const ctx = {
       config: { getConfig: () => ({ publicAppUrl: 'https://zcc.herokuapp.com' }) },
-      pairingRelay: { state: () => 'offline' as const }
+      pairingRelay: { state: () => 'offline' as const, snapshot: () => ({ state: 'offline' as const }) }
     };
     try {
       requirePublicAppUrl(ctx as never);
@@ -71,16 +78,46 @@ describe('host bootstrap helpers', () => {
   it('allows bootstrap against a public origin when the relay is unconfigured', () => {
     const ctx = {
       config: { getConfig: () => ({ publicAppUrl: 'https://box.tailnet.ts.net' }) },
-      pairingRelay: { state: () => 'unconfigured' as const }
+      pairingRelay: { state: () => 'unconfigured' as const, snapshot: () => ({ state: 'unconfigured' as const }) }
     };
     expect(requirePublicAppUrl(ctx as never)).toBe('https://box.tailnet.ts.net');
   });
 
-  it('returns the origin when the relay is connected', () => {
+  it('prefixes the session origin when the relay is connected', () => {
     const ctx = {
       config: { getConfig: () => ({ publicAppUrl: 'https://zcc.herokuapp.com' }) },
-      pairingRelay: { state: () => 'connected' as const }
+      pairingRelay: {
+        state: () => 'connected' as const,
+        snapshot: () => ({
+          state: 'connected' as const,
+          sessionId: 'zcrs_abcdefghijklmnopqr1234',
+          joinUntil: Date.now() + 60_000
+        })
+      }
     };
-    expect(requirePublicAppUrl(ctx as never)).toBe('https://zcc.herokuapp.com');
+    expect(requirePublicAppUrl(ctx as never)).toBe(
+      'https://zcc.herokuapp.com/t/zcrs_abcdefghijklmnopqr1234'
+    );
+  });
+
+  it('fails with join_expired when the relay join window has closed', () => {
+    const ctx = {
+      config: { getConfig: () => ({ publicAppUrl: 'https://zcc.herokuapp.com' }) },
+      pairingRelay: {
+        state: () => 'connected' as const,
+        snapshot: () => ({
+          state: 'connected' as const,
+          sessionId: 'zcrs_abcdefghijklmnopqr1234',
+          joinUntil: Date.now() - 1
+        })
+      }
+    };
+    try {
+      requirePublicAppUrl(ctx as never);
+      throw new Error('expected join_expired');
+    } catch (error) {
+      expect(error).toBeInstanceOf(HostBootstrapError);
+      expect(error).toMatchObject({ code: 'join_expired' });
+    }
   });
 });

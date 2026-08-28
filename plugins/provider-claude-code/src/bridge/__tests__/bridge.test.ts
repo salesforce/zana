@@ -18,6 +18,7 @@ import {
   type JsonValue,
   type PermissionEscalation,
   type RuntimePermissionPolicy,
+  type ThreadEvent,
 } from "@zana-ai/zcc-domain/thread-runtime";
 
 const { forkSessionMock, queryMock } = vi.hoisted(() => ({
@@ -39,6 +40,7 @@ import {
 } from "../../interactive-contract.js";
 import { listClaudeCodeBridgeModels } from "../model-list.js";
 import {
+  assembleCapturedThreadEvents,
   createBridgeJsonRpcTestHarness,
   type BridgeJsonRpcOutputMessage,
 } from "@zana-ai/zcc-provider-bridge-protocol/testing";
@@ -234,22 +236,14 @@ function getLatestQueryCall(): ClaudeQueryCall {
 
 /**
  * Turns the bridge settled as failed. The SDK result message never reaches
- * the wire; the translator turns it into a failed turn.
+ * the wire; the bridge emits semantic deltas, so the capture is run through a
+ * real delta assembler (the runtime adapter's exact translation) and the
+ * canonical failed-turn events are counted.
  */
-function getFailedTurns(
-  messages: BridgeJsonRpcOutputMessage[],
-): BridgeJsonRpcOutputMessage[] {
-  return messages.filter((message) => {
-    if (message.method !== "thread/event" || !isRecord(message.params)) {
-      return false;
-    }
-    const { event } = message.params;
-    return (
-      isRecord(event) &&
-      event.type === "turn/completed" &&
-      event.status === "failed"
-    );
-  });
+function getFailedTurns(messages: BridgeJsonRpcOutputMessage[]) {
+  return assembleCapturedThreadEvents(messages, "claude-code").filter(
+    (event) => event.type === "turn/completed" && event.status === "failed",
+  );
 }
 
 function getBridgeErrorMessages(
@@ -4290,22 +4284,34 @@ describe("canonical model context-window hint", () => {
       } as unknown as SDKMessage);
       await bridge.flushWork();
 
-      const contextWindowEvents = bridge.messages.flatMap((message) => {
-        if (message.method !== "thread/event") {
-          return [];
-        }
-        const params = message.params;
-        if (params === null || typeof params !== "object") {
-          return [];
-        }
-        // Freeform wire payload: the ThreadEvent the bridge just serialized.
-        const event = (params as { event?: { type?: string } }).event;
-        return event?.type === "thread/contextWindowUsage/updated"
-          ? [event as unknown as { contextWindowUsage: JsonValue }]
-          : [];
-      });
+      const contextWindowEvents = assembleCapturedThreadEvents(
+        bridge.messages,
+        "claude-code",
+      ).filter(
+        (
+          event,
+        ): event is Extract<
+          ThreadEvent,
+          { type: "thread/contextWindowUsage/updated" }
+        > => event.type === "thread/contextWindowUsage/updated",
+      );
 
       expect(contextWindowEvents.at(-1)?.contextWindowUsage).toMatchObject({
+        modelContextWindow: 1_000_000,
+      });
+
+      const tokenUsageEvents = assembleCapturedThreadEvents(
+        bridge.messages,
+        "claude-code",
+      ).filter(
+        (
+          event,
+        ): event is Extract<
+          ThreadEvent,
+          { type: "thread/tokenUsage/updated" }
+        > => event.type === "thread/tokenUsage/updated",
+      );
+      expect(tokenUsageEvents.at(-1)?.tokenUsage).toMatchObject({
         modelContextWindow: 1_000_000,
       });
     } finally {

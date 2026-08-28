@@ -1,5 +1,5 @@
 import { product } from '../lib/product-client.js';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ChevronRight, FileText, Folder, Globe, Slash, CornerDownLeft } from 'lucide-react';
 import { useData, useScheduler, usePersonas, useUi, visibleTerminals } from '../store.js';
 import type { LaunchProfileId, WalkedFile, SlashCommand, SshHostEntry, Project, Persona } from '@zana-ai/zcc-domain/product';
@@ -13,6 +13,8 @@ import type { WhenContext } from './palette/whenContext.js';
 import { isScopedWindow } from '../lib/windowScope.js';
 import { recordUse, recencyBoost, getRecents } from '../lib/paletteRecents.js';
 import { titleFromPrompt } from '../lib/promptTitle.js';
+import { useRouteState } from '../hooks/useRouteState.js';
+import { listCommandPaletteActions, subscribePluginSlots } from '../plugins/plugin-slots.js';
 
 interface Props {
   onClose: () => void;
@@ -100,6 +102,12 @@ export function CommandPalette({ onClose }: Props) {
   const recentFilesMap = useUi((s) => s.recentFiles);
   const pushToast = useUi((s) => s.pushToast);
   const allPersonas = usePersonas((s) => s.personas);
+  const route = useRouteState();
+  const commandPaletteActions = useSyncExternalStore(
+    subscribePluginSlots,
+    listCommandPaletteActions,
+    listCommandPaletteActions
+  );
   const selectedProject = projects.find((p) => p.id === selectedProjectId) ?? null;
   const selectedProjectTabs = selectedProject ? visibleTerminals(terminals[selectedProject.id]) : [];
   // Personas offered for the selected project: builtin + global + its own.
@@ -322,11 +330,15 @@ export function CommandPalette({ onClose }: Props) {
     scheduledTasks, personas, modules, overviewOpen, whenCtx, onClose, launch,
     launchPersona, addProject, setNav, selectProject, selectTab, setWorkspaceMode,
     setSettingsTab, setExtensionsTab, setOverviewOpen, setPinned, restartTerminal, closeTerminal,
-    reopenLastClosed, restoreLastDetached, pushToast
+    reopenLastClosed, restoreLastDetached, pushToast,
+    commandPaletteActions,
+    threadId: route.threadId,
+    projectId: route.focusedProjectId
   }), [projects, terminals, selectedProject, selectedProjectTabs, activeTab,
     scheduledTasks, personas, modules, overviewOpen, whenCtx, onClose, addProject, setNav,
     selectProject, selectTab, setWorkspaceMode, setSettingsTab, setExtensionsTab, setOverviewOpen,
-    setPinned, restartTerminal, closeTerminal, reopenLastClosed, restoreLastDetached, pushToast]);
+    setPinned, restartTerminal, closeTerminal, reopenLastClosed, restoreLastDetached, pushToast,
+    commandPaletteActions, route.threadId, route.focusedProjectId]);
 
   // --- command filtering / ranking -----------------------------------------
   const rows = useMemo<ScoredRow[]>(() => {

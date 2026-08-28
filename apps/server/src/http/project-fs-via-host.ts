@@ -1,5 +1,5 @@
-import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
-import type { HostListDirResult, HostListFilesResult, HostReadFileResult } from '@zana-ai/zcc-contracts/host-rpc';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
+import type { HostListDirResult, HostListPathsResult, HostReadFileResult } from '@zana-ai/zcc-contracts/host-rpc';
 import type { FsEntry, FsReadResult, Project } from '@zana-ai/zcc-domain/product';
 import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
 import { isSafeRelPath } from './library-via-host.js';
@@ -166,42 +166,45 @@ export async function listProjectPaths(
     throw new ProjectFsError(400, 'path-unavailable', 'project has no local path');
   }
 
-  let result: HostListFilesResult;
+  let result: HostListPathsResult;
   try {
     const hostId = ctx.hostHub.resolveHostId(project.hostId);
-    result = await ctx.hostHub.callHostOnlineRpc<HostListFilesResult>({
+    const query = (opts.query ?? '').trim();
+    const includeFiles = opts.includeFiles !== false;
+    const includeDirectories = opts.includeDirectories !== false;
+    if (!includeFiles && !includeDirectories) {
+      return { paths: [], truncated: false };
+    }
+    const requested = Number.isFinite(opts.limit) ? Number(opts.limit) : PATH_SEARCH_DEFAULT_LIMIT;
+    const limit = Math.min(PATH_SEARCH_MAX_LIMIT, Math.max(1, requested));
+    result = await ctx.hostHub.callHostOnlineRpc<HostListPathsResult>({
       hostId,
-      command: { type: 'host.list_files', roots: [project.path] }
+      command: {
+        type: 'host.list_paths',
+        path: project.path,
+        limit,
+        includeFiles,
+        includeDirectories,
+        ...(query ? { query } : {})
+      }
     });
   } catch (error) {
     mapHostError(error);
   }
 
-  const query = (opts.query ?? '').trim().toLowerCase();
-  const includeFiles = opts.includeFiles !== false;
-  const includeDirectories = opts.includeDirectories !== false;
-  const requested = Number.isFinite(opts.limit) ? Number(opts.limit) : PATH_SEARCH_DEFAULT_LIMIT;
-  const limit = Math.min(PATH_SEARCH_MAX_LIMIT, Math.max(1, requested));
   const mapped: ProjectPathEntry[] = [];
-  for (const file of result.files) {
-    if (!file.relPath || isDeniedProjectRelPath(file.relPath)) continue;
-    const kind = file.kind === 'dir' ? 'directory' : 'file';
-    if (kind === 'file' && !includeFiles) continue;
-    if (kind === 'directory' && !includeDirectories) continue;
-    const name = basename(file.relPath);
-    if (query && !file.relPath.toLowerCase().includes(query) && !name.toLowerCase().includes(query)) {
-      continue;
-    }
+  for (const entry of result.paths) {
+    if (!entry.path || isDeniedProjectRelPath(entry.path)) continue;
     mapped.push({
-      kind,
-      path: file.relPath,
-      name,
-      score: 0,
-      positions: []
+      kind: entry.kind,
+      path: entry.path,
+      name: entry.name,
+      score: entry.score,
+      positions: entry.positions
     });
   }
   return {
-    paths: mapped.slice(0, limit),
-    truncated: mapped.length > limit
+    paths: mapped,
+    truncated: result.truncated
   };
 }

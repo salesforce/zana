@@ -1,11 +1,13 @@
 'use client';
 
 import { useEffect } from 'react';
+import { enhanceDocMermaid } from '@/lib/enhance-doc-mermaid';
 
 /**
  * Client-side progressive enhancement for the (server-rendered) doc article:
  *   1. wire the "Copy" buttons injected by lib/docs.ts onto each code block,
- *   2. scroll-spy the right-hand TOC — highlight the heading currently in view.
+ *   2. render ```mermaid fences to SVG (lazy-loaded),
+ *   3. scroll-spy the right-hand TOC — highlight the heading currently in view.
  * Renders nothing; it just attaches behavior to the already-present DOM.
  */
 export function DocsEnhancer({ slug }: { slug: string }) {
@@ -48,6 +50,8 @@ export function DocsEnhancer({ slug }: { slug: string }) {
       cleanups.push(() => btn.removeEventListener('click', onClick));
     }
 
+    const stopMermaid = enhanceDocMermaid(article);
+
     // ---- 2. TOC scroll-spy ----
     const tocLinks = Array.from(document.querySelectorAll<HTMLAnchorElement>('.docs-toc a'));
     let observer: IntersectionObserver | undefined;
@@ -75,6 +79,7 @@ export function DocsEnhancer({ slug }: { slug: string }) {
       cleanups.forEach((fn) => fn());
       timers.forEach((t) => clearTimeout(t));
       observer?.disconnect();
+      stopMermaid();
     };
   }, [slug]);
 

@@ -241,4 +241,21 @@ describe('buildPaletteItems', () => {
     expect(keys).toContain('ext:good:c');
     expect(keys.some((k) => k.startsWith('ext:bad:'))).toBe(false);
   });
+
+  it('appends definePluginApp commandPaletteAction rows under Extensions', () => {
+    const keys = buildPaletteItems(
+      baseCtx({
+        commandPaletteActions: [
+          {
+            id: 'open',
+            pluginId: 'pr-monitor',
+            generation: 1,
+            title: 'Open PR Monitor',
+            run: () => undefined
+          }
+        ]
+      })
+    ).map((i) => i.key);
+    expect(keys).toContain('plugin:pr-monitor/open');
+  });
 });

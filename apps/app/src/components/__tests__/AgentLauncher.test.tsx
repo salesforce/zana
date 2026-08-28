@@ -74,8 +74,6 @@ describe('launcher attachments', () => {
   it('renders removable pills and uploads remote attachments at launch', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
     expect(source).toContain('product.fs.uploadToRemote(remoteTarget.id, localPath, \'.\')');
-    expect(source).toContain('attachments={attachments}');
-    expect(source).toContain('onAddAttachments={addAttachments}');
     expect(source).toContain('appendAttachmentContext(prompt, attachmentPaths)');
   });
 });
@@ -83,27 +81,28 @@ describe('launcher attachments', () => {
 describe('Quick Agent composer', () => {
   it('uses the Home-style command surface without duplicating launcher pickers', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('const useQuickAgentHomeComposer = scratchIsTarget;');
     expect(source).toContain('product.quickPrompts.list().catch(() => [])');
     expect(source).toContain('product.extensions.list().catch(() => [])');
-    expect(source).toContain("variant={useQuickAgentHomeComposer ? 'home' : 'default'}");
-    expect(source).toContain("submitLabel={mode === 'autonomous' ? 'Launch autonomous team' : 'Launch agent'}");
-    expect(source).toContain("{mode !== 'thread' && !useQuickAgentHomeComposer && (");
+    expect(source).toContain('<AutonomousTeamComposer');
+    expect(source).toContain("{mode === 'autonomous' && (");
     expect(source).toContain("mode === 'autonomous'");
   });
 });
 
 describe('launch mode', () => {
-  it('offers Thread, Legacy Agent, and Autonomous Team without gating the whole control on teams', () => {
+  it('offers Modern, CLI Agent, and Autonomous Team without gating the whole control on teams', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
     expect(source).toContain("useState<LaunchMode>('thread')");
     expect(source).toContain('<LaunchModeSegmented');
     expect(source).toContain('showAutonomousTeam={teams.length > 0}');
     expect(source).not.toContain('Single agent');
     expect(source).toContain('<ThreadCommandComposer');
+    expect(source).toContain('<LegacyAgentHomeComposer');
+    expect(source).toContain('<AutonomousTeamComposer');
     expect(source).toContain('initialText={initialPrompt}');
     expect(source).toContain('onCreated={onClose}');
-    expect(source).toContain("{mode !== 'thread' && (<>");
+    expect(source).toContain("{mode === 'autonomous' && (<>");
+    expect(source).not.toContain('<PromptComposer');
   });
 
   it('paints the thread composer on a panel surface distinct from the launch modal', () => {

@@ -4,17 +4,17 @@ import { fileURLToPath } from 'node:url';
 import { SETTINGS_SECTIONS, SETTINGS_SUBSECTIONS } from '@/views/settings/SettingsView';
 
 describe('Settings subsection navigation', () => {
-  it('lists Install status, then Thread and Legacy Agent', () => {
+  it('lists Install status, then Modern and CLI Agent', () => {
     expect(SETTINGS_SUBSECTIONS.harness?.slice(0, 3)).toEqual([
       { id: 'harness-status', label: 'Install status' },
-      { id: 'harness-thread', label: 'Thread' },
-      { id: 'harness-legacy', label: 'Legacy Agent' }
+      { id: 'harness-thread', label: 'Modern' },
+      { id: 'harness-legacy', label: 'CLI Agent' }
     ]);
   });
 
-  it('lists Threads, CLI skills, and Debug under Global', () => {
+  it('lists Composer, CLI skills, and Debug under Global', () => {
     expect(SETTINGS_SUBSECTIONS.global).toEqual(expect.arrayContaining([
-      { id: 'threads', label: 'Threads' },
+      { id: 'threads', label: 'Composer' },
       { id: 'cli-skills', label: 'CLI skills' },
       { id: 'debug', label: 'Debug' }
     ]));
@@ -43,10 +43,10 @@ describe('Settings subsection navigation', () => {
     expect(source).not.toContain('maxLiveSessions');
   });
 
-  it('lists Legacy Agent resource ceilings under Agent settings', () => {
+  it('lists CLI Agent resource ceilings under Agent settings', () => {
     expect(SETTINGS_SUBSECTIONS.agents).toContainEqual({
       id: 'legacy-agent',
-      label: 'Legacy Agent'
+      label: 'CLI Agent'
     });
     expect(SETTINGS_SUBSECTIONS.global?.map((section) => section.id)).not.toContain('performance');
   });

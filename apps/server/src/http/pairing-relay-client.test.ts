@@ -134,12 +134,19 @@ async function startStack() {
     });
     client!.start();
   });
+  for (let i = 0; i < 50 && !client.sessionId(); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
   return { door, productPort };
 }
 
 describe('pairing relay client', () => {
   it('round-trips install.sh, a tarball, enroll, host ws, and interactive-request', async () => {
     const stack = await startStack();
+    expect(client?.sessionId()).toMatch(/^zcrs_/);
+    const prefixed = await fetch(new URL(`t/${client!.sessionId()}/install.sh`, stack.door.url));
+    expect(prefixed.status).toBe(200);
+    await expect(prefixed.text()).resolves.toContain('echo join');
     const script = await fetch(new URL('install.sh', stack.door.url));
     expect(script.status).toBe(200);
     await expect(script.text()).resolves.toContain('echo join');

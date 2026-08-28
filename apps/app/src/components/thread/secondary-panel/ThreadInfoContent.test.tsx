@@ -111,10 +111,67 @@ describe('ThreadInfoRows', () => {
     expect(html).toContain('Staging');
     expect(html).toContain('feat/panel');
     expect(html).toContain('data-testid="thread-info-git"');
+    expect(html).toContain('Uncommitted · 1 file');
     expect(html).toContain('data-testid="thread-info-pr"');
     expect(html).toContain('#1');
     expect(html).toContain('data-testid="thread-info-files"');
+    expect(html).toContain('thread-info-file-name');
     expect(html).toContain('a.ts');
+    expect(html).toContain('thread-info-file-kind');
+    expect(html).toContain('>M<');
+    expect(html).not.toContain('>Changed files<');
+  });
+
+  it('lists untracked files full-width with the kind letter on the right', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ThreadInfoRows
+          isWorktree={false}
+          cwd="/tmp/proj"
+          branchName="main"
+          workspaceStatus={{
+            dirty: true,
+            filesTruncated: false,
+            files: [
+              { path: '.zcc/audit.ndjson', kind: 'untracked' },
+              { path: '.zcc/events.ndjson', kind: 'untracked' }
+            ]
+          } as never}
+          pullRequest={null}
+        />
+      </MemoryRouter>
+    );
+    expect(html).toContain('Uncommitted · 2 files');
+    expect(html).toContain('is-untracked');
+    expect(html).toContain('audit.ndjson');
+    expect(html).toContain('>?<');
+    expect(html.indexOf('audit.ndjson')).toBeLessThan(html.indexOf('>?<', html.indexOf('audit.ndjson')));
+    expect(html).not.toContain('More changes…');
+    expect(html).not.toContain('>Changed files<');
+  });
+
+  it('caps a long dirty file list and marks the remainder', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ThreadInfoRows
+          isWorktree={false}
+          cwd="/tmp/proj"
+          branchName="main"
+          workspaceStatus={{
+            dirty: true,
+            filesTruncated: true,
+            files: Array.from({ length: 3 }, (_, i) => ({
+              path: `src/file-${i}.ts`,
+              kind: 'modified'
+            }))
+          } as never}
+          pullRequest={null}
+        />
+      </MemoryRouter>
+    );
+    expect(html).toContain('Uncommitted · 3+ files');
+    expect(html).toContain('file-0.ts');
+    expect(html).toContain('More changes…');
   });
 
   it('renders Model and Reasoning with human labels', () => {

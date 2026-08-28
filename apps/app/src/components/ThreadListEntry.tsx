@@ -36,7 +36,7 @@ export function ThreadListEntry({
       onClick={() => navigate(getThreadRoutePath(thread.id, projectId))}
       onContextMenu={onContextMenu}
       aria-current={active ? 'true' : undefined}
-      title={`${thread.title ?? 'Untitled thread'}${projectName ? ` — ${projectName}` : ''} · ${thread.status}`}
+      title={`${thread.title ?? 'Untitled agent'}${projectName ? ` — ${projectName}` : ''} · ${thread.status}`}
     >
       <span className="agents-row-icon">
         <ProviderIcon providerId={thread.providerId} size={13} />
@@ -44,7 +44,7 @@ export function ThreadListEntry({
       <span className="agents-row-text">
         <span className="agents-row-title-line">
           <span className={`tab-agent-dot agent-${tone}`} aria-hidden="true" />
-          <span className="agents-row-title">{thread.title ?? 'Untitled thread'}</span>
+          <span className="agents-row-title">{thread.title ?? 'Untitled agent'}</span>
           <FleetKindChip kind="thread" />
         </span>
         <span className="agents-row-meta">

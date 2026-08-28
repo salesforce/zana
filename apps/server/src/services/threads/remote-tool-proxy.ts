@@ -1,19 +1,22 @@
-import { join } from 'node:path';
 import type { Project } from '@zana-ai/zcc-domain/product';
-import { createProjectSettingsStore } from '../../project-settings-store.js';
 
+/**
+ * SSH remotes default to this machine + remote tools. Selecting the enrolled
+ * host daemon turns the proxy off so the thread runs on that box over RPC.
+ */
 export function isRemoteToolProxyActive(
   project: Project,
-  settings: { remoteToolProxy?: unknown }
+  executionHostId?: string | null
 ): boolean {
-  return Boolean(project.remote) && !project.hostId && settings.remoteToolProxy === true;
+  if (!project.remote) return false;
+  if (project.hostId && executionHostId === project.hostId) return false;
+  return true;
 }
 
-export function readRemoteToolProxySetting(dataDir: string, projectId: string): boolean {
-  const store = createProjectSettingsStore({
-    projectSettingsFile: join(dataDir, 'project-settings.json')
-  });
-  return store.get(projectId).remoteToolProxy === true;
+/** Placeholder on this machine; the enrolled host uses the resolved remote path. */
+export function remoteWorkspacePath(project: Project, remoteToolProxy: boolean): string {
+  if (!remoteToolProxy && project.remote?.remotePath) return project.remote.remotePath;
+  return project.path;
 }
 
 export function threadLaunchRemote(project: Project): {

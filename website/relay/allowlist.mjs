@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const ALLOWLIST_PATH = join(dirname(fileURLToPath(import.meta.url)), 'allowlist.json');
 
-/** @type {{ http: Array<{ methods: string[]; path: string }>; ws: string[] }} */
+/** @type {{ http: Array<{ methods: string[]; path?: string; pathPattern?: string }>; ws: string[] }} */
 export const PAIRING_ALLOWLIST = JSON.parse(readFileSync(ALLOWLIST_PATH, 'utf8'));
 
 export function normalizePairingPath(pathname) {
@@ -15,7 +15,12 @@ export function normalizePairingPath(pathname) {
 export function isAllowedHttp(method, pathname) {
   const path = normalizePairingPath(pathname);
   const verb = (method ?? 'GET').toUpperCase();
-  return PAIRING_ALLOWLIST.http.some((row) => row.path === path && row.methods.includes(verb));
+  return PAIRING_ALLOWLIST.http.some((row) => {
+    if (!row.methods.includes(verb)) return false;
+    if (typeof row.path === 'string') return row.path === path;
+    if (typeof row.pathPattern === 'string') return new RegExp(row.pathPattern, 'u').test(path);
+    return false;
+  });
 }
 
 export function isAllowedWs(pathname) {

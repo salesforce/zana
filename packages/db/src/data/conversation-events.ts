@@ -37,6 +37,24 @@ export function nextConversationEventSequence(db: ZccDatabase, threadId: string)
   return row.max_sequence + 1;
 }
 
+/** One grouped lookup for roster unread math. Empty input skips the query. */
+export function maxConversationEventSequenceByThreadIds(
+  db: ZccDatabase,
+  threadIds: readonly string[]
+): Record<string, number> {
+  if (threadIds.length === 0) return {};
+  const placeholders = threadIds.map(() => '?').join(',');
+  const rows = db.sqlite.prepare(
+    `SELECT thread_id AS threadId, MAX(sequence) AS maxSequence
+     FROM thread_events
+     WHERE thread_id IN (${placeholders})
+     GROUP BY thread_id`
+  ).all(...threadIds) as { threadId: string; maxSequence: number }[];
+  const out: Record<string, number> = {};
+  for (const row of rows) out[row.threadId] = row.maxSequence;
+  return out;
+}
+
 export function appendConversationThreadEvent(
   db: ZccDatabase,
   input: { threadId: string; type: string; payload?: unknown }
@@ -66,6 +84,60 @@ export function countConversationThreadEvents(db: ZccDatabase, threadId: string)
     'SELECT COUNT(*) AS count FROM thread_events WHERE thread_id = ?'
   ).get(threadId) as { count: number };
   return row.count;
+}
+
+export function deleteConversationThreadEventsAfter(
+  db: ZccDatabase,
+  threadId: string,
+  sequence: number
+): number {
+  const result = db.sqlite.prepare(
+    'DELETE FROM thread_events WHERE thread_id = ? AND sequence > ?'
+  ).run(threadId, sequence);
+  return Number(result.changes ?? 0);
+}
+
+export function remapConversationEventPayloadThreadId(
+  payload: unknown,
+  threadId: string
+): unknown {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return payload;
+  if (!('threadId' in payload)) return payload;
+  return { ...payload, threadId };
+}
+
+export function copyConversationThreadEvents(
+  db: ZccDatabase,
+  input: {
+    targetThreadId: string;
+    rows: readonly ConversationThreadEventRow[];
+  }
+): ConversationThreadEventRow[] {
+  if (input.rows.length === 0) return [];
+  return db.transaction(() => {
+    const copied: ConversationThreadEventRow[] = [];
+    let sequence = nextConversationEventSequence(db, input.targetThreadId);
+    const insert = db.sqlite.prepare(
+      `INSERT INTO thread_events (id, thread_id, sequence, type, payload, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    );
+    const now = Date.now();
+    for (const row of input.rows) {
+      const id = createEventId();
+      const payload = remapConversationEventPayloadThreadId(row.payload, input.targetThreadId);
+      insert.run(id, input.targetThreadId, sequence, row.type, JSON.stringify(payload ?? {}), now);
+      copied.push({
+        id,
+        threadId: input.targetThreadId,
+        sequence,
+        type: row.type,
+        payload,
+        createdAt: now
+      });
+      sequence += 1;
+    }
+    return copied;
+  });
 }
 
 export function listConversationThreadEventsWindow(

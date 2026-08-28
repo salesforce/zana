@@ -7,7 +7,9 @@ import {
 import {
   bridgeCapabilitiesSchema,
   initializeResultSchema,
-  threadEventNotificationSchema,
+  PROVIDER_BRIDGE_PROTOCOL_VERSION,
+  THREAD_DELTA_NOTIFICATION_METHOD,
+  threadDeltaNotificationParamsSchema,
   threadStopParamsSchema,
   ThreadEventGrammar,
   toolCallRequestParamsSchema,
@@ -39,11 +41,11 @@ describe("handshake", () => {
   });
 });
 
-describe("thread/event strictness", () => {
-  it("rejects a payload whose event is not a valid ThreadEvent", () => {
-    const result = threadEventNotificationSchema.safeParse({
+describe("thread/delta strictness", () => {
+  it("rejects a payload whose deltas are not valid ThreadDeltas", () => {
+    const result = threadDeltaNotificationParamsSchema.safeParse({
       threadId: "thr_1",
-      event: { type: "definitely/not/a/thread/event", data: {} },
+      deltas: [{ kind: "definitely/not/a/delta" }],
     });
     expect(result.success).toBe(false);
   });
@@ -309,52 +311,40 @@ describe("conformance turn/settles-without-activity", () => {
     const providerThreadId = "p_stub_1";
     let turnCounter = 0;
 
-    const emit = (threadId: string, event: ThreadEvent): void => {
+    const emit = (threadId: string, deltas: unknown[]): void => {
       outbox.push({
         jsonrpc: "2.0",
-        method: "thread/event",
-        params: { threadId, event },
+        method: THREAD_DELTA_NOTIFICATION_METHOD,
+        params: { threadId, deltas },
       });
     };
 
-    const runTurn = (threadId: string, zeroWork: boolean): void => {
+    const runTurn = (
+      threadId: string,
+      clientRequestId: unknown,
+      zeroWork: boolean,
+    ): void => {
       turnCounter += 1;
-      const turnId = `turn_${turnCounter}`;
-      const scope = { kind: "turn", turnId } as const;
+      const accepted = { kind: "input.accepted", clientRequestId };
       if (zeroWork) {
         if (!options.settlesZeroWork) {
-          // The #1431 bug: the provider finished, but no bb turn ever settles.
           return;
         }
-        emit(threadId, {
-          type: "turn/completed",
-          threadId,
-          providerThreadId,
-          status: "completed",
-          scope,
-        });
+        emit(threadId, [
+          accepted,
+          { kind: "turn.boundary", status: "completed", claimIfIdle: true },
+        ]);
         return;
       }
-      emit(threadId, {
-        type: "turn/started",
-        threadId,
-        providerThreadId,
-        scope,
-      });
-      emit(threadId, {
-        type: "item/started",
-        threadId,
-        providerThreadId,
-        scope,
-        item: { type: "agentMessage", id: `item_${turnCounter}`, text: "hi" },
-      });
-      emit(threadId, {
-        type: "turn/completed",
-        threadId,
-        providerThreadId,
-        status: "completed",
-        scope,
-      });
+      const key = { providerItemId: `item_${turnCounter}` };
+      const item = { type: "agentMessage", text: "hi" };
+      emit(threadId, [
+        accepted,
+        { kind: "turn.open" },
+        { kind: "item.open", key, item },
+        { kind: "item.close", key, status: "completed", item },
+        { kind: "turn.boundary", status: "completed" },
+      ]);
     };
 
     const handleLine = (line: string): void => {
@@ -375,7 +365,10 @@ describe("conformance turn/settles-without-activity", () => {
       };
       switch (method) {
         case "initialize":
-          respond({ protocolVersion: 1, capabilities: {} });
+          respond({
+            protocolVersion: PROVIDER_BRIDGE_PROTOCOL_VERSION,
+            capabilities: { grammarVersions: [3, 3] },
+          });
           return;
         case "thread/start":
         case "thread/resume":
@@ -383,7 +376,11 @@ describe("conformance turn/settles-without-activity", () => {
           return;
         case "turn/start": {
           const threadId = String(params?.threadId ?? "");
-          runTurn(threadId, promptText(params?.input) === "/clear");
+          runTurn(
+            threadId,
+            params?.clientRequestId,
+            promptText(params?.input) === "/clear",
+          );
           respond({});
           return;
         }
@@ -423,6 +420,7 @@ describe("conformance turn/settles-without-activity", () => {
   ) {
     const report = await runBridgeConformance({
       transport: createStubBridge(options),
+      providerId: "stub",
       session: options.withFixture
         ? zeroWorkFixture
         : {

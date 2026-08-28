@@ -10,7 +10,7 @@ import {
 
 const alpha = { id: 'alpha', name: 'alpha-repo' };
 const scratch = { id: 'scratch-1', name: SCRATCH_WORKSPACE_NAME, quickAgent: true };
-const zana = { id: 'zana', name: 'zana-command-center' };
+const coreRepo = { id: 'core-repo', name: 'zana-command-center' };
 
 describe('scratchWorkspaceProject', () => {
   it('prefers the quickAgent scratch project over a name match', () => {
@@ -18,7 +18,7 @@ describe('scratchWorkspaceProject', () => {
   });
 
   it('falls back to a project named zcc-workspace when the flag is missing', () => {
-    expect(scratchWorkspaceProject([zana, { id: 'ws', name: SCRATCH_WORKSPACE_NAME }])?.id).toBe('ws');
+    expect(scratchWorkspaceProject([coreRepo, { id: 'ws', name: SCRATCH_WORKSPACE_NAME }])?.id).toBe('ws');
   });
 });
 
@@ -26,7 +26,7 @@ describe('composerProjectLabel', () => {
   it('shows Default Workspace for the scratch folder name and keeps other names', () => {
     expect(composerProjectLabel(scratch)).toBe('Default Workspace');
     expect(composerProjectLabel({ id: 'ws', name: SCRATCH_WORKSPACE_NAME })).toBe(DEFAULT_COMPOSER_WORKSPACE_LABEL);
-    expect(composerProjectLabel(zana)).toBe('zana-command-center');
+    expect(composerProjectLabel(coreRepo)).toBe('zana-command-center');
   });
 
   it('keeps a custom scratch-workspace name', () => {
@@ -40,28 +40,28 @@ describe('composerProjectLabel', () => {
 
 describe('composerProjectOptions', () => {
   it('keeps the scratch workspace first without reordering the rest', () => {
-    expect(composerProjectOptions([alpha, scratch, zana]).map((row) => row.id)).toEqual([
+    expect(composerProjectOptions([alpha, scratch, coreRepo]).map((row) => row.id)).toEqual([
       'scratch-1',
       'alpha',
-      'zana'
+      'core-repo'
     ]);
   });
 });
 
 describe('resolveComposerProjectId', () => {
   it('uses a pinned project and skips the scratch default', () => {
-    expect(resolveComposerProjectId([scratch, zana], '', 'zana')).toBe('zana');
+    expect(resolveComposerProjectId([scratch, coreRepo], '', 'core-repo')).toBe('core-repo');
   });
 
   it('defaults to zcc-workspace when the user has not selected a project', () => {
-    expect(resolveComposerProjectId([zana, scratch, alpha], '')).toBe('scratch-1');
+    expect(resolveComposerProjectId([coreRepo, scratch, alpha], '')).toBe('scratch-1');
   });
 
   it('keeps a user-selected project instead of snapping back to scratch', () => {
-    expect(resolveComposerProjectId([scratch, zana], 'zana')).toBe('zana');
+    expect(resolveComposerProjectId([scratch, coreRepo], 'core-repo')).toBe('core-repo');
   });
 
   it('returns empty when scratch is not in the list yet', () => {
-    expect(resolveComposerProjectId([zana, alpha], '')).toBe('');
+    expect(resolveComposerProjectId([coreRepo, alpha], '')).toBe('');
   });
 });

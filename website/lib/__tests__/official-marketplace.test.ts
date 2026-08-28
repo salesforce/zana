@@ -56,7 +56,7 @@ describe('official marketplace.json', () => {
 });
 
 describe('officialMarketplaceAddCommand', () => {
-  it('builds the add command from PUBLIC_BASE_URL, stripping a trailing slash', () => {
+  it('uses PUBLIC_BASE_URL when it is a public origin, stripping a trailing slash', () => {
     expect(officialMarketplaceFeedUrl('https://zcc-7808c5bc8f3d.herokuapp.com/')).toBe(
       'https://zcc-7808c5bc8f3d.herokuapp.com/marketplace/v1/marketplace.json'
     );
@@ -65,9 +65,18 @@ describe('officialMarketplaceAddCommand', () => {
     );
   });
 
-  it('keeps a local origin when PUBLIC_BASE_URL is the dev default', () => {
+  it('does not advertise localhost — falls back to the public catalog origin', () => {
     expect(officialMarketplaceAddCommand('http://localhost:4321')).toBe(
-      'zcc marketplace add http://localhost:4321/marketplace/v1/marketplace.json'
+      'zcc marketplace add https://zcc-7808c5bc8f3d.herokuapp.com/marketplace/v1/marketplace.json'
+    );
+    expect(officialMarketplaceAddCommand('')).toBe(
+      'zcc marketplace add https://zcc-7808c5bc8f3d.herokuapp.com/marketplace/v1/marketplace.json'
+    );
+  });
+
+  it('follows a later PUBLIC_BASE_URL without a code change', () => {
+    expect(officialMarketplaceAddCommand('https://zana.example')).toBe(
+      'zcc marketplace add https://zana.example/marketplace/v1/marketplace.json'
     );
   });
 });

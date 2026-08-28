@@ -38,7 +38,7 @@ import {
  * list / flow / empty board but filters to one workspace. Presentational
  * lane/card rendering lives in the shared {@link AgentBoardLanes}.
  *
- * New thread/agent never mounts a launcher here — it flips `useUi.launcherOpen`
+ * New agent never mounts a launcher here — it flips `useUi.launcherOpen`
  * so App (fleet) or Workspace (project) hosts the shared modal.
  */
 
@@ -288,11 +288,11 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
               className="btn primary agents-board-new"
               data-testid="agents-board-new-thread"
               onClick={() => useUi.getState().setLauncherOpen(true)}
-              aria-label="New thread/agent"
-              title="Start a new thread or agent"
+              aria-label="New agent"
+              title="Start a new agent"
             >
               <Plus size={14} />
-              <span className="agents-board-btn-label">New thread/agent</span>
+              <span className="agents-board-btn-label">New agent</span>
             </button>
           </div>
         </header>
@@ -323,15 +323,15 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
             <Bot size={28} aria-hidden="true" />
             {isGlobal ? (
               <>
-                <h4>No agents or threads</h4>
+                <h4>No agents</h4>
                 <p>
-                  Start a thread or agent — it&rsquo;ll appear here, across every project.
+                  Start an agent — it&rsquo;ll appear here, across every project.
                 </p>
               </>
             ) : (
               <>
-                <h4>No agents or threads yet</h4>
-                <p>Start a thread or agent in this project and watch it move across the board.</p>
+                <h4>No agents yet</h4>
+                <p>Start an agent in this project and watch it move across the board.</p>
               </>
             )}
             <button
@@ -341,7 +341,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
               onClick={() => useUi.getState().setLauncherOpen(true)}
             >
               <Plus size={14} />
-              New thread/agent
+              New agent
             </button>
           </div>
         </div>
@@ -350,7 +350,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
           <Bot size={28} aria-hidden="true" />
           <h4>No matches</h4>
           <p>
-            No agents or threads match &ldquo;{filter.trim()}&rdquo;.{' '}
+            No agents match &ldquo;{filter.trim()}&rdquo;.{' '}
             <button type="button" className="list-empty-link" onClick={() => setFilter('')}>
               Clear filter
             </button>

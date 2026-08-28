@@ -73,6 +73,11 @@ export interface PendingInteractionLifecycleDeps {
       resolution: PendingInteractionResolution;
     };
   }) => Promise<unknown>;
+  onInteractionSettled?: (args: {
+    threadId: string;
+    status: PendingInteraction['status'];
+    statusReason: string | null;
+  }) => void;
 }
 
 function conflict(interaction: PendingInteraction): ThreadCreateError {
@@ -497,6 +502,11 @@ export class PendingInteractionLifecycle {
   private settleTerminal(interaction: PendingInteraction): void {
     appendPendingInteractionTimelineEvent(this.deps.db, this.deps.hub, interaction);
     notifyThread(this.deps, interaction.threadId);
+    this.deps.onInteractionSettled?.({
+      threadId: interaction.threadId,
+      status: interaction.status,
+      statusReason: interaction.statusReason ?? null
+    });
   }
 
   private settlePluginWaiter(id: string, result: PluginInteractionResult): void {

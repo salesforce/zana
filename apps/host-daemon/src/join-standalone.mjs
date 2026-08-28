@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 /**
- * Pairing runtime packed into /install/zcc-host.tgz.
- * Node builtins only (no TypeScript loader, no native PTY) so a remote Linux
- * box or Docker image can enroll, open the host websocket, and serve local
- * /status.
+ * Pairing-only helper for tests. The install tarball is the esbuild bundle of
+ * join-cli (see scripts/build-join.mjs), not this file. This module enrolls,
+ * opens the host websocket, and serves local /status with Node builtins only.
  */
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -11,7 +10,7 @@ import { homedir, hostname } from 'node:os';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const PROTOCOL_VERSION = 10;
+const PROTOCOL_VERSION = 16;
 
 function readFlag(args, flag) {
   const index = args.indexOf(flag);
@@ -155,9 +154,7 @@ function connectWs(options, auth, onOpen) {
       attempt += 1;
       reconnectTimer = setTimeout(connect, delay);
     });
-    next.addEventListener('error', () => {
-      next.close();
-    });
+    // Do not close() from `error`: Node's undici WebSocket re-dispatches error from close().
   };
 
   connect();

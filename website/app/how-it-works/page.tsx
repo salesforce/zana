@@ -31,8 +31,8 @@ const JOURNEY = [
     eyebrow: 'Launch with intent',
     title: 'Delegate outcomes, not your attention.',
     body:
-      'Open New Chat and start a Thread with Claude Code, Cursor, OpenCode, Codex, or Pi in the correct project. Switch to Legacy Agent for a real PTY. Start more sessions when work can proceed independently, without giving up visibility.',
-    details: ['New Chat defaults to Thread; Legacy Agent is a real terminal', 'Run several projects in parallel', 'Use personas, teams, or Autonomous Team for repeatable roles'],
+      'Open New Chat and start a Thread with Claude Code, Cursor, OpenCode, Codex, or Pi in the correct project. Switch to CLI Agent for a real PTY. Start more sessions when work can proceed independently, without giving up visibility.',
+    details: ['New Chat defaults to Thread; CLI Agent is a real terminal', 'Run several projects in parallel', 'Use personas, teams, or Autonomous Team for repeatable roles'],
     visual: 'agent-terminal'
   },
   {

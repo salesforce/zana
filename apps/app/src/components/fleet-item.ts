@@ -32,7 +32,7 @@ export function isVisibleThread(thread: ThreadListItem): boolean {
 }
 
 export function threadTitle(thread: Pick<ThreadListItem, 'title'>): string {
-  return thread.title ?? 'Untitled thread';
+  return thread.title ?? 'Untitled agent';
 }
 
 export function agentFleetItem(card: AgentCard): Extract<FleetItem, { kind: 'agent' }> {
@@ -114,7 +114,7 @@ export function threadRailStatus(
 }
 
 export function threadRailDetail(thread: Pick<ThreadListItem, 'status' | 'hasPendingInteraction'>): string {
-  return `${threadRailStatus(thread)} · Thread`;
+  return `${threadRailStatus(thread)} · Agent`;
 }
 
 /** Humanize a thread provider id (`claude-code` → `Claude Code`, `acp-cursor` → `Cursor`). */
@@ -131,10 +131,13 @@ export function threadHarnessLabel(providerId: string): string {
 
 /** Runtime + harness line for a board card (replaces the redundant project name). */
 export function threadCardRuntimeLabel(
-  thread: Pick<ThreadListItem, 'providerId' | 'isWorktree'>
+  thread: Pick<ThreadListItem, 'providerId' | 'isWorktree'>,
+  remoteToolProxy = false
 ): string {
   const harness = threadHarnessLabel(thread.providerId);
-  const runtime = thread.isWorktree ? 'This checkout' : 'Local';
+  const runtime = remoteToolProxy
+    ? 'Local agent · remote tools'
+    : thread.isWorktree ? 'This checkout' : 'Local';
   return `${harness} · ${runtime}`;
 }
 

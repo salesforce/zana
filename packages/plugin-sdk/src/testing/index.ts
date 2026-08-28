@@ -58,7 +58,29 @@ export interface FakePluginHost {
   harness: FakePluginHarness;
 }
 
-export function createFakePluginHost(options?: { pluginId?: string }): FakePluginHost {
+export interface FakePluginHostOptions {
+  pluginId?: string;
+  spawnThread?: (args: { projectId: string; prompt: string; providerId?: string }) => Promise<{ id: string }>;
+  getThread?: (args: { threadId: string }) => Promise<
+    import('../server.js').PluginSdkThreadSummary | null
+  >;
+  listThreadEvents?: (args: {
+    threadId: string;
+    limit?: number;
+    types?: readonly string[];
+    order?: 'asc' | 'desc';
+  }) => Promise<import('../server.js').PluginSdkThreadEventRow[]>;
+  sendThread?: (args: { threadId: string; prompt: string }) => Promise<{ id: string }>;
+  archiveThread?: (args: { threadId: string }) => Promise<{ id: string }>;
+  forkThread?: (args: { threadId: string }) => Promise<{ id: string }>;
+  unarchiveThread?: (args: { threadId: string }) => Promise<{ id: string }>;
+  pushInbox?: (args: { projectId: string; comments: string }) => Promise<{ id: string }>;
+  listProjects?: () =>
+    | Array<{ id: string; name: string; path?: string }>
+    | Promise<Array<{ id: string; name: string; path?: string }>>;
+}
+
+export function createFakePluginHost(options?: FakePluginHostOptions): FakePluginHost {
   const pluginId = options?.pluginId ?? 'test';
   const kv = new Map<string, unknown>();
   const rpc = new Map<string, (args: unknown) => unknown | Promise<unknown>>();
@@ -166,8 +188,65 @@ export function createFakePluginHost(options?: { pluginId?: string }): FakePlugi
     },
     sdk: {
       threads: {
-        async spawn() {
-          throw new Error('zcc.sdk is not available in this runtime');
+        async spawn(args) {
+          if (!options?.spawnThread) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          return options.spawnThread(args);
+        },
+        async get(args) {
+          if (!options?.getThread) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          return options.getThread(args);
+        },
+        events: {
+          async list(args) {
+            if (!options?.listThreadEvents) {
+              throw new Error('zcc.sdk is not available in this runtime');
+            }
+            return options.listThreadEvents(args);
+          }
+        },
+        async send(args) {
+          if (!options?.sendThread) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          return options.sendThread(args);
+        },
+        async archive(args) {
+          if (!options?.archiveThread) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          return options.archiveThread(args);
+        },
+        async fork(args) {
+          if (!options?.forkThread) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          return options.forkThread(args);
+        },
+        async unarchive(args) {
+          if (!options?.unarchiveThread) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          return options.unarchiveThread(args);
+        }
+      },
+      inbox: {
+        async push(args) {
+          if (!options?.pushInbox) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          return options.pushInbox(args);
+        }
+      },
+      projects: {
+        async list() {
+          if (!options?.listProjects) {
+            throw new Error('zcc.sdk is not available in this runtime');
+          }
+          return options.listProjects();
         }
       }
     },
@@ -213,7 +292,9 @@ export function createFakePluginHost(options?: { pluginId?: string }): FakePlugi
         const named = typeof jobOrCron === 'string';
         const cron = named ? jobOrCron : cronOrName;
         const job = named ? maybeJob : jobOrCron;
-        if (typeof job === 'function') schedules.push({ cron, job });
+        if (typeof job === 'function') {
+          schedules.push({ cron, job: job as () => void | Promise<void> });
+        }
       }
     },
     agents: {

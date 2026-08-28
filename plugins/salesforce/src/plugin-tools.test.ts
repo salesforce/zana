@@ -4,6 +4,7 @@ import { createSalesforcePlugin } from '../lib/plugin.js';
 import { envelopeTitle } from '../lib/guardrail.js';
 import { createKvArtifactStore } from '../lib/artifacts.js';
 import { compactError } from '../lib/dx-project.js';
+import { AGENT_SCRIPT_EXAMPLES } from '../lib/agent-script-model.js';
 import type { SalesforceDeps, SalesforceRequest } from '../lib/types.js';
 
 function orgDisplay(kind: 'sandbox' | 'production' = 'sandbox') {
@@ -143,6 +144,9 @@ function mockDeps(options?: {
         return { code: options?.agentCompileCode ?? 0, stdout: 'compiled', stderr: options?.agentCompileCode ? 'syntax' : '' };
       }
       return { code: options?.jestCode ?? 0, stdout: 'PASS', stderr: '' };
+    },
+    writeFile: (path, content) => {
+      files[path] = content;
     }
   };
 }
@@ -163,6 +167,50 @@ describe('salesforce family tools', () => {
     expect(JSON.stringify(org)).not.toContain('SECRET_TOKEN');
     const help = await harness.cli!.run(['--help'], { pluginId: 'salesforce', argv: ['--help'] });
     expect(help.stdout).toContain('zcc sf doctor');
+    expect(help.stdout).toContain('zcc sf lint');
+    const listed = await harness.callRpc('agentFiles.list');
+    expect(listed).toMatchObject({ ok: true });
+    expect((listed as { files: Array<{ apiName: string }> }).files.some((row) => row.apiName === 'MyBot')).toBe(true);
+    const parsed = await harness.callRpc('agentScript.parse', { source: AGENT_SCRIPT_EXAMPLES[0]!.source, dialect: 'agentforce' });
+    expect(parsed).toMatchObject({ ok: true });
+    const lint = await harness.cli!.run(['lint', 'force-app/main/default/agents/MyBot.agent'], {
+      pluginId: 'salesforce',
+      argv: ['lint', 'force-app/main/default/agents/MyBot.agent']
+    });
+    expect(lint.stdout).toContain('MyBot.agent');
+    const written = await harness.callRpc('agentFiles.write', {
+      path: 'force-app/main/default/agents/MyBot.agent',
+      content: 'config:\n    agent_name: "MyBot"\nstart_agent:\n    reasoning:\n        instructions: "hi"\n'
+    });
+    expect(written).toMatchObject({ ok: true });
+    const reread = await harness.callRpc('agentFiles.read', { path: 'force-app/main/default/agents/MyBot.agent' });
+    expect(reread).toMatchObject({ ok: true, file: { apiName: 'MyBot' } });
+    await expect(harness.callRpc('agentFiles.read', { path: '/etc/passwd' })).resolves.toMatchObject({
+      ok: false,
+      code: 'path_refused'
+    });
+    await expect(
+      harness.callRpc('agentFiles.write', {
+        path: 'force-app/main/default/agents/MyBot.agent',
+        content: 'stale',
+        expectedSha256: 'deadbeef'
+      })
+    ).resolves.toMatchObject({ ok: false, code: 'sha_mismatch' });
+    const emptyParse = await harness.callRpc('agentScript.parse', { source: '', dialect: 'agentforce' });
+    expect(emptyParse).toMatchObject({ ok: true });
+    await expect(harness.callRpc('agentFiles.read', {})).resolves.toMatchObject({ ok: false, code: 'invalid_input' });
+    await expect(harness.callRpc('agentFiles.write', { path: 'x.agent' })).resolves.toMatchObject({
+      ok: false,
+      code: 'invalid_input'
+    });
+    const examples = await harness.callRpc('agentScript.examples');
+    expect(examples).toMatchObject({ ok: true });
+    const lintAll = await harness.cli!.run(['lint'], { pluginId: 'salesforce', argv: ['lint'] });
+    expect(lintAll.stdout).toContain('MyBot.agent');
+    harness.setSettings({ defaultOrg: 'dev', projectRoot: '' });
+    const lintMissing = await harness.cli!.run(['lint'], { pluginId: 'salesforce', argv: ['lint'] });
+    expect(lintMissing.exitCode).toBe(1);
+    harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
     const unknown = await harness.cli!.run(['nope'], { pluginId: 'salesforce', argv: ['nope'] });
     expect(unknown.exitCode).toBe(2);
     const soql = harness.agentTools.find((row) => row.name === 'sf_soql')!;

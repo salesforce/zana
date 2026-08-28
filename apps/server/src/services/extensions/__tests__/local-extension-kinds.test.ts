@@ -7,7 +7,7 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const EXTENSION_CREATOR_SKILL = join(process.cwd(), 'resources/extension-creator-skill.md');
+const EXTENSION_CREATOR_SKILL = join(process.cwd(), 'apps/server/src/plugins/builtin-skills/extension-creator/SKILL.md');
 
 async function importLocalExt() {
   return await import('../local-extension.js');

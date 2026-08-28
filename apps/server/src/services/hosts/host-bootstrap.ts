@@ -10,6 +10,7 @@ import { isLoopbackHttpHost } from '../../browser-bootstrap.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { HostUnavailableError } from '../../http/host-hub.js';
 import { resolvePublicAppUrl } from '../../http/public-app-url.js';
+import { pairingSessionServerUrl, relayJoinWindowOpen } from '../../http/pairing-session-url.js';
 import { resolveHostArtifact } from './host-artifact.js';
 import type { ProjectRecord } from '../../project-store.js';
 
@@ -93,6 +94,16 @@ export function requirePublicAppUrl(ctx: ProductHttpContext): string {
       'The pairing relay is offline. Keep Zana running so remotes can reach this machine.'
     );
   }
+  if (ctx.pairingRelay?.state() === 'connected') {
+    const snapshot = ctx.pairingRelay.snapshot();
+    if (!relayJoinWindowOpen(snapshot)) {
+      throw new HostBootstrapError(
+        'join_expired',
+        'The pairing join window has closed. Renew it in Settings → Machines, then try again.'
+      );
+    }
+    return pairingSessionServerUrl(url, snapshot.sessionId!);
+  }
   return url;
 }
 
@@ -130,6 +141,17 @@ export function resolveHostBootstrapPlan(input: {
   if (!existing || existing.isPrimary) return { kind: 'install' };
   if (input.connected) return { kind: 'bind', hostId: existing.id };
   return { kind: 'repair', hostId: existing.id };
+}
+
+/**
+ * A websocket-connected daemon can still be running a stale join.mjs.
+ * Restart-only cannot replace that file, so Fix always reinstalls unless a
+ * disconnected daemon comes back after a plain restart.
+ */
+export function resolveRepairPlan(
+  state: 'connected' | 'disconnected' | 'not_installed'
+): 'install' | 'restart' {
+  return state === 'disconnected' ? 'restart' : 'install';
 }
 
 function executionPath(remote: ProjectRemote, homeDir: string | null): string {
@@ -296,11 +318,7 @@ export async function repairHost(
         serverHost
       }
     });
-    if (status.state === 'connected') {
-      events.push({ type: 'done', hostId });
-      return events;
-    }
-    if (status.state === 'disconnected') {
+    if (resolveRepairPlan(status.state) === 'restart') {
       events.push({ type: 'log', text: 'Restarting the remote host daemon…' });
       try {
         const restarted = await ctx.hostHub.callHostOnlineRpc<{ ok: true; log: string }>({
@@ -323,6 +341,8 @@ export async function repairHost(
       } catch {
         events.push({ type: 'log', text: 'Restart did not reconnect; reinstalling…' });
       }
+    } else {
+      events.push({ type: 'log', text: 'Installing a fresh host-daemon artifact…' });
     }
     const issued = ctx.joinCodes.mintForHost(hostId);
     const command = pairingCommand(serverUrl, issued.joinCode, issued.hostId);

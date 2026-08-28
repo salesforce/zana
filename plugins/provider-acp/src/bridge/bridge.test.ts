@@ -14,9 +14,11 @@ import { createStandaloneBuiltinCompactCommandInput } from "@zana-ai/zcc-domain/
 import type { DynamicTool, ReasoningLevel } from "@zana-ai/zcc-domain/thread-runtime";
 import {
   captureBridgeJsonRpcOutput,
+  assembleCapturedThreadEvents,
   type BridgeJsonRpcOutputMessage,
   type CapturedBridgeJsonRpcOutput,
 } from "@zana-ai/zcc-provider-bridge-protocol/testing";
+import { PROVIDER_BRIDGE_PROTOCOL_VERSION } from "@zana-ai/zcc-provider-bridge-protocol";
 import { handleLine } from "./bridge.js";
 import { ACP_BRIDGE_NO_ACTIVE_TURN_ERROR_CODE } from "../bridge-protocol.js";
 import { ACP_BRIDGE_MCP_SERVER_NAME } from "./tool-proxy-mcp.js";
@@ -87,25 +89,17 @@ function notifications(method: string): BridgeJsonRpcOutputMessage[] {
 }
 
 /**
- * The canonical thread events the bridge emitted, oldest first. The `acp/*`
- * envelopes the bridge builds internally never reach the wire, so every
- * session-scoped assertion reads the translated events.
+ * The canonical thread events the bridge's output assembles to, oldest first.
+ * The bridge emits `thread/delta` notifications; every session-scoped
+ * assertion runs the full capture through a real runtime delta assembler
+ * (the exact translation the bridge-protocol adapter performs). A fresh
+ * assembler per call over the full ordered capture keeps ids deterministic.
  */
 function threadEvents(): Record<string, unknown>[] {
-  return notifications("thread/event").flatMap((message) => {
-    const params = message.params;
-    if (
-      typeof params !== "object" ||
-      params === null ||
-      Array.isArray(params)
-    ) {
-      return [];
-    }
-    const event = params.event;
-    return typeof event === "object" && event !== null && !Array.isArray(event)
-      ? [event as Record<string, unknown>]
-      : [];
-  });
+  return assembleCapturedThreadEvents(
+    output.messages,
+    "acp",
+  ) as unknown as Record<string, unknown>[];
 }
 
 function threadEventsOfType(type: string): Record<string, unknown>[] {
@@ -480,11 +474,11 @@ afterEach(async () => {
 describe("acp bridge", () => {
   it("answers initialize and lists grouped models without spawning an agent", async () => {
     const initializeId = sendRequest("initialize", {
-      protocolVersion: 1,
-      client: { name: "bb", version: "1.0.0" },
+      protocolVersion: PROVIDER_BRIDGE_PROTOCOL_VERSION,
+      client: { name: "zcc", version: "1.0.0" },
     });
     expect((await waitForResponse(initializeId)).result).toMatchObject({
-      protocolVersion: 1,
+      protocolVersion: PROVIDER_BRIDGE_PROTOCOL_VERSION,
       capabilities: { fork: "tip", approvalEnforcedBy: "runtime" },
     });
 
@@ -1684,12 +1678,14 @@ describe("acp bridge", () => {
         ),
       "forwarded permission request",
     );
-    // The canonical interaction carries the approval payload, scoped to the
-    // turn the permission interrupted.
+    // The canonical interaction carries the approval payload; the turn id is
+    // runtime-stamped under the narrow grammar, so the bridge sends the
+    // wire contract's unresolved marker (null) and the runtime attaches its
+    // active turn for the thread.
     expect(forwarded.params).toMatchObject({
       threadId: bbThreadId,
       providerThreadId,
-      turnId: expect.any(String),
+      turnId: null,
       payload: {
         kind: "approval",
         subject: expect.objectContaining({ command: "rm -rf /tmp/scratch" }),

@@ -16,6 +16,8 @@ vi.mock('../../lib/product-client.js', () => ({
       onChanged: () => () => {},
       providerCliStatus: async () => ({}),
       installProviderCli: async () => [],
+      repair: async () => [],
+      updateSshIdentity: async () => undefined,
       update: async () => undefined,
       updatePermissionCeiling: async () => undefined,
       retryUpdate: async () => undefined,
@@ -23,6 +25,7 @@ vi.mock('../../lib/product-client.js', () => ({
     },
     relay: {
       status: async () => ({ state: 'unconfigured' }),
+      renewJoinWindow: async () => ({ state: 'unconfigured' }),
       onChanged: () => () => {}
     }
   }
@@ -107,6 +110,8 @@ describe('MachinesTab', () => {
     expect(html).toContain('data-testid="relay-status"');
     expect(html).not.toContain('data-testid="machines-empty"');
     expect(html).toContain('Connected machines follow the server version automatically');
+    expect(html).toContain('several desktops may share one token');
+    expect(html).not.toContain('steals the tunnel');
   });
 
   it('treats a blank public app URL as empty', () => {
@@ -138,6 +143,21 @@ describe('MachinesTab', () => {
     expect(html).toContain('2 projects');
     expect(html).toContain('Permission ceiling');
     expect(html).not.toContain('data-testid="machines-empty"');
+  });
+
+  it('offers Reconnect on an offline paired machine', () => {
+    hostsState.current = [host({ name: 'limited-pony', status: 'disconnected' })];
+    projectsState.current = [{ hostId: 'h1' }];
+    const html = renderToStaticMarkup(
+      <MachinesTab
+        config={config}
+        onConfigDraft={vi.fn()}
+        onUpdate={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+    expect(html).toContain('limited-pony');
+    expect(html).toContain('Reconnect');
+    expect(html).toContain('data-testid="machine-reconnect-h1"');
   });
 });
 
@@ -224,6 +244,22 @@ describe('MachineCliInventory', () => {
     );
     expect(html).toContain('Working…');
   });
+
+  it('shows the install failure on the CLI that failed', () => {
+    const html = renderToStaticMarkup(
+      <MachineCliInventory
+        hostId="h1"
+        rows={[{ provider: 'codex', status: cli({ installed: false, currentVersion: null }) }]}
+        busyKey={null}
+        installErrors={{ 'h1:codex': 'npm ERR! permission denied' }}
+        onInstall={vi.fn()}
+      />
+    );
+    expect(html).toContain('npm ERR! permission denied');
+    expect(html).toContain('role="alert"');
+    expect(html).toContain('data-testid="machine-cli-error-h1-codex"');
+    expect(html).toContain('machine-cli-row--error');
+  });
 });
 
 describe('MachineCard', () => {
@@ -237,12 +273,15 @@ describe('MachineCard', () => {
         busyKey={null}
         renaming={false}
         renameValue=""
+        reconnecting={false}
+        reconnectError={null}
         onRenameValue={vi.fn()}
         onRenameStart={vi.fn()}
         onRenameCommit={vi.fn()}
         onPermissionChange={vi.fn()}
         onRetryUpdate={vi.fn()}
         onRemove={vi.fn()}
+        onReconnect={vi.fn()}
         onInstall={vi.fn()}
       />
     );
@@ -253,8 +292,36 @@ describe('MachineCard', () => {
     expect(html).toContain('Permission ceiling');
     expect(html).toContain('Rename');
     expect(html).toContain('Remove');
+    expect(html).not.toContain('Reconnect');
     expect(html).not.toContain('this machine</span>');
     expect(html).toContain('Harness CLIs');
+  });
+
+  it('surfaces a CLI install failure on the connected card', () => {
+    const html = renderToStaticMarkup(
+      <MachineCard
+        host={host()}
+        projectCount={1}
+        now={Date.now()}
+        cliRows={[{ provider: 'pi', status: cli({ displayName: 'PI', installed: false, currentVersion: null }) }]}
+        busyKey={null}
+        installErrors={{ 'h1:pi': 'npm ERR! EACCES' }}
+        renaming={false}
+        renameValue=""
+        reconnecting={false}
+        reconnectError={null}
+        onRenameValue={vi.fn()}
+        onRenameStart={vi.fn()}
+        onRenameCommit={vi.fn()}
+        onPermissionChange={vi.fn()}
+        onRetryUpdate={vi.fn()}
+        onRemove={vi.fn()}
+        onReconnect={vi.fn()}
+        onInstall={vi.fn()}
+      />
+    );
+    expect(html).toContain('npm ERR! EACCES');
+    expect(html).toContain('data-testid="machine-cli-error-h1-pi"');
   });
 
   it('hides CLI inventory while offline and omits remove on the primary machine', () => {
@@ -267,12 +334,15 @@ describe('MachineCard', () => {
         busyKey={null}
         renaming={false}
         renameValue=""
+        reconnecting={false}
+        reconnectError={null}
         onRenameValue={vi.fn()}
         onRenameStart={vi.fn()}
         onRenameCommit={vi.fn()}
         onPermissionChange={vi.fn()}
         onRetryUpdate={vi.fn()}
         onRemove={vi.fn()}
+        onReconnect={vi.fn()}
         onInstall={vi.fn()}
       />
     );
@@ -280,6 +350,7 @@ describe('MachineCard', () => {
     expect(html).toContain('1 project');
     expect(html).toContain('Connect this machine to see harness CLI versions');
     expect(html).not.toContain('Remove');
+    expect(html).not.toContain('Reconnect');
     expect(html).not.toContain('Harness CLIs');
   });
 
@@ -293,12 +364,15 @@ describe('MachineCard', () => {
         busyKey={null}
         renaming={false}
         renameValue=""
+        reconnecting={false}
+        reconnectError={null}
         onRenameValue={vi.fn()}
         onRenameStart={vi.fn()}
         onRenameCommit={vi.fn()}
         onPermissionChange={vi.fn()}
         onRetryUpdate={vi.fn()}
         onRemove={vi.fn()}
+        onReconnect={vi.fn()}
         onInstall={vi.fn()}
       />
     );
@@ -315,16 +389,94 @@ describe('MachineCard', () => {
         busyKey={null}
         renaming
         renameValue="new-name"
+        reconnecting={false}
+        reconnectError={null}
         onRenameValue={vi.fn()}
         onRenameStart={vi.fn()}
         onRenameCommit={vi.fn()}
         onPermissionChange={vi.fn()}
         onRetryUpdate={vi.fn()}
         onRemove={vi.fn()}
+        onReconnect={vi.fn()}
         onInstall={vi.fn()}
       />
     );
     expect(renaming).toContain('value="new-name"');
     expect(renaming).toContain('aria-label="Machine name"');
+  });
+
+  it('offers Reconnect on an offline remote and shows progress or errors', () => {
+    const offline = renderToStaticMarkup(
+      <MachineCard
+        host={host({ status: 'disconnected', name: 'limited-pony' })}
+        projectCount={1}
+        now={Date.now()}
+        cliRows={[]}
+        busyKey={null}
+        renaming={false}
+        renameValue=""
+        reconnecting={false}
+        reconnectError={null}
+        onRenameValue={vi.fn()}
+        onRenameStart={vi.fn()}
+        onRenameCommit={vi.fn()}
+        onPermissionChange={vi.fn()}
+        onRetryUpdate={vi.fn()}
+        onRemove={vi.fn()}
+        onReconnect={vi.fn()}
+        onInstall={vi.fn()}
+      />
+    );
+    expect(offline).toContain('Reconnect');
+    expect(offline).toContain('data-testid="machine-reconnect-h1"');
+    expect(offline).toContain('Connect this machine to see harness CLI versions');
+
+    const busy = renderToStaticMarkup(
+      <MachineCard
+        host={host({ status: 'disconnected', name: 'limited-pony' })}
+        projectCount={1}
+        now={Date.now()}
+        cliRows={[]}
+        busyKey={null}
+        renaming={false}
+        renameValue=""
+        reconnecting
+        reconnectError={null}
+        onRenameValue={vi.fn()}
+        onRenameStart={vi.fn()}
+        onRenameCommit={vi.fn()}
+        onPermissionChange={vi.fn()}
+        onRetryUpdate={vi.fn()}
+        onRemove={vi.fn()}
+        onReconnect={vi.fn()}
+        onInstall={vi.fn()}
+      />
+    );
+    expect(busy).toContain('Reconnecting…');
+    expect(busy).toContain('disabled=""');
+
+    const failed = renderToStaticMarkup(
+      <MachineCard
+        host={host({ status: 'disconnected', name: 'limited-pony' })}
+        projectCount={1}
+        now={Date.now()}
+        cliRows={[]}
+        busyKey={null}
+        renaming={false}
+        renameValue=""
+        reconnecting={false}
+        reconnectError="ssh timed out"
+        onRenameValue={vi.fn()}
+        onRenameStart={vi.fn()}
+        onRenameCommit={vi.fn()}
+        onPermissionChange={vi.fn()}
+        onRetryUpdate={vi.fn()}
+        onRemove={vi.fn()}
+        onReconnect={vi.fn()}
+        onInstall={vi.fn()}
+      />
+    );
+    expect(failed).toContain('ssh timed out');
+    expect(failed).toContain('role="alert"');
   });
 });

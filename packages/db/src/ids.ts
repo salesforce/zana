@@ -23,3 +23,7 @@ export function createEventId(): string {
 export function createPendingInteractionId(): string {
   return `pint_${randomUUID()}`;
 }
+
+export function createDeferredThreadMessageId(): string {
+  return `dmsg_${randomUUID()}`;
+}

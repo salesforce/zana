@@ -42,6 +42,98 @@ function readPkg(rootDir: string): { name: string; version: string; zcc?: { serv
   };
 }
 
+function hostReactPlugin(): {
+  name: string;
+  setup(build: { onResolve(opts: { filter: RegExp }, fn: (args: { path: string }) => { path: string; namespace: string }): void; onLoad(opts: { filter: RegExp; namespace: string }, fn: (args: { path: string }) => { contents: string; loader: 'js' }): void }): void;
+} {
+  const namespace = 'zcc-host-react';
+  const reactShim = `const React = globalThis.__ZCC_HOST_REACT__;
+export default React;
+export const Children = React.Children;
+export const Component = React.Component;
+export const Fragment = React.Fragment;
+export const StrictMode = React.StrictMode;
+export const Suspense = React.Suspense;
+export const cloneElement = React.cloneElement;
+export const createContext = React.createContext;
+export const createElement = React.createElement;
+export const createRef = React.createRef;
+export const forwardRef = React.forwardRef;
+export const isValidElement = React.isValidElement;
+export const lazy = React.lazy;
+export const memo = React.memo;
+export const startTransition = React.startTransition;
+export const useCallback = React.useCallback;
+export const useContext = React.useContext;
+export const useDebugValue = React.useDebugValue;
+export const useDeferredValue = React.useDeferredValue;
+export const useEffect = React.useEffect;
+export const useId = React.useId;
+export const useImperativeHandle = React.useImperativeHandle;
+export const useInsertionEffect = React.useInsertionEffect;
+export const useLayoutEffect = React.useLayoutEffect;
+export const useMemo = React.useMemo;
+export const useReducer = React.useReducer;
+export const useRef = React.useRef;
+export const useState = React.useState;
+export const useSyncExternalStore = React.useSyncExternalStore;
+export const useTransition = React.useTransition;
+export const version = React.version;
+`;
+  const jsxShim = `const React = globalThis.__ZCC_HOST_REACT__;
+export const Fragment = React.Fragment;
+export function jsx(type, props, key) {
+  return React.createElement(type, key === undefined ? props : { ...props, key });
+}
+export const jsxs = jsx;
+export const jsxDEV = jsx;
+`;
+  return {
+    name: 'zcc-host-react',
+    setup(build) {
+      build.onResolve({ filter: /^(react|react-dom|react\/jsx-runtime|react\/jsx-dev-runtime)$/ }, (args) => ({
+        path: args.path,
+        namespace
+      }));
+      build.onLoad({ filter: /.*/, namespace }, (args) => ({
+        contents: args.path.startsWith('react/jsx') ? jsxShim : reactShim,
+        loader: 'js'
+      }));
+    }
+  };
+}
+
+function resolvePluginSdkAppEntry(): string {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const src = join(here, '../../plugin-sdk/src/app.ts');
+  if (existsSync(src)) return src;
+  return fileURLToPath(import.meta.resolve('@zana-ai/zcc-plugin-sdk/app'));
+}
+
+/**
+ * Plugin app bundles are native ESM loaded with `import()` and no import map.
+ * Bare `@zana-ai/zcc-plugin-sdk/app` specifiers throw in the renderer. Point
+ * them at the SDK source so esbuild inlines the global-host shim (same idea
+ * as `hostReactPlugin`).
+ */
+function hostPluginSdkPlugin(): {
+  name: string;
+  setup(build: {
+    onResolve(
+      opts: { filter: RegExp },
+      fn: (args: { path: string }) => { path: string }
+    ): void;
+  }): void;
+} {
+  const sdkApp = resolvePluginSdkAppEntry();
+  return {
+    name: 'zcc-host-plugin-sdk-app',
+    setup(build) {
+      build.onResolve({ filter: /^@zana-ai\/zcc-plugin-sdk\/app$/ }, () => ({ path: sdkApp }));
+    }
+  };
+}
+
 async function bundle(opts: {
   entry: string;
   outfile: string;
@@ -62,16 +154,12 @@ async function bundle(opts: {
       target: 'es2022',
       jsx: 'automatic',
       logLevel: 'silent',
+      loader: opts.platform === 'browser' ? { '.css': 'text' } : undefined,
+      plugins: opts.platform === 'browser' ? [hostReactPlugin(), hostPluginSdkPlugin()] : undefined,
       external:
         opts.platform === 'node'
           ? ['@zana-ai/zcc-plugin-sdk', '@zana-ai/zcc-plugin-sdk/server']
-          : ['react', 'react-dom', '@zana-ai/zcc-plugin-sdk', '@zana-ai/zcc-plugin-sdk/app'],
-      banner:
-        opts.platform === 'browser'
-          ? {
-              js: 'const React = globalThis.__ZCC_HOST_REACT__;'
-            }
-          : undefined
+          : ['@zana-ai/zcc-plugin-sdk/server']
     });
     mkdirSync(dirname(opts.outfile), { recursive: true });
     renameSync(staged, opts.outfile);

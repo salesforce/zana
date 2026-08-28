@@ -40,6 +40,8 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@zana-ai/zcc-plugin-build": "workspace:*",
+    "@zana-ai/zcc-plugin-sdk": "workspace:*",
     "@zana-ai/zcc-tsconfig": "workspace:*",
     "@types/node": "^26.2.0",
     "tsx": "^4.23.1",

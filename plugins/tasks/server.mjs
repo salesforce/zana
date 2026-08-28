@@ -31,6 +31,38 @@ export default function plugin(zcc) {
     return item;
   });
 
+  zcc.ui.registerMentionProvider({
+    id: 'task',
+    label: 'Tasks',
+    async search({ query }) {
+      const items = await all();
+      const needle = typeof query === 'string' ? query.trim().toLowerCase() : '';
+      return items
+        .filter((item) => !needle || item.title.toLowerCase().includes(needle) || item.id.includes(needle))
+        .slice(0, 20)
+        .map((item) => ({
+          id: item.id,
+          label: item.title,
+          insertText: `@${item.title}`
+        }));
+    },
+    async resolve(itemId) {
+      const items = await all();
+      const item = items.find((row) => row.id === itemId);
+      if (!item) throw new Error(`unknown task: ${itemId}`);
+      return {
+        context: [
+          `# Task ${item.title}`,
+          '',
+          `Status: ${item.done ? 'done' : 'open'}`,
+          `Id: ${item.id}`,
+          '',
+          'Act on this task with `zcc tasks` (list / add / done).'
+        ].join('\n')
+      };
+    }
+  });
+
   zcc.cli.register({
     name: 'tasks',
     summary: 'Plan and track work',

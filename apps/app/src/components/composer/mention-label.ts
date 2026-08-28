@@ -16,7 +16,7 @@ export function mentionResourceValue(resource?: MentionLabelResource): string {
 
 export function mentionKindTitle(resource?: MentionLabelResource): string {
   const kind = resource?.kind;
-  if (kind === 'thread') return 'Thread';
+  if (kind === 'thread') return 'Agent';
   if (kind === 'project') return 'Project';
   if (kind === 'command') return 'Command';
   if (kind === 'path') {
@@ -25,10 +25,13 @@ export function mentionKindTitle(resource?: MentionLabelResource): string {
   return '';
 }
 
-/** Visible mention text: kind title next to the value, e.g. "Thread: Hello". */
+/** Visible mention text: kind title next to the value, e.g. "Agent: Hello". */
 export function mentionDisplayLabel(resource?: MentionLabelResource): string {
-  const value = mentionResourceValue(resource);
+  let value = mentionResourceValue(resource);
   const kind = resource?.kind;
+  if (kind === 'thread' && value.startsWith('Thread: ')) {
+    value = value.slice('Thread: '.length);
+  }
   if (kind !== 'thread' && kind !== 'project') return value;
   const title = mentionKindTitle(resource);
   if (!title) return value;

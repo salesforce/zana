@@ -5,39 +5,6 @@ function hostReact() {
 export default {
   __zccPluginApp: true,
   setup(app) {
-    app.slots.threadPanelAction({
-      id: 'library',
-      title: 'Library',
-      layout: 'padded',
-      component: function DocsThreadPanel() {
-        const React = hostReact();
-        if (!React) return null;
-        return React.createElement(
-          'div',
-          { style: { padding: 24 } },
-          React.createElement('h2', { style: { marginTop: 0 } }, 'Library'),
-          React.createElement(
-            'p',
-            { style: { color: 'var(--text-muted)' } },
-            'Open the Docs rail or the project Library tab for the full catalogue.'
-          )
-        );
-      }
-    });
-    app.slots.experimental_newThreadPanelAction({
-      id: 'library',
-      title: 'Library',
-      component: function DocsComposePanel(props) {
-        const React = hostReact();
-        if (!React) return null;
-        return React.createElement(
-          'p',
-          { style: { padding: 16 } },
-          'Library for ',
-          props.projectId || 'this workspace'
-        );
-      }
-    });
     app.slots.fileOpener({
       id: 'md',
       title: 'Docs',

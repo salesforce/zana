@@ -6,7 +6,8 @@ export {
   createEnvironmentId,
   createThreadId,
   createEventId,
-  createPendingInteractionId
+  createPendingInteractionId,
+  createDeferredThreadMessageId
 } from './ids.js';
 export {
   getHost,
@@ -68,6 +69,7 @@ export {
   updateConversationThreadTitle,
   setConversationProviderThreadId,
   archiveConversationThread,
+  unarchiveConversationThread,
   countLiveConversationThreadsForEnvironment,
   type ConversationThreadRow,
   type ConversationThreadStatus
@@ -81,10 +83,14 @@ export {
 } from './data/events.js';
 export {
   appendConversationThreadEvent,
+  copyConversationThreadEvents,
   countConversationThreadEvents,
+  deleteConversationThreadEventsAfter,
   listConversationThreadEvents,
   listConversationThreadEventsWindow,
+  maxConversationEventSequenceByThreadIds,
   nextConversationEventSequence,
+  remapConversationEventPayloadThreadId,
   type ConversationThreadEventRow
 } from './data/conversation-events.js';
 export {
@@ -108,3 +114,12 @@ export {
   type PendingInteractionRow,
   type PendingInteractionStatus
 } from './data/pending-interactions.js';
+export {
+  DEFERRED_THREAD_MESSAGE_CAP,
+  countDeferredThreadMessages,
+  createDeferredThreadMessage,
+  deleteDeferredThreadMessage,
+  deleteDeferredThreadMessagesForThread,
+  listDeferredThreadMessages,
+  type DeferredThreadMessageRow
+} from './data/deferred-thread-messages.js';

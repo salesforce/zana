@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { homedir } from 'node:os';
-import { mkdirSync, realpathSync, statSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type {
   AppConfig,
@@ -14,21 +14,24 @@ import type {
 } from '@zana-ai/zcc-domain/product';
 import { browserRequestProblem, headerValue } from './browser-request-guard.js';
 import { listJsonFiles, readJsonFile, writeJsonFile } from './disk-json.js';
-import { applyTrustedOriginCors, readJsonBody, sendJson } from './json.js';
+import { applyTrustedOriginCors, readJsonBody, sendBytes, sendJson } from './json.js';
 import type { ProductHttpContext, ProductTerminalRecord } from './product-context.js';
 import { ThreadCreateError } from './thread-create.js';
 import {
   conversationThreadView,
+  conversationThreadViews,
   createConversationFromRequest,
   flattenThreadInput,
   type CreateConversationInput
 } from '../services/threads/conversation-create.js';
 import {
+  archiveConversation,
   cancelConversationPlan,
   forkConversation,
   resumeConversation,
   sendConversationTurn,
   stopConversation,
+  unarchiveConversation,
   type ThreadSendMode
 } from '../services/threads/conversation-lifecycle.js';
 import { conversationOutline, conversationTimeline } from '../services/threads/conversation-timeline.js';
@@ -43,6 +46,8 @@ import {
   type ThreadModelLoadErrorCode
 } from '../services/threads/thread-execution-options.js';
 import { archiveThread, destroyEnvironment } from '../services/environments/environment-cleanup.js';
+import { clearConversationGoal, renameConversationOnHost } from '../services/threads/thread-host-commands.js';
+import { editConversationMessage } from '../services/threads/conversation-edit-message.js';
 import {
   environmentDiff,
   environmentDiffFiles,
@@ -55,17 +60,23 @@ import {
 import { spawnEnvironmentChoiceSchema } from '@zana-ai/zcc-domain';
 import { jsonValueSchema, pendingInteractionResolutionSchema, reasoningLevelSchema, type ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
-import { systemInstallCliSkillsRequestSchema, threadOpenRequestSchema } from '@zana-ai/zcc-server-contract';
+import { systemInstallCliSkillsRequestSchema, threadOpenRequestSchema, editMessageRequestSchema, hostFileWriteRequestSchema, hostMkdirRequestSchema, hostMovePathRequestSchema, hostRemovePathRequestSchema, hostFileReadRequestSchema, hostFileListRequestSchema, hostPathListRequestSchema } from '@zana-ai/zcc-server-contract';
 import { normalizeRepoUrl } from '../services/projects/git-clone.js';
 import { harnessDescriptors, harnessEffectiveDefault, harnessVerify } from './harness-via-rpc.js';
 import { isSafeRelPath, listLibraryDocs, listQuickPrompts, readLibraryDoc } from './library-via-host.js';
 import { listProjectDir, listProjectPaths, readProjectFile } from './project-fs-via-host.js';
+import { listHostFiles, listHostPaths, mkdirHostPath, moveHostPath, readHostFile, removeHostPath, writeHostFile } from './files-via-host.js';
 import { getConversationThread, getEnvironment, listConversationThreadEvents, listConversationThreadsByProject, listVisibleConversationThreads, nextConversationEventSequence, updateConversationThreadTitle } from '@zana-ai/zcc-db';
 import { handleHostsApi } from './hosts-api.js';
 import type { MarketplaceCatalogRow } from '../plugins/marketplace-store.js';
-import { resolvePublicAppUrl } from './public-app-url.js';
+import { presentAppConfig } from './public-app-url.js';
 import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
 import { parseMultipartVoiceForm, readVoiceBody } from './multipart-voice.js';
+import {
+  ProjectAttachmentError,
+  readAttachment,
+  storeAttachment
+} from '../services/projects/attachments.js';
 import {
   transcribeVoiceOnHost,
   VoiceTranscriptionError,
@@ -125,6 +136,79 @@ async function handlePluginAppEnabled(
     const message = error instanceof Error ? error.message : String(error);
     const notFound = /not installed/i.test(message);
     sendJson(response, notFound ? 404 : 400, { error: message });
+  }
+}
+
+function pluginAppErrorStatus(message: string): number {
+  if (/not installed|not running|unknown rpc/i.test(message)) return 404;
+  return 400;
+}
+
+async function handlePluginAppRpc(
+  request: IncomingMessage,
+  response: ServerResponse,
+  ctx: ProductHttpContext,
+  id: string
+): Promise<void> {
+  if (!ctx.plugins) {
+    sendJson(response, 503, { error: 'plugin host is unavailable' });
+    return;
+  }
+  const body = (await readJsonBody(request)) as { method?: unknown; args?: unknown };
+  if (typeof body.method !== 'string' || body.method.trim().length === 0) {
+    sendJson(response, 400, { error: 'method required' });
+    return;
+  }
+  try {
+    sendJson(response, 200, { value: await ctx.plugins.callRpc(id, body.method, body.args) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    sendJson(response, pluginAppErrorStatus(message), { error: message });
+  }
+}
+
+async function handlePluginAppSettingsGet(
+  response: ServerResponse,
+  ctx: ProductHttpContext,
+  id: string
+): Promise<void> {
+  if (!ctx.plugins) {
+    sendJson(response, 503, { error: 'plugin host is unavailable' });
+    return;
+  }
+  sendJson(response, 200, ctx.plugins.getSettings(id));
+}
+
+async function handlePluginAppSettingsSet(
+  request: IncomingMessage,
+  response: ServerResponse,
+  ctx: ProductHttpContext,
+  id: string
+): Promise<void> {
+  if (!ctx.plugins) {
+    sendJson(response, 503, { error: 'plugin host is unavailable' });
+    return;
+  }
+  const body = (await readJsonBody(request)) as { values?: unknown };
+  if (!body.values || typeof body.values !== 'object' || Array.isArray(body.values)) {
+    sendJson(response, 400, { error: 'values required' });
+    return;
+  }
+  const values: Record<string, string | boolean | undefined> = {};
+  for (const [key, value] of Object.entries(body.values as Record<string, unknown>)) {
+    if (value === null || value === undefined) values[key] = undefined;
+    else if (typeof value === 'string' || typeof value === 'boolean') values[key] = value;
+    else {
+      sendJson(response, 400, { error: `invalid setting ${key}` });
+      return;
+    }
+  }
+  try {
+    await ctx.plugins.setSettings(id, values);
+    sendJson(response, 200, ctx.plugins.getSettings(id));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    sendJson(response, pluginAppErrorStatus(message), { error: message });
   }
 }
 
@@ -189,6 +273,7 @@ export async function handleProductHttp(
   const method = (request.method ?? 'GET').toUpperCase();
   const path = requestUrl.pathname;
   const isVoiceTranscription = path === '/api/v1/system/voice-transcription' && method === 'POST';
+  const isProjectAttachmentUpload = Boolean(routeParams(path, '/api/v1/projects/:id/attachments')) && method === 'POST';
   const problem = browserRequestProblem(
     {
       req: {
@@ -198,7 +283,7 @@ export async function handleProductHttp(
       }
     },
     { config: ctx.origins },
-    { requireJsonForMutation: request.method !== 'OPTIONS' && !isVoiceTranscription }
+    { requireJsonForMutation: request.method !== 'OPTIONS' && !isVoiceTranscription && !isProjectAttachmentUpload }
   );
   if (problem) {
     sendJson(response, problem.status, { error: problem.error });
@@ -293,19 +378,13 @@ export async function handleProductHttp(
     }
 
     if (path === '/api/v1/config' && method === 'GET') {
-      const config = ctx.config.getConfig();
-      sendJson(response, 200, {
-        config: {
-          ...config,
-          publicAppUrl: resolvePublicAppUrl({ configUrl: config.publicAppUrl }) ?? config.publicAppUrl
-        }
-      });
+      sendJson(response, 200, { config: presentAppConfig(ctx.config.getConfig()) });
       return true;
     }
 
     if (path === '/api/v1/config' && (method === 'PATCH' || method === 'POST')) {
       const patch = (await readJsonBody(request)) as Partial<AppConfig>;
-      const config = ctx.config.setConfig(patch);
+      const config = presentAppConfig(ctx.config.setConfig(patch));
       ctx.pairingRelay?.refresh();
       ctx.hub.emit('config:changed', config);
       sendJson(response, 200, { config });
@@ -313,7 +392,17 @@ export async function handleProductHttp(
     }
 
     if (path === '/api/v1/relay' && method === 'GET') {
-      sendJson(response, 200, { state: ctx.pairingRelay?.state() ?? 'unconfigured' });
+      sendJson(response, 200, ctx.pairingRelay?.snapshot() ?? { state: 'unconfigured' });
+      return true;
+    }
+
+    if (path === '/api/v1/relay/renew-join' && method === 'POST') {
+      if (ctx.pairingRelay?.state() !== 'connected') {
+        sendJson(response, 409, { error: 'relay_offline' });
+        return true;
+      }
+      const snapshot = await ctx.pairingRelay.renewJoinWindow();
+      sendJson(response, 200, snapshot);
       return true;
     }
 
@@ -527,6 +616,104 @@ export async function handleProductHttp(
       return true;
     }
 
+    if (path === '/api/v1/files/read' && method === 'POST') {
+      const parsed = hostFileReadRequestSchema.safeParse(await readJsonBody(request));
+      if (!parsed.success) {
+        sendJson(response, 400, { error: 'invalid-input', message: 'invalid file read request' });
+        return true;
+      }
+      try {
+        sendJson(response, 200, await readHostFile(ctx, parsed.data));
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    if (path === '/api/v1/files/list' && method === 'POST') {
+      const parsed = hostFileListRequestSchema.safeParse(await readJsonBody(request));
+      if (!parsed.success) {
+        sendJson(response, 400, { error: 'invalid-input', message: 'invalid file list request' });
+        return true;
+      }
+      try {
+        sendJson(response, 200, await listHostFiles(ctx, parsed.data));
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    if (path === '/api/v1/files/paths' && method === 'POST') {
+      const parsed = hostPathListRequestSchema.safeParse(await readJsonBody(request));
+      if (!parsed.success) {
+        sendJson(response, 400, { error: 'invalid-input', message: 'invalid path list request' });
+        return true;
+      }
+      try {
+        sendJson(response, 200, await listHostPaths(ctx, parsed.data));
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    if (path === '/api/v1/files/write' && method === 'POST') {
+      const parsed = hostFileWriteRequestSchema.safeParse(await readJsonBody(request));
+      if (!parsed.success) {
+        sendJson(response, 400, { error: 'invalid-input', message: 'invalid file write request' });
+        return true;
+      }
+      try {
+        sendJson(response, 200, await writeHostFile(ctx, parsed.data));
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    if (path === '/api/v1/files/mkdir' && method === 'POST') {
+      const parsed = hostMkdirRequestSchema.safeParse(await readJsonBody(request));
+      if (!parsed.success) {
+        sendJson(response, 400, { error: 'invalid-input', message: 'invalid mkdir request' });
+        return true;
+      }
+      try {
+        sendJson(response, 200, await mkdirHostPath(ctx, parsed.data));
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    if (path === '/api/v1/files/move' && method === 'POST') {
+      const parsed = hostMovePathRequestSchema.safeParse(await readJsonBody(request));
+      if (!parsed.success) {
+        sendJson(response, 400, { error: 'invalid-input', message: 'invalid move request' });
+        return true;
+      }
+      try {
+        sendJson(response, 200, await moveHostPath(ctx, parsed.data));
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    if (path === '/api/v1/files/remove' && method === 'POST') {
+      const parsed = hostRemovePathRequestSchema.safeParse(await readJsonBody(request));
+      if (!parsed.success) {
+        sendJson(response, 400, { error: 'invalid-input', message: 'invalid remove request' });
+        return true;
+      }
+      try {
+        sendJson(response, 200, await removeHostPath(ctx, parsed.data));
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
     if (path === '/api/v1/harness/verify' && method === 'GET') {
       try {
         sendJson(response, 200, { results: await harnessVerify(ctx.hostHub, requestUrl.searchParams.get('hostId') ?? undefined) });
@@ -582,7 +769,7 @@ export async function handleProductHttp(
       const threads = projectId
         ? listConversationThreadsByProject(ctx.db, projectId)
         : listVisibleConversationThreads(ctx.db);
-      sendJson(response, 200, { threads: threads.map((thread) => conversationThreadView(ctx, thread)) });
+      sendJson(response, 200, { threads: conversationThreadViews(ctx, threads) });
       return true;
     }
 
@@ -615,6 +802,7 @@ export async function handleProductHttp(
       }
       const updated = updateConversationThreadTitle(ctx.db, thread.id, title) ?? thread;
       ctx.threadTitleNamer?.reserve(thread.id);
+      await renameConversationOnHost(ctx, updated, title);
       ctx.hub.emit('threads:updated', conversationThreadView(ctx, updated));
       sendJson(response, 200, { thread: conversationThreadView(ctx, updated) });
       return true;
@@ -657,8 +845,10 @@ export async function handleProductHttp(
         return true;
       }
       const maxSeq = Math.max(0, nextConversationEventSequence(ctx.db, thread.id) - 1);
-      const lastReadSeq = markThreadRead(ctx.dataDir, thread.id, maxSeq);
-      sendJson(response, 200, { thread: { ...conversationThreadView(ctx, thread), lastReadSeq } });
+      markThreadRead(ctx.dataDir, thread.id, maxSeq);
+      const view = conversationThreadView(ctx, thread);
+      ctx.hub.emit('threads:updated', view);
+      sendJson(response, 200, { thread: view });
       return true;
     }
 
@@ -669,8 +859,10 @@ export async function handleProductHttp(
         sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
         return true;
       }
-      const lastReadSeq = markThreadRead(ctx.dataDir, thread.id, 0);
-      sendJson(response, 200, { thread: { ...conversationThreadView(ctx, thread), lastReadSeq } });
+      markThreadRead(ctx.dataDir, thread.id, 0);
+      const view = conversationThreadView(ctx, thread);
+      ctx.hub.emit('threads:updated', view);
+      sendJson(response, 200, { thread: view });
       return true;
     }
 
@@ -1012,7 +1204,9 @@ export async function handleProductHttp(
     const threadArchive = routeParams(path, '/api/v1/threads/:id/archive');
     if (threadArchive && method === 'POST') {
       try {
-        const ok = await archiveThread(ctx, threadArchive.id);
+        const ok =
+          (await archiveConversation(ctx, threadArchive.id)) ||
+          (await archiveThread(ctx, threadArchive.id));
         if (!ok) {
           sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
           return true;
@@ -1020,6 +1214,135 @@ export async function handleProductHttp(
         sendJson(response, 200, { ok: true, threadId: threadArchive.id });
       } catch (error) {
         sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadUnarchive = routeParams(path, '/api/v1/threads/:id/unarchive');
+    if (threadUnarchive && method === 'POST') {
+      try {
+        const thread = await unarchiveConversation(ctx, threadUnarchive.id);
+        sendJson(response, 200, { ok: true, thread: conversationThreadView(ctx, thread) });
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadGoalClear = routeParams(path, '/api/v1/threads/:id/goal/clear');
+    if (threadGoalClear && method === 'POST') {
+      try {
+        sendJson(response, 200, await clearConversationGoal(ctx, threadGoalClear.id));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadEditMessage = routeParams(path, '/api/v1/threads/:id/edit-message');
+    if (threadEditMessage && method === 'POST') {
+      const parsed = editMessageRequestSchema.safeParse(await readJsonBody(request));
+      if (!parsed.success) {
+        sendJson(response, 400, { error: 'invalid-input', message: 'invalid edit-message request' });
+        return true;
+      }
+      try {
+        sendJson(response, 200, await editConversationMessage(ctx, threadEditMessage.id, parsed.data));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, {
+            ok: false,
+            code: error.code,
+            error: error.code,
+            message: error.message
+          });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const projectAttachmentUpload = routeParams(path, '/api/v1/projects/:id/attachments');
+    if (projectAttachmentUpload && method === 'POST') {
+      const project = ctx.toProjects().find((row) => row.id === projectAttachmentUpload.id);
+      if (!project) {
+        sendJson(response, 404, { error: 'unknown-project', message: 'project is not registered' });
+        return true;
+      }
+      const contentType = headerValue(request.headers, 'content-type') ?? '';
+      if (!contentType.toLowerCase().startsWith('multipart/form-data')) {
+        sendJson(response, 415, { error: 'content-type must be multipart/form-data' });
+        return true;
+      }
+      try {
+        const body = await readVoiceBody(request);
+        const form = parseMultipartVoiceForm(body, contentType);
+        if (!form.file) {
+          sendJson(response, 400, { error: 'invalid_request', message: 'Attachment file is required' });
+          return true;
+        }
+        const uploaded = await storeAttachment(ctx.dataDir, project.id, {
+          name: form.file.filename,
+          type: form.file.mimeType,
+          size: form.file.bytes.byteLength,
+          arrayBuffer: async () => form.file!.bytes.buffer.slice(
+            form.file!.bytes.byteOffset,
+            form.file!.bytes.byteOffset + form.file!.bytes.byteLength
+          )
+        });
+        sendJson(response, 201, uploaded);
+      } catch (error) {
+        if (error instanceof ProjectAttachmentError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        if (error && typeof error === 'object' && 'status' in error && typeof (error as { status: unknown }).status === 'number') {
+          const status = error as { status: number; code?: string; message?: string };
+          sendJson(response, status.status, {
+            error: status.code ?? 'invalid_request',
+            message: status.message ?? (error instanceof Error ? error.message : String(error))
+          });
+          return true;
+        }
+        throw error;
+      }
+      return true;
+    }
+
+    const projectAttachmentContent = routeParams(path, '/api/v1/projects/:id/attachments/content');
+    if (projectAttachmentContent && method === 'GET') {
+      const project = ctx.toProjects().find((row) => row.id === projectAttachmentContent.id);
+      if (!project) {
+        sendJson(response, 404, { error: 'unknown-project', message: 'project is not registered' });
+        return true;
+      }
+      const attachmentPath = requestUrl.searchParams.get('path') ?? '';
+      if (!attachmentPath) {
+        sendJson(response, 400, { error: 'invalid_request', message: 'path is required' });
+        return true;
+      }
+      try {
+        const attachment = await readAttachment(ctx.dataDir, project.id, attachmentPath);
+        sendBytes(response, 200, attachment.content, {
+          'cache-control': 'private, max-age=31536000, immutable',
+          'content-type': attachment.mimeType ?? 'application/octet-stream',
+          etag: attachment.etag
+        });
+      } catch (error) {
+        if (error instanceof ProjectAttachmentError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        throw error;
       }
       return true;
     }
@@ -1292,15 +1615,53 @@ export async function handleProductHttp(
       return true;
     }
 
+    if (path === '/api/v1/plugin-apps/updates' && method === 'GET') {
+      if (!ctx.plugins) {
+        sendJson(response, 503, { error: 'plugin host is unavailable' });
+        return true;
+      }
+      sendJson(response, 200, { updates: await ctx.plugins.checkUpdates() });
+      return true;
+    }
+
     const pluginAppEnable = routeParams(path, '/api/v1/plugin-apps/:id/enable');
     if (pluginAppEnable && method === 'POST') {
       await handlePluginAppEnabled(response, ctx, pluginAppEnable.id, true);
       return true;
     }
-
     const pluginAppDisable = routeParams(path, '/api/v1/plugin-apps/:id/disable');
     if (pluginAppDisable && method === 'POST') {
       await handlePluginAppEnabled(response, ctx, pluginAppDisable.id, false);
+      return true;
+    }
+    const pluginAppUpdate = routeParams(path, '/api/v1/plugin-apps/:id/update');
+    if (pluginAppUpdate && method === 'POST') {
+      if (!ctx.plugins) {
+        sendJson(response, 503, { error: 'plugin host is unavailable' });
+        return true;
+      }
+      try {
+        await ctx.plugins.applyUpdate(pluginAppUpdate.id);
+        sendJson(response, 200, { ok: true as const, value: true as const });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const notFound = /not installed/i.test(message);
+        sendJson(response, notFound ? 404 : 400, { error: message });
+      }
+      return true;
+    }
+    const pluginAppRpc = routeParams(path, '/api/v1/plugin-apps/:id/rpc');
+    if (pluginAppRpc && method === 'POST') {
+      await handlePluginAppRpc(request, response, ctx, pluginAppRpc.id);
+      return true;
+    }
+    const pluginAppSettings = routeParams(path, '/api/v1/plugin-apps/:id/settings');
+    if (pluginAppSettings && method === 'GET') {
+      await handlePluginAppSettingsGet(response, ctx, pluginAppSettings.id);
+      return true;
+    }
+    if (pluginAppSettings && method === 'POST') {
+      await handlePluginAppSettingsSet(request, response, ctx, pluginAppSettings.id);
       return true;
     }
 
@@ -1375,7 +1736,9 @@ export async function handleProductHttp(
 
     if (path === '/api/v1/plugins/contributions' && method === 'GET') {
       sendJson(response, 200, {
-        cliCommands: ctx.plugins?.cliContributions() ?? [],
+        cliCommands: typeof ctx.plugins?.cliContributions === 'function'
+          ? ctx.plugins.cliContributions()
+          : [],
         mentionProviders: typeof ctx.plugins?.mentionProviders === 'function'
           ? ctx.plugins.mentionProviders()
           : [],
@@ -1655,15 +2018,13 @@ export async function handleProductHttp(
       if (providerId) {
         try {
           const hostId = ctx.hostHub.resolveHostId(requestedHostId);
-          const dataDir = join(ctx.dataDir, 'thread-bridges', providerId);
-          mkdirSync(dataDir, { recursive: true, mode: 0o700 });
           listed = await ctx.hostHub.callHostOnlineRpc<ProviderListModelsResult>({
             hostId,
             timeoutMs: 20_000,
             command: {
               type: 'provider.list_models',
               providerId,
-              bridgeLaunch: bridgeLaunchForProvider(providerId, dataDir)
+              bridgeLaunch: bridgeLaunchForProvider(providerId, ctx.pluginHostArtifacts)
             }
           });
         } catch (error) {

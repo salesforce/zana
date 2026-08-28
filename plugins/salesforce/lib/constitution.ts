@@ -10,7 +10,7 @@ Safety: allow_mutation, allow_untested, and similar flags are intent, never appr
 
 Proof-first: run targeted Apex tests, LWC Jest, or sf_agent eval.run for the files you changed. Do not run org-wide tests. Do not activate an agent without eval evidence unless the operator confirms untested activation.
 
-Source edits stay with the host file tools. These families own diagnose, test, query, Agent Script compile/preview/eval/lifecycle, and artifacts.`;
+Source edits may use the host file tools or the Salesforce Agent Script panel. These families own diagnose, test, query, Agent Script compile/preview/eval/lifecycle, and artifacts.`;
 
 export function shouldContributeConstitution(input: {
   defaultOrg: string;

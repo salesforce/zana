@@ -19,7 +19,10 @@ function deps(exec: SalesforceDeps['execSf']): SalesforceDeps {
     readFile: () => null,
     readdir: () => [],
     realpath: (path) => path,
-    spawnContained: async () => ({ code: 1, stdout: '', stderr: '' })
+    spawnContained: async () => ({ code: 1, stdout: '', stderr: '' }),
+    writeFile: () => {
+      throw new Error('writeFile not stubbed');
+    }
   };
 }
 
@@ -28,7 +31,8 @@ describe('doctor', () => {
     const report = await runDoctor(deps(async () => ({ code: 127, stdout: '', stderr: '' })), {
       defaultOrg: 'dev',
       apiVersion: '62.0',
-      projectRoot: '/proj'
+      projectRoot: '/proj',
+      agentScriptDialect: 'agentforce'
     });
     expect(report.cliOk).toBe(false);
     expect(report.cliError).toMatch(/not found/);
@@ -40,7 +44,8 @@ describe('doctor', () => {
     const report = await runDoctor(deps(async () => ({ code: 1, stdout: '', stderr: 'sf exploded' })), {
       defaultOrg: '',
       apiVersion: '62.0',
-      projectRoot: ''
+      projectRoot: '',
+      agentScriptDialect: 'agentforce'
     });
     expect(report.cliOk).toBe(false);
     expect(report.cliError).toContain('sf exploded');
@@ -50,7 +55,8 @@ describe('doctor', () => {
     const report = await runDoctor(deps(async () => ({ code: 2, stdout: 'no binary output', stderr: '' })), {
       defaultOrg: '',
       apiVersion: '62.0',
-      projectRoot: ''
+      projectRoot: '',
+      agentScriptDialect: 'agentforce'
     });
     expect(report.cliError).toContain('no binary output');
     expect(formatDoctor({
@@ -105,7 +111,7 @@ describe('doctor', () => {
         }
         return { code: 1, stdout: '', stderr: 'unexpected' };
       }),
-      { defaultOrg: 'dev', apiVersion: '62.0', projectRoot: '/proj' }
+      { defaultOrg: 'dev', apiVersion: '62.0', projectRoot: '/proj', agentScriptDialect: 'agentforce' }
     );
     expect(report.cliOk).toBe(true);
     expect(report.org?.kind).toBe('sandbox');
@@ -128,7 +134,7 @@ describe('doctor', () => {
         }
         return { code: 1, stdout: '', stderr: 'alias missing' };
       }),
-      { defaultOrg: 'dev', apiVersion: '62.0', projectRoot: '' }
+      { defaultOrg: 'dev', apiVersion: '62.0', projectRoot: '', agentScriptDialect: 'agentforce' }
     );
     expect(report.cliOk).toBe(true);
     expect(report.cliError).toContain('alias missing');
@@ -196,7 +202,7 @@ describe('doctor', () => {
         readFile: (path) => files[path] ?? null,
         readdir: (path) => dirs[path] ?? []
       },
-      { defaultOrg: '', apiVersion: '62.0', projectRoot: '/proj' }
+      { defaultOrg: '', apiVersion: '62.0', projectRoot: '/proj', agentScriptDialect: 'agentforce' }
     );
     expect(report.agentBundleCount).toBe(1);
     expect(report.agentCompiler).toBe('cli');

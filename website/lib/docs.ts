@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { marked } from 'marked';
 import { createHighlighter, type Highlighter } from 'shiki';
+import { isMermaidInfostring, mermaidFigureHtml } from './doc-mermaid';
 
 /**
  * Docs are synced from the parent repo into ./content/docs/ by
@@ -45,16 +46,16 @@ export function getDoc(slug: string): DocMeta | undefined {
  * Build-time syntax highlighter. Created ONCE (module singleton) and reused
  * across every code block on every doc — creating one per block would reload
  * grammars + themes on each call. Dual-theme (github-light + github-dark): shiki
- * emits both colors as inline styles + CSS custom props so a single build serves
- * both site themes; globals.css toggles them off [data-theme]. Highlighting runs
+ * emits both colors as CSS custom props. Docs code chrome is always dark
+ * (`--code-bg`), so globals.css always applies `--shiki-dark`. Highlighting runs
  * server-side only, so there is zero client runtime cost.
  */
 const HL_THEMES = ['github-light', 'github-dark'] as const;
 // Languages actually used across our synced docs (+ a few safe extras). Anything
 // not in this set falls back to plaintext rather than throwing.
 const HL_LANGS = ['bash', 'shellscript', 'json', 'jsonc', 'typescript', 'tsx', 'javascript', 'css', 'markdown'];
-// Fence-tag → loaded grammar. Tags not present here render as plaintext (e.g.
-// `text`, `mermaid` — a diagram DSL we don't tokenize).
+// Fence-tag → loaded grammar. Tags not present here render as plaintext.
+// `mermaid` is intercepted in the code renderer and never reaches shiki.
 const LANG_ALIASES: Record<string, string> = {
   sh: 'bash',
   shell: 'bash',
@@ -100,11 +101,18 @@ function resolveLang(infostring: string | undefined): string {
  */
 /** Escape a string for safe use inside a double-quoted HTML attribute. */
 function escapeAttr(s: string): string {
+  return escapeHtml(s).replace(/"/g, '&quot;');
+}
+
+function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+function wrapCodeBlock(innerPre: string): string {
+  return `<div class="code-wrap"><button class="code-copy" type="button" aria-label="Copy code">Copy</button>${innerPre}</div>\n`;
 }
 
 function rewriteDocHref(href: string): string | null {
@@ -177,18 +185,26 @@ export async function renderDoc(meta: DocMeta): Promise<RenderedDoc> {
     return `<h${depth} id="${id}">${text}${anchor}</h${depth}>\n`;
   };
 
-  // `text` is the raw source string. Tokenize
-  // with shiki (dual-theme) and wrap in .code-wrap with the copy button. Shiki's
+  // `text` is the raw source string. Mermaid fences become a figure that
+  // DocsEnhancer hydrates into SVG. Everything else is tokenized with shiki
+  // (dual-theme) and wrapped in .code-wrap with the copy button. Shiki's
   // rendered text content equals the source, so DocsEnhancer's `code.innerText`
   // still copies the raw source. Unknown/absent langs render as plaintext.
   renderer.code = ({ text, lang: infostring }) => {
+    if (isMermaidInfostring(infostring)) return mermaidFigureHtml(text);
     const lang = resolveLang(infostring);
+    // Plaintext fences (` ```text `, or no tag) stay unhighlighted. Shiki's
+    // plaintext grammar paints every token comment-gray (#6A737D) on both
+    // themes — unreadable on the dark --code-bg chrome.
+    if (lang === 'text') {
+      return wrapCodeBlock(`<pre><code>${escapeHtml(text)}</code></pre>`);
+    }
     const highlighted = highlighter.codeToHtml(text, {
       lang,
       themes: { light: 'github-light', dark: 'github-dark' },
-      defaultColor: false // emit CSS vars for both themes; globals.css picks one
+      defaultColor: false // emit CSS vars; globals.css always applies --shiki-dark
     });
-    return `<div class="code-wrap"><button class="code-copy" type="button" aria-label="Copy code">Copy</button>${highlighted}</div>\n`;
+    return wrapCodeBlock(highlighted);
   };
 
   // Rewrite repo-relative links for the public site;

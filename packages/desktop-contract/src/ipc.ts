@@ -326,7 +326,9 @@ export const IPC = {
     setEnabled: 'pluginApps:setEnabled',
     callRpc: 'pluginApps:callRpc',
     getSettings: 'pluginApps:getSettings',
-    setSettings: 'pluginApps:setSettings'
+    setSettings: 'pluginApps:setSettings',
+    checkUpdates: 'pluginApps:checkUpdates',
+    applyUpdate: 'pluginApps:applyUpdate'
   },
   /**
    * Runtime extensions under `~/.zcc/extensions/<id>/`. Mirrors the

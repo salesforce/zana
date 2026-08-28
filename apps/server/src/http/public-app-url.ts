@@ -56,6 +56,20 @@ export function resolvePublicAppUrl(input?: {
     ?? parsePublicOrigin(readPublicAppUrlFile(input?.cwd));
 }
 
+/** Renderer-facing config: fill `publicAppUrl` from env / Settings / the repo file. */
+export function presentAppConfig<T extends { publicAppUrl?: string }>(
+  config: T,
+  input?: { env?: NodeJS.ProcessEnv; cwd?: string }
+): T {
+  const publicAppUrl = resolvePublicAppUrl({
+    env: input?.env,
+    configUrl: config.publicAppUrl,
+    cwd: input?.cwd
+  });
+  if (!publicAppUrl || publicAppUrl === config.publicAppUrl) return config;
+  return { ...config, publicAppUrl };
+}
+
 export function publicOriginHost(publicAppUrl: string | undefined): string | undefined {
   if (!publicAppUrl) return undefined;
   try {

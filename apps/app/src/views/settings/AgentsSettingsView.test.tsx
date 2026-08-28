@@ -30,7 +30,7 @@ describe('AgentsTab worktree isolation', () => {
     expect(html).not.toContain('type="checkbox"');
   });
 
-  it('places PTY session ceilings under Legacy Agent', () => {
+  it('places PTY session ceilings under CLI Agent', () => {
     const html = renderToStaticMarkup(
       <AgentsTab
         config={config}
@@ -38,7 +38,7 @@ describe('AgentsTab worktree isolation', () => {
         onUpdate={vi.fn().mockResolvedValue(undefined)}
       />
     );
-    expect(html).toContain('Legacy Agent');
+    expect(html).toContain('CLI Agent');
     expect(html).toContain('Max live sessions');
     expect(html).toContain('Agent heap limit (MB)');
     expect(html).not.toContain('Performance &amp; limits');

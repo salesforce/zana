@@ -74,7 +74,7 @@ describe('AgentTray', () => {
     expect(markup).toContain('Command Center');
   });
 
-  it('keeps an inline empty state visible when no agents or threads are active', () => {
+  it('keeps an inline empty state visible when no agents are active', () => {
     h.data.terminals = {} as typeof h.data.terminals;
     h.status.byId = {} as typeof h.status.byId;
     h.threads = [];
@@ -82,7 +82,7 @@ describe('AgentTray', () => {
     const markup = renderToStaticMarkup(<MemoryRouter><AgentTray placement="inline" /></MemoryRouter>);
 
     expect(markup).toContain('class="agent-tray-empty"');
-    expect(markup).toContain('No active agents or threads');
+    expect(markup).toContain('No active agents');
   });
 
   it('shows a project-scoped idle thread in the workspace tray but not the global tray', () => {
@@ -112,6 +112,6 @@ describe('AgentTray', () => {
       </MemoryRouter>
     );
     expect(global).not.toContain('Idle review');
-    expect(global).toContain('No active agents or threads');
+    expect(global).toContain('No active agents');
   });
 });

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { fallbackModelsForProvider, fallbackMoreModelsForProvider, fallbackProviderOption } from './fallback-models.js';
+import {
+  composerProvidersFromCatalog,
+  fallbackModelsForProvider,
+  fallbackMoreModelsForProvider,
+  fallbackProviderOption,
+  fallbackProvidersForNewThread,
+  snapNewThreadProviderId
+} from './fallback-models.js';
 
 describe('fallback thread catalogs', () => {
   it('seeds Claude models so the picker is never empty before execution-options returns', () => {
@@ -50,5 +57,62 @@ describe('fallback thread catalogs', () => {
     expect(fallbackModelsForProvider('acp-cursor')).toEqual([]);
     expect(fallbackModelsForProvider('acp-opencode')).toEqual([]);
     expect(fallbackProviderOption('acp-opencode').displayName).toBe('OpenCode');
+  });
+
+  it('seeds every builtin harness on a new thread and locks to one on an existing thread', () => {
+    expect(fallbackProvidersForNewThread().map((row) => row.id)).toEqual([
+      'claude-code',
+      'codex',
+      'pi',
+      'acp-cursor',
+      'acp-opencode'
+    ]);
+    expect(composerProvidersFromCatalog([], false, 'claude-code').map((row) => row.id)).toEqual([
+      'claude-code',
+      'codex',
+      'pi',
+      'acp-cursor',
+      'acp-opencode'
+    ]);
+    expect(composerProvidersFromCatalog([], true, 'codex').map((row) => row.id)).toEqual(['codex']);
+    expect(composerProvidersFromCatalog(
+      [{ id: 'claude-code', displayName: 'Claude', permissionModes: ['full'], composerActions: ['plan'] }],
+      false,
+      'claude-code'
+    )[0]).toMatchObject({ displayName: 'Claude', composerActions: ['plan'] });
+    expect(composerProvidersFromCatalog(
+      [
+        { id: 'claude-code', displayName: 'Claude Code', permissionModes: ['full'], composerActions: [] },
+        { id: 'custom-agent', displayName: 'Custom', permissionModes: ['full'], composerActions: [] }
+      ],
+      false,
+      'claude-code'
+    ).map((row) => row.id)).toEqual([
+      'claude-code',
+      'codex',
+      'pi',
+      'acp-cursor',
+      'acp-opencode',
+      'custom-agent'
+    ]);
+    expect(composerProvidersFromCatalog(
+      [{ id: 'pi', displayName: 'Pi', permissionModes: ['full'], composerActions: [] }],
+      true,
+      'claude-code'
+    ).map((row) => row.id)).toEqual(['pi']);
+  });
+
+  it('does not snap a builtin fallback that the new-thread picker still offers', () => {
+    const loading = composerProvidersFromCatalog([], false, 'acp-cursor').map((row) => row.id);
+    expect(snapNewThreadProviderId(loading, 'acp-cursor')).toBeNull();
+    const live = composerProvidersFromCatalog(
+      [{ id: 'claude-code', displayName: 'Claude Code', permissionModes: ['full'], composerActions: [] }],
+      false,
+      'acp-cursor'
+    ).map((row) => row.id);
+    expect(snapNewThreadProviderId(live, 'claude-code')).toBeNull();
+    expect(snapNewThreadProviderId(live, 'acp-cursor')).toBeNull();
+    expect(snapNewThreadProviderId(live, 'gone-plugin')).toBe('claude-code');
+    expect(snapNewThreadProviderId([], 'acp-cursor')).toBeNull();
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Project } from '@zana-ai/zcc-domain/product';
-import { isRemoteToolProxyActive, threadLaunchRemote } from './remote-tool-proxy.js';
+import { isRemoteToolProxyActive, remoteWorkspacePath, threadLaunchRemote } from './remote-tool-proxy.js';
 
 const sshProject: Project = {
   id: 'p-ssh',
@@ -12,21 +12,39 @@ const sshProject: Project = {
 };
 
 describe('isRemoteToolProxyActive', () => {
-  it('is on only for an unbound SSH project with the setting true', () => {
-    expect(isRemoteToolProxyActive(sshProject, { remoteToolProxy: true })).toBe(true);
+  it('is on for an unbound SSH project', () => {
+    expect(isRemoteToolProxyActive(sshProject)).toBe(true);
+    expect(isRemoteToolProxyActive(sshProject, 'h-primary')).toBe(true);
   });
 
-  it('is off by default, when bound to a host, or when the project is local', () => {
-    expect(isRemoteToolProxyActive(sshProject, {})).toBe(false);
-    expect(isRemoteToolProxyActive(sshProject, { remoteToolProxy: false })).toBe(false);
-    expect(isRemoteToolProxyActive({ ...sshProject, hostId: 'h-enrolled' }, { remoteToolProxy: true })).toBe(false);
+  it('is on when a bound SSH project still runs on this machine', () => {
+    expect(isRemoteToolProxyActive({ ...sshProject, hostId: 'h-enrolled' })).toBe(true);
+    expect(isRemoteToolProxyActive({ ...sshProject, hostId: 'h-enrolled' }, 'h-primary')).toBe(true);
+  });
+
+  it('is off when executing on the enrolled host or when the project is local', () => {
+    expect(isRemoteToolProxyActive({ ...sshProject, hostId: 'h-enrolled' }, 'h-enrolled')).toBe(false);
     expect(isRemoteToolProxyActive({
       id: 'p-local',
       name: 'Local',
       path: '/tmp/local',
       createdAt: 1,
       lastActiveAt: 1
-    }, { remoteToolProxy: true })).toBe(false);
+    })).toBe(false);
+  });
+});
+
+describe('remoteWorkspacePath', () => {
+  it('uses the placeholder on this machine and the remote path on the enrolled host', () => {
+    expect(remoteWorkspacePath(sshProject, true)).toBe('/tmp/placeholder');
+    expect(remoteWorkspacePath(sshProject, false)).toBe('/src');
+    expect(remoteWorkspacePath({
+      id: 'p-local',
+      name: 'Local',
+      path: '/tmp/local',
+      createdAt: 1,
+      lastActiveAt: 1
+    }, false)).toBe('/tmp/local');
   });
 });
 

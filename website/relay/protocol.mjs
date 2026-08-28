@@ -7,7 +7,9 @@ export const TYPE = {
   HTTP_RES: 4,
   WS_OPEN: 5,
   WS_DATA: 6,
-  WS_CLOSE: 7
+  WS_CLOSE: 7,
+  HELLO: 8,
+  JOIN_RENEW: 9
 };
 
 export const FLAG = {

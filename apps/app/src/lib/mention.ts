@@ -10,11 +10,11 @@
  * a mention here, and what is its query?".
  *
  * A mention is active when, scanning left from the caret:
- *   - we hit an `@` before any whitespace, AND
+ *   - we hit an `@` before a tab or newline, AND
  *   - that `@` is at the very start or is itself preceded by whitespace
- *     (so an `a@b` email or a `foo@` mid-word never triggers), AND
- *   - the run between the `@` and the caret contains no whitespace (typing a
- *     space closes the mention — the query is a single path fragment).
+ *     (so an `a@b` email or a `foo@` mid-word never triggers).
+ * Ordinary spaces stay in the query so titles like "Hello world" match.
+ * Tabs and newlines still end the mention.
  *
  * The query may be empty (caret right after a bare `@`), which is a valid state
  * the UI uses to show the project's most-recent / top files.
@@ -27,7 +27,9 @@ export interface MentionMatch {
   start: number;
 }
 
-/** Whitespace between the `@` and the caret closes the mention. */
+/** Tabs and newlines end the mention; ordinary spaces do not. */
+const END_RE = /[\t\n\r]/;
+/** Word-boundary check for the character before `@`. */
 const WS_RE = /\s/;
 
 /**
@@ -46,7 +48,7 @@ export function detectMention(value: string, caret: number): MentionMatch | null
       if (before !== '' && !WS_RE.test(before)) return null;
       return { query: value.slice(i + 1, caret), start: i };
     }
-    if (WS_RE.test(ch)) return null; // whitespace before any `@` — no mention
+    if (END_RE.test(ch)) return null;
     i--;
   }
   return null;

@@ -283,7 +283,7 @@ export function WorkspaceView() {
           />
         ) : isNewThread ? (
           <div className="explorer-topbar">
-            <span className="explorer-topbar-label">New thread</span>
+            <span className="explorer-topbar-label">New agent</span>
           </div>
         ) : isAgents ? (
           <div className="explorer-topbar">

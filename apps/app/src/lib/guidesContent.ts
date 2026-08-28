@@ -8,7 +8,7 @@ export const GUIDE_CONTENT: Record<string, string> = {
   'create-extension': `
 A plugin is your own panel or tool, running inside Zana.
 
-## 1. Seed a thread
+## 1. Seed a conversation
 
 Click **Plugins → New plugin** (or **Browse → Create a plugin**, or the composer
 **Plugin** button). That inserts the same prompt: *Create a new zcc plugin that …*
@@ -32,7 +32,7 @@ Edits to \`server.ts\` reload from source. App changes remount live. Use
 
 **Install from folder / repository** and **Open existing plugin** stay in the
 hub overflow menu. Those install an existing tree; they never start a create
-thread.
+agent.
 
 A failed reload keeps the last good generation running. Plugins are full-trust
 in-process on the server after install.
@@ -126,15 +126,17 @@ Press **⌘?** any time (or open it from this Guides card) for the complete
 reference, including Explorer and tab-context-menu actions.
 `,
   walkthrough: `
-The first-run walkthrough is a three-step tour of the core loop: launching an
-agent, adding a project, and creating a schedule.
+The first-run walkthrough is a four-step tour of the core loop: starting a
+conversation, flipping to CLI Agent on the same New Chat page, adding a project,
+and creating a schedule.
 
 It auto-opens once for a new install, then never again unless you re-open
 it — from here, or from **Settings → General → Replay walkthrough**.
 
 Each step moves the app to the real view it's talking about and points at
 the control to use, so you're looking at the actual UI rather than a
-screenshot.
+screenshot. The Modern and CLI Agent steps stay on **New Chat** and switch
+the composer so you can see both launchers.
 
 Use **Back**/**Next** to move between steps, or **Skip**/**Esc** to close it
 at any point — closing (by finishing or skipping) marks it done so it won't

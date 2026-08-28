@@ -12,9 +12,9 @@ describe('AgentsBoard', () => {
     expect(workspace).toContain('<AgentsBoard scope={{ kind: \'project\', project }} />');
     expect(board).not.toContain('<AgentLauncher');
     expect(board).toContain('setLauncherOpen(true)');
-    expect(board).toContain('aria-label="New thread/agent"');
+    expect(board).toContain('aria-label="New agent"');
     expect(board).not.toContain('aria-label="Legacy PTY agent"');
-    expect(board).not.toContain('aria-label="New agent"');
+    expect(board).not.toContain('aria-label="New thread/agent"');
     expect(app).toContain('{launcherOpen && (nav !== \'projects\' || !focusedProjectId) && (');
     expect(app).not.toContain("nav !== 'home'");
   });
@@ -27,8 +27,8 @@ describe('AgentsBoard', () => {
     const emptyBranch = board.slice(emptyStart, filterStart);
     expect(emptyBranch).toContain('<AuroraGrid />');
     expect(emptyBranch).not.toContain('<HomeAgentComposer');
-    expect(emptyBranch).toContain('No agents or threads');
-    expect(emptyBranch).toContain('No agents or threads yet');
+    expect(emptyBranch).toContain('No agents');
+    expect(emptyBranch).toContain('No agents yet');
     expect(emptyBranch).toContain('setLauncherOpen(true)');
     expect(emptyBranch).toContain('data-testid="agents-board-new-thread"');
     expect(board).toContain('{fleet.length > 0 && (');
@@ -58,7 +58,7 @@ describe('AgentsBoard compact chrome contract', () => {
     expect(board).toContain('className="agents-board-header-actions"');
     expect(board).toContain('className="agents-board-btn-label"');
     expect(board).toContain('className="agents-board-count-extra"');
-    expect(board).toContain('aria-label="New thread/agent"');
+    expect(board).toContain('aria-label="New agent"');
     expect(board).toContain('data-testid="agents-board-new-thread"');
     expect(board).toContain('btn primary agents-board-new');
     expect(board).not.toContain('agents-board-legacy');

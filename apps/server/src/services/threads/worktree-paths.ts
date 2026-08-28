@@ -1,7 +1,8 @@
 import path from 'node:path';
 import {
   MANAGED_WORKTREE_DIR_NAME,
-  PERSONAL_WORKSPACE_DIR_NAME
+  PERSONAL_WORKSPACE_DIR_NAME,
+  PROJECT_CHECKOUTS_DIR_NAME
 } from '@zana-ai/zcc-domain';
 
 const REPO_DIR_NAME_PATTERN = /^[A-Za-z0-9._][A-Za-z0-9._-]*$/;
@@ -40,6 +41,33 @@ export function resolveManagedTargetPath(args: {
 
 export function resolvePersonalTargetPath(args: { dataDir: string; environmentId: string }): string {
   return path.posix.join(args.dataDir, PERSONAL_WORKSPACE_DIR_NAME, args.environmentId);
+}
+
+/** Probe slug for `project.clone_default_path` so we can derive the host data dir. */
+export const HOST_DATA_DIR_PROBE_SLUG = 'zcc';
+
+/** `join(dataDir, checkouts, slug)` → dataDir. */
+export function hostDataDirFromCloneDefaultPath(cloneDefaultPath: string): string {
+  const normalized = cloneDefaultPath.replace(/\\/g, '/').replace(/\/+$/, '');
+  const checkoutsDir = path.posix.dirname(normalized);
+  if (path.posix.basename(checkoutsDir) !== PROJECT_CHECKOUTS_DIR_NAME) {
+    throw new Error(`clone default path is not under ${PROJECT_CHECKOUTS_DIR_NAME}: ${cloneDefaultPath}`);
+  }
+  const dataDir = path.posix.dirname(checkoutsDir);
+  if (!dataDir || dataDir === '/' || dataDir === '.') {
+    throw new Error(`could not derive host data dir from ${cloneDefaultPath}`);
+  }
+  return dataDir;
+}
+
+export function resolvePersonalTargetPathFromCloneDefault(
+  cloneDefaultPath: string,
+  environmentId: string
+): string {
+  return resolvePersonalTargetPath({
+    dataDir: hostDataDirFromCloneDefaultPath(cloneDefaultPath),
+    environmentId
+  });
 }
 
 export function isZccManagedWorkspacePath(args: { dataDir: string; path: string }): boolean {

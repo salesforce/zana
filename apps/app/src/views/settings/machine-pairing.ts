@@ -15,6 +15,49 @@ export function pairingCommand(input: {
   );
 }
 
+export const RELAY_SESSION_ID_RE = /^zcrs_[A-Za-z0-9_-]{16,64}$/;
+
+export function pairingSessionServerUrl(origin: string, sessionId: string): string {
+  return `${origin.replace(/\/$/u, '')}/t/${sessionId}`;
+}
+
+export type RelayStatus = {
+  state: 'connected' | 'offline' | 'unconfigured';
+  sessionId?: string;
+  joinUntil?: number;
+};
+
+/** Prefer `/t/<sessionId>` when the Heroku relay is connected; Tailscale stays bare. */
+export function resolveRelayPairingServerUrl(input: {
+  publicAppUrl?: string | null;
+  relay?: RelayStatus | null;
+  now?: number;
+}): { url: string | null; error?: 'join_expired' | 'relay_offline' } {
+  const base = resolvePairingServerUrl(input.publicAppUrl);
+  if (!base) return { url: null };
+  const relay = input.relay;
+  if (!relay || relay.state === 'unconfigured') return { url: base };
+  if (relay.state === 'offline') return { url: base, error: 'relay_offline' };
+  if (!relay.sessionId || !RELAY_SESSION_ID_RE.test(relay.sessionId)) {
+    return { url: base, error: 'join_expired' };
+  }
+  const prefixed = pairingSessionServerUrl(base, relay.sessionId);
+  const now = input.now ?? Date.now();
+  if (typeof relay.joinUntil === 'number' && relay.joinUntil <= now) {
+    return { url: prefixed, error: 'join_expired' };
+  }
+  return { url: prefixed };
+}
+
+export function joinCountdownMs(
+  joinCodeExpiresAt: number,
+  joinUntil: number | undefined,
+  now: number
+): number {
+  const end = typeof joinUntil === 'number' ? Math.min(joinCodeExpiresAt, joinUntil) : joinCodeExpiresAt;
+  return end - now;
+}
+
 /**
  * Laptop-side one-liner for SSH remotes (Salesforce workspaces, no Tailscale).
  * Reverse-forwards product HTTP to the remote loopback so the copied installer

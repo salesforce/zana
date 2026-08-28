@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   expandDirectoryRootsToRuntimeSkillRoots,
+  hashInjectedSkillCatalog,
   loadRuntimeSkillRoots,
   readInjectedSkillDirectoryRoots
 } from './injected-skill-roots.js';
@@ -59,5 +60,16 @@ describe('injected skill roots', () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-no-skills-'));
     dirs.push(dataDir);
     expect(loadRuntimeSkillRoots(dataDir)).toEqual([]);
+  });
+
+  it('hashes the injected skill catalog', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-hash-skills-'));
+    dirs.push(dataDir);
+    const empty = hashInjectedSkillCatalog(dataDir);
+    mkdirSync(join(dataDir, 'skills-generated', 'hello'), { recursive: true });
+    writeFileSync(join(dataDir, 'skills-generated', 'hello', 'SKILL.md'), '---\ndescription: Hi\n---\n');
+    const withSkill = hashInjectedSkillCatalog(dataDir);
+    expect(withSkill).not.toBe(empty);
+    expect(hashInjectedSkillCatalog(dataDir)).toBe(withSkill);
   });
 });

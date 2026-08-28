@@ -64,6 +64,10 @@ export default defineConfig({
         replacement: resolve(__dirname, 'packages/thread-view/src/index.ts')
       },
       {
+        find: /^@zana-ai\/zcc-provider-bridge-protocol\/assembler$/,
+        replacement: resolve(__dirname, 'packages/provider-bridge-protocol/src/assembler/index.ts')
+      },
+      {
         find: /^@zana-ai\/zcc-provider-bridge-protocol\/bridge-kit$/,
         replacement: resolve(__dirname, 'packages/provider-bridge-protocol/src/bridge-kit/index.ts')
       },
@@ -158,6 +162,13 @@ export default defineConfig({
       {
         find: /^@zana-ai\/zcc-plugin-sdk\/testing$/,
         replacement: resolve(__dirname, 'packages/plugin-sdk/src/testing/index.ts')
+      },
+      {
+        find: /^@zana-ai\/zcc-plugin-sdk\/provider-bridge\/testing$/,
+        replacement: resolve(
+          __dirname,
+          'packages/plugin-sdk/src/provider-bridge-testing.ts',
+        )
       },
       {
         find: /^@zana-ai\/zcc-plugin-sdk\/(.*)$/,

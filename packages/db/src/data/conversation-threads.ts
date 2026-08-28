@@ -204,6 +204,14 @@ export function archiveConversationThread(db: ZccDatabase, id: string): Conversa
   return getConversationThread(db, id);
 }
 
+export function unarchiveConversationThread(db: ZccDatabase, id: string): ConversationThreadRow | null {
+  const now = Date.now();
+  db.sqlite.prepare(
+    `UPDATE threads SET archived_at = NULL, updated_at = ? WHERE id = ? AND archived_at IS NOT NULL`
+  ).run(now, id);
+  return getConversationThread(db, id);
+}
+
 export function countLiveConversationThreadsForEnvironment(db: ZccDatabase, environmentId: string): number {
   const row = db.sqlite.prepare(
     `SELECT COUNT(*) AS n FROM threads

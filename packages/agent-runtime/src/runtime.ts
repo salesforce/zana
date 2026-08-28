@@ -68,6 +68,7 @@ import type {
   AgentRuntimeBridgeLaunch,
   AgentRuntimeExecutionOptions,
   AgentRuntimeOptions,
+  AgentRuntimeProviderRecoveryHint,
   ReapedIdleProviderSession,
   AgentRuntimeSkillRoot,
 } from "./types.js";
@@ -162,10 +163,37 @@ interface ArchiveOrUnarchiveThreadArgs {
   threadId: string;
 }
 
-interface CodexArchivedSessionRecoveryArgs {
+/**
+ * What a request needs so the runtime can act on the recovery hint a bridge
+ * attaches to its rejection: the session to unarchive, the thread to retry.
+ */
+interface RequestRecoveryArgs {
+  bridgeLaunch?: AgentRuntimeBridgeLaunch;
   providerId: string;
   providerThreadId: string;
   threadId: string;
+}
+
+/**
+ * A runtime request the bridge rejected with a typed recovery hint. `code` is
+ * the host-side failure code so an `authRequired` rejection reaches the server
+ * as `auth_required` without a regex anywhere on the way.
+ */
+export class AgentRuntimeRecoveryError extends Error {
+  readonly code: "auth_required" | "rate_limited";
+  readonly recovery: AgentRuntimeProviderRecoveryHint;
+
+  constructor(args: {
+    code: "auth_required" | "rate_limited";
+    message: string;
+    recovery: AgentRuntimeProviderRecoveryHint;
+    cause: unknown;
+  }) {
+    super(args.message, { cause: args.cause });
+    this.name = "AgentRuntimeRecoveryError";
+    this.code = args.code;
+    this.recovery = args.recovery;
+  }
 }
 
 interface AgentRuntimeInternalOptions extends AgentRuntimeOptions {
@@ -277,6 +305,11 @@ const CODEX_ARCHIVED_SESSION_ERROR_PATTERN =
   /\b(?:session|thread)\s+\S+\s+is archived\b/i;
 const CODEX_EMPTY_ROLLOUT_RENAME_ERROR_PATTERN = /\brollout at .+ is empty\b/i;
 const CODEX_RENAME_RETRY_DELAYS_MS = [50, 200] as const;
+/**
+ * A `rateLimited { retryable: true }` rejection is retried on this ladder;
+ * the failure after the last rung propagates as a typed error.
+ */
+const DEFAULT_RATE_LIMITED_RETRY_DELAYS_MS = [2_000, 8_000] as const;
 
 async function delay(ms: number): Promise<void> {
   await new Promise<void>((resolve) => {
@@ -357,6 +390,8 @@ function createAgentRuntimeInternal(
   let nextRequestId = 1;
   const threadIdentityRegistry = new RuntimeThreadIdentityRegistry();
   const threadRuntimeConfigs = new Map<string, ThreadRuntimeConfig>();
+  const rateLimitedRetryDelaysMs =
+    options.rateLimitRetry?.delaysMs ?? DEFAULT_RATE_LIMITED_RETRY_DELAYS_MS;
   const codexThreadsRequiringAccountRestart = new Set<string>();
   const idleProviderSessionSinceMsByThreadId = new Map<string, number>();
   // Accepted turn dispatches awaiting the provider's turn/started. The
@@ -533,7 +568,7 @@ function createAgentRuntimeInternal(
     message: SendJsonRpcRequestArgs<TResult>["message"];
     resultSchema: SendJsonRpcRequestArgs<TResult>["resultSchema"];
     timeoutMs?: number;
-    recovery?: CodexArchivedSessionRecoveryArgs;
+    recovery?: RequestRecoveryArgs;
   }): Promise<TResult> {
     const request = {
       child: args.proc.child,
@@ -543,46 +578,209 @@ function createAgentRuntimeInternal(
       resultSchema: args.resultSchema,
       ...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {}),
     };
+    return sendRequestWithRecovery({
+      allowUnarchive: true,
+      proc: args.proc,
+      recovery: args.recovery,
+      request,
+    });
+  }
 
+  interface RequestRecoveryPolicy<TResult> {
+    allowUnarchive: boolean;
+    proc: ProviderProcess;
+    recovery: RequestRecoveryArgs | undefined;
+    request: SendJsonRpcRequestArgs<TResult>;
+  }
+
+  async function sendRequestWithRecovery<TResult>(
+    args: RequestRecoveryPolicy<TResult>,
+  ): Promise<TResult> {
     try {
-      return await sendJsonRpcRequest(request);
+      return await sendJsonRpcRequest({
+        ...args.request,
+        child: args.proc.child,
+        pending: args.proc.pending,
+      });
     } catch (error) {
-      const recovery = args.recovery;
-      if (
-        !recovery ||
-        !isCodexArchivedSessionError(recovery.providerId, error)
-      ) {
+      const hint = rejectionHint(error, {
+        providerId: args.proc.providerId,
+        ...(args.recovery === undefined
+          ? {}
+          : { threadId: args.recovery.threadId }),
+      });
+      if (hint === null) {
         throw error;
       }
-
-      options.onStderr?.(
-        `Codex session "${recovery.providerThreadId}" is archived; unarchiving before retrying thread "${recovery.threadId}".`,
-      );
-      let retryProc: ProviderProcess;
-      try {
-        await archiveOrUnarchiveThread({
-          commandType: "thread/unarchive",
-          ...recovery,
-        });
-        // Unarchiving can replace an exited provider process, so resolve the
-        // process again instead of writing to the captured child's stdin.
-        retryProc = requireProviderProcess({
-          processKey: args.proc.processKey,
-          providerId: args.proc.providerId,
-        });
-      } catch (recoveryError) {
-        // The archived-session error names the session and the CLI command
-        // that fixes it, so keep it as the reported failure whenever the
-        // recovery itself could not run.
-        throw new Error(error.message, { cause: recoveryError });
-      }
-
-      return sendJsonRpcRequest({
-        ...request,
-        child: retryProc.child,
-        pending: retryProc.pending,
-      });
+      return await actOnRejection({ ...args, error, hint });
     }
+  }
+
+  async function actOnRejection<TResult>(
+    args: RequestRecoveryPolicy<TResult> & {
+      error: unknown;
+      hint: AgentRuntimeProviderRecoveryHint;
+    },
+  ): Promise<TResult> {
+    const { error, hint, recovery } = args;
+    switch (hint.kind) {
+      case "sessionArchived":
+        if (recovery !== undefined && hint.retryable && args.allowUnarchive) {
+          return await unarchiveAndRetryRequest({
+            error,
+            proc: args.proc,
+            recovery,
+            request: args.request,
+          });
+        }
+        throw error;
+      case "rateLimited":
+        if (recovery !== undefined && hint.retryable) {
+          return await retryRateLimitedRequest({
+            allowUnarchive: args.allowUnarchive,
+            error,
+            hint,
+            proc: args.proc,
+            recovery,
+            request: args.request,
+          });
+        }
+        options.onProviderRecovery?.(hint);
+        throw toRecoveryError({ cause: error, code: "rate_limited", hint });
+      case "authRequired":
+        options.onProviderRecovery?.(hint);
+        throw toRecoveryError({ cause: error, code: "auth_required", hint });
+      case "restartRecommended":
+        options.onProviderRecovery?.(hint);
+        throw error;
+      case "staleTurn":
+        throw error;
+    }
+  }
+
+  function rejectionHint(
+    error: unknown,
+    scope: { providerId: string; threadId?: string },
+  ): AgentRuntimeProviderRecoveryHint | null {
+    if (error instanceof JsonRpcResponseError && error.recovery !== null) {
+      return { ...scope, ...error.recovery };
+    }
+    if (
+      scope.threadId !== undefined &&
+      isCodexArchivedSessionError(scope.providerId, error)
+    ) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        ...scope,
+        kind: "sessionArchived",
+        message,
+        retryable: true,
+      };
+    }
+    return null;
+  }
+
+  function toRecoveryError(args: {
+    cause: unknown;
+    code: AgentRuntimeRecoveryError["code"];
+    hint: AgentRuntimeProviderRecoveryHint;
+  }): AgentRuntimeRecoveryError {
+    return new AgentRuntimeRecoveryError({
+      cause: args.cause,
+      code: args.code,
+      message: args.hint.message,
+      recovery: args.hint,
+    });
+  }
+
+  interface RetryableRequestArgs<TResult> {
+    error: unknown;
+    proc: ProviderProcess;
+    recovery: RequestRecoveryArgs;
+    request: SendJsonRpcRequestArgs<TResult>;
+  }
+
+  async function unarchiveAndRetryRequest<TResult>(
+    args: RetryableRequestArgs<TResult>,
+  ): Promise<TResult> {
+    const { error, recovery } = args;
+    options.onStderr?.(
+      `Session "${recovery.providerThreadId}" is archived; unarchiving before retrying thread "${recovery.threadId}".`,
+    );
+    let retryProc: ProviderProcess;
+    try {
+      await archiveOrUnarchiveThread({
+        commandType: "thread/unarchive",
+        ...recovery,
+      });
+      retryProc = requireProviderProcess({
+        processKey: args.proc.processKey,
+        providerId: args.proc.providerId,
+      });
+    } catch (recoveryError) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(message, { cause: recoveryError });
+    }
+
+    return sendRequestWithRecovery({
+      allowUnarchive: false,
+      proc: retryProc,
+      recovery,
+      request: args.request,
+    });
+  }
+
+  async function retryRateLimitedRequest<TResult>(
+    args: RetryableRequestArgs<TResult> & {
+      allowUnarchive: boolean;
+      hint: AgentRuntimeProviderRecoveryHint;
+    },
+  ): Promise<TResult> {
+    let lastError = args.error;
+    let lastHint = args.hint;
+    for (const retryDelayMs of rateLimitedRetryDelaysMs) {
+      options.onStderr?.(
+        `Provider "${args.recovery.providerId}" is rate limited; retrying thread "${args.recovery.threadId}" in ${retryDelayMs}ms.`,
+      );
+      await delay(retryDelayMs);
+      const proc = requireProviderProcess({
+        processKey: args.proc.processKey,
+        providerId: args.proc.providerId,
+      });
+      try {
+        return await sendJsonRpcRequest({
+          ...args.request,
+          child: proc.child,
+          pending: proc.pending,
+        });
+      } catch (retryError) {
+        const nextHint = rejectionHint(retryError, {
+          providerId: args.recovery.providerId,
+          threadId: args.recovery.threadId,
+        });
+        if (nextHint === null) {
+          throw retryError;
+        }
+        if (!(nextHint.kind === "rateLimited" && nextHint.retryable)) {
+          return await actOnRejection({
+            allowUnarchive: args.allowUnarchive,
+            error: retryError,
+            hint: nextHint,
+            proc,
+            recovery: args.recovery,
+            request: args.request,
+          });
+        }
+        lastError = retryError;
+        lastHint = nextHint;
+      }
+    }
+    options.onProviderRecovery?.(lastHint);
+    throw toRecoveryError({
+      cause: lastError,
+      code: "rate_limited",
+      hint: lastHint,
+    });
   }
 
   function resolveProviderForThread(threadId: string): string {
@@ -1241,6 +1439,23 @@ function createAgentRuntimeInternal(
       sourceThreadId !== undefined &&
       suppressedThreadEventIds.has(sourceThreadId)
     ) {
+      return;
+    }
+    const recoveryHint = args.proc.adapter.decodeRecoveryHint?.(args.parsed);
+    if (recoveryHint !== null && recoveryHint !== undefined) {
+      if (
+        recoveryHint.threadId !== undefined &&
+        !args.proc.identity.threadIds.has(recoveryHint.threadId)
+      ) {
+        options.onStderr?.(
+          `Dropping provider/recovery ${recoveryHint.kind} from "${args.proc.providerId}": it names thread "${recoveryHint.threadId}", which that process does not host.`,
+        );
+        return;
+      }
+      options.onProviderRecovery?.({
+        providerId: args.proc.providerId,
+        ...recoveryHint,
+      });
       return;
     }
     emitTranslatedEvents({

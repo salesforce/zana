@@ -23,6 +23,12 @@ describe('PluginComposerChrome create-plugin action', () => {
     expect(html).not.toMatch(/>Plugin</);
   });
 
+  it('keeps Create plugin on the new-thread CLI composer as well as Modern', () => {
+    const html = render({ kind: 'new-thread', projectId: 'proj-1' });
+    expect(html).toContain('data-testid="composer-create-plugin"');
+    expect(html).toContain('Create plugin');
+  });
+
   it('hides the action on an existing thread', () => {
     const html = render({ kind: 'thread', threadId: 't1' });
     expect(html).not.toContain('composer-create-plugin');

@@ -71,7 +71,7 @@ export default function Features() {
               </div>
                 {(() => {
                   const shotId = FEATURE_SHOTS[f.slug];
-                  return shotId ? <ProductShot id={shotId} /> : null;
+                  return shotId ? <ProductShot id={shotId} placeholder /> : null;
                 })()}
               </div>
           </div>

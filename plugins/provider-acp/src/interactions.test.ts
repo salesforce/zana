@@ -92,6 +92,55 @@ describe("buildAcpPermissionInteractionPayload", () => {
     });
     expect(payload.availableDecisions).toEqual(["allow_once", "deny"]);
   });
+
+  it("classifies an edit-kind permission as a file_change subject", () => {
+    const payload = buildAcpPermissionInteractionPayload({
+      toolCall: {
+        toolCallId: "call-write",
+        kind: "edit",
+        title: "Write notes.md",
+        locations: [{ path: "/tmp/notes.md" }],
+      },
+      options: allowDenyOptions,
+    });
+    expect(payload).toMatchObject({
+      subject: {
+        kind: "file_change",
+        itemId: "call-write",
+        writeScope: "/tmp/notes.md",
+      },
+    });
+  });
+
+  it("classifies a diff-content permission as a file_change subject", () => {
+    const payload = buildAcpPermissionInteractionPayload({
+      toolCall: {
+        toolCallId: "call-diff",
+        kind: "other",
+        content: [{ type: "diff", path: "src/index.ts" }],
+      },
+      options: allowDenyOptions,
+    });
+    expect(payload.subject).toMatchObject({
+      kind: "file_change",
+      writeScope: "src/index.ts",
+    });
+  });
+
+  it("keeps execute permissions as command approvals", () => {
+    const payload = buildAcpPermissionInteractionPayload({
+      toolCall: {
+        toolCallId: "call-exec",
+        kind: "execute",
+        command: "git status",
+      },
+      options: allowDenyOptions,
+    });
+    expect(payload.subject).toMatchObject({
+      kind: "command",
+      command: "git status",
+    });
+  });
 });
 
 describe("buildAcpApprovalDecisions", () => {

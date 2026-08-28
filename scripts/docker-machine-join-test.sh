@@ -12,7 +12,7 @@ SERVER_PORT=${ZCC_MACHINE_JOIN_SERVER_PORT:-18780}
 PROXY_PORT=${ZCC_MACHINE_JOIN_PROXY_PORT:-18781}
 DATA_DIR=$(mktemp -d "${TMPDIR:-/tmp}/zcc-docker-join-XXXXXX")
 PUBLIC_URL="http://host.docker.internal:${PROXY_PORT}"
-IMAGE=${ZCC_MACHINE_JOIN_IMAGE:-node:22-bookworm}
+IMAGE=${ZCC_MACHINE_JOIN_IMAGE:-zcc-remote-machine:test}
 CONTAINER="zcc-machine-join-$$"
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -78,24 +78,19 @@ mint=$(curl -sf -X POST "http://127.0.0.1:${SERVER_PORT}/api/v1/hosts/join-codes
 join_code=$(node -e "process.stdout.write(JSON.parse(process.argv[1]).joinCode)" "$mint")
 host_id=$(node -e "process.stdout.write(JSON.parse(process.argv[1]).hostId)" "$mint")
 
+docker build -t "$IMAGE" "$ROOT/docker/remote-machine" >/dev/null
+
 docker run -d \
   --name "$CONTAINER" \
+  --hostname zcc-docker \
   --add-host=host.docker.internal:host-gateway \
-  -e SERVER="$PUBLIC_URL" \
+  -e ZCC_SERVER_URL="$PUBLIC_URL" \
   -e JOIN_CODE="$join_code" \
   -e HOST_ID="$host_id" \
-  "$IMAGE" \
-  bash -lc '
-set -euo pipefail
-command -v curl >/dev/null || { apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null; }
-curl -fL "$SERVER/install.sh" -o /tmp/install.sh
-export ZCC_INSTALL_SKIP_SERVICE=1 ZCC_INSTALL_WAIT_ATTEMPTS=40 ZCC_INSTALL_WAIT_DELAY=0.5
-# Skip-service waits on the join process, which stays up after Connected.
-exec sh /tmp/install.sh --join-code "$JOIN_CODE" --host-id "$HOST_ID" --server "$SERVER"
-' >/dev/null
+  "$IMAGE" >/dev/null
 
-deadline=$((SECONDS + 90))
-until docker logs "$CONTAINER" 2>&1 | grep -q "Connected (service install skipped)."; do
+deadline=$((SECONDS + 120))
+until docker logs "$CONTAINER" 2>&1 | grep -Eq 'Host daemon connected|Connected \(service install skipped\)|zcc-host-daemon joined'; do
   if [[ $SECONDS -ge $deadline ]]; then
     printf 'installer did not report connected\n' >&2
     docker logs "$CONTAINER" >&2 || true

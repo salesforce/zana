@@ -8,5 +8,9 @@ describe('plugin-apps HTTP surface', () => {
     expect(source).toContain('toPluginAppSnapshot');
     expect(source).toContain("routeParams(path, '/api/v1/plugin-apps/:id/enable')");
     expect(source).toContain("routeParams(path, '/api/v1/plugin-apps/:id/disable')");
+    expect(source).toContain("path === '/api/v1/plugin-apps/updates'");
+    expect(source).toContain("routeParams(path, '/api/v1/plugin-apps/:id/update')");
+    expect(source).toContain("routeParams(path, '/api/v1/plugin-apps/:id/rpc')");
+    expect(source).toContain("routeParams(path, '/api/v1/plugin-apps/:id/settings')");
   });
 });

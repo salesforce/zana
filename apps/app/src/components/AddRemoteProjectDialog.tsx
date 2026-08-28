@@ -20,29 +20,19 @@ interface AddRemoteProjectDialogProps {
 
 /**
  * Modal that lists SSH hosts from `~/.ssh/config` and lets the user pick
- * one to register as a remote-backed Project. No mutation of the user's
- * ssh config — read-only list.
+ * one to register as a remote-backed Project. Threads can run on this
+ * machine with SSH tools, or on a host daemon installed over SSH.
+ * No mutation of the user's ssh config — read-only list.
  */
 export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemoteProjectDialogProps) {
   const [hosts, setHosts] = useState<SshHostEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Non-fatal note when a refresh could not update the config but existing hosts
-  // are still shown. Distinct from `error`.
   const [warning, setWarning] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   const [picked, setPicked] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [user, setUser] = useState('');
-  // Start path is left BLANK by default so an unedited submit sends no
-  // `remotePath` and the start-path precedence chain applies as designed:
-  // per-project `remotePath` → global `AppConfig.remoteDefaultPath`
-  // (Settings → Connectivity) → remote `$HOME`. A hardcoded default here
-  // would silently override the Connectivity value for every newly added remote.
   const [remotePath, setRemotePath] = useState('');
-  // Bastion / jump host. Prefilled from the picked host's `ProxyJump` line when
-  // ~/.ssh/config carries one; usually left as-is (ssh applies its own config
-  // jump transparently), but set/overridden here when the config doesn't and
-  // the reverse tunnel needs `-J` to reach the final host.
   const [proxyJump, setProxyJump] = useState('');
   const [installHost, setInstallHost] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -51,17 +41,11 @@ export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemo
   const [pairingCommand, setPairingCommand] = useState<string | null>(null);
   const [createdId, setCreatedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  // Bumped on each reload; lets an in-flight load ignore its result if a newer
-  // load (or unmount) supersedes it.
   const loadSeq = useRef(0);
 
   const busy = submitting || installing;
 
-  // `sync=true` asks an optional host provider to refresh before parsing; the
-  // on-mount load just reads the existing configuration.
   const loadHosts = useCallback((sync: boolean) => {
-    // Guard against a stale preload (when a dev session was running before
-    // the ssh binding existed). Surfacing a friendly message beats crashing.
     if (!hasDesktopBridge()) {
       setError('SSH binding not loaded — quit (⌘Q) and relaunch the app.');
       setHosts([]);
@@ -71,8 +55,6 @@ export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemo
     setLoading(true);
     setError(null);
     setWarning(null);
-    // syncHosts returns { hosts, warning? }; listHosts returns a bare array.
-    // Normalize both to the same shape.
     const op =
       sync && product.ssh.syncHosts
         ? product.ssh.syncHosts()
@@ -97,7 +79,6 @@ export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemo
   useEffect(() => {
     loadHosts(false);
     return () => {
-      // Invalidate any in-flight load on unmount.
       loadSeq.current++;
     };
   }, [loadHosts]);
@@ -120,14 +101,12 @@ export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemo
         (h.hostname ?? '').toLowerCase().includes(q) ||
         (h.user ?? '').toLowerCase().includes(q)
     );
-  }, [hosts, filter]);
+  }, [filter, hosts]);
 
   const pickHost = (alias: string) => {
     if (busy || createdId) return;
     setPicked(alias);
     if (!name.trim()) setName(alias);
-    // Prefill the bastion field from the host's ~/.ssh/config ProxyJump, if any,
-    // so a config-managed jump is visible (and editable) rather than hidden.
     const entry = hosts?.find((h) => h.alias === alias);
     setProxyJump(entry?.proxyJump ?? '');
   };
@@ -318,17 +297,17 @@ export function AddRemoteProjectDialogView({
             />
           </div>
 
-            <div className="remote-host-hint-row">
-              <div className="modal-hint">
-               Showing hosts from <code>~/.ssh/config</code>.
-              </div>
+          <div className="remote-host-hint-row">
+            <div className="modal-hint">
+              Showing hosts from <code>~/.ssh/config</code>. Threads can run on this machine with SSH tools, or on a remote host daemon.
+            </div>
             <button
               type="button"
               className="remote-host-refresh"
               onClick={onRefresh}
               disabled={loading || fieldsLocked}
-               title="Refresh SSH hosts from the configured provider"
-               aria-label="Refresh SSH hosts"
+              title="Refresh SSH hosts from the configured provider"
+              aria-label="Refresh SSH hosts"
             >
               <RefreshCw size={12} className={loading ? 'spinning' : undefined} />
               <span>{loading ? 'Refreshing…' : 'Refresh'}</span>
@@ -339,8 +318,8 @@ export function AddRemoteProjectDialogView({
             {hosts === null && <div className="list-empty">Loading hosts…</div>}
             {hosts !== null && filtered.length === 0 && (
               <div className="list-empty">
-                 {hosts.length === 0
-                   ? 'No SSH hosts found in ~/.ssh/config.'
+                {hosts.length === 0
+                  ? 'No SSH hosts found in ~/.ssh/config.'
                   : `No hosts match “${filter}”.`}
               </div>
             )}
@@ -407,11 +386,10 @@ export function AddRemoteProjectDialogView({
                 onChange={(e) => onInstallHostChange(e.target.checked)}
                 disabled={fieldsLocked}
               />
-              <span>Install host daemon on this machine</span>
+              <span>Install host daemon on the remote machine</span>
             </label>
             <p className="modal-hint remote-install-hint">
-              SSHs from this computer, enrolls the daemon, and runs later threads there.
-              Uncheck to keep SSH-only for now.
+              SSHs from this computer and enrolls a daemon so you can pick <strong>Remote machine</strong> in the composer. Uncheck to keep using this machine with SSH tools; you can install later from the composer.
             </p>
           </div>
 

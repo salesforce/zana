@@ -27,6 +27,14 @@ describe('tasks plugin', () => {
     expect(added).toMatchObject({ title: 'Loop' });
     const listed = await harness.cli!.run(['list'], { pluginId: 'tasks', argv: ['list'] });
     expect(listed.stdout).toContain('Loop');
+    expect(harness.mentionProviders[0]).toMatchObject({ id: 'task', label: 'Tasks' });
+    await expect(harness.mentionProviders[0]!.search({ query: 'Loop' })).resolves.toEqual([
+      expect.objectContaining({ label: 'Loop' })
+    ]);
+    const item = added as { id: string };
+    await expect(harness.mentionProviders[0]!.resolve(item.id)).resolves.toMatchObject({
+      context: expect.stringContaining('Loop')
+    });
   });
 
   it('registers a Tasks nav panel, thread panel, and task directive', () => {

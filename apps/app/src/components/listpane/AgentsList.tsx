@@ -418,8 +418,8 @@ export function AgentsListPane() {
           data-testid="agents-new"
           className="icon-btn agents-new"
           onClick={openLauncher}
-          aria-label="New thread/agent"
-          title="New thread/agent"
+          aria-label="New agent"
+          title="New agent"
         >
           <Plus size={14} />
         </button>
@@ -433,8 +433,8 @@ export function AgentsListPane() {
         {rows.length === 0 && visibleThreads.length === 0 ? (
           <div className="agents-list-empty">
             <Bot size={20} aria-hidden="true" />
-            <p>No threads yet</p>
-            <span>Start a thread or agent from the launcher.</span>
+            <p>No agents yet</p>
+            <span>Start an agent from the launcher.</span>
             <button
               type="button"
               data-testid="agents-new-empty"
@@ -442,7 +442,7 @@ export function AgentsListPane() {
               onClick={openLauncher}
             >
               <Plus size={14} />
-              New thread/agent
+              New agent
             </button>
             <button
               type="button"

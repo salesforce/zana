@@ -5,9 +5,12 @@ import {
   buildHubRows,
   displayIcon,
   filterInstalledRows,
+  hostSettingsPanelOf,
   installedPublisher,
+  moduleHostCallReady,
   publisherLabel,
   rowEnabled,
+  shouldMountHostSettings,
   type HubRow
 } from './installed-plugins.js';
 
@@ -116,7 +119,7 @@ describe('filterInstalledRows', () => {
     expect(rowEnabled(found[0]!)).toBe(false);
   });
 
-  it('filters by publisher chip and sorts enabled first, then name', () => {
+  it('filters by publisher chip and sorts by name, not enabled state', () => {
     const official = filterInstalledRows(rows, '', 'official', 'asc');
     expect(official.map((row) => row.module.id)).toEqual(['docs', 'pi']);
     const local = filterInstalledRows(rows, '', 'local', 'asc');
@@ -128,11 +131,75 @@ describe('filterInstalledRows', () => {
     ]);
   });
 
-  it('reverses name order when sortDir is desc, still enabled-first', () => {
+  it('reverses name order when sortDir is desc without grouping by enabled', () => {
     const desc = filterInstalledRows(rows, '', 'all', 'desc');
-    expect(desc.map((row) => row.module.id)).toEqual(['docs', 'acme', 'pi']);
+    expect(desc.map((row) => row.module.id)).toEqual(['pi', 'docs', 'acme']);
     const asc = filterInstalledRows(rows, '', 'all', 'asc');
     expect(asc.map((row) => row.module.id)).toEqual(['acme', 'docs', 'pi']);
+  });
+
+  it('keeps a disabled plugin in alphabetic position instead of appending it', () => {
+    const mixed: HubRow[] = [
+      {
+        module: mod('salesforce', 'Salesforce'),
+        entry: null,
+        plugin: plugin('salesforce', { name: 'Salesforce', enabled: true })
+      },
+      {
+        module: mod('pi', 'Pi provider'),
+        entry: null,
+        plugin: plugin('pi', { name: 'Pi provider', enabled: false, status: 'disabled' })
+      },
+      {
+        module: mod('pr-monitor', 'PR Monitor'),
+        entry: null,
+        plugin: plugin('pr-monitor', { name: 'PR Monitor', enabled: false, status: 'disabled' })
+      }
+    ];
+    expect(filterInstalledRows(mixed, '', 'all', 'asc').map((row) => row.module.title)).toEqual([
+      'Pi provider',
+      'PR Monitor',
+      'Salesforce'
+    ]);
+  });
+});
+
+describe('moduleHostCallReady', () => {
+  it('does not mount a host.call settings panel unless a live disk-ext main can answer', () => {
+    const panel = () => null;
+    const leftover: HubRow = {
+      module: { ...mod('salesforce', 'Salesforce'), settingsPanel: panel, panel },
+      entry: null,
+      plugin: plugin('salesforce', { name: 'Salesforce', provenance: 'direct' })
+    };
+    expect(moduleHostCallReady(leftover)).toBe(false);
+    expect(shouldMountHostSettings(leftover)).toBe(false);
+    expect(hostSettingsPanelOf(leftover)).toBe(panel);
+
+    const inactive: HubRow = {
+      module: { ...mod('salesforce', 'Salesforce'), settingsPanel: panel },
+      entry: entry('salesforce', { mainActive: false }),
+      plugin: null
+    };
+    expect(moduleHostCallReady(inactive)).toBe(false);
+    expect(shouldMountHostSettings(inactive)).toBe(false);
+
+    const live: HubRow = {
+      module: { ...mod('salesforce', 'Salesforce'), settingsPanel: panel },
+      entry: entry('salesforce', { mainActive: true }),
+      plugin: null
+    };
+    expect(moduleHostCallReady(live)).toBe(true);
+    expect(shouldMountHostSettings(live)).toBe(true);
+
+    const official: HubRow = {
+      module: mod('docs', 'Docs'),
+      entry: null,
+      plugin: plugin('docs', { name: 'Docs' })
+    };
+    expect(moduleHostCallReady(official)).toBe(false);
+    expect(shouldMountHostSettings(official)).toBe(false);
+    expect(hostSettingsPanelOf(official)).toBeUndefined();
   });
 });
 

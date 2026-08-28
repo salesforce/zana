@@ -28,9 +28,16 @@ describe('detectMention', () => {
     expect(detectMention(value, caret)).toBeNull();
   });
 
-  it('closes the mention once a space is typed after the token', () => {
-    const { value, caret } = at('open @src/foo |');
-    expect(detectMention(value, caret)).toBeNull();
+  it('keeps spaces verbatim in a multiword mention query', () => {
+    const { value, caret } = at('Ask @Hello world |');
+    expect(detectMention(value, caret)).toEqual({ query: 'Hello world ', start: 4 });
+  });
+
+  it('still ends a mention query on a tab or newline', () => {
+    const tab = at('Ask @prompt\t|');
+    expect(detectMention(tab.value, tab.caret)).toBeNull();
+    const nl = at('Ask @prompt\n|');
+    expect(detectMention(nl.value, nl.caret)).toBeNull();
   });
 
   it('returns null when there is no @ left of the caret', () => {

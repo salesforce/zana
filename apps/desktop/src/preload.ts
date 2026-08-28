@@ -262,6 +262,8 @@ const api: CcApi = {
     retryUpdate: async () => ({ ok: true as const }),
     remove: async () => ({ ok: true as const }),
     directory: async () => ({ directory: '/', parent: null, entries: [] }),
+    pathsExist: async () => ({ existence: {} }),
+    pickFolder: async () => ({ path: null }),
     cloneDefaultPath: async () => ({ path: '/' }),
     providerCliStatus: async () => ({}),
     installProviderCli: async () => [],
@@ -504,7 +506,16 @@ const api: CcApi = {
       ipcRenderer.invoke(IPC.git.removeWorktree, projectPath, worktreePath, force)
   },
   files: {
-    pathForFile: (file) => webUtils.getPathForFile(file)
+    pathForFile: (file) => webUtils.getPathForFile(file),
+    read: async () => {
+      throw new Error('product.files.read is served over HTTP');
+    },
+    list: async () => {
+      throw new Error('product.files.list is served over HTTP');
+    },
+    listPaths: async () => {
+      throw new Error('product.files.listPaths is served over HTTP');
+    }
   },
   inbox: {
     history: (opts) => ipcRenderer.invoke(IPC.inbox.history, opts),
@@ -712,6 +723,8 @@ const api: CcApi = {
     callRpc: (pluginId, method, args) => ipcRenderer.invoke(IPC.pluginApps.callRpc, pluginId, method, args),
     getSettings: (pluginId) => ipcRenderer.invoke(IPC.pluginApps.getSettings, pluginId),
     setSettings: (pluginId, values) => ipcRenderer.invoke(IPC.pluginApps.setSettings, pluginId, values),
+    checkUpdates: () => ipcRenderer.invoke(IPC.pluginApps.checkUpdates),
+    applyUpdate: (id) => ipcRenderer.invoke(IPC.pluginApps.applyUpdate, id),
     onChanged: (cb) => {
       const handler = (_e: unknown, entries: PluginAppEntry[]) => cb(entries);
       ipcRenderer.on(IPC.pluginApps.onChanged, handler);

@@ -12,18 +12,37 @@ import {
   workspaceStatusSchema
 } from '@zana-ai/zcc-domain';
 import { gitBranchNameSchema } from '@zana-ai/zcc-domain/git-checkout';
-import { availableModelSchema, clientTurnRequestIdSchema, dynamicToolSchema, pendingInteractionResolutionSchema, reasoningLevelSchema } from '@zana-ai/zcc-domain/thread-runtime';
+import {
+  availableModelSchema,
+  clientTurnRequestIdSchema,
+  dynamicToolSchema,
+  FILE_LIST_LIMIT_MAX,
+  FILE_LIST_QUERY_MAX_LENGTH,
+  pendingInteractionResolutionSchema,
+  reasoningLevelSchema
+} from '@zana-ai/zcc-domain/thread-runtime';
 import {
   providerCliInstallEventSchema,
   providerCliInstallRequestSchema,
   providerCliStatusResponseSchema
 } from '@zana-ai/zcc-host-daemon-contract/local';
+import { HOST_ARTIFACT_MAX_BYTES } from '@zana-ai/zcc-host-daemon-contract';
 
 /**
  * Bump when any enroll payload, daemon WS message, host-rpc command, or host
  * event envelope changes shape or meaning. Mismatch fails before dispatch.
+ *
+ * Strategy: grow this Host-RPC version. Do not cut the enrolled path over to
+ * host-daemon-contract v132 (BB's session protocol) — that would rewrite
+ * host-hub, events, join, and the WS session. Missing BB commands land here.
+ *
+ * 17: host FS mutations (write/mkdir/move/remove/browse/exist) and host-side
+ * thread rewind / archive / rename / goal.clear.
+ * 18: HostBridgeLaunch is digest+byteLength (no laptop artifactPath/dataDir);
+ * remotes fetch packed dist/host.js from GET /internal/plugins/:id/host/:digest.
+ * 19: host FS discovery (list_paths, read_path, file_metadata, pick_folder).
  */
-export const HOST_RPC_PROTOCOL_VERSION = 16;
+export const HOST_RPC_PROTOCOL_VERSION = 19;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
 
 const UuidSchema = z.string().uuid();
@@ -44,6 +63,12 @@ export const HostRpcCommandTypeSchema = z.enum([
   'thread.stop',
   'thread.plan.cancel',
   'thread.resume',
+  'thread.rewind.prepare',
+  'thread.rewind.discard',
+  'thread.rename',
+  'thread.archive',
+  'thread.unarchive',
+  'thread.goal.clear',
   'turn.submit',
   'terminal.start',
   'terminal.input',
@@ -52,6 +77,16 @@ export const HostRpcCommandTypeSchema = z.enum([
   'host.list_files',
   'host.list_dir',
   'host.read_file',
+  'host.write_file',
+  'host.mkdir',
+  'host.move_path',
+  'host.remove_path',
+  'host.browse_directory',
+  'host.paths_exist',
+  'host.list_paths',
+  'host.read_path',
+  'host.file_metadata',
+  'host.pick_folder',
   'host.list_branches',
   'workspace.status',
   'workspace.diff',
@@ -174,12 +209,11 @@ const threadLaunchCohortSchema = z.object({
 
 export const HostBridgeLaunchSchema = z.object({
   pluginId: z.string().min(1),
-  dataDir: PathSchema,
   source: z.discriminatedUnion('kind', [
     z.object({
       kind: z.literal('artifact'),
-      digest: z.string().min(1),
-      artifactPath: PathSchema
+      digest: z.string().regex(/^[a-f0-9]{64}$/u),
+      byteLength: z.number().int().positive().max(HOST_ARTIFACT_MAX_BYTES)
     }).strict(),
     z.object({
       kind: z.literal('daemon-bundled'),
@@ -306,6 +340,62 @@ export const ThreadResumeCommandSchema = ThreadResumeFieldsSchema.extend({
   environmentId: UuidSchema
 }).strict();
 
+export const ThreadRewindPrepareCommandSchema = z.object({
+  type: z.literal('thread.rewind.prepare'),
+  threadId: UuidSchema,
+  environmentId: UuidSchema,
+  leaseId: z.string().min(1).max(128),
+  projectId: z.string().min(1),
+  providerId: z.string().min(1),
+  sourceProviderThreadId: z.string().min(1).max(200),
+  retainThroughProviderCheckpoint: z.string().min(1).max(400),
+  cwd: PathSchema.optional(),
+  bridgeLaunch: HostBridgeLaunchSchema.optional(),
+  permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional(),
+  model: z.string().min(1).max(200).optional(),
+  reasoningLevel: reasoningLevelSchema.optional()
+}).strict();
+
+export const ThreadRewindDiscardCommandSchema = z.object({
+  type: z.literal('thread.rewind.discard'),
+  threadId: UuidSchema,
+  environmentId: UuidSchema,
+  leaseId: z.string().min(1).max(128)
+}).strict();
+
+export const ThreadRenameCommandSchema = z.object({
+  type: z.literal('thread.rename'),
+  threadId: UuidSchema,
+  environmentId: UuidSchema,
+  title: z.string().min(1).max(200)
+}).strict();
+
+export const ThreadArchiveCommandSchema = z.object({
+  type: z.literal('thread.archive'),
+  threadId: UuidSchema,
+  environmentId: UuidSchema,
+  providerId: z.string().min(1),
+  providerThreadId: z.string().min(1),
+  cwd: PathSchema.optional(),
+  bridgeLaunch: HostBridgeLaunchSchema.optional()
+}).strict();
+
+export const ThreadUnarchiveCommandSchema = z.object({
+  type: z.literal('thread.unarchive'),
+  threadId: UuidSchema,
+  environmentId: UuidSchema,
+  providerId: z.string().min(1),
+  providerThreadId: z.string().min(1),
+  cwd: PathSchema.optional(),
+  bridgeLaunch: HostBridgeLaunchSchema.optional()
+}).strict();
+
+export const ThreadGoalClearCommandSchema = z.object({
+  type: z.literal('thread.goal.clear'),
+  threadId: UuidSchema,
+  environmentId: UuidSchema
+}).strict();
+
 export const TerminalStartCommandSchema = z.object({
   type: z.literal('terminal.start'),
   sessionId: UuidSchema,
@@ -349,6 +439,75 @@ export const HostReadFileCommandSchema = z.object({
   type: z.literal('host.read_file'),
   root: PathSchema,
   relPath: RelPathSchema
+}).strict();
+
+export const HostWriteFileCommandSchema = z.object({
+  type: z.literal('host.write_file'),
+  path: PathSchema,
+  rootPath: PathSchema.optional(),
+  content: z.string(),
+  contentEncoding: z.enum(['utf8', 'base64']),
+  createParents: z.boolean(),
+  expectedSha256: z.string().nullable().optional(),
+  mode: z.number().int().min(0).max(0o777).optional()
+}).strict();
+
+export const HostMkdirCommandSchema = z.object({
+  type: z.literal('host.mkdir'),
+  path: PathSchema,
+  rootPath: PathSchema.optional(),
+  recursive: z.boolean()
+}).strict();
+
+export const HostMovePathCommandSchema = z.object({
+  type: z.literal('host.move_path'),
+  sourcePath: PathSchema,
+  destinationPath: PathSchema,
+  rootPath: PathSchema.optional()
+}).strict();
+
+export const HostRemovePathCommandSchema = z.object({
+  type: z.literal('host.remove_path'),
+  path: PathSchema,
+  rootPath: PathSchema.optional(),
+  recursive: z.boolean()
+}).strict();
+
+export const HostBrowseDirectoryCommandSchema = z.object({
+  type: z.literal('host.browse_directory'),
+  path: PathSchema.optional()
+}).strict();
+
+export const HostPathsExistCommandSchema = z.object({
+  type: z.literal('host.paths_exist'),
+  paths: z.array(PathSchema).min(1).max(200)
+}).strict();
+
+export const HostListPathsCommandSchema = z.object({
+  type: z.literal('host.list_paths'),
+  path: PathSchema,
+  query: z.string().max(FILE_LIST_QUERY_MAX_LENGTH).optional(),
+  limit: z.number().int().positive().max(FILE_LIST_LIMIT_MAX),
+  includeFiles: z.boolean(),
+  includeDirectories: z.boolean()
+}).strict().refine((command) => command.includeFiles || command.includeDirectories, {
+  message: 'At least one path kind must be included'
+});
+
+export const HostReadPathCommandSchema = z.object({
+  type: z.literal('host.read_path'),
+  path: PathSchema,
+  rootPath: PathSchema.optional()
+}).strict();
+
+export const HostFileMetadataCommandSchema = z.object({
+  type: z.literal('host.file_metadata'),
+  path: PathSchema,
+  rootPath: PathSchema.optional()
+}).strict();
+
+export const HostPickFolderCommandSchema = z.object({
+  type: z.literal('host.pick_folder')
 }).strict();
 
 export const HostListBranchesCommandSchema = workspaceContextSchema.extend({
@@ -525,6 +684,12 @@ export const HostRpcCommandSchema = z.union([
   ThreadStopCommandSchema,
   ThreadPlanCancelCommandSchema,
   ThreadResumeCommandSchema,
+  ThreadRewindPrepareCommandSchema,
+  ThreadRewindDiscardCommandSchema,
+  ThreadRenameCommandSchema,
+  ThreadArchiveCommandSchema,
+  ThreadUnarchiveCommandSchema,
+  ThreadGoalClearCommandSchema,
   TurnSubmitCommandSchema,
   TerminalStartCommandSchema,
   TerminalInputCommandSchema,
@@ -533,6 +698,16 @@ export const HostRpcCommandSchema = z.union([
   HostListFilesCommandSchema,
   HostListDirCommandSchema,
   HostReadFileCommandSchema,
+  HostWriteFileCommandSchema,
+  HostMkdirCommandSchema,
+  HostMovePathCommandSchema,
+  HostRemovePathCommandSchema,
+  HostBrowseDirectoryCommandSchema,
+  HostPathsExistCommandSchema,
+  HostListPathsCommandSchema,
+  HostReadPathCommandSchema,
+  HostFileMetadataCommandSchema,
+  HostPickFolderCommandSchema,
   HostListBranchesCommandSchema,
   WorkspaceStatusCommandSchema,
   WorkspaceDiffCommandSchema,
@@ -644,6 +819,43 @@ export const ThreadResumeResultSchema = z.object({
 }).strict();
 export type ThreadResumeResult = z.infer<typeof ThreadResumeResultSchema>;
 
+export const ThreadRewindPrepareResultSchema = z.object({
+  threadId: UuidSchema,
+  prepared: z.literal(true),
+  providerThreadId: z.string().min(1)
+}).strict();
+export type ThreadRewindPrepareResult = z.infer<typeof ThreadRewindPrepareResultSchema>;
+
+export const ThreadRewindDiscardResultSchema = z.object({
+  leaseId: z.string().min(1),
+  discarded: z.literal(true)
+}).strict();
+export type ThreadRewindDiscardResult = z.infer<typeof ThreadRewindDiscardResultSchema>;
+
+export const ThreadRenameResultSchema = z.object({
+  threadId: UuidSchema,
+  renamed: z.literal(true)
+}).strict();
+export type ThreadRenameResult = z.infer<typeof ThreadRenameResultSchema>;
+
+export const ThreadArchiveResultSchema = z.object({
+  threadId: UuidSchema,
+  archived: z.literal(true)
+}).strict();
+export type ThreadArchiveResult = z.infer<typeof ThreadArchiveResultSchema>;
+
+export const ThreadUnarchiveResultSchema = z.object({
+  threadId: UuidSchema,
+  unarchived: z.literal(true)
+}).strict();
+export type ThreadUnarchiveResult = z.infer<typeof ThreadUnarchiveResultSchema>;
+
+export const ThreadGoalClearResultSchema = z.object({
+  threadId: UuidSchema,
+  cleared: z.boolean()
+}).strict();
+export type ThreadGoalClearResult = z.infer<typeof ThreadGoalClearResultSchema>;
+
 export const TerminalStartResultSchema = z.object({
   sessionId: UuidSchema,
   started: z.literal(true),
@@ -699,6 +911,84 @@ export const HostReadFileResultSchema = z.object({
   encoding: z.literal('utf8')
 }).strict();
 export type HostReadFileResult = z.infer<typeof HostReadFileResultSchema>;
+
+export const HostWriteFileResultSchema = z.discriminatedUnion('outcome', [
+  z.object({
+    outcome: z.literal('written'),
+    sha256: z.string().min(1),
+    sizeBytes: z.number().int().nonnegative()
+  }).strict(),
+  z.object({
+    outcome: z.literal('conflict'),
+    currentSha256: z.string().nullable()
+  }).strict()
+]);
+export type HostWriteFileResult = z.infer<typeof HostWriteFileResultSchema>;
+
+export const HostPathMutationResultSchema = z.object({
+  ok: z.literal(true)
+}).strict();
+export type HostPathMutationResult = z.infer<typeof HostPathMutationResultSchema>;
+
+export const HostBrowseDirectoryEntrySchema = z.object({
+  kind: z.enum(['file', 'directory']),
+  name: z.string().min(1).max(512),
+  path: PathSchema
+}).strict();
+export type HostBrowseDirectoryEntry = z.infer<typeof HostBrowseDirectoryEntrySchema>;
+
+export const HostBrowseDirectoryResultSchema = z.object({
+  directory: PathSchema,
+  parent: PathSchema.nullable(),
+  entries: z.array(HostBrowseDirectoryEntrySchema)
+}).strict();
+export type HostBrowseDirectoryResult = z.infer<typeof HostBrowseDirectoryResultSchema>;
+
+export const HostPathsExistResultSchema = z.object({
+  existence: z.record(z.string(), z.boolean())
+}).strict();
+export type HostPathsExistResult = z.infer<typeof HostPathsExistResultSchema>;
+
+export const HostPathEntryKindSchema = z.enum(['file', 'directory']);
+export type HostPathEntryKind = z.infer<typeof HostPathEntryKindSchema>;
+
+export const HostPathEntrySchema = z.object({
+  kind: HostPathEntryKindSchema,
+  path: z.string(),
+  name: z.string(),
+  score: z.number(),
+  positions: z.array(z.number().int().nonnegative())
+}).strict();
+export type HostPathEntry = z.infer<typeof HostPathEntrySchema>;
+
+export const HostListPathsResultSchema = z.object({
+  paths: z.array(HostPathEntrySchema),
+  truncated: z.boolean()
+}).strict();
+export type HostListPathsResult = z.infer<typeof HostListPathsResultSchema>;
+
+export const HostReadPathResultSchema = z.object({
+  path: z.string(),
+  content: z.string(),
+  contentEncoding: z.enum(['base64', 'utf8']),
+  mimeType: z.string().optional(),
+  sizeBytes: z.number().int().nonnegative(),
+  modifiedAtMs: z.number().nonnegative().optional(),
+  sha256: z.string()
+}).strict();
+export type HostReadPathResult = z.infer<typeof HostReadPathResultSchema>;
+
+export const HostFileMetadataResultSchema = z.object({
+  path: z.string(),
+  modifiedAtMs: z.number().nonnegative(),
+  sizeBytes: z.number().int().nonnegative()
+}).strict();
+export type HostFileMetadataResult = z.infer<typeof HostFileMetadataResultSchema>;
+
+export const HostPickFolderResultSchema = z.object({
+  path: z.string().nullable()
+}).strict();
+export type HostPickFolderResult = z.infer<typeof HostPickFolderResultSchema>;
 
 export const HostListBranchesResultSchema = z.object({
   branches: z.array(z.string().min(1)),
@@ -819,6 +1109,12 @@ export const HostRpcResultSchemaByType = {
   'thread.stop': ThreadStopResultSchema,
   'thread.plan.cancel': ThreadPlanCancelResultSchema,
   'thread.resume': ThreadResumeResultSchema,
+  'thread.rewind.prepare': ThreadRewindPrepareResultSchema,
+  'thread.rewind.discard': ThreadRewindDiscardResultSchema,
+  'thread.rename': ThreadRenameResultSchema,
+  'thread.archive': ThreadArchiveResultSchema,
+  'thread.unarchive': ThreadUnarchiveResultSchema,
+  'thread.goal.clear': ThreadGoalClearResultSchema,
   'turn.submit': TurnSubmitResultSchema,
   'terminal.start': TerminalStartResultSchema,
   'terminal.input': TerminalInputResultSchema,
@@ -827,6 +1123,16 @@ export const HostRpcResultSchemaByType = {
   'host.list_files': HostListFilesResultSchema,
   'host.list_dir': HostListDirResultSchema,
   'host.read_file': HostReadFileResultSchema,
+  'host.write_file': HostWriteFileResultSchema,
+  'host.mkdir': HostPathMutationResultSchema,
+  'host.move_path': HostPathMutationResultSchema,
+  'host.remove_path': HostPathMutationResultSchema,
+  'host.browse_directory': HostBrowseDirectoryResultSchema,
+  'host.paths_exist': HostPathsExistResultSchema,
+  'host.list_paths': HostListPathsResultSchema,
+  'host.read_path': HostReadPathResultSchema,
+  'host.file_metadata': HostFileMetadataResultSchema,
+  'host.pick_folder': HostPickFolderResultSchema,
   'host.list_branches': HostListBranchesResultSchema,
   'workspace.status': WorkspaceStatusResultSchema,
   'workspace.diff': WorkspaceDiffResultSchema,

@@ -4,7 +4,7 @@ import { isPluginOwnedIconPath } from "./plugin-icon.js";
 
 const requiredManifestString = z.string().trim().min(1);
 
-export { isPluginOwnedIconPath } from "./plugin-icon.js";
+export { isPluginOwnedIconPath, parseNamespacedGlyph } from "./plugin-icon.js";
 
 export const pluginBrandingSchema = z
   .object({

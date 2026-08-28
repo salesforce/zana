@@ -10,9 +10,11 @@ import {
   encodeFrame,
   encodeJsonPayload
 } from './pairing-relay-protocol.js';
+import { isRelaySessionId, type PairingRelaySnapshot } from './pairing-session-url.js';
 import { resolvePublicAppUrl } from './public-app-url.js';
 
 export type PairingRelayState = 'connected' | 'offline' | 'unconfigured';
+export type PairingRelayHello = { sessionId: string; joinUntil: number };
 
 const HOP_BY_HOP = new Set([
   'connection',
@@ -93,10 +95,17 @@ export interface PairingRelayClientOptions {
   fetchImpl?: typeof fetch;
   /** Test-only: dial a loopback relay (production never treats 127.0.0.1 as public). */
   allowLoopbackOrigin?: boolean;
+  /** Persisted routing id so enrolled daemons can reclaim `/t/<id>` after restart. */
+  sessionId?: string;
+  onHello?: (hello: PairingRelayHello) => void;
 }
 
 export interface PairingRelayClient {
   state(): PairingRelayState;
+  snapshot(): PairingRelaySnapshot;
+  sessionId(): string | undefined;
+  joinUntil(): number | undefined;
+  renewJoinWindow(): Promise<PairingRelaySnapshot>;
   start(): void;
   stop(): void;
   onState(listener: (state: PairingRelayState) => void): () => void;
@@ -106,12 +115,15 @@ export function createPairingRelayClient(options: PairingRelayClientOptions): Pa
   const fetchImpl = options.fetchImpl ?? fetch;
   const WsImpl = options.WebSocketImpl ?? WebSocket;
   const listeners = new Set<(state: PairingRelayState) => void>();
+  const helloWaiters = new Set<(hello: PairingRelayHello) => void>();
   let socket: WebSocket | null = null;
   let pingTimer: NodeJS.Timeout | null = null;
   let reconnectTimer: NodeJS.Timeout | null = null;
   let backoff = 1000;
   let stopped = true;
   let current: PairingRelayState = 'unconfigured';
+  let currentSessionId = isRelaySessionId(options.sessionId) ? options.sessionId : undefined;
+  let currentJoinUntil: number | undefined;
   const remoteSockets = new Map<number, WebSocket>();
   const wsQueues = new Map<number, Array<{ payload: Buffer; binary: boolean }>>();
 
@@ -260,6 +272,20 @@ export function createPairingRelayClient(options: PairingRelayClientOptions): Pa
       send(TYPE.PONG, 0, frame.streamId);
       return;
     }
+    if (frame.type === TYPE.HELLO) {
+      try {
+        const meta = decodeJsonPayload(frame.payload) as { sessionId?: string; joinUntil?: number };
+        if (!isRelaySessionId(meta.sessionId) || typeof meta.joinUntil !== 'number') return;
+        currentSessionId = meta.sessionId;
+        currentJoinUntil = meta.joinUntil;
+        const hello = { sessionId: meta.sessionId, joinUntil: meta.joinUntil };
+        options.onHello?.(hello);
+        for (const waiter of [...helloWaiters]) waiter(hello);
+      } catch {
+        /* ignore malformed hello */
+      }
+      return;
+    }
     if (frame.type === TYPE.PONG) return;
     if (frame.type === TYPE.HTTP_REQ) {
       if (frame.flags & FLAG.META) {
@@ -351,8 +377,11 @@ export function createPairingRelayClient(options: PairingRelayClientOptions): Pa
     }
     disconnect();
     setState('offline');
+    currentJoinUntil = undefined;
+    const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+    if (currentSessionId) headers['X-Zcc-Relay-Session'] = currentSessionId;
     const next = new WsImpl(relayWsUrl(origin), {
-      headers: { Authorization: `Bearer ${token}` },
+      headers,
       perMessageDeflate: false
     });
     socket = next;
@@ -379,8 +408,37 @@ export function createPairingRelayClient(options: PairingRelayClientOptions): Pa
     });
   }
 
+  function snapshot(): PairingRelaySnapshot {
+    return {
+      state: current,
+      ...(currentSessionId ? { sessionId: currentSessionId } : {}),
+      ...(typeof currentJoinUntil === 'number' ? { joinUntil: currentJoinUntil } : {})
+    };
+  }
+
   return {
     state: () => current,
+    snapshot,
+    sessionId: () => currentSessionId,
+    joinUntil: () => currentJoinUntil,
+    renewJoinWindow() {
+      if (current !== 'connected' || !socket || socket.readyState !== WebSocket.OPEN) {
+        return Promise.resolve(snapshot());
+      }
+      return new Promise<PairingRelaySnapshot>((resolve) => {
+        const timer = setTimeout(() => {
+          helloWaiters.delete(onHello);
+          resolve(snapshot());
+        }, 2_000);
+        const onHello = () => {
+          clearTimeout(timer);
+          helloWaiters.delete(onHello);
+          resolve(snapshot());
+        };
+        helloWaiters.add(onHello);
+        send(TYPE.JOIN_RENEW, FLAG.FIN, 0);
+      });
+    },
     start() {
       stopped = false;
       backoff = 1000;

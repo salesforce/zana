@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   isAllowedHostInternalHost,
+  presentAppConfig,
   publicOriginHost,
   readPublicAppUrlFile,
   resolvePublicAppUrl
@@ -43,6 +44,24 @@ describe('public app URL', () => {
       configUrl: 'https://box.tailnet.ts.net',
       cwd
     })).toBe('https://box.tailnet.ts.net');
+  });
+
+  it('presents the resolved public origin on config without writing it back', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'zcc-url-present-'));
+    writeFileSync(join(cwd, 'public-app-url'), 'https://zcc-7808c5bc8f3d.herokuapp.com\n');
+    expect(presentAppConfig({ theme: 'dark' }, { env: {}, cwd })).toEqual({
+      theme: 'dark',
+      publicAppUrl: 'https://zcc-7808c5bc8f3d.herokuapp.com'
+    });
+    expect(presentAppConfig(
+      { publicAppUrl: 'https://box.tailnet.ts.net' },
+      { env: { ZCC_APP_URL: 'https://from-env.example' }, cwd }
+    ).publicAppUrl).toBe('https://from-env.example');
+    const stored = { publicAppUrl: 'https://box.tailnet.ts.net' };
+    expect(presentAppConfig(stored, { env: {}, cwd: mkdtempSync(join(tmpdir(), 'zcc-url-empty-')) })).toBe(stored);
+    const emptyCwd = mkdtempSync(join(tmpdir(), 'zcc-url-none-'));
+    const bare = { theme: 'light' };
+    expect(presentAppConfig(bare, { env: {}, cwd: emptyCwd })).toBe(bare);
   });
 
   it('allowlists loopback or the configured public Host header', () => {

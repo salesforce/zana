@@ -78,12 +78,12 @@ export function GlobalView({
 
       <Section
         anchorId="threads"
-        title="Threads"
-        help="Composer and markdown behavior for new and running threads."
+        title="Composer"
+        help="Composer and markdown behavior for new and running agents."
       >
         <CheckboxField
-          label="Navigate to threads on creation"
-          help="Open a new thread as soon as you send the first message. Off keeps you on the current page."
+          label="Navigate to agents on creation"
+          help="Open a new agent as soon as you send the first message. Off keeps you on the current page."
           checked={navigateOnCreate}
           onChange={setNavigateOnCreate}
         />
@@ -94,21 +94,21 @@ export function GlobalView({
           onChange={setMarkdownInPrompt}
         />
         <CheckboxField
-          label="Steer running threads on Enter"
-          help="When a thread is running, Enter steers the current turn and Cmd/Ctrl+Enter queues the next message. Off keeps Enter as auto-send."
+          label="Steer running agents on Enter"
+          help="When an agent is running, Enter steers the current turn and Cmd/Ctrl+Enter queues the next message. Off keeps Enter as auto-send."
           checked={config.steerActiveThreadOnEnter ?? false}
           onChange={(v) => onUpdate({ steerActiveThreadOnEnter: v })}
         />
         <CheckboxField
           label="Rewrite localhost links"
-          help="Replace localhost and 127.0.0.1 in thread markdown links with this window’s hostname so a remote viewer reaches the machine they’re looking at."
+          help="Replace localhost and 127.0.0.1 in agent markdown links with this window’s hostname so a remote viewer reaches the machine they’re looking at."
           checked={rewriteLocalhost}
           onChange={setRewriteLocalhost}
         />
         {hasDesktopBridge() ? (
           <CheckboxField
             label="Open web links in the side-panel browser"
-            help="http(s) links in threads open in the in-app browser instead of your OS browser. Turn off to keep the previous external-open behavior."
+            help="http(s) links in agents open in the in-app browser instead of your OS browser. Turn off to keep the previous external-open behavior."
             checked={openLinksInAppBrowser}
             onChange={setOpenLinksInAppBrowser}
           />
@@ -142,7 +142,7 @@ export function GlobalView({
       <Section
         anchorId="debug"
         title="Debug"
-        help="Diagnostics for thread timelines. Off by default."
+        help="Diagnostics for agent timelines. Off by default."
       >
         <CheckboxField
           label="Show unhandled provider events"
@@ -155,7 +155,7 @@ export function GlobalView({
       <Section title="Help">
         <SettingsActionRow
           label="Replay walkthrough"
-          help="For new users: launching an agent, adding a project, and creating a schedule."
+          help="For new users: starting a conversation, the CLI Agent composer, adding a project, and creating a schedule."
         >
           <button
             type="button"

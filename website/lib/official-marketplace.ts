@@ -2,9 +2,23 @@ import officialIndex from '../content/marketplace/marketplace.json';
 
 export const OFFICIAL_MARKETPLACE_FEED_PATH = '/marketplace/v1/marketplace.json';
 
+/**
+ * Public origin used when `PUBLIC_BASE_URL` is unset or still localhost.
+ * Override with `PUBLIC_BASE_URL` (no code change) when the site moves.
+ */
+export const FALLBACK_PUBLIC_MARKETPLACE_ORIGIN = 'https://zcc-7808c5bc8f3d.herokuapp.com';
+
+export function resolveMarketplacePublicBaseUrl(publicBaseUrl: string): string {
+  const trimmed = publicBaseUrl.replace(/\/+$/, '');
+  if (!trimmed || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(trimmed)) {
+    return FALLBACK_PUBLIC_MARKETPLACE_ORIGIN;
+  }
+  return trimmed;
+}
+
 /** Absolute catalog URL for `zcc marketplace add`. `publicBaseUrl` is `PUBLIC_BASE_URL`. */
 export function officialMarketplaceFeedUrl(publicBaseUrl: string): string {
-  return `${publicBaseUrl.replace(/\/+$/, '')}${OFFICIAL_MARKETPLACE_FEED_PATH}`;
+  return `${resolveMarketplacePublicBaseUrl(publicBaseUrl)}${OFFICIAL_MARKETPLACE_FEED_PATH}`;
 }
 
 export function officialMarketplaceAddCommand(publicBaseUrl: string): string {

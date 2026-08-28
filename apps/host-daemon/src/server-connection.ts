@@ -13,6 +13,7 @@ import { createRuntimeManager, type ThreadRuntimeAdapter } from './runtime-manag
 import { createEnrolledPty, type EnrolledPty } from './enrolled-pty.js';
 import { createInteractiveRequestHttpClient } from './interactive-request-client.js';
 import { createPluginToolCallHttpClient } from './plugin-tool-call-client.js';
+import { createPluginHostArtifactHttpClient } from './plugin-host-artifact-client.js';
 import {
   InteractiveRequestRegistry,
   InteractiveRequestRegistryError
@@ -91,6 +92,11 @@ export function startEnrolledHostConnection(options: {
     hostKey: options.hostKey,
     sessionId: instanceId
   });
+  const pluginHostArtifacts = createPluginHostArtifactHttpClient({
+    serverUrl: options.serverUrl,
+    hostId: options.hostId,
+    hostKey: options.hostKey
+  });
   const interactiveRequests = new InteractiveRequestRegistry({
     registerRequest: (request) => interactiveClient.registerRequest(request),
     onRegistrationFailure: ({ error, request }) => {
@@ -121,6 +127,7 @@ export function startEnrolledHostConnection(options: {
         }
       },
       onPluginToolCall: (request) => pluginToolCalls.invoke(request),
+      fetchPluginHostArtifact: (args) => pluginHostArtifacts.fetch(args),
       onProcessExit: (info) => {
         const threadIds = info.threads.map((thread) => thread.threadId);
         if (threadIds.length === 0) return;
@@ -150,6 +157,12 @@ export function startEnrolledHostConnection(options: {
       resizeWork: (input) => adapter!.resizeWork(input),
       writeWork: (input) => adapter!.writeWork(input),
       stopWork: (input) => adapter!.stopWork(input),
+      prepareRewind: (input) => adapter!.prepareRewind(input),
+      discardRewind: (input) => adapter!.discardRewind(input),
+      renameWork: (input) => adapter!.renameWork(input),
+      archiveWork: (input) => adapter!.archiveWork(input),
+      unarchiveWork: (input) => adapter!.unarchiveWork(input),
+      clearGoal: (input) => adapter!.clearGoal(input),
       deliverInteractiveResolve: (input) => interactiveRequests.resolve(input),
       startTerminal: (input) => enrolledPty!.startTerminal(input),
       writeTerminal: (input) => enrolledPty!.writeTerminal(input),
@@ -206,9 +219,8 @@ export function startEnrolledHostConnection(options: {
       attempt += 1;
       reconnectTimer = setTimeout(connect, delay);
     });
-    next.addEventListener('error', () => {
-      next.close();
-    });
+    // Do not close() from `error`: Node's undici WebSocket re-dispatches
+    // error from close(), which overflowed the stack on remotes. `close` reconnects.
   }
 
   connect();

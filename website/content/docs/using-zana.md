@@ -17,7 +17,7 @@ from the sidebar.
 
 - **Thread** *(default)* — a conversation with the selected harness in the
   project you pick. This is the usual path for day-to-day work.
-- **Legacy Agent** — a real PTY running the native CLI, with the same tools and
+- **CLI Agent** — a real PTY running the native CLI, with the same tools and
   permissions as a standalone terminal.
 - **Autonomous Team** — launch a saved team of personas against the project when
   the work benefits from parallel roles.
@@ -41,7 +41,7 @@ From the board you can:
   auto-close-idle.
 - **Close** a session when its work is done.
 
-A **Legacy Agent** tab is a real harness PTY, so the native Claude Code, Cursor,
+A **CLI Agent** tab is a real harness PTY, so the native Claude Code, Cursor,
 OpenCode, Codex, or Pi workflow remains available inside Zana. **Threads** are
 the default conversation surface from New Chat.
 

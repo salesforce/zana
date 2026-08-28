@@ -10,18 +10,27 @@ import { product } from '../../lib/product-client.js';
 import { useData } from '@/store';
 import { Field, Section } from '@/components/settings/FormFields';
 import { useHosts } from '../../hooks/useHosts.js';
+import { HostSshIdentityDialog } from '../../components/HostSshIdentityDialog.js';
 import { AddMachineDialog } from './AddMachineDialog.js';
 import { MachineCard } from './MachineCard.js';
 import {
   defaultSshHost,
+  formatJoinCountdown,
   sshHostOptionsFromProjects
 } from './machine-pairing.js';
+import { reconnectMachine } from './machine-reconnect.js';
 import {
   actionableProviderCliRows,
+  installProviderCliOnMachine,
   orderedProviderCliRows
 } from './machine-provider-clis.js';
 
 type RelayState = 'connected' | 'offline' | 'unconfigured';
+type RelaySnapshot = {
+  state: RelayState;
+  sessionId?: string;
+  joinUntil?: number;
+};
 
 function relayCopy(state: RelayState): { label: string; tone: 'ok' | 'warn' | 'muted' } {
   if (state === 'connected') return { label: 'Connected', tone: 'ok' };
@@ -30,25 +39,45 @@ function relayCopy(state: RelayState): { label: string; tone: 'ok' | 'warn' | 'm
 }
 
 export function RelayStatusLine({ state }: { state?: RelayState }) {
-  const [live, setLive] = useState<RelayState>(state ?? 'unconfigured');
+  const [live, setLive] = useState<RelaySnapshot>({ state: state ?? 'unconfigured' });
+  const [now, setNow] = useState(Date.now());
+  const [renewing, setRenewing] = useState(false);
   useEffect(() => {
     if (state) {
-      setLive(state);
+      setLive({ state });
       return;
     }
     let cancelled = false;
     product.relay.status().then((row) => {
-      if (!cancelled) setLive(row.state);
+      if (!cancelled) setLive(row);
     }).catch(() => undefined);
     const unsub = product.relay.onChanged((row) => {
-      if (!cancelled) setLive(row.state);
+      if (!cancelled) setLive(row);
     });
     return () => {
       cancelled = true;
       unsub();
     };
   }, [state]);
-  const copy = relayCopy(live);
+  useEffect(() => {
+    if (live.state !== 'connected' || typeof live.joinUntil !== 'number') return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [live.state, live.joinUntil]);
+  const copy = relayCopy(live.state);
+  const joinRemaining = typeof live.joinUntil === 'number' ? live.joinUntil - now : null;
+  const joinOpen = live.state === 'connected' && joinRemaining !== null && joinRemaining > 0;
+  const renew = async () => {
+    setRenewing(true);
+    try {
+      const next = await product.relay.renewJoinWindow();
+      setLive(next);
+    } catch {
+      /* keep current snapshot */
+    } finally {
+      setRenewing(false);
+    }
+  };
   return (
     <p className="settings-help" data-testid="relay-status">
       Relay:{' '}
@@ -57,6 +86,26 @@ export function RelayStatusLine({ state }: { state?: RelayState }) {
       >
         {copy.label}
       </span>
+      {live.state === 'connected' && joinRemaining !== null ? (
+        <>
+          {' '}
+          {joinOpen ? (
+            <span data-testid="relay-join-window">Join window {formatJoinCountdown(joinRemaining)}</span>
+          ) : (
+            <span data-testid="relay-join-window">Join window closed</span>
+          )}
+          {' '}
+          <button
+            type="button"
+            className="settings-btn"
+            data-testid="relay-renew-join"
+            disabled={renewing}
+            onClick={() => void renew()}
+          >
+            Renew join window
+          </button>
+        </>
+      ) : null}
     </p>
   );
 }
@@ -79,6 +128,10 @@ export function MachinesSettingsView({
   const [renameValue, setRenameValue] = useState('');
   const [cliByHost, setCliByHost] = useState<Record<string, ProviderCliStatusResponse>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [installErrors, setInstallErrors] = useState<Record<string, string>>({});
+  const [repairingId, setRepairingId] = useState<string | null>(null);
+  const [repairError, setRepairError] = useState<{ hostId: string; message: string } | null>(null);
+  const [sshPick, setSshPick] = useState<{ hostId: string; name: string } | null>(null);
   const now = Date.now();
   const counts = useMemo(() => {
     const map = new Map<string, number>();
@@ -112,6 +165,33 @@ export function MachinesSettingsView({
 
   const actionable = useMemo(() => actionableProviderCliRows(cliByHost), [cliByHost]);
 
+  async function runReconnect(hostId: string, afterSshPick = false): Promise<void> {
+    const host = hosts.find((row) => row.id === hostId);
+    if (!host) return;
+    setRepairError(null);
+    if (!afterSshPick && !host.canRepairViaSsh) {
+      setSshPick({ hostId: host.id, name: host.name });
+      return;
+    }
+    setRepairingId(host.id);
+    try {
+      const result = await reconnectMachine({
+        hostId: host.id,
+        canRepairViaSsh: host.canRepairViaSsh,
+        afterSshPick,
+        repair: (id) => product.hosts.repair(id)
+      });
+      if (result.ok) return;
+      if (result.needsSshPick) {
+        setSshPick({ hostId: host.id, name: host.name });
+        return;
+      }
+      setRepairError({ hostId: host.id, message: result.message });
+    } finally {
+      setRepairingId(null);
+    }
+  }
+
   async function runInstall(
     hostId: string,
     provider: ProviderCliKey,
@@ -119,8 +199,22 @@ export function MachinesSettingsView({
   ): Promise<void> {
     const key = `${hostId}:${provider}`;
     setBusyKey(key);
+    setInstallErrors((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
     try {
-      await product.hosts.installProviderCli(hostId, { provider, actionKind });
+      const outcome = await installProviderCliOnMachine({
+        hostId,
+        provider,
+        actionKind,
+        install: product.hosts.installProviderCli
+      });
+      if (!outcome.ok) {
+        setInstallErrors((prev) => ({ ...prev, [key]: outcome.message }));
+      }
       await refreshCliStatus();
     } finally {
       setBusyKey(null);
@@ -132,7 +226,7 @@ export function MachinesSettingsView({
       <Section
         anchorId="machines"
         title="Machines"
-        help="Pair another computer so projects and threads can run there. SSH remotes stay a separate path — they use this machine’s daemon to ssh in. Connected machines follow the server version automatically; Codex, Claude Code, and the other harness CLIs update from the rows below."
+        help="Pair another computer so projects and agents can run there. SSH remotes stay a separate path — they use this machine’s daemon to ssh in. Connected machines follow the server version automatically; Codex, Claude Code, and the other harness CLIs update from the rows below."
       >
         <Field
           label="Public app URL"
@@ -148,7 +242,7 @@ export function MachinesSettingsView({
         </Field>
         <Field
           label="Relay token"
-          help="Must match Heroku config ZCC_RELAY_TOKEN. Env ZCC_RELAY_TOKEN wins over this field. One laptop per token (connecting a second desktop steals the tunnel)."
+          help="Must match Heroku config ZCC_RELAY_TOKEN. Env ZCC_RELAY_TOKEN wins over this field. Authenticates this laptop; several desktops may share one token. Each gets a short join window on its own session URL."
         >
           <input
             type="password"
@@ -192,6 +286,7 @@ export function MachinesSettingsView({
               now={now}
               cliRows={orderedProviderCliRows(cliByHost[host.id])}
               busyKey={busyKey}
+              installErrors={installErrors}
               renaming={renameId === host.id}
               renameValue={renameValue}
               onRenameValue={setRenameValue}
@@ -210,6 +305,9 @@ export function MachinesSettingsView({
                 void product.hosts.updatePermissionCeiling(host.id, mode);
               }}
               onRetryUpdate={() => void product.hosts.retryUpdate(host.id)}
+              reconnecting={repairingId === host.id}
+              reconnectError={repairError?.hostId === host.id ? repairError.message : null}
+              onReconnect={() => void runReconnect(host.id)}
               onRemove={() => {
                 if (window.confirm(`Remove ${host.name}?`)) {
                   void product.hosts.remove(host.id);
@@ -220,6 +318,18 @@ export function MachinesSettingsView({
           ))}
         </ul>
       </Section>
+      {sshPick ? (
+        <HostSshIdentityDialog
+          hostName={sshPick.name}
+          onClose={() => setSshPick(null)}
+          onSubmit={async (identity) => {
+            const hostIdToRepair = sshPick.hostId;
+            await product.hosts.updateSshIdentity(hostIdToRepair, identity);
+            setSshPick(null);
+            await runReconnect(hostIdToRepair, true);
+          }}
+        />
+      ) : null}
       <AddMachineDialog
         open={adding}
         onClose={() => setAdding(false)}

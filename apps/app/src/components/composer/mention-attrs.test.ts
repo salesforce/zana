@@ -33,7 +33,7 @@ describe('mentionAttrsForSuggestion', () => {
     });
   });
 
-  it('labels a thread pill Thread: <title> while serializing the bare title', () => {
+  it('labels a thread pill Agent: <title> while serializing the bare title', () => {
     expect(mentionAttrsForSuggestion({
       kind: 'thread',
       threadId: 't1',
@@ -41,7 +41,7 @@ describe('mentionAttrsForSuggestion', () => {
       title: 'Hello',
       projectName: 'Zana'
     })).toMatchObject({
-      label: 'Thread: Hello',
+      label: 'Agent: Hello',
       serializedText: '@Hello',
       resource: { kind: 'thread', threadId: 't1', label: 'Hello' }
     });

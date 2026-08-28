@@ -2,11 +2,12 @@ import { product } from '../lib/product-client.js';
 import type { PluginHostBridge } from '@zana-ai/zcc-plugin-sdk';
 /**
  * Loads renderer apps owned by the server-side PluginService. Bundles are served
- * from the supervised same-origin static host, so relative chunks and assets
- * resolve without giving the renderer an install path or a filesystem read
- * capability. Already-installed `extension.json` bundles still default-export
- * `RendererEntry.activate()`; that shape is accepted for one-release compatibility
- * with the server-side manifest shim.
+ * from `/plugins/:id/assets/*` on the supervised same-origin static host (and,
+ * in Vite dev, the product server behind the renderer proxy) so relative chunks
+ * resolve without giving the renderer an install path. Leftover `extension.json`
+ * bundles that default-export `RendererEntry.activate()` are not activated here:
+ * they call `ModuleHost.call` (`modules:call`), and PluginService never spawns
+ * that Electron main. Disk-extension loading still owns those bundles.
  */
 
 import * as React from 'react';
@@ -17,8 +18,7 @@ import type { PluginRegistrationSet } from '@zana-ai/zcc-plugin-sdk';
 import { isPluginAppDefinition } from '@zana-ai/zcc-plugin-sdk';
 import { PluginSlotBoundary } from './PluginSlotBoundary.js';
 import { clearPluginSlots, interpretPluginApp } from './plugin-slots.js';
-import { evictHost, getHost } from '../modules/ModulePanelHost.js';
-import { normalizeActivateResult } from '../modules/loader.js';
+import { evictHost } from '../modules/ModulePanelHost.js';
 
 export interface PluginAppModule extends AppModule {
   loadError?: string;
@@ -39,27 +39,17 @@ type PluginAppImporter = (url: string) => Promise<{ default?: unknown }>;
 
 const importPluginApp: PluginAppImporter = (url) => import(/* @vite-ignore */ url);
 
+/**
+ * Record a failed plugin-app import for the Plugins hub. Do not attach a
+ * `panel` — the sidebar treats any panel as a global nav destination, and most
+ * plugin apps never registered one (settings, pendingInteraction, provider
+ * icons). The hub already renders `loadError` on the detail pane.
+ */
 function errorModule(entry: PluginAppEntry, message: string): PluginAppModule {
-  const Panel: React.ComponentType<{ host: ModuleHost }> = () =>
-    React.createElement(
-      'main',
-      { className: 'settings-panel' },
-      React.createElement(
-        'div',
-        { className: 'settings-inner' },
-        React.createElement('h2', null, `${entry.name} failed to load`),
-        React.createElement(
-          'pre',
-          { style: { whiteSpace: 'pre-wrap', color: 'var(--danger)' } },
-          message
-        )
-      )
-    );
   return {
     id: entry.id,
     title: entry.name,
     icon: entry.icon,
-    panel: Panel,
     projectTab: entry.projectTab,
     loadError: message
   };
@@ -67,35 +57,6 @@ function errorModule(entry: PluginAppEntry, message: string): PluginAppModule {
 
 function isRendererEntry(value: unknown): value is RendererEntry {
   return typeof value === 'object' && value !== null && typeof (value as RendererEntry).activate === 'function';
-}
-
-function moduleFromLegacyActivate(entry: PluginAppEntry, exported: RendererEntry): PluginAppModule {
-  const host = getHost(entry.id);
-  const { panel, settingsPanel, background, commands, navBadge } = normalizeActivateResult(
-    exported.activate({ React, host })
-  );
-  const hasPanel = typeof panel === 'function' || (typeof panel === 'object' && panel !== null);
-  const hasSettings =
-    typeof settingsPanel === 'function' || (typeof settingsPanel === 'object' && settingsPanel !== null);
-  const contributes =
-    hasPanel || hasSettings || typeof commands === 'function' || typeof navBadge === 'function';
-  if (!contributes) {
-    return errorModule(
-      entry,
-      'activate() returned nothing usable (no panel, settingsPanel, commands, or navBadge).'
-    );
-  }
-  return {
-    id: entry.id,
-    title: entry.name,
-    icon: entry.icon,
-    panel: hasPanel ? panel : undefined,
-    settingsPanel: hasSettings ? settingsPanel : undefined,
-    background,
-    commands,
-    navBadge,
-    projectTab: hasPanel ? entry.projectTab : undefined
-  };
 }
 
 function moduleFromSet(entry: PluginAppEntry, set: PluginRegistrationSet): PluginAppModule | null {
@@ -154,11 +115,13 @@ async function loadPluginApp(
       const set = interpretPluginApp(entry.id, mod.default);
       return moduleFromSet(entry, set);
     }
-    // One-release compatibility: already-installed extension.json bundles still
-    // default-export RendererEntry.activate(), matching the server-side shim.
+    // Leftover extension.json renderers call ModuleHost.call → modules:call.
+    // PluginService never spawns that Electron main, so activating them here
+    // toasts "Unknown module". Disk-extension loading still owns those bundles
+    // when a live child exists.
     if (isRendererEntry(mod.default)) {
       clearPluginSlots(entry.id);
-      return moduleFromLegacyActivate(entry, mod.default);
+      return null;
     }
     clearPluginSlots(entry.id);
     return errorModule(entry, 'Bundle did not default-export a plugin app.');

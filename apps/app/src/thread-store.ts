@@ -16,6 +16,9 @@ export interface ThreadListItem {
   archivedAt?: number | null;
   parentThreadId?: string | null;
   hasPendingInteraction?: boolean;
+  lastReadSeq?: number | null;
+  maxSeq?: number;
+  updatedAt?: number;
 }
 
 interface ThreadStore {
@@ -42,10 +45,33 @@ function ensureThreadUpdates(): void {
     }
     void useThreads.getState().load();
   });
+  product.threads.onEvent((payload) => {
+    if (!payload || typeof payload !== 'object') return;
+    const threadId = 'threadId' in payload && typeof payload.threadId === 'string'
+      ? payload.threadId
+      : null;
+    const sequence = 'sequence' in payload && typeof payload.sequence === 'number'
+      ? payload.sequence
+      : null;
+    if (!threadId || sequence == null) return;
+    const current = useThreads.getState().threads.find((row) => row.id === threadId);
+    if (!current || (current.maxSeq ?? 0) >= sequence) return;
+    useThreads.getState().upsert({ ...current, maxSeq: sequence, updatedAt: Date.now() });
+  });
 }
 
 function withoutArchived(threads: ThreadListItem[]): ThreadListItem[] {
   return threads.filter((row) => !row.archivedAt);
+}
+
+function withUnreadFields(thread: ThreadListItem, previous?: ThreadListItem): ThreadListItem {
+  return {
+    ...previous,
+    ...thread,
+    lastReadSeq: thread.lastReadSeq !== undefined ? thread.lastReadSeq : previous?.lastReadSeq ?? null,
+    maxSeq: typeof thread.maxSeq === 'number' ? thread.maxSeq : previous?.maxSeq ?? 0,
+    updatedAt: thread.updatedAt ?? previous?.updatedAt ?? thread.createdAt
+  };
 }
 
 /** Patch an existing row in place so opening a thread does not reshuffle the rail. */
@@ -57,10 +83,21 @@ export function mergeThreadRoster(
     return threads.filter((row) => row.id !== thread.id);
   }
   const index = threads.findIndex((row) => row.id === thread.id);
-  if (index < 0) return [thread, ...threads];
+  if (index < 0) return [withUnreadFields(thread), ...threads];
   const next = threads.slice();
-  next[index] = thread;
+  next[index] = withUnreadFields(thread, threads[index]);
   return next;
+}
+
+export function applyThreadEventSequence(
+  threads: ThreadListItem[],
+  threadId: string,
+  sequence: number,
+  now = Date.now()
+): ThreadListItem[] {
+  const current = threads.find((row) => row.id === threadId);
+  if (!current || (current.maxSeq ?? 0) >= sequence) return threads;
+  return mergeThreadRoster(threads, { ...current, maxSeq: sequence, updatedAt: now });
 }
 
 export function pendingChildThreads(

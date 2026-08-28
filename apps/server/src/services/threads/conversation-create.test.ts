@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { flattenThreadInput, requestAutoThreadTitle, threadTitle } from './conversation-create.js';
+import { PluginHostArtifactRegistry } from '../../plugins/plugin-host-artifact-registry.js';
 import {
   bridgeLaunchForProvider,
   canonicalThreadProviderId,
@@ -117,8 +118,14 @@ describe('thread provider catalog', () => {
     expect(getThreadProvider('acp-opencode')).toBeUndefined();
   });
 
-  it('does not prefix pluginRoot onto an absolute host entry', () => {
-    const hostEntry = '/tmp/provider-acp/src/bridge/bridge.ts';
+  it('emits digest and byteLength from the host artifact registry', () => {
+    const artifacts = new PluginHostArtifactRegistry();
+    artifacts.set('provider-acp', {
+      path: '/tmp/dist/host.js',
+      digest: 'ab'.repeat(32),
+      byteLength: 2048,
+      generation: 'g1'
+    });
     const handle = registerThreadProvider('provider-acp', {
       id: 'acp-opencode',
       displayName: 'OpenCode',
@@ -131,12 +138,51 @@ describe('thread provider catalog', () => {
         permissionModes: ['accept-edits', 'full']
       },
       composerActions: []
-    }, hostEntry);
+    });
     try {
-      const launch = bridgeLaunchForProvider('acp-opencode', '/tmp/data');
-      expect(launch.source).toMatchObject({ kind: 'artifact', artifactPath: hostEntry });
+      const launch = bridgeLaunchForProvider('acp-opencode', artifacts);
+      expect(launch.source).toEqual({
+        kind: 'artifact',
+        digest: 'ab'.repeat(32),
+        byteLength: 2048
+      });
+      expect(launch).not.toHaveProperty('dataDir');
     } finally {
       handle.unregister();
+    }
+  });
+
+  it('refuses a plugin provider launch when the host artifact is missing', () => {
+    const handle = registerThreadProvider('provider-acp', {
+      id: 'acp-opencode',
+      displayName: 'OpenCode',
+      capabilities: {
+        supportsServiceTier: true,
+        fork: 'tip',
+        supportsManualCompaction: true,
+        supportsThreadArchive: false,
+        supportsThreadRename: false,
+        permissionModes: ['accept-edits', 'full']
+      },
+      composerActions: []
+    });
+    try {
+      expect(() => bridgeLaunchForProvider('acp-opencode', new PluginHostArtifactRegistry()))
+        .toThrow(/no host artifact/u);
+    } finally {
+      handle.unregister();
+    }
+  });
+
+  it('uses a daemon-bundled launch for fake without a registry snapshot', () => {
+    const previous = process.env.ZCC_FAKE_PROVIDER;
+    process.env.ZCC_FAKE_PROVIDER = '1';
+    try {
+      const launch = bridgeLaunchForProvider('fake', new PluginHostArtifactRegistry());
+      expect(launch.source).toEqual({ kind: 'daemon-bundled', id: 'fake' });
+    } finally {
+      if (previous === undefined) delete process.env.ZCC_FAKE_PROVIDER;
+      else process.env.ZCC_FAKE_PROVIDER = previous;
     }
   });
 
@@ -169,7 +215,8 @@ describe('unmanaged environment reuse', () => {
     expect(source).toContain("choice.kind === 'unmanaged'");
     expect(source).toContain('needsHostAttach');
     expect(source).toContain("existing.workspaceProvisionType === 'unmanaged'");
-    expect(source).toContain('requestAutoThreadTitle(ctx, input, running.id, prompt)');
+    expect(source).toContain('requestAutoThreadTitle(ctx, input, running.id, textPrompt)');
+    expect(source).toContain('hostPromptFromInput');
     expect(source).toContain('titleFromPrompt');
     expect(source).toContain('reasoningLevel: args.input.reasoningLevel');
     expect(source).toContain("...(args.input.reasoningLevel ? { reasoningLevel: args.input.reasoningLevel } : {})");
@@ -184,6 +231,24 @@ describe('thread title namer wiring', () => {
     expect(source).toContain("hub.emit('threads:updated', conversationThreadView(ctx, updated))");
     expect(source).toContain('autoRenameTabs !== false');
     expect(source).toContain('join(dataDir, \'llm-prompts\')');
+  });
+});
+
+describe('SSH remotes', () => {
+  it('run on this machine with remote tools unless the enrolled host is selected', () => {
+    const source = readFileSync(new URL('./conversation-create.ts', import.meta.url), 'utf8');
+    expect(source).toContain('conversationThreadViews');
+    expect(source).toContain('peekThreadReadSeq');
+    expect(source).toContain('maxConversationEventSequenceByThreadIds');
+    expect(source).toContain('isRemoteToolProxyActive(project, input.hostId)');
+    expect(source).toContain('remoteWorkspacePath(project, remoteToolProxy)');
+    expect(source).toContain('resolveSpawnChoiceForHost');
+    expect(source).toContain('dropCwd');
+    expect(source).toContain('resolvePersonalTargetPathOnHost');
+    expect(source).not.toContain('readRemoteToolProxySetting');
+    expect(source).toContain('getPrimaryHost(ctx.db)');
+    expect(source).toContain('remoteToolProxy: true');
+    expect(source).toContain('threadLaunchRemote(args.project)');
   });
 });
 

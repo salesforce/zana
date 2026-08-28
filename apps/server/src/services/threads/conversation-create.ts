@@ -1,5 +1,3 @@
-import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import type { ThreadStartResult } from '@zana-ai/zcc-contracts/host-rpc';
 import {
   createConversationThread,
@@ -9,6 +7,8 @@ import {
   getEnvironment,
   getPrimaryHost,
   hasPendingInteractionForThread,
+  maxConversationEventSequenceByThreadIds,
+  nextConversationEventSequence,
   updateConversationThreadStatus,
   updateEnvironmentDiscovery,
   updateEnvironmentStatus,
@@ -30,7 +30,8 @@ import { AmbiguousHostError, HostUnavailableError } from '../../http/host-hub.js
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { emitPluginThreadEvent } from '../../plugins/thread-events.js';
 import { unmanagedAttachRefusal } from './workspace-path-claims.js';
-import { resolveManagedTargetPath, resolvePersonalTargetPath } from './worktree-paths.js';
+import { resolveManagedTargetPath } from './worktree-paths.js';
+import { resolvePersonalTargetPathOnHost } from './host-personal-path.js';
 import {
   bridgeLaunchForProvider,
   canonicalThreadProviderId,
@@ -41,10 +42,14 @@ import { ThreadCreateError } from '../../http/thread-create.js';
 import { appendClientTurnRequested } from './client-turn-requested.js';
 import {
   isRemoteToolProxyActive,
-  readRemoteToolProxySetting,
+  remoteWorkspacePath,
   threadLaunchRemote
 } from './remote-tool-proxy.js';
+import { resolveSpawnChoiceForHost } from './spawn-choice-for-host.js';
 import { safePackPluginSession } from '../../plugins/plugin-agent-tools.js';
+import { hostPromptFromInput, resolvePromptAttachmentPath } from '../projects/attachments.js';
+import { withResolvedPluginMentionContext } from '../../plugins/plugin-mentions.js';
+import { loadThreadReads, peekThreadReadSeq } from './thread-reads.js';
 
 export interface CreateConversationInput {
   projectId: string;
@@ -97,14 +102,18 @@ function provisionCommandFor(
   environment: EnvironmentRow,
   project: Project,
   choice: SpawnEnvironmentChoice,
-  checkout: CreateConversationInput['checkout']
+  checkout: CreateConversationInput['checkout'],
+  workspacePath: string
 ): EnvironmentProvisionCommand {
   if (choice.kind === 'personal') {
+    if (!environment.path) {
+      throw new ThreadCreateError(500, 'thread-create-failed', 'personal workspace path is missing');
+    }
     return {
       type: 'environment.provision',
       environmentId: environment.id,
       workspaceProvisionType: 'personal',
-      targetPath: environment.path ?? resolvePersonalTargetPath({ dataDir: '', environmentId: environment.id })
+      targetPath: environment.path
     };
   }
   if (choice.kind === 'worktree') {
@@ -123,7 +132,7 @@ function provisionCommandFor(
     type: 'environment.provision',
     environmentId: environment.id,
     workspaceProvisionType: 'unmanaged',
-    path: project.path,
+    path: workspacePath,
     checkout
   };
 }
@@ -158,17 +167,17 @@ async function startConversationOnHost(
     project: Project;
     thread: ConversationThreadRow;
     prompt: string[];
+    hostPrompt: string[];
     environmentId: string;
     input: CreateConversationInput;
     remoteToolProxy: boolean;
+    dropCwd?: boolean;
   }
 ): Promise<void> {
   const providerId = canonicalThreadProviderId(args.input.providerId);
   if (!getThreadProvider(providerId)) {
     throw new ThreadCreateError(400, 'invalid-provider', `unknown thread provider: ${args.input.providerId}`);
   }
-  const dataDir = join(ctx.dataDir, 'thread-bridges', providerId);
-  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const requestedMode = args.input.permissionMode ?? permissionModeForLaunchProfile(args.input.providerId);
   const permissionMode = clampPermissionModeToHost(ctx.db, args.hostId, requestedMode) ?? requestedMode;
   const clientRequestId = appendClientTurnRequested(ctx, {
@@ -193,10 +202,12 @@ async function startConversationOnHost(
       environmentId: args.environmentId,
       projectId: args.project.id,
       providerId,
-      input: args.prompt,
-      cwd: args.input.cwd,
+      input: args.hostPrompt,
+      cwd: args.dropCwd
+        ? undefined
+        : (args.remoteToolProxy || !args.project.remote ? args.input.cwd : undefined),
       title: args.thread.title ?? undefined,
-      bridgeLaunch: bridgeLaunchForProvider(providerId, dataDir),
+      bridgeLaunch: bridgeLaunchForProvider(providerId, ctx.pluginHostArtifacts),
       permissionMode,
       ...(args.input.model ? { model: args.input.model } : {}),
       ...(args.input.reasoningLevel ? { reasoningLevel: args.input.reasoningLevel } : {}),
@@ -232,17 +243,41 @@ export interface ConversationThreadView {
   branchName: string | null;
   isWorktree: boolean;
   hasPendingInteraction: boolean;
+  lastReadSeq: number | null;
+  maxSeq: number;
 }
 
-export function conversationThreadView(ctx: ProductHttpContext, thread: ConversationThreadRow): ConversationThreadView {
+export function conversationThreadView(
+  ctx: ProductHttpContext,
+  thread: ConversationThreadRow,
+  extras?: { lastReadSeq?: number | null; maxSeq?: number }
+): ConversationThreadView {
   const environment = thread.environmentId ? getEnvironment(ctx.db, thread.environmentId) : null;
+  const lastReadSeq = extras && 'lastReadSeq' in extras
+    ? extras.lastReadSeq ?? null
+    : peekThreadReadSeq(ctx.dataDir, thread.id);
+  const maxSeq = extras?.maxSeq ?? Math.max(0, nextConversationEventSequence(ctx.db, thread.id) - 1);
   return {
     ...thread,
     cwd: environment?.path ?? null,
     branchName: environment?.branchName ?? null,
     isWorktree: environment?.isWorktree ?? false,
-    hasPendingInteraction: hasPendingInteractionForThread(ctx.db, thread.id)
+    hasPendingInteraction: hasPendingInteractionForThread(ctx.db, thread.id),
+    lastReadSeq,
+    maxSeq
   };
+}
+
+export function conversationThreadViews(
+  ctx: ProductHttpContext,
+  threads: readonly ConversationThreadRow[]
+): ConversationThreadView[] {
+  const maxById = maxConversationEventSequenceByThreadIds(ctx.db, threads.map((thread) => thread.id));
+  const reads = loadThreadReads(ctx.dataDir);
+  return threads.map((thread) => conversationThreadView(ctx, thread, {
+    lastReadSeq: Object.prototype.hasOwnProperty.call(reads, thread.id) ? reads[thread.id]! : null,
+    maxSeq: maxById[thread.id] ?? 0
+  }));
 }
 
 export async function createConversationFromRequest(
@@ -255,20 +290,25 @@ export async function createConversationFromRequest(
   if (!input.providerId) {
     throw new ThreadCreateError(400, 'invalid-provider', 'providerId is required');
   }
-  const prompt = input.input.map((part) => part.trim()).filter((part) => part.length > 0);
+  const resolvedPromptInput = await withResolvedPluginMentionContext(ctx.plugins, input.promptInput);
+  const textPrompt = flattenThreadInput(resolvedPromptInput).map((part) => part.trim()).filter((part) => part.length > 0);
+  const promptSource = textPrompt.length > 0 ? textPrompt : input.input.map((part) => part.trim()).filter((part) => part.length > 0);
+  const prompt = hostPromptFromInput(
+    resolvedPromptInput,
+    promptSource,
+    (path) => resolvePromptAttachmentPath(ctx.dataDir, input.projectId, path)
+  );
   if (prompt.length === 0) {
     throw new ThreadCreateError(400, 'invalid-input', 'input is required');
   }
 
   const project = requireProject(ctx, input.projectId);
-  const remoteToolProxy = isRemoteToolProxyActive(
-    project,
-    { remoteToolProxy: readRemoteToolProxySetting(ctx.dataDir, project.id) }
-  );
+  const remoteToolProxy = isRemoteToolProxyActive(project, input.hostId);
+  const workspacePath = remoteWorkspacePath(project, remoteToolProxy);
+  const primary = getPrimaryHost(ctx.db);
   let hostId: string;
   try {
     if (remoteToolProxy) {
-      const primary = getPrimaryHost(ctx.db);
       if (!primary) {
         throw new ThreadCreateError(503, 'host-unavailable', 'This machine’s host daemon is not connected.');
       }
@@ -286,13 +326,25 @@ export async function createConversationFromRequest(
   if (project.remote && choice.kind !== 'unmanaged') {
     throw new ThreadCreateError(403, 'remote-unsupported', 'remote projects can only use this checkout');
   }
+  const spawnChoice = resolveSpawnChoiceForHost({
+    project,
+    choice,
+    executionHostId: hostId,
+    primaryHostId: primary?.id,
+    remoteToolProxy
+  });
+  if (!spawnChoice.ok) {
+    throw new ThreadCreateError(400, spawnChoice.code, spawnChoice.message);
+  }
+  choice = spawnChoice.choice;
+  const dropCwd = spawnChoice.dropCwd;
 
   if (choice.kind === 'unmanaged' || input.checkout) {
     const refusal = unmanagedAttachRefusal(ctx.db, {
       dataDir: ctx.dataDir,
       checksOutBranch: Boolean(input.checkout),
       hostId,
-      path: project.path,
+      path: workspacePath,
       projectId: project.id
     });
     if (refusal) {
@@ -304,7 +356,7 @@ export async function createConversationFromRequest(
   const providerId = canonicalThreadProviderId(input.providerId);
 
   if (choice.kind === 'unmanaged') {
-    const existingUnmanaged = findProjectEnvironmentByHostPath(ctx.db, project.id, hostId, project.path);
+    const existingUnmanaged = findProjectEnvironmentByHostPath(ctx.db, project.id, hostId, workspacePath);
     if (existingUnmanaged) {
       choice = { kind: 'reuse', environmentId: existingUnmanaged.id };
     }
@@ -330,7 +382,7 @@ export async function createConversationFromRequest(
       hostId,
       environmentId: existing.id,
       providerId,
-      title: threadTitle(input, prompt),
+      title: threadTitle(input, textPrompt),
       status: 'starting'
     });
     emitPluginThreadEvent(ctx, {
@@ -343,7 +395,7 @@ export async function createConversationFromRequest(
         const provisioned = await ctx.hostHub.callHostOnlineRpc<EnvironmentProvisionResult>({
           hostId,
           command: {
-            ...provisionCommandFor(existing, project, { kind: 'unmanaged' }, input.checkout),
+            ...provisionCommandFor(existing, project, { kind: 'unmanaged' }, input.checkout, workspacePath),
             initiator: { threadId: thread.id, provisioningId: existing.id }
           }
         });
@@ -357,10 +409,12 @@ export async function createConversationFromRequest(
           mergeBaseBranch: provisioned.defaultBranch
         });
       }
-      await startConversationOnHost(ctx, { hostId, project, thread, prompt, environmentId: existing.id, input, remoteToolProxy });
+      await startConversationOnHost(ctx, {
+        hostId, project, thread, prompt: textPrompt, hostPrompt: prompt, environmentId: existing.id, input: { ...input, promptInput: resolvedPromptInput }, remoteToolProxy, dropCwd
+      });
       const running = updateConversationThreadStatus(ctx.db, thread.id, 'active') ?? thread;
       ctx.hub.emit('threads:updated', conversationThreadView(ctx, running));
-      requestAutoThreadTitle(ctx, input, running.id, prompt);
+      requestAutoThreadTitle(ctx, input, running.id, textPrompt);
       emitPluginThreadEvent(ctx, {
         name: 'thread.active',
         threadId: running.id,
@@ -376,46 +430,54 @@ export async function createConversationFromRequest(
   }
 
   let created: { environment: EnvironmentRow; thread: ConversationThreadRow };
+  const environmentId = crypto.randomUUID();
+  let personalPath: string | undefined;
+  if (choice.kind === 'personal') {
+    try {
+      personalPath = await resolvePersonalTargetPathOnHost(ctx, hostId, environmentId);
+    } catch (error) {
+      throw mapHostError(error);
+    }
+  }
   try {
-  created = ctx.db.transaction(() => {
-    const environmentId = crypto.randomUUID();
-    const path = choice.kind === 'worktree'
-      ? resolveManagedTargetPath({ dataDir: ctx.dataDir, environmentId, sourcePath: project.path })
-      : choice.kind === 'personal'
-        ? resolvePersonalTargetPath({ dataDir: ctx.dataDir, environmentId })
-        : project.path;
-    const environment = createEnvironment(ctx.db, {
-      id: environmentId,
-      projectId: project.id,
-      hostId,
-      path,
-      workspaceProvisionType: choice.kind === 'worktree' ? 'managed-worktree' : choice.kind === 'personal' ? 'personal' : 'unmanaged',
-      branchName: choice.kind === 'worktree'
-        ? buildManagedBranchName({ threadId: environmentId, branchSlug: choice.branchSlug })
-        : null,
-      baseBranch: choice.kind === 'worktree' ? choice.baseBranch ?? null : null,
-      status: 'provisioning'
+    created = ctx.db.transaction(() => {
+      const path = choice.kind === 'worktree'
+        ? resolveManagedTargetPath({ dataDir: ctx.dataDir, environmentId, sourcePath: project.path })
+        : choice.kind === 'personal'
+          ? personalPath!
+          : workspacePath;
+      const environment = createEnvironment(ctx.db, {
+        id: environmentId,
+        projectId: project.id,
+        hostId,
+        path,
+        workspaceProvisionType: choice.kind === 'worktree' ? 'managed-worktree' : choice.kind === 'personal' ? 'personal' : 'unmanaged',
+        branchName: choice.kind === 'worktree'
+          ? buildManagedBranchName({ threadId: environmentId, branchSlug: choice.branchSlug })
+          : null,
+        baseBranch: choice.kind === 'worktree' ? choice.baseBranch ?? null : null,
+        status: 'provisioning'
+      });
+      const thread = createConversationThread(ctx.db, {
+        id: requestedId,
+        projectId: project.id,
+        hostId,
+        environmentId: environment.id,
+        providerId,
+        title: threadTitle(input, textPrompt),
+        status: 'starting'
+      });
+      emitPluginThreadEvent(ctx, {
+        name: 'thread.created',
+        threadId: thread.id,
+        projectId: thread.projectId
+      });
+      return { environment, thread };
     });
-    const thread = createConversationThread(ctx.db, {
-      id: requestedId,
-      projectId: project.id,
-      hostId,
-      environmentId: environment.id,
-      providerId,
-      title: threadTitle(input, prompt),
-      status: 'starting'
-    });
-    emitPluginThreadEvent(ctx, {
-      name: 'thread.created',
-      threadId: thread.id,
-      projectId: thread.projectId
-    });
-    return { environment, thread };
-  });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!message.includes('UNIQUE constraint failed: environments.')) throw error;
-    const path = choice.kind === 'unmanaged' ? project.path : null;
+    const path = choice.kind === 'unmanaged' ? workspacePath : null;
     const existing = path ? findProjectEnvironmentByHostPath(ctx.db, project.id, hostId, path) : null;
     if (!existing) throw error;
     choice = { kind: 'reuse', environmentId: existing.id };
@@ -425,7 +487,7 @@ export async function createConversationFromRequest(
       hostId,
       environmentId: existing.id,
       providerId,
-      title: threadTitle(input, prompt),
+      title: threadTitle(input, textPrompt),
       status: 'starting'
     });
     emitPluginThreadEvent(ctx, {
@@ -440,7 +502,7 @@ export async function createConversationFromRequest(
     const provisioned = await ctx.hostHub.callHostOnlineRpc<EnvironmentProvisionResult>({
       hostId,
       command: {
-        ...provisionCommandFor(created.environment, project, choice, input.checkout),
+        ...provisionCommandFor(created.environment, project, choice, input.checkout, workspacePath),
         initiator: { threadId: created.thread.id, provisioningId: created.environment.id }
       }
     });
@@ -457,14 +519,16 @@ export async function createConversationFromRequest(
       hostId,
       project,
       thread: created.thread,
-      prompt,
+      prompt: textPrompt,
+      hostPrompt: prompt,
       environmentId: created.environment.id,
-      input,
-      remoteToolProxy
+      input: { ...input, promptInput: resolvedPromptInput },
+      remoteToolProxy,
+      dropCwd
     });
     const running = updateConversationThreadStatus(ctx.db, created.thread.id, 'active') ?? created.thread;
     ctx.hub.emit('threads:updated', conversationThreadView(ctx, running));
-    requestAutoThreadTitle(ctx, input, running.id, prompt);
+    requestAutoThreadTitle(ctx, input, running.id, textPrompt);
     emitPluginThreadEvent(ctx, {
       name: 'thread.active',
       threadId: running.id,

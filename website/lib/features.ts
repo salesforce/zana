@@ -31,9 +31,9 @@ export const FEATURES: FeatureDetail[] = [
     title: 'Multi-project cockpit',
     tagline: 'One window for every project and every session.',
     body:
-      'New Chat starts a Thread with Claude Code, Cursor, OpenCode, Codex, or Pi. Legacy Agent is still a real PTY when you want the native terminal. Switch projects or harnesses without losing anything that is running.',
+      'New Chat starts a Thread with Claude Code, Cursor, OpenCode, Codex, or Pi. CLI Agent is still a real PTY when you want the native terminal. Switch projects or harnesses without losing anything that is running.',
     points: [
-      'Thread is the default; Legacy Agent is a real PTY',
+      'Thread is the default; CLI Agent is a real PTY',
       'Tabbed workspace with a command palette',
       'Switch projects without losing a session'
     ]

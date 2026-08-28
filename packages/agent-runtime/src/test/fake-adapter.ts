@@ -19,6 +19,11 @@ import {
   decodeNormalizedProviderToolCallRequest,
   BuildInteractiveResponseArgs,
 } from "@zana-ai/zcc-provider-bridge-protocol/bridge-kit";
+import {
+  THREAD_DELTA_NOTIFICATION_METHOD,
+  threadDeltaSchema,
+  type ThreadDelta,
+} from "@zana-ai/zcc-provider-bridge-protocol";
 import type {
   DecodedInteractiveRequest,
   DecodedToolCallRequest,
@@ -309,7 +314,105 @@ function toFakeEventMessage(
   };
 }
 
+function translateThreadDelta(event: ProviderRuntimeEvent): ThreadEvent[] {
+  if (!isRecord(event.params)) return [];
+  const threadId =
+    typeof event.params.threadId === "string" ? event.params.threadId : "";
+  if (!threadId || !Array.isArray(event.params.deltas)) return [];
+  const events: ThreadEvent[] = [];
+  let turnId = "";
+  for (const raw of event.params.deltas) {
+    const parsed = threadDeltaSchema.safeParse(raw);
+    if (!parsed.success) continue;
+    const delta = parsed.data;
+    if ("providerTurnId" in delta && typeof delta.providerTurnId === "string") {
+      turnId = delta.providerTurnId;
+    }
+    events.push(...translateFakeDelta(threadId, turnId, delta));
+  }
+  return events;
+}
+
+function translateFakeDelta(
+  threadId: string,
+  turnId: string,
+  delta: ThreadDelta,
+): ThreadEvent[] {
+  switch (delta.kind) {
+    case "turn.open":
+      if (!turnId) return [];
+      return [
+        {
+          type: "turn/started",
+          threadId,
+          providerThreadId: "",
+          scope: turnScope(turnId),
+        },
+      ];
+    case "input.accepted": {
+      const parsedId = clientTurnRequestIdSchema.safeParse(delta.clientRequestId);
+      if (!parsedId.success || !turnId) return [];
+      return [
+        {
+          type: "turn/input/accepted",
+          threadId,
+          providerThreadId: "",
+          scope: turnScope(turnId),
+          clientRequestId: parsedId.data,
+        },
+      ];
+    }
+    case "item.open": {
+      if (delta.item.type !== "agentMessage" || !turnId) return [];
+      const id = delta.key.providerItemId ?? "msg";
+      return [
+        {
+          type: "item/started",
+          threadId,
+          providerThreadId: "",
+          scope: turnScope(turnId),
+          item: { type: "agentMessage", id, text: delta.item.text },
+        },
+      ];
+    }
+    case "item.close": {
+      if (delta.item.type !== "agentMessage" || !turnId) return [];
+      const id = delta.key.providerItemId ?? "msg";
+      return [
+        {
+          type: "item/completed",
+          threadId,
+          providerThreadId: "",
+          scope: turnScope(turnId),
+          item: { type: "agentMessage", id, text: delta.item.text },
+        },
+      ];
+    }
+    case "turn.boundary": {
+      if (!turnId) return [];
+      return [
+        {
+          type: "turn/completed",
+          threadId,
+          providerThreadId: "",
+          scope: turnScope(turnId),
+          status:
+            delta.status === "failed" || delta.status === "interrupted"
+              ? delta.status
+              : "completed",
+        },
+      ];
+    }
+    default:
+      return [];
+  }
+}
+
 function translateEventMessage(event: ProviderRuntimeEvent): ThreadEvent[] {
+  if (event.method === THREAD_DELTA_NOTIFICATION_METHOD) {
+    return translateThreadDelta(event);
+  }
+
   const message = toFakeEventMessage(event);
   if (!message) {
     return [];

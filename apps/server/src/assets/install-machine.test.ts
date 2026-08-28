@@ -75,4 +75,13 @@ describe('install-machine.sh flags', () => {
     expect(fromNix.status).toBe(0);
     expect(fromNix.stdout.trim()).toBe(nixNode);
   });
+
+  it('keeps the daemon without systemd when the user bus is missing', () => {
+    const source = spawnSync('sh', ['-c', `grep -E "systemd_user_available|nohup |No systemd user bus" ${JSON.stringify(script)}`], {
+      encoding: 'utf8'
+    });
+    expect(source.stdout).toContain('systemd_user_available');
+    expect(source.stdout).toContain('nohup ');
+    expect(source.stdout).toContain('No systemd user bus');
+  });
 });

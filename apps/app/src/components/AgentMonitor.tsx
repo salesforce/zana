@@ -137,8 +137,8 @@ export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) 
     return (
       <div className="agent-monitor agent-monitor--empty">
         <Bot size={28} aria-hidden="true" />
-        <h4>No agents or threads</h4>
-        <p>Start a Claude session or a thread and it will appear here to watch live.</p>
+        <h4>No agents</h4>
+        <p>Start an agent and it will appear here to watch live.</p>
       </div>
     );
   }

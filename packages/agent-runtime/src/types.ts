@@ -9,6 +9,7 @@ import type {
   PendingInteractionResolution,
   PromptInput,
   ProviderFork,
+  ProviderRecoveryKind,
   RuntimeThreadExecutionOptions,
   ThreadEvent,
   ToolCallRequest,
@@ -78,6 +79,19 @@ export interface AgentRuntimeProcessExitInfo {
   stderr: string | null;
 }
 
+/**
+ * A bridge's `provider/recovery` notification, stamped with the provider it
+ * came from. `threadId` is the bb thread for session-scoped hints and absent
+ * for provider-wide ones (`authRequired`, account-level `rateLimited`).
+ */
+export interface AgentRuntimeProviderRecoveryHint {
+  providerId: string;
+  threadId?: string;
+  kind: ProviderRecoveryKind;
+  message: string;
+  retryable: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Runtime options
 // ---------------------------------------------------------------------------
@@ -134,6 +148,18 @@ export interface AgentRuntimeOptions {
 
   /** Called when a provider process exits unexpectedly. */
   onProcessExit?: (info: AgentRuntimeProcessExitInfo) => void;
+  /**
+   * The retry ladder for a request a bridge rejected with a retryable
+   * `rateLimited` recovery hint: one re-send per entry, after that delay.
+   * Default: [2s, 8s]. Tests shorten it.
+   */
+  rateLimitRetry?: { delaysMs?: readonly number[] };
+  /**
+   * Called when a bridge raises a typed `provider/recovery` hint, after the
+   * runtime has recorded it for the action it drives. A runtime signal, never
+   * a timeline event.
+   */
+  onProviderRecovery?: (hint: AgentRuntimeProviderRecoveryHint) => void;
 }
 
 // ---------------------------------------------------------------------------

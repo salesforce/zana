@@ -22,6 +22,8 @@ import type { AppModule } from '@zana-ai/zcc-extension-sdk/renderer';
 import { getHost } from '../../modules/ModulePanelHost.js';
 import { resolveIcon } from '../../lib/resolveIcon.js';
 import { evaluateWhen, type WhenContext } from './whenContext.js';
+import { buildPluginPaletteItems } from './plugin-palette-actions.js';
+import type { PluginCommandPaletteActionRegistration } from '@zana-ai/zcc-plugin-sdk';
 
 /** A category a palette item belongs to, used for empty-query grouping. */
 export type PaletteCategory = 'Projects' | 'Tabs' | 'Actions' | 'Extensions';
@@ -75,6 +77,9 @@ export interface PaletteBuildContext {
   reopenLastClosed: (projectId: string) => Promise<{ id: string } | null>;
   restoreLastDetached: (projectId: string) => Promise<string | null>;
   pushToast: (message: string, kind?: 'info' | 'error') => void;
+  commandPaletteActions?: readonly PluginCommandPaletteActionRegistration[];
+  threadId?: string | null;
+  projectId?: string | null;
 }
 
 /**
@@ -598,6 +603,11 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
     ...tabItems,
     ...actions,
     ...openWindowItems,
-    ...buildExtensionItems(ctx)
+    ...buildExtensionItems(ctx),
+    ...buildPluginPaletteItems(
+      ctx.commandPaletteActions ?? [],
+      { threadId: ctx.threadId ?? null, projectId: ctx.projectId ?? null },
+      ctx.onClose
+    )
   ];
 }

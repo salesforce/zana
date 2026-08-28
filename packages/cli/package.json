@@ -1,7 +1,7 @@
 {
   "name": "@zcc/cli",
   "version": "0.1.0",
-  "description": "Thin CLI for reading/authoring Zana Command Center stores",
+  "description": "CLI for the Zana Command Center product API",
   "license": "MIT",
   "type": "module",
   "bin": {

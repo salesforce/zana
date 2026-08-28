@@ -2,15 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { archiveThread } from './environment-cleanup.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import {
-  getEnvironment,
   getThread,
   updateThreadStatus
 } from '@zana-ai/zcc-db';
 
 vi.mock('@zana-ai/zcc-db', () => ({
   getThread: vi.fn(),
-  getConversationThread: vi.fn(() => null),
-  archiveConversationThread: vi.fn(),
   updateThreadStatus: vi.fn(),
   countLiveThreadsForEnvironment: vi.fn(() => 0),
   getEnvironment: vi.fn(() => null),
@@ -32,7 +29,6 @@ const thread = {
 beforeEach(() => {
   vi.mocked(getThread).mockReset();
   vi.mocked(updateThreadStatus).mockReset();
-  vi.mocked(getEnvironment).mockReset().mockReturnValue(null);
 });
 
 describe('archiveThread', () => {

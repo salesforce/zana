@@ -40,3 +40,34 @@ describe('collectTestPluginApp', () => {
     expect(set.pluginId).toBe('notes');
   });
 });
+
+describe('createFakePluginHost sdk stubs', () => {
+  it('throws until inbox and projects callbacks are wired', async () => {
+    const bare = createFakePluginHost({ pluginId: 'bare' });
+    await expect(bare.zcc.sdk.inbox.push({ projectId: 'p', comments: 'x' })).rejects.toThrow(/not available/);
+    await expect(bare.zcc.sdk.projects.list()).rejects.toThrow(/not available/);
+    const wired = createFakePluginHost({
+      pluginId: 'wired',
+      pushInbox: async (args) => ({ id: `inb:${args.projectId}` }),
+      listProjects: async () => [{ id: 'p1', name: 'A' }]
+    });
+    await expect(wired.zcc.sdk.inbox.push({ projectId: 'p1', comments: 'hi' })).resolves.toEqual({
+      id: 'inb:p1'
+    });
+    await expect(wired.zcc.sdk.projects.list()).resolves.toEqual([{ id: 'p1', name: 'A' }]);
+  });
+
+  it('throws until thread archive fork and unarchive callbacks are wired', async () => {
+    const bare = createFakePluginHost({ pluginId: 'bare' });
+    await expect(bare.zcc.sdk.threads.archive({ threadId: 't1' })).rejects.toThrow(/not available/);
+    const wired = createFakePluginHost({
+      pluginId: 'wired',
+      archiveThread: async (args) => ({ id: args.threadId }),
+      forkThread: async (args) => ({ id: `fork:${args.threadId}` }),
+      unarchiveThread: async (args) => ({ id: args.threadId })
+    });
+    await expect(wired.zcc.sdk.threads.archive({ threadId: 't1' })).resolves.toEqual({ id: 't1' });
+    await expect(wired.zcc.sdk.threads.fork({ threadId: 't1' })).resolves.toEqual({ id: 'fork:t1' });
+    await expect(wired.zcc.sdk.threads.unarchive({ threadId: 't1' })).resolves.toEqual({ id: 't1' });
+  });
+});

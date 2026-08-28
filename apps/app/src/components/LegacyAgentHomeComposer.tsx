@@ -1,39 +1,45 @@
 import { product } from '../lib/product-client.js';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, Folder, Loader2, Maximize2, Mic, Minimize2, Paperclip } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowUp, Folder, Loader2, Mic, Paperclip } from 'lucide-react';
 import type { HarnessAdapterDescriptor, HarnessModelTarget } from '@zana-ai/zcc-domain/harness-adapter';
 import type {
   EffectiveHarnessDefaultResult,
   HarnessFamily,
   HarnessModelRoutingV1,
   LaunchProfileId,
-  Project
+  Project,
+  TerminalSession
 } from '@zana-ai/zcc-domain/product';
 import { buildLaunchArgs } from './AgentLauncher.js';
-import { LauncherModelPicker } from './LauncherModelPicker.js';
 import { EnvironmentPicker, defaultWorkspaceChoice, type WorkspacePickerValue } from './EnvironmentPicker.js';
-import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import {
   CommandComposer,
   ComposerIconButton,
   ComposerToolbar
 } from './ui/CommandComposer.js';
-import { AttachmentPills } from './ui/AttachmentPills.js';
 import { VoiceRecordingBar } from './thread/voice/VoiceRecordingBar.js';
 import { useVoiceInput } from './thread/voice/useVoiceInput.js';
 import { useData, usePersonas, useUi } from '../store.js';
 import { useShallow } from 'zustand/react/shallow';
-import { useFileDrop } from '../hooks/useFileDrop.js';
 import { posixQuote } from '../lib/quote.js';
-import { hasDesktopBridge } from '../lib/app-surface.js';
-import { appendAttachmentContext, attachmentName, mergeAttachmentPaths } from '../lib/attachments.js';
+import { attachmentName } from '../lib/attachments.js';
+import { persistComposerImages } from '../lib/prompt-attachments.js';
+import { ComposerProjectPicker } from './ComposerProjectPicker.js';
+import { composerProjectOptions, resolveComposerProjectId } from './composer-project-default.js';
+import { ModelReasoningPicker } from './thread/pickers/ModelReasoningPicker.js';
+import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
+import { ComposerPromptField } from './composer/ComposerPromptField.js';
+import { useComposerPromptField } from './composer/use-composer-prompt-field.js';
+import { composerProvidersFromCatalog } from './thread/pickers/fallback-models.js';
 import {
-  composerProjectLabel,
-  composerProjectOptions,
-  DEFAULT_COMPOSER_WORKSPACE_LABEL,
-  resolveComposerProjectId
-} from './composer-project-default.js';
-import { availableAgentHarnesses, PROFILE_BY_FAMILY } from './legacy-agent-home.js';
+  absolutePathMentions,
+  assembleCliLaunchPrompt,
+  availableAgentHarnesses,
+  familyForThreadProviderId,
+  PROFILE_BY_FAMILY,
+  rewritePromptPaths,
+  threadProviderIdForFamily
+} from './legacy-agent-home.js';
 
 const EMPTY_MODELS: readonly HarnessModelTarget[] = [];
 
@@ -42,9 +48,15 @@ const EMPTY_MODELS: readonly HarnessModelTarget[] = [];
  * this file is the only home-page caller of `createTerminal`.
  */
 export function LegacyAgentHomeComposer({
-  project: pinnedProject
+  project: pinnedProject,
+  initialText,
+  onLaunched,
+  onClose
 }: {
   project?: Project;
+  initialText?: string;
+  onLaunched?: (session: TerminalSession, projectId: string) => void;
+  onClose?: () => void;
 }) {
   const projects = useData((s) => s.projects);
   const loadProjects = useData((s) => s.loadProjects);
@@ -58,7 +70,6 @@ export function LegacyAgentHomeComposer({
   const harnessOpenCodeEnabled = useData((s) => s.harnessOpenCodeEnabled);
   const selectTab = useUi((s) => s.selectTab);
   const pushToast = useUi((s) => s.pushToast);
-  const [prompt, setPrompt] = useState('');
   const [projectId, setProjectId] = useState(pinnedProject?.id ?? '');
   const [familyId, setFamilyId] = useState<HarnessFamily | ''>('');
   const [automaticProfile, setAutomaticProfile] = useState<LaunchProfileId | null>(null);
@@ -71,33 +82,33 @@ export function LegacyAgentHomeComposer({
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
-  const [attachments, setAttachments] = useState<string[]>([]);
   const [workspace, setWorkspace] = useState<WorkspacePickerValue>(() => defaultWorkspaceChoice(false));
-  const canAttach = hasDesktopBridge();
   const ensureScratchRef = useRef(false);
   const selectionGeneration = useRef(0);
   const descriptorGeneration = useRef(0);
+  const launchRef = useRef<() => void>(() => undefined);
   const launchProjects = useMemo(() => composerProjectOptions(projects), [projects]);
-  const projectOptions = launchProjects;
   const harnesses = useMemo(() => availableAgentHarnesses(descriptors), [descriptors]);
   const project = pinnedProject ?? launchProjects.find((candidate) => candidate.id === projectId);
   const selectedHarness = harnesses.find((descriptor) => descriptor.id === familyId);
   const models: readonly HarnessModelTarget[] = selectedHarness?.targets?.models ?? EMPTY_MODELS;
-  const addAttachments = (paths: string[]) => {
-    setAttachments((current) => mergeAttachmentPaths(current, paths));
-  };
-  const { dropOver, dropHandlers } = useFileDrop(
-    (paths) => addAttachments(paths.split('\n')),
-    (paths) => paths.join('\n')
-  );
-  const insertVoiceTranscript = useCallback((text: string) => {
-    setPrompt((current) => {
-      const next = text.endsWith(' ') ? text : `${text} `;
-      if (!current) return next;
-      return current.endsWith(' ') || current.endsWith('\n') ? `${current}${next}` : `${current} ${next}`;
-    });
-  }, []);
-  const voice = useVoiceInput({ onTranscript: insertVoiceTranscript });
+
+  const field = useComposerPromptField({
+    placeholder: 'Describe the task… Leave empty to open an interactive session',
+    testId: 'legacy-agent-command-input',
+    ariaLabel: 'Instruction for the CLI agent',
+    projectId,
+    projectRoot: project?.path,
+    projects,
+    disabled: launching,
+    initialText,
+    slashCatalog: { kind: 'cli' },
+    onSubmit: () => {
+      launchRef.current();
+    },
+    onError: setError
+  });
+  const voice = useVoiceInput({ onTranscript: field.insertText });
   const voiceBusy = voice.state === 'recording' || voice.state === 'transcribing';
 
   useEffect(() => {
@@ -198,6 +209,7 @@ export function LegacyAgentHomeComposer({
   const launch = async () => {
     if (!project || !familyId || launching || selectionState !== 'resolved' || resolvedProjectId !== projectId) return;
     if (selectionProvenance === 'explicit' && !selectedHarness) return;
+    if (field.typeaheadOpen) return;
     const profile = selectionProvenance === 'automatic'
       ? automaticProfile
       : selectedHarness?.defaultProfileId ?? PROFILE_BY_FAMILY[familyId];
@@ -205,21 +217,25 @@ export function LegacyAgentHomeComposer({
     setError(null);
     setLaunching(true);
     try {
-      let attachmentPaths = attachments;
-      if (project.remote && attachments.length > 0) {
-        const uploaded: string[] = [];
-        for (const localPath of attachments) {
+      const serialized = field.serialize();
+      let promptText = serialized.text;
+      if (project.remote) {
+        const uploaded: Array<{ from: string; to: string }> = [];
+        for (const localPath of absolutePathMentions(serialized.mentions)) {
           const result = await product.fs.uploadToRemote(project.id, localPath, '.');
           if (!result.ok || !result.path) {
             pushToast(result.message ?? `Failed to upload ${attachmentName(localPath)}`, 'error');
             return;
           }
-          uploaded.push(result.path);
+          uploaded.push({ from: localPath, to: posixQuote(result.path) });
           pushToast(`Uploaded ${attachmentName(localPath)} to ${project.remote.host}`);
         }
-        attachmentPaths = uploaded.map(posixQuote);
+        promptText = rewritePromptPaths(promptText, uploaded);
       }
-      const launchedPrompt = appendAttachmentContext(prompt, attachmentPaths);
+      const imagePaths = field.images.length === 0
+        ? []
+        : await persistComposerImages(project.id, field.images);
+      const launchedPrompt = assembleCliLaunchPrompt({ text: promptText, imagePaths });
       const args = buildLaunchArgs(
         launchedPrompt,
         selectedHarness?.label ?? familyId
@@ -237,11 +253,15 @@ export function LegacyAgentHomeComposer({
         isolateScratch: project.quickAgent ? args.title || true : undefined
       });
       if (!session) return;
-      setPrompt('');
-      setAttachments([]);
-      useUi.getState().enterProjectFocus(project.id);
-      selectTab(project.id, session.id);
-      useUi.getState().openAgentModal(session.id, project.id);
+      field.clear();
+      if (onLaunched) {
+        onLaunched(session, project.id);
+      } else {
+        useUi.getState().enterProjectFocus(project.id);
+        selectTab(project.id, session.id);
+        if (!onClose) useUi.getState().openAgentModal(session.id, project.id);
+      }
+      onClose?.();
     } catch (err) {
       const message = `Agent launch failed: ${err instanceof Error ? err.message : String(err)}`;
       setError(message);
@@ -250,13 +270,34 @@ export function LegacyAgentHomeComposer({
       setLaunching(false);
     }
   };
+  launchRef.current = () => {
+    void launch();
+  };
+
+  const harnessProviderOptions = composerProvidersFromCatalog(
+    harnesses.flatMap((descriptor) => {
+      const providerId = threadProviderIdForFamily(descriptor.id);
+      return providerId
+        ? [{ id: providerId, displayName: descriptor.label, permissionModes: [], composerActions: [] }]
+        : [];
+    }),
+    false,
+    'claude-code'
+  ).map((row) => ({ value: row.id, label: row.displayName }));
 
   return (
-    <div
-      className={`thread-command-composer${expanded ? ' is-expanded' : ''}${dropOver ? ' is-drop-over' : ''}${launching ? ' is-sending' : ''}`}
-      {...dropHandlers}
+    <PluginComposerChrome
+      scope={{ kind: 'new-thread', projectId: projectId || null }}
+      text={field.text}
+      setText={field.setText}
+      focus={field.focus}
     >
-      <span id="legacy-agent-command-label" className="thread-command-label">Legacy agent composer</span>
+    <div
+      className={`thread-command-composer${expanded ? ' is-expanded' : ''}${field.dropOver ? ' is-drop-over' : ''}${launching ? ' is-sending' : ''}`}
+      onKeyDown={field.handleChromeKeyDown}
+      {...field.dropHandlers}
+    >
+      <span id="legacy-agent-command-label" className="thread-command-label">CLI agent composer</span>
       {error ? (
         <p className="thread-command-error" data-testid="legacy-agent-command-error">{error}</p>
       ) : null}
@@ -268,36 +309,19 @@ export function LegacyAgentHomeComposer({
         labelledBy="legacy-agent-command-label"
         aria-busy={launching}
       >
-        <AttachmentPills
-          paths={attachments}
-          onRemove={(path) => setAttachments((current) => current.filter((item) => item !== path))}
+        <ComposerPromptField
+          editor={field.editor}
+          images={field.images}
+          onRemoveImage={field.removeImage}
+          expanded={expanded}
+          onToggleExpanded={() => setExpanded((current) => !current)}
+          expandTestId="legacy-agent-command-expand"
+          menuOpen={field.menuOpen}
+          suggestions={field.suggestions}
+          selectedIndex={field.highlighted}
+          triggerKind={field.triggerKind}
+          onApply={field.applySuggestion}
         />
-        <div className="thread-command-editor-slot">
-          <ComposerIconButton
-            className="thread-command-expand"
-            aria-label={expanded ? 'Make prompt box smaller' : 'Make prompt box larger'}
-            title={expanded ? 'Make prompt box smaller' : 'Make prompt box larger'}
-            data-testid="legacy-agent-command-expand"
-            onClick={() => setExpanded((current) => !current)}
-          >
-            {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-          </ComposerIconButton>
-          <textarea
-            className="thread-command-editor"
-            data-testid="legacy-agent-command-input"
-            value={prompt}
-            placeholder="Describe the task… Leave empty to open an interactive session"
-            aria-label="Instruction for the legacy agent"
-            disabled={launching}
-            onChange={(event) => setPrompt(event.target.value)}
-            onKeyDown={(event) => {
-              if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-                event.preventDefault();
-                void launch();
-              }
-            }}
-          />
-        </div>
         <ComposerToolbar>
           {voiceBusy ? (
             <VoiceRecordingBar
@@ -309,22 +333,18 @@ export function LegacyAgentHomeComposer({
           ) : (
             <>
               <div className="thread-command-footer-start">
-                <PopoverPicklist
-                  ariaLabel="Agent harness"
-                  value={familyId}
-                  disabled={harnesses.length === 0}
-                  searchable={false}
-                  placeholder={
-                    harnesses.length === 0
-                      ? 'No agent harness available'
-                      : selectionState === 'unavailable'
-                        ? 'Choose an available harness'
-                        : 'Resolving default harness'
+                <ModelReasoningPicker
+                  providerOptions={harnessProviderOptions}
+                  selectedProviderId={
+                    (familyId && threadProviderIdForFamily(familyId))
+                    || harnessProviderOptions[0]?.value
+                    || ''
                   }
-                  options={harnesses.map((descriptor) => ({ value: descriptor.id, label: descriptor.label }))}
-                  onChange={(nextFamilyId) => {
+                  onSelectedProviderChange={(nextProviderId) => {
+                    const nextFamilyId = familyForThreadProviderId(nextProviderId);
+                    if (!nextFamilyId) return;
                     selectionGeneration.current += 1;
-                    setFamilyId(nextFamilyId as HarnessFamily);
+                    setFamilyId(nextFamilyId);
                     setAutomaticProfile(null);
                     setModelId('');
                     setSelectionProvenance('explicit');
@@ -332,21 +352,18 @@ export function LegacyAgentHomeComposer({
                     setResolvedProjectId(projectId);
                     setSelectionMessage(null);
                   }}
+                  modelValue={modelId}
+                  modelOptions={models.map((model) => ({ value: model.id, label: model.label }))}
+                  modelIsLoading={selectionState === 'loading'}
+                  onModelChange={setModelId}
+                  disabled={harnessProviderOptions.length === 0}
                 />
-                {models.length > 0 && (
-                  <LauncherModelPicker
-                    id="home-legacy-agent-model"
-                    models={models}
-                    value={modelId}
-                    onChange={setModelId}
-                  />
-                )}
               </div>
               <div className="thread-command-footer-end">
                 <ComposerIconButton
-                  onClick={() => { if (!canAttach) return; void product.fs.pickFiles().then(addAttachments); }}
-                  disabled={!canAttach}
-                  title={canAttach ? 'Attach files' : 'File attachments require the desktop app'}
+                  onClick={() => { if (!field.canAttach) return; field.attachPickedFiles(); }}
+                  disabled={!field.canAttach}
+                  title={field.canAttach ? 'Attach files' : 'File attachments require the desktop app'}
                   aria-label="Attach files"
                 >
                   <Paperclip size={14} aria-hidden="true" />
@@ -396,9 +413,9 @@ export function LegacyAgentHomeComposer({
         <div className="thread-command-composer-meta-start">
           <div className="thread-command-chip">
             <Folder size={14} aria-hidden="true" />
-            <PopoverPicklist
+            <ComposerProjectPicker
+              projects={projects}
               value={projectId}
-              options={projectOptions.map((row) => ({ value: row.id, label: composerProjectLabel(row) }))}
               onChange={(nextProjectId) => {
                 selectionGeneration.current += 1;
                 setResolvedProjectId(null);
@@ -408,8 +425,6 @@ export function LegacyAgentHomeComposer({
                 setModelId('');
                 setProjectId(nextProjectId);
               }}
-              ariaLabel="Project"
-              placeholder={DEFAULT_COMPOSER_WORKSPACE_LABEL}
               disabled={Boolean(pinnedProject)}
               title={pinnedProject ? 'Workspace is locked to this project' : undefined}
             />
@@ -426,5 +441,6 @@ export function LegacyAgentHomeComposer({
         </div>
       </div>
     </div>
+    </PluginComposerChrome>
   );
 }

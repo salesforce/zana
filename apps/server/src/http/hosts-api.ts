@@ -5,6 +5,8 @@ import {
   hostProviderCliInstallRequestSchema,
   hostBootstrapRequestSchema,
   hostSshIdentityRequestSchema,
+  hostPathsExistRequestSchema,
+  hostPickFolderRequestSchema,
   updateHostPermissionCeilingRequestSchema
 } from '@zana-ai/zcc-server-contract';
 import {
@@ -43,6 +45,8 @@ function emitHostsChanged(ctx: ProductHttpContext): void {
 function connectedSet(ctx: ProductHttpContext): Set<string> {
   return new Set(ctx.hostHub.connectedHostIds());
 }
+
+const FOLDER_PICKER_TIMEOUT_MS = 10 * 60 * 1000;
 
 function requireHost(ctx: ProductHttpContext, id: string) {
   const row = getHost(ctx.db, id);
@@ -199,30 +203,99 @@ export async function handleHostsApi(
       sendJson(response, 400, { error: 'invalid directory query' });
       return true;
     }
-    const root = query.data.path ?? host.homeDir;
-    if (!root) {
-      sendJson(response, 409, { error: 'host home directory is unknown' });
+    try {
+      ctx.hostHub.ensureHostSessionReady(host.id);
+      const result = await ctx.hostHub.callHostOnlineRpc<{
+        directory: string;
+        parent: string | null;
+        entries: Array<{ name: string; kind: 'file' | 'directory'; path: string }>;
+      }>({
+        hostId: host.id,
+        command: query.data.path
+          ? { type: 'host.browse_directory', path: query.data.path }
+          : { type: 'host.browse_directory' }
+      });
+      sendJson(response, 200, result);
+    } catch (error) {
+      if (error instanceof HostUnavailableError) {
+        sendJson(response, 503, { error: error.message });
+        return true;
+      }
+      sendJson(response, 502, { error: error instanceof Error ? error.message : String(error) });
+    }
+    return true;
+  }
+
+  const pathsExist = routeParams(path, '/api/v1/hosts/:id/paths/exist');
+  if (pathsExist && method === 'POST') {
+    const host = requireHost(ctx, pathsExist.id);
+    if (!host) {
+      sendJson(response, 404, { error: 'host not found' });
+      return true;
+    }
+    let body: unknown;
+    try {
+      body = await readJsonBody(request);
+    } catch {
+      sendJson(response, 400, { error: 'invalid JSON' });
+      return true;
+    }
+    const parsed = hostPathsExistRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      sendJson(response, 400, { error: 'invalid paths exist request' });
       return true;
     }
     try {
       ctx.hostHub.ensureHostSessionReady(host.id);
-      const result = await ctx.hostHub.callHostOnlineRpc<{
-        entries: Array<{ name: string; kind: 'file' | 'directory'; path: string }>;
-      }>({
+      const result = await ctx.hostHub.callHostOnlineRpc({
         hostId: host.id,
-        command: { type: 'host.list_dir', root, relPath: '' }
+        command: { type: 'host.paths_exist', paths: parsed.data.paths }
       });
-      const parentIndex = root.lastIndexOf('/');
-      const parent = root === '/' ? null : (parentIndex <= 0 ? '/' : root.slice(0, parentIndex));
-      sendJson(response, 200, {
-        directory: root,
-        parent,
-        entries: result.entries.map((entry) => ({
-          kind: entry.kind,
-          name: entry.name,
-          path: entry.path
-        }))
+      sendJson(response, 200, result);
+    } catch (error) {
+      if (error instanceof HostUnavailableError) {
+        sendJson(response, 503, { error: error.message });
+        return true;
+      }
+      sendJson(response, 502, { error: error instanceof Error ? error.message : String(error) });
+    }
+    return true;
+  }
+
+  const pickFolder = routeParams(path, '/api/v1/hosts/:id/pick-folder');
+  if (pickFolder && method === 'POST') {
+    const host = requireHost(ctx, pickFolder.id);
+    if (!host) {
+      sendJson(response, 404, { error: 'host not found' });
+      return true;
+    }
+    let body: unknown;
+    try {
+      body = await readJsonBody(request);
+    } catch {
+      sendJson(response, 400, { error: 'invalid JSON' });
+      return true;
+    }
+    const parsed = hostPickFolderRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      sendJson(response, 400, { error: 'invalid pick-folder request' });
+      return true;
+    }
+    if (parsed.data.clientHostId !== host.id) {
+      sendJson(response, 409, {
+        error: 'native_picker_unavailable',
+        message: 'Native folder picker is only available when the browser helper and work host are on the same machine'
       });
+      return true;
+    }
+    try {
+      ctx.hostHub.ensureHostSessionReady(host.id);
+      const result = await ctx.hostHub.callHostOnlineRpc({
+        hostId: host.id,
+        timeoutMs: FOLDER_PICKER_TIMEOUT_MS,
+        command: { type: 'host.pick_folder' }
+      });
+      sendJson(response, 200, result);
     } catch (error) {
       if (error instanceof HostUnavailableError) {
         sendJson(response, 503, { error: error.message });

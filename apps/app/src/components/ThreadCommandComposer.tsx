@@ -1,11 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent } from 'react';
-import { useEditor, EditorContent } from '@tiptap/react';
-import { ArrowUp, Folder, Laptop, Loader2, Maximize2, Mic, Minimize2, Square } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { ArrowUp, Folder, Laptop, Loader2, Mic, Paperclip, Square } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { Project } from '@zana-ai/zcc-domain/product';
 import type { ThreadContextWindowUsage } from '@zana-ai/zcc-server-contract';
-import { apiJson } from '../lib/fetch-with-app-surface.js';
-import { COMPOSER_COMMANDS_RELOAD_EVENT } from '../lib/composer-commands-reload.js';
 import { product } from '../lib/product-client.js';
 import { useData } from '../store.js';
 import { useThreads } from '../thread-store.js';
@@ -22,7 +19,9 @@ import { HostSshIdentityDialog } from './HostSshIdentityDialog.js';
 import { ComposerHostActionChip } from './ComposerHostActionChip.js';
 import {
   bootstrapOutcome,
+  composerHostsForProject,
   composerRemoteToolsMark,
+  isForeignExecutionHost,
   resolveComposerHostAction,
   shouldBlockComposerSend,
   shouldShowHostPicker
@@ -42,47 +41,23 @@ import {
 } from './thread/pickers/composer-mode.js';
 import { fallbackProviderOption } from './thread/pickers/fallback-models.js';
 import { useThreadComposerOptions } from './thread/pickers/useThreadComposerOptions.js';
-import { ComposerTypeaheadMenu } from './composer/ComposerTypeaheadMenu.js';
-import {
-  commandsFromComposerActions,
-  commandsFromPluginSkills,
-  mergeCommandCatalogs
-} from './composer/filter-composer-suggestions.js';
 import { VoiceRecordingBar } from './thread/voice/VoiceRecordingBar.js';
 import { useVoiceInput } from './thread/voice/useVoiceInput.js';
-import {
-  droppedPathsFromDataTransfer,
-  isComposerPathDrag,
-  mentionContentForDroppedPaths
-} from './composer/composer-file-drop.js';
-import { findActiveTrigger } from './composer/find-active-trigger.js';
-import { mentionAttrsForSuggestion } from './composer/mention-attrs.js';
-import { serializePromptEditor } from './composer/serialize-prompt-editor.js';
-import {
-  nextSuggestionIndex,
-  typeaheadKeyAction
-} from './composer/typeahead-keyboard.js';
-import { COMPOSER_TRIGGERS, type ActiveTrigger, type TypeaheadSuggestion } from './composer/types.js';
-import { useComposerSuggestions } from './composer/use-composer-suggestions.js';
+import { persistComposerImages } from '../lib/prompt-attachments.js';
 import { isBusyThreadStatus, shouldShowThreadStop } from './thread/thread-timeline-model.js';
 import { ThreadContextMeter } from './thread/ThreadContextMeter.js';
-import {
-  composerProjectLabel,
-  composerProjectOptions,
-  DEFAULT_COMPOSER_WORKSPACE_LABEL,
-  resolveComposerProjectId
-} from './composer-project-default.js';
+import { ComposerProjectPicker } from './ComposerProjectPicker.js';
+import { resolveComposerProjectId } from './composer-project-default.js';
 import { useBooleanPreference } from '../lib/use-boolean-preference.js';
 import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
 import {
-  composerPromptExtensions,
-  MARKDOWN_IN_PROMPT_DEFAULT,
-  MARKDOWN_IN_PROMPT_KEY,
   NAVIGATE_TO_THREAD_ON_CREATE_DEFAULT,
   NAVIGATE_TO_THREAD_ON_CREATE_KEY,
   resolveThreadSendMode
 } from '../lib/thread-composer-preferences.js';
 import { COMPOSER_INSERT_EVENT } from './thread/secondary-panel/SecondaryPanelSelectionActions.js';
+import { ComposerPromptField } from './composer/ComposerPromptField.js';
+import { useComposerPromptField } from './composer/use-composer-prompt-field.js';
 
 export type ThreadSendMode = 'start' | 'auto' | 'steer' | 'queue-if-active' | 'steer-if-active';
 
@@ -124,12 +99,8 @@ export function ThreadCommandComposer({
   const projects = useData((s) => s.projects);
   const loadProjects = useData((s) => s.loadProjects);
   const upsertThread = useThreads((s) => s.upsert);
-  const [commands, setCommands] = useState<Array<{ name: string; description: string }>>([]);
-  const [commandsLoaded, setCommandsLoaded] = useState(false);
-  const [commandsEpoch, setCommandsEpoch] = useState(0);
   const [projectId, setProjectId] = useState(pinnedProject?.id ?? '');
   const ensureScratchRef = useRef(false);
-  const projectOptions = useMemo(() => composerProjectOptions(projects), [projects]);
   const options = useThreadComposerOptions({
     threadId,
     lockedProviderId,
@@ -143,24 +114,10 @@ export function ThreadCommandComposer({
     NAVIGATE_TO_THREAD_ON_CREATE_KEY,
     NAVIGATE_TO_THREAD_ON_CREATE_DEFAULT
   );
-  const [markdownInPrompt] = useBooleanPreference(
-    MARKDOWN_IN_PROMPT_KEY,
-    MARKDOWN_IN_PROMPT_DEFAULT
-  );
   const [expanded, setExpanded] = useState(false);
   const [workspace, setWorkspace] = useState<WorkspacePickerValue>(() => defaultWorkspaceChoice(false));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [trigger, setTrigger] = useState<ActiveTrigger | null>(null);
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const submitRef = useRef<(opts?: { modifierEnter?: boolean }) => void>(() => undefined);
-  const dismissedRef = useRef<{ from: number; to: number } | null>(null);
-  const typeaheadRef = useRef({
-    open: false,
-    applyCurrent: () => {},
-    move: (_delta: number) => {},
-    dismiss: () => {}
-  });
   const cycleComposerModeRef = useRef<(event: {
     key: string;
     shiftKey: boolean;
@@ -170,41 +127,24 @@ export function ThreadCommandComposer({
     preventDefault: () => void;
     stopPropagation: () => void;
   }) => boolean>(() => false);
-  const insertDroppedMentionsRef = useRef<(event: DragEvent) => boolean>(() => false);
-  const restoreFocusAfterSubmitRef = useRef(false);
-  const [dropOver, setDropOver] = useState(false);
-  const dropOverRef = useRef(false);
-  dropOverRef.current = dropOver;
+  const submitRef = useRef<(opts?: { modifierEnter?: boolean }) => void>(() => undefined);
   const selectedProject = pinnedProject ?? projects.find((row) => row.id === projectId);
   const hosts = useHosts();
+  const pickerHosts = useMemo(
+    () => composerHostsForProject(hosts, selectedProject),
+    [hosts, selectedProject]
+  );
   const publicAppUrl = usePublicAppUrl();
   const threads = useThreads((s) => s.threads);
   const currentThread = threadId ? threads.find((row) => row.id === threadId) : undefined;
-  const [hostId, setHostId] = useState(() => defaultHostId(hosts, pinnedProject?.hostId));
+  const [hostId, setHostId] = useState(() => defaultHostId(hosts, pinnedProject));
   const [hostBusy, setHostBusy] = useState<string | null>(null);
   const [pairingCommand, setPairingCommand] = useState<string | null>(null);
   const [sshPick, setSshPick] = useState<{ hostId: string; name: string } | null>(null);
-  const [remoteToolProxy, setRemoteToolProxy] = useState(false);
 
   useEffect(() => {
-    setHostId(defaultHostId(hosts, selectedProject?.hostId));
-  }, [hosts, selectedProject?.hostId]);
-
-  useEffect(() => {
-    if (!selectedProject?.remote || selectedProject.hostId) {
-      setRemoteToolProxy(false);
-      return;
-    }
-    let cancelled = false;
-    product.projectSettings.get(selectedProject.id)
-      .then((settings) => {
-        if (!cancelled) setRemoteToolProxy(settings.remoteToolProxy === true);
-      })
-      .catch(() => {
-        if (!cancelled) setRemoteToolProxy(false);
-      });
-    return () => { cancelled = true; };
-  }, [selectedProject?.id, selectedProject?.remote, selectedProject?.hostId]);
+    setHostId(defaultHostId(hosts, selectedProject));
+  }, [hosts, selectedProject]);
 
   const hostAction = useMemo(
     () => resolveComposerHostAction({
@@ -217,21 +157,8 @@ export function ThreadCommandComposer({
   );
   const hostSendBlocked = shouldBlockComposerSend(hostAction, selectedProject);
   const showHostPicker = shouldShowHostPicker(hosts, selectedProject);
-  const remoteToolsMark = composerRemoteToolsMark(selectedProject, remoteToolProxy);
-
-  const syncTrigger = useCallback((editor: Parameters<typeof findActiveTrigger>[0]) => {
-    const next = findActiveTrigger(editor, COMPOSER_TRIGGERS);
-    if (
-      next
-      && dismissedRef.current
-      && next.from === dismissedRef.current.from
-      && next.to === dismissedRef.current.to
-    ) {
-      return;
-    }
-    dismissedRef.current = null;
-    setTrigger(next);
-  }, []);
+  const remoteToolsMark = composerRemoteToolsMark(selectedProject, currentThread?.hostId ?? hostId);
+  const foreignHost = isForeignExecutionHost(selectedProject, hosts, hostId);
 
   useEffect(() => {
     if (pinnedProject) {
@@ -258,264 +185,6 @@ export function ThreadCommandComposer({
     };
   }, [loadProjects, pinnedProject, projectId, projects]);
 
-  useEffect(() => {
-    const bump = () => setCommandsEpoch((current) => current + 1);
-    const offApps = product.pluginApps.onChanged(() => bump());
-    const offSkills = product.skills.onChanged(() => bump());
-    window.addEventListener(COMPOSER_COMMANDS_RELOAD_EVENT, bump);
-    return () => {
-      offApps();
-      offSkills();
-      window.removeEventListener(COMPOSER_COMMANDS_RELOAD_EVENT, bump);
-    };
-  }, []);
-
-  useEffect(() => {
-    const provider = options.provider ?? fallbackProviderOption(options.providerId);
-    const fallback = commandsFromComposerActions(provider.composerActions, provider.displayName);
-    setCommands(fallback);
-    setCommandsLoaded(true);
-
-    let cancelled = false;
-    const fromHttp = projectId
-      ? product.threads.commands(projectId)
-        .then((body) => body.commands.filter((row) => !row.providerId || row.providerId === options.providerId))
-        .catch(() => [])
-      : Promise.resolve([]);
-    const fromPlugins = apiJson<{
-      pluginSkills?: Array<{ name: string; enabled?: boolean; skillNames?: string[] }>;
-    }>('/plugins/contributions')
-      .then((body) => commandsFromPluginSkills(body.pluginSkills ?? []))
-      .catch(() => []);
-    const fromPalette = product.commands.list(selectedProject?.path).catch(() => []);
-
-    void Promise.all([fromHttp, fromPlugins, fromPalette]).then(([httpRows, pluginRows, paletteRows]) => {
-      if (cancelled) return;
-      setCommands(mergeCommandCatalogs([
-        fallback,
-        pluginRows,
-        httpRows.map((row) => ({ name: row.name, description: row.description ?? '' })),
-        paletteRows.map((row) => ({ name: row.invocation, description: row.description ?? '' }))
-      ]));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [options.provider, options.providerId, projectId, selectedProject?.path, commandsEpoch]);
-
-  const editor = useEditor({
-    immediatelyRender: false,
-    extensions: composerPromptExtensions(
-      markdownInPrompt,
-      threadId
-        ? 'Ask for a follow-up. @ to mention files, folders, or threads'
-        : 'Ask anything. @ to mention files, folders, or threads'
-    ),
-    editorProps: {
-      attributes: {
-        class: 'ui-command-composer-input thread-command-editor',
-        'data-testid': 'thread-command-input'
-      },
-      handleDrop: (_view, event) => {
-        if (!insertDroppedMentionsRef.current(event)) return false;
-        event.stopPropagation();
-        return true;
-      },
-      handleDOMEvents: {
-        dragover: (_view, event) => {
-          if (!isComposerPathDrag(Array.from(event.dataTransfer?.types ?? []))) return false;
-          event.preventDefault();
-          if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
-          if (!dropOverRef.current) {
-            dropOverRef.current = true;
-            setDropOver(true);
-          }
-          return false;
-        }
-      },
-      handleKeyDown: (_view, event) => {
-        if (cycleComposerModeRef.current(event)) return true;
-        const menu = typeaheadRef.current;
-        if (menu.open) {
-          const action = typeaheadKeyAction(event);
-          if (action === 'next') {
-            event.preventDefault();
-            menu.move(1);
-            return true;
-          }
-          if (action === 'prev') {
-            event.preventDefault();
-            menu.move(-1);
-            return true;
-          }
-          if (action === 'apply') {
-            event.preventDefault();
-            menu.applyCurrent();
-            return true;
-          }
-          if (action === 'dismiss') {
-            event.preventDefault();
-            menu.dismiss();
-            return true;
-          }
-          if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-            event.preventDefault();
-            return true;
-          }
-        }
-        if (
-          event.key === 'Enter'
-          && !event.shiftKey
-          && !event.altKey
-          && !event.metaKey
-          && !event.ctrlKey
-          && !event.isComposing
-        ) {
-          event.preventDefault();
-          submitRef.current({ modifierEnter: false });
-          return true;
-        }
-        return false;
-      }
-    },
-    onUpdate: ({ editor: next }) => syncTrigger(next),
-    onSelectionUpdate: ({ editor: next }) => syncTrigger(next)
-  }, [markdownInPrompt, threadId]);
-
-  const seededInitialText = useRef(false);
-  useEffect(() => {
-    if (!editor || seededInitialText.current || !initialText) return;
-    seededInitialText.current = true;
-    const chain = editor.chain().insertContent(initialText);
-    if (autoFocus) chain.focus();
-    chain.run();
-  }, [autoFocus, editor, initialText]);
-
-  useEffect(() => {
-    if (!editor || !autoFocus || initialText) return;
-    editor.commands.focus();
-  }, [autoFocus, editor, initialText]);
-
-  useEffect(() => {
-    if (!editor) return;
-    editor.setEditable(!busy);
-    if (busy || !restoreFocusAfterSubmitRef.current) return;
-    const frame = requestAnimationFrame(() => {
-      if (editor.isDestroyed) return;
-      restoreFocusAfterSubmitRef.current = false;
-      editor.commands.focus('end', { scrollIntoView: false });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [busy, editor]);
-
-  const insertDroppedMentions = useCallback((event: DragEvent, atDropPoint: boolean): boolean => {
-    const data = event.dataTransfer;
-    if (!editor || !data) return false;
-    const paths = droppedPathsFromDataTransfer({
-      types: Array.from(data.types),
-      files: Array.from(data.files),
-      items: data.items,
-      getData: (type) => data.getData(type),
-      pathForFile: (file) => product.files.pathForFile(file),
-      projectRoot: selectedProject?.path
-    });
-    if (paths.length === 0) return false;
-    event.preventDefault();
-    const chain = editor.chain().focus();
-    if (atDropPoint) {
-      const pos = editor.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
-      if (typeof pos === 'number') chain.setTextSelection(pos);
-    }
-    return chain.insertContent(mentionContentForDroppedPaths(paths)).run();
-  }, [editor, selectedProject?.path]);
-
-  insertDroppedMentionsRef.current = (event) => {
-    const inserted = insertDroppedMentions(event, true);
-    if (inserted) {
-      dropOverRef.current = false;
-      setDropOver(false);
-    }
-    return inserted;
-  };
-
-  const dropHandlers = {
-    onDragOver: (event: ReactDragEvent) => {
-      if (!isComposerPathDrag(Array.from(event.dataTransfer.types))) return;
-      event.preventDefault();
-      event.dataTransfer.dropEffect = 'copy';
-      if (!dropOverRef.current) {
-        dropOverRef.current = true;
-        setDropOver(true);
-      }
-    },
-    onDragLeave: (event: ReactDragEvent) => {
-      if (event.currentTarget === event.target) {
-        dropOverRef.current = false;
-        setDropOver(false);
-      }
-    },
-    onDrop: (event: ReactDragEvent) => {
-      if (!insertDroppedMentions(event.nativeEvent, false)) return;
-      event.preventDefault();
-      dropOverRef.current = false;
-      setDropOver(false);
-    }
-  };
-
-  const insertVoiceTranscript = useCallback((text: string) => {
-    editor?.chain().focus().insertContent(text.endsWith(' ') ? text : `${text} `).run();
-  }, [editor]);
-  useEffect(() => {
-    if (!editor || !threadId) return;
-    const onInsert = (event: Event) => {
-      const detail = (event as CustomEvent<{ threadId?: string; text?: string }>).detail;
-      if (!detail?.text || detail.threadId !== threadId) return;
-      insertVoiceTranscript(detail.text);
-    };
-    window.addEventListener(COMPOSER_INSERT_EVENT, onInsert);
-    return () => window.removeEventListener(COMPOSER_INSERT_EVENT, onInsert);
-  }, [editor, insertVoiceTranscript, threadId]);
-  const voice = useVoiceInput({ onTranscript: insertVoiceTranscript });
-  const voiceBusy = voice.state === 'recording' || voice.state === 'transcribing';
-
-  const { suggestions, menuOpen } = useComposerSuggestions({
-    trigger,
-    projectId,
-    projects,
-    commands,
-    commandsLoaded
-  });
-  const highlighted = suggestions.length === 0 ? 0 : Math.min(selectedIndex, suggestions.length - 1);
-
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [trigger?.from, trigger?.kind, trigger?.query]);
-
-  const applySuggestion = useCallback((item: TypeaheadSuggestion) => {
-    if (!editor || !trigger) return;
-    dismissedRef.current = null;
-    editor.chain().focus().deleteRange({ from: trigger.from, to: trigger.to }).insertContent([
-      { type: 'mention', attrs: mentionAttrsForSuggestion(item) },
-      { type: 'text', text: ' ' }
-    ]).run();
-    setTrigger(null);
-  }, [editor, trigger]);
-
-  typeaheadRef.current = {
-    open: menuOpen,
-    applyCurrent: () => {
-      const item = suggestions[highlighted];
-      if (item) applySuggestion(item);
-    },
-    move: (delta) => {
-      setSelectedIndex(nextSuggestionIndex(highlighted, suggestions.length, delta));
-    },
-    dismiss: () => {
-      if (trigger) dismissedRef.current = { from: trigger.from, to: trigger.to };
-      setTrigger(null);
-    }
-  };
-
   const permissionOptions = permissionModeOptionsFor(
     options.provider?.permissionModes ?? ['accept-edits', 'full']
   );
@@ -523,7 +192,10 @@ export function ThreadCommandComposer({
     ? options.providerId
     : options.providers.find((row) => row.id === 'fake')?.id
       ?? (options.providers.some((row) => row.id === options.providerId) ? options.providerId : options.providers[0]?.id);
-  const canSend = Boolean(threadId || ((pinnedProject || projectId) && resolvedProviderId));
+  const canSend = Boolean(
+    threadId
+    || ((pinnedProject || projectId) && resolvedProviderId && options.rosterReady)
+  );
 
   const composerModes = useMemo(
     () => composerModesForActions(options.provider?.composerActions ?? []),
@@ -550,6 +222,45 @@ export function ThreadCommandComposer({
   useEffect(() => {
     if (!composerModes.includes(composerMode)) setComposerMode('agent');
   }, [composerMode, composerModes]);
+
+  const provider = options.provider ?? fallbackProviderOption(options.providerId);
+  const field = useComposerPromptField({
+    placeholder: threadId
+      ? 'Ask for a follow-up. @ to mention files, folders, or threads'
+      : 'Ask anything. @ to mention files, folders, or threads',
+    testId: 'thread-command-input',
+    projectId,
+    threadId,
+    projectRoot: selectedProject?.path,
+    projects,
+    disabled: busy,
+    autoFocus,
+    initialText,
+    slashCatalog: {
+      kind: 'thread',
+      providerId: options.providerId,
+      composerActions: provider.composerActions,
+      providerDisplayName: provider.displayName
+    },
+    onSubmit: (opts) => {
+      void submitRef.current(opts);
+    },
+    interceptKeyDown: (event) => cycleComposerModeRef.current(event),
+    onError: setError
+  });
+
+  useEffect(() => {
+    if (!threadId) return;
+    const onInsert = (event: Event) => {
+      const detail = (event as CustomEvent<{ threadId?: string; text?: string }>).detail;
+      if (!detail?.text || detail.threadId !== threadId) return;
+      field.insertText(detail.text);
+    };
+    window.addEventListener(COMPOSER_INSERT_EVENT, onInsert);
+    return () => window.removeEventListener(COMPOSER_INSERT_EVENT, onInsert);
+  }, [field.insertText, threadId]);
+  const voice = useVoiceInput({ onTranscript: field.insertText });
+  const voiceBusy = voice.state === 'recording' || voice.state === 'transcribing';
 
   const runPeerDaemon = useCallback(async (kind: 'install' | 'fix', targetHostId?: string) => {
     const project = pinnedProject ?? projects.find((row) => row.id === projectId);
@@ -594,22 +305,38 @@ export function ThreadCommandComposer({
   }, [hostAction, hosts, runPeerDaemon]);
 
   const submit = useCallback(async (opts?: { modifierEnter?: boolean }) => {
-    if (busy || sendBlocked || hostSendBlocked || typeaheadRef.current.open) return;
-    const serialized = serializePromptEditor(editor?.getJSON());
-    if (!serialized.text.trim()) {
+    if (busy || sendBlocked || hostSendBlocked || field.typeaheadOpen) return;
+    const serialized = field.serialize();
+    if (!serialized.text.trim() && field.images.length === 0) {
       setError('Enter a message first');
-      editor?.commands.focus();
+      field.focus();
       return;
     }
     const selected = pinnedProject ?? projects.find((row) => row.id === projectId);
     if (!threadId && !selected) {
       setError('Select a project first');
-      editor?.commands.focus();
+      field.focus();
       return;
     }
     if (!threadId && !resolvedProviderId) {
-      setError('No thread provider is available');
-      editor?.commands.focus();
+      setError('No agent provider is available');
+      field.focus();
+      return;
+    }
+    if (!threadId && !options.rosterReady) {
+      setError('Still loading providers');
+      field.focus();
+      return;
+    }
+    if (!threadId && !options.registeredProviderIds.includes(resolvedProviderId)) {
+      setError('That harness is not available for Modern threads.');
+      field.focus();
+      return;
+    }
+    const persistProjectId = selected?.id ?? projectId;
+    if (field.images.some((image) => !image.path) && !persistProjectId) {
+      setError('Select a project first');
+      field.focus();
       return;
     }
     const sendMode = resolveThreadSendMode({
@@ -618,17 +345,27 @@ export function ThreadCommandComposer({
       modifierEnter: opts?.modifierEnter === true
     });
     const text = applyComposerModePrefix(serialized.text, composerMode);
-    const input = [{ type: 'text' as const, text, mentions: serialized.mentions }];
-    restoreFocusAfterSubmitRef.current = true;
+    field.markRestoreFocus();
     setError(null);
     setBusy(true);
     try {
+      const imagePaths = field.images.length === 0
+        ? []
+        : await persistComposerImages(persistProjectId, field.images);
+      const input = [
+        ...(text.trim() ? [{ type: 'text' as const, text, mentions: serialized.mentions }] : []),
+        ...imagePaths.map((path) => ({ type: 'localImage' as const, path }))
+      ];
+      if (input.length === 0) {
+        setError('Enter a message first');
+        return;
+      }
       if (threadId) {
         await product.threads.send(threadId, input, sendMode, {
           model: options.model,
           reasoningLevel: options.reasoningLevel
         });
-        editor?.commands.clearContent();
+        field.clear();
         return;
       }
       const created = await product.threads.create({
@@ -636,8 +373,8 @@ export function ThreadCommandComposer({
         providerId: resolvedProviderId!,
         input,
         hostId,
-        environment: workspace,
-        cwd: selected!.path,
+        environment: selected!.quickAgent && foreignHost ? { kind: 'personal' } : workspace,
+        cwd: foreignHost ? undefined : selected!.path,
         permissionMode: permissionMode as 'accept-edits' | 'auto' | 'full',
         model: options.model,
         reasoningLevel: options.reasoningLevel
@@ -647,7 +384,7 @@ export function ThreadCommandComposer({
         return;
       }
       upsertThread(created.value);
-      editor?.commands.clearContent();
+      field.clear();
       onCreated?.(created.value.id);
       if (navigateOnCreate) {
         navigate(getThreadRoutePath(
@@ -664,13 +401,15 @@ export function ThreadCommandComposer({
     busy,
     sendBlocked,
     hostSendBlocked,
+    field,
     composerMode,
-    editor,
     navigate,
     navigateOnCreate,
     onCreated,
     options.model,
     options.reasoningLevel,
+    options.rosterReady,
+    options.providers,
     permissionMode,
     pinnedProject,
     projectId,
@@ -684,7 +423,8 @@ export function ThreadCommandComposer({
     threadId,
     upsertThread,
     workspace,
-    hostId
+    hostId,
+    foreignHost
   ]);
 
   submitRef.current = (opts) => {
@@ -692,15 +432,7 @@ export function ThreadCommandComposer({
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
-    if (cycleComposerModeRef.current(event)) return;
-    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-      if (typeaheadRef.current.open) {
-        event.preventDefault();
-        return;
-      }
-      event.preventDefault();
-      void submit({ modifierEnter: true });
-    }
+    field.handleChromeKeyDown(event);
   };
 
   const sendButton = (
@@ -726,56 +458,41 @@ export function ThreadCommandComposer({
     </ComposerIconButton>
   );
 
-  const composerText = editor ? serializePromptEditor(editor.getJSON()).text : '';
-  const setComposerText = useCallback((next: string) => {
-    editor?.commands.setContent(next);
-  }, [editor]);
-  const composerFocus = useCallback(() => {
-    editor?.commands.focus();
-  }, [editor]);
-
   return (
     <>
     <PluginComposerChrome
       scope={threadId ? { kind: 'thread', threadId } : { kind: 'new-thread', projectId: projectId ?? null }}
-      text={composerText}
-      setText={setComposerText}
-      focus={composerFocus}
+      text={field.text}
+      setText={field.setText}
+      focus={field.focus}
     >
     <div
-      className={`thread-command-composer${expanded ? ' is-expanded' : ''}${dropOver ? ' is-drop-over' : ''}${busy ? ' is-sending' : ''}`}
+      className={`thread-command-composer${expanded ? ' is-expanded' : ''}${field.dropOver ? ' is-drop-over' : ''}${busy ? ' is-sending' : ''}`}
       onKeyDown={onKeyDown}
-      {...dropHandlers}
+      {...field.dropHandlers}
     >
-      <span id="thread-command-label" className="thread-command-label">Thread composer</span>
+      <span id="thread-command-label" className="thread-command-label">Agent composer</span>
       {error ? (
         <p className="thread-command-error" data-testid="thread-command-error">{error}</p>
       ) : null}
       <CommandComposer
-        className={`home-agent-command thread-command-card${dropOver ? ' is-drop-over' : ''}`}
+        className={`home-agent-command thread-command-card${field.dropOver ? ' is-drop-over' : ''}`}
         labelledBy="thread-command-label"
         aria-busy={busy}
       >
-        <div className="thread-command-editor-slot">
-          <ComposerIconButton
-            className="thread-command-expand"
-            aria-label={expanded ? 'Make prompt box smaller' : 'Make prompt box larger'}
-            title={expanded ? 'Make prompt box smaller' : 'Make prompt box larger'}
-            data-testid="thread-command-expand"
-            onClick={() => setExpanded((current) => !current)}
-          >
-            {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-          </ComposerIconButton>
-          <EditorContent editor={editor} />
-        </div>
-        {menuOpen && (
-          <ComposerTypeaheadMenu
-            suggestions={suggestions}
-            selectedIndex={highlighted}
-            triggerKind={trigger?.kind === 'command' ? 'command' : 'mention'}
-            onApply={applySuggestion}
-          />
-        )}
+        <ComposerPromptField
+          editor={field.editor}
+          images={field.images}
+          onRemoveImage={field.removeImage}
+          expanded={expanded}
+          onToggleExpanded={() => setExpanded((current) => !current)}
+          expandTestId="thread-command-expand"
+          menuOpen={field.menuOpen}
+          suggestions={field.suggestions}
+          selectedIndex={field.highlighted}
+          triggerKind={field.triggerKind}
+          onApply={field.applySuggestion}
+        />
         <ComposerToolbar>
           {voiceBusy ? (
             <VoiceRecordingBar
@@ -811,6 +528,14 @@ export function ThreadCommandComposer({
               </div>
               <div className="thread-command-footer-end">
                 <ThreadContextMeter usage={contextWindowUsage} />
+                <ComposerIconButton
+                  onClick={() => { if (!field.canAttach) return; field.attachPickedFiles(); }}
+                  disabled={!field.canAttach}
+                  title={field.canAttach ? 'Attach files' : 'File attachments require the desktop app'}
+                  aria-label="Attach files"
+                >
+                  <Paperclip size={14} aria-hidden="true" />
+                </ComposerIconButton>
                 <ComposerIconButton
                   className="voice-input-btn voice-input-btn--icon"
                   aria-label={
@@ -855,7 +580,7 @@ export function ThreadCommandComposer({
             <>
               <span className="thread-command-chip thread-command-env" data-testid="thread-env-label">
                 <Laptop size={14} aria-hidden="true" />
-                {environmentLabel ?? 'Local'}
+                {remoteToolsMark ?? environmentLabel ?? 'Local'}
               </span>
               <ComposerHostActionChip
                 action={hostAction}
@@ -866,32 +591,28 @@ export function ThreadCommandComposer({
                   ? () => void navigator.clipboard.writeText(pairingCommand)
                   : undefined}
               />
-              {remoteToolsMark ? (
-                <span className="thread-command-chip" data-testid="composer-remote-tools-mark">
-                  {remoteToolsMark}
-                </span>
-              ) : null}
             </>
           ) : (
             <>
               <div className="thread-command-chip">
                 <Folder size={14} aria-hidden="true" />
-                <PopoverPicklist
+                <ComposerProjectPicker
+                  projects={projects}
                   value={projectId}
-                  options={projectOptions.map((row) => ({ value: row.id, label: composerProjectLabel(row) }))}
                   onChange={setProjectId}
-                  ariaLabel="Project"
-                  placeholder={DEFAULT_COMPOSER_WORKSPACE_LABEL}
                   disabled={Boolean(pinnedProject)}
                   title={pinnedProject ? 'Workspace is locked to this project' : undefined}
                 />
               </div>
-              <EnvironmentPicker projectId={projectId} value={workspace} onChange={setWorkspace} />
-              {showHostPicker && hosts.length > 0 && (
+              {!selectedProject?.remote && !foreignHost && (
+                <EnvironmentPicker projectId={projectId} value={workspace} onChange={setWorkspace} />
+              )}
+              {showHostPicker && pickerHosts.length > 0 && (
                 <div className="thread-command-chip">
                   <Laptop size={14} aria-hidden="true" />
                   <HostMachinePicker
-                    hosts={hosts}
+                    hosts={pickerHosts}
+                    project={selectedProject}
                     value={hostId}
                     onChange={setHostId}
                     includeDisconnected

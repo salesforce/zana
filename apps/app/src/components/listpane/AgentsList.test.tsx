@@ -39,8 +39,8 @@ describe('AgentsListPane', () => {
     const html = renderToStaticMarkup(<MemoryRouter><AgentsListPane /></MemoryRouter>);
 
     expect(html).toContain('aria-label="Open full-width Agents list"');
-    expect(html).toContain('aria-label="New thread/agent"');
-    expect(html).toContain('New thread/agent');
+    expect(html).toContain('aria-label="New agent"');
+    expect(html).toContain('New agent');
     expect(html).not.toContain('Legacy PTY');
     expect(html).not.toContain('aria-expanded');
   });
@@ -61,7 +61,7 @@ describe('AgentsListPane', () => {
     expect(source).not.toContain('getNewThreadRoutePath');
     expect(source).not.toContain('getRootRoutePath');
     expect(source).not.toContain('agents-legacy-new');
-    expect(source).toContain('aria-label="New thread/agent"');
+    expect(source).toContain('aria-label="New agent"');
     expect(source).toContain('threadIdFromPath');
     expect(source).toContain('agents-row-needs-you');
   });

@@ -20,6 +20,8 @@ import { createCoalescedRunner } from '../../lib/coalesced-runner.js';
 import { getThreadRoutePath } from '../../lib/route-paths.js';
 import { useRouteState } from '../../hooks/useRouteState.js';
 import { pendingChildThreads, useThreads } from '../../thread-store.js';
+import { useData } from '../../store.js';
+import { composerRemoteToolsMark } from '../../components/composer-host-status.js';
 import { ThreadPendingInteractionBanner } from '../../components/thread/pending-interactions/ThreadPendingInteractionBanner.js';
 import { ChildThreadPendingBanners } from '../../components/thread/pending-interactions/ChildThreadPendingBanners.js';
 import {
@@ -81,10 +83,11 @@ export function ThreadDetail({
   const pendingInteractions = useOpenPendingInteractions(threadId);
   const panel = useThreadSecondaryPanel(threadId);
   useInAppBrowserPanel(threadId, panel);
-  const [title, setTitle] = useState('Thread');
+  const [title, setTitle] = useState('Agent');
   const [status, setStatus] = useState('starting');
   const [cwd, setCwd] = useState<string | null>(null);
   const [projectId, setProjectId] = useState<string | null>(null);
+  const project = useData((s) => (projectId ? s.projects.find((row) => row.id === projectId) ?? null : null));
   const [environmentId, setEnvironmentId] = useState<string | null>(null);
   const [isWorktree, setIsWorktree] = useState(false);
   const [branchName, setBranchName] = useState<string | null>(null);
@@ -147,7 +150,7 @@ export function ThreadDetail({
           reasoningLevel?: string | null;
         };
         const nextStatus = thread.status ?? timeline.status;
-        setTitle(thread.title?.trim() || 'Thread');
+        setTitle(thread.title?.trim() || 'Agent');
         setStatus(nextStatus);
         setCwd(typeof thread.cwd === 'string' ? thread.cwd : null);
         setProjectId(typeof thread.projectId === 'string' ? thread.projectId : null);
@@ -181,7 +184,12 @@ export function ThreadDetail({
             isWorktree: thread.isWorktree ?? false,
             archivedAt: thread.archivedAt ?? null,
             parentThreadId: (thread as { parentThreadId?: string | null }).parentThreadId ?? null,
-            hasPendingInteraction: Boolean((thread as { hasPendingInteraction?: boolean }).hasPendingInteraction)
+            hasPendingInteraction: Boolean((thread as { hasPendingInteraction?: boolean }).hasPendingInteraction),
+            lastReadSeq: typeof timeline.lastReadSeq === 'number' ? timeline.lastReadSeq : null,
+            maxSeq: typeof timeline.maxSeq === 'number' ? timeline.maxSeq : 0,
+            updatedAt: typeof (thread as { updatedAt?: number }).updatedAt === 'number'
+              ? (thread as { updatedAt: number }).updatedAt
+              : undefined
           });
         }
         if (!isBusyThreadStatus(nextStatus) && !timelineHasInFlightRetry(timeline.rows as TimelineRow[]) && poll !== null) {
@@ -225,7 +233,10 @@ export function ThreadDetail({
     if (!threadId) return;
     void product.threads.read(threadId).then((body) => {
       const seq = (body.thread as { lastReadSeq?: number }).lastReadSeq;
-      if (typeof seq === 'number') setLastReadSeq(seq);
+      if (typeof seq !== 'number') return;
+      setLastReadSeq(seq);
+      const existing = useThreads.getState().threads.find((row) => row.id === threadId);
+      if (existing) useThreads.getState().upsert({ ...existing, lastReadSeq: seq });
     }).catch(() => undefined);
   }, [threadId]);
 
@@ -377,7 +388,7 @@ export function ThreadDetail({
       />
     );
   } else if (pin === 'diff') {
-    panelBody = <p className="thread-detail-empty">No environment is attached to this thread.</p>;
+    panelBody = <p className="thread-detail-empty">No environment is attached to this agent.</p>;
   }
 
   const awaitingUser = pendingInteractions.length > 0 || timelineRowsAwaitUser(rows);
@@ -498,11 +509,15 @@ export function ThreadDetail({
               />
               <ThreadCommandComposer
                 threadId={threadId}
+                project={project ?? undefined}
                 autoFocus={!embedded}
                 status={status}
                 inFlightRetry={inFlightRetry}
                 sendBlocked={pendingInteractions.length > 0}
-                environmentLabel={isWorktree ? 'This checkout' : 'Local'}
+                environmentLabel={
+                  composerRemoteToolsMark(project ?? undefined, threads.find((row) => row.id === threadId)?.hostId)
+                    ?? (isWorktree ? 'This checkout' : 'Local')
+                }
                 contextWindowUsage={contextWindow}
                 providerId={threadProviderId ?? undefined}
                 model={threadModel}

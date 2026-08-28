@@ -96,6 +96,7 @@ it("passes the canonical protocol suite against supervised fake app-server child
 
   const report = await runBridgeConformance({
     transport,
+    providerId: "codex",
     session: {
       cwd: workspaceDir,
       promptInput: [{ type: "text", text: "say hello", mentions: [] }],

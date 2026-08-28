@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { placePopoverMenu } from '../PopoverPicklist.js';
+import { picklistOptionVisible, placePopoverMenu, splitPicklistOptions } from '../PopoverPicklist.js';
 
 const source = readFileSync(
   join(fileURLToPath(new URL('../../../../../../packages/ui/src/popover-picklist.tsx', import.meta.url))),
@@ -19,6 +19,40 @@ describe('PopoverPicklist', () => {
     expect(source).toContain("event.key === 'Enter'");
     expect(source).toContain('placePopoverMenu(');
     expect(source).not.toContain('<select');
+  });
+
+  it('keeps sticky action rows visible while the list is filtered', () => {
+    expect(source).toContain('sticky?: boolean');
+    expect(source).toContain('picklistOptionVisible');
+    expect(source).toContain('splitPicklistOptions');
+    expect(source).toContain('launch-model-picker-menu--split');
+    expect(source).toContain('launch-model-picker-options');
+    expect(source).toContain('launch-model-picker-footer');
+    expect(picklistOptionVisible({ label: 'New project', sticky: true }, 'core')).toBe(true);
+    expect(picklistOptionVisible({ label: 'core-repo' }, 'core')).toBe(true);
+    expect(picklistOptionVisible({ label: 'Claude Sonnet', compactLabel: 'Sonnet' }, 'sonnet')).toBe(true);
+    expect(picklistOptionVisible({ label: 'Ask', description: 'Plan first' }, 'plan')).toBe(true);
+    expect(picklistOptionVisible({ label: 'core-repo' }, 'salesforce')).toBe(false);
+    expect(picklistOptionVisible({ label: 'Default Workspace' }, '')).toBe(true);
+  });
+
+  it('pins sticky actions below a filtered scrolling list', () => {
+    const split = splitPicklistOptions([
+      { value: 'alpha', label: 'alpha-repo' },
+      { value: 'core', label: 'core-repo' },
+      { value: 'new', label: 'New project', sticky: true },
+      { value: 'none', label: "Don't work in a project", sticky: true }
+    ], 'core');
+    expect(split.items.map((row) => row.value)).toEqual(['core']);
+    expect(split.sticky.map((row) => row.value)).toEqual(['new', 'none']);
+    expect(splitPicklistOptions([
+      { value: 'alpha', label: 'alpha-repo' },
+      { value: 'new', label: 'New project', sticky: true }
+    ], 'zzz').items).toEqual([]);
+    expect(splitPicklistOptions([
+      { value: 'alpha', label: 'alpha-repo' },
+      { value: 'new', label: 'New project', sticky: true }
+    ], 'zzz', false).items.map((row) => row.value)).toEqual(['alpha']);
   });
 });
 

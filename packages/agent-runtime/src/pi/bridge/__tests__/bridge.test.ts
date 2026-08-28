@@ -126,6 +126,7 @@ import {
 } from "../output-guard.js";
 import { PI_BRIDGE_SESSION_DIR_ENV } from "../session-paths.js";
 import {
+  assembleCapturedThreadEvents,
   createBridgeJsonRpcTestHarness,
   type BridgeJsonRpcObject,
   type BridgeJsonRpcOutputMessage,
@@ -199,13 +200,11 @@ function turnSteerParams(
   return { ...turnStartParams(threadId, input), expectedTurnId };
 }
 
-/** The thread events a canonical session emitted, in order. */
+/** The thread events a canonical session assembled, in order. */
 function threadEvents(
   messages: readonly BridgeJsonRpcOutputMessage[],
 ): JsonValue[] {
-  return messages
-    .filter((message) => message.method === "thread/event")
-    .map((message) => (message.params as { event: JsonValue }).event);
+  return assembleCapturedThreadEvents(messages, "pi") as unknown as JsonValue[];
 }
 
 interface ControlledPiAgentSession {

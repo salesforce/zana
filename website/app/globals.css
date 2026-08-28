@@ -33,7 +33,7 @@
   --warn: #8d6515;
   --danger: #bc3039;
   --code-bg: #0d1117;
-  --code-text: #c9d1d9;
+  --code-text: #e6edf3;
   --shadow-sm: 0 1px 2px rgba(45, 42, 20, 0.06);
   --shadow-md: 0 12px 30px -16px rgba(60, 50, 20, 0.16);
   --shadow-lg: 0 40px 90px -44px rgba(60, 50, 20, 0.24);
@@ -80,7 +80,7 @@
   --warn: #e3b341;
   --danger: #ff7b72;
   --code-bg: #0d1117;
-  --code-text: #c9d1d9;
+  --code-text: #e6edf3;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 12px 32px -18px rgba(0, 0, 0, 0.85);
   --shadow-lg: 0 40px 120px -40px rgba(0, 0, 0, 0.9);
@@ -508,7 +508,7 @@ h1, h2, h3, h4 {
 .browser-frame figcaption { display: grid; gap: 5px; padding: 14px 16px 15px; border-top: 1px solid var(--border-soft); background: var(--panel); color: var(--muted); font-size: 13px; line-height: 1.5; }
 .browser-frame figcaption strong { color: var(--text-2); font-weight: 550; }
 .product-shot-image { position: relative; min-height: 100%; aspect-ratio: 16 / 10; background: var(--code-bg); }
-.product-shot-image img { object-fit: cover; }
+.product-shot-image img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .product-shot-placeholder { position: relative; isolation: isolate; display: grid; min-height: 380px; padding: 34px; overflow: hidden; align-content: center; gap: 18px; background: linear-gradient(145deg, #10151c, #0b0f15); }
 .product-shot-wide .product-shot-placeholder, .product-shot-wide .product-shot-image { aspect-ratio: 16 / 9; min-height: 0; }
 .product-shot-standard .product-shot-placeholder, .product-shot-standard .product-shot-image { aspect-ratio: 4 / 3; min-height: 0; }
@@ -887,25 +887,25 @@ a.card { color: inherit; display: block; }
 /* code */
 .prose pre {
   background: var(--code-bg); border: 1px solid var(--border); border-radius: 12px;
-  padding: 18px 20px; overflow-x: auto; font-size: 13px; line-height: 1.6; margin: 18px 0;
+  padding: 18px 20px; overflow-x: auto; font-size: 14px; line-height: 1.65; margin: 18px 0;
+  color: var(--code-text);
 }
 .prose code { font-family: var(--font-mono); font-size: 0.88em; }
 .prose pre code { color: var(--code-text); }
 .prose :not(pre) > code {
   background: var(--panel-3); padding: 2px 7px; border-radius: 6px;
-  border: 1px solid var(--border-soft); color: var(--accent-2); font-size: 0.85em;
+  border: 1px solid var(--border-soft); color: var(--accent-2); font-size: 0.9em;
 }
-[data-theme="dark"] .prose :not(pre) > code { color: #d9b8ff; }
+[data-theme="dark"] .prose :not(pre) > code { color: #e6c9ff; }
 
-/* shiki syntax highlighting (dual-theme, defaultColor:false → --shiki-light/dark
-   custom props per token). Pick the palette off the site theme; keep our own
-   pre chrome (border/radius/padding) rather than shiki's flat background. */
-.prose pre.shiki { background: var(--code-bg); }
+/* shiki dual-theme (defaultColor:false → --shiki-light/dark per token).
+   Code chrome stays dark in both site themes (--code-bg), so always use
+   github-dark tokens. Pairing --shiki-light with a dark pre painted dark
+   text on #0d1117 and made CLI dumps unreadable. */
+.prose pre.shiki { background: var(--code-bg); color: var(--code-text); }
 .prose pre.shiki code { color: inherit; }
-[data-theme="light"] .prose .shiki,
-[data-theme="light"] .prose .shiki span { color: var(--shiki-light); }
-[data-theme="dark"] .prose .shiki,
-[data-theme="dark"] .prose .shiki span { color: var(--shiki-dark); }
+.prose pre.shiki,
+.prose pre.shiki span { color: var(--shiki-dark, var(--code-text)); }
 
 /* copy button on code blocks */
 .code-wrap { position: relative; }
@@ -913,11 +913,32 @@ a.card { color: inherit; display: block; }
   position: absolute; top: 10px; right: 10px; z-index: 2;
   font-size: 11px; font-weight: 600; padding: 5px 10px; border-radius: 7px;
   border: 1px solid rgba(255, 255, 255, 0.14); background: rgba(255, 255, 255, 0.06);
-  color: #c7cbd6; cursor: pointer; opacity: 0; transition: opacity 0.14s var(--ease), background 0.14s var(--ease);
+  color: #e6edf3; cursor: pointer; opacity: 0.85; transition: opacity 0.14s var(--ease), background 0.14s var(--ease);
 }
 .code-wrap:hover .code-copy { opacity: 1; }
 .code-copy:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
 .code-copy.copied { color: var(--brand-3); border-color: rgba(63, 185, 80, 0.4); }
+
+/* mermaid diagrams (```mermaid fences). Source is the no-JS fallback; DocsEnhancer
+   swaps it for SVG and re-renders when the site theme changes. */
+.prose .doc-mermaid {
+  margin: 22px 0;
+  padding: 18px 16px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+}
+.prose .doc-mermaid .doc-mermaid-source {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.prose .doc-mermaid-svg { display: flex; justify-content: center; }
+.prose .doc-mermaid-svg svg { max-width: 100%; height: auto; }
 
 .prose table { border-collapse: collapse; width: 100%; margin: 20px 0; font-size: 14px; display: block; overflow-x: auto; }
 .prose th, .prose td { border: 1px solid var(--border); padding: 10px 14px; text-align: left; }
@@ -991,10 +1012,38 @@ main:has(.bb-hero) + footer { margin-top: 0; border-top-color: #e3e2dd; backgrou
 .bb-button-primary { border-color: #1d1e24; background: #1d1e24; color: #fff; box-shadow: 0 11px 28px rgba(29,30,36,.2); }
 .bb-button-primary:hover { color: #fff; border-color: #343641; background: #343641; }
 .bb-install-note { margin: 15px 0 0; color: #737985; font-size: 13px; }
-.bb-product-wrap { position: relative; max-width: 1280px; margin-top: 58px; padding: 0 32px; }
-.bb-product-shot { position: relative; z-index: 1; margin: 0; overflow: hidden; border: 1px solid #3a3d49; border-radius: 13px 13px 0 0; transform: perspective(1700px) rotateX(2deg); transform-origin: top center; box-shadow: 0 30px 64px rgba(24,25,31,.24), 0 0 0 5px rgba(255,255,255,.46); }
-.bb-product-shot .product-shot-image { aspect-ratio: 16 / 8.7; }
-.bb-product-shot .product-shot-image img { object-position: top center; }
+.bb-product-wrap { position: relative; max-width: 1280px; margin-top: 58px; padding: 0 32px 28px; }
+.bb-mac-frame { position: relative; z-index: 1; transform: perspective(1800px) rotateX(6deg); transform-origin: top center; filter: drop-shadow(0 38px 70px rgba(24, 25, 31, .28)); }
+.bb-mac-frame .product-shot { margin: 0; }
+.bb-mac-frame .product-shot-image { aspect-ratio: 16 / 8.7; }
+.bb-mac-frame .product-shot-image img { object-position: top center; }
+
+.mac-frame-lid {
+  padding: 12px;
+  border: 1px solid #3a3a3e;
+  border-radius: 18px 18px 10px 10px;
+  background: linear-gradient(180deg, #3a3a3e 0%, #1f1f23 14px, #1a1a1d 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14);
+}
+.mac-frame-camera {
+  display: block; width: 7px; height: 7px; margin: 0 auto 8px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #2a2a30, #050506 62%);
+  box-shadow: 0 0 0 1px #111113, 0 0 0 3px #252528;
+}
+.mac-frame-screen { overflow: hidden; border-radius: 6px; background: #111; }
+.mac-frame-base {
+  position: relative; height: 16px; margin: 0 -2.4%;
+  background: linear-gradient(180deg, #d8d8dc 0%, #b7b7bc 55%, #9e9ea4 100%);
+  clip-path: polygon(1.6% 0, 98.4% 0, 100% 100%, 0 100%);
+  border-radius: 0 0 10px 10px;
+  box-shadow: 0 10px 18px rgba(24, 25, 31, .12);
+}
+.mac-frame-notch {
+  position: absolute; left: 50%; top: 0; z-index: 1; width: 15%; height: 6px;
+  transform: translateX(-50%);
+  border-radius: 0 0 5px 5px;
+  background: #1a1a1d;
+}
 .bb-product-glow { position: absolute; z-index: 0; inset: 10% 13% -18%; background: radial-gradient(ellipse, rgba(80,88,255,.25), transparent 66%); filter: blur(40px); }
 
 .bb-harnesses { padding: 0; border-bottom: 1px solid #e3e2dd; background: #fafaf8; }
@@ -1035,7 +1084,7 @@ main:has(.bb-hero) + footer { margin-top: 0; border-top-color: #e3e2dd; backgrou
 
 .bb-final-cta { padding: 98px 0; background: #fafaf8; color: #15161b; }.bb-final-cta-card { padding: 64px; border: 1px solid #e0dfda; border-radius: 16px; background: #fff; box-shadow: 0 22px 50px rgba(39,38,34,.04); text-align: center; }.bb-final-cta-card h2 { max-width: 780px; margin-right: auto; margin-left: auto; color: #15161b; font-size: clamp(37px, 5.5vw, 66px); }.bb-final-cta-card > p:not(.bb-section-label) { max-width: 650px; margin: 0 auto; color: #666a74; font-size: 17px; line-height: 1.6; }.bb-final-cta-card .bb-button-primary { border-color: #16171c; background: #16171c; color: #fff; }.bb-final-cta-card .bb-button-primary:hover { background: #32343c; color: #fff; }.bb-final-cta-card .bb-button-secondary { border-color: #b7b5af; color: #17181d; background: transparent; box-shadow: none; }.bb-final-cta-card .bb-button-secondary:hover { border-color: #6a6e77; color: #17181d; background: rgba(0,0,0,.045); }
 
-@media (max-width: 780px) { .bb-hero { padding-top: 78px; }.bb-product-wrap { margin-top: 48px; padding: 0 18px; }.bb-product-shot { transform: none; }.bb-harnesses .wrap { min-height: auto; padding-top: 25px; padding-bottom: 25px; align-items: flex-start; flex-direction: column; }.bb-harnesses ul { justify-content: flex-start; gap: 16px 25px; flex-wrap: wrap; }.bb-statement { padding: 92px 0 60px; }.bb-feature-grid { grid-template-columns: 1fr; padding-bottom: 80px; }.bb-feature-card-wide { grid-column: auto; }.bb-feature-card { min-height: 0; padding: 25px; }.bb-feature-card h2 { margin-top: 48px; }.bb-workflow { padding: 88px 0; }.bb-workflow-heading { grid-template-columns: 1fr; gap: 14px; margin-bottom: 42px; }.bb-workflow .bb-section-label { padding-top: 0; }.bb-workflow-steps { grid-template-columns: 1fr; }.bb-workflow-steps li { min-height: 0; }.bb-workflow-steps li + li { border-top: 1px solid #30323c; border-left: 0; }.bb-workflow-steps h3 { margin-top: 42px; }.bb-build { padding: 92px 0; }.bb-build-grid { grid-template-columns: 1fr; gap: 42px; }.bb-final-cta { padding: 72px 0; }.bb-final-cta-card { padding: 38px 24px; } }
+@media (max-width: 780px) { .bb-hero { padding-top: 78px; }.bb-product-wrap { margin-top: 48px; padding: 0 18px 22px; }.bb-mac-frame { transform: none; }.bb-harnesses .wrap { min-height: auto; padding-top: 25px; padding-bottom: 25px; align-items: flex-start; flex-direction: column; }.bb-harnesses ul { justify-content: flex-start; gap: 16px 25px; flex-wrap: wrap; }.bb-statement { padding: 92px 0 60px; }.bb-feature-grid { grid-template-columns: 1fr; padding-bottom: 80px; }.bb-feature-card-wide { grid-column: auto; }.bb-feature-card { min-height: 0; padding: 25px; }.bb-feature-card h2 { margin-top: 48px; }.bb-workflow { padding: 88px 0; }.bb-workflow-heading { grid-template-columns: 1fr; gap: 14px; margin-bottom: 42px; }.bb-workflow .bb-section-label { padding-top: 0; }.bb-workflow-steps { grid-template-columns: 1fr; }.bb-workflow-steps li { min-height: 0; }.bb-workflow-steps li + li { border-top: 1px solid #30323c; border-left: 0; }.bb-workflow-steps h3 { margin-top: 42px; }.bb-build { padding: 92px 0; }.bb-build-grid { grid-template-columns: 1fr; gap: 42px; }.bb-final-cta { padding: 72px 0; }.bb-final-cta-card { padding: 38px 24px; } }
 @media (max-width: 520px) { .bb-hero { padding-top: 58px; }.bb-hero h1 { font-size: 44px; letter-spacing: -.065em; }.bb-actions { align-items: stretch; flex-direction: column; }.bb-button { width: 100%; }.bb-install-note { font-size: 12px; }.bb-harnesses ul { font-size: 14px; }.bb-statement h2, .bb-workflow h2, .bb-build h2, .bb-final-cta h2 { letter-spacing: -.055em; }.bb-project-pills { display: grid; }.bb-project-pills span { width: max-content; max-width: 100%; }.bb-code-window { padding: 18px; font-size: 11px; }.bb-final-cta-card { padding: 32px 20px; } }
 
 /* ================= CLEAN SECONDARY PAGES =================

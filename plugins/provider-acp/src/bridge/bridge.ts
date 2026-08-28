@@ -18,17 +18,14 @@ import {
   type AvailableModel,
   type PromptInput,
   type ReasoningLevel,
-  type ThreadEvent,
   hostDaemonAcpLaunchSpecSchema,
   bridgeRequestEnvelopeSchema,
-  buildAcceptedUserMessageEvent,
   buildEditDiff,
   createBridgeIo,
   createBridgeLineHandler,
   decodeBridgeJsonRpcResponse,
   decodeToolCallResponsePayload,
   mimeTypeFromExtension,
-  queueAcceptedUserMessage,
   runBridgeRequest,
   withoutBridgeRuntimeEnv,
   type BridgeJsonRpcResponse,
@@ -36,7 +33,10 @@ import {
   BRIDGE_JSON_RPC_ERRORS,
   BRIDGE_NOTIFICATION_METHODS,
   PROVIDER_BRIDGE_PROTOCOL_VERSION,
+  THREAD_DELTA_GRAMMAR_V3,
+  THREAD_DELTA_NOTIFICATION_METHOD,
   type InitializeResult,
+  type ThreadDelta,
   experimental_defineProviderBridge,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import { execFile } from "node:child_process";
@@ -65,9 +65,10 @@ import {
   acpBridgeCommandMethodValues,
 } from "../bridge-protocol.js";
 import {
-  createAcpEventTranslator,
-  type AcpEventTranslator,
-} from "../event-translation.js";
+  createAcpDeltaTranslator,
+  type AcpDeltaTranslator,
+} from "../delta-translation.js";
+import { resolveAcpDialect } from "../dialect.js";
 import {
   buildAcpPermissionInteractionPayload,
   resolveAcpPermissionDecision,
@@ -143,7 +144,7 @@ interface AcpThreadSession {
   bbThreadId: string;
   providerThreadId: string;
   /** Every session-scoped notification is translated through this. */
-  translator: AcpEventTranslator;
+  translator: AcpDeltaTranslator;
   connection: AcpAgentConnection;
   agentLabel: string;
   supportsImageInput: boolean;
@@ -259,42 +260,42 @@ let canonicalSessionSerial = 0;
 let configuredSkillRoots: AcpSkillRoot[] | null = null;
 const ACP_CANONICAL_PROVIDER_ID = "acp";
 
-function createSessionTranslator(): AcpEventTranslator {
-  canonicalSessionSerial += 1;
-  const idPrefix = `${canonicalIdEntropyPrefix}${canonicalSessionSerial}-`;
-  return createAcpEventTranslator({
-    providerId: ACP_CANONICAL_PROVIDER_ID,
-    turnIdPrefix: idPrefix,
-    itemIdPrefix: idPrefix,
-    synthesizeItemStarted: true,
+function createSessionTranslator(
+  cwd: string,
+  command: string,
+): AcpDeltaTranslator {
+  return createAcpDeltaTranslator({
+    cwd,
+    dialect: resolveAcpDialect({ command }),
   });
 }
 
-function sendThreadEvents(
-  session: AcpThreadSession,
-  events: readonly ThreadEvent[],
+function sendThreadDeltas(
+  threadId: string,
+  deltas: readonly ThreadDelta[],
 ): void {
-  for (const event of events) {
-    sendNotification(BRIDGE_NOTIFICATION_METHODS.threadEvent, {
-      threadId: session.bbThreadId,
-      event,
-    });
+  if (deltas.length === 0) {
+    return;
   }
+  sendNotification(THREAD_DELTA_NOTIFICATION_METHOD, {
+    threadId,
+    deltas,
+  });
 }
 
 /**
  * The one session-scoped emitter: it runs the ACP-flavored notification
- * through the session translator and emits the finished `ThreadEvent`s as
- * `thread/event` notifications. The `acp/*` envelope never reaches the wire —
- * it is only the translator's input vocabulary.
+ * through the session translator and emits the parsed semantic deltas as one
+ * batched `thread/delta` notification. The `acp/*` envelope never reaches
+ * the wire — it is only the translator's input vocabulary.
  */
 function emitForSession(
   session: AcpThreadSession,
   method: string,
   params: Record<string, unknown>,
 ): void {
-  sendThreadEvents(
-    session,
+  sendThreadDeltas(
+    session.bbThreadId,
     session.translator.translateAcpEvent(
       { jsonrpc: "2.0", method, params },
       { threadId: session.bbThreadId },
@@ -303,19 +304,10 @@ function emitForSession(
 }
 
 function emitSessionError(session: AcpThreadSession, message: string): void {
-  // Settle any open translator turn first: every accepted turn reaches
-  // exactly one terminal state, and settlement events precede the error
-  // signal. Without an open turn the error stays a runtime notification —
-  // translating it would fabricate a failed turn bb never accepted.
-  const state = session.translator.resolveState({
+  emitForSession(session, "error", {
     threadId: session.bbThreadId,
+    message,
   });
-  if (state.currentTurnId !== undefined) {
-    emitForSession(session, "error", {
-      threadId: session.bbThreadId,
-      message,
-    });
-  }
   sendNotification(BRIDGE_NOTIFICATION_METHODS.error, {
     threadId: session.bbThreadId,
     ...(session.providerThreadId !== ""
@@ -834,6 +826,7 @@ async function loadSessionDiscoveredModels(
     args: agent.args,
     cwd: agent.cwd ?? process.cwd(),
     env: childEnv,
+    recordThreadId: null,
     onNotification: () => {},
     onRequest: (_method, _params, responder) => {
       responder.error(-32601, "ACP model discovery does not support requests");
@@ -1404,7 +1397,7 @@ function handlePermissionRequest(
   const rawInputCommand = acpRawInputCommandSchema.safeParse(
     toolCall?.rawInput,
   );
-  const normalizedToolCall = toolCall?.toolCallId
+    const normalizedToolCall = toolCall?.toolCallId
     ? {
         toolCallId: toolCall.toolCallId,
         ...(toolCall.title ? { title: toolCall.title } : {}),
@@ -1412,6 +1405,8 @@ function handlePermissionRequest(
         ...(rawInputCommand.success
           ? { command: rawInputCommand.data.command }
           : {}),
+        ...(toolCall.locations ? { locations: toolCall.locations } : {}),
+        ...(toolCall.content ? { content: toolCall.content } : {}),
       }
     : undefined;
 
@@ -1422,14 +1417,14 @@ function handlePermissionRequest(
       toolCall: normalizedToolCall,
       options: parsed.data.options,
     });
-    const state = session.translator.resolveState({
-      threadId: session.bbThreadId,
-    });
+    // Turn ids are runtime-minted under the narrow grammar: `turnId: null`
+    // asks the runtime to stamp its active turn for this thread.
     void sendRuntimeRequest(BRIDGE_INBOUND_REQUEST_METHODS.interactionRequest, {
       providerThreadId: session.providerThreadId,
       threadId: session.bbThreadId,
-      turnId: state.currentTurnId ?? null,
+      turnId: null,
       payload,
+      providerNativeIds: true,
     })
       .then((result) => {
         if (!session.pendingPermissions.delete(pending)) {
@@ -1602,7 +1597,10 @@ async function startAgentSession(
     await stopSession(existing);
   }
 
-  const translator = createSessionTranslator();
+  const translator = createSessionTranslator(
+    params.cwd,
+    params.agent.command,
+  );
   // Ordering guarantee: thread/identity precedes any thread/event for the
   // session, so pre-identity notifications are held and flushed after the
   // identity goes out.
@@ -1637,6 +1635,7 @@ async function startAgentSession(
     args: launch.args,
     cwd: params.cwd,
     env: childEnv,
+    recordThreadId: bbThreadId,
     onNotification: (method, notificationParams) =>
       handleAgentNotification(session, method, notificationParams),
     onRequest: (method, requestParams, responder) =>
@@ -1820,6 +1819,7 @@ async function startAgentSession(
       providerThreadId: sessionId,
       sessionRestorable: session.supportsLoadSession,
     });
+    sendThreadDeltas(bbThreadId, [{ kind: "session.reset" }]);
     for (const deferred of deferredEmits) {
       emitForSession(session, deferred.method, deferred.params);
     }
@@ -2272,6 +2272,9 @@ async function handleRequest(
           threadGoalClear: false,
           fork: "tip",
           approvalEnforcedBy: "runtime",
+          grammarVersions: [THREAD_DELTA_GRAMMAR_V3, THREAD_DELTA_GRAMMAR_V3],
+          steerMode: "queue",
+          skills: { configure: true },
         },
       };
       sendResult(request.id, result);
@@ -2369,25 +2372,9 @@ async function handleRequest(
       // Accepted-input correlation (turn/input/accepted): queue onto the
       // translator so its onTurnStart drains it into the opening turn; a
       // still-open translator turn gets the event immediately instead.
-      const state = session.translator.resolveState({
-        threadId: session.bbThreadId,
-      });
-      if (state.currentTurnId !== undefined) {
-        sendThreadEvents(
-          session,
-          buildAcceptedUserMessageEvent({
-            clientRequestId: params.clientRequestId,
-            providerThreadId: session.providerThreadId,
-            threadId: session.bbThreadId,
-            turnId: state.currentTurnId,
-          }),
-        );
-      } else {
-        queueAcceptedUserMessage({
-          clientRequestId: params.clientRequestId,
-          state,
-        });
-      }
+      sendThreadDeltas(session.bbThreadId, [
+        { kind: "input.accepted", clientRequestId: params.clientRequestId },
+      ]);
       // A standalone builtin `/compact` mention is bb's manual-compaction
       // request, not model input: it runs the agent's own compaction command
       // instead of becoming a prompt.
@@ -2417,15 +2404,9 @@ async function handleRequest(
       }
       // A steer joins the active turn, so its acceptance is emitted
       // immediately against the expected turn id.
-      sendThreadEvents(
-        session,
-        buildAcceptedUserMessageEvent({
-          clientRequestId: params.clientRequestId,
-          providerThreadId: session.providerThreadId,
-          threadId: session.bbThreadId,
-          turnId: params.expectedTurnId,
-        }),
-      );
+      sendThreadDeltas(session.bbThreadId, [
+        { kind: "input.accepted", clientRequestId: params.clientRequestId },
+      ]);
       session.queuedInputs.push(params.input);
       requestSteerCancel(session);
       sendResult(request.id, { threadId: params.threadId });

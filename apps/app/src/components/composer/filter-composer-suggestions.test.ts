@@ -4,6 +4,8 @@ import {
   buildMentionSuggestions,
   commandsFromComposerActions,
   commandsFromPluginSkills,
+  filterCliComposerCommands,
+  isThreadWorkModeCommand,
   mergeCommandCatalogs,
   mentionOrder,
   rankSuggestions
@@ -70,7 +72,7 @@ describe('buildMentionSuggestions', () => {
 
   it('matches a thread by project name when the title does not', () => {
     const rows = buildMentionSuggestions({
-      query: 'zana',
+      query: 'zan',
       paths: [],
       threads: [{ id: 't1', projectId: 'p1', title: 'Hello', projectName: 'Zana' }],
       projects: []
@@ -125,6 +127,23 @@ describe('mergeCommandCatalogs', () => {
     ])).toEqual([
       { name: '/plan', description: 'Fallback plan' },
       { name: '/commit', description: 'Commit' }
+    ]);
+  });
+});
+
+describe('filterCliComposerCommands', () => {
+  it('drops thread work-mode prefixes and keeps skill slash names', () => {
+    expect(isThreadWorkModeCommand('plan')).toBe(true);
+    expect(isThreadWorkModeCommand('/GOAL')).toBe(true);
+    expect(isThreadWorkModeCommand('/commit')).toBe(false);
+    expect(filterCliComposerCommands([
+      { name: '/plan', description: 'Enter plan mode' },
+      { name: 'goal', description: 'Set a goal' },
+      { name: '/commit', description: 'Commit' },
+      { name: '/salesforce-constitution', description: 'Salesforce' }
+    ])).toEqual([
+      { name: '/commit', description: 'Commit' },
+      { name: '/salesforce-constitution', description: 'Salesforce' }
     ]);
   });
 });

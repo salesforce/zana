@@ -15,6 +15,7 @@ import type { PluginService } from './plugins/plugin-service.js';
 import {
   attachProductPluginService,
   bundledPluginsRootFromDataDir,
+  pluginAssetRootFromService,
   toPluginAppSnapshot
 } from './http/product-plugins.js';
 
@@ -82,10 +83,7 @@ parentPort.on('message', async ({ data }) => {
           // A browser never needs filesystem paths to render this landing view.
           projects: toBrowserProjectSummaries(projects?.list() ?? [])
         }),
-        pluginAssetRoot: (pluginId) => {
-          const row = plugins?.get(pluginId);
-          return row?.enabled && row.appEntry ? row.rootDir : null;
-        },
+        pluginAssetRoot: (pluginId) => pluginAssetRootFromService(plugins ?? undefined, pluginId),
         product
       });
       close = host.close;

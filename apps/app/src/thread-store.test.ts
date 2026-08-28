@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { mergeThreadRoster, pendingChildThreads, type ThreadListItem } from './thread-store.js';
+import { readFileSync } from 'node:fs';
+import { mergeThreadRoster, pendingChildThreads, applyThreadEventSequence, type ThreadListItem } from './thread-store.js';
 
 function thread(over: Partial<ThreadListItem> & Pick<ThreadListItem, 'id'>): ThreadListItem {
   return {
@@ -30,6 +31,18 @@ describe('mergeThreadRoster', () => {
     ]);
   });
 
+  it('keeps lastReadSeq and maxSeq when an upsert omits them', () => {
+    const existing = thread({ id: 'hello', lastReadSeq: 2, maxSeq: 5, updatedAt: 9 });
+    const opened = thread({ id: 'hello', title: 'Hello', status: 'idle' });
+    expect(mergeThreadRoster([existing], opened)[0]).toMatchObject({
+      id: 'hello',
+      title: 'Hello',
+      lastReadSeq: 2,
+      maxSeq: 5,
+      updatedAt: 9
+    });
+  });
+
   it('prepends a thread that is not already on the roster', () => {
     const existing = thread({ id: 'a' });
     const created = thread({ id: 'b' });
@@ -57,5 +70,24 @@ describe('pendingChildThreads', () => {
     const quiet = thread({ id: 'child-quiet', parentThreadId: 'parent', hasPendingInteraction: false });
     const other = thread({ id: 'other', parentThreadId: 'elsewhere', hasPendingInteraction: true });
     expect(pendingChildThreads([parent, waiting, quiet, other], 'parent')).toEqual([waiting]);
+  });
+});
+
+describe('applyThreadEventSequence', () => {
+  it('bumps maxSeq and recency for a known thread', () => {
+    const rows = [thread({ id: 't1', maxSeq: 2, updatedAt: 1 })];
+    expect(applyThreadEventSequence(rows, 't1', 4, 50)[0]).toMatchObject({
+      id: 't1',
+      maxSeq: 4,
+      updatedAt: 50
+    });
+    expect(applyThreadEventSequence(rows, 't1', 2, 50)).toBe(rows);
+    expect(applyThreadEventSequence(rows, 'missing', 9, 50)).toBe(rows);
+  });
+
+  it('listens for thread events so unread maxSeq can bump without a full reload', () => {
+    const source = readFileSync(new URL('./thread-store.ts', import.meta.url), 'utf8');
+    expect(source).toContain('product.threads.onEvent');
+    expect(source).toContain('maxSeq: sequence');
   });
 });

@@ -103,11 +103,11 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
     { id: 'agent-heartbeat', label: 'Agent heartbeat' },
     { id: 'auto-close-idle', label: 'Idle handling & follow-ups' },
     { id: 'overseer', label: 'Overseer' },
-    { id: 'legacy-agent', label: 'Legacy Agent' }
+    { id: 'legacy-agent', label: 'CLI Agent' }
   ],
   global: [
     { id: 'appearance', label: 'Appearance' },
-    { id: 'threads', label: 'Threads' },
+    { id: 'threads', label: 'Composer' },
     { id: 'cli-skills', label: 'CLI skills' },
     { id: 'debug', label: 'Debug' }
   ],
@@ -118,8 +118,8 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
   ],
   harness: [
     { id: 'harness-status', label: 'Install status' },
-    { id: 'harness-thread', label: 'Thread' },
-    { id: 'harness-legacy', label: 'Legacy Agent' },
+    { id: 'harness-thread', label: 'Modern' },
+    { id: 'harness-legacy', label: 'CLI Agent' },
     { id: 'harness-claude', label: 'Claude Code' },
     { id: 'harness-cursor', label: 'Cursor' },
     { id: 'harness-codex', label: 'Codex' },

@@ -12,8 +12,9 @@ const MAX_REQ_BODY = 1_000_000;
 
 /**
  * @param {() => void} [onChange]
+ * @param {{ onJoinRenew?: () => void }} [options]
  */
-export function createPairingSession(onChange) {
+export function createPairingSession(onChange, options = {}) {
   /** @type {ReturnType<typeof createWsConnection> | null} */
   let laptop = null;
   let nextId = 1;
@@ -86,6 +87,10 @@ export function createPairingSession(onChange) {
     }
     if (frame.type === TYPE.PING) {
       send(TYPE.PONG, 0, frame.streamId);
+      return;
+    }
+    if (frame.type === TYPE.JOIN_RENEW) {
+      options.onJoinRenew?.();
       return;
     }
     if (frame.type === TYPE.HTTP_RES) {
@@ -264,8 +269,13 @@ export function createPairingSession(onChange) {
     });
   }
 
+  function sendHello(payload) {
+    send(TYPE.HELLO, FLAG.META | FLAG.FIN, 0, encodeJsonPayload(payload));
+  }
+
   return {
     attach,
+    sendHello,
     hasLaptop() {
       return Boolean(laptop && !laptop.closed);
     },

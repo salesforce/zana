@@ -58,9 +58,10 @@ describe('AddRemoteProjectDialogView', () => {
     expect(html).toContain('educational-roadrunner');
     expect(html).toContain('kit-kat');
     expect(html).toContain('data-testid="remote-install-host"');
-    expect(html).toContain('Install host daemon on this machine');
+    expect(html).toContain('Install host daemon on the remote machine');
     expect(html).toContain('Add and install');
     expect(html).toContain('checked=""');
+    expect(html).toContain('Remote machine');
   });
 
   it('lets the user add an SSH remote without installing a daemon', () => {

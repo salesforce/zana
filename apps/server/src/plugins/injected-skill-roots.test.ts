@@ -20,6 +20,9 @@ describe('builtinSkillsRootPath', () => {
     const skill = join(root, 'zcc-plugin-authoring', 'SKILL.md');
     expect(existsSync(skill), `expected ${skill} to exist`).toBe(true);
     expect(readFileSync(skill, 'utf8')).toMatch(/^---\nname: zcc-plugin-authoring\n/);
+    expect(existsSync(join(root, 'zcc-cli', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(root, 'zcc-inbox', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(root, 'harness-authoring', 'SKILL.md'))).toBe(false);
   });
 });
 

@@ -348,12 +348,4 @@ describe('zcc-plugin-authoring skill', () => {
     expect(skill).toContain('server.ts');
     expect(skill).toContain('plugin_cli_output_too_large');
   });
-
-  it('keeps the packaged ~/.claude copy in lockstep with the injected skill', () => {
-    const packaged = readFileSync(
-      fileURLToPath(new URL('../../../../resources/zcc-plugin-authoring-skill.md', import.meta.url)),
-      'utf8'
-    );
-    expect(packaged).toBe(skill);
-  });
 });

@@ -8,6 +8,7 @@ import { createProductWebSocketServer, handleProductUpgrade } from './http/produ
 import { createHostDaemonWebSocketServer, handleHostInternalHttp, handleHostInternalUpgrade } from './http/host-internal.js';
 import { handleInstallHttp } from './http/install-http.js';
 import { attachPairingRelay } from './http/pairing-relay-controller.js';
+import { tryServePluginAsset } from './http/plugin-assets.js';
 
 export interface BrowserProjectSummary {
   id: string;
@@ -149,40 +150,7 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
       return;
     }
 
-    const pluginMatch = requestUrl.pathname.match(/^\/plugins\/([a-z0-9][a-z0-9-]*)\/assets\/(.+)$/);
-    if (pluginMatch && options.pluginAssetRoot) {
-      const pluginRoot = options.pluginAssetRoot(pluginMatch[1]!);
-      if (!pluginRoot) {
-        response.writeHead(404).end();
-        return;
-      }
-      const pluginFile = pathForRequest(pluginRoot, `/${pluginMatch[2]}`);
-      if (!pluginFile) {
-        response.writeHead(400).end();
-        return;
-      }
-      try {
-        const file = await realpath(pluginFile);
-        const containedRoot = await realpath(pluginRoot);
-        if (!isContained(containedRoot, file)) {
-          response.writeHead(403).end();
-          return;
-        }
-        const metadata = await stat(file);
-        if (!metadata.isFile()) throw new Error('not a file');
-        response.writeHead(200, {
-          'Cache-Control': 'no-cache',
-          'Content-Type': contentType(file),
-          'X-Content-Type-Options': 'nosniff'
-        });
-        if (request.method === 'HEAD') {
-          response.end();
-          return;
-        }
-        createReadStream(file).on('error', () => response.destroy()).pipe(response);
-      } catch {
-        response.writeHead(404).end();
-      }
+    if (options.pluginAssetRoot && (await tryServePluginAsset(request, response, options.pluginAssetRoot))) {
       return;
     }
 

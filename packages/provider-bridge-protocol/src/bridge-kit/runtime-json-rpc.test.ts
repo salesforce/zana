@@ -1,7 +1,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
-import { describe, it } from "vitest";
-import { sendJsonRpcResult } from "./runtime-json-rpc.js";
+import { describe, expect, it } from "vitest";
+import {
+  JsonRpcResponseError,
+  type PendingJsonRpcRequest,
+  sendJsonRpcResult,
+  settleJsonRpcResponse,
+} from "./runtime-json-rpc.js";
 
 const EPIPE_PAYLOAD_SIZE = 1024 * 1024;
 
@@ -53,5 +58,41 @@ describe("runtime JSON-RPC transport", () => {
       }
       await waitForChildExit(child);
     }
+  });
+
+  it("attaches a typed recovery hint from error.data.recovery", async () => {
+    const pending = new Map<string | number, PendingJsonRpcRequest>();
+    const rejected = new Promise<unknown>((_, reject) => {
+      pending.set(1, {
+        resolve: () => undefined,
+        reject,
+      });
+    });
+    settleJsonRpcResponse({
+      id: 1,
+      pending,
+      response: {
+        error: {
+          code: -32000,
+          message: "rate limited",
+          data: {
+            recovery: {
+              kind: "rateLimited",
+              message: "try again shortly",
+              retryable: true,
+            },
+          },
+        },
+      },
+    });
+    await expect(rejected).rejects.toMatchObject({
+      name: "JsonRpcResponseError",
+      recovery: {
+        kind: "rateLimited",
+        message: "try again shortly",
+        retryable: true,
+      },
+    });
+    expect(pending.size).toBe(0);
   });
 });

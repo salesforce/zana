@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { listHomepageSections, listNavPanels } from './plugin-slots.js';
+import { listHomepageSections, listNavPanels, listPendingInteractionSlots } from './plugin-slots.js';
 import { reconcilePluginApps, usePluginAppModules } from './plugin-app-loader.js';
 
 afterEach(async () => {
@@ -67,10 +67,11 @@ describe('server plugin app loader', () => {
     );
 
     expect(usePluginAppModules.getState().modules[0]).toMatchObject({ id: 'broken', loadError: 'bundle exploded' });
+    expect(usePluginAppModules.getState().modules[0]?.panel).toBeUndefined();
     expect(listNavPanels().some((panel) => panel.pluginId === 'broken')).toBe(false);
   });
 
-  it('activates a legacy RendererEntry bundle instead of treating it as a missing plugin app', async () => {
+  it('does not activate a leftover extension.json RendererEntry as a plugin app', async () => {
     const Panel = () => null;
     await reconcilePluginApps(
       [{
@@ -86,21 +87,17 @@ describe('server plugin app loader', () => {
       {
         importer: async () => ({
           default: {
-            activate: () => ({ panel: Panel })
+            activate: () => ({ panel: Panel, settingsPanel: Panel })
           }
         })
       }
     );
 
-    const loaded = usePluginAppModules.getState().modules[0];
-    expect(loaded.id).toBe('gus');
-    expect(loaded.title).toBe('GUS');
-    expect(loaded.loadError).toBeUndefined();
-    expect(loaded.panel).toBe(Panel);
+    expect(usePluginAppModules.getState().modules).toEqual([]);
     expect(listNavPanels().some((panel) => panel.pluginId === 'gus')).toBe(false);
   });
 
-  it('surfaces a legacy activate() that contributes nothing', async () => {
+  it('does not treat a leftover activate() as a failed plugin-app import', async () => {
     await reconcilePluginApps(
       [{
         id: 'empty',
@@ -119,9 +116,36 @@ describe('server plugin app loader', () => {
       }
     );
 
-    expect(usePluginAppModules.getState().modules[0]).toMatchObject({
-      id: 'empty',
-      loadError: 'activate() returned nothing usable (no panel, settingsPanel, commands, or navBadge).'
-    });
+    expect(usePluginAppModules.getState().modules).toEqual([]);
+    expect(usePluginAppModules.getState().modules.some((module) => module.loadError)).toBe(false);
+  });
+
+  it('does not create a nav module for a slot-only plugin app', async () => {
+    await reconcilePluginApps(
+      [{
+        id: 'ask-user-question',
+        name: 'Ask user question',
+        description: '',
+        icon: 'CircleHelp',
+        enabled: true,
+        provenance: 'builtin',
+        status: 'running',
+        appUrl: '/plugins/ask-user-question/assets/app.js?v=1'
+      }],
+      {
+        importer: async () => ({
+          default: {
+            __zccPluginApp: true,
+            setup(app: { slots: { pendingInteraction(registration: object): void } }) {
+              app.slots.pendingInteraction({ id: 'ask-user-question', component: () => null });
+            }
+          }
+        })
+      }
+    );
+
+    expect(usePluginAppModules.getState().modules).toEqual([]);
+    expect(listNavPanels()).toEqual([]);
+    expect(listPendingInteractionSlots().map((slot) => slot.pluginId)).toEqual(['ask-user-question']);
   });
 });

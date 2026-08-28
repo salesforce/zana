@@ -173,12 +173,72 @@ export interface PluginEvents {
   on(name: PluginThreadEventName, handler: (event: PluginThreadEvent) => void | Promise<void>): void;
 }
 
+export interface PluginSdkThreadSummary {
+  id: string;
+  projectId: string;
+  hostId: string;
+  environmentId: string | null;
+  providerId: string;
+  status: string;
+}
+
+export interface PluginSdkThreadEventRow {
+  seq: number;
+  type: string;
+  payload: unknown;
+}
+
+export interface PluginSdkThreadEventListArgs {
+  threadId: string;
+  limit?: number;
+  types?: readonly string[];
+  order?: 'asc' | 'desc';
+}
+
+export interface PluginSdkThreadSendArgs {
+  threadId: string;
+  prompt: string;
+}
+
+export interface PluginSdkThreadIdArgs {
+  threadId: string;
+}
+
 export interface PluginSdkThreads {
   spawn(args: { projectId: string; prompt: string; providerId?: string }): Promise<{ id: string }>;
+  get(args: { threadId: string }): Promise<PluginSdkThreadSummary | null>;
+  events: {
+    list(args: PluginSdkThreadEventListArgs): Promise<PluginSdkThreadEventRow[]>;
+  };
+  send(args: PluginSdkThreadSendArgs): Promise<{ id: string }>;
+  archive(args: PluginSdkThreadIdArgs): Promise<{ id: string }>;
+  fork(args: PluginSdkThreadIdArgs): Promise<{ id: string }>;
+  unarchive(args: PluginSdkThreadIdArgs): Promise<{ id: string }>;
+}
+
+export interface PluginSdkInboxPushArgs {
+  projectId: string;
+  comments: string;
+}
+
+export interface PluginSdkInbox {
+  push(args: PluginSdkInboxPushArgs): Promise<{ id: string }>;
+}
+
+export interface PluginSdkProject {
+  id: string;
+  name: string;
+  path?: string;
+}
+
+export interface PluginSdkProjects {
+  list(): Promise<PluginSdkProject[]>;
 }
 
 export interface PluginSdk {
   threads: PluginSdkThreads;
+  inbox: PluginSdkInbox;
+  projects: PluginSdkProjects;
 }
 
 export interface PluginHostClient {
@@ -310,10 +370,30 @@ export interface PluginMentionSuggestion {
   insertText?: string;
 }
 
+export const PLUGIN_MENTION_TRIGGERS = ['@', '#', '$', '!', '~'] as const;
+export type PluginMentionTrigger = (typeof PLUGIN_MENTION_TRIGGERS)[number];
+
+export interface PluginMentionSearchContext {
+  query: string;
+  trigger?: string;
+  projectId?: string;
+  threadId?: string;
+}
+
+export interface PluginMentionResolveResult {
+  context: string;
+}
+
 export interface PluginMentionProviderRegistration {
   id: string;
+  label: string;
+  /** @deprecated Prefer `triggers`. A single character still treated as `triggers: [trigger]`. */
   trigger?: string;
-  search(query: string): PluginMentionSuggestion[] | Promise<PluginMentionSuggestion[]>;
+  triggers?: readonly PluginMentionTrigger[];
+  search(
+    ctx: PluginMentionSearchContext | string
+  ): PluginMentionSuggestion[] | Promise<PluginMentionSuggestion[]>;
+  resolve(itemId: string): PluginMentionResolveResult | Promise<PluginMentionResolveResult>;
 }
 
 export interface PluginUi {

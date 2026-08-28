@@ -30,6 +30,7 @@ export function PluginNewThreadActions({ projectId }: { projectId: string | null
                   openPanel: (options) => {
                     void options;
                     setOpenId(key);
+                    return true;
                   }
                 });
                 setOpenId(key);

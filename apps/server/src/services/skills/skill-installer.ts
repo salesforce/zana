@@ -1,20 +1,13 @@
 /**
- * Install the bundled `zcc-center` Claude Code skill into `~/.claude/skills/`.
+ * Install the global `zcc-cli` skill into `~/.claude/skills/`.
  *
- * The app ships `resources/zcc-center-skill.md` — a SKILL.md that teaches an
- * agent how to author schedules and templates as JSON in `.zcc`. The
- * skill catalogue is read-only (it lists `~/.claude/skills/`, never writes),
- * so to make our skill *available* we deploy it on boot, the same way
- * `ensureMcpConfigForProject` deploys the per-project `.mcp.json`.
- *
- * Install target: `~/.claude/skills/zcc-center/SKILL.md`.
+ * Product skills live in `apps/server/src/plugins/builtin-skills/` and are
+ * injected into threads via `injected-skill-roots.json`. Only `zcc-cli` is
+ * *also* copied to `~/.claude/skills` (and host `~/.agents/skills` via
+ * install-cli-skills) so agents outside ZCC can drive the CLI.
  *
  * Idempotent + edit-respecting: we only (re)write when the on-disk content
- * differs from what we ship. That means
- *   - first boot installs it,
- *   - a shipped-content bump (new app version) propagates,
- *   - but we don't rewrite an identical file on every boot (no churn, and the
- *     skills watcher doesn't fire needlessly).
+ * differs from what we ship.
  */
 
 import { homedir } from 'node:os';
@@ -29,50 +22,28 @@ import { discoverPluginSkillNames } from '../../plugins/plugin-skills.js';
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 
 const SKILLS_ROOT = join(homedir(), '.claude', 'skills');
-const SKILL_DIR = join(homedir(), '.claude', 'skills', 'zcc-center');
-const SKILL_FILE = join(SKILL_DIR, 'SKILL.md');
-
-const SAVED_SKILL_DIR = join(homedir(), '.claude', 'skills', 'saved-reports');
-const SAVED_SKILL_FILE = join(SAVED_SKILL_DIR, 'SKILL.md');
-
-const BRAINSTORM_SKILL_DIR = join(homedir(), '.claude', 'skills', 'brainstorm');
-const BRAINSTORM_SKILL_FILE = join(BRAINSTORM_SKILL_DIR, 'SKILL.md');
-
-const ZCC_CLI_SKILL_DIR = join(homedir(), '.claude', 'skills', 'zcc-cli');
+const ZCC_CLI_SKILL_DIR = join(SKILLS_ROOT, 'zcc-cli');
 const ZCC_CLI_SKILL_FILE = join(ZCC_CLI_SKILL_DIR, 'SKILL.md');
 
-const EXT_CREATOR_SKILL_DIR = join(homedir(), '.claude', 'skills', 'extension-creator');
-const EXT_CREATOR_SKILL_FILE = join(EXT_CREATOR_SKILL_DIR, 'SKILL.md');
-
-const SUBMIT_PLUGIN_SKILL_DIR = join(homedir(), '.claude', 'skills', 'submit-a-plugin');
-const SUBMIT_PLUGIN_SKILL_FILE = join(SUBMIT_PLUGIN_SKILL_DIR, 'SKILL.md');
-
-const HARNESS_AUTHORING_SKILL_DIR = join(homedir(), '.claude', 'skills', 'harness-authoring');
-const HARNESS_AUTHORING_SKILL_FILE = join(HARNESS_AUTHORING_SKILL_DIR, 'SKILL.md');
-
-const PLUGIN_AUTHORING_SKILL_DIR = join(homedir(), '.claude', 'skills', 'zcc-plugin-authoring');
-const PLUGIN_AUTHORING_SKILL_FILE = join(PLUGIN_AUTHORING_SKILL_DIR, 'SKILL.md');
-
-const BROWSER_SKILL_DIR = join(homedir(), '.claude', 'skills', 'zcc-browser');
-const BROWSER_SKILL_FILE = join(BROWSER_SKILL_DIR, 'SKILL.md');
-
 /**
- * Resolve a shipped resource file. In dev, electron-vite runs from the repo
- * root with `moduleDir = out/main`, so the source is `../../resources`. Once
- * packaged, electron-builder copies it next to app.asar via `extraResources`,
- * surfaced as `process.resourcesPath`. Mirrors `resolveIconPath` in
- * `apps/desktop/src/resolve-icon-path.ts`.
+ * Resolve a shipped skill file. Prefer the in-thread builtin-skills tree
+ * (`<slug>/SKILL.md`). Packaged builds also copy that tree to
+ * `process.resourcesPath/builtin-skills`. Legacy `resources/<name>-skill.md`
+ * copies remain only for maintainer-only skills (harness-authoring).
  */
 function resolveShippedPath(fileName: string): string | null {
   const builtinSlug = fileName.replace(/-skill\.md$/, '');
+  const resourcesPath =
+    typeof process.resourcesPath === 'string' && process.resourcesPath.length > 0
+      ? process.resourcesPath
+      : null;
   const candidates = [
-    process.resourcesPath ? join(process.resourcesPath, fileName) : null,
+    join(builtinSkillsRootPath(), builtinSlug, 'SKILL.md'),
+    resourcesPath ? join(resourcesPath, 'builtin-skills', builtinSlug, 'SKILL.md') : null,
+    resourcesPath ? join(resourcesPath, fileName) : null,
     join(moduleDir, `../../resources/${fileName}`),
-    // Shared chunks emit below out/main/chunks, unlike the main entry.
     join(moduleDir, `../../../resources/${fileName}`),
-    // Unit tests import this file from apps/server/src/services/skills.
-    join(moduleDir, `../../../../../resources/${fileName}`),
-    join(builtinSkillsRootPath(), builtinSlug, 'SKILL.md')
+    join(moduleDir, `../../../../../resources/${fileName}`)
   ].filter((p): p is string => !!p);
   for (const p of candidates) {
     if (existsSync(p)) return p;
@@ -135,130 +106,22 @@ async function installSkill(
   }
 }
 
-/** Deploy the bundled `zcc-center` skill (schedules/templates authoring). */
-async function installZccCenterSkill(
-  log?: (context: string, err: unknown) => void
-): Promise<string | null> {
-  return installSkill('installZccCenterSkill', 'zcc-center-skill.md', SKILL_DIR, SKILL_FILE, log);
-}
-
-/** Deploy the bundled `saved-reports` skill (find & reuse saved inbox reports). */
-async function installSavedReportsSkill(
-  log?: (context: string, err: unknown) => void
-): Promise<string | null> {
-  return installSkill(
-    'installSavedReportsSkill',
-    'saved-reports-skill.md',
-    SAVED_SKILL_DIR,
-    SAVED_SKILL_FILE,
-    log
-  );
-}
-
-/** Deploy the bundled `brainstorm` skill (ideate + capture ideas into the library). */
-async function installBrainstormSkill(
-  log?: (context: string, err: unknown) => void
-): Promise<string | null> {
-  return installSkill(
-    'installBrainstormSkill',
-    'brainstorm-skill.md',
-    BRAINSTORM_SKILL_DIR,
-    BRAINSTORM_SKILL_FILE,
-    log
-  );
-}
-
-/** Deploy the bundled `zcc-cli` skill (drive/inspect the app via the `zcc` CLI). */
+/** Deploy the global `zcc-cli` skill (drive/inspect the app via the `zcc` CLI). */
 async function installZccCliSkill(
   log?: (context: string, err: unknown) => void
 ): Promise<string | null> {
   return installSkill('installZccCliSkill', 'zcc-cli-skill.md', ZCC_CLI_SKILL_DIR, ZCC_CLI_SKILL_FILE, log);
 }
 
-/** Deploy the bundled `extension-creator` skill (author a local extension in-app). */
-async function installExtensionCreatorSkill(
-  log?: (context: string, err: unknown) => void
-): Promise<string | null> {
-  return installSkill(
-    'installExtensionCreatorSkill',
-    'extension-creator-skill.md',
-    EXT_CREATOR_SKILL_DIR,
-    EXT_CREATOR_SKILL_FILE,
-    log
-  );
-}
-
-async function installSubmitPluginSkill(
-  log?: (context: string, err: unknown) => void
-): Promise<string | null> {
-  return installSkill(
-    'installSubmitPluginSkill',
-    'submit-a-plugin-skill.md',
-    SUBMIT_PLUGIN_SKILL_DIR,
-    SUBMIT_PLUGIN_SKILL_FILE,
-    log
-  );
-}
-
-/** Deploy the bundled `harness-authoring` skill (first-party CLI integrations). */
-async function installHarnessAuthoringSkill(
-  log?: (context: string, err: unknown) => void
-): Promise<string | null> {
-  return installSkill(
-    'installHarnessAuthoringSkill',
-    'harness-authoring-skill.md',
-    HARNESS_AUTHORING_SKILL_DIR,
-    HARNESS_AUTHORING_SKILL_FILE,
-    log
-  );
-}
-
-/** Deploy the bundled `zcc-browser` skill (visible in-app browser MCP tools). */
-async function installBrowserSkill(
-  log?: (context: string, err: unknown) => void
-): Promise<string | null> {
-  return installSkill(
-    'installBrowserSkill',
-    'zcc-browser-skill.md',
-    BROWSER_SKILL_DIR,
-    BROWSER_SKILL_FILE,
-    log
-  );
-}
-
-/** Deploy the always-on plugin-authoring skill (all providers via catalog + Claude copy). */
-async function installPluginAuthoringSkill(
-  log?: (context: string, err: unknown) => void
-): Promise<string | null> {
-  return installSkill(
-    'installPluginAuthoringSkill',
-    'zcc-plugin-authoring-skill.md',
-    PLUGIN_AUTHORING_SKILL_DIR,
-    PLUGIN_AUTHORING_SKILL_FILE,
-    log
-  );
-}
-
 /**
- * One entry per bundled skill: a stable `name` (the skill dir slug, used in the
- * redeploy summary) and its installer. Keeping the list here — beside the
- * per-skill installers — is the single source of truth both boot and the
- * on-demand "Redeploy bundled skills" button iterate, so a new bundled skill is
- * added in exactly one place.
+ * One entry per skill copied to `~/.claude/skills` at boot / Redeploy.
+ * Other product skills stay in `builtin-skills/` and are injected at thread spawn.
  */
 const BUNDLED_SKILLS: ReadonlyArray<{
   name: string;
   install: (log?: (context: string, err: unknown) => void) => Promise<string | null>;
 }> = [
-  { name: 'zcc-center', install: installZccCenterSkill },
-  { name: 'saved-reports', install: installSavedReportsSkill },
-  { name: 'brainstorm', install: installBrainstormSkill },
-  { name: 'zcc-cli', install: installZccCliSkill },
-  { name: 'extension-creator', install: installExtensionCreatorSkill },
-  { name: 'submit-a-plugin', install: installSubmitPluginSkill },
-  { name: 'harness-authoring', install: installHarnessAuthoringSkill },
-  { name: 'zcc-plugin-authoring', install: installPluginAuthoringSkill },
-  { name: 'zcc-browser', install: installBrowserSkill }
+  { name: 'zcc-cli', install: installZccCliSkill }
 ];
 
 /** The bundled-skill names, for callers that only need the roster (e.g. boot). */

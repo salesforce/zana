@@ -53,6 +53,32 @@ export function threadInfoEnvironmentLabel(
   return environmentLabel(isWorktree, environmentName);
 }
 
+export const THREAD_INFO_FILE_PREVIEW_LIMIT = 12;
+
+export function threadInfoGitSummary(
+  label: string | null,
+  fileCount: number,
+  truncated = false
+): string | null {
+  if (!label) return null;
+  if (fileCount <= 0) return label;
+  const count = truncated ? `${fileCount}+` : String(fileCount);
+  const noun = fileCount === 1 && !truncated ? 'file' : 'files';
+  return `${label} · ${count} ${noun}`;
+}
+
+export function threadInfoFilePreview<T>(
+  files: readonly T[],
+  truncated = false,
+  limit = THREAD_INFO_FILE_PREVIEW_LIMIT
+): { files: T[]; extraLabel: string | null } {
+  const shown = files.slice(0, limit);
+  const extra = files.length - shown.length;
+  if (truncated) return { files: shown, extraLabel: 'More changes…' };
+  if (extra > 0) return { files: shown, extraLabel: `+${extra} more` };
+  return { files: shown, extraLabel: null };
+}
+
 export async function hydrateRemoteToolProxyInfo(
   project: {
     id: string;
@@ -60,8 +86,8 @@ export async function hydrateRemoteToolProxyInfo(
     hostId?: string | null;
   } | null,
   deps: {
-    getSettings: (id: string) => Promise<{ remoteToolProxy?: boolean }>;
     remoteRoot: (id: string) => Promise<{ ok: boolean; root?: string; message?: string }>;
+    executionHostId?: string | null;
   }
 ): Promise<{
   active: boolean;
@@ -75,15 +101,9 @@ export async function hydrateRemoteToolProxyInfo(
     sshStatus: null as 'connected' | 'unreachable' | null,
     remoteDirectory: null as string | null
   };
-  if (!project?.remote || project.hostId) return empty;
+  if (!project?.remote) return empty;
+  if (project.hostId && deps.executionHostId === project.hostId) return empty;
   const sshTarget = sshTargetLabel(project.remote);
-  let settings: { remoteToolProxy?: boolean } = {};
-  try {
-    settings = await deps.getSettings(project.id);
-  } catch {
-    return empty;
-  }
-  if (settings.remoteToolProxy !== true) return empty;
   try {
     const root = await deps.remoteRoot(project.id);
     if (root.ok && root.root) {

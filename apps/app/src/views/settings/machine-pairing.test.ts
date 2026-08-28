@@ -3,10 +3,12 @@ import {
   defaultSshHost,
   formatJoinCountdown,
   isLoopbackOrigin,
+  joinCountdownMs,
   localListenPort,
   mergePairingSshHosts,
   pairingCommand,
   resolvePairingServerUrl,
+  resolveRelayPairingServerUrl,
   sanitizeSshHost,
   sshHostOptionsFromProjects,
   sshHostsFromProjects,
@@ -38,6 +40,32 @@ describe('machine pairing command', () => {
     })).toContain('/install.sh');
     expect(isLoopbackOrigin('http://localhost:8780')).toBe(true);
     expect(formatJoinCountdown(65_000)).toBe('1:05');
+  });
+
+  it('prefixes a relay session origin and min()s the join countdown', () => {
+    expect(resolveRelayPairingServerUrl({
+      publicAppUrl: 'https://zcc.herokuapp.com/',
+      relay: {
+        state: 'connected',
+        sessionId: 'zcrs_abcdefghijklmnopqr1234',
+        joinUntil: 2_000
+      },
+      now: 1_000
+    })).toEqual({ url: 'https://zcc.herokuapp.com/t/zcrs_abcdefghijklmnopqr1234' });
+    expect(resolveRelayPairingServerUrl({
+      publicAppUrl: 'https://zcc.herokuapp.com',
+      relay: {
+        state: 'connected',
+        sessionId: 'zcrs_abcdefghijklmnopqr1234',
+        joinUntil: 500
+      },
+      now: 1_000
+    }).error).toBe('join_expired');
+    expect(resolveRelayPairingServerUrl({
+      publicAppUrl: 'https://box.tailnet.ts.net',
+      relay: { state: 'unconfigured' }
+    }).url).toBe('https://box.tailnet.ts.net');
+    expect(joinCountdownMs(10_000, 4_000, 1_000)).toBe(3_000);
   });
 
   it('builds an SSH reverse-tunnel command for loopback pairing', () => {

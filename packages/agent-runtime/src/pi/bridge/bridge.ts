@@ -10,12 +10,14 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 import { z } from "zod";
-import type { ThreadEvent, ThreadEventContextWindowUsage } from "@zana-ai/zcc-domain/thread-runtime";
-import { isStandaloneBuiltinCompactCommand, turnScope } from "@zana-ai/zcc-domain/thread-runtime";
+import type { ThreadEventContextWindowUsage } from "@zana-ai/zcc-domain/thread-runtime";
+import { isStandaloneBuiltinCompactCommand } from "@zana-ai/zcc-domain/thread-runtime";
 import {
   BRIDGE_JSON_RPC_ERRORS,
   BRIDGE_NOTIFICATION_METHODS,
   PROVIDER_BRIDGE_PROTOCOL_VERSION,
+  THREAD_DELTA_GRAMMAR_V3,
+  THREAD_DELTA_NOTIFICATION_METHOD,
   modelListParamsSchema,
   threadDiscardParamsSchema,
   threadForkParamsSchema,
@@ -28,15 +30,12 @@ import {
   type InitializeResult,
 } from "@zana-ai/zcc-provider-bridge-protocol";
 import {
-  UNSTAMPED_THREAD_ID,
   bridgeRequestEnvelopeSchema,
-  buildAcceptedUserMessageEvent,
   createBridgeIo,
   createBridgeLineHandler,
   createPendingToolCallTracker,
   decodeBridgeJsonRpcResponse,
   mimeTypeFromExtension,
-  queueAcceptedUserMessage,
   runBridgeRequest,
   experimental_defineProviderBridge,
 } from "@zana-ai/zcc-provider-bridge-protocol/bridge-kit";
@@ -48,9 +47,12 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import {
-  createPiEventTranslator,
-  type PiEventTranslator,
+  createPiDeltaTranslator,
+} from "../delta-translation.js";
+import {
+  createPiModelContextWindowResolver,
 } from "../event-translation.js";
+import type { ThreadDelta } from "@zana-ai/zcc-provider-bridge-protocol";
 import {
   buildPiSessionParams,
   type PiSessionParams,
@@ -216,7 +218,7 @@ interface ThreadSession {
   /** Stable provider identity used to resolve the persisted session file. */
   providerThreadId: string;
   /** Every session-scoped notification is translated through this. */
-  translator: PiEventTranslator;
+  translator: ReturnType<typeof createPiDeltaTranslator>;
 }
 
 interface PiThreadStopResult {
@@ -323,35 +325,35 @@ let translatorSessionSerial = 0;
 let configuredSkillPaths: string[] | null = null;
 const PI_PROVIDER_ID = "pi";
 
-function createSessionTranslator(): PiEventTranslator {
-  translatorSessionSerial += 1;
-  const idPrefix = `${sessionIdEntropyPrefix}${translatorSessionSerial}-`;
-  return createPiEventTranslator({
-    providerId: PI_PROVIDER_ID,
-    turnIdPrefix: idPrefix,
-    itemIdPrefix: idPrefix,
-    synthesizeItemStarted: true,
+function createSessionTranslator() {
+  return createPiDeltaTranslator({
+    resolveModelContextWindow: createPiModelContextWindowResolver(),
   });
 }
 
-function sendThreadEvents(
+function sendThreadDeltas(
   threadId: string,
-  events: readonly ThreadEvent[],
+  deltas: readonly ThreadDelta[],
 ): void {
-  for (const event of events) {
-    send({
-      jsonrpc: "2.0",
-      method: BRIDGE_NOTIFICATION_METHODS.threadEvent,
-      params: { threadId, event },
-    });
+  if (deltas.length === 0) {
+    return;
   }
+  send({
+    jsonrpc: "2.0",
+    method: THREAD_DELTA_NOTIFICATION_METHOD,
+    params: { threadId, deltas },
+  });
+}
+
+function sendSessionReset(threadId: string, translator: ReturnType<typeof createPiDeltaTranslator>): void {
+  translator.resetThread(threadId);
+  sendThreadDeltas(threadId, [{ kind: "session.reset" }]);
 }
 
 /**
  * The one session-scoped emitter: it runs the pi-flavored notification through
- * the session translator and emits the finished `ThreadEvent`s as
- * `thread/event` notifications. The pi-flavored envelope never reaches the
- * wire — it is only the translator's input vocabulary.
+ * the session translator and emits the parsed semantic deltas as one batched
+ * `thread/delta` notification.
  */
 function emitForSession(
   threadSession: ThreadSession,
@@ -359,9 +361,9 @@ function emitForSession(
   method: string,
   params: Record<string, unknown>,
 ): void {
-  sendThreadEvents(
+  sendThreadDeltas(
     threadId,
-    threadSession.translator.translatePiEvent(
+    threadSession.translator.translate(
       { jsonrpc: "2.0", method, params },
       { threadId },
     ),
@@ -398,14 +400,7 @@ function emitSessionError(
   threadId: string,
   message: string,
 ): void {
-  // Settle any open translator turn first: every accepted turn reaches
-  // exactly one terminal state, and settlement events precede the error
-  // signal. Without an open turn the error stays a runtime notification —
-  // translating it would fabricate a failed turn bb never accepted.
-  const state = threadSession.translator.resolveState({ threadId });
-  if (state.currentTurnId !== undefined) {
-    emitForSession(threadSession, threadId, "error", { threadId, message });
-  }
+  emitForSession(threadSession, threadId, "error", { threadId, message });
   sendSessionScopedError(threadId, threadSession.providerThreadId, message);
 }
 
@@ -623,6 +618,9 @@ async function handleRequest(
           threadGoalClear: false,
           fork: "checkpoint",
           approvalEnforcedBy: "runtime",
+          grammarVersions: [THREAD_DELTA_GRAMMAR_V3, THREAD_DELTA_GRAMMAR_V3],
+          steerMode: "inject",
+          skills: { configure: true },
         },
       };
       sendResult(request.id, result);
@@ -767,6 +765,10 @@ function sendThreadSessionResult(
   providerThreadId: string,
 ): void {
   sendThreadIdentity(threadId, providerThreadId);
+  const constructed = sessions.get(threadId);
+  if (constructed) {
+    sendSessionReset(threadId, constructed.translator);
+  }
   sendResult(id, { providerThreadId, sessionRestorable: true });
 }
 
@@ -907,28 +909,12 @@ function startPiCompaction(
  * turn gets the event immediately instead.
  */
 function recordAcceptedTurnInput(
-  threadSession: ThreadSession,
+  _threadSession: ThreadSession,
   params: TurnStartParams,
 ): void {
-  const state = threadSession.translator.resolveState({
-    threadId: params.threadId,
-  });
-  if (state.currentTurnId !== undefined) {
-    sendThreadEvents(
-      params.threadId,
-      buildAcceptedUserMessageEvent({
-        clientRequestId: params.clientRequestId,
-        providerThreadId: params.providerThreadId,
-        threadId: params.threadId,
-        turnId: state.currentTurnId,
-      }),
-    );
-    return;
-  }
-  queueAcceptedUserMessage({
-    clientRequestId: params.clientRequestId,
-    state,
-  });
+  sendThreadDeltas(params.threadId, [
+    { kind: "input.accepted", clientRequestId: params.clientRequestId },
+  ]);
 }
 
 function handleTurnStart(id: string | number, params: TurnStartParams): void {
@@ -988,15 +974,9 @@ async function handleTurnSteer(
     );
     // A steer joins the active turn; its acceptance is emitted only once the
     // SDK actually accepted the queued input, against the expected turn id.
-    sendThreadEvents(
-      params.threadId,
-      buildAcceptedUserMessageEvent({
-        clientRequestId: params.clientRequestId,
-        providerThreadId: params.providerThreadId,
-        threadId: params.threadId,
-        turnId: params.expectedTurnId,
-      }),
-    );
+    sendThreadDeltas(params.threadId, [
+      { kind: "input.accepted", clientRequestId: params.clientRequestId },
+    ]);
     sendResult(id, { threadId: params.threadId });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -1027,24 +1007,7 @@ async function handleThreadStop(
   ) {
     // An interrupt settles the active turn as interrupted before teardown;
     // the SDK session is detached on close, so no further events flow.
-    const state = threadSession.translator.resolveState({
-      threadId: params.threadId,
-    });
-    if (state.currentTurnId !== undefined) {
-      sendThreadEvents(params.threadId, [
-        {
-          type: "turn/completed",
-          threadId: UNSTAMPED_THREAD_ID,
-          providerThreadId: "",
-          scope: turnScope(state.currentTurnId),
-          status: "interrupted",
-        },
-      ]);
-      threadSession.translator.turnState.finishTurn({
-        state,
-        threadId: params.threadId,
-      });
-    }
+    sendThreadDeltas(params.threadId, [{ kind: "session.ended" }]);
   }
   // A release detaches the idle session and must not fabricate an
   // interruption (#1584): the close path emits no turn events.

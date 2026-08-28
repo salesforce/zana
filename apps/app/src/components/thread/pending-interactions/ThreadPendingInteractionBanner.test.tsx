@@ -92,7 +92,7 @@ describe('ThreadPendingInteractionBanner', () => {
         />
       </MemoryRouter>
     );
-    expect(html).toContain('From child thread: Child work');
+    expect(html).toContain('From child agent: Child work');
     expect(html).toContain('Waiting for an answer');
     expect(html).toContain('Continue?');
     expect(html).toContain('Other…');

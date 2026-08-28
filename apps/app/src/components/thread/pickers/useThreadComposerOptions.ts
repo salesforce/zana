@@ -8,9 +8,10 @@ import {
 import type { ModelPickerOption, PickerOption } from './model-picker-option.js';
 import { REASONING_LABELS, visibleComposerReasoningLevels } from './reasoning-labels.js';
 import {
+  composerProvidersFromCatalog,
   fallbackModelsForProvider,
   fallbackMoreModelsForProvider,
-  fallbackProviderOption,
+  snapNewThreadProviderId,
   type ThreadComposerProviderOption
 } from './fallback-models.js';
 import {
@@ -132,11 +133,13 @@ export function useThreadComposerOptions(input: {
     void ensureThreadProviderModels(providerId);
   }, [providerId]);
 
-  const providers = catalog.providers.length > 0
-    ? catalog.providers
-    : input.threadId || input.lockedProviderId
-      ? [fallbackProviderOption(providerId)]
-      : [];
+  const providers = composerProvidersFromCatalog(
+    catalog.providers,
+    Boolean(input.threadId || input.lockedProviderId),
+    providerId
+  );
+  const rosterReady = catalog.providers.length > 0 || Boolean(input.threadId || input.lockedProviderId);
+  const registeredProviderIds = catalog.providers.map((row) => row.id);
   const cached = catalog.byProvider[providerId];
   const models = cached?.models ?? fallbackModelsForProvider(providerId);
   const moreModels = cached?.selectedOnlyModels ?? fallbackMoreModelsForProvider(providerId);
@@ -145,15 +148,13 @@ export function useThreadComposerOptions(input: {
 
   useEffect(() => {
     if (input.threadId || input.lockedProviderId) return;
-    if (catalog.providers.length === 0) return;
-    const offered = catalog.providers.some((row) => row.id === providerId);
-    if (!offered && catalog.providers[0]) {
-      const next = catalog.providers[0].id;
-      setProviderIdState(next);
-      const restored = restoreProviderSelection(next);
-      setModelState(restored.model);
-      setReasoningLevelState(restored.reasoningLevel);
-    }
+    const offered = composerProvidersFromCatalog(catalog.providers, false, providerId);
+    const next = snapNewThreadProviderId(offered.map((row) => row.id), providerId);
+    if (!next) return;
+    setProviderIdState(next);
+    const restored = restoreProviderSelection(next);
+    setModelState(restored.model);
+    setReasoningLevelState(restored.reasoningLevel);
   }, [input.threadId, input.lockedProviderId, catalog.providers, providerId]);
 
   const activeModel = useMemo(
@@ -212,6 +213,8 @@ export function useThreadComposerOptions(input: {
     providerId,
     setProviderId,
     providerOptions,
+    rosterReady,
+    registeredProviderIds,
     model,
     setModel,
     modelOptions,

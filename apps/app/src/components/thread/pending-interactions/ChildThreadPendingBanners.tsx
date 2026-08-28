@@ -39,7 +39,7 @@ function ChildThreadPendingBanner({
           threadId={child.id}
           sourceThread={{
             href: getThreadRoutePath(child.id, projectId ?? undefined),
-            title: child.title?.trim() || 'Child thread'
+            title: child.title?.trim() || 'Child agent'
           }}
         />
       ))}

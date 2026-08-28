@@ -18,29 +18,27 @@
 import {
   DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_ENDPOINT,
   pendingInteractionResolutionSchema,
-  turnScope,
   type PendingInteractionGrantedPermissionProfile,
   type PendingInteractionPayload,
   type PermissionEscalation,
   type ReasoningLevel,
-  type ThreadEvent,
+  type ThreadDelta,
   BRIDGE_INBOUND_REQUEST_METHODS,
   BRIDGE_JSON_RPC_ERRORS,
   BRIDGE_NOTIFICATION_METHODS,
   PROVIDER_BRIDGE_PROTOCOL_VERSION,
+  THREAD_DELTA_GRAMMAR_V3,
+  THREAD_DELTA_NOTIFICATION_METHOD,
   threadDiscardParamsSchema as canonicalThreadDiscardParamsSchema,
   threadStartParamsSchema as canonicalThreadStartParamsSchema,
   threadStopParamsSchema as canonicalThreadStopParamsSchema,
   turnStartParamsSchema as canonicalTurnStartParamsSchema,
   turnSteerParamsSchema as canonicalTurnSteerParamsSchema,
   type InitializeResult,
-  UNSTAMPED_THREAD_ID,
-  buildAcceptedUserMessageEvent,
   createBridgeIo,
   createBridgeLineHandler,
   createPendingToolCallTracker,
   decodeBridgeJsonRpcResponse,
-  queueAcceptedUserMessage,
   runBridgeRequest,
   shouldAutoDenyInteractiveRequest,
   withoutBridgeRuntimeEnv,
@@ -59,9 +57,9 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import {
-  createClaudeEventTranslator,
-  type ClaudeEventTranslator,
-} from "../event-translation.js";
+  createClaudeDeltaTranslator,
+  type ClaudeDeltaTranslator,
+} from "../delta-translation.js";
 import {
   buildClaudeApprovalInteractionPayload,
   buildClaudeInteractiveResponse,
@@ -72,7 +70,6 @@ import {
   buildClaudeTurnParams,
   type ClaudeCodeSkillRoot,
 } from "../session-params.js";
-import { buildInterruptedClaudeTaskEvents } from "../task-translation.js";
 import { SdkSession, type SdkSessionOptions } from "./sdk-session.js";
 import { listClaudeCodeBridgeModels } from "./model-list.js";
 import {
@@ -233,7 +230,7 @@ interface ThreadSession {
   closing: boolean;
   streamEnded: boolean;
   /** Every session-scoped notification is translated through this. */
-  translator: ClaudeEventTranslator;
+  translator: ClaudeDeltaTranslator;
   mockCliTrafficProxy: ClaudeCodeMockCliTrafficProxy | null;
   pendingInteractiveRequests: Map<string | number, PendingInteractiveRequest>;
   /** Current-turn fallback when Claude supplies no originating-work metadata. */
@@ -664,35 +661,29 @@ const sessionIdEntropyPrefix = `bt${randomUUID().slice(0, 8)}-`;
 let translatorSessionSerial = 0;
 const CLAUDE_PROVIDER_ID = "claude-code";
 
-function createSessionTranslator(): ClaudeEventTranslator {
-  translatorSessionSerial += 1;
-  const idPrefix = `${sessionIdEntropyPrefix}${translatorSessionSerial}-`;
-  return createClaudeEventTranslator({
-    providerId: CLAUDE_PROVIDER_ID,
-    turnIdPrefix: idPrefix,
-    itemIdPrefix: idPrefix,
-    synthesizeItemStarted: true,
-  });
+function createSessionTranslator(cwd: string): ClaudeDeltaTranslator {
+  return createClaudeDeltaTranslator({ cwd });
 }
 
-function sendThreadEvents(
+function sendThreadDeltas(
   threadId: string,
-  events: readonly ThreadEvent[],
+  deltas: readonly ThreadDelta[],
 ): void {
-  for (const event of events) {
-    send({
-      jsonrpc: "2.0",
-      method: BRIDGE_NOTIFICATION_METHODS.threadEvent,
-      params: { threadId, event },
-    });
+  if (deltas.length === 0) {
+    return;
   }
+  send({
+    jsonrpc: "2.0",
+    method: THREAD_DELTA_NOTIFICATION_METHOD,
+    params: { threadId, deltas },
+  });
 }
 
 /**
  * The one session-scoped emitter: it runs the Claude-flavored notification
- * through the session translator and emits the finished `ThreadEvent`s as
- * `thread/event` notifications. The `sdk/message` envelope never reaches the
- * wire — it is only the translator's input vocabulary.
+ * through the session translator and emits the parsed semantic deltas as one
+ * batched `thread/delta` notification. The `sdk/message` envelope never
+ * reaches the wire — it is only the translator's input vocabulary.
  */
 function emitForSession(
   threadSession: ThreadSession,
@@ -700,9 +691,9 @@ function emitForSession(
   method: string,
   params: Record<string, unknown>,
 ): void {
-  sendThreadEvents(
+  sendThreadDeltas(
     threadId,
-    threadSession.translator.translateClaudeEvent(
+    threadSession.translator.translate(
       { jsonrpc: "2.0", method, params },
       { threadId },
     ),
@@ -718,8 +709,7 @@ function emitSessionError(
   // exactly one terminal state, and settlement events precede the error
   // signal. Without an open turn the error stays a runtime notification —
   // translating it would fabricate a failed turn bb never accepted.
-  const state = threadSession.translator.resolveState({ threadId });
-  if (state.currentTurnId !== undefined) {
+  if (threadSession.translator.hasOpenTurn(threadId)) {
     emitForSession(threadSession, threadId, "error", { threadId, message });
   }
   send({
@@ -747,28 +737,10 @@ function emitSessionReplacement(args: {
   threadId: string;
   threadSession: ThreadSession;
 }): void {
-  const translator = args.threadSession.translator;
-  const state = translator.resolveState({ threadId: args.threadId });
-  const settlement: ThreadEvent[] = [];
-  if (state.currentTurnId !== undefined) {
-    settlement.push({
-      type: "turn/completed",
-      threadId: UNSTAMPED_THREAD_ID,
-      providerThreadId: "",
-      scope: turnScope(state.currentTurnId),
-      status: "interrupted",
-    });
-    translator.turnState.finishTurn({ state, threadId: args.threadId });
-  }
-  // Replacing the CLI session kills its background tasks with it.
-  settlement.push(
-    ...buildInterruptedClaudeTaskEvents({
-      tasks: state.tasksById,
-      threadId: UNSTAMPED_THREAD_ID,
-    }),
+  sendThreadDeltas(
+    args.threadId,
+    args.threadSession.translator.buildSessionSettlementDeltas(args.threadId),
   );
-  state.opaqueTaskIds.clear();
-  sendThreadEvents(args.threadId, settlement);
   send({
     jsonrpc: "2.0",
     method: BRIDGE_NOTIFICATION_METHODS.sessionReplaced,
@@ -791,26 +763,10 @@ function emitCanonicalTurnInputAccepted(
   acceptance: CanonicalTurnAcceptance,
   threadId: string,
 ): void {
-  if (threadSession.translator === null) {
-    return;
-  }
-  const state = threadSession.translator.resolveState({ threadId });
-  if (state.currentTurnId !== undefined) {
-    sendThreadEvents(
-      threadId,
-      buildAcceptedUserMessageEvent({
-        clientRequestId: acceptance.clientRequestId,
-        providerThreadId: acceptance.providerThreadId,
-        threadId,
-        turnId: state.currentTurnId,
-      }),
-    );
-    return;
-  }
-  queueAcceptedUserMessage({
-    clientRequestId: acceptance.clientRequestId,
-    state,
-  });
+  sendThreadDeltas(
+    threadId,
+    threadSession.translator.acceptInput(threadId, acceptance.clientRequestId),
+  );
 }
 
 function sendThreadIdentity(threadId: string, providerThreadId: string): void {
@@ -825,6 +781,10 @@ function sendThreadIdentity(threadId: string, providerThreadId: string): void {
       sessionRestorable: true,
     },
   });
+}
+
+function sendSessionReset(threadId: string): void {
+  sendThreadDeltas(threadId, [{ kind: "session.reset" }]);
 }
 
 function nextSessionSerial(): number {
@@ -912,7 +872,7 @@ function seedModelContextWindowHint(
   threadId: string,
   model: string | undefined,
 ): void {
-  if (threadSession.translator === null || model === undefined) {
+  if (model === undefined) {
     return;
   }
   threadSession.translator.setClaudeModelContextWindowHint(threadId, model);
@@ -939,7 +899,9 @@ function createThreadSession(args: CreateThreadSessionArgs): ThreadSession {
     sessionSerial,
     closing: false,
     streamEnded: false,
-    translator: createSessionTranslator(),
+    translator: createSessionTranslator(
+      args.sessionConstructionConfig.sessionOptions.cwd,
+    ),
     mockCliTrafficProxy: args.mockCliTrafficProxy,
     pendingInteractiveRequests: new Map(),
     permissionEscalation: args.permissionEscalation,
@@ -956,6 +918,14 @@ function createThreadSession(args: CreateThreadSessionArgs): ThreadSession {
     sessionPermissionGrants: [...(args.sessionPermissionGrants ?? [])],
     threadIdRef: args.threadIdRef,
   };
+  threadSession.translator.configureInjectedTools(
+    (args.sessionConstructionConfig.dynamicTools ?? []).map((tool) => ({
+      name: tool.name,
+      ...(tool.presentation === undefined
+        ? {}
+        : { presentation: tool.presentation }),
+    })),
+  );
   seedModelContextWindowHint(
     threadSession,
     args.threadIdRef.current,
@@ -1251,6 +1221,7 @@ function replaceThreadSession(args: ReplaceThreadSessionArgs): void {
   sessions.set(args.threadId, args.replacementSession);
   args.replacementSession.session.start(args.providerThreadId);
   sendThreadIdentity(args.threadId, args.providerThreadId);
+  sendSessionReset(args.threadId);
 }
 
 function replaceEndedThreadSession(
@@ -1617,15 +1588,10 @@ function buildInteractivePermissionResult(
  * active turn.
  */
 function resolveCanonicalInteractionTurnId(
-  threadSession: ThreadSession,
-  threadId: string,
+  _threadSession: ThreadSession,
+  _threadId: string,
 ): string | null {
-  if (threadSession.translator === null) {
-    return null;
-  }
-  return (
-    threadSession.translator.resolveState({ threadId }).currentTurnId ?? null
-  );
+  return null;
 }
 
 function createForwardInteractiveRequest(
@@ -1695,10 +1661,8 @@ function createForwardInteractiveRequest(
         params: {
           threadId: args.threadId,
           providerThreadId: args.providerThreadId,
-          turnId: resolveCanonicalInteractionTurnId(
-            threadSession,
-            args.threadId,
-          ),
+          turnId: null,
+          providerNativeIds: true,
           payload,
         },
       });
@@ -1756,10 +1720,8 @@ function createForwardUserQuestionRequest(
         params: {
           threadId: args.threadId,
           providerThreadId: args.providerThreadId,
-          turnId: resolveCanonicalInteractionTurnId(
-            threadSession,
-            args.threadId,
-          ),
+          turnId: null,
+          providerNativeIds: true,
           payload,
         },
       });
@@ -2004,6 +1966,9 @@ async function handleRequest(request: ClaudeCodeJsonRpcRequest): Promise<void> {
           threadGoalClear: false,
           fork: "checkpoint",
           approvalEnforcedBy: "provider",
+          grammarVersions: [THREAD_DELTA_GRAMMAR_V3, THREAD_DELTA_GRAMMAR_V3],
+          steerMode: "inject",
+          skills: { configure: true },
         },
       };
       sendResult(request.id, result);
@@ -2123,6 +2088,7 @@ async function handleThreadStart(
   // Identity precedes any thread/event; the result carries the same identity
   // with per-session restorability.
   sendThreadIdentity(threadIdRef.current, providerThreadId);
+  sendSessionReset(threadIdRef.current);
   sendResult(id, { providerThreadId, sessionRestorable: true });
 }
 
@@ -2225,6 +2191,7 @@ async function handleThreadResume(
     return;
   }
   sendThreadIdentity(threadId, requestedProviderThreadId);
+  sendSessionReset(threadId);
   sendResult(id, {
     providerThreadId: requestedProviderThreadId,
     sessionRestorable: true,
@@ -2293,6 +2260,7 @@ async function handleThreadFork(
   threadSession.session.start(forkedProviderThreadId);
 
   sendThreadIdentity(threadId, forkedProviderThreadId);
+  sendSessionReset(threadId);
   sendResult(id, {
     providerThreadId: forkedProviderThreadId,
     sessionRestorable: true,
@@ -2482,31 +2450,10 @@ async function handleThreadStop(
     // An interrupt settles the active turn as interrupted and, like today's
     // cancel semantics, takes the session's background tasks down with the
     // CLI session it closes.
-    const state = threadSession.translator.resolveState({
-      threadId: params.threadId,
-    });
-    const settlement: ThreadEvent[] = [];
-    if (state.currentTurnId !== undefined) {
-      settlement.push({
-        type: "turn/completed",
-        threadId: UNSTAMPED_THREAD_ID,
-        providerThreadId: "",
-        scope: turnScope(state.currentTurnId),
-        status: "interrupted",
-      });
-      threadSession.translator.turnState.finishTurn({
-        state,
-        threadId: params.threadId,
-      });
-    }
-    settlement.push(
-      ...buildInterruptedClaudeTaskEvents({
-        tasks: state.tasksById,
-        threadId: UNSTAMPED_THREAD_ID,
-      }),
+    sendThreadDeltas(
+      params.threadId,
+      threadSession.translator.buildSessionSettlementDeltas(params.threadId),
     );
-    state.opaqueTaskIds.clear();
-    sendThreadEvents(params.threadId, settlement);
   }
   // A release detaches the idle session and must not fabricate an
   // interruption or settle background tasks (#1584): the session stays

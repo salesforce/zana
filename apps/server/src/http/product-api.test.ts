@@ -2,13 +2,29 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } fro
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createConversationThread, createEnvironment, updateConversationThreadStatus, upsertHost } from '@zana-ai/zcc-db';
+import { createConversationThread, createEnvironment, updateConversationThreadStatus, upsertHost, appendConversationThreadEvent } from '@zana-ai/zcc-db';
 import { startProductServer, type ProductServer } from './product-server.js';
 import { HostUnavailableError } from './host-hub.js';
 import { registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
 
 let server: ProductServer | null = null;
 const providerHandles: Array<{ unregister(): void }> = [];
+
+function seedTestHostArtifact(product: ProductServer): ProductServer {
+  product.ctx.pluginHostArtifacts.set('test', {
+    path: '/tmp/host.js',
+    digest: 'a'.repeat(64),
+    byteLength: 12,
+    generation: 'g1'
+  });
+  return product;
+}
+
+async function startTestProductServer(
+  options: Parameters<typeof startProductServer>[0]
+): Promise<ProductServer> {
+  return seedTestHostArtifact(await startProductServer(options));
+}
 
 afterEach(async () => {
   await server?.close();
@@ -63,7 +79,7 @@ describe('product HTTP', () => {
       })
     );
 
-    server = await startProductServer({
+    server = await startTestProductServer({
       dataDir,
       origins: { serverPort: 0, devAppPort: 5173 }
     });
@@ -204,7 +220,7 @@ describe('product HTTP', () => {
       })
     );
     writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ version: 1, theme: 'dark' }));
-    server = await startProductServer({
+    server = await startTestProductServer({
       dataDir,
       origins: { serverPort: 0, devAppPort: 5173 }
     });
@@ -288,7 +304,7 @@ describe('product HTTP', () => {
 
   it('returns 410 for PTY I/O on the Thread API', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-output-'));
-    server = await startProductServer({
+    server = await startTestProductServer({
       dataDir,
       origins: { serverPort: 0, devAppPort: 5173 }
     });
@@ -332,7 +348,7 @@ describe('product HTTP', () => {
 
   it('includes idle conversation threads in the unscoped list', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-threads-'));
-    server = await startProductServer({
+    server = await startTestProductServer({
       dataDir,
       origins: { serverPort: 0, devAppPort: 5173 }
     });
@@ -351,14 +367,67 @@ describe('product HTTP', () => {
     });
     updateConversationThreadStatus(server.ctx.db, thread.id, 'idle');
     const body = await fetch(`${server.url}api/v1/threads`).then((response) => response.json()) as {
-      threads: Array<{ id: string; status: string }>;
+      threads: Array<{ id: string; status: string; lastReadSeq: number | null; maxSeq: number }>;
     };
-    expect(body.threads).toEqual([expect.objectContaining({ id: thread.id, status: 'idle' })]);
+    expect(body.threads).toEqual([
+      expect.objectContaining({ id: thread.id, status: 'idle', lastReadSeq: null, maxSeq: 0 })
+    ]);
+  });
+
+  it('lists lastReadSeq and maxSeq and emits threads:updated on read', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-thread-reads-'));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: '/tmp/proj'
+    });
+    const thread = createConversationThread(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code',
+      title: 'Reads'
+    });
+    appendConversationThreadEvent(server.ctx.db, { threadId: thread.id, type: 'turn/started' });
+    appendConversationThreadEvent(server.ctx.db, { threadId: thread.id, type: 'turn/completed' });
+
+    const listed = await fetch(`${server.url}api/v1/threads`).then((response) => response.json()) as {
+      threads: Array<{ id: string; lastReadSeq: number | null; maxSeq: number }>;
+    };
+    expect(listed.threads).toEqual([
+      expect.objectContaining({ id: thread.id, lastReadSeq: null, maxSeq: 2 })
+    ]);
+
+    const emit = vi.spyOn(server.ctx.hub, 'emit');
+    const read = await fetch(`${server.url}api/v1/threads/${thread.id}/read`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    });
+    expect(read.status).toBe(200);
+    await expect(read.json()).resolves.toMatchObject({ thread: { id: thread.id, lastReadSeq: 2, maxSeq: 2 } });
+    expect(emit).toHaveBeenCalledWith('threads:updated', expect.objectContaining({
+      id: thread.id,
+      lastReadSeq: 2,
+      maxSeq: 2
+    }));
+
+    const afterRead = await fetch(`${server.url}api/v1/threads`).then((response) => response.json()) as {
+      threads: Array<{ id: string; lastReadSeq: number | null; maxSeq: number }>;
+    };
+    expect(afterRead.threads).toEqual([
+      expect.objectContaining({ id: thread.id, lastReadSeq: 2, maxSeq: 2 })
+    ]);
   });
 
   it('renames a thread and marks it unread', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-thread-header-'));
-    server = await startProductServer({
+    server = await startTestProductServer({
       dataDir,
       origins: { serverPort: 0, devAppPort: 5173 }
     });
@@ -393,6 +462,7 @@ describe('product HTTP', () => {
     });
     expect(blank.status).toBe(400);
 
+    const emit = vi.spyOn(server.ctx.hub, 'emit');
     const unread = await fetch(`${server.url}api/v1/threads/${thread.id}/unread`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -400,6 +470,10 @@ describe('product HTTP', () => {
     });
     expect(unread.status).toBe(200);
     await expect(unread.json()).resolves.toMatchObject({ thread: { id: thread.id, lastReadSeq: 0 } });
+    expect(emit).toHaveBeenCalledWith('threads:updated', expect.objectContaining({
+      id: thread.id,
+      lastReadSeq: 0
+    }));
 
     const missingRename = await fetch(`${server.url}api/v1/threads/missing/`, {
       method: 'PATCH',
@@ -432,7 +506,7 @@ describe('product HTTP', () => {
         }]
       })
     );
-    server = await startProductServer({
+    server = await startTestProductServer({
       dataDir,
       origins: { serverPort: 0, devAppPort: 5173 }
     });
@@ -447,6 +521,144 @@ describe('product HTTP', () => {
     const unknownPaths = await fetch(`${server.url}api/v1/projects/missing/paths`);
     expect(unknownPaths.status).toBe(404);
     await expect(unknownPaths.json()).resolves.toMatchObject({ code: 'unknown-project' });
+  });
+
+  it('forwards host file mutations through Host-RPC with defaults', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-files-'));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const rpc = vi.fn(async (input: { command: { type: string } }) => {
+      if (input.command.type === 'host.write_file') {
+        return { outcome: 'conflict', currentSha256: 'b'.repeat(64) };
+      }
+      if (input.command.type === 'host.read_path') {
+        return {
+          path: '/tmp/note.md',
+          content: 'hello',
+          contentEncoding: 'utf8',
+          sizeBytes: 5,
+          sha256: 'a'.repeat(64)
+        };
+      }
+      if (input.command.type === 'host.list_paths') {
+        return { paths: [], truncated: false };
+      }
+      return { ok: true };
+    });
+    server.ctx.hostHub.resolveHostId = () => 'host-1';
+    server.ctx.hostHub.callHostOnlineRpc = rpc;
+
+    const written = await fetch(`${server.url}api/v1/files/write`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: '/tmp/note.md', content: 'hello' })
+    });
+    expect(written.status).toBe(200);
+    await expect(written.json()).resolves.toEqual({
+      outcome: 'conflict',
+      currentSha256: 'b'.repeat(64)
+    });
+
+    const mkdir = await fetch(`${server.url}api/v1/files/mkdir`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: '/tmp/dir' })
+    });
+    expect(mkdir.status).toBe(200);
+
+    const listed = await fetch(`${server.url}api/v1/files/list`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: '/tmp' })
+    });
+    expect(listed.status).toBe(200);
+
+    const paths = await fetch(`${server.url}api/v1/files/paths`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: '/tmp', includeFiles: true, includeDirectories: true })
+    });
+    expect(paths.status).toBe(200);
+
+    const read = await fetch(`${server.url}api/v1/files/read`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: '/tmp/note.md' })
+    });
+    expect(read.status).toBe(200);
+
+    const invalid = await fetch(`${server.url}api/v1/files/write`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'missing path' })
+    });
+    expect(invalid.status).toBe(400);
+
+    expect(rpc.mock.calls.map((call) => call[0].command.type)).toEqual([
+      'host.write_file',
+      'host.mkdir',
+      'host.list_paths',
+      'host.list_paths',
+      'host.read_path'
+    ]);
+    expect(rpc.mock.calls[0]?.[0].command).toMatchObject({
+      contentEncoding: 'utf8',
+      createParents: false
+    });
+  });
+
+  it('renames a Codex thread on the live host after the product title write', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-codex-rename-'));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    providerHandles.push(
+      registerThreadProvider('test', {
+        id: 'codex',
+        displayName: 'Codex',
+        capabilities: {
+          supportsServiceTier: false,
+          fork: 'checkpoint',
+          supportsThreadArchive: true,
+          supportsThreadRename: true,
+          permissionModes: ['full']
+        }
+      })
+    );
+    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: '/tmp/proj'
+    });
+    const thread = createConversationThread(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'codex',
+      title: 'Hello'
+    });
+    const rpc = vi.fn(async () => ({ threadId: thread.id, renamed: true }));
+    server.ctx.hostHub.callHostOnlineRpc = rpc;
+
+    const renamed = await fetch(`${server.url}api/v1/threads/${thread.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'Hello 2' })
+    });
+    expect(renamed.status).toBe(200);
+    expect(rpc).toHaveBeenCalledWith({
+      hostId: host.id,
+      command: {
+        type: 'thread.rename',
+        threadId: thread.id,
+        environmentId: environment.id,
+        title: 'Hello 2'
+      }
+    });
   });
 
   it('persists workspace order from POST /api/v1/projects/reorder', async () => {
@@ -467,7 +679,7 @@ describe('product HTTP', () => {
       join(dataDir, 'config.json'),
       JSON.stringify({ version: 1, theme: 'dark', followUpsEnabled: true })
     );
-    server = await startProductServer({
+    server = await startTestProductServer({
       dataDir,
       origins: { serverPort: 0, devAppPort: 5173 }
     });
@@ -489,11 +701,80 @@ describe('product HTTP', () => {
     expect(again.projects.map((project: { id: string }) => project.id)).toEqual(['proj-b', 'proj-a']);
   });
 
+  it('stores and serves composer image attachments', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-attach-'));
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-product-attach-proj-'));
+    writeFileSync(
+      join(dataDir, 'projects.json'),
+      JSON.stringify({
+        version: 1,
+        projects: [{ id: 'proj-1', name: 'Alpha', path: projectRoot, createdAt: 1, lastActiveAt: 1 }]
+      })
+    );
+    writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ version: 1, theme: 'dark' }));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+
+    const form = new FormData();
+    form.set('file', new Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' }), 'shot.png');
+    const uploaded = await fetch(`${server.url}api/v1/projects/proj-1/attachments`, {
+      method: 'POST',
+      body: form
+    });
+    expect(uploaded.status).toBe(201);
+    const body = await uploaded.json() as { type: string; path: string; name: string };
+    expect(body).toMatchObject({ type: 'localImage', name: 'shot.png' });
+
+    const content = await fetch(
+      `${server.url}api/v1/projects/proj-1/attachments/content?path=${encodeURIComponent(body.path)}`
+    );
+    expect(content.status).toBe(200);
+    expect(content.headers.get('content-type')).toBe('image/png');
+    const bytes = new Uint8Array(await content.arrayBuffer());
+    expect([...bytes]).toEqual([137, 80, 78, 71]);
+
+    const escaped = await fetch(
+      `${server.url}api/v1/projects/proj-1/attachments/content?path=${encodeURIComponent('../secret.png')}`
+    );
+    expect(escaped.status).toBe(400);
+
+    const missingPath = await fetch(`${server.url}api/v1/projects/proj-1/attachments/content`);
+    expect(missingPath.status).toBe(400);
+
+    const unknownGet = await fetch(`${server.url}api/v1/projects/missing/attachments/content?path=shot.png`);
+    expect(unknownGet.status).toBe(404);
+
+    const unknownForm = new FormData();
+    unknownForm.set('file', new Blob([new Uint8Array([1])], { type: 'image/png' }), 'shot.png');
+    const unknownProject = await fetch(`${server.url}api/v1/projects/missing/attachments`, {
+      method: 'POST',
+      body: unknownForm
+    });
+    expect(unknownProject.status).toBe(404);
+
+    const jsonRejected = await fetch(`${server.url}api/v1/projects/proj-1/attachments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    });
+    expect(jsonRejected.status).toBe(415);
+
+    const missingFile = new FormData();
+    missingFile.set('prompt', 'hello');
+    const missing = await fetch(`${server.url}api/v1/projects/proj-1/attachments`, {
+      method: 'POST',
+      body: missingFile
+    });
+    expect(missing.status).toBe(400);
+  });
+
   it('transcribes voice over multipart when a host is connected', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-voice-'));
     writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [] }));
     writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ version: 1, theme: 'dark' }));
-    server = await startProductServer({
+    server = await startTestProductServer({
       dataDir,
       origins: { serverPort: 0, devAppPort: 5173 }
     });
@@ -571,7 +852,7 @@ describe('product HTTP', () => {
 
   it('serves environment diff file TOC and per-file patches', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-diff-'));
-    server = await startProductServer({
+    server = await startTestProductServer({
       dataDir,
       origins: { serverPort: 0, devAppPort: 5173 }
     });
@@ -655,7 +936,7 @@ describe('product HTTP thread reasoning', () => {
 describe('product HTTP plugins', () => {
   it('lists contributions and dispatches plugin CLI and HTTP', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugins-'));
-    server = await startProductServer({
+    server = await startTestProductServer({
       dataDir,
       origins: { serverPort: 0, devAppPort: 5173 }
     });
@@ -698,7 +979,7 @@ describe('product HTTP plugins', () => {
 
   it('lists enabled plugin skills on contributions and the project command catalog', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-skills-'));
-    server = await startProductServer({
+    server = await startTestProductServer({
       dataDir,
       origins: { serverPort: 0, devAppPort: 5173 }
     });
@@ -749,7 +1030,7 @@ describe('product HTTP plugins', () => {
 
   it('lists redacted plugin-app snapshots and toggles enable/disable', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-apps-'));
-    server = await startProductServer({
+    server = await startTestProductServer({
       dataDir,
       origins: { serverPort: 0, devAppPort: 5173 }
     });
@@ -806,18 +1087,164 @@ describe('product HTTP plugins', () => {
     expect(body.apps[0]).not.toHaveProperty('rootDir');
     expect(body.apps[0]).not.toHaveProperty('source');
 
-    const disable = await fetch(`${server.url}api/v1/plugin-apps/docs/disable`, { method: 'POST' });
+    const missingType = await fetch(`${server.url}api/v1/plugin-apps/docs/disable`, {
+      method: 'POST'
+    });
+    expect(missingType.status).toBe(415);
+
+    const disable = await fetch(`${server.url}api/v1/plugin-apps/docs/disable`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' }
+    });
     await expect(disable.json()).resolves.toEqual({ ok: true, value: true });
     const after = await fetch(`${server.url}api/v1/plugin-apps`);
     await expect(after.json()).resolves.toMatchObject({ apps: [{ id: 'docs', enabled: false }] });
 
-    const missing = await fetch(`${server.url}api/v1/plugin-apps/missing/enable`, { method: 'POST' });
+    const missing = await fetch(`${server.url}api/v1/plugin-apps/missing/enable`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' }
+    });
+    expect(missing.status).toBe(404);
+  });
+
+  it('calls plugin RPC and reads or writes settings', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-rpc-'));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const settings = {
+      descriptors: { token: { type: 'string' as const, label: 'Token' } },
+      values: { token: 'secret' as string | boolean | undefined }
+    };
+    server.ctx.plugins = {
+      snapshot: () => [],
+      callRpc: async (pluginId: string, method: string) => {
+        if (pluginId !== 'pr-monitor') throw new Error(`unknown rpc ${pluginId}.${method}`);
+        if (method === 'badge') return { count: 3 };
+        throw new Error(`unknown rpc ${pluginId}.${method}`);
+      },
+      getSettings: (pluginId: string) => {
+        if (pluginId !== 'pr-monitor') return { descriptors: {}, values: {} };
+        return settings;
+      },
+      setSettings: async (pluginId: string, values: Record<string, string | boolean | undefined>) => {
+        if (pluginId !== 'pr-monitor') throw new Error(`plugin not running: ${pluginId}`);
+        settings.values = { ...settings.values, ...values };
+      }
+    } as never;
+
+    const rpc = await fetch(`${server.url}api/v1/plugin-apps/pr-monitor/rpc`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ method: 'badge' })
+    });
+    await expect(rpc.json()).resolves.toEqual({ value: { count: 3 } });
+
+    const missingMethod = await fetch(`${server.url}api/v1/plugin-apps/pr-monitor/rpc`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    expect(missingMethod.status).toBe(400);
+
+    const unknown = await fetch(`${server.url}api/v1/plugin-apps/missing/rpc`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ method: 'badge' })
+    });
+    expect(unknown.status).toBe(404);
+
+    const listed = await fetch(`${server.url}api/v1/plugin-apps/pr-monitor/settings`);
+    await expect(listed.json()).resolves.toEqual(settings);
+
+    const written = await fetch(`${server.url}api/v1/plugin-apps/pr-monitor/settings`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ values: { token: 'next' } })
+    });
+    await expect(written.json()).resolves.toMatchObject({ values: { token: 'next' } });
+
+    const invalid = await fetch(`${server.url}api/v1/plugin-apps/pr-monitor/settings`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ values: { token: 1 } })
+    });
+    expect(invalid.status).toBe(400);
+
+    const missingValues = await fetch(`${server.url}api/v1/plugin-apps/pr-monitor/settings`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    expect(missingValues.status).toBe(400);
+
+    const notRunning = await fetch(`${server.url}api/v1/plugin-apps/missing/settings`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ values: { token: 'x' } })
+    });
+    expect(notRunning.status).toBe(404);
+
+    server.ctx.plugins = undefined;
+    const unavailable = await fetch(`${server.url}api/v1/plugin-apps/pr-monitor/rpc`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ method: 'badge' })
+    });
+    expect(unavailable.status).toBe(503);
+    expect((await fetch(`${server.url}api/v1/plugin-apps/pr-monitor/settings`)).status).toBe(503);
+    expect(
+      (
+        await fetch(`${server.url}api/v1/plugin-apps/pr-monitor/settings`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ values: {} })
+        })
+      ).status
+    ).toBe(503);
+  });
+
+  it('checks catalog plugin updates and applies them', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-updates-'));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const updates = [
+      { id: 'docs', current: '1.0.0', available: '1.1.0', marketplace: 'official' }
+    ];
+    const applied: string[] = [];
+    server.ctx.plugins = {
+      snapshot: () => [],
+      checkUpdates: async () => updates,
+      applyUpdate: async (id: string) => {
+        if (id !== 'docs') throw new Error(`plugin not installed: ${id}`);
+        applied.push(id);
+        return { id };
+      }
+    } as never;
+
+    const listed = await fetch(`${server.url}api/v1/plugin-apps/updates`);
+    await expect(listed.json()).resolves.toEqual({ updates });
+
+    const apply = await fetch(`${server.url}api/v1/plugin-apps/docs/update`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' }
+    });
+    await expect(apply.json()).resolves.toEqual({ ok: true, value: true });
+    expect(applied).toEqual(['docs']);
+
+    const missing = await fetch(`${server.url}api/v1/plugin-apps/missing/update`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' }
+    });
     expect(missing.status).toBe(404);
   });
 
   it('adds, lists, refreshes, and removes marketplace catalogs', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-mp-'));
-    server = await startProductServer({
+    server = await startTestProductServer({
       dataDir,
       origins: { serverPort: 0, devAppPort: 5173 }
     });
@@ -903,7 +1330,7 @@ describe('product HTTP plugins', () => {
 describe('product HTTP CLI skills', () => {
   it('lists empty status and requires hostIds on install', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-cli-skills-'));
-    server = await startProductServer({
+    server = await startTestProductServer({
       dataDir,
       origins: { serverPort: 0, devAppPort: 5173 }
     });
@@ -923,7 +1350,7 @@ describe('product HTTP CLI skills', () => {
 describe('product HTTP pending interactions', () => {
   it('returns 404 for interactions on an unknown thread', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-pint-'));
-    server = await startProductServer({
+    server = await startTestProductServer({
       dataDir,
       origins: { serverPort: 0, devAppPort: 5173 }
     });

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { Archive } from 'lucide-react';
 import { product } from '../lib/product-client.js';
 import { getAgentsRoutePath, getProjectRoutePath, getThreadRoutePath, projectIdFromThreadPath, threadIdFromPath } from '../lib/route-paths.js';
 import { useRouteState } from '../hooks/useRouteState.js';
@@ -29,7 +30,7 @@ export interface ThreadMenuContext {
 }
 
 export function threadTitle(thread: Pick<ThreadListItem, 'title'>): string {
-  return thread.title?.trim() || 'Untitled thread';
+  return thread.title?.trim() || 'Untitled agent';
 }
 
 export function viewingThread(pathname: string, threadId: string): boolean {
@@ -56,11 +57,19 @@ export async function runThreadMenuAction(
     return;
   }
   const title = threadTitle(thread);
-  if (!ctx.confirm(`Archive “${title}”?`)) return;
+  if (action === 'archive' && ctx.confirm && !ctx.confirm(`Archive “${title}”?`)) return;
+  await archiveThreadWithoutConfirm(thread, ctx);
+}
+
+export async function archiveThreadWithoutConfirm(
+  thread: Pick<ThreadListItem, 'id' | 'title'>,
+  ctx: ThreadMenuContext
+): Promise<void> {
   const result = await ctx.archive(thread.id);
   if (result && result.ok === false) return;
   ctx.remove(thread.id);
   if (viewingThread(ctx.pathname, thread.id)) {
+    const projectId = ctx.projectId || projectIdFromThreadPath(ctx.pathname) || undefined;
     ctx.navigate(projectId ? getProjectRoutePath(projectId) : getAgentsRoutePath());
   }
 }
@@ -147,7 +156,7 @@ export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
         <button
           type="button"
           onClick={() => run('stop')}
-          title="Stop this thread. The conversation stays in the list."
+          title="Stop this agent. The conversation stays in the list."
         >
           Stop
         </button>
@@ -156,7 +165,7 @@ export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
         <button
           type="button"
           onClick={() => run('fork')}
-          title="Start a new thread from this conversation"
+          title="Start a new agent from this conversation"
         >
           Fork
         </button>
@@ -166,10 +175,44 @@ export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
         type="button"
         className="tab-context-danger"
         onClick={() => run('archive')}
-        title="Archive this thread and remove it from the list"
+        title="Archive this agent and remove it from the list"
       >
         Archive
       </button>
     </div>
+  );
+}
+
+/** Hover-revealed one-click archive. Same lifecycle as the menu, without a confirm dialog. */
+export function ThreadArchiveQuickAction({ thread }: { thread: ThreadListItem }) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const route = useRouteState();
+  const projectId = route.isProjectWorkspace ? route.focusedProjectId : null;
+  return (
+    <button
+      type="button"
+      className="project-terminal-close thread-archive-quick"
+      data-testid="thread-archive-quick"
+      aria-label={`Archive ${threadTitle(thread)}`}
+      title="Archive agent"
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void archiveThreadWithoutConfirm(thread, {
+          navigate,
+          pathname: location.pathname,
+          projectId,
+          confirm: () => true,
+          stop: (id) => product.threads.stop(id),
+          fork: (id) => product.threads.fork(id),
+          archive: (id) => product.threads.archive(id),
+          remove: (id) => useThreads.getState().remove(id)
+        });
+      }}
+    >
+      <Archive size={12} />
+    </button>
   );
 }

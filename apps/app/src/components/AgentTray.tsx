@@ -190,7 +190,7 @@ export function AgentTray({
   if (items.length === 0) {
     return placement === 'inline' ? (
       <p className="agent-tray-empty" role="status">
-        {projectId ? 'No agents or threads' : 'No active agents or threads'}
+        {projectId ? 'No agents' : 'No active agents'}
       </p>
     ) : null;
   }

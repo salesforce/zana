@@ -80,7 +80,8 @@ export interface PluginThreadPanelProps {
 
 export interface PluginThreadPanelActionContext {
   threadId: string;
-  openPanel(options?: { title?: string; params?: JsonValue }): void;
+  /** Returns true when the host opened this action's side panel. */
+  openPanel(options?: { title?: string; params?: JsonValue }): boolean;
 }
 
 export interface PluginThreadPanelActionRegistration extends PluginSlotBase {
@@ -99,7 +100,8 @@ export interface PluginNewThreadPanelProps {
 
 export interface PluginNewThreadPanelActionContext {
   projectId: string | null;
-  openPanel(options?: { title?: string; params?: JsonValue }): void;
+  /** Returns true when the host opened this action's compose-time panel. */
+  openPanel(options?: { title?: string; params?: JsonValue }): boolean;
 }
 
 export interface PluginNewThreadPanelActionRegistration extends PluginSlotBase {
@@ -202,6 +204,32 @@ export interface PluginMessageActionRegistration extends PluginSlotBase {
   title: string;
   icon?: string;
   run: (context: PluginMessageActionContext) => void | Promise<void>;
+}
+
+/** Context handed to a `commandPaletteAction`'s `isAvailable` and `run`. */
+export interface PluginCommandPaletteActionContext {
+  threadId: string | null;
+  projectId: string | null;
+  /**
+   * Open one of this plugin's `threadPanelAction` components in the current
+   * thread's side panel. Returns true when the host accepted the open.
+   */
+  openPanel(options: PluginMessageActionThreadPanelOptions): boolean;
+  /**
+   * Navigate to one of this plugin's `navPanel` routes. Returns true when a
+   * router consumed the navigation.
+   */
+  toPluginPanel(path: string, options?: { subPath?: string; replace?: boolean }): boolean;
+}
+
+/**
+ * A row in the host command palette (⌘P), listed under Extensions beside
+ * core commands. The plugin supplies a title and `run`; the host owns matching.
+ */
+export interface PluginCommandPaletteActionRegistration extends PluginSlotBase {
+  title: string;
+  isAvailable?(context: PluginCommandPaletteActionContext): boolean;
+  run(context: PluginCommandPaletteActionContext): void | Promise<void>;
 }
 
 export interface PluginProviderIconRegistration {
@@ -341,6 +369,9 @@ export interface PluginAppSlots {
   fileOpener(registration: Omit<PluginFileOpenerRegistration, 'generation' | 'pluginId'>): void;
   messageDirective(registration: Omit<PluginMessageDirectiveRegistration, 'generation' | 'pluginId'>): void;
   messageAction(registration: Omit<PluginMessageActionRegistration, 'generation' | 'pluginId'>): void;
+  commandPaletteAction(
+    registration: Omit<PluginCommandPaletteActionRegistration, 'generation' | 'pluginId'>
+  ): void;
   experimental_providerIcon(registration: Omit<PluginProviderIconRegistration, 'generation' | 'pluginId'>): void;
 }
 
@@ -373,6 +404,7 @@ export interface PluginRegistrationSet {
   fileOpeners: PluginFileOpenerRegistration[];
   messageDirectives: PluginMessageDirectiveRegistration[];
   messageActions: PluginMessageActionRegistration[];
+  commandPaletteActions: PluginCommandPaletteActionRegistration[];
   providerIcons: PluginProviderIconRegistration[];
   composerCustomizations: ComposerCustomization[];
   contentScripts: PluginContentScriptRegistration[];
@@ -453,6 +485,8 @@ export interface PluginSdkApp {
   ThreadChat: ComponentType<ThreadChatProps>;
   Markdown: ComponentType<MarkdownProps>;
   experimental_NewThreadComposer: ComponentType<NewThreadComposerProps>;
+  /** Host-only toast helper; not a public SDK export. */
+  toast?(message: string, kind?: 'info' | 'error'): void;
 }
 
 export function emptyRegistrationSet(pluginId: string, generation: number): PluginRegistrationSet {
@@ -472,6 +506,7 @@ export function emptyRegistrationSet(pluginId: string, generation: number): Plug
     fileOpeners: [],
     messageDirectives: [],
     messageActions: [],
+    commandPaletteActions: [],
     providerIcons: [],
     composerCustomizations: [],
     contentScripts: []
@@ -545,6 +580,7 @@ export function collectPluginApp(
     fileOpener: new Set<string>(),
     messageDirective: new Set<string>(),
     messageAction: new Set<string>(),
+    commandPaletteAction: new Set<string>(),
     providerIcon: new Set<string>(),
     contentScript: new Set<string>()
   };
@@ -773,6 +809,25 @@ export function collectPluginApp(
             ...(registration.icon !== undefined
               ? { icon: requireNonEmptyString(kind, 'icon', registration.icon) }
               : {}),
+            run: registration.run
+          })
+        );
+      },
+      commandPaletteAction: (registration) => {
+        const kind = 'slots.commandPaletteAction';
+        const id = requireSlotId(kind, registration.id);
+        requireUniqueId(kind, seen.commandPaletteAction, id);
+        if (typeof registration.run !== 'function') {
+          throw new Error(`${kind}: "run" must be a function`);
+        }
+        if (registration.isAvailable !== undefined && typeof registration.isAvailable !== 'function') {
+          throw new Error(`${kind}: "isAvailable" must be a function when set`);
+        }
+        set.commandPaletteActions.push(
+          stamp({
+            id,
+            title: requireNonEmptyString(kind, 'title', registration.title),
+            ...(registration.isAvailable !== undefined ? { isAvailable: registration.isAvailable } : {}),
             run: registration.run
           })
         );

@@ -55,6 +55,7 @@ function httpProduct(): Pick<
   | 'library'
   | 'quickPrompts'
   | 'fs'
+  | 'files'
   | 'pluginApps'
   | 'extensions'
   | 'updates'
@@ -411,6 +412,14 @@ function httpProduct(): Pick<
         const query = path ? `?path=${encodeURIComponent(path)}` : '';
         return apiJson(`/hosts/${encodeURIComponent(id)}/directory${query}`);
       },
+      pathsExist: async (id, paths) => apiJson(`/hosts/${encodeURIComponent(id)}/paths/exist`, {
+        method: 'POST',
+        body: JSON.stringify({ paths })
+      }),
+      pickFolder: async (id, clientHostId) => apiJson(`/hosts/${encodeURIComponent(id)}/pick-folder`, {
+        method: 'POST',
+        body: JSON.stringify({ clientHostId })
+      }),
       cloneDefaultPath: async (id, projectId) => apiJson(
         `/hosts/${encodeURIComponent(id)}/clone-default-path?projectId=${encodeURIComponent(projectId)}`
       ),
@@ -493,8 +502,21 @@ function httpProduct(): Pick<
       onChanged: (cb) => subscribeProductEvent<Host[] | undefined>('hosts:changed', cb)
     } as CcApi['hosts'],
     relay: {
-      status: async () => apiJson<{ state: 'connected' | 'offline' | 'unconfigured' }>('/relay'),
-      onChanged: (cb) => subscribeProductEvent<{ state: 'connected' | 'offline' | 'unconfigured' }>('relay:changed', cb)
+      status: async () => apiJson<{
+        state: 'connected' | 'offline' | 'unconfigured';
+        sessionId?: string;
+        joinUntil?: number;
+      }>('/relay'),
+      renewJoinWindow: async () => apiJson<{
+        state: 'connected' | 'offline' | 'unconfigured';
+        sessionId?: string;
+        joinUntil?: number;
+      }>('/relay/renew-join', { method: 'POST', body: '{}' }),
+      onChanged: (cb) => subscribeProductEvent<{
+        state: 'connected' | 'offline' | 'unconfigured';
+        sessionId?: string;
+        joinUntil?: number;
+      }>('relay:changed', cb)
     } as CcApi['relay'],
     marketplaces: {
       list: async () => {
@@ -759,6 +781,23 @@ function httpProduct(): Pick<
         }
       }
     } as CcApi['fs'],
+    files: {
+      pathForFile: (_file: File) => {
+        throw new Error('pathForFile requires the desktop app');
+      },
+      read: async (input) => apiJson('/files/read', {
+        method: 'POST',
+        body: JSON.stringify(input)
+      }),
+      list: async (input) => apiJson('/files/list', {
+        method: 'POST',
+        body: JSON.stringify(input)
+      }),
+      listPaths: async (input) => apiJson('/files/paths', {
+        method: 'POST',
+        body: JSON.stringify(input)
+      })
+    },
     pluginApps: {
       list: async () => {
         const body = await apiJson<{ apps?: PluginAppEntry[] }>('/plugin-apps');
@@ -767,7 +806,8 @@ function httpProduct(): Pick<
       setEnabled: async (id, enabled) => {
         try {
           await apiJson(`/plugin-apps/${encodeURIComponent(id)}/${enabled ? 'enable' : 'disable'}`, {
-            method: 'POST'
+            method: 'POST',
+            body: '{}'
           });
           const body = await apiJson<{ apps?: PluginAppEntry[] }>('/plugin-apps');
           emitPluginApps(Array.isArray(body.apps) ? body.apps : []);
@@ -780,11 +820,56 @@ function httpProduct(): Pick<
           };
         }
       },
-      callRpc: async () => {
-        throw new Error('plugin rpc is not available on this origin');
+      checkUpdates: async () => {
+        const body = await apiJson<{ updates?: Array<{
+          id: string;
+          current: string;
+          available: string;
+          marketplace: string;
+        }> }>('/plugin-apps/updates');
+        const listed = await apiJson<{ apps?: PluginAppEntry[] }>('/plugin-apps');
+        emitPluginApps(Array.isArray(listed.apps) ? listed.apps : []);
+        return Array.isArray(body.updates) ? body.updates : [];
       },
-      getSettings: async () => ({ descriptors: {}, values: {} }),
-      setSettings: async () => ({ descriptors: {}, values: {} }),
+      applyUpdate: async (id) => {
+        try {
+          await apiJson(`/plugin-apps/${encodeURIComponent(id)}/update`, {
+            method: 'POST',
+            body: '{}'
+          });
+          const listed = await apiJson<{ apps?: PluginAppEntry[] }>('/plugin-apps');
+          emitPluginApps(Array.isArray(listed.apps) ? listed.apps : []);
+          return { ok: true as const, value: true as const };
+        } catch (error) {
+          return {
+            ok: false as const,
+            code: 'WRITE_FAILED',
+            message: error instanceof Error ? error.message : String(error)
+          };
+        }
+      },
+      callRpc: async (pluginId, method, args) => {
+        const body = await apiJson<{ value?: unknown }>(
+          `/plugin-apps/${encodeURIComponent(pluginId)}/rpc`,
+          {
+            method: 'POST',
+            body: JSON.stringify({ method, args })
+          }
+        );
+        return body.value;
+      },
+      getSettings: async (pluginId) =>
+        apiJson(`/plugin-apps/${encodeURIComponent(pluginId)}/settings`),
+      setSettings: async (pluginId, values) => {
+        const payload: Record<string, string | boolean | null> = {};
+        for (const [key, value] of Object.entries(values)) {
+          payload[key] = value === undefined ? null : value;
+        }
+        return apiJson(`/plugin-apps/${encodeURIComponent(pluginId)}/settings`, {
+          method: 'POST',
+          body: JSON.stringify({ values: payload })
+        });
+      },
       onChanged: (cb) => {
         pluginAppListeners.add(cb);
         return () => {
@@ -892,6 +977,24 @@ export const product: CcApi = new Proxy({} as CcApi, {
     if (name === 'threads' || name === 'environments' || name === 'hosts' || name === 'relay' || name === 'marketplaces' || name === 'cliSkills') {
       const http = httpProduct() as unknown as Record<string, unknown>;
       return withStubs(name, http[name] as object);
+    }
+    if (name === 'files') {
+      const http = httpProduct().files;
+      if (hasDesktopBridge()) {
+        const desktop = (window.cc as unknown as CcApi).files;
+        return {
+          ...http,
+          pathForFile: desktop?.pathForFile ?? ((file: File) => {
+            throw new Error('pathForFile requires the desktop app');
+          })
+        };
+      }
+      return {
+        ...http,
+        pathForFile: (_file: File) => {
+          throw new Error('pathForFile requires the desktop app');
+        }
+      };
     }
     if (name === 'voice') {
       const http = httpProduct().voice;

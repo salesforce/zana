@@ -31,7 +31,7 @@ export function NewThreadView({ project: projectProp }: { project?: Project } = 
     <section className="new-thread-view aurora-host" data-testid="new-thread-view">
       <AuroraGrid />
       <div className="new-thread-view-inner">
-        <h1 className="new-thread-view-heading">New thread</h1>
+        <h1 className="new-thread-view-heading">New agent</h1>
         <HomeAgentComposer
           project={project}
           initialText={seed.initialText}

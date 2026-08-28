@@ -133,6 +133,9 @@ curl -fL --connect-timeout 10 --max-time 300 --retry 2 "$server_url/install/zcc-
 tar -xzf "$package_file" -C "$package_dir"
 
 join_bin=${ZCC_HOST_JOIN_CLI:-}
+if [ -z "$join_bin" ] && [ -f "$package_dir/join.cjs" ]; then
+  join_bin="$package_dir/join.cjs"
+fi
 if [ -z "$join_bin" ] && [ -f "$package_dir/join.mjs" ]; then
   join_bin="$package_dir/join.mjs"
 fi
@@ -143,22 +146,24 @@ fi
 
 run_join() {
   ZCC_DATA_DIR="$data_dir" ZCC_SERVER_URL="$server_url" \
-    "$NODE_BIN" "$join_bin" join \
+    nohup "$NODE_BIN" "$join_bin" join \
       --join-code "$join_code" \
       --host-id "$host_id" \
       --server-url "$server_url" \
       --host-daemon-port "$port" \
-      --auto-update
+      --auto-update \
+      >>"$data_dir/host-daemon.log" 2>&1 &
+  join_pid=$!
+  printf '%s\n' "$join_pid" > "$data_dir/host-daemon.pid"
+}
+
+systemd_user_available() {
+  command -v systemctl >/dev/null 2>&1 || return 1
+  systemctl --user show-environment >/dev/null 2>&1
 }
 
 echo "Enrolling host daemon…"
-if [ "${ZCC_INSTALL_SKIP_SERVICE:-}" = 1 ]; then
-  run_join &
-  join_pid=$!
-else
-  run_join &
-  join_pid=$!
-fi
+run_join
 
 wait_connected() {
   i=0
@@ -186,11 +191,10 @@ if [ "${ZCC_INSTALL_SKIP_SERVICE:-}" = 1 ]; then
   exit 0
 fi
 
-kill "$join_pid" 2>/dev/null || true
-sleep 1
-
 uname_s=$(uname -s)
 if [ "$uname_s" = Darwin ]; then
+  kill "$join_pid" 2>/dev/null || true
+  sleep 1
   plist="$HOME/Library/LaunchAgents/ai.zana.zcc-host-daemon.$server_host.plist"
   mkdir -p "$HOME/Library/LaunchAgents"
   cat > "$plist" <<PLIST
@@ -229,7 +233,9 @@ if [ "$uname_s" = Darwin ]; then
 PLIST
   launchctl unload "$plist" 2>/dev/null || true
   launchctl load "$plist"
-else
+elif systemd_user_available; then
+  kill "$join_pid" 2>/dev/null || true
+  sleep 1
   unit_dir="$HOME/.config/systemd/user"
   mkdir -p "$unit_dir"
   unit="$unit_dir/zcc-host-daemon-$server_host.service"
@@ -250,6 +256,10 @@ WantedBy=default.target
 UNIT
   systemctl --user daemon-reload
   systemctl --user enable --now "zcc-host-daemon-$server_host.service"
+else
+  echo "No systemd user bus; leaving the host daemon running in the background."
+  echo "Host daemon connected."
+  exit 0
 fi
 
 if ! wait_connected; then

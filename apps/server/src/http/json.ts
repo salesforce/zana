@@ -39,6 +39,16 @@ export function sendNoContent(response: ServerResponse): void {
   response.writeHead(204, headersWithCors(response, { 'Cache-Control': 'no-store' })).end();
 }
 
+export function sendBytes(
+  response: ServerResponse,
+  status: number,
+  body: Buffer,
+  headers: Record<string, string>
+): void {
+  response.writeHead(status, headersWithCors(response, headers));
+  response.end(body);
+}
+
 export function sendNdjson(response: ServerResponse, events: unknown[]): void {
   response.writeHead(
     200,

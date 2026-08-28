@@ -49,13 +49,22 @@ import {
   buildHubRows,
   displayIcon,
   filterInstalledRows,
+  hostSettingsPanelOf,
   installedPublisher,
+  moduleHostCallReady,
   publisherLabel,
   rowDescription,
   rowEnabled,
+  shouldMountHostSettings,
   type HubRow,
   type InstalledPublisherFilter
 } from './installed-plugins.js';
+import { reportPluginEnabledFailure, setHubRowEnabled } from './plugin-row-enabled.js';
+import {
+  applyHubPluginUpdate,
+  pluginAvailableVersion,
+  pluginUpdatesCheckedMessage
+} from './plugin-row-update.js';
 
 export { buildHubRows, type HubRow } from './installed-plugins.js';
 
@@ -158,9 +167,14 @@ export function ExtensionsHub({
   const checkUpdates = () => {
     setMoreOpen(false);
     setCheckingUpdates(true);
-    product.extensions
+    product.pluginApps
       .checkUpdates()
-      .catch(() => {})
+      .then((updates) => {
+        useUi.getState().pushToast(pluginUpdatesCheckedMessage(updates.length));
+      })
+      .catch(() => {
+        useUi.getState().pushToast('Could not check for plugin updates', 'error');
+      })
       .finally(() => setCheckingUpdates(false));
   };
 
@@ -395,7 +409,7 @@ export function InstalledView({ toolbarExtra }: { toolbarExtra?: ReactNode } = {
             {sortDir === 'asc' ? <ArrowUpAZ size={14} /> : <ArrowDownAZ size={14} />}
             Name
           </button>
-          <div className="ext-install-menu-wrap" ref={newMenuRef}>
+          <div className="ext-install-menu-wrap ext-install-split" ref={newMenuRef}>
             <button
               type="button"
               className="settings-btn primary"
@@ -407,14 +421,14 @@ export function InstalledView({ toolbarExtra }: { toolbarExtra?: ReactNode } = {
             </button>
             <button
               type="button"
-              className="settings-btn"
+              className="settings-btn primary ext-install-split-toggle"
               onClick={() => setNewMenuOpen((open) => !open)}
               aria-haspopup="menu"
               aria-expanded={newMenuOpen}
               aria-label="Install or open a plugin"
               title="Install or open a plugin"
             >
-              <ChevronDown size={12} className="ext-install-menu-caret" />
+              <ChevronDown size={12} />
             </button>
             {newMenuOpen && (
               <div className="ext-install-menu" role="menu" aria-label="Install or open a plugin">
@@ -474,27 +488,29 @@ export function InstalledView({ toolbarExtra }: { toolbarExtra?: ReactNode } = {
           ))}
         </div>
       )}
-      {rows.length === 0 ? (
-        <p className="settings-help settings-help--muted">
-          No plugins installed. Browse the Marketplace, or create your own.
-        </p>
-      ) : visible.length === 0 ? (
-        <p className="settings-help settings-help--muted">
-          {query.trim()
-            ? `No plugins match “${query.trim()}”.`
-            : 'No plugins match these filters.'}
-        </p>
-      ) : (
-        <div className="ext-installed-panel" role="list" aria-label="Installed plugins">
-          {visible.map((row) => (
-            <InstalledPluginRow
-              key={row.module.id}
-              row={row}
-              onOpen={() => selectSettingsExtension(row.module.id)}
-            />
-          ))}
-        </div>
-      )}
+      <div className="ext-installed-scroller">
+        {rows.length === 0 ? (
+          <p className="settings-help settings-help--muted">
+            No plugins installed. Browse the Marketplace, or create your own.
+          </p>
+        ) : visible.length === 0 ? (
+          <p className="settings-help settings-help--muted">
+            {query.trim()
+              ? `No plugins match “${query.trim()}”.`
+              : 'No plugins match these filters.'}
+          </p>
+        ) : (
+          <div className="ext-installed-panel" role="list" aria-label="Installed plugins">
+            {visible.map((row) => (
+              <InstalledPluginRow
+                key={row.module.id}
+                row={row}
+                onOpen={() => selectSettingsExtension(row.module.id)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
       {openExisting && <InstallFromGitDialog mode="open" onClose={() => setOpenExisting(false)} />}
       {installGit && <InstallFromGitDialog onClose={() => setInstallGit(false)} />}
     </section>
@@ -503,8 +519,10 @@ export function InstalledView({ toolbarExtra }: { toolbarExtra?: ReactNode } = {
 
 function InstalledPluginRow({ row, onOpen }: { row: HubRow; onOpen: () => void }) {
   const [pending, setPending] = useState<boolean | null>(null);
+  const [updating, setUpdating] = useState(false);
   const enabled = pending ?? rowEnabled(row);
   const canToggle = row.plugin != null || row.entry != null;
+  const availableVersion = pluginAvailableVersion(row);
   const publisher = installedPublisher(row);
   const pill = publisherLabel(publisher);
   const description = rowDescription(row);
@@ -513,10 +531,38 @@ function InstalledPluginRow({ row, onOpen }: { row: HubRow; onOpen: () => void }
   const toggle = (next: boolean) => {
     if (!canToggle) return;
     setPending(next);
-    const request = row.plugin
-      ? product.pluginApps.setEnabled(row.plugin.id, next)
-      : product.extensions.setEnabled(row.entry!.id, next);
-    request.catch(() => {}).finally(() => setPending(null));
+    void setHubRowEnabled(row, next, product)
+      .then((res) => reportPluginEnabledFailure(res, useUi.getState().pushToast))
+      .catch((err) => {
+        reportPluginEnabledFailure(
+          {
+            ok: false,
+            message: err instanceof Error ? err.message : 'Failed to update plugin'
+          },
+          useUi.getState().pushToast
+        );
+      })
+      .finally(() => setPending(null));
+  };
+
+  const applyUpdate = () => {
+    if (!availableVersion || updating) return;
+    setUpdating(true);
+    void applyHubPluginUpdate(row, product)
+      .then((res) => {
+        if (!res.ok) {
+          useUi.getState().pushToast(res.message || 'Failed to update plugin', 'error');
+          return;
+        }
+        useUi.getState().pushToast(`Updated ${row.module.title} to ${availableVersion}`);
+      })
+      .catch((err) => {
+        useUi.getState().pushToast(
+          err instanceof Error ? err.message : 'Failed to update plugin',
+          'error'
+        );
+      })
+      .finally(() => setUpdating(false));
   };
 
   return (
@@ -538,11 +584,29 @@ function InstalledPluginRow({ row, onOpen }: { row: HubRow; onOpen: () => void }
                 {pill}
               </span>
             )}
+            {availableVersion && (
+              <span className="ext-installed-pill ext-market-item-source--update">Update</span>
+            )}
           </span>
           {description ? <span className="ext-installed-row-desc">{description}</span> : null}
         </span>
       </button>
       <span className="ext-installed-row-trailing">
+        {availableVersion ? (
+          <button
+            type="button"
+            className="settings-btn ext-installed-update"
+            disabled={updating}
+            onClick={(event) => {
+              event.stopPropagation();
+              applyUpdate();
+            }}
+            title={`Update to ${availableVersion}`}
+            aria-label={`Update ${row.module.title} to ${availableVersion}`}
+          >
+            {updating ? 'Updating…' : 'Update'}
+          </button>
+        ) : null}
         {canToggle ? (
           <label className="ext-installed-switch" title={enabled ? 'Disable' : 'Enable'}>
             <input
@@ -652,11 +716,7 @@ function rowStatus(
  */
 function ExtensionDetail({ row }: { row: HubRow }) {
   const { module, entry } = row;
-  // A module's own settings UI is `settingsPanel`. For modules that historically
-  // used `placement: 'settings'` (their `panel` IS the settings page, e.g. Slack)
-  // fall back to `panel` so they keep working without re-authoring.
-  const SettingsPanel =
-    module.settingsPanel ?? (module.placement === 'settings' ? module.panel : undefined);
+  const SettingsPanel = hostSettingsPanelOf(row);
 
   return (
     <>
@@ -667,10 +727,18 @@ function ExtensionDetail({ row }: { row: HubRow }) {
         <section className="settings-section">
           <p className="modal-error">{module.loadError}</p>
         </section>
-      ) : SettingsPanel ? (
+      ) : SettingsPanel && shouldMountHostSettings(row) ? (
         <ErrorBoundary key={module.id}>
           <SettingsPanel host={getHost(module.id)} />
         </ErrorBoundary>
+      ) : SettingsPanel ? (
+        <section className="settings-section">
+          <p className="settings-help settings-help--muted">
+            {entry
+              ? 'This extension’s main process is not running, so its settings cannot load. If you just turned it on, wait a moment or relaunch Command Center.'
+              : 'This leftover extension still uses the old module host, which is not running. Uninstall it and install the official plugin from the Marketplace.'}
+          </p>
+        </section>
       ) : (
         <section className="settings-section">
           <p className="settings-help settings-help--muted">
@@ -847,18 +915,25 @@ function AboutCard({ row }: { row: HubRow }) {
   // Global panels are launched from this hub instead of earning a separate
   // sidebar row. Project-only and Settings-only modules remain in their native
   // project/settings surfaces.
-  const canOpenPanel = canOpenGlobalPanel(module);
+  const canOpenPanel =
+    canOpenGlobalPanel(module) &&
+    (moduleHostCallReady(row) || module.settingsPanel !== module.panel);
   const openPanel = () => useUi.getState().setNav(module.id);
 
   const canToggle = plugin != null || entry != null;
   const enabled = plugin ? plugin.enabled : (entry?.enabled ?? true);
   const toggleEnabled = () => {
-    if (plugin) {
-      product.pluginApps.setEnabled(plugin.id, !plugin.enabled).catch(() => {});
-      return;
-    }
-    if (!entry) return;
-    product.extensions.setEnabled(entry.id, !entry.enabled).catch(() => {});
+    void setHubRowEnabled({ module, entry: entry ?? null, plugin: plugin ?? null }, !enabled, product)
+      .then((res) => reportPluginEnabledFailure(res, useUi.getState().pushToast))
+      .catch((err) => {
+        reportPluginEnabledFailure(
+          {
+            ok: false,
+            message: err instanceof Error ? err.message : 'Failed to update plugin'
+          },
+          useUi.getState().pushToast
+        );
+      });
   };
   const reveal = () => {
     if (!entry) return;

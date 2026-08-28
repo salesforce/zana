@@ -20,7 +20,7 @@ export function ThreadStorageBrowser({
       applyIfCurrent(cancelled, next.files, setFiles);
     }).catch((err: unknown) => {
       if (!cancelled) {
-        setError(err instanceof Error ? err.message : 'Could not load thread storage');
+        setError(err instanceof Error ? err.message : 'Could not load storage');
         setFiles([]);
       }
     });
@@ -30,7 +30,7 @@ export function ThreadStorageBrowser({
   const rows = files ?? [];
   return (
     <div className="thread-info-storage" data-testid="thread-info-storage">
-      <h3>Thread storage</h3>
+      <h3>Storage</h3>
       {error ? (
         <p className="thread-detail-empty">{error}</p>
       ) : files === null ? (

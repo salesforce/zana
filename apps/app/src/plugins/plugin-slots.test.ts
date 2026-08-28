@@ -7,6 +7,7 @@ import {
   listHomepageSections,
   listNavPanels,
   listPendingInteractionSlots,
+  listCommandPaletteActions,
   listSidebarFooterActions
 } from './plugin-slots.js';
 
@@ -27,11 +28,17 @@ describe('plugin slot registry', () => {
         app.slots.navPanel({ id: 'main', title: 'Tasks', icon: 'ListTodo', component: () => null });
         app.slots.homepageSection({ id: 'open', title: 'Open', component: () => null });
         app.slots.pendingInteraction({ id: 'confirm', component: () => null });
+        app.slots.commandPaletteAction({
+          id: 'open',
+          title: 'Open Tasks',
+          run: () => undefined
+        });
       })
     );
     expect(listNavPanels()).toHaveLength(1);
     expect(listHomepageSections()).toHaveLength(1);
     expect(listPendingInteractionSlots()).toHaveLength(1);
+    expect(listCommandPaletteActions()).toHaveLength(1);
     expect(listNavPanels()[0]?.generation).toBe(2);
   });
 

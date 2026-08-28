@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { deriveRepoDirName, isLegacyWorktreePath, isZccManagedWorkspacePath, resolveManagedTargetPath, resolvePersonalTargetPath } from './worktree-paths.js';
+import {
+  deriveRepoDirName,
+  hostDataDirFromCloneDefaultPath,
+  isLegacyWorktreePath,
+  isZccManagedWorkspacePath,
+  resolveManagedTargetPath,
+  resolvePersonalTargetPath,
+  resolvePersonalTargetPathFromCloneDefault
+} from './worktree-paths.js';
 
 describe('worktree paths', () => {
   it('derives a repo directory name from local, url, and scp sources', () => {
@@ -24,5 +32,17 @@ describe('worktree paths', () => {
   it('recognizes leftover ~/zcc-worktrees as unmanaged legacy checkouts', () => {
     expect(isLegacyWorktreePath('/Users/me', '/Users/me/zcc-worktrees/proj/task')).toBe(true);
     expect(isLegacyWorktreePath('/Users/me', '/Users/me/.zcc/worktrees/env/demo')).toBe(false);
+  });
+
+  it('derives the host data dir from clone_default_path so personal workspaces stay on that box', () => {
+    expect(hostDataDirFromCloneDefaultPath('/home/sfwork/.zcc-machines/app/checkouts/zcc'))
+      .toBe('/home/sfwork/.zcc-machines/app');
+    expect(hostDataDirFromCloneDefaultPath('/Users/me/.zcc/checkouts/zcc')).toBe('/Users/me/.zcc');
+    expect(resolvePersonalTargetPathFromCloneDefault(
+      '/home/sfwork/.zcc-machines/app/checkouts/zcc',
+      'env-1'
+    )).toBe('/home/sfwork/.zcc-machines/app/personal-workspaces/env-1');
+    expect(() => hostDataDirFromCloneDefaultPath('/tmp/zcc')).toThrow(/not under checkouts/);
+    expect(() => hostDataDirFromCloneDefaultPath('/checkouts/zcc')).toThrow(/could not derive host data dir/);
   });
 });

@@ -92,4 +92,21 @@ describe('findActiveTrigger', () => {
       findActiveTrigger(editorWithText('Look at @one@two'), COMPOSER_TRIGGERS)
     ).toBeNull();
   });
+
+  it('keeps spaces verbatim in a multiword mention query', () => {
+    const query = 'Hello world ';
+    const text = `Ask @${query}`;
+    expect(findActiveTrigger(editorWithText(text), COMPOSER_TRIGGERS)).toEqual({
+      char: '@',
+      kind: 'mention',
+      query,
+      from: 'Ask '.length,
+      to: text.length
+    });
+  });
+
+  it('still ends a mention query on a tab or newline', () => {
+    expect(findActiveTrigger(editorWithText('Ask @prompt\t'), COMPOSER_TRIGGERS)).toBeNull();
+    expect(findActiveTrigger(editorWithText('Ask @prompt\n'), COMPOSER_TRIGGERS)).toBeNull();
+  });
 });

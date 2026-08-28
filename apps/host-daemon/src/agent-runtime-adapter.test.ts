@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HostEventEnvelope } from '@zana-ai/zcc-contracts/host-rpc';
 import {
   createAgentRuntimeWithAdapters,
@@ -13,6 +13,7 @@ import {
   createAgentRuntimeAdapter,
   mapRuntimeThreadEvent,
   mergeSessionTooling,
+  resolveRuntimeBridgeLaunch,
   threadExecutionOptions
 } from './agent-runtime-adapter.js';
 import type { ThreadEvent } from '@zana-ai/zcc-domain/thread-runtime';
@@ -540,6 +541,32 @@ describe('agent runtime thread adapter', () => {
     expect(started[0]?.disallowedTools).toBeUndefined();
   });
 
+  it('passes a packed bridge bundle dir into AgentRuntime', async () => {
+    const seen: Array<{ bridgeBundleDir?: string }> = [];
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined,
+      dataDir: cwd,
+      bridgeBundleDir: '/tmp/zcc-packed-bridges',
+      createRuntime: (options) => {
+        seen.push({ bridgeBundleDir: options.bridgeBundleDir });
+        return createAgentRuntimeWithAdapters({
+          ...options,
+          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+        });
+      }
+    });
+    await adapter.startWork({
+      threadId: randomUUID(),
+      environmentId: randomUUID(),
+      projectId: 'p1',
+      providerId: 'fake',
+      input: ['hello'],
+      cwd
+    });
+    expect(seen).toEqual([{ bridgeBundleDir: '/tmp/zcc-packed-bridges' }]);
+    adapter.dispose();
+  });
+
   it('lists fake provider models through AgentRuntime', async () => {
     const adapter = createAgentRuntimeAdapter({
       emit: () => undefined,
@@ -554,7 +581,6 @@ describe('agent runtime thread adapter', () => {
       providerId: 'fake',
       bridgeLaunch: {
         pluginId: 'provider-fake',
-        dataDir: cwd,
         source: { kind: 'daemon-bundled', id: 'fake' },
         capabilities: {
           supportsServiceTier: false,
@@ -567,6 +593,231 @@ describe('agent runtime thread adapter', () => {
     });
     expect(listed.models.length).toBeGreaterThan(0);
     expect(listed.models[0]?.model).toBeTruthy();
+    adapter.dispose();
+  });
+
+  it('resolves an artifact launch to the cached host.js path, not a laptop source path', async () => {
+    const bytes = new Uint8Array(Buffer.from('export default "cached";\n'));
+    const digest = (await import('node:crypto')).createHash('sha256').update(bytes).digest('hex');
+    const fetchPluginHostArtifact = vi.fn(async () => bytes);
+    const launch = {
+      pluginId: 'provider-acp',
+      source: { kind: 'artifact' as const, digest, byteLength: bytes.byteLength },
+      capabilities: {
+        supportsServiceTier: true,
+        permissionModes: ['full'],
+        supportsThreadArchive: false,
+        supportsThreadRename: false,
+        fork: 'tip'
+      }
+    };
+    const first = await resolveRuntimeBridgeLaunch({
+      launch,
+      daemonDataDir: cwd,
+      fetchPluginHostArtifact
+    });
+    expect(first.source.kind).toBe('artifact');
+    if (first.source.kind === 'artifact') {
+      expect(first.source.artifactPath).toBe(
+        join(cwd, 'plugin-host-artifacts', 'provider-acp', digest, 'host.js')
+      );
+      expect(first.source.artifactPath).not.toMatch(/bridge\.ts$/u);
+    }
+    expect(fetchPluginHostArtifact).toHaveBeenCalledTimes(1);
+    await resolveRuntimeBridgeLaunch({
+      launch,
+      daemonDataDir: cwd,
+      fetchPluginHostArtifact
+    });
+    expect(fetchPluginHostArtifact).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses an artifact launch when fetch is not configured', async () => {
+    await expect(
+      resolveRuntimeBridgeLaunch({
+        launch: {
+          pluginId: 'provider-acp',
+          source: {
+            kind: 'artifact',
+            digest: 'ab'.repeat(32),
+            byteLength: 12
+          },
+          capabilities: {
+            supportsServiceTier: true,
+            permissionModes: ['full'],
+            supportsThreadArchive: false,
+            supportsThreadRename: false,
+            fork: 'tip'
+          }
+        },
+        daemonDataDir: cwd
+      })
+    ).rejects.toThrow(/fetch is not configured/u);
+  });
+
+  it('renames, archives, and prepares a rewind through AgentRuntime', async () => {
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined,
+      dataDir: cwd,
+      createRuntime: (options) =>
+        createAgentRuntimeWithAdapters({
+          ...options,
+          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+        })
+    });
+    const environmentId = randomUUID();
+    const threadId = randomUUID();
+    const started = await adapter.startWork({
+      threadId,
+      environmentId,
+      projectId: 'p1',
+      providerId: 'fake',
+      input: ['hello'],
+      cwd
+    });
+    await adapter.renameWork({ threadId, title: 'Renamed' });
+    await adapter.clearGoal({ threadId });
+    const providerThreadId = started?.providerThreadId ?? 'pt-1';
+    const prepared = await adapter.prepareRewind({
+      threadId,
+      environmentId,
+      leaseId: 'lease-1',
+      projectId: 'p1',
+      providerId: 'fake',
+      sourceProviderThreadId: providerThreadId,
+      retainThroughProviderCheckpoint: 'cp-1',
+      cwd
+    });
+    expect(prepared.providerThreadId).toBeTruthy();
+    await adapter.discardRewind({ leaseId: 'lease-1', environmentId });
+    await adapter.stopWork({ threadId });
+    adapter.dispose();
+  });
+
+  it('forwards archive and unarchive to AgentRuntime', async () => {
+    const archived: string[] = [];
+    const unarchived: string[] = [];
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined,
+      dataDir: cwd,
+      createRuntime: (options) => {
+        const runtime = createAgentRuntimeWithAdapters({
+          ...options,
+          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+        });
+        return {
+          ...runtime,
+          archiveThread: async (input) => {
+            archived.push(input.providerThreadId);
+          },
+          unarchiveThread: async (input) => {
+            unarchived.push(input.providerThreadId);
+          }
+        };
+      }
+    });
+    const environmentId = randomUUID();
+    await adapter.archiveWork({
+      threadId: randomUUID(),
+      environmentId,
+      providerId: 'fake',
+      providerThreadId: 'pt-1',
+      cwd
+    });
+    await adapter.unarchiveWork({
+      threadId: randomUUID(),
+      environmentId,
+      providerId: 'fake',
+      providerThreadId: 'pt-1',
+      cwd
+    });
+    expect(archived).toEqual(['pt-1']);
+    expect(unarchived).toEqual(['pt-1']);
+    adapter.dispose();
+  });
+
+  it('replaces an idle environment runtime when the skill catalog changes', async () => {
+    let created = 0;
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined,
+      dataDir: cwd,
+      createRuntime: (options) => {
+        created += 1;
+        return createAgentRuntimeWithAdapters({
+          ...options,
+          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+        });
+      }
+    });
+    const environmentId = randomUUID();
+    const threadId = randomUUID();
+    await adapter.startWork({
+      threadId,
+      environmentId,
+      projectId: 'p1',
+      providerId: 'fake',
+      input: ['hello'],
+      cwd
+    });
+    await adapter.stopWork({ threadId });
+    expect(created).toBe(1);
+    mkdirSync(join(cwd, 'skills-generated', 'hello'), { recursive: true });
+    writeFileSync(
+      join(cwd, 'skills-generated', 'hello', 'SKILL.md'),
+      '---\ndescription: Hi\n---\n'
+    );
+    await adapter.refreshSkillCatalog();
+    expect(adapter.listLoadedEnvironments()).toEqual([]);
+    await adapter.startWork({
+      threadId: randomUUID(),
+      environmentId,
+      projectId: 'p1',
+      providerId: 'fake',
+      input: ['hello'],
+      cwd
+    });
+    expect(created).toBe(2);
+    adapter.dispose();
+  });
+
+  it('keeps a busy environment runtime when the skill catalog changes', async () => {
+    let created = 0;
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined,
+      dataDir: cwd,
+      createRuntime: (options) => {
+        created += 1;
+        return createAgentRuntimeWithAdapters({
+          ...options,
+          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+        });
+      }
+    });
+    const environmentId = randomUUID();
+    await adapter.startWork({
+      threadId: randomUUID(),
+      environmentId,
+      projectId: 'p1',
+      providerId: 'fake',
+      input: ['hello'],
+      cwd
+    });
+    mkdirSync(join(cwd, 'skills-generated', 'hello'), { recursive: true });
+    writeFileSync(
+      join(cwd, 'skills-generated', 'hello', 'SKILL.md'),
+      '---\ndescription: Hi\n---\n'
+    );
+    await adapter.refreshSkillCatalog();
+    expect(adapter.listLoadedEnvironments()).toEqual([environmentId]);
+    await adapter.startWork({
+      threadId: randomUUID(),
+      environmentId,
+      projectId: 'p1',
+      providerId: 'fake',
+      input: ['second'],
+      cwd
+    });
+    expect(created).toBe(1);
     adapter.dispose();
   });
 });

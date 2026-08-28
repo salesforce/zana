@@ -12,16 +12,12 @@ import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  buildPluginHost,
-  resolvePluginBuildToolchain,
-} from "@zana-ai/zcc-plugin-sdk";
+import { buildPluginHost } from "@zana-ai/zcc-plugin-build";
 import { ensurePluginProcessDataDir } from "@zana-ai/zcc-agent-process-utils";
-import { validatePluginProviderDeclaration } from "@zana-ai/zcc-plugin-sdk/internal/host-policy";
 import type {
-  BbPluginApi,
   PluginProviderDeclaration,
-} from "@zana-ai/zcc-plugin-sdk";
+  ZccPluginApi,
+} from "@zana-ai/zcc-plugin-sdk/server";
 import {
   INTEGRATION_PROVIDER_BRIDGE_MANIFEST_PATH,
   type IntegrationProviderBridgeManifest,
@@ -30,8 +26,8 @@ import {
 /**
  * Every first-party provider plugin that ships a bridge artifact. Pi is
  * separate: its bridge stays in the daemon bundle (its agent tree cannot be
- * inlined into a relocatable artifact), so it has no `bb.providerBridge` and
- * its launch names the bundled bridge instead of an artifact.
+ * inlined into a relocatable artifact), so its launch names the bundled
+ * bridge instead of an artifact.
  */
 const PROVIDER_BRIDGE_PLUGIN_IDS = [
   "provider-codex",
@@ -45,8 +41,6 @@ const DAEMON_BUNDLED_BRIDGE_PLUGIN_IDS: Readonly<Record<string, string>> = {
 };
 
 function pluginRootDir(pluginId: string): string {
-  // No trailing slash: the plugin build's directory-escape checks compare
-  // against `rootDir + "/"`.
   return fileURLToPath(
     new URL(`../../../../plugins/${pluginId}`, import.meta.url),
   );
@@ -70,25 +64,21 @@ async function loadDeclaration(
     throw new Error(`${pluginId} has no default plugin export`);
   }
   let captured: PluginProviderDeclaration | undefined;
-  const bb = {
+  const zcc = {
     agents: {
       experimental_registerProvider(declaration: PluginProviderDeclaration) {
         captured = declaration;
+        return { id: declaration.id, unregister() {} };
       },
     },
-  } as unknown as BbPluginApi;
-  (entry as (bb: BbPluginApi) => void)(bb);
+  } as unknown as ZccPluginApi;
+  (entry as (api: ZccPluginApi) => void)(zcc);
   if (captured === undefined) {
     throw new Error(`${pluginId} registered no provider declaration`);
   }
-  return validatePluginProviderDeclaration(captured);
+  return captured;
 }
 
-/**
- * The same five execution capabilities the server puts on the wire (see
- * resolveBridgeLaunchForProviderId): the daemon has no registry to read a
- * declaration from.
- */
 function wireCapabilities(
   declaration: PluginProviderDeclaration,
 ): IntegrationProviderBridgeManifest[string]["capabilities"] {
@@ -103,16 +93,13 @@ function wireCapabilities(
 }
 
 export async function setup(): Promise<void> {
-  const bridgeDataRoot = join(tmpdir(), "bb-agent-runtime-integration-daemon");
-  const toolchain = await resolvePluginBuildToolchain(
-    join(tmpdir(), "bb-plugin-build-toolchain"),
-  );
+  const bridgeDataRoot = join(tmpdir(), "zcc-agent-runtime-integration-daemon");
   const manifest: IntegrationProviderBridgeManifest = {};
   for (const pluginId of PROVIDER_BRIDGE_PLUGIN_IDS) {
     const rootDir = pluginRootDir(pluginId);
     const [declaration, build] = await Promise.all([
       loadDeclaration(pluginId),
-      buildPluginHost(rootDir, "0.0.0-integration", toolchain),
+      buildPluginHost(rootDir, "0.0.0-integration"),
     ]);
     manifest[declaration.id] = {
       pluginId,
@@ -124,8 +111,6 @@ export async function setup(): Promise<void> {
       source: {
         kind: "artifact",
         digest: build.artifactDigest,
-        // No download step here: the daemon caches the verified bytes, the
-        // test launches the freshly built file in place.
         artifactPath: build.jsPath,
       },
       capabilities: wireCapabilities(declaration),

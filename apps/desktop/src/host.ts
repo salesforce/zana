@@ -5482,11 +5482,10 @@ async function bootstrapNormal() {
   // Hot-reload watcher for ~/.zcc/extensions (Rule #3 — init once here, NOT in
   // createWindow which re-runs). Picks up installs/upgrades/removals live.
   startExtensionsWatcher();
-  // Deploy every bundled SKILL.md into ~/.claude/skills so they show up in the
-  // skill catalogue (zcc-center schedules/templates, saved-reports, brainstorm,
-  // zcc-cli, extension-creator). Idempotent + edit-respecting + best-effort —
-  // never blocks boot. Same roster the "Reload skills & MCP" button re-runs, so
-  // the set lives in one place (skill-installer.ts `BUNDLED_SKILLS`).
+  // Copy the global zcc-cli skill into ~/.claude/skills so agents outside ZCC
+  // can drive the CLI. Other product skills stay in builtin-skills/ and are
+  // injected at thread spawn. Same roster the "Reload skills & MCP" button
+  // re-runs (skill-installer.ts `BUNDLED_SKILLS`).
   redeployBundledSkills(logMainError).catch((err) =>
     logMainError('redeployBundledSkills', err)
   );

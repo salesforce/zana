@@ -23,6 +23,8 @@ import { conversationThreadView } from '../services/threads/conversation-create.
 import { createThreadTitleNamer, type ThreadTitleNamer } from '../services/threads/thread-title-namer.js';
 import { createJoinCodeStore, type JoinCodeStore } from '../services/hosts/join-codes.js';
 import type { PluginService } from '../plugins/plugin-service.js';
+import { PluginHostArtifactRegistry } from '../plugins/plugin-host-artifact-registry.js';
+import { flushHeldConversationSends } from '../services/threads/conversation-lifecycle.js';
 
 export interface ProductTerminalRecord extends TerminalSession {
   hostId: string;
@@ -45,6 +47,7 @@ export interface ProductHttpContext {
   threadTitleNamer: ThreadTitleNamer;
   terminalSessions: Map<string, ProductTerminalRecord>;
   plugins?: PluginService;
+  pluginHostArtifacts: PluginHostArtifactRegistry;
   pairingRelay?: import('./pairing-relay-controller.js').PairingRelayHandle;
   toProjects(): Project[];
   /** Release long-lived watchers started with this context. */
@@ -95,10 +98,19 @@ export function createProductHttpContext(
       );
     }
   });
+  let ctx: ProductHttpContext;
   pendingInteractions = new PendingInteractionLifecycle({
     db,
     hub,
-    callHostOnlineRpc: (input) => hostHub.callHostOnlineRpc(input)
+    callHostOnlineRpc: (input) => hostHub.callHostOnlineRpc(input),
+    onInteractionSettled: ({ threadId, status, statusReason }) => {
+      if (!ctx) return;
+      if (status === 'interrupted' && (statusReason === 'thread-stopped' || statusReason === 'thread-deleted')) {
+        return;
+      }
+      if (ctx.pendingInteractions.hasPendingThreadInteraction(threadId)) return;
+      void flushHeldConversationSends(ctx, threadId).catch(() => undefined);
+    }
   });
   pendingInteractions.start();
   const envToken = process.env.ZCC_HOST_ENROLL_TOKEN;
@@ -123,7 +135,6 @@ export function createProductHttpContext(
   const promptRegistry = new PromptRegistry({ userDir: join(dataDir, 'llm-prompts') });
   promptRegistry.start();
   const llmService = new LlmService(new Map());
-  let ctx: ProductHttpContext;
   const threadTitleNamer = createThreadTitleNamer({
     autoRenameEnabled: () => config.getConfig().autoRenameTabs !== false,
     getEntry: (id) => promptRegistry.get(id),
@@ -155,9 +166,11 @@ export function createProductHttpContext(
     pendingInteractions,
     threadTitleNamer,
     terminalSessions,
+    pluginHostArtifacts: new PluginHostArtifactRegistry(),
     toProjects: () => projects.list() as unknown as Project[],
     dispose: () => {
       promptRegistry.stop();
+      ctx.plugins?.stop?.();
     }
   };
   return ctx;

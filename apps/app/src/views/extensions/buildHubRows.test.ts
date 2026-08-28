@@ -127,9 +127,13 @@ describe('Installed collection chrome', () => {
     expect(source).toContain('ext-installed-row');
     expect(source).toContain('Search installed plugins');
     expect(source).toContain('New plugin');
+    expect(source).toContain('ext-install-split');
+    expect(source).toContain('ext-install-split-toggle');
     expect(source).toContain('Install or open a plugin');
     expect(source).toContain('CREATE_PLUGIN_PROMPT');
     expect(source).not.toContain('Create plugin');
+    expect(source).toContain('shouldMountHostSettings');
+    expect(source).toContain('moduleHostCallReady');
     expect(source).toContain('ext-installed-switch-spacer');
     expect(source).toContain("id: 'all', label: 'All'");
     expect(source).toContain('ext-hub-about-open');
@@ -152,8 +156,10 @@ describe('Extensions hub More menu', () => {
 
   it('holds catalog maintenance instead of crowding the browse toolbar', () => {
     expect(source).toContain("checkingUpdates ? 'Checking for updates…' : 'Check for updates'");
-    expect(source).toContain('product.extensions');
+    expect(source).toContain('product.pluginApps');
     expect(source).toContain('.checkUpdates()');
+    expect(source).toContain('pluginAvailableVersion');
+    expect(source).toContain('applyHubPluginUpdate');
     expect(
       source.split('toolbarExtra={showTabs ? undefined : maintenanceActions}').length - 1
     ).toBe(2);

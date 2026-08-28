@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import type { ProviderCliStatus, ProviderCliStatusResponse } from '@zana-ai/zcc-contracts/host-rpc';
+import type {
+  ProviderCliInstallEvent,
+  ProviderCliStatus,
+  ProviderCliStatusResponse
+} from '@zana-ai/zcc-contracts/host-rpc';
 import {
   actionableProviderCliRows,
+  installProviderCliOnMachine,
   machineCliInventorySummary,
   orderedProviderCliRows,
   providerCliBadge,
+  providerCliInstallOutcome,
+  providerCliInstallOutputSnippet,
   providerCliPresentation
 } from './machine-provider-clis.js';
 
@@ -126,5 +133,116 @@ describe('machine provider CLI rows', () => {
       installAction: null,
       needsUpdate: false
     })).currentLabel).toBe('Installed');
+  });
+});
+
+function events(...rows: ProviderCliInstallEvent[]): ProviderCliInstallEvent[] {
+  return rows;
+}
+
+describe('providerCliInstallOutcome', () => {
+  it('treats a successful completed event as ok', () => {
+    expect(providerCliInstallOutcome(events(
+      { type: 'started', provider: 'codex', command: 'codex update' },
+      { type: 'completed', provider: 'codex', exitCode: 0, signal: null, success: true }
+    ))).toEqual({ ok: true });
+  });
+
+  it('prefers an error event over a later unsuccessful close', () => {
+    expect(providerCliInstallOutcome(events(
+      { type: 'error', provider: 'codex', message: 'Provider CLI install timed out after 600000ms' },
+      { type: 'completed', provider: 'codex', exitCode: 1, signal: null, success: false }
+    ))).toEqual({
+      ok: false,
+      message: 'Provider CLI install timed out after 600000ms'
+    });
+  });
+
+  it('shows the last stderr lines when the command exits non-zero', () => {
+    expect(providerCliInstallOutcome(events(
+      { type: 'output', provider: 'pi', stream: 'stdout', text: 'downloading\n' },
+      { type: 'output', provider: 'pi', stream: 'stderr', text: 'npm ERR! code EACCES\nnpm ERR! permission denied\n' },
+      { type: 'completed', provider: 'pi', exitCode: 1, signal: null, success: false }
+    ))).toEqual({
+      ok: false,
+      message: 'npm ERR! code EACCES\nnpm ERR! permission denied'
+    });
+  });
+
+  it('falls back to stdout, then exit code, then signal', () => {
+    expect(providerCliInstallOutcome(events(
+      { type: 'output', provider: 'cursor', stream: 'stdout', text: 'agent not found\n' },
+      { type: 'completed', provider: 'cursor', exitCode: 127, signal: null, success: false }
+    ))).toEqual({ ok: false, message: 'agent not found' });
+    expect(providerCliInstallOutcome(events(
+      { type: 'completed', provider: 'cursor', exitCode: 2, signal: null, success: false }
+    ))).toEqual({ ok: false, message: 'Install failed (exit 2)' });
+    expect(providerCliInstallOutcome(events(
+      { type: 'completed', provider: 'cursor', exitCode: null, signal: 'SIGTERM', success: false }
+    ))).toEqual({ ok: false, message: 'Install failed (SIGTERM)' });
+    expect(providerCliInstallOutcome(events(
+      { type: 'completed', provider: 'cursor', exitCode: null, signal: null, success: false }
+    ))).toEqual({ ok: false, message: 'Install failed' });
+  });
+
+  it('fails when the stream never finishes', () => {
+    expect(providerCliInstallOutcome([])).toEqual({
+      ok: false,
+      message: 'Install did not complete'
+    });
+    expect(providerCliInstallOutcome(events(
+      { type: 'started', provider: 'opencode', command: 'npm install -g opencode-ai' }
+    ))).toEqual({ ok: false, message: 'Install did not complete' });
+  });
+});
+
+describe('providerCliInstallOutputSnippet', () => {
+  it('keeps the last stderr lines and ignores blank ones', () => {
+    const lines = Array.from({ length: 12 }, (_, i) => `line ${i + 1}`);
+    expect(providerCliInstallOutputSnippet(events(
+      { type: 'output', provider: 'codex', stream: 'stderr', text: `${lines.join('\n')}\n\n` }
+    ))).toBe(lines.slice(-8).join('\n'));
+  });
+
+  it('caps an oversized dump so the row stays readable', () => {
+    const dump = 'x'.repeat(800);
+    const snippet = providerCliInstallOutputSnippet(events(
+      { type: 'output', provider: 'codex', stream: 'stderr', text: dump }
+    ));
+    expect(snippet).toHaveLength(600);
+    expect(snippet).toBe(dump.slice(-600));
+  });
+});
+
+describe('installProviderCliOnMachine', () => {
+  it('returns the parsed stream outcome', async () => {
+    await expect(installProviderCliOnMachine({
+      hostId: 'h1',
+      provider: 'codex',
+      actionKind: 'update',
+      install: async () => [
+        { type: 'completed', provider: 'codex', exitCode: 0, signal: null, success: true }
+      ]
+    })).resolves.toEqual({ ok: true });
+  });
+
+  it('turns thrown failures into a visible message', async () => {
+    await expect(installProviderCliOnMachine({
+      hostId: 'h1',
+      provider: 'pi',
+      actionKind: 'install',
+      install: async () => {
+        throw new Error('host unavailable');
+      }
+    })).resolves.toEqual({ ok: false, message: 'host unavailable' });
+
+    await expect(installProviderCliOnMachine({
+      hostId: 'h1',
+      provider: 'pi',
+      actionKind: 'install',
+      install: async () => {
+        throw 'nope';
+      }
+    })).resolves.toEqual({ ok: false, message: 'Install failed' });
   });
 });

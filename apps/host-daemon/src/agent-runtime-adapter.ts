@@ -7,8 +7,11 @@ import {
   type AgentRuntimeBridgeLaunch,
   type AgentRuntimeOptions
 } from '@zana-ai/zcc-agent-runtime';
+import { ensurePluginProcessDataDir } from '@zana-ai/zcc-agent-process-utils';
 import { createFakeAgentRuntime, fakeProviderEnabled } from './fake-runtime.js';
-import { loadRuntimeSkillRoots } from './injected-skill-roots.js';
+import { loadRuntimeSkillRoots, hashInjectedSkillCatalog } from './injected-skill-roots.js';
+import { ensureCachedPluginHostArtifact, type FetchPluginHostArtifact } from './plugin-host-artifact-cache.js';
+import { silentArtifactCacheLogger, type ArtifactCacheLogger } from './node-artifact-cache.js';
 import {
   encodeClientTurnRequestIdNumber,
   type PermissionMode,
@@ -24,7 +27,8 @@ import {
 } from '@zana-ai/zcc-domain/thread-runtime';
 import { HostCommandError } from './host-command-error.js';
 import type { ThreadRuntimeAdapter } from './thread-runtime-types.js';
-import type { ThreadResumeInput, ThreadWorkInput } from './command-dispatch.js';
+import type { ThreadArchiveInput, ThreadResumeInput, ThreadRewindPrepareInput, ThreadWorkInput } from './command-dispatch.js';
+import { packedBridgeBundleDir } from './packed-bridge-dir.js';
 import {
   REMOTE_TOOL_PROXY_DISALLOWED_TOOLS,
   REMOTE_TOOL_PROXY_DYNAMIC_TOOLS,
@@ -133,11 +137,23 @@ function executionOptions(input: {
   return threadExecutionOptions(input);
 }
 
-function toRuntimeBridgeLaunch(launch: HostBridgeLaunch): AgentRuntimeBridgeLaunch {
+function toRuntimeBridgeLaunch(
+  launch: HostBridgeLaunch,
+  dataDir: string,
+  artifactPath?: string
+): AgentRuntimeBridgeLaunch {
+  const source =
+    launch.source.kind === 'artifact'
+      ? {
+          kind: 'artifact' as const,
+          digest: launch.source.digest,
+          artifactPath: artifactPath ?? ''
+        }
+      : launch.source;
   return {
     pluginId: launch.pluginId,
-    dataDir: launch.dataDir,
-    source: launch.source,
+    dataDir,
+    source,
     capabilities: {
       supportsServiceTier: launch.capabilities.supportsServiceTier,
       permissionModes: launch.capabilities.permissionModes as PermissionMode[],
@@ -146,6 +162,34 @@ function toRuntimeBridgeLaunch(launch: HostBridgeLaunch): AgentRuntimeBridgeLaun
       fork: launch.capabilities.fork as AgentRuntimeBridgeLaunch['capabilities']['fork']
     }
   };
+}
+
+export async function resolveRuntimeBridgeLaunch(args: {
+  launch: HostBridgeLaunch;
+  daemonDataDir: string;
+  fetchPluginHostArtifact?: FetchPluginHostArtifact;
+  logger?: ArtifactCacheLogger;
+}): Promise<AgentRuntimeBridgeLaunch> {
+  const dataDir = await ensurePluginProcessDataDir({
+    daemonDataDir: args.daemonDataDir,
+    pluginId: args.launch.pluginId,
+    kind: 'bridge-data'
+  });
+  if (args.launch.source.kind === 'daemon-bundled') {
+    return toRuntimeBridgeLaunch(args.launch, dataDir);
+  }
+  if (!args.fetchPluginHostArtifact) {
+    throw new Error('plugin host artifact fetch is not configured');
+  }
+  const artifactPath = await ensureCachedPluginHostArtifact({
+    dataDir: args.daemonDataDir,
+    pluginId: args.launch.pluginId,
+    digest: args.launch.source.digest,
+    byteLength: args.launch.source.byteLength,
+    fetchArtifact: args.fetchPluginHostArtifact,
+    logger: args.logger ?? silentArtifactCacheLogger
+  });
+  return toRuntimeBridgeLaunch(args.launch, dataDir, artifactPath);
 }
 
 function isInFlightRetryEvent(event: ThreadEvent): boolean {
@@ -177,10 +221,18 @@ export function createAgentRuntimeAdapter(options: {
   emit: (event: HostEventEnvelope) => void;
   dataDir?: string;
   createRuntime?: CreateAgentRuntimeFn;
+  /**
+   * Packed join artifact directory (worker + Pi bridge). Defaults to the
+   * sibling files next to this module when present — so a remote `join.mjs`
+   * does not `import.meta.resolve` workspace packages.
+   */
+  bridgeBundleDir?: string;
   /** Global `AppConfig.remoteDefaultPath` — same fallback Explorer / ssh -t use. */
   getRemoteDefaultPath?: () => string | undefined;
   onInteractiveRequest?: (request: PendingInteractionCreate) => Promise<PendingInteractionResolution>;
   onPluginToolCall?: (request: ToolCallRequest) => Promise<ToolCallResponse>;
+  fetchPluginHostArtifact?: FetchPluginHostArtifact;
+  artifactCacheLogger?: ArtifactCacheLogger;
   onProcessExit?: (info: {
     providerId: string;
     threads: Array<{ threadId: string }>;
@@ -191,20 +243,39 @@ export function createAgentRuntimeAdapter(options: {
   }) => void;
 }): ThreadRuntimeAdapter {
   const runtimes = new Map<string, AgentRuntime>();
+  const runtimeMeta = new Map<string, { catalogHash: string; cwd: string }>();
   const threadLocation = new Map<string, { environmentId: string; cwd: string }>();
   const remoteProxyByThread = new Map<string, ThreadRemoteProxy>();
   const createRuntime = options.createRuntime
     ?? (fakeProviderEnabled() ? createFakeAgentRuntime : createAgentRuntime);
+  const bridgeBundleDir = options.bridgeBundleDir ?? packedBridgeBundleDir();
   const storageRoot = join(options.dataDir ?? '/tmp/zcc-thread-runtime', 'thread-storage');
   mkdirSync(storageRoot, { recursive: true });
+  const skillDataDir = options.dataDir ?? storageRoot;
+  const daemonDataDir = options.dataDir ?? '/tmp/zcc-thread-runtime';
 
-  function runtimeFor(environmentId: string, cwd: string): AgentRuntime {
-    const existing = runtimes.get(environmentId);
-    if (existing) return existing;
-    const runtime = createRuntime({
+  function resolveLaunch(launch: HostBridgeLaunch): Promise<AgentRuntimeBridgeLaunch> {
+    return resolveRuntimeBridgeLaunch({
+      launch,
+      daemonDataDir,
+      fetchPluginHostArtifact: options.fetchPluginHostArtifact,
+      logger: options.artifactCacheLogger
+    });
+  }
+
+  function environmentHasThreads(environmentId: string): boolean {
+    for (const location of threadLocation.values()) {
+      if (location.environmentId === environmentId) return true;
+    }
+    return false;
+  }
+
+  function createEnvironmentRuntime(cwd: string): AgentRuntime {
+    return createRuntime({
       workspacePath: cwd,
       threadStorageRootPath: storageRoot,
-      skillRoots: loadRuntimeSkillRoots(options.dataDir ?? storageRoot),
+      skillRoots: loadRuntimeSkillRoots(skillDataDir),
+      ...(bridgeBundleDir ? { bridgeBundleDir } : {}),
       onEvent: (event) => {
         options.emit(mapRuntimeThreadEvent(event));
       },
@@ -239,7 +310,23 @@ export function createAgentRuntimeAdapter(options: {
       ...(options.onInteractiveRequest ? { onInteractiveRequest: options.onInteractiveRequest } : {}),
       ...(options.onProcessExit ? { onProcessExit: options.onProcessExit } : {})
     });
+  }
+
+  function runtimeFor(environmentId: string, cwd: string): AgentRuntime {
+    const catalogHash = hashInjectedSkillCatalog(skillDataDir);
+    const existing = runtimes.get(environmentId);
+    const meta = runtimeMeta.get(environmentId);
+    if (existing && meta) {
+      if (meta.catalogHash === catalogHash) return existing;
+      if (environmentHasThreads(environmentId) || existing.hasOpenBackgroundWork()) {
+        return existing;
+      }
+      void existing.shutdown();
+      runtimes.delete(environmentId);
+    }
+    const runtime = createEnvironmentRuntime(cwd);
     runtimes.set(environmentId, runtime);
+    runtimeMeta.set(environmentId, { catalogHash, cwd });
     return runtime;
   }
 
@@ -257,12 +344,12 @@ export function createAgentRuntimeAdapter(options: {
       bridgeLaunch: HostBridgeLaunch;
       cwd?: string;
     }): Promise<ProviderListModelsResult> {
-      const dataDir = join(storageRoot, 'model-list', input.providerId);
-      mkdirSync(dataDir, { recursive: true });
-      const runtime = runtimeFor(`model-list:${input.providerId}`, input.cwd ?? dataDir);
+      const workspaceCwd = input.cwd ?? join(storageRoot, 'model-list', input.providerId);
+      if (!input.cwd) mkdirSync(workspaceCwd, { recursive: true });
+      const runtime = runtimeFor(`model-list:${input.providerId}`, workspaceCwd);
       const listed = await runtime.listModels({
         providerId: input.providerId,
-        bridgeLaunch: toRuntimeBridgeLaunch({ ...input.bridgeLaunch, dataDir }),
+        bridgeLaunch: await resolveLaunch(input.bridgeLaunch),
         ...(input.cwd ? { cwd: input.cwd } : {})
       });
       return {
@@ -294,7 +381,7 @@ export function createAgentRuntimeAdapter(options: {
           model: input.model,
           reasoningLevel: input.reasoningLevel
         }),
-        ...(input.bridgeLaunch ? { bridgeLaunch: toRuntimeBridgeLaunch(input.bridgeLaunch) } : {}),
+        ...(input.bridgeLaunch ? { bridgeLaunch: await resolveLaunch(input.bridgeLaunch) } : {}),
         ...mergeSessionTooling({
           remoteProxy,
           dynamicTools: input.dynamicTools,
@@ -329,7 +416,7 @@ export function createAgentRuntimeAdapter(options: {
           model: input.model,
           reasoningLevel: input.reasoningLevel
         }),
-        ...(input.bridgeLaunch ? { bridgeLaunch: toRuntimeBridgeLaunch(input.bridgeLaunch) } : {}),
+        ...(input.bridgeLaunch ? { bridgeLaunch: await resolveLaunch(input.bridgeLaunch) } : {}),
         ...mergeSessionTooling({
           remoteProxy: false,
           dynamicTools: input.dynamicTools,
@@ -350,11 +437,88 @@ export function createAgentRuntimeAdapter(options: {
       threadLocation.delete(input.threadId);
       remoteProxyByThread.delete(input.threadId);
     },
+    async prepareRewind(input: ThreadRewindPrepareInput) {
+      const runtime = runtimeFor(input.environmentId, input.cwd);
+      const result = await runtime.prepareThreadRewind({
+        environmentId: input.environmentId,
+        threadId: input.threadId,
+        leaseId: input.leaseId,
+        projectId: input.projectId,
+        providerId: input.providerId,
+        sourceProviderThreadId: input.sourceProviderThreadId,
+        retainThroughProviderCheckpoint: input.retainThroughProviderCheckpoint,
+        options: executionOptions({
+          permissionMode: input.permissionMode,
+          model: input.model,
+          reasoningLevel: input.reasoningLevel
+        }),
+        ...(input.bridgeLaunch ? { bridgeLaunch: await resolveLaunch(input.bridgeLaunch) } : {})
+      });
+      return { providerThreadId: result.providerThreadId };
+    },
+    async discardRewind(input: { leaseId: string; environmentId: string }) {
+      const runtime = runtimes.get(input.environmentId);
+      if (!runtime) return;
+      await runtime.discardThreadRewind({ leaseId: input.leaseId });
+    },
+    async renameWork(input: { threadId: string; title: string }) {
+      const runtime = runtimeForThread(input.threadId);
+      await runtime.renameThread({ threadId: input.threadId, title: input.title });
+    },
+    async archiveWork(input: ThreadArchiveInput) {
+      const runtime = runtimeFor(input.environmentId, input.cwd);
+      await runtime.archiveThread({
+        threadId: input.threadId,
+        providerId: input.providerId,
+        providerThreadId: input.providerThreadId,
+        ...(input.bridgeLaunch ? { bridgeLaunch: await resolveLaunch(input.bridgeLaunch) } : {})
+      });
+    },
+    async unarchiveWork(input: ThreadArchiveInput) {
+      const runtime = runtimeFor(input.environmentId, input.cwd);
+      await runtime.unarchiveThread({
+        threadId: input.threadId,
+        providerId: input.providerId,
+        providerThreadId: input.providerThreadId,
+        ...(input.bridgeLaunch ? { bridgeLaunch: await resolveLaunch(input.bridgeLaunch) } : {})
+      });
+    },
+    async clearGoal(input: { threadId: string }) {
+      const runtime = runtimeForThread(input.threadId);
+      return runtime.clearThreadGoal({ threadId: input.threadId });
+    },
+    async reapIdleProviderSessions(args) {
+      const reapedSessions = [];
+      for (const [environmentId, runtime] of runtimes) {
+        const result = await runtime.reapIdleProviderSessions(args);
+        for (const session of result.reapedSessions) {
+          threadLocation.delete(session.threadId);
+          remoteProxyByThread.delete(session.threadId);
+          reapedSessions.push(session);
+        }
+      }
+      return { reapedSessions };
+    },
+    async refreshSkillCatalog() {
+      const catalogHash = hashInjectedSkillCatalog(skillDataDir);
+      for (const [environmentId, runtime] of [...runtimes.entries()]) {
+        const meta = runtimeMeta.get(environmentId);
+        if (!meta || meta.catalogHash === catalogHash) continue;
+        if (environmentHasThreads(environmentId) || runtime.hasOpenBackgroundWork()) continue;
+        await runtime.shutdown();
+        runtimes.delete(environmentId);
+        runtimeMeta.delete(environmentId);
+      }
+    },
+    listLoadedEnvironments() {
+      return [...runtimes.keys()];
+    },
     dispose() {
       for (const runtime of runtimes.values()) {
         void runtime.shutdown();
       }
       runtimes.clear();
+      runtimeMeta.clear();
       threadLocation.clear();
       remoteProxyByThread.clear();
     }

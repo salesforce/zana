@@ -40,3 +40,9 @@ e2e-artifacts/
 
 # menubar-popover dev preview screenshots
 .mbp-live.png
+
+# Docker remote-machine join secrets / loopback-proxy pid (local play only)
+docker/remote-machine/.env
+docker/remote-machine/.proxy-state
+docker/remote-machine/.proxy.pid
+

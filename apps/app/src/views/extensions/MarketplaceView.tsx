@@ -443,33 +443,35 @@ export function MarketplaceView({
         />
       )}
 
-      {error && <p className="modal-error">{error}</p>}
+      <div className="ext-market-scroller">
+        {error && <p className="modal-error">{error}</p>}
 
-      {entries === null ? (
-        <p className="settings-help settings-help--muted">Loading marketplace…</p>
-      ) : entries.length === 0 ? (
-        <p className="settings-help settings-help--muted">
-          No plugins to show. First-party plugins ship with the app; if this list is empty,
-          the bundled plugins root was not found. Add a community catalog above,
-          or install from a local folder, archive, git repository, or npm package.
-        </p>
-      ) : filtered && filtered.length === 0 ? (
-        <p className="settings-help settings-help--muted">
-          No plugins match “{query.trim()}”.
-        </p>
-      ) : (
-        <ul className="ext-market-list">
-          {(filtered ?? []).map((entry) => (
-            <MarketRow
-              key={entry.id}
-              entry={entry}
-              busy={busy[entry.id]}
-              error={rowError[entry.id]}
-              onInstall={() => setPendingConfirm(entry)}
-            />
-          ))}
-        </ul>
-      )}
+        {entries === null ? (
+          <p className="settings-help settings-help--muted">Loading marketplace…</p>
+        ) : entries.length === 0 ? (
+          <p className="settings-help settings-help--muted">
+            No plugins to show. First-party plugins ship with the app; if this list is empty,
+            the bundled plugins root was not found. Add a community catalog above,
+            or install from a local folder, archive, git repository, or npm package.
+          </p>
+        ) : filtered && filtered.length === 0 ? (
+          <p className="settings-help settings-help--muted">
+            No plugins match “{query.trim()}”.
+          </p>
+        ) : (
+          <ul className="ext-market-list">
+            {(filtered ?? []).map((entry) => (
+              <MarketRow
+                key={entry.id}
+                entry={entry}
+                busy={busy[entry.id]}
+                error={rowError[entry.id]}
+                onInstall={() => setPendingConfirm(entry)}
+              />
+            ))}
+          </ul>
+        )}
+      </div>
 
       {pendingConfirm && (
         <PluginInstallConfirm

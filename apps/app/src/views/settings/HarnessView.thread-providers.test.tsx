@@ -17,7 +17,7 @@ describe('ThreadProviderCatalog', () => {
     expect(html).not.toContain('Claude Codeprovider-claude-code');
     expect(html).toContain('class="opener-row-name">Claude Code<');
     expect(html).toContain('class="thread-provider-id" title="provider-claude-code">provider-claude-code<');
-    expect(html).toContain('the default thread provider.');
+    expect(html).toContain('the default Modern provider.');
     expect(html).toContain('Agent Client Protocol');
     expect(html).toContain('Codex coding CLI');
     expect(html).toContain('Pi coding-agent CLI');
@@ -41,7 +41,7 @@ describe('ThreadProviderCatalog', () => {
 
   it('renders an empty catalog without a list', () => {
     const html = renderToStaticMarkup(<ThreadProviderCatalog providers={[]} />);
-    expect(html).toContain('No thread providers registered.');
+    expect(html).toContain('No Modern providers registered.');
     expect(html).not.toContain('thread-provider-catalog');
   });
 
@@ -51,27 +51,27 @@ describe('ThreadProviderCatalog', () => {
         providers={[{ id: 'other', displayName: 'Other', pluginId: 'provider-other' }]}
       />
     );
-    expect(html).toContain('Registered thread provider plugin.');
+    expect(html).toContain('Registered Modern provider plugin.');
     expect(html).toContain('provider-other');
     expect(html).toContain('Other');
   });
 });
 
 describe('HarnessSettingsTabs', () => {
-  it('marks Thread selected by default and Legacy Agent as the other tab', () => {
+  it('marks Modern selected by default and CLI Agent as the other tab', () => {
     const html = renderToStaticMarkup(
       <HarnessSettingsTabs pane="thread" onPaneChange={() => undefined} />
     );
     expect(html).toContain('role="tablist"');
-    expect(html).toContain('Thread');
-    expect(html).toContain('Legacy Agent');
+    expect(html).toContain('Modern');
+    expect(html).toContain('CLI Agent');
     expect(html).toContain('is-active');
   });
 
-  it('marks Legacy Agent selected when that pane is active', () => {
+  it('marks CLI Agent selected when that pane is active', () => {
     const html = renderToStaticMarkup(
       <HarnessSettingsTabs pane="legacy" onPaneChange={() => undefined} />
     );
-    expect(html).toMatch(/aria-selected="true"[^>]*>\s*Legacy Agent/);
+    expect(html).toMatch(/aria-selected="true"[^>]*>\s*CLI Agent/);
   });
 });

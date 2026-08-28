@@ -1,5 +1,7 @@
 import type {
   ProviderCliInstallAction,
+  ProviderCliInstallActionKind,
+  ProviderCliInstallEvent,
   ProviderCliKey,
   ProviderCliStatus,
   ProviderCliStatusResponse
@@ -87,4 +89,87 @@ export function machineCliInventorySummary(rows: MachineProviderCliRow[]): strin
 export function providerCliBadge(status: ProviderCliStatus): string | null {
   const copy = providerCliPresentation(status);
   return copy.tone === 'ok' ? null : copy.badge;
+}
+
+export type ProviderCliInstallOutcome =
+  | { ok: true }
+  | { ok: false; message: string };
+
+const OUTPUT_SNIPPET_LINES = 8;
+const OUTPUT_SNIPPET_CHARS = 600;
+
+function streamText(events: ProviderCliInstallEvent[], stream: 'stderr' | 'stdout'): string {
+  return events
+    .filter((event) => event.type === 'output' && event.stream === stream)
+    .map((event) => event.text)
+    .join('');
+}
+
+export function providerCliInstallOutputSnippet(events: ProviderCliInstallEvent[]): string | null {
+  const raw = streamText(events, 'stderr').trim() || streamText(events, 'stdout').trim();
+  if (!raw) return null;
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim().length > 0);
+  let snippet = lines.slice(-OUTPUT_SNIPPET_LINES).join('\n');
+  if (snippet.length > OUTPUT_SNIPPET_CHARS) {
+    snippet = snippet.slice(snippet.length - OUTPUT_SNIPPET_CHARS);
+  }
+  return snippet;
+}
+
+function failedCompletedMessage(
+  completed: { exitCode: number | null; signal: string | null },
+  snippet: string | null
+): string {
+  if (snippet) return snippet;
+  if (completed.exitCode != null) return `Install failed (exit ${completed.exitCode})`;
+  if (completed.signal) return `Install failed (${completed.signal})`;
+  return 'Install failed';
+}
+
+export function providerCliInstallOutcome(
+  events: ProviderCliInstallEvent[]
+): ProviderCliInstallOutcome {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i]!;
+    if (event.type === 'error') {
+      return { ok: false, message: event.message };
+    }
+  }
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i]!;
+    if (event.type !== 'completed') continue;
+    if (event.success) return { ok: true };
+    return {
+      ok: false,
+      message: failedCompletedMessage(event, providerCliInstallOutputSnippet(events))
+    };
+  }
+  return { ok: false, message: 'Install did not complete' };
+}
+
+export async function installProviderCliOnMachine(input: {
+  hostId: string;
+  provider: ProviderCliKey;
+  actionKind: ProviderCliInstallActionKind;
+  install: (
+    hostId: string,
+    request: { provider: ProviderCliKey; actionKind: ProviderCliInstallActionKind }
+  ) => Promise<ProviderCliInstallEvent[]>;
+}): Promise<ProviderCliInstallOutcome> {
+  try {
+    return providerCliInstallOutcome(
+      await input.install(input.hostId, {
+        provider: input.provider,
+        actionKind: input.actionKind
+      })
+    );
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : 'Install failed'
+    };
+  }
 }

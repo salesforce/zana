@@ -34,7 +34,7 @@ type PromptState =
 
 interface Props {
   project: Project;
-  /** Narrower tree defaults when hosted in a thread / legacy-agent side panel. */
+  /** Narrower tree defaults when hosted in a thread / CLI-agent side panel. */
   embedded?: boolean;
 }
 

@@ -22,6 +22,7 @@ describe('pairing relay allowlist guard', () => {
     expect(isAllowedHttp('POST', '/internal/hosts/enroll')).toBe(true);
     expect(isAllowedHttp('POST', '/internal/hosts/interactive-request')).toBe(true);
     expect(isAllowedHttp('POST', '/internal/hosts/interactive-request/interrupt')).toBe(true);
+    expect(isAllowedHttp('GET', `/internal/plugins/provider-acp/host/${'ab'.repeat(32)}`)).toBe(true);
     expect(isAllowedWs('/internal/hosts/ws')).toBe(true);
     expect(isAllowedWs('/internal/hosts/ws/')).toBe(true);
   });
@@ -45,5 +46,9 @@ describe('pairing relay protocol', () => {
     expect(ts.equals(fromJs)).toBe(true);
     expect(decodeFrame(ts)).toEqual(js.decodeFrame(fromJs));
     expect(decodeFrame(ts)).toMatchObject({ type: TYPE.HTTP_RES, flags: FLAG.FIN, streamId: 42 });
+    expect(js.TYPE.HELLO).toBe(TYPE.HELLO);
+    expect(js.TYPE.JOIN_RENEW).toBe(TYPE.JOIN_RENEW);
+    expect(TYPE.HELLO).toBe(8);
+    expect(TYPE.JOIN_RENEW).toBe(9);
   });
 });

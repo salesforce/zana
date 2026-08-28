@@ -22,7 +22,12 @@ type PiAssistantEventType =
   | "toolcall_start"
   | "unknown";
 
-type PiMessageBoundaryRole = "assistant" | "toolResult" | "user" | "unknown";
+type PiMessageBoundaryRole =
+  | "assistant"
+  | "custom"
+  | "toolResult"
+  | "user"
+  | "unknown";
 
 type PiSdkEventType =
   | "agent_end"
@@ -134,6 +139,7 @@ function toPiMessageBoundaryRole(
 ): PiMessageBoundaryRole {
   switch (role) {
     case "assistant":
+    case "custom":
     case "toolResult":
     case "user":
       return role;
@@ -316,17 +322,13 @@ function describeParsedPiRawEvent(
           /:$/u,
           "",
         );
-      switch (event.role) {
-        case "assistant":
-          return { kind, coverage: "noise" };
-        case "toolResult":
-        case "user":
-          return { kind, coverage: "noise" };
-        case "unknown":
-          return { kind: `sdk/${event.sdkType}`, coverage: "unknown" };
-        default:
-          return assertNever(event.role);
-      }
+      // Every known role is noise, `custom` included: the translator records
+      // a displayed extension-injected `message_start` as provider input, and
+      // every other custom boundary (its `message_end`, hidden messages)
+      // carries nothing for the runtime.
+      return event.role === "unknown"
+        ? { kind: `sdk/${event.sdkType}`, coverage: "unknown" }
+        : { kind, coverage: "noise" };
     }
 
     case "sdk/message_update":

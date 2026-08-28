@@ -25,18 +25,16 @@ import type {
   HarnessModelRoutingV1,
   Persona,
   Project,
-  ProjectRemote,
   SessionCohort
 } from '@zana-ai/zcc-domain/product';
 import { harnessFamilyOf, parseProfile } from '@zana-ai/zcc-domain/launch-provider';
 import { AmbiguousHostError, HostUnavailableError } from './host-hub.js';
 import type { ProductHttpContext } from './product-context.js';
 import { unmanagedAttachRefusal } from '../services/threads/workspace-path-claims.js';
-import { resolveManagedTargetPath, resolvePersonalTargetPath } from '../services/threads/worktree-paths.js';
-import {
-  isRemoteToolProxyActive,
-  readRemoteToolProxySetting
-} from '../services/threads/remote-tool-proxy.js';
+import { resolveManagedTargetPath } from '../services/threads/worktree-paths.js';
+import { resolvePersonalTargetPathOnHost } from '../services/threads/host-personal-path.js';
+import { isRemoteToolProxyActive, remoteWorkspacePath, threadLaunchRemote } from '../services/threads/remote-tool-proxy.js';
+import { resolveSpawnChoiceForHost } from '../services/threads/spawn-choice-for-host.js';
 import { listJsonFiles } from './disk-json.js';
 import { join } from 'node:path';
 
@@ -157,14 +155,18 @@ function provisionCommandFor(
   environment: EnvironmentRow,
   project: Project,
   choice: SpawnEnvironmentChoice,
-  checkout: SpawnThreadInput['checkout']
+  checkout: SpawnThreadInput['checkout'],
+  workspacePath: string
 ): EnvironmentProvisionCommand {
   if (choice.kind === 'personal') {
+    if (!environment.path) {
+      throw new ThreadCreateError(500, 'thread-create-failed', 'personal workspace path is missing');
+    }
     return {
       type: 'environment.provision',
       environmentId: environment.id,
       workspaceProvisionType: 'personal',
-      targetPath: environment.path ?? resolvePersonalTargetPath({ dataDir: '', environmentId: environment.id })
+      targetPath: environment.path
     };
   }
   if (choice.kind === 'worktree') {
@@ -183,7 +185,7 @@ function provisionCommandFor(
     type: 'environment.provision',
     environmentId: environment.id,
     workspaceProvisionType: 'unmanaged',
-    path: project.path,
+    path: workspacePath,
     checkout
   };
 }
@@ -213,13 +215,12 @@ export async function createThreadFromRequest(
   const prompt = input.input.map((part) => part.trim()).filter((part) => part.length > 0);
 
   const project = requireProject(ctx, input.projectId);
-  const remoteToolProxy = isRemoteToolProxyActive(project, {
-    remoteToolProxy: readRemoteToolProxySetting(ctx.dataDir, project.id)
-  });
+  const remoteToolProxy = isRemoteToolProxyActive(project, input.hostId);
+  const workspacePath = remoteWorkspacePath(project, remoteToolProxy);
+  const primary = getPrimaryHost(ctx.db);
   let hostId: string;
   try {
     if (remoteToolProxy) {
-      const primary = getPrimaryHost(ctx.db);
       if (!primary) {
         throw new ThreadCreateError(503, 'host-unavailable', 'This machine’s host daemon is not connected.');
       }
@@ -240,13 +241,25 @@ export async function createThreadFromRequest(
     }
     choice = { kind: 'unmanaged' };
   }
+  const spawnChoice = resolveSpawnChoiceForHost({
+    project,
+    choice,
+    executionHostId: hostId,
+    primaryHostId: primary?.id,
+    remoteToolProxy
+  });
+  if (!spawnChoice.ok) {
+    throw new ThreadCreateError(400, spawnChoice.code, spawnChoice.message);
+  }
+  choice = spawnChoice.choice;
+  const dropCwd = spawnChoice.dropCwd;
 
   if (choice.kind === 'unmanaged' || input.checkout) {
     const refusal = unmanagedAttachRefusal(ctx.db, {
       dataDir: ctx.dataDir,
       checksOutBranch: Boolean(input.checkout),
       hostId,
-      path: project.path,
+      path: workspacePath,
       projectId: project.id
     });
     if (refusal) {
@@ -272,7 +285,7 @@ export async function createThreadFromRequest(
       status: 'starting'
     });
     try {
-      await startThreadOnHost(ctx, { hostId, project, thread, prompt, environmentId: existing.id, input });
+      await startThreadOnHost(ctx, { hostId, project, thread, prompt, environmentId: existing.id, input, dropCwd });
       const running = updateThreadStatus(ctx.db, thread.id, 'running') ?? thread;
       ctx.hub.emit('threads:updated', running);
       return running;
@@ -283,13 +296,22 @@ export async function createThreadFromRequest(
     }
   }
 
+  const environmentId = crypto.randomUUID();
+  let personalPath: string | undefined;
+  if (choice.kind === 'personal') {
+    try {
+      personalPath = await resolvePersonalTargetPathOnHost(ctx, hostId, environmentId);
+    } catch (error) {
+      throw mapHostError(error);
+    }
+  }
+
   const created = ctx.db.transaction(() => {
-    const environmentId = crypto.randomUUID();
     const path = choice.kind === 'worktree'
       ? resolveManagedTargetPath({ dataDir: ctx.dataDir, environmentId, sourcePath: project.path })
       : choice.kind === 'personal'
-        ? resolvePersonalTargetPath({ dataDir: ctx.dataDir, environmentId })
-        : project.path;
+        ? personalPath!
+        : workspacePath;
     const environment = createEnvironment(ctx.db, {
       id: environmentId,
       projectId: project.id,
@@ -318,7 +340,7 @@ export async function createThreadFromRequest(
     const provisioned = await ctx.hostHub.callHostOnlineRpc<EnvironmentProvisionResult>({
       hostId,
       command: {
-        ...provisionCommandFor(created.environment, project, choice, input.checkout),
+        ...provisionCommandFor(created.environment, project, choice, input.checkout, workspacePath),
         initiator: { threadId: created.thread.id, provisioningId: created.environment.id }
       }
     });
@@ -338,7 +360,8 @@ export async function createThreadFromRequest(
       thread: created.thread,
       prompt,
       environmentId: created.environment.id,
-      input
+      input,
+      dropCwd
     });
     const running = updateThreadStatus(ctx.db, created.thread.id, 'running') ?? created.thread;
     ctx.hub.emit('threads:updated', running);
@@ -360,6 +383,7 @@ async function startThreadOnHost(
     prompt: string[];
     environmentId: string;
     input: SpawnThreadInput;
+    dropCwd?: boolean;
   }
 ): Promise<void> {
   const status = await ctx.hostHub.callHostOnlineRpc<ProviderStatusResult>({
@@ -373,17 +397,7 @@ async function startThreadOnHost(
       throw new ThreadCreateError(503, 'provider_unavailable', `provider ${args.input.providerId} is not available on that host`);
     }
   }
-  const remote: ProjectRemote | undefined = args.project.remote
-    ? {
-        host: args.project.remote.host,
-        user: args.project.remote.user,
-        remotePath: args.project.remote.remotePath,
-        proxyJump: args.project.remote.proxyJump
-      }
-    : undefined;
-  const remoteToolProxy = isRemoteToolProxyActive(args.project, {
-    remoteToolProxy: readRemoteToolProxySetting(ctx.dataDir, args.project.id)
-  });
+  const remoteToolProxy = isRemoteToolProxyActive(args.project, args.hostId);
   await ctx.hostHub.callHostOnlineRpc<ThreadStartResult>({
     hostId: args.hostId,
     command: {
@@ -393,7 +407,9 @@ async function startThreadOnHost(
       projectId: args.project.id,
       providerId: args.input.providerId,
       input: args.prompt,
-      cwd: remote && !remoteToolProxy ? undefined : args.input.cwd,
+      cwd: args.dropCwd || (args.project.remote && !remoteToolProxy)
+        ? undefined
+        : args.input.cwd,
       title: args.thread.title ?? undefined,
       extraArgs: args.input.extraArgs,
       harnessRouting: args.input.harnessRouting,
@@ -404,13 +420,17 @@ async function startThreadOnHost(
       inboxLevel: args.input.inboxLevel,
       autonomous: args.input.autonomous,
       resumeSessionId: args.input.resumeSessionId,
-      environment: remote && !remoteToolProxy ? undefined : args.input.executionEnvironment,
+      environment: args.project.remote && !remoteToolProxy ? undefined : args.input.executionEnvironment,
       sandboxDenyNetwork: args.input.sandboxDenyNetwork,
       microVmImage: args.input.microVmImage,
       microVmCpus: args.input.microVmCpus,
       microVmMemoryMib: args.input.microVmMemoryMib,
-      remote,
-      ...(remoteToolProxy ? { remoteToolProxy: true } : {}),
+      ...(remoteToolProxy
+        ? {
+            remote: threadLaunchRemote(args.project),
+            remoteToolProxy: true
+          }
+        : {}),
       reconnectTmuxId: args.input.reconnectTmuxId,
       resume: args.input.resume,
       cohort: args.input.cohort

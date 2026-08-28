@@ -16,7 +16,7 @@ function sectionKind(item: TypeaheadSuggestion): 'threads' | 'projects' | 'files
 }
 
 function sectionLabel(kind: ReturnType<typeof sectionKind>): string {
-  if (kind === 'threads') return 'Threads';
+  if (kind === 'threads') return 'Agents';
   if (kind === 'projects') return 'Projects';
   if (kind === 'commands') return 'Commands';
   if (kind === 'plugins') return 'Plugins';

@@ -4,6 +4,25 @@ import { collectPluginApp } from './app-contract.js';
 import { shimLegacyExtensionManifest } from './legacy-shim.js';
 
 describe('definePluginApp', () => {
+  it('does not recurse when the host runtime points definePluginApp at this function', () => {
+    const g = globalThis as { __ZCC_PLUGIN_RUNTIME__?: { definePluginApp: typeof definePluginApp } };
+    const previous = g.__ZCC_PLUGIN_RUNTIME__;
+    g.__ZCC_PLUGIN_RUNTIME__ = { definePluginApp };
+    try {
+      const def = definePluginApp((app) => {
+        app.slots.navPanel({
+          id: 'main',
+          title: 'PR Monitor',
+          icon: 'GitPullRequest',
+          component: () => null
+        });
+      });
+      expect(isPluginAppDefinition(def)).toBe(true);
+    } finally {
+      g.__ZCC_PLUGIN_RUNTIME__ = previous;
+    }
+  });
+
   it('collects v1 slots and stamps generation', () => {
     const def = definePluginApp((app) => {
       app.slots.navPanel({
@@ -67,6 +86,31 @@ describe('definePluginApp', () => {
     expect(set.messageDirectives[0]?.id).toBe('task');
     expect(set.composerCustomizations[0]?.id).toBe('retry');
     expect(set.contentScripts[0]?.id).toBe('boot');
+  });
+
+  it('collects commandPaletteAction and rejects a missing run', () => {
+    const def = definePluginApp((app) => {
+      app.slots.commandPaletteAction({
+        id: 'open',
+        title: 'Open PR Monitor',
+        run: () => undefined
+      });
+    });
+    const set = collectPluginApp('pr-monitor', 1, def);
+    expect(set.commandPaletteActions).toHaveLength(1);
+    expect(set.commandPaletteActions[0]?.title).toBe('Open PR Monitor');
+    expect(() =>
+      collectPluginApp(
+        'pr-monitor',
+        1,
+        definePluginApp((app) => {
+          app.slots.commandPaletteAction({
+            id: 'open',
+            title: 'Broken'
+          } as never);
+        })
+      )
+    ).toThrow(/"run" must be a function/);
   });
 
   it('defaults navPanel path to id and rejects duplicate slot ids', () => {

@@ -39,6 +39,14 @@ import { CONSTITUTION_INSTRUCTIONS, shouldContributeConstitution } from './const
 import { ConnectionError, ConnectionManager } from './connection.js';
 import { formatDoctor, runDoctor } from './doctor.js';
 import { compactError, fingerprint, isDxProject, resolveUnderRoot } from './dx-project.js';
+import {
+  AgentFilesError,
+  listAgentFiles,
+  readAgentFile,
+  writeAgentFile
+} from './agent-files.js';
+import { parseAgentScriptSource } from './agent-script-parse.js';
+import { AGENT_SCRIPT_EXAMPLES } from './agent-script-model.js';
 import { envelopeTitle, Guardrail } from './guardrail.js';
 import { diagnoseLwc, findLwcComponent, inspectLwc, parseLwcInput, resolveJestBin, scanLwcComponents } from './lwc.js';
 import { createNodeDeps } from './node-deps.js';
@@ -50,8 +58,13 @@ import {
   GUARDRAIL_RENDERER_ID,
   LOG_BODY_PREVIEW_CHARS,
   SETTING_API_VERSION,
+  SETTING_AGENT_SCRIPT_DIALECT,
   SETTING_DEFAULT_ORG,
   SETTING_PROJECT_ROOT,
+  AGENT_SCRIPT_DIALECTS,
+  DEFAULT_AGENT_SCRIPT_DIALECT,
+  normalizeAgentScriptDialect,
+  type AgentScriptDialect,
   type DoctorReport,
   type EnvelopeKind,
   type PluginSettingsValues,
@@ -77,11 +90,22 @@ const SETTINGS = {
     type: 'string' as const,
     label: 'DX project root',
     description: 'Local Salesforce DX project path (the folder that contains sfdx-project.json). Used for LWC and Agent Script bundles.'
+  },
+  [SETTING_AGENT_SCRIPT_DIALECT]: {
+    type: 'select' as const,
+    label: 'Agent Script dialect',
+    description: 'Parser and playground dialect for .agent files.',
+    options: [...AGENT_SCRIPT_DIALECTS],
+    default: DEFAULT_AGENT_SCRIPT_DIALECT
   }
 };
 
 function stringSetting(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function dialectSetting(value: unknown): AgentScriptDialect {
+  return normalizeAgentScriptDialect(value);
 }
 
 export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: SalesforceDeps = createNodeDeps()): Promise<void> {
@@ -103,7 +127,8 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     return {
       defaultOrg: stringSetting(values[SETTING_DEFAULT_ORG]),
       apiVersion: stringSetting(values[SETTING_API_VERSION]) || DEFAULT_API_VERSION,
-      projectRoot: stringSetting(values[SETTING_PROJECT_ROOT])
+      projectRoot: stringSetting(values[SETTING_PROJECT_ROOT]),
+      agentScriptDialect: dialectSetting(values[SETTING_AGENT_SCRIPT_DIALECT])
     };
   };
 
@@ -131,10 +156,56 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       defaultOrg: snapshot.defaultOrg,
       apiVersion: snapshot.apiVersion,
       projectRoot: snapshot.projectRoot,
+      agentScriptDialect: snapshot.agentScriptDialect,
       dxProject: isDxProject(snapshot.projectRoot, deps.exists),
       lastDoctor
     };
   });
+  zcc.rpc.method('agentFiles.list', async () => {
+    const snapshot = await readSettings();
+    try {
+      return { ok: true, files: listAgentFiles(snapshot.projectRoot, deps) };
+    } catch (error) {
+      return agentFilesFailure(error);
+    }
+  });
+  zcc.rpc.method('agentFiles.read', async (args) => {
+    const snapshot = await readSettings();
+    const path = rpcString(args, 'path');
+    if (!path) return { ok: false, code: 'invalid_input', error: 'read requires path.' };
+    try {
+      return { ok: true, file: readAgentFile(snapshot.projectRoot, path, deps) };
+    } catch (error) {
+      return agentFilesFailure(error);
+    }
+  });
+  zcc.rpc.method('agentFiles.write', async (args) => {
+    const snapshot = await readSettings();
+    const path = rpcString(args, 'path');
+    const content = args && typeof args === 'object' && 'content' in args ? (args as { content?: unknown }).content : undefined;
+    const expectedSha256 = rpcString(args, 'expectedSha256') || undefined;
+    if (!path || typeof content !== 'string') {
+      return { ok: false, code: 'invalid_input', error: 'write requires path and string content.' };
+    }
+    try {
+      return { ok: true, file: writeAgentFile(snapshot.projectRoot, path, content, deps, expectedSha256) };
+    } catch (error) {
+      return agentFilesFailure(error);
+    }
+  });
+  zcc.rpc.method('agentScript.parse', async (args) => {
+    const snapshot = await readSettings();
+    const source = args && typeof args === 'object' && typeof (args as { source?: unknown }).source === 'string'
+      ? (args as { source: string }).source
+      : '';
+    const dialect = dialectSetting(
+      args && typeof args === 'object' && 'dialect' in args
+        ? (args as { dialect?: unknown }).dialect
+        : snapshot.agentScriptDialect
+    );
+    return { ok: true, result: parseAgentScriptSource(source, dialect) };
+  });
+  zcc.rpc.method('agentScript.examples', async () => ({ ok: true, examples: AGENT_SCRIPT_EXAMPLES }));
   zcc.rpc.method('org', async () => {
     try {
       const org = publicOrgView(await connections.connect());
@@ -148,15 +219,16 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
 
   zcc.cli.register({
     name: 'sf',
-    summary: 'Salesforce DX doctor and org status',
+    summary: 'Salesforce DX doctor, org status, and Agent Script lint',
     commands: [
       { name: 'doctor', summary: 'Check Salesforce CLI, aliases, and the target org', usage: 'zcc sf doctor' },
-      { name: 'org', summary: 'Show the resolved target org (no token)', usage: 'zcc sf org' }
+      { name: 'org', summary: 'Show the resolved target org (no token)', usage: 'zcc sf org' },
+      { name: 'lint', summary: 'Lint a confined .agent file (or every bundle)', usage: 'zcc sf lint [path]' }
     ],
     async run(argv) {
       const command = argv[0] ?? 'doctor';
       if (command === '--help' || command === '-h') {
-        return { exitCode: 0, stdout: 'zcc sf doctor\nzcc sf org\n' };
+        return { exitCode: 0, stdout: 'zcc sf doctor\nzcc sf org\nzcc sf lint [path]\n' };
       }
       const snapshot = await readSettings();
       if (command === 'doctor' || command === '') {
@@ -176,6 +248,9 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
             stderr: `${error instanceof Error ? error.message : String(error)}\n`
           };
         }
+      }
+      if (command === 'lint') {
+        return runAgentLint(deps, snapshot, argv.slice(1));
       }
       return { exitCode: 2, stderr: `unknown command: ${command}; run zcc sf --help\n` };
     }
@@ -253,7 +328,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   zcc.agents.registerTool({
     name: 'sf_agent',
     description:
-      'Agentforce Agent Script lifecycle: compile/inspect a confined .agent file, live preview, eval via a confined spec (sf agent test run-eval) or an org AiEvaluationDefinition, and fail-closed publish/activate. Source edits stay with file tools. Publish and activate always confirm.',
+      'Agentforce Agent Script lifecycle: compile/inspect a confined .agent file, live preview, eval via a confined spec (sf agent test run-eval) or an org AiEvaluationDefinition, and fail-closed publish/activate. Edit source in the Agent Script panel or file tools. Publish and activate always confirm.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1109,6 +1184,52 @@ function readConfinedFile(projectRoot: string, relativePath: string, deps: Sales
   const resolved = resolveUnderRoot(projectRoot, relativePath, deps.realpath);
   if (!resolved) return null;
   return deps.readFile(resolved);
+}
+
+function rpcString(args: unknown, key: string): string {
+  if (!args || typeof args !== 'object') return '';
+  const value = (args as Record<string, unknown>)[key];
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function agentFilesFailure(error: unknown): { ok: false; code: string; error: string } {
+  if (error instanceof AgentFilesError) return { ok: false, code: error.code, error: error.message };
+  return { ok: false, code: 'failed', error: error instanceof Error ? error.message : String(error) };
+}
+
+function runAgentLint(
+  deps: SalesforceDeps,
+  snapshot: PluginSettingsValues,
+  argv: string[]
+): { exitCode: number; stdout?: string; stderr?: string } {
+  const target = argv[0]?.trim() ?? '';
+  try {
+    const files = target
+      ? [readAgentFile(snapshot.projectRoot, target, deps)]
+      : listAgentFiles(snapshot.projectRoot, deps).map((row) => readAgentFile(snapshot.projectRoot, row.path, deps));
+    if (files.length === 0) {
+      return { exitCode: 0, stdout: 'No .agent bundles in the configured DX project.\n' };
+    }
+    let failed = 0;
+    const lines: string[] = [];
+    for (const file of files) {
+      const parsed = parseAgentScriptSource(file.content, snapshot.agentScriptDialect);
+      const errors = parsed.diagnostics.filter((row) => row.severity === 'error');
+      if (errors.length === 0 && !parsed.hasErrors) {
+        lines.push(`${file.path}: ok (${parsed.graph.nodes.length} nodes)`);
+        continue;
+      }
+      failed += 1;
+      lines.push(`${file.path}: ${errors.length || parsed.diagnostics.length} issue(s)`);
+      for (const diagnostic of parsed.diagnostics.slice(0, 20)) {
+        lines.push(`  ${diagnostic.line + 1}:${diagnostic.column + 1} ${diagnostic.severity} ${diagnostic.message}`);
+      }
+    }
+    return { exitCode: failed === 0 ? 0 : 1, stdout: `${lines.join('\n')}\n` };
+  } catch (error) {
+    const failure = agentFilesFailure(error);
+    return { exitCode: 1, stderr: `${failure.error}\n` };
+  }
 }
 
 function connectionFailure(error: unknown): ToolResult {

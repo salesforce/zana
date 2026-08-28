@@ -23,7 +23,7 @@ export interface ThreadTitleNamerDeps {
 
 /**
  * Applies `builtin:tab-namer` to conversation threads. Same one-shot / retry
- * contract as the legacy-agent tab path; the apply callback persists the label.
+ * contract as the CLI-agent tab path; the apply callback persists the label.
  */
 export function createThreadTitleNamer(deps: ThreadTitleNamerDeps): ThreadTitleNamer {
   const namedIds = new Set<string>();

@@ -233,12 +233,20 @@ writePlugin('memory', {
   });
   zcc.ui.registerMentionProvider({
     id: 'memory',
-    search: async (query) => {
+    label: 'Memory',
+    search: async (ctx) => {
+      const query = typeof ctx === 'string' ? ctx : ctx.query;
       const values = await settings.get();
       const notes = typeof values.notes === 'string' ? values.notes : '';
       if (!notes.trim()) return [];
       if (query && !notes.toLowerCase().includes(query.toLowerCase())) return [];
       return [{ id: 'notes', label: 'Memory notes', insertText: notes.slice(0, 80) }];
+    },
+    resolve: async () => {
+      const values = await settings.get();
+      const notes = typeof values.notes === 'string' ? values.notes.trim() : '';
+      if (!notes) throw new Error('memory notes are empty');
+      return { context: `# Memory notes\n\n${notes}` };
     }
   });
 }

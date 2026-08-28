@@ -1,5 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import type { HostDaemonAcpLaunchSpec } from "@zana-ai/zcc-host-daemon-contract";
 import {
   sanitizeInheritedChildProcessEnv,
@@ -13,6 +14,7 @@ import { createProviderForId } from "./provider-registry.js";
 import { filterSkillRootsForProvider } from "./runtime-skill-roots.js";
 import {
   ignoredJsonRpcResultSchema,
+  PROVIDER_BRIDGE_RECORD_DIR_ENV,
   readBoundedLines,
   type PendingJsonRpcRequest,
   sendJsonRpcRequest,
@@ -497,6 +499,12 @@ export class RuntimeProviderProcessManager {
       ...this.args.env,
       ...processConfig.env,
     };
+    // Record mode: each bridge records under its provider subdirectory so the
+    // layout is `<root>/<providerId>/<threadId>/<direction>.ndjson`.
+    const recordRoot = env[PROVIDER_BRIDGE_RECORD_DIR_ENV];
+    if (recordRoot !== undefined && recordRoot !== "") {
+      env[PROVIDER_BRIDGE_RECORD_DIR_ENV] = join(recordRoot, args.providerId);
+    }
 
     const child = spawnPortablePipedProcess({
       command: processConfig.command,

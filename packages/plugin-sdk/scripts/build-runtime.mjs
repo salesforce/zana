@@ -26,6 +26,11 @@ const entries = [
     external: ['zod', 'zod/*']
   },
   {
+    source: 'src/provider-bridge-testing.ts',
+    output: 'dist/provider-bridge-testing.js',
+    external: ['zod', 'zod/*']
+  },
+  {
     source: 'src/testing/index.ts',
     output: 'dist/testing/index.js',
     external: []

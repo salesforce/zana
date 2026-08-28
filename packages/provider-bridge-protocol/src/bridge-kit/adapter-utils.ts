@@ -6,7 +6,7 @@
  */
 
 import { z } from "zod";
-import type { ThreadEventItem } from "@zana-ai/zcc-domain/thread-runtime";
+import type { ThreadEventItem, ThreadEventTokenUsageBreakdown } from "@zana-ai/zcc-domain/thread-runtime";
 import { textBlockSchema } from "./tool-arg-schemas.js";
 import { getStringProperty, isRecord } from "./provider-visibility-helpers.js";
 
@@ -375,4 +375,26 @@ function describeResultContentBlock(block: unknown): string | null {
     return `[${type}: ${url}]`;
   }
   return `[${type}]`;
+}
+
+/** The empty breakdown a bridge's per-session usage accumulator starts from. */
+export const ZERO_TOKEN_USAGE: ThreadEventTokenUsageBreakdown = {
+  totalTokens: 0,
+  inputTokens: 0,
+  cachedInputTokens: 0,
+  outputTokens: 0,
+  reasoningOutputTokens: 0,
+};
+
+export function addTokenUsage(
+  total: ThreadEventTokenUsageBreakdown,
+  last: ThreadEventTokenUsageBreakdown,
+): ThreadEventTokenUsageBreakdown {
+  return {
+    totalTokens: total.totalTokens + last.totalTokens,
+    inputTokens: total.inputTokens + last.inputTokens,
+    cachedInputTokens: total.cachedInputTokens + last.cachedInputTokens,
+    outputTokens: total.outputTokens + last.outputTokens,
+    reasoningOutputTokens: total.reasoningOutputTokens + last.reasoningOutputTokens,
+  };
 }

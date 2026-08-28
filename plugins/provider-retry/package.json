@@ -3,18 +3,21 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Composer action to retry the last provider turn.",
+  "description": "Continue turns after provider subscription limits reset.",
   "engines": {
     "zcc": ">=1.0.0",
     "zccPluginSdk": ">=0.1.0"
   },
+  "scripts": {
+    "build": "node ../../packages/plugin-build/scripts/build-app.mjs ."
+  },
   "zcc": {
     "name": "Provider retry",
-    "description": "Composer action to retry the last provider turn.",
+    "description": "Continue turns after provider subscription limits reset.",
     "branding": {
       "icon": "RotateCcw"
     },
-    "server": "./server.mjs",
+    "server": "./server.ts",
     "app": "./app.js"
   }
 }

@@ -21,16 +21,24 @@ export function shortHostName(name: string): string {
   return trimmed.split('.')[0] || trimmed;
 }
 
-export function hostPickerLabel(host: Host): string {
-  return host.isPrimary ? 'This machine' : shortHostName(host.name);
+export function hostPickerLabel(host: Host, project?: Project): string {
+  if (host.isPrimary) return 'This machine';
+  if (project?.remote && project.hostId === host.id) return 'Remote machine';
+  return shortHostName(host.name);
 }
 
-export function hostPickerDescription(host: Host): string {
+export function hostPickerDescription(host: Host, project?: Project): string {
   const status = host.status === 'connected' ? 'Online' : 'Offline';
-  if (!host.isPrimary) return status;
-  const shortName = shortHostName(host.name);
-  if (!shortName || shortName.toLowerCase() === 'this machine') return status;
-  return `${shortName} · ${status}`;
+  if (host.isPrimary) {
+    const shortName = shortHostName(host.name);
+    if (!shortName || shortName.toLowerCase() === 'this machine') return status;
+    return `${shortName} · ${status}`;
+  }
+  if (project?.remote && project.hostId === host.id) {
+    const shortName = shortHostName(host.name);
+    return shortName ? `${shortName} · ${status}` : status;
+  }
+  return status;
 }
 
 export function composerHostActionChipLabel(action: ComposerHostAction): string | null {
@@ -40,6 +48,23 @@ export function composerHostActionChipLabel(action: ComposerHostAction): string 
   }
   if (action.kind === 'blocked') return 'Unavailable';
   return action.label;
+}
+
+/** SSH remotes only offer this machine and, after install, the bound daemon. */
+export function composerHostsForProject(hosts: Host[], project?: Project): Host[] {
+  if (!project?.remote) return hosts;
+  return hosts.filter((host) => host.isPrimary || host.id === project.hostId);
+}
+
+/** True when a local project is aimed at a machine that does not own its folder. */
+export function isForeignExecutionHost(
+  project: Project | undefined,
+  hosts: Host[],
+  selectedHostId?: string
+): boolean {
+  if (!project || !selectedHostId || project.remote) return false;
+  const bound = project.hostId ?? hosts.find((host) => host.isPrimary)?.id;
+  return Boolean(bound) && bound !== selectedHostId;
 }
 
 export function resolveComposerHostAction(input: {
@@ -53,12 +78,11 @@ export function resolveComposerHostAction(input: {
     return { kind: 'blocked', reason: 'This machine’s host daemon is not connected.' };
   }
 
-  const sshProject = Boolean(input.project?.remote);
   const boundHost = input.project?.hostId
     ? input.hosts.find((host) => host.id === input.project!.hostId)
     : undefined;
 
-  if (sshProject && !boundHost) {
+  if (input.project?.remote && !boundHost) {
     if (!input.publicAppUrl || isLoopbackOrigin(input.publicAppUrl)) {
       return {
         kind: 'blocked',
@@ -66,7 +90,7 @@ export function resolveComposerHostAction(input: {
         reason: `Set a public app URL before installing a remote daemon. ${TAILSCALE_SERVE_HINT}`
       };
     }
-    const remote = input.project!.remote!;
+    const remote = input.project.remote;
     const target = remote.user ? `${remote.user}@${remote.host}` : remote.host;
     return {
       kind: 'install',
@@ -78,16 +102,11 @@ export function resolveComposerHostAction(input: {
   const selected = input.selectedHostId
     ? input.hosts.find((host) => host.id === input.selectedHostId)
     : undefined;
-  const executionHost = boundHost ?? selected;
+  const executionHost = selected ?? (input.project?.remote ? primary : boundHost);
+  if (input.project?.remote && executionHost?.isPrimary) {
+    return { kind: 'ready' };
+  }
   if (executionHost && executionHost.status !== 'connected' && !executionHost.isPrimary) {
-    if (!input.publicAppUrl || isLoopbackOrigin(input.publicAppUrl)) {
-      return {
-        kind: 'blocked',
-        needsPublicUrl: true,
-        hostId: executionHost.id,
-        reason: `Set a public app URL before reconnecting ${executionHost.name}. ${TAILSCALE_SERVE_HINT}`
-      };
-    }
     return {
       kind: 'fix',
       hostId: executionHost.id,
@@ -97,6 +116,23 @@ export function resolveComposerHostAction(input: {
         ? `${executionHost.name} is offline`
         : `${executionHost.name} is offline. Pick an SSH host to reconnect it.`
     };
+  }
+
+  if (
+    executionHost
+    && input.project
+    && !input.project.remote
+    && !input.project.quickAgent
+  ) {
+    const projectHostId = input.project.hostId ?? primary.id;
+    if (executionHost.id !== projectHostId) {
+      const projectHost = input.hosts.find((host) => host.id === projectHostId);
+      const here = projectHost?.isPrimary ? 'this machine' : (projectHost?.name ?? 'another machine');
+      return {
+        kind: 'blocked',
+        reason: `This project lives on ${here}. Add a folder on ${executionHost.name} first.`
+      };
+    }
   }
 
   return { kind: 'ready' };
@@ -110,7 +146,7 @@ export function shouldBlockComposerSend(
     if (action.needsPublicUrl && project?.remote && !project.hostId) return false;
     return true;
   }
-  if (project?.remote) return false;
+  if (action.kind === 'install') return false;
   return action.kind === 'fix';
 }
 
@@ -118,18 +154,21 @@ export function shouldShowHostPicker(
   hosts: Host[],
   project?: Project
 ): boolean {
-  if (project?.remote) return true;
+  if (project?.remote) {
+    return composerHostsForProject(hosts, project).length > 1;
+  }
   const connected = hosts.filter((host) => host.status === 'connected');
   if (hosts.some((host) => host.status === 'disconnected' && !host.isPrimary)) return true;
   return connected.length > 1;
 }
 
-/** Short composer mark when an SSH project runs the local harness with remote tools. */
+/** Composer mark when this machine runs the harness and tools go over SSH. */
 export function composerRemoteToolsMark(
   project: Project | undefined,
-  remoteToolProxy: boolean
+  selectedHostId?: string
 ): string | null {
-  if (!project?.remote || project.hostId || !remoteToolProxy) return null;
+  if (!project?.remote) return null;
+  if (project.hostId && selectedHostId === project.hostId) return null;
   return 'Local agent · remote tools';
 }
 

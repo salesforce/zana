@@ -4,8 +4,8 @@ import { readFileSync } from 'node:fs';
 describe('HostMachinePicker', () => {
   it('uses a short this-machine label, status line, and icons instead of a raw FQDN', () => {
     const source = readFileSync(new URL('./HostMachinePicker.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('hostPickerLabel(host)');
-    expect(source).toContain('hostPickerDescription(host)');
+    expect(source).toContain('hostPickerLabel(host, project)');
+    expect(source).toContain('hostPickerDescription(host, project)');
     expect(source).toContain('host-machine-picker-option');
     expect(source).toContain('<Laptop size={14}');
     expect(source).toContain('<Monitor size={14}');

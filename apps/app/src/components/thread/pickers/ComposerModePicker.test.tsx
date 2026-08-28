@@ -60,7 +60,7 @@ describe('ComposerModePicker', () => {
     expect(html).toContain('Shift+Tab');
   });
 
-  it('does not offer Legacy Agent in the work-mode menu', () => {
+  it('does not offer CLI Agent in the work-mode menu', () => {
     const html = renderToStaticMarkup(
       <ComposerModePicker
         value="agent"
@@ -69,6 +69,7 @@ describe('ComposerModePicker', () => {
       />
     );
     expect(html).toContain('data-testid="composer-mode-picker-trigger"');
+    expect(html).not.toContain('CLI Agent');
     expect(html).not.toContain('Legacy Agent');
     expect(html).not.toContain('composer-mode-legacy');
   });

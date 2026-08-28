@@ -74,7 +74,7 @@ export function ThreadSecondaryPanel({
           <button
             type="button"
             className="thread-secondary-pin"
-            aria-label="Show thread info"
+            aria-label="Show info"
             aria-pressed={pin === 'info'}
             data-testid="thread-info-pin"
             onClick={onSelectInfo}

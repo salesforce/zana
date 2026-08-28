@@ -11,7 +11,7 @@
 
 Zana Command Center is a desktop control plane for running, coordinating, and
 reviewing AI coding agents across your projects. **New Chat** starts a Thread
-with the coding CLI you already use (Legacy Agent is a real PTY when you want
+with the coding CLI you already use (CLI Agent is a real PTY when you want
 it), then gives you one place to see the fleet, answer questions, reuse proven
 workflows, and retain the outcome.
 
@@ -59,7 +59,7 @@ pnpm dev
 
 1. **Connect real work.** Register a local repository, an enrolled machine, or
    an SSH-hosted project.
-2. **Launch the right agent.** From New Chat, start a Thread (or Legacy Agent)
+2. **Launch the right agent.** From New Chat, start a Thread (or CLI Agent)
    with Claude Code, Cursor, Codex, Pi, OpenCode, or a shell — with the relevant
    persona, model, and execution mode.
 3. **Operate the fleet.** See which sessions need you, are working, idle, or done
@@ -73,7 +73,7 @@ pnpm dev
 ## What Zana Provides
 
 - **Real coding harnesses, not a replacement chat shell.** New Chat defaults to
-  a Thread; Legacy Agent runs a native PTY for Claude Code, Cursor, Codex, Pi,
+  a Thread; CLI Agent runs a native PTY for Claude Code, Cursor, Codex, Pi,
   OpenCode, and plain-shell workflows.
 - **One workspace for many environments.** Manage local folders, enrolled
   machines, and SSH projects with their own terminals, agents, explorer,
@@ -98,7 +98,7 @@ pnpm dev
 
 | Surface | Purpose |
 | --- | --- |
-| **Home** | New Chat composer (Thread, Legacy Agent, Autonomous Team), active work, and quick launch. |
+| **Home** | New Chat composer (Thread, CLI Agent, Autonomous Team), active work, and quick launch. |
 | **Projects** | Local, enrolled-machine, and SSH project registry, file explorer, project tabs, skills, settings, and scoped agent work. |
 | **Terminals** | Tabbed PTY sessions for supported coding CLIs and shell workflows. |
 | **Agents** | Global and project boards for live state, session details, reports, transcripts, usage, and bulk actions. |

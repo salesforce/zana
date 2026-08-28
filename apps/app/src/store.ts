@@ -345,10 +345,16 @@ interface UiState {
   /**
    * The first-run walkthrough overlay. Auto-opens once on the first main-window
    * launch (gated on AppConfig.walkthroughCompleted in init), and re-openable
-   * from Settings. A spotlight tour of launch-an-agent / add-a-project /
-   * create-a-schedule.
+   * from Settings. A spotlight tour of start-a-thread / CLI-agent /
+   * add-a-project / create-a-schedule.
    */
   walkthroughOpen: boolean;
+  /**
+   * While the walkthrough is pointing at New Chat, force the Thread / Legacy
+   * Agent switcher so the real composer is on screen. `null` when the tour is
+   * elsewhere (or closed).
+   */
+  walkthroughHomeMode: 'thread' | 'agent' | null;
   /**
    * The first-run setup checklist (dependency doctor) overlay. Auto-opens once
    * on the first main-window launch IF a dependency is missing AND the user
@@ -523,6 +529,7 @@ interface UiState {
   setLauncherOpen: (open: boolean) => void;
   /** Open / close the first-run walkthrough overlay. */
   setWalkthroughOpen: (open: boolean) => void;
+  setWalkthroughHomeMode: (mode: 'thread' | 'agent' | null) => void;
   /** Open / close the first-run setup checklist (dependency doctor) overlay. */
   setSetupOpen: (open: boolean) => void;
   setSearchOpen: (open: boolean) => void;
@@ -872,6 +879,7 @@ export const useUi = create<UiState>((set, get) => ({
   resumeOpen: false,
   launcherOpen: false,
   walkthroughOpen: false,
+  walkthroughHomeMode: null,
   setupOpen: false,
   searchOpen: false,
   findOpen: false,
@@ -1058,7 +1066,9 @@ export const useUi = create<UiState>((set, get) => ({
   setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
   setResumeOpen: (resumeOpen) => set({ resumeOpen }),
   setLauncherOpen: (launcherOpen) => set({ launcherOpen }),
-  setWalkthroughOpen: (walkthroughOpen) => set({ walkthroughOpen }),
+  setWalkthroughOpen: (walkthroughOpen) =>
+    set(walkthroughOpen ? { walkthroughOpen } : { walkthroughOpen, walkthroughHomeMode: null }),
+  setWalkthroughHomeMode: (walkthroughHomeMode) => set({ walkthroughHomeMode }),
   setSetupOpen: (setupOpen) => set({ setupOpen }),
   setSearchOpen: (searchOpen) => set({ searchOpen }),
   setFindOpen: (findOpen) => set({ findOpen }),

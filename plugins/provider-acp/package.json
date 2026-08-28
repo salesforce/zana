@@ -3,12 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Run threads with ACP (Agent Client Protocol) agents, including Cursor and OpenCode.",
+  "description": "Run Zana threads with ACP (Agent Client Protocol) agents, including Cursor and OpenCode.",
   "engines": {
     "zcc": ">=1.0.0",
     "zccPluginSdk": ">=0.1.0"
   },
   "scripts": {
+    "build": "node ../../packages/plugin-build/scripts/build-app.mjs .",
     "test": "vitest run --config vitest.config.ts",
     "typecheck": "tsc --noEmit"
   },
@@ -28,7 +29,7 @@
   },
   "zcc": {
     "name": "ACP providers",
-    "description": "Run threads with ACP agents, including Cursor and OpenCode.",
+    "description": "Run Zana threads with ACP agents, including Cursor and OpenCode.",
     "branding": {
       "icon": "./icons/cursor.svg"
     },

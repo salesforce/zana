@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HOST_RPC_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/host-rpc';
 import { listHosts } from '@zana-ai/zcc-db';
 import { startProductServer, type ProductServer } from './product-server.js';
@@ -424,5 +424,69 @@ createServer((_req, res) => {
       body: JSON.stringify({ host: '-evil' })
     });
     expect(rejected.status).toBe(400);
+  });
+
+  it('browses via host.browse_directory and gates the native folder picker', async () => {
+    await start();
+    const enrolled = await fetch(`${server!.url}internal/hosts/enroll`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer enroll-token-enroll-token-enroll',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+        hostName: 'laptop',
+        instanceId: '11111111-1111-4111-8111-111111111111'
+      })
+    });
+    const host = await enrolled.json() as { hostId: string };
+    server!.ctx.hostHub.ensureHostSessionReady = () => ({}) as never;
+    const rpc = vi.fn(async (input: { command: { type: string }; timeoutMs?: number }) => {
+      if (input.command.type === 'host.browse_directory') {
+        return { directory: '/Users/me', parent: '/Users', entries: [] };
+      }
+      if (input.command.type === 'host.paths_exist') {
+        return { existence: { '/tmp/a': true } };
+      }
+      return { path: '/Users/me/proj' };
+    });
+    server!.ctx.hostHub.callHostOnlineRpc = rpc;
+
+    const listing = await fetch(`${server!.url}api/v1/hosts/${host.hostId}/directory`);
+    expect(listing.status).toBe(200);
+    await expect(listing.json()).resolves.toEqual({
+      directory: '/Users/me',
+      parent: '/Users',
+      entries: []
+    });
+    expect(rpc.mock.calls[0]?.[0].command).toEqual({ type: 'host.browse_directory' });
+
+    const exists = await fetch(`${server!.url}api/v1/hosts/${host.hostId}/paths/exist`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ paths: ['/tmp/a'] })
+    });
+    expect(exists.status).toBe(200);
+    await expect(exists.json()).resolves.toEqual({ existence: { '/tmp/a': true } });
+
+    const denied = await fetch(`${server!.url}api/v1/hosts/${host.hostId}/pick-folder`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ clientHostId: 'other-host' })
+    });
+    expect(denied.status).toBe(409);
+
+    const picked = await fetch(`${server!.url}api/v1/hosts/${host.hostId}/pick-folder`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ clientHostId: host.hostId })
+    });
+    expect(picked.status).toBe(200);
+    await expect(picked.json()).resolves.toEqual({ path: '/Users/me/proj' });
+    expect(rpc.mock.calls.at(-1)?.[0]).toMatchObject({
+      timeoutMs: 10 * 60 * 1000,
+      command: { type: 'host.pick_folder' }
+    });
   });
 });

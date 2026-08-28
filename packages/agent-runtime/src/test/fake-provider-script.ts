@@ -68,6 +68,8 @@ const defaultModelList = {
 
 // Test-only mode used by runtime command-contract coverage.
 const simulateArchivedSession = process.argv.includes("--archived-session");
+const simulateRateLimitedOnce = process.argv.includes("--rate-limited-once");
+let remainingRateLimitedRejections = simulateRateLimitedOnce ? 1 : 0;
 const failUnarchive = process.argv.includes("--unarchive-fails");
 let failNextDiscard = process.argv.includes("--discard-fails-once");
 const returnThreadIdAsProviderIdentity = process.argv.includes(
@@ -128,6 +130,13 @@ function rejectArchivedSession(message: JsonRecord): boolean {
     error: {
       code: -32000,
       message: `session ${providerThreadId} is archived. Run codex unarchive ${providerThreadId} to unarchive it first.`,
+      data: {
+        recovery: {
+          kind: "sessionArchived",
+          message: `session ${providerThreadId} is archived. Run codex unarchive ${providerThreadId} to unarchive it first.`,
+          retryable: true,
+        },
+      },
     },
   });
   if (exitAfterArchivedError) {
@@ -138,6 +147,14 @@ function rejectArchivedSession(message: JsonRecord): boolean {
 
 function send(message: JsonRecord): void {
   process.stdout.write(`${JSON.stringify(message)}\n`);
+}
+
+function sendDeltas(threadId: string, deltas: JsonRecord[]): void {
+  send({
+    jsonrpc: "2.0",
+    method: "thread/delta",
+    params: { threadId, deltas },
+  });
 }
 
 function getThreadState(threadId: string): ThreadState | null {
@@ -228,7 +245,7 @@ function clearActiveTurn(thread: ThreadState): void {
 
 function emitUserMessage(
   threadId: string,
-  turnId: string,
+  _turnId: string,
   input: unknown,
 ): void {
   const thread = getThreadState(threadId);
@@ -240,20 +257,6 @@ function emitUserMessage(
     return;
   }
   thread.userMessageCount += 1;
-  send({
-    jsonrpc: "2.0",
-    method: "item/completed",
-    params: {
-      threadId,
-      turnId,
-      providerThreadId: thread.providerThreadId,
-      item: {
-        type: "userMessage",
-        id: `user-${thread.userMessageCount}`,
-        content,
-      },
-    },
-  });
 }
 
 function completeTurn(
@@ -271,44 +274,36 @@ function completeTurn(
 
   if (status === "completed") {
     const itemId = `msg-${thread.turnCount}`;
-    send({
-      jsonrpc: "2.0",
-      method: "item/started",
-      params: {
-        threadId,
-        turnId: turn.turnId,
-        item: {
-          type: "agentMessage",
-          id: itemId,
-          text: "",
-        },
+    sendDeltas(threadId, [
+      {
+        kind: "item.open",
+        key: { providerItemId: itemId },
+        item: { type: "agentMessage", text: "" },
+        providerTurnId: turn.turnId,
       },
-    });
-    send({
-      jsonrpc: "2.0",
-      method: "item/completed",
-      params: {
-        threadId,
-        turnId: turn.turnId,
-        item: {
-          type: "agentMessage",
-          id: itemId,
-          text: responseText,
-        },
+      {
+        kind: "item.close",
+        key: { providerItemId: itemId },
+        status: "completed",
+        item: { type: "agentMessage", text: responseText },
+        providerTurnId: turn.turnId,
       },
-    });
+      {
+        kind: "turn.boundary",
+        status: "completed",
+        providerTurnId: turn.turnId,
+      },
+    ]);
+    return;
   }
 
-  send({
-    jsonrpc: "2.0",
-    method: "turn/completed",
-    params: {
-      threadId,
-      turnId: turn.turnId,
-      providerThreadId: thread.providerThreadId,
-      status,
+  sendDeltas(threadId, [
+    {
+      kind: "turn.boundary",
+      status: status === "interrupted" ? "interrupted" : "failed",
+      providerTurnId: turn.turnId,
     },
-  });
+  ]);
 }
 
 function scheduleTurnCompletion(
@@ -387,27 +382,17 @@ function beginTurn(threadId: string, input: unknown, clientRequestId?: string): 
     timer: null,
   };
 
-  send({
-    jsonrpc: "2.0",
-    method: "turn/started",
-    params: {
-      threadId,
-      turnId,
-      providerThreadId: thread.providerThreadId,
-    },
-  });
+  const deltas: JsonRecord[] = [
+    { kind: "turn.open", providerTurnId: turnId },
+  ];
   if (clientRequestId) {
-    send({
-      jsonrpc: "2.0",
-      method: "turn/input/accepted",
-      params: {
-        threadId,
-        turnId,
-        providerThreadId: thread.providerThreadId,
-        clientRequestId,
-      },
+    deltas.push({
+      kind: "input.accepted",
+      clientRequestId,
+      providerTurnId: turnId,
     });
   }
+  sendDeltas(threadId, deltas);
   emitUserMessage(threadId, turnId, input);
 
   if (plan.questionRequested) {
@@ -581,7 +566,16 @@ function handleMessage(message: JsonRecord): void {
     send({
       jsonrpc: "2.0",
       id: getJsonRpcId(message.id) ?? 0,
-      result: { ok: true },
+      result: {
+        protocolVersion: 2,
+        capabilities: {
+          grammarVersions: [3, 3],
+          sessionRestore: true,
+          fork: "tip",
+          threadArchive: true,
+          threadRename: true,
+        },
+      },
     });
     return;
   }
@@ -642,6 +636,25 @@ function handleMessage(message: JsonRecord): void {
   }
 
   if (method === "turn/start") {
+    if (remainingRateLimitedRejections > 0) {
+      remainingRateLimitedRejections -= 1;
+      send({
+        jsonrpc: "2.0",
+        id: getJsonRpcId(message.id) ?? 0,
+        error: {
+          code: -32000,
+          message: "rate limited",
+          data: {
+            recovery: {
+              kind: "rateLimited",
+              message: "rate limited",
+              retryable: true,
+            },
+          },
+        },
+      });
+      return;
+    }
     startTurn(message);
     return;
   }

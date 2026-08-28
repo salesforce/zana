@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AgentRuntimeSkillRoot } from '@zana-ai/zcc-agent-runtime';
@@ -95,4 +96,14 @@ export function expandDirectoryRootsToRuntimeSkillRoots(
 
 export function loadRuntimeSkillRoots(dataDir: string): AgentRuntimeSkillRoot[] {
   return expandDirectoryRootsToRuntimeSkillRoots(readInjectedSkillDirectoryRoots(dataDir));
+}
+
+/** Stable hash of injected skill directory roots + discovered skill names. */
+export function hashInjectedSkillCatalog(dataDir: string): string {
+  const roots = readInjectedSkillDirectoryRoots(dataDir).slice().sort();
+  const payload = roots.map((root) => ({
+    root,
+    skills: discoverSkills(root).map((skill) => `${skill.name}:${skill.description}`).sort()
+  }));
+  return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 }

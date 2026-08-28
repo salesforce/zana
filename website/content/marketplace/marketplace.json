@@ -7,7 +7,7 @@
     {
       "id": "provider-acp",
       "displayName": "ACP providers",
-      "description": "Run threads with ACP agents, including Cursor and OpenCode.",
+      "description": "Run Zana threads with ACP agents, including Cursor and OpenCode.",
       "icon": {
         "lucide": "./icons/cursor.svg"
       },
@@ -76,7 +76,7 @@
     {
       "id": "provider-claude-code",
       "displayName": "Claude Code provider",
-      "description": "Run threads with Claude Code.",
+      "description": "Run Zana threads with Claude Code.",
       "icon": {
         "lucide": "./icons/claude-code.svg"
       },
@@ -99,7 +99,7 @@
     {
       "id": "provider-codex",
       "displayName": "Codex provider",
-      "description": "Run threads with Codex.",
+      "description": "Run Zana threads with Codex.",
       "icon": {
         "lucide": "./icons/codex.svg"
       },
@@ -283,7 +283,7 @@
     {
       "id": "provider-pi",
       "displayName": "Pi provider",
-      "description": "Run threads with Pi.",
+      "description": "Run Zana threads with Pi.",
       "icon": {
         "lucide": "./icons/pi.svg"
       },
@@ -299,6 +299,29 @@
         "git": {
           "url": "https://github.com/salesforce/zana",
           "subdir": "plugins/provider-pi",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "pr-monitor",
+      "displayName": "PR Monitor",
+      "description": "Keep your authored pull requests visible: CI, review, merge-readiness, and inbox alerts.",
+      "icon": {
+        "lucide": "GitPullRequest"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/pr-monitor",
           "ref": "HEAD"
         }
       }
@@ -329,7 +352,7 @@
     {
       "id": "salesforce",
       "displayName": "Salesforce",
-      "description": "Org identity, doctor, and API-native SOQL/Apex/LWC/Agent Script tools with fail-closed approvals. Install with `zcc plugin install salesforce`.",
+      "description": "Org identity, doctor, Agent Script editor, and API-native SOQL/Apex/LWC/Agent Script tools with fail-closed approvals. Install with `zcc plugin install salesforce`.",
       "icon": {
         "lucide": "Cloud"
       },

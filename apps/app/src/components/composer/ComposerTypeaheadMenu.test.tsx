@@ -16,7 +16,7 @@ describe('ComposerTypeaheadMenu', () => {
       />
     );
     expect(html).toContain('data-testid="composer-typeahead-menu"');
-    expect(html).toContain('Threads');
+    expect(html).toContain('Agents');
     expect(html).toContain('Files');
     expect(html).toContain('foo.ts');
     expect(html).toContain('Zana');

@@ -397,11 +397,73 @@ describe('conversation and banners', () => {
     expect(html).toContain('thread-timeline-bubble');
   });
 
+  it('renders compact image thumbs on a user message', () => {
+    const html = renderToStaticMarkup(
+      <ConversationRow
+        projectId="proj-1"
+        row={{
+          ...workBase,
+          id: 'u-img',
+          kind: 'conversation',
+          role: 'user',
+          text: '',
+          attachments: {
+            webImages: 0,
+            localImages: 1,
+            localFiles: 0,
+            imageUrls: [],
+            localImagePaths: ['shot-1.png'],
+            localFilePaths: []
+          },
+          initiator: 'user',
+          senderThreadId: null,
+          systemMessageKind: 'unlabeled',
+          systemMessageSubject: null,
+          turnRequest: { isGrouped: false, kind: 'message', status: 'accepted' },
+          mentions: []
+        }}
+      />
+    );
+    expect(html).toContain('composer-image-thumbs');
+    expect(html).toContain('/api/v1/projects/proj-1/attachments/content?path=shot-1.png');
+  });
+
+  it('skips absolute local image paths that the renderer cannot fetch', () => {
+    const html = renderToStaticMarkup(
+      <ConversationRow
+        projectId="proj-1"
+        row={{
+          ...workBase,
+          id: 'u-img-abs',
+          kind: 'conversation',
+          role: 'user',
+          text: 'see this',
+          attachments: {
+            webImages: 0,
+            localImages: 1,
+            localFiles: 0,
+            imageUrls: [],
+            localImagePaths: ['/tmp/shot.png'],
+            localFilePaths: []
+          },
+          initiator: 'user',
+          senderThreadId: null,
+          systemMessageKind: 'unlabeled',
+          systemMessageSubject: null,
+          turnRequest: { isGrouped: false, kind: 'message', status: 'accepted' },
+          mentions: []
+        }}
+      />
+    );
+    expect(html).not.toContain('composer-image-thumbs');
+    expect(html).toContain('see this');
+  });
+
   it('labels mentions from resource fields', () => {
     expect(mentionPillLabel({ resource: { kind: 'path', label: 'src' } })).toBe('src');
     expect(mentionPillLabel({ resource: { kind: 'path', path: 'a.ts' } })).toBe('a.ts');
     expect(mentionPillLabel({ resource: { kind: 'command', name: 'help' } })).toBe('help');
-    expect(mentionPillLabel({ resource: { kind: 'thread', label: 'Hello' } })).toBe('Thread: Hello');
+    expect(mentionPillLabel({ resource: { kind: 'thread', label: 'Hello' } })).toBe('Agent: Hello');
     expect(mentionPillLabel({})).toBe('');
   });
 

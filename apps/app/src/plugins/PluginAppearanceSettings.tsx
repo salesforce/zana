@@ -55,12 +55,12 @@ export function PluginThreadListPicker() {
   if (lists.length === 0) return null;
   return (
     <Field
-      label="Thread list"
-      help="An exclusive plugin thread list replaces only the scrolling Agents list. Plugin nav rows and the sidebar footer stay host-owned."
+      label="Agents list"
+      help="An exclusive plugin agents list replaces only the scrolling Agents list. Plugin nav rows and the sidebar footer stay host-owned."
     >
       <PopoverPicklist
         value={value}
-        ariaLabel="Thread list"
+        ariaLabel="Agents list"
         searchable={false}
         onChange={(next) => {
           setValue(next);

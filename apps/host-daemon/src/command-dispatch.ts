@@ -14,6 +14,7 @@ import type {
 } from '@zana-ai/zcc-contracts/host-rpc';
 import type { z } from 'zod';
 import { harnessFamilyOf, parseProfile } from '@zana-ai/zcc-domain/launch-provider';
+import { PERSONAL_WORKSPACE_DIR_NAME } from '@zana-ai/zcc-domain';
 import type { AppConfig, HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
 import type { PendingInteractionResolution } from '@zana-ai/zcc-domain/thread-runtime';
 import {
@@ -45,6 +46,18 @@ import {
   peerDaemonStatus,
   type PeerDaemonSsh
 } from './peer-daemon.js';
+import {
+  browseHostDirectory,
+  checkHostPathsExist,
+  listHostPaths,
+  mkdirHostPath,
+  moveHostPath,
+  pickHostFolder,
+  readHostFileMetadata,
+  readHostPath,
+  removeHostPath,
+  writeHostFile
+} from './host-fs.js';
 
 const MAX_LISTED_FILES = 500;
 const MAX_DIR_ENTRIES = 2000;
@@ -80,6 +93,30 @@ export type ThreadResumeInput = {
   instructions?: ThreadStartFields['instructions'];
 };
 
+export type ThreadRewindPrepareInput = {
+  threadId: string;
+  environmentId: string;
+  leaseId: string;
+  projectId: string;
+  providerId: string;
+  sourceProviderThreadId: string;
+  retainThroughProviderCheckpoint: string;
+  cwd: string;
+  bridgeLaunch?: ThreadStartFields['bridgeLaunch'];
+  permissionMode?: ThreadStartFields['permissionMode'];
+  model?: string;
+  reasoningLevel?: ThreadWorkInput['reasoningLevel'];
+};
+
+export type ThreadArchiveInput = {
+  threadId: string;
+  environmentId: string;
+  providerId: string;
+  providerThreadId: string;
+  cwd: string;
+  bridgeLaunch?: ThreadStartFields['bridgeLaunch'];
+};
+
 export interface CommandRuntime {
   dataDir: string;
   environments: Map<string, { path: string; workspaceProvisionType: 'unmanaged' | 'managed-worktree' | 'personal' }>;
@@ -110,6 +147,12 @@ export interface CommandRuntime {
     providerRequestId: string;
     resolution: PendingInteractionResolution;
   }) => void;
+  prepareRewind?: (input: ThreadRewindPrepareInput) => Promise<{ providerThreadId: string }>;
+  discardRewind?: (input: { leaseId: string; environmentId: string }) => Promise<void>;
+  renameWork?: (input: { threadId: string; title: string }) => Promise<void>;
+  archiveWork?: (input: ThreadArchiveInput) => Promise<void>;
+  unarchiveWork?: (input: ThreadArchiveInput) => Promise<void>;
+  clearGoal?: (input: { threadId: string }) => Promise<{ cleared: boolean }>;
   startTerminal?: (input: { sessionId: string; cwd: string; cols: number; rows: number }) => Promise<{ pid?: number } | void>;
   writeTerminal?: (input: { sessionId: string; data: string }) => Promise<void>;
   resizeTerminal?: (input: { sessionId: string; cols: number; rows: number }) => Promise<void>;
@@ -149,6 +192,12 @@ export function createCommandRuntime(options: {
     providerRequestId: string;
     resolution: PendingInteractionResolution;
   }) => void;
+  prepareRewind?: (input: ThreadRewindPrepareInput) => Promise<{ providerThreadId: string }>;
+  discardRewind?: (input: { leaseId: string; environmentId: string }) => Promise<void>;
+  renameWork?: (input: { threadId: string; title: string }) => Promise<void>;
+  archiveWork?: (input: ThreadArchiveInput) => Promise<void>;
+  unarchiveWork?: (input: ThreadArchiveInput) => Promise<void>;
+  clearGoal?: (input: { threadId: string }) => Promise<{ cleared: boolean }>;
   startTerminal?: (input: { sessionId: string; cwd: string; cols: number; rows: number }) => Promise<{ pid?: number } | void>;
   writeTerminal?: (input: { sessionId: string; data: string }) => Promise<void>;
   resizeTerminal?: (input: { sessionId: string; cols: number; rows: number }) => Promise<void>;
@@ -177,6 +226,12 @@ export function createCommandRuntime(options: {
     writeWork: options.writeWork,
     stopWork: options.stopWork,
     deliverInteractiveResolve: options.deliverInteractiveResolve,
+    prepareRewind: options.prepareRewind,
+    discardRewind: options.discardRewind,
+    renameWork: options.renameWork,
+    archiveWork: options.archiveWork,
+    unarchiveWork: options.unarchiveWork,
+    clearGoal: options.clearGoal,
     startTerminal: options.startTerminal,
     writeTerminal: options.writeTerminal,
     resizeTerminal: options.resizeTerminal,
@@ -189,6 +244,12 @@ export function createCommandRuntime(options: {
       return { providers: results };
     })
   };
+}
+
+function personalProvisionPath(runtime: CommandRuntime, environmentId: string, requested: string): string {
+  return isWithin(requested, runtime.dataDir)
+    ? requested
+    : join(runtime.dataDir, PERSONAL_WORKSPACE_DIR_NAME, environmentId);
 }
 
 async function withEnvironmentLane<T>(runtime: CommandRuntime, environmentId: string, run: () => Promise<T>): Promise<T> {
@@ -307,6 +368,25 @@ async function resumeThreadRuntimeIfMissing(
     environmentId: command.environmentId,
     ...command.resume
   });
+}
+
+function requireEnvironment(
+  runtime: CommandRuntime,
+  environmentId: string
+): { path: string; workspaceProvisionType: 'unmanaged' | 'managed-worktree' | 'personal' } {
+  const environment = runtime.environments.get(environmentId);
+  if (!environment) {
+    throw new HostCommandError('environment_not_ready', 'environment is not provisioned');
+  }
+  return environment;
+}
+
+function requireThread(runtime: CommandRuntime, threadId: string): { environmentId: string; providerId: string } {
+  const thread = runtime.threads.get(threadId);
+  if (!thread) {
+    throw new HostCommandError('unknown_thread', 'thread is not running on this host');
+  }
+  return thread;
 }
 
 function requireTerminal(runtime: CommandRuntime, sessionId: string): { cwd: string } {
@@ -447,7 +527,7 @@ export async function dispatchHostCommand(
             : command.workspaceProvisionType === 'personal'
               ? await provisionWorkspace({
                   workspaceProvisionType: 'personal',
-                  targetPath: command.targetPath,
+                  targetPath: personalProvisionPath(runtime, command.environmentId, command.targetPath),
                   onProgress,
                   signal: controller.signal
                 })
@@ -561,6 +641,88 @@ export async function dispatchHostCommand(
     }
     case 'thread.resume':
       return applyThreadResume(runtime, command);
+    case 'thread.rewind.prepare': {
+      const environment = requireEnvironment(runtime, command.environmentId);
+      if (!runtime.prepareRewind) {
+        throw new HostCommandError('unsupported', 'thread rewind is not available on this host');
+      }
+      const cwd = confineThreadCwd(environment.path, command.cwd);
+      const prepared = await runtime.prepareRewind({
+        threadId: command.threadId,
+        environmentId: command.environmentId,
+        leaseId: command.leaseId,
+        projectId: command.projectId,
+        providerId: command.providerId,
+        sourceProviderThreadId: command.sourceProviderThreadId,
+        retainThroughProviderCheckpoint: command.retainThroughProviderCheckpoint,
+        cwd,
+        bridgeLaunch: command.bridgeLaunch,
+        permissionMode: command.permissionMode,
+        model: command.model,
+        reasoningLevel: command.reasoningLevel
+      });
+      return {
+        threadId: command.threadId,
+        prepared: true as const,
+        providerThreadId: prepared.providerThreadId
+      };
+    }
+    case 'thread.rewind.discard': {
+      if (runtime.discardRewind) {
+        await runtime.discardRewind({
+          leaseId: command.leaseId,
+          environmentId: command.environmentId
+        });
+      }
+      return { leaseId: command.leaseId, discarded: true as const };
+    }
+    case 'thread.rename': {
+      requireThread(runtime, command.threadId);
+      if (runtime.renameWork) {
+        await runtime.renameWork({ threadId: command.threadId, title: command.title });
+      }
+      return { threadId: command.threadId, renamed: true as const };
+    }
+    case 'thread.archive': {
+      const environment = requireEnvironment(runtime, command.environmentId);
+      if (!runtime.archiveWork) {
+        throw new HostCommandError('unsupported', 'thread archive is not available on this host');
+      }
+      const cwd = confineThreadCwd(environment.path, command.cwd);
+      await runtime.archiveWork({
+        threadId: command.threadId,
+        environmentId: command.environmentId,
+        providerId: command.providerId,
+        providerThreadId: command.providerThreadId,
+        cwd,
+        bridgeLaunch: command.bridgeLaunch
+      });
+      return { threadId: command.threadId, archived: true as const };
+    }
+    case 'thread.unarchive': {
+      const environment = requireEnvironment(runtime, command.environmentId);
+      if (!runtime.unarchiveWork) {
+        throw new HostCommandError('unsupported', 'thread unarchive is not available on this host');
+      }
+      const cwd = confineThreadCwd(environment.path, command.cwd);
+      await runtime.unarchiveWork({
+        threadId: command.threadId,
+        environmentId: command.environmentId,
+        providerId: command.providerId,
+        providerThreadId: command.providerThreadId,
+        cwd,
+        bridgeLaunch: command.bridgeLaunch
+      });
+      return { threadId: command.threadId, unarchived: true as const };
+    }
+    case 'thread.goal.clear': {
+      requireThread(runtime, command.threadId);
+      if (!runtime.clearGoal) {
+        throw new HostCommandError('unsupported', 'thread goal clear is not available on this host');
+      }
+      const result = await runtime.clearGoal({ threadId: command.threadId });
+      return { threadId: command.threadId, cleared: result.cleared };
+    }
     case 'turn.submit': {
       await resumeThreadRuntimeIfMissing(runtime, command);
       if (runtime.submitTurn) {
@@ -659,6 +821,26 @@ export async function dispatchHostCommand(
       }
       return { content: readFileSync(contained, 'utf8'), encoding: 'utf8' as const };
     }
+    case 'host.write_file':
+      return writeHostFile(command);
+    case 'host.mkdir':
+      return mkdirHostPath(command);
+    case 'host.move_path':
+      return moveHostPath(command);
+    case 'host.remove_path':
+      return removeHostPath(command);
+    case 'host.browse_directory':
+      return browseHostDirectory(command);
+    case 'host.paths_exist':
+      return checkHostPathsExist(command);
+    case 'host.list_paths':
+      return listHostPaths(command);
+    case 'host.read_path':
+      return readHostPath(command);
+    case 'host.file_metadata':
+      return readHostFileMetadata(command);
+    case 'host.pick_folder':
+      return pickHostFolder();
     case 'host.list_branches':
       try {
         return await workspaceBranches(command.workspacePath, command.limit);

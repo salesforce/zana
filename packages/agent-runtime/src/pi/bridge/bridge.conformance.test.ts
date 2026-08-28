@@ -250,6 +250,7 @@ it("passes the canonical protocol suite against the scripted pi session", async 
 
   const report = await runBridgeConformance({
     transport,
+    providerId: "pi",
     session: {
       cwd: workspaceDir,
       promptInput: [{ type: "text", text: "say hello", mentions: [] }],

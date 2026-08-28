@@ -7,7 +7,7 @@ import { collectTestPluginApp } from '@zana-ai/zcc-plugin-sdk/testing/app';
 import { derivePluginId, readPluginManifest } from '@zana-ai/zcc-domain';
 import { discoverPluginSkillNames } from '@zana-ai/zcc-server/plugins/plugin-skills';
 import plugin from '../server.ts';
-import app from '../app.js';
+import app from '../app.tsx';
 import { createSalesforcePlugin } from '../lib/plugin.js';
 import { CONSTITUTION_INSTRUCTIONS } from '../lib/constitution.js';
 import type { SalesforceDeps, SalesforceRequest } from '../lib/types.js';
@@ -60,7 +60,10 @@ function mockDeps(kind: 'sandbox' | 'production' = 'sandbox', rest?: (req: Sales
     readFile: (path) => (path.endsWith('sfdx-project.json') ? '{"packageDirectories":[{"path":"force-app"}]}' : null),
     readdir: () => [],
     realpath: (path) => path,
-    spawnContained: async () => ({ code: 0, stdout: 'ok', stderr: '' })
+    spawnContained: async () => ({ code: 0, stdout: 'ok', stderr: '' }),
+    writeFile: () => {
+      throw new Error('writeFile not stubbed');
+    }
   };
 }
 
@@ -75,17 +78,23 @@ describe('salesforce plugin contract', () => {
       'salesforce-dx'
     ]);
     expect(readFileSync(join(root, 'skills/salesforce-dx/SKILL.md'), 'utf8')).toContain('zcc sf doctor');
+    expect(readFileSync(join(root, 'skills/salesforce-dx/SKILL.md'), 'utf8')).toContain('Agent Script');
+    expect(readFileSync(join(root, 'NOTICE'), 'utf8')).toContain('Apache License 2.0');
     const server = readFileSync(join(root, 'server.ts'), 'utf8');
     expect(server).toContain('./lib/plugin.js');
     expect(server).not.toContain('./src/');
   });
 
-  it('registers settings, project tab, guardrail, and composer banner', () => {
+  it('registers settings, project tab, guardrail, composer banner, Agent Script panel, and file opener', () => {
     const set = collectTestPluginApp(app, 'salesforce');
     expect(set.settingsSections[0]?.id).toBe('salesforce');
     expect(set.projectTabs[0]?.label).toBe('Salesforce');
     expect(set.pendingInteractions[0]?.id).toBe('salesforce-guardrail');
     expect(set.composerCustomizations[0]?.id).toBe('salesforce-banner');
+    expect(set.navPanels[0]?.id).toBe('agent-script');
+    expect(set.navPanels[0]?.title).toBe('Agent Script');
+    expect(set.fileOpeners[0]?.extensions).toEqual(['agent', 'afscript']);
+    expect(set.commandPaletteActions[0]?.id).toBe('open-agent-script');
   });
 
   it('loads against the fake host and registers family tools plus zcc sf', async () => {

@@ -7,13 +7,16 @@ import { useHosts } from '../../hooks/useHosts.js';
 import {
   formatJoinCountdown,
   isLoopbackOrigin,
+  joinCountdownMs,
   mergePairingSshHosts,
   pairingCommand,
   resolvePairingServerUrl,
+  resolveRelayPairingServerUrl,
   sanitizeSshHost,
   sshPairingCommand,
   TAILSCALE_SERVE_HINT,
-  type PairingSshHostOption
+  type PairingSshHostOption,
+  type RelayStatus
 } from './machine-pairing.js';
 
 interface AddMachineDialogProps {
@@ -104,6 +107,7 @@ export function AddMachineDialogView({
   remainingMs,
   expired,
   mintError,
+  joinWindowClosed,
   loopbackWarning,
   viaSsh,
   sshHost,
@@ -119,6 +123,7 @@ export function AddMachineDialogView({
   remainingMs: number | null;
   expired: boolean;
   mintError: string | null;
+  joinWindowClosed?: boolean;
   loopbackWarning: boolean;
   viaSsh: boolean;
   sshHost: string;
@@ -206,9 +211,11 @@ export function AddMachineDialogView({
             </button>
             {expired ? (
               <>
-                <span className="add-machine-expiry">Code expired</span>
+                <span className="add-machine-expiry">
+                  {joinWindowClosed ? 'Join window closed' : 'Code expired'}
+                </span>
                 <button type="button" className="settings-btn" onClick={onRetryMint}>
-                  Generate a new code
+                  {joinWindowClosed ? 'Renew join window' : 'Generate a new code'}
                 </button>
               </>
             ) : remainingMs !== null ? (
@@ -276,6 +283,7 @@ function AddMachineDialogContent({
   const [copied, setCopied] = useState(false);
   const [mintNonce, setMintNonce] = useState(0);
   const [sshHost, setSshHost] = useState(defaultSshHost);
+  const [relay, setRelay] = useState<RelayStatus | null>(null);
   const [configHosts, setConfigHosts] = useState<Array<{
     alias: string;
     hostname?: string;
@@ -286,11 +294,31 @@ function AddMachineDialogContent({
   if (baseline.current === null && hosts.length > 0) {
     baseline.current = new Set(hosts.map((host) => host.id));
   }
-  const serverUrl = resolvePairingServerUrl(publicAppUrl);
+
+  useEffect(() => {
+    let cancelled = false;
+    product.relay.status().then((row) => {
+      if (!cancelled) setRelay(row);
+    }).catch(() => undefined);
+    const unsub = product.relay.onChanged((row) => {
+      if (!cancelled) setRelay(row);
+    });
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, []);
+
+  const resolved = resolveRelayPairingServerUrl({ publicAppUrl, relay, now });
+  const serverUrl = resolved.url ?? resolvePairingServerUrl(publicAppUrl);
+  const joinWindowClosed = resolved.error === 'join_expired';
   const loopbackWarning = Boolean(serverUrl && isLoopbackOrigin(serverUrl));
   const viaSsh = Boolean(loopbackWarning && serverUrl && join && sanitizeSshHost(sshHost));
 
   const remint = useCallback(() => {
+    void product.relay.renewJoinWindow().then((row) => {
+      setRelay(row);
+    }).catch(() => undefined);
     setMintNonce((value) => value + 1);
   }, []);
 
@@ -362,8 +390,10 @@ function AddMachineDialogContent({
       })
       : pairingCommand({ publicAppUrl: serverUrl, joinCode: join.joinCode, hostId: join.hostId })
     : null;
-  const remaining = join ? join.expiresAt - now : null;
-  const expired = remaining !== null && remaining <= 0;
+  const remaining = join
+    ? joinCountdownMs(join.expiresAt, relay?.joinUntil, now)
+    : null;
+  const expired = joinWindowClosed || (remaining !== null && remaining <= 0);
 
   const copy = async () => {
     if (!command) return;
@@ -384,6 +414,7 @@ function AddMachineDialogContent({
       remainingMs={remaining}
       expired={expired}
       mintError={error}
+      joinWindowClosed={joinWindowClosed}
       loopbackWarning={loopbackWarning}
       viaSsh={viaSsh}
       sshHost={sshHost}
