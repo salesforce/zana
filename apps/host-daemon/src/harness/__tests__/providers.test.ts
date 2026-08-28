@@ -309,6 +309,7 @@ describe('ClaudeCodeProvider.buildRemoteCommand', () => {
     expect(cmd.match(/--allowedTools/g)).toHaveLength(1);
     expect(cmd).toContain('mcp__zcc-inbox__inbox_push');
     expect(cmd).toContain('mcp__zcc-inbox__inbox_search');
+    expect(cmd).toContain('mcp__zcc-inbox__preview_file');
     // Interactive (non-scheduled) ⇒ no schedule_report in the allowlist.
     expect(cmd).not.toContain('mcp__zcc-inbox__schedule_report');
     // Inbox-usage guidance appended to the system prompt.

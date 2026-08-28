@@ -2,6 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Code2, Download, Expand, FileImage, Minus, Plus, RotateCcw, X } from 'lucide-react';
 import { rasterizeSvgString, downloadBlob } from '../lib/mermaidExport.js';
 import { mermaidSvgLayout } from '../lib/mermaid-svg-layout.js';
+import {
+  mermaidSvgCacheKey,
+  readMermaidSvgCache,
+  writeMermaidSvgCache
+} from '../lib/mermaid-svg-cache.js';
 import { Modal } from './Modal.js';
 
 /**
@@ -25,6 +30,7 @@ let mermaidPromise: Promise<typeof import('mermaid').default> | null = null;
 type MermaidTheme = 'dark' | 'default';
 
 function currentTheme(): MermaidTheme {
+  if (typeof document === 'undefined') return 'dark';
   return document.documentElement.getAttribute('data-theme') === 'light'
     ? 'default'
     : 'dark';
@@ -115,7 +121,9 @@ export function MermaidDiagram({
   theme?: MermaidTheme;
   exportable?: boolean;
 }) {
-  const [svg, setSvg] = useState<string | null>(null);
+  const resolvedTheme = theme ?? currentTheme();
+  const cacheKey = mermaidSvgCacheKey(resolvedTheme, code);
+  const [svg, setSvg] = useState<string | null>(() => readMermaidSvgCache(cacheKey) ?? null);
   const [error, setError] = useState(false);
   // Toolbar "Source" toggle: swap the rendered diagram for its raw mermaid
   // code block in place. Only reachable via the exportable toolbar.
@@ -126,15 +134,23 @@ export function MermaidDiagram({
 
   useEffect(() => {
     let cancelled = false;
+    const cached = readMermaidSvgCache(cacheKey);
+    if (cached) {
+      setSvg(cached);
+      setError(false);
+      return;
+    }
     // Keep the last good SVG on screen while a new render runs. Clearing it
-    // flashes "Rendering diagram…" (and a height jump) on every streaming
-    // token or theme pass — the blink the thread transcript was showing.
+    // flashes "Rendering diagram…" (and a height jump) on every remount —
+    // the thread transcript ticks `now` every second and react-markdown
+    // rebuilds this component with empty state.
     setError(false);
 
     void (async () => {
       try {
         const id = `inbox-mermaid-${renderSeq++}`;
-        const rendered = await renderToSvg(theme ?? currentTheme(), id, code);
+        const rendered = await renderToSvg(resolvedTheme, id, code);
+        writeMermaidSvgCache(cacheKey, rendered);
         if (!cancelled) {
           setSvg(rendered);
           setError(false);
@@ -147,7 +163,7 @@ export function MermaidDiagram({
     return () => {
       cancelled = true;
     };
-  }, [code, theme]);
+  }, [cacheKey, code, resolvedTheme]);
 
   // `data-mermaid` marks every mounted diagram (any state); `data-mermaid-state`
   // distinguishes a still-rendering one from a settled (svg/error) one. The PDF

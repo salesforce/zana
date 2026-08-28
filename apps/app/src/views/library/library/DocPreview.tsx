@@ -1,6 +1,6 @@
 import { product } from '../../../lib/product-client.js';
-import React, { useEffect, useRef, useState, isValidElement, type ReactNode } from 'react';
-import { Pencil, Eye, Save } from 'lucide-react';
+import React, { useEffect, useState, isValidElement, type ReactNode } from 'react';
+import { Pencil, Eye, Save, Type, Code2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Editor from '@monaco-editor/react';
@@ -15,6 +15,7 @@ import { useMonacoTheme } from '@/hooks/useMonacoTheme';
 import { useAiEnhanceSelection } from '@/components/AiEnhanceSelection';
 import { StencilLines } from '@/components/ui/Skeleton';
 import { parseFrontMatter } from '@zana-ai/zcc-extension-sdk/helpers';
+import { LibraryMarkdownEditor } from './LibraryMarkdownEditor.js';
 
 export interface DocPreviewProps {
   doc: LibraryDoc;
@@ -23,20 +24,7 @@ export interface DocPreviewProps {
   onAutoEditConsumed?: () => void;
 }
 
-// Editor/preview split ratio (editor share of width), draggable via
-// .library-split-resizer. Persisted as a renderer-only UI preference
-// (localStorage), matching the Explorer tree splitter behavior.
-const SPLIT_RATIO_MIN = 0.25;
-const SPLIT_RATIO_MAX = 0.75;
-const SPLIT_RATIO_DEFAULT = 0.5;
-const SPLIT_RATIO_KEY = 'zcc.libraryDocSplitRatio';
-
-function loadSplitRatio(): number {
-  if (typeof localStorage === 'undefined') return SPLIT_RATIO_DEFAULT;
-  const raw = Number(localStorage.getItem(SPLIT_RATIO_KEY));
-  if (!Number.isFinite(raw) || raw <= 0) return SPLIT_RATIO_DEFAULT;
-  return Math.max(SPLIT_RATIO_MIN, Math.min(SPLIT_RATIO_MAX, raw));
-}
+type EditSurface = 'rich' | 'source';
 
 /**
  * Preview + (for markdown) inline edit for a single library doc. Shared by the
@@ -56,46 +44,9 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProp
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
+  const [editSurface, setEditSurface] = useState<EditSurface>('rich');
   const editable = doc.kind === 'md' && doc.id !== '' && !!doc.relPath;
   const { registerEditor, modal: aiEnhanceModal } = useAiEnhanceSelection();
-
-  // Drag-to-resize the editor/preview split, persisted as a renderer-only UI
-  // preference (localStorage), matching the Explorer tree splitter behavior.
-  const [splitRatio, setSplitRatio] = useState(loadSplitRatio);
-  const splitPaneRef = useRef<HTMLDivElement>(null);
-  const onSplitResizeMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault();
-    const container = splitPaneRef.current;
-    if (!container) return;
-    document.body.classList.add('resizing-col');
-    let latest = splitRatio;
-    const onMove = (ev: MouseEvent) => {
-      const rect = container.getBoundingClientRect();
-      const raw = (ev.clientX - rect.left) / rect.width;
-      latest = Math.max(SPLIT_RATIO_MIN, Math.min(SPLIT_RATIO_MAX, raw));
-      setSplitRatio(latest);
-    };
-    const onUp = () => {
-      document.body.classList.remove('resizing-col');
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      try {
-        localStorage.setItem(SPLIT_RATIO_KEY, String(latest));
-      } catch {
-        /* localStorage write is best-effort */
-      }
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  };
-  const onSplitResizeDoubleClick = () => {
-    setSplitRatio(SPLIT_RATIO_DEFAULT);
-    try {
-      localStorage.setItem(SPLIT_RATIO_KEY, String(SPLIT_RATIO_DEFAULT));
-    } catch {
-      /* best-effort */
-    }
-  };
 
   useEffect(() => {
     setLoading(true);
@@ -103,6 +54,7 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProp
     setContent(null);
     setDataUrl(null);
     setEditing(false);
+    setEditSurface('rich');
 
     if (doc.kind === 'md' || doc.kind === 'code') {
       // Read as text through the library's own scope-confined seam — a GLOBAL
@@ -151,6 +103,7 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProp
   useEffect(() => {
     if (autoEdit && editable && content !== null) {
       setDraft(content);
+      setEditSurface('rich');
       setEditing(true);
       onAutoEditConsumed?.();
     }
@@ -158,6 +111,7 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProp
 
   const beginEdit = () => {
     setDraft(content ?? '');
+    setEditSurface('rich');
     setEditing(true);
   };
 
@@ -204,9 +158,8 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProp
     );
   }
 
-  // Markdown: editable for tracked idea/notes. Clicking "Edit" shows a live
-  // editor+preview split immediately, so the user always sees the rendered
-  // result next to what they're typing.
+  // Markdown: editable for tracked idea/notes. Edit opens a WYSIWYG surface
+  // (BB Docs-style); Source switches to full-width Monaco for raw markdown.
   if (doc.kind === 'md' && content !== null) {
     return (
       <div className="library-md-pane">
@@ -222,6 +175,28 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProp
               >
                 <Save size={13} />
                 <span>{saving ? 'Saving…' : 'Save'}</span>
+              </button>
+              <button
+                type="button"
+                className={`library-edit-btn${editSurface === 'rich' ? ' active' : ''}`}
+                onClick={() => setEditSurface('rich')}
+                disabled={saving}
+                aria-pressed={editSurface === 'rich'}
+                title="Rich text editor"
+              >
+                <Type size={13} />
+                <span>Rich</span>
+              </button>
+              <button
+                type="button"
+                className={`library-edit-btn${editSurface === 'source' ? ' active' : ''}`}
+                onClick={() => setEditSurface('source')}
+                disabled={saving}
+                aria-pressed={editSurface === 'source'}
+                title="Markdown source"
+              >
+                <Code2 size={13} />
+                <span>Source</span>
               </button>
               <button
                 type="button"
@@ -249,8 +224,10 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProp
           )}
         </div>
         {editing ? (
-          <div className="library-split-pane" ref={splitPaneRef}>
-            <div className="library-split-editor explorer-viewer-monaco" style={{ flexBasis: `${splitRatio * 100}%` }}>
+          editSurface === 'rich' ? (
+            <LibraryMarkdownEditor value={draft} onChange={setDraft} autofocus />
+          ) : (
+            <div className="explorer-viewer-monaco">
               <Editor
                 value={draft}
                 language="markdown"
@@ -267,21 +244,7 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProp
               />
               {aiEnhanceModal}
             </div>
-            <div
-              className="library-split-resizer"
-              role="separator"
-              aria-orientation="vertical"
-              aria-valuemin={SPLIT_RATIO_MIN * 100}
-              aria-valuemax={SPLIT_RATIO_MAX * 100}
-              aria-valuenow={splitRatio * 100}
-              title="Drag to resize · double-click to reset"
-              onMouseDown={onSplitResizeMouseDown}
-              onDoubleClick={onSplitResizeDoubleClick}
-            />
-            <div className="library-split-preview explorer-md-preview" style={{ flexBasis: `${(1 - splitRatio) * 100}%` }}>
-              <div className="inbox-md">{renderMarkdownBody(draft)}</div>
-            </div>
-          </div>
+          )
         ) : (
           <div className="explorer-md-preview">
             <div className="inbox-md">{renderMarkdownBody(content)}</div>
@@ -346,9 +309,9 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed }: DocPreviewProp
 }
 
 /**
- * Rendered markdown body shared by the preview pane and the split-view's live
- * preview half — strips the `---`…`---` front-matter header (the manifest
- * already shows title/summary/tags) and renders mermaid fences as diagrams.
+ * Rendered markdown body for the read-only preview — strips the `---`…`---`
+ * front-matter header (the manifest already shows title/summary/tags) and
+ * renders mermaid fences as diagrams.
  */
 function renderMarkdownBody(text: string) {
   return (
@@ -357,7 +320,7 @@ function renderMarkdownBody(text: string) {
       components={{
         pre: (props) => {
           const mermaid = extractMermaid(props.children);
-          if (mermaid !== null) return <MermaidDiagram code={mermaid} exportable />;
+          if (mermaid !== null) return <MermaidDiagram key={mermaid} code={mermaid} exportable />;
           return <pre {...props} />;
         }
       }}

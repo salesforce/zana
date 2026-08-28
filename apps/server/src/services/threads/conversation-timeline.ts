@@ -147,6 +147,8 @@ function projectTimeline(
     return {
       threadId: thread.id,
       status: thread.status,
+      // In-process callers (tests) may inspect the window; the HTTP handler
+      // strips this so the renderer never parses thousands of raw events.
       events: rows,
       rows: projectedRows,
       goal: timeline.goal,

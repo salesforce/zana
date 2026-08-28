@@ -148,6 +148,15 @@ export function previewKind(path: string, content: string): 'image' | 'text' {
   return isPreviewImagePath(path) && content.startsWith('data:') ? 'image' : 'text';
 }
 
+export function previewPathParts(path: string): { name: string; dir: string | null } {
+  const normalized = path.replace(/\\/g, '/').replace(/\/+$/u, '');
+  const cut = normalized.lastIndexOf('/');
+  if (cut < 0) return { name: normalized || path, dir: null };
+  const name = normalized.slice(cut + 1);
+  const dir = normalized.slice(0, cut);
+  return { name: name || path, dir: dir || null };
+}
+
 export function matchNewTabFiles(
   files: Array<{ path: string; rel?: string }>,
   query: string

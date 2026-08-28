@@ -506,11 +506,11 @@ describe('ThreadTimeline', () => {
           timeUsedSeconds: 0
         }}
         lastReadSeq={1}
-        hasOlderRows
       />
     );
     expect(html).toContain('Ship UI');
     expect(html).toContain('thread-unread-divider');
-    expect(html).toContain('thread-load-older');
+    expect(html).not.toContain('thread-load-older');
+    expect(html).not.toContain('thread-show-earlier');
   });
 });

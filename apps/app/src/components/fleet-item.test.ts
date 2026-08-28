@@ -5,6 +5,7 @@ import type { ThreadListItem } from '../thread-store.js';
 import {
   agentFleetItem,
   agentRowStateClass,
+  fleetKindLabel,
   fleetMatchesLane,
   fleetThreadLane,
   resolveMonitorSelection,
@@ -77,13 +78,15 @@ describe('fleet items', () => {
     expect(rows.map((row) => row.id).slice(0, 2)).toEqual(['live', 'failed']);
     expect(rows.some((row) => row.id === 'archived')).toBe(false);
     expect(rows.filter((row) => row.status === 'idle')).toHaveLength(RAIL_IDLE_THREAD_LIMIT);
-    expect(threadRailDetail(thread({ id: 't1', status: 'error' }))).toBe('Error · Agent');
+    expect(threadRailDetail(thread({ id: 't1', status: 'error' }))).toBe('Error · Thread');
     expect(threadRailStatus(thread({ id: 't1', status: 'error' }))).toBe('Error');
     expect(threadRailStatus(thread({ id: 't1', status: 'error', hasPendingInteraction: true }))).toBe('Error');
-    expect(threadRailDetail(thread({ id: 't1', status: 'active' }))).toBe('Working · Agent');
-    expect(threadRailDetail(thread({ id: 't1', status: 'active', hasPendingInteraction: true }))).toBe('Needs you · Agent');
+    expect(threadRailDetail(thread({ id: 't1', status: 'active' }))).toBe('Working · Thread');
+    expect(threadRailDetail(thread({ id: 't1', status: 'active', hasPendingInteraction: true }))).toBe('Needs you · Thread');
     expect(threadFleetItem(thread({ id: 't1', status: 'active', hasPendingInteraction: true })).state).toBe('blocked');
-    expect(threadRailDetail(thread({ id: 't1', status: 'idle' }))).toBe('Idle · Agent');
+    expect(threadRailDetail(thread({ id: 't1', status: 'idle' }))).toBe('Idle · Thread');
+    expect(fleetKindLabel('thread')).toBe('Thread');
+    expect(fleetKindLabel('agent')).toBe('CLI Agent');
     expect(threadRailStatusClass('Working')).toBe('agents-row-working');
     expect(threadRailStatusClass('Error')).toBe('agents-row-needs-you');
     expect(threadRailStatusClass('Needs you')).toBe('agents-row-needs-you');

@@ -17,6 +17,12 @@ describe('ExtensionsView aurora background', () => {
     expect(view).not.toContain('PluginSettingsSections');
   });
 
+  it('mounts plugin settings sections on the plugin detail page', () => {
+    expect(hub).toContain('PluginSettingsSections');
+    expect(hub).toContain('<PluginSettingsSections pluginId={module.id} />');
+    expect(hub).toContain('{hasSlotSettings ? null : <PluginDefinedSettings pluginId={module.id} />}');
+  });
+
   it('pins the grid to the panel and lifts hub content above it', () => {
     const panelStart = css.indexOf('.extensions-panel {\n  display: flex;');
     expect(panelStart).toBeGreaterThan(-1);

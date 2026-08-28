@@ -193,6 +193,7 @@ describe('product API command groups', () => {
     expect((await runCli(['node', 'zcc', 'thread', 'archive', 'thr-1'], { fetchImpl })).stdout).toContain('archived');
     expect((await runCli(['node', 'zcc', 'thread', 'unarchive', 'thr-1'], { fetchImpl })).stdout).toContain('unarchived');
     expect((await runCli(['node', 'zcc', 'thread', 'open', 'thr-1'], { fetchImpl })).stdout).toContain('opened');
+    expect((await runCli(['node', 'zcc', 'thread', 'open', 'thr-1', '--file', 'src/a.ts'], { fetchImpl })).stdout).toContain('opened');
     expect((await runCli(['node', 'zcc', 'thread', 'interactions', 'thr-1', '--json'], { fetchImpl })).exitCode).toBe(0);
     expect((await runCli(['node', 'zcc', 'machine', 'show', 'h1'], { fetchImpl })).stdout).toContain('Laptop');
     expect((await runCli(['node', 'zcc', 'machine', 'join-code', '--json'], { fetchImpl })).stdout).toContain('join-1');
@@ -222,5 +223,26 @@ describe('product API command groups', () => {
     expect((await runCli(['node', 'zcc', 'project', 'create'], { fetchImpl })).exitCode).toBe(2);
     expect((await runCli(['node', 'zcc', 'guide', 'nope'])).exitCode).toBe(2);
     expect((await runCli(['node', 'zcc', 'help'])).stdout).toContain('USAGE:');
+  });
+
+  it('posts a confined file preview body on thread open --file', async () => {
+    let body: unknown;
+    const fetchImpl = router({
+      'POST /api/v1/threads/thr-1/open': (_url, init) => {
+        body = JSON.parse(String(init?.body));
+        return { delivered: 1, path: 'src/a.ts', source: 'workspace' };
+      }
+    });
+    const opened = await runCli(
+      ['node', 'zcc', 'thread', 'open', 'thr-1', '--file', 'src/a.ts', '--line', '12', '--source', 'workspace'],
+      { fetchImpl }
+    );
+    expect(opened.exitCode).toBe(0);
+    expect(body).toEqual({
+      file: { source: 'workspace', path: 'src/a.ts', lineNumber: 12 }
+    });
+    expect((await runCli(['node', 'zcc', 'thread', 'open', 'thr-1', '--source', 'workspace'], { fetchImpl })).exitCode).toBe(2);
+    expect((await runCli(['node', 'zcc', 'thread', 'open', 'thr-1', '--line', '3'], { fetchImpl })).exitCode).toBe(2);
+    expect((await runCli(['node', 'zcc', 'thread', 'open', 'thr-1', '--file', 'a.ts', '--source', 'other'], { fetchImpl })).exitCode).toBe(2);
   });
 });

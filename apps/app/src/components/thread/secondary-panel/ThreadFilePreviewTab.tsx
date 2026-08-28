@@ -1,24 +1,39 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
+import { Copy, FileText } from 'lucide-react';
 import { product } from '../../../lib/product-client.js';
+import { DocContent } from '../../MarkdownContent.js';
 import { PluginSlotBoundary } from '../../../plugins/PluginSlotBoundary.js';
 import { listFileOpeners, subscribePluginSlots } from '../../../plugins/plugin-slots.js';
 import {
+  fileExtensionOf,
   fileOpenerKey,
   matchingFileOpeners,
-  resolveFileOpener
+  resolveFileOpener,
+  writeFileOpenerPin
 } from '../../../plugins/plugin-slot-resolvers.js';
+import type { PluginFileOpenerRegistration } from '@zana-ai/zcc-plugin-sdk';
 import { SecondaryPanelSelectionActions } from './SecondaryPanelSelectionActions.js';
-import { applyPreviewResult, loadFilePreview, previewKind } from './threadSecondaryPanelLogic.js';
+import {
+  applyPreviewResult,
+  copyText,
+  loadFilePreview,
+  previewKind,
+  previewPathParts
+} from './threadSecondaryPanelLogic.js';
 import { StencilLines } from '../../ui/Skeleton.js';
 
 export function ThreadFilePreviewView({
   path,
   content,
-  error
+  error,
+  threadId,
+  projectId
 }: {
   path: string;
   content: string | null;
   error: string | null;
+  threadId?: string;
+  projectId?: string | null;
 }) {
   if (error) return <p className="thread-detail-empty">{error}</p>;
   if (content === null) {
@@ -34,9 +49,74 @@ export function ThreadFilePreviewView({
     return <img className="thread-file-preview-image" src={content} alt={path} />;
   }
   return (
-    <pre className="thread-file-preview" data-testid="thread-file-preview">
-      {content}
-    </pre>
+    <div className="thread-file-preview" data-testid="thread-file-preview">
+      <DocContent
+        path={path}
+        content={content}
+        exportable
+        threadId={threadId}
+        projectId={projectId}
+      />
+    </div>
+  );
+}
+
+export function ThreadFilePreviewChrome({
+  path,
+  matches,
+  selectedKey,
+  onSelect
+}: {
+  path: string;
+  matches: readonly PluginFileOpenerRegistration[];
+  selectedKey: string;
+  onSelect: (key: string) => void;
+}) {
+  const { name, dir } = previewPathParts(path);
+  const [copied, setCopied] = useState(false);
+  return (
+    <header className="thread-file-preview-chrome" data-testid="thread-file-preview-chrome">
+      <FileText size={14} strokeWidth={1.75} className="thread-file-preview-chrome-icon" aria-hidden />
+      <span className="thread-file-preview-path" title={path}>
+        {dir ? <span className="thread-file-preview-dir">{dir}/</span> : null}
+        <span className="thread-file-preview-name">{name}</span>
+      </span>
+      <div className="thread-file-preview-chrome-actions">
+        <button
+          type="button"
+          className="thread-file-preview-copy"
+          data-testid="thread-file-preview-copy"
+          aria-label={copied ? 'Copied' : 'Copy path'}
+          title={copied ? 'Copied' : 'Copy path'}
+          onClick={() => {
+            void copyText(path).then(() => {
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1200);
+            });
+          }}
+        >
+          <Copy size={12} />
+        </button>
+        {matches.length > 0 ? (
+          <label className="thread-file-open-with">
+            <span className="thread-file-open-with-label">Open with</span>
+            <select
+              aria-label="Open with"
+              data-testid="thread-file-open-with"
+              value={selectedKey}
+              onChange={(event) => onSelect(event.target.value)}
+            >
+              <option value="host">Host preview</option>
+              {matches.map((row) => (
+                <option key={fileOpenerKey(row)} value={fileOpenerKey(row)}>
+                  {row.title}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+      </div>
+    </header>
   );
 }
 
@@ -59,6 +139,7 @@ export function ThreadFilePreviewTab({
   const openers = useSyncExternalStore(subscribePluginSlots, listFileOpeners, listFileOpeners);
   const opener = resolveFileOpener(path, openers, override);
   const OpenerComponent = opener?.component;
+  const matches = matchingFileOpeners(path, openers);
 
   useEffect(() => {
     let cancelled = false;
@@ -79,36 +160,35 @@ export function ThreadFilePreviewTab({
     return () => { cancelled = true; };
   }, [path, storage, threadId]);
 
-  const hostPreview = <ThreadFilePreviewView path={path} content={content} error={error} />;
-  const matches = matchingFileOpeners(path, openers);
-  const openWith = matches.length > 0 ? (
-    <label className="thread-file-open-with">
-      Open with
-      <select
-        aria-label="Open with"
-        data-testid="thread-file-open-with"
-        value={opener ? fileOpenerKey(opener) : 'host'}
-        onChange={(event) => {
-          setOverride(event.target.value);
-        }}
-      >
-        <option value="host">Host preview</option>
-        {matches.map((row) => (
-          <option key={fileOpenerKey(row)} value={fileOpenerKey(row)}>
-            {row.title}
-          </option>
-        ))}
-      </select>
-    </label>
-  ) : null;
+  const hostPreview = (
+    <ThreadFilePreviewView
+      path={path}
+      content={content}
+      error={error}
+      threadId={threadId}
+      projectId={projectId}
+    />
+  );
+  const chrome = (
+    <ThreadFilePreviewChrome
+      path={path}
+      matches={matches}
+      selectedKey={opener ? fileOpenerKey(opener) : 'host'}
+      onSelect={(next) => {
+        setOverride(next);
+        const extension = fileExtensionOf(path);
+        if (extension) writeFileOpenerPin(extension, next);
+      }}
+    />
+  );
   const preview = !opener || !OpenerComponent ? (
     <div className="thread-file-preview-host">
-      {openWith}
+      {chrome}
       {hostPreview}
     </div>
   ) : (
     <div className="thread-file-preview-host">
-      {openWith}
+      {chrome}
       <PluginSlotBoundary pluginId={opener.pluginId} generation={opener.generation}>
         <OpenerComponent
           pluginId={opener.pluginId}

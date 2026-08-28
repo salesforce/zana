@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { product } from '../lib/product-client.js';
 import type { PluginSettingsSnapshot } from '@zana-ai/zcc-domain/product';
 import { CheckboxField } from '../components/settings/FormFields.js';
+import { listSettingsSections, subscribePluginSlots } from './plugin-slots.js';
 
 export function PluginSettingsForm({
   snap,
@@ -68,11 +69,17 @@ export function PluginSettingsForm({
 
 /** Host-generated form from `zcc.settings.define` descriptors. */
 export function PluginDefinedSettings({ pluginId }: { pluginId: string }) {
+  const hasSlotSettings = useSyncExternalStore(
+    subscribePluginSlots,
+    listSettingsSections,
+    listSettingsSections
+  ).some((section) => section.pluginId === pluginId);
   const [snap, setSnap] = useState<PluginSettingsSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (hasSlotSettings) return;
     let cancelled = false;
     product.pluginApps
       .getSettings(pluginId)
@@ -85,8 +92,9 @@ export function PluginDefinedSettings({ pluginId }: { pluginId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [pluginId]);
+  }, [pluginId, hasSlotSettings]);
 
+  if (hasSlotSettings) return null;
   if (!snap || Object.keys(snap.descriptors).length === 0) return null;
 
   const save = async (key: string, value: string | boolean | undefined) => {

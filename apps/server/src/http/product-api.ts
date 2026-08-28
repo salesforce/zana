@@ -44,6 +44,7 @@ import { readLastThreadExecution } from '../services/threads/thread-last-executi
 import { markThreadRead } from '../services/threads/thread-reads.js';
 import { readThreadHostFile } from '../services/threads/thread-host-file.js';
 import { listThreadStorageFiles, readThreadStorageFile } from '../services/threads/thread-storage.js';
+import { openThreadFilePreview, previewFileDepsFromContext } from '../services/threads/preview-file.js';
 import { listThreadProviders, bridgeLaunchForProvider } from '../services/threads/thread-provider-catalog.js';
 import {
   buildThreadExecutionOptions,
@@ -827,14 +828,16 @@ export async function handleProductHttp(
     const threadTimeline = routeParams(path, '/api/v1/threads/:id/timeline');
     if (threadTimeline && method === 'GET') {
       try {
-        sendJson(response, 200, conversationTimeline(ctx, threadTimeline.id, {
+        const { events, ...body } = conversationTimeline(ctx, threadTimeline.id, {
           segmentLimit: requestUrl.searchParams.get('segmentLimit'),
           beforeAnchorSeq: requestUrl.searchParams.get('beforeAnchorSeq'),
           beforeAnchorId: requestUrl.searchParams.get('beforeAnchorId'),
           afterSequence: requestUrl.searchParams.get('afterSequence'),
           includeNestedRows: requestUrl.searchParams.get('includeNestedRows'),
           summaryOnly: requestUrl.searchParams.get('summaryOnly')
-        }));
+        });
+        void events;
+        sendJson(response, 200, body);
       } catch (error) {
         if (error instanceof ThreadCreateError) {
           sendJson(response, error.status, { error: error.code, message: error.message });
@@ -953,14 +956,30 @@ export async function handleProductHttp(
     const threadOpen = routeParams(path, '/api/v1/threads/:id/open');
     if (threadOpen && method === 'POST') {
       try {
-        const thread = getConversationThread(ctx.db, threadOpen.id);
-        if (!thread) {
-          sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
-          return true;
-        }
         const parsed = threadOpenRequestSchema.safeParse(await readJsonBody(request));
         if (!parsed.success) {
           sendJson(response, 400, { error: 'invalid-request', message: 'invalid thread-open payload' });
+          return true;
+        }
+        if (parsed.data.file) {
+          const opened = openThreadFilePreview(previewFileDepsFromContext(ctx), {
+            threadId: threadOpen.id,
+            projectId: parsed.data.projectId,
+            split: parsed.data.split,
+            source: parsed.data.file.source,
+            path: parsed.data.file.path,
+            lineNumber: parsed.data.file.lineNumber
+          });
+          sendJson(response, 200, {
+            delivered: opened.delivered,
+            path: opened.path,
+            source: opened.source
+          });
+          return true;
+        }
+        const thread = getConversationThread(ctx.db, threadOpen.id);
+        if (!thread) {
+          sendJson(response, 404, { error: 'unknown-thread', message: 'thread is not registered' });
           return true;
         }
         ctx.hub.emit('threads:open', {
@@ -968,7 +987,7 @@ export async function handleProductHttp(
           projectId: thread.projectId,
           threadId: thread.id,
           split: parsed.data.split ?? 'right',
-          file: parsed.data.file
+          file: null
         });
         sendJson(response, 200, { delivered: ctx.hub.size() });
       } catch (error) {

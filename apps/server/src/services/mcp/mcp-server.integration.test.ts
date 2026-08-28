@@ -906,6 +906,11 @@ describe('inbox MCP server (end-to-end)', () => {
     clients.push(client);
     const tools = await client.listTools();
     expect(tools.tools.find((t) => t.name === 'browser_open'), 'browser_open tool is registered').toBeTruthy();
+    expect(tools.tools.find((t) => t.name === 'preview_file'), 'preview_file tool is registered').toBeTruthy();
+    const previewSchema = tools.tools.find((t) => t.name === 'preview_file')!;
+    const previewProps = (previewSchema.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
+    expect(Object.keys(previewProps)).not.toContain('threadId');
+    expect(Object.keys(previewProps)).not.toContain('projectId');
     const res = await client.callTool({
       name: 'browser_open',
       arguments: { url: 'https://example.com' }
@@ -913,5 +918,46 @@ describe('inbox MCP server (end-to-end)', () => {
     expect((res as { isError?: boolean }).isError).toBe(true);
     const text = (res as { content?: Array<{ text?: string }> }).content?.[0]?.text ?? '';
     expect(text).toContain('desktop app');
+    const preview = await client.callTool({
+      name: 'preview_file',
+      arguments: { path: 'src/a.ts' }
+    });
+    expect((preview as { isError?: boolean }).isError).toBe(true);
+    const previewText = (preview as { content?: Array<{ text?: string }> }).content?.[0]?.text ?? '';
+    expect(previewText).toContain('desktop app');
+  });
+
+  it('preview_file closes over the session URL and ignores a forged threadId', async () => {
+    const store = createMemoryInboxStore();
+    const seen: unknown[] = [];
+    handle = await startMcpServer({
+      inboxStore: store,
+      suggestionsStore: createMemorySuggestionsStore(),
+      projects: { get: (id) => (id === 'proj-1' ? makeProject('proj-1', 'My Project') : null) },
+      previewFile: async (input) => {
+        seen.push(input);
+        return { delivered: 1, path: input.path, source: input.source };
+      },
+      log: () => {}
+    });
+    const client = await connectClient(handle.url, 'proj-1/sess-A');
+    clients.push(client);
+    const res = await client.callTool({
+      name: 'preview_file',
+      arguments: { path: 'src/a.ts', threadId: 'other-thread', lineNumber: 3 }
+    });
+    expect((res as { isError?: boolean }).isError).toBeFalsy();
+    expect(seen).toEqual([{
+      threadId: 'sess-A',
+      projectId: 'proj-1',
+      source: 'workspace',
+      path: 'src/a.ts',
+      lineNumber: 3
+    }]);
+
+    const projectOnly = await connectClient(handle.url, 'proj-1');
+    clients.push(projectOnly);
+    const listed = await projectOnly.listTools();
+    expect(listed.tools.find((t) => t.name === 'preview_file')).toBeFalsy();
   });
 });

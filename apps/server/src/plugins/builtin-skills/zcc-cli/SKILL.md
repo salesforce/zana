@@ -87,7 +87,8 @@ zcc thread log <id>
 zcc thread tell <id> "…"
 zcc thread wait <id> [--timeout 20m]
 zcc thread stop <id>
-zcc thread fork|archive|unarchive|open <id>
+zcc thread fork|archive|unarchive <id>
+zcc thread open <id> [--file PATH] [--source workspace|thread-storage] [--line N]
 zcc thread interactions <id>
 ```
 

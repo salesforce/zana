@@ -232,12 +232,36 @@ export async function runThreadCommand(
   }
 
   if (subcommand === 'open') {
-    const id = rest[0];
+    const pathFlag = flagValue(rest, '--file');
+    const sourceFlag = flagValue(rest, '--source');
+    const lineFlag = flagValue(rest, '--line');
+    const positional = stripFlags(rest, ['--file', '--source', '--line'], []);
+    const id = positional[0];
     if (!id) return errResult('thread open requires a <threadId>', 2);
+    if (sourceFlag && !pathFlag) return errResult('thread open --source requires --file', 2);
+    if (lineFlag && !pathFlag) return errResult('thread open --line requires --file', 2);
+    if (sourceFlag && sourceFlag !== 'workspace' && sourceFlag !== 'thread-storage') {
+      return errResult("thread open --source must be 'workspace' or 'thread-storage'", 2);
+    }
+    const lineNumber = lineFlag ? Number(lineFlag) : null;
+    if (lineFlag && (!Number.isInteger(lineNumber) || (lineNumber ?? 0) < 1)) {
+      return errResult('thread open --line must be a positive integer', 2);
+    }
     const opened = await productRequest<unknown>(
       'POST',
       `/api/v1/threads/${encodeURIComponent(id)}/open`,
-      { deps, body: {} }
+      {
+        deps,
+        body: pathFlag
+          ? {
+              file: {
+                source: sourceFlag === 'thread-storage' ? 'thread-storage' : 'workspace',
+                path: pathFlag,
+                lineNumber
+              }
+            }
+          : {}
+      }
     );
     if (!opened.ok) return opened.result;
     return renderOrJson(json, opened.data, `${id} opened\n`);

@@ -98,12 +98,12 @@ describe('Settings subsection navigation', () => {
     expect(source).not.toContain('selectSettingsExtension');
   });
 
-  it('mounts plugin settings sections on the Global tab, not as a competing nav destination', () => {
+  it('mounts plugin settings sections on the plugin detail page, not Global', () => {
     const source = readFileSync(
       fileURLToPath(new URL('../../views/settings/GlobalView.tsx', import.meta.url)),
       'utf8'
     );
-    expect(source).toContain('PluginSettingsSections');
+    expect(source).not.toContain('PluginSettingsSections');
     expect(source).toContain('reloadComposerCommandCatalog');
     expect(source).toContain('Reload slash commands');
     expect(source).toContain('Record provider traffic');

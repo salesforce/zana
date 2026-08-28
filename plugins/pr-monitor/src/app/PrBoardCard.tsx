@@ -1,6 +1,7 @@
 /**
  * Compact kanban card — BB tasks-style: muted key, two-line title, one meta
  * row. Status lives on the column. Checkboxes stay off the resting card.
+ * Click (or Enter/Space) opens a detail dialog and marks the card seen.
  */
 
 import { useState } from 'react';
@@ -42,10 +43,11 @@ interface Props {
   selected: boolean;
   /** Any card on the board is selected — keep checkboxes available to extend the set. */
   selectionActive?: boolean;
-  /** Explicit Select mode: click toggles selection instead of mark-seen. */
+  /** Explicit Select mode: click toggles selection instead of opening details. */
   selectMode?: boolean;
   onToggleSelect: (url: string) => void;
   onDismiss: (url: string) => void;
+  onOpen: (url: string) => void;
 }
 
 function isSafeExternalUrl(url: string): boolean {
@@ -72,6 +74,7 @@ export function PrBoardCard({
   selectMode = false,
   onToggleSelect,
   onDismiss,
+  onOpen,
 }: Props) {
   const [retrying, setRetrying] = useState(false);
   const unread = isUnread(pr);
@@ -142,12 +145,17 @@ export function PrBoardCard({
     }
   };
 
+  const openDetails = () => {
+    onOpen(pr.url);
+    void markSeen();
+  };
+
   const handleCardClick = (e: React.MouseEvent) => {
     if (e.metaKey || e.ctrlKey || selectMode) {
       onToggleSelect(pr.url);
       return;
     }
-    void markSeen();
+    openDetails();
   };
 
   return (
@@ -169,11 +177,12 @@ export function PrBoardCard({
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           if (selectMode) onToggleSelect(pr.url);
-          else void markSeen();
+          else openDetails();
         }
       }}
       role="listitem"
       tabIndex={0}
+      aria-haspopup="dialog"
       aria-label={`${pr.repo} #${pr.number}: ${pr.title}`}
     >
       <div className="prm-board-card-top">

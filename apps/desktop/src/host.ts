@@ -5568,6 +5568,31 @@ async function bootstrapNormal() {
     port: readMcpPort(mcpPortFile),
     inboxStore,
     suggestionsStore,
+    previewFile: async ({ threadId, projectId, source, path, lineNumber }) => {
+      const response = await fetch(new URL(`api/v1/threads/${encodeURIComponent(threadId)}/open`, productServerUrl()), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          projectId,
+          file: { source, path, lineNumber }
+        })
+      });
+      const body = await response.json() as {
+        delivered?: number;
+        path?: string;
+        source?: 'workspace' | 'thread-storage';
+        message?: string;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(body.message ?? body.error ?? 'preview failed');
+      }
+      return {
+        delivered: typeof body.delivered === 'number' ? body.delivered : 0,
+        path: body.path ?? path,
+        source: body.source ?? source
+      };
+    },
     // Suppress-while-working gate for BLOCKING inbox questions (default ON). The
     // inbox tools call `heldQuestions.maybeHold(...)` at push time; a held
     // question surfaces later on the agent's idle/blocked edge (Rule 1: the gate

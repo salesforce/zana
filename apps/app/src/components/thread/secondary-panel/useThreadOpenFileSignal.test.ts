@@ -49,4 +49,17 @@ describe('thread-open file signal', () => {
       path: 'notes/plan.md'
     });
   });
+
+  it('parses the hub thread-open payload an MCP preview emits', () => {
+    expect(parseThreadOpenFilePayload({
+      type: 'thread-open',
+      projectId: 'p1',
+      threadId: 't1',
+      split: 'right',
+      file: { source: 'workspace', path: 'src/a.ts', lineNumber: 3 }
+    })).toEqual({
+      threadId: 't1',
+      file: { source: 'workspace', path: 'src/a.ts', lineNumber: 3 }
+    });
+  });
 });

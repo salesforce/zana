@@ -5,6 +5,11 @@ import { threadStatusToAgentState } from './thread/thread-timeline-model.js';
 
 export type FleetKind = 'agent' | 'thread';
 
+/** Compact kind word for rail subtitles and chips: Thread vs CLI Agent. */
+export function fleetKindLabel(kind: FleetKind): string {
+  return kind === 'thread' ? 'Thread' : 'CLI Agent';
+}
+
 export type FleetItem =
   | {
       kind: 'agent';
@@ -131,7 +136,7 @@ export function agentRowStateClass(state: AgentState, exited: boolean): string |
 }
 
 export function threadRailDetail(thread: Pick<ThreadListItem, 'status' | 'hasPendingInteraction'>): string {
-  return `${threadRailStatus(thread)} · Agent`;
+  return `${threadRailStatus(thread)} · ${fleetKindLabel('thread')}`;
 }
 
 /** Humanize a thread provider id (`claude-code` → `Claude Code`, `acp-cursor` → `Cursor`). */

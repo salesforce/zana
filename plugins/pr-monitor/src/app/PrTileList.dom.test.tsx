@@ -12,6 +12,7 @@
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
+import { useState } from 'react';
 import { render, fireEvent, waitFor, within } from '@testing-library/react';
 import type { ModuleHost, ProjectInfo } from './host.js';
 import { PrTileList, resolveBulkFavorite, compareFavoritesFirst, type SortField, type SortDir } from './PrTileList.js';
@@ -86,7 +87,7 @@ describe('PrTileList toolbar', () => {
   afterEach(() => {
     cleanup?.();
     cleanup = null;
-    document.querySelectorAll('.prm-tile-menu').forEach((m) => m.remove());
+    document.querySelectorAll('.prm-tile-menu, .modal-backdrop').forEach((m) => m.remove());
   });
 
   // --- Empty states (AC-LIST-24.0/24.1/24.2) ---
@@ -736,6 +737,75 @@ describe('PrTileList toolbar', () => {
     fireEvent.click(container.querySelector('.prm-board-card')!);
     expect(container.querySelector('.prm-bulk-bar')).toBeTruthy();
     expect(container.querySelector('.prm-bulk-count')?.textContent).toBe('1 selected');
+    expect(document.querySelector('.prm-modal--detail')).toBeNull();
+  });
+
+  it('clicking a board card opens a detail modal', () => {
+    const dismissed: string[] = [];
+    const { unmount } = render(
+      <PrTileList
+        {...baseProps(
+          [
+            makePr({
+              number: 7,
+              title: 'Ready to inspect',
+              body: 'More detail than the card shows.',
+              lastSeenAt: NOW,
+            }),
+          ],
+          {
+            viewMode: 'board',
+            onDismiss: (u) => dismissed.push(u),
+            repositories: [
+              {
+                owner: 'owner',
+                repo: 'repo',
+                host: 'github.com',
+                orgLogin: 'owner',
+                active: true,
+                createdAt: 1,
+                notifyInApp: true,
+                ignoredFailingChecks: ['Snyk'],
+                sfciGated: true,
+              },
+            ],
+          }
+        )}
+      />
+    );
+    cleanup = () => unmount();
+    expect(document.querySelector('.prm-modal--detail')).toBeNull();
+    fireEvent.click(document.querySelector('.prm-board-card')!);
+    const modal = document.querySelector('.prm-modal--detail');
+    expect(modal).toBeTruthy();
+    expect(modal?.textContent).toContain('Ready to inspect');
+    expect(modal?.textContent).toContain('More detail than the card shows.');
+    fireEvent.click(modal!.querySelector<HTMLButtonElement>('button[title="Close"]')!);
+    expect(document.querySelector('.prm-modal--detail')).toBeNull();
+    fireEvent.click(document.querySelector('.prm-board-card')!);
+    fireEvent.click(document.querySelector<HTMLButtonElement>('.prm-modal--detail button[aria-label="Dismiss"]')!);
+    expect(dismissed).toEqual(['https://github.com/owner/repo/pull/7']);
+    expect(document.querySelector('.prm-modal--detail')).toBeNull();
+  });
+
+  it('closes the detail modal when the open PR leaves the list', () => {
+    function Harness() {
+      const [items, setItems] = useState([makePr({ number: 7, title: 'Soon gone', lastSeenAt: NOW })]);
+      return (
+        <div>
+          <button type="button" data-testid="drop-pr" onClick={() => setItems([])}>
+            drop
+          </button>
+          <PrTileList {...baseProps(items, { viewMode: 'board' })} />
+        </div>
+      );
+    }
+    const { unmount } = render(<Harness />);
+    cleanup = () => unmount();
+    fireEvent.click(document.querySelector('.prm-board-card')!);
+    expect(document.querySelector('.prm-modal--detail')).toBeTruthy();
+    fireEvent.click(document.querySelector('[data-testid="drop-pr"]')!);
+    expect(document.querySelector('.prm-modal--detail')).toBeNull();
   });
 
   it('restores persisted empty-lane and collapsed preferences', async () => {

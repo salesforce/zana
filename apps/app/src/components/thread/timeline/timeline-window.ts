@@ -1,26 +1,5 @@
-/** Top-level rows kept in the live transcript before "Load older" / Show earlier. */
 export const TIMELINE_WINDOW_SIZE = 200;
 export const TERMINAL_EXPANSION_RETENTION = 24;
-
-export type OlderHistoryAction =
-  | { kind: 'none' }
-  | { kind: 'show-earlier'; hiddenCount: number }
-  | { kind: 'load-older'; loading: boolean };
-
-/**
- * One control at the top of the transcript: reveal already-loaded rows first,
- * then fetch an older server page. Two stacked buttons made "Load older"
- * look like it only uncovered a handful of rows.
- */
-export function olderHistoryAction(opts: {
-  hiddenCount: number;
-  hasOlderRows: boolean;
-  loadingOlder: boolean;
-}): OlderHistoryAction {
-  if (opts.hiddenCount > 0) return { kind: 'show-earlier', hiddenCount: opts.hiddenCount };
-  if (opts.hasOlderRows) return { kind: 'load-older', loading: opts.loadingOlder };
-  return { kind: 'none' };
-}
 
 export function retainTerminalExpansionIds(
   previous: readonly string[],

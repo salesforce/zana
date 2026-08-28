@@ -29,7 +29,22 @@ describe('library document scroll pane', () => {
   it('keeps the preview inside a bounded flex pane that owns overflow', () => {
     expect(css).toMatch(/\.library-view\s*\{[^}]*height:\s*100%;[^}]*overflow:\s*hidden;/);
     expect(css).toMatch(
-      /\.library-md-pane\s*>\s*\.explorer-md-preview\s*\{[^}]*min-height:\s*0;[^}]*overflow:\s*auto;/
+      /\.library-md-pane\s*>\s*\.explorer-md-preview\s*\{[^}]*flex:\s*1 1 0%;[^}]*min-height:\s*0;[^}]*overflow:\s*auto;/
     );
+    expect(css).toMatch(
+      /\.library-md-pane\s*>\s*\.library-md-editor\s*,\s*\.library-md-pane\s*>\s*\.explorer-viewer-monaco\s*\{[^}]*flex:\s*1 1 0%;[^}]*min-height:\s*0;/
+    );
+    expect(css).toMatch(/\.module-panel-host\s*\{[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;/);
+  });
+});
+
+describe('library markdown edit surfaces', () => {
+  it('defaults edit to the WYSIWYG editor and keeps Monaco behind Source', () => {
+    expect(source).toContain('LibraryMarkdownEditor');
+    expect(source).toContain("editSurface === 'rich'");
+    expect(source).toContain("setEditSurface('source')");
+    expect(source).toContain('onMount={registerEditor}');
+    expect(source).toMatch(/<span>Rich<\/span>/);
+    expect(source).toMatch(/<span>Source<\/span>/);
   });
 });

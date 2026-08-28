@@ -89,7 +89,6 @@ function makeErrorModule(entry: ExtensionEntry, message: string): ExtensionModul
 function appModuleFromPluginSet(entry: ExtensionEntry, set: PluginRegistrationSet): ExtensionModule {
   const title = entry.manifest?.title ?? entry.id;
   const nav = set.navPanels[0];
-  const settings = set.settingsSections[0];
   const projectTab = set.projectTabs[0];
   const Panel = nav
     ? function PluginNavPanel() {
@@ -101,23 +100,12 @@ function appModuleFromPluginSet(entry: ExtensionEntry, set: PluginRegistrationSe
         );
       }
     : undefined;
-  const Settings = settings
-    ? function PluginSettingsPanel() {
-        const Component = settings.component;
-        return React.createElement(
-          PluginSlotBoundary,
-          { pluginId: entry.id, generation: settings.generation },
-          React.createElement(Component, { pluginId: entry.id })
-        );
-      }
-    : undefined;
   return {
     id: entry.id,
     title: nav?.title ?? title,
     icon: nav?.icon ?? entry.manifest?.icon ?? 'Puzzle',
     titleLabel: entry.manifest?.titleLabel,
     panel: Panel,
-    settingsPanel: Settings,
     projectTab: projectTab
       ? {
           label: projectTab.label,

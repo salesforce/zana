@@ -4,6 +4,7 @@ import type {
   TimelineApprovalWorkRow,
   TimelineCommandWorkRow,
   TimelineFileChangeWorkRow,
+  TimelineFileReadWorkRow,
   TimelineImageViewWorkRow,
   TimelineParentChange,
   TimelineRowBase,
@@ -1145,6 +1146,27 @@ describe("buildTimelineRowTitle", () => {
     });
   });
 
+  it("declares an open-file-preview action on file-read titles", () => {
+    const row: TimelineFileReadWorkRow = {
+      ...baseRow("file-read-1"),
+      kind: "work",
+      workKind: "file-read",
+      status: "completed",
+      callId: "read-call-1",
+      path: "src/app.ts",
+      cmd: null,
+      completedAt: 2,
+    };
+    const title = buildTimelineRowTitle(row, DEFAULT_OPTIONS);
+    expect(title.action).toEqual({
+      kind: "open-file-preview",
+      path: "src/app.ts",
+    });
+    expect(title.segments.find((segment) => segment.accent === "file")?.text).toBe(
+      "src/app.ts",
+    );
+  });
+
   it("does not declare an action on non-file-change titles", () => {
     const commandRow = {
       ...baseRow("cmd-1"),
@@ -1633,6 +1655,11 @@ describe("buildTimelineRowTitle", () => {
       "Read src/app.ts",
       "Searched for TODO in src",
     ]);
+    expect(titles[0]?.title.action).toEqual({
+      kind: "open-file-preview",
+      path: "src/app.ts",
+    });
+    expect(titles[1]?.title.action).toBeNull();
     expect(titles[0]?.title.segments[0]?.text).toBe("Read");
     expect(titles[0]?.title.segments[1]?.text).toBe("app.ts");
     expect(

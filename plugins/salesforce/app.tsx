@@ -17,18 +17,6 @@ function pad(children: unknown) {
   return React.createElement('div', { style: { padding: 16, height: '100%', boxSizing: 'border-box' } }, children);
 }
 
-function SalesforceSettings() {
-  const React = hostReact();
-  if (!React) return null;
-  return pad(
-    React.createElement(
-      'p',
-      { style: { color: 'var(--text-muted)', marginTop: 0 } },
-      'Set Default org alias, DX project root, and Agent Script dialect on this plugin’s detail page. The Agent Script panel edits .agent files; org preview/publish still uses sf_agent.'
-    )
-  );
-}
-
 function SalesforceProjectTab(props: { pluginId: string; projectId: string }) {
   const React = hostReact();
   const navigate = useZccNavigate();
@@ -234,12 +222,6 @@ export default definePluginApp((app) => {
     title: 'Agent Script',
     extensions: ['agent', 'afscript'],
     component: AgentFileOpener
-  });
-  app.slots.settingsSection({
-    id: 'salesforce',
-    title: 'Salesforce',
-    description: 'DX org alias, API version, local project root, and Agent Script dialect.',
-    component: SalesforceSettings
   });
   app.slots.projectTab({
     id: 'salesforce',

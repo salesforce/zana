@@ -43,6 +43,7 @@ import {
 import { PrTile } from './PrTile.js';
 import { HostFilterMenu } from './HostFilterMenu.js';
 import { PrBoard } from './PrBoard.js';
+import { PrDetailModal } from './PrDetailModal.js';
 import { type ListViewMode, emptyActiveColumnCount, groupPrsByStatus, isPrRollupStatus } from './pr-board.js';
 
 /** The nine rollup statuses in canonical triage-severity order (for tabs + sort). */
@@ -221,6 +222,7 @@ export function PrTileList({
   const [selectMode, setSelectMode] = useState(false);
   const [showEmpty, setShowEmpty] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<PrRollupStatus>>(() => new Set());
+  const [detailUrl, setDetailUrl] = useState<string | null>(null);
   const hostBtnRef = useRef<HTMLButtonElement>(null);
   const viewMode = onViewModeChange ? viewModeProp : localView;
   const setViewMode = (mode: ListViewMode) => {
@@ -352,6 +354,38 @@ export function PrTileList({
     () => emptyActiveColumnCount(groupPrsByStatus(shown)),
     [shown]
   );
+
+  const detailPr = detailUrl ? prs.find((p) => p.url === detailUrl) : undefined;
+  useEffect(() => {
+    if (detailUrl && !detailPr) setDetailUrl(null);
+  }, [detailUrl, detailPr]);
+
+  const detailExtras = useMemo(() => {
+    if (!detailPr) return null;
+    const build = resolveBuildThresholds(
+      detailPr.repo,
+      repositories,
+      tisWarnHours ?? DEFAULT_TIS_WARN_HOURS,
+      tisDangerHours ?? DEFAULT_TIS_DANGER_HOURS
+    );
+    const rev = resolveReviewThresholds(
+      detailPr.repo,
+      repositories,
+      reviewWarnDays ?? DEFAULT_REVIEW_TIS_WARN_DAYS,
+      reviewDangerDays ?? DEFAULT_REVIEW_TIS_DANGER_DAYS
+    );
+    const repoRec = (repositories ?? []).find(
+      (r) => `${r.owner}/${r.repo}`.toLowerCase() === detailPr.repo.toLowerCase()
+    );
+    return {
+      tisWarnHours: build.warnHours,
+      tisDangerHours: build.dangerHours,
+      reviewWarnDays: rev.warnDays,
+      reviewDangerDays: rev.dangerDays,
+      sfciGated: repoRec?.sfciGated === true,
+      ignoredFailingChecks: repoRec?.ignoredFailingChecks,
+    };
+  }, [detailPr, repositories, tisWarnHours, tisDangerHours, reviewWarnDays, reviewDangerDays]);
 
   // Unread count reflects the host-scoped set (like countsByStatus above) but
   // NOT the active status tab/search — mirroring how it already ignored those
@@ -727,6 +761,7 @@ export function PrTileList({
           onToggleCollapse={toggleCollapse}
           onToggleSelect={toggleSelect}
           onDismiss={onDismiss}
+          onOpen={setDetailUrl}
         />
       ) : (
         <div className="prm-tile-list">
@@ -770,6 +805,27 @@ export function PrTileList({
             );
           })}
         </div>
+      )}
+
+      {detailPr && detailExtras && (
+        <PrDetailModal
+          pr={detailPr}
+          host={host}
+          projects={projects}
+          tisWarnHours={detailExtras.tisWarnHours}
+          tisDangerHours={detailExtras.tisDangerHours}
+          reviewWarnDays={detailExtras.reviewWarnDays}
+          reviewDangerDays={detailExtras.reviewDangerDays}
+          sfciGated={detailExtras.sfciGated}
+          ignoredFailingChecks={detailExtras.ignoredFailingChecks}
+          workItemLocatorBase={workItemLocatorBase}
+          onClose={() => setDetailUrl(null)}
+          onDismiss={(url) => {
+            setDetailUrl(null);
+            onDismiss(url);
+          }}
+          onProjectAssign={onProjectAssign}
+        />
       )}
     </div>
   );

@@ -22,6 +22,8 @@ describe('builtinSkillsRootPath', () => {
     expect(readFileSync(skill, 'utf8')).toMatch(/^---\nname: zcc-plugin-authoring\n/);
     expect(existsSync(join(root, 'zcc-cli', 'SKILL.md'))).toBe(true);
     expect(existsSync(join(root, 'zcc-inbox', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(root, 'zcc-preview', 'SKILL.md'))).toBe(true);
+    expect(readFileSync(join(root, 'zcc-preview', 'SKILL.md'), 'utf8')).toMatch(/^---\nname: zcc-preview\n/);
     expect(existsSync(join(root, 'harness-authoring', 'SKILL.md'))).toBe(false);
   });
 });

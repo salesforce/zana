@@ -64,5 +64,3 @@ export function timelineContainsRowId(rows: readonly ThreadTimelineViewRow[], id
   }
   return false;
 }
-
-export const SEARCH_LOAD_OLDER_CAP = 6;

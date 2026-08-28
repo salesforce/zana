@@ -1,6 +1,6 @@
 import { useAgentStatus, useSubagents } from '../../store.js';
 import type { TerminalSession, AgentState } from '@zana-ai/zcc-domain/product';
-import { agentRowStateClass } from '../fleet-item.js';
+import { agentRowStateClass, fleetKindLabel } from '../fleet-item.js';
 
 /** Compact state words for an agent's detail subtitle (the verbose
  *  AGENT_STATE_LABEL reads as a tooltip; the inline line stays terse). */
@@ -45,7 +45,7 @@ export function AgentRowDetail({ session }: { session: TerminalSession }) {
     : session.status === 'starting'
       ? 'starting…'
       : `started ${timeAgo(session.createdAt)}`;
-  const detailParts = [subagentText, timeText].filter(Boolean);
+  const detailParts = [fleetKindLabel('agent'), subagentText, timeText].filter(Boolean);
   if (!stateText && detailParts.length === 0) return null;
   return (
     <span className="project-terminal-detail">

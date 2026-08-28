@@ -659,6 +659,9 @@ describe('expandable row and chips', () => {
     expect(source).not.toContain('ThreadConversationToc');
     expect(source).not.toContain('ThreadTableOfContents');
     expect(source).not.toContain('thread-toc');
+    expect(source).toContain('TIMELINE_SEGMENT_LIMIT = 10_000');
+    expect(source).not.toContain('onLoadOlder');
+    expect(source).not.toContain('thread-load-older');
     const column = source.slice(columnAt);
     expect(column).toContain('<ThreadTimeline');
     expect(column).toContain('<ThreadWorkspaceBanner');
@@ -672,6 +675,12 @@ describe('expandable row and chips', () => {
     expect(source).not.toContain('ThreadPromptModeChip');
 
     const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
+    const columnCss = css.slice(
+      css.indexOf('.thread-detail-column {'),
+      css.indexOf('.thread-detail-column > .thread-command-composer')
+    );
+    expect(columnCss).toContain('height: 100%;');
+    expect(columnCss).toContain('overflow: hidden;');
     expect(css).toContain('.thread-composer-dock {');
     expect(css).toContain('.thread-composer-stack-card');
     expect(css).toContain('.thread-prompt-mode-card');
@@ -689,6 +698,23 @@ describe('expandable row and chips', () => {
     );
     expect(assistantActions).toContain('position: absolute;');
     expect(assistantActions).toContain('left: 0;');
+    expect(assistantActions).toContain('top: 100%;');
+    expect(assistantActions).toContain('padding: 6px 0 4px;');
+    const hiddenActions = css.slice(
+      css.indexOf('.thread-message-actions {'),
+      css.indexOf('.thread-timeline-row.is-user .thread-message-actions {')
+    );
+    expect(hiddenActions).toContain('pointer-events: none;');
+    const hoverActions = css.slice(
+      css.indexOf('.thread-timeline-row:hover .thread-message-actions,'),
+      css.indexOf('.thread-message-request-label {')
+    );
+    expect(hoverActions).toContain('pointer-events: auto;');
+    const actionBtn = css.slice(
+      css.indexOf('.thread-message-action {'),
+      css.indexOf('.thread-unread-divider {')
+    );
+    expect(actionBtn).toContain('padding: 4px;');
     expect(css).toContain('.thread-timeline-item.is-assistant {\n  align-items: flex-start;');
     const bubbles = css.slice(
       css.indexOf('.thread-timeline-row.is-user .thread-timeline-bubble,'),
@@ -699,6 +725,7 @@ describe('expandable row and chips', () => {
     expect(bubbles).toContain('border: 1px solid var(--border);');
     expect(css).toContain('.thread-timeline-item:hover,\n.thread-timeline-item:focus-within {\n  z-index: 1;');
     expect(css).toContain('.thread-detail-timeline {\n  user-select: text;');
+    expect(css).not.toContain('.thread-toc');
   });
 
   it('gives mermaid diagrams a definite thread-bubble width so they cannot resize-loop', () => {
@@ -706,10 +733,16 @@ describe('expandable row and chips', () => {
     expect(mermaid).toContain('mermaidSvgLayout');
     expect(mermaid).toContain('inbox-mermaid-frame');
     expect(mermaid).toContain('flowchart: { useMaxWidth: false }');
+    expect(mermaid).toContain('readMermaidSvgCache');
     expect(mermaid).not.toMatch(/setSvg\(null\)/);
 
     const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
-    expect(css).toContain('.thread-timeline-row:has(.inbox-mermaid)');
+    const mermaidRow = css.slice(
+      css.indexOf('.thread-timeline-row:has(.inbox-mermaid)'),
+      css.indexOf('.thread-timeline-row .inbox-mermaid,')
+    );
+    expect(mermaidRow).toContain('width: 100%;');
+    expect(mermaidRow).toContain('max-width: 100%;');
     expect(css).toContain('.inbox-mermaid-frame.is-sized svg');
     expect(css).toContain('position: absolute;');
   });
@@ -719,6 +752,11 @@ describe('expandable row and chips', () => {
     expect(source).toContain('thread-detail-timeline thread-scrollbar');
     expect(source).toContain('markTransientScrollbarScrolling');
     expect(source).toContain('clearTransientScrollbarScrolling');
+    expect(source).toContain('!searchHitRowId && shouldStickToBottom');
+    expect(source).toContain('initialOpen');
+    expect(source).toContain('useLayoutEffect');
+    expect(source).toContain('pinScrollToBottom');
+    expect(source).toContain('new ResizeObserver(pin)');
 
     const css = readFileSync(fileURLToPath(new URL('../../styles/global.css', import.meta.url)), 'utf8');
     const scrollbar = css.slice(

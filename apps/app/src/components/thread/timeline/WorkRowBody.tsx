@@ -12,7 +12,9 @@ import {
   isPluginRenderableWorkRow,
   PluginTimelineRendererBody
 } from './PluginTimelineRendererBody.js';
+import { dispatchThreadOpenFile } from '../secondary-panel/useThreadOpenFileSignal.js';
 import { useTimelineWorkRowFullOutput } from './useTimelineWorkRowFullOutput.js';
+import { ThreadOpenFilePreviewButton } from './TimelineTitleView.js';
 
 function splitUnifiedDiff(diff: string): { original: string; modified: string } {
   const original: string[] = [];
@@ -392,6 +394,9 @@ function HostWorkRowBody({
         <div className="thread-file-read-body">
           <PresentationDetail presentation={row.presentation} threadId={threadId} />
           <p className="thread-terminal-meta">{row.path}</p>
+          {threadId ? (
+            <ThreadOpenFilePreviewButton onClick={() => dispatchThreadOpenFile(threadId, row.path)} />
+          ) : null}
           {row.cmd ? <pre className="thread-timeline-work-body">{row.cmd}</pre> : null}
         </div>
       );

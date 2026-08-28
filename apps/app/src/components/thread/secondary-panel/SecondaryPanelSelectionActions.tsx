@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { MessageSquarePlus } from 'lucide-react';
+import { useCallback, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 
 export const COMPOSER_INSERT_EVENT = 'zcc:composer-insert';
 
@@ -73,6 +74,7 @@ export function SecondaryPanelSelectionActions({
             clear();
           }}
         >
+          <MessageSquarePlus size={12} aria-hidden />
           Add to chat
         </button>
       ) : null}

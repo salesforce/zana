@@ -528,6 +528,7 @@ describe('remote hooks over ssh -R reverse tunnel', () => {
     expect(remoteCmd).toContain('--mcp-config');
     expect(remoteCmd).toContain(`http://127.0.0.1:${remotePort}/mcp/proj-remote/${session.id}`);
     expect(remoteCmd).toContain('mcp__zcc-inbox__inbox_push');
+    expect(remoteCmd).toContain('mcp__zcc-inbox__preview_file');
     // Overseer stays excluded even with MCP on.
     expect(remoteCmd).not.toContain('ZCC_OVERSEER_URL=');
   });

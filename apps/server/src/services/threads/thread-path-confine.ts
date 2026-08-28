@@ -18,8 +18,8 @@ export function confinePathToRoot(root: string, candidate: string): string | nul
   return normalized;
 }
 
-export const DEFAULT_TIMELINE_SEGMENT_LIMIT = 400;
-export const MAX_TIMELINE_SEGMENT_LIMIT = 2000;
+export const DEFAULT_TIMELINE_SEGMENT_LIMIT = 10_000;
+export const MAX_TIMELINE_SEGMENT_LIMIT = 10_000;
 
 export function parseTimelineSegmentLimit(raw: string | null): number {
   if (!raw) return DEFAULT_TIMELINE_SEGMENT_LIMIT;

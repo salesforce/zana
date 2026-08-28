@@ -3296,6 +3296,15 @@ body.resizing-col {
   margin-left: 0;
 }
 
+/* Title lives on AgentSessionView. Modal chrome is status / Report / shelves
+   on the left, fullscreen + close on the right. */
+.agent-modal-window-controls {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
 /* Title / close / fullscreen stay above the split: maximize and the narrow
    overlay live in the body and must not eat this chrome. */
 .agent-terminal-modal > .modal-header {
@@ -3304,43 +3313,7 @@ body.resizing-col {
   z-index: 8;
 }
 
-.agent-modal-icon {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.agent-modal-heading {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  /* Absorb the header's slack so the trailing controls (state chip · follow
-     star · close) sit flush-right with even gaps, instead of relying on
-     per-control margin-left:auto (which left a gap once the star was inserted
-     between the state chip and the close button). */
-  flex: 1 1 auto;
-  gap: 1px;
-}
-
-.agent-modal-title {
-  font-size: 13px;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.agent-modal-sub {
-  font-size: 11px;
-  color: var(--text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .agent-modal-state {
-  margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -3356,13 +3329,8 @@ body.resizing-col {
   color: var(--accent-green, #3fb950);
 }
 
-/* When the state chip is present it claims the margin-left:auto; otherwise the
-   close button must push itself to the right edge. */
 .agent-modal-header .icon-button {
-  margin-left: auto;
-}
-.agent-modal-state + .icon-button {
-  margin-left: 8px;
+  margin-left: 0;
 }
 
 /* A blocking inbox question surfaced in the modal (see ModalPendingQuestion).
@@ -4856,6 +4824,13 @@ body.resizing-col {
 .project-ext-tab > * {
   flex: 1;
   min-height: 0;
+}
+/* Library clips to this box and scrolls inside .explorer-md-preview. A parent
+   overflow:auto would compete with that pane and, with .library-view's
+   overflow:hidden, trap the wheel with nothing to scroll. */
+.project-ext-tab:has(.library-view),
+.module-panel-slot:has(.library-view) {
+  overflow: hidden;
 }
 
 /* Generic centered loading fallback used by the lazy-loaded workspace views
@@ -9533,9 +9508,15 @@ body.resizing-col .ext-hub-resizer::before {
 .module-panel-host {
   grid-column: 2 / -1;
   min-width: 0;
+  /* Grid items default to min-height: auto. A tall library/doc preview would
+     grow this past the shell track; #root's overflow:hidden then swallows the
+     document with no scroller. Pin to the track; the slot still owns overflow
+     as a fallback for panels that don't clip themselves. */
+  min-height: 0;
   height: 100%;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .module-panel-slot {
@@ -14432,6 +14413,7 @@ body.resizing-col .explorer-resizer::after {
 .inbox-md-table-wrap {
   margin: 10px 0;
   overflow-x: auto;
+  overflow-y: hidden;
   border: 1px solid var(--border);
   border-radius: 6px;
 }
@@ -14473,6 +14455,7 @@ body.resizing-col .explorer-resizer::after {
   font-size: 12px;
   line-height: 1.55;
   overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .inbox-md pre code,
@@ -14484,7 +14467,9 @@ body.resizing-col .explorer-resizer::after {
 }
 
 /* Rendered mermaid diagrams. Centered, with the SVG scaled to fit the
-   panel width so wide graphs don't overflow horizontally. */
+   panel width so wide graphs don't overflow horizontally. overflow-y is
+   explicitly hidden: overflow-x:auto alone computes overflow-y to auto and
+   the diagram box traps wheel events so the library/inbox preview can't scroll. */
 .inbox-mermaid {
   margin: 12px 0;
   padding: 12px;
@@ -14492,6 +14477,7 @@ body.resizing-col .explorer-resizer::after {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   overflow-x: auto;
+  overflow-y: hidden;
   text-align: center;
 }
 
@@ -23865,12 +23851,177 @@ body.resizing-col .library-resizer::after {
 
 /* Override .explorer-md-preview's height:100% — that percentage does not
    resolve inside this flex column (edit bar sibling + no explicit parent
-   height), so the preview grew with the doc and never became a scroll box. */
+   height), so the preview grew with the doc and never became a scroll box.
+   flex-basis 0% (not auto) sizes against the pane, not the markdown, so the
+   box stays bounded and overflow:auto actually scrolls. */
 .library-md-pane > .explorer-md-preview {
-  flex: 1 1 auto;
+  flex: 1 1 0%;
   min-height: 0;
   height: auto;
   overflow: auto;
+}
+
+.library-md-pane > .library-md-editor,
+.library-md-pane > .explorer-viewer-monaco {
+  flex: 1 1 0%;
+  min-height: 0;
+}
+
+.library-md-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 28px;
+  background: var(--bg-base);
+}
+
+.library-md-editor .library-md-editor-surface,
+.library-md-editor .tiptap {
+  outline: none;
+  min-height: 100%;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+
+.library-md-editor .tiptap > :first-child {
+  margin-top: 0;
+}
+
+.library-md-editor .tiptap p {
+  margin: 0 0 10px;
+}
+
+.library-md-editor .tiptap h1,
+.library-md-editor .tiptap h2,
+.library-md-editor .tiptap h3,
+.library-md-editor .tiptap h4,
+.library-md-editor .tiptap h5,
+.library-md-editor .tiptap h6 {
+  margin: 18px 0 8px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.library-md-editor .tiptap h1 { font-size: 18px; }
+.library-md-editor .tiptap h2 { font-size: 16px; }
+.library-md-editor .tiptap h3 { font-size: 14px; }
+.library-md-editor .tiptap h4 { font-size: 13px; }
+
+.library-md-editor .tiptap ul,
+.library-md-editor .tiptap ol {
+  margin: 0 0 10px;
+  padding-left: 22px;
+}
+
+.library-md-editor .tiptap ul { list-style: disc; }
+.library-md-editor .tiptap ol { list-style: decimal; }
+
+.library-md-editor .tiptap li {
+  margin-bottom: 4px;
+}
+
+.library-md-editor .tiptap a {
+  color: var(--accent-blue);
+}
+
+.library-md-editor .tiptap code {
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  font-size: 12px;
+}
+
+.library-md-editor .tiptap pre {
+  margin: 10px 0;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #0d1117;
+  padding: 10px 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  font-size: 12px;
+}
+
+.library-md-editor .tiptap pre code {
+  background: none;
+  padding: 0;
+}
+
+.library-md-editor .tiptap blockquote {
+  margin: 10px 0;
+  padding-left: 12px;
+  border-left: 2px solid var(--border);
+  color: var(--text-dim);
+}
+
+.library-md-editor .tiptap hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 16px 0;
+}
+
+.library-md-editor .tiptap .tableWrapper {
+  margin: 10px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.library-md-editor .tiptap table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.library-md-editor .tiptap th,
+.library-md-editor .tiptap td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.library-md-editor .tiptap th {
+  background: var(--bg-elevated);
+  font-weight: 600;
+}
+
+.library-md-editor .tiptap ul[data-type='taskList'] {
+  list-style: none;
+  padding-left: 0;
+}
+
+.library-md-editor .tiptap ul[data-type='taskList'] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.library-md-editor .tiptap ul[data-type='taskList'] li > label {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.library-md-editor .tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: var(--text-muted);
+}
+
+.library-md-bubble {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.library-md-bubble .library-edit-btn {
+  padding: 4px 6px;
 }
 
 .library-edit-bar {
@@ -23947,6 +24098,8 @@ body.resizing-col .library-resizer::after {
 
 .library-split-preview.explorer-md-preview {
   padding: 16px 20px;
+  overflow: auto;
+  height: auto;
 }
 
 .library-split-preview .inbox-md {
@@ -28668,10 +28821,8 @@ body.resizing-col .library-split-resizer::after {
   overflow: hidden;
 }
 
-/* When the state chip is present it claims the margin-left:auto; otherwise the
-   close button must push itself to the right edge. */
 .agent-modal-header .icon-button {
-  margin-left: auto;
+  margin-left: 0;
 }
 
 /* The portal anchor: TerminalSurface fills it (position:absolute; inset:0). It
@@ -29234,7 +29385,9 @@ body.resizing-col .library-split-resizer::after {
 }
 
 /* Rendered mermaid diagrams. Centered, with the SVG scaled to fit the
-   panel width so wide graphs don't overflow horizontally. */
+   panel width so wide graphs don't overflow horizontally. overflow-y is
+   explicitly hidden: overflow-x:auto alone computes overflow-y to auto and
+   the diagram box traps wheel events so the library/inbox preview can't scroll. */
 .inbox-mermaid {
   margin: 12px 0;
   padding: 12px;
@@ -29242,6 +29395,7 @@ body.resizing-col .library-split-resizer::after {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   overflow-x: auto;
+  overflow-y: hidden;
   text-align: center;
 }
 
@@ -31343,8 +31497,11 @@ textarea.thread-command-editor {
   display: flex;
   flex-direction: column;
   justify-self: center;
+  align-self: stretch;
   min-width: 0;
   min-height: 0;
+  height: 100%;
+  overflow: hidden;
   width: 100%;
   max-width: 54rem;
   gap: 12px;
@@ -31676,6 +31833,7 @@ textarea.thread-command-editor {
 .thread-timeline-row:has(.inbox-mermaid),
 .thread-timeline-row:has(.inbox-mermaid-loading) {
   width: 100%;
+  max-width: 100%;
 }
 
 .thread-timeline-row .inbox-mermaid,
@@ -32022,28 +32180,34 @@ textarea.thread-command-editor {
 .thread-message-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 2px;
   margin-top: 4px;
+  padding: 4px 2px 2px;
   opacity: 0;
+  pointer-events: none;
 }
 
 .thread-timeline-row.is-user .thread-message-actions {
   position: absolute;
-  top: calc(100% - 2px);
+  top: 100%;
   right: 0;
   margin: 0;
+  padding: 6px 0 4px;
 }
 
 .thread-timeline-row.is-assistant .thread-message-actions {
   position: absolute;
-  top: calc(100% - 2px);
+  top: 100%;
   left: 0;
   margin: 0;
+  padding: 6px 0 4px;
   justify-content: flex-start;
 }
 
 .thread-timeline-row:hover .thread-message-actions,
 .thread-timeline-row:focus-within .thread-message-actions {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .thread-message-request-label {
@@ -32082,9 +32246,17 @@ textarea.thread-command-editor {
   resize: vertical;
 }
 
+.thread-message-overflow-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
 .thread-message-overflow {
   display: inline-block;
-  margin-top: 6px;
+  margin: 0;
   border: 0;
   background: transparent;
   color: var(--accent, var(--ink));
@@ -32097,7 +32269,8 @@ textarea.thread-command-editor {
   background: transparent;
   color: var(--ink-muted);
   cursor: pointer;
-  padding: 2px;
+  padding: 4px;
+  border-radius: 6px;
 }
 
 .thread-unread-divider {
@@ -32208,6 +32381,27 @@ textarea.thread-command-editor {
   cursor: pointer;
   font: inherit;
   padding: 0;
+}
+
+.thread-timeline-preview-btn {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--accent-blue, #4c8dff) 45%, var(--border));
+  border-radius: 4px;
+  background: transparent;
+  color: var(--accent-blue, #4c8dff);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 550;
+  line-height: 1.5;
+  vertical-align: middle;
+}
+
+.thread-timeline-preview-btn:hover {
+  background: color-mix(in srgb, var(--accent-blue, #4c8dff) 12%, transparent);
 }
 
 .thread-question-form {
@@ -32936,13 +33130,137 @@ textarea.thread-command-editor {
   font-size: 12px;
 }
 
+.thread-file-preview-host {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.thread-file-preview-chrome {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--bg-elevated, var(--bg-2)) 70%, transparent);
+}
+
+.thread-file-preview-chrome-icon {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+.thread-file-preview-path {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.thread-file-preview-dir {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.thread-file-preview-name {
+  flex: 0 1 auto;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.thread-file-preview-chrome-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.thread-file-preview-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.thread-file-preview-copy:hover {
+  color: var(--text-primary);
+  border-color: var(--border);
+  background: var(--bg-base, var(--bg));
+}
+
+.thread-file-preview-chrome .thread-file-open-with {
+  padding: 0;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.thread-file-open-with-label {
+  white-space: nowrap;
+}
+
+.thread-file-preview-chrome .thread-file-open-with select {
+  appearance: none;
+  -webkit-appearance: none;
+  max-width: 11rem;
+  padding: 3px 22px 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background-color: var(--bg-elevated, var(--bg-2));
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='none' stroke='%238a93a6' stroke-width='1.5' d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 7px center;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.thread-file-preview-chrome .thread-file-open-with select:hover {
+  border-color: var(--border-strong, var(--border));
+}
+
+.thread-file-preview-chrome .thread-file-open-with select:focus {
+  outline: none;
+  border-color: var(--accent-blue, #4c8dff);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-blue, #4c8dff) 22%, transparent);
+}
+
 .thread-file-preview {
   margin: 0;
-  padding: 12px;
+  padding: 16px 20px 28px;
   overflow: auto;
-  font-size: 12px;
-  line-height: 1.45;
-  white-space: pre-wrap;
+  min-height: 0;
+  flex: 1 1 auto;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.thread-file-preview .inbox-md {
+  max-width: 42rem;
+}
+
+.docs-file-opener {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
 }
 
 .thread-file-preview-image {
@@ -33226,15 +33544,27 @@ textarea.thread-command-editor {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg, var(--background));
-  color: var(--text-primary);
-  box-shadow: 0 4px 16px rgb(0 0 0 / 18%);
+  padding: 6px 12px;
+  border: 1px solid var(--accent-blue);
+  border-radius: 8px;
+  background: var(--accent-blue);
+  color: #fff;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 40%);
   font: inherit;
   font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
   cursor: pointer;
+}
+
+.thread-selection-add:hover {
+  background: color-mix(in srgb, var(--accent-blue) 85%, #000);
+  border-color: color-mix(in srgb, var(--accent-blue) 85%, #000);
+}
+
+.thread-selection-add:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .thread-terminal-tab {

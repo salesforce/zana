@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   COMPOSER_INSERT_EVENT,
@@ -46,5 +48,15 @@ describe('SecondaryPanelSelectionActions', () => {
     );
     expect(wrapped).toContain('data-testid="thread-selection-host"');
     expect(wrapped).toContain('preview');
+  });
+
+  it('paints the add-to-chat chip with accent tokens so it stays visible on dark surfaces', () => {
+    const css = readFileSync(fileURLToPath(new URL('../../../styles/global.css', import.meta.url)), 'utf8');
+    const source = readFileSync(fileURLToPath(new URL('./SecondaryPanelSelectionActions.tsx', import.meta.url)), 'utf8');
+    expect(css).toMatch(/\.thread-selection-add \{[\s\S]*?background: var\(--accent-blue\);/);
+    expect(css).toMatch(/\.thread-selection-add \{[\s\S]*?color: #fff;/);
+    expect(css).not.toContain('background: var(--bg, var(--background));');
+    expect(source).toContain('MessageSquarePlus');
+    expect(source).toContain('Add to chat');
   });
 });

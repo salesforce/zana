@@ -61,11 +61,13 @@ describe('PrBoardCard', () => {
     selectMode?: boolean;
     onToggleSelect?: (u: string) => void;
     onDismiss?: (u: string) => void;
+    onOpen?: (u: string) => void;
     host?: ModuleHost;
   }) {
     const { host, calls } = over?.host ? { host: over.host, calls: [] } : makeHost();
     const onDismiss = over?.onDismiss ?? (() => {});
     const onToggleSelect = over?.onToggleSelect ?? (() => {});
+    const onOpen = over?.onOpen ?? (() => {});
     const { container } = render(
       <PrBoardCard
         pr={pr}
@@ -74,10 +76,11 @@ describe('PrBoardCard', () => {
         selectMode={over?.selectMode}
         onToggleSelect={onToggleSelect}
         onDismiss={onDismiss}
+        onOpen={onOpen}
       />
     );
     cleanup = () => container.remove();
-    return { container, host, calls, onDismiss, onToggleSelect };
+    return { container, host, calls, onDismiss, onToggleSelect, onOpen };
   }
 
   it('renders short repo, number, work item, and title', () => {
@@ -104,30 +107,34 @@ describe('PrBoardCard', () => {
 
   it('records markPrAsSeen when an unread card is clicked', async () => {
     const calls: Array<{ handler: string; args: unknown[] }> = [];
+    const opened: string[] = [];
     const { host } = makeHost();
     (host as { call: ModuleHost['call'] }).call = async (handler, ...args) => {
       calls.push({ handler, args });
       return { ok: true, prs: [] };
     };
-    const { container } = mount(makePr({ lastSeenAt: 0 }), { host });
+    const { container } = mount(makePr({ lastSeenAt: 0 }), { host, onOpen: (u) => opened.push(u) });
     fireEvent.click(container.querySelector('.prm-board-card')!);
     await Promise.resolve();
     expect(calls.some((c) => c.handler === 'markPrAsSeen')).toBe(true);
+    expect(opened).toEqual(['https://github.com/acme/webapp/pull/42']);
   });
 
   it('marks seen from Enter or Space on an unread card', async () => {
     const calls: Array<{ handler: string }> = [];
+    const opened: string[] = [];
     const { host } = makeHost();
     (host as { call: ModuleHost['call'] }).call = async (handler) => {
       calls.push({ handler });
       return { ok: true, prs: [] };
     };
-    const { container } = mount(makePr({ lastSeenAt: 0 }), { host });
+    const { container } = mount(makePr({ lastSeenAt: 0 }), { host, onOpen: (u) => opened.push(u) });
     const card = container.querySelector('.prm-board-card')!;
     fireEvent.keyDown(card, { key: 'Enter' });
     fireEvent.keyDown(card, { key: ' ' });
     await Promise.resolve();
     expect(calls.filter((c) => c.handler === 'markPrAsSeen').length).toBe(2);
+    expect(opened).toHaveLength(2);
   });
 
   it('ignores other keys on the card', async () => {
@@ -143,17 +150,22 @@ describe('PrBoardCard', () => {
     expect(calls).toEqual([]);
   });
 
-  it('does not mark a seen card on click', async () => {
+  it('opens details on a seen card without marking it seen', async () => {
     const calls: Array<{ handler: string }> = [];
+    const opened: string[] = [];
     const { host } = makeHost();
-    (host as { call: ModuleHost['call'] }).call = async (handler, ...args) => {
+    (host as { call: ModuleHost['call'] }).call = async (handler) => {
       calls.push({ handler });
       return { ok: true, prs: [] };
     };
-    const { container } = mount(makePr({ lastSeenAt: Date.now() }), { host });
+    const { container } = mount(makePr({ lastSeenAt: Date.now() }), {
+      host,
+      onOpen: (u) => opened.push(u),
+    });
     fireEvent.click(container.querySelector('.prm-board-card')!);
     await Promise.resolve();
     expect(calls.some((c) => c.handler === 'markPrAsSeen')).toBe(false);
+    expect(opened).toEqual(['https://github.com/acme/webapp/pull/42']);
   });
 
   it('opens a safe GitHub URL from the open button', () => {
@@ -320,8 +332,9 @@ describe('PrBoardCard', () => {
     expect(container.querySelector('.prm-check-pip--pending')?.textContent).toContain('1');
   });
 
-  it('⌘-click selects the card instead of marking it seen', async () => {
+  it('⌘-click selects the card instead of opening details', async () => {
     const selected: string[] = [];
+    const opened: string[] = [];
     const calls: Array<{ handler: string }> = [];
     const { host } = makeHost();
     (host as { call: ModuleHost['call'] }).call = async (handler) => {
@@ -331,6 +344,7 @@ describe('PrBoardCard', () => {
     const { container } = mount(makePr({ lastSeenAt: 0 }), {
       host,
       onToggleSelect: (u) => selected.push(u),
+      onOpen: (u) => opened.push(u),
     });
     fireEvent.click(container.querySelector('.prm-board-card')!, { metaKey: true });
     fireEvent.click(container.querySelector('.prm-board-card')!, { ctrlKey: true });
@@ -339,11 +353,13 @@ describe('PrBoardCard', () => {
       'https://github.com/acme/webapp/pull/42',
       'https://github.com/acme/webapp/pull/42',
     ]);
+    expect(opened).toEqual([]);
     expect(calls.some((c) => c.handler === 'markPrAsSeen')).toBe(false);
   });
 
-  it('select mode click toggles selection instead of mark-seen', async () => {
+  it('select mode click toggles selection instead of opening details', async () => {
     const selected: string[] = [];
+    const opened: string[] = [];
     const calls: Array<{ handler: string }> = [];
     const { host } = makeHost();
     (host as { call: ModuleHost['call'] }).call = async (handler) => {
@@ -354,6 +370,7 @@ describe('PrBoardCard', () => {
       host,
       selectMode: true,
       onToggleSelect: (u) => selected.push(u),
+      onOpen: (u) => opened.push(u),
     });
     expect(container.querySelector('.prm-board-card--select-mode')).toBeTruthy();
     fireEvent.click(container.querySelector('.prm-board-card')!);
@@ -363,6 +380,7 @@ describe('PrBoardCard', () => {
       'https://github.com/acme/webapp/pull/42',
       'https://github.com/acme/webapp/pull/42',
     ]);
+    expect(opened).toEqual([]);
     expect(calls.some((c) => c.handler === 'markPrAsSeen')).toBe(false);
   });
 

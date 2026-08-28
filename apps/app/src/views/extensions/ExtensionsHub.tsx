@@ -7,7 +7,7 @@ import { product } from '../../lib/product-client.js';
  * settings UI through `AppModule.settingsPanel`.
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   FolderOpen,
@@ -44,6 +44,8 @@ import { requestComposerCommandsReload } from '@/lib/composer-commands-reload';
 import { InstallFromGitDialog } from '@/components/InstallFromGitDialog';
 import { Marketplace } from '@/views/extensions/MarketplaceView';
 import { PluginDefinedSettings } from '@/plugins/PluginDefinedSettings';
+import { PluginSettingsSections } from '@/plugins/PluginSettingsSections';
+import { listSettingsSections, subscribePluginSlots } from '@/plugins/plugin-slots';
 import { useUi } from '@/store';
 import {
   buildHubRows,
@@ -712,26 +714,32 @@ function rowStatus(
 /**
  * Detail pane for one module. Renders the extension's own `settingsPanel` when
  * it ships one (mounted with the module's cached host), preceded by a compact
- * "About" header. A module with no settings panel shows just the About card.
+ * "About" header. Plugin `settingsSection` slots mount here too — not on Global.
  */
 function ExtensionDetail({ row }: { row: HubRow }) {
   const { module, entry } = row;
   const SettingsPanel = hostSettingsPanelOf(row);
+  const hasSlotSettings = useSyncExternalStore(
+    subscribePluginSlots,
+    listSettingsSections,
+    listSettingsSections
+  ).some((section) => section.pluginId === module.id);
 
   return (
     <>
       <AboutCard row={row} />
       {entry && <InstallConfirmationCard entry={entry} />}
-      <PluginDefinedSettings pluginId={module.id} />
+      {hasSlotSettings ? null : <PluginDefinedSettings pluginId={module.id} />}
+      <PluginSettingsSections pluginId={module.id} />
       {module.loadError ? (
         <section className="settings-section">
           <p className="modal-error">{module.loadError}</p>
         </section>
-      ) : SettingsPanel && shouldMountHostSettings(row) ? (
+      ) : SettingsPanel && shouldMountHostSettings(row) && !hasSlotSettings ? (
         <ErrorBoundary key={module.id}>
           <SettingsPanel host={getHost(module.id)} />
         </ErrorBoundary>
-      ) : SettingsPanel ? (
+      ) : SettingsPanel && !hasSlotSettings ? (
         <section className="settings-section">
           <p className="settings-help settings-help--muted">
             {entry
@@ -739,7 +747,7 @@ function ExtensionDetail({ row }: { row: HubRow }) {
               : 'This leftover extension still uses the old module host, which is not running. Uninstall it and install the official plugin from the Marketplace.'}
           </p>
         </section>
-      ) : (
+      ) : hasSlotSettings ? null : (
         <section className="settings-section">
           <p className="settings-help settings-help--muted">
             {entry

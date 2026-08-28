@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import {
   buildTimelineViewRows,
@@ -20,6 +20,7 @@ import {
   firstUnreadRowId,
   isNearBottom,
   markTransientScrollbarScrolling,
+  pinScrollToBottom,
   shouldStickToBottom
 } from './timeline/timeline-scroll.js';
 import {
@@ -28,11 +29,7 @@ import {
   ThreadWorkingIndicator
 } from './timeline/ThreadBanners.js';
 import { TimelineRows } from './timeline/TimelineRows.js';
-import {
-  olderHistoryAction,
-  retainTerminalExpansionIds,
-  windowTimelineRows
-} from './timeline/timeline-window.js';
+import { retainTerminalExpansionIds } from './timeline/timeline-window.js';
 
 export interface ThreadTimelineProps {
   rows: TimelineRow[];
@@ -41,9 +38,6 @@ export interface ThreadTimelineProps {
   goal?: ThreadTimelineGoal | null;
   activeWorkflows?: TimelineViewWorkflowWorkRow[] | null;
   lastReadSeq?: number | null;
-  hasOlderRows?: boolean;
-  loadingOlder?: boolean;
-  onLoadOlder?: () => void;
   onReachedBottom?: () => void;
   onCopy?: (text: string) => void;
   onTitleAction?: (action: TimelineTitleAction) => void;
@@ -83,9 +77,6 @@ export function ThreadTimeline({
   goal,
   activeWorkflows,
   lastReadSeq,
-  hasOlderRows,
-  loadingOlder,
-  onLoadOlder,
   onReachedBottom,
   onCopy,
   onTitleAction,
@@ -102,7 +93,6 @@ export function ThreadTimeline({
 }: ThreadTimelineProps) {
   const [now, setNow] = useState(() => Date.now());
   const [retainedTerminalIds, setRetainedTerminalIds] = useState<string[]>([]);
-  const [showAllWindow, setShowAllWindow] = useState(false);
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
@@ -110,6 +100,7 @@ export function ThreadTimeline({
   const paneRef = useRef<HTMLDivElement>(null);
   const scrollbarIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [pinnedAway, setPinnedAway] = useState(false);
+  const [initialOpen, setInitialOpen] = useState(true);
   const viewRows = useMemo(() => buildTimelineViewRows(rows), [rows]);
   const awaitingUser = waitingOnUser || timelineRowsAwaitUser(rows);
   const expansion = useMemo(
@@ -129,13 +120,6 @@ export function ThreadTimeline({
       ...retainedTerminalIds
     ])
   }), [expansion.liveFrontierRowIds, expansion.terminalFrontierRowIds, retainedTerminalIds]);
-  const windowed = useMemo(
-    () => windowTimelineRows(viewRows, undefined, {
-      showAll: showAllWindow,
-      keepId: searchHitRowId
-    }),
-    [searchHitRowId, showAllWindow, viewRows]
-  );
   const unreadRowId = useMemo(
     () => firstUnreadRowId(flattenForUnread(viewRows), lastReadSeq),
     [lastReadSeq, viewRows]
@@ -147,16 +131,27 @@ export function ThreadTimeline({
   );
   const contentKey = streamingContentKey
     ?? streamingContentIdentity(viewRows, streamingAssistantMessageId, thinking?.updatedAt);
-  const stick = shouldStickToBottom({
+  const stick = !searchHitRowId && shouldStickToBottom({
     isBusy: busy,
     streaming: streamingAssistantMessageId !== null,
-    userPinnedAway: pinnedAway
+    userPinnedAway: pinnedAway,
+    initialOpen
   });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    setInitialOpen(true);
+    setPinnedAway(false);
+  }, [threadId]);
+
+  useLayoutEffect(() => {
     const pane = paneRef.current;
     if (!pane || !stick) return;
-    pane.scrollTop = pane.scrollHeight;
+    const pin = () => pinScrollToBottom(pane);
+    pin();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(pin);
+    for (const child of pane.children) observer.observe(child);
+    return () => observer.disconnect();
   }, [stick, viewRows, thinking, contentKey]);
 
   useEffect(() => {
@@ -183,30 +178,17 @@ export function ThreadTimeline({
     markTransientScrollbarScrolling(pane, scrollbarIdleRef);
     const near = isNearBottom(pane);
     setPinnedAway(!near);
+    if (!near) setInitialOpen(false);
     if (near) onReachedBottom?.();
-    if (pane.scrollTop <= 24 && hasOlderRows && !loadingOlder) onLoadOlder?.();
-  }, [hasOlderRows, loadingOlder, onLoadOlder, onReachedBottom]);
+  }, [onReachedBottom]);
 
   const scrollToBottom = () => {
     const pane = paneRef.current;
     if (!pane) return;
-    pane.scrollTop = pane.scrollHeight;
+    pinScrollToBottom(pane);
     setPinnedAway(false);
+    setInitialOpen(true);
     onReachedBottom?.();
-  };
-
-  const olderAction = olderHistoryAction({
-    hiddenCount: windowed.hiddenCount,
-    hasOlderRows: Boolean(hasOlderRows),
-    loadingOlder: Boolean(loadingOlder)
-  });
-  const revealOlderHistory = () => {
-    if (olderAction.kind === 'show-earlier') {
-      setShowAllWindow(true);
-      return;
-    }
-    setShowAllWindow(true);
-    onLoadOlder?.();
   };
 
   return (
@@ -221,31 +203,11 @@ export function ThreadTimeline({
         ref={paneRef}
         onScroll={onScroll}
       >
-        {olderAction.kind === 'show-earlier' ? (
-          <button
-            type="button"
-            className="thread-load-older"
-            data-testid="thread-show-earlier"
-            onClick={revealOlderHistory}
-          >
-            Show earlier ({olderAction.hiddenCount})
-          </button>
-        ) : olderAction.kind === 'load-older' ? (
-          <button
-            type="button"
-            className="thread-load-older"
-            data-testid="thread-load-older"
-            disabled={olderAction.loading}
-            onClick={revealOlderHistory}
-          >
-            {olderAction.loading ? 'Loading…' : 'Load older'}
-          </button>
-        ) : null}
         {viewRows.length === 0 ? (
           <p className="thread-detail-empty">Waiting for the first turn…</p>
         ) : (
           <TimelineRows
-            rows={windowed.visible}
+            rows={viewRows}
             now={now}
             expansion={expansionWithRetention}
             unreadRowId={unreadRowId}

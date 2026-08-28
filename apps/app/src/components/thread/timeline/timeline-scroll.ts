@@ -37,12 +37,21 @@ export function isNearBottom(
   return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
 }
 
+export function pinScrollToBottom(
+  el: { scrollTop: number; scrollHeight: number; clientHeight: number }
+): void {
+  const next = Math.max(0, el.scrollHeight - el.clientHeight);
+  if (el.scrollTop !== next) el.scrollTop = next;
+}
+
 export function shouldStickToBottom(opts: {
   isBusy: boolean;
   streaming?: boolean;
   userPinnedAway: boolean;
+  initialOpen?: boolean;
 }): boolean {
-  return (opts.isBusy || Boolean(opts.streaming)) && !opts.userPinnedAway;
+  if (opts.userPinnedAway) return false;
+  return Boolean(opts.initialOpen) || opts.isBusy || Boolean(opts.streaming);
 }
 
 export function firstUnreadRowId(

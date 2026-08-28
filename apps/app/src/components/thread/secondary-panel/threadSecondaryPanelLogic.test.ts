@@ -12,6 +12,7 @@ import {
   normalizeBrowserUrl,
   onThreadPanelTerminalUnmount,
   previewKind,
+  previewPathParts,
   shouldClearThreadPanelTerminal,
   widthFromPointer,
   loadEnvironmentName,
@@ -102,6 +103,13 @@ describe('threadSecondaryPanelLogic', () => {
     expect(contentFromLocalRead(null)).toBeNull();
     expect(previewKind('/tmp/a.png', 'data:image/png;base64,xx')).toBe('image');
     expect(previewKind('/tmp/a.ts', 'const x = 1')).toBe('text');
+    expect(previewPathParts('docs/architecture/high-level-architecture.md')).toEqual({
+      name: 'high-level-architecture.md',
+      dir: 'docs/architecture'
+    });
+    expect(previewPathParts('README.md')).toEqual({ name: 'README.md', dir: null });
+    expect(previewPathParts('/tmp/a.ts')).toEqual({ name: 'a.ts', dir: '/tmp' });
+    expect(previewPathParts('C:\\foo\\bar.ts')).toEqual({ name: 'bar.ts', dir: 'C:/foo' });
   });
 
   it('filters New Tab files and titles them', () => {

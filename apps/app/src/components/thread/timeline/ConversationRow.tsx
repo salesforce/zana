@@ -1,4 +1,4 @@
-import { useMemo, useState, useSyncExternalStore } from 'react';
+import { memo, useMemo, useState, useSyncExternalStore } from 'react';
 import { MarkdownContent } from '../../MarkdownContent.js';
 import type { ThreadTimelineViewRow } from '@zana-ai/zcc-thread-view';
 import { mentionPillLabel } from './mention-pills.js';
@@ -18,7 +18,9 @@ import {
 import { resolveIcon } from '../../../lib/resolveIcon.js';
 import { product } from '../../../lib/product-client.js';
 import { SecondaryPanelSelectionActions } from '../secondary-panel/SecondaryPanelSelectionActions.js';
+import { conversationFilePreviewPaths } from '../../markdown-local-file.js';
 import { dispatchThreadOpenFile } from '../secondary-panel/useThreadOpenFileSignal.js';
+import { ThreadOpenFilePreviewButton } from './TimelineTitleView.js';
 import { ThreadImageLightbox } from './ThreadImageLightbox.js';
 
 function userRequestLabel(row: Extract<ThreadTimelineViewRow, { kind: 'conversation' }>): string | null {
@@ -33,7 +35,7 @@ function userRequestLabel(row: Extract<ThreadTimelineViewRow, { kind: 'conversat
   return null;
 }
 
-export function ConversationRow({
+export const ConversationRow = memo(function ConversationRow({
   row,
   onCopy,
   threadId,
@@ -75,6 +77,10 @@ export function ConversationRow({
       ]
     : [];
   const fileNames = row.role === 'user' ? (row.attachments?.localFilePaths ?? []) : [];
+  const previewPaths = useMemo(
+    () => conversationFilePreviewPaths(row.text ?? '', fileNames),
+    [fileNames, row.text]
+  );
   const actions = useSyncExternalStore(subscribePluginSlots, listMessageActions, listMessageActions);
   const streamingSplit = useMemo(
     () => (streaming && row.role === 'assistant' ? splitStreamingMarkdown(row.text ?? '') : null),
@@ -225,15 +231,28 @@ export function ConversationRow({
               <MarkdownContent text={visibleText} breaks threadId={threadId} projectId={projectId} />
             )
           ) : null}
-          {(row.text ?? '').length > MESSAGE_OVERFLOW_CAP && !editing ? (
-            <button
-              type="button"
-              className="thread-message-overflow"
-              data-testid="thread-message-overflow"
-              onClick={() => setExpanded((value) => !value)}
-            >
-              {expanded ? 'Show less' : 'Show more'}
-            </button>
+          {(threadId && previewPaths.length > 0 && !editing)
+            || ((row.text ?? '').length > MESSAGE_OVERFLOW_CAP && !editing) ? (
+            <div className="thread-message-overflow-row">
+              {threadId && previewPaths.length > 0 && !editing ? (
+                previewPaths.map((path) => (
+                  <ThreadOpenFilePreviewButton
+                    key={path}
+                    onClick={() => dispatchThreadOpenFile(threadId, path)}
+                  />
+                ))
+              ) : null}
+              {(row.text ?? '').length > MESSAGE_OVERFLOW_CAP && !editing ? (
+                <button
+                  type="button"
+                  className="thread-message-overflow"
+                  data-testid="thread-message-overflow"
+                  onClick={() => setExpanded((value) => !value)}
+                >
+                  {expanded ? 'Show less' : 'Show more'}
+                </button>
+              ) : null}
+            </div>
           ) : null}
         </div>
       </SecondaryPanelSelectionActions>
@@ -262,4 +281,4 @@ export function ConversationRow({
       ) : null}
     </article>
   );
-}
+});

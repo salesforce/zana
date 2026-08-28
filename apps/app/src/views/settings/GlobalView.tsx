@@ -5,7 +5,6 @@ import { Play, ClipboardCheck, RefreshCw } from 'lucide-react';
 import { useUi } from '@/store';
 import { reloadComposerCommandCatalog } from '@/lib/composer-commands-reload';
 import { Section, Field, CheckboxField, SettingsActionRow } from '@/components/settings/FormFields';
-import { PluginSettingsSections } from '@/plugins/PluginSettingsSections';
 import { PluginThemePicker, PluginThreadListPicker } from '@/plugins/PluginAppearanceSettings';
 import { DoctorSection } from '@/components/settings/DoctorSection';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
@@ -191,7 +190,6 @@ export function GlobalView({
       </Section>
 
       <DoctorSection />
-      <PluginSettingsSections />
     </>
   );
 }

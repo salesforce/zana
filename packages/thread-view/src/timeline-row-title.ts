@@ -136,6 +136,11 @@ export type TimelineTitleAction =
       path: string;
     }
   | {
+      kind: "open-file-preview";
+      /** Workspace-relative path of the file to open in the side-panel preview. */
+      path: string;
+    }
+  | {
       kind: "open-plugin-side-chat";
       /** A side-chat plugin fork to open in that plugin's panel tab. */
       threadId: string;
@@ -434,6 +439,7 @@ interface PresentedTitleArgs {
   content?: string | null;
   plainContent?: string;
   em?: boolean;
+  action?: TimelineTitleAction | null;
 }
 
 function presentedTitle({
@@ -444,6 +450,7 @@ function presentedTitle({
   content,
   plainContent,
   em = true,
+  action = null,
 }: PresentedTitleArgs): TimelineTitle {
   const resolvedContent = content === undefined ? presentation.title : content;
   const segments: TimelineTitleSegment[] = [
@@ -468,7 +475,7 @@ function presentedTitle({
       : status === "interrupted"
         ? [statusDecoration("interrupted", durationMs)]
         : filterNull([durationDecoration(startedAt, completedAt)]);
-  return makeTitle({ segments, decorations });
+  return makeTitle({ segments, decorations, action });
 }
 
 // ---------------------------------------------------------------------------
@@ -1262,6 +1269,9 @@ function mapQuestionTitle(row: TimelineQuestionViewWorkRow): TimelineTitle {
 }
 
 function mapFileReadTitle(row: TimelineFileReadWorkRow): TimelineTitle {
+  const action: TimelineTitleAction | null = row.path
+    ? { kind: "open-file-preview", path: row.path }
+    : null;
   if (row.presentation) {
     return presentedTitle({
       presentation: row.presentation,
@@ -1270,6 +1280,7 @@ function mapFileReadTitle(row: TimelineFileReadWorkRow): TimelineTitle {
       completedAt: row.completedAt,
       content: formatTimelinePath({ path: row.path, mode: "compact" }),
       plainContent: row.path,
+      action,
     });
   }
   return makeTitle({
@@ -1277,8 +1288,9 @@ function mapFileReadTitle(row: TimelineFileReadWorkRow): TimelineTitle {
       segment(row.status === "pending" ? "Reading" : "Read", {
         shimmer: row.status === "pending",
       }),
-      segment(row.path, { em: true, truncate: true }),
+      segment(row.path, { em: true, truncate: true, accent: "file" }),
     ],
+    action,
   });
 }
 
@@ -1673,7 +1685,11 @@ function mapTimelineActivityIntentTitle({
   const decorations = failureStatus
     ? [statusDecoration(failureStatus, null)]
     : [];
-  return makeTitle({ segments, decorations });
+  const action =
+    intent.type === "read" && intent.path
+      ? { kind: "open-file-preview" as const, path: intent.path }
+      : null;
+  return makeTitle({ segments, decorations, action });
 }
 
 // ---------------------------------------------------------------------------

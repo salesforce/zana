@@ -51,7 +51,10 @@ import { PluginThreadHeaderActions } from '../../plugins/PluginThreadHeaderActio
 import { copyText } from '../../components/thread/secondary-panel/threadSecondaryPanelLogic.js';
 import { useThreadSecondaryPanel } from '../../components/thread/secondary-panel/useThreadSecondaryPanel.js';
 import { useInAppBrowserPanel } from '../../components/thread/secondary-panel/useInAppBrowserPanel.js';
-import { useThreadOpenFileSignal } from '../../components/thread/secondary-panel/useThreadOpenFileSignal.js';
+import {
+  dispatchThreadOpenFile,
+  useThreadOpenFileSignal
+} from '../../components/thread/secondary-panel/useThreadOpenFileSignal.js';
 import { appendThreadRecentItem, tabInputFromRecentItem } from '../../components/thread/secondary-panel/threadRecentItems.js';
 import {
   activeClosableTab,
@@ -70,13 +73,12 @@ import {
   THREAD_STOP_REQUESTED_EVENT
 } from '../../components/thread/timeline/thread-optimistic-events.js';
 import {
-  SEARCH_LOAD_OLDER_CAP,
   findDeepestTimelineSearchHit,
-  timelineContainsRowId,
   type TimelineSearchHit
 } from '../../components/thread/timeline/thread-search.js';
 
-const INITIAL_SEGMENT_LIMIT = 400;
+/** Safety cap (Rule 5). Large enough that a normal thread loads in one shot. */
+const TIMELINE_SEGMENT_LIMIT = 10_000;
 const TIMELINE_DELTA_DEBOUNCE_MS = 100;
 
 export function ThreadDetailView() {
@@ -128,9 +130,6 @@ export function ThreadDetail({
   const [promptMode, setPromptMode] = useState<{ mode: string; prompt?: string } | null>(null);
   const [contextWindow, setContextWindow] = useState<ThreadContextWindowUsage | null>(null);
   const [lastReadSeq, setLastReadSeq] = useState<number | null>(null);
-  const [hasOlderRows, setHasOlderRows] = useState(false);
-  const [segmentLimit, setSegmentLimit] = useState(INITIAL_SEGMENT_LIMIT);
-  const [loadingOlder, setLoadingOlder] = useState(false);
   const [diffPath, setDiffPath] = useState<string | null>(null);
   const [planExpanded, setPlanExpanded] = useState(false);
   const [todoExpanded, setTodoExpanded] = useState(false);
@@ -141,7 +140,6 @@ export function ThreadDetail({
   const [searchDraft, setSearchDraft] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchHit, setSearchHit] = useState<TimelineSearchHit | null>(null);
-  const [searchLoadAttempts, setSearchLoadAttempts] = useState(0);
   const rowsRef = useRef<TimelineRow[]>([]);
   const maxSeqRef = useRef(0);
   const loadedRef = useRef(false);
@@ -212,15 +210,6 @@ export function ThreadDetail({
   }, [displayRows, searchHit, searchQuery]);
 
   useEffect(() => {
-    if (!searchHit || searchLoadAttempts <= 0) return;
-    if (timelineContainsRowId(buildTimelineViewRows(displayRows), searchHit.id)) return;
-    if (!hasOlderRows || searchLoadAttempts >= SEARCH_LOAD_OLDER_CAP) return;
-    setSearchLoadAttempts((current) => current + 1);
-    setLoadingOlder(true);
-    setSegmentLimit((current) => current + INITIAL_SEGMENT_LIMIT);
-  }, [displayRows, hasOlderRows, searchHit]);
-
-  useEffect(() => {
     if (!threadId) return;
     let cancelled = false;
     let debounceTimer: number | null = null;
@@ -245,7 +234,6 @@ export function ThreadDetail({
       setPromptMode((timeline.activePromptMode as { mode: string; prompt?: string } | null) ?? null);
       setContextWindow((timeline.contextWindowUsage as ThreadContextWindowUsage | null) ?? null);
       setLastReadSeq(typeof timeline.lastReadSeq === 'number' ? timeline.lastReadSeq : null);
-      setHasOlderRows(Boolean(timeline.timelinePage?.hasOlderRows));
       return nextRows;
     };
 
@@ -255,7 +243,7 @@ export function ThreadDetail({
     }> => {
       const useDelta = !forceFull && loadedRef.current;
       const timeline = await product.threads.timeline(threadId, {
-        segmentLimit,
+        segmentLimit: TIMELINE_SEGMENT_LIMIT,
         afterSequence: useDelta ? String(maxSeqRef.current) : undefined,
         includeNestedRows: 'false',
         summaryOnly: 'true'
@@ -333,8 +321,6 @@ export function ThreadDetail({
         }
       } catch {
         /* keep last */
-      } finally {
-        if (!cancelled) setLoadingOlder(false);
       }
     });
     const scheduleDelta = () => {
@@ -362,7 +348,7 @@ export function ThreadDetail({
       stopUpdated();
       stopEvents();
     };
-  }, [segmentLimit, threadId, upsertThread]);
+  }, [threadId, upsertThread]);
 
   const markRead = useCallback(() => {
     if (!threadId) return;
@@ -541,19 +527,15 @@ export function ThreadDetail({
     setSearchQuery(needle);
     if (!needle) {
       setSearchHit(null);
-      setSearchLoadAttempts(0);
       return;
     }
     const viewRows = buildTimelineViewRows(displayRows);
     void product.threads.conversationOutline(threadId).then((outline) => {
-      const hit = findDeepestTimelineSearchHit(viewRows, needle, outline.items);
-      setSearchHit(hit);
-      setSearchLoadAttempts(hit && !timelineContainsRowId(viewRows, hit.id) && hasOlderRows ? 1 : 0);
+      setSearchHit(findDeepestTimelineSearchHit(viewRows, needle, outline.items));
     }).catch(() => {
       setSearchHit(findDeepestTimelineSearchHit(viewRows, needle));
-      setSearchLoadAttempts(0);
     });
-  }, [displayRows, hasOlderRows, threadId]);
+  }, [displayRows, threadId]);
 
   return (
     <section
@@ -612,18 +594,13 @@ export function ThreadDetail({
               goal={goal}
               activeWorkflows={workflows}
               lastReadSeq={lastReadSeq}
-              hasOlderRows={hasOlderRows}
-              loadingOlder={loadingOlder}
-              onLoadOlder={() => {
-                setLoadingOlder(true);
-                setSegmentLimit((current) => current + INITIAL_SEGMENT_LIMIT);
-              }}
               onReachedBottom={markRead}
               onCopy={(text) => {
                 void copyText(text);
               }}
               onTitleAction={(action) => {
                 if (action.kind === 'open-file-diff') openDiff(action.path);
+                if (action.kind === 'open-file-preview') dispatchThreadOpenFile(threadId, action.path);
               }}
               onTitleLink={(link) => {
                 if (link.kind === 'thread') {

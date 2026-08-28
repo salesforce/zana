@@ -43,6 +43,7 @@ import { registerInboxPushTool } from '../inbox/inbox-mcp-tool.js';
 import { registerInboxAskTool } from '../inbox/inbox-ask-mcp-tool.js';
 import { registerInboxSearchTool } from '../inbox/inbox-search-mcp-tool.js';
 import { registerBrowserAutomationTools } from '../threads/browser-mcp-tools.js';
+import { registerPreviewFileTool } from '../threads/preview-file-mcp-tool.js';
 import { registerRemoteExecTool, type RegisterRemoteExecOpts } from '@zana-ai/zcc-host-daemon/remote-exec-mcp-tool';
 import {
   registerRemoteFsTools,
@@ -445,6 +446,19 @@ export interface McpServerOptions {
    * project or spoof provenance. Session-scoped only. Absent ⇒ tools not registered.
    */
   followupAgentApi?: FollowUpAgentApi;
+  /**
+   * Open a file in this session's visible side-panel preview. Session-scoped
+   * only — identity is closed over from the MCP URL. The implementation confines
+   * the path (Rule 2) and broadcasts `threads:open`. Absent disables the tool
+   * (e.g. tests that don't exercise preview).
+   */
+  previewFile?: (input: {
+    threadId: string;
+    projectId: string;
+    source: 'workspace' | 'thread-storage';
+    path: string;
+    lineNumber: number | null;
+  }) => Promise<{ delivered: number; path: string; source: 'workspace' | 'thread-storage' }>;
 }
 
 export interface McpServerHandle {
@@ -504,6 +518,7 @@ function buildProjectMcpServer(opts: {
   libraryAgentApi?: McpServerOptions['libraryAgentApi'];
   goalAgentApi?: McpServerOptions['goalAgentApi'];
   followupAgentApi?: McpServerOptions['followupAgentApi'];
+  previewFile?: McpServerOptions['previewFile'];
 }): McpServer {
   const mcp = new McpServer({ name: 'zcc-inbox', version: '0.1.0' });
   // Resolve scheduled-ness + loudness once at build time so inbox_push entries
@@ -562,6 +577,13 @@ function buildProjectMcpServer(opts: {
     inboxStore: opts.inboxStore
   });
   registerBrowserAutomationTools(mcp, { threadId: opts.sessionId ?? null });
+  if (opts.sessionId) {
+    registerPreviewFileTool(mcp, {
+      threadId: opts.sessionId,
+      projectId: opts.projectId,
+      previewFile: opts.previewFile
+    });
+  }
   // suggest_action: propose a runnable next action for the operator's launcher.
   // Available on both route shapes (a suggestion needs no live originating
   // session); projectId/origin come from the route, never the agent (rule 1).
@@ -1620,7 +1642,8 @@ async function handleRequest(
     resetMicrovm: opts.resetMicrovm,
     libraryAgentApi: opts.libraryAgentApi,
     goalAgentApi: opts.goalAgentApi,
-    followupAgentApi: opts.followupAgentApi
+    followupAgentApi: opts.followupAgentApi,
+    previewFile: opts.previewFile
   });
 
   // Ensure transport + mcp tear down once the response finishes, even on

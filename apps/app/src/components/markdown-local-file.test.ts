@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseLocalFileMarkdownHref } from './markdown-local-file.js';
+import { conversationFilePreviewPaths, parseLocalFileMarkdownHref } from './markdown-local-file.js';
 import { parseThreadMentionHref, splitThreadMentionText } from './markdown-thread-mentions.js';
 
 describe('parseLocalFileMarkdownHref', () => {
@@ -12,6 +12,42 @@ describe('parseLocalFileMarkdownHref', () => {
   it('rejects http(s) and parent-segment escapes', () => {
     expect(parseLocalFileMarkdownHref('https://example.com/app.ts')).toBeNull();
     expect(parseLocalFileMarkdownHref('/tmp/../etc/passwd')).toBeNull();
+  });
+});
+
+describe('conversationFilePreviewPaths', () => {
+  it('picks a workspace-relative path from the top of an assistant dump', () => {
+    const dump = [
+      'docs/architecture/high-level-architecture.md',
+      '',
+      '# Zana Command Center',
+      '',
+      'See also packages/thread-view/src/timeline-row-title.ts for titles.'
+    ].join('\n');
+    expect(conversationFilePreviewPaths(dump)).toEqual([
+      'docs/architecture/high-level-architecture.md'
+    ]);
+  });
+
+  it('accepts backtick wrapping and a File: prefix, and includes attachments', () => {
+    expect(conversationFilePreviewPaths('`src/lib/foo.ts`\nbody')).toEqual(['src/lib/foo.ts']);
+    expect(conversationFilePreviewPaths('File: docs/guide.md\n# Guide')).toEqual(['docs/guide.md']);
+    expect(conversationFilePreviewPaths('# docs/architecture/high-level-architecture.md\n\nbody')).toEqual([
+      'docs/architecture/high-level-architecture.md'
+    ]);
+    expect(conversationFilePreviewPaths('hello', ['notes/todo.md'])).toEqual(['notes/todo.md']);
+  });
+
+  it('ignores headings and later body paths', () => {
+    expect(conversationFilePreviewPaths('# README.md\n\nhello')).toEqual([]);
+    const body = [
+      'Here is the doc.',
+      '',
+      '# Title',
+      '',
+      'Related: packages/cli/src/lib/run-cli.ts'
+    ].join('\n');
+    expect(conversationFilePreviewPaths(body)).toEqual([]);
   });
 });
 

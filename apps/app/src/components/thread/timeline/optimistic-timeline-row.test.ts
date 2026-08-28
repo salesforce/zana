@@ -8,11 +8,7 @@ import {
   mergePendingStopRow
 } from './optimistic-timeline-row.js';
 import { findDeepestTimelineSearchHit, timelineContainsRowId } from './thread-search.js';
-import {
-  olderHistoryAction,
-  retainTerminalExpansionIds,
-  windowTimelineRows
-} from './timeline-window.js';
+import { retainTerminalExpansionIds, windowTimelineRows } from './timeline-window.js';
 import type { ThreadTimelineViewRow } from '@zana-ai/zcc-thread-view';
 
 describe('optimistic timeline rows', () => {
@@ -70,19 +66,5 @@ describe('timeline window', () => {
     expect(windowTimelineRows(rows, 3).hiddenCount).toBe(2);
     expect(windowTimelineRows(rows, 3, { keepId: 'r0' }).visible[0]?.id).toBe('r0');
     expect(windowTimelineRows(rows, 3, { keepId: 'missing' }).hiddenCount).toBe(0);
-  });
-
-  it('offers one older-history control, preferring already-loaded rows', () => {
-    expect(olderHistoryAction({ hiddenCount: 12, hasOlderRows: true, loadingOlder: false })).toEqual({
-      kind: 'show-earlier',
-      hiddenCount: 12
-    });
-    expect(olderHistoryAction({ hiddenCount: 0, hasOlderRows: true, loadingOlder: true })).toEqual({
-      kind: 'load-older',
-      loading: true
-    });
-    expect(olderHistoryAction({ hiddenCount: 0, hasOlderRows: false, loadingOlder: false })).toEqual({
-      kind: 'none'
-    });
   });
 });

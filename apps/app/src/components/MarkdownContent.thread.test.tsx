@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { MarkdownContent } from './MarkdownContent.js';
+import { DocContent, MarkdownContent } from './MarkdownContent.js';
 
 describe('MarkdownContent thread extras', () => {
   it('turns single newlines into breaks for user messages only', () => {
@@ -25,5 +25,15 @@ describe('MarkdownContent thread extras', () => {
     );
     expect(html).toContain('file:///workspace/README.md');
     expect(html).not.toContain('target="_blank"');
+  });
+
+  it('renders mdx through the markdown pipeline', () => {
+    const html = renderToStaticMarkup(
+      <DocContent path="notes/intro.mdx" content="# Hello\n\n**there**" />
+    );
+    expect(html).toContain('inbox-md');
+    expect(html).toContain('<h1');
+    expect(html).toContain('<strong>');
+    expect(html).not.toContain('**there**');
   });
 });

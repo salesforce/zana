@@ -36,7 +36,8 @@ Chapters: threads, projects, machines, terminals, plugins, automations, agent-co
   zcc thread tell <id> "..."
   zcc thread wait <id> [--timeout 20m]
   zcc thread stop <id>
-  zcc thread fork|archive|unarchive|open <id>
+  zcc thread fork|archive|unarchive <id>
+  zcc thread open <id> [--file PATH] [--source workspace|thread-storage] [--line N]
   zcc thread interactions <id>
 
 zcc run and zcc agent send are deprecated aliases for spawn and tell.

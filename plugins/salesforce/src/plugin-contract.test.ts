@@ -87,7 +87,7 @@ describe('salesforce plugin contract', () => {
 
   it('registers settings, project tab, guardrail, composer banner, Agent Script panel, and file opener', () => {
     const set = collectTestPluginApp(app, 'salesforce');
-    expect(set.settingsSections[0]?.id).toBe('salesforce');
+    expect(set.settingsSections).toEqual([]);
     expect(set.projectTabs[0]?.label).toBe('Salesforce');
     expect(set.pendingInteractions[0]?.id).toBe('salesforce-guardrail');
     expect(set.composerCustomizations[0]?.id).toBe('salesforce-banner');

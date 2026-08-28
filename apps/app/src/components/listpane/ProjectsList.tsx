@@ -52,9 +52,9 @@ import { useEnsureThreads } from '../../hooks/useEnsureThreads.js';
 import { useRouteState } from '../../hooks/useRouteState.js';
 import { copyText } from '../../lib/copy-text.js';
 import { getThreadRoutePath } from '../../lib/route-paths.js';
-import { FleetKindChip } from '../FleetKindChip.js';
 import { ProviderIcon } from '../thread/pickers/ProviderIcon.js';
 import {
+  fleetKindLabel,
   railThreadsForProject,
   threadIsLiveForRail,
   threadRailStatus,
@@ -759,7 +759,7 @@ export function ProjectsList({
                             <span className={threadRailStatusClass(status)}>
                               {status}
                             </span>
-                            {' · Agent'}
+                            {` · ${fleetKindLabel('thread')}`}
                           </span>
                         </span>
                       </button>
@@ -774,6 +774,7 @@ export function ProjectsList({
                       <button
                         type="button"
                         className={`project-terminal-row ${isUnread ? 'unread' : ''}`}
+                        data-kind="agent"
                         onPointerDown={(e) => e.stopPropagation()}
                         onClick={() => {
                           if (consumeProjectClick()) return;
@@ -791,7 +792,6 @@ export function ProjectsList({
                           <AgentRowDetail session={t} />
                         </span>
                         <AgentStatusDot sessionId={t.id} />
-                        <FleetKindChip kind="agent" />
                       </button>
                     </div>
                   );

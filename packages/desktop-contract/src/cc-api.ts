@@ -446,7 +446,7 @@ export interface CcApi {
       summaryOnly?: 'true' | 'false';
     }): Promise<{
       rows: unknown[];
-      events: unknown[];
+      events?: unknown[];
       status: string;
       goal?: unknown;
       pendingTodos?: unknown;

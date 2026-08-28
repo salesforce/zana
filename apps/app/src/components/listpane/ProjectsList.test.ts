@@ -229,9 +229,14 @@ describe('nested live threads', () => {
     expect(working).toContain('color: var(--accent-gold);');
     expect(working).toContain('animation: nav-badge-pulse');
     expect(source).not.toContain('MessageSquare');
-    expect(source).not.toContain('<FleetKindChip kind="thread" />');
+    expect(source).not.toContain('FleetKindChip');
+    expect(source).toContain("fleetKindLabel('thread')");
+    expect(source).toContain('data-kind="agent"');
     expect(readFileSync(new URL('./AgentRowDetail.tsx', import.meta.url), 'utf8')).toContain(
       'agentRowStateClass'
+    );
+    expect(readFileSync(new URL('./AgentRowDetail.tsx', import.meta.url), 'utf8')).toContain(
+      "fleetKindLabel('agent')"
     );
   });
 });

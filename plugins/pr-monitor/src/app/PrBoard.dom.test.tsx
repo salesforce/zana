@@ -67,6 +67,7 @@ describe('PrBoard', () => {
         onToggleCollapse={over?.onToggleCollapse ?? (() => {})}
         onToggleSelect={() => {}}
         onDismiss={() => {}}
+        onOpen={() => {}}
         repositories={over?.repositories}
         tisWarnHours={over?.tisWarnHours}
         tisDangerHours={over?.tisDangerHours}

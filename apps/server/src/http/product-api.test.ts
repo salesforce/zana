@@ -339,6 +339,7 @@ describe('product HTTP', () => {
     const timeline = await timelineResponse.json();
     expect(timeline.threadId).toBe(thread.id);
     expect(timeline.rows).toEqual([]);
+    expect(timeline).not.toHaveProperty('events');
     const outlineResponse = await fetch(`${server.url}api/v1/threads/${thread.id}/conversation-outline`);
     expect(outlineResponse.status).toBe(200);
     await expect(outlineResponse.json()).resolves.toMatchObject({ items: [], maxSeq: 0 });
@@ -1362,5 +1363,109 @@ describe('product HTTP pending interactions', () => {
     await expect(
       fetch(`${server.url}api/v1/threads/missing-thread/interactions`).then((response) => response.status)
     ).resolves.toBe(404);
+  });
+});
+
+describe('product HTTP thread file preview', () => {
+  it('confines a workspace file, rejects escapes, and opens a PTY panel owner', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-preview-'));
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-product-preview-proj-'));
+    writeFileSync(
+      join(dataDir, 'projects.json'),
+      JSON.stringify({
+        version: 1,
+        projects: [
+          {
+            id: 'proj-1',
+            name: 'Alpha',
+            path: projectRoot,
+            createdAt: 1,
+            lastActiveAt: 1
+          }
+        ]
+      })
+    );
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: projectRoot
+    });
+    const thread = createConversationThread(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code'
+    });
+
+    const emitted: unknown[] = [];
+    const orig = server.ctx.hub.emit.bind(server.ctx.hub);
+    vi.spyOn(server.ctx.hub, 'emit').mockImplementation((type, payload) => {
+      if (type === 'threads:open') emitted.push(payload);
+      orig(type, payload);
+    });
+
+    const opened = await fetch(`${server.url}api/v1/threads/${thread.id}/open`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        file: { source: 'workspace', path: 'src/a.ts', lineNumber: 4 }
+      })
+    });
+    expect(opened.status).toBe(200);
+    await expect(opened.json()).resolves.toMatchObject({
+      path: 'src/a.ts',
+      source: 'workspace'
+    });
+    expect(emitted[0]).toMatchObject({
+      type: 'thread-open',
+      threadId: thread.id,
+      projectId: 'proj-1',
+      split: 'right',
+      file: { source: 'workspace', path: 'src/a.ts', lineNumber: 4 }
+    });
+
+    const escaped = await fetch(`${server.url}api/v1/threads/${thread.id}/open`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        file: { source: 'workspace', path: '../secret.txt' }
+      })
+    });
+    expect(escaped.status).toBe(403);
+    await expect(escaped.json()).resolves.toMatchObject({ ok: false, code: 'path-escape' });
+
+    const missing = await fetch(`${server.url}api/v1/threads/missing/open`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        file: { source: 'workspace', path: 'src/a.ts' }
+      })
+    });
+    expect(missing.status).toBe(404);
+
+    const pty = await fetch(`${server.url}api/v1/threads/sess-pty/open`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'proj-1',
+        file: { source: 'workspace', path: 'README.md' }
+      })
+    });
+    expect(pty.status).toBe(200);
+    await expect(pty.json()).resolves.toMatchObject({
+      path: 'README.md',
+      source: 'workspace'
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      type: 'thread-open',
+      threadId: 'sess-pty',
+      projectId: 'proj-1',
+      file: { source: 'workspace', path: 'README.md', lineNumber: null }
+    });
   });
 });

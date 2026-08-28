@@ -51,6 +51,7 @@ interface Props {
   onToggleCollapse: (status: PrRollupStatus) => void;
   onToggleSelect: (url: string) => void;
   onDismiss: (url: string) => void;
+  onOpen: (url: string) => void;
 }
 
 export function PrBoard({
@@ -66,6 +67,7 @@ export function PrBoard({
   onToggleCollapse,
   onToggleSelect,
   onDismiss,
+  onOpen,
 }: Props) {
   const columns = useMemo(() => groupPrsByStatus(prs), [prs]);
   const visible = useMemo(() => visibleBoardColumns(columns, { showEmpty }), [columns, showEmpty]);
@@ -136,6 +138,7 @@ export function PrBoard({
                         selectMode={selectMode}
                         onToggleSelect={onToggleSelect}
                         onDismiss={onDismiss}
+                        onOpen={onOpen}
                       />
                     );
                   })

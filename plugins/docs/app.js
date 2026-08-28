@@ -16,7 +16,6 @@ export default {
         return React.createElement(
           'div',
           { className: 'docs-file-opener' },
-          React.createElement('p', { className: 'docs-file-opener-path' }, props.path),
           React.createElement(Original)
         );
       }

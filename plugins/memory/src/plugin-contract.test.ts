@@ -8,6 +8,6 @@ describe("memory plugin", () => {
     const { zcc, harness } = createFakePluginHost({ pluginId: "memory" });
     await plugin(zcc);
     expect(harness.agentConfigurers?.length ?? 1).toBeGreaterThan(0);
-    expect(collectTestPluginApp(app, "memory").settingsSections[0]?.id).toBe("memory");
+    expect(collectTestPluginApp(app, "memory").settingsSections).toEqual([]);
   });
 });

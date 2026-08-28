@@ -560,7 +560,7 @@ export const threadOpenFileSchema = z
   .object({
     source: panelFileSourceSchema,
     path: z.string().min(1),
-    lineNumber: z.number().int().positive().nullable(),
+    lineNumber: z.number().int().positive().nullable().optional(),
   })
   .strict();
 export type ThreadOpenFile = z.infer<typeof threadOpenFileSchema>;
@@ -568,7 +568,7 @@ export type ThreadOpenFile = z.infer<typeof threadOpenFileSchema>;
 const threadOpenFileLenientSchema = z.object({
   source: panelFileSourceSchema,
   path: z.string().min(1),
-  lineNumber: z.number().int().positive().nullable(),
+  lineNumber: z.number().int().positive().nullable().optional(),
 });
 
 /**
@@ -606,7 +606,13 @@ export const threadOpenRequestSchema = z
     // Omission preserves ordinary thread/file-open behavior, while an explicit
     // placement lets callers choose how the pane should open.
     split: threadOpenSplitSchema.optional(),
-    file: threadOpenFileSchema.nullable(),
+    file: threadOpenFileSchema.nullable().optional(),
+    /**
+     * Fallback project when `:id` is a live panel owner (PTY session id) rather
+     * than a conversation thread. Ignored when the path id is a registered
+     * conversation thread — that row's projectId wins (Rule 1).
+     */
+    projectId: z.string().min(1).optional(),
   })
   .strict();
 export type ThreadOpenRequest = z.infer<typeof threadOpenRequestSchema>;
@@ -614,6 +620,8 @@ export type ThreadOpenRequest = z.infer<typeof threadOpenRequestSchema>;
 /** Response for POST /threads/:id/open: how many connected clients received it. */
 export const threadOpenResponseSchema = z.object({
   delivered: z.number().int().nonnegative(),
+  path: z.string().min(1).optional(),
+  source: panelFileSourceSchema.optional(),
 });
 export type ThreadOpenResponse = z.infer<typeof threadOpenResponseSchema>;
 

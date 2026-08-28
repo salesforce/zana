@@ -274,7 +274,8 @@ PRODUCT API (app must be running — ZCC_SERVER_URL, default http://127.0.0.1:87
   status                   Live dashboard: projects and threads
   thread list [--project ID]
   thread spawn --project <id> --prompt "..." [--provider <id>] [--wait]
-  thread show|log|tell|wait|stop|fork|archive|unarchive|open|interactions <id>
+  thread show|log|tell|wait|stop|fork|archive|unarchive|interactions <id>
+  thread open <id> [--file PATH] [--source workspace|thread-storage] [--line N]
   machine list|show|join-code|rename|remove|provider-cli
   project list|show|create|files|content|skills
   projects ls              Alias of project list

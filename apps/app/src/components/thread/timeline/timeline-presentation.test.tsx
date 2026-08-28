@@ -7,7 +7,7 @@ import { TimelineTitleView, stopTitleEvent } from './TimelineTitleView.js';
 import { mentionPillLabel } from './mention-pills.js';
 import { imagePreviewSrc, resolveQuestionAnswer } from './work-row-helpers.js';
 import { decorationText, isPastWorkRow, titleSegmentClass } from './timeline-title.js';
-import { firstUnreadRowId, isNearBottom, shouldStickToBottom } from './timeline-scroll.js';
+import { firstUnreadRowId, isNearBottom, pinScrollToBottom, shouldStickToBottom } from './timeline-scroll.js';
 
 const workBase = {
   threadId: 't1',
@@ -372,6 +372,77 @@ describe('WorkRowBody', () => {
 });
 
 describe('conversation and banners', () => {
+  it('offers Preview next to Show more when an assistant dump starts with a file path', () => {
+    const dump = `docs/architecture/high-level-architecture.md\n\n# Title\n${'x'.repeat(2100)}`;
+    const html = renderToStaticMarkup(
+      <ConversationRow
+        threadId="t1"
+        row={{
+          ...workBase,
+          id: 'a-preview',
+          kind: 'conversation',
+          role: 'assistant',
+          text: dump,
+          attachments: null,
+          initiator: 'agent',
+          senderThreadId: null,
+          systemMessageKind: 'unlabeled',
+          systemMessageSubject: null,
+          turnRequest: { isGrouped: false, kind: 'message', status: 'accepted' },
+          mentions: []
+        }}
+      />
+    );
+    expect(html).toContain('thread-open-file-preview');
+    expect(html).toContain('Preview');
+    expect(html).toContain('thread-message-overflow');
+    expect(html).toContain('Show more');
+  });
+
+  it('does not offer Preview without a thread id or a leading file path', () => {
+    const dump = `docs/architecture/high-level-architecture.md\n\n# Title\n${'x'.repeat(2100)}`;
+    const noThread = renderToStaticMarkup(
+      <ConversationRow
+        row={{
+          ...workBase,
+          id: 'a-no-thread',
+          kind: 'conversation',
+          role: 'assistant',
+          text: dump,
+          attachments: null,
+          initiator: 'agent',
+          senderThreadId: null,
+          systemMessageKind: 'unlabeled',
+          systemMessageSubject: null,
+          turnRequest: { isGrouped: false, kind: 'message', status: 'accepted' },
+          mentions: []
+        }}
+      />
+    );
+    expect(noThread).not.toContain('thread-open-file-preview');
+    expect(noThread).toContain('Show more');
+    const prose = renderToStaticMarkup(
+      <ConversationRow
+        threadId="t1"
+        row={{
+          ...workBase,
+          id: 'a-prose',
+          kind: 'conversation',
+          role: 'assistant',
+          text: 'Done.',
+          attachments: null,
+          initiator: 'agent',
+          senderThreadId: null,
+          systemMessageKind: 'unlabeled',
+          systemMessageSubject: null,
+          turnRequest: { isGrouped: false, kind: 'message', status: 'accepted' },
+          mentions: []
+        }}
+      />
+    );
+    expect(prose).not.toContain('thread-open-file-preview');
+  });
+
   it('renders mention pills and copy chrome', () => {
     const html = renderToStaticMarkup(
       <ConversationRow
@@ -461,6 +532,7 @@ describe('conversation and banners', () => {
       <ConversationRow
         threadId="t1"
         parentThreadId="parent"
+        onCopy={() => undefined}
         row={{
           ...workBase,
           id: 'a-fork',
@@ -479,6 +551,8 @@ describe('conversation and banners', () => {
     );
     expect(assistant).toContain('thread-fork-message');
     expect(assistant).toContain('thread-send-to-main');
+    expect(assistant).toContain('thread-add-to-chat');
+    expect(assistant).toContain('thread-copy-message');
     expect(assistant).toContain('thread-timeline-bubble');
     expect(assistant).toContain('thread-timeline-row is-assistant');
   });
@@ -595,6 +669,25 @@ describe('title view and scroll helpers', () => {
     expect(html).toContain('accent-file');
     expect(html).toContain('README.md');
     expect(html).toContain('+1 −0');
+    const preview = renderToStaticMarkup(
+      <TimelineTitleView
+        now={0}
+        title={{
+          segments: [
+            { text: 'Read ', em: false, shimmer: false, truncate: false },
+            { text: 'src/a.ts', em: true, shimmer: false, truncate: true, accent: 'file' }
+          ],
+          decorations: [],
+          tone: 'default',
+          action: { kind: 'open-file-preview', path: 'src/a.ts' },
+          plain: 'Read src/a.ts'
+        }}
+        onAction={() => undefined}
+      />
+    );
+    expect(preview).toContain('thread-open-file-preview');
+    expect(preview).toContain('Preview');
+    expect(preview).toContain('src/a.ts');
     const linked = renderToStaticMarkup(
       <TimelineTitleView
         now={0}
@@ -622,6 +715,18 @@ describe('title view and scroll helpers', () => {
     expect(isNearBottom({ scrollTop: 0, scrollHeight: 400, clientHeight: 40 })).toBe(false);
     expect(shouldStickToBottom({ isBusy: true, userPinnedAway: false })).toBe(true);
     expect(shouldStickToBottom({ isBusy: true, userPinnedAway: true })).toBe(false);
+    expect(shouldStickToBottom({ isBusy: false, userPinnedAway: false })).toBe(false);
+    expect(shouldStickToBottom({ isBusy: false, userPinnedAway: false, initialOpen: true })).toBe(true);
+    expect(shouldStickToBottom({ isBusy: false, userPinnedAway: true, initialOpen: true })).toBe(false);
+    expect(shouldStickToBottom({ isBusy: false, streaming: true, userPinnedAway: false })).toBe(true);
+    const pane = { scrollTop: 0, scrollHeight: 400, clientHeight: 40 };
+    pinScrollToBottom(pane);
+    expect(pane.scrollTop).toBe(360);
+    pinScrollToBottom(pane);
+    expect(pane.scrollTop).toBe(360);
+    const short = { scrollTop: 0, scrollHeight: 20, clientHeight: 40 };
+    pinScrollToBottom(short);
+    expect(short.scrollTop).toBe(0);
     expect(firstUnreadRowId([{ id: 'a', sourceSeqStart: 1 }, { id: 'b', sourceSeqStart: 5 }], 3)).toBe('b');
     expect(firstUnreadRowId([{ id: 'a', sourceSeqStart: 1 }], 0)).toBeNull();
     const prevented = { preventDefault() { this.ok = true; }, stopPropagation() { this.stopped = true; }, ok: false, stopped: false };

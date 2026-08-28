@@ -27,7 +27,8 @@ describe('ThreadListEntry', () => {
     expect(html).toContain('data-testid="thread-list-entry-working"');
     expect(html).toContain('Planning next move');
     expect(html).toContain('data-kind="thread"');
-    expect(html).toContain('Agent');
+    expect(html).toContain('Thread');
+    expect(html).not.toContain('CLI Agent');
     expect(html).toContain('<svg');
     expect(html).not.toContain('lucide-message-square');
   });

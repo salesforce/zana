@@ -1,7 +1,13 @@
+/**
+ * @vitest-environment happy-dom
+ */
+import { cleanup, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { definePluginApp } from '@zana-ai/zcc-plugin-sdk';
 import type { PluginSettingsSnapshot } from '@zana-ai/zcc-domain/product';
-import { PluginSettingsForm } from './PluginDefinedSettings.js';
+import { PluginDefinedSettings, PluginSettingsForm } from './PluginDefinedSettings.js';
+import { clearPluginSlots, interpretPluginApp } from './plugin-slots.js';
 
 const snap: PluginSettingsSnapshot = {
   descriptors: {
@@ -32,5 +38,27 @@ describe('PluginSettingsForm', () => {
     );
     expect(html).toContain('nope');
     expect(html).toContain('disabled=""');
+  });
+});
+
+describe('PluginDefinedSettings', () => {
+  afterEach(() => {
+    cleanup();
+    clearPluginSlots('custom-instructions');
+  });
+
+  it('hides the define() form when the plugin mounts its own settings section', () => {
+    interpretPluginApp(
+      'custom-instructions',
+      definePluginApp((app) => {
+        app.slots.settingsSection({
+          id: 'custom-instructions',
+          component: () => <textarea aria-label="Custom instructions" />
+        });
+      })
+    );
+    render(<PluginDefinedSettings pluginId="custom-instructions" />);
+    expect(screen.queryByText('Plugin settings')).toBeNull();
+    expect(screen.queryByText('Persisted on the server for this plugin.')).toBeNull();
   });
 });

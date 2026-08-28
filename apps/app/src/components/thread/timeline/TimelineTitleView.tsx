@@ -10,6 +10,26 @@ export function stopTitleEvent(event: { preventDefault(): void; stopPropagation(
   event.stopPropagation();
 }
 
+export function ThreadOpenFilePreviewButton({
+  onClick
+}: {
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="thread-timeline-preview-btn"
+      data-testid="thread-open-file-preview"
+      onClick={(event) => {
+        stopTitleEvent(event);
+        onClick();
+      }}
+    >
+      Preview
+    </button>
+  );
+}
+
 export function TimelineTitleView({
   title,
   now,
@@ -61,6 +81,9 @@ export function TimelineTitleView({
           </span>
         );
       })}
+      {title.action?.kind === 'open-file-preview' && onAction ? (
+        <ThreadOpenFilePreviewButton onClick={() => onAction(title.action!)} />
+      ) : null}
       {title.decorations.map((decoration, index) => {
         const text = decorationText(decoration, now);
         if (!text) return <Fragment key={`${decoration.kind}-${index}`} />;

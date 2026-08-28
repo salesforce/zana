@@ -1,13 +1,11 @@
 import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useShallow } from 'zustand/react/shallow';
 import { X, Square, Inbox, Loader2, RefreshCw, FileText, Sparkles, MailCheck, BellOff, Maximize2, Minimize2 } from 'lucide-react';
 import { inboxQuestions } from '@zana-ai/zcc-domain/product';
 import type { AgentState, InboxEntry, TerminalSession } from '@zana-ai/zcc-domain/product';
-import { profileIcon, personaIcon } from '../lib/profileIcon.js';
 import { isClaudeProfile } from '../lib/launchProfile.js';
 import { providerCapabilities } from '@zana-ai/zcc-domain/launch-provider';
-import { useData, usePersonas, useAgentStatus, useCatchUpSummary, useSubagents, useOverseerActivity, useIdleTriage, useInbox, useInboxAnswered } from '../store.js';
+import { useData, useAgentStatus, useCatchUpSummary, useSubagents, useOverseerActivity, useIdleTriage, useInbox, useInboxAnswered } from '../store.js';
 import { idleSurfacesToNeedsYou } from './AgentBoard.js';
 import { inboxPrimaryTitle } from '../lib/inboxPresentation.js';
 import { QuestionBlock } from './InboxQuestionBlock.js';
@@ -59,9 +57,6 @@ export function AgentTerminalModal({
   state,
   onClose
 }: Props) {
-  // PERF FIX: wrap array selector in useShallow to prevent re-renders when the
-  // array content is unchanged (personas is an array).
-  const personas = usePersonas(useShallow((s) => s.personas));
   const heartbeatEnabled = useData((s) => s.heartbeatEnabled);
   const ref = useRef<HTMLDivElement | null>(null);
 
@@ -130,11 +125,6 @@ export function AgentTerminalModal({
   const toggleHeartbeat = () => {
     void useData.getState().setHeartbeat(session.id, projectId, !session.heartbeat);
   };
-
-  const persona = session.personaId
-    ? personas.find((p) => p.id === session.personaId)
-    : undefined;
-  const subtitle = persona?.name ?? session.profile;
 
   const stats = useSessionStats(session.id, projectId, exited);
   // Count of this agent's flagged reports (inbox_push({ report: true }) on the
@@ -307,16 +297,9 @@ export function AgentTerminalModal({
         aria-label={`Agent ${session.title}`}
         tabIndex={-1}
       >
+        {/* Title lives on AgentSessionView. This chrome is status / Report /
+            shelves / follow on the left, fullscreen + close on the right. */}
         <header className="modal-header agent-modal-header" data-testid="agent-modal-header">
-          <span
-            className={`agent-modal-icon tab-profile-icon profile-${session.profile}`}
-          >
-            {persona ? personaIcon(persona, 15) : profileIcon(session.profile, 15)}
-          </span>
-          <span className="agent-modal-heading">
-            <span className="agent-modal-title">{session.title}</span>
-            <span className="agent-modal-sub">{subtitle}</span>
-          </span>
           {!exited && (
             <span
               className={`agent-modal-state agent-${state}`}
@@ -342,17 +325,19 @@ export function AgentTerminalModal({
           </div>
           <TaskShelvesPopover shelves={shelves} onSelectRow={onSelectShelfRow} />
           <FavoriteStar session={session} size={16} className="agent-modal-fav" />
-          <button
-            className="icon-button"
-            onClick={toggleFullScreen}
-            aria-label={fullScreen ? 'Exit full screen' : 'Full screen'}
-            title={fullScreen ? 'Exit full screen' : 'Full screen'}
-          >
-            {fullScreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-          </button>
-          <button className="icon-button" onClick={onClose} aria-label="Close">
-            <X size={16} />
-          </button>
+          <div className="agent-modal-window-controls">
+            <button
+              className="icon-button"
+              onClick={toggleFullScreen}
+              aria-label={fullScreen ? 'Exit full screen' : 'Full screen'}
+              title={fullScreen ? 'Exit full screen' : 'Full screen'}
+            >
+              {fullScreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+            </button>
+            <button className="icon-button" onClick={onClose} aria-label="Close">
+              <X size={16} />
+            </button>
+          </div>
         </header>
 
         {/* Body: live PTY beside the shared thread secondary panel (Info / Diff /

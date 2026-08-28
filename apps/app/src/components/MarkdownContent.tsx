@@ -1,4 +1,4 @@
-import { Children, isValidElement, type ReactNode } from 'react';
+import { Children, isValidElement, memo, type ReactNode } from 'react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
@@ -45,29 +45,37 @@ export function DocContent({
   path,
   content,
   mermaidTheme,
-  exportable = false
+  exportable = false,
+  threadId,
+  projectId
 }: {
   path: string;
   content: string;
   mermaidTheme?: 'dark' | 'default';
   exportable?: boolean;
+  threadId?: string;
+  projectId?: string | null;
 }) {
   const lower = path.toLowerCase();
-  if (lower.endsWith('.md') || lower.endsWith('.markdown')) {
+  if (lower.endsWith('.md') || lower.endsWith('.markdown') || lower.endsWith('.mdx')) {
     // Library docs carry a `---`…`---` metadata header. react-markdown has no
     // notion of front-matter and would render it as a mangled bold blob, so
     // peel it off and surface the useful fields as a clean chip header above
     // the body. Non-front-matter docs render exactly as before.
     const parsed = parseFrontMatter(content);
-    if (parsed) {
-      return (
-        <>
-          <DocFrontMatter meta={parsed.meta} />
-          <MarkdownContent text={parsed.body} mermaidTheme={mermaidTheme} exportable={exportable} />
-        </>
-      );
-    }
-    return <MarkdownContent text={content} mermaidTheme={mermaidTheme} exportable={exportable} />;
+    const markdown = parsed ? parsed.body : content;
+    return (
+      <>
+        {parsed ? <DocFrontMatter meta={parsed.meta} /> : null}
+        <MarkdownContent
+          text={markdown}
+          mermaidTheme={mermaidTheme}
+          exportable={exportable}
+          threadId={threadId}
+          projectId={projectId}
+        />
+      </>
+    );
   }
   // Syntax-highlight recognized source files (.ts/.tsx/.py/…) the same way the
   // markdown path highlights fenced code. Unknown/extensionless files fall back
@@ -127,7 +135,7 @@ function formatCreatedAt(ms: number | undefined): string {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-export function MarkdownContent({
+export const MarkdownContent = memo(function MarkdownContent({
   text,
   mermaidTheme,
   exportable = false,
@@ -240,7 +248,7 @@ export function MarkdownContent({
           pre: (props) => {
             const mermaid = extractMermaid(props.children);
             if (mermaid !== null)
-              return <MermaidDiagram code={mermaid} theme={mermaidTheme} exportable={exportable} />;
+              return <MermaidDiagram key={mermaid} code={mermaid} theme={mermaidTheme} exportable={exportable} />;
             return <pre {...props} />;
           }
         }}
@@ -249,7 +257,7 @@ export function MarkdownContent({
       </ReactMarkdown>
     </div>
   );
-}
+});
 
 /**
  * Given the children of a markdown `<pre>` (which react-markdown renders as a

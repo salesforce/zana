@@ -10,7 +10,7 @@
   },
   "zcc": {
     "name": "Custom instructions",
-    "description": "A Settings section for host-wide agent instructions.",
+    "description": "Add persistent custom instructions to agent threads on this host.",
     "branding": { "icon": "ScrollText" },
     "server": "./server.mjs",
     "app": "./app.js"

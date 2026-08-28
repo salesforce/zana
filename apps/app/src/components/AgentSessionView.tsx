@@ -12,6 +12,7 @@ import { ThreadPluginTab } from './thread/secondary-panel/ThreadPluginTab.js';
 import { ThreadExplorerTab } from './thread/secondary-panel/ThreadExplorerTab.js';
 import { useSecondaryPanel } from './thread/secondary-panel/useThreadSecondaryPanel.js';
 import { useInAppBrowserPanel } from './thread/secondary-panel/useInAppBrowserPanel.js';
+import { useThreadOpenFileSignal } from './thread/secondary-panel/useThreadOpenFileSignal.js';
 import { appendThreadRecentItem, tabInputFromRecentItem } from './thread/secondary-panel/threadRecentItems.js';
 import {
   activeClosableTab,
@@ -80,6 +81,18 @@ export function AgentSessionView({
 }) {
   const panel = useSecondaryPanel(modal ? `${session.id}:modal` : session.id, { defaultOpen: !modal });
   useInAppBrowserPanel(modal ? `${session.id}:modal` : session.id, panel);
+  useThreadOpenFileSignal({
+    threadId: session.id,
+    environmentId: session.cwd || null,
+    openTab: (tab) => {
+      if (tab.kind === 'file-preview' && tab.path) {
+        appendThreadRecentItem(session.id, { kind: 'file', source: 'workspace', path: tab.path });
+      } else if (tab.kind === 'storage-preview' && tab.path) {
+        appendThreadRecentItem(session.id, { kind: 'file', source: 'thread-storage', path: tab.path });
+      }
+      panel.addTab(tab);
+    }
+  });
   const exited = session.status === 'exited';
   const loadedStats = useSessionStats(session.id, projectId, exited, providedStats === undefined);
   const stats = providedStats ?? loadedStats;

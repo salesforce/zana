@@ -31,10 +31,11 @@ describe('thread path confine', () => {
   });
 
   it('clamps timeline page size and preview text', () => {
-    expect(parseTimelineSegmentLimit(null)).toBe(400);
+    expect(parseTimelineSegmentLimit(null)).toBe(10_000);
     expect(parseTimelineSegmentLimit('12')).toBe(12);
-    expect(parseTimelineSegmentLimit('9999')).toBe(2000);
-    expect(parseTimelineSegmentLimit('nope')).toBe(400);
+    expect(parseTimelineSegmentLimit('9999')).toBe(9999);
+    expect(parseTimelineSegmentLimit('99999')).toBe(10_000);
+    expect(parseTimelineSegmentLimit('nope')).toBe(10_000);
     expect(parsePositiveInt('12')).toBe(12);
     expect(parsePositiveInt('0')).toBeUndefined();
     expect(outlinePreview('  hello\nworld  ')).toBe('hello world');

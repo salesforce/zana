@@ -79,4 +79,19 @@ describe('WorkRowBody', () => {
     expect(html).toContain('thread-ansi-output');
     expect(html).toContain('done');
   });
+
+  it('opens a file-read path as a preview control when threadId is set', () => {
+    const row: TimelineViewWorkRow = {
+      ...base,
+      workKind: 'file-read',
+      callId: 'read-1',
+      path: 'src/a.ts',
+      cmd: null,
+      completedAt: 2
+    };
+    const html = renderToStaticMarkup(<WorkRowBody row={row} threadId="t1" />);
+    expect(html).toContain('src/a.ts');
+    expect(html).toContain('thread-open-file-preview');
+    expect(html).toContain('Preview');
+  });
 });

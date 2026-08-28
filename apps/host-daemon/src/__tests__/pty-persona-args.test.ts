@@ -272,6 +272,7 @@ describe('PtyManager.create — persona layer integration', () => {
     const merged = argv[idx + 1].split(',');
     // Should include both inbox pre-approvals and persona tools
     expect(merged).toContain('mcp__zcc-inbox__inbox_push');
+    expect(merged).toContain('mcp__zcc-inbox__preview_file');
     // Follow-up tools are pre-approved too (project-locked, provenance-stamped),
     // so parking / resolving a question never prompts.
     expect(merged).toContain('mcp__zcc-inbox__followup_create');
@@ -459,6 +460,7 @@ describe('PtyManager.create — trustZccToolsEnabled (whole-server pre-approval)
     const tools = argv[idx + 1].split(',');
     // Narrow list present; wildcard absent; privileged delete still withheld.
     expect(tools).toContain('mcp__zcc-inbox__inbox_push');
+    expect(tools).toContain('mcp__zcc-inbox__preview_file');
     expect(tools).not.toContain('mcp__zcc-inbox');
     expect(tools).not.toContain('mcp__zcc-inbox__library_remove');
   });
