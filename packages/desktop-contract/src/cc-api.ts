@@ -333,6 +333,12 @@ export interface CcApi {
       request: { provider: ProviderCliKey; actionKind: ProviderCliInstallActionKind }
     ): Promise<ProviderCliInstallEvent[]>;
     onChanged(cb: (hosts: Host[] | undefined) => void): () => void;
+    /**
+     * Restart this laptop's enrolled host-daemon and reconnect it to the
+     * product hub. Desktop uses the co-started host utility; loopback HTTP
+     * is the fallback when that process is not running.
+     */
+    relaunchLocal(): Promise<{ ok: true } | { ok: false; message: string }>;
   };
   /**
    * Outbound pairing-relay tunnel to the public origin (Heroku front door).
@@ -1327,6 +1333,7 @@ export interface CcApi {
       marketplace: string;
     }>>;
     applyUpdate(id: string): Promise<Result<true>>;
+    remove(id: string): Promise<Result<true>>;
   };
   /**
    * Runtime extensions discovered under `~/.zcc/extensions/<id>/`.

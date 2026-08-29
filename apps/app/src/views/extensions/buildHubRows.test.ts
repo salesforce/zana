@@ -96,14 +96,13 @@ describe('buildHubRows — union of loaded modules + discovered entries', () => 
     expect(rows.filter((r) => r.module.id === 'foo-0001')).toHaveLength(1);
   });
 
-  it('keeps built-ins (no entry) alongside extension rows, sorted by title', () => {
+  it('keeps built-in compiled modules out of Installed unless they are actually installed', () => {
     const rows = buildHubRows(
-      [mod('slack', 'Slack')],
+      [mod('docs', 'Docs')],
       [entry('aaa-0001', { manifest: { id: 'aaa-0001', title: 'Aardvark', icon: 'Box', engines: { zccApi: '^1' }, entry: { renderer: 'r.js' } } } as unknown as Partial<ExtensionEntry>)]
     );
-    expect(rows.map((r) => r.module.title)).toEqual(['Aardvark', 'Slack']);
-    // The built-in row has no disk entry.
-    expect(rows.find((r) => r.module.id === 'slack')?.entry).toBeNull();
+    expect(rows.map((r) => r.module.title)).toEqual(['Aardvark']);
+    expect(rows.find((r) => r.module.id === 'docs')).toBeUndefined();
   });
 });
 

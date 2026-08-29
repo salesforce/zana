@@ -499,7 +499,11 @@ function httpProduct(): Pick<
         `/hosts/${encodeURIComponent(id)}/ssh-identity`,
         { method: 'PATCH', body: JSON.stringify(patch) }
       ),
-      onChanged: (cb) => subscribeProductEvent<Host[] | undefined>('hosts:changed', cb)
+      onChanged: (cb) => subscribeProductEvent<Host[] | undefined>('hosts:changed', cb),
+      relaunchLocal: async () => apiJson<{ ok: true } | { ok: false; message: string }>(
+        '/hosts/relaunch-local',
+        { method: 'POST', body: '{}' }
+      )
     } as CcApi['hosts'],
     relay: {
       status: async () => apiJson<{
@@ -889,6 +893,23 @@ function httpProduct(): Pick<
           };
         }
       },
+      remove: async (id) => {
+        try {
+          await apiJson(`/plugin-apps/${encodeURIComponent(id)}/remove`, {
+            method: 'POST',
+            body: '{}'
+          });
+          const listed = await apiJson<{ apps?: PluginAppEntry[] }>('/plugin-apps');
+          emitPluginApps(Array.isArray(listed.apps) ? listed.apps : []);
+          return { ok: true as const, value: true as const };
+        } catch (error) {
+          return {
+            ok: false as const,
+            code: 'WRITE_FAILED',
+            message: error instanceof Error ? error.message : String(error)
+          };
+        }
+      },
       callRpc: async (pluginId, method, args) => {
         const body = await apiJson<{ value?: unknown }>(
           `/plugin-apps/${encodeURIComponent(pluginId)}/rpc`,
@@ -1015,7 +1036,18 @@ function stubFamily(family: string): unknown {
 export const product: CcApi = new Proxy({} as CcApi, {
   get(_target, family: string | symbol) {
     const name = String(family);
-    if (name === 'threads' || name === 'environments' || name === 'hosts' || name === 'relay' || name === 'marketplaces' || name === 'cliSkills') {
+    if (name === 'hosts') {
+      const http = httpProduct().hosts;
+      if (hasDesktopBridge()) {
+        const desktop = (window.cc as unknown as CcApi).hosts;
+        return withStubs('hosts', {
+          ...http,
+          relaunchLocal: desktop?.relaunchLocal ?? http.relaunchLocal
+        });
+      }
+      return withStubs('hosts', http);
+    }
+    if (name === 'threads' || name === 'environments' || name === 'relay' || name === 'marketplaces' || name === 'cliSkills') {
       const http = httpProduct() as unknown as Record<string, unknown>;
       return withStubs(name, http[name] as object);
     }

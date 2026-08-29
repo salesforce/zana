@@ -5,6 +5,10 @@ export function machineCanReconnect(host: Host): boolean {
   return !host.isPrimary && host.status !== 'connected';
 }
 
+export function machineCanRelaunchLocal(host: Host): boolean {
+  return host.isPrimary;
+}
+
 export type MachineReconnectResult =
   | { ok: true; hostId: string }
   | { ok: false; message: string; needsSshPick?: boolean };

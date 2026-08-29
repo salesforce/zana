@@ -616,6 +616,15 @@ describe('host enroll hub and thread create', () => {
     });
     try {
       expect(server!.ctx.hostHub.connectedHostIds()).toContain(daemon.hostId);
+      const listed = await fetch(`${server!.url}api/v1/hosts`).then((response) => response.json()) as Array<{
+        id: string;
+        status: string;
+        lastSeenAt: number | null;
+      }>;
+      const row = listed.find((host) => host.id === daemon.hostId);
+      expect(row?.status).toBe('connected');
+      expect(row?.lastSeenAt).toEqual(expect.any(Number));
+      expect(Date.now() - (row?.lastSeenAt ?? 0)).toBeLessThan(10_000);
     } finally {
       await daemon.close();
     }

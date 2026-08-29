@@ -5,6 +5,7 @@ import {
   setPluginAppEnabledOnProductServer,
   checkPluginUpdatesFromProductServer,
   applyPluginUpdateOnProductServer,
+  removePluginAppOnProductServer,
   callPluginRpcOnProductServer,
   getPluginSettingsFromProductServer,
   setPluginSettingsOnProductServer
@@ -112,6 +113,24 @@ describe('plugin-apps product-server fallback', () => {
     ).resolves.toMatchObject({ ok: false, code: 'NOT_FOUND' });
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/api/v1/plugin-apps/updates');
     expect(String(fetchMock.mock.calls[1]?.[0])).toContain('/api/v1/plugin-apps/docs/update');
+  });
+
+  it('POSTs plugin remove and maps failures', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/docs/remove')) return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      return new Response(JSON.stringify({ error: 'plugin not installed: missing' }), { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(removePluginAppOnProductServer('docs', 'http://127.0.0.1:8780/')).resolves.toEqual({
+      ok: true,
+      value: true
+    });
+    await expect(removePluginAppOnProductServer('missing', 'http://127.0.0.1:8780/')).resolves.toMatchObject({
+      ok: false,
+      code: 'NOT_FOUND'
+    });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/api/v1/plugin-apps/docs/remove');
   });
 
   it('POSTs plugin RPC and maps host errors', async () => {

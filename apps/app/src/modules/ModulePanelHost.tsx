@@ -20,7 +20,7 @@ import { useUi } from '../store.js';
 import { useMergedModules } from './index.js';
 import { createModuleHost, createMountScopedHost, clearModuleCache } from './host.js';
 import { ErrorBoundary } from '../components/ErrorBoundary.js';
-import type { ModuleHost } from '@zana-ai/zcc-extension-sdk/renderer';
+import type { AppModule, ModuleHost } from '@zana-ai/zcc-extension-sdk/renderer';
 import { listNavPanels } from '../plugins/plugin-slots.js';
 import { PluginSlotBoundary } from '../plugins/PluginSlotBoundary.js';
 import { useRouteState } from '../hooks/useRouteState.js';
@@ -31,32 +31,31 @@ function generationFor(pluginId: string): number {
   return listNavPanels().find((panel) => panel.pluginId === pluginId)?.generation ?? 0;
 }
 
-export function ModulePanelHost() {
-  const nav = useUi((s) => s.nav);
-  const route = useRouteState();
-  const location = useLocation();
+/**
+ * Compiled-in / leftover disk-extension panel. Plugin nav URLs are split
+ * workspace routes, so {@link ModulePanelHost} sits out; the split pane falls
+ * back here when the plugin never registered a navPanel slot (Docs is the
+ * built-in example: UI lives in `apps/app`, `plugins/docs` only ships skills).
+ */
+export function AppModulePanel({ moduleId }: { moduleId: string }) {
   const modules = useMergedModules();
-  const pluginPanel = useHasPluginNavPanel(route.nav || nav);
-  const mod = useMemo(() => modules.find((m) => m.id === nav), [modules, nav]);
+  const mod = useMemo(() => modules.find((m) => m.id === moduleId), [modules, moduleId]);
+  return <ModulePanelBody mod={mod ?? null} extraHostClass="split-plugin-pane" />;
+}
 
-  // W1-6: wrap the cached base host in a per-MOUNT cleanup scope so the panel's
-  // `on`/`subscribe`/`register` subscriptions auto-dispose when this panel
-  // unmounts (nav switch / module change). Re-created per module id; the base
-  // host + its cache/storage are still the shared singleton.
+function ModulePanelBody({
+  mod,
+  extraHostClass
+}: {
+  mod: AppModule | null;
+  extraHostClass?: string;
+}) {
   const scoped = useMemo(() => (mod ? createMountScopedHost(getHost(mod.id)) : null), [mod]);
   const host: ModuleHost | null = scoped?.host ?? null;
   useEffect(() => () => scoped?.dispose(), [scoped]);
 
-  if (isSplitWorkspacePath(location.pathname) || pluginPanel) return null;
-
   if (!mod || !host) return null;
 
-  // As of the Phase 2 contract `panel` is optional: a module may contribute
-  // only `commands` and/or a `navBadge`. Such a module still owns a nav entry
-  // (for its badge + palette commands), so selecting it must not crash —
-  // ListPane has already bowed out of the content area for any merged module.
-  // We render a tasteful placeholder rather than nothing so the empty content
-  // area doesn't read as a broken view.
   const Panel = mod.panel;
   if (!Panel) {
     return (
@@ -71,14 +70,9 @@ export function ModulePanelHost() {
     );
   }
 
-  // Own the shell-grid placement HERE so every extension panel fills the content
-  // area (columns 2→3, full height) without each extension having to know the
-  // app-shell's grid secret. The list column returns null for a module nav, so a
-  // bare panel would otherwise auto-place into the narrow list track (col 2) and
-  // leave col 3 empty. This slot spans both — the extension's own root just needs
-  // to fill 100% (which `width:auto`/block already does inside a stretched slot).
+  const hostClass = extraHostClass ? `module-panel-host ${extraHostClass}` : 'module-panel-host';
   return (
-    <div className="module-panel-host">
+    <div className={hostClass}>
       <div className="module-panel-slot panel-body--full">
         <PluginSlotBoundary pluginId={mod.id} generation={generationFor(mod.id)}>
           <ErrorBoundary key={`${mod.id}:${generationFor(mod.id)}`}>
@@ -88,6 +82,19 @@ export function ModulePanelHost() {
       </div>
     </div>
   );
+}
+
+export function ModulePanelHost() {
+  const nav = useUi((s) => s.nav);
+  const route = useRouteState();
+  const location = useLocation();
+  const modules = useMergedModules();
+  const pluginPanel = useHasPluginNavPanel(route.nav || nav);
+  const mod = useMemo(() => modules.find((m) => m.id === nav), [modules, nav]);
+
+  if (isSplitWorkspacePath(location.pathname) || pluginPanel) return null;
+
+  return <ModulePanelBody mod={mod ?? null} />;
 }
 
 const hosts = new Map<string, ModuleHost>();

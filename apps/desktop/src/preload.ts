@@ -267,7 +267,8 @@ const api: CcApi = {
     cloneDefaultPath: async () => ({ path: '/' }),
     providerCliStatus: async () => ({}),
     installProviderCli: async () => [],
-    onChanged: () => () => {}
+    onChanged: () => () => {},
+    relaunchLocal: () => ipcRenderer.invoke(IPC.hosts.relaunchLocal)
   },
   relay: {
     status: async () => ({ state: 'unconfigured' as const }),
@@ -725,6 +726,7 @@ const api: CcApi = {
     setSettings: (pluginId, values) => ipcRenderer.invoke(IPC.pluginApps.setSettings, pluginId, values),
     checkUpdates: () => ipcRenderer.invoke(IPC.pluginApps.checkUpdates),
     applyUpdate: (id) => ipcRenderer.invoke(IPC.pluginApps.applyUpdate, id),
+    remove: (id) => ipcRenderer.invoke(IPC.pluginApps.remove, id),
     onChanged: (cb) => {
       const handler = (_e: unknown, entries: PluginAppEntry[]) => cb(entries);
       ipcRenderer.on(IPC.pluginApps.onChanged, handler);

@@ -62,6 +62,7 @@ import {
   type InstalledPublisherFilter
 } from './installed-plugins.js';
 import { reportPluginEnabledFailure, setHubRowEnabled } from './plugin-row-enabled.js';
+import { uninstallHubRow } from './plugin-row-uninstall.js';
 import {
   applyHubPluginUpdate,
   pluginAvailableVersion,
@@ -624,7 +625,15 @@ function InstalledPluginRow({ row, onOpen }: { row: HubRow; onOpen: () => void }
         ) : (
           <span className="ext-installed-switch-spacer" aria-hidden="true" />
         )}
-        <ChevronRight size={14} className="ext-installed-row-chevron" aria-hidden="true" />
+        <button
+          type="button"
+          className="ext-installed-row-chevron"
+          onClick={onOpen}
+          tabIndex={-1}
+          aria-hidden="true"
+        >
+          <ChevronRight size={14} />
+        </button>
       </span>
     </div>
   );
@@ -929,6 +938,7 @@ function AboutCard({ row }: { row: HubRow }) {
   const openPanel = () => useUi.getState().setNav(module.id);
 
   const canToggle = plugin != null || entry != null;
+  const canUninstall = plugin != null || entry != null;
   const enabled = plugin ? plugin.enabled : (entry?.enabled ?? true);
   const toggleEnabled = () => {
     void setHubRowEnabled({ module, entry: entry ?? null, plugin: plugin ?? null }, !enabled, product)
@@ -1007,11 +1017,11 @@ function AboutCard({ row }: { row: HubRow }) {
     }
   };
   const uninstall = async () => {
-    if (!entry) return;
+    if (!canUninstall) return;
     setRemoving(true);
     setRemoveError(null);
     try {
-      const res = await product.extensions.uninstall(entry.id);
+      const res = await uninstallHubRow({ module, entry: entry ?? null, plugin: plugin ?? null }, product);
       if (!res.ok) {
         setRemoveError(res.message ?? 'Uninstall failed');
         setRemoving(false);
@@ -1183,7 +1193,7 @@ function AboutCard({ row }: { row: HubRow }) {
               </button>
             )}
           </div>
-          {entry && (
+          {canUninstall && (
             <div className="ext-actions ext-actions--end">
               {confirmRemove ? (
                 <>
@@ -1210,7 +1220,7 @@ function AboutCard({ row }: { row: HubRow }) {
                   type="button"
                   className="settings-btn danger-ghost"
                   onClick={() => setConfirmRemove(true)}
-                  title="Uninstall this extension"
+                  title="Uninstall this plugin"
                 >
                   <Trash2 size={14} />
                   Uninstall

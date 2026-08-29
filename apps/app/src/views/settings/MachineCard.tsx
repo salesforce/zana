@@ -15,7 +15,7 @@ import {
   type MachineProviderCliRow,
   type ProviderCliTone
 } from './machine-provider-clis.js';
-import { machineCanReconnect } from './machine-reconnect.js';
+import { machineCanReconnect, machineCanRelaunchLocal } from './machine-reconnect.js';
 import { machineConnectionCopy, permissionLabel } from './machine-status.js';
 
 function StatusIcon({ tone }: { tone: ProviderCliTone | 'error' }) {
@@ -120,6 +120,8 @@ export function MachineCard({
   renameValue,
   reconnecting,
   reconnectError,
+  relaunching = false,
+  relaunchError = null,
   onRenameValue,
   onRenameStart,
   onRenameCommit,
@@ -127,6 +129,7 @@ export function MachineCard({
   onRetryUpdate,
   onRemove,
   onReconnect,
+  onRelaunch,
   onInstall
 }: {
   host: Host;
@@ -139,6 +142,8 @@ export function MachineCard({
   renameValue: string;
   reconnecting: boolean;
   reconnectError: string | null;
+  relaunching?: boolean;
+  relaunchError?: string | null;
   onRenameValue: (value: string) => void;
   onRenameStart: () => void;
   onRenameCommit: () => void;
@@ -146,12 +151,14 @@ export function MachineCard({
   onRetryUpdate: () => void;
   onRemove: () => void;
   onReconnect: () => void;
+  onRelaunch?: () => void;
   onInstall: (provider: ProviderCliKey, actionKind: ProviderCliInstallActionKind) => void;
 }) {
   const connection = machineConnectionCopy(host, now);
   const HostIcon = host.isPrimary ? Laptop : Monitor;
   const projectLabel = `${projectCount} ${projectCount === 1 ? 'project' : 'projects'}`;
   const showReconnect = machineCanReconnect(host);
+  const showRelaunch = machineCanRelaunchLocal(host);
 
   return (
     <li className={`machine-card${host.status === 'connected' ? ' machine-card--online' : ''}`}>
@@ -225,6 +232,19 @@ export function MachineCard({
               {reconnecting ? 'Reconnecting…' : 'Reconnect'}
             </button>
           ) : null}
+          {showRelaunch ? (
+            <button
+              type="button"
+              className="settings-btn"
+              disabled={relaunching}
+              onClick={onRelaunch}
+              aria-label={`Relaunch the local harness on ${host.name}`}
+              data-testid={`machine-relaunch-${host.id}`}
+            >
+              <RefreshCw size={13} aria-hidden="true" className={relaunching ? 'spinning' : undefined} />
+              {relaunching ? 'Relaunching…' : 'Relaunch harness'}
+            </button>
+          ) : null}
           {host.lastRejectedProtocolVersion ? (
             <button type="button" className="settings-btn" onClick={onRetryUpdate}>
               Retry update
@@ -245,18 +265,26 @@ export function MachineCard({
         </div>
       </div>
       {host.status === 'connected' ? (
-        <MachineCliInventory
-          hostId={host.id}
-          rows={cliRows}
-          busyKey={busyKey}
-          installErrors={installErrors}
-          onInstall={onInstall}
-        />
+        <>
+          <MachineCliInventory
+            hostId={host.id}
+            rows={cliRows}
+            busyKey={busyKey}
+            installErrors={installErrors}
+            onInstall={onInstall}
+          />
+          {relaunchError ? (
+            <p className="machine-reconnect-error" role="alert">{relaunchError}</p>
+          ) : null}
+        </>
       ) : (
         <div className="machine-cli-offline-wrap">
           <p className="machine-cli-offline">Connect this machine to see harness CLI versions.</p>
           {reconnectError ? (
             <p className="machine-reconnect-error" role="alert">{reconnectError}</p>
+          ) : null}
+          {relaunchError ? (
+            <p className="machine-reconnect-error" role="alert">{relaunchError}</p>
           ) : null}
         </div>
       )}

@@ -8297,7 +8297,15 @@ body.resizing-col .ext-hub-resizer::before {
   padding: 4px 8px;
 }
 .ext-installed-row-chevron {
-  width: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
   opacity: 0;
   color: var(--text-muted);
   flex-shrink: 0;

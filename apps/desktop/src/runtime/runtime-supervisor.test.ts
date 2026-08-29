@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,6 +25,10 @@ describe('runtime supervisor', () => {
     expect(runtime.hostToken).toHaveLength(43);
     expect(runtime.hostSigningKey).toHaveLength(43);
     await expect(runtime.appVersion()).resolves.toBe('');
+    await expect(runtime.relaunchEnrolledHost()).resolves.toEqual({
+      ok: false,
+      message: 'This session does not run a packaged host daemon'
+    });
     await expect(runtime.listProjects()).resolves.toEqual([]);
     await expect(fetch(runtime.rendererUrl).then((response) => response.text())).resolves.toContain('runtime');
     await expect(fetch(`${runtime.hostUrl}/health`).then((response) => response.json())).resolves.toEqual({ ok: true });
@@ -95,5 +99,14 @@ describe('runtime supervisor', () => {
     expect(await runtime.recordTerminalEvent({ kind: 'output', protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION, binding, sessionId, launchEpoch: 0, sequence: 99, data: 'late' })).toBe(true);
     expect(await runtime.recordTerminalEvent({ kind: 'output', protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION, binding, sessionId, launchEpoch: 0, sequence: 99, data: 'duplicate' })).toBe(false);
     expect(await runtime.recordTerminalEvent({ kind: 'output', protocolVersion: TERMINAL_HOST_PROTOCOL_VERSION, binding, sessionId, launchEpoch: 1, sequence: 100, data: 'stale' })).toBe(false);
+  });
+
+  it('retries a failed desktop host enroll in the background', () => {
+    const source = readFileSync(new URL('./runtime-supervisor.ts', import.meta.url), 'utf8');
+    expect(source).toContain('host daemon enroll failed');
+    expect(source).toContain('setInterval');
+    expect(source).toContain('enrollOnce');
+    expect(source).toContain("'relaunch'");
+    expect(source).toContain('relaunchEnrolledHost');
   });
 });

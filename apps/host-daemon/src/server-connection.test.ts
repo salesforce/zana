@@ -66,6 +66,32 @@ describe('enrolled host websocket', () => {
     await connection.close();
   });
 
+  it('rejects ready when the socket closes before hello', async () => {
+    class ClosedSocket {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSING = 2;
+      static readonly CLOSED = 3;
+      readyState = 3;
+      addEventListener(type: string, fn: (event?: unknown) => void) {
+        if (type === 'close') queueMicrotask(() => fn({ code: 1006 }));
+      }
+      close() {}
+      send() {}
+    }
+    globalThis.WebSocket = ClosedSocket as unknown as typeof WebSocket;
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-ws-closed-'));
+    const connection = startEnrolledHostConnection({
+      serverUrl: 'http://127.0.0.1:1/',
+      hostId: '11111111-1111-4111-8111-111111111111',
+      hostKey: 'key-1',
+      dataDir,
+      runtime: stubRuntime(dataDir)
+    });
+    await expect(connection.ready).rejects.toThrow(/closed before hello/);
+    await connection.close();
+  });
+
   it('fetches plugin host artifacts through the enrolled HTTP client', () => {
     const source = readFileSync(new URL('./server-connection.ts', import.meta.url), 'utf8');
     expect(source).toContain('createPluginHostArtifactHttpClient');

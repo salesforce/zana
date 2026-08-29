@@ -184,6 +184,14 @@ describe('startStaticHost', () => {
       instanceId
     }));
     await expect.poll(() => product.hostHub.connectedHostIds()).toContain(enrolled.hostId);
+    const listed = await fetch(`${host.url}api/v1/hosts`).then((response) => response.json()) as Array<{
+      id: string;
+      status: string;
+      lastSeenAt: number | null;
+    }>;
+    const row = listed.find((item) => item.id === enrolled.hostId);
+    expect(row?.status).toBe('connected');
+    expect(Date.now() - (row?.lastSeenAt ?? 0)).toBeLessThan(10_000);
     socket.close();
     product.hostHub.close();
     product.db.close();
