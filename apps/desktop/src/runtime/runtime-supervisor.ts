@@ -37,6 +37,7 @@ export interface RuntimeSupervisor {
   readonly hostUrl: string;
   readonly hostToken: string;
   readonly hostSigningKey: string;
+  relaunchEnrolledHost(): Promise<{ ok: true } | { ok: false; message: string }>;
   appVersion(): Promise<string>;
   listProjects(): Promise<RuntimeProject[]>;
   addProject(path: string): Promise<RuntimeProject>;
@@ -156,6 +157,12 @@ export async function startRuntimeSupervisor(options: StartRuntimeSupervisorOpti
     hostUrl: host.url,
     hostToken: token,
     hostSigningKey: signingKey,
+    async relaunchEnrolledHost() {
+      return {
+        ok: false as const,
+        message: 'This session does not run a packaged host daemon'
+      };
+    },
     appVersion: async () => options.version ?? '',
     listProjects: async () => [],
     addProject: async () => { throw new Error('runtime project storage is unavailable'); },
@@ -204,6 +211,7 @@ export async function startRuntimeSupervisor(options: StartRuntimeSupervisorOpti
 interface UtilityChild {
   postMessage(message: unknown): void;
   on(event: 'message', listener: (message: unknown) => void): void;
+  off?(event: 'message', listener: (message: unknown) => void): void;
   on(event: 'error', listener: (error: Error) => void): void;
   once(event: 'exit', listener: () => void): void;
   once(event: 'spawn', listener: () => void): void;
@@ -306,7 +314,8 @@ function startUtility(
 
 function enrollHostUtility(
   child: UtilityChild,
-  input: { serverUrl: string; token: string; dataDir: string }
+  input: { serverUrl: string; token: string; dataDir: string },
+  type: 'enroll' | 'relaunch' = 'enroll'
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -314,10 +323,14 @@ function enrollHostUtility(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      child.off?.('message', onMessage);
       if (error) reject(error);
       else resolve();
     };
-    const timer = setTimeout(() => finish(new Error('host enroll timed out')), 15_000);
+    const timer = setTimeout(
+      () => finish(new Error(type === 'relaunch' ? 'host relaunch timed out' : 'host enroll timed out')),
+      type === 'relaunch' ? 20_000 : 15_000
+    );
     const onMessage = (message: unknown) => {
       const data = message as { type?: string; message?: string };
       if (data.type === 'enrolled') {
@@ -325,12 +338,12 @@ function enrollHostUtility(
         return;
       }
       if (data.type === 'error') {
-        finish(new Error(data.message ?? 'host enroll failed'));
+        finish(new Error(data.message ?? (type === 'relaunch' ? 'host relaunch failed' : 'host enroll failed')));
       }
     };
     child.on('message', onMessage);
     child.postMessage({
-      type: 'enroll',
+      type,
       protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
       serverUrl: input.serverUrl,
       token: input.token,
@@ -376,17 +389,29 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
     renderer.child.kill();
     throw new Error('runtime dataDir is required to enroll the host daemon');
   }
+  let enrollRetry: NodeJS.Timeout | null = null;
+  const enrollInput = {
+    serverUrl: renderer.url,
+    token: readEnrollToken(options.dataDir!),
+    dataDir: options.dataDir!
+  };
+  const enrollOnce = () => enrollHostUtility(host.child, enrollInput);
   try {
-    await enrollHostUtility(host.child, {
-      serverUrl: renderer.url,
-      token: readEnrollToken(options.dataDir),
-      dataDir: options.dataDir
-    });
+    await enrollOnce();
   } catch (error) {
     // The renderer can still boot; thread spawn surfaces host-unavailable if
     // the handshake never completes. Blocking the window here makes Electron
-    // E2E hang in firstWindow() with no diagnostic.
+    // E2E hang in firstWindow() with no diagnostic. Keep retrying so this
+    // machine is not stuck Offline after a transient enroll failure.
     console.error('host daemon enroll failed', error);
+    enrollRetry = setInterval(() => {
+      void enrollOnce().then(() => {
+        if (enrollRetry) {
+          clearInterval(enrollRetry);
+          enrollRetry = null;
+        }
+      }).catch(() => undefined);
+    }, 5_000);
   }
   const server = createUtilityRuntime(renderer);
   const hostRuntime = createUtilityRuntime(host);
@@ -501,7 +526,34 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
     callPluginRpc: (pluginId, method, args) => server.request('plugins-call-rpc', pluginId, method, args),
     getPluginSettings: (pluginId) => server.request('plugins-settings-get', pluginId),
     setPluginSettings: (pluginId, values) => server.request('plugins-settings-set', pluginId, values),
+    async relaunchEnrolledHost() {
+      if (enrollRetry) {
+        clearInterval(enrollRetry);
+        enrollRetry = null;
+      }
+      try {
+        await enrollHostUtility(host.child, enrollInput, 'relaunch');
+        return { ok: true as const };
+      } catch (error) {
+        enrollRetry = setInterval(() => {
+          void enrollOnce().then(() => {
+            if (enrollRetry) {
+              clearInterval(enrollRetry);
+              enrollRetry = null;
+            }
+          }).catch(() => undefined);
+        }, 5_000);
+        return {
+          ok: false as const,
+          message: error instanceof Error ? error.message : 'Could not relaunch this machine'
+        };
+      }
+    },
     async close(): Promise<void> {
+      if (enrollRetry) {
+        clearInterval(enrollRetry);
+        enrollRetry = null;
+      }
       await Promise.allSettled([server.stop(), hostRuntime.stop()]);
     }
   };

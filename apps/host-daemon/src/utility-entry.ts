@@ -34,7 +34,7 @@ parentPort.on('message', async ({ data }) => {
     ghBinary?: string;
   };
   if (
-    (message.type === 'start' || message.type === 'enroll' || message.type === 'stop')
+    (message.type === 'start' || message.type === 'enroll' || message.type === 'relaunch' || message.type === 'stop')
     && message.protocolVersion !== SERVER_RUNTIME_PROTOCOL_VERSION
   ) {
     parentPort.postMessage({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, message: 'incompatible host runtime protocol version' });
@@ -78,7 +78,31 @@ parentPort.on('message', async ({ data }) => {
       enrolled = await startEnrolledHostDaemon({
         dataDir: message.dataDir,
         serverUrl: message.serverUrl,
-        token: message.token
+        token: message.token,
+        stealLock: true
+      });
+      parentPort.postMessage({
+        type: 'enrolled',
+        protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+        hostId: enrolled.hostId
+      });
+    } catch (error) {
+      parentPort.postMessage({
+        type: 'error',
+        protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+  if (message.type === 'relaunch' && message.serverUrl && message.token && message.dataDir) {
+    try {
+      await enrolled?.close();
+      enrolled = null;
+      enrolled = await startEnrolledHostDaemon({
+        dataDir: message.dataDir,
+        serverUrl: message.serverUrl,
+        token: message.token,
+        stealLock: true
       });
       parentPort.postMessage({
         type: 'enrolled',

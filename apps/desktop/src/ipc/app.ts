@@ -2,6 +2,7 @@
 import { ipcMain } from 'electron';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
+import { productServerUrl } from '../window/renderer-url.js';
 import { microVmPlatformSupported } from '@zana-ai/zcc-host-daemon/harness/microvm-environment';
 import { getReleaseNotes } from '../release-notes.js';
 import { store } from '@zana-ai/zcc-server/services/projects/store';
@@ -144,6 +145,32 @@ export function registerAppIpc(): void {
       ctx.doctor?.dismiss();
     },
     () => undefined
+  );
+
+  ctx.safeHandle(
+    IPC.hosts.relaunchLocal,
+    async (): Promise<{ ok: true } | { ok: false; message: string }> => {
+      if (typeof ctx.runtimeSupervisor?.relaunchEnrolledHost === 'function') {
+        return ctx.runtimeSupervisor.relaunchEnrolledHost();
+      }
+      try {
+        const response = await fetch(new URL('api/v1/hosts/relaunch-local', productServerUrl()), {
+          method: 'POST'
+        });
+        const body = await response.json() as { ok?: boolean; message?: string };
+        if (body.ok === true) return { ok: true };
+        return {
+          ok: false,
+          message: typeof body.message === 'string' ? body.message : 'Could not relaunch this machine'
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          message: error instanceof Error ? error.message : 'Could not relaunch this machine'
+        };
+      }
+    },
+    () => ({ ok: false, message: 'Could not relaunch this machine' })
   );
 }
 

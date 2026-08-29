@@ -107,6 +107,30 @@ export async function applyPluginUpdateOnProductServer(
   };
 }
 
+export async function removePluginAppOnProductServer(
+  id: string,
+  baseUrl = loopbackProductServerUrl()
+): Promise<Result<true>> {
+  if (!baseUrl) {
+    return { ok: false, code: 'UNAVAILABLE', message: 'plugin host is unavailable' };
+  }
+  const response = await fetch(
+    new URL(`api/v1/plugin-apps/${encodeURIComponent(id)}/remove`, baseUrl),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    }
+  );
+  if (response.ok) return { ok: true, value: true };
+  const message = await productServerError(response, `plugin host returned ${response.status}`);
+  return {
+    ok: false,
+    code: response.status === 404 ? 'NOT_FOUND' : 'WRITE_FAILED',
+    message
+  };
+}
+
 const EMPTY_PLUGIN_SETTINGS = { descriptors: {}, values: {} } as const;
 
 export async function callPluginRpcOnProductServer(

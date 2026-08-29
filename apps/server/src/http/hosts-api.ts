@@ -19,6 +19,7 @@ import {
 import { readJsonBody, sendJson, sendNdjson } from './json.js';
 import type { ProductHttpContext } from './product-context.js';
 import { listPublicHosts, parseHostRename, toPublicHost } from '../services/hosts/host-public.js';
+import { relaunchLocalHostDaemon } from '../services/hosts/host-relaunch.js';
 import { HostUnavailableError } from './host-hub.js';
 import { bootstrapHostForProject, parseSshIdentity, repairHost } from '../services/hosts/host-bootstrap.js';
 
@@ -97,6 +98,12 @@ export async function handleHostsApi(
     }
     const events = await bootstrapHostForProject(ctx, parsed.data.projectId);
     sendNdjson(response, events);
+    return true;
+  }
+
+  if (path === '/api/v1/hosts/relaunch-local' && method === 'POST') {
+    const result = await relaunchLocalHostDaemon(ctx);
+    sendJson(response, result.ok ? 200 : 503, result);
     return true;
   }
 

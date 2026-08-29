@@ -21,7 +21,8 @@ vi.mock('../../lib/product-client.js', () => ({
       update: async () => undefined,
       updatePermissionCeiling: async () => undefined,
       retryUpdate: async () => undefined,
-      remove: async () => undefined
+      remove: async () => undefined,
+      relaunchLocal: async () => ({ ok: true as const })
     },
     relay: {
       status: async () => ({ state: 'unconfigured' }),
@@ -142,6 +143,8 @@ describe('MachinesTab', () => {
     expect(html).toContain('this machine');
     expect(html).toContain('2 projects');
     expect(html).toContain('Permission ceiling');
+    expect(html).toContain('Relaunch harness');
+    expect(html).toContain('data-testid="machine-relaunch-h1"');
     expect(html).not.toContain('data-testid="machines-empty"');
   });
 
@@ -293,6 +296,7 @@ describe('MachineCard', () => {
     expect(html).toContain('Rename');
     expect(html).toContain('Remove');
     expect(html).not.toContain('Reconnect');
+    expect(html).not.toContain('Relaunch harness');
     expect(html).not.toContain('this machine</span>');
     expect(html).toContain('Harness CLIs');
   });
@@ -351,7 +355,36 @@ describe('MachineCard', () => {
     expect(html).toContain('Connect this machine to see harness CLI versions');
     expect(html).not.toContain('Remove');
     expect(html).not.toContain('Reconnect');
+    expect(html).toContain('Relaunch harness');
     expect(html).not.toContain('Harness CLIs');
+  });
+
+  it('shows Relaunching… while the local daemon restarts', () => {
+    const html = renderToStaticMarkup(
+      <MachineCard
+        host={host({ isPrimary: true, name: 'MacBook' })}
+        projectCount={1}
+        now={Date.now()}
+        cliRows={[]}
+        busyKey={null}
+        renaming={false}
+        renameValue=""
+        reconnecting={false}
+        reconnectError={null}
+        relaunching
+        relaunchError="daemon.lock is held"
+        onRenameValue={vi.fn()}
+        onRenameStart={vi.fn()}
+        onRenameCommit={vi.fn()}
+        onPermissionChange={vi.fn()}
+        onRetryUpdate={vi.fn()}
+        onRemove={vi.fn()}
+        onReconnect={vi.fn()}
+        onInstall={vi.fn()}
+      />
+    );
+    expect(html).toContain('Relaunching…');
+    expect(html).toContain('daemon.lock is held');
   });
 
   it('offers retry update and an inline rename field', () => {

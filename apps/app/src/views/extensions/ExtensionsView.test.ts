@@ -83,4 +83,11 @@ describe('ExtensionsView aurora background', () => {
     expect(hub).toContain('setHubRowEnabled');
     expect(hub).not.toContain('.catch(() => {}).finally(() => setPending(null))');
   });
+
+  it('opens plugin details from the trailing chevron as well as the row', () => {
+    expect(hub).toContain('className="ext-installed-row-chevron"');
+    expect(hub).toContain('onClick={onOpen}');
+    const chevron = hub.slice(hub.indexOf('ext-installed-row-chevron'));
+    expect(chevron.startsWith('ext-installed-row-chevron"\n          onClick={onOpen}')).toBe(true);
+  });
 });

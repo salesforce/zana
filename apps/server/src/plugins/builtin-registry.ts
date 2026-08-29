@@ -166,3 +166,14 @@ export const OFFICIAL_PLUGINS: BundledPluginDefinition[] = [
 export function bundledPluginByName(name: string): BundledPluginDefinition | undefined {
   return [...BUILTIN_PLUGINS, ...OFFICIAL_PLUGINS].find((plugin) => plugin.name === name);
 }
+
+/**
+ * First-party plugins we used to seed into `~/.zcc/extensions` / PluginService
+ * and no longer ship. Start() uninstalls them so leftover hub rows cannot
+ * come back. Local-authored working dirs (local.json) are left alone.
+ */
+export const RETIRED_FIRST_PARTY_PLUGIN_IDS = ['consensus', 'slack', 'zana', 'zana-hub'] as const;
+
+export function isRetiredFirstPartyPluginId(id: string): boolean {
+  return (RETIRED_FIRST_PARTY_PLUGIN_IDS as readonly string[]).includes(id);
+}

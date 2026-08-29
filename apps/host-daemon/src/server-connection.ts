@@ -58,10 +58,10 @@ export function startEnrolledHostConnection(options: {
     };
   });
 
-  function markReady(): void {
+  function markReady(error?: Error): void {
     if (readySettled) return;
     readySettled = true;
-    settleReady?.();
+    settleReady?.(error);
   }
 
   const sink: EventSink = createEventSink({
@@ -215,6 +215,10 @@ export function startEnrolledHostConnection(options: {
         heartbeatTimer = null;
       }
       options.onSocketClose?.(event.code);
+      if (!readySettled) {
+        markReady(new Error('host websocket closed before hello'));
+        return;
+      }
       if (closed) return;
       const delay = BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)]!;
       attempt += 1;
@@ -232,10 +236,7 @@ export function startEnrolledHostConnection(options: {
     ready,
     async close() {
       closed = true;
-      if (!readySettled) {
-        readySettled = true;
-        settleReady?.(new Error('host connection closed before hello'));
-      }
+      markReady(new Error('host connection closed before hello'));
       if (reconnectTimer) clearTimeout(reconnectTimer);
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       adapter?.dispose();

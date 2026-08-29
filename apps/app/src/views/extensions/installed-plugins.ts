@@ -65,8 +65,9 @@ export function displayIcon(name: string): string {
  * Loaded modules keep their real (executable) module. Every disk entry or
  * installed plugin whose id is NOT already covered by a loaded module gets a
  * display-only placeholder so an unconsented / disabled / no-UI plugin stays
- * visible and manageable. Exported for unit tests — this join is the fix for
- * the disappearing-row bug and the Installed collection's "list every builtin".
+ * visible and manageable. Compiled-in app modules with no plugin snapshot and
+ * no disk entry are omitted — Installed lists what is installed, not the
+ * renderer registry.
  */
 export function buildHubRows(
   modules: (AppModule & { loadError?: string })[],
@@ -81,6 +82,7 @@ export function buildHubRows(
   for (const id of ids) {
     const plugin = byPlugin.get(id) ?? null;
     const entry = byEntry.get(id) ?? null;
+    if (!plugin && !entry) continue;
     const loaded = byModule.get(id);
     const module =
       loaded ?? (plugin ? placeholderFromPlugin(plugin) : placeholderModule(entry!));

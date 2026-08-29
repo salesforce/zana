@@ -48,7 +48,12 @@ import {
 import { PluginHostArtifactRegistry } from './plugin-host-artifact-registry.js';
 import { loadPluginHostArtifactSnapshot } from './plugin-host-artifact.js';
 import { discoverPluginSkillNames } from './plugin-skills.js';
-import { BUILTIN_PLUGINS, OFFICIAL_PLUGINS, bundledPluginByName } from './builtin-registry.js';
+import {
+  BUILTIN_PLUGINS,
+  OFFICIAL_PLUGINS,
+  bundledPluginByName,
+  isRetiredFirstPartyPluginId
+} from './builtin-registry.js';
 import { defaultCloneGit, defaultFetchJson, defaultSpawnNpm } from './plugin-process.js';
 import { readPluginLogTail } from './plugin-log.js';
 import {
@@ -57,6 +62,7 @@ import {
   type InstalledPluginRow,
   type PluginStore
 } from './plugin-store.js';
+import { createPluginUninstalledStore, pluginUninstalledPath } from './plugin-uninstalled.js';
 import {
   generatedSkillsRootPath,
   syncPluginCommandsSkill,
@@ -335,6 +341,7 @@ function resolveBundledDir(bundledRoot: string, name: string): string {
 
 export function createPluginService(opts: PluginServiceOptions): PluginService {
   const store: PluginStore = createPluginStore({ file: pluginStorePath(opts.dataDir) });
+  const uninstalled = createPluginUninstalledStore({ file: pluginUninstalledPath(opts.dataDir) });
   const marketplaces: MarketplaceStore = createMarketplaceStore({
     file: marketplaceStorePath(opts.dataDir)
   });
@@ -883,6 +890,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       installedAt: existing?.installedAt ?? ts,
       updatedAt: ts
     };
+    await uninstalled.forget(manifest.id);
     await store.upsert(row);
     await loadOne(row);
     await emitCapabilities();
@@ -974,6 +982,32 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     }
   }
 
+  async function retireRetiredFirstPartyPlugins(): Promise<void> {
+    const ids = new Set<string>();
+    for (const row of store.list()) {
+      if (isRetiredFirstPartyPluginId(row.id)) ids.add(row.id);
+    }
+    const legacyRoot = join(opts.dataDir, 'extensions');
+    if (existsSync(legacyRoot) && statSync(legacyRoot).isDirectory()) {
+      for (const name of readdirSync(legacyRoot)) {
+        if (name.endsWith('.json') || !isRetiredFirstPartyPluginId(name)) continue;
+        ids.add(name);
+      }
+    }
+    for (const id of ids) {
+      if (isLocalSidecar(opts.dataDir, id)) continue;
+      availableUpdates.delete(id);
+      await disposeOne(id);
+      const row = await store.remove(id);
+      await uninstalled.add(id);
+      if (row && row.sourceKind !== 'path' && row.rootDir.startsWith(join(opts.dataDir, 'plugins'))) {
+        rmSync(row.rootDir, { recursive: true, force: true });
+      }
+      removeInstalledPluginCopy(opts.dataDir, id);
+      removeLeftoverSidecar(opts.dataDir, id);
+    }
+  }
+
   const service: PluginService = {
     list: () => store.list(),
     get: (id) => store.get(id),
@@ -1034,9 +1068,11 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       availableUpdates.delete(id);
       await disposeOne(id);
       const row = await store.remove(id);
+      await uninstalled.add(id);
       if (row && row.sourceKind !== 'path' && row.rootDir.startsWith(join(opts.dataDir, 'plugins'))) {
         rmSync(row.rootDir, { recursive: true, force: true });
       }
+      removeLeftoverSidecar(opts.dataDir, id);
       await emitCapabilities();
       await emitAppsChanged();
       await syncCliSkill();
@@ -1059,6 +1095,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       const installed: InstalledPluginRow[] = [];
       for (const def of BUILTIN_PLUGINS) {
         if (!def.autoInstall) continue;
+        if (uninstalled.has(def.pluginId)) continue;
         if (store.get(def.pluginId)) continue;
         try {
           installed.push(await installParsed({ kind: 'builtin', name: def.name }, def.defaultEnabled));
@@ -1069,7 +1106,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       return installed;
     },
     async start() {
-      await migrateLegacySidecars(opts.dataDir, installParsed, store);
+      await retireRetiredFirstPartyPlugins();
       await this.reconcileBuiltins();
       await seedOfficialMarketplace();
       for (const row of store.list()) {
@@ -1264,41 +1301,31 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   return service;
 }
 
-async function migrateLegacySidecars(
-  dataDir: string,
-  installParsed: (source: ParsedPluginSource, enable: boolean) => Promise<InstalledPluginRow>,
-  store: PluginStore
-): Promise<void> {
-  const legacyRoot = join(dataDir, 'extensions');
-  if (!existsSync(legacyRoot) || !statSync(legacyRoot).isDirectory()) return;
-  let enabled: Record<string, boolean> = {};
+function removeInstalledPluginCopy(dataDir: string, id: string): void {
+  if (!isPluginId(id)) return;
+  const copy = join(dataDir, 'plugins', id);
+  if (!existsSync(copy) || !statSync(copy).isDirectory()) return;
+  rmSync(copy, { recursive: true, force: true });
+}
+
+function isLocalSidecar(dataDir: string, id: string): boolean {
   try {
-    const raw = JSON.parse(readFileSync(join(legacyRoot, 'enabled.json'), 'utf8')) as {
-      enabled?: Record<string, boolean>;
+    const locals = JSON.parse(readFileSync(join(dataDir, 'extensions', 'local.json'), 'utf8')) as {
+      [key: string]: { workingDir?: string };
     };
-    enabled = raw.enabled ?? {};
+    const workingDir = locals[id]?.workingDir;
+    return typeof workingDir === 'string' && workingDir.length > 0;
   } catch {
-    /* optional */
+    return false;
   }
-  let locals: Record<string, { workingDir?: string }> = {};
-  try {
-    locals = JSON.parse(readFileSync(join(legacyRoot, 'local.json'), 'utf8')) as typeof locals;
-  } catch {
-    /* optional */
-  }
-  for (const name of readdirSync(legacyRoot)) {
-    if (name.endsWith('.json')) continue;
-    const dir = join(legacyRoot, name);
-    if (!statSync(dir).isDirectory()) continue;
-    if (store.get(name)) continue;
-    const localDir = locals[name]?.workingDir;
-    const sourceDir = localDir && existsSync(localDir) ? localDir : dir;
-    try {
-      await installParsed({ kind: 'path', path: sourceDir }, enabled[name] !== false);
-    } catch {
-      /* skip unreadable legacy dirs */
-    }
-  }
+}
+
+/** Drop a leftover `~/.zcc/extensions/<id>` copy so discovery cannot resurrect it. */
+function removeLeftoverSidecar(dataDir: string, id: string): void {
+  if (!isPluginId(id) || isLocalSidecar(dataDir, id)) return;
+  const sidecar = join(dataDir, 'extensions', id);
+  if (!existsSync(sidecar) || !statSync(sidecar).isDirectory()) return;
+  rmSync(sidecar, { recursive: true, force: true });
 }
 
 export function defaultBundledRoot(): string {

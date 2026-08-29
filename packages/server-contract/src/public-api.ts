@@ -625,6 +625,12 @@ export const publicApiRoutes = {
       request: noRequest(),
       response: jsonResponse<Host[]>(),
     }),
+    relaunchLocal: defineRoute({
+      path: "/hosts/relaunch-local",
+      method: "post",
+      request: noRequest(),
+      response: jsonResponse<{ ok: true } | { ok: false; message: string }>(),
+    }),
     get: defineRoute({
       path: "/hosts/:id",
       method: "get",

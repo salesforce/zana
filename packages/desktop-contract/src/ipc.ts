@@ -28,6 +28,9 @@ export const IPC = {
     listHosts: 'ssh:listHosts',
     syncHosts: 'ssh:syncHosts'
   },
+  hosts: {
+    relaunchLocal: 'hosts:relaunchLocal'
+  },
   terminals: {
     list: 'terminals:list',
     verifyTmux: 'terminals:verifyTmux',
@@ -328,7 +331,8 @@ export const IPC = {
     getSettings: 'pluginApps:getSettings',
     setSettings: 'pluginApps:setSettings',
     checkUpdates: 'pluginApps:checkUpdates',
-    applyUpdate: 'pluginApps:applyUpdate'
+    applyUpdate: 'pluginApps:applyUpdate',
+    remove: 'pluginApps:remove'
   },
   /**
    * Runtime extensions under `~/.zcc/extensions/<id>/`. Mirrors the
