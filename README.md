@@ -4,9 +4,6 @@
   <a href="https://github.com/salesforce/zana/releases/latest">
     <img alt="Download the latest Zana release" src="https://img.shields.io/badge/Download-Latest_Release-2ea44f?style=for-the-badge">
   </a>
-  <a href="https://github.com/salesforce/zana/blob/main/LICENSE.txt">
-    <img alt="MIT License" src="https://img.shields.io/badge/License-MIT-blue.svg">
-  </a>
 </p>
 
 Zana Command Center is a desktop control plane for running, coordinating, and
@@ -169,3 +166,9 @@ We also drew inspiration from bb, Cursor, Codex, and Claude Code.
 Contributions to code, documentation, tests, and issue reports are welcome. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow and
 [SECURITY.md](SECURITY.md) for private vulnerability reporting.
+
+<p align="center">
+  <a href="https://github.com/salesforce/zana/blob/main/LICENSE.txt">
+    <img alt="License MIT" src="https://img.shields.io/badge/License-MIT-blue.svg">
+  </a>
+</p>
