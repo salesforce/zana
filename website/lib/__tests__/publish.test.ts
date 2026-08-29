@@ -23,6 +23,40 @@ function manifestB64(fields: Record<string, unknown>): string {
   return b64(JSON.stringify(fields));
 }
 
+function pluginPackage(
+  id: string,
+  extra?: {
+    version?: string;
+    title?: string;
+    description?: string;
+    icon?: string;
+    engines?: Record<string, unknown>;
+    packageName?: string;
+  }
+): Record<string, unknown> {
+  return {
+    name: extra?.packageName ?? `zcc-plugin-${id}`,
+    version: extra?.version ?? '1.0.0',
+    engines: extra?.engines ?? { zcc: '^1.0.0' },
+    zcc: {
+      name: extra?.title ?? id,
+      description: extra?.description ?? `${id} plugin`,
+      branding: { icon: extra?.icon ?? 'Sparkles' },
+      app: './app.js'
+    }
+  };
+}
+
+function pluginFiles(
+  id: string,
+  extra?: Parameters<typeof pluginPackage>[1] & { extraFiles?: Record<string, string> }
+): Record<string, string> {
+  return {
+    'package.json': manifestB64(pluginPackage(id, extra)),
+    ...extra?.extraFiles
+  };
+}
+
 let userCounter = 30000;
 function freshUser(githubLogin: string) {
   userCounter += 1;
@@ -67,26 +101,17 @@ describe('publish', () => {
     const { publishRelease } = await import('../publish.ts');
     const { sha256Hex } = await import('../signing.ts');
     const user = freshUser('octocat');
+    const files = pluginFiles('gus', {
+      title: 'GUS',
+      description: 'GUS integration',
+      icon: 'Ticket',
+      extraFiles: { 'main.mjs': b64('export default {}') }
+    });
 
     const result = await publishRelease({
       id: 'gus',
       user,
-      body: {
-        archive: {
-          files: {
-            'extension.json': manifestB64({
-              id: 'gus',
-              version: '1.0.0',
-              engines: { zccApi: '^1.0.0' },
-              title: 'GUS',
-              description: 'GUS integration',
-              icon: 'Ticket',
-              permissions: ['storage']
-            }),
-            'main.mjs': b64('export default {}')
-          }
-        }
-      }
+      body: { archive: { files } }
     });
 
     expect(result.status).toBe(201);
@@ -98,27 +123,9 @@ describe('publish', () => {
     expect(release.url).toBe(`${PUBLIC_BASE_URL}/extensions/archives/gus-1.0.0.json`);
     expect(release.author).toBe('octocat');
     expect(release.title).toBe('GUS');
-    expect(release.permissions).toEqual(['storage']);
+    expect(release.permissions).toBeUndefined();
 
-    // The stored bytes are the canonical `{files:{...}}` JSON — recompute the
-    // same way publishRelease does and check sha256 + signature verify
-    // against them, exactly as the desktop client's applyRelease() would.
-    const canonicalBytes = Buffer.from(
-      JSON.stringify({
-        files: {
-          'extension.json': manifestB64({
-            id: 'gus',
-            version: '1.0.0',
-            engines: { zccApi: '^1.0.0' },
-            title: 'GUS',
-            description: 'GUS integration',
-            icon: 'Ticket',
-            permissions: ['storage']
-          }),
-          'main.mjs': b64('export default {}')
-        }
-      })
-    );
+    const canonicalBytes = Buffer.from(JSON.stringify({ files }));
     expect(release.sha256).toBe(sha256Hex(canonicalBytes));
 
     const publicKey = createPublicKey(publicKeyPem);
@@ -131,15 +138,11 @@ describe('publish', () => {
     const { sha256Hex } = await import('../signing.ts');
     const user = freshUser('cli-user');
 
-    const archiveJson = JSON.stringify({
-      files: {
-        'extension.json': manifestB64({ id: 'zana', version: '1.0.0', engines: { zccApi: '^1.0.0' } })
-      }
-    });
+    const archiveJson = JSON.stringify({ files: pluginFiles('notes') });
     const archiveBytes = Buffer.from(archiveJson, 'utf-8');
     const archiveBase64 = archiveBytes.toString('base64');
 
-    const result = await publishRelease({ id: 'zana', user, body: { archiveBase64 } });
+    const result = await publishRelease({ id: 'notes', user, body: { archiveBase64 } });
 
     expect(result.status).toBe(201);
     if (result.status !== 201) return;
@@ -158,11 +161,7 @@ describe('publish', () => {
     const result = await publishRelease({
       id: 'freshly-claimed',
       user,
-      body: {
-        archive: {
-          files: { 'extension.json': manifestB64({ id: 'freshly-claimed', version: '1.0.0', engines: { zccApi: '^1.0.0' } }) }
-        }
-      }
+      body: { archive: { files: pluginFiles('freshly-claimed') } }
     });
     expect(result.status).toBe(201);
 
@@ -186,7 +185,7 @@ describe('publish', () => {
       body: {
         archive: {
           files: {
-            'extension.json': manifestB64({ id: 'escape-id', version: '1.0.0', engines: { zccApi: '^1.0.0' } }),
+            ...pluginFiles('escape-id'),
             '../evil.txt': b64('nope')
           }
         }
@@ -197,7 +196,7 @@ describe('publish', () => {
     if (result.status === 400) expect(result.error).toBe('bad_archive');
   });
 
-  it('bad_archive: rejects an archive missing extension.json', async () => {
+  it('bad_archive: rejects an archive missing package.json', async () => {
     const { publishRelease } = await import('../publish.ts');
     const user = freshUser('no-manifest');
 
@@ -211,16 +210,36 @@ describe('publish', () => {
     if (result.status === 400) expect(result.error).toBe('bad_archive');
   });
 
-  it('bad_manifest: rejects a manifest id that does not match the route id', async () => {
+  it('bad_manifest: rejects a derived plugin id that does not match the route id', async () => {
     const { publishRelease } = await import('../publish.ts');
     const user = freshUser('mismatcher');
 
     const result = await publishRelease({
       id: 'route-id',
       user,
+      body: { archive: { files: pluginFiles('different-id') } }
+    });
+
+    expect(result.status).toBe(400);
+    if (result.status === 400) expect(result.error).toBe('bad_manifest');
+  });
+
+  it('bad_manifest: rejects a package.json missing version', async () => {
+    const { publishRelease } = await import('../publish.ts');
+    const user = freshUser('no-version');
+
+    const result = await publishRelease({
+      id: 'no-version-id',
+      user,
       body: {
         archive: {
-          files: { 'extension.json': manifestB64({ id: 'different-id', version: '1.0.0', engines: { zccApi: '^1.0.0' } }) }
+          files: {
+            'package.json': manifestB64({
+              name: 'zcc-plugin-no-version-id',
+              engines: { zcc: '^1.0.0' },
+              zcc: { name: 'No version', description: 'missing version', branding: { icon: 'Sparkles' }, app: './app.js' }
+            })
+          }
         }
       }
     });
@@ -229,20 +248,60 @@ describe('publish', () => {
     if (result.status === 400) expect(result.error).toBe('bad_manifest');
   });
 
-  it('bad_manifest: rejects a manifest missing version', async () => {
+  it('still publishes a leftover extension.json archive (one-release shim)', async () => {
     const { publishRelease } = await import('../publish.ts');
-    const user = freshUser('no-version');
+    const user = freshUser('legacy');
 
     const result = await publishRelease({
-      id: 'no-version-id',
+      id: 'legacy-ext',
       user,
       body: {
-        archive: { files: { 'extension.json': manifestB64({ id: 'no-version-id', engines: { zccApi: '^1.0.0' } }) } }
+        archive: {
+          files: {
+            'extension.json': manifestB64({
+              id: 'legacy-ext',
+              version: '1.0.0',
+              engines: { zccApi: '^1.0.0' },
+              title: 'Legacy',
+              permissions: ['storage']
+            })
+          }
+        }
       }
     });
 
-    expect(result.status).toBe(400);
-    if (result.status === 400) expect(result.error).toBe('bad_manifest');
+    expect(result.status).toBe(201);
+    if (result.status !== 201) return;
+    expect(result.release.title).toBe('Legacy');
+    expect(result.release.permissions).toEqual(['storage']);
+  });
+
+  it('prefers package.json when an archive also carries extension.json', async () => {
+    const { publishRelease } = await import('../publish.ts');
+    const user = freshUser('both');
+
+    const result = await publishRelease({
+      id: 'both-ext',
+      user,
+      body: {
+        archive: {
+          files: {
+            ...pluginFiles('both-ext', { title: 'From package.json', version: '2.0.0' }),
+            'extension.json': manifestB64({
+              id: 'both-ext',
+              version: '1.0.0',
+              engines: { zccApi: '^1.0.0' },
+              title: 'From extension.json'
+            })
+          }
+        }
+      }
+    });
+
+    expect(result.status).toBe(201);
+    if (result.status !== 201) return;
+    expect(result.release.version).toBe('2.0.0');
+    expect(result.release.title).toBe('From package.json');
   });
 
   it('not_owner: a second user publishing an already-claimed id is rejected', async () => {
@@ -253,18 +312,14 @@ describe('publish', () => {
     const first = await publishRelease({
       id: 'owned-ext',
       user: owner,
-      body: {
-        archive: { files: { 'extension.json': manifestB64({ id: 'owned-ext', version: '1.0.0', engines: { zccApi: '^1.0.0' } }) } }
-      }
+      body: { archive: { files: pluginFiles('owned-ext') } }
     });
     expect(first.status).toBe(201);
 
     const second = await publishRelease({
       id: 'owned-ext',
       user: intruder,
-      body: {
-        archive: { files: { 'extension.json': manifestB64({ id: 'owned-ext', version: '2.0.0', engines: { zccApi: '^1.0.0' } }) } }
-      }
+      body: { archive: { files: pluginFiles('owned-ext', { version: '2.0.0' }) } }
     });
     expect(second.status).toBe(403);
     if (second.status === 403) expect(second.error).toBe('not_owner');
@@ -277,18 +332,14 @@ describe('publish', () => {
     const first = await publishRelease({
       id: 'versioned-ext',
       user,
-      body: {
-        archive: { files: { 'extension.json': manifestB64({ id: 'versioned-ext', version: '2.0.0', engines: { zccApi: '^1.0.0' } }) } }
-      }
+      body: { archive: { files: pluginFiles('versioned-ext', { version: '2.0.0' }) } }
     });
     expect(first.status).toBe(201);
 
     const lower = await publishRelease({
       id: 'versioned-ext',
       user,
-      body: {
-        archive: { files: { 'extension.json': manifestB64({ id: 'versioned-ext', version: '1.9.0', engines: { zccApi: '^1.0.0' } }) } }
-      }
+      body: { archive: { files: pluginFiles('versioned-ext', { version: '1.9.0' }) } }
     });
     expect(lower.status).toBe(409);
     if (lower.status === 409) expect(lower.error).toBe('stale_version');
@@ -296,9 +347,7 @@ describe('publish', () => {
     const exact = await publishRelease({
       id: 'versioned-ext',
       user,
-      body: {
-        archive: { files: { 'extension.json': manifestB64({ id: 'versioned-ext', version: '2.0.0', engines: { zccApi: '^1.0.0' } }) } }
-      }
+      body: { archive: { files: pluginFiles('versioned-ext', { version: '2.0.0' }) } }
     });
     expect(exact.status).toBe(409);
     if (exact.status === 409) expect(exact.error).toBe('stale_version');
@@ -306,9 +355,7 @@ describe('publish', () => {
     const higher = await publishRelease({
       id: 'versioned-ext',
       user,
-      body: {
-        archive: { files: { 'extension.json': manifestB64({ id: 'versioned-ext', version: '2.1.0', engines: { zccApi: '^1.0.0' } }) } }
-      }
+      body: { archive: { files: pluginFiles('versioned-ext', { version: '2.1.0' }) } }
     });
     expect(higher.status).toBe(201);
   });
@@ -317,9 +364,6 @@ describe('publish', () => {
     const { publishRelease, ARCHIVE_MAX_BYTES } = await import('../publish.ts');
     const user = freshUser('whale');
 
-    // Cheaply build an over-cap payload: a single big base64 string as one
-    // "file" pushes the derived `{files:{...}}` JSON bytes over 16 MiB
-    // without needing to construct a valid multi-file archive.
     const bigBase64 = 'A'.repeat(ARCHIVE_MAX_BYTES + 1024);
 
     const result = await publishRelease({
@@ -328,7 +372,7 @@ describe('publish', () => {
       body: {
         archive: {
           files: {
-            'extension.json': manifestB64({ id: 'whale-ext', version: '1.0.0', engines: { zccApi: '^1.0.0' } }),
+            ...pluginFiles('whale-ext'),
             'big.bin': bigBase64
           }
         }

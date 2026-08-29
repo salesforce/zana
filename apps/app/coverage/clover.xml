@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1787851510143" clover="3.2.0">
+  <project timestamp="1787851510143" name="All files">
+    <metrics statements="56" coveredstatements="56" conditionals="44" coveredconditionals="44" methods="16" coveredmethods="16" elements="116" coveredelements="116" complexity="0" loc="56" ncloc="56" packages="1" files="1" classes="1"/>
+    <file name="machine-provider-clis.ts" path="/Users/grebmann/zcc-workspace/zana-command-center/apps/app/src/views/settings/machine-provider-clis.ts">
+      <metrics statements="56" coveredstatements="56" conditionals="44" coveredconditionals="44" methods="16" coveredmethods="16"/>
+      <line num="10" count="1" type="stmt"/>
+      <line num="27" count="3" type="cond" truecount="2" falsecount="0"/>
+      <line num="28" count="2" type="stmt"/>
+      <line num="29" count="10" type="stmt"/>
+      <line num="30" count="10" type="cond" truecount="2" falsecount="0"/>
+      <line num="37" count="1" type="stmt"/>
+      <line num="38" count="1" type="stmt"/>
+      <line num="39" count="1" type="stmt"/>
+      <line num="40" count="3" type="cond" truecount="2" falsecount="0"/>
+      <line num="41" count="2" type="stmt"/>
+      <line num="45" count="1" type="stmt"/>
+      <line num="49" count="8" type="cond" truecount="2" falsecount="0"/>
+      <line num="50" count="2" type="stmt"/>
+      <line num="57" count="6" type="cond" truecount="2" falsecount="0"/>
+      <line num="58" count="8" type="cond" truecount="2" falsecount="0"/>
+      <line num="59" count="1" type="stmt"/>
+      <line num="66" count="5" type="cond" truecount="2" falsecount="0"/>
+      <line num="67" count="2" type="stmt"/>
+      <line num="74" count="3" type="stmt"/>
+      <line num="83" count="4" type="cond" truecount="2" falsecount="0"/>
+      <line num="84" count="4" type="stmt"/>
+      <line num="85" count="3" type="cond" truecount="2" falsecount="0"/>
+      <line num="86" count="2" type="cond" truecount="2" falsecount="0"/>
+      <line num="90" count="3" type="stmt"/>
+      <line num="91" count="3" type="cond" truecount="2" falsecount="0"/>
+      <line num="98" count="1" type="stmt"/>
+      <line num="99" count="1" type="stmt"/>
+      <line num="102" count="11" type="stmt"/>
+      <line num="103" count="15" type="cond" truecount="2" falsecount="0"/>
+      <line num="104" count="4" type="stmt"/>
+      <line num="109" count="7" type="cond" truecount="2" falsecount="0"/>
+      <line num="110" count="7" type="cond" truecount="2" falsecount="0"/>
+      <line num="111" count="4" type="stmt"/>
+      <line num="113" count="16" type="stmt"/>
+      <line num="114" count="16" type="stmt"/>
+      <line num="115" count="4" type="stmt"/>
+      <line num="116" count="4" type="cond" truecount="2" falsecount="0"/>
+      <line num="117" count="1" type="stmt"/>
+      <line num="119" count="4" type="stmt"/>
+      <line num="126" count="5" type="cond" truecount="2" falsecount="0"/>
+      <line num="127" count="3" type="cond" truecount="2" falsecount="0"/>
+      <line num="128" count="2" type="cond" truecount="2" falsecount="0"/>
+      <line num="129" count="1" type="stmt"/>
+      <line num="135" count="10" type="stmt"/>
+      <line num="136" count="14" type="stmt"/>
+      <line num="137" count="14" type="cond" truecount="2" falsecount="0"/>
+      <line num="138" count="1" type="stmt"/>
+      <line num="141" count="9" type="stmt"/>
+      <line num="142" count="8" type="stmt"/>
+      <line num="143" count="8" type="cond" truecount="2" falsecount="0"/>
+      <line num="144" count="7" type="cond" truecount="2" falsecount="0"/>
+      <line num="145" count="5" type="stmt"/>
+      <line num="150" count="2" type="stmt"/>
+      <line num="162" count="3" type="stmt"/>
+      <line num="163" count="3" type="stmt"/>
+      <line num="170" count="2" type="stmt"/>
+    </file>
+  </project>
+</coverage>

@@ -1,0 +1,52 @@
+#!/bin/sh
+# Enroll this container as a ZCC host-daemon.
+# Usage: zcc-join --join-code <code> --host-id <id> --server <url>
+set -eu
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: zcc-join --join-code <code> --host-id <id> --server <url>
+
+Downloads /install.sh from the server (Heroku pairing origin or the
+loopback Docker proxy) and enrolls this machine. Data lives in
+~/.zcc-machines/<server-host>.
+EOF
+  exit 2
+}
+
+join_code=
+host_id=
+server_url=
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --join-code) join_code=${2:-}; shift 2 ;;
+    --host-id) host_id=${2:-}; shift 2 ;;
+    --server|--server-url) server_url=${2:-}; shift 2 ;;
+    -h|--help) usage ;;
+    *) echo "unknown option: $1" >&2; usage ;;
+  esac
+done
+
+[ -n "$join_code" ] && [ -n "$host_id" ] && [ -n "$server_url" ] || usage
+server_url=${server_url%/}
+
+if [ "$(id -u)" -eq 0 ]; then
+  exec runuser -u zcc -- env HOME=/home/zcc \
+    JOIN_CODE="$join_code" HOST_ID="$host_id" ZCC_SERVER_URL="$server_url" \
+    /usr/local/bin/zcc-join --join-code "$join_code" --host-id "$host_id" --server "$server_url"
+fi
+
+server_host=$(printf '%s' "$server_url" | sed -E 's#^https?://##; s#[/:].*##')
+[ -n "$server_host" ] || { echo "invalid --server" >&2; exit 2; }
+
+data_root=${ZCC_MACHINES_ROOT:-"$HOME/.zcc-machines"}
+data_dir="$data_root/$server_host"
+mkdir -p "$data_dir"
+chmod 700 "$data_root" "$data_dir" 2>/dev/null || true
+printf '%s\n' "$server_url" > "$data_dir/.server-url"
+
+echo "Downloading installer from $server_url …"
+curl -fL --connect-timeout 10 --max-time 60 --retry 2 "$server_url/install.sh" -o /tmp/zcc-install.sh
+# No systemd user bus in this image; the installer nohups and exits 0.
+sh /tmp/zcc-install.sh --join-code "$join_code" --host-id "$host_id" --server "$server_url"

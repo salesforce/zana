@@ -1,0 +1,20 @@
+{
+  "name": "@zcc-ext/inline-vis",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Render ::vis{kind} charts in assistant markdown.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "zcc": {
+    "name": "Inline vis",
+    "description": "Render ::vis{kind} charts in assistant markdown.",
+    "branding": {
+      "icon": "ChartNoAxesColumn"
+    },
+    "server": "./server.mjs",
+    "app": "./app.js"
+  }
+}

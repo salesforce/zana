@@ -1,18 +1,17 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import { ProductShot } from '../../components/ProductShot';
 
 export const metadata: Metadata = {
-  title: 'Extension SDK',
-  description: 'An approachable overview of the Zana Command Center extension SDK, host boundary, optional main module, and permission model.',
+  title: 'Plugin SDK',
+  description: 'An approachable overview of @zana-ai/zcc-plugin-sdk: package.json zcc, app slots, server APIs, and full-trust install.',
   alternates: { canonical: '/extensions/sdk/' }
 };
 
 const SDK_LAYERS = [
-  ['Manifest', 'Declares identity, entry points, compatible API range, contributions, and requested permissions.'],
-  ['Renderer entry', 'Returns a panel through activate({ React, host }); the host provides React and the supported ModuleHost surface.'],
-  ['Optional main module', 'Handles capabilities that must execute outside the renderer through a brokered, permission-gated context.'],
-  ['Contributions', 'Adds commands, project tabs, personas, teams, agent capabilities, or other declared extension surfaces.']
+  ['Manifest', 'Declares identity in package.json → zcc: name, app/server entries, skills, MCP, and engines.zcc.'],
+  ['App slots', 'definePluginApp registers nav panels and other slots. The host React instance is globalThis.__ZCC_HOST_REACT__.'],
+  ['Server API', 'export default function plugin(zcc) receives ZccPluginApi in-process on the server. Host-daemon tokens never reach the plugin.'],
+  ['Contributions', 'Adds skills, MCP servers, settings, and extra metadata declared in the zcc block.']
 ] as const;
 
 export default function ExtensionSdkPage() {
@@ -23,10 +22,9 @@ export default function ExtensionSdkPage() {
           <div className="guide-hero-copy" data-reveal>
             <span className="eyebrow">SDK overview</span>
             <h1>Build against a stable host.<br /><span className="grad">Not app internals.</span></h1>
-            <p>The extension SDK is the public contract between your TypeScript code and Zana. Renderer panels use a provided host surface; main-side work is brokered and scope-checked.</p>
+            <p>The plugin SDK is the public contract between your TypeScript package and Zana. After a loud full-trust confirm, plugins load in-process on the server and register UI slots in the app.</p>
             <div className="cta"><Link className="btn btn-primary btn-lg" href="/extensions/getting-started/">Start with a panel</Link><Link className="btn btn-ghost btn-lg" href="/docs/extensions-sdk-reference/">Open full SDK reference</Link></div>
           </div>
-          <ProductShot id="sdk-main-module" priority />
         </div>
       </section>
 
@@ -38,14 +36,55 @@ export default function ExtensionSdkPage() {
       </section>
 
       <section id="permissions" style={{ paddingTop: 0 }}>
-        <div className="wrap"><div className="product-proof" data-reveal><div className="product-proof-copy"><span className="eyebrow">The permission model</span><h2>Declare intent. Get consent. Run within scope.</h2><p>An extension does not receive broad system access just because it ships a main module. The effective grant is derived from declared permissions and user consent, then enforced at each brokered call.</p><ul><li>Use the smallest permission set that makes the feature possible</li><li>Keep filesystem roots and network or executable scopes explicit</li><li>Treat a wider permission request as a product decision users can evaluate</li></ul><p style={{ marginTop: 20 }}><Link className="text-link" href="/docs/extensions-authoring/#permissions-are-enforced-for-disk-extensions-p3-b">Read scoped permission details <span aria-hidden="true">→</span></Link></p></div><ProductShot id="extension-consent" /></div></div>
+        <div className="wrap">
+          <div className="product-proof solo" data-reveal>
+            <div className="product-proof-copy">
+              <span className="eyebrow">Trust at install</span>
+              <h2>Full-trust in-process. Confirm it out loud.</h2>
+              <p>Plugins are not sandboxed Electron guests. The control is install/enable, exact version pinning, engines.zcc, and a loud confirm that lists skills, MCP, and extra the grant would add.</p>
+              <ul>
+                <li>Official catalogs install offline; community catalogs are npm/git pointers only</li>
+                <li>A failed reload keeps the last good generation running</li>
+                <li>Host-daemon tokens and signing keys never reach a plugin</li>
+              </ul>
+              <p style={{ marginTop: 20 }}><Link className="text-link" href="/docs/extensions-authoring/">Read the authoring guide <span aria-hidden="true">→</span></Link></p>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section style={{ paddingTop: 0 }}>
-        <div className="wrap"><div className="product-proof reverse" data-reveal><div className="product-proof-copy"><span className="eyebrow">Use the host surface</span><h2>Panels receive what they need from Zana.</h2><p>Renderer entries use the supplied React instance and ModuleHost. That keeps extensions aligned with the host lifecycle and prevents fragile imports of core implementation details.</p><ul><li>Read selected project context and launch sessions through the host</li><li>Use storage, cache, events, toasts, inbox actions, and external links</li><li>Call only your extension’s main-side capabilities through the host bridge</li></ul></div><ProductShot id="extension-panel-result" /></div></div>
+        <div className="wrap">
+          <div className="product-proof solo" data-reveal>
+            <div className="product-proof-copy">
+              <span className="eyebrow">Use the host surface</span>
+              <h2>Panels receive what they need from Zana.</h2>
+              <p>App entries register slots instead of importing core modules. That keeps plugins aligned with the host lifecycle and prevents fragile imports of implementation details.</p>
+              <ul>
+                <li>Register nav panels, homepage sections, and settings with definePluginApp</li>
+                <li>Use storage, RPC, realtime, and schedules through the SDK</li>
+                <li>Keep renderer input untrusted; the server still confines paths</li>
+              </ul>
+            </div>
+          </div>
+        </div>
       </section>
 
-      <section className="guide-next-section"><div className="wrap"><div className="guide-next-card" data-reveal><div><span className="eyebrow">Go deeper</span><h2>The reference contains the exact types, events, and lifecycle behavior.</h2><p>Use it as the source of truth while implementing, and return to these visual guides when you need to orient a new contributor.</p></div><div className="guide-next-actions"><Link className="btn btn-primary" href="/docs/extensions-sdk-reference/">Read SDK reference</Link><Link className="btn btn-ghost" href="/docs/extensions-authoring/">Read authoring guide</Link></div></div></div></section>
+      <section className="guide-next-section">
+        <div className="wrap">
+          <div className="guide-next-card" data-reveal>
+            <div>
+              <span className="eyebrow">Go deeper</span>
+              <h2>The reference contains the exact types, events, and lifecycle behavior.</h2>
+              <p>Use it as the source of truth while implementing, and return to these guides when you need to orient a new contributor.</p>
+            </div>
+            <div className="guide-next-actions">
+              <Link className="btn btn-primary" href="/docs/extensions-sdk-reference/">Read SDK reference</Link>
+              <Link className="btn btn-ghost" href="/docs/extensions-authoring/">Read authoring guide</Link>
+            </div>
+          </div>
+        </div>
+      </section>
     </>
   );
 }

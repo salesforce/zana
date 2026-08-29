@@ -1,0 +1,7 @@
+{
+  "name": "zcc-docker-sample",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Sample app on the Docker remote machine",
+  "main": "src/index.js"
+}

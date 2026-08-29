@@ -1,0 +1,24 @@
+{
+  "name": "@zcc-ext/docs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cross-project Docs rail and per-project Library — durable findings, decisions, and ideas.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "zcc": {
+    "name": "Docs",
+    "description": "Durable project knowledge: Docs rail, per-project Library, and the library-curator skill",
+    "branding": { "icon": "Library" },
+    "server": "./server.mjs",
+    "app": "./app.js",
+    "projectTab": {
+      "label": "Library",
+      "icon": "Library",
+      "global": true
+    },
+    "skills": ["skills"]
+  }
+}

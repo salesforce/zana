@@ -1,0 +1,179 @@
+import type { AgentState } from '@zana-ai/zcc-domain/product';
+import type { ActiveThinking, ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
+import type { TimelineRow } from '@zana-ai/zcc-server-contract';
+
+/** Live copy while a thread is busy and not streaming a thought. */
+export const THREAD_WORKING_PHRASES = [
+  'Planning next move',
+  'Weighing the options',
+  'Mapping the next step',
+  'Choosing an approach',
+  'Lining up the work',
+  'Gathering context',
+  'Charting a course',
+  'Sorting the pieces',
+  'Finding the angle',
+  'Setting the next play'
+] as const;
+
+export const THREAD_WORKING_PHRASE_INTERVAL_MS = 3500;
+
+export function threadWorkingPhraseIndex(tick: number): number {
+  const count = THREAD_WORKING_PHRASES.length;
+  return ((tick % count) + count) % count;
+}
+
+export function threadWorkingPhrase(tick: number): string {
+  return THREAD_WORKING_PHRASES[threadWorkingPhraseIndex(tick)]!;
+}
+
+export function threadWorkingIndicatorLabel(thinking: boolean, phrase: string): string {
+  return thinking ? 'Thinking…' : `${phrase}…`;
+}
+
+export function isBusyThreadStatus(status: string): boolean {
+  return status === 'starting' || status === 'active' || status === 'stopping';
+}
+
+/** True when the latest timeline row is a retry/reconnect still in flight. */
+export function timelineHasInFlightRetry(rows: readonly TimelineRow[] | null | undefined): boolean {
+  if (!rows?.length) return false;
+  return rowEndsWithInFlightRetry(rows[rows.length - 1]!);
+}
+
+function rowEndsWithInFlightRetry(row: TimelineRow): boolean {
+  if (row.kind === 'turn') {
+    const last = row.children?.at(-1);
+    return last ? rowEndsWithInFlightRetry(last) : false;
+  }
+  if (row.kind !== 'system') return false;
+  if (row.systemKind === 'reconnect') return true;
+  return row.systemKind === 'error' && isProviderRetryDetail(row.detail);
+}
+
+function isProviderRetryDetail(detail: string | null): boolean {
+  return typeof detail === 'string' && /API retry \d+\/\d+/i.test(detail);
+}
+
+export function shouldShowThreadStop(
+  threadId: string | undefined,
+  status: string | undefined,
+  inFlightRetry = false
+): boolean {
+  if (!threadId) return false;
+  if (isBusyThreadStatus(status ?? '')) return true;
+  // Retrying provider errors can land as `error` while the SDK is still
+  // backing off. Keep Stop available so the user can abort the retry loop.
+  return status === 'error' && inFlightRetry;
+}
+
+/** Map a conversation-thread status onto the agent-board lanes. */
+export function threadStatusToAgentState(status: string, waitingOnUser = false): AgentState {
+  if (status === 'error') return 'idle';
+  if (waitingOnUser) return 'blocked';
+  if (isBusyThreadStatus(status)) return 'working';
+  return 'idle';
+}
+
+/** Visual tone for a thread status chip/dot. Errors keep the danger look without
+ *  borrowing the `blocked` / "Needs you" lane — a failed run is not a prompt. */
+export function threadStatusTone(
+  status: string,
+  waitingOnUser = false
+): AgentState | 'error' {
+  if (status === 'error') return 'error';
+  return threadStatusToAgentState(status, waitingOnUser);
+}
+
+export function threadStatusLabel(
+  status: string,
+  waitingOnUser = false,
+  thinking?: ActiveThinking | null,
+  workingPhrase: string = THREAD_WORKING_PHRASES[0]
+): string {
+  const trimmed = status.trim();
+  if (!trimmed) return '';
+  if (trimmed === 'error') return 'Error';
+  if (waitingOnUser) return 'Needs you';
+  if (isBusyThreadStatus(trimmed)) return thinking ? 'Thinking' : workingPhrase;
+  if (trimmed === 'idle') return 'Idle';
+  return trimmed.replace(/-/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+export function timelineRowsAwaitUser(rows: readonly TimelineRow[] | null | undefined): boolean {
+  if (!rows?.length) return false;
+  for (const row of rows) {
+    if (row.kind === 'turn') {
+      if (timelineRowsAwaitUser(row.children)) return true;
+      continue;
+    }
+    if (row.kind !== 'work') continue;
+    if (row.workKind === 'question') {
+      if (row.lifecycle === 'pending' || row.lifecycle === 'resolving') return true;
+      continue;
+    }
+    if (row.workKind === 'approval') {
+      if (row.lifecycle === 'waiting' || row.lifecycle === 'pending' || row.lifecycle === 'resolving') {
+        return true;
+      }
+      continue;
+    }
+    if (row.workKind === 'delegation' && timelineRowsAwaitUser(row.childRows)) return true;
+  }
+  return false;
+}
+
+export function visiblePendingTodos(
+  todos: ThreadTimelinePendingTodos | null | undefined
+): ThreadTimelinePendingTodos | null {
+  if (!todos?.items.length) return null;
+  if (todos.items.every((item) => item.status === 'completed')) return null;
+  return todos;
+}
+
+export function workRowBody(row: {
+  workKind?: string;
+  output?: string;
+  change?: {
+    path?: string;
+    diff?: string | null;
+    diffStats?: { added: number; removed: number };
+  };
+  queries?: string[];
+  url?: string;
+  path?: string;
+  description?: string;
+  summary?: string | null;
+  questions?: unknown;
+}): string {
+  switch (row.workKind) {
+    case 'command':
+    case 'tool':
+    case 'delegation':
+      return typeof row.output === 'string' ? row.output : '';
+    case 'file-change': {
+      const stats = row.change?.diffStats;
+      const tally = stats ? `+${stats.added} −${stats.removed}` : '';
+      return [row.change?.path, tally, row.change?.diff].filter(Boolean).join('\n');
+    }
+    case 'web-search':
+      return (row.queries ?? []).join('\n');
+    case 'web-fetch':
+      return row.url ?? '';
+    case 'image-view':
+      return row.path ?? '';
+    case 'workflow':
+      return row.summary || row.description || '';
+    case 'question':
+      return Array.isArray(row.questions)
+        ? row.questions.map((question) => {
+          if (question && typeof question === 'object' && 'prompt' in question) {
+            return String((question as { prompt: unknown }).prompt);
+          }
+          return '';
+        }).filter(Boolean).join('\n')
+        : '';
+    default:
+      return '';
+  }
+}

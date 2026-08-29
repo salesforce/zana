@@ -1,0 +1,4 @@
+export const FILE_LIST_QUERY_MAX_LENGTH = 256;
+export const FILE_LIST_LIMIT_MAX = 10_000;
+export const BRANCH_LIST_QUERY_MAX_LENGTH = 256;
+export const BRANCH_LIST_LIMIT_MAX = 1_000;

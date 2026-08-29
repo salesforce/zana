@@ -1,0 +1,468 @@
+{
+  "schemaVersion": 1,
+  "name": "official",
+  "displayName": "Zana official plugins",
+  "description": "First-party plugins shipped with Zana Command Center",
+  "plugins": [
+    {
+      "id": "provider-acp",
+      "displayName": "ACP providers",
+      "description": "Run Zana threads with ACP agents, including Cursor and OpenCode.",
+      "icon": {
+        "lucide": "./icons/cursor.svg"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/provider-acp",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "ask-user-question",
+      "displayName": "Ask user question",
+      "description": "Structured multiple-choice questions in the thread workbench.",
+      "icon": {
+        "lucide": "CircleHelp"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/ask-user-question",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "automations",
+      "displayName": "Automations",
+      "description": "Author and inspect scheduled automations.",
+      "icon": {
+        "lucide": "Workflow"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/automations",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "provider-claude-code",
+      "displayName": "Claude Code provider",
+      "description": "Run Zana threads with Claude Code.",
+      "icon": {
+        "lucide": "./icons/claude-code.svg"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/provider-claude-code",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "provider-codex",
+      "displayName": "Codex provider",
+      "description": "Run Zana threads with Codex.",
+      "icon": {
+        "lucide": "./icons/codex.svg"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/provider-codex",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "connect",
+      "displayName": "Connect",
+      "description": "Tunnel this ZCC to an enrolled host.",
+      "icon": {
+        "lucide": "Cable"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/connect",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "custom-instructions",
+      "displayName": "Custom instructions",
+      "description": "Add persistent custom instructions to agent threads on this host.",
+      "icon": {
+        "lucide": "ScrollText"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/custom-instructions",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "docs",
+      "displayName": "Docs",
+      "description": "Durable project knowledge: Docs rail, per-project Library, and the library-curator skill",
+      "icon": {
+        "lucide": "Library"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/docs",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "github",
+      "displayName": "GitHub",
+      "description": "Browse issues and pull requests from a GitHub repository.",
+      "icon": {
+        "lucide": "Github"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/github",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "inline-vis",
+      "displayName": "Inline vis",
+      "description": "Render ::vis{kind} charts in assistant markdown.",
+      "icon": {
+        "lucide": "ChartNoAxesColumn"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/inline-vis",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "keep-awake",
+      "displayName": "Keep awake",
+      "description": "Prevent the local machine from sleeping while ZCC is running.",
+      "icon": {
+        "lucide": "Coffee"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/keep-awake",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "memory",
+      "displayName": "Memory",
+      "description": "Durable notes the agent should remember across threads.",
+      "icon": {
+        "lucide": "Brain"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/memory",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "provider-pi",
+      "displayName": "Pi provider",
+      "description": "Run Zana threads with Pi.",
+      "icon": {
+        "lucide": "./icons/pi.svg"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/provider-pi",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "pr-monitor",
+      "displayName": "PR Monitor",
+      "description": "Keep your authored pull requests visible: CI, review, merge-readiness, and inbox alerts.",
+      "icon": {
+        "lucide": "GitPullRequest"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/pr-monitor",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "provider-retry",
+      "displayName": "Provider retry",
+      "description": "Continue turns after provider subscription limits reset.",
+      "icon": {
+        "lucide": "RotateCcw"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/provider-retry",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "salesforce",
+      "displayName": "Salesforce",
+      "description": "Org identity, doctor, Agent Script editor, and API-native SOQL/Apex/LWC/Agent Script tools with fail-closed approvals. Install with `zcc plugin install salesforce`.",
+      "icon": {
+        "lucide": "Cloud"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/salesforce",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "secrets",
+      "displayName": "Secrets",
+      "description": "Prompt for a secret via pendingInteraction.",
+      "icon": {
+        "lucide": "KeyRound"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/secrets",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "side-chat",
+      "displayName": "Side chat",
+      "description": "Fork a compact chat beside the current thread.",
+      "icon": {
+        "lucide": "MessagesSquare"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/side-chat",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "tasks",
+      "displayName": "Tasks",
+      "description": "Plan and track work: a sidebar panel, `zcc tasks`, and a generated-skill-friendly command.",
+      "icon": {
+        "lucide": "ListTodo"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/tasks",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
+      "id": "workflows",
+      "displayName": "Workflows",
+      "description": "Inline workflow cards in assistant messages and a composer plus-menu.",
+      "icon": {
+        "lucide": "GitBranch"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/workflows",
+          "ref": "HEAD"
+        }
+      }
+    }
+  ]
+}

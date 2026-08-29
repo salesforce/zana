@@ -1,21 +1,21 @@
 /**
  * Verifies the scheduler's "open a running session" affordance end-to-end:
  * a fired schedule spawns a HEADLESS background pty (hidden from the tab strip);
- * clicking the Overview row's open button must un-hide it (setHeadless=false)
- * and promote it to a visible, selected tab in the project workspace.
+ * clicking the Overview row's open button must peek it in the agent-inspector
+ * modal without yanking the user onto a project terminal tab.
  *
  * Both the "Running now" and "Finished · session open" rows call the identical
- * onOpenTerminal → restoreTerminal → setHeadless(false) → selectTab path, so a
- * live `shell` fire (stays alive, never stamps finishedAt) exercises the shared
- * mechanism. We drive schedule creation + fire via the real window.cc IPC, then
- * click the real DOM button and assert against the real renderer state.
+ * onOpenTerminal → openScheduledLive → openAgentModal path, so a live `shell`
+ * fire (stays alive, never stamps finishedAt) exercises the shared mechanism.
+ * We drive schedule creation + fire via the real window.cc IPC, then click the
+ * real DOM button and assert the inspector modal is on screen.
  */
-import { test, expect } from './fixtures/app';
+import { test, expect } from './fixtures/app.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
-test('scheduler: clicking "open" on a running scheduled session promotes it to a visible tab', async ({
+test('scheduler: clicking "open" on a running scheduled session peeks the inspector modal', async ({
   app,
 }) => {
   const { window } = app;
@@ -43,7 +43,7 @@ test('scheduler: clicking "open" on a running scheduled session promotes it to a
   // store's project list, which would silently undo the open we're testing.
   // (In real usage a scheduled task always targets a pre-existing project, so
   // this guard never fires — the reload models that precondition.)
-  const projectsNav = window.locator('button.nav-item').filter({ hasText: 'Projects' });
+  const projectsNav = window.locator('.nav-item').filter({ hasText: 'Projects' });
   await projectsNav.first().click();
   await window.locator('button[aria-label="Reload project list"]').click();
 
@@ -95,14 +95,14 @@ test('scheduler: clicking "open" on a running scheduled session promotes it to a
   }, projectId);
   expect(sessionId).toBeTruthy();
 
-  // The spawned session is headless → NOT a visible tab yet: no tab titled
-  // "Scheduled: …" should exist before we click (guards against a false green).
+  // The spawned session is headless → NOT a visible tab: no tab titled
+  // "Scheduled: …" should exist before (or after) we click.
   await expect(
     window.locator('.tabbar .tab').filter({ hasText: 'E2E open-me' })
   ).toHaveCount(0);
 
   // Open the Scheduler view via its sidebar/nav control.
-  const schedNav = window.locator('button.nav-item').filter({ hasText: 'Scheduler' });
+  const schedNav = window.locator('.nav-item').filter({ hasText: 'Scheduler' });
   await schedNav.first().click();
 
   // The Overview "Running now" card renders one row per live scheduled session,
@@ -120,16 +120,18 @@ test('scheduler: clicking "open" on a running scheduled session promotes it to a
   await expect(openBtn).toBeVisible({ timeout: 15_000 });
   await openBtn.click();
 
-  // The backend half: main un-hides the session (headless flag cleared) so it
-  // rejoins the visible tab list. We assert on the STATE we care about — the
-  // session is still present AND no longer headless — as a single string so a
-  // dropped session ('gone') is distinguishable from a still-hidden one
-  // ('headless'); the success value is 'visible'.
+  // Peek stays on Scheduler: the inspector modal hosts the live session, and
+  // the headless pty is NOT promoted into the tab strip.
+  const agentModal = window.locator('[data-testid="agent-terminal-modal"]');
+  await expect(agentModal).toBeVisible({ timeout: 15_000 });
+  await expect(agentModal.getByTestId('agent-modal-header')).toBeVisible();
+  await expect(
+    window.locator('.tabbar .tab').filter({ hasText: 'E2E open-me' })
+  ).toHaveCount(0);
+
   await expect
     .poll(
       async () =>
-        // NOTE: `window.cc` lives on the app's browser window, so this MUST run
-        // inside window.evaluate — `window` here is the Playwright Page handle.
         window.evaluate(
           async (args) => {
             const { pid, sid } = args as { pid: string; sid: string };
@@ -139,27 +141,20 @@ test('scheduler: clicking "open" on a running scheduled session promotes it to a
             ) as Array<{ id: string; headless?: boolean }>;
             const mine = sessions.find((s) => s.id === sid);
             if (!mine) return 'gone';
-            // headless is `undefined` once cleared (setHeadless(false) drops it).
             return mine.headless ? 'headless' : 'visible';
           },
           { pid: projectId, sid: sessionId }
         ),
       { timeout: 15_000 }
     )
-    .toBe('visible');
-
-  // The navigation half: the click must TAKE the user to the session — focus the
-  // project, land on Terminals, and show the un-hidden session as the active tab.
-  const tab = window.locator('.tabbar .tab').filter({ hasText: 'E2E open-me' });
-  await expect(tab.first()).toBeVisible({ timeout: 15_000 });
-  await expect(tab.first()).toHaveClass(/active/, { timeout: 15_000 });
+    .toBe('headless');
   } finally {
     // Leave no trace in the real ~/.zcc (macOS home-path leak): remove the
     // project and the schedule we created above.
     await window.evaluate(async (pid) => {
       try {
         const list = await window.cc.scheduler.list();
-        const tasks = (list && 'ok' in (list as any) ? (list as any).value : list) as Array<{
+        const tasks = (list && 'ok' in list ? (list as any).value : list) as Array<{
           id: string;
           name?: string;
           projectId?: string;

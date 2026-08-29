@@ -1,20 +1,15 @@
-# Built-in modules (`plugins/`)
+# First-party plugins (`plugins/`)
 
-This directory contains app features compiled into the trusted Electron process.
-They are distinct from runtime disk extensions, which are discovered from
-`~/.zcc/extensions/<id>/` and run through the permission broker.
+This directory holds first-party plugins. They are distinct from the plugin
+host (`apps/server/src/plugins/`, `apps/app/src/plugins/`), which discovers
+and loads any installed plugin.
 
-## Current built-in
+## Current
 
-| Module | Why it is built in |
+| Package | Role |
 | --- | --- |
-| `slack/` | Uses in-process timers for the live bot poll loop and a trusted fetch capability. |
+| `docs/` | Builtin (`autoInstall: true`) — Docs rail, per-project Library, and the library-curator skill. The panel UI is compiled into the renderer (`apps/app/src/views/library`); this package ships the skill + server. Packaged builds copy `plugins/` via electron-builder extraResources. |
+| `salesforce/` | Official (`autoInstall: false`) — Salesforce DX inner loop. Install with `zcc plugin install salesforce`. Org doctor, SOQL/Apex/LWC/Agent Script family tools, and fail-closed mutation confirms. |
 
-## Authoring
-
-Built-ins and disk extensions consume the published `@zana-ai/zcc-extension-sdk` APIs.
-For disk-extension manifests, packaging, permissions, and the runtime isolation
-model, see [`docs/extensions-authoring.md`](../docs/extensions-authoring.md).
-
-Do not add a runtime extension to `MAIN_MODULES` or `APP_MODULES`; package it
-with an `extension.json` manifest and install it through the extension workflow.
+Do not add a runtime plugin to `MAIN_MODULES`. Author it with a `package.json`
+`zcc` block under `plugins/<id>` and install it through the plugin workflow.

@@ -10,29 +10,34 @@
     "group": "Start"
   },
   {
+    "slug": "multiple-devices",
+    "title": "Using Zana on multiple machines",
+    "group": "Start"
+  },
+  {
     "slug": "cli",
     "title": "The zcc CLI",
     "group": "Start"
   },
   {
     "slug": "extensions-quickstart",
-    "title": "Build your first extension",
-    "group": "Extensions"
+    "title": "Build your first plugin",
+    "group": "Plugins"
   },
   {
     "slug": "extensions",
-    "title": "Extensions overview",
-    "group": "Extensions"
+    "title": "Plugins overview",
+    "group": "Plugins"
   },
   {
     "slug": "extensions-authoring",
-    "title": "Authoring extensions",
-    "group": "Extensions"
+    "title": "Authoring plugins",
+    "group": "Plugins"
   },
   {
     "slug": "extensions-sdk-reference",
-    "title": "Extension SDK reference",
-    "group": "Extensions"
+    "title": "Plugin SDK reference",
+    "group": "Plugins"
   },
   {
     "slug": "harness-authoring",

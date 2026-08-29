@@ -1,0 +1,20 @@
+{
+  "name": "@zcc-ext/github",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Browse issues and pull requests from a GitHub repository.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "zcc": {
+    "name": "GitHub",
+    "description": "Browse issues and pull requests from a GitHub repository.",
+    "branding": {
+      "icon": "Github"
+    },
+    "server": "./server.mjs",
+    "app": "./app.js"
+  }
+}

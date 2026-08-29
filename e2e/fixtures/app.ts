@@ -6,6 +6,10 @@
  * Isolation model (why the suite never touches your real machine state):
  *   - HOME is a throwaway tmp dir, so every `~/.zcc/*` path the app resolves
  *     (extensions, registry config, inbox, personas, …) lands in the sandbox.
+ *   - ZCC_DATA_DIR is pinned under that HOME so host-daemon enroll/lock does
+ *     not collide with a live developer daemon on `~/.zcc`.
+ *   - `--user-data-dir` is a throwaway dir so a running Zana instance cannot
+ *     steal Electron's single-instance lock and leave Playwright without a window.
  *   - ZCC_EXTENSIONS_DIR is pinned under that HOME for belt-and-suspenders.
  *   - The app runs against the BUILT bundle (out/main/index.js) — the same code
  *     a packaged build runs, minus code-signing.
@@ -36,8 +40,8 @@ import {
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startLocalRegistry, type LocalRegistry, type DummyExtensionSpec } from './registry';
-import { EventRecorder } from '../sdk/events';
+import { startLocalRegistry, type LocalRegistry, type DummyExtensionSpec } from './registry.js';
+import { EventRecorder } from '../sdk/events.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const MAIN_ENTRY = join(REPO_ROOT, 'out/main/index.js');
@@ -156,11 +160,16 @@ async function appWindow(app: ElectronApplication): Promise<Page> {
   await app.firstWindow({ timeout: 60_000 });
   for (let i = 0; i < 80; i++) {
     for (const w of app.windows()) {
-      if (w.url().includes('index.html')) return w;
+      if (isAppRendererUrl(w.url())) return w;
     }
     await new Promise((r) => setTimeout(r, 250));
   }
-  throw new Error('app renderer window (index.html) never appeared');
+  throw new Error('app renderer window never appeared');
+}
+
+/** Production uses the supervised loopback server; dev/repair keeps file URLs. */
+export function isAppRendererUrl(url: string): boolean {
+  return url.includes('index.html') || /^http:\/\/127\.0\.0\.1:\d+\//.test(url);
 }
 
 export interface LaunchOptions {
@@ -183,10 +192,15 @@ export interface LaunchOptions {
 export async function launchApp(home: string, opts: LaunchOptions = {}): Promise<AppHandle> {
   writeAppConfig(home, opts.initialConfig);
   const preserveHome = opts.env?.ZCC_E2E_PRESERVE_HOME === '1';
+  const dataDir = join(home, '.zcc');
+  mkdirSync(dataDir, { recursive: true });
+  const userDataDir = join(home, 'electron-user-data');
+  mkdirSync(userDataDir, { recursive: true });
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
     HOME: preserveHome ? homedir() : home,
     ZCC_E2E_HOME: home,
+    ZCC_DATA_DIR: dataDir,
     ZCC_EXTENSIONS_DIR: join(home, '.zcc', 'extensions'),
     // Electron's unpackaged default is "0.0". The main process uses this only
     // in E2E so the smoke test observes the same version as package.json.
@@ -194,9 +208,19 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
     ...(opts.e2e ? { ZCC_E2E: '1' } : {}),
     ...opts.env,
   };
+  // A parent `electron-vite dev` / leftover diagnostic must not steal this
+  // unpackaged E2E boot onto the live renderer or product server.
+  if (!opts.env?.ELECTRON_RENDERER_URL) delete env.ELECTRON_RENDERER_URL;
+  if (!opts.env?.ZCC_DESKTOP_APP_URL) delete env.ZCC_DESKTOP_APP_URL;
+  if (!opts.env?.ZCC_SERVER_URL) delete env.ZCC_SERVER_URL;
+  if (!opts.env?.ZCC_HOST_ENROLL_TOKEN) delete env.ZCC_HOST_ENROLL_TOKEN;
   if (opts.caCertPath) env.NODE_EXTRA_CA_CERTS = opts.caCertPath;
 
-  const app = await electron.launch({ args: [MAIN_ENTRY], env, timeout: 60_000 });
+  const app = await electron.launch({
+    args: [`--user-data-dir=${userDataDir}`, MAIN_ENTRY],
+    env,
+    timeout: 60_000
+  });
   const window = await appWindow(app);
   await window.waitForSelector('#root', { timeout: 30_000 });
   await dismissConsentOverlays(window);
@@ -204,7 +228,7 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
 }
 
 /**
- * On a fresh boot the app seeds its bundled extensions (gus/cu/consensus), each
+ * On a fresh boot the app seeds its bundled extensions (docs), each
  * of which declares permissions and raises a first-run consent overlay that
  * intercepts pointer events. Tests aren't about that flow, so dismiss every
  * pending overlay (the overlay shows one un-consented extension at a time).
@@ -230,6 +254,11 @@ type Fixtures = {
   home: string;
   /** Opt the marketplace channel ON (boots a signed HTTPS registry). */
   useRegistry: boolean;
+  /**
+   * Hide first-party bundled plugins from Browse so remote-registry specs can
+   * assert exact row counts. Default off — production Browse is non-empty.
+   */
+  isolateBundledCatalog: boolean;
   /** When useRegistry, reject unsigned releases (default true). */
   requireSignature: boolean;
   /** Customize the published dummy extension. */
@@ -256,6 +285,7 @@ type Fixtures = {
 
 export const test = base.extend<Fixtures>({
   useRegistry: [false, { option: true }],
+  isolateBundledCatalog: [false, { option: true }],
   requireSignature: [true, { option: true }],
   dummySpec: [{}, { option: true }],
   e2e: [false, { option: true }],
@@ -286,7 +316,7 @@ export const test = base.extend<Fixtures>({
     }
   },
 
-  app: async ({ home, registry, requireSignature, e2e, launchEnv, initialConfig, seedClaudeAuth }, use) => {
+  app: async ({ home, registry, requireSignature, e2e, launchEnv, initialConfig, seedClaudeAuth, isolateBundledCatalog }, use) => {
     if (registry) {
       writeRegistryConfig(home, {
         enabled: true,
@@ -319,10 +349,18 @@ export const test = base.extend<Fixtures>({
       writeFileSync(realConfigPath, JSON.stringify({ ...current, ...initialConfig }, null, 2));
     }
 
+    const env: Record<string, string> = { ...launchEnv };
+    if (isolateBundledCatalog) {
+      const empty = join(home, 'empty-bundled-catalog');
+      mkdirSync(empty, { recursive: true });
+      env.ZCC_BUNDLED_PLUGINS_DIR = empty;
+      env.ZCC_BUNDLED_EXTENSIONS_DIR = empty;
+    }
+
     const handle = await launchApp(home, {
       caCertPath: registry?.caCertPath,
       e2e,
-      env: launchEnv,
+      env,
       initialConfig
     });
     try {

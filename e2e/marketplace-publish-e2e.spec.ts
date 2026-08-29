@@ -12,7 +12,7 @@
  *   3. Run the REAL CLI (`scripts/publish-extension.mjs --api --token`) as a
  *      child process against a freshly-built dummy extension artifact dir
  *      (id `e2e-marketplace-pub`, mirroring `fixtures/registry.ts`'s dummy —
- *      NOT one of the app's bundled ids like `gus`/`zana`/`cu`/`consensus`.
+ *      NOT one of the app's bundled ids like `docs`.
  *      Publishing under a bundled id was tried first and failed: the app
  *      seeds those at boot (`seedBundledExtensions`) at the exact version
  *      this test would publish, so the marketplace row is already
@@ -43,9 +43,9 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 
-import { startWebsiteServer, type WebsiteServer } from './fixtures/website-server';
-import { launchApp, writeRegistryConfig, dismissConsentOverlays, type AppHandle } from './fixtures/app';
-import { MarketplacePage } from './fixtures/marketplace';
+import { startWebsiteServer, type WebsiteServer } from './fixtures/website-server.js';
+import { launchApp, writeRegistryConfig, dismissConsentOverlays, type AppHandle } from './fixtures/app.js';
+import { MarketplacePage } from './fixtures/marketplace.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -59,32 +59,32 @@ const EXT_TITLE = 'E2E Marketplace Pub';
 const EXT_VERSION = '1.0.0';
 
 /**
- * Write a minimal, valid extension artifact dir — the same shape
- * `fixtures/registry.ts`'s dummy extension uses, so `buildArchive()` in
- * `scripts/publish-extension.mjs` accepts it (a manifest + `main.mjs`).
+ * Write a minimal, valid plugin artifact dir so `buildArchive()` in
+ * `scripts/publish-extension.mjs` accepts it (`package.json` zcc + server entry).
  */
-function writeDummyExtensionArtifact(dir: string): void {
+function writeDummyPluginArtifact(dir: string): void {
   mkdirSync(dir, { recursive: true });
   writeFileSync(
-    join(dir, 'extension.json'),
+    join(dir, 'package.json'),
     JSON.stringify(
       {
-        id: EXT_ID,
+        name: `zcc-plugin-${EXT_ID}`,
         version: EXT_VERSION,
-        title: EXT_TITLE,
-        icon: 'Sparkles',
-        titleLabel: EXT_TITLE,
-        entry: { main: 'main.mjs' },
-        engines: { zccApi: '^1.0.0' },
-        permissions: ['storage'],
+        engines: { zcc: '^1.0.0', zccPluginSdk: '>=0.1.0' },
+        zcc: {
+          name: EXT_TITLE,
+          description: EXT_TITLE,
+          branding: { icon: 'Sparkles' },
+          server: './server.mjs'
+        }
       },
       null,
       2
     )
   );
   writeFileSync(
-    join(dir, 'main.mjs'),
-    `export default { id: ${JSON.stringify(EXT_ID)}, setup(ctx) { ctx.log('${EXT_ID} activated'); return { ping: async () => 'pong' }; } };\n`
+    join(dir, 'server.mjs'),
+    `/** @param {import('@zana-ai/zcc-plugin-sdk').ZccPluginApi} zcc */\nexport default function plugin(zcc) {}\n`
   );
 }
 
@@ -194,7 +194,7 @@ test.describe('marketplace publish E2E — publish via API, install via the real
 
     // === Step 3: run the REAL CLI against a freshly-built dummy extension dir ===
     const extensionDir = join(workDir, 'artifact', EXT_ID);
-    writeDummyExtensionArtifact(extensionDir);
+    writeDummyPluginArtifact(extensionDir);
 
     const { stdout } = await execFileAsync(
       process.execPath,
@@ -268,6 +268,7 @@ test.describe('marketplace publish E2E — publish via API, install via the real
       await expect(market.rowButton(EXT_TITLE)).toHaveText(/Install/);
 
       await market.rowButton(EXT_TITLE).click();
+      await market.confirmInstall();
       await expect(market.rowButton(EXT_TITLE)).toHaveText(/Installed/, { timeout: 30_000 });
 
       const list = await market.ipc<Array<{ id: string; enabled: boolean }>>('list');

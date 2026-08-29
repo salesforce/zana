@@ -1,24 +1,32 @@
 {
   "name": "@zcc/cli",
   "version": "0.1.0",
-  "description": "Thin CLI for reading/authoring Zana Command Center stores",
+  "description": "CLI for the Zana Command Center product API",
   "license": "MIT",
   "type": "module",
   "bin": {
     "zcc": "./dist/bin/zcc.js"
   },
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/bin/zcc.js",
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && node scripts/postbuild.mjs",
-    "test": "vitest run",
+    "build": "node scripts/build.mjs && node scripts/postbuild.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "pnpm run build && vitest run",
     "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@zana-ai/zcc-domain": "workspace:*",
+    "@zana-ai/zcc-plugin-build": "workspace:*",
+    "@zana-ai/zcc-plugin-sdk": "workspace:*",
+    "@zana-ai/zcc-plugin-templates": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }
 }

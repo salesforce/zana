@@ -49,7 +49,7 @@ tar \
   --exclude='out' \
   --exclude='dist' \
   --exclude='*/dist' \
-  --exclude='test-results' \
+  --exclude='e2e/.artifacts' \
   --exclude='playwright-report' \
   --exclude='.env' \
   --exclude='.env.*' \

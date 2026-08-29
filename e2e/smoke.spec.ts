@@ -10,9 +10,10 @@
  * mutating call would leak into the developer's real state and there's no
  * cleanup hook in this deliberately-minimal spec.
  */
-import { test, expect } from './fixtures/app';
+import { test, expect } from './fixtures/app.js';
 
 test('app boots: renderer mounts and the IPC bridge is live', async ({ app }) => {
+  expect(app.window.url()).toMatch(/^http:\/\/127\.0\.0\.1:\d+\//);
   // React root mounted something.
   const rootChildren = await app.window.evaluate(
     () => document.querySelector('#root')?.childElementCount ?? 0
@@ -37,4 +38,12 @@ test('app boots: renderer mounts and the IPC bridge is live', async ({ app }) =>
     (window as unknown as { cc: { app: { version: () => Promise<string> } } }).cc.app.version()
   );
   expect(version, 'app.version() must round-trip a semver from main').toMatch(/^\d+\.\d+\.\d+/);
+
+  // Projects are the first product read routed through the supervised server
+  // utility process. This is read-only so the release smoke cannot touch the
+  // developer's real ZCC state.
+  const projects = await app.window.evaluate(() =>
+    (window as unknown as { cc: { projects: { list: () => Promise<unknown[]> } } }).cc.projects.list()
+  );
+  expect(Array.isArray(projects), 'projects.list() must round-trip via the server runtime').toBe(true);
 });

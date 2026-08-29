@@ -1,19 +1,16 @@
+import { marketplaceCardsFromIndex, officialMarketplaceIndex } from './official-marketplace';
 import type { CatalogEntry } from './registry';
 
-/**
- * Bundled fallback catalog, drawn from the example extensions shipped in the
- * repo (bundled-extensions/*). Shown when NEXT_PUBLIC_REGISTRY_URL is unset or
- * the live feed is unreachable, so the marketplace is never an empty shell.
- */
-export const SAMPLE_CATALOG: CatalogEntry[] = [
-  {
-    id: 'consensus',
-    version: '0.1.0',
-    title: 'Consensus',
-    description: 'A per-project tab for settled council decisions — multi-voice deliberation made durable.',
-    author: 'Zana',
-    icon: 'Scale',
-    permissions: ['inbox:push'],
-    versions: ['0.1.0']
-  }
-];
+/** Fallback when the live `/marketplace/v1/marketplace.json` feed cannot be fetched. */
+export const SAMPLE_CATALOG: CatalogEntry[] = marketplaceCardsFromIndex(officialMarketplaceIndex()).map(
+  (card) => ({
+    id: card.id,
+    version: card.version,
+    title: card.title,
+    description: card.description,
+    author: card.author,
+    icon: card.icon,
+    permissions: [],
+    versions: [card.version]
+  })
+);

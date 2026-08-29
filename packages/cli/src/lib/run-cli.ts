@@ -29,16 +29,14 @@ import {
   readFollowUps
 } from './store-readers.js';
 import { callControlPlane, isAppRunning } from './control-client.js';
+import { type CliResult as SharedCliResult } from './cli-result.js';
+import type { ProductHttpDeps } from './product-http.js';
 
-export interface CliDeps {
+export interface CliDeps extends ProductHttpDeps {
   dataDir: string;
 }
 
-export interface CliResult {
-  exitCode: number;
-  stdout: string;
-  stderr?: string;
-}
+export type CliResult = SharedCliResult;
 
 const VERSION = '0.1.0';
 
@@ -121,11 +119,43 @@ export async function runCli(argv: string[], deps?: Partial<CliDeps>): Promise<C
   const filteredArgs = [...argsNoData.filter(a => a !== '--json'), ...tailWithSentinel];
 
   const [command, subcommand, ...rest] = filteredArgs;
+  const httpDeps: ProductHttpDeps = {
+    fetchImpl: deps?.fetchImpl,
+    serverUrl: deps?.serverUrl,
+    nowMs: deps?.nowMs,
+    sleep: deps?.sleep
+  };
 
   try {
-    // ---- File-backed reads (work whether the app is up or down) ----
-    if (command === 'projects' && subcommand === 'ls') {
-      return await projectsList(dataDir, jsonOutput);
+    if (command === 'help') {
+      return help();
+    } else if (command === 'guide') {
+      const { runGuideCommand } = await import('./commands/guide.js');
+      return await runGuideCommand(subcommand, jsonOutput);
+    } else if (command === 'thread') {
+      const { runThreadCommand } = await import('./commands/thread.js');
+      return await runThreadCommand(subcommand, rest, jsonOutput, httpDeps);
+    } else if (command === 'machine') {
+      const { runMachineCommand } = await import('./commands/machine.js');
+      return await runMachineCommand(subcommand, rest, jsonOutput, httpDeps);
+    } else if (command === 'project') {
+      const { runProjectCommand } = await import('./commands/project.js');
+      return await runProjectCommand(subcommand, rest, jsonOutput, httpDeps);
+    } else if (command === 'projects' && (subcommand === 'ls' || subcommand === 'list' || !subcommand)) {
+      const { runProjectCommand } = await import('./commands/project.js');
+      return await runProjectCommand('list', rest, jsonOutput, httpDeps);
+    } else if (command === 'skill') {
+      const { runSkillCommand } = await import('./commands/skill.js');
+      return await runSkillCommand(subcommand, rest, jsonOutput, httpDeps);
+    } else if (command === 'settings') {
+      const { runSettingsCommand } = await import('./commands/settings.js');
+      return await runSettingsCommand(subcommand, rest, jsonOutput, httpDeps);
+    } else if (command === 'terminal') {
+      const { runTerminalCommand } = await import('./commands/terminal.js');
+      return await runTerminalCommand(subcommand, rest, jsonOutput, httpDeps);
+    } else if (command === 'environment') {
+      const { runEnvironmentCommand } = await import('./commands/environment.js');
+      return await runEnvironmentCommand(subcommand, rest, jsonOutput, httpDeps);
     } else if (command === 'personas' && subcommand === 'ls') {
       return await personasList(dataDir, jsonOutput);
     } else if (command === 'schedule' && subcommand === 'ls') {
@@ -142,27 +172,22 @@ export async function runCli(argv: string[], deps?: Partial<CliDeps>): Promise<C
       return await followupList(dataDir, rest, jsonOutput);
     }
 
-    // ---- Live commands (require the running app's control plane) ----
     else if (command === 'status') {
-      return await statusDashboard(dataDir, jsonOutput);
+      const { statusDashboardHttp } = await import('./commands/status.js');
+      return await statusDashboardHttp(jsonOutput, httpDeps);
     } else if (command === 'agent' && subcommand === 'ls') {
       return await live(dataDir, 'agent.list', {}, jsonOutput);
     } else if (command === 'team' && subcommand === 'ls') {
       return await live(dataDir, 'team.list', {}, jsonOutput);
     } else if (command === 'agent' && subcommand === 'send') {
-      const to = rest[0];
-      const message = rest.slice(1).join(' ');
-      if (!to || !message) {
-        return errResult('agent send requires <handle> and a message', 2);
-      }
-      return await live(dataDir, 'agent.send', { to, message }, jsonOutput);
+      const { runTellAlias } = await import('./commands/thread.js');
+      return await runTellAlias(rest[0], rest.slice(1).join(' '), jsonOutput, httpDeps);
     } else if (command === 'term' && subcommand === 'ls') {
-      const projectId = flagValue(rest, '--project');
-      return await live(dataDir, 'term.list', projectId ? { projectId } : {}, jsonOutput);
+      const { runTermListAlias } = await import('./commands/terminal.js');
+      return await runTermListAlias(rest, jsonOutput, httpDeps);
     } else if (command === 'term' && subcommand === 'close') {
-      const id = rest[0];
-      if (!id) return errResult('term close requires a <sessionId>', 2);
-      return await live(dataDir, 'term.close', { sessionId: id }, jsonOutput);
+      const { runTermCloseAlias } = await import('./commands/terminal.js');
+      return await runTermCloseAlias(rest[0], jsonOutput, httpDeps);
     } else if (command === 'term' && subcommand === 'reply') {
       // Inject a follow-up turn at a live session's prompt — the operator-side
       // "interact" primitive (maps to the control plane's term.reply op).
@@ -189,9 +214,8 @@ export async function runCli(argv: string[], deps?: Partial<CliDeps>): Promise<C
         jsonOutput
       );
     } else if (command === 'run') {
-      // `run` has no subcommand — the first positional is the project, which the
-      // top-level destructure captured as `subcommand`. Rejoin it with `rest`.
-      return await runCommand(dataDir, subcommand ? [subcommand, ...rest] : rest, jsonOutput);
+      const { runSpawnAlias } = await import('./commands/thread.js');
+      return await runSpawnAlias(subcommand ? [subcommand, ...rest] : rest, jsonOutput, httpDeps);
     } else if (command === 'schedule' && subcommand === 'run-now') {
       const id = rest[0];
       if (!id) return errResult('schedule run-now requires a <scheduleId>', 2);
@@ -200,7 +224,22 @@ export async function runCli(argv: string[], deps?: Partial<CliDeps>): Promise<C
       const id = rest[0];
       if (!id) return errResult(`schedule ${subcommand} requires a <scheduleId>`, 2);
       return await live(dataDir, 'sched.setEnabled', { id, enabled: subcommand === 'enable' }, jsonOutput);
+    } else if (command === 'plugin') {
+      const { runPluginCommand } = await import('./plugin-commands.js');
+      return await runPluginCommand(dataDir, subcommand, rest, jsonOutput);
+    } else if (command === 'marketplace') {
+      const { runMarketplaceCommand } = await import('./plugin-commands.js');
+      return await runMarketplaceCommand(dataDir, subcommand, rest, jsonOutput);
     } else {
+      const { pluginProxyCandidate, proxyPluginCliCommand } = await import('./plugin-cli-proxy.js');
+      if (pluginProxyCandidate(command)) {
+        return await proxyPluginCliCommand(
+          dataDir,
+          command,
+          subcommand ? [subcommand, ...rest] : rest,
+          jsonOutput
+        );
+      }
       return {
         exitCode: 1,
         stdout: '',
@@ -222,36 +261,48 @@ function help(): CliResult {
 USAGE:
   zcc <command> [options]
 
-READ COMMANDS (work whether the app is running or not):
-  status                   Live dashboard: projects, agents, schedules
-  projects ls              List projects
+OFFLINE (no app required):
+  guide [chapter]          Print a chapter (overview, threads, projects, machines,
+                           terminals, plugins, automations, agent-configuration,
+                           environments)
+  plugin new <name>        Scaffold a TypeScript plugin (package.json zcc)
+       [--dir PATH] [--app] [--kind panel|main-panel|mcp-consumer|agent-preset]
+  plugin types [dir]       Sync bundled SDK .d.ts into the plugin [--check]
+  plugin build [dir]       Bundle zcc.app / zcc.server for CI
+
+PRODUCT API (app must be running — ZCC_SERVER_URL, default http://127.0.0.1:8780):
+  status                   Live dashboard: projects and threads
+  thread list [--project ID]
+  thread spawn --project <id> --prompt "..." [--provider <id>] [--wait]
+  thread show|log|tell|wait|stop|fork|archive|unarchive|interactions <id>
+  thread open <id> [--file PATH] [--source workspace|thread-storage] [--line N]
+  machine list|show|join-code|rename|remove|provider-cli
+  project list|show|create|files|content|skills
+  projects ls              Alias of project list
+  skill list|show|files|cli-skills-status|install-cli-skills
+  settings show|general|experiment|appearance
+  terminal list|create|send|close
+  environment status|diff|diff-files|pull-request <id>
+  run <project> <prompt>   Deprecated alias of thread spawn
+  agent send <id> <msg>    Deprecated alias of thread tell
+  term ls|close            Deprecated aliases of terminal list|close
+
+FILE READS (work if the app is down; prefer HTTP groups above when it is up):
   personas ls              List personas
   schedule ls              List scheduled tasks
   inbox ls [--project ID]  List inbox entries
   inbox show <id>          Show full inbox entry
   followup ls              List follow-ups (parked questions/decisions)
        [--project ID] [--status open|resolved|dismissed] [--all]
-       Defaults to open only; --all shows every state.
 
-LIVE COMMANDS (require the app to be running):
+LIVE CONTROL PLANE (app must be running):
+  plugin ls|install|enable|disable|reload|remove|dev|search|outdated|update|run|logs
+  marketplace ls|add|refresh|remove|install
   agent ls                 List live agents + their state
-  team ls                  List the team catalogue (builtins + files + extensions)
-  agent send <h> <msg>     Send a message to agent <handle>
-  term ls [--project ID]   List live terminal sessions
-  term close <sessionId>   Close a live session
+  team ls                  List the team catalogue
   term reply <sessionId> <message>
-                           Inject a follow-up turn at a live session's prompt
   term close-summary <projectId> <sessionId...>
-                           Summarize the sessions' work to the inbox, then close
-                           them. Add --no-summary to close without summarizing.
-  run <project> <prompt>   Spawn a claude agent in a project
-       [--persona NAME|ID] [--profile P] [--wait | --detach] [--timeout 5m]
-       --persona resolves by id, name, or unique prefix (e.g. 'reviewer').
-       Use '--' before a prompt that contains flag-like tokens:
-         zcc run myproj -- review the --wait handler
-  schedule run-now <id>    Fire a schedule once now
-  schedule enable <id>     Enable a schedule
-  schedule disable <id>    Disable a schedule
+  schedule run-now|enable|disable <id>
 
 OPTIONS:
   --json                   Output as JSON (machine-readable)
@@ -260,23 +311,23 @@ OPTIONS:
   --version, -v            Show version
 
 ENVIRONMENT:
+  ZCC_SERVER_URL            Product HTTP base (default http://127.0.0.1:8780)
   ZCC_CENTER_DIR            Override data directory (default: ~/.zcc)
   ZCC_SESSION_ID            Set by the app inside agent terminals. When present,
                             the CLI is treated as an AGENT caller (read-only) —
-                            mutating commands are refused. Do not set by hand.
+                            mutating commands are refused (FORBIDDEN_AGENT, exit 5).
+                            Do not set by hand.
 
 EXIT CODES:
-  0 success · 1 error · 2 bad usage · 3 not found/ambiguous
-  4 resource limit · 5 refused by guard · 124 --wait timeout
+  0 success · 1 error / APP_NOT_RUNNING · 2 bad usage · 3 not found/ambiguous
+  4 resource limit · 5 FORBIDDEN_AGENT · 124 --wait timeout
 
 EXAMPLES:
-  zcc status
-  zcc followup ls --project my-proj
-  zcc run my-proj "review the diff in src/auth" --persona reviewer --wait
-  zcc term reply sess-abc "also check the error paths"
-  zcc agent send reviewer "PR #214 is ready"
-  zcc term close-summary my-proj sess-abc sess-def
-  zcc schedule run-now nightly-review
+  zcc status --json
+  zcc thread spawn --project my-proj --prompt "review src/auth" --wait
+  zcc thread tell <id> "also check the error paths"
+  zcc machine list
+  zcc guide threads
 `;
   return { exitCode: 0, stdout: text };
 }

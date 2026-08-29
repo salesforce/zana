@@ -1,7 +1,7 @@
 /**
  * Public served-feed projection (design §6) — turns the `releases` table into
  * the EXACT `RegistryIndex` shape the FROZEN desktop client reads via
- * `fetchRegistryIndex()` (`src/main/extension-registry.ts`) and the website's
+ * `fetchRegistryIndex()` (`apps/server/src/services/extensions/extension-registry.ts`) and the website's
  * own `fetchCatalog()` (`lib/registry.ts`). Both gate on `schema === 1 &&
  * Array.isArray(releases)`, so `buildIndex()` must always satisfy that.
  *

@@ -15,6 +15,7 @@ import { defineConfig } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './e2e',
+  outputDir: './e2e/.artifacts',
   // Marketplace functionality is temporarily out of scope for the core E2E
   // suite. Its tests remain runnable explicitly by file path.
   testIgnore: [

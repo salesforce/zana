@@ -14,7 +14,7 @@
  * ("Open in new window") window takes. Before the fix the card collapsed into
  * Idle after reload; with the seed it stays in Working.
  */
-import { test, expect, dismissConsentOverlays } from './fixtures/app';
+import { test, expect, dismissConsentOverlays } from './fixtures/app.js';
 import { mkdtempSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -98,7 +98,7 @@ test('agent status survives a window reload (snapshot re-hydration)', async ({ a
     await dismissConsentOverlays(window);
 
     // Navigate to the global Agents board (nav resets to home on reload).
-    const agentsNav = window.locator('button.nav-item').filter({ hasText: 'Agents' });
+    const agentsNav = window.locator('.nav-item').filter({ hasText: 'Agents' });
     await agentsNav.first().click();
 
     const workingLane = window.locator('.agents-lane.lane-working');

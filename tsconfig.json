@@ -14,17 +14,51 @@
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
     "paths": {
-      "@shared/*": ["./src/shared/*"],
-      "@renderer/*": ["./src/renderer/*"],
+      "@/*": ["./apps/app/src/*"],
+      "@zana-ai/zcc-plugin-sdk": ["./packages/plugin-sdk/src/index.ts"],
+      "@zana-ai/zcc-plugin-sdk/*": ["./packages/plugin-sdk/src/*"],
+      "@zana-ai/zcc-domain": ["./packages/domain/src/index.ts"],
+      "@zana-ai/zcc-domain/*": ["./packages/domain/src/*"],
+      "@zana-ai/zcc-desktop-contract": ["./packages/desktop-contract/src/index.ts"],
+      "@zana-ai/zcc-llm": ["./packages/llm/src/index.ts"],
+      "@zana-ai/zcc-path-confine": ["./packages/path-confine/src/index.ts"],
+      "@zana-ai/zcc-spawn-plan": ["./packages/spawn-plan/src/index.ts"],
+      "@zana-ai/zcc-process-utils": ["./packages/process-utils/src/index.ts"],
+      "@zana-ai/zcc-ui/*": ["./packages/ui/src/*"],
       "@zana-ai/zcc-extension-sdk": ["./packages/extension-sdk/src/index.ts"],
       "@zana-ai/zcc-extension-sdk/*": ["./packages/extension-sdk/src/*"],
       "@zcc/harness-sdk": ["./packages/harness-sdk/src/index.ts"],
-      "@zcc/harness-sdk/*": ["./packages/harness-sdk/src/*"]
+      "@zcc/harness-sdk/*": ["./packages/harness-sdk/src/*"],
+      "@zana-ai/zcc-server": ["./apps/server/src/index.ts"],
+      "@zana-ai/zcc-server/*": ["./apps/server/src/*"],
+      "@zana-ai/zcc-host-daemon": ["./apps/host-daemon/src/index.ts"],
+      "@zana-ai/zcc-host-daemon/*": ["./apps/host-daemon/src/*"],
+       "@zana-ai/zcc-contracts/project-settings": ["./packages/contracts/src/project-settings.ts"],
+       "@zana-ai/zcc-contracts/runtime": ["./packages/contracts/src/runtime.ts"],
+       "@zana-ai/zcc-contracts/terminal-execution": ["./packages/contracts/src/terminal-execution.ts"],
+      "@zana-ai/zcc-contracts/canonical-json": ["./packages/contracts/src/canonical-json.ts"],
+      "@zana-ai/zcc-contracts/host-rpc": ["./packages/contracts/src/host-rpc.ts"],
+      "@zana-ai/zcc-db": ["./packages/db/src/index.ts"],
+      "@zana-ai/zcc-host-workspace": ["./packages/host-workspace/src/index.ts"]
     }
   },
   "include": [
-    "src/**/*.ts",
-    "src/**/*.tsx",
+    "apps/app/src/**/*.ts",
+    "apps/app/src/**/*.tsx",
+    "apps/desktop/src/**/*.ts",
+    "apps/server/src/**/*.ts",
+    "apps/host-daemon/src/**/*.ts",
+    "packages/plugin-sdk/src/**/*.ts",
+    "packages/domain/src/**/*.ts",
+    "packages/contracts/src/**/*.ts",
+    "packages/db/src/**/*.ts",
+    "packages/host-workspace/src/**/*.ts",
+    "packages/llm/src/**/*.ts",
+    "packages/path-confine/src/**/*.ts",
+    "packages/spawn-plan/src/**/*.ts",
+    "packages/process-utils/src/**/*.ts",
+    "packages/ui/src/**/*.ts",
+    "packages/ui/src/**/*.tsx",
     "packages/extension-sdk/src/**/*.ts",
     "packages/harness-sdk/src/**/*.ts",
     "plugins/**/*.ts",
@@ -36,5 +70,12 @@
   // type-aware-runs them; keep them out of the production `tsc` gate so adding
   // plugins/** to `include` doesn't drag in that churn. Production plugin code
   // IS typechecked.
-  "exclude": ["plugins/**/*.test.ts", "plugins/**/*.test.tsx"]
+  "exclude": [
+    "plugins/**/*.test.ts",
+    "plugins/**/*.test.tsx",
+    "apps/server/src/**/*.test.ts",
+    "packages/db/src/**/*.test.ts",
+    "packages/contracts/src/**/*.test.ts",
+    "packages/host-workspace/src/**/*.test.ts"
+  ]
 }

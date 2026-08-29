@@ -44,9 +44,16 @@ const nextConfig = {
   output: 'standalone',
   images: { unoptimized: true },
   trailingSlash: true,
+  transpilePackages: ['mermaid'],
   // Next is hoisted to the npm workspace root, so Turbopack must resolve from
   // there rather than the website package's partial node_modules directory.
-  turbopack: { root: workspaceRoot }
+  turbopack: { root: workspaceRoot },
+  async redirects() {
+    return [
+      { source: '/how-it-works', destination: '/docs', permanent: true },
+      { source: '/features', destination: '/docs', permanent: true }
+    ];
+  }
 };
 
 export default nextConfig;

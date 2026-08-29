@@ -4,7 +4,7 @@ This directory is a **working example** of the static marketplace the app's
 remote-update / install channel consumes. It was produced by:
 
 ```sh
-npm run publish-extension -- bundled-extensions/consensus \
+npm run publish-extension -- plugins/docs \
   --out examples/registry \
   --base-url https://extensions.example.com
 ```
@@ -18,7 +18,7 @@ It contains:
   `author` / `icon` shown in the in-app Marketplace.
 - **`<id>-<version>.json`** — one archive per release: a dependency-free JSON
   file-bundle, `{ "files": { "<name>": "<base64>" } }`. This is exactly what
-  `decodeArchive` (`src/main/extension-registry.ts`) expects — no tar/zip.
+  `decodeArchive` (`apps/server/src/services/extensions/extension-registry.ts`) expects — no tar/zip.
 
 ## How the app uses it
 
@@ -58,10 +58,9 @@ TLS in front of it.
 ## Publishing a new version
 
 ```sh
-# 1. Build + package the extension into a committed artifact dir.
-#    (e.g. `cd extensions/consensus && npm run package` → bundled-extensions/consensus)
-# 2. Publish it into the registry, signing with your Ed25519 key:
-npm run publish-extension -- bundled-extensions/consensus \
+# 1. First-party plugins live in plugins/<id> (e.g. plugins/docs).
+# 2. Publish into the registry, signing with your Ed25519 key:
+npm run publish-extension -- plugins/docs \
   --out dist-registry \
   --base-url https://extensions.example.com \
   --key ./registry-signing-key.pem

@@ -13,7 +13,7 @@
  * in the project window, then DISABLE it and assert the tab disappears there
  * live. Both toggles cross the window boundary, so we cover show + hide.
  */
-import { test, expect } from './fixtures/app';
+import { isAppRendererUrl, test, expect } from './fixtures/app.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -43,7 +43,7 @@ test('config: toggling Follow-ups in one window flips the tab in another live', 
   try {
     // Teach the main window's renderer store about the project (raw projects.add
     // persists in main but doesn't broadcast projects:onChanged).
-    const projectsNav = window.locator('button.nav-item').filter({ hasText: 'Projects' });
+    const projectsNav = window.locator('.nav-item').filter({ hasText: 'Projects' });
     await projectsNav.first().click();
     await window.locator('button[aria-label="Reload project list"]').click();
     const filter = window.locator('.list-filter input');
@@ -62,7 +62,7 @@ test('config: toggling Follow-ups in one window flips the tab in another live', 
         () => {
           projectWindow = electron
             .windows()
-            .find((w) => w !== window && w.url().includes('index.html'));
+            .find((w) => w !== window && isAppRendererUrl(w.url()));
           return projectWindow ? 'opened' : 'waiting';
         },
         { timeout: 20_000 }

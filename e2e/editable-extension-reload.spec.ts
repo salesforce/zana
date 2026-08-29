@@ -3,8 +3,8 @@
  * Electron app, then prove a source dist/ edit is automatically reinstalled
  * while a shell session remains rooted in that imported source directory.
  */
-import { test, expect } from './fixtures/app';
-import { stubOpenDialog } from './sdk/native-dialog';
+import { test, expect } from './fixtures/app.js';
+import { stubOpenDialog } from './sdk/native-dialog.js';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -39,13 +39,11 @@ test('imported editable folder automatically reloads a rebuilt dist while its sh
 
   try {
     writeExtension(source, 'initial-marker');
-    // This is the user-facing path: Settings → Extensions → Import editable folder.
-    await app.window.locator('.nav-item', { hasText: 'Settings' }).first().click();
-    await app.window
-      .locator('.settings-section-item')
-      .filter({ has: app.window.locator('.project-name', { hasText: 'Extensions' }) })
-      .click();
-    const importButton = app.window.getByRole('button', { name: 'Open existing extension' });
+    // This is the user-facing path: Extensions → Installed → Open existing extension.
+    await app.window.locator('.nav-item', { hasText: 'Plugins' }).first().click();
+    await app.window.getByTestId('extensions-nav-installed').click();
+    await app.window.getByRole('button', { name: 'Install or open a plugin' }).click();
+    const importButton = app.window.getByRole('menuitem', { name: 'Open existing plugin' });
     await expect(importButton).toBeVisible();
     await importButton.click();
     const dialog = app.window.locator('[role="dialog"][aria-label="Open an existing extension"]');

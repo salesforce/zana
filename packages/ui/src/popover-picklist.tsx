@@ -1,0 +1,432 @@
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { Check, ChevronDown, Search } from 'lucide-react';
+import { useExclusivePopover } from './use-exclusive-popover.js';
+
+export { useExclusivePopover } from './use-exclusive-popover.js';
+
+const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
+
+const VIEWPORT_PAD = 8;
+const MENU_GAP = 4;
+const FLIP_BELOW_PX = 160;
+const MENU_MAX_HEIGHT_PX = 360;
+const MENU_MAX_HEIGHT_VH = 0.55;
+
+export interface PopoverMenuPlacement {
+  left: number;
+  width: number;
+  maxHeight: number;
+  top?: number;
+  bottom?: number;
+}
+
+/** Keep a fixed menu attached to its trigger and fully inside the viewport. */
+export function placePopoverMenu(
+  trigger: Pick<DOMRect, 'left' | 'right' | 'top' | 'bottom' | 'width'>,
+  viewport: { width: number; height: number },
+  minWidth: number
+): PopoverMenuPlacement {
+  const width = Math.max(trigger.width, minWidth);
+  let left = trigger.left;
+  if (left + width > viewport.width - VIEWPORT_PAD) {
+    left = trigger.right - width;
+  }
+  if (left < VIEWPORT_PAD) left = VIEWPORT_PAD;
+  if (left + width > viewport.width - VIEWPORT_PAD) {
+    left = Math.max(VIEWPORT_PAD, viewport.width - width - VIEWPORT_PAD);
+  }
+
+  const spaceBelow = viewport.height - trigger.bottom - VIEWPORT_PAD;
+  const spaceAbove = trigger.top - VIEWPORT_PAD;
+  const openAbove = spaceBelow < FLIP_BELOW_PX && spaceAbove > spaceBelow;
+  const available = Math.max(120, openAbove ? spaceAbove : spaceBelow);
+  const cap = Math.min(
+    MENU_MAX_HEIGHT_PX,
+    Math.floor(viewport.height * MENU_MAX_HEIGHT_VH)
+  );
+  const maxHeight = Math.min(available, cap);
+  if (openAbove) {
+    return {
+      left,
+      width,
+      maxHeight,
+      bottom: viewport.height - trigger.top + MENU_GAP
+    };
+  }
+  return {
+    left,
+    width,
+    maxHeight,
+    top: trigger.bottom + MENU_GAP
+  };
+}
+
+export interface PopoverPicklistOption<T extends string> {
+  value: T;
+  /** Plain text used for the trigger, search matching, and the default option row. */
+  label: string;
+  /** Shorter trigger label; the menu still shows `label`. */
+  compactLabel?: string;
+  /** Optional richer option-row rendering (icon, meta line, ...); falls back to `label`. */
+  content?: ReactNode;
+  /** Muted second line under the option label (helper text or a longer description). */
+  description?: string;
+  /** Extra class on this option's row, e.g. for a taller/richer layout. */
+  className?: string;
+  /** Renders a group header above the first option of a new group, in list order. */
+  group?: string;
+  /** Keeps an unavailable choice visible without allowing it to be selected. */
+  disabled?: boolean;
+  /** Warning color on the trigger (when selected) and the option row. */
+  tone?: 'default' | 'warning';
+  /** Stays visible while the menu is filtered — used for action rows. */
+  sticky?: boolean;
+}
+
+export function picklistOptionVisible(
+  option: Pick<PopoverPicklistOption<string>, 'label' | 'compactLabel' | 'description' | 'sticky'>,
+  query: string
+): boolean {
+  if (option.sticky) return true;
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return true;
+  const haystack = `${option.label} ${option.compactLabel ?? ''} ${option.description ?? ''}`.toLowerCase();
+  return haystack.includes(normalizedQuery);
+}
+
+/** Scrollable choices vs pinned action rows that stay on screen while the list moves. */
+export function splitPicklistOptions<T extends string>(
+  options: readonly PopoverPicklistOption<T>[],
+  query: string,
+  searchable = true
+): { items: PopoverPicklistOption<T>[]; sticky: PopoverPicklistOption<T>[] } {
+  const items: PopoverPicklistOption<T>[] = [];
+  const sticky: PopoverPicklistOption<T>[] = [];
+  for (const option of options) {
+    if (option.sticky) {
+      sticky.push(option);
+      continue;
+    }
+    if (!searchable || picklistOptionVisible(option, query)) items.push(option);
+  }
+  return { items, sticky };
+}
+
+export interface PopoverPicklistProps<T extends string> {
+  id?: string;
+  ariaLabel: string;
+  value: T | '';
+  options: readonly PopoverPicklistOption<T>[];
+  onChange: (value: T) => void;
+  placeholder?: string;
+  disabled?: boolean;
+  title?: string;
+  searchable?: boolean;
+  searchPlaceholder?: string;
+  emptyHint?: string;
+  className?: string;
+  /** Class on the trigger button; defaults to the bordered field look. */
+  triggerClassName?: string;
+  /** Minimum popover width in px; defaults to 200. */
+  minWidth?: number;
+  /**
+   * Anchor the popover to the trigger's parent element instead of the
+   * trigger itself — for a compound field (e.g. a leading icon beside the
+   * trigger) where the popover's left edge should align with the whole field.
+   */
+  anchorToParent?: boolean;
+}
+
+function PicklistOptionRow<T extends string>({
+  option,
+  previousGroup,
+  optionId,
+  selected,
+  active,
+  onHover,
+  onSelect
+}: {
+  option: PopoverPicklistOption<T>;
+  previousGroup?: string;
+  optionId: string;
+  selected: boolean;
+  active: boolean;
+  onHover: () => void;
+  onSelect: () => void;
+}) {
+  return (
+    <div>
+      {option.group && option.group !== previousGroup && (
+        <div className="launch-model-picker-group-label">{option.group}</div>
+      )}
+      <button
+        type="button"
+        id={optionId}
+        className={`launch-model-picker-option${option.description ? ' launch-model-picker-option--stacked' : ''}${option.className ? ` ${option.className}` : ''}${selected ? ' is-selected' : ''}${active ? ' is-active' : ''}${option.tone === 'warning' ? ' is-warning' : ''}`}
+        role="option"
+        aria-selected={selected}
+        aria-disabled={option.disabled || undefined}
+        disabled={option.disabled}
+        tabIndex={-1}
+        onMouseEnter={onHover}
+        onFocus={onHover}
+        onClick={onSelect}
+      >
+        {option.content || option.description ? (
+          <span className="launch-model-picker-option-copy">
+            {option.content ?? <span>{option.label}</span>}
+            {option.description ? (
+              <span className="launch-model-picker-option-description">{option.description}</span>
+            ) : null}
+          </span>
+        ) : (
+          <span>{option.label}</span>
+        )}
+        {selected && <Check size={14} aria-hidden="true" />}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Generic single-select popover: a trigger button + a portal-rendered,
+ * optionally searchable options menu. Generalizes the popover pattern the
+ * project and model pickers each hand-rolled, so a new dropdown does not fall
+ * back to a plain native menu. Reuses the `launch-model-picker-*` CSS
+ * classes those pickers already share.
+ */
+export function PopoverPicklist<T extends string>({
+  id,
+  ariaLabel,
+  value,
+  options,
+  onChange,
+  placeholder = 'Select…',
+  disabled,
+  title,
+  searchable = true,
+  searchPlaceholder = 'Search…',
+  emptyHint = 'No matches',
+  className = '',
+  triggerClassName = 'launch-model-picker-trigger',
+  minWidth = 200,
+  anchorToParent = false
+}: PopoverPicklistProps<T>) {
+  const [open, setOpen] = useExclusivePopover();
+  const [query, setQuery] = useState('');
+  const [position, setPosition] = useState<PopoverMenuPlacement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const wasOpenRef = useRef(false);
+  const menuId = useId();
+  const [activeIndex, setActiveIndex] = useState(0);
+  const selected = options.find((option) => option.value === value);
+  const { items: visibleItems, sticky: stickyOptions } = useMemo(
+    () => splitPicklistOptions(options, query, searchable),
+    [options, query, searchable]
+  );
+  const visibleOptions = useMemo(
+    () => [...visibleItems, ...stickyOptions],
+    [stickyOptions, visibleItems]
+  );
+  const activeOption = visibleOptions[activeIndex];
+
+  const optionId = (option: PopoverPicklistOption<T>) => `${menuId}-${option.value}`;
+  const selectOption = (option: PopoverPicklistOption<T> | undefined) => {
+    if (!option || option.disabled) return;
+    onChange(option.value);
+    setOpen(false);
+  };
+  const moveActive = (direction: 1 | -1) => {
+    if (visibleOptions.length === 0) return;
+    setActiveIndex((current) => {
+      for (let offset = 1; offset <= visibleOptions.length; offset += 1) {
+        const index = (current + direction * offset + visibleOptions.length) % visibleOptions.length;
+        if (!visibleOptions[index].disabled) return index;
+      }
+      return current;
+    });
+  };
+  const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement | HTMLInputElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      setOpen(false);
+    } else if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      moveActive(1);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      moveActive(-1);
+    } else if (event.key === 'Home') {
+      event.preventDefault();
+      const index = visibleOptions.findIndex((option) => !option.disabled);
+      if (index >= 0) setActiveIndex(index);
+    } else if (event.key === 'End') {
+      event.preventDefault();
+      const index = visibleOptions.length - 1 - [...visibleOptions].reverse().findIndex((option) => !option.disabled);
+      if (index >= 0) setActiveIndex(index);
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      selectOption(activeOption);
+    }
+  };
+
+  useIsomorphicLayoutEffect(() => {
+    if (!open || !triggerRef.current) return;
+    const rect = anchorToParent
+      ? triggerRef.current.parentElement?.getBoundingClientRect() ?? triggerRef.current.getBoundingClientRect()
+      : triggerRef.current.getBoundingClientRect();
+    setPosition(placePopoverMenu(
+      rect,
+      { width: window.innerWidth, height: window.innerHeight },
+      minWidth
+    ));
+  }, [open, anchorToParent, minWidth]);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    // Capture phase: a modal dialog (e.g. the New Agent launcher) stops
+    // mousedown propagation on its own container to keep clicks inside it from
+    // bubbling to a backdrop's close-on-click-outside handler. That stopPropagation
+    // runs during the bubble phase, so a bubble-phase document listener here would
+    // never see clicks made inside that modal. Capture fires top-down BEFORE bubble,
+    // so it can't be blocked by a descendant's later stopPropagation call.
+    document.addEventListener('mousedown', close, true);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', close, true);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (open) {
+      const selectedIndex = visibleOptions.findIndex((option) => option.value === value && !option.disabled);
+      const firstEnabledIndex = visibleOptions.findIndex((option) => !option.disabled);
+      setActiveIndex(selectedIndex >= 0 ? selectedIndex : Math.max(0, firstEnabledIndex));
+      if (searchable) searchRef.current?.focus();
+      else menuRef.current?.focus();
+    } else {
+      setQuery('');
+      if (wasOpenRef.current) triggerRef.current?.focus();
+    }
+    wasOpenRef.current = open;
+  }, [open, searchable, value]);
+
+  useEffect(() => {
+    if (activeIndex >= visibleOptions.length) setActiveIndex(0);
+  }, [activeIndex, visibleOptions.length]);
+
+  useEffect(() => {
+    if (!open || !activeOption || activeOption.sticky) return;
+    const node = menuRef.current?.querySelector(`[id="${CSS.escape(optionId(activeOption))}"]`);
+    if (node instanceof HTMLElement) node.scrollIntoView({ block: 'nearest' });
+  }, [activeIndex, activeOption, open]);
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        id={id}
+        type="button"
+        className={`${triggerClassName} ${className}${selected?.tone === 'warning' ? ' is-warning' : ''}`}
+        disabled={disabled}
+        title={title}
+        onClick={() => setOpen((current) => !current)}
+        onKeyDown={(event) => {
+          if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            setOpen(true);
+          }
+        }}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        aria-label={ariaLabel}
+      >
+        <span>{selected?.compactLabel ?? selected?.label ?? placeholder}</span>
+        <ChevronDown size={14} aria-hidden="true" />
+      </button>
+      {open && createPortal(
+        <div
+          ref={menuRef}
+          className="launch-model-picker-menu launch-model-picker-menu--split"
+          role="listbox"
+          id={menuId}
+          tabIndex={-1}
+          aria-label={ariaLabel}
+          aria-activedescendant={activeOption ? optionId(activeOption) : undefined}
+          onKeyDown={handleMenuKeyDown}
+          style={position ? {
+            left: position.left,
+            width: position.width,
+            maxHeight: position.maxHeight,
+            ...(position.bottom != null
+              ? { bottom: position.bottom, top: 'auto' }
+              : { top: position.top })
+          } : { visibility: 'hidden' }}
+        >
+          {searchable && (
+            <div className="launch-model-picker-search">
+              <Search size={13} aria-hidden="true" />
+              <input
+                ref={searchRef}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={searchPlaceholder}
+                aria-label={searchPlaceholder}
+                aria-activedescendant={activeOption ? optionId(activeOption) : undefined}
+                onKeyDown={handleMenuKeyDown}
+              />
+            </div>
+          )}
+          <div className="launch-model-picker-options">
+            {visibleItems.map((option, index) => (
+              <PicklistOptionRow
+                key={option.value}
+                option={option}
+                previousGroup={visibleItems[index - 1]?.group}
+                optionId={optionId(option)}
+                selected={value === option.value}
+                active={activeIndex === index}
+                onHover={() => setActiveIndex(index)}
+                onSelect={() => selectOption(option)}
+              />
+            ))}
+            {visibleItems.length === 0 && <div className="launch-model-picker-hint">{emptyHint}</div>}
+          </div>
+          {stickyOptions.length > 0 && (
+            <div className="launch-model-picker-footer">
+              {stickyOptions.map((option, offset) => {
+                const index = visibleItems.length + offset;
+                return (
+                  <PicklistOptionRow
+                    key={option.value}
+                    option={option}
+                    previousGroup={offset === 0 ? undefined : stickyOptions[offset - 1]?.group}
+                    optionId={optionId(option)}
+                    selected={value === option.value}
+                    active={activeIndex === index}
+                    onHover={() => setActiveIndex(index)}
+                    onSelect={() => selectOption(option)}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}

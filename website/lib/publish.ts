@@ -5,7 +5,7 @@
  * `completeGithubLogin` in `lib/auth.ts`.
  *
  * Byte/validation rules are reproduced EXACTLY from the frozen desktop client
- * (`src/main/extension-registry.ts::decodeArchive`, `ARCHIVE_MAX_BYTES`) and
+ * (`apps/server/src/services/extensions/extension-registry.ts::decodeArchive`, `ARCHIVE_MAX_BYTES`) and
  * `scripts/publish-extension.mjs::buildArchive` — re-declared here rather than
  * imported, since `website/` has no dependency on the app's `src/main/**`
  * (same "locally mirrored, not imported" precedent `lib/registry.ts` and
@@ -29,7 +29,7 @@ import { compareVersions, type RegistryRelease } from './registry.ts';
 import type { PublishRequestBody } from './validation.ts';
 import type { User, NewExtension, NewRelease, Extension } from './db/schema.sqlite.ts';
 
-/** Matches `src/main/extension-registry.ts::ARCHIVE_MAX_BYTES` (16 MiB per release). */
+/** Matches `apps/server/src/services/extensions/extension-registry.ts::ARCHIVE_MAX_BYTES` (16 MiB per release). */
 export const ARCHIVE_MAX_BYTES = 16 * 1024 * 1024;
 
 export type PublishErrorCode = 'bad_archive' | 'bad_manifest' | 'not_owner' | 'stale_version' | 'too_large';
@@ -51,7 +51,7 @@ export type PublishResult = PublishSuccess | PublishFailure;
 export type PublishUser = Pick<User, 'id' | 'githubLogin'>;
 
 export interface PublishReleaseParams {
-  /** The `:id` route param — MUST match the archive's `extension.json` `id`. */
+  /** The `:id` route param — MUST match the derived plugin id (`package.json` `name`). */
   id: string;
   user: PublishUser;
   body: PublishRequestBody;
@@ -76,7 +76,7 @@ function deriveArchiveBytes(body: PublishRequestBody): Buffer {
 }
 
 // ---------------------------------------------------------------------------
-// `decodeArchive` rules, reproduced EXACTLY from `src/main/extension-registry.ts`
+// `decodeArchive` rules, reproduced EXACTLY from `apps/server/src/services/extensions/extension-registry.ts`
 // ---------------------------------------------------------------------------
 
 type ArchiveFiles = Record<string, Buffer>;
@@ -86,8 +86,9 @@ class BadArchiveError extends Error {}
 /**
  * Parse + validate the JSON file-bundle archive with the SAME rules the
  * engine's `decodeArchive` enforces: reject names containing `/`, `\`, `..`,
- * or a leading `.`, and require `extension.json`. Throws `BadArchiveError` on
- * any violation (fail-closed) so the caller maps it to `400 bad_archive`.
+ * or a leading `.`, and require `package.json` (or a one-release
+ * `extension.json` shim). Throws `BadArchiveError` on any violation
+ * (fail-closed) so the caller maps it to `400 bad_archive`.
  */
 function decodeArchive(bytes: Buffer): ArchiveFiles {
   let parsed: { files?: unknown };
@@ -107,7 +108,9 @@ function decodeArchive(bytes: Buffer): ArchiveFiles {
     }
     out[name] = Buffer.from(b64, 'base64');
   }
-  if (!out['extension.json']) throw new BadArchiveError('archive missing extension.json');
+  if (!out['package.json'] && !out['extension.json']) {
+    throw new BadArchiveError('archive missing package.json');
+  }
   return out;
 }
 
@@ -128,14 +131,83 @@ interface Manifest {
 
 class BadManifestError extends Error {}
 
-/** Parse `extension.json`, requiring string `id`/`version`/`engines.zccApi` and `id === routeId`. */
-function parseManifest(files: ArchiveFiles, routeId: string): Manifest {
-  let raw: Record<string, unknown>;
-  try {
-    raw = JSON.parse(files['extension.json'].toString('utf-8')) as Record<string, unknown>;
-  } catch {
-    throw new BadManifestError('extension.json is not valid JSON');
+const PLUGIN_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+const BUILTIN_NAV_SENTINEL = '__builtin__';
+
+/**
+ * Mirror of `packages/domain/src/plugin-id.ts` `derivePluginId` — website/
+ * does not depend on that package (same locally-mirrored posture as
+ * `lib/registry.ts`). Keep the two copies byte-identical on the algorithm.
+ */
+function derivePluginId(packageName: string): string {
+  if (packageName === BUILTIN_NAV_SENTINEL) {
+    throw new Error(`cannot derive a plugin id from package name "${packageName}"`);
   }
+  const base = packageName.includes('/')
+    ? (packageName.split('/').pop() ?? packageName)
+    : packageName;
+  const id = base
+    .replace(/^(zcc|zana)-plugin-/, '')
+    .replace(/^@/, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/^-+|-+$/g, '');
+  if (id.length === 0 || id === BUILTIN_NAV_SENTINEL || !PLUGIN_ID_PATTERN.test(id)) {
+    throw new Error(`cannot derive a plugin id from package name "${packageName}"`);
+  }
+  return id;
+}
+
+function parseJsonObject(bytes: Buffer, label: string): Record<string, unknown> {
+  try {
+    return JSON.parse(bytes.toString('utf-8')) as Record<string, unknown>;
+  } catch {
+    throw new BadManifestError(`${label} is not valid JSON`);
+  }
+}
+
+/** Parse `package.json` → `zcc`, requiring `name`/`version`/`engines.zcc` and a derived id that matches the route. */
+function parsePackageJsonManifest(raw: Record<string, unknown>, routeId: string): Manifest {
+  const packageName = raw.name;
+  if (typeof packageName !== 'string' || !packageName) {
+    throw new BadManifestError('package.json is missing a string "name"');
+  }
+  let id: string;
+  try {
+    id = derivePluginId(packageName);
+  } catch (err) {
+    throw new BadManifestError(err instanceof Error ? err.message : 'cannot derive plugin id');
+  }
+  if (id !== routeId) {
+    throw new BadManifestError(`derived plugin id "${id}" does not match route id "${routeId}"`);
+  }
+  const version = raw.version;
+  if (typeof version !== 'string' || !version) {
+    throw new BadManifestError('package.json is missing a string "version"');
+  }
+  const engines = raw.engines as Record<string, unknown> | undefined;
+  const zccApi =
+    (typeof engines?.zcc === 'string' && engines.zcc) ||
+    (typeof engines?.zccApi === 'string' && engines.zccApi) ||
+    '';
+  if (!zccApi) throw new BadManifestError('package.json is missing engines.zcc');
+  const zcc = raw.zcc as Record<string, unknown> | undefined;
+  if (!zcc || typeof zcc !== 'object' || Array.isArray(zcc)) {
+    throw new BadManifestError('package.json is missing a zcc block');
+  }
+  const branding = zcc.branding as Record<string, unknown> | undefined;
+  return {
+    id,
+    version,
+    zccApi,
+    title: typeof zcc.name === 'string' ? zcc.name : undefined,
+    description: typeof zcc.description === 'string' ? zcc.description : undefined,
+    icon: typeof branding?.icon === 'string' ? branding.icon : undefined
+  };
+}
+
+/** One-release shim: leftover `extension.json` archives still publish. */
+function parseLegacyExtensionManifest(raw: Record<string, unknown>, routeId: string): Manifest {
   const id = raw.id;
   const version = raw.version;
   const engines = raw.engines as Record<string, unknown> | undefined;
@@ -146,7 +218,7 @@ function parseManifest(files: ArchiveFiles, routeId: string): Manifest {
   if (id !== routeId) throw new BadManifestError(`manifest id "${id}" does not match route id "${routeId}"`);
 
   const permissions = Array.isArray(raw.permissions)
-    ? (raw.permissions.filter((p): p is string => typeof p === 'string'))
+    ? raw.permissions.filter((p): p is string => typeof p === 'string')
     : undefined;
 
   return {
@@ -159,6 +231,16 @@ function parseManifest(files: ArchiveFiles, routeId: string): Manifest {
     icon: typeof raw.icon === 'string' ? raw.icon : undefined,
     permissions
   };
+}
+
+function parseManifest(files: ArchiveFiles, routeId: string): Manifest {
+  if (files['package.json']) {
+    return parsePackageJsonManifest(parseJsonObject(files['package.json'], 'package.json'), routeId);
+  }
+  if (files['extension.json']) {
+    return parseLegacyExtensionManifest(parseJsonObject(files['extension.json'], 'extension.json'), routeId);
+  }
+  throw new BadManifestError('archive is missing package.json');
 }
 
 // ---------------------------------------------------------------------------
@@ -271,7 +353,7 @@ export async function publishRelease({ id, user, body }: PublishReleaseParams): 
   if (!existingExtension) {
     await insertExtensionRow(conn, { id, ownerUserId: user.id, createdAt: Date.now() });
   } else if (existingExtension.ownerUserId !== user.id) {
-    return fail(403, 'not_owner', `extension "${id}" is owned by another publisher`);
+    return fail(403, 'not_owner', `plugin "${id}" is owned by another publisher`);
   }
 
   // 6. Monotonicity — never-downgrade, and reject an exact re-publish.

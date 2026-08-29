@@ -1,0 +1,28 @@
+services:
+  machine:
+    build: .
+    image: zcc-remote-machine:local
+    container_name: zcc-docker
+    hostname: zcc-docker
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    environment:
+      JOIN_CODE: ${JOIN_CODE:-}
+      HOST_ID: ${HOST_ID:-}
+      ZCC_SERVER_URL: ${ZCC_SERVER_URL:-}
+      SSH_AUTH_PUBKEYS_DIR: ${SSH_AUTH_PUBKEYS_DIR:-}
+    ports:
+      - "${ZCC_DOCKER_SSH_PORT:-2222}:22"
+    volumes:
+      - zcc-machines:/home/zcc/.zcc-machines
+      - ./workspace:/home/zcc/workspace
+    restart: unless-stopped
+    init: true
+    stdin_open: true
+    tty: true
+    # Default bridge: do not allocate a new compose subnet (Docker Desktop
+    # often exhausts predefined address pools on a busy machine).
+    network_mode: bridge
+
+volumes:
+  zcc-machines:

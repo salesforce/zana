@@ -3,7 +3,7 @@ import { createHash, verify as cryptoVerify } from 'node:crypto';
 import { sha256Hex, signEd25519, generateEd25519Keypair } from '../signing';
 
 /**
- * Replicates `makeEd25519Verifier` from `src/main/extension-registry.ts`
+ * Replicates `makeEd25519Verifier` from `apps/server/src/services/extensions/extension-registry.ts`
  * EXACTLY (`crypto.verify(null, data, publicKey, Buffer.from(signatureB64,'base64'))`)
  * so this test proves `signing.ts` produces signatures the UNCHANGED desktop
  * engine accepts, without importing across the worktree's package boundary.
@@ -19,7 +19,7 @@ function verifyLikeEngine(data: Uint8Array, publicKeyPem: string, signatureB64: 
 describe('signing', () => {
   it('signs bytes and the engine-equivalent verifier accepts the signature', () => {
     const { publicKeyPem, privateKeyPem } = generateEd25519Keypair();
-    const bytes = Buffer.from(JSON.stringify({ files: { 'extension.json': 'e30=' } }));
+    const bytes = Buffer.from(JSON.stringify({ files: { 'package.json': 'e30=' } }));
 
     const signature = signEd25519(bytes, privateKeyPem);
 
@@ -28,8 +28,8 @@ describe('signing', () => {
 
   it('rejects a signature over tampered bytes', () => {
     const { publicKeyPem, privateKeyPem } = generateEd25519Keypair();
-    const bytes = Buffer.from(JSON.stringify({ files: { 'extension.json': 'e30=' } }));
-    const tampered = Buffer.from(JSON.stringify({ files: { 'extension.json': 'e31=' } }));
+    const bytes = Buffer.from(JSON.stringify({ files: { 'package.json': 'e30=' } }));
+    const tampered = Buffer.from(JSON.stringify({ files: { 'package.json': 'e31=' } }));
 
     const signature = signEd25519(bytes, privateKeyPem);
 

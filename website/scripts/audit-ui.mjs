@@ -3,8 +3,6 @@ import { chromium } from '@playwright/test';
 const baseUrl = process.env.AUDIT_BASE_URL ?? 'http://127.0.0.1:4321';
 const routes = [
   '/',
-  '/how-it-works/',
-  '/features/',
   '/extensions/',
   '/extensions/getting-started/',
   '/extensions/install/',

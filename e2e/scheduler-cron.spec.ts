@@ -11,7 +11,7 @@
  * tested; this spec's job is the UI seam that was dropped: the toggle, the cron
  * input, its validation, the preview, and the save-path cadence branch.
  */
-import { test, expect } from './fixtures/app';
+import { test, expect } from './fixtures/app.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -33,7 +33,7 @@ test('scheduler: the Cron cadence UI validates, previews, and saves a cron sched
 
   try {
     // Teach the renderer store about the project (see scheduler-open.spec.ts).
-    const projectsNav = window.locator('button.nav-item').filter({ hasText: 'Projects' });
+    const projectsNav = window.locator('.nav-item').filter({ hasText: 'Projects' });
     await projectsNav.first().click();
     await window.locator('button[aria-label="Reload project list"]').click();
     const filter = window.locator('.list-filter input');
@@ -43,7 +43,7 @@ test('scheduler: the Cron cadence UI validates, previews, and saves a cron sched
     ).toBeVisible({ timeout: 15_000 });
 
     // Open the Scheduler and its "New schedule" modal.
-    const schedNav = window.locator('button.nav-item').filter({ hasText: 'Scheduler' });
+    const schedNav = window.locator('.nav-item').filter({ hasText: 'Scheduler' });
     await schedNav.first().click();
     await window.locator('button', { hasText: 'New schedule' }).first().click();
 

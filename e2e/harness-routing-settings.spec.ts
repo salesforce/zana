@@ -1,10 +1,9 @@
-import { test, expect } from './fixtures/app';
+import { test, expect } from './fixtures/app.js';
 import type { Locator, Page } from '@playwright/test';
-import { makeFakeAgentBinary } from './sdk/harness';
+import { makeFakeAgentBinary } from './sdk/harness.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-
 async function selectPicklistOption(
   trigger: Locator,
   window: Page,
@@ -22,11 +21,11 @@ test('Global and Project harness settings persist provider, model, execution, an
   const { window } = app;
   const openCode = makeFakeAgentBinary({ profile: 'generic', sequence: 'plain-exit' });
   const projectDir = mkdtempSync(join(tmpdir(), 'zcc-routing-settings-'));
-  const projectName = basename(projectDir);
   const project = await window.evaluate((path) => window.cc.projects.add(path), projectDir);
   expect(project.ok).toBe(true);
   if (!project.ok) return;
   const projectId = project.value.id;
+  const projectName = basename(projectDir);
 
   try {
     await window.evaluate(() => window.cc.config.set({
@@ -45,7 +44,8 @@ test('Global and Project harness settings persist provider, model, execution, an
     await window.locator('[data-testid="nav-settings"]').click();
     await window.locator('.settings-section-item').filter({ hasText: 'Code Harness' }).click();
 
-    const globalOpenCode = window.locator('.opener-row').filter({ hasText: 'OpenCode' });
+    await window.getByRole('tab', { name: 'CLI Agent' }).click();
+    const globalOpenCode = window.getByTestId('harness-legacy-list').locator('.opener-row').filter({ hasText: 'OpenCode' });
     await globalOpenCode.locator('.opener-row-expand').click();
     const globalProvider = globalOpenCode.getByRole('button', { name: 'Default provider' });
     const globalModel = globalOpenCode.getByRole('button', { name: 'Default model level' });

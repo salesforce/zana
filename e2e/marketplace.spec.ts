@@ -6,27 +6,31 @@
  * shipped engine enforces: opt-in channel, HTTPS, sha256 integrity, Ed25519
  * signature, and the UI wiring from a click through IPC to disk.
  */
-import { test, expect } from './fixtures/app';
-import { MarketplacePage } from './fixtures/marketplace';
+import { test, expect } from './fixtures/app.js';
+import { MarketplacePage } from './fixtures/marketplace.js';
 
-test.describe('marketplace — channel off by default', () => {
-  // No `useRegistry` → no ~/.zcc/extension-registry.json → channel stays off.
-  test('shows the "not configured" hint and lists nothing', async ({ app }) => {
+test.describe('marketplace — bundled catalog without a remote registry', () => {
+  // No `useRegistry` → no ~/.zcc/extension-registry.json → remote channel stays off.
+  // First-party plugins under `plugins/` still populate Browse (shipped-with-the-app).
+  test('lists bundled first-party plugins with zero network', async ({ app }) => {
     const market = new MarketplacePage(app.window);
     await market.open();
 
-    await expect(market.emptyHint()).toBeVisible();
-    await expect(market.rows()).toHaveCount(0);
-
-    // The engine itself returns an empty catalog — no network reached by default.
-    const res = await market.ipc<{ ok: boolean; value?: unknown[] }>('marketplaceList');
+    const res = await market.ipc<{
+      ok: boolean;
+      value?: Array<{ source: string; id: string }>;
+    }>('marketplaceList');
     expect(res.ok).toBe(true);
-    expect(res.value).toEqual([]);
+    expect(res.value?.length).toBeGreaterThan(0);
+    expect(res.value?.every((entry) => entry.source === 'bundled')).toBe(true);
+
+    await expect(market.rows()).not.toHaveCount(0);
+    await expect(market.emptyHint()).toHaveCount(0);
   });
 });
 
 test.describe('marketplace — signed registry configured', () => {
-  test.use({ useRegistry: true });
+  test.use({ useRegistry: true, isolateBundledCatalog: true });
 
   test('browses the catalog and installs the dummy extension via the UI', async ({
     app,
@@ -45,8 +49,9 @@ test.describe('marketplace — signed registry configured', () => {
     const button = market.rowButton('E2E Dummy');
     await expect(button).toHaveText(/Install/);
 
-    // Click install → downloads, verifies sha256 + Ed25519, stages to disk.
+    // Click install → confirm full trust → downloads, verifies sha256 + Ed25519, stages to disk.
     await button.click();
+    await market.confirmInstall();
 
     // The onChanged push re-renders the row as installed.
     await expect(market.rowButton('E2E Dummy')).toHaveText(/Installed/, { timeout: 30_000 });
@@ -71,7 +76,7 @@ test.describe('marketplace — signed registry configured', () => {
 });
 
 test.describe('marketplace — integrity gates (signed registry)', () => {
-  test.use({ useRegistry: true });
+  test.use({ useRegistry: true, isolateBundledCatalog: true });
 
   test('a tampered release is rejected by the install path', async ({ app }) => {
     const market = new MarketplacePage(app.window);

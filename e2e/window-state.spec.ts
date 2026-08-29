@@ -1,10 +1,10 @@
-import { test, expect } from './fixtures/app';
+import { test, expect } from './fixtures/app.js';
 
 const isMacOS = process.platform === 'darwin';
 
-async function mainWindowState(app: import('./fixtures/app').AppHandle) {
+async function mainWindowState(app: import('./fixtures/app.js').AppHandle) {
   return app.electron.evaluate(({ BrowserWindow }) => {
-    const win = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes('index.html'));
+    const win = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes('index.html') || /^http:\/\/127\.0\.0\.1:\d+\//.test(candidate.webContents.getURL()));
     return {
       normal: win?.isNormal() ?? false,
       maximized: win?.isMaximized() ?? false,
@@ -15,14 +15,14 @@ async function mainWindowState(app: import('./fixtures/app').AppHandle) {
   });
 }
 
-async function zoomToWorkArea(app: import('./fixtures/app').AppHandle) {
+async function zoomToWorkArea(app: import('./fixtures/app.js').AppHandle) {
   const normal = await app.electron.evaluate(({ BrowserWindow }) => {
-    const win = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes('index.html'));
+    const win = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes('index.html') || /^http:\/\/127\.0\.0\.1:\d+\//.test(candidate.webContents.getURL()));
     if (!win) throw new Error('main window not found');
     return win.getNormalBounds();
   });
   await app.electron.evaluate(({ BrowserWindow }) => {
-    const win = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes('index.html'));
+    const win = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes('index.html') || /^http:\/\/127\.0\.0\.1:\d+\//.test(candidate.webContents.getURL()));
     if (!win) throw new Error('main window not found');
     // Electron maps maximize() to native fullscreen while fullscreenable. Disable
     // that mapping only for this call to exercise macOS zoom/maximize instead.
@@ -31,7 +31,7 @@ async function zoomToWorkArea(app: import('./fixtures/app').AppHandle) {
     win.setFullScreenable(true);
   });
   await expect.poll(() => app.electron.evaluate(({ BrowserWindow, screen }) => {
-    const win = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes('index.html'));
+    const win = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes('index.html') || /^http:\/\/127\.0\.0\.1:\d+\//.test(candidate.webContents.getURL()));
     if (!win) return false;
     const bounds = win.getBounds();
     const area = screen.getDisplayMatching(bounds).workArea;
@@ -53,7 +53,7 @@ test.describe('macOS native-window behavior', () => {
   await app.electron.evaluate(({ app: electronApp }) => electronApp.quit());
   await appClosed;
 
-  const relaunched = await import('./fixtures/app').then(({ launchApp }) => launchApp(app.home));
+  const relaunched = await import('./fixtures/app.js').then(({ launchApp }) => launchApp(app.home));
   try {
     await expect.poll(() => mainWindowState(relaunched)).toMatchObject({
       fullscreen: false,
@@ -71,7 +71,7 @@ test('Option-green maximize is restored after close and reactivate', async ({ ap
   const reopenedPromise = app.electron.waitForEvent('window');
   const windowClosed = app.window.waitForEvent('close');
   await app.electron.evaluate(({ BrowserWindow }) => {
-    BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes('index.html'))?.close();
+    BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes('index.html') || /^http:\/\/127\.0\.0\.1:\d+\//.test(candidate.webContents.getURL()))?.close();
   });
   await windowClosed;
   await app.electron.evaluate(({ app: electronApp }) => electronApp.emit('activate'));
@@ -87,7 +87,7 @@ test('Option-green maximize is restored after close and reactivate', async ({ ap
 test('native fullscreen relaunches as a regular window', async ({ app }) => {
   test.skip(!isMacOS, 'macOS native-window behavior');
   await app.electron.evaluate(({ BrowserWindow }) => {
-    const win = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes('index.html'));
+    const win = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes('index.html') || /^http:\/\/127\.0\.0\.1:\d+\//.test(candidate.webContents.getURL()));
     if (!win) throw new Error('main window not found');
     win.setFullScreen(true);
   });
@@ -97,7 +97,7 @@ test('native fullscreen relaunches as a regular window', async ({ app }) => {
   await app.electron.evaluate(({ app: electronApp }) => electronApp.quit());
   await appClosed;
 
-  const relaunched = await import('./fixtures/app').then(({ launchApp }) => launchApp(app.home));
+  const relaunched = await import('./fixtures/app.js').then(({ launchApp }) => launchApp(app.home));
   try {
     await expect.poll(() => mainWindowState(relaunched)).toMatchObject({
       normal: true,

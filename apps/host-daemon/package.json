@@ -1,0 +1,60 @@
+{
+  "name": "@zana-ai/zcc-host-daemon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ZCC local execution host for authorized PTY and harness work.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "source": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./harness/registry": {
+      "types": "./src/harness/registry.ts",
+      "source": "./src/harness/registry.ts",
+      "default": "./src/harness/registry.ts"
+    },
+    "./harness/effective-default": {
+      "types": "./src/harness/effective-default.ts",
+      "source": "./src/harness/effective-default.ts",
+      "default": "./src/harness/effective-default.ts"
+    },
+    "./harness/harness-verify": {
+      "types": "./src/harness/harness-verify.ts",
+      "source": "./src/harness/harness-verify.ts",
+      "default": "./src/harness/harness-verify.ts"
+    },
+    "./*": {
+      "types": "./src/*.ts",
+      "source": "./src/*.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:join": "node scripts/build-join.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@zana-ai/zcc-agent-runtime": "workspace:*",
+    "@zana-ai/zcc-agent-process-utils": "workspace:*",
+    "@zana-ai/zcc-contracts": "workspace:*",
+    "@zana-ai/zcc-domain": "workspace:*",
+    "@zana-ai/zcc-host-daemon-contract": "workspace:*",
+    "@zana-ai/zcc-host-workspace": "workspace:*",
+    "@zana-ai/zcc-llm": "workspace:*",
+    "@zana-ai/zcc-path-confine": "workspace:*",
+    "@zana-ai/zcc-process-utils": "workspace:*",
+    "@zana-ai/zcc-spawn-plan": "workspace:*",
+    "@zcc/harness-sdk": "workspace:*",
+    "esbuild": "^0.25.0",
+    "node-pty": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

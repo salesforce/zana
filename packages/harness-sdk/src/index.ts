@@ -6,7 +6,7 @@
  * (`LaunchSurface`/`ChatSurface`) or their app-coupled I/O types (`AutoModeInput`,
  * `ResolvedLaunch`, `HarnessRunRequest`, …) — those carry `AppConfig`/`Persona`/pi
  * types and stay in `src/main`. Nor the concrete providers, `PtyManager`,
- * terminal-launch internals, or the byte-sensitive argv assembly (`spawn-plan.ts`).
+ * terminal-launch internals, or the byte-sensitive argv assembly (`@zana-ai/zcc-spawn-plan`).
  *
  * This is the harness twin of `@zana-ai/zcc-extension-sdk`: because it's electron-free and
  * harness-agnostic, `npm publish` works the day we choose (it exposes only the

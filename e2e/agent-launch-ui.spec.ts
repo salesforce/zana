@@ -6,8 +6,9 @@
  * in the UI and streams live output.
  *
  *   Agents nav (data-testid="nav-agents")
- *     → "New quick agent" (data-testid="agents-new" / "agents-new-empty")
+ *     → "New agent" (data-testid="agents-new" / "agents-new-empty")
  *     → launcher modal (data-testid="launch-modal")
+ *         → CLI Agent
  *         → instruction textarea (data-testid="launch-instruction")
  *         → target project select (aria-label="Target project")
  *         → harness select (aria-label="Launch harness")
@@ -27,8 +28,8 @@
  * ~/.zcc — the fixture snapshots/restores config.json; we remove the tmp project
  * we register in `finally`.
  */
-import { test, expect } from './fixtures/app';
-import { makeFakeAgentBinary } from './sdk/harness';
+import { test, expect } from './fixtures/app.js';
+import { makeFakeAgentBinary } from './sdk/harness.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -101,9 +102,10 @@ test('launching an agent through the real UI opens its terminal and it goes work
       await newEmptyBtn.click();
     }
 
-    // 3. The launcher modal is up.
+    // 3. The launcher modal is up; switch to CLI Agent for the PTY path.
     const modal = window.locator('[data-testid="launch-modal"]');
     await expect(modal).toBeVisible();
+    await modal.getByRole('button', { name: 'CLI Agent' }).click();
 
     // 4. Type an instruction into the real composer textarea.
     const instruction = modal.locator('[data-testid="launch-instruction"]');
@@ -140,6 +142,14 @@ test('launching an agent through the real UI opens its terminal and it goes work
     //    status. The stub emits the braille spinner first → `working`.
     const stateChip = agentModal.locator('[data-testid="agent-modal-state"]');
     await expect(stateChip).toHaveAttribute('data-state', 'working', { timeout: 15_000 });
+    await expect(agentModal.getByTestId('agent-modal-header')).toBeVisible();
+    await expect(agentModal.getByTestId('agent-session-view')).toBeVisible();
+    await expect(agentModal.getByTestId('thread-secondary-show')).toBeVisible();
+    await expect(agentModal.getByTestId('thread-secondary-panel')).toHaveCount(0);
+    await agentModal.getByTestId('thread-secondary-show').click();
+    await expect(agentModal.getByTestId('thread-secondary-panel')).toBeVisible();
+    await expect(agentModal.getByTestId('thread-info-pin')).toBeVisible();
+    await expect(agentModal.getByRole('button', { name: 'Close Session' })).toBeVisible();
 
     // 10. Secondary confirmation on the live event timeline: main classified the
     //     session `working` and pushed it. (The DOM assertion above already

@@ -5,8 +5,8 @@ import { DOCS, renderDoc } from './docs';
 /**
  * Build-time docs search index. Computed server-side (reads the synced markdown
  * in content/docs) and passed as a prop into the client ⌘K palette — no runtime
- * fetch, no server, no DB. The whole corpus is 4 small docs, so the embedded
- * JSON is tiny.
+ * fetch, no server, no DB. The whole corpus is a handful of small docs, so the
+ * embedded JSON is tiny.
  *
  * Each doc is split into SECTIONS keyed by its h2/h3 headings so a hit can deep
  * link to /docs/<slug>/#<heading-id>. Markdown is stripped to plain text and

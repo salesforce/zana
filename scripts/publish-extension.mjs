@@ -11,11 +11,12 @@
  * browses + installs it.
  *
  * This is the PUBLISH side of the same engine the app's remote-update channel
- * (`src/main/extension-registry.ts`) consumes — it deliberately reproduces that
+ * (`apps/server/src/services/extensions/extension-registry.ts`) consumes — it deliberately reproduces that
  * module's contracts so a published release is installable without any guesswork:
  *   - Archive format = the JSON file-bundle `decodeArchive` expects:
  *     `{ "files": { "<name>": "<base64>" } }`. File names must NOT contain
- *     `/`, `\`, `..`, or a leading `.`, and `extension.json` MUST be present.
+ *     `/`, `\`, `..`, or a leading `.`, and `package.json` MUST be present
+ *     (a leftover `extension.json` is accepted for one release).
  *   - `sha256` = lowercase hex of the archive's raw bytes (the integrity gate).
  *   - `signature` (with --key) = Ed25519 over those bytes, base64 — matches
  *     `makeEd25519Verifier` (`crypto.verify(null, bytes, key, sig)`).
@@ -45,7 +46,7 @@
  *     --api https://exts.example.com --token zpat_...
  *
  * `<extensionDir>` is a built artifact dir (a manifest + its runtime files, e.g.
- * `bundled-extensions/consensus`). `--base-url` is prepended to the archive filename
+ * `plugins/docs`). `--base-url` is prepended to the archive filename
  * to form the release `url`; the engine REQUIRES it to be HTTPS. `--out` holds
  * the archive + (default) index; `--index` overrides the index path.
  */
@@ -80,7 +81,7 @@ API mode:
 
 Arguments:
   <extensionDir>        Built artifact dir (a manifest + its runtime files,
-                         e.g. bundled-extensions/consensus).
+                         e.g. plugins/docs).
 
 Local-file mode options:
   --out <dir>           Output dir for the archive + default index
@@ -164,11 +165,74 @@ function buildArchive(dir) {
     if (badName(name)) fail(`file name rejected (path escape / hidden): ${name}`);
     files[name] = readFileSync(join(dir, name)).toString('base64');
   }
-  if (!files['extension.json']) fail('artifact dir has no extension.json');
+  if (!files['package.json'] && !files['extension.json']) fail('artifact dir has no package.json');
   return Buffer.from(JSON.stringify({ files }));
 }
 
-/** Atomic write: tmp sibling + rename (mirrors the engine's shared-file posture). */
+const BUILTIN_NAV_SENTINEL = '__builtin__';
+const PLUGIN_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+
+/** Mirror of `packages/domain/src/plugin-id.ts` — this script has no workspace import. */
+function derivePluginId(packageName) {
+  if (packageName === BUILTIN_NAV_SENTINEL) {
+    throw new Error(`cannot derive a plugin id from package name "${packageName}"`);
+  }
+  const base = packageName.includes('/')
+    ? (packageName.split('/').at(-1) ?? packageName)
+    : packageName;
+  const id = base
+    .replace(/^(zcc|zana)-plugin-/, '')
+    .replace(/^@/, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/^-+|-+$/g, '');
+  if (id.length === 0 || id === BUILTIN_NAV_SENTINEL || !PLUGIN_ID_PATTERN.test(id)) {
+    throw new Error(`cannot derive a plugin id from package name "${packageName}"`);
+  }
+  return id;
+}
+
+function readPluginManifest(dir) {
+  const pkgPath = join(dir, 'package.json');
+  if (existsSync(pkgPath)) {
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+    const id = derivePluginId(pkg.name);
+    const version = pkg.version;
+    const zccApi = pkg.engines?.zcc ?? pkg.engines?.zccApi;
+    const zcc = pkg.zcc && typeof pkg.zcc === 'object' ? pkg.zcc : {};
+    if (typeof id !== 'string' || !id) fail('package.json name did not derive a plugin id');
+    if (typeof version !== 'string' || !version) fail('package.json is missing a string "version"');
+    if (typeof zccApi !== 'string' || !zccApi) fail('package.json is missing engines.zcc');
+    return {
+      id,
+      version,
+      zccApi,
+      title: typeof zcc.name === 'string' ? zcc.name : undefined,
+      description: typeof zcc.description === 'string' ? zcc.description : undefined,
+      icon: typeof zcc.branding?.icon === 'string' ? zcc.branding.icon : undefined,
+      permissions: undefined
+    };
+  }
+  const legacyPath = join(dir, 'extension.json');
+  if (!existsSync(legacyPath)) fail('artifact dir has no package.json (or a leftover extension.json)');
+  const manifest = JSON.parse(readFileSync(legacyPath, 'utf-8'));
+  const id = manifest.id;
+  const version = manifest.version;
+  const zccApi = manifest?.engines?.zccApi;
+  if (typeof id !== 'string' || !id) fail('legacy extension.json is missing a string "id"');
+  if (typeof version !== 'string' || !version) fail('legacy extension.json is missing a string "version"');
+  if (typeof zccApi !== 'string' || !zccApi) fail('legacy extension.json is missing engines.zccApi');
+  return {
+    id,
+    version,
+    zccApi,
+    title: manifest.title,
+    description: manifest.description,
+    author: manifest.author,
+    icon: manifest.icon,
+    permissions: Array.isArray(manifest.permissions) ? manifest.permissions : undefined
+  };
+}
 function atomicWrite(file, data) {
   mkdirSync(dirname(file), { recursive: true });
   const tmp = `${file}.tmp-${process.pid}`;
@@ -244,18 +308,11 @@ async function main() {
   // its "id" is REQUIRED in both modes to build the API mode's route path).
   let manifest;
   try {
-    manifest = JSON.parse(readFileSync(join(dir, 'extension.json'), 'utf-8'));
+    manifest = readPluginManifest(dir);
   } catch (err) {
-    return fail(`unreadable extension.json: ${err instanceof Error ? err.message : err}`);
+    return fail(`unreadable plugin manifest: ${err instanceof Error ? err.message : err}`);
   }
-  const id = manifest.id;
-  const version = manifest.version;
-  if (typeof id !== 'string' || !id) fail('manifest is missing a string "id"');
-  if (typeof version !== 'string' || !version) fail('manifest is missing a string "version"');
-  const zccApi = manifest?.engines?.zccApi;
-  if (typeof zccApi !== 'string' || !zccApi) {
-    fail('manifest is missing engines.zccApi (the host-compat range)');
-  }
+  const { id, version, zccApi } = manifest;
 
   if (api) {
     return publishViaApi(dir, id, api, token);

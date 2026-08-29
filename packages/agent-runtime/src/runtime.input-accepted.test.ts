@@ -1,0 +1,430 @@
+import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ThreadEvent } from "@zana-ai/zcc-domain/thread-runtime";
+import { getThreadEventScopeTurnId, turnScope } from "@zana-ai/zcc-domain/thread-runtime";
+import { createAgentRuntimeWithAdapters } from "./runtime.js";
+import { createFakeAdapter, fakeProviderScriptPath } from "./test/index.js";
+import {
+  fullRuntimeOptions,
+  wait,
+  waitForThreadTurnStarted,
+} from "./test/runtime-test-harness.js";
+import { promptTextInput } from "./test/prompt-input.js";
+
+describe("createAgentRuntime input accepted events", () => {
+  let tmpDir: string;
+  let scriptPath: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "bb-runtime-test-"));
+    scriptPath = fakeProviderScriptPath;
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("suppresses provider-emitted user message echoes for turns and steers", async () => {
+    const events: ThreadEvent[] = [];
+    const runtime = createAgentRuntimeWithAdapters({
+      workspacePath: tmpDir,
+      onEvent: (event) => events.push(event),
+      onToolCall: async () => ({
+        contentItems: [{ type: "inputText", text: "ok" }],
+        success: true,
+      }),
+      adapterFactory: () => createFakeAdapter({ scriptPath }),
+    });
+
+    await runtime.startThread({
+      environmentId: "env-1",
+      threadId: "t1",
+      projectId: "p1",
+      providerId: "fake",
+      options: fullRuntimeOptions,
+    });
+    await runtime.runTurn({
+      clientRequestId: "creq_222222222s",
+      threadId: "t1",
+      input: [promptTextInput({ text: "delay:500 first input" })],
+      options: fullRuntimeOptions,
+    });
+    await waitForThreadTurnStarted({
+      events,
+      providerId: "fake",
+      runtime,
+      threadId: "t1",
+      turnId: "turn-1",
+    });
+
+    await runtime.steerTurn({
+      clientRequestId: "creq_222222222t",
+      threadId: "t1",
+      expectedTurnId: "turn-1",
+      input: [promptTextInput({ text: "steer input" })],
+      options: fullRuntimeOptions,
+    });
+    await wait(50);
+
+    expect(
+      events.some(
+        (event) =>
+          event.type === "item/completed" && event.item.type === "userMessage",
+      ),
+    ).toBe(false);
+
+    await runtime.shutdown();
+  });
+
+  it("emits input accepted events only after accepted commands", async () => {
+    const events: ThreadEvent[] = [];
+    const acceptedCommandScriptPath = join(
+      tmpDir,
+      "accepted-command-provider.cjs",
+    );
+    writeFileSync(
+      acceptedCommandScriptPath,
+      `
+const readline = require("node:readline");
+
+function send(message) {
+  process.stdout.write(JSON.stringify(message) + "\\n");
+}
+
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") {
+    send({ jsonrpc: "2.0", id: message.id, result: { ok: true } });
+    return;
+  }
+  if (message.method === "thread/start") {
+    send({ jsonrpc: "2.0", id: message.id, result: { providerThreadId: "prov-thread-1" } });
+    send({
+      jsonrpc: "2.0",
+      method: "thread/identity",
+      params: { threadId: message.params.threadId, providerThreadId: "prov-thread-1" },
+    });
+    return;
+  }
+  if (message.method === "turn/start") {
+    send({ jsonrpc: "2.0", id: message.id, result: { ok: true } });
+    send({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: {
+        threadId: message.params.threadId,
+        providerThreadId: "prov-thread-1",
+        turnId: "turn-1",
+      },
+    });
+    return;
+  }
+  if (message.method === "turn/steer") {
+    send({ jsonrpc: "2.0", id: message.id, result: { ok: true } });
+  }
+});
+`,
+      "utf8",
+    );
+    const baseAdapter = createFakeAdapter({
+      scriptPath: acceptedCommandScriptPath,
+    });
+    const runtime = createAgentRuntimeWithAdapters({
+      workspacePath: tmpDir,
+      onEvent: (event) => events.push(event),
+      onToolCall: async () => ({
+        contentItems: [{ type: "inputText", text: "ok" }],
+        success: true,
+      }),
+      adapterFactory: () => ({
+        ...baseAdapter,
+        translateAcceptedCommand({ command }) {
+          if (command.type !== "turn/steer") {
+            return [];
+          }
+          if (command.clientRequestId === undefined) {
+            return [];
+          }
+          return [
+            {
+              type: "turn/input/accepted",
+              threadId: command.threadId,
+              providerThreadId: command.providerThreadId,
+              turnId: command.expectedTurnId,
+              scope: turnScope(command.expectedTurnId),
+              clientRequestId: command.clientRequestId,
+            },
+          ];
+        },
+      }),
+    });
+
+    await runtime.startThread({
+      environmentId: "env-1",
+      threadId: "t1",
+      projectId: "p1",
+      providerId: "fake",
+      options: fullRuntimeOptions,
+    });
+    await runtime.runTurn({
+      clientRequestId: "creq_222222222u",
+      threadId: "t1",
+      input: [promptTextInput({ text: "active turn" })],
+      options: fullRuntimeOptions,
+    });
+    await waitForThreadTurnStarted({
+      events,
+      providerId: "fake",
+      runtime,
+      threadId: "t1",
+      turnId: "turn-1",
+    });
+    await runtime.steerTurn({
+      threadId: "t1",
+      expectedTurnId: "turn-1",
+      clientRequestId: "creq_23456789ae",
+      input: [promptTextInput({ text: "accepted steer" })],
+      options: fullRuntimeOptions,
+    });
+
+    expect(
+      events.some(
+        (event) =>
+          event.type === "turn/input/accepted" &&
+          event.clientRequestId === "creq_23456789ae" &&
+          getThreadEventScopeTurnId(event.scope) === "turn-1",
+      ),
+    ).toBe(true);
+
+    await runtime.shutdown();
+  });
+
+  it("does not emit provider accepted-command events when a command is rejected", async () => {
+    const events: ThreadEvent[] = [];
+    const rejectingSteerScriptPath = join(
+      tmpDir,
+      "rejecting-steer-provider.cjs",
+    );
+    writeFileSync(
+      rejectingSteerScriptPath,
+      `
+const readline = require("node:readline");
+
+function send(message) {
+  process.stdout.write(JSON.stringify(message) + "\\n");
+}
+
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") {
+    send({ jsonrpc: "2.0", id: message.id, result: { ok: true } });
+    return;
+  }
+  if (message.method === "thread/start") {
+    send({ jsonrpc: "2.0", id: message.id, result: { providerThreadId: "prov-thread-1" } });
+    send({
+      jsonrpc: "2.0",
+      method: "thread/identity",
+      params: { threadId: message.params.threadId, providerThreadId: "prov-thread-1" },
+    });
+    return;
+  }
+  if (message.method === "turn/start") {
+    send({ jsonrpc: "2.0", id: message.id, result: { ok: true } });
+    send({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: {
+        threadId: message.params.threadId,
+        providerThreadId: "prov-thread-1",
+        turnId: "turn-1",
+      },
+    });
+    return;
+  }
+  if (message.method === "turn/steer") {
+    send({
+      jsonrpc: "2.0",
+      id: message.id,
+      error: { code: -32000, message: "No active session" },
+    });
+  }
+});
+`,
+      "utf8",
+    );
+    const baseAdapter = createFakeAdapter({
+      scriptPath: rejectingSteerScriptPath,
+    });
+    const runtime = createAgentRuntimeWithAdapters({
+      workspacePath: tmpDir,
+      onEvent: (event) => events.push(event),
+      onToolCall: async () => ({
+        contentItems: [{ type: "inputText", text: "ok" }],
+        success: true,
+      }),
+      adapterFactory: () => ({
+        ...baseAdapter,
+        translateAcceptedCommand({ command }) {
+          if (command.type === "turn/steer") {
+            throw new Error("Rejected steer should not be translated");
+          }
+          return [];
+        },
+      }),
+    });
+
+    await runtime.startThread({
+      environmentId: "env-1",
+      threadId: "t1",
+      projectId: "p1",
+      providerId: "fake",
+      options: fullRuntimeOptions,
+    });
+    await runtime.runTurn({
+      clientRequestId: "creq_222222222v",
+      threadId: "t1",
+      input: [promptTextInput({ text: "active turn" })],
+      options: fullRuntimeOptions,
+    });
+    await waitForThreadTurnStarted({
+      events,
+      providerId: "fake",
+      runtime,
+      threadId: "t1",
+      turnId: "turn-1",
+    });
+
+    await expect(
+      runtime.steerTurn({
+        clientRequestId: "creq_222222222w",
+        threadId: "t1",
+        expectedTurnId: "turn-1",
+        input: [promptTextInput({ text: "rejected steer" })],
+        options: fullRuntimeOptions,
+      }),
+    ).rejects.toThrow(/No active session/);
+
+    expect(events.some((event) => event.type === "turn/input/accepted")).toBe(
+      false,
+    );
+
+    await runtime.shutdown();
+  });
+
+  it("maps a bridge no-active-turn error to a stale steer", async () => {
+    const events: ThreadEvent[] = [];
+    const clearActiveTurnState = vi.fn();
+    const staleSteerScriptPath = join(tmpDir, "stale-steer-provider.cjs");
+    writeFileSync(
+      staleSteerScriptPath,
+      `
+const readline = require("node:readline");
+function send(message) { process.stdout.write(JSON.stringify(message) + "\\n"); }
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") {
+    send({ jsonrpc: "2.0", id: message.id, result: { ok: true } });
+    return;
+  }
+  if (message.method === "thread/start") {
+    send({ jsonrpc: "2.0", id: message.id, result: { providerThreadId: "prov-thread-1" } });
+    send({
+      jsonrpc: "2.0",
+      method: "thread/identity",
+      params: { threadId: message.params.threadId, providerThreadId: "prov-thread-1" },
+    });
+    return;
+  }
+  if (message.method === "turn/start") {
+    send({ jsonrpc: "2.0", id: message.id, result: { ok: true } });
+    send({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: {
+        threadId: message.params.threadId,
+        providerThreadId: "prov-thread-1",
+        turnId: "turn-1",
+      },
+    });
+    return;
+  }
+  if (message.method === "turn/steer") {
+    send({
+      jsonrpc: "2.0",
+      id: message.id,
+      error: { code: -32001, message: "No active turn to steer" },
+    });
+  }
+});
+`,
+      "utf8",
+    );
+    const runtime = createAgentRuntimeWithAdapters({
+      workspacePath: tmpDir,
+      onEvent: (event) => events.push(event),
+      onToolCall: async () => ({
+        contentItems: [{ type: "inputText", text: "ok" }],
+        success: true,
+      }),
+      adapterFactory: () => ({
+        ...createFakeAdapter({
+          id: "acp-cursor",
+          scriptPath: staleSteerScriptPath,
+        }),
+        clearActiveTurnState,
+      }),
+    });
+
+    await runtime.startThread({
+      environmentId: "env-1",
+      threadId: "t1",
+      projectId: "p1",
+      providerId: "acp-cursor",
+      options: fullRuntimeOptions,
+    });
+    await runtime.runTurn({
+      clientRequestId: "creq_222222222x",
+      threadId: "t1",
+      input: [promptTextInput({ text: "active turn" })],
+      options: fullRuntimeOptions,
+    });
+    await waitForThreadTurnStarted({
+      events,
+      providerId: "acp-cursor",
+      runtime,
+      threadId: "t1",
+      turnId: "turn-1",
+    });
+
+    await expect(
+      runtime.steerTurn({
+        clientRequestId: "creq_222222222y",
+        threadId: "t1",
+        expectedTurnId: "turn-1",
+        input: [promptTextInput({ text: "late steer" })],
+        options: fullRuntimeOptions,
+      }),
+    ).resolves.toEqual({ status: "stale", activeTurnId: null });
+    expect(clearActiveTurnState).toHaveBeenCalledWith("t1");
+    await expect(
+      runtime.steerTurn({
+        clientRequestId: "creq_222222222z",
+        threadId: "t1",
+        expectedTurnId: "turn-1",
+        input: [promptTextInput({ text: "still late" })],
+        options: fullRuntimeOptions,
+      }),
+    ).resolves.toEqual({ status: "stale", activeTurnId: null });
+    expect(events.some((event) => event.type === "turn/input/accepted")).toBe(
+      false,
+    );
+
+    await runtime.shutdown();
+  });
+});

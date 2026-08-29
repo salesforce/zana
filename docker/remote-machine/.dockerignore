@@ -1,0 +1,4 @@
+*.test.ts
+.env
+.proxy-state
+.proxy.pid

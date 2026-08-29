@@ -1,0 +1,737 @@
+import { describe, expect, it } from 'vitest';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { WorkRowBody } from './WorkRowBody.js';
+import { ThreadGoalBanner, ThreadWorkingIndicator } from './ThreadBanners.js';
+import { ConversationRow } from './ConversationRow.js';
+import { TimelineTitleView, stopTitleEvent } from './TimelineTitleView.js';
+import { mentionPillLabel } from './mention-pills.js';
+import { imagePreviewSrc, resolveQuestionAnswer } from './work-row-helpers.js';
+import { decorationText, isPastWorkRow, titleSegmentClass } from './timeline-title.js';
+import { firstUnreadRowId, isNearBottom, pinScrollToBottom, shouldStickToBottom } from './timeline-scroll.js';
+
+const workBase = {
+  threadId: 't1',
+  turnId: 'turn-1',
+  sourceSeqStart: 1,
+  sourceSeqEnd: 1,
+  startedAt: 1,
+  createdAt: 1,
+  kind: 'work' as const,
+  callId: 'c1'
+};
+
+describe('timeline title helpers', () => {
+  it('formats decorations and CSS classes', () => {
+    expect(decorationText({ kind: 'diff-stats', added: 1, removed: 0 }, 0)).toBe('+1 −0');
+    expect(decorationText({ kind: 'status', status: 'error' }, 0)).toBe('error');
+    expect(decorationText({
+      kind: 'summary-status',
+      errorCount: 1,
+      interruptedCount: 2
+    }, 0)).toBe('1 error, 2 interrupted');
+    expect(decorationText({
+      kind: 'summary-status',
+      errorCount: 2,
+      interruptedCount: 0
+    }, 0)).toBe('2 errors');
+    expect(decorationText({ kind: 'duration', startedAt: 0, completedAt: 1000, em: false }, 0)).toEqual(expect.any(String));
+    expect(titleSegmentClass({ em: true, accent: 'file', truncate: true, shimmer: true }))
+      .toBe('is-em is-shimmer is-truncate accent-file');
+    expect(isPastWorkRow({ kind: 'work', status: 'completed' })).toBe(true);
+    expect(isPastWorkRow({ kind: 'system', status: 'error' })).toBe(false);
+    expect(isPastWorkRow({ kind: 'conversation' })).toBe(false);
+  });
+});
+
+describe('WorkRowBody', () => {
+  it('renders command output as a terminal block', () => {
+    const html = renderToStaticMarkup(
+      <WorkRowBody row={{
+        ...workBase,
+        id: 'c1',
+        workKind: 'command',
+        status: 'pending',
+        command: 'ls -la',
+        cwd: null,
+        source: 'user',
+        output: 'README.md',
+        exitCode: null,
+        completedAt: null,
+        approvalStatus: null,
+        activityIntents: []
+      }} />
+    );
+    expect(html).toContain('$ ls -la');
+    expect(html).toContain('README.md');
+    expect(html).toContain('source: user');
+    expect(html).toContain('thread-code-card');
+    expect(html).toContain('thread-expandable-line');
+    expect(html).toContain('thread-timeline-work-body');
+  });
+
+  it('keeps a long bash one-liner in an expandable code card', () => {
+    const command = 'for d in */; do name="${d%/}"; echo "$name"; git -C "$d" status -sb; done';
+    const html = renderToStaticMarkup(
+      <WorkRowBody row={{
+        ...workBase,
+        id: 'c-long',
+        workKind: 'command',
+        status: 'pending',
+        command,
+        cwd: null,
+        source: null,
+        output: '',
+        exitCode: null,
+        completedAt: null,
+        approvalStatus: null,
+        activityIntents: []
+      }} />
+    );
+    expect(html).toContain('thread-code-card thread-terminal-output');
+    expect(html).toContain('thread-expandable-line');
+    expect(html).toContain('$ for d in */');
+    expect(html).toContain('git -C');
+    expect(html).not.toContain('thread-terminal-cmd');
+  });
+
+  it('renders exit codes and string tool args in a code card', () => {
+    const command = renderToStaticMarkup(
+      <WorkRowBody row={{
+        ...workBase,
+        id: 'c-exit',
+        workKind: 'command',
+        status: 'completed',
+        command: '',
+        cwd: null,
+        source: null,
+        output: 'ok',
+        exitCode: 0,
+        completedAt: 2,
+        approvalStatus: null,
+        activityIntents: []
+      }} />
+    );
+    expect(command).toContain('thread-code-card');
+    expect(command).toContain('exit 0');
+    expect(command).not.toContain('thread-expandable-line');
+    const tool = renderToStaticMarkup(
+      <WorkRowBody row={{
+        ...workBase,
+        id: 'tool-str',
+        workKind: 'tool',
+        status: 'completed',
+        toolName: 'Bash',
+        toolArgs: 'echo hi',
+        output: 'hi',
+        completedAt: 2,
+        approvalStatus: null,
+        activityIntents: []
+      }} />
+    );
+    expect(tool).toContain('thread-code-card thread-tool-detail');
+    expect(tool).toContain('echo hi');
+    expect(renderToStaticMarkup(
+      <WorkRowBody row={{
+        ...workBase,
+        id: 'tool-empty',
+        workKind: 'tool',
+        status: 'completed',
+        toolName: 'Nop',
+        toolArgs: null,
+        output: '',
+        completedAt: 2,
+        approvalStatus: null,
+        activityIntents: []
+      }} />
+    )).toContain('Nop');
+  });
+
+  it('renders file-change hunks and stats', () => {
+    const html = renderToStaticMarkup(
+      <WorkRowBody row={{
+        ...workBase,
+        id: 'fc1',
+        workKind: 'file-change',
+        status: 'completed',
+        change: {
+          path: 'README.md',
+          kind: 'update',
+          movePath: null,
+          diff: '@@',
+          diffStats: { added: 1, removed: 0 }
+        },
+        stdout: null,
+        stderr: null,
+        approvalStatus: null
+      }} />
+    );
+    expect(html).toContain('README.md');
+    expect(html).toContain('+1');
+    expect(html).toContain('@@');
+  });
+
+  it('renders workflow progress and image stubs', () => {
+    const workflow = renderToStaticMarkup(
+      <WorkRowBody row={{
+        ...workBase,
+        id: 'wf1',
+        workKind: 'workflow',
+        status: 'pending',
+        itemId: 'item-1',
+        taskType: 'local_workflow',
+        workflowName: 'Build',
+        description: 'Ship it',
+        model: null,
+        taskStatus: 'running',
+        workflow: {
+          phases: [{ index: 1, title: 'Explore' }],
+          agents: [{
+            index: 1,
+            label: 'Coder',
+            state: 'running',
+            model: 'default',
+            attempt: 1,
+            cached: false,
+            lastProgressAt: 1
+          }]
+        },
+        usage: null,
+        summary: null,
+        error: null,
+        completedAt: null
+      }} />
+    );
+    expect(workflow).toContain('Explore');
+    expect(workflow).toContain('Coder');
+    const image = renderToStaticMarkup(
+      <WorkRowBody row={{
+        ...workBase,
+        id: 'img1',
+        workKind: 'image-view',
+        status: 'completed',
+        path: 'shot.png',
+        completedAt: 2
+      }} />
+    );
+    expect(image).toContain('shot.png');
+    expect(image).toContain('thread-image-stub');
+  });
+
+  it('renders pending questions and waiting approvals', () => {
+    const question = renderToStaticMarkup(
+      <WorkRowBody
+        row={{
+          ...workBase,
+          id: 'q1',
+          workKind: 'question',
+          status: 'pending',
+          interactionId: 'pi_1',
+          lifecycle: 'pending',
+          questions: [{
+            id: 'q',
+            prompt: 'Continue?',
+            multiSelect: false,
+            allowFreeText: true
+          }],
+          answers: null,
+          statusReason: null
+        }}
+      />
+    );
+    expect(question).toBe('');
+    expect(question).not.toContain('thread-question-input');
+    const answered = renderToStaticMarkup(
+      <WorkRowBody
+        row={{
+          ...workBase,
+          id: 'q2',
+          workKind: 'question',
+          status: 'completed',
+          interactionId: 'pi_1',
+          lifecycle: 'answered',
+          questions: [{
+            id: 'q',
+            prompt: 'Continue?',
+            multiSelect: false,
+            allowFreeText: true,
+            options: [{ value: 'yes', label: 'Yes, ship it' }]
+          }],
+          answers: { q: { selected: ['yes'], freeText: 'ship it' } },
+          statusReason: null
+        }}
+      />
+    );
+    expect(answered).toContain('Continue?');
+    expect(answered).toContain('Yes, ship it');
+    expect(answered).toContain('ship it');
+    const approval = renderToStaticMarkup(
+      <WorkRowBody row={{
+        ...workBase,
+        id: 'a1',
+        workKind: 'approval',
+        status: 'pending',
+        interactionId: 'pi_2',
+        approvalKind: 'file-edit',
+        lifecycle: 'waiting',
+        target: { itemId: 'item', toolName: 'Edit' }
+      }} />
+    );
+    expect(approval).toBe('');
+  });
+
+  it('renders tool args and denied approvals without a fake approve control', () => {
+    const tool = renderToStaticMarkup(
+      <WorkRowBody row={{
+        ...workBase,
+        id: 'tool-1',
+        workKind: 'tool',
+        status: 'completed',
+        toolName: 'Read',
+        toolArgs: { path: 'README.md' },
+        output: 'ok',
+        completedAt: 2,
+        approvalStatus: null,
+        activityIntents: []
+      }} />
+    );
+    expect(tool).toContain('Read');
+    expect(tool).toContain('README.md');
+    const denied = renderToStaticMarkup(
+      <WorkRowBody row={{
+        ...workBase,
+        id: 'a2',
+        workKind: 'approval',
+        status: 'completed',
+        interactionId: 'pi_3',
+        approvalKind: 'file-edit',
+        lifecycle: 'denied',
+        target: { itemId: 'item', toolName: null }
+      }} />
+    );
+    expect(denied).toBe('');
+    expect(denied).not.toContain('Approve');
+  });
+
+  it('renders file-change stderr, workflow errors, and title-only web rows', () => {
+    const file = renderToStaticMarkup(
+      <WorkRowBody
+        onOpenDiff={() => undefined}
+        row={{
+          ...workBase,
+          id: 'fc2',
+          workKind: 'file-change',
+          status: 'completed',
+          change: {
+            path: 'a.ts',
+            kind: 'update',
+            movePath: null,
+            diff: null,
+            diffStats: { added: 0, removed: 1 }
+          },
+          stdout: null,
+          stderr: 'conflict',
+          approvalStatus: null
+        }}
+      />
+    );
+    expect(file).toContain('a.ts');
+    expect(file).toContain('conflict');
+    expect(file).toContain('thread-file-change-path');
+    const workflow = renderToStaticMarkup(
+      <WorkRowBody row={{
+        ...workBase,
+        id: 'wf2',
+        workKind: 'workflow',
+        status: 'completed',
+        itemId: 'item-2',
+        taskType: 'local_workflow',
+        workflowName: null,
+        description: '',
+        model: null,
+        taskStatus: 'failed',
+        workflow: null,
+        usage: null,
+        summary: 'failed run',
+        error: 'boom',
+        completedAt: 3
+      }} />
+    );
+    expect(workflow).toContain('failed run');
+    expect(workflow).toContain('boom');
+    expect(renderToStaticMarkup(
+      <WorkRowBody row={{
+        ...workBase,
+        id: 'ws',
+        workKind: 'web-search',
+        status: 'completed',
+        queries: ['q'],
+        completedAt: 2
+      }} />
+    )).toBe('');
+  });
+});
+
+describe('conversation and banners', () => {
+  it('offers Preview next to Show more when an assistant dump starts with a file path', () => {
+    const dump = `docs/architecture/high-level-architecture.md\n\n# Title\n${'x'.repeat(2100)}`;
+    const html = renderToStaticMarkup(
+      <ConversationRow
+        threadId="t1"
+        row={{
+          ...workBase,
+          id: 'a-preview',
+          kind: 'conversation',
+          role: 'assistant',
+          text: dump,
+          attachments: null,
+          initiator: 'agent',
+          senderThreadId: null,
+          systemMessageKind: 'unlabeled',
+          systemMessageSubject: null,
+          turnRequest: { isGrouped: false, kind: 'message', status: 'accepted' },
+          mentions: []
+        }}
+      />
+    );
+    expect(html).toContain('thread-open-file-preview');
+    expect(html).toContain('Preview');
+    expect(html).toContain('thread-message-overflow');
+    expect(html).toContain('Show more');
+  });
+
+  it('does not offer Preview without a thread id or a leading file path', () => {
+    const dump = `docs/architecture/high-level-architecture.md\n\n# Title\n${'x'.repeat(2100)}`;
+    const noThread = renderToStaticMarkup(
+      <ConversationRow
+        row={{
+          ...workBase,
+          id: 'a-no-thread',
+          kind: 'conversation',
+          role: 'assistant',
+          text: dump,
+          attachments: null,
+          initiator: 'agent',
+          senderThreadId: null,
+          systemMessageKind: 'unlabeled',
+          systemMessageSubject: null,
+          turnRequest: { isGrouped: false, kind: 'message', status: 'accepted' },
+          mentions: []
+        }}
+      />
+    );
+    expect(noThread).not.toContain('thread-open-file-preview');
+    expect(noThread).toContain('Show more');
+    const prose = renderToStaticMarkup(
+      <ConversationRow
+        threadId="t1"
+        row={{
+          ...workBase,
+          id: 'a-prose',
+          kind: 'conversation',
+          role: 'assistant',
+          text: 'Done.',
+          attachments: null,
+          initiator: 'agent',
+          senderThreadId: null,
+          systemMessageKind: 'unlabeled',
+          systemMessageSubject: null,
+          turnRequest: { isGrouped: false, kind: 'message', status: 'accepted' },
+          mentions: []
+        }}
+      />
+    );
+    expect(prose).not.toContain('thread-open-file-preview');
+  });
+
+  it('renders mention pills and copy chrome', () => {
+    const html = renderToStaticMarkup(
+      <ConversationRow
+        onCopy={() => undefined}
+        row={{
+          ...workBase,
+          id: 'u1',
+          kind: 'conversation',
+          role: 'user',
+          text: 'Read README.md',
+          attachments: null,
+          initiator: 'user',
+          senderThreadId: null,
+          systemMessageKind: 'unlabeled',
+          systemMessageSubject: null,
+          turnRequest: { isGrouped: false, kind: 'message', status: 'accepted' },
+          mentions: [{
+            start: 5,
+            end: 14,
+            resource: { kind: 'path', source: 'workspace', entryKind: 'file', path: 'README.md', label: 'README.md' }
+          }]
+        }}
+      />
+    );
+    expect(html).toContain('README.md');
+    expect(html).toContain('thread-copy-message');
+    expect(html).toContain('thread-timeline-row is-user');
+    expect(html).toContain('thread-timeline-bubble');
+  });
+
+  it('renders compact image thumbs on a user message', () => {
+    const html = renderToStaticMarkup(
+      <ConversationRow
+        projectId="proj-1"
+        row={{
+          ...workBase,
+          id: 'u-img',
+          kind: 'conversation',
+          role: 'user',
+          text: '',
+          attachments: {
+            webImages: 0,
+            localImages: 1,
+            localFiles: 0,
+            imageUrls: [],
+            localImagePaths: ['shot-1.png'],
+            localFilePaths: []
+          },
+          initiator: 'user',
+          senderThreadId: null,
+          systemMessageKind: 'unlabeled',
+          systemMessageSubject: null,
+          turnRequest: { isGrouped: false, kind: 'message', status: 'accepted' },
+          mentions: []
+        }}
+      />
+    );
+    expect(html).toContain('composer-image-thumbs');
+    expect(html).toContain('/api/v1/projects/proj-1/attachments/content?path=shot-1.png');
+  });
+
+  it('offers edit on idle user messages and fork/send-to-main on assistant child threads', () => {
+    const user = renderToStaticMarkup(
+      <ConversationRow
+        threadId="t1"
+        threadIdle
+        onCopy={() => undefined}
+        row={{
+          ...workBase,
+          id: 'u-edit',
+          kind: 'conversation',
+          role: 'user',
+          text: 'Fix it',
+          attachments: null,
+          initiator: 'user',
+          senderThreadId: null,
+          systemMessageKind: 'unlabeled',
+          systemMessageSubject: null,
+          turnRequest: { isGrouped: false, kind: 'message', status: 'accepted' },
+          mentions: []
+        }}
+      />
+    );
+    expect(user).toContain('thread-edit-message');
+    expect(user).not.toContain('thread-fork-message');
+    const assistant = renderToStaticMarkup(
+      <ConversationRow
+        threadId="t1"
+        parentThreadId="parent"
+        onCopy={() => undefined}
+        row={{
+          ...workBase,
+          id: 'a-fork',
+          kind: 'conversation',
+          role: 'assistant',
+          text: 'Done.',
+          attachments: null,
+          initiator: 'agent',
+          senderThreadId: null,
+          systemMessageKind: 'unlabeled',
+          systemMessageSubject: null,
+          turnRequest: { isGrouped: false, kind: 'message', status: 'accepted' },
+          mentions: []
+        }}
+      />
+    );
+    expect(assistant).toContain('thread-fork-message');
+    expect(assistant).toContain('thread-send-to-main');
+    expect(assistant).toContain('thread-add-to-chat');
+    expect(assistant).toContain('thread-copy-message');
+    expect(assistant).toContain('thread-timeline-bubble');
+    expect(assistant).toContain('thread-timeline-row is-assistant');
+  });
+
+  it('skips absolute local image paths that the renderer cannot fetch', () => {
+    const html = renderToStaticMarkup(
+      <ConversationRow
+        projectId="proj-1"
+        row={{
+          ...workBase,
+          id: 'u-img-abs',
+          kind: 'conversation',
+          role: 'user',
+          text: 'see this',
+          attachments: {
+            webImages: 0,
+            localImages: 1,
+            localFiles: 0,
+            imageUrls: [],
+            localImagePaths: ['/tmp/shot.png'],
+            localFilePaths: []
+          },
+          initiator: 'user',
+          senderThreadId: null,
+          systemMessageKind: 'unlabeled',
+          systemMessageSubject: null,
+          turnRequest: { isGrouped: false, kind: 'message', status: 'accepted' },
+          mentions: []
+        }}
+      />
+    );
+    expect(html).not.toContain('composer-image-thumbs');
+    expect(html).toContain('see this');
+  });
+
+  it('labels mentions from resource fields', () => {
+    expect(mentionPillLabel({ resource: { kind: 'path', label: 'src' } })).toBe('src');
+    expect(mentionPillLabel({ resource: { kind: 'path', path: 'a.ts' } })).toBe('a.ts');
+    expect(mentionPillLabel({ resource: { kind: 'command', name: 'help' } })).toBe('help');
+    expect(mentionPillLabel({ resource: { kind: 'thread', label: 'Hello' } })).toBe('Agent: Hello');
+    expect(mentionPillLabel({})).toBe('');
+  });
+
+  it('builds image data URLs and question answers', () => {
+    expect(imagePreviewSrc({ contentType: 'image/svg+xml', content: '<svg />' })).toContain('data:image/svg+xml');
+    expect(imagePreviewSrc({ contentType: 'image/png', content: 'x' })).toBeNull();
+    expect(resolveQuestionAnswer(' yes ', ['Continue?'])).toBe('yes');
+    expect(resolveQuestionAnswer('  ', ['Continue?'])).toBe('Continue?');
+  });
+
+  it('shows thinking and goal chips', () => {
+    const withText = renderToStaticMarkup(
+      <ThreadWorkingIndicator status="active" thinking={{ id: 'th', text: 'Planning', startedAt: 1, updatedAt: 1 }} />
+    );
+    expect(withText).toContain('Thinking…');
+    expect(withText).toContain('Planning');
+    expect(withText).toContain('<details');
+    expect(withText).toContain('thread-timeline-work-chevron');
+    expect(withText).toContain('thread-thinking-details');
+    expect(renderToStaticMarkup(
+      <ThreadWorkingIndicator
+        status="active"
+        thinking={{ id: 'th', text: 'Planning', startedAt: 1, updatedAt: 1 }}
+        waitingOnUser
+      />
+    )).toBe('');
+    expect(renderToStaticMarkup(
+      <ThreadWorkingIndicator status="active" thinking={{ id: 'th', text: '  ', startedAt: 1, updatedAt: 1 }} />
+    )).toContain('Thinking…');
+    expect(renderToStaticMarkup(
+      <ThreadWorkingIndicator status="starting" thinking={{ id: 'th', text: 'Plan first.', startedAt: 1, updatedAt: 1 }} />
+    )).toContain('Thinking…');
+    expect(renderToStaticMarkup(
+      <ThreadWorkingIndicator status="active" thinking={null} />
+    )).toContain('Planning next move…');
+    expect(renderToStaticMarkup(
+      <ThreadWorkingIndicator status="active" thinking={null} />
+    )).not.toContain('thread-timeline-work-chevron');
+    expect(renderToStaticMarkup(
+      <ThreadGoalBanner goal={{
+        sourceSeq: 1,
+        updatedAt: 1,
+        objective: 'Ship the UI',
+        status: 'active',
+        tokenBudget: null,
+        tokensUsed: 0,
+        timeUsedSeconds: 0
+      }} />
+    )).toContain('Ship the UI');
+  });
+});
+
+describe('title view and scroll helpers', () => {
+  it('renders file accents and duration decorations', () => {
+    const html = renderToStaticMarkup(
+      <TimelineTitleView
+        now={2000}
+        title={{
+          segments: [{ text: 'Edited ', em: false, shimmer: false, truncate: false }, {
+            text: 'README.md',
+            em: true,
+            shimmer: false,
+            truncate: true,
+            accent: 'file'
+          }],
+          decorations: [{ kind: 'diff-stats', added: 1, removed: 0 }],
+          tone: 'default',
+          action: { kind: 'open-file-diff', path: 'README.md' },
+          plain: 'Edited README.md'
+        }}
+        onAction={() => undefined}
+      />
+    );
+    expect(html).toContain('accent-file');
+    expect(html).toContain('README.md');
+    expect(html).toContain('+1 −0');
+    const preview = renderToStaticMarkup(
+      <TimelineTitleView
+        now={0}
+        title={{
+          segments: [
+            { text: 'Read ', em: false, shimmer: false, truncate: false },
+            { text: 'src/a.ts', em: true, shimmer: false, truncate: true, accent: 'file' }
+          ],
+          decorations: [],
+          tone: 'default',
+          action: { kind: 'open-file-preview', path: 'src/a.ts' },
+          plain: 'Read src/a.ts'
+        }}
+        onAction={() => undefined}
+      />
+    );
+    expect(preview).toContain('thread-open-file-preview');
+    expect(preview).toContain('Preview');
+    expect(preview).toContain('src/a.ts');
+    const linked = renderToStaticMarkup(
+      <TimelineTitleView
+        now={0}
+        title={{
+          segments: [{
+            text: 'parent',
+            em: false,
+            shimmer: false,
+            truncate: false,
+            link: { kind: 'thread', threadId: 't2' }
+          }],
+          decorations: [],
+          tone: 'default',
+          action: null,
+          plain: 'parent'
+        }}
+        onLink={() => undefined}
+      />
+    );
+    expect(linked).toContain('thread-timeline-title-link');
+  });
+
+  it('detects sticky-bottom and unread boundaries', () => {
+    expect(isNearBottom({ scrollTop: 100, scrollHeight: 140, clientHeight: 40 })).toBe(true);
+    expect(isNearBottom({ scrollTop: 0, scrollHeight: 400, clientHeight: 40 })).toBe(false);
+    expect(shouldStickToBottom({ isBusy: true, userPinnedAway: false })).toBe(true);
+    expect(shouldStickToBottom({ isBusy: true, userPinnedAway: true })).toBe(false);
+    expect(shouldStickToBottom({ isBusy: false, userPinnedAway: false })).toBe(false);
+    expect(shouldStickToBottom({ isBusy: false, userPinnedAway: false, initialOpen: true })).toBe(true);
+    expect(shouldStickToBottom({ isBusy: false, userPinnedAway: true, initialOpen: true })).toBe(false);
+    expect(shouldStickToBottom({ isBusy: false, streaming: true, userPinnedAway: false })).toBe(true);
+    const pane = { scrollTop: 0, scrollHeight: 400, clientHeight: 40 };
+    pinScrollToBottom(pane);
+    expect(pane.scrollTop).toBe(360);
+    pinScrollToBottom(pane);
+    expect(pane.scrollTop).toBe(360);
+    const short = { scrollTop: 0, scrollHeight: 20, clientHeight: 40 };
+    pinScrollToBottom(short);
+    expect(short.scrollTop).toBe(0);
+    expect(firstUnreadRowId([{ id: 'a', sourceSeqStart: 1 }, { id: 'b', sourceSeqStart: 5 }], 3)).toBe('b');
+    expect(firstUnreadRowId([{ id: 'a', sourceSeqStart: 1 }], 0)).toBeNull();
+    const prevented = { preventDefault() { this.ok = true; }, stopPropagation() { this.stopped = true; }, ok: false, stopped: false };
+    stopTitleEvent(prevented);
+    expect(prevented.ok).toBe(true);
+    expect(prevented.stopped).toBe(true);
+  });
+});

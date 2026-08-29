@@ -26,12 +26,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
+          cache: pnpm
 
-      # node-pty / better-sqlite3 are native; `npm ci` runs their install
+      # node-pty / better-sqlite3 are native; pnpm runs their install
       # scripts. distutils was dropped from Python 3.12 stdlib, so pin 3.11
       # where node-gyp can still import it (matches release.yml).
       - uses: actions/setup-python@v7
@@ -39,13 +41,13 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Typecheck
-        run: npm run typecheck
+        run: pnpm run typecheck
 
       - name: Unit tests
-        run: npm test
+        run: pnpm test
 
   # E2E (Playwright + real Electron) is informational, NOT a required check —
   # it launches the whole app under a headless X server (xvfb) and exercises the
@@ -60,17 +62,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
+          cache: pnpm
 
       - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       # Electron needs a display + the usual Chromium shared libs. xvfb-run
       # supplies a virtual X server; playwright's dep installer pulls the libs.
@@ -81,14 +85,14 @@ jobs:
           npx playwright install-deps chromium
 
       - name: Build app
-        run: npm run build
+        run: pnpm run build
         env:
           # The renderer bundle includes Monaco and exceeds Node's default heap
           # on GitHub-hosted runners.
           NODE_OPTIONS: --max-old-space-size=6144
 
       - name: E2E tests
-        run: xvfb-run -a npm run test:e2e:only
+        run: xvfb-run -a pnpm run test:e2e:only
 
       - name: Upload Playwright report on failure
         if: failure()
@@ -97,6 +101,6 @@ jobs:
           name: playwright-report
           path: |
             playwright-report
-            test-results
+            e2e/.artifacts
           retention-days: 7
           if-no-files-found: ignore

@@ -12,6 +12,24 @@ import { runCli } from '../lib/run-cli.js';
 
 const fixtureDir = join(tmpdir(), `cc-cli-test-${Date.now()}`);
 
+function projectsFetch(projects: unknown[]): typeof fetch {
+  return (async (input: RequestInfo | URL) => {
+    const url = new URL(String(input instanceof Request ? input.url : input));
+    if (url.pathname === '/api/v1/projects') {
+      return new Response(JSON.stringify({ projects }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return new Response(JSON.stringify({ error: 'unmocked' }), { status: 404 });
+  }) as typeof fetch;
+}
+
+const fixtureProjects = [
+  { id: 'proj-001', name: 'Test Project', path: '/home/user/test-project', tag: 'test' },
+  { id: 'proj-002', name: 'Another Project', path: '/home/user/another' }
+];
+
 beforeAll(() => {
   // Create fixture data directory
   mkdirSync(fixtureDir, { recursive: true });
@@ -162,7 +180,10 @@ describe('cc CLI', () => {
   });
 
   it('lists projects as JSON', async () => {
-    const result = await runCli(['node', 'zcc', 'projects', 'ls', '--json'], { dataDir: fixtureDir });
+    const result = await runCli(['node', 'zcc', 'projects', 'ls', '--json'], {
+      dataDir: fixtureDir,
+      fetchImpl: projectsFetch(fixtureProjects)
+    });
     expect(result.exitCode).toBe(0);
     const projects = JSON.parse(result.stdout);
     expect(projects).toHaveLength(2);
@@ -171,10 +192,12 @@ describe('cc CLI', () => {
   });
 
   it('lists projects as human table', async () => {
-    const result = await runCli(['node', 'zcc', 'projects', 'ls'], { dataDir: fixtureDir });
+    const result = await runCli(['node', 'zcc', 'projects', 'ls'], {
+      dataDir: fixtureDir,
+      fetchImpl: projectsFetch(fixtureProjects)
+    });
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain('ID');
-    expect(result.stdout).toContain('NAME');
+    expect(result.stdout).toContain('proj-001');
     expect(result.stdout).toContain('Test Project');
     expect(result.stdout).toContain('Another Project');
   });
@@ -336,7 +359,7 @@ describe('cc CLI', () => {
   it('handles unknown command', async () => {
     const result = await runCli(['node', 'zcc', 'unknown', 'cmd'], { dataDir: fixtureDir });
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain('unknown command');
+    expect(result.stderr).toMatch(/not running|unknown command/);
   });
 
   it('term close-summary rejects missing args with usage exit code', async () => {
@@ -355,10 +378,13 @@ describe('cc CLI', () => {
     expect(result.stdout).toContain('term close-summary');
   });
 
-  it('handles missing data directory gracefully', async () => {
-    const result = await runCli(['node', 'zcc', 'projects', 'ls'], { dataDir: '/nonexistent' });
+  it('lists no projects when the API returns an empty set', async () => {
+    const result = await runCli(['node', 'zcc', 'projects', 'ls'], {
+      dataDir: '/nonexistent',
+      fetchImpl: projectsFetch([])
+    });
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain('No projects found');
+    expect(result.stdout).toContain('No projects');
   });
 
   it('supports short ID prefix matching for inbox show', async () => {
@@ -377,7 +403,7 @@ describe('cc CLI', () => {
   });
 
   it('honors the --data-dir flag (space form) over the default', async () => {
-    const result = await runCli(['node', 'zcc', '--data-dir', fixtureDir, 'projects', 'ls', '--json']);
+    const result = await runCli(['node', 'zcc', '--data-dir', fixtureDir, 'inbox', 'ls', '--json']);
     expect(result.exitCode).toBe(0);
     const parsed = JSON.parse(result.stdout);
     expect(Array.isArray(parsed)).toBe(true);
@@ -390,37 +416,25 @@ describe('cc CLI', () => {
     expect(result.stdout).not.toContain('No schedules found');
   });
 
-  it('reads legacy v0 projects.json (bare array)', async () => {
-    const v0Dir = join(tmpdir(), `cc-cli-v0-${Date.now()}`);
-    mkdirSync(v0Dir, { recursive: true });
-    try {
-      writeFileSync(
-        join(v0Dir, 'projects.json'),
-        JSON.stringify([
-          { id: 'v0proj', name: 'Legacy Project', path: '/tmp/legacy', createdAt: 1, lastActiveAt: 1 }
-        ])
-      );
-      const result = await runCli(['node', 'zcc', 'projects', 'ls', '--json'], { dataDir: v0Dir });
-      expect(result.exitCode).toBe(0);
-      const parsed = JSON.parse(result.stdout);
-      expect(parsed).toHaveLength(1);
-      expect(parsed[0].id).toBe('v0proj');
-    } finally {
-      rmSync(v0Dir, { recursive: true, force: true });
-    }
+  it('lists a single project from the product API', async () => {
+    const result = await runCli(['node', 'zcc', 'projects', 'ls', '--json'], {
+      fetchImpl: projectsFetch([
+        { id: 'v0proj', name: 'Legacy Project', path: '/tmp/legacy' }
+      ])
+    });
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].id).toBe('v0proj');
   });
 
-  it('does not crash on syntactically broken JSON', async () => {
-    const brokenDir = join(tmpdir(), `cc-cli-broken-${Date.now()}`);
-    mkdirSync(brokenDir, { recursive: true });
-    try {
-      writeFileSync(join(brokenDir, 'projects.json'), '{ this is not json');
-      const result = await runCli(['node', 'zcc', 'projects', 'ls'], { dataDir: brokenDir });
-      // Degrades to empty + a non-fatal warning, never throws.
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('No projects found');
-    } finally {
-      rmSync(brokenDir, { recursive: true, force: true });
-    }
+  it('reports APP_NOT_RUNNING when the product API is unreachable', async () => {
+    const result = await runCli(['node', 'zcc', 'projects', 'ls'], {
+      fetchImpl: async () => {
+        throw new Error('ECONNREFUSED');
+      }
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toMatch(/not running/);
   });
 });

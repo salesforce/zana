@@ -18,7 +18,7 @@ function parseFeed(text: string): FeedInfo | null {
 }
 
 const PLATFORMS = [
-  { os: '🍎', name: 'macOS', note: 'Universal · signed & notarized · .dmg', primary: true },
+  { os: '🍎', name: 'macOS', note: 'Apple Silicon or Intel · signed & notarized · .dmg', primary: true },
   { os: '🪟', name: 'Windows', note: 'NSIS installer · .exe', wip: true },
   { os: '🐧', name: 'Linux', note: 'AppImage', wip: true }
 ];
@@ -88,10 +88,10 @@ export function DownloadClient() {
           </div>
           <div>
             <pre className="clean-command-block">
-              <code>git clone {site.repo}.git{'\n'}cd zana{'\n'}npm install{'\n'}npm run dev</code>
+              <code>git clone {site.repo}.git{'\n'}cd zana{'\n'}pnpm install{'\n'}pnpm dev</code>
             </pre>
             <p className="clean-source-note">
-              Prerequisites: Node 20+ and <code>git</code>. See the{' '}
+              Prerequisites: Node 20+, pnpm, and <code>git</code>. See the{' '}
               <a href="/docs/">docs</a> for source-build guidance.
             </p>
           </div>

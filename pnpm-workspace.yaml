@@ -1,0 +1,33 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "plugins/*"
+  - "tools/*"
+  - "website"
+
+# ZCC deliberately ships Electron and native execution dependencies. Keep the
+# allowlist narrow so pnpm's supply-chain policy continues to reject arbitrary
+# lifecycle scripts while permitting the artifacts our existing build requires.
+onlyBuiltDependencies:
+  - "@google/genai"
+  - "@julusian/jpeg-turbo"
+  - "better-sqlite3"
+  - "electron"
+  - "electron-winstaller"
+  - "esbuild"
+  - "node-hid"
+  - "node-pty"
+  - "protobufjs"
+  - "sharp"
+allowBuilds:
+  '@google/genai': true
+  '@julusian/jpeg-turbo': true
+  better-sqlite3: true
+  electron: true
+  electron-winstaller: true
+  esbuild: true
+  node-hid: true
+  node-pty: true
+  protobufjs: true
+  sharp: true
+blockExoticSubdeps: false

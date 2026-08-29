@@ -7,9 +7,8 @@ import { useEffect, useState } from 'react';
 import { site } from '@/lib/site';
 
 const LINKS = [
-  { href: '/how-it-works/', label: 'How it works' },
-  { href: '/features/', label: 'Features' },
-  { href: '/extensions/', label: 'Extensions' },
+  { href: '/', label: 'Home' },
+  { href: '/extensions/', label: 'Plugins' },
   { href: '/marketplace/', label: 'Marketplace' },
   { href: '/docs/', label: 'Docs' },
   { href: '/dashboard/', label: 'Publish' }
@@ -145,23 +144,22 @@ export function Footer() {
               Zana Command Center
             </span>
             <p className="foot-blurb">
-              A desktop control plane for Claude Code, OpenCode, Codex, and Pi sessions across every project.
+              A desktop control plane for Claude Code, Cursor, OpenCode, Codex, and Pi sessions across every project.
             </p>
           </div>
           <div className="foot-col">
             <h4>Product</h4>
-            <Link href="/how-it-works/">How it works</Link>
-            <Link href="/features/">Features</Link>
-            <Link href="/extensions/">Extensions</Link>
+            <Link href="/">Home</Link>
+            <Link href="/extensions/">Plugins</Link>
             <Link href="/marketplace/">Marketplace</Link>
             <Link href="/download/">Download</Link>
-            <Link href="/dashboard/">Publish an extension</Link>
+            <Link href="/dashboard/">Publish a plugin</Link>
           </div>
           <div className="foot-col">
             <h4>Docs</h4>
             <Link href="/docs/">Documentation</Link>
             <Link href="/docs/cli/">The zcc CLI</Link>
-            <Link href="/docs/extensions-authoring/">Build an extension</Link>
+            <Link href="/docs/extensions-authoring/">Build a plugin</Link>
           </div>
           <div className="foot-col">
             <h4>Resources</h4>
@@ -172,6 +170,11 @@ export function Footer() {
         </div>
         <div className="foot-bottom">
           <span>© {year} Zana Command Center. Free &amp; open.</span>
+          <span>
+            Architecture rebased on{' '}
+            <a href="https://github.com/get-bb/bb" target="_blank" rel="noopener noreferrer">bb</a>. Inspired by bb,
+            Cursor, Codex, and Claude Code.
+          </span>
           <span>macOS today, Windows &amp; Linux soon — signed &amp; auto-updating.</span>
         </div>
       </div>

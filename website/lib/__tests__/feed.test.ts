@@ -26,9 +26,9 @@ describe('feed', () => {
   let dbFile: string;
   const now = Date.now();
 
-  const archiveGusA = Buffer.from(JSON.stringify({ files: { 'extension.json': 'eyJpZCI6Imd1cyJ9' } }));
-  const archiveGusB = Buffer.from(JSON.stringify({ files: { 'extension.json': 'eyJpZCI6Imd1cyIsInYiOiJiIn0=' } }));
-  const archiveZana = Buffer.from(JSON.stringify({ files: { 'extension.json': 'eyJpZCI6InphbmEifQ==' } }));
+  const archiveGusA = Buffer.from(JSON.stringify({ files: { 'package.json': 'eyJpZCI6Imd1cyJ9' } }));
+  const archiveGusB = Buffer.from(JSON.stringify({ files: { 'package.json': 'eyJpZCI6Imd1cyIsInYiOiJiIn0=' } }));
+  const archiveZana = Buffer.from(JSON.stringify({ files: { 'package.json': 'eyJpZCI6InphbmEifQ==' } }));
 
   beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), 'zcc-registry-feed-'));

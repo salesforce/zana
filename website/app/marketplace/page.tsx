@@ -1,14 +1,18 @@
 import type { Metadata } from 'next';
+import { site } from '@/lib/site';
 import { MarketplaceClient } from './MarketplaceClient';
+
+/** Read `PUBLIC_BASE_URL` at request time so the add-command origin can change without a rebuild. */
+export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   title: 'Marketplace',
   description:
-    'Browse and install Zana Command Center extensions — panels, tabs, commands, personas, and teams from the same catalog the desktop app reads.',
+    'Browse and install Zana Command Center plugins — panels, skills, and MCP servers from the same catalog the desktop app reads.',
   alternates: { canonical: '/marketplace/' },
   openGraph: {
     title: 'Marketplace — Zana Command Center',
-    description: 'Extend the cockpit: install panels, tabs, commands, personas, and teams.',
+    description: 'Discover plugins: official bundled plus community git catalogs (pointers only).',
     url: '/marketplace/',
     type: 'website',
     images: ['/opengraph-image']
@@ -16,5 +20,5 @@ export const metadata: Metadata = {
 };
 
 export default function MarketplacePage() {
-  return <MarketplaceClient />;
+  return <MarketplaceClient publicBaseUrl={site.publicBaseUrl} />;
 }

@@ -1,5 +1,6 @@
 /**
- * Page object for Settings → Extensions → Marketplace, plus a thin IPC helper.
+ * Page object for Sidebar → Extensions → Browse extensions (Marketplace), plus
+ * a thin IPC helper.
  *
  * Two layers, used deliberately:
  *   - UI methods (open, rows, install) drive the real renderer the way a user
@@ -13,24 +14,17 @@ import type { Page } from '@playwright/test';
 export class MarketplacePage {
   constructor(private readonly window: Page) {}
 
-  /** Navigate Sidebar → Settings → Extensions section → Marketplace sub-tab. */
+  /** Navigate Sidebar → Extensions → Browse extensions. */
   async open(): Promise<void> {
-    // Sidebar "Settings" rail entry.
-    await this.window.locator('.nav-item', { hasText: 'Settings' }).first().click();
-    // Settings section row "Extensions" (a .settings-section-item, not a button).
-    await this.window
-      .locator('.settings-section-item')
-      .filter({ has: this.window.locator('.project-name', { hasText: 'Extensions' }) })
-      .click();
-    // Extensions hub sub-tab "Marketplace".
-    await this.window.getByRole('tab', { name: 'Marketplace' }).click();
+    await this.window.locator('.nav-item', { hasText: 'Plugins' }).first().click();
+    await this.window.getByTestId('extensions-nav-marketplace').click();
     await this.window.waitForSelector('.ext-market', { timeout: 15_000 });
   }
 
-  /** The marketplace "off / not configured" hint (shown when no registry). */
+  /** The marketplace empty hint (shown when bundled + remote catalogs are both empty). */
   emptyHint() {
     return this.window.locator('.settings-help--muted', {
-      hasText: 'No marketplace configured',
+      hasText: 'No plugins to show',
     });
   }
 
@@ -49,6 +43,11 @@ export class MarketplacePage {
   /** The action button inside a row (Install / Update / Installed / Incompatible). */
   rowButton(title: string) {
     return this.row(title).locator('.ext-market-item-action button');
+  }
+
+  /** Confirm the full-trust dialog that follows an Install / Update click. */
+  async confirmInstall(): Promise<void> {
+    await this.window.getByRole('button', { name: 'Install with full trust' }).click();
   }
 
   /** Call a `window.cc.extensions.<method>(...args)` in the renderer. */

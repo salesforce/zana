@@ -1,34 +1,18 @@
 # @zana-ai/zcc-extension-sdk
 
-The public TypeScript contract for building Zana Command Center extensions.
+Retired disk-extension contract (`extension.json`, `utilityProcess`,
+`RendererEntry.activate`, permission broker).
 
-## Install
+**New plugins use [`@zana-ai/zcc-plugin-sdk`](../plugin-sdk).** Scaffold with
+`zcc plugin new <name>` or **Create** in Plugins → Browse. The manifest is
+`package.json` → `zcc`; the app entry is `definePluginApp`; the server entry is
+`export default function plugin(zcc)`.
 
-```sh
-npm install --save-dev @zana-ai/zcc-extension-sdk
-```
+This package remains in the repo only so already-installed leftover extensions
+can keep loading for one release. Do not start a new integration here.
 
-## Imports
+See:
 
-```ts
-import { defineMainModule } from '@zana-ai/zcc-extension-sdk';
-import type { RendererEntry } from '@zana-ai/zcc-extension-sdk/renderer';
-import type { MainModuleContext } from '@zana-ai/zcc-extension-sdk/main';
-```
-
-Available entry points are `@zana-ai/zcc-extension-sdk`, `/renderer`, `/main`,
-`/helpers`, and `/testing`.
-
-See the extension authoring guide in the Zana repository for the manifest,
-permission, build, and publishing workflow:
-https://github.com/salesforce/zana/blob/main/docs/extensions-authoring.md
-
-## Publishing
-
-The package is public. From this workspace, publish a reviewed release with:
-
-```sh
-npm publish --workspace @zana-ai/zcc-extension-sdk --access public
-```
-
-`prepublishOnly` builds the distributable before publishing.
+- https://github.com/salesforce/zana/blob/main/docs/extensions.md
+- https://github.com/salesforce/zana/blob/main/docs/extensions-authoring.md
+- https://github.com/salesforce/zana/blob/main/docs/extensions-sdk-reference.md

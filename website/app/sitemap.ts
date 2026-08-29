@@ -11,8 +11,6 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const base = site.publicBaseUrl.replace(/\/$/, '');
   const staticPaths = [
     '/',
-    '/how-it-works/',
-    '/features/',
     '/extensions/',
     '/extensions/getting-started/',
     '/extensions/install/',

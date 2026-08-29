@@ -1,9 +1,9 @@
 /**
- * Dev-only seed: publish the repo's example extensions into the local SQLite
+ * Dev-only seed: publish first-party plugins into the local SQLite
  * registry so `/extensions/index.json` serves a non-empty, VERIFIABLE feed for
  * manual marketplace testing. Builds the same `{files:{…}}` archive bytes the
  * engine hashes+verifies, signs them with a throwaway Ed25519 key, and inserts
- * one `releases` row per example (raw SQL — no `.ts` imports, so plain `node`
+ * one `releases` row per plugin (raw SQL — no `.ts` imports, so plain `node`
  * runs it without a TS loader). Prints the matching REGISTRY_PUBLIC_KEY (spki
  * PEM, one line) to paste into ~/.zcc/extension-registry.json.
  *
@@ -22,6 +22,7 @@ const Database = require('better-sqlite3');
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..', '..');
+const PLUGINS_ROOT = join(REPO_ROOT, 'plugins');
 const EXAMPLES = join(REPO_ROOT, 'examples', 'extensions');
 
 const dbSpec = (process.env.DATABASE_URL ?? 'file:./dev.db').replace(/^file:/, '');
@@ -32,19 +33,69 @@ function sha256Hex(bytes) {
 function signEd25519(bytes, privateKeyPem) {
   return cryptoSign(null, bytes, createPrivateKey(privateKeyPem)).toString('base64');
 }
+function derivePluginId(packageName) {
+  const base = packageName.includes('/') ? (packageName.split('/').at(-1) ?? packageName) : packageName;
+  return base
+    .replace(/^(zcc|zana)-plugin-/, '')
+    .replace(/^@/, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function readSeedManifest(dir) {
+  const pkgPath = join(dir, 'package.json');
+  if (existsSync(pkgPath)) {
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+    if (!pkg || typeof pkg.zcc !== 'object' || pkg.zcc === null) return null;
+    return {
+      id: derivePluginId(pkg.name),
+      version: pkg.version,
+      zccApi: pkg.engines?.zcc ?? pkg.engines?.zccApi ?? '^1.0.0',
+      title: pkg.zcc.name ?? null,
+      description: pkg.zcc.description ?? null,
+      icon: pkg.zcc.branding?.icon ?? null,
+      permissions: null
+    };
+  }
+  const legacyPath = join(dir, 'extension.json');
+  if (!existsSync(legacyPath)) return null;
+  const manifest = JSON.parse(readFileSync(legacyPath, 'utf-8'));
+  return {
+    id: manifest.id,
+    version: manifest.version,
+    zccApi: manifest.engines?.zccApi ?? '^1.0.0',
+    title: manifest.title ?? null,
+    description: manifest.description ?? null,
+    icon: manifest.icon ?? null,
+    permissions: manifest.permissions ? JSON.stringify(manifest.permissions) : null
+  };
+}
+
+function listPluginDirs() {
+  const dirs = [];
+  if (existsSync(PLUGINS_ROOT)) {
+    for (const name of readdirSync(PLUGINS_ROOT)) {
+      dirs.push(join(PLUGINS_ROOT, name));
+    }
+  }
+  if (existsSync(EXAMPLES)) {
+    for (const name of readdirSync(EXAMPLES)) {
+      dirs.push(join(EXAMPLES, name));
+    }
+  }
+  return dirs;
+}
+
 function buildArchive(dir) {
   const files = {};
-  for (const name of readdirSync(dir)) {
-    // Same allowlist the engine's decodeArchive enforces (no nesting/dotfiles).
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const name = entry.name;
     if (name.includes('/') || name.startsWith('.')) continue;
     files[name] = readFileSync(join(dir, name)).toString('base64');
   }
   return Buffer.from(JSON.stringify({ files }));
-}
-
-if (!existsSync(EXAMPLES)) {
-  console.error(`seed: no examples dir at ${EXAMPLES}`);
-  process.exit(1);
 }
 
 const { publicKey, privateKey } = generateKeyPairSync('ed25519');
@@ -71,29 +122,34 @@ const insertRel = db.prepare(
       @description, @author, @icon, @archiveBytes, @archiveSize, @publishedBy, @createdAt)`
 );
 
-const ids = readdirSync(EXAMPLES).filter((d) => existsSync(join(EXAMPLES, d, 'extension.json')));
-for (const id of ids) {
-  const dir = join(EXAMPLES, id);
-  const manifest = JSON.parse(readFileSync(join(dir, 'extension.json'), 'utf-8'));
+let seeded = 0;
+for (const dir of listPluginDirs()) {
+  const manifest = readSeedManifest(dir);
+  if (!manifest || !manifest.id || !manifest.version) continue;
   const bytes = buildArchive(dir);
   insertExt.run(manifest.id, ownerId, now);
   insertRel.run({
     extensionId: manifest.id,
     version: manifest.version,
-    zccApi: manifest.engines?.zccApi ?? '^1.0.0',
+    zccApi: manifest.zccApi,
     sha256: sha256Hex(bytes),
     signature: signEd25519(bytes, privateKeyPem),
-    permissions: manifest.permissions ? JSON.stringify(manifest.permissions) : null,
-    title: manifest.title ?? null,
-    description: manifest.description ?? null,
+    permissions: manifest.permissions,
+    title: manifest.title,
+    description: manifest.description,
     author: 'zana',
-    icon: manifest.icon ?? null,
+    icon: manifest.icon,
     archiveBytes: bytes,
     archiveSize: bytes.length,
     publishedBy: ownerId,
     createdAt: now
   });
+  seeded += 1;
   console.log(`seed: published ${manifest.id}@${manifest.version} (${bytes.length} bytes)`);
+}
+if (seeded === 0) {
+  console.error('seed: no package.json zcc plugins (or leftover extension.json dirs) found');
+  process.exit(1);
 }
 db.close();
 

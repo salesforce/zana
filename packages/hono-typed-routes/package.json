@@ -1,0 +1,27 @@
+{
+  "name": "@zana-ai/zcc-hono-typed-routes",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "clean": "rimraf dist tsconfig.tsbuildinfo",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "hono": "^4.7.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@zana-ai/zcc-tsconfig": "workspace:*",
+    "typescript": "^7.0.2"
+  },
+  "private": true
+}

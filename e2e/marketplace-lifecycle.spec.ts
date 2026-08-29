@@ -9,11 +9,11 @@
  *   4. Uninstall removes it from disk and tears down the live child
  *   5. All without an app relaunch
  */
-import { test, expect } from './fixtures/app';
-import { MarketplacePage } from './fixtures/marketplace';
+import { test, expect } from './fixtures/app.js';
+import { MarketplacePage } from './fixtures/marketplace.js';
 
 test.describe('marketplace lifecycle — search', () => {
-  test.use({ useRegistry: true });
+  test.use({ useRegistry: true, isolateBundledCatalog: true });
 
   test('search box filters the catalog by title/id/description/author', async ({
     app,
@@ -67,7 +67,7 @@ test.describe('marketplace lifecycle — search', () => {
 });
 
 test.describe('marketplace lifecycle — install and uninstall', () => {
-  test.use({ useRegistry: true });
+  test.use({ useRegistry: true, isolateBundledCatalog: true });
 
   test('installs extension → surfaces live → uninstalls → gone', async ({ app, registry }) => {
     const id = registry!.extension.id;
@@ -84,6 +84,7 @@ test.describe('marketplace lifecycle — install and uninstall', () => {
 
     // === Phase 2: Install ===
     await market.rowButton('E2E Dummy').click();
+    await market.confirmInstall();
 
     // Wait for install to complete (button changes to "Installed")
     await expect(market.rowButton('E2E Dummy')).toHaveText(/Installed/, { timeout: 30_000 });
@@ -129,29 +130,25 @@ test.describe('marketplace lifecycle — install and uninstall', () => {
     expect(list.some((e) => e.id === id)).toBe(false);
 
     // Navigate back to marketplace — should show "Install" again
-    await app.window.getByRole('tab', { name: 'Marketplace' }).click();
+    await app.window.getByRole('tab', { name: 'Browse' }).click();
     await expect(market.rowButton('E2E Dummy')).toHaveText(/Install/);
   });
 
   test('reconcile picks up manual install without relaunch', async ({ app, home }) => {
-    // Manually copy hello-sample into ~/.zcc/extensions (simulating a manual install)
-    const { cp, mkdir } = await import('node:fs/promises');
+    // Manually write hello-sample into ~/.zcc/extensions (simulating a manual install)
+    const { mkdir, writeFile } = await import('node:fs/promises');
     const { join } = await import('node:path');
-    const { fileURLToPath } = await import('node:url');
+    const { HELLO_SAMPLE_FILES } = await import('./fixtures/sample-extensions.js');
 
-    const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
-    const FIXTURE = join(REPO_ROOT, 'test/fixtures/hello-sample');
-    const INSTALL_DIR = join(home, '.zcc', 'extensions');
-
+    const INSTALL_DIR = join(home, '.zcc', 'extensions', 'hello-sample');
     await mkdir(INSTALL_DIR, { recursive: true });
-    await cp(FIXTURE, join(INSTALL_DIR, 'hello-sample'), { recursive: true });
+    for (const [rel, contents] of Object.entries(HELLO_SAMPLE_FILES)) {
+      await writeFile(join(INSTALL_DIR, rel), contents);
+    }
 
     // Trigger a rescan via the Extensions panel
-    await app.window.locator('.nav-item', { hasText: 'Settings' }).first().click();
-    await app.window
-      .locator('.settings-section-item')
-      .filter({ has: app.window.locator('.project-name', { hasText: 'Extensions' }) })
-      .click();
+    await app.window.locator('.nav-item', { hasText: 'Plugins' }).first().click();
+    await app.window.getByTestId('extensions-nav-installed').click();
 
     // Click "Reload" or "Rescan" button
     const rescanButton = app.window.locator('button', { hasText: /Reload|Rescan/ });
@@ -176,6 +173,7 @@ test.describe('marketplace lifecycle — install and uninstall', () => {
     // Install the extension first
     await market.open();
     await market.rowButton('E2E Dummy').click();
+    await market.confirmInstall();
     await expect(market.rowButton('E2E Dummy')).toHaveText(/Installed/, { timeout: 30_000 });
 
     // Uninstall via IPC (simulating the renderer's uninstall call)
@@ -192,6 +190,7 @@ test.describe('marketplace lifecycle — install and uninstall', () => {
 test.describe('marketplace lifecycle — permission-widening updates', () => {
   test.use({
     useRegistry: true,
+    isolateBundledCatalog: true,
     // Customize the dummy to have minimal permissions initially
     dummySpec: { permissions: ['storage'] },
   });

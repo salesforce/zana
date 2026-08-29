@@ -1,0 +1,18 @@
+{
+  "name": "@zcc-ext/custom-instructions",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standing instructions included in every later agent thread on this host.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "zcc": {
+    "name": "Custom instructions",
+    "description": "Add persistent custom instructions to agent threads on this host.",
+    "branding": { "icon": "ScrollText" },
+    "server": "./server.mjs",
+    "app": "./app.js"
+  }
+}

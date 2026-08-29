@@ -32,6 +32,7 @@ export const metadata: Metadata = {
   applicationName: site.name,
   keywords: [
     'Claude Code',
+    'Cursor',
     'OpenCode',
     'Codex CLI',
     'Pi coding agent',

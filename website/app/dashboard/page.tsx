@@ -38,9 +38,9 @@ export default async function Dashboard() {
       <section className="clean-dashboard-hero">
         <div className="wrap">
           <span className="clean-page-kicker">Publisher dashboard</span>
-          <h1>Sign in to publish extensions</h1>
+          <h1>Sign in to publish plugins</h1>
           <p>
-            Publishing an extension requires a GitHub identity — it&apos;s how the registry attributes releases and
+            Publishing a plugin requires a GitHub identity — it&apos;s how the registry attributes releases and
             enforces that only you can update an id you&apos;ve claimed.
           </p>
           <a className="clean-button clean-button-dark" href="/api/auth/github/login">
@@ -83,12 +83,13 @@ export default async function Dashboard() {
           <p>Create a token below, then run:</p>
           <pre className="clean-command-block">
             <code>
-              node scripts/publish-extension.mjs &lt;extensionDir&gt; --api {site.publicBaseUrl} --token zpat_…
+              node scripts/publish-extension.mjs &lt;pluginDir&gt; --api {site.publicBaseUrl} --token zpat_…
             </code>
           </pre>
           <p style={{ marginBottom: 0 }}>
             The first publish of an id claims it under your account; later publishes of the same id require the same
-            token owner. See <Link href="/docs/">the docs</Link> for the full extension manifest reference.
+            token owner. See <Link href="/docs/">the docs</Link> for the plugin manifest reference
+            (<code>package.json</code> <code>zcc</code>).
           </p>
         </div>
 
