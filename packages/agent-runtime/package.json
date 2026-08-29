@@ -34,7 +34,7 @@
     "@zana-ai/zcc-host-daemon-contract": "workspace:*",
     "@zana-ai/zcc-agent-process-utils": "workspace:*",
     "@zana-ai/zcc-provider-bridge-protocol": "workspace:*",
-    "@earendil-works/pi-ai": "0.84.0",
+    "@earendil-works/pi-ai": "0.84.3",
     "@earendil-works/pi-coding-agent": "0.84.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^4.3.6"
