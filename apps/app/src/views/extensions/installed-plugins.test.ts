@@ -86,6 +86,7 @@ describe('buildHubRows — PluginService snapshot union', () => {
     expect(local?.plugin).toBeNull();
     expect(installedPublisher(local!)).toBe('local');
     expect(publisherLabel('local')).toBe('Local');
+    expect(rows.find((row) => row.module.id === 'slack')).toBeUndefined();
   });
 });
 

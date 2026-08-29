@@ -73,6 +73,10 @@
   "exclude": [
     "plugins/**/*.test.ts",
     "plugins/**/*.test.tsx",
+    // Glob `*.ts` also matches `*.d.ts`. The vendored `declare module` stub
+    // would otherwise override the real `@zana-ai/zcc-plugin-sdk` exports
+    // (ZccPluginApi, slot registrations, etc.) for the whole program.
+    "plugins/**/types/zcc-plugin-sdk.d.ts",
     "apps/server/src/**/*.test.ts",
     "packages/db/src/**/*.test.ts",
     "packages/contracts/src/**/*.test.ts",

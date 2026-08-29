@@ -14,69 +14,141 @@ export interface EnrolledHostDaemon {
   close(): Promise<void>;
 }
 
+async function waitForHello(connection: EnrolledHostConnection, timeoutMs: number): Promise<void> {
+  let openTimer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      connection.ready,
+      new Promise<never>((_, reject) => {
+        openTimer = setTimeout(() => reject(new Error('host websocket did not open')), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (openTimer) clearTimeout(openTimer);
+  }
+}
+
+async function mintCredentials(options: {
+  dataDir: string;
+  serverUrl: string;
+  token: string;
+  hostId?: string;
+  hostName?: string;
+  instanceId: string;
+}): Promise<{ hostId: string; hostKey: string }> {
+  const requestedHostId = options.hostId ?? resolveHostId(options.dataDir);
+  const enrolled = await enrollDaemonHost({
+    serverUrl: options.serverUrl,
+    token: options.token,
+    hostName: options.hostName ?? detectHostName(),
+    instanceId: options.instanceId,
+    hostId: requestedHostId
+  });
+  persistHostId(options.dataDir, enrolled.hostId);
+  writeHostAuth(options.dataDir, {
+    hostId: enrolled.hostId,
+    hostKey: enrolled.hostKey,
+    hostName: options.hostName ?? detectHostName()
+  });
+  return { hostId: enrolled.hostId, hostKey: enrolled.hostKey };
+}
+
+async function openSession(options: {
+  dataDir: string;
+  serverUrl: string;
+  hostId: string;
+  hostKey: string;
+  instanceId: string;
+  onSocketClose?: (code: number) => void;
+}): Promise<EnrolledHostConnection> {
+  const connection = startEnrolledHostConnection({
+    serverUrl: options.serverUrl,
+    hostId: options.hostId,
+    hostKey: options.hostKey,
+    instanceId: options.instanceId,
+    dataDir: options.dataDir,
+    onSocketClose: options.onSocketClose
+  });
+  void connection.ready.catch(() => {
+    /* close() may reject after a timeout wins the race */
+  });
+  try {
+    await waitForHello(connection, 10_000);
+    return connection;
+  } catch (error) {
+    await connection.close();
+    throw error;
+  }
+}
+
 export async function startEnrolledHostDaemon(options: {
   dataDir: string;
   serverUrl: string;
   token?: string;
   hostId?: string;
   hostName?: string;
+  /** Desktop co-started daemon: replace another holder of this data dir. */
+  stealLock?: boolean;
   onSocketClose?: (code: number) => void;
 }): Promise<EnrolledHostDaemon> {
-  const releaseLock = acquireDaemonLock(options.dataDir);
+  const releaseLock = acquireDaemonLock(options.dataDir, { steal: options.stealLock === true });
   try {
     const instanceId = randomUUID();
     const existing = readHostAuth(options.dataDir);
     let hostId: string;
-    let hostKey: string;
+    let connection: EnrolledHostConnection;
     if (existing) {
-      hostId = existing.hostId;
-      hostKey = existing.hostKey;
+      try {
+        connection = await openSession({
+          dataDir: options.dataDir,
+          serverUrl: options.serverUrl,
+          hostId: existing.hostId,
+          hostKey: existing.hostKey,
+          instanceId,
+          onSocketClose: options.onSocketClose
+        });
+        hostId = existing.hostId;
+      } catch (error) {
+        if (!options.token) throw error;
+        const minted = await mintCredentials({
+          dataDir: options.dataDir,
+          serverUrl: options.serverUrl,
+          token: options.token,
+          hostId: options.hostId ?? existing.hostId,
+          hostName: options.hostName,
+          instanceId
+        });
+        hostId = minted.hostId;
+        connection = await openSession({
+          dataDir: options.dataDir,
+          serverUrl: options.serverUrl,
+          hostId: minted.hostId,
+          hostKey: minted.hostKey,
+          instanceId,
+          onSocketClose: options.onSocketClose
+        });
+      }
     } else {
       if (!options.token) {
         throw new Error('host enroll token is missing and auth.json is absent');
       }
-      const requestedHostId = options.hostId ?? resolveHostId(options.dataDir);
-      const enrolled = await enrollDaemonHost({
+      const minted = await mintCredentials({
+        dataDir: options.dataDir,
         serverUrl: options.serverUrl,
         token: options.token,
-        hostName: options.hostName ?? detectHostName(),
+        hostId: options.hostId,
+        hostName: options.hostName,
+        instanceId
+      });
+      hostId = minted.hostId;
+      connection = await openSession({
+        dataDir: options.dataDir,
+        serverUrl: options.serverUrl,
+        hostId: minted.hostId,
+        hostKey: minted.hostKey,
         instanceId,
-        hostId: requestedHostId
+        onSocketClose: options.onSocketClose
       });
-      persistHostId(options.dataDir, enrolled.hostId);
-      writeHostAuth(options.dataDir, {
-        hostId: enrolled.hostId,
-        hostKey: enrolled.hostKey,
-        hostName: options.hostName ?? detectHostName()
-      });
-      hostId = enrolled.hostId;
-      hostKey = enrolled.hostKey;
-    }
-    const connection = startEnrolledHostConnection({
-      serverUrl: options.serverUrl,
-      hostId,
-      hostKey,
-      instanceId,
-      dataDir: options.dataDir,
-      onSocketClose: options.onSocketClose
-    });
-    void connection.ready.catch(() => {
-      /* close() may reject after a timeout wins the race */
-    });
-    let openTimer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([
-        connection.ready,
-        new Promise<never>((_, reject) => {
-          openTimer = setTimeout(() => reject(new Error('host websocket did not open')), 10_000);
-        })
-      ]);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    } catch (error) {
-      await connection.close();
-      throw error;
-    } finally {
-      if (openTimer) clearTimeout(openTimer);
     }
     return {
       hostId,

@@ -131,6 +131,8 @@ export function MachinesSettingsView({
   const [installErrors, setInstallErrors] = useState<Record<string, string>>({});
   const [repairingId, setRepairingId] = useState<string | null>(null);
   const [repairError, setRepairError] = useState<{ hostId: string; message: string } | null>(null);
+  const [relaunchingId, setRelaunchingId] = useState<string | null>(null);
+  const [relaunchError, setRelaunchError] = useState<{ hostId: string; message: string } | null>(null);
   const [sshPick, setSshPick] = useState<{ hostId: string; name: string } | null>(null);
   const now = Date.now();
   const counts = useMemo(() => {
@@ -189,6 +191,24 @@ export function MachinesSettingsView({
       setRepairError({ hostId: host.id, message: result.message });
     } finally {
       setRepairingId(null);
+    }
+  }
+
+  async function runRelaunch(hostId: string): Promise<void> {
+    setRelaunchError(null);
+    setRelaunchingId(hostId);
+    try {
+      const result = await product.hosts.relaunchLocal();
+      if (!result.ok) {
+        setRelaunchError({ hostId, message: result.message });
+      }
+    } catch (err) {
+      setRelaunchError({
+        hostId,
+        message: err instanceof Error ? err.message : 'Could not relaunch this machine'
+      });
+    } finally {
+      setRelaunchingId(null);
     }
   }
 
@@ -307,7 +327,10 @@ export function MachinesSettingsView({
               onRetryUpdate={() => void product.hosts.retryUpdate(host.id)}
               reconnecting={repairingId === host.id}
               reconnectError={repairError?.hostId === host.id ? repairError.message : null}
+              relaunching={relaunchingId === host.id}
+              relaunchError={relaunchError?.hostId === host.id ? relaunchError.message : null}
               onReconnect={() => void runReconnect(host.id)}
+              onRelaunch={() => void runRelaunch(host.id)}
               onRemove={() => {
                 if (window.confirm(`Remove ${host.name}?`)) {
                   void product.hosts.remove(host.id);

@@ -19,18 +19,64 @@ function pidIsAlive(pid: number): boolean {
   }
 }
 
-export function acquireDaemonLock(dataDir: string): () => void {
+function readLockPid(lockPath: string): number | null {
+  try {
+    const pid = Number(readFileSync(lockPath, 'utf8').trim());
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+function signalPid(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(pid, signal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+  }
+}
+
+function waitUntilDead(pid: number, timeoutMs: number): boolean {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!pidIsAlive(pid)) return true;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+  }
+  return !pidIsAlive(pid);
+}
+
+function unlinkIfOwner(lockPath: string, pid: number): void {
+  try {
+    if (readLockPid(lockPath) === pid) unlinkSync(lockPath);
+  } catch {
+    /* already gone or stolen */
+  }
+}
+
+/**
+ * Exclusive lock for one enrolled host-daemon per data dir. A stale lock
+ * (dead pid) is replaced. `steal: true` is for the desktop co-started daemon:
+ * it must take over ~/.zcc even if a leftover `enroll-entry` from `pnpm start`
+ * still holds the file, otherwise this machine stays Offline in the app that
+ * the user is actually looking at.
+ */
+export function acquireDaemonLock(dataDir: string, options?: { steal?: boolean }): () => void {
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const lockPath = join(dataDir, DAEMON_LOCK_FILE_NAME);
-  try {
-    const existing = readFileSync(lockPath, 'utf8').trim();
-    const pid = Number(existing);
-    if (Number.isInteger(pid) && pid > 0 && pidIsAlive(pid)) {
-      throw new DaemonLockError(`another host-daemon holds ${lockPath} (pid ${pid})`);
+  const existingPid = readLockPid(lockPath);
+  if (existingPid !== null && pidIsAlive(existingPid)) {
+    if (existingPid === process.pid || !options?.steal) {
+      throw new DaemonLockError(`another host-daemon holds ${lockPath} (pid ${existingPid})`);
     }
+    signalPid(existingPid, 'SIGTERM');
+    if (!waitUntilDead(existingPid, 1_500)) signalPid(existingPid, 'SIGKILL');
+    waitUntilDead(existingPid, 300);
+  }
+  unlinkIfOwner(lockPath, existingPid ?? -1);
+  try {
     unlinkSync(lockPath);
   } catch (error) {
-    if (error instanceof DaemonLockError) throw error;
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
 
@@ -46,10 +92,6 @@ export function acquireDaemonLock(dataDir: string): () => void {
   return () => {
     if (released) return;
     released = true;
-    try {
-      unlinkSync(lockPath);
-    } catch {
-      /* already gone */
-    }
+    unlinkIfOwner(lockPath, process.pid);
   };
 }

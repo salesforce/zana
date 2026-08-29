@@ -25,6 +25,7 @@ import { createJoinCodeStore, type JoinCodeStore } from '../services/hosts/join-
 import type { PluginService } from '../plugins/plugin-service.js';
 import { PluginHostArtifactRegistry } from '../plugins/plugin-host-artifact-registry.js';
 import { flushHeldConversationSends } from '../services/threads/conversation-lifecycle.js';
+import { disposeLocalHostDaemon } from '../services/hosts/host-relaunch.js';
 
 export interface ProductTerminalRecord extends TerminalSession {
   hostId: string;
@@ -169,6 +170,7 @@ export function createProductHttpContext(
     pluginHostArtifacts: new PluginHostArtifactRegistry(),
     toProjects: () => projects.list() as unknown as Project[],
     dispose: () => {
+      disposeLocalHostDaemon(ctx);
       promptRegistry.stop();
       ctx.plugins?.stop?.();
     }

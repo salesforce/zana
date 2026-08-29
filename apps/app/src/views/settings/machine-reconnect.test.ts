@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
 import {
   machineCanReconnect,
+  machineCanRelaunchLocal,
   reconnectMachine
 } from './machine-reconnect.js';
 
@@ -27,6 +28,14 @@ describe('machineCanReconnect', () => {
     expect(machineCanReconnect(host())).toBe(true);
     expect(machineCanReconnect(host({ status: 'connected' }))).toBe(false);
     expect(machineCanReconnect(host({ isPrimary: true }))).toBe(false);
+  });
+});
+
+describe('machineCanRelaunchLocal', () => {
+  it('offers relaunch on this machine only', () => {
+    expect(machineCanRelaunchLocal(host({ isPrimary: true }))).toBe(true);
+    expect(machineCanRelaunchLocal(host({ isPrimary: true, status: 'connected' }))).toBe(true);
+    expect(machineCanRelaunchLocal(host())).toBe(false);
   });
 });
 

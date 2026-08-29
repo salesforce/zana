@@ -25,6 +25,7 @@ import {
   getLatestSessionForHost,
   getThread,
   markHostProtocolRejected,
+  markHostSeen,
   openHostSession,
   updateConversationThreadStatus,
   updateThreadStatus,
@@ -166,6 +167,7 @@ export function createHostHub(
       options?.onNewHostInstance?.(hostId);
     }
     openHostSession(db, { hostId, instanceId, hostName: getHost(db, hostId)?.name ?? 'host' });
+    markHostSeen(db, hostId);
     sessions.set(hostId, { hostId, instanceId, socket });
     hub.emit('hosts:changed', undefined);
     const waiters = connectWaiters.get(hostId);

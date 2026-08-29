@@ -742,6 +742,57 @@ describe('PluginService', () => {
     expect(installed.map((row) => row.id)).not.toContain('tasks');
     expect(service.get('tasks')).toBeUndefined();
   });
+
+  it('does not auto-reinstall a builtin after uninstall', async () => {
+    const dataDir = root();
+    const bundled = root();
+    writePlugin(join(bundled, 'docs'), 'docs');
+    const service = createPluginService({ dataDir, bundledRoot: bundled });
+    await service.reconcileBuiltins();
+    expect(service.get('docs')?.id).toBe('docs');
+    await service.remove('docs');
+    expect(service.get('docs')).toBeUndefined();
+    const again = await service.reconcileBuiltins();
+    expect(again).toEqual([]);
+    expect(service.get('docs')).toBeUndefined();
+    await service.install(join(bundled, 'docs'));
+    expect(service.get('docs')?.id).toBe('docs');
+  });
+
+  it('auto-uninstalls retired first-party leftovers instead of migrating them', async () => {
+    const dataDir = root();
+    const sidecar = join(dataDir, 'extensions', 'zana');
+    writePlugin(sidecar, 'zana');
+    const leftover = writePlugin(join(root(), 'consensus'), 'consensus');
+    const keep = writePlugin(join(root(), 'keep'), 'keep');
+    const bundled = root();
+    writePlugin(join(bundled, 'docs'), 'docs');
+    const service = createPluginService({ dataDir, bundledRoot: bundled });
+    await service.install(leftover);
+    await service.install(keep);
+    await service.start();
+    expect(service.get('zana')).toBeUndefined();
+    expect(service.get('consensus')).toBeUndefined();
+    expect(existsSync(sidecar)).toBe(false);
+    expect(service.get('keep')?.id).toBe('keep');
+  });
+
+  it('leaves a local-authored retired id in place', async () => {
+    const dataDir = root();
+    const sidecar = join(dataDir, 'extensions', 'zana');
+    writePlugin(sidecar, 'zana');
+    mkdirSync(join(dataDir, 'extensions'), { recursive: true });
+    writeFileSync(
+      join(dataDir, 'extensions', 'local.json'),
+      JSON.stringify({ zana: { workingDir: sidecar } })
+    );
+    const bundled = root();
+    writePlugin(join(bundled, 'docs'), 'docs');
+    const service = createPluginService({ dataDir, bundledRoot: bundled });
+    await service.start();
+    expect(existsSync(sidecar)).toBe(true);
+    expect(service.get('zana')).toBeUndefined();
+  });
 });
 
 describe('defaultPluginDataDir', () => {

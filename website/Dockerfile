@@ -18,6 +18,12 @@ ENV npm_config_registry=https://registry.npmjs.org/
 # nested esbuild binaries, so `npm install` honors the lock while filling
 # those in on the linux build.
 COPY package.json package-lock.json* ./
+# Lockfiles from Salesforce machines pin `resolved` to Nexus; rewrite those
+# tarball URLs so npm actually hits registry.npmjs.org (the registry env
+# alone does not override lockfile `resolved` fields).
+RUN if [ -f package-lock.json ]; then \
+      sed -i 's#https://nexus-proxy.repo.local.sfdc.net/nexus/content/groups/npm-all/#https://registry.npmjs.org/#g' package-lock.json; \
+    fi
 RUN npm install --no-audit --no-fund
 
 # NEXT_PUBLIC_* are inlined at build time, so pass them as build args when the

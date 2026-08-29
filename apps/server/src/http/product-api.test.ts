@@ -1113,6 +1113,41 @@ describe('product HTTP plugins', () => {
     expect(missing.status).toBe(404);
   });
 
+  it('removes a plugin app through POST /plugin-apps/:id/remove', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-remove-'));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const apps = new Map([['docs', true]]);
+    server.ctx.plugins = {
+      snapshot: () =>
+        [...apps.keys()].map((id) => ({
+          id,
+          name: 'Docs',
+          description: 'library',
+          icon: 'Library',
+          enabled: true,
+          provenance: 'builtin',
+          status: 'running',
+          appUrl: '/plugins/docs/app.js'
+        })),
+      remove: async (id: string) => {
+        if (!apps.has(id)) throw new Error(`plugin not installed: ${id}`);
+        apps.delete(id);
+      }
+    } as never;
+
+    const removed = await fetch(`${server.url}api/v1/plugin-apps/docs/remove`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    });
+    await expect(removed.json()).resolves.toEqual({ ok: true, value: true });
+    const after = await fetch(`${server.url}api/v1/plugin-apps`);
+    await expect(after.json()).resolves.toEqual({ apps: [] });
+  });
+
   it('calls plugin RPC and reads or writes settings', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-rpc-'));
     server = await startTestProductServer({
