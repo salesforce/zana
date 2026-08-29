@@ -249,6 +249,9 @@ jobs:
             notarized. First launch should open without Gatekeeper prompts.
             Auto-updates install on quit.
 
+            After you update, the app opens **What's New** with the curated notes
+            for this version (the same `docs/releases` markdown bundled in the app).
+
             > **Note:** if this build is unsigned (no signing secrets configured),
             > auto-update is disabled and you will need to bypass Gatekeeper manually:
             > **System Settings → Privacy & Security → Open Anyway**, or run
