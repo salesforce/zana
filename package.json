@@ -1,7 +1,7 @@
 {
   "name": "zana-command-center",
   "productName": "Zana",
-  "version": "1.0.10",
+  "version": "2.0.0",
   "private": true,
   "description": "Zana Command Center — multi-project terminal hub for Claude Code sessions",
   "author": "grebmann",
