@@ -18,7 +18,7 @@
     "test:watch": "vitest"
   },
   "devDependencies": {
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.3.0",
     "vitest": "^4.1.10"
   }
 }
