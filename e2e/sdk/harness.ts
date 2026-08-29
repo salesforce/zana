@@ -38,7 +38,18 @@ export type HarnessSequence =
   /** Generic agent: plain stdout, no OSC title, hold forever. */
   | 'plain-hold'
   /** Generic agent: plain stdout, then exit(code). */
-  | 'plain-exit';
+  | 'plain-exit'
+  /**
+   * Non-OSC agent that emits NO output at all, then holds forever. This is the
+   * cross-harness "at rest, awaiting input" fixture: because the pty never
+   * produces a first output event, main's output-activity heuristic
+   * (`OutputActivityMonitor.onSilence`, src/main/output-activity.ts) sees
+   * `!hasFirstEvent` after `DEFAULT_IDLE_AFTER_MS` (~1.5s) and reports `waiting`
+   * (NOT `idle`, which requires prior output). Contrast `plain-hold`, which
+   * echoes a line first and therefore settles to `idle`. Use for specs that must
+   * observe the `waiting` agent state on a non-Claude harness.
+   */
+  | 'silent-hold';
 
 export interface FakeAgentOptions {
   /** 'claude' → OSC titles; 'generic' → plain stdout. Defaults from `sequence`. */
@@ -90,6 +101,32 @@ export function makeFakeOpenCodeBinary(): FakeAgentBinary {
       'fi',
       'echo "unexpected fake OpenCode invocation: $*" >&2',
       'exit 64'
+    ].join('\n')
+  });
+}
+
+/**
+ * OpenCode fixture that satisfies the launch handshake (`--version` + agent
+ * discovery) then holds with NO session output. A worker launched on this binary
+ * receives its kickoff via `--prompt` argv (never stdin), so nothing is ever
+ * written to or echoed by its pty — main's output-activity heuristic therefore
+ * classifies it `waiting` (non-OSC harness at rest, `!hasFirstEvent`; the
+ * `silent-hold` sequence documents the mechanism). Discovery output is captured
+ * out-of-band by main and never reaches the session pty, so it doesn't count as a
+ * first output event. Use for at-rest cross-harness delivery specs where a real
+ * OpenCode worker must settle to `waiting`.
+ */
+export function makeSilentOpenCodeBinary(): FakeAgentBinary {
+  return makeFakeAgentBinary({
+    profile: 'generic',
+    script: [
+      'if [ "$1" = "--version" ]; then echo "1.18.10"; exit 0; fi',
+      'if [ "$1" = "agent" ] && [ "$2" = "list" ]; then echo "build (primary)"; exit 0; fi',
+      'if [ "$1" = "debug" ] && [ "$2" = "agent" ]; then echo \'{"hidden":false}\'; exit 0; fi',
+      // Any other invocation (the worker/coordinator run) holds SILENTLY: no
+      // stdout means the session never registers a first output event, so it
+      // settles to `waiting` rather than `idle`.
+      'cat'
     ].join('\n')
   });
 }
@@ -177,6 +214,10 @@ function presetBody(opts: FakeAgentOptions): string {
       return `${versionIntercept}echo "generic agent running"\n${HOLD}`;
     case 'plain-exit':
       return `${versionIntercept}echo "generic agent running"\nsleep 1\nexit ${code}`;
+    case 'silent-hold':
+      // No echo, no OSC title — just hold. Drives the silence heuristic to
+      // `waiting` (see the sequence doc above).
+      return `${versionIntercept}${HOLD}`;
     default:
       return `${versionIntercept}${HOLD}`;
   }

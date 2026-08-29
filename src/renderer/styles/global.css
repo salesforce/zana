@@ -2201,6 +2201,9 @@ body.resizing-col {
 .agent-modal-state.agent-working {
   color: var(--accent-green, #3fb950);
 }
+.agent-modal-state.agent-waiting {
+  color: var(--accent-gold, #d29922);
+}
 
 /* When the state chip is present it claims the margin-left:auto; otherwise the
    close button must push itself to the right edge. */
@@ -6170,6 +6173,10 @@ body.resizing-col .ext-hub-resizer::before {
   background: var(--accent-gold);
   animation: agent-dot-pulse 1.1s ease-in-out infinite;
 }
+.tab-agent-dot.agent-waiting {
+  background: var(--accent-gold);
+  opacity: 0.75;
+}
 .tab-agent-dot.agent-done {
   background: var(--accent-blue);
   box-shadow: 0 0 6px rgba(47, 129, 247, 0.6);
@@ -9308,6 +9315,14 @@ body.resizing-col .explorer-resizer::after {
   overflow: hidden;
 }
 
+.agents-board-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .agents-board-header {
   display: flex;
   align-items: center;
@@ -9788,6 +9803,46 @@ body.resizing-col .explorer-resizer::after {
   height: 0;
 }
 
+.execution-details {
+  /* Details and lanes are sibling flex sections. Cap details so the agent
+     lanes always retain room; each section keeps its own vertical scroll. */
+  flex: 0 1 42%;
+  min-height: 180px;
+  max-height: min(420px, 42%);
+  overflow-y: auto;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.execution-details > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.execution-details-close { flex: none; }
+.execution-details-meta { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 14px 0; }
+.execution-details-meta dt { color: var(--text-muted); font-size: 12px; }
+.execution-details-meta dd { margin: 0; overflow-wrap: anywhere; }
+.execution-details select,
+.execution-details input,
+.execution-details textarea { box-sizing: border-box; color: var(--text); background: var(--bg-raised); border: 1px solid var(--border-strong, var(--border)); border-radius: 6px; padding: 7px 9px; }
+.execution-details textarea { display: block; width: 100%; resize: vertical; line-height: 1.4; }
+.execution-details select { margin: 4px 6px 4px 0; }
+.execution-details input:focus,
+.execution-details select:focus,
+.execution-details textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.execution-details [aria-invalid="true"] { border-color: var(--danger, #d24b4b); }
+.execution-blocker { margin: 18px 0; padding: 14px; border: 1px solid color-mix(in srgb, var(--accent) 58%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--accent) 8%, var(--bg)); }
+.execution-blocker-heading, .execution-blocker-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.execution-blocker-heading h4 { margin: 0; }
+.execution-blocker-heading span { color: var(--accent); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.execution-blocker-question { margin: 10px 0 6px; font-weight: 600; white-space: pre-wrap; }
+.execution-blocker-options { color: var(--text-muted); font-size: 13px; }
+.execution-blocker-terminal { color: var(--text-muted); font-size: 13px; font-style: italic; }
+.execution-delivery-status { padding: 7px 9px; border-radius: 5px; background: var(--bg-raised); font-size: 13px; }
+.execution-blocker-label { display: block; margin: 12px 0 5px; font-size: 12px; font-weight: 700; }
+.execution-blocker-actions { margin-top: 8px; }
+.execution-blocker-actions > span { color: var(--text-muted); font-size: 12px; }
+@media (max-width: 640px) { .execution-details-meta { grid-template-columns: 1fr; gap: 2px; } .execution-blocker-actions { align-items: flex-start; flex-direction: column; } }
+.execution-details-events, .execution-details-artifacts { display: grid; gap: 6px; margin-top: 8px; }
+
 /* Cards keep their natural height — overflow the lane (which scrolls) rather
    than compressing to fit. */
 .agents-lane .agent-card {
@@ -10063,6 +10118,12 @@ body.resizing-col .explorer-resizer::after {
   color: var(--accent-gold);
 }
 
+/* Execution jobs need a loud, distinct identity from ordinary autonomous teams. */
+.agent-card-badge.job {
+  background: color-mix(in srgb, var(--accent-blue, #5aa9e6) 24%, transparent);
+  color: var(--accent-blue, #5aa9e6);
+}
+
 /* Next-scheduled-fire chip — the Scheduler panel's countdown, mirrored onto a
    card whose session was fired by a schedule. A Clock glyph + tabular digits so
    the ticking countdown doesn't jitter the row width. Cool accent so it reads
@@ -10163,8 +10224,16 @@ body.resizing-col .explorer-resizer::after {
   box-shadow: none;
 }
 .agent-squad-worker-label {
+  flex: 0 1 42%;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.agent-squad-worker-activity {
   flex: 1 1 auto;
   min-width: 0;
+  color: var(--text-dim);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -20016,7 +20085,8 @@ button.launch-persona {
   gap: 3px;
 }
 
-.workflow-arg-field label {
+.workflow-arg-field label,
+.workflow-arg-field > span {
   font-size: 11px;
   font-weight: 600;
   color: var(--text-muted);
@@ -20024,7 +20094,8 @@ button.launch-persona {
 }
 
 .workflow-arg-field input,
-.workflow-arg-field select {
+.workflow-arg-field select,
+.workflow-arg-field textarea {
   background: var(--bg-app, var(--bg-panel));
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -20034,9 +20105,21 @@ button.launch-persona {
 }
 
 .workflow-arg-field input:focus,
-.workflow-arg-field select:focus {
+.workflow-arg-field select:focus,
+.workflow-arg-field textarea:focus {
   outline: none;
   border-color: var(--accent-blue);
+}
+
+.launch-job-details {
+  display: grid;
+  gap: 10px;
+  padding: 10px 0;
+}
+
+.launch-optional {
+  font-weight: 400;
+  opacity: 0.75;
 }
 
 .workflow-arg-help {
@@ -27775,6 +27858,15 @@ body.resizing-col .library-split-resizer::after {
   flex-wrap: wrap;
   font-size: 11.5px;
 }
+.squad-flow-node-blocker {
+  display: block;
+  margin-top: 3px;
+  color: var(--danger);
+  font-size: 10.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .squad-flow-state-text.agent-working {
   color: var(--accent-gold);
 }
@@ -28307,4 +28399,19 @@ body.resizing-col .library-split-resizer::after {
 
 .team-slot-remove:hover {
   color: var(--danger, #e5534b);
+}
+
+.job-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: #10b981;
+  color: white;
+  margin-left: 5px;
 }

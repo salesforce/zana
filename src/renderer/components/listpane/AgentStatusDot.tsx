@@ -7,7 +7,8 @@ const AGENT_STATE_LABEL: Record<AgentState, string> = {
   working: 'Working',
   done: 'Done — unseen',
   idle: 'Idle',
-  unknown: ''
+  unknown: '',
+  waiting: 'Waiting for model'
 };
 
 /**

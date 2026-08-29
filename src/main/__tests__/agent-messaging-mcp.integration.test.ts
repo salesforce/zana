@@ -131,6 +131,74 @@ describe('agent messaging MCP tools (end-to-end)', () => {
     expect(entries).toHaveLength(0);
   });
 
+  it('1b. waiting target (non-OSC harness rest state): agent_send injects immediately', async () => {
+    const inbox = createMemoryInboxStore();
+    const registry = createAgentRegistryStore();
+    const messageLog = createAgentMessageLog();
+    registry.upsert({ sessionId: 'sess-A', projectId: 'p1', cwd: '/a', handle: 'reviewer' });
+    registry.upsert({ sessionId: 'sess-B', projectId: 'p1', cwd: '/b', handle: 'impl' });
+    const injects: Array<{ sessionId: string; text: string }> = [];
+
+    const h = await boot({
+      inbox,
+      registry,
+      messageLog,
+      projects: [makeProject('p1', 'P1')],
+      statusFor: () => 'waiting', // target is at rest (non-OSC harness) → injectable
+      injects,
+      liveSessions: new Set(['sess-A', 'sess-B'])
+    });
+
+    const client = await connectClient(h.url, 'p1/sess-A');
+    clients.push(client);
+    const res = await client.callTool({
+      name: 'agent_send',
+      arguments: { to: 'impl', message: 'please re-run the auth tests' }
+    });
+    expect((res as { isError?: boolean }).isError).toBeFalsy();
+    const text = JSON.stringify((res as { content?: unknown }).content);
+    expect(text).toMatch(/Delivered/);
+
+    expect(injects).toHaveLength(1);
+    expect(injects[0].sessionId).toBe('sess-B');
+
+    const hist = messageLog.history('p1');
+    expect(hist[0].deliveredAt).toBeDefined();
+  });
+
+  it('1c. blocked target: agent_send does NOT inject — stays queued', async () => {
+    const inbox = createMemoryInboxStore();
+    const registry = createAgentRegistryStore();
+    const messageLog = createAgentMessageLog();
+    registry.upsert({ sessionId: 'sess-A', projectId: 'p1', cwd: '/a', handle: 'reviewer' });
+    registry.upsert({ sessionId: 'sess-B', projectId: 'p1', cwd: '/b', handle: 'impl' });
+    const injects: Array<{ sessionId: string; text: string }> = [];
+
+    const h = await boot({
+      inbox,
+      registry,
+      messageLog,
+      projects: [makeProject('p1', 'P1')],
+      statusFor: () => 'blocked', // mid-permission-prompt → never injectable
+      injects,
+      liveSessions: new Set(['sess-A', 'sess-B'])
+    });
+
+    const client = await connectClient(h.url, 'p1/sess-A');
+    clients.push(client);
+    const res = await client.callTool({
+      name: 'agent_send',
+      arguments: { to: 'impl', message: 'ping while blocked' }
+    });
+    expect((res as { isError?: boolean }).isError).toBeFalsy();
+    const text = JSON.stringify((res as { content?: unknown }).content);
+    expect(text).toMatch(/Queued/);
+
+    expect(injects).toHaveLength(0);
+    const hist = messageLog.history('p1');
+    expect(hist[0].deliveredAt).toBeUndefined();
+  });
+
   it('2. busy target: agent_send QUEUES (no inject), and agent_inbox drains it', async () => {
     const inbox = createMemoryInboxStore();
     const registry = createAgentRegistryStore();

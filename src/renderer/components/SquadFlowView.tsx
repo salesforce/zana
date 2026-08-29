@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight, GitPullRequest, Hash, Workflow } from 'lucide-react';
-import type { SquadFlowGraph, SquadFlowNode } from '@shared/types';
+import type { ExecutionBoardProjection, SquadFlowGraph, SquadFlowNode } from '@shared/types';
 import {
   useData,
   useUi,
@@ -95,7 +95,8 @@ const STATE_VERB: Record<SquadFlowNode['state'], string> = {
   blocked: 'needs you',
   done: 'done',
   idle: 'idle',
-  unknown: 'idle'
+  unknown: 'idle',
+  waiting: 'waiting'
 };
 
 /** Max child rows rendered in a node card before collapsing to "+N more". */
@@ -352,7 +353,7 @@ function FlowEdge({
 
 const DRAG_THRESHOLD = 4;
 
-function SquadGraph({ graph }: { graph: SquadFlowGraph }) {
+function SquadGraph({ graph, onInspectExecution }: { graph: SquadFlowGraph; onInspectExecution?: (projectId: string, executionId: string) => void }) {
   const width = 1100;
   const now = graph.builtAt;
   const { placed, height } = useMemo(() => layout(graph, width), [graph, width]);
@@ -438,10 +439,15 @@ function SquadGraph({ graph }: { graph: SquadFlowGraph }) {
       e.currentTarget.releasePointerCapture(e.pointerId);
       setDraggingId(null);
       if (!drag.moved) {
+        const node = graph.nodes.find((candidate) => candidate.sessionId === drag.sessionId);
+        if (node?.job?.executionId && onInspectExecution) {
+          onInspectExecution(graph.projectId, node.job.executionId);
+          return;
+        }
         useUi.getState().openAgentModal(drag.sessionId, graph.projectId);
       }
     },
-    [graph.projectId]
+    [graph, onInspectExecution]
   );
 
   return (
@@ -508,7 +514,8 @@ function SquadGraph({ graph }: { graph: SquadFlowGraph }) {
                 onPointerDown={(e) => handlePointerDown(e, node, x, y)}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
-                title={node.handle ?? node.displayName ?? node.sessionId}
+                onDoubleClick={() => useUi.getState().openAgentModal(node.sessionId, graph.projectId)}
+                title={`${node.handle ?? node.displayName ?? node.sessionId} (${node.job?.executionId ? 'Click to inspect job details, double-click to open terminal' : 'Click to open terminal'})`}
               >
                 <span className="squad-flow-node-main">
                   <span className="squad-flow-node-icon" aria-hidden="true">
@@ -520,6 +527,11 @@ function SquadGraph({ graph }: { graph: SquadFlowGraph }) {
                   </span>
                   <span className="squad-flow-node-body">
                     <span className="squad-flow-node-top">
+                      {node.job?.executionId && (
+                        <span className="job-badge" title={`Execution-backed job member (Run ID: ${node.job.executionId})`} style={{ margin: 0, marginRight: 5 }}>
+                          job
+                        </span>
+                      )}
                       <span className="squad-flow-node-label">{prettyLabel(node.label)}</span>
                       {node.isOrchestrator && (
                         <span className="squad-flow-orch-tag" title="Team lead — close it to end the whole team">
@@ -527,13 +539,18 @@ function SquadGraph({ graph }: { graph: SquadFlowGraph }) {
                         </span>
                       )}
                     </span>
-                    <span className="squad-flow-node-state">
+                      <span className="squad-flow-node-state">
                       <span
                         className={`squad-flow-state-text agent-${node.exited ? 'done' : node.state}`}
                       >
                         {node.exited ? 'exited' : verb}
                         {since ? ` · ${since}` : ''}
                       </span>
+                      {node.job?.needsAttention && node.job.blockerQuestion && (
+                        <span className="squad-flow-node-blocker" title={node.job.blockerQuestion}>
+                          Needs you · {truncate(node.job.blockerQuestion, 56)}
+                        </span>
+                      )}
                       {node.role && <span className="squad-flow-node-role">{node.role}</span>}
                       {node.liveSubagents > 0 && !node.subagentChildren?.length && (
                         <span
@@ -561,9 +578,10 @@ interface SquadFlowViewProps {
   /** Scope to one project (the per-project board passes this). Omitted on the
    *  global board → one graph per project that has live agents. */
   projectId?: string;
+  onInspectExecution?: (projectId: string, executionId: string) => void;
 }
 
-export function SquadFlowView({ projectId }: SquadFlowViewProps = {}) {
+export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewProps = {}) {
   const terminals = useData((s) => s.terminals);
   const projects = useData((s) => s.projects);
   const agents = useAgentMesh((s) => s.agents);
@@ -572,6 +590,20 @@ export function SquadFlowView({ projectId }: SquadFlowViewProps = {}) {
   const sinceById = useAgentStatus((s) => s.since);
   const subagentsById = useSubagents((s) => s.byId);
   const subagentChildrenById = useSubagentChildren((s) => s.byId);
+  const [executions, setExecutions] = useState<ExecutionBoardProjection[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      const targets = projectId ? [projectId] : projects.map((project) => project.id);
+      void Promise.all(targets.map((id) => window.cc.executionBoard.listProject(id))).then((lists) => {
+        if (!cancelled) setExecutions(lists.flatMap((list) => list.executions));
+      });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 5_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [projectId, projects]);
 
   // One graph per project that has live agents (or just the scoped project). Raw
   // slices only; derive behind a memo so a status tick doesn't rebuild the world
@@ -592,6 +624,7 @@ export function SquadFlowView({ projectId }: SquadFlowViewProps = {}) {
         sinceById,
         subagentsById,
         subagentChildrenById,
+        executions: executions.filter((execution) => execution.projectId === pid),
         builtAt
       });
       if (graph) out.push(graph);
@@ -606,6 +639,7 @@ export function SquadFlowView({ projectId }: SquadFlowViewProps = {}) {
     sinceById,
     subagentsById,
     subagentChildrenById,
+    executions,
     projectId
   ]);
 
@@ -653,13 +687,14 @@ export function SquadFlowView({ projectId }: SquadFlowViewProps = {}) {
         sinceById,
         subagentsById,
         subagentChildrenById,
+        executions: executions.filter((execution) => execution.projectId === pid),
         launchFilter: grp.launchId,
         builtAt
       });
       if (g) byLaunch.set(grp.launchId, g);
     }
     return { groups, byLaunch };
-  }, [selected, terminals, agents, messages, statusById, sinceById, subagentsById, subagentChildrenById]);
+  }, [selected, terminals, agents, messages, statusById, sinceById, subagentsById, subagentChildrenById, executions]);
 
   const groupIds = squadDerived.groups.map((g) => g.launchId);
 
@@ -747,7 +782,7 @@ export function SquadFlowView({ projectId }: SquadFlowViewProps = {}) {
           ariaLabel="Squads in project"
         />
       )}
-      <SquadGraph key={`${activeGraph.projectId}:${selectedSquad}`} graph={activeGraph} />
+      <SquadGraph key={`${activeGraph.projectId}:${selectedSquad}`} graph={activeGraph} onInspectExecution={onInspectExecution} />
     </div>
   );
 }

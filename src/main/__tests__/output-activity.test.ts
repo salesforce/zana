@@ -144,6 +144,38 @@ describe('OutputActivityMonitor', () => {
     expect(ctx.reports).toEqual([['s1', 'working']]); // no trailing idle
   });
 
+  it('reports `waiting` on silence when no first event has been seen', () => {
+    ctx.monitor.onTurnStart('s1');
+    expect(ctx.reports).toEqual([['s1', 'working']]);
+    ctx.clock.advance(DEFAULT_IDLE_AFTER_MS);
+    expect(ctx.reports).toEqual([
+      ['s1', 'working'],
+      ['s1', 'waiting']
+    ]);
+  });
+
+  it('transitions from `waiting` back to `working` on the first output', () => {
+    ctx.monitor.onTurnStart('s1');
+    ctx.clock.advance(DEFAULT_IDLE_AFTER_MS);
+    expect(ctx.reports).toEqual([
+      ['s1', 'working'],
+      ['s1', 'waiting']
+    ]);
+    ctx.monitor.observe('s1', 'real response output');
+    expect(ctx.reports).toEqual([
+      ['s1', 'working'],
+      ['s1', 'waiting'],
+      ['s1', 'working']
+    ]);
+    ctx.clock.advance(DEFAULT_IDLE_AFTER_MS);
+    expect(ctx.reports).toEqual([
+      ['s1', 'working'],
+      ['s1', 'waiting'],
+      ['s1', 'working'],
+      ['s1', 'idle']
+    ]);
+  });
+
   it('remove() of an unknown session is a no-op', () => {
     expect(() => ctx.monitor.remove('nope')).not.toThrow();
   });

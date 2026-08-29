@@ -3,7 +3,8 @@
  * declares it met, then tears the run down.
  *
  * Sibling of HeartbeatService: same injected-deps, fake-clock-testable shape,
- * same "nudge an idle agent via reply()" primitive and consecutive-nudge cap.
+ * same "nudge an at-rest (idle/waiting) agent via reply()" primitive and
+ * consecutive-nudge cap.
  * Differs in that it is RUN-scoped (not per-agent opt-in), nudges regardless of
  * the global heartbeat switch, uses a GOAL-AWARE message, and owns run-level stop
  * conditions (goal-reached via orchestrator exit, manual, max-rounds, timeout).
@@ -55,15 +56,21 @@ export interface AutonomousRunSupervisorDeps {
 }
 
 interface SessionTimers {
-  /** The armed idle-nudge timer for this session (null when not idle/eligible). */
-  nudge: NodeJS.Timeout | null;
   lastState: AgentState;
 }
+
+/**
+ * Non-OSC harnesses (codex/cursor/pi/opencode) rest in `waiting`, not `idle` —
+ * only claude rests in `idle`. Treat both as at-rest wherever the supervisor
+ * gates on "is this session at rest."
+ */
+const atRest = (s: AgentState): boolean => s === 'idle' || s === 'waiting';
 
 interface RunEntry {
   run: AutonomousRun;
   sessions: Map<string, SessionTimers>;
   timeout: NodeJS.Timeout | null;
+  nudge: NodeJS.Timeout | null;
 }
 
 export class AutonomousRunSupervisor extends EventEmitter {
@@ -103,10 +110,10 @@ export class AutonomousRunSupervisor extends EventEmitter {
     };
     const sessions = new Map<string, SessionTimers>();
     for (const sid of [input.orchestratorSessionId, ...input.workerSessionIds]) {
-      sessions.set(sid, { nudge: null, lastState: 'unknown' });
+      sessions.set(sid, { lastState: 'unknown' });
       this.sessionToRun.set(sid, run.runId);
     }
-    const entry: RunEntry = { run, sessions, timeout: null };
+    const entry: RunEntry = { run, sessions, timeout: null, nudge: null };
     if (run.limits.timeoutMs > 0) {
       entry.timeout = this.deps.setTimer(
         () => this.stop(run.runId, 'timeout'),
@@ -130,18 +137,19 @@ export class AutonomousRunSupervisor extends EventEmitter {
     st.lastState = state;
     if (state === prev) return;
 
-    if (state !== 'idle') {
-      if (st.nudge) {
-        this.deps.clearTimer(st.nudge);
-        st.nudge = null;
+    if (!atRest(state)) {
+      if (atRest(prev)) {
+        const stillHasIdle = [...entry.sessions.values()].some((s) => atRest(s.lastState));
+        if (!stillHasIdle && entry.nudge) {
+          this.deps.clearTimer(entry.nudge);
+          entry.nudge = null;
+        }
       }
       // Activity detected (transition to working/blocked) → reset the run timeout.
       this.resetTimeout(entry);
       return;
     }
-    if (st.nudge) return;
-    const ms = Math.max(1, Math.round(this.deps.nudgeDelaySeconds())) * 1000;
-    st.nudge = this.deps.setTimer(() => this.fire(runId, sessionId), ms);
+    this.armNudge(entry);
   }
 
   /**
@@ -178,9 +186,13 @@ export class AutonomousRunSupervisor extends EventEmitter {
       return;
     }
     const st = entry.sessions.get(sessionId);
-    if (st?.nudge) {
-      this.deps.clearTimer(st.nudge);
-      st.nudge = null;
+    if (st) {
+      st.lastState = 'unknown';
+    }
+    const stillHasIdle = [...entry.sessions.values()].some((s) => atRest(s.lastState));
+    if (!stillHasIdle && entry.nudge) {
+      this.deps.clearTimer(entry.nudge);
+      entry.nudge = null;
     }
   }
 
@@ -226,14 +238,16 @@ export class AutonomousRunSupervisor extends EventEmitter {
     );
   }
 
-  /** The idle timer elapsed: nudge + re-arm, or trip the max-rounds cap. */
-  private fire(runId: string, sessionId: string): void {
+  private armNudge(entry: RunEntry): void {
+    if (entry.nudge) return;
+    const ms = Math.max(1, Math.round(this.deps.nudgeDelaySeconds())) * 1000;
+    entry.nudge = this.deps.setTimer(() => this.fireRound(entry.run.runId), ms);
+  }
+
+  private fireRound(runId: string): void {
     const entry = this.runs.get(runId);
     if (!entry || entry.run.state !== 'running') return;
-    const st = entry.sessions.get(sessionId);
-    if (!st) return;
-    st.nudge = null;
-    if (st.lastState !== 'idle') return;
+    entry.nudge = null;
 
     const cap = entry.run.limits.maxRounds;
     if (cap > 0 && entry.run.rounds >= cap) {
@@ -241,17 +255,34 @@ export class AutonomousRunSupervisor extends EventEmitter {
       return;
     }
 
-    const text = this.nudgeText(entry.run, sessionId);
-    const sent = this.deps.reply(sessionId, text);
-    if (!sent) return;
-    entry.run.rounds += 1;
-    this.emit('nudge', runId, sessionId, entry.run.rounds);
-    this.emit('changed', { ...entry.run });
-    // Nudge delivered (agent still responding to idle) → reset the run timeout.
-    this.resetTimeout(entry);
+    const eligibleSessions: string[] = [];
+    for (const [sid, st] of entry.sessions) {
+      if (atRest(st.lastState)) {
+        eligibleSessions.push(sid);
+      }
+    }
 
-    const ms = Math.max(1, Math.round(this.deps.nudgeDelaySeconds())) * 1000;
-    st.nudge = this.deps.setTimer(() => this.fire(runId, sessionId), ms);
+    if (eligibleSessions.length === 0) return;
+
+    let nudgedAny = false;
+    for (const sid of eligibleSessions) {
+      const text = this.nudgeText(entry.run, sid);
+      const sent = this.deps.reply(sid, text);
+      if (sent) {
+        nudgedAny = true;
+      }
+    }
+
+    if (nudgedAny) {
+      entry.run.rounds += 1;
+      this.emit('nudge', runId, eligibleSessions[0], entry.run.rounds);
+      this.emit('changed', { ...entry.run });
+    }
+
+    const stillHasIdle = [...entry.sessions.values()].some((s) => atRest(s.lastState));
+    if (stillHasIdle) {
+      this.armNudge(entry);
+    }
   }
 
   /** Goal-aware nudge text: orchestrator vs worker variant. */
@@ -260,7 +291,7 @@ export class AutonomousRunSupervisor extends EventEmitter {
       return (
         `Autonomous run still active. The goal is: ${run.goal}. ` +
         `Keep delegating to your workers via agent_send and coordinating. ` +
-        `When the goal is FULLY met, call close_session_with_summary with a ` +
+        `When the goal is FULLY met, call complete_autonomous_run with a ` +
         `summary of what was accomplished. If it is already met, do that now.`
       );
     }
@@ -290,11 +321,11 @@ export class AutonomousRunSupervisor extends EventEmitter {
       this.deps.clearTimer(entry.timeout);
       entry.timeout = null;
     }
-    for (const [sid, st] of entry.sessions) {
-      if (st.nudge) {
-        this.deps.clearTimer(st.nudge);
-        st.nudge = null;
-      }
+    if (entry.nudge) {
+      this.deps.clearTimer(entry.nudge);
+      entry.nudge = null;
+    }
+    for (const [sid] of entry.sessions) {
       this.sessionToRun.delete(sid);
       if (sid !== alreadyGone) this.deps.closeSession(sid);
     }

@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Bot, Moon, Plus, Loader2 } from 'lucide-react';
-import type { Project } from '@shared/types';
+import type { ExecutionBoardProjection, Project } from '@shared/types';
 import { useData, useUi, useAgentStatus, useIdleTriage, useOverseerActivity, useSubagents, useFavoriteAgents, favoriteKey, listedTerminals } from '../store';
 import { AgentBoardLanes, isReclaimableIdle, type AgentCard } from './AgentBoard';
 import { AgentViewToggle } from './AgentViewToggle';
@@ -9,6 +9,7 @@ import { AutonomousRunBanner } from './AutonomousRunBanner';
 import { AgentMonitor } from './AgentMonitor';
 import { CloseIdleAgentsDialog } from './CloseIdleAgentsDialog';
 import { CohortBar, type LiveCohort } from './CohortBar';
+import { ExecutionJobDetails } from './ExecutionJobDetails';
 
 /**
  * Per-project Agents board — the Kanban-style status board scoped to one
@@ -45,6 +46,46 @@ export function ProjectAgentsBoard({ project, onNewAgent }: Props) {
   // button) or one cohort's idle members (a team chip). Null = closed.
   const [closeIdleTarget, setCloseIdleTarget] = useState<AgentCard[] | null>(null);
   const [busyAction, setBusyAction] = useState<null | 'close'>(null);
+  const [executions, setExecutions] = useState<ExecutionBoardProjection[]>([]);
+  const [hasMoreExecutions, setHasMoreExecutions] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null);
+
+  const loadMoreExecutions = async () => {
+    if (loadingMore || !hasMoreExecutions || executions.length === 0) return;
+    setLoadingMore(true);
+    try {
+      const oldest = executions[executions.length - 1].createdAt;
+      const next = await window.cc.executionBoard.listProject(project.id, oldest);
+      setExecutions((prev) => {
+        const existing = new Set(prev.map(e => e.executionId));
+        const added = next.executions.filter(e => !existing.has(e.executionId));
+        return [...prev, ...added];
+      });
+      setHasMoreExecutions(next.hasMore);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => void window.cc.executionBoard.listProject(project.id).then((next) => {
+      if (!cancelled) {
+        setExecutions((prev) => {
+          if (prev.length > next.executions.length) {
+            const nextMap = new Map(next.executions.map(e => [e.executionId, e]));
+            return prev.map(e => nextMap.get(e.executionId) ?? e);
+          }
+          return next.executions;
+        });
+        setHasMoreExecutions(next.hasMore);
+      }
+    });
+    refresh();
+    const timer = setInterval(refresh, 5_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [project.id, sessions]);
 
   // Raw slices only — derive cards behind a memo so we don't trip zustand's
   // re-render loop (see zustand-selector-stable-ref memory). Listed sessions
@@ -79,6 +120,11 @@ export function ProjectAgentsBoard({ project, onNewAgent }: Props) {
 
   // Card click → peek at the agent in the inspector modal (no nav change).
   const inspect = (c: AgentCard) => {
+    const executionId = c.session.cohort?.executionId;
+    if (executionId) {
+      setSelectedExecutionId(executionId);
+      return;
+    }
     useUi.getState().openAgentModal(c.session.id, project.id);
   };
 
@@ -136,7 +182,9 @@ export function ProjectAgentsBoard({ project, onNewAgent }: Props) {
         </button>
       </div>
 
+      <div className="agents-board-content">
       <AutonomousRunBanner projectId={project.id} />
+      {selectedExecutionId && <ExecutionJobDetails projectId={project.id} executionId={selectedExecutionId} onClose={() => setSelectedExecutionId(null)} />}
       {/* Live Team cohorts launched into this project — one chip per launch, with
           a per-team Close scoped to that cohort (same reclaimable filter as the
           board buttons: skips question-parked, background, and starred members).
@@ -156,10 +204,10 @@ export function ProjectAgentsBoard({ project, onNewAgent }: Props) {
       )}
 
       {boardView === 'flow' ? (
-        <SquadFlowView projectId={project.id} />
+        <SquadFlowView projectId={project.id} onInspectExecution={(_projectId, executionId) => setSelectedExecutionId(executionId)} />
       ) : boardView === 'list' ? (
-        <AgentMonitor cards={cards} />
-      ) : cards.length === 0 ? (
+        <AgentMonitor cards={cards} executions={executions} onInspectExecution={(_projectId, executionId) => setSelectedExecutionId(executionId)} />
+      ) : cards.length === 0 && executions.length === 0 ? (
         <div className="agents-board-empty">
           <Bot size={28} aria-hidden="true" />
           <h4>No agents yet</h4>
@@ -170,8 +218,12 @@ export function ProjectAgentsBoard({ project, onNewAgent }: Props) {
           </button>
         </div>
       ) : (
-        <AgentBoardLanes cards={cards} activeId={activeTabId} onInspect={inspect} onPick={pick} />
+        <AgentBoardLanes cards={cards} activeId={activeTabId} onInspect={inspect} onPick={pick} executions={executions} hasMoreExecutions={hasMoreExecutions} onLoadMoreExecutions={loadMoreExecutions} onDismissExecution={(executionId) => {
+          setExecutions((current) => current.filter((execution) => execution.executionId !== executionId));
+          setSelectedExecutionId((current) => current === executionId ? null : current);
+        }} />
       )}
+      </div>
 
       {closeIdleTarget && (
         <CloseIdleAgentsDialog

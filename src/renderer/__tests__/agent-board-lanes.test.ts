@@ -6,13 +6,16 @@ import {
   isBackgroundAgent,
   isReclaimableIdle,
   cardNeedsAttention,
+  executionNeedsAttention,
   LANES,
   groupCardsByProject,
+  partitionExecutionMembers,
   partitionSquads,
   scheduleBySessionId,
   formatCountdown,
   type AgentCard
 } from '../components/AgentBoard';
+import type { ExecutionBoardProjection } from '@shared/types';
 
 /**
  * The Idle / Delegating partition is safety-critical: the "Close idle" action
@@ -35,6 +38,18 @@ function card(over: Partial<AgentCard> & { state: AgentCard['state'] }): AgentCa
     liveSubagents: 0,
     ...over
   };
+}
+
+function execution(over: Partial<ExecutionBoardProjection> = {}): ExecutionBoardProjection {
+  return {
+    executionId: 'execution-1', projectId: 'p1', jobTitle: 'Job', state: 'BLOCKED', attempt: 1,
+    createdAt: 1, updatedAt: 1,
+    ...over
+  };
+}
+
+function laneFor(card: AgentCard): string | undefined {
+  return LANES.find((lane) => lane.match(card))?.key;
 }
 
 describe('Idle / Delegating lane predicates', () => {
@@ -401,6 +416,96 @@ describe('partitionSquads', () => {
     const { workersByOrchestrator } = partitionSquads(cards);
     // Workers keep their incoming order (w2 before w1), not sorted.
     expect(workersByOrchestrator.get('o1')?.map((c) => c.session.id)).toEqual(['w2', 'w1']);
+  });
+});
+
+describe('partitionExecutionMembers', () => {
+  it('groups separate cohorts under one live execution orchestrator', () => {
+    const host = memberCard('host', 'co1', 'orchestrator');
+    const worker = memberCard('worker', 'co2', 'worker');
+    host.session.cohort!.executionId = 'execution-1';
+    worker.session.cohort!.executionId = 'execution-1';
+    const { top, workersByHost } = partitionExecutionMembers([host, worker]);
+    expect(top.map((card) => card.session.id)).toEqual(['host']);
+    expect(workersByHost.get('host')?.map((card) => card.session.id)).toEqual(['worker']);
+  });
+
+  it('keeps driverless execution members visible', () => {
+    const worker = memberCard('worker', 'co1', 'worker');
+    worker.session.cohort!.executionId = 'execution-1';
+    const { top, workersByHost } = partitionExecutionMembers([worker]);
+    expect(top.map((card) => card.session.id)).toEqual(['worker']);
+    expect(workersByHost.size).toBe(0);
+  });
+
+  it('creates a synthetic job host when retained execution workers have no live orchestrator', () => {
+    const worker = memberCard('worker', 'co1', 'worker');
+    worker.session.cohort!.executionId = 'execution-1';
+    const { top, workersByHost } = partitionExecutionMembers([worker], [{
+      executionId: 'execution-1', projectId: 'p1', jobTitle: 'Release train', state: 'RUNNING', attempt: 2, createdAt: 40, updatedAt: 50
+    }]);
+    expect(top.map((card) => card.session.id)).toEqual(['execution:execution-1']);
+    expect(top[0].session.title).toBe('Release train');
+    expect(top[0].isSyntheticExecutionHost).toBe(true);
+    expect(workersByHost.get('execution:execution-1')?.map((card) => card.session.id)).toEqual(['worker']);
+  });
+
+  it('retains a projection-only execution when no terminal card remains', () => {
+    const { top } = partitionExecutionMembers([], [{
+      executionId: 'execution-1', projectId: 'p1', jobTitle: 'Release train', state: 'BLOCKED', attempt: 2, createdAt: 40, updatedAt: 50
+    }]);
+    expect(top).toMatchObject([{ projectId: 'p1', isSyntheticExecutionHost: true, session: { id: 'execution:execution-1', status: 'running' } }]);
+  });
+
+  it('moves a live Job host to Needs you only for an actionable details prompt', () => {
+    const host = memberCard('host', 'co1', 'orchestrator');
+    host.session.cohort!.executionId = 'execution-1';
+    const prompt = execution({ currentBlocker: { id: 'blocker-1', workUnitId: 'work-1', slotId: 'worker', question: 'Ship?' } });
+    const pending = execution({ currentBlocker: { ...prompt.currentBlocker!, delivery: { id: 'delivery-1', state: 'PENDING', attempt: 0, maxAttempts: 8, retryEligible: false } } });
+
+    const promptedHost = partitionExecutionMembers([host], [prompt]).top[0];
+    const pendingHost = partitionExecutionMembers([host], [pending]).top[0];
+
+    expect(promptedHost.state).toBe('blocked');
+    expect(laneFor(promptedHost)).toBe('blocked');
+    expect(pendingHost.state).toBe('idle');
+    expect(laneFor(pendingHost)).toBe('idle');
+  });
+
+  it('keeps a running Job in Needs you while its details prompt remains actionable', () => {
+    const host = memberCard('host', 'co1', 'orchestrator');
+    host.session.cohort!.executionId = 'execution-1';
+    const { top } = partitionExecutionMembers([host], [execution({
+      state: 'RUNNING',
+      currentBlocker: { id: 'blocker-1', workUnitId: 'work-1', slotId: 'worker', question: 'Ship?' }
+    })]);
+    expect(top[0].state).toBe('blocked');
+    expect(laneFor(top[0])).toBe('blocked');
+  });
+
+  it('keeps a blocked Job idle when no user prompt exists', () => {
+    const { top } = partitionExecutionMembers([], [execution()]);
+    expect(top[0].state).toBe('idle');
+    expect(laneFor(top[0])).toBe('idle');
+  });
+});
+
+describe('synthetic execution hosts', () => {
+  it('surfaces a blocked synthetic host in Needs you rather than Working', () => {
+    const host = memberCard('execution:execution-1', 'co1', 'orchestrator', { state: 'blocked', isSyntheticExecutionHost: true });
+    expect(needsYou.match(host, 'medium')).toBe(true);
+    expect(working.match(host, 'medium')).toBe(false);
+  });
+});
+
+describe('executionNeedsAttention', () => {
+  it('requires a live blocker with no answer delivery in flight', () => {
+    const blocker = { id: 'blocker-1', workUnitId: 'work-1', slotId: 'worker', question: 'Ship?' };
+    expect(executionNeedsAttention(execution({ currentBlocker: blocker }))).toBe(true);
+    expect(executionNeedsAttention(execution({ currentBlocker: { ...blocker, delivery: { id: 'delivery-1', state: 'PENDING', attempt: 0, maxAttempts: 8, retryEligible: false } } }))).toBe(false);
+    expect(executionNeedsAttention(execution({ currentBlocker: { ...blocker, delivery: { id: 'delivery-1', state: 'LEASED', attempt: 1, maxAttempts: 8, retryEligible: false } } }))).toBe(false);
+    expect(executionNeedsAttention(execution({ currentBlocker: { ...blocker, delivery: { id: 'delivery-1', state: 'FAILED', attempt: 8, maxAttempts: 8, retryEligible: true } } }))).toBe(true);
+    expect(executionNeedsAttention(execution({ state: 'COMPLETED', currentBlocker: blocker }))).toBe(false);
   });
 });
 

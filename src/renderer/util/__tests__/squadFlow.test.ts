@@ -3,6 +3,7 @@ import type {
   AgentMessage,
   AgentRecord,
   AgentState,
+  ExecutionBoardProjection,
   SquadFlowGraph,
   SquadFlowNode,
   TerminalSession
@@ -115,6 +116,39 @@ describe('buildSquadFlow — node membership', () => {
 // ---- identity & fused fields ------------------------------------------------
 
 describe('buildSquadFlow — node fields', () => {
+  it('surfaces an actionable Job blocker on its orchestrator node', () => {
+    const graph = buildSquadFlow(inputs({
+      agents: [agent({ sessionId: 'orch' })],
+      statusById: { orch: 'working' },
+      executions: [{
+        executionId: 'job-1', projectId: 'p1', jobTitle: 'Ship', state: 'RUNNING', attempt: 1,
+        createdAt: 1, updatedAt: 1, orchestratorSessionId: 'orch',
+        currentBlocker: { id: 'blocker-1', workUnitId: 'work-1', slotId: 'worker', question: 'Ship now?' }
+      } as ExecutionBoardProjection]
+    }));
+    expect(nodeMap(graph!).get('orch')).toMatchObject({
+      state: 'blocked', job: { executionId: 'job-1', blockerQuestion: 'Ship now?', needsAttention: true }
+    });
+  });
+
+  it('does not flag a Job while its response delivery is in flight', () => {
+    const graph = buildSquadFlow(inputs({
+      agents: [agent({ sessionId: 'orch' })],
+      statusById: { orch: 'working' },
+      executions: [{
+        executionId: 'job-1', projectId: 'p1', jobTitle: 'Ship', state: 'RUNNING', attempt: 1,
+        createdAt: 1, updatedAt: 1, orchestratorSessionId: 'orch',
+        currentBlocker: { id: 'blocker-1', workUnitId: 'work-1', slotId: 'worker', question: 'Ship now?', delivery: { id: 'delivery-1', state: 'PENDING', attempt: 0, maxAttempts: 8, retryEligible: false } }
+      } as ExecutionBoardProjection]
+    }));
+    expect(nodeMap(graph!).get('orch')).toMatchObject({ state: 'working', job: { needsAttention: false } });
+  });
+
+  it('prefers host-stamped cohort identity over a harness-provided handle', () => {
+    const worker = session({ cohort: { cohortId: 'launch-1', teamId: 'team-1', teamName: 'Team', role: 'worker', slotLabel: 'Verification worker' } });
+    const graph = buildSquadFlow(inputs({ sessions: [worker], agents: [agent({ sessionId: worker.id, handle: 'opencode', teamLaunchId: 'launch-1' })] }));
+    expect(graph?.nodes[0]).toMatchObject({ label: 'Verification worker', displayName: 'Verification worker' });
+  });
   it('labels by handle, falling back to displayName then sessionId', () => {
     const g = buildSquadFlow(
       inputs({
@@ -323,6 +357,47 @@ describe('buildSquadFlow — orchestrator', () => {
       })
     );
     expect(g!.nodes.filter((n) => n.isOrchestrator)).toHaveLength(1);
+  });
+
+  it('prioritizes explicit orchestrator role from session cohort over high out-degree', () => {
+    const s1 = session({ id: 'a', cohort: { cohortId: 'c1', teamId: 't1', teamName: 'T1', role: 'worker' } });
+    const s2 = session({ id: 'b', cohort: { cohortId: 'c1', teamId: 't1', teamName: 'T1', role: 'orchestrator' } });
+    const g = buildSquadFlow(
+      inputs({
+        sessions: [s1, s2],
+        agents: [
+          agent({ sessionId: 'a' }),
+          agent({ sessionId: 'b' })
+        ],
+        messages: [
+          message({ id: 'm1', fromSessionId: 'a', toSessionId: 'b' }) // outdegree b=0, a=1
+        ]
+      })
+    );
+    const m = nodeMap(g!);
+    expect(m.get('b')!.isOrchestrator).toBe(true);
+    expect(m.get('a')!.isOrchestrator).toBe(false);
+  });
+
+  it('maps execution jobs to both worker and coordinator nodes via session cohort executionId', () => {
+    const s1 = session({ id: 'a', cohort: { cohortId: 'c1', teamId: 't1', teamName: 'T1', role: 'worker', executionId: 'job-xyz' } });
+    const s2 = session({ id: 'b', cohort: { cohortId: 'c1', teamId: 't1', teamName: 'T1', role: 'orchestrator', executionId: 'job-xyz' } });
+    const g = buildSquadFlow(
+      inputs({
+        sessions: [s1, s2],
+        agents: [
+          agent({ sessionId: 'a' }),
+          agent({ sessionId: 'b' })
+        ],
+        executions: [{
+          executionId: 'job-xyz', projectId: 'p1', jobTitle: 'Run Job', state: 'RUNNING', attempt: 1,
+          createdAt: 1, updatedAt: 1, orchestratorSessionId: 'b'
+        } as ExecutionBoardProjection]
+      })
+    );
+    const m = nodeMap(g!);
+    expect(m.get('a')!.job).toMatchObject({ executionId: 'job-xyz' });
+    expect(m.get('b')!.job).toMatchObject({ executionId: 'job-xyz' });
   });
 });
 

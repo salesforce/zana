@@ -23,7 +23,7 @@ const SPONSOR_URL = 'https://github.com/salesforce/zana';
  *  lane) aren't counted as live. */
 function bucketOf(c: AgentCard): 'running' | 'blocked' | 'delegating' | 'idle' | null {
   if (c.session.status === 'exited') return null;
-  if (c.state === 'working') return 'running';
+  if (c.state === 'working' || c.state === 'waiting') return 'running';
   if (c.state === 'blocked') return 'blocked';
   if (isDelegatingAgent(c)) return 'delegating';
   if (isIdleAgent(c)) return 'idle';

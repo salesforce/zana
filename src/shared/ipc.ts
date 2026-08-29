@@ -24,6 +24,22 @@ export const IPC = {
     listProject: 'executionConsent:listProject',
     revokeProject: 'executionConsent:revokeProject'
   },
+  executionBoard: {
+    listProject: 'executionBoard:listProject',
+    snapshot: 'executionBoard:snapshot',
+    readArtifact: 'executionBoard:readArtifact',
+    dismiss: 'executionBoard:dismiss',
+    stop: 'executionBoard:stop',
+    retry: 'executionBoard:retry',
+    retryWork: 'executionBoard:retryWork',
+    releaseWork: 'executionBoard:releaseWork',
+    reassignWork: 'executionBoard:reassignWork',
+    respond: 'executionBoard:respond',
+    resume: 'executionBoard:resume',
+    retryDelivery: 'executionBoard:retryDelivery',
+    clearResumeToken: 'executionBoard:clearResumeToken',
+    relaunchMonitor: 'executionBoard:relaunchMonitor'
+  },
   ssh: {
     listHosts: 'ssh:listHosts',
     syncHosts: 'ssh:syncHosts'
@@ -214,6 +230,9 @@ export const IPC = {
     deleteRemote: 'fs:deleteRemote',
     uploadToRemote: 'fs:uploadToRemote',
     downloadFromRemote: 'fs:downloadFromRemote'
+  },
+  executionSources: {
+    pick: 'executionSources:pick'
   },
   openers: {
     openIn: 'openers:openIn'
@@ -632,6 +651,7 @@ export const IPC = {
     delete: 'teams:delete',
     launch: 'teams:launch',
     cancel: 'teams:cancel',
+    startJob: 'teams:startJob',
     launchAutonomous: 'teams:launchAutonomous',
     stopAutonomous: 'teams:stopAutonomous',
     exportBundle: 'teams:exportBundle',
@@ -678,6 +698,8 @@ export const IPC = {
     /** () => { seq:number; size:number; cap:number } — ring stats/current cursor. */
     snapshot: 'test:snapshot',
     /** () => void — clear the ring (seq stays monotonic). */
-    reset: 'test:reset'
+    reset: 'test:reset',
+    /** E2E only: resolve a live session's already-issued MCP URL. */
+    mcpRoute: 'test:mcpRoute'
   }
 } as const;

@@ -831,9 +831,29 @@ function ReplyBox({
   const submit = async () => {
     if (busy || !text.trim()) return;
     setSending(true);
-    const ok = dead
-      ? await onAnswerDeadSession!(text)
-      : await replyToInboxEntry(entry.id, sessionId!, text);
+    let ok = false;
+    if (entry.executionId && entry.blockerId) {
+      const clientRequestId = `${entry.executionId}:${entry.blockerId}:${Date.now()}`;
+      const result = await window.cc.executionBoard.respond(
+        entry.projectId,
+        entry.executionId,
+        -1, // use latest stateVersion in main
+        entry.blockerId,
+        clientRequestId,
+        text
+      );
+      if (result.ok) {
+        ok = true;
+        useInboxAnswered.getState().markAnswered(entry.id);
+        useUi.getState().pushToast('Response sent', 'info');
+      } else {
+        useUi.getState().pushToast(result.message || 'Failed to send response', 'error');
+      }
+    } else {
+      ok = dead
+        ? await onAnswerDeadSession!(text)
+        : await replyToInboxEntry(entry.id, sessionId!, text);
+    }
     setSending(false);
     if (ok) {
       setText('');

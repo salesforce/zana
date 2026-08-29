@@ -9,7 +9,7 @@ import {
   Trash2,
   Terminal as TerminalIcon
 } from 'lucide-react';
-import type { AgentState } from '@shared/types';
+import type { AgentState, ExecutionBoardProjection } from '@shared/types';
 import { useData, useUi, usePersonas, useAgentPanel } from '../store';
 import { profileIcon, personaIcon } from '../util/profileIcon';
 import { isClaudeProfile } from '../util/launchProfile';
@@ -49,13 +49,17 @@ const STATE_LABEL: Record<AgentState, string> = {
   working: 'Working',
   idle: 'Idle',
   done: 'Done',
-  unknown: 'Idle'
+  unknown: 'Idle',
+  waiting: 'Waiting for model'
 };
 
 interface AgentMonitorProps {
   cards: AgentCard[];
+  /** Durable Job state promotes only its orchestrator when a response is needed. */
+  executions?: readonly ExecutionBoardProjection[];
   /** Show the owning-project chip on rows + in the status pane (global board). */
   showProject?: boolean;
+  onInspectExecution?: (projectId: string, executionId: string) => void;
 }
 
 /** Which lane a card sits in — reuses the board's exact lane predicates so the
@@ -66,7 +70,7 @@ function laneOf(card: AgentCard, sensitivity: IdleAttentionSensitivity): LaneKey
   return lane?.key ?? 'idle';
 }
 
-export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) {
+export function AgentMonitor({ cards, executions = [], showProject = false, onInspectExecution }: AgentMonitorProps) {
   const sensitivity = useData((s) => s.idleAttentionSensitivity);
   const selection = useUi((s) => s.agentMonitor);
   const selectMonitorAgent = useUi((s) => s.selectMonitorAgent);
@@ -80,12 +84,24 @@ export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) 
   // the stable store action.
   useEffect(() => () => clearMonitorAgent(), [clearMonitorAgent]);
 
+  const jobCards = useMemo(() => {
+    const byExecutionId = new Map(executions.map((execution) => [execution.executionId, execution]));
+    return cards.map((card) => {
+      const executionId = card.session.cohort?.executionId;
+      const execution = executionId ? byExecutionId.get(executionId) : undefined;
+      const terminal = execution?.state === 'COMPLETED' || execution?.state === 'FAILED' || execution?.state === 'STOPPED';
+      const needsAttention = !!execution?.currentBlocker && !terminal &&
+        execution.currentBlocker.delivery?.state !== 'PENDING' && execution.currentBlocker.delivery?.state !== 'LEASED';
+      return (needsAttention && card.session.cohort?.role === 'orchestrator') ? { ...card, state: 'blocked' as const } : card;
+    });
+  }, [cards, executions]);
+
   // Group cards into the board's lanes, then flatten into a single ordered list
   // with lane headers — the list reads top-to-bottom by urgency (Needs you →
   // Working → Delegating → Idle → Done), mirroring the Kanban's lane order.
   const grouped = useMemo(() => {
     const byLane = new Map<LaneKey, AgentCard[]>();
-    for (const c of cards) {
+    for (const c of jobCards) {
       const key = laneOf(c, sensitivity);
       const list = byLane.get(key) ?? [];
       list.push(c);
@@ -94,7 +110,7 @@ export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) 
     return LANES.map((l) => ({ key: l.key, label: l.label, cards: byLane.get(l.key) ?? [] })).filter(
       (g) => g.cards.length > 0
     );
-  }, [cards, sensitivity]);
+  }, [jobCards, sensitivity]);
 
   // The selected card, resolved from the live card list (so its state/badges
   // stay fresh). Falls back to the first card when the selection is absent or
@@ -102,9 +118,9 @@ export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) 
   // *something* when any agent exists.
   const selected = useMemo(() => {
     const bySel =
-      selection && cards.find((c) => c.session.id === selection.sessionId);
-    return bySel ?? cards[0] ?? null;
-  }, [cards, selection]);
+      selection && jobCards.find((c) => c.session.id === selection.sessionId);
+    return bySel ?? jobCards[0] ?? null;
+  }, [jobCards, selection]);
 
   // Keep the store selection in sync with the resolved fallback, so the surface
   // portals the right session even before the user clicks. Only writes when it
@@ -116,7 +132,7 @@ export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) 
     }
   }, [selected, selection, selectMonitorAgent]);
 
-  if (cards.length === 0) {
+  if (jobCards.length === 0) {
     return (
       <div className="agent-monitor agent-monitor--empty">
         <Bot size={28} aria-hidden="true" />
@@ -151,7 +167,7 @@ export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) 
 
       <AgentMonitorTerminal selected={selected} />
 
-      {selected && <AgentMonitorStatus card={selected} showProject={showProject} />}
+      {selected && <AgentMonitorStatus card={selected} showProject={showProject} executions={executions} onInspectExecution={onInspectExecution} />}
     </div>
   );
 }
@@ -201,6 +217,11 @@ function AgentMonitorRow({ card, laneKey, active, showProject, onSelect }: RowPr
       <span className="agent-monitor-row-text">
         <span className="agent-monitor-row-title-line">
           {!exited && <span className={`tab-agent-dot agent-${card.state}`} aria-hidden="true" />}
+          {!!t.cohort?.executionId && (
+            <span className="job-badge" title={`Execution-backed job member (Run ID: ${t.cohort.executionId})`} style={{ margin: 0, marginRight: 5 }}>
+              job
+            </span>
+          )}
           <span className="agent-monitor-row-title">{t.title}</span>
         </span>
         <span className="agent-monitor-row-meta">
@@ -227,6 +248,11 @@ function AgentMonitorTerminal({ selected }: { selected: AgentCard | null }) {
         <TerminalIcon size={13} aria-hidden="true" />
         {selected ? (
           <>
+            {!!selected.session.cohort?.executionId && (
+              <span className="job-badge" title={`Execution-backed job member (Run ID: ${selected.session.cohort.executionId})`} style={{ margin: 0, marginRight: 5 }}>
+                job
+              </span>
+            )}
             <span className="agent-monitor-main-title">{selected.session.title}</span>
             {selected.session.status !== 'exited' && (
               <span className={`agent-monitor-main-state agent-${selected.state}`}>
@@ -256,7 +282,17 @@ function AgentMonitorTerminal({ selected }: { selected: AgentCard | null }) {
 
 // ── Right pane: status + actions ────────────────────────────────────────────
 
-function AgentMonitorStatus({ card, showProject }: { card: AgentCard; showProject: boolean }) {
+function AgentMonitorStatus({
+  card,
+  showProject,
+  executions,
+  onInspectExecution
+}: {
+  card: AgentCard;
+  showProject: boolean;
+  executions: readonly ExecutionBoardProjection[];
+  onInspectExecution?: (projectId: string, executionId: string) => void;
+}) {
   const { actions } = useAgentCardActions();
   const toggleCollapse = useAgentPanel((s) => s.toggle);
   const collapsed = useAgentPanel((s) => s.collapsed.monitor);
@@ -264,6 +300,11 @@ function AgentMonitorStatus({ card, showProject }: { card: AgentCard; showProjec
   const exited = t.status === 'exited';
   const background = isBackgroundAgent(card);
   const cohort = cardCohort(card);
+  const execution = executions.find(
+    (candidate) =>
+      (t.cohort?.executionId && candidate.executionId === t.cohort.executionId) ||
+      candidate.orchestratorSessionId === t.id
+  );
 
   // "Open in workspace" — the escape hatch into the full split-pane view, same
   // path the board card's context-menu "Open" uses.
@@ -307,6 +348,15 @@ function AgentMonitorStatus({ card, showProject }: { card: AgentCard; showProjec
   // while each surface keeps its own behavior.
   const monitorActions = (
     <>
+      {execution && onInspectExecution && (
+        <button
+          type="button"
+          className="agent-monitor-action"
+          onClick={() => onInspectExecution(execution.projectId, execution.executionId)}
+        >
+          {execution.currentBlocker ? 'Respond in job details' : 'Job details'}
+        </button>
+      )}
       {!exited && (
         <button
           type="button"

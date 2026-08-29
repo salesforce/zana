@@ -4,7 +4,8 @@
  * Reports the agent never pushes to the inbox itself (it forgets, or the
  * session ends before it gets around to `inbox_push`) previously vanished
  * from the Report tab entirely — the file sat on disk but no `InboxEntry`
- * ever pointed at it. This service closes that gap on the working→idle edge:
+ * ever pointed at it. This service closes that gap on the working→at-rest edge
+ * (`idle` for claude, `waiting` for non-OSC harnesses like codex/cursor/pi/opencode):
  * it reads the session's already-computed file-touch list (the same data
  * {@link TranscriptSource.readStats} feeds the modal's Changes tab) and, for
  * any file that LOOKS like a report deliverable (see {@link isReportCandidatePath}),
@@ -108,7 +109,9 @@ export interface AutoReportDeps {
 }
 
 /**
- * Watches agent-state transitions and, on each edge into `idle`, links any
+ * Watches agent-state transitions and, on each edge into an at-rest state
+ * (`idle` or `waiting` — the latter is where non-OSC harnesses like
+ * codex/cursor/pi/opencode rest, since only claude rests in `idle`), links any
  * newly-touched report-looking file to the inbox. Wire {@link observe} to the
  * agent-status `status` event and {@link remove} to pty exit (Rule 3).
  */
@@ -121,7 +124,7 @@ export class AutoReportLinkerService {
   constructor(private readonly deps: AutoReportDeps) {}
 
   observe(sessionId: string, state: AgentState): void {
-    if (state !== 'idle') return;
+    if (state !== 'idle' && state !== 'waiting') return;
     if (this.scanning.has(sessionId)) return;
     this.scanning.add(sessionId);
     void this.scan(sessionId).finally(() => {

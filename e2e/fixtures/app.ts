@@ -36,6 +36,7 @@ import {
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { startLocalRegistry, type LocalRegistry, type DummyExtensionSpec } from './registry';
 import { EventRecorder } from '../sdk/events';
 
@@ -170,6 +171,119 @@ export interface LaunchOptions {
   e2e?: boolean;
   /** Config fields written before app boot for startup-path coverage. */
   initialConfig?: Record<string, unknown>;
+  /** Grace period for relaunch-fixture shutdown. Tests may shorten this. */
+  relaunchCloseTimeoutMs?: number;
+}
+
+export interface RelaunchLifecycle {
+  readonly home: string;
+  readonly current: AppHandle;
+  forceKill(): Promise<void>;
+  relaunch(): Promise<AppHandle>;
+  close(): Promise<void>;
+}
+
+function descendantPids(rootPid: number): number[] {
+  try {
+    const rows = execFileSync('ps', ['-axo', 'pid=,ppid='], { encoding: 'utf8' }).trim().split('\n');
+    const children = new Map<number, number[]>();
+    for (const row of rows) {
+      const [pid, ppid] = row.trim().split(/\s+/).map(Number);
+      if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
+      children.set(ppid, [...(children.get(ppid) ?? []), pid]);
+    }
+    const descendants: number[] = [];
+    const pending = [...(children.get(rootPid) ?? [])];
+    while (pending.length > 0) {
+      const pid = pending.pop()!;
+      descendants.push(pid);
+      pending.push(...(children.get(pid) ?? []));
+    }
+    return descendants.reverse();
+  } catch {
+    return [];
+  }
+}
+
+function killPids(pids: readonly number[]): void {
+  for (const pid of pids) {
+    try { process.kill(pid, 'SIGKILL'); } catch { /* already exited */ }
+  }
+}
+
+async function waitBounded(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+  let settled = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      promise.then(() => { settled = true; }).catch(() => { settled = true; }),
+      new Promise<void>((resolve) => { timer = setTimeout(resolve, timeoutMs); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+  return settled;
+}
+
+/** Own one isolated HOME across abrupt built-Electron death and relaunch. */
+export function createRelaunchLifecycle(initial: AppHandle, opts: LaunchOptions = {}): RelaunchLifecycle {
+  type OwnedHandle = { handle: AppHandle; pid?: number };
+  function own(handle: AppHandle): OwnedHandle {
+    try {
+      return { handle, pid: handle.electron.process()?.pid };
+    } catch {
+      return { handle };
+    }
+  }
+  const handles: OwnedHandle[] = [own(initial)];
+  const closeTimeoutMs = opts.relaunchCloseTimeoutMs ?? 15_000;
+  let current = initial;
+
+  async function forceClose(owned: OwnedHandle): Promise<void> {
+    const { handle, pid } = owned;
+    let process: ReturnType<ElectronApplication['process']>;
+    try { process = handle.electron.process(); } catch { process = null; }
+    const closed = handle.electron.waitForEvent?.('close').catch(() => undefined);
+    const descendants = pid ? descendantPids(pid) : [];
+    killPids(descendants);
+    try { process?.kill('SIGKILL'); } catch { /* already exited */ }
+    if (closed) await waitBounded(closed, closeTimeoutMs);
+    if (pid) killPids(descendantPids(pid));
+  }
+
+  async function closeOwned(owned: OwnedHandle): Promise<void> {
+    const { handle, pid } = owned;
+    let process: ReturnType<ElectronApplication['process']>;
+    try { process = handle.electron.process(); } catch { process = null; }
+    const descendantsAtCleanup = pid ? descendantPids(pid) : [];
+    try {
+      const closedGracefully = await waitBounded(handle.electron.close(), closeTimeoutMs);
+      if (!closedGracefully) await forceClose(owned);
+    } finally {
+      const currentDescendants = pid ? descendantPids(pid) : [];
+      killPids([...new Set([...currentDescendants, ...descendantsAtCleanup])]);
+      try { process?.kill('SIGKILL'); } catch { /* already exited */ }
+    }
+  }
+
+  return {
+    home: initial.home,
+    get current() { return current; },
+    async forceKill() {
+      const owned = handles.find(({ handle }) => handle === current) ?? own(current);
+      await forceClose(owned);
+    },
+    async relaunch() {
+      current = await launchApp(initial.home, opts);
+      handles.push(own(current));
+      return current;
+    },
+    async close() {
+      for (const owned of [...handles].reverse()) {
+        await closeOwned(owned);
+      }
+    }
+  };
 }
 
 /**

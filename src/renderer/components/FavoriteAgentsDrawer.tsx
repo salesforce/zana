@@ -39,7 +39,8 @@ const STATE_LABEL: Record<AgentState, string> = {
   working: 'Working',
   idle: 'Idle',
   done: 'Done',
-  unknown: 'Idle'
+  unknown: 'Idle',
+  waiting: 'Waiting for model'
 };
 
 /** Bucket a starred card. Background (headless) wins over live state so detached
@@ -51,6 +52,7 @@ export function sectionOf(c: AgentCard): FavSectionId {
     case 'blocked':
       return 'blocked';
     case 'working':
+    case 'waiting':
       return 'working';
     default:
       return 'idle';

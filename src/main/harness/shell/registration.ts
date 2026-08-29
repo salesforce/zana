@@ -9,6 +9,5 @@ export const shellHarness: HarnessRegistration = {
   profiles: [{ id: 'shell', posture: 'other' }],
   implementation,
   renderRemoteCommand: (input) => implementation.buildRemoteCommand(input),
-  monitorCapability: { state: 'unsupported', sources: [], reason: 'Terminal-only profile' },
   supportedScopes: ['local', 'remote']
 };

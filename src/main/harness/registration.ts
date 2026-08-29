@@ -12,12 +12,6 @@ import type { HarnessAgentDiscoveryResult } from '../../shared/harness-adapter.j
 import type { LaunchProvider, RemoteCommandInput, RemoteCommandResult } from './launch-provider.js';
 import type { HarnessTranscriptAdapter, NativeSessionPatch } from './session-adapter.js';
 
-export interface HarnessMonitorCapability {
-  readonly state: 'supported' | 'unsupported';
-  readonly sources: readonly string[];
-  readonly reason?: string;
-}
-
 export type NativeConversationResume = Pick<
   CreateTerminalRequest,
   'profile' | 'extraArgs' | 'resumeSessionId'
@@ -38,8 +32,6 @@ export interface HarnessRegistration extends SdkHarnessRegistration<LaunchProfil
   }) => Promise<void>;
   /** Main-owned transcript/session bridge. Created once by TranscriptSource. */
   readonly createTranscriptAdapter?: (input: { openCodeBinary: () => string }) => HarnessTranscriptAdapter;
-  /** Verified native monitor signals only; absent support remains explicit. */
-  readonly monitorCapability: HarnessMonitorCapability;
   /** Harness-owned exact native resume projection for trusted native ids. */
   readonly nativeConversationResume?: (nativeConversationId: string) => NativeConversationResume | undefined;
   /** Read this registration's native conversation identity from a trusted session. */

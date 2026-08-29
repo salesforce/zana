@@ -197,6 +197,23 @@ describe('installFromDir', () => {
     expect(await readFile(join(installDir, 'acme', 'renderer.js'), 'utf-8')).toBe('NEW');
   });
 
+  it('serializes concurrent replacements for the same extension', async () => {
+    await writeInstalled('acme', { id: 'acme', version: '1.0.0', engines }, 'OLD');
+    await writeSrc({ id: 'acme', version: '2.0.0', engines }, 'NEW');
+    const { installFromDir } = await importInstaller();
+
+    const results = await Promise.all([
+      installFromDir(srcDir, { reservedIds: reserved }),
+      installFromDir(srcDir, { reservedIds: reserved })
+    ]);
+
+    expect(results).toEqual([
+      { ok: true, value: { id: 'acme' } },
+      { ok: true, value: { id: 'acme' } }
+    ]);
+    expect(await readFile(join(installDir, 'acme', 'renderer.js'), 'utf-8')).toBe('NEW');
+  });
+
   it('rejects a main entry that cannot satisfy the MainModule contract', async () => {
     await writeSrc({ id: 'acme', version: '1.0.0', engines, entry: { main: 'main.mjs' } });
     await writeFile(join(srcDir, 'main.mjs'), 'export default { setup() {} };', 'utf-8');

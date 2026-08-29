@@ -1,6 +1,11 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
-import { resolve } from 'node:path';
+import { createRequire } from 'node:module';
+import { dirname, resolve } from 'node:path';
+
+const require = createRequire(import.meta.url);
+// Monaco's export map blocks package.json resolution on newer Node versions.
+const monacoVsRoot = resolve(dirname(require.resolve('monaco-editor')), '..', '..', 'esm/vs');
 
 // Resolve the extension SDK (`@zana-ai/zcc-extension-sdk` + subpaths) to its source
 // in all three bundles. The SDK is the canonical extension contract; core and
@@ -86,7 +91,7 @@ export default defineConfig({
         // entrypoints remain under `esm/vs`. Resolve that subtree directly.
         {
           find: 'monaco-editor/esm/vs',
-          replacement: resolve(__dirname, 'node_modules/monaco-editor/esm/vs')
+          replacement: monacoVsRoot
         },
         { find: '@shared', replacement: resolve(__dirname, 'src/shared') }
       ],

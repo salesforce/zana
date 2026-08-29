@@ -72,8 +72,8 @@ describe('launcher attachments', () => {
   it('renders removable pills and uploads remote attachments at launch', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
     expect(source).toContain('window.cc.fs.uploadToRemote(remoteTarget.id, localPath, \'.\')');
-    expect(source).toContain('attachments={attachments}');
-    expect(source).toContain('onAddAttachments={addAttachments}');
+    expect(source).toContain("attachments={mode === 'job' ? jobSources.map(({ name }) => name) : attachments}");
+    expect(source).toContain("onAddAttachments={mode === 'job' ? () => undefined : addAttachments}");
     expect(source).toContain('appendAttachmentContext(prompt, attachmentPaths)');
   });
 });
@@ -83,9 +83,28 @@ describe('Quick Agent composer', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
     expect(source).toContain('const useQuickAgentHomeComposer = scratchIsTarget;');
     expect(source).toContain("variant={useQuickAgentHomeComposer ? 'home' : 'default'}");
-    expect(source).toContain("submitLabel={mode === 'autonomous' ? 'Launch autonomous team' : 'Launch agent'}");
+    expect(source).toContain("submitLabel={mode === 'autonomous' ? 'Launch autonomous team' : mode === 'job' ? 'Launch job team' : 'Launch agent'}");
     expect(source).toContain('{!useQuickAgentHomeComposer && (');
     expect(source).toContain("mode === 'autonomous'");
+  });
+});
+
+describe('Team job launch', () => {
+  it('exposes optional title and summary and submits both independently from required goal', () => {
+    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('id="launch-job-title"');
+    expect(source).toContain('id="launch-job-summary"');
+    expect(source).toContain('title: jobTitle.trim() || titleFromPrompt(goal)');
+    expect(source).toContain('summary: jobSummary.trim() || undefined');
+  });
+
+  it('uses chooser-issued source capability ids without appending paths to goal', () => {
+    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('window.cc.executionSources.pick(target.id)');
+    expect(source).toContain('sourceCapabilityIds: jobSources.map(({ id }) => id)');
+    const launchJob = source.slice(source.indexOf('const launchJob = async'), source.indexOf('// "Fix with AI"'));
+    expect(launchJob).not.toContain('resolveAttachmentPaths');
+    expect(launchJob).not.toContain('appendAttachmentContext');
   });
 });
 
@@ -214,7 +233,7 @@ describe('agentRoutingForSubmission', () => {
 describe('structured routing submission', () => {
   it('keeps submission helper inert until controls mark routing dirty', () => {
     expect(agentRoutingForSubmission(true, 'opencode', {}, {
-      opencode: { modelTargetId: 'aisuite/gpt-5.6-sol' }
+      opencode: { modelTargetId: 'llmgw/gpt-5.6-sol-1M' }
     }, false)).toBeUndefined();
   });
 });
@@ -247,10 +266,13 @@ describe('OpenCode project agent discovery', () => {
     expect(roleTargetValueForPicker('review', [])).toBe('');
   });
 
-  it('loads through project-id IPC once, refreshes explicitly, and prevents stale updates', () => {
+  it('loads through project-id IPC, consumes refresh intent once, and prevents stale updates', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('window.cc.harness.agentDescriptors(\n      openCodeAgentDiscoveryProjectId,\n      openCodeAgentDiscoveryProfile,\n      agentDescriptorsRefresh > 0\n    )');
-    expect(source).toContain('setAgentDescriptorsRefresh((value) => value + 1);');
+    expect(source).toContain('const refresh = refreshAgentDescriptorsRef.current;');
+    expect(source).toContain('refreshAgentDescriptorsRef.current = false;');
+    expect(source).toContain('window.cc.harness.agentDescriptors(\n      openCodeAgentDiscoveryProjectId,\n      openCodeAgentDiscoveryProfile,\n      refresh\n    )');
+    expect(source).toContain('refreshAgentDescriptorsRef.current = true;');
+    expect(source).toContain('setAgentDescriptorsRequest((value) => value + 1);');
     expect(source).toContain('Effective OpenCode agent');
     expect(source).toContain('Refresh agents');
     expect(source).toMatch(/return \(\) => \{\s*cancelled = true;\s*\};/);

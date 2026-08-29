@@ -81,6 +81,19 @@ describe('HeartbeatService', () => {
     expect(reply).toHaveBeenCalledWith('s1', 'continue please');
   });
 
+  it('arms a timer on entering waiting and nudges when it fires (non-OSC at-rest state)', () => {
+    const { deps, clock, reply } = makeDeps();
+    svc = new HeartbeatService(deps);
+
+    svc.observe('s1', 'working');
+    svc.observe('s1', 'waiting');
+    expect(clock.setTimer).toHaveBeenCalledTimes(1);
+    expect(reply).not.toHaveBeenCalled();
+
+    clock.fireNext();
+    expect(reply).toHaveBeenCalledWith('s1', 'continue please');
+  });
+
   it('re-arms after a nudge so a still-idle agent is nudged again', () => {
     const { deps, clock, reply } = makeDeps();
     svc = new HeartbeatService(deps);

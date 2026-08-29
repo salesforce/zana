@@ -80,6 +80,47 @@ describe('AutonomousRunSupervisor', () => {
     expect(text).toContain('Ship feature X');
   });
 
+  it('nudges a waiting worker with goal-aware text after the delay (waiting == idle at-rest)', () => {
+    // Non-OSC harnesses (codex/cursor/pi/opencode) rest in `waiting`, not `idle`.
+    // The supervisor must treat waiting as at-rest too, or those workers never
+    // get progress nudges.
+    const { deps, clock, reply } = makeDeps();
+    const svc = new AutonomousRunSupervisor(deps);
+    svc.start(START);
+
+    svc.observe('w1', 'waiting');
+    expect(clock.setTimer).toHaveBeenCalled();
+    expect(reply).not.toHaveBeenCalled();
+
+    clock.fireNext();
+    expect(reply).toHaveBeenCalledTimes(1);
+    const [sid, text] = reply.mock.calls[0] as unknown as [string, string];
+    expect(sid).toBe('w1');
+    expect(text).toContain('Ship feature X');
+  });
+
+  it('leaving waiting (waiting → working) resets the run timeout, same as leaving idle', () => {
+    const { deps, clock } = makeDeps();
+    const svc = new AutonomousRunSupervisor(deps);
+
+    svc.start({ ...START, limits: { maxRounds: 0, timeoutMs: 60_000 } });
+    const initialTimerCount = clock.setTimer.mock.calls.length; // 1 (the timeout)
+
+    svc.observe('w1', 'waiting');
+    // waiting arms a nudge timer but does NOT reset the timeout by itself.
+    expect(clock.clearTimer).not.toHaveBeenCalled();
+
+    svc.observe('w1', 'working');
+    // Leaving the at-rest state (waiting → working) resets the timeout, and
+    // disarms the nudge since no session is at-rest anymore.
+    expect(clock.clearTimer).toHaveBeenCalled();
+    expect(clock.setTimer.mock.calls.length).toBe(initialTimerCount + 2); // timeout re-arm + earlier nudge arm
+
+    const run = svc.list()[0];
+    expect(run.state).toBe('running');
+    expect(run.stopReason).toBeUndefined();
+  });
+
   it('never nudges a blocked agent', () => {
     const { deps, clock, reply } = makeDeps();
     const svc = new AutonomousRunSupervisor(deps);
@@ -292,9 +333,7 @@ describe('AutonomousRunSupervisor', () => {
     expect(closeSession).toHaveBeenCalled();
   });
 
-  it('nudge delivery ALSO resets the timeout (activity signal)', () => {
-    // A nudge successfully delivered means the agent is still responding to
-    // idle state → the run is making progress, so timeout should reset.
+  it('successful nudge is not inactivity progress (does not reset the timeout)', () => {
     const { deps, clock, reply } = makeDeps();
     const svc = new AutonomousRunSupervisor(deps);
 
@@ -305,11 +344,10 @@ describe('AutonomousRunSupervisor', () => {
     svc.observe('w1', 'idle');
     clock.fireNext(); // fire the nudge timer
 
-    // Nudge delivered → timeout should have been reset
+    // Nudge delivered → timeout should NOT have been reset
     expect(reply).toHaveBeenCalledTimes(1);
-    expect(clock.clearTimer).toHaveBeenCalled(); // timeout was cleared
-    expect(clock.setTimer.mock.calls.length).toBeGreaterThan(initialSetCount + 1);
-    // At least: initial timeout + nudge timer + NEW timeout after reset
+    expect(clock.clearTimer).not.toHaveBeenCalled(); // timeout was NOT cleared
+    expect(clock.setTimer.mock.calls.length).toBe(initialSetCount + 2);
 
     const run = svc.list()[0];
     expect(run.state).toBe('running');
@@ -372,5 +410,46 @@ describe('AutonomousRunSupervisor', () => {
     expect(run.state).toBe('stopped');
     expect(run.stopReason).toBe('timeout');
     expect(closeSession).toHaveBeenCalled();
+  });
+
+  it('covers deterministic fleet cadence, failed reply no consumption, and rounds 1, 2, 32', () => {
+    const { deps, clock, reply } = makeDeps();
+    const svc = new AutonomousRunSupervisor(deps);
+
+    svc.start({
+      runId: 'run-fleet',
+      teamId: 'team-fleet',
+      projectId: 'p1',
+      goal: 'Test fleet',
+      orchestratorSessionId: 'orch',
+      workerSessionIds: ['w1', 'w2'],
+      limits: { maxRounds: 35, timeoutMs: 100_000 }
+    });
+
+    svc.observe('w1', 'idle');
+    svc.observe('w2', 'idle');
+
+    clock.fireNext();
+    expect(reply).toHaveBeenCalledTimes(2);
+    let run = svc.list().find((r) => r.runId === 'run-fleet')!;
+    expect(run.rounds).toBe(1);
+
+    clock.fireNext();
+    expect(reply).toHaveBeenCalledTimes(4);
+    run = svc.list().find((r) => r.runId === 'run-fleet')!;
+    expect(run.rounds).toBe(2);
+
+    reply.mockReturnValue(false);
+    clock.fireNext();
+    run = svc.list().find((r) => r.runId === 'run-fleet')!;
+    expect(run.rounds).toBe(2);
+
+    reply.mockReturnValue(true);
+
+    for (let r = 2; r < 32; r++) {
+      clock.fireNext();
+    }
+    run = svc.list().find((r) => r.runId === 'run-fleet')!;
+    expect(run.rounds).toBe(32);
   });
 });

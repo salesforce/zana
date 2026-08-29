@@ -52,14 +52,6 @@ describe('PromptRegistry', () => {
     expect(entry?.timeoutMs).toBe(30_000);
   });
 
-  it('ships monitor prompts with HTTP defaults, never claude-cli', () => {
-    for (const id of ['builtin:idle-triage', 'builtin:catch-up-summary']) {
-      const entry = registry.get(id);
-      expect(entry?.source).toBe('builtin');
-      expect(['openai', 'gemini']).toContain(entry?.provider);
-    }
-  });
-
   it('registers builtin:approve-reviewer', () => {
     const entry = registry.get('builtin:approve-reviewer');
     expect(entry).not.toBeNull();

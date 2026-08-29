@@ -18,16 +18,16 @@ describe('target-resolution main authorization', () => {
   it('resolves model routing through Agent > Persona > Project > Global precedence', () => {
     const global = {
       schemaVersion: 1 as const,
-      byAdapter: { opencode: { modelTargetId: 'aisuite/gpt-5.6-luna' } }
+      byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-luna-1M' } }
     };
     const project = {
       schemaVersion: 1 as const,
-      byAdapter: { opencode: { modelTargetId: 'aisuite/gpt-5.6-terra' } }
+      byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-terra-1M' } }
     };
     const persona = { id: 'p', name: 'P', modelLevel: 'high' as const };
     const agent = {
       schemaVersion: 1 as const,
-      byAdapter: { opencode: { modelTargetId: 'aisuite/gemini-3.5-flash' } }
+      byAdapter: { opencode: { modelTargetId: 'llmgw/gemini-3.5-flash' } }
     };
     const resolve = (overrides: Record<string, unknown> = {}) => resolveModelTarget(opencode, {
       config: { ...config(), harnessRouting: global },
@@ -37,15 +37,15 @@ describe('target-resolution main authorization', () => {
       ...overrides
     });
 
-    expect(resolve()).toMatchObject({ source: 'global', targetId: 'aisuite/gpt-5.6-luna' });
+    expect(resolve()).toMatchObject({ source: 'global', targetId: 'llmgw/gpt-5.6-luna-1M' });
     expect(resolve({ projectSettings: { harnessRouting: project } })).toMatchObject({
-      source: 'project', targetId: 'aisuite/gpt-5.6-terra'
+      source: 'project', targetId: 'llmgw/gpt-5.6-terra-1M'
     });
     expect(resolve({ projectSettings: { harnessRouting: project }, persona })).toMatchObject({
-      source: 'persona', targetId: 'aisuite/gpt-5.6-sol'
+      source: 'persona', targetId: 'llmgw/gpt-5.6-sol-1M'
     });
     expect(resolve({ projectSettings: { harnessRouting: project }, persona, perTabRouting: agent })).toMatchObject({
-      source: 'per-tab', targetId: 'aisuite/gemini-3.5-flash'
+      source: 'per-tab', targetId: 'llmgw/gemini-3.5-flash'
     });
   });
 
@@ -62,14 +62,14 @@ describe('target-resolution main authorization', () => {
         modelLevel: 'low',
         harnessRouting: {
           schemaVersion: 1,
-          byAdapter: { opencode: { modelTargetId: 'aisuite/gpt-5.6-sol' } }
+          byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-sol-1M' } }
         }
       }
     });
 
     expect(resolved).toMatchObject({
       source: 'persona',
-      targetId: 'aisuite/gpt-5.6-sol',
+      targetId: 'llmgw/gpt-5.6-sol-1M',
       structuredSelected: true
     });
   });
@@ -89,7 +89,7 @@ describe('target-resolution main authorization', () => {
       config: config(),
       profile: 'opencode',
       extraArgs: [],
-      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'aisuite/gpt-5.6-terra' } } },
+      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-terra-1M' } } },
       scope: 'remote'
     })).toThrow('model target is unavailable for remote launches');
   });
@@ -99,10 +99,10 @@ describe('target-resolution main authorization', () => {
       config: config(),
       profile: 'opencode',
       extraArgs: [],
-      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'aisuite/gpt-5.6-terra' } } },
+      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-terra-1M' } } },
       scope: 'local'
     });
-    expect(resolved.contribution.args).toEqual(['--model', 'aisuite/gpt-5.6-terra']);
+    expect(resolved.contribution.args).toEqual(['--model', 'llmgw/gpt-5.6-terra-1M']);
   });
 
   it('validates provider target as a filter over the effective combined model target', () => {
@@ -111,7 +111,8 @@ describe('target-resolution main authorization', () => {
       perTabRouting: {
         schemaVersion: 1,
         byAdapter: {
-          opencode: { providerTargetId: 'anthropic', modelTargetId: 'aisuite/gpt-5.6-sol' }
+          // xai is a real provider but does not own the gpt-5.6-sol (openai) model.
+          opencode: { providerTargetId: 'xai', modelTargetId: 'llmgw/gpt-5.6-sol-1M' }
         }
       }
     })).toThrow('model target does not belong to selected provider');
@@ -123,7 +124,7 @@ describe('target-resolution main authorization', () => {
         ...config(),
         harnessRouting: {
           schemaVersion: 1,
-          byAdapter: { opencode: { providerTargetId: 'google', modelTargetId: 'aisuite/gemini-3.5-flash' } }
+          byAdapter: { opencode: { providerTargetId: 'google', modelTargetId: 'llmgw/gemini-3.5-flash' } }
         }
       },
       profile: 'opencode',
@@ -132,7 +133,7 @@ describe('target-resolution main authorization', () => {
       projectSettings: {
         harnessRouting: {
           schemaVersion: 1,
-          byAdapter: { opencode: { providerTargetId: 'anthropic', modelTargetId: 'aisuite/us.anthropic.claude-sonnet-5' } }
+          byAdapter: { opencode: { providerTargetId: 'xai', modelTargetId: 'llmgw/grok-4.6' } }
         }
       },
       persona: {
@@ -141,7 +142,7 @@ describe('target-resolution main authorization', () => {
         baseProfile: 'opencode',
         harnessRouting: {
           schemaVersion: 1,
-          byAdapter: { opencode: { providerTargetId: 'openai', modelTargetId: 'aisuite/gpt-5.6-sol' } }
+          byAdapter: { opencode: { providerTargetId: 'openai', modelTargetId: 'llmgw/gpt-5.6-sol-1M' } }
         }
       }
     });
@@ -149,7 +150,7 @@ describe('target-resolution main authorization', () => {
     expect(resolved).toMatchObject({
       source: 'persona',
       providerTargetId: 'openai',
-      targetId: 'aisuite/gpt-5.6-sol'
+      targetId: 'llmgw/gpt-5.6-sol-1M'
     });
   });
 
@@ -161,7 +162,7 @@ describe('target-resolution main authorization', () => {
       scope: 'local',
       perTabRouting: {
         schemaVersion: 1,
-        byAdapter: { opencode: { providerTargetId: 'anthropic' } }
+        byAdapter: { opencode: { providerTargetId: 'xai' } }
       }
     })).toThrow('requires a concrete compatible model target');
   });
@@ -177,13 +178,13 @@ describe('target-resolution main authorization', () => {
         modelLevel: 'high',
         harnessRouting: {
           schemaVersion: 1,
-          byAdapter: { opencode: { modelTargetId: 'aisuite/gemini-3.1-pro-preview' } }
+          byAdapter: { opencode: { modelTargetId: 'llmgw/gemini-3.1-pro-preview' } }
         }
       },
       scope: 'local'
     });
-    expect(resolved.targetId).toBe('aisuite/gpt-5.6-sol');
-    expect(resolved.contribution.args).toEqual(['--model', 'aisuite/gpt-5.6-sol']);
+    expect(resolved.targetId).toBe('llmgw/gpt-5.6-sol-1M');
+    expect(resolved.contribution.args).toEqual(['--model', 'llmgw/gpt-5.6-sol-1M']);
   });
 
   it('maps one portable project model level through the selected harness', () => {
@@ -195,7 +196,7 @@ describe('target-resolution main authorization', () => {
       scope: 'local'
     });
     expect(resolved.source).toBe('project');
-    expect(resolved.targetId).toBe('aisuite/gpt-5.6-sol');
+    expect(resolved.targetId).toBe('llmgw/gpt-5.6-sol-1M');
   });
 
   it.each([
@@ -228,12 +229,12 @@ describe('target-resolution main authorization', () => {
         modelLevel: 'low',
         harnessRouting: {
           schemaVersion: 1,
-          byAdapter: { opencode: { modelTargetId: 'aisuite/gpt-5.6-sol' } }
+          byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-sol-1M' } }
         }
       },
       scope: 'local'
     });
-    expect(resolved.targetId).toBe('aisuite/gpt-5.6-sol');
+    expect(resolved.targetId).toBe('llmgw/gpt-5.6-sol-1M');
   });
 
   it('prefers portable persona model over project model', () => {
@@ -243,7 +244,7 @@ describe('target-resolution main authorization', () => {
       persona: { id: 'p', name: 'P', modelLevel: 'high' }
     });
     expect(resolved.source).toBe('persona');
-    expect(resolved.targetId).toBe('aisuite/gpt-5.6-sol');
+    expect(resolved.targetId).toBe('llmgw/gpt-5.6-sol-1M');
   });
 
   it('keeps neutral legacy concrete Persona and Project models on Claude/Codex adapters', () => {

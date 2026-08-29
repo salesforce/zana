@@ -138,6 +138,15 @@ describe('HeldQuestionService', () => {
     expect(appended).toHaveLength(1);
   });
 
+  it('flushes held questions on the working→waiting edge (non-OSC harness rest state)', () => {
+    const { deps, appended } = makeDeps();
+    const svc = new HeldQuestionService(deps);
+    svc.maybeHold('s1', blockingInput());
+    svc.observe('s1', 'waiting');
+    expect(appended).toHaveLength(1);
+    expect(svc.heldCount('s1')).toBe(0);
+  });
+
   it('does not flush while the agent keeps working', () => {
     const { deps, appended } = makeDeps();
     const svc = new HeldQuestionService(deps);

@@ -79,6 +79,16 @@ reviewer + security), a *research* team fanning out across sources, or a
 **personas** are edited from the sidebar, and extensions can contribute their
 own.
 
+### Team Jobs
+
+You can launch a Team as a durable **Job**. Jobs track long-running or autonomous
+work with persistent status, artifact collection, and completion history visible on
+the Agents board. 
+
+- **Launch**: Open **New agent** from the Agents board, select **Job Team**, choose a Team and project, enter the required goal, and optionally add a title and summary.
+- **Settings**: Autonomous Team runs and Team Jobs share timeout and nudge settings (configured in Settings → Agents). Defaults are 45-minute inactivity timeout and 30 maximum nudges; setting either to 0 disables that safeguard.
+- **History & Retention**: Completed Jobs appear on the Agents board. You can scroll or click "Load older history" to retrieve past jobs. Job records and their visible history are retained for at least 30 days.
+
 ---
 
 ## Goals & Follow-ups

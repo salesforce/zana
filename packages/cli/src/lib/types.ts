@@ -177,4 +177,6 @@ export interface InboxEntry {
   sessionId?: string;
   scheduled?: boolean;
   notify?: InboxNotifyLevel;
+  executionId?: string;
+  blockerId?: string;
 }

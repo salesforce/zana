@@ -33,5 +33,10 @@ describe('launch coordinator production spawn guard', () => {
     expect(text).toContain('reapOrphanTmuxSessions((sessionId) => ptys.getSession(sessionId) !== null)');
     expect(text).toContain('restoreCapabilities.removeSession(sessionId)');
     expect(text).toContain('teamLifecycleIntegration.reconcileStartup([...recovered])');
+    const bootstrapStart = text.indexOf('async function bootstrapNormal()');
+    const bootstrapSetup = text.slice(bootstrapStart, text.indexOf('// Arm the e2e observability tap FIRST', bootstrapStart));
+    expect(bootstrapSetup).toMatch(
+      /try \{[\s\S]*try \{[\s\S]*await launchLedger\.reconcileStartup\(\{[\s\S]*\}\);[\s\S]*\} finally \{[\s\S]*await squadExecutionService\.restoreDeadlines\(\);[\s\S]*\}[\s\S]*\} catch \(error\) \{[\s\S]*normalBootstrapStarted = false;[\s\S]*throw error;[\s\S]*\}/
+    );
   });
 });

@@ -2,7 +2,6 @@ import type { LlmPromptEntry, LlmProviderId, LlmRunResult } from '../shared/type
 import type { LlmProvider, LlmProviderMap } from './llm/provider.js';
 
 const DEFAULT_PROVIDER: LlmProviderId = 'claude-cli';
-const MONITOR_PROVIDERS: ReadonlySet<LlmProviderId> = new Set(['openai', 'gemini']);
 
 /**
  * Fill `{{var}}` placeholders in a template from a vars map. Unknown
@@ -95,28 +94,5 @@ export class LlmService {
     }
 
     return call;
-  }
-
-  /**
-   * Dispatch monitor-only semantic work through an explicit HTTP provider. This
-   * boundary prevents a prompt override or default-provider fallback from
-   * launching a coding harness while observing another session.
-   */
-  runMonitor(
-    entry: LlmPromptEntry,
-    providerId: LlmProviderId | undefined,
-    vars: Record<string, string>,
-    dedupeKey?: string
-  ): Promise<LlmRunResult> {
-    if (!providerId || !MONITOR_PROVIDERS.has(providerId)) {
-      return Promise.resolve({
-        ok: false,
-        text: '',
-        error: 'no eligible monitor HTTP provider configured',
-        provider: providerId ?? 'openai',
-        ms: 0
-      });
-    }
-    return this.run({ ...entry, provider: providerId }, vars, dedupeKey);
   }
 }

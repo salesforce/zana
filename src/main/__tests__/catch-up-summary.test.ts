@@ -58,7 +58,6 @@ describe('CatchUpSummaryService', () => {
       delaySeconds: () => 20,
       getSession: () => baseSession,
       hasTranscript: (p) => p === 'claude',
-      hasMonitorCapability: (p) => p === 'claude',
       readDigest: vi.fn(async () => 'User: do task\n\nAssistant: working on it'),
       runSummary: vi.fn(async () => okResult('**Summary**\n\n- Did the thing')),
       now: () => 1000,
@@ -142,6 +141,49 @@ describe('CatchUpSummaryService', () => {
       await tick();
 
       expect(deps.runSummary).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('observe → waiting trigger (non-Claude at-rest state)', () => {
+    it('arms the dwell on working→waiting and generates a summary with trigger=idle', async () => {
+      const { deps, clock } = makeDeps();
+      const svc = new CatchUpSummaryService(deps);
+      const emitted: CatchUpSummaryResult[] = [];
+      svc.on('summary', (r) => emitted.push(r));
+
+      svc.observe('s', 'working');
+      svc.observe('s', 'waiting'); // edge → arm dwell (waiting is idle-equivalent)
+      expect(clock.pendingCount()).toBe(1);
+      expect(deps.runSummary).not.toHaveBeenCalled();
+
+      clock.fireNext(); // dwell elapses while still waiting
+      await tick();
+
+      expect(deps.runSummary).toHaveBeenCalledTimes(1);
+      // The trigger passed to runSummary/recorded on the result must be the
+      // narrower 'idle', never the raw AgentState 'waiting'.
+      expect((deps.runSummary as ReturnType<typeof vi.fn>).mock.calls[0][1]).toBe('idle');
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0]).toMatchObject({
+        sessionId: 's',
+        projectId: 'p1',
+        ok: true,
+        trigger: 'idle'
+      });
+    });
+
+    it('does not re-fire while the agent stays waiting (one-shot per spell)', async () => {
+      const { deps, clock } = makeDeps();
+      const svc = new CatchUpSummaryService(deps);
+
+      svc.observe('s', 'waiting');
+      svc.observe('s', 'waiting'); // repeated frame — no fresh edge
+      expect(clock.pendingCount()).toBe(1);
+      clock.fireNext();
+      await tick();
+      svc.observe('s', 'waiting'); // still waiting after firing — must not re-arm
+      expect(clock.pendingCount()).toBe(0);
+      expect(deps.runSummary).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -264,18 +306,6 @@ describe('CatchUpSummaryService', () => {
   });
 
   describe('session eligibility', () => {
-    it('returns monitor-unsupported without reading a transcript', async () => {
-      const { deps } = makeDeps({
-        getSession: () => ({ ...baseSession, profile: 'cursor' }),
-        hasTranscript: () => true,
-        hasMonitorCapability: () => false
-      });
-      const svc = new CatchUpSummaryService(deps);
-      const result = await svc.generateOne('s');
-      expect(result.error).toBe('monitor-unsupported');
-      expect(deps.readDigest).not.toHaveBeenCalled();
-    });
-
     it('skips scheduled/headless (background) sessions — no timer, no runSummary', async () => {
       const scheduled = makeDeps({ getSession: () => ({ ...baseSession, scheduled: true }) });
       const svcScheduled = new CatchUpSummaryService(scheduled.deps);

@@ -31,10 +31,8 @@ const ProjectFollowUpsView = lazy(() =>
 const ProjectFeedView = lazy(() =>
   import('./ProjectFeedView').then((m) => ({ default: m.ProjectFeedView }))
 );
-const SchedulerPanel = lazy(() =>
-  import('./SchedulerPanel').then((m) => ({ default: m.SchedulerPanel }))
-);
 import type { LaunchProfileId } from '@shared/types';
+import { SchedulerPanel } from './SchedulerPanel';
 
 export function Workspace() {
   const projects = useData((s) => s.projects);
@@ -475,11 +473,7 @@ export function Workspace() {
               <LibraryView project={project} />
             </Suspense>
           )}
-          {isScheduler && project && (
-            <Suspense fallback={<div className="workbench-status">Loading scheduler…</div>}>
-              <SchedulerPanel projectId={project.id} />
-            </Suspense>
-          )}
+          {isScheduler && project && <SchedulerPanel projectId={project.id} />}
           {isGoals && project && (
             <Suspense fallback={<div className="workbench-status">Loading goals…</div>}>
               <ProjectGoalsView project={project} />

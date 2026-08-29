@@ -1,30 +1,40 @@
 /**
  * Idle-agent triage add-on (off by default; spends tokens).
  *
- * The agent-status tracker tells us WHEN an agent is idle, but the OSC `✳` glyph
- * looks identical whether the agent (a) asked you a question, (b) finished and
- * is closeable, or (c) paused mid-task. This service fills that gap: when a
- * claude agent settles into idle, it reads the session transcript's last
- * assistant turn and runs the `builtin:idle-triage` LLM micro-call to classify
- * WHY it's idle, then emits an {@link IdleTriageResult} the renderer surfaces on
- * the Agents board.
+ * The agent-status tracker tells us WHEN an agent is at rest (idle for claude,
+ * waiting for non-OSC harnesses), but the OSC `✳` glyph — or the equivalent
+ * `waiting` state — looks identical whether the agent (a) asked you a
+ * question, (b) finished and is closeable, or (c) paused mid-task. This
+ * service fills that gap: when an agent settles at rest, it reads the session
+ * transcript's last assistant turn and runs the `builtin:idle-triage` LLM
+ * micro-call to classify WHY it's at rest, then emits an
+ * {@link IdleTriageResult} the renderer surfaces on the Agents board.
  *
  * Cost discipline (this is the whole reason it's opt-in):
- *  - It fires only after the agent has DWELLED idle for `delaySeconds` (armed on
- *    the working/blocked → idle edge, cancelled by any non-idle transition), so
- *    the 1–2s idle flicker between tool calls never spends a call.
- *  - One-shot per idle spell: re-armed only when the agent leaves idle, so a
- *    steady idle agent is classified exactly once (mirrors the tab-namer's
- *    one-shot-per-session gate).
- *  - It bails before spending anything when the add-on is disabled, no transcript
- *    text exists, or no eligible monitor HTTP provider is configured.
+ *  - It fires only after the agent has DWELLED at rest (idle/waiting) for
+ *    `delaySeconds` (armed on the working/blocked → at-rest edge, cancelled
+ *    by any transition back to working/blocked), so the 1–2s flicker between
+ *    tool calls never spends a call.
+ *  - One-shot per at-rest spell: re-armed only when the agent leaves the
+ *    at-rest state, so a steady at-rest agent is classified exactly once
+ *    (mirrors the tab-namer's one-shot-per-session gate).
+ *  - It bails before spending anything when the add-on is disabled, the session
+ *    isn't a live claude session, or there's no transcript text to classify.
  *
  * All collaborators are injected so the trigger logic is unit-testable without
- * Electron, the filesystem, or a real provider call.
+ * Electron, the filesystem, or a real `claude --print` spawn.
  */
 
 import { EventEmitter } from 'node:events';
 import type { AgentState, IdleResolution, IdleTriageResult, LlmRunResult } from '../shared/types.js';
+
+/**
+ * At-rest gate for the dwell/triage state machine. Only `claude` rests in
+ * `idle`; non-OSC harnesses (codex/cursor/pi/opencode) rest in `waiting`
+ * instead. Treat both as equivalent "at rest" everywhere the triage dwell
+ * arms/disarms/re-checks, so non-Claude workers get triaged too.
+ */
+const atRest = (s: AgentState): boolean => s === 'idle' || s === 'waiting';
 
 /**
  * The minimal session identity a transcript reader needs to LOCATE a transcript.
@@ -78,8 +88,6 @@ export interface IdleTriageDeps {
    * whose `providerCapabilities().hasTranscript` is true participates.
    */
   hasTranscript: (profile: string) => boolean;
-  /** Only registrations with verified native monitor facts can use semantic work. */
-  hasMonitorCapability: (profile: string) => boolean;
   /**
    * Read the session transcript's last assistant prose ('' when unavailable).
    * Takes a session ref (not just cwd/claudeSessionId) so a provider whose
@@ -96,9 +104,6 @@ export interface IdleTriageDeps {
   /** Clear a dwell-timer handle. Injected to pair with {@link setTimer}. */
   clearTimer: (handle: NodeJS.Timeout) => void;
 }
-
-export const MAX_CONCURRENT_TRIAGES = 5;
-export const MAX_TRIAGES_PER_SESSION = 6;
 
 /**
  * Coerce a model's JSON reply into an {@link IdleResolution} + summary. Tolerant:
@@ -150,64 +155,63 @@ export function parseTriage(text: string): Omit<IdleTriageResult, 'sessionId' | 
 
 /**
  * Per-session triage gate. `fired` is true once we've claimed the one-shot for
- * the current idle spell (set when the dwell timer elapses, before any await);
- * it's reset only after the agent leaves idle, so a steady idle agent triages
- * once. `timer` holds the pending dwell timer armed on the idle edge — non-null
- * only between entering idle and either the timer elapsing or being cancelled
- * (any non-idle transition clears it).
+ * the current at-rest spell (set when the dwell timer elapses, before any
+ * await); it's reset only after the agent leaves the at-rest state (idle or
+ * waiting), so a steady at-rest agent triages once. `timer` holds the pending
+ * dwell timer armed on the at-rest edge — non-null only between entering
+ * at-rest and either the timer elapsing or being cancelled (any transition
+ * back to working/blocked clears it).
  */
 interface Entry {
-  /** Last agent state we saw, to detect the edge into/out of idle. */
+  /** Last agent state we saw, to detect the edge into/out of at-rest (idle/waiting). */
   lastState: AgentState;
-  /** A triage for the CURRENT idle spell is in flight or already done. */
+  /** A triage for the CURRENT at-rest spell is in flight or already done. */
   fired: boolean;
-  /** The armed dwell timer (null when not idle / already elapsed / cancelled). */
+  /** The armed dwell timer (null when not at rest / already elapsed / cancelled). */
   timer: NodeJS.Timeout | null;
-  /** Lifetime budget prevents agent-controlled OSC state cycling from spending without bound. */
-  runs: number;
 }
 
 /**
  * Watches agent-state transitions and emits `triage` ({@link IdleTriageResult})
- * once per idle spell, when enabled. Wire {@link observe} to the agent-status
- * `status` event and {@link remove} to pty exit.
+ * once per at-rest (idle/waiting) spell, when enabled. Wire {@link observe} to
+ * the agent-status `status` event and {@link remove} to pty exit.
  */
 export class IdleTriageService extends EventEmitter {
   private entries = new Map<string, Entry>();
-  private pending = 0;
 
   constructor(private readonly deps: IdleTriageDeps) {
     super();
   }
 
   /**
-   * Feed a session's newly-resolved agent state. On the edge into idle it arms a
-   * dwell timer of `delaySeconds()`; the triage micro-call fires only when that
-   * timer elapses AND the agent is still idle (so the 1–2s idle flicker between
-   * tool calls never triages). Any non-idle transition cancels the pending timer
-   * and re-arms the one-shot gate so the NEXT idle spell triages afresh. Cheap
-   * and synchronous on the hot path — the LLM call is fired-and-forgotten once
+   * Feed a session's newly-resolved agent state. On the edge into at rest
+   * (idle or waiting) it arms a dwell timer of `delaySeconds()`; the triage
+   * micro-call fires only when that timer elapses AND the agent is still at
+   * rest (so the 1–2s flicker between tool calls never triages). Any
+   * transition back to working/blocked cancels the pending timer and re-arms
+   * the one-shot gate so the NEXT at-rest spell triages afresh. Cheap and
+   * synchronous on the hot path — the LLM call is fired-and-forgotten once
    * the dwell elapses.
    */
   observe(sessionId: string, state: AgentState): void {
     let entry = this.entries.get(sessionId);
     if (!entry) {
-      entry = { lastState: 'unknown', fired: false, timer: null, runs: 0 };
+      entry = { lastState: 'unknown', fired: false, timer: null };
       this.entries.set(sessionId, entry);
     }
-    const wasIdle = entry.lastState === 'idle';
+    const wasAtRest = atRest(entry.lastState);
     entry.lastState = state;
 
-    if (state !== 'idle') {
-      // Left idle (working/blocked/exited): cancel any pending dwell and re-arm
-      // so the NEXT idle spell triages.
+    if (!atRest(state)) {
+      // Left at-rest (working/blocked/exited): cancel any pending dwell and
+      // re-arm so the NEXT at-rest spell triages.
       this.disarm(entry);
       entry.fired = false;
       return;
     }
-    // state === 'idle' from here.
-    if (wasIdle || entry.fired || entry.timer) return; // not a fresh edge / handled / already waiting
-    // Arm the dwell: triage only if still idle when it elapses.
+    // state is at-rest (idle/waiting) from here.
+    if (wasAtRest || entry.fired || entry.timer) return; // not a fresh edge / handled / already waiting
+    // Arm the dwell: triage only if still at rest when it elapses.
     const ms = Math.max(1, Math.round(this.deps.delaySeconds())) * 1000;
     entry.timer = this.deps.setTimer(() => this.onDwellElapsed(sessionId), ms);
   }
@@ -230,32 +234,23 @@ export class IdleTriageService extends EventEmitter {
   }
 
   /**
-   * The dwell elapsed. If the agent is still idle (observe() would have disarmed
-   * on leaving, but guard the race), claim the one-shot and fire the triage. The
-   * LLM call is fired-and-forgotten; a failure releases the one-shot so a later
-   * working→idle cycle can retry.
+   * The dwell elapsed. If the agent is still at rest (observe() would have
+   * disarmed on leaving, but guard the race), claim the one-shot and fire the
+   * triage. The LLM call is fired-and-forgotten; a failure releases the
+   * one-shot so a later working→at-rest cycle can retry.
    */
   private onDwellElapsed(sessionId: string): void {
     const entry = this.entries.get(sessionId);
     if (!entry) return;
     entry.timer = null;
-    if (entry.lastState !== 'idle' || entry.fired || entry.runs >= MAX_TRIAGES_PER_SESSION) return;
+    if (!atRest(entry.lastState) || entry.fired) return;
     entry.fired = true; // claim the one-shot before any await
 
-    if (this.pending >= MAX_CONCURRENT_TRIAGES) {
-      entry.fired = false;
-      entry.timer = this.deps.setTimer(() => this.onDwellElapsed(sessionId), 1_000);
-      return;
-    }
-    this.pending++;
-    entry.runs++;
     void this.triage(sessionId).catch(() => {
       // Never let a triage failure crash the timer callback. Release the one-shot
-      // so a future working→idle cycle gets a fresh attempt.
+      // so a future working→at-rest cycle gets a fresh attempt.
       const e = this.entries.get(sessionId);
       if (e) e.fired = false;
-    }).finally(() => {
-      this.pending--;
     });
   }
 
@@ -265,7 +260,7 @@ export class IdleTriageService extends EventEmitter {
     if (!session || session.status === 'exited') return;
     // Background agents (scheduled runs, team workers) never request attention.
     if (session.scheduled || session.headless) return;
-    if (!this.deps.hasMonitorCapability(session.profile) || !this.deps.hasTranscript(session.profile)) return;
+    if (!this.deps.hasTranscript(session.profile)) return;
 
     const lastTurn = await this.deps.readLastTurn({
       id: sessionId,
@@ -285,8 +280,9 @@ export class IdleTriageService extends EventEmitter {
     if (!result.ok) return;
 
     // The agent may have moved on during the ~10–20s call. Only emit if it's
-    // still idle — a stale badge on a now-working agent would be misleading.
-    if (this.entries.get(sessionId)?.lastState !== 'idle') return;
+    // still at rest — a stale badge on a now-working agent would be misleading.
+    const lastState = this.entries.get(sessionId)?.lastState;
+    if (lastState === undefined || !atRest(lastState)) return;
 
     const parsed = parseTriage(result.text);
     if (!parsed) return;

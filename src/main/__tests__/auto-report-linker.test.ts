@@ -87,6 +87,28 @@ describe('AutoReportLinkerService', () => {
     });
   });
 
+  it('links a newly-written report file on the waiting edge (non-OSC harness rest state)', async () => {
+    const { deps, appended, filesByCall } = makeDeps({
+      getSession: () => ({
+        projectId: 'p1',
+        profile: 'codex',
+        cwd: '/proj',
+        openCodeSessionId: 'o1'
+      })
+    });
+    filesByCall.push(stats([{ path: '/proj/weather_forecast_europe_report.md', op: 'C' }]));
+    const svc = new AutoReportLinkerService(deps);
+    svc.observe('s1', 'waiting');
+    await flush();
+    expect(appended).toHaveLength(1);
+    expect(appended[0]).toMatchObject({
+      projectId: 'p1',
+      sessionId: 's1',
+      report: true,
+      docs: [{ path: 'weather_forecast_europe_report.md' }]
+    });
+  });
+
   it('does not re-link the same file on a later idle edge', async () => {
     const { deps, appended, filesByCall } = makeDeps();
     filesByCall.push(stats([{ path: '/proj/report.md', op: 'C' }]));

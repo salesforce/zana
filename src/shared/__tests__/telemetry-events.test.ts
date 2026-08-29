@@ -35,6 +35,7 @@ describe('containsUgc', () => {
   it('is false for every current variant — the union is UGC-free by design', () => {
     expect(containsUgc(session())).toBe(false);
     expect(containsUgc(rollup())).toBe(false);
+    expect(containsUgc({ kind: 'execution.job', executionId: 'e1', projectId: 'p1', teamId: 't1', state: 'RUNNING', attempt: 1, eventCount: 2, artifactCount: 1 })).toBe(false);
   });
 
   // This is the load-bearing guarantee: if someone adds a variant to the union
@@ -66,6 +67,12 @@ describe('assertUgcFree', () => {
   it('passes a well-formed rollup', () => {
     const e = rollup();
     expect(assertUgcFree(e)).toBe(e);
+  });
+
+  it('passes a content-free execution job event and rejects summary smuggling', () => {
+    const event = { kind: 'execution.job' as const, executionId: 'e1', projectId: 'p1', teamId: 't1', state: 'COMPLETED' as const, attempt: 1, durationMs: 10, eventCount: 2, artifactCount: 1 };
+    expect(assertUgcFree(event)).toBe(event);
+    expect(() => assertUgcFree({ ...event, summary: 'secret task content' } as unknown as TelemetryEvent)).toThrow(/unexpected key/);
   });
 
   it('rejects a smuggled extra key (a field not on the variant allowlist)', () => {

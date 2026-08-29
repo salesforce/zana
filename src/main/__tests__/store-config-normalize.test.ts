@@ -207,11 +207,11 @@ describe('harness settings containers', () => {
     expect(normalizeConfig({
       harnessRouting: {
         schemaVersion: 1,
-        byAdapter: { opencode: { modelTargetId: 'aisuite/gpt-5.6-terra' } }
+        byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-terra-1M' } }
       }
     }).harnessRouting).toEqual({
       schemaVersion: 1,
-      byAdapter: { opencode: { modelTargetId: 'aisuite/gpt-5.6-terra' } }
+      byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-terra-1M' } }
     });
   });
 
@@ -291,13 +291,6 @@ describe('normalizeConfig — theme (WARP-A2 tri-state)', () => {
 });
 
 describe('normalizeConfig — catch-up summary flags', () => {
-  it('accepts only explicit HTTP monitor providers', () => {
-    expect(normalizeConfig({ monitorSemanticProvider: 'openai' }).monitorSemanticProvider).toBe('openai');
-    expect(normalizeConfig({ monitorSemanticProvider: 'gemini' }).monitorSemanticProvider).toBe('gemini');
-    // @ts-expect-error monitor paths must never accept coding-harness providers
-    expect(normalizeConfig({ monitorSemanticProvider: 'claude-cli' }).monitorSemanticProvider).toBeUndefined();
-  });
-
   it('passes through a boolean catchUpSummaryEnabled', () => {
     expect(normalizeConfig({ catchUpSummaryEnabled: true }).catchUpSummaryEnabled).toBe(true);
     expect(normalizeConfig({ catchUpSummaryEnabled: false }).catchUpSummaryEnabled).toBe(false);

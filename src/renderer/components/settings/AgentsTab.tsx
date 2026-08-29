@@ -171,28 +171,10 @@ export function AgentsTab({
       >
         <CheckboxField
           label="Idle-agent triage"
-          help="When an agent goes idle, classify why — waiting on you, done, or paused — and badge it on the Agents board. Uses the idle-triage prompt through the selected monitor HTTP provider. Off by default: it spends tokens."
+          help="When an agent goes idle, classify why — waiting on you, done, or paused — and badge it on the Agents board. Uses the idle-triage prompt (edit under Prompts). Off by default: it spends tokens, one claude call per idle spell."
           checked={config.idleTriageEnabled ?? false}
           onChange={(v) => onUpdate({ idleTriageEnabled: v })}
         />
-        <Field
-          label="Monitor semantic provider"
-          help="Used only for idle triage and catch-up summaries. Select OpenAI or Gemini after configuring its key under Prompts. Without one, monitoring stays deterministic and semantic results are unavailable."
-        >
-          <PopoverPicklist
-            value={config.monitorSemanticProvider ?? ''}
-            ariaLabel="Monitor semantic provider"
-            searchable={false}
-            onChange={(monitorSemanticProvider) =>
-              onUpdate({ monitorSemanticProvider: monitorSemanticProvider || undefined })
-            }
-            options={[
-              { value: '', label: 'No provider (semantic work unavailable)' },
-              { value: 'openai', label: 'OpenAI' },
-              { value: 'gemini', label: 'Gemini' }
-            ]}
-          />
-        </Field>
         {config.idleTriageEnabled && (
           <>
             <Field
@@ -288,6 +270,12 @@ export function AgentsTab({
           checked={config.teamLaunchEnabled ?? false}
           onChange={(v) => onUpdate({ teamLaunchEnabled: v })}
         />
+        <CheckboxField
+          label="Team jobs"
+          help="Show durable Job Team mode in New agent. Jobs persist on Agents board after closing launcher. On by default."
+          checked={config.teamJobLaunchEnabled !== false}
+          onChange={(v) => onUpdate({ teamJobLaunchEnabled: v })}
+        />
       </Section>
 
       {/* Agent heartbeat — auto-nudge a stalled agent. Its tuning sub-fields
@@ -363,8 +351,8 @@ export function AgentsTab({
           </>
         )}
         <Field
-          label="Autonomous run timeout (minutes, 0 = no timeout)"
-          help="How long an autonomous squad can run before timing out. Set to 0 to disable timeout completely. Default is 45 minutes. Range 0 (disabled) or 1–1440 (1 minute to 24 hours)."
+          label="Team timeout (minutes, 0 = no timeout)"
+          help="How long Autonomous Team runs and Team jobs can run before timing out. Set to 0 to disable timeout completely. Default is 45 minutes. Range 0 (disabled) or 1–1440 (1 minute to 24 hours)."
         >
           <input
             type="number"

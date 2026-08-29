@@ -55,6 +55,30 @@ async function waitFor(predicate: () => boolean | Promise<boolean>, what: string
   }
 }
 
+async function triggerUntilInstalled(
+  rendererPath: string,
+  installedRenderer: string,
+  original: string,
+  marker: string
+): Promise<void> {
+  const start = Date.now();
+  let attempt = 0;
+  for (;;) {
+    const currentMarker = `// ${marker}-${attempt}\n`;
+    await writeFile(rendererPath, `${currentMarker}${original}`, 'utf-8');
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    try {
+      if (existsSync(installedRenderer) && (await readFile(installedRenderer, 'utf-8')).includes(currentMarker)) return;
+    } catch (err: unknown) {
+      // replaceDir removes the old install before renaming its replacement.
+      // A concurrent read can cross that short window after existsSync passes.
+      if (!(err instanceof Error) || !('code' in err) || err.code !== 'ENOENT') throw err;
+    }
+    if (Date.now() - start > 10_000) throw new Error(`timed out waiting for: auto-reinstalled renderer.js to contain ${marker}`);
+    attempt += 1;
+  }
+}
+
 describe('local-extension hot-reload (real fs, real fs.watch, dummy extension)', () => {
   beforeEach(async () => {
     extDir = await mkdtemp(join(tmpdir(), 'cc-ext-install-root-'));
@@ -111,15 +135,15 @@ describe('local-extension hot-reload (real fs, real fs.watch, dummy extension)',
         // real edit-and-rebuild loop would produce.
         const rendererPath = join(workingDir, 'dist', 'renderer.js');
         const original = await readFile(rendererPath, 'utf-8');
-        await writeFile(rendererPath, `// hot-reload marker\n${original}`, 'utf-8');
-
         // No manual "Reload from source" / install_local_extension call here —
-        // the watcher must notice and re-install on its own.
-        await waitFor(async () => {
-          if (!existsSync(installedRenderer)) return false;
-          const content = await readFile(installedRenderer, 'utf-8');
-          return content.includes('// hot-reload marker');
-        }, 'auto-reinstalled renderer.js to contain the hot-reload marker');
+        // the watcher must notice and re-install on its own. fs.watch has no
+        // readiness barrier, so retry source writes until its OS subscription
+        // observes one instead of treating a lost first event as product failure.
+        await triggerUntilInstalled(rendererPath, installedRenderer, original, 'hot-reload marker');
+        // Drain duplicate fs.watch notifications from the successful write before
+        // testing post-close behavior; otherwise an already-queued reinstall can
+        // observe the next source contents without any post-close watch event.
+        await new Promise((resolve) => setTimeout(resolve, 150));
 
         expect(onFailure).not.toHaveBeenCalled();
 
@@ -175,13 +199,7 @@ describe('local-extension hot-reload (real fs, real fs.watch, dummy extension)',
 
         const rendererPath = join(workingDir, 'dist', 'renderer.js');
         const original = await readFile(rendererPath, 'utf-8');
-        await writeFile(rendererPath, `// flat-watch marker\n${original}`, 'utf-8');
-
-        await waitFor(async () => {
-          if (!existsSync(installedRenderer)) return false;
-          const content = await readFile(installedRenderer, 'utf-8');
-          return content.includes('// flat-watch marker');
-        }, 'auto-reinstalled renderer.js under a forced non-recursive watch');
+        await triggerUntilInstalled(rendererPath, installedRenderer, original, 'flat-watch marker');
 
         expect(onFailure).not.toHaveBeenCalled();
       } finally {

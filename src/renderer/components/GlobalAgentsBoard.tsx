@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Bot, Moon, Plus, Search, X, Loader2 } from 'lucide-react';
-import type { TerminalSession } from '@shared/types';
+import type { ExecutionBoardProjection, TerminalSession } from '@shared/types';
 import { useData, useUi, useAgentStatus, useIdleTriage, useOverseerActivity, useSubagents, useFavoriteAgents, favoriteKey, listedTerminals } from '../store';
 import { AgentBoardLanes, isReclaimableIdle, type AgentCard } from './AgentBoard';
 import { AgentViewToggle } from './AgentViewToggle';
@@ -9,6 +9,7 @@ import { AgentMonitor } from './AgentMonitor';
 import { CloseIdleAgentsDialog } from './CloseIdleAgentsDialog';
 import { CohortBar, type LiveCohort } from './CohortBar';
 import { AgentLauncher } from './AgentLauncher';
+import { ExecutionJobDetails } from './ExecutionJobDetails';
 
 /**
  * The cross-project Agents Kanban: a board of every agent across ALL projects,
@@ -50,6 +51,18 @@ export function GlobalAgentsBoard() {
   // but here it can target any registered project (its default is the scratch
   // workspace). Opened from the primary button in the header.
   const [launcherOpen, setLauncherOpen] = useState(false);
+  const [executions, setExecutions] = useState<ExecutionBoardProjection[]>([]);
+  const [selectedExecution, setSelectedExecution] = useState<{ projectId: string; executionId: string } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => void Promise.all(projects.map((project) => window.cc.executionBoard.listProject(project.id))).then((lists) => {
+      if (!cancelled) setExecutions(lists.flatMap((list) => list.executions));
+    });
+    refresh();
+    const timer = setInterval(refresh, 5_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [projects, terminals]);
 
   // Flatten every project's listed (visible + hidden-but-alive) non-shell
   // sessions into one card list. Raw store slices only; derive behind a memo so
@@ -104,6 +117,10 @@ export function GlobalAgentsBoard() {
 
   // Card click → peek at the agent in the inspector modal (no nav change).
   const inspect = (c: AgentCard) => {
+    if (c.session.cohort?.executionId) {
+      setSelectedExecution({ projectId: c.projectId, executionId: c.session.cohort.executionId });
+      return;
+    }
     useUi.getState().openAgentModal(c.session.id, c.projectId);
   };
 
@@ -192,6 +209,8 @@ export function GlobalAgentsBoard() {
           New agent
         </button>
       </div>
+      <div className="agents-board-content">
+      {selectedExecution && <ExecutionJobDetails projectId={selectedExecution.projectId} executionId={selectedExecution.executionId} onClose={() => setSelectedExecution(null)} />}
 
       {/* Live Team cohorts — one chip per launch, with a per-team Close scoped to
           that cohort (same reclaimable filter as the board buttons: skips
@@ -212,10 +231,10 @@ export function GlobalAgentsBoard() {
       )}
 
       {boardView === 'flow' ? (
-        <SquadFlowView />
+        <SquadFlowView onInspectExecution={(projectId, executionId) => setSelectedExecution({ projectId, executionId })} />
       ) : boardView === 'list' ? (
-        <AgentMonitor cards={visibleCards} showProject />
-      ) : cards.length === 0 ? (
+        <AgentMonitor cards={visibleCards} executions={executions} showProject onInspectExecution={(projectId, executionId) => setSelectedExecution({ projectId, executionId })} />
+      ) : cards.length === 0 && executions.length === 0 ? (
         <div className="agents-board-empty">
           <Bot size={28} aria-hidden="true" />
           <h4>No agents running</h4>
@@ -236,8 +255,12 @@ export function GlobalAgentsBoard() {
           </p>
         </div>
       ) : (
-        <AgentBoardLanes cards={visibleCards} onInspect={inspect} onPick={pick} showProject />
+        <AgentBoardLanes cards={visibleCards} onInspect={inspect} onPick={pick} showProject executions={executions} onDismissExecution={(executionId) => {
+          setExecutions((current) => current.filter((execution) => execution.executionId !== executionId));
+          setSelectedExecution((current) => current?.executionId === executionId ? null : current);
+        }} />
       )}
+      </div>
 
       {closeIdleTarget && (
         <CloseIdleAgentsDialog

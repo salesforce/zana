@@ -55,7 +55,7 @@ describe('execution-state resolution', () => {
     expect(portable).toMatchObject({
       origin: 'portable-mapped', source: 'Persona', targetId: 'opencode.execution.accept-edits',
       equivalence: 'closest', consentRequired: true,
-      contribution: { args: ['--agent', 'build', '--auto'] }
+      contribution: { args: ['--auto'] }
     });
 
     const pinned = resolveExecutionState(providerFor('opencode'), {
@@ -130,7 +130,7 @@ describe('execution-state resolution', () => {
       profile: 'opencode',
       extraArgs: []
     });
-    expect(resolved.contribution.args).toEqual(['--agent', 'build', '--auto']);
+    expect(resolved.contribution.args).toEqual(['--auto']);
   });
 
   it('maps Cursor autonomous to force', () => {

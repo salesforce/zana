@@ -112,4 +112,23 @@ describe('AgentMailDrainService', () => {
     svc.observe('s1', 'done');
     expect(reply).toHaveBeenCalledTimes(1);
   });
+
+  it('nudges once on the edge into waiting (non-OSC harness rest state)', () => {
+    queue['s1'] = [{ id: 'm1', fromHandle: 'alice' }];
+    svc.observe('s1', 'working');
+    expect(reply).not.toHaveBeenCalled();
+    svc.observe('s1', 'waiting');
+    expect(reply).toHaveBeenCalledTimes(1);
+    const [sessionId, text] = reply.mock.calls[0];
+    expect(sessionId).toBe('s1');
+    expect(text).toContain('agent_inbox');
+    expect(text).toContain('@alice');
+  });
+
+  it('does not nudge on the edge into blocked', () => {
+    queue['s1'] = [{ id: 'm1', fromHandle: 'alice' }];
+    svc.observe('s1', 'working');
+    svc.observe('s1', 'blocked');
+    expect(reply).not.toHaveBeenCalled();
+  });
 });

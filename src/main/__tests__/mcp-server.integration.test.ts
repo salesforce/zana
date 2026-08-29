@@ -93,6 +93,35 @@ describe('inbox MCP server (end-to-end)', () => {
     return handle;
   }
 
+  it('1a. responds with a Content-Length-delimited application/json body, NOT an SSE stream', async () => {
+    // enableJsonResponse guard. A real OpenCode MCP client wedges after the
+    // first larger SSE response (leaves the stream unconsumed -> every later
+    // request times out with -32001). Zana's stateless usage is pure
+    // request/response, so the server MUST answer with a single JSON body, not
+    // text/event-stream. Assert the wire directly so a revert to SSE is caught.
+    const store = createMemoryInboxStore();
+    const h = await boot(store, [makeProject('proj-1', 'My Project')]);
+    const res = await fetch(`${h.url}/mcp/proj-1/sess-A`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        // MCP requires the client to accept BOTH types; the server still chooses.
+        accept: 'application/json, text/event-stream'
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'raw', version: '0' } }
+      })
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type') ?? '').toContain('application/json');
+    expect(res.headers.get('content-type') ?? '').not.toContain('text/event-stream');
+    const body = await res.json();
+    expect(body).toMatchObject({ jsonrpc: '2.0', id: 1, result: { protocolVersion: expect.any(String) } });
+  });
+
   it('1. works: a session-scoped inbox_push persists with the URL identity', async () => {
     const store = createMemoryInboxStore();
     const h = await boot(store, [makeProject('proj-1', 'My Project')]);
@@ -177,6 +206,75 @@ describe('inbox MCP server (end-to-end)', () => {
     });
     expect((rejected as { isError?: boolean }).isError).toBe(true);
     expect(cancelTeamLaunch).not.toHaveBeenCalledWith('caller-session', 'request-2');
+  });
+
+  it('routes execution calls through authenticated URL identity and rejects stale or cross-project routes', async () => {
+    const projects = [makeProject('proj-1', 'One'), makeProject('proj-2', 'Two')];
+    const routeIsLive = vi.fn((sessionId: string, projectId: string) => sessionId === 'caller-session' && projectId === 'proj-1');
+    const executionService = {
+      start: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', state: 'RUNNING' } })),
+      list: vi.fn(async () => [{ id: 'execution-1', state: 'RUNNING' }]),
+      snapshot: vi.fn(async () => ({ execution: { id: 'execution-1', state: 'RUNNING' }, executions: [], events: [], nextAfter: 0, truncated: false, artifacts: [], artifactsTruncated: false }))
+    };
+    const map = new Map(projects.map((project) => [project.id, project]));
+    handle = await startMcpServer({
+      inboxStore: createMemoryInboxStore(),
+      suggestionsStore: createMemorySuggestionsStore(),
+      projects: { get: (id) => map.get(id) ?? null },
+      executionService: executionService as never,
+      validateTeamRouteIdentity: routeIsLive,
+      log: () => {}
+    });
+    const credential = controlCredentialForSession('caller-session');
+    const owner = await connectClient(handle.url, `proj-1/caller-session/${credential}`);
+    clients.push(owner);
+
+    const identity = await owner.callTool({ name: 'execution.whoami', arguments: {} });
+    expect((identity as { isError?: boolean }).isError).toBeFalsy();
+    expect(JSON.parse(((identity as { content: Array<{ text: string }> }).content[0].text))).toEqual({
+      projectId: 'proj-1', projectName: 'One', sessionLive: true
+    });
+
+    const started = await owner.callTool({
+      name: 'execution.start',
+      arguments: { version: 1, teamId: 'team-1', launchRequestId: 'request-1', slots: [{ initialTask: 'Run' }] }
+    });
+    expect((started as { isError?: boolean }).isError).toBeFalsy();
+    expect(executionService.start).toHaveBeenCalledWith('caller-session', 'proj-1', expect.objectContaining({ teamId: 'team-1' }));
+
+    const callsBeforeInvalid = executionService.start.mock.calls.length;
+    for (const argumentsWithPrivateField of [
+      { version: 1, teamId: 'team-1', launchRequestId: 'private-top', slots: [{ initialTask: 'Run' }], modelTier: 'HIGH' },
+      { version: 1, teamId: 'team-1', launchRequestId: 'private-slot', slots: [{ initialTask: 'Run', modelTier: 'HIGH' }] },
+      {
+        version: 1, teamId: 'team-1', launchRequestId: 'private-workflow', slots: [{ initialTask: 'Run' }],
+        workflow: {
+          schemaVersion: 1, profileId: 'implementation', profileVersion: '1',
+          controller: { personaId: 'controller', slotId: 'orchestrator:controller' },
+          workers: [{ role: 'worker', personaId: 'worker', slotId: '0:worker:0', modelTier: 'HIGH' }],
+          supportedRequestVersions: [1]
+        }
+      }
+    ]) {
+      const invalid = await owner.callTool({ name: 'execution.start', arguments: argumentsWithPrivateField });
+      expect((invalid as { isError?: boolean }).isError).toBe(true);
+    }
+    expect(executionService.start).toHaveBeenCalledTimes(callsBeforeInvalid);
+
+    const snapshot = await owner.callTool({ name: 'execution.snapshot', arguments: { executionId: 'execution-1', after: 4 } });
+    expect((snapshot as { isError?: boolean }).isError).toBeFalsy();
+    expect(executionService.snapshot).toHaveBeenCalledWith('caller-session', 'proj-1', 'execution-1', 4);
+
+    routeIsLive.mockReturnValue(false);
+    const stale = await owner.callTool({ name: 'execution.list', arguments: {} });
+    expect((stale as { isError?: boolean }).isError).toBe(true);
+    expect(executionService.list).not.toHaveBeenCalled();
+
+    const wrongProject = await connectClient(handle.url, `proj-2/caller-session/${credential}`);
+    clients.push(wrongProject);
+    const crossProject = await wrongProject.callTool({ name: 'execution.list', arguments: {} });
+    expect((crossProject as { isError?: boolean }).isError).toBe(true);
+    expect(executionService.list).not.toHaveBeenCalled();
   });
 
   it('rejects Team mutations on a forged or uncredentialed live session route', async () => {

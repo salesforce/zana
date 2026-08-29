@@ -7,8 +7,10 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 interface FakeProc {
   pid: number;
   args: string[];
-  write: () => void;
-  onData: () => void;
+  writes: string[];
+  dataHandlers: Array<(data: string) => void>;
+  write: (data: string) => void;
+  onData: (handler: (data: string) => void) => void;
   onExit: () => void;
   resize: () => void;
   kill: () => void;
@@ -21,8 +23,10 @@ vi.mock('node-pty', () => ({
     const proc: FakeProc = {
       pid: 2000 + spawned.length,
       args,
-      write() {},
-      onData() {},
+      writes: [],
+      dataHandlers: [],
+      write(data) { this.writes.push(data); },
+      onData(handler) { this.dataHandlers.push(handler); },
       onExit() {},
       resize() {},
       kill() {}
@@ -39,6 +43,7 @@ vi.mock('../mcp-config.js', () => ({
 
 import { PtyManager, cleanExtraArgs, extractPinnedSessionId } from '../pty.js';
 import type { AppConfig } from '../../shared/types.js';
+import { seedPromptArgs } from '../../shared/launch-provider.js';
 
 const UUID = 'a8ca9b2c-eaaa-4b62-b865-841a9344151e';
 
@@ -238,6 +243,121 @@ describe('PtyManager.create — autonomous team runs (yolo base)', () => {
     });
     const denied = flagValue(spawned[0].args, '--disallowedTools') ?? '';
     expect(denied).not.toContain('AskUserQuestion');
+  });
+});
+
+describe('PtyManager.create — Job Team policy', () => {
+  beforeEach(() => { spawned.length = 0; });
+
+  it.each([
+    ['claude', true],
+    ['cursor', true],
+    ['codex', true],
+    ['pi', true],
+    ['opencode', true],
+    ['shell', false]
+  ] as const)('binds Job Team kickoff at spawn for %s', (profile, acceptsPrompt) => {
+    const task = `Job Team kickoff for ${profile}`;
+    const mgr = new PtyManager();
+    mgr.create({
+      projectId: 'p1', profile, cwd: '/tmp', cols: 80, rows: 24, config: CONFIG,
+      coordinationMode: 'job-team', extraArgs: seedPromptArgs(profile, task)
+    });
+
+    const argv = spawned[0].args;
+    if (!acceptsPrompt) {
+      expect(argv).not.toContain(task);
+      return;
+    }
+    if (profile === 'opencode') {
+      expect(flagValue(argv, '--prompt')).toBe(task);
+      return;
+    }
+    expect(argv).toContain(task);
+  });
+
+  it('pre-approves only coordination/reporting additions without inheriting autonomous execution grants', () => {
+    const mgr = new PtyManager();
+    mgr.setMcpBaseUrl('http://127.0.0.1:9999');
+    mgr.create({
+      projectId: 'p1', profile: 'claude', cwd: '/tmp', cols: 80, rows: 24, config: CONFIG,
+      coordinationMode: 'job-team'
+    });
+    const argv = spawned[0].args;
+    const allowed = flagValue(argv, '--allowedTools') ?? '';
+    for (const tool of [
+      'agent_send', 'agent_inbox',
+      'execution.snapshot', 'execution.source.list', 'execution.source.read', 'execution.plan.register',
+      'execution.work.claim', 'execution.work.assign', 'execution.work.complete', 'execution.work.fail',
+       'execution.work.block', 'execution.work.release', 'execution.work.retry',
+       'execution.delivery.pull', 'execution.delivery.ack',
+      'execution.event', 'execution.artifact.put', 'execution.artifact.list', 'execution.complete'
+    ]) expect(allowed).toContain(tool);
+    for (const unsafe of ['remote_exec', 'microvm_exec', 'microvm_reset']) expect(allowed).not.toContain(unsafe);
+    expect(argv).not.toContain('--dangerously-skip-permissions');
+    expect(flagValue(argv, '--permission-mode')).not.toBe('acceptEdits');
+    expect(flagValue(argv, '--disallowedTools')).toContain('AskUserQuestion');
+  });
+
+  it('suppresses generic peer-discovery guidance for host-bound Job Teams', () => {
+    const mgr = new PtyManager();
+    mgr.setMcpBaseUrl('http://127.0.0.1:9999');
+    mgr.create({
+      projectId: 'p1', profile: 'claude', cwd: '/tmp', cols: 80, rows: 24, config: CONFIG,
+      coordinationMode: 'job-team'
+    });
+    const argv = spawned[0].args;
+    const guidance = flagValue(argv, '--append-system-prompt') ?? '';
+    expect(guidance).not.toContain('Other Claude Code agents may be running in sibling tabs');
+    expect(guidance).not.toContain('`register_agent`');
+    expect(guidance).not.toContain('`list_agents`');
+    expect(guidance).not.toContain('`find_agent`');
+    expect(flagValue(argv, '--allowedTools')).toContain('mcp__zcc-inbox__agent_send');
+  });
+
+  it('does not register tab-naming first-prompt hooks for Job Team sessions', () => {
+    const mgr = new PtyManager();
+    mgr.setMcpBaseUrl('http://127.0.0.1:9999');
+    mgr.create({
+      projectId: 'p1', profile: 'claude', cwd: '/tmp', cols: 80, rows: 24, config: CONFIG,
+      coordinationMode: 'job-team'
+    });
+    const argv = spawned[0].args;
+    const settings = JSON.parse(flagValue(argv, '--settings') ?? '{}') as {
+      hooks?: { UserPromptSubmit?: Array<{ hooks?: Array<{ command?: string }> }> };
+    };
+    expect(settings.hooks?.UserPromptSubmit?.flatMap((entry) => entry.hooks ?? []).map((hook) => hook.command).join('\n'))
+      .not.toContain('ZCC_FIRSTPROMPT_URL');
+  });
+
+  it('keeps tab-naming first-prompt hooks for ordinary sessions', () => {
+    const mgr = new PtyManager();
+    mgr.setMcpBaseUrl('http://127.0.0.1:9999');
+    mgr.create({ projectId: 'p1', profile: 'claude', cwd: '/tmp', cols: 80, rows: 24, config: CONFIG });
+    const settings = JSON.parse(flagValue(spawned[0].args, '--settings') ?? '{}') as {
+      hooks?: { UserPromptSubmit?: Array<{ hooks?: Array<{ command?: string }> }> };
+    };
+    expect(settings.hooks?.UserPromptSubmit?.flatMap((entry) => entry.hooks ?? []).map((hook) => hook.command).join('\n'))
+      .toContain('ZCC_FIRSTPROMPT_URL');
+  });
+
+  it('does not inject delayed persona initialPrompt after a composed kickoff', async () => {
+    vi.useFakeTimers();
+    try {
+      const mgr = new PtyManager();
+      mgr.setMcpBaseUrl('http://127.0.0.1:9999');
+      mgr.create({
+        projectId: 'p1', profile: 'claude', cwd: '/tmp', cols: 80, rows: 24, config: CONFIG,
+        coordinationMode: 'job-team', suppressPersonaInitialPrompt: true,
+        persona: { id: 'coordinator', name: 'Coordinator', initialPrompt: 'persona kickoff' },
+        extraArgs: ['composed kickoff']
+      });
+      for (const handler of spawned[0].dataHandlers) handler('ready');
+      await vi.runAllTimersAsync();
+      expect(spawned[0].writes).not.toContain('persona kickoff\r');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

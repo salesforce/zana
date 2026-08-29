@@ -113,7 +113,7 @@ export interface HostEvents {
   /** A session's Claude agent transitioned between activity states. */
   'session:agentStatus': {
     sessionId: string;
-    state: 'working' | 'blocked' | 'done' | 'idle' | 'unknown';
+    state: 'working' | 'blocked' | 'done' | 'idle' | 'unknown' | 'waiting';
   };
   /** A session's process exited; `code` is the exit code. */
   'session:exit': { sessionId: string; code: number };

@@ -5,17 +5,18 @@ Guidance for working in this repo (Zana Command Center — an Electron + React +
 ## Worktrees
 
 Create all git worktrees under `.worktrees/<branch-name>` inside this repository.
-Keeps repo instructions and tooling configuration in each worktree ancestor.
+This keeps repository-local instructions and tooling configuration in each worktree's
+ancestor path.
 
 ## Engineering Rules
 
-Core rules. Rationale: `docs/review-consensus-2026-06.md`.
+The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
 
-1. **Renderer is untrusted — main authorizes.** Validate path / projectId / cwd in main; renderer checks are advisory.
-2. **Confine paths before trust.** Renderer- or agent-supplied paths become trust anchors only after `realpath` matching registered project or HOME/cloneRoot base.
-3. **Subscribe long-lived emitters once at app init** — never `createWindow()`. Release every subscription, timer, and per-session resource on shutdown.
-4. **Shared-file writes are atomic and serialized** — uniquely suffixed tmp + rename, mutex for read-modify-write, or strictly append-only.
-5. **Keep heavy, unbounded work off main event loop** — bound/`LIMIT`/paginate growing reads; accumulating stores need retention cap.
+1. **The renderer is untrusted — main authorizes.** Validate any path / projectId / cwd in main before it grants access; renderer-side checks are advisory.
+2. **Confine paths before trusting them.** A renderer- or agent-supplied path is only a trust anchor after `realpath`-matching a registered project (or a HOME/cloneRoot base).
+3. **Subscribe long-lived emitters once, at app init** — never inside `createWindow()` (it re-runs). Release every subscription, timer, and per-session resource on its shutdown path.
+4. **Shared-file writes are atomic and serialized** — tmp + uniquely-suffixed rename, and one in-process mutex for read-modify-write (or be strictly append-only).
+5. **Keep heavy, unbounded work off the main event loop** — bound/`LIMIT`/paginate growing reads; an unbounded accumulating store needs a retention cap.
 6. **Core never names a specific extension in logic** — concrete ids appear only in the `MAIN_MODULES` / `APP_MODULES` registration. In the RENDERER the invariant is now absolute: the `'zana'` module-id literal must appear NOWHERE in `src/renderer/**` code (the whole Zana feature — main + renderer — is now a disk extension, see the zana note below, so there is no longer any core quarantine seam). The source-text guard (`src/renderer/__tests__/rule6-zana-literal.guard.test.ts`) scans comment-stripped renderer code and fails on ANY bare `'zana'`/`"zana"` token. NOTE: `MAIN_MODULES` now registers ONLY `slack` (the sole compiled-in built-in) — `zana` is no longer a built-in main module (it left core when its data moved off native better-sqlite3 onto the host MCP pool over the brokered `mcp` cap); the registration site is guarded by `src/main/__tests__/core-extension-separation.guard.test.ts`.
 7. **Promotion to a built-in is deliberate and bounded** — only when the broker can't grant the capability even scoped, and the trusted version (`builtinExec`/`builtinFetch`) is no weaker than its broker-gated twin (redirects, body cap, timeout).
 8. **New or modified code needs at least 80% test coverage.** Cover meaningful branches and failure paths, not only line count. For Electron main/renderer seams, unit coverage alone is insufficient: add or update the relevant built-Electron E2E test. Before completion, run the focused tests and the production-boundary E2E required by any affected coupling note.
@@ -450,6 +451,24 @@ Core rules. Rationale: `docs/review-consensus-2026-06.md`.
   (`src/main/ssh-config.ts`) and extension SSH-host-provider seam are the public
   integration points. An environment-specific integration belongs in a separately
   distributed extension, never in the app source tree.
+
+- **`bundled-extensions/*` contains committed runtime artifacts, not disposable
+  build output.** `predev`/`prestart` run `scripts/seed-extensions.mjs`, whose
+  per-extension package scripts rewrite these canonical packaged manifests and
+  bundles (including `build.sha`/`build.at` provenance); `electron-builder.yml`
+  ships this directory. When those tracked files change during app build/run,
+  preserve, inspect, and include them in the related commit unless the package
+  output is proven stale or incorrect. Never classify them as unrelated generated
+  churn solely because a build command produced them. Because provenance records
+  the pre-commit `HEAD`, a later explicit artifact-refresh commit may still be
+  needed when exact post-commit provenance matters. **DO stage and commit
+  `bundled-extensions/**` with the related change — do NOT drop it from a commit
+  as "provenance noise" and do NOT `.gitignore` it. These files are tracked,
+  shipped app artifacts; the only churn you may leave uncommitted is a
+  `build.sha`/`build.at` bump with no other diff, and even that is committed by
+  default.** (Disposable outputs like `coverage/` ARE `.gitignore`d — that is the
+  test for "commit vs ignore": shipped ⇒ commit, regenerated-and-not-shipped ⇒
+  ignore.)
 
 - **Release artifacts are published to the configured public GitHub release feed.**
   The auto-updater reads that feed anonymously. When cutting a release, publish

@@ -48,3 +48,6 @@ e2e-artifacts/
 
 # menubar-popover dev preview screenshots
 .mbp-live.png
+
+# Test coverage reports (regenerated, not shipped)
+coverage/

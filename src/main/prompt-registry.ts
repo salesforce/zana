@@ -106,9 +106,7 @@ const BUILTIN: LlmPromptEntry[] = [
     label: 'Idle triage',
     description:
       'Classifies an idle agent from the last thing it said: waiting on you, done, or paused. Powers the idle-agent triage add-on (Settings → off by default, spends tokens).',
-    // Monitor dispatch replaces this with the configured eligible HTTP provider.
-    // Keep a safe default for direct prompt testing and never name claude-cli here.
-    provider: 'openai',
+    provider: 'claude-cli',
     model: 'haiku',
     systemPrompt: [
       'You classify the state of a paused coding agent from the last message it wrote.',
@@ -136,8 +134,7 @@ const BUILTIN: LlmPromptEntry[] = [
     label: 'Catch-up summary',
     description:
       'Generates a tight catch-up for an idle or blocked agent — where are we, what changed — shown under the terminal in the agent modal. Powers the catch-up-summary add-on (Settings → Experimental → off by default, spends tokens).',
-    // See builtin:idle-triage: monitor dispatch selects OpenAI or Gemini only.
-    provider: 'openai',
+    provider: 'claude-cli',
     model: 'haiku',
     systemPrompt: [
       'You write a tight catch-up for a coding agent that has been idle or blocked a while.',

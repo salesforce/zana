@@ -183,7 +183,7 @@ describe('PtyManager.create — persona layer integration', () => {
         harnessRouting: {
           schemaVersion: 1,
           byAdapter: {
-            opencode: { modelTargetId: 'aisuite/gpt-5.6-luna', executionState: 'plan' }
+            opencode: { modelTargetId: 'llmgw/gpt-5.6-luna-1M', executionState: 'plan' }
           }
         }
       },
@@ -191,7 +191,7 @@ describe('PtyManager.create — persona layer integration', () => {
         harnessRouting: {
           schemaVersion: 1,
           byAdapter: {
-            opencode: { modelTargetId: 'aisuite/gpt-5.6-terra', executionState: 'interactive' }
+            opencode: { modelTargetId: 'llmgw/gpt-5.6-terra-1M', executionState: 'interactive' }
           }
         }
       },
@@ -199,18 +199,17 @@ describe('PtyManager.create — persona layer integration', () => {
       harnessRouting: {
         schemaVersion: 1,
         byAdapter: {
-          opencode: { modelTargetId: 'aisuite/gemini-3.5-flash', executionState: 'autonomous' }
+          opencode: { modelTargetId: 'llmgw/gemini-3.5-flash', executionState: 'autonomous' }
         }
       }
     });
 
     const argv = spawned[0].args;
-    expect(argv).toContain('aisuite/gemini-3.5-flash');
-    expect(argv).toContain('build');
+    expect(argv).toContain('llmgw/gemini-3.5-flash');
     expect(argv).toContain('--auto');
-    expect(argv).not.toContain('aisuite/gpt-5.6-luna');
-    expect(argv).not.toContain('aisuite/gpt-5.6-terra');
-    expect(argv).not.toContain('aisuite/gpt-5.6-sol');
+    expect(argv).not.toContain('llmgw/gpt-5.6-luna-1M');
+    expect(argv).not.toContain('llmgw/gpt-5.6-terra-1M');
+    expect(argv).not.toContain('llmgw/gpt-5.6-sol-1M');
     expect(argv).not.toContain('plan');
   });
 

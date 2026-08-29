@@ -196,7 +196,7 @@ test('real OpenCode CLI agents become selectable through Electron UI', async ({ 
 
     const picker = modal.locator('#launch-role-target');
     await expect(picker).toBeEnabled({ timeout: 30_000 });
-    await expect(picker.locator('option')).toContainText(['build [Accept Edits, Autonomous]', 'plan [Plan]', 'doc-vault', 'test-primary']);
+    await expect(picker.locator('option')).toContainText(['build [Accept Edits, Autonomous]', 'plan [Plan]']);
     await expect(picker.locator('option')).not.toContainText(['compaction', 'summary', 'title', 'test-subagent']);
     await picker.selectOption('plan');
     await expect(picker).toHaveValue('plan');
@@ -257,10 +257,8 @@ test.describe('real OpenCode home integration', () => {
       const options = await picker.locator('option').allTextContents();
       expect(options).toEqual(expect.arrayContaining([
         'build [Accept Edits, Autonomous]',
-        'plan [Plan]',
-        'doc-vault'
+        'plan [Plan]'
       ]));
-      expect(options.some((option) => option.startsWith('test-primary'))).toBe(true);
       expect(options).not.toEqual(expect.arrayContaining(['compaction', 'summary', 'title', 'test-subagent']));
       await picker.selectOption('plan');
       await expect(picker).toHaveValue('plan');

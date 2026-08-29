@@ -34,6 +34,7 @@ import type {
   Project,
   QuickPrompt,
   TerminalSession,
+  ExecutionSourceCapabilityView,
   WorkflowArgument
 } from '@shared/types';
 import { executionMappingOptions } from '@shared/harness-adapter';
@@ -1011,6 +1012,7 @@ export const AgentLauncher = memo(function AgentLauncher({
   // (PI) ignores it (the toggle is disabled).
   const [yolo, setYolo] = useState(false);
   const globalDefaultHarness = useData((s) => s.defaultHarness);
+  const teamJobLaunchEnabled = useData((s) => s.teamJobLaunchEnabled);
   const configLoaded = useData((s) => s.configLoaded);
   const harnessCursorEnabled = useData((s) => s.harnessCursorEnabled);
   const harnessCodexEnabled = useData((s) => s.harnessCodexEnabled);
@@ -1112,21 +1114,22 @@ export const AgentLauncher = memo(function AgentLauncher({
    * registered project instead. Unused in project mode (the target is fixed).
    */
   const [targetProjectId, setTargetProjectId] = useState<string | null>(null);
-  // Launch mode: a single agent (default, the flow above) or an autonomous team
-  // run (orchestrator + workers driven toward a goal). Autonomous mode swaps the
-  // profile/persona/framework pickers for a Team picker and launches via
-  // `teams.launchAutonomous` instead of `createTerminal`.
-  const [mode, setMode] = useState<'agent' | 'autonomous'>('agent');
+  // Team modes replace individual harness choices with host-authorized Team work.
+  const [mode, setMode] = useState<'agent' | 'autonomous' | 'job'>('agent');
   const [teamId, setTeamId] = useState<string | null>(null);
+  const [jobTitle, setJobTitle] = useState('');
+  const [jobSummary, setJobSummary] = useState('');
   const [harnessDescriptors, setHarnessDescriptors] = useState<HarnessAdapterDescriptor[]>([]);
   const [openCodeAgentDiscoverySnapshot, setOpenCodeAgentDiscoverySnapshot] = useState<OpenCodeAgentDiscoverySnapshot | null>(null);
-  const [agentDescriptorsRefresh, setAgentDescriptorsRefresh] = useState(0);
+  const [agentDescriptorsRequest, setAgentDescriptorsRequest] = useState(0);
+  const refreshAgentDescriptorsRef = useRef(false);
   const [portableRouting, setPortableRouting] = useState<LauncherRouting>({});
   const [nativeRouting, setNativeRouting] = useState<Partial<Record<HarnessFamily, LauncherRouting>>>({});
   const [agentRoutingDirty, setAgentRoutingDirty] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [launching, setLaunching] = useState(false);
   const [attachments, setAttachments] = useState<string[]>([]);
+  const [jobSources, setJobSources] = useState<ExecutionSourceCapabilityView[]>([]);
   const [fixingWithAi, setFixingWithAi] = useState(false);
   const teams = useTeams(useShallow((s) => s.teams));
   const pushToast = useUi((s) => s.pushToast);
@@ -1189,6 +1192,20 @@ export const AgentLauncher = memo(function AgentLauncher({
   const remoteTarget = target?.remote ? { id: target.id, remote: target.remote } : undefined;
   const addAttachments = (paths: string[]) => {
     setAttachments((current) => mergeAttachmentPaths(current, paths));
+  };
+  const pickJobSources = async () => {
+    if (!target) return;
+    const result = await window.cc.executionSources.pick(target.id);
+    if (!result.ok) {
+      const message = result.message ?? result.code;
+      setLaunchError(message);
+      pushToast(message, 'error');
+      return;
+    }
+    setJobSources((current) => {
+      const ids = new Set(current.map(({ id }) => id));
+      return [...current, ...result.value.filter(({ id }) => !ids.has(id))];
+    });
   };
   const resolveAttachmentPaths = async (): Promise<string[] | null> => {
     if (!remoteTarget) return attachments;
@@ -1478,6 +1495,10 @@ export const AgentLauncher = memo(function AgentLauncher({
         cancelled = true;
       };
     }
+    // Consume refresh intent once. A later project/profile change should use
+    // the startup-warmed catalog instead of silently running discovery again.
+    const refresh = refreshAgentDescriptorsRef.current;
+    refreshAgentDescriptorsRef.current = false;
     setOpenCodeAgentDiscoverySnapshot({
       projectId: openCodeAgentDiscoveryProjectId,
       profile: openCodeAgentDiscoveryProfile,
@@ -1486,7 +1507,7 @@ export const AgentLauncher = memo(function AgentLauncher({
     void window.cc.harness.agentDescriptors(
       openCodeAgentDiscoveryProjectId,
       openCodeAgentDiscoveryProfile,
-      agentDescriptorsRefresh > 0
+      refresh
     )
       .then((discovery) => {
         if (cancelled) return;
@@ -1520,7 +1541,7 @@ export const AgentLauncher = memo(function AgentLauncher({
     return () => {
       cancelled = true;
     };
-  }, [openCodeAgentDiscoveryProjectId, openCodeAgentDiscoveryProfile, agentDescriptorsRefresh]);
+  }, [openCodeAgentDiscoveryProjectId, openCodeAgentDiscoveryProfile, agentDescriptorsRequest]);
 
   useEffect(() => {
     composerRef.current?.focus();
@@ -1678,6 +1699,41 @@ export const AgentLauncher = memo(function AgentLauncher({
       onClose();
     } catch (err) {
       const message = `Autonomous launch failed: ${err instanceof Error ? err.message : String(err)}`;
+      setLaunchError(message);
+      pushToast(message, 'error');
+    } finally {
+      setLaunching(false);
+    }
+  };
+
+  const launchJob = async () => {
+    const goal = prompt.trim();
+    if (!teamId || !goal || !target) return;
+    setLaunching(true);
+    try {
+      const res = await window.cc.teams.startJob({
+        teamId,
+        projectId: target.id,
+        goal,
+        title: jobTitle.trim() || titleFromPrompt(goal),
+        summary: jobSummary.trim() || undefined,
+        sourceCapabilityIds: jobSources.map(({ id }) => id)
+      });
+      if (!res.ok) {
+        const message = `Job launch failed: ${res.message ?? res.code}`;
+        setLaunchError(message);
+        pushToast(message, 'error');
+        return;
+      }
+      clearDraft();
+      setAttachments([]);
+      setJobSources([]);
+      setLaunchError(null);
+      pushToast('Job launched. Open Agents board to monitor it.');
+      onClose();
+      
+    } catch (err) {
+      const message = `Job launch failed: ${err instanceof Error ? err.message : String(err)}`;
       setLaunchError(message);
       pushToast(message, 'error');
     } finally {
@@ -1885,6 +1941,16 @@ export const AgentLauncher = memo(function AgentLauncher({
                 >
                   <Zap size={13} /> Autonomous team
                 </button>
+                {teamJobLaunchEnabled && (
+                  <button
+                    type="button"
+                    className={mode === 'job' ? 'active' : ''}
+                    onClick={() => setMode('job')}
+                    aria-pressed={mode === 'job'}
+                  >
+                    <Users size={13} /> Job Team
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -1894,19 +1960,22 @@ export const AgentLauncher = memo(function AgentLauncher({
             value={prompt}
             onChange={setPrompt}
             mentionProjectPath={project?.path}
-            attachments={attachments}
-            onAddAttachments={addAttachments}
+            attachments={mode === 'job' ? jobSources.map(({ name }) => name) : attachments}
+            onAddAttachments={mode === 'job' ? () => undefined : addAttachments}
+            onPickAttachments={mode === 'job' ? pickJobSources : undefined}
+            attachmentDropEnabled={mode !== 'job'}
             onRemoveAttachment={(path) => {
-              setAttachments((current) => current.filter((item) => item !== path));
+              if (mode === 'job') setJobSources((current) => current.filter(({ name }) => name !== path));
+              else setAttachments((current) => current.filter((item) => item !== path));
             }}
-            onSubmit={mode === 'autonomous' ? launchAutonomous : launch}
+            onSubmit={mode === 'autonomous' ? launchAutonomous : mode === 'job' ? launchJob : launch}
             variant={useQuickAgentHomeComposer ? 'home' : 'default'}
-            submitLabel={mode === 'autonomous' ? 'Launch autonomous team' : 'Launch agent'}
-            submitDisabled={mode === 'autonomous'
+            submitLabel={mode === 'autonomous' ? 'Launch autonomous team' : mode === 'job' ? 'Launch job team' : 'Launch agent'}
+            submitDisabled={mode === 'autonomous' || mode === 'job'
               ? !teamId || !prompt.trim() || !target || launching
               : !target || !descriptor || !configLoaded || !worktreeDefaultLoaded || personaProfileConflict || launching}
             placeholder={
-              mode === 'autonomous'
+              mode === 'autonomous' || mode === 'job'
                 ? 'Describe the GOAL for the team to reach (⌘↵ to launch). Attach or drop supporting files.'
                 : 'Describe the task… (⌘↵ to launch). Attach or drop files. Leave empty to open an interactive session.'
             }
@@ -2009,7 +2078,7 @@ export const AgentLauncher = memo(function AgentLauncher({
           {/* Autonomous mode: pick the Team to launch. The goal comes from the
               prompt box above. Replaces the profile/persona/framework pickers —
               those are per-agent and don't apply to a whole-team run. */}
-          {mode === 'autonomous' && (
+          {(mode === 'autonomous' || mode === 'job') && (
             <div className="launch-row">
               <span className="launch-row-label">Team</span>
               <div className="launch-personas" role="group" aria-label="Team">
@@ -2032,6 +2101,33 @@ export const AgentLauncher = memo(function AgentLauncher({
                   </button>
                 ))}
               </div>
+            </div>
+          )}
+
+          {mode === 'job' && (
+            <div className="launch-job-details" role="group" aria-label="Job details">
+              <label className="workflow-arg-field" htmlFor="launch-job-title">
+                <span>Title <span className="launch-optional">Optional</span></span>
+                <input
+                  id="launch-job-title"
+                  type="text"
+                  maxLength={256}
+                  value={jobTitle}
+                  placeholder="Defaults from goal"
+                  onChange={(event) => setJobTitle(event.target.value)}
+                />
+              </label>
+              <label className="workflow-arg-field" htmlFor="launch-job-summary">
+                <span>Summary <span className="launch-optional">Optional</span></span>
+                <textarea
+                  id="launch-job-summary"
+                  rows={3}
+                  maxLength={4000}
+                  value={jobSummary}
+                  placeholder="Add context for this job"
+                  onChange={(event) => setJobSummary(event.target.value)}
+                />
+              </label>
             </div>
           )}
 
@@ -2254,7 +2350,8 @@ export const AgentLauncher = memo(function AgentLauncher({
                             discovery: { status: 'loading' }
                           });
                         }
-                        setAgentDescriptorsRefresh((value) => value + 1);
+                        refreshAgentDescriptorsRef.current = true;
+                        setAgentDescriptorsRequest((value) => value + 1);
                       }}
                       onChange={(patch) => updateNativeRouting(family!.id, patch)}
                     />
@@ -2530,6 +2627,16 @@ export const AgentLauncher = memo(function AgentLauncher({
                 >
                   <Zap size={14} />
                   Launch autonomous team
+                </button>
+              ) : mode === 'job' ? (
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={!teamId || !prompt.trim() || !target || launching}
+                  onClick={launchJob}
+                  title="Launch durable Job Team (⌘↵)"
+                >
+                  Launch job team
                 </button>
               ) : (
                 <button

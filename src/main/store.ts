@@ -875,9 +875,6 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.idleTriageEnabled === 'boolean') {
     normalized.idleTriageEnabled = input.idleTriageEnabled;
   }
-  if (input.monitorSemanticProvider === 'openai' || input.monitorSemanticProvider === 'gemini') {
-    normalized.monitorSemanticProvider = input.monitorSemanticProvider;
-  }
   if (typeof input.heldQuestionsEnabled === 'boolean') {
     normalized.heldQuestionsEnabled = input.heldQuestionsEnabled;
   }
@@ -944,6 +941,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (typeof input.teamLaunchEnabled === 'boolean') {
     normalized.teamLaunchEnabled = input.teamLaunchEnabled;
+  }
+  if (typeof input.teamJobLaunchEnabled === 'boolean') {
+    normalized.teamJobLaunchEnabled = input.teamJobLaunchEnabled;
   }
   if (typeof input.goalsEnabled === 'boolean') {
     normalized.goalsEnabled = input.goalsEnabled;
@@ -1536,8 +1536,7 @@ export const store = {
       'defaultExecutionState',
       'piProvider',
       'piModel',
-      'piThinking',
-      'monitorSemanticProvider'
+      'piThinking'
     ] as const;
     for (const key of optionalHarnessKeys) {
       if (Object.prototype.hasOwnProperty.call(patch, key) && patch[key] === undefined) {
