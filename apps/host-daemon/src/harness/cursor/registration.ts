@@ -15,6 +15,7 @@ export const cursorHarness: HarnessRegistration = {
   defaultProfileId: 'cursor',
   implementation,
   renderRemoteCommand: (input) => implementation.buildRemoteCommand(input),
+  monitorCapability: { state: 'unsupported', sources: [], reason: 'No verified native monitor source' },
   supportedScopes: ['local', 'remote'],
   verification: {
     enabledConfigKey: 'harnessCursorEnabled',

@@ -58,7 +58,7 @@ const exactObserved = (effect: string): ExecutionEvidenceFixture['observed'] => 
 const APPROVED_EXECUTION_EVIDENCE: Readonly<Record<string, ExecutionEvidenceFixture>> = Object.freeze({
   ...Object.fromEntries((['plan', 'interactive', 'accept-edits', 'autonomous'] as const).map((state) => [
     `claude.execution.${state}`,
-    exactExecutionEvidence('claude', state, '2.1.220', ['local', 'remote'], exactObserved(`Claude ${state} permission mode`))
+    exactExecutionEvidence('claude', state, '2.1.209', ['local', 'remote'], exactObserved(`Claude ${state} permission mode`))
   ])),
   ...Object.fromEntries((['plan', 'interactive', 'accept-edits', 'autonomous'] as const).map((state) => [
     `codex.execution.${state}`,

@@ -27,7 +27,7 @@ ways to operate the same workspace.
 > supported coding-agent CLI on your `PATH`.
 
 <p align="center">
-  <img alt="Zana Command Center Agents board showing a multi-agent workspace" src="docs/assets/screenshot-agents-board.png" width="100%">
+  <img alt="Zana Command Center Agents board showing a multi-agent workspace" src="docs/assets/screenshot-agents-board.gif" width="100%">
 </p>
 
 ## Use Zana

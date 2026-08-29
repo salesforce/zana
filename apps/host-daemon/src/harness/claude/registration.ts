@@ -30,6 +30,7 @@ export const claudeHarness: HarnessRegistration = {
     return resume;
   },
   renderLifecycle: (input) => renderClaudeLifecycle(input),
+  monitorCapability: { state: 'supported', sources: ['osc-title', 'lifecycle-hooks', 'tool-hooks'] },
   createTranscriptAdapter: () => claudeTranscript,
   supportedScopes: ['local', 'remote'],
   verification: {

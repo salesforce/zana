@@ -6,6 +6,7 @@ import {
   AgentStatusTracker,
   SUBAGENT_CHILD_CAP
 } from './agent-status.js';
+import { HARNESS_MONITOR_FACTS_VERSION } from '@zana-ai/zcc-host-daemon/harness-monitor-facts';
 
 describe('classifyOscTitle', () => {
   it('maps a leading braille spinner glyph to working', () => {
@@ -76,6 +77,19 @@ describe('extractLastOscTitle', () => {
 });
 
 describe('AgentStatusTracker (debounced emits)', () => {
+  it('accepts normalized monitor facts without a harness helper process', () => {
+    const tracker = new AgentStatusTracker();
+    const result = tracker.reportFact({
+      version: HARNESS_MONITOR_FACTS_VERSION,
+      sessionId: 's1',
+      profile: 'opencode',
+      source: 'test',
+      observedAt: Date.now(),
+      capability: 'supported',
+      kind: 'blocked'
+    });
+    expect(result).toMatchObject({ state: 'blocked', reason: 'blocked' });
+  });
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 

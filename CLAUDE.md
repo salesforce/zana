@@ -5,12 +5,11 @@ Guidance for working in this repo (Zana Command Center — an Electron + React +
 ## Worktrees
 
 Create all git worktrees under `.worktrees/<branch-name>` inside this repository.
-This keeps repository-local instructions and tooling configuration in each worktree's
-ancestor path.
+Keeps repo instructions and tooling configuration in each worktree ancestor.
 
 ## Engineering Rules
 
-The few that matter. (Fuller rationale: `docs/review-consensus-2026-06.md`.)
+Core rules. Rationale: `docs/review-consensus-2026-06.md`.
 
 1. **The renderer is untrusted — main authorizes.** Validate any path / projectId / cwd in main before it grants access; renderer-side checks are advisory.
 2. **Confine paths before trusting them.** A renderer- or agent-supplied path is only a trust anchor after `realpath`-matching a registered project (or a HOME/cloneRoot base).

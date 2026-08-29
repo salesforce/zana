@@ -16,11 +16,11 @@
  *  - One-shot per idle spell: re-armed only when the agent leaves idle, so a
  *    steady idle agent is classified exactly once (mirrors the tab-namer's
  *    one-shot-per-session gate).
- *  - It bails before spending anything when the add-on is disabled, the session
- *    isn't a live claude session, or there's no transcript text to classify.
+ *  - It bails before spending anything when the add-on is disabled, no transcript
+ *    text exists, or no eligible monitor HTTP provider is configured.
  *
  * All collaborators are injected so the trigger logic is unit-testable without
- * Electron, the filesystem, or a real `claude --print` spawn.
+ * Electron, the filesystem, or a real provider call.
  */
 
 import { EventEmitter } from 'node:events';
@@ -78,6 +78,8 @@ export interface IdleTriageDeps {
    * whose `providerCapabilities().hasTranscript` is true participates.
    */
   hasTranscript: (profile: string) => boolean;
+  /** Only registrations with verified native monitor facts can use semantic work. */
+  hasMonitorCapability: (profile: string) => boolean;
   /**
    * Read the session transcript's last assistant prose ('' when unavailable).
    * Takes a session ref (not just cwd/claudeSessionId) so a provider whose
@@ -94,6 +96,9 @@ export interface IdleTriageDeps {
   /** Clear a dwell-timer handle. Injected to pair with {@link setTimer}. */
   clearTimer: (handle: NodeJS.Timeout) => void;
 }
+
+export const MAX_CONCURRENT_TRIAGES = 5;
+export const MAX_TRIAGES_PER_SESSION = 6;
 
 /**
  * Coerce a model's JSON reply into an {@link IdleResolution} + summary. Tolerant:
@@ -158,6 +163,8 @@ interface Entry {
   fired: boolean;
   /** The armed dwell timer (null when not idle / already elapsed / cancelled). */
   timer: NodeJS.Timeout | null;
+  /** Lifetime budget prevents agent-controlled OSC state cycling from spending without bound. */
+  runs: number;
 }
 
 /**
@@ -167,6 +174,7 @@ interface Entry {
  */
 export class IdleTriageService extends EventEmitter {
   private entries = new Map<string, Entry>();
+  private pending = 0;
 
   constructor(private readonly deps: IdleTriageDeps) {
     super();
@@ -184,7 +192,7 @@ export class IdleTriageService extends EventEmitter {
   observe(sessionId: string, state: AgentState): void {
     let entry = this.entries.get(sessionId);
     if (!entry) {
-      entry = { lastState: 'unknown', fired: false, timer: null };
+      entry = { lastState: 'unknown', fired: false, timer: null, runs: 0 };
       this.entries.set(sessionId, entry);
     }
     const wasIdle = entry.lastState === 'idle';
@@ -231,14 +239,23 @@ export class IdleTriageService extends EventEmitter {
     const entry = this.entries.get(sessionId);
     if (!entry) return;
     entry.timer = null;
-    if (entry.lastState !== 'idle' || entry.fired) return;
+    if (entry.lastState !== 'idle' || entry.fired || entry.runs >= MAX_TRIAGES_PER_SESSION) return;
     entry.fired = true; // claim the one-shot before any await
 
+    if (this.pending >= MAX_CONCURRENT_TRIAGES) {
+      entry.fired = false;
+      entry.timer = this.deps.setTimer(() => this.onDwellElapsed(sessionId), 1_000);
+      return;
+    }
+    this.pending++;
+    entry.runs++;
     void this.triage(sessionId).catch(() => {
       // Never let a triage failure crash the timer callback. Release the one-shot
       // so a future working→idle cycle gets a fresh attempt.
       const e = this.entries.get(sessionId);
       if (e) e.fired = false;
+    }).finally(() => {
+      this.pending--;
     });
   }
 
@@ -248,7 +265,7 @@ export class IdleTriageService extends EventEmitter {
     if (!session || session.status === 'exited') return;
     // Background agents (scheduled runs, team workers) never request attention.
     if (session.scheduled || session.headless) return;
-    if (!this.deps.hasTranscript(session.profile)) return;
+    if (!this.deps.hasMonitorCapability(session.profile) || !this.deps.hasTranscript(session.profile)) return;
 
     const lastTurn = await this.deps.readLastTurn({
       id: sessionId,

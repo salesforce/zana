@@ -15,16 +15,16 @@
  *    never spends a call. Armed on working/blocked → idle OR on entering 'blocked'.
  *  - One-shot per spell: re-armed only when the agent leaves the trigger state, so
  *    a steady idle or blocked agent is summarized exactly once (mirrors idle-triage).
- *  - It bails before spending anything when the add-on is disabled, the session
- *    isn't a live claude session, it's a background (scheduled/headless) session,
- *    or there's no transcript text to summarize.
+ *  - It bails before spending anything when the add-on is disabled, it is a
+ *    background (scheduled/headless) session, transcript text is unavailable, or
+ *    no eligible monitor HTTP provider is configured.
  *  - Re-checks isEnabled() AFTER the cheap transcript read and BEFORE the costly
  *    LLM spawn (CLAUDE.md #5) so toggling off mid-read doesn't still spend tokens.
  *  - Bounded concurrency (MAX_CONCURRENT_SUMMARIES) so a burst across many sessions
  *    can't stampede (mirrors close-summary.ts).
  *
  * All collaborators are injected so the service is unit-testable without Electron,
- * the filesystem, or a real `claude --print` spawn (mirrors {@link IdleTriageService}).
+ * the filesystem, or a real provider call (mirrors {@link IdleTriageService}).
  */
 
 import { EventEmitter } from 'node:events';
@@ -66,6 +66,8 @@ export interface CatchUpSummaryDeps {
    * profile without a transcript is skipped. Provider-agnostic.
    */
   hasTranscript: (profile: string) => boolean;
+  /** Only registrations with verified native monitor facts can use semantic work. */
+  hasMonitorCapability: (profile: string) => boolean;
   /**
    * Read the session transcript's digest (a role-tagged summary of the whole
    * session, not just the last turn — we want the arc). Returns '' when unavailable.
@@ -85,10 +87,9 @@ export interface CatchUpSummaryDeps {
 }
 
 /**
- * Cap on concurrent per-session micro-calls. Each {@link runSummary} spawns a
- * `claude --print` child, so without a bound, a burst across many sessions would
- * fork that many processes at once (CLAUDE.md #5 — keep heavy work off a single
- * burst). 5 keeps responsiveness without stampeding (mirrors close-summary.ts).
+ * Cap on concurrent per-session micro-calls. Without a bound, a burst across
+ * many sessions would stampede the configured HTTP provider. 5 keeps
+ * responsiveness without stampeding (mirrors close-summary.ts).
  */
 const MAX_CONCURRENT_SUMMARIES = 5;
 
@@ -272,6 +273,7 @@ export class CatchUpSummaryService extends EventEmitter {
     if (!session || session.status === 'exited') return fail('ineligible');
     // Background agents (scheduled runs, team workers) never request attention.
     if (session.scheduled || session.headless) return fail('background');
+    if (!this.deps.hasMonitorCapability(session.profile)) return fail('monitor-unsupported');
     if (!this.deps.hasTranscript(session.profile)) return fail('no-transcript');
 
     const digest = await this.deps.readDigest({

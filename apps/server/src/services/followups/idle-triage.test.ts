@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { IdleTriageService, parseTriage, type IdleTriageDeps, type TriageSessionInfo } from './idle-triage.js';
+import { IdleTriageService, MAX_CONCURRENT_TRIAGES, MAX_TRIAGES_PER_SESSION, parseTriage, type IdleTriageDeps, type TriageSessionInfo } from './idle-triage.js';
 import type { IdleTriageResult, LlmRunResult } from '@zana-ai/zcc-domain/product';
 
 describe('parseTriage', () => {
@@ -135,6 +135,7 @@ describe('IdleTriageService', () => {
       delaySeconds: () => 20,
       getSession: () => baseSession,
       hasTranscript: (p) => p === 'claude',
+      hasMonitorCapability: (p) => p === 'claude',
       readLastTurn: vi.fn(async () => 'Done — want me to commit?'),
       runTriage: vi.fn(async () => okResult('{"resolution":"done","summary":"finished","confidence":0.8}')),
       now: () => 1000,
@@ -225,8 +226,52 @@ describe('IdleTriageService', () => {
     expect(deps.runTriage).not.toHaveBeenCalled();
   });
 
+  it('caps concurrent automatic triage calls', async () => {
+    const calls: Array<() => void> = [];
+    const { deps, clock } = makeDeps({
+      runTriage: vi.fn(() => new Promise<LlmRunResult>((resolve) => calls.push(() => resolve(okResult('{"resolution":"done","summary":"x"}')))))
+    });
+    const svc = new IdleTriageService(deps);
+    for (let index = 0; index < MAX_CONCURRENT_TRIAGES + 1; index += 1) {
+      svc.observe(`s${index}`, 'idle');
+      clock.fireNext();
+    }
+    await tick();
+    expect(deps.runTriage).toHaveBeenCalledTimes(MAX_CONCURRENT_TRIAGES);
+    calls.forEach((resolve) => resolve());
+    await tick();
+    clock.fireNext();
+    await tick();
+    expect(deps.runTriage).toHaveBeenCalledTimes(MAX_CONCURRENT_TRIAGES + 1);
+  });
+
+  it('limits repeated idle spells for one session', async () => {
+    const { deps, clock } = makeDeps();
+    const svc = new IdleTriageService(deps);
+    for (let index = 0; index < MAX_TRIAGES_PER_SESSION + 1; index += 1) {
+      svc.observe('s', 'idle');
+      clock.fireNext();
+      await tick();
+      svc.observe('s', 'working');
+    }
+    expect(deps.runTriage).toHaveBeenCalledTimes(MAX_TRIAGES_PER_SESSION);
+  });
+
   it('skips non-claude sessions', async () => {
     const { deps, clock } = makeDeps({ getSession: () => ({ ...baseSession, profile: 'shell' }) });
+    const svc = new IdleTriageService(deps);
+    svc.observe('s', 'idle');
+    clock.fireNext();
+    await tick();
+    expect(deps.runTriage).not.toHaveBeenCalled();
+  });
+
+  it('skips transcript-capable sessions with no verified monitor capability', async () => {
+    const { deps, clock } = makeDeps({
+      getSession: () => ({ ...baseSession, profile: 'cursor' }),
+      hasTranscript: () => true,
+      hasMonitorCapability: () => false
+    });
     const svc = new IdleTriageService(deps);
     svc.observe('s', 'idle');
     clock.fireNext();

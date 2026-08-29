@@ -1874,10 +1874,16 @@ export interface AppConfig {
    * Enable the idle-agent triage add-on: when a claude agent settles into idle,
    * run the `builtin:idle-triage` LLM micro-call over its last turn to classify
    * WHY it's idle (waiting on you / done / paused) and surface that on the
-   * Agents board. Default OFF — it spends tokens (one `claude --print` call per
-   * idle spell). When false, idle cards show no resolution badge.
+   * Agents board. Default OFF — it spends tokens through the configured monitor
+   * HTTP provider. When false, idle cards show no resolution badge.
    */
   idleTriageEnabled?: boolean;
+  /**
+   * Explicit HTTP provider for monitor-only semantic work (idle triage and
+   * catch-up summaries). Absent means unavailable: monitor paths never fall
+   * back to a coding-harness CLI.
+   */
+  monitorSemanticProvider?: 'openai' | 'gemini';
   /**
    * Suppress a BLOCKING inbox question (from `inbox_ask`, or an `inbox_push`
    * question marked `blocking`) WHILE its originating agent is still `working`,

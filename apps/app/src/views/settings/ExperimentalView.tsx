@@ -31,7 +31,7 @@ export function ExperimentalView({
         />
         <CheckboxField
           label="Catch-up summary"
-          help="Experimental — when an agent sits idle or is waiting on a choice, precompute a quick catch-up summary under the terminal using the fastest model. Also shows the manual 'Summarize to inbox' button in the agent modal. Off ⇒ both are hidden."
+          help="Experimental — when an agent sits idle or is waiting on a choice, precompute a quick catch-up summary under the terminal through monitor HTTP provider selected in Agents settings. Without one, summaries report unavailable. Also shows manual 'Summarize to inbox' button in agent modal. Off ⇒ both are hidden."
           checked={config.catchUpSummaryEnabled ?? false}
           onChange={(v) => onUpdate({ catchUpSummaryEnabled: v })}
         />
