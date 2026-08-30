@@ -99,7 +99,8 @@ describe('thread / legacy isolation', () => {
     expect(legacy).toContain('createTerminal');
     expect(legacy).toContain('buildLaunchArgs');
     expect(legacy).toContain("from './legacy-agent-home.js'");
-    expect(legacy).toContain('ModelReasoningPicker');
+    expect(legacy).toContain('cliAgentModelOptions');
+    expect(legacy).toContain('ensureThreadProviderModels');
     expect(legacy).toContain('useComposerPromptField');
     expect(legacy).toContain("kind: 'cli'");
     expect(legacy).not.toContain('ComposerModePicker');

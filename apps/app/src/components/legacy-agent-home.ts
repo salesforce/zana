@@ -17,6 +17,23 @@ const THREAD_PROVIDER_BY_FAMILY: Record<HarnessFamily, string> = {
   opencode: 'acp-opencode'
 };
 
+export type CliAgentModelOption = { id: string; label: string };
+
+/**
+ * Claude/Codex/Cursor/OpenCode keep their trusted PTY adapter catalogs.
+ * Pi's adapter catalog is empty, so the CLI Agent picker uses the live
+ * thread model list (`provider.list_models`) instead of "No models available".
+ */
+export function cliAgentModelOptions(input: {
+  adapterModels: ReadonlyArray<{ id: string; label: string }>;
+  catalogModels: ReadonlyArray<{ model: string; displayName: string }>;
+}): CliAgentModelOption[] {
+  if (input.adapterModels.length > 0) {
+    return input.adapterModels.map((row) => ({ id: row.id, label: row.label }));
+  }
+  return input.catalogModels.map((row) => ({ id: row.model, label: row.displayName }));
+}
+
 export function threadProviderIdForFamily(family: string): string | null {
   if (family in THREAD_PROVIDER_BY_FAMILY) return THREAD_PROVIDER_BY_FAMILY[family as HarnessFamily];
   return null;

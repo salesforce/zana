@@ -47,6 +47,13 @@ export interface ExecutionResolution {
 
 import type { LaunchProvider } from './launch-provider.js';
 
+/** Pi (and similar) list models at runtime; the static adapter catalog is empty. */
+const LIVE_LISTED_MODEL_TARGET_ID = /^[A-Za-z0-9][\w./:+@-]{0,255}$/;
+
+export function isLiveListedModelTargetId(id: string): boolean {
+  return !id.startsWith('-') && LIVE_LISTED_MODEL_TARGET_ID.test(id);
+}
+
 const MODEL_LEVELS: readonly ModelLevel[] = ['low', 'medium', 'high', 'extra-high'];
 const EXECUTION_STATES = ['plan', 'interactive', 'accept-edits', 'autonomous'] as const;
 
@@ -209,11 +216,13 @@ export function resolveModelTarget(provider: LaunchProvider, input: TargetResolu
 
   let contribution: HarnessNativeContribution = {};
   if (structuredSelected && targetId) {
-    const target = provider.adapter.descriptor.targets?.models.find((candidate) => candidate.id === targetId);
+    const catalogModels = provider.adapter.descriptor.targets?.models ?? [];
+    const target = catalogModels.find((candidate) => candidate.id === targetId);
     if (!target) {
-      throw new Error(`Unknown model target for ${provider.adapter.descriptor.label}.`);
-    }
-    if (input.scope && !target.scope.includes(input.scope)) {
+      if (catalogModels.length > 0 || !isLiveListedModelTargetId(targetId) || !provider.modelContribution) {
+        throw new Error(`Unknown model target for ${provider.adapter.descriptor.label}.`);
+      }
+    } else if (input.scope && !target.scope.includes(input.scope)) {
       throw new Error(`${provider.adapter.descriptor.label} model target is unavailable for ${input.scope} launches.`);
     }
   }
