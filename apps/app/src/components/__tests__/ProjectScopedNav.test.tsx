@@ -93,6 +93,7 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     expect(markup).toContain('class="sidebar-utility-bar"');
     expect(markup).toContain('class="sidebar-resizer"');
     expect(markup).toContain('aria-label="Settings"');
+    expect(markup).toContain('aria-label="Report a bug"');
     expect(markup).toContain('aria-label="Open this project in a new window"');
     expect(markup).not.toContain('>Settings<');
     expect(markup).not.toContain('>Open in new window<');
@@ -160,6 +161,7 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     expect(markup).not.toContain('project-focused-nav');
     expect(markup).not.toContain('aria-label="Open this project in a new window"');
     expect(markup).toContain('aria-label="Settings"');
+    expect(markup).toContain('aria-label="Report a bug"');
     expect(markup).not.toContain('aria-label="Go back"');
     expect(markup).not.toContain('class="settings-app-back"');
     expect(markup).not.toContain('>Back</button>');

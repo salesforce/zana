@@ -13,7 +13,8 @@ export {
   BB_IDE_URL,
   CLAUDE_CODE_URL,
   CODEX_URL,
-  CURSOR_URL
+  CURSOR_URL,
+  REPORT_BUG_URL
 } from './about-credits.js';
 
 export type {

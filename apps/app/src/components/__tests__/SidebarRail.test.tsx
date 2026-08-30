@@ -87,6 +87,7 @@ describe('SidebarRail', () => {
     expect(markup).toContain('class="sidebar-nav sidebar-nav--sortable"');
     expect(markup).toContain('class="sidebar-utility-bar"');
     expect(markup).toContain('aria-label="Settings"');
+    expect(markup).toContain('aria-label="Report a bug"');
     expect(markup).toContain('href="/settings"');
     expect(markup).toContain('class="sidebar-resizer"');
     expect(markup).toContain('aria-orientation="vertical"');
@@ -142,6 +143,8 @@ describe('SidebarRail', () => {
     expect(source).toContain('{...rest}');
     expect(source).toContain('consumeNavClick()');
     expect(source).toContain('sidebar-utility-bar');
+    expect(source).toContain('openBugReport');
+    expect(source).toContain('Report a bug');
     expect(source).toContain('<DndContext');
     expect(source).toContain('onNavigate');
   });
