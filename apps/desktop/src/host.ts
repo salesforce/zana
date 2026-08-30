@@ -132,7 +132,7 @@ import { createAgentMessageLog, type IAgentMessageLog } from '@zana-ai/zcc-serve
 import { killLocalTmuxSession, listLocalTmuxSessionIds, reapOrphanTmuxSessions, verifyTmux } from '@zana-ai/zcc-host-daemon/tmux';
 import { exportInboxPdf } from './native/inbox-pdf.js';
 import { createSavedStore, type ISavedStore } from '@zana-ai/zcc-server';
-import { ABOUT_CREDITS, type SavedRecord, type SavedRecordInput } from '@zana-ai/zcc-domain/product';
+import { ABOUT_CREDITS, REPORT_BUG_URL, type SavedRecord, type SavedRecordInput } from '@zana-ai/zcc-domain/product';
 import type { ConversationHistorySnapshot } from '@zana-ai/zcc-domain/product';
 import type { CancelTeamLaunchResult, LaunchTeamResult, TeamLaunchAuthorizationInputSlot, TeamLaunchAuthorizationResult, TeamLaunchRequestInput, TeamFailedWorkerSlot, TeamLaunchedWorker } from '@zana-ai/zcc-domain/product';
 import type { SubagentChild } from '@zana-ai/zcc-domain/product';
@@ -5128,6 +5128,10 @@ function buildAppMenu() {
           click: () => sendToFocused('app:openShortcuts')
         },
         { type: 'separator' },
+        {
+          label: 'Report a bug',
+          click: () => void shell.openExternal(REPORT_BUG_URL)
+        },
         {
           label: 'View on GitHub',
           click: () => shell.openExternal('https://github.com/grebmann/zana-command-center')

@@ -9,7 +9,8 @@ import {
 import { DndContext } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { Link } from 'react-router-dom';
-import { Settings } from 'lucide-react';
+import { Bug, Settings } from 'lucide-react';
+import { openBugReport } from '../lib/report-bug.js';
 import { useUi } from '../store.js';
 import { useRouteState } from '../hooks/useRouteState.js';
 import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js';
@@ -179,6 +180,15 @@ export function SidebarRail({
         >
           <Settings size={18} />
         </Link>
+        <button
+          type="button"
+          className="sidebar-utility-button"
+          aria-label="Report a bug"
+          title="Report a bug"
+          onClick={() => openBugReport()}
+        >
+          <Bug size={18} aria-hidden="true" />
+        </button>
         {footerActions.map((action) => {
           const Icon = resolveIcon(action.icon);
           return (

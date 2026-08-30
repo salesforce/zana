@@ -6,7 +6,9 @@ and issue reports are welcome.
 ## Before You Start
 
 - Search [existing issues](https://github.com/salesforce/zana/issues) before
-  opening a new one.
+  opening a new one. Bug reports should use the
+  [Bug report](https://github.com/salesforce/zana/issues/new?template=bug.yml)
+  template (also available from the in-app **Report a bug** control).
 - Open an issue first for substantial features or behavioral changes so the
   maintainers and community can align on the approach.
 - For security vulnerabilities, follow the private reporting process in

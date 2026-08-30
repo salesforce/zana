@@ -1,0 +1,20 @@
+name: Bug report
+description: Something in Zana does not work
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you saw, and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+  - type: input
+    id: version
+    attributes:
+      label: Zana version and OS
+      description: Settings → About
