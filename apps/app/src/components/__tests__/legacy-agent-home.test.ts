@@ -3,6 +3,7 @@ import {
   absolutePathMentions,
   assembleCliLaunchPrompt,
   availableAgentHarnesses,
+  cliAgentModelOptions,
   familyForThreadProviderId,
   PROFILE_BY_FAMILY,
   rewritePromptPaths,
@@ -45,6 +46,28 @@ describe('thread provider id mapping', () => {
     expect(familyForThreadProviderId('acp-opencode')).toBe('opencode');
     expect(familyForThreadProviderId('codex')).toBe('codex');
     expect(familyForThreadProviderId('unknown')).toBeNull();
+  });
+});
+
+describe('cliAgentModelOptions', () => {
+  it('keeps a trusted PTY adapter catalog when the adapter lists models', () => {
+    expect(cliAgentModelOptions({
+      adapterModels: [{ id: 'sonnet', label: 'Sonnet (latest)' }],
+      catalogModels: [{ model: 'claude-sonnet-5', displayName: 'Sonnet 5' }]
+    })).toEqual([{ id: 'sonnet', label: 'Sonnet (latest)' }]);
+  });
+
+  it('uses the live thread catalog when the adapter has no models (Pi)', () => {
+    expect(cliAgentModelOptions({
+      adapterModels: [],
+      catalogModels: [
+        { model: 'openai/gpt-5.2', displayName: 'GPT-5.2' },
+        { model: 'anthropic/claude-opus-4-8', displayName: 'Opus 4.8' }
+      ]
+    })).toEqual([
+      { id: 'openai/gpt-5.2', label: 'GPT-5.2' },
+      { id: 'anthropic/claude-opus-4-8', label: 'Opus 4.8' }
+    ]);
   });
 });
 

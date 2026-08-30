@@ -303,6 +303,51 @@ describe('target-resolution main authorization', () => {
     })).toMatchObject({ source: 'Persona', targetId: 'custom-agent', contribution: { args: ['--agent', 'custom-agent'] } });
   });
 
+  it('accepts a live-listed Pi model id when the adapter catalog is empty', () => {
+    const resolved = resolveModelTarget(providerFor('pi'), {
+      config: config(),
+      profile: 'pi',
+      extraArgs: [],
+      perTabRouting: {
+        schemaVersion: 1,
+        byAdapter: { pi: { modelTargetId: 'openai/gpt-5.2' } }
+      },
+      scope: 'local'
+    });
+    expect(resolved).toMatchObject({
+      source: 'per-tab',
+      targetId: 'openai/gpt-5.2',
+      structuredSelected: true,
+      contribution: { args: ['--model', 'openai/gpt-5.2'] }
+    });
+  });
+
+  it('rejects a flag-shaped Pi model id that is not in a static catalog', () => {
+    expect(() => resolveModelTarget(providerFor('pi'), {
+      config: config(),
+      profile: 'pi',
+      extraArgs: [],
+      perTabRouting: {
+        schemaVersion: 1,
+        byAdapter: { pi: { modelTargetId: '--model' } }
+      },
+      scope: 'local'
+    })).toThrow('Unknown model target');
+  });
+
+  it('still rejects an unknown model on adapters that own a static catalog', () => {
+    expect(() => resolveModelTarget(providerFor('claude'), {
+      config: config(),
+      profile: 'claude',
+      extraArgs: [],
+      perTabRouting: {
+        schemaVersion: 1,
+        byAdapter: { claude: { modelTargetId: 'openai/gpt-5.2' } }
+      },
+      scope: 'local'
+    })).toThrow('Unknown model target');
+  });
+
   it('rejects structured Codex model selection combined with raw short model flag', () => {
     expect(() => resolveModelTarget(providerFor('codex'), {
       config: config(),

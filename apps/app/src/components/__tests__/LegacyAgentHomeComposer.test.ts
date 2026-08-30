@@ -16,7 +16,9 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('onLaunched');
     expect(source).toContain('onClose');
     expect(source).toContain('data-testid="legacy-agent-command-send"');
-    expect(source).toContain("from './legacy-agent-home.js'");
+    expect(source).toContain('cliAgentModelOptions');
+    expect(source).toContain('ensureThreadProviderModels');
+    expect(source).toContain('prefetchThreadModelCatalog');
     expect(source).toContain('useComposerPromptField');
     expect(source).toContain("kind: 'cli'");
     expect(source).toContain('assembleCliLaunchPrompt');

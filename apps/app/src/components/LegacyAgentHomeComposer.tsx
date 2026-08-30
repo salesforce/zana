@@ -1,5 +1,5 @@
 import { product } from '../lib/product-client.js';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ArrowUp, Folder, Loader2, Mic, Paperclip } from 'lucide-react';
 import type { HarnessAdapterDescriptor, HarnessModelTarget } from '@zana-ai/zcc-domain/harness-adapter';
 import type {
@@ -35,11 +35,18 @@ import {
   absolutePathMentions,
   assembleCliLaunchPrompt,
   availableAgentHarnesses,
+  cliAgentModelOptions,
   familyForThreadProviderId,
   PROFILE_BY_FAMILY,
   rewritePromptPaths,
   threadProviderIdForFamily
 } from './legacy-agent-home.js';
+import {
+  ensureThreadProviderModels,
+  getThreadModelCatalog,
+  prefetchThreadModelCatalog,
+  subscribeThreadModelCatalog
+} from './thread/pickers/thread-model-catalog.js';
 
 const EMPTY_MODELS: readonly HarnessModelTarget[] = [];
 
@@ -91,7 +98,28 @@ export function LegacyAgentHomeComposer({
   const harnesses = useMemo(() => availableAgentHarnesses(descriptors), [descriptors]);
   const project = pinnedProject ?? launchProjects.find((candidate) => candidate.id === projectId);
   const selectedHarness = harnesses.find((descriptor) => descriptor.id === familyId);
-  const models: readonly HarnessModelTarget[] = selectedHarness?.targets?.models ?? EMPTY_MODELS;
+  const catalog = useSyncExternalStore(
+    subscribeThreadModelCatalog,
+    getThreadModelCatalog,
+    getThreadModelCatalog
+  );
+  const selectedProviderId = (familyId && threadProviderIdForFamily(familyId)) || '';
+  const catalogEntry = selectedProviderId ? catalog.byProvider[selectedProviderId] : undefined;
+  const models = cliAgentModelOptions({
+    adapterModels: selectedHarness?.targets?.models ?? EMPTY_MODELS,
+    catalogModels: catalogEntry?.models ?? []
+  });
+  const moreModelOptions = (selectedHarness?.targets?.models?.length ?? 0) > 0
+    ? []
+    : (catalogEntry?.selectedOnlyModels ?? []).map((row) => ({
+      value: row.model,
+      label: row.displayName
+    }));
+  const catalogModelsLoading = Boolean(
+    selectedProviderId
+    && (selectedHarness?.targets?.models?.length ?? 0) === 0
+    && (catalog.inflight.has(selectedProviderId) || !catalogEntry)
+  );
 
   const field = useComposerPromptField({
     placeholder: 'Describe the task… Leave empty to open an interactive session',
@@ -110,6 +138,14 @@ export function LegacyAgentHomeComposer({
   });
   const voice = useVoiceInput({ onTranscript: field.insertText });
   const voiceBusy = voice.state === 'recording' || voice.state === 'transcribing';
+
+  useEffect(() => {
+    void prefetchThreadModelCatalog();
+  }, []);
+
+  useEffect(() => {
+    if (selectedProviderId) void ensureThreadProviderModels(selectedProviderId);
+  }, [selectedProviderId]);
 
   useEffect(() => {
     const generation = ++descriptorGeneration.current;
@@ -354,7 +390,13 @@ export function LegacyAgentHomeComposer({
                   }}
                   modelValue={modelId}
                   modelOptions={models.map((model) => ({ value: model.id, label: model.label }))}
-                  modelIsLoading={selectionState === 'loading'}
+                  moreModelOptions={moreModelOptions}
+                  modelIsLoading={selectionState === 'loading' || catalogModelsLoading}
+                  modelLoadError={
+                    (selectedHarness?.targets?.models?.length ?? 0) > 0
+                      ? null
+                      : catalogEntry?.modelLoadError ?? null
+                  }
                   onModelChange={setModelId}
                   disabled={harnessProviderOptions.length === 0}
                 />
