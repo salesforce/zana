@@ -54,7 +54,13 @@ export async function loadPluginHostArtifactSnapshot(args: {
 }): Promise<PluginHostArtifactSnapshot | null> {
   if (args.hostEntry === null) return null;
   if (shouldRebuildHostArtifact(args.sourceKind, args.rootDir, args.hostEntry)) {
-    await buildPluginHost(args.rootDir, args.zccVersion);
+    try {
+      await buildPluginHost(args.rootDir, args.zccVersion);
+    } catch (error) {
+      // Packaged Electron bundles esbuild's JS API without its native binary.
+      // Keep a previously built dist/host.js instead of degrading the plugin.
+      if (!existsSync(join(args.rootDir, 'dist', 'host.js'))) throw error;
+    }
   }
   const jsPath = join(args.rootDir, 'dist', 'host.js');
   const metaPath = join(args.rootDir, 'dist', 'host.meta.json');

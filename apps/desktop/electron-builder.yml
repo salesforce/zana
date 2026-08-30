@@ -46,6 +46,14 @@ extraResources:
   # `resolveOpencodeBinDir` finds resourcesPath/opencode/<arch>/opencode.
   - from: vendor/opencode
     to: opencode
+  # Packed provider-bridge worker + Pi bridge. The desktop host-daemon runs
+  # from asar and cannot import.meta.resolve tsx/TypeScript; join-cli already
+  # ships these next to join.mjs for remotes. Copy the same files here.
+  - from: apps/host-daemon/dist
+    to: host-bridge
+    filter:
+      - bb-provider-bridge-worker.mjs
+      - bb-pi-bridge.mjs
   # First-party plugins (`plugins/<id>` with a package.json `zcc` block).
   # PluginService.reconcileBuiltins auto-installs from this tree; tests and
   # packaging scripts stay in the repo and are not shipped.

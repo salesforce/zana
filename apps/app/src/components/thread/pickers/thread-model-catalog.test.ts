@@ -4,6 +4,7 @@ import {
   getThreadModelCatalog,
   prefetchThreadModelCatalog,
   reloadThreadModelCatalog,
+  reloadThreadProviderModels,
   resetThreadModelCatalog,
   type ThreadExecutionOptionsFetcher
 } from './thread-model-catalog.js';
@@ -106,6 +107,26 @@ describe('thread model catalog', () => {
     expect(getThreadModelCatalog().inflight.size).toBe(0);
   });
 
+  it('retries a timed-out catalog so a slow Cursor/OpenCode list can refill the picker', async () => {
+    let timedOut = true;
+    const fetcher: ThreadExecutionOptionsFetcher = async (query) => {
+      const body = optionsBody(['acp-cursor'], query?.providerId ?? 'roster');
+      if (query?.providerId === 'acp-cursor' && timedOut) {
+        return { ...body, models: [], modelLoadError: { providerId: 'acp-cursor', code: 'timeout' } };
+      }
+      return body;
+    };
+    resetThreadModelCatalog(fetcher);
+    await prefetchThreadModelCatalog();
+    expect(getThreadModelCatalog().byProvider['acp-cursor']?.modelLoadError).toBe('timeout');
+    expect(getThreadModelCatalog().byProvider['acp-cursor']?.models).toEqual([]);
+
+    timedOut = false;
+    await ensureThreadProviderModels('acp-cursor');
+    expect(getThreadModelCatalog().byProvider['acp-cursor']?.modelLoadError).toBeNull();
+    expect(getThreadModelCatalog().byProvider['acp-cursor']?.models[0]?.model).toBe('acp-cursor-model');
+  });
+
   it('stores auth_required so Settings can show sign-in and a later retry can refill models', async () => {
     let signedIn = false;
     const fetcher: ThreadExecutionOptionsFetcher = async (query) => {
@@ -137,6 +158,44 @@ describe('thread model catalog', () => {
     calls.length = 0;
     await reloadThreadModelCatalog();
     expect(calls).toEqual([undefined, 'claude-code', 'codex']);
+  });
+
+  it('reloads one provider after a successful cache without wiping the others', async () => {
+    const calls: Array<string | undefined> = [];
+    const fetcher: ThreadExecutionOptionsFetcher = async (query) => {
+      calls.push(query?.providerId);
+      return optionsBody(['claude-code', 'codex'], query?.providerId ?? 'roster');
+    };
+    resetThreadModelCatalog(fetcher);
+    await prefetchThreadModelCatalog();
+    calls.length = 0;
+    await reloadThreadProviderModels('codex');
+    expect(calls).toEqual(['codex']);
+    expect(getThreadModelCatalog().byProvider['claude-code']?.models[0]?.model).toBe('claude-code-model');
+    expect(getThreadModelCatalog().byProvider.codex?.models[0]?.model).toBe('codex-model');
+  });
+
+  it('shares an in-flight reload instead of starting a second fetch', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let providerFetches = 0;
+    const fetcher: ThreadExecutionOptionsFetcher = async (query) => {
+      if (query?.providerId === 'codex') {
+        providerFetches += 1;
+        await gate;
+      }
+      return optionsBody(['codex'], query?.providerId ?? 'roster');
+    };
+    resetThreadModelCatalog(fetcher);
+    const first = reloadThreadProviderModels('codex');
+    const second = reloadThreadProviderModels('codex');
+    expect(second).toBe(first);
+    release();
+    await first;
+    expect(providerFetches).toBe(1);
+    expect(getThreadModelCatalog().byProvider.codex?.models[0]?.model).toBe('codex-model');
   });
 
   it('re-runs prefetch when a harness is added while the first load is in flight', async () => {

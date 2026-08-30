@@ -73,16 +73,19 @@ function finalizeNodeEsmBundle(path) {
 const require = createRequire(import.meta.url);
 `;
   let text = readFileSync(path, 'utf8');
+  if (text.startsWith('#!')) {
+    text = text.slice(text.indexOf('\n') + 1);
+  }
   text = text.replace(
     /throw Error\('Dynamic require of "' \+ (\w+) \+ '" is not supported'\);/g,
     'return require($1);'
   );
-  if (!text.includes("from 'node:module'")) {
-    text = `#!/usr/bin/env node\n${requireShim}${text}`;
-  } else if (!text.startsWith('#!')) {
-    text = `#!/usr/bin/env node\n${text}`;
-  }
-  writeFileSync(path, text);
+  // esbuild may emit `import { createRequire }` in the middle of the bundle.
+  // A second unaliased import of the same binding is a SyntaxError, and
+  // skipping the shim leaves esbuild's `typeof require` helper undefined.
+  text = text.replace(/^import \{ createRequire \} from ["']node:module["'];\n/gm, '');
+  text = `${requireShim}${text}`;
+  writeFileSync(path, `#!/usr/bin/env node\n${text}`);
 }
 
 finalizeNodeEsmBundle(outfile);

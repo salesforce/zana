@@ -14,9 +14,15 @@ import { StencilForm, Skeleton } from '@/components/ui/Skeleton';
 import { providerUiSchema } from '@zana-ai/zcc-domain/launch-provider';
 import {
   getThreadModelCatalog,
+  prefetchThreadModelCatalog,
+  reloadThreadProviderModels,
   subscribeThreadModelCatalog
 } from '../../components/thread/pickers/thread-model-catalog.js';
-import { harnessLoginStatus, type HarnessLoginStatus } from '../../components/thread/pickers/harness-login.js';
+import {
+  emptyModelsHint,
+  harnessLoginStatus,
+  type HarnessLoginStatus
+} from '../../components/thread/pickers/harness-login.js';
 
 const USE_HARNESS_DEFAULT = { id: '', label: 'Use harness default' } as const;
 const CODEX_UI = providerUiSchema('codex');
@@ -460,31 +466,121 @@ function threadProviderBlurb(providerId: string): string {
   return THREAD_PROVIDER_BLURB[providerId] ?? 'Registered Modern provider plugin.';
 }
 
+const THREAD_PROVIDER_MODEL_CAP = 12;
+
+function threadProviderModelsStatus(
+  providerId: string,
+  loading: boolean,
+  entry: { models: { length: number }; modelLoadError: string | null } | undefined
+): string {
+  if (loading) return 'Loading…';
+  if (!entry) return 'Not loaded';
+  if (entry.models.length > 0) {
+    return `${entry.models.length} model${entry.models.length === 1 ? '' : 's'}`;
+  }
+  const hint = emptyModelsHint(providerId, entry.modelLoadError);
+  if (entry.modelLoadError && entry.modelLoadError !== 'auth_required') {
+    return `${hint} (${entry.modelLoadError})`;
+  }
+  return hint;
+}
+
+function ThreadProviderRow({
+  provider,
+  entry,
+  loading
+}: {
+  provider: ThreadProviderListItem;
+  entry: ReturnType<typeof getThreadModelCatalog>['byProvider'][string] | undefined;
+  loading: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const models = entry?.models ?? [];
+  const visible = models.slice(0, THREAD_PROVIDER_MODEL_CAP);
+  const hidden = models.length - visible.length;
+  const status = threadProviderModelsStatus(provider.id, loading, entry);
+  return (
+    <li className="opener-row">
+      <div className="opener-row-head">
+        <button
+          type="button"
+          className="opener-row-expand"
+          aria-expanded={open}
+          aria-label={`Models for ${provider.displayName}`}
+          onClick={() => setOpen((value) => !value)}
+        >
+          <ChevronRight
+            size={14}
+            className={`opener-row-chevron${open ? ' opener-row-chevron--open' : ''}`}
+            aria-hidden
+          />
+        </button>
+        <span className="opener-row-glyph" aria-hidden>
+          {threadProviderGlyph(provider.id)}
+        </span>
+        <div className="opener-row-text">
+          <span className="opener-row-name">{provider.displayName}</span>
+          <span className="opener-row-blurb">{threadProviderBlurb(provider.id)}</span>
+        </div>
+        <span className="thread-provider-model-status">{status}</span>
+        <code className="thread-provider-id" title={provider.pluginId}>
+          {provider.pluginId}
+        </code>
+      </div>
+      {open ? (
+        <div className="opener-row-advanced">
+          <div className="thread-provider-model-actions">
+            <button
+              type="button"
+              className="cred-btn"
+              disabled={loading}
+              onClick={() => {
+                void reloadThreadProviderModels(provider.id);
+              }}
+            >
+              {models.length > 0 ? 'Reload' : 'Load'}
+            </button>
+          </div>
+          {visible.length > 0 ? (
+            <ul className="thread-provider-models">
+              {visible.map((model) => (
+                <li key={model.id} title={model.id}>
+                  {model.displayName} <code>{model.id}</code>
+                </li>
+              ))}
+              {hidden > 0 ? <li className="thread-provider-models-more">and {hidden} more</li> : null}
+            </ul>
+          ) : (
+            <p className="settings-help">{status}</p>
+          )}
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
 export function ThreadProviderCatalog({
   providers
 }: {
   providers: ThreadProviderListItem[];
 }) {
+  const catalog = useSyncExternalStore(
+    subscribeThreadModelCatalog,
+    getThreadModelCatalog,
+    getThreadModelCatalog
+  );
   if (providers.length === 0) {
     return <p className="settings-help">No Modern providers registered.</p>;
   }
   return (
     <ul className="opener-list thread-provider-list" data-testid="thread-provider-catalog">
       {providers.map((provider) => (
-        <li key={provider.id} className="opener-row">
-          <div className="opener-row-head">
-            <span className="opener-row-glyph" aria-hidden>
-              {threadProviderGlyph(provider.id)}
-            </span>
-            <div className="opener-row-text">
-              <span className="opener-row-name">{provider.displayName}</span>
-              <span className="opener-row-blurb">{threadProviderBlurb(provider.id)}</span>
-            </div>
-            <code className="thread-provider-id" title={provider.pluginId}>
-              {provider.pluginId}
-            </code>
-          </div>
-        </li>
+        <ThreadProviderRow
+          key={provider.id}
+          provider={provider}
+          entry={catalog.byProvider[provider.id]}
+          loading={catalog.inflight.has(provider.id)}
+        />
       ))}
     </ul>
   );
@@ -492,6 +588,9 @@ export function ThreadProviderCatalog({
 
 function ThreadProvidersPanel() {
   const [providers, setProviders] = useState<ThreadProviderListItem[] | null>(null);
+  useEffect(() => {
+    void prefetchThreadModelCatalog();
+  }, []);
   useEffect(() => {
     let cancelled = false;
     void product.threads.providers()
@@ -793,7 +892,9 @@ export function HarnessView({
         <p className="settings-help settings-section-help">
           These plugins power Modern conversations. They register through{' '}
           <code>experimental_registerProvider</code> and launch via AgentRuntime
-          — not the CLI Agent PTY harness.
+          — not the CLI Agent PTY harness. Model names come from the host; Reload
+          fetches that provider again and updates the composer picker, bypassing
+          its cache.
         </p>
         <ThreadProvidersPanel />
       </div>

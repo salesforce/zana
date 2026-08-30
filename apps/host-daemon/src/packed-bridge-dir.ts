@@ -7,9 +7,20 @@ export const PACKED_BRIDGE_WORKER_FILE = 'bb-provider-bridge-worker.mjs';
 
 /**
  * Directory that holds the packed join artifact's provider-bridge files.
- * Present next to `join.mjs` on a remote; absent when running from source.
+ * Present next to `join.mjs` on a remote; in the Mac app they are copied to
+ * `process.resourcesPath/host-bridge` so the daemon does not spawn `tsx`
+ * against TypeScript inside `app.asar`.
  */
 export function packedBridgeBundleDir(fromUrl: string = import.meta.url): string | undefined {
   const dir = dirname(fileURLToPath(fromUrl));
-  return existsSync(join(dir, PACKED_BRIDGE_WORKER_FILE)) ? dir : undefined;
+  if (existsSync(join(dir, PACKED_BRIDGE_WORKER_FILE))) return dir;
+  const resources =
+    typeof process.resourcesPath === 'string' && process.resourcesPath.length > 0
+      ? process.resourcesPath
+      : null;
+  if (resources) {
+    const bundled = join(resources, 'host-bridge');
+    if (existsSync(join(bundled, PACKED_BRIDGE_WORKER_FILE))) return bundled;
+  }
+  return undefined;
 }

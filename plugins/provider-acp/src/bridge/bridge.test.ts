@@ -927,7 +927,7 @@ describe("acp bridge", () => {
       });
       await waitForFileWithRealTimer(sessionReadyFile);
       await new Promise((resolveTick) => realSetTimeout(resolveTick, 100));
-      await vi.advanceTimersByTimeAsync(15_000);
+      await vi.advanceTimersByTimeAsync(4_000);
     } finally {
       vi.useRealTimers();
     }

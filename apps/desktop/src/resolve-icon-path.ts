@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 export type ResolveIconPathOpts = {
-  /** `app.isPackaged`. Unpackaged (`pnpm dev`) uses `icon-dev.png`. */
+  /** `app.isPackaged`. Unpackaged (`pnpm dev`) uses the DEV-badged icon. */
   packaged: boolean;
   /** Directory of the calling module (`import.meta.url`). */
   moduleDir: string;
@@ -15,14 +15,15 @@ export type ResolveIconPathOpts = {
 
 const DEV_ICON = 'icon-dev.png';
 const PACKAGED_ICONS = ['icon.icns', 'icon-1024.png'] as const;
-const UNPACKAGED_ICONS = [DEV_ICON, 'icon-1024.png'] as const;
+const UNPACKAGED_ICONS = [DEV_ICON] as const;
 
 /**
  * Candidate paths for the branded Zana icon.
  *
- * Unpackaged (`pnpm dev`) always resolves `icon-dev.png`, independent of
- * whatever electron-builder ships. Packaged reads the extraResources / mac.icon
- * copy at `process.resourcesPath`. electron-vite emits main at `out/main` and
+ * Unpackaged (`pnpm dev`) resolves only `icon-dev.png` (DEV-badged), never
+ * the shipping artwork — running both side-by-side must stay visually
+ * distinct. Packaged reads the extraResources / mac.icon copy at
+ * `process.resourcesPath`. electron-vite emits main at `out/main` and
  * shared chunks at `out/main/chunks`, so unpackaged also walks those + cwd.
  */
 export function iconPathCandidates(opts: {

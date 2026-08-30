@@ -88,6 +88,28 @@ describe('loadPluginHostArtifactSnapshot', () => {
     expect(snapshot?.byteLength).toBe(bytes.byteLength);
   });
 
+  it('keeps a prebuilt dist when rebuilding from source fails', async () => {
+    const dir = await writePlugin('export default { rebuilt: true };\n');
+    const first = await loadPluginHostArtifactSnapshot({
+      pluginId: 'host-fixture',
+      rootDir: dir,
+      hostEntry: './host.ts',
+      sourceKind: 'path',
+      zccVersion: '1.0.0'
+    });
+    const prebuilt = await readFile(join(dir, 'dist', 'host.js'), 'utf8');
+    await writeFile(join(dir, 'host.ts'), 'import { x } from "@zana-ai/zcc-server";\nexport default x;\n');
+    const snapshot = await loadPluginHostArtifactSnapshot({
+      pluginId: 'host-fixture',
+      rootDir: dir,
+      hostEntry: './host.ts',
+      sourceKind: 'path',
+      zccVersion: '1.0.0'
+    });
+    expect(snapshot?.digest).toBe(first?.digest);
+    expect(await readFile(join(dir, 'dist', 'host.js'), 'utf8')).toBe(prebuilt);
+  });
+
   it('does not rebuild an npm-installed plugin even when source is present', async () => {
     const dir = await writePlugin('export default { rebuilt: true };\n');
     await mkdir(join(dir, 'dist'), { recursive: true });

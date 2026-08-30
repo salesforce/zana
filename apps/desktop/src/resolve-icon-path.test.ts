@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { iconPathCandidates, resolveIconPath } from './resolve-icon-path.js';
@@ -43,6 +44,7 @@ describe('iconPathCandidates', () => {
     expect(paths[0]).toBe(join('/checkout/out/main', '../../resources', 'icon-dev.png'));
     expect(paths).toContain(join('/checkout', 'resources', 'icon-dev.png'));
     expect(paths.some((p) => p.endsWith('icon.icns'))).toBe(false);
+    expect(paths.some((p) => p.endsWith('icon-1024.png'))).toBe(false);
     expect(paths.some((p) => p.endsWith('electron.icns'))).toBe(false);
   });
 
@@ -82,7 +84,7 @@ describe('resolveIconPath', () => {
     ).toBe(dev);
   });
 
-  it('falls back to the product png when icon-dev.png is missing', () => {
+  it('does not fall back to the shipping icon when icon-dev.png is missing', () => {
     const product = join('/repo', 'resources', 'icon-1024.png');
     expect(
       resolveIconPath({
@@ -91,7 +93,13 @@ describe('resolveIconPath', () => {
         cwd: '/repo',
         exists: existsIn([product])
       })
-    ).toBe(product);
+    ).toBeNull();
+  });
+
+  it('committed unpackaged icon is visually distinct from the shipping png', () => {
+    const dev = readFileSync(join(repoRoot, 'resources', 'icon-dev.png'));
+    const shipping = readFileSync(join(repoRoot, 'resources', 'icon-1024.png'));
+    expect(dev.equals(shipping)).toBe(false);
   });
 
   it('returns null when nothing exists', () => {

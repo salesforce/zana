@@ -94,7 +94,7 @@ function applyRoster(rows: ThreadComposerProviderOption[]): void {
   providers = rows;
 }
 
-async function loadProvider(providerId: string): Promise<void> {
+function loadProvider(providerId: string): Promise<void> {
   const existing = loads.get(providerId);
   if (existing) return existing;
   const epoch = catalogEpoch;
@@ -119,11 +119,10 @@ async function loadProvider(providerId: string): Promise<void> {
     }
   })();
   loads.set(providerId, pending);
-  try {
-    await pending;
-  } finally {
-    loads.delete(providerId);
-  }
+  void pending.finally(() => {
+    if (loads.get(providerId) === pending) loads.delete(providerId);
+  });
+  return pending;
 }
 
 async function runPrefetch(): Promise<void> {
@@ -183,7 +182,21 @@ export function reloadThreadModelCatalog(): Promise<void> {
 
 export function ensureThreadProviderModels(providerId: string): Promise<void> {
   const cached = byProvider[providerId];
-  if (cached && cached.modelLoadError !== 'auth_required') return Promise.resolve();
+  if (cached && cached.models.length > 0) return Promise.resolve();
+  if (cached && cached.modelLoadError === null) return Promise.resolve();
+  return loadProvider(providerId);
+}
+
+/** Settings Reload: always refetch this provider; share an in-flight load. */
+export function reloadThreadProviderModels(providerId: string): Promise<void> {
+  const existing = loads.get(providerId);
+  if (existing) return existing;
+  if (byProvider[providerId]) {
+    const next = { ...byProvider };
+    delete next[providerId];
+    byProvider = next;
+    emit();
+  }
   return loadProvider(providerId);
 }
 
