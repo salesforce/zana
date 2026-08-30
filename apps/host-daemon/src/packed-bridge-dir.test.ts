@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -15,5 +15,21 @@ describe('packedBridgeBundleDir', () => {
   it('returns undefined when the packed worker is absent', () => {
     const dir = mkdtempSync(join(tmpdir(), 'zcc-packed-bridge-missing-'));
     expect(packedBridgeBundleDir(pathToFileURL(join(dir, 'join.mjs')).href)).toBeUndefined();
+  });
+
+  it('falls back to process.resourcesPath/host-bridge for the packaged app', () => {
+    const resources = mkdtempSync(join(tmpdir(), 'zcc-packed-bridge-resources-'));
+    const bundled = join(resources, 'host-bridge');
+    mkdirSync(bundled);
+    writeFileSync(join(bundled, PACKED_BRIDGE_WORKER_FILE), '');
+    const previous = Object.getOwnPropertyDescriptor(process, 'resourcesPath');
+    Object.defineProperty(process, 'resourcesPath', { configurable: true, value: resources });
+    try {
+      const missing = mkdtempSync(join(tmpdir(), 'zcc-packed-bridge-caller-'));
+      expect(packedBridgeBundleDir(pathToFileURL(join(missing, 'join.mjs')).href)).toBe(bundled);
+    } finally {
+      if (previous) Object.defineProperty(process, 'resourcesPath', previous);
+      else delete (process as { resourcesPath?: string }).resourcesPath;
+    }
   });
 });

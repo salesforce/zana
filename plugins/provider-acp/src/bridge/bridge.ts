@@ -476,7 +476,10 @@ const ACP_DEFAULT_MODEL: AvailableModel = {
 };
 
 const MODEL_LIST_TIMEOUT_MS = 30_000;
-const ACP_NATIVE_REASONING_DISCOVERY_TIMEOUT_MS = 15_000;
+// Keep this well under the product-server list_models RPC budget. Cursor's
+// session/new already takes a few seconds; a 15s probe made the picker miss
+// the 20s RPC deadline and cache an empty catalog.
+const ACP_NATIVE_REASONING_DISCOVERY_TIMEOUT_MS = 4_000;
 const AUTH_REQUIRED_MODEL_LIST_ERROR_MESSAGE =
   "ACP agent is not authenticated.";
 
@@ -1040,9 +1043,9 @@ async function discoverAcpNativeReasoningByModel(args: {
 
   // Each probe is one model-switch round trip to the local agent, so work is
   // bounded by the time budget rather than a model-count cutoff (omp's catalog
-  // alone is ~90 models). On timeout or a mid-probe error the partial map is
-  // kept: probed models surface their real reasoning levels and unprobed
-  // models fall back to the agent-managed default.
+  // alone is ~90 models). The budget is short on purpose: the picker already has
+  // every model id from session/new, and waiting out a long probe used to miss
+  // the host RPC deadline. On timeout the partial map is kept.
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const timeoutReached = new Promise<
     ReadonlyMap<string, AcpNativeReasoningSupport>

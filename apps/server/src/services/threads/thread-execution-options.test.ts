@@ -173,6 +173,7 @@ describe('execution-options API wiring', () => {
     expect(source).toContain('readLastThreadExecution');
     expect(source).toContain('classifyModelListError');
     expect(source).toContain('listError');
+    expect(source).toContain('timeoutMs: 45_000');
   });
 });
 

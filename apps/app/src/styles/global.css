@@ -6227,6 +6227,40 @@ body.resizing-col {
   border-radius: 999px;
   padding: 3px 9px;
 }
+.thread-provider-model-status {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.thread-provider-model-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.thread-provider-models {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 168px;
+  overflow: auto;
+}
+.thread-provider-models li {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.thread-provider-models code {
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+.thread-provider-models-more {
+  font-style: italic;
+}
 .harness-settings-group {
   display: flex;
   flex-direction: column;

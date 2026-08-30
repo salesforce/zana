@@ -2511,8 +2511,8 @@ function applyDockIcon() {
   // Packaged builds must not call dock.setIcon: it replaces the bundle icon
   // (already channel-correct via electron-builder) with a raw NSImage that
   // bypasses the macOS appearance pipeline, so dark mode shows the light
-  // rendering. Dev runs still need it to show icon-dev.png instead of the
-  // stock Electron icon.
+  // rendering. Dev runs still need it so the DEV-badged icon-dev.png replaces
+  // both Electron's atom and the shipping Zana icon.
   if (process.platform !== 'darwin' || !app.dock || app.isPackaged) return;
   const image = productIconImage();
   if (!image) return;

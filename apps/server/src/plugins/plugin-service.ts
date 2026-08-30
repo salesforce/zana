@@ -1092,6 +1092,14 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       return updated;
     },
     async reconcileBuiltins() {
+      for (const row of store.list()) {
+        if (row.sourceKind !== 'builtin') continue;
+        const name = row.source.startsWith('builtin:') ? row.source.slice('builtin:'.length) : row.id;
+        const expected = resolveBundledDir(opts.bundledRoot, name);
+        if (existsSync(expected) && resolve(row.rootDir) !== resolve(expected)) {
+          await store.upsert({ ...row, rootDir: expected, updatedAt: now() });
+        }
+      }
       const installed: InstalledPluginRow[] = [];
       for (const def of BUILTIN_PLUGINS) {
         if (!def.autoInstall) continue;

@@ -2195,7 +2195,11 @@ export async function handleProductHttp(
           const hostId = ctx.hostHub.resolveHostId(requestedHostId);
           listed = await ctx.hostHub.callHostOnlineRpc<ProviderListModelsResult>({
             hostId,
-            timeoutMs: 20_000,
+            // ACP discovery (Cursor session/new + a short reasoning probe) can
+            // exceed the default 30s RPC budget; 45s stays above the 30s
+            // bridge MODEL_LIST_TIMEOUT so a hang still returns the synthetic
+            // fallback instead of an empty picker.
+            timeoutMs: 45_000,
             command: {
               type: 'provider.list_models',
               providerId,

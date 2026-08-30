@@ -63,5 +63,10 @@ describe('host-artifact', () => {
     );
     expect(`${workerStart.stderr}${workerStart.stdout}`).not.toMatch(/Cannot find package '@zana-ai\//);
     expect(workerStart.status, workerStart.stderr || workerStart.stdout).toBe(0);
+
+    const piBridge = readFileSync(join(unpack, 'bb-pi-bridge.mjs'), 'utf8');
+    expect(piBridge.match(/^#!/gm) ?? []).toHaveLength(1);
+    const piCheck = isolatedNode(['--check', join(unpack, 'bb-pi-bridge.mjs')]);
+    expect(piCheck.status, piCheck.stderr || piCheck.stdout).toBe(0);
   }, 60_000);
 });

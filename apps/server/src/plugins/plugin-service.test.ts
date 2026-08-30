@@ -743,6 +743,20 @@ describe('PluginService', () => {
     expect(service.get('tasks')).toBeUndefined();
   });
 
+  it('rebases a builtin plugin onto the current bundledRoot', async () => {
+    const dataDir = root();
+    const firstBundled = root();
+    const nextBundled = root();
+    writePlugin(join(firstBundled, 'docs'), 'docs');
+    writePlugin(join(nextBundled, 'docs'), 'docs');
+    const first = createPluginService({ dataDir, bundledRoot: firstBundled });
+    await first.reconcileBuiltins();
+    expect(first.get('docs')?.rootDir).toBe(join(firstBundled, 'docs'));
+    const next = createPluginService({ dataDir, bundledRoot: nextBundled });
+    await next.reconcileBuiltins();
+    expect(next.get('docs')?.rootDir).toBe(join(nextBundled, 'docs'));
+  });
+
   it('does not auto-reinstall a builtin after uninstall', async () => {
     const dataDir = root();
     const bundled = root();
