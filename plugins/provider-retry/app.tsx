@@ -1,3 +1,4 @@
+import type { ComponentType } from "react";
 import {
   definePluginApp,
   useComposerView,
@@ -7,13 +8,18 @@ import {
 
 const REALTIME_CHANNEL = "provider-retry";
 
-function payloadThreadId(payload) {
+function hostReact() {
+  return (globalThis as { __ZCC_HOST_REACT__?: typeof import("react") })
+    .__ZCC_HOST_REACT__;
+}
+
+function payloadThreadId(payload: unknown): string | null {
   if (typeof payload !== "object" || payload === null) return null;
-  const threadId = payload.threadId;
+  const threadId = (payload as { threadId?: unknown }).threadId;
   return typeof threadId === "string" ? threadId : null;
 }
 
-function retryLabel(retryAtMs) {
+function retryLabel(retryAtMs: number) {
   return new Intl.DateTimeFormat(undefined, {
     weekday: "short",
     hour: "numeric",
@@ -30,30 +36,45 @@ function ProviderRetryBanner() {
   });
 }
 
-function hostReactCreate(component, props) {
-  const React = globalThis.__ZCC_HOST_REACT__;
+function hostReactCreate<P extends Record<string, unknown>>(
+  component: ComponentType<P>,
+  props: P & { key?: string },
+) {
+  const React = hostReact();
   if (!React) return null;
   return React.createElement(component, props);
 }
 
-function ProviderRetryBannerForThread({ threadId }) {
-  const React = globalThis.__ZCC_HOST_REACT__;
+function ProviderRetryBannerForThread({ threadId }: { threadId: string }) {
+  const React = hostReact();
   if (!React) return null;
   const { useCallback, useEffect, useState } = React;
   const rpc = useRpc();
   const [cancelling, setCancelling] = useState(false);
-  const [view, setView] = useState(null);
+  const [view, setView] = useState<Record<string, unknown> | null>(null);
 
   const load = useCallback(async () => {
     const result = await rpc.call("providerRetryStatus", { threadId });
-    setView(result && typeof result === "object" ? result.view : null);
+    const nextView =
+      result && typeof result === "object"
+        ? (result as { view?: unknown }).view
+        : null;
+    setView(
+      nextView && typeof nextView === "object"
+        ? (nextView as Record<string, unknown>)
+        : null,
+    );
   }, [rpc, threadId]);
 
   const cancel = useCallback(async () => {
     setCancelling(true);
     try {
       const result = await rpc.call("providerRetryCancel", { threadId });
-      if (result && result.cancelled) {
+      if (
+        result &&
+        typeof result === "object" &&
+        (result as { cancelled?: unknown }).cancelled
+      ) {
         setView(null);
       } else {
         await load();
@@ -131,7 +152,7 @@ export default definePluginApp((app) => {
       {
         id: "retry-last",
         component: function RetryAction() {
-          const React = globalThis.__ZCC_HOST_REACT__;
+          const React = hostReact();
           if (!React) return null;
           return React.createElement(
             "span",

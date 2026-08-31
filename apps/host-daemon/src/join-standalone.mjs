@@ -10,7 +10,7 @@ import { homedir, hostname } from 'node:os';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const PROTOCOL_VERSION = 16;
+const PROTOCOL_VERSION = 19;
 
 function readFlag(args, flag) {
   const index = args.indexOf(flag);

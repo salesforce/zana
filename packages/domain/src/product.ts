@@ -3191,6 +3191,11 @@ export interface ScheduledTask {
    */
   autoCloseOnFinish?: boolean;
   /**
+   * Optional maximum runtime for this scheduled run in minutes.
+   * If the run is still alive after this, the scheduler will force-close it.
+   */
+  maxDurationMinutes?: number;
+  /**
    * Group id ({@link ScheduleGroup}) for organising global schedules in the
    * rail (e.g. "Personal" / "Work"). Absent or unresolvable = Ungrouped.
    * Ignored for project-scoped schedules.
@@ -3237,6 +3242,7 @@ export interface ScheduleCreateInput {
   /** Inbox loudness; defaults to `quiet` when omitted. See {@link InboxNotifyLevel}. */
   inboxLevel?: InboxNotifyLevel;
   autoCloseOnFinish?: boolean;
+  maxDurationMinutes?: number;
   /** Group id (see {@link ScheduleGroup}). Only meaningful for global scope. */
   group?: string;
 }
@@ -3902,6 +3908,7 @@ export interface ScheduleUpdateInput {
   /** Inbox loudness. Omit to leave unchanged. See {@link InboxNotifyLevel}. */
   inboxLevel?: InboxNotifyLevel;
   autoCloseOnFinish?: boolean;
+  maxDurationMinutes?: number;
   /** Group id, or null to clear (move to Ungrouped). Omit to leave unchanged. */
   group?: string | null;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { PendingInteraction } from '@zana-ai/zcc-domain/thread-runtime';
+import type { ApprovalPendingInteraction } from '@zana-ai/zcc-domain/thread-runtime';
 import type { TimelineRow } from '@zana-ai/zcc-server-contract';
 import {
   latestAssistantConversationText,
@@ -17,7 +17,7 @@ const rowBase = {
   createdAt: 1
 };
 
-function planInteraction(over: { plan?: string; planFilePath?: string | null } = {}): PendingInteraction {
+function planInteraction(over: { plan?: string; planFilePath?: string | null } = {}): ApprovalPendingInteraction {
   return {
     id: 'pint_1',
     threadId: 'thr-1',
@@ -73,7 +73,7 @@ describe('thread plan document', () => {
       plan: 'Ship it',
       planFilePath: '/tmp/plan.md'
     });
-    const command: PendingInteraction = {
+    const command: ApprovalPendingInteraction = {
       ...planInteraction(),
       payload: {
         kind: 'approval',

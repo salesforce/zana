@@ -9,7 +9,10 @@ import type {
   PendingInteractionRequestedPermissionProfile,
   PendingInteractionResolution
 } from '@zana-ai/zcc-domain/thread-runtime';
-import { isApprovalPendingInteractionPayload } from '@zana-ai/zcc-domain/thread-runtime';
+import {
+  isApprovalPendingInteractionPayload,
+  isPluginExtensionInteractionRequestPayload
+} from '@zana-ai/zcc-domain/thread-runtime';
 
 type PendingInteractionPermissionSummaryProfile =
   | PendingInteractionGrantablePermissionProfile
@@ -127,6 +130,7 @@ function summarizeCommandActions(
 
 export function pendingInteractionSubjectDetails(interaction: PendingInteraction): PendingInteractionDetail[] {
   if (interaction.payload.kind === 'plugin') return [];
+  if (isPluginExtensionInteractionRequestPayload(interaction.payload)) return [];
   if (!isApprovalPendingInteractionPayload(interaction.payload)) {
     return interaction.payload.questions.map((question) => ({
       kind: 'text',
@@ -177,7 +181,11 @@ export function pendingInteractionSubjectDetails(interaction: PendingInteraction
 }
 
 export function formatPendingInteractionSubjectDetailLines(interaction: PendingInteraction): string[] {
-  if (interaction.payload.kind !== 'plugin' && !isApprovalPendingInteractionPayload(interaction.payload)) {
+  if (
+    interaction.payload.kind !== 'plugin' &&
+    !isPluginExtensionInteractionRequestPayload(interaction.payload) &&
+    !isApprovalPendingInteractionPayload(interaction.payload)
+  ) {
     return interaction.payload.questions.map((question) => question.prompt);
   }
   return pendingInteractionSubjectDetails(interaction).map((detail) => `${detail.label}: ${detail.value}`);

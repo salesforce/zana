@@ -64,10 +64,18 @@ async function waitFor<T>(
   }
 }
 
-async function waitForFileWithRealTimer(path: string): Promise<void> {
+async function waitForFileWithRealTimer(path: string, expectedContent?: string): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
+    // The client fs/write is not atomic: the file exists before its content is
+    // fully flushed. Existence alone races an empty read under load, so when a
+    // caller cares about the content, poll until it matches.
     if (existsSync(path)) {
-      return;
+      if (expectedContent === undefined) return;
+      try {
+        if (readFileSync(path, "utf8") === expectedContent) return;
+      } catch {
+        // transient read during the write — keep polling
+      }
     }
     await new Promise((resolveTick) => realSetTimeout(resolveTick, 20));
   }
@@ -1974,7 +1982,7 @@ describe("acp bridge", () => {
         },
       });
       await waitForResponse(turnId);
-      await waitForFileWithRealTimer(targetPath);
+      await waitForFileWithRealTimer(targetPath, "hello from agent\n");
 
       expect(readFileSync(targetPath, "utf8")).toBe("hello from agent\n");
     } finally {

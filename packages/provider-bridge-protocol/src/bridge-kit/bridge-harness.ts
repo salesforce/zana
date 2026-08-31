@@ -9,7 +9,7 @@ type BridgeJsonRpcResponse =
   | {
       jsonrpc: "2.0";
       id: BridgeJsonRpcId;
-      error: { code: number; message: string };
+      error: { code: number; message: string; data?: unknown };
     };
 
 interface CreateBridgeIoArgs {
@@ -20,7 +20,12 @@ export function createBridgeIo<TMessage>({
   write = (line) => process.stdout.write(line),
 }: CreateBridgeIoArgs = {}): {
   send: (message: TMessage | BridgeJsonRpcResponse) => void;
-  sendError: (id: BridgeJsonRpcId, code: number, message: string) => void;
+  sendError: (
+    id: BridgeJsonRpcId,
+    code: number,
+    message: string,
+    data?: unknown,
+  ) => void;
   sendResult: (id: BridgeJsonRpcId, result: unknown) => void;
 } {
   const send = (message: TMessage | BridgeJsonRpcResponse): void => {
@@ -28,8 +33,8 @@ export function createBridgeIo<TMessage>({
   };
   return {
     send,
-    sendError: (id, code, message) => {
-      send({ jsonrpc: "2.0", id, error: { code, message } });
+    sendError: (id, code, message, data) => {
+      send({ jsonrpc: "2.0", id, error: { code, message, data } });
     },
     sendResult: (id, result) => {
       send({ jsonrpc: "2.0", id, result });

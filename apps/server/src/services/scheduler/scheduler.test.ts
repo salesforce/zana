@@ -155,8 +155,10 @@ function makeManager(extraTaskFields?: Record<string, unknown>): {
   manager: SchedulerManager;
   ptys: FakePtyManager;
   task: ReturnType<SchedulerManager['create']>;
+  pendingSubagents: { count: number };
 } {
   const ptys = new FakePtyManager();
+  const pendingSubagents = { count: 0 };
   const project: Project = {
     id: 'proj-1',
     name: 'P',
@@ -174,7 +176,8 @@ function makeManager(extraTaskFields?: Record<string, unknown>): {
   manager.setDeps({
     ptys: ptys as unknown as PtyManager,
     launchTerminal: (opts) => ptys.create(opts as unknown as Record<string, unknown>) as never,
-    store: fakeStore as unknown as Parameters<SchedulerManager['setDeps']>[0]['store']
+    store: fakeStore as unknown as Parameters<SchedulerManager['setDeps']>[0]['store'],
+    getPendingSubagentCount: () => pendingSubagents.count
   });
   const task = manager.create({
     name: 't',
@@ -184,7 +187,7 @@ function makeManager(extraTaskFields?: Record<string, unknown>): {
     enabled: false,
     ...extraTaskFields
   });
-  return { manager, ptys, task };
+  return { manager, ptys, task, pendingSubagents };
 }
 
 describe('SchedulerManager.fire — headless spawn', () => {
@@ -693,6 +696,98 @@ describe('SchedulerManager.onAgentFinished', () => {
     expect(ptys.closeExpectedCalls).toEqual([sid]);
   });
 
+  it('waits for a later zero-pending parent Stop after background work completes', () => {
+    const { manager, ptys, task, pendingSubagents } = makeManager({
+      prompt: 'work',
+      autoCloseOnFinish: true
+    });
+    autoFire(manager, task.id);
+    const sid = ptys.sessions[0].id;
+    pendingSubagents.count = 2;
+
+    manager.onAgentFinished(sid);
+    manager.onAgentFinished(sid); // duplicate parent Stop cannot arm another close
+    expect(ptys.closeExpectedCalls).toEqual([]);
+
+    pendingSubagents.count = 0;
+    manager.onSubagentCountChanged(sid);
+    // Child completion alone must leave time for parent result handling/reporting.
+    expect(ptys.closeExpectedCalls).toEqual([]);
+
+    manager.onAgentFinished(sid);
+    expect(ptys.closeExpectedCalls).toEqual([sid]);
+  });
+
+  it('times out a deferred background subagent run with an explicit error', () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, ptys, task, pendingSubagents } = makeManager({
+        prompt: 'work',
+        autoCloseOnFinish: true
+      });
+      autoFire(manager, task.id);
+      const sid = ptys.sessions[0].id;
+      pendingSubagents.count = 1;
+
+      manager.onAgentFinished(sid);
+      vi.advanceTimersByTime(10 * 60 * 1000);
+
+      expect(ptys.closeExpectedCalls).toEqual([sid]);
+      const run = runsOf(manager, task.id).find((candidate) => candidate.sessionId === sid)!;
+      expect(run.result).toBe('error');
+      expect(run.message).toBe('background subagent timed out');
+
+      // A later expected PTY exit cannot overwrite the explicit timeout error.
+      ptys.simulateExit(sid, 0);
+      const finalRun = runsOf(manager, task.id).find((candidate) => candidate.sessionId === sid)!;
+      expect(finalRun.result).toBe('error');
+      expect(finalRun.message).toBe('background subagent timed out');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears a deferred timeout when parent reaches its final Stop', () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, ptys, task, pendingSubagents } = makeManager({
+        prompt: 'work',
+        autoCloseOnFinish: true
+      });
+      autoFire(manager, task.id);
+      const sid = ptys.sessions[0].id;
+      pendingSubagents.count = 1;
+      manager.onAgentFinished(sid);
+
+      pendingSubagents.count = 0;
+      manager.onAgentFinished(sid);
+      vi.advanceTimersByTime(10 * 60 * 1000);
+
+      expect(ptys.closeExpectedCalls).toEqual([sid]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears deferred state on stopAll without closing the session', () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, ptys, task, pendingSubagents } = makeManager({
+        prompt: 'work',
+        autoCloseOnFinish: true
+      });
+      autoFire(manager, task.id);
+      pendingSubagents.count = 1;
+      manager.onAgentFinished(ptys.sessions[0].id);
+
+      manager.stopAll();
+      vi.advanceTimersByTime(10 * 60 * 1000);
+      expect(ptys.closeExpectedCalls).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('finishedAt survives the exit-time recordRun merge', () => {
     const { manager, ptys, task } = makeManager({ prompt: 'work' });
     autoFire(manager, task.id);
@@ -714,6 +809,56 @@ describe('SchedulerManager.onAgentFinished', () => {
     manager.onAgentFinished('no-such-session');
 
     expect(ptys.closeExpectedCalls).toEqual([]);
+  });
+
+  it('applies maxDurationMinutes watchdog to force-close runs on timeout', () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, ptys, task } = makeManager({
+        prompt: 'work',
+        maxDurationMinutes: 5,
+        autoCloseOnFinish: true
+      });
+      autoFire(manager, task.id);
+      const sid = ptys.sessions[0].id;
+      vi.advanceTimersByTime(4 * 60 * 1000);
+      expect(ptys.closeExpectedCalls).toEqual([]);
+      vi.advanceTimersByTime(1 * 60 * 1000);
+      expect(ptys.closeExpectedCalls).toEqual([sid]);
+      ptys.simulateExit(sid, 0);
+      const run = runsOf(manager, task.id).find((r) => r.sessionId === sid)!;
+      expect(run.result).toBe('error');
+      expect(run.message).toContain('exceeded maximum duration of 5 minutes');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('prevents concurrent duplicate fires when firing is true', async () => {
+    const { manager, ptys, task } = makeManager({ prompt: 'work' });
+    let resolvePromise: (v: unknown) => void;
+    const promise = new Promise<unknown>((resolve) => {
+      resolvePromise = resolve;
+    });
+    (manager as unknown as { deps: { launchTerminal: unknown } }).deps.launchTerminal = (() =>
+      promise) as never;
+    (manager as unknown as { fire: (id: string, o: { manual: boolean }) => void }).fire(task.id, {
+      manual: false
+    });
+    expect((manager as unknown as { live: Map<string, { firing?: boolean }> }).live.get(task.id)!.firing).toBe(true);
+    (manager as unknown as { fire: (id: string, o: { manual: boolean }) => void }).fire(task.id, {
+      manual: false
+    });
+    const runs = runsOf(manager, task.id);
+    expect(
+      runs.some(
+        (r) => r.result === 'skipped' && r.message === 'previous fire/launch is already in progress'
+      )
+    ).toBe(true);
+    resolvePromise!(ptys.create({ projectId: 'proj-1', title: 'Task' }));
+    await promise;
+    await new Promise((resolve) => process.nextTick(resolve));
+    expect((manager as unknown as { live: Map<string, { firing?: boolean }> }).live.get(task.id)!.firing).toBe(false);
   });
 });
 

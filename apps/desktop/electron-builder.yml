@@ -12,6 +12,8 @@ files:
   - "!**/*.{md,markdown,d.ts.map,js.map}"
 
 extraResources:
+  - from: resources/scheduled-supervisor
+    to: scheduled-supervisor
   # NOTE: don't copy icon.icns here — `mac.icon` already places it at
   # Contents/Resources/icon.icns (== process.resourcesPath/icon.icns), so a
   # second copy collides (EEXIST hard-link during packaging). The runtime

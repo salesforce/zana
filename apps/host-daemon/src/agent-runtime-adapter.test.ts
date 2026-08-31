@@ -60,7 +60,7 @@ describe('agent runtime thread adapter', () => {
       createRuntime: (options) =>
         createAgentRuntimeWithAdapters({
           ...options,
-          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         })
     });
     const threadId = randomUUID();
@@ -97,7 +97,7 @@ describe('agent runtime thread adapter', () => {
       createRuntime: (options) =>
         createAgentRuntimeWithAdapters({
           ...options,
-          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         })
     });
     const threadId = randomUUID();
@@ -130,7 +130,7 @@ describe('agent runtime thread adapter', () => {
       createRuntime: (options) =>
         createAgentRuntimeWithAdapters({
           ...options,
-          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         })
     });
     const threadId = randomUUID();
@@ -157,7 +157,7 @@ describe('agent runtime thread adapter', () => {
       createRuntime: (options) => {
         const runtime = createAgentRuntimeWithAdapters({
           ...options,
-          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         });
         return {
           ...runtime,
@@ -195,7 +195,7 @@ describe('agent runtime thread adapter', () => {
   });
 
   it('forwards clientRequestId into startThread and runTurn', async () => {
-    const started: string[] = [];
+    const started: (string | undefined)[] = [];
     const turned: string[] = [];
     const adapter = createAgentRuntimeAdapter({
       emit: () => undefined,
@@ -203,7 +203,7 @@ describe('agent runtime thread adapter', () => {
       createRuntime: (options) => {
         const runtime = createAgentRuntimeWithAdapters({
           ...options,
-          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         });
         return {
           ...runtime,
@@ -246,7 +246,7 @@ describe('agent runtime thread adapter', () => {
       createRuntime: (options) =>
         createAgentRuntimeWithAdapters({
           ...options,
-          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         })
     });
     const threadId = randomUUID();
@@ -282,7 +282,7 @@ describe('agent runtime thread adapter', () => {
         created.push(options.workspacePath);
         return createAgentRuntimeWithAdapters({
           ...options,
-          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         });
       }
     });
@@ -321,7 +321,7 @@ describe('agent runtime thread adapter', () => {
       createRuntime: (options) => {
         const runtime = createAgentRuntimeWithAdapters({
           ...options,
-          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         });
         return {
           ...runtime,
@@ -361,7 +361,7 @@ describe('agent runtime thread adapter', () => {
       createRuntime: (options) => {
         const runtime = createAgentRuntimeWithAdapters({
           ...options,
-          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         });
         return {
           ...runtime,
@@ -422,7 +422,7 @@ describe('agent runtime thread adapter', () => {
       createRuntime: (options) => {
         const runtime = createAgentRuntimeWithAdapters({
           ...options,
-          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         });
         return {
           ...runtime,
@@ -478,7 +478,7 @@ describe('agent runtime thread adapter', () => {
         onToolCall = options.onToolCall as typeof onToolCall;
         return createAgentRuntimeWithAdapters({
           ...options,
-          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         });
       }
     });
@@ -527,7 +527,7 @@ describe('agent runtime thread adapter', () => {
         onToolCall = options.onToolCall as typeof onToolCall;
         return createAgentRuntimeWithAdapters({
           ...options,
-          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         });
       }
     });
@@ -562,7 +562,7 @@ describe('agent runtime thread adapter', () => {
       createRuntime: (options) => {
         const runtime = createAgentRuntimeWithAdapters({
           ...options,
-          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         });
         return {
           ...runtime,
@@ -596,7 +596,7 @@ describe('agent runtime thread adapter', () => {
         seen.push({ bridgeBundleDir: options.bridgeBundleDir });
         return createAgentRuntimeWithAdapters({
           ...options,
-          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         });
       }
     });
@@ -619,7 +619,7 @@ describe('agent runtime thread adapter', () => {
       createRuntime: (options) =>
         createAgentRuntimeWithAdapters({
           ...options,
-          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         })
     });
     const listed = await adapter.listModels({
@@ -707,7 +707,7 @@ describe('agent runtime thread adapter', () => {
       createRuntime: (options) =>
         createAgentRuntimeWithAdapters({
           ...options,
-          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         })
     });
     const environmentId = randomUUID();
@@ -748,7 +748,7 @@ describe('agent runtime thread adapter', () => {
       createRuntime: (options) => {
         const runtime = createAgentRuntimeWithAdapters({
           ...options,
-          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         });
         return {
           ...runtime,
@@ -790,7 +790,7 @@ describe('agent runtime thread adapter', () => {
         created += 1;
         return createAgentRuntimeWithAdapters({
           ...options,
-          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         });
       }
     });
@@ -834,7 +834,7 @@ describe('agent runtime thread adapter', () => {
         created += 1;
         return createAgentRuntimeWithAdapters({
           ...options,
-          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         });
       }
     });

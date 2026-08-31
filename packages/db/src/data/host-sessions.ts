@@ -49,7 +49,7 @@ export function getActiveSessionForHost(db: ZccDatabase, hostId: string): HostSe
 /** Latest session for a host, including closed rows from a crash or replace. */
 export function getLatestSessionForHost(db: ZccDatabase, hostId: string): HostSessionRow | null {
   const row = db.sqlite.prepare(
-    `SELECT * FROM host_sessions WHERE host_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`
+    `SELECT * FROM host_sessions WHERE host_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`
   ).get(hostId) as HostSessionSqlRow | undefined;
   return row ? toSession(row) : null;
 }

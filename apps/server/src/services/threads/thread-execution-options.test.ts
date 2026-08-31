@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import type { HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
 import {
@@ -9,6 +9,114 @@ import {
   selectedOnlyModelsForThreadProvider,
   threadProviderFamily
 } from './thread-execution-options.js';
+import type { PluginProviderHandle } from '@zana-ai/zcc-plugin-sdk/server';
+import { registerThreadProvider } from './thread-provider-catalog.js';
+
+// Providers are no longer statically seeded in the catalog; plugins register
+// them at boot. Register the bundled providers the assertions rely on so the
+// catalog matches a booted app.
+const BUNDLED_PROVIDERS = [
+  {
+    pluginId: 'provider-claude-code',
+    declaration: {
+      id: 'claude-code',
+      displayName: 'Claude Code',
+      capabilities: {
+        supportsServiceTier: false,
+        supportsNativeUserQuestion: true,
+        fork: 'checkpoint',
+        supportsManualCompaction: true,
+        supportsThreadArchive: false,
+        supportsThreadRename: false,
+        supportsWorkflows: true,
+        permissionModes: ['accept-edits', 'auto', 'full'],
+        reasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh', 'ultracode', 'max']
+      },
+      composerActions: ['plan']
+    }
+  },
+  {
+    pluginId: 'provider-codex',
+    declaration: {
+      id: 'codex',
+      displayName: 'Codex',
+      capabilities: {
+        supportsServiceTier: true,
+        fork: 'checkpoint',
+        supportsManualCompaction: true,
+        supportsThreadArchive: true,
+        supportsThreadRename: true,
+        permissionModes: ['accept-edits', 'auto', 'full'],
+        reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']
+      },
+      composerActions: ['plan', 'goal']
+    }
+  },
+  {
+    pluginId: 'provider-pi',
+    declaration: {
+      id: 'pi',
+      displayName: 'Pi',
+      capabilities: {
+        supportsServiceTier: false,
+        fork: 'checkpoint',
+        supportsManualCompaction: true,
+        supportsThreadArchive: false,
+        supportsThreadRename: false,
+        permissionModes: ['full'],
+        reasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh', 'max']
+      },
+      composerActions: []
+    }
+  },
+  {
+    pluginId: 'provider-acp',
+    declaration: {
+      id: 'acp-cursor',
+      displayName: 'Cursor',
+      capabilities: {
+        supportsServiceTier: true,
+        fork: 'tip',
+        supportsManualCompaction: false,
+        supportsThreadArchive: false,
+        supportsThreadRename: false,
+        permissionModes: ['accept-edits', 'full'],
+        reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max']
+      },
+      composerActions: []
+    }
+  },
+  {
+    pluginId: 'provider-acp',
+    declaration: {
+      id: 'acp-opencode',
+      displayName: 'OpenCode',
+      capabilities: {
+        supportsServiceTier: true,
+        fork: 'tip',
+        supportsManualCompaction: true,
+        supportsThreadArchive: false,
+        supportsThreadRename: false,
+        permissionModes: ['accept-edits', 'full'],
+        reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max']
+      },
+      composerActions: []
+    }
+  }
+];
+
+let providerHandles: PluginProviderHandle[] = [];
+
+beforeEach(() => {
+  providerHandles = BUNDLED_PROVIDERS.map((entry) =>
+    registerThreadProvider(entry.pluginId, entry.declaration, 'src/bridge/bridge.ts')
+  );
+});
+
+afterEach(() => {
+  for (const handle of providerHandles) handle.unregister();
+  providerHandles = [];
+});
 
 function verify(
   family: HarnessVerifyResult['family'],

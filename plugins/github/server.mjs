@@ -9,12 +9,15 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-async function ghJson(args, timeoutMs = 8_000) {
+async function defaultGhJson(args, timeoutMs = 8_000) {
   const { stdout } = await execFileAsync('gh', args, { timeout: timeoutMs, maxBuffer: 256 * 1024 });
   return JSON.parse(String(stdout));
 }
 
-export default function plugin(zcc) {
+export default function plugin(zcc, deps = {}) {
+  // `gh` runner is injectable so tests can drive search/resolve deterministically
+  // without spawning the real CLI (a real subprocess flakes under parallel load).
+  const ghJson = deps.ghJson ?? defaultGhJson;
   const settings = zcc.settings.define({
     repo: { type: 'string', label: 'Repository (owner/name)' }
   });

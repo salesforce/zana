@@ -384,7 +384,7 @@ export function parseToolCallLifecycleEvent(
       : "tool-call";
     const delegationMetadata = getDelegationMetadata(fullToolName, parsedArgs);
     const toolArgs = parseToolArgs(parsedArgs);
-    const statusLabels = decoded.item.statusLabels;
+    const statusLabels = decoded.item.presentation?.label;
 
     const baseCall = {
       callId,

@@ -80,6 +80,7 @@ const MCP_BASE = 'http://127.0.0.1:39999';
 // port (39999) is left intact so a drift there still trips the snapshot.
 const REVERSE_FORWARD_RE = /\b\d{4,5}(:127\.0\.0\.1:39999)/g;
 const HOOK_PORT_RE = /(127\.0\.0\.1:)\d{4,5}(\/hook)/g;
+const SCHEDULED_SUPERVISOR_RE = /(?:[A-Za-z]:)?[^"\\]+\/resources\/scheduled-supervisor/g;
 
 /** Replace every UUID + the derived remote port with stable tokens so snapshots don't churn per run. */
 function normalize<T>(value: T): T {
@@ -87,7 +88,8 @@ function normalize<T>(value: T): T {
     .replace(UUID_RE, '<UUID>')
     .replace(SESSION_CREDENTIAL_RE, '<SESSION_CREDENTIAL>')
     .replace(REVERSE_FORWARD_RE, '<PORT>$1')
-    .replace(HOOK_PORT_RE, '$1<PORT>$2');
+    .replace(HOOK_PORT_RE, '$1<PORT>$2')
+    .replace(SCHEDULED_SUPERVISOR_RE, '<SCHEDULED_SUPERVISOR>');
   return JSON.parse(masked);
 }
 

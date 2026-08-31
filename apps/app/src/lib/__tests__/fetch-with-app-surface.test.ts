@@ -7,7 +7,7 @@ describe('fetchWithAppSurface', () => {
   });
 
   it('stamps the app-surface header', async () => {
-    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response('{}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
     await fetchWithAppSurface('/api/v1/health');
     const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);

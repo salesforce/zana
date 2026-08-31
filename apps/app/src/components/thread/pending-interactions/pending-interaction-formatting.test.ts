@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { PendingInteraction } from '@zana-ai/zcc-domain/thread-runtime';
+import type { ApprovalPendingInteraction } from '@zana-ai/zcc-domain/thread-runtime';
 import {
   approvalDecisionIndexForKey,
   approvalDecisionLabel,
@@ -13,7 +13,7 @@ import {
   summarizePendingInteractionRequestedPermissions
 } from './pending-interaction-formatting.js';
 
-function commandInteraction(): PendingInteraction {
+function commandInteraction(): ApprovalPendingInteraction {
   return {
     id: 'pint_1',
     threadId: 'thr-1',
@@ -69,12 +69,12 @@ describe('pending interaction formatting', () => {
 
   it('omits unknown actions that repeat the command and duplicate reasons', () => {
     const command = 'for d in */ ; do echo "$d"; done';
-    const interaction = {
+    const interaction: ApprovalPendingInteraction = {
       ...commandInteraction(),
       payload: {
         kind: 'approval' as const,
         reason: command,
-        availableDecisions: ['allow_once', 'deny'] as const,
+        availableDecisions: ['allow_once', 'deny'],
         subject: {
           kind: 'command' as const,
           itemId: 'item-1',
@@ -174,6 +174,7 @@ describe('pending interaction formatting', () => {
     })).toEqual(['Plan file: /tmp/plan.md']);
     expect(formatPendingInteractionSubjectDetailLines({
       ...base,
+      resolution: null,
       payload: {
         kind: 'user_question',
         questions: [{
@@ -187,6 +188,7 @@ describe('pending interaction formatting', () => {
     })).toEqual(['Continue?']);
     expect(pendingInteractionSubjectDetails({
       ...base,
+      resolution: null,
       payload: {
         kind: 'user_question',
         questions: [{
@@ -200,6 +202,7 @@ describe('pending interaction formatting', () => {
     })).toEqual([{ kind: 'text', label: 'Question', value: 'Continue?' }]);
     expect(formatPendingInteractionSubjectDetailLines({
       ...base,
+      resolution: null,
       origin: { kind: 'plugin', pluginId: 'ask-user', rendererId: 'form' },
       payload: { kind: 'plugin', title: 'Confirm', data: { n: 1 } }
     })).toEqual([]);
@@ -262,12 +265,12 @@ describe('pending interaction formatting', () => {
   });
 
   it('builds permission-grant resolutions with granted permissions', () => {
-    const interaction = {
+    const interaction: ApprovalPendingInteraction = {
       ...commandInteraction(),
       payload: {
         kind: 'approval' as const,
         reason: 'grant',
-        availableDecisions: ['allow_once', 'deny'] as const,
+        availableDecisions: ['allow_once', 'deny'],
         subject: {
           kind: 'permission_grant' as const,
           itemId: 'item-3',

@@ -289,8 +289,18 @@ function httpProduct(): Pick<
       },
       onChanged: (cb: (tasks: ScheduledTask[]) => void) =>
         subscribeProductEvent<ScheduledTask[]>('scheduler:changed', cb),
+      create: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
+      update: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
+      delete: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
+      setEnabled: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
+      runNow: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
       listTemplates: async () => [],
       onTemplatesChanged: noopSubscribe,
+      revealTemplatesDir: async () => ({
+        ok: false,
+        path: '',
+        message: 'schedule templates require the desktop app'
+      }),
       groups: {
         list: async () => [],
         create: async () => ({ ok: false, code: 'unavailable', message: 'schedule groups require the desktop app' }),
@@ -330,10 +340,22 @@ function httpProduct(): Pick<
       onMessagesPruned: noopSubscribe
     } as CcApi['agents'],
     terminals: {
+      verifyTmux: async () => ({ installed: false, installHint: 'tmux requires the desktop app' }),
+      listTmuxRestoreCandidates: async () => [],
       list: async () => {
         const body = await apiJson<{ sessions: TerminalSession[] }>('/terminals');
         return body.sessions;
       },
+      restore: async () => ({
+        ok: false,
+        code: 'unavailable',
+        message: 'restoring terminal tabs requires the desktop app'
+      }),
+      reconnectRemote: async () => ({
+        ok: false,
+        code: 'unavailable',
+        message: 'reconnecting remote tabs requires the desktop app'
+      }),
       create: async (req: CreateTerminalRequest): Promise<Result<TerminalSession>> => {
         const response = await fetchWithAppSurface('/api/v1/terminals', {
           method: 'POST',
@@ -353,7 +375,8 @@ function httpProduct(): Pick<
       },
       setActiveSession: async () => {},
       setFavorites: async () => {},
-      setHeartbeat: async () => {},
+      setHeartbeat: async () => null,
+      setHeadless: async () => null,
       backlog: async () => '',
       onData: (cb) => subscribeProductEvent<{ sessionId: string; data: string }>('terminals:data', (payload) => {
         cb(payload.sessionId, payload.data);
@@ -366,6 +389,26 @@ function httpProduct(): Pick<
       onExit: (cb) => subscribeProductEvent<{ sessionId: string; code: number }>('terminals:exit', (payload) => {
         cb(payload.sessionId, payload.code);
       }),
+      onWake: noopSubscribe,
+      onTitle: noopSubscribe,
+      onAgentStatus: noopSubscribe,
+      onSubagents: noopSubscribe,
+      onSubagentChildren: noopSubscribe,
+      onIdleTriage: noopSubscribe,
+      onCatchUpSummary: noopSubscribe,
+      onOverseerActivity: noopSubscribe,
+      agentStatusSnapshot: async () => [],
+      agentStatusSince: async () => ({ mode: 'replay' as const, events: [], headSeq: 0 }),
+      subagentSnapshot: async () => [],
+      subagentChildrenSnapshot: async () => [],
+      generateCatchUpSummary: async () => {
+        throw new Error('generateCatchUpSummary requires the desktop app');
+      },
+      clearAgentBlocked: async () => false,
+      summarizeIdle: async () => ({ summarized: 0 }),
+      summarizeSession: async () => ({ ok: false as const, reason: 'ineligible' as const }),
+      sessionStats: async () => null,
+      closeFollowup: async () => ({ summarized: 0, followedUp: 0 }),
       resize: async (sessionId, cols, rows) => {
         await apiJson(`/terminals/${encodeURIComponent(sessionId)}/resize`, {
           method: 'POST',
@@ -801,7 +844,7 @@ function httpProduct(): Pick<
         );
         return body.descriptors;
       },
-      agentDescriptors: async () => ({ agents: [], unsupportedReason: 'unavailable in the browser' }),
+      agentDescriptors: async () => ({ status: 'failure' as const, reason: 'unavailable in the browser' }),
       effectiveDefault: async (projectId: string) =>
         apiJson<Awaited<ReturnType<CcApi['harness']['effectiveDefault']>>>(
           `/harness/effective-default?projectId=${encodeURIComponent(projectId)}`
@@ -1023,6 +1066,21 @@ function httpProduct(): Pick<
       onChanged: noopSubscribe
     } as CcApi['extensions'],
     updates: {
+      check: async () => {
+        throw new Error('updates.check requires the desktop app');
+      },
+      download: async () => {
+        throw new Error('updates.download requires the desktop app');
+      },
+      skip: async () => {
+        throw new Error('updates.skip requires the desktop app');
+      },
+      quitAndInstall: async () => {
+        throw new Error('updates.quitAndInstall requires the desktop app');
+      },
+      simulate: async () => {
+        throw new Error('updates.simulate requires the desktop app');
+      },
       getStatus: async () => ({ kind: 'idle' as const }),
       onStatus: noopSubscribe,
       onProgress: noopSubscribe,

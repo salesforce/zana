@@ -117,6 +117,8 @@ function mergeCodexRateLimitSnapshot(
       update.individualLimit ?? previous?.individualLimit ?? null,
     planType: update.planType ?? previous?.planType ?? null,
     rateLimitReachedType: update.rateLimitReachedType ?? null,
+    spendControlReached:
+      update.spendControlReached ?? previous?.spendControlReached ?? null,
   };
   if (
     merged.rateLimitReachedType === null &&
@@ -289,6 +291,10 @@ function getProviderErrorCategory(
         return "thread-rollback-failed";
       case "sandboxError":
         return "sandbox";
+      case "sessionBudgetExceeded":
+        return "budget-exceeded";
+      case "misalignmentPolicyViolation":
+        return "policy";
       case "other":
         return "unknown";
     }

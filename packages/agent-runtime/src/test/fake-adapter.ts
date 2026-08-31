@@ -626,6 +626,7 @@ export function createFakeAdapter(
       supportsFork: true,
       supportsSessionRewind: true,
       permissionModes: ["accept-edits", "auto", "full"],
+      modelCatalogScope: "host",
     },
     classifyExecutionSettingsChange: classifySessionExecutionSettingsChange,
     decodeToolCallRequest,

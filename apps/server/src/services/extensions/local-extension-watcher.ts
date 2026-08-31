@@ -76,6 +76,10 @@ interface Entry {
   debounce: TimerHandle | null;
   /** Sessions currently cwd'd into this working dir. */
   sessionIds: Set<string>;
+  /** A reinstall is currently running — serialize so two never race the install dir (Rule 4). */
+  reinstalling: boolean;
+  /** A change arrived while a reinstall was in flight — run exactly one more when it finishes. */
+  pendingReinstall: boolean;
 }
 
 export class LocalExtensionWatcher {
@@ -135,7 +139,15 @@ export class LocalExtensionWatcher {
       entry.sessionIds.add(sessionId);
       return;
     }
-    entry = { id, workingDir, watcher: null, debounce: null, sessionIds: new Set([sessionId]) };
+    entry = {
+      id,
+      workingDir,
+      watcher: null,
+      debounce: null,
+      sessionIds: new Set([sessionId]),
+      reinstalling: false,
+      pendingReinstall: false
+    };
     this.entries.set(workingDir, entry);
     const watchFn = this.deps.watch ?? defaultWatch;
     // Watch `dist/` itself (not `workingDir`) so a changed file is a DIRECT
@@ -184,22 +196,41 @@ export class LocalExtensionWatcher {
   }
 
   private async reinstall(entry: Entry): Promise<void> {
-    // Re-check ownership at fire time — the source manifest could have been
-    // hand-edited to a different id since we armed (mirrors reinstallLocal's
-    // ID_MISMATCH gate), and this entry could already be closing.
-    if (!this.entries.has(entry.workingDir)) return;
-    const declaredId = await this.deps.readWorkingDirId(entry.workingDir);
-    if (declaredId !== entry.id) {
-      this.deps.onFailure(
-        entry.id,
-        entry.workingDir,
-        `Source manifest id "${declaredId ?? '(none)'}" does not match "${entry.id}" — skipped hot-reload`
-      );
+    // Serialize: a reinstall does rm(installDir, recursive) + copy, so two
+    // running at once race the install dir (recursive-rm vs the other's writes
+    // → ENOTEMPTY). If one is already in flight, mark a single follow-up and
+    // let the current run trigger it on completion (Rule 4).
+    if (entry.reinstalling) {
+      entry.pendingReinstall = true;
       return;
     }
-    const result = await this.deps.reinstall(entry.id, entry.workingDir);
-    if (!result.ok) {
-      this.deps.onFailure(entry.id, entry.workingDir, result.message);
+    entry.reinstalling = true;
+    try {
+      // Re-check ownership at fire time — the source manifest could have been
+      // hand-edited to a different id since we armed (mirrors reinstallLocal's
+      // ID_MISMATCH gate), and this entry could already be closing.
+      if (!this.entries.has(entry.workingDir)) return;
+      const declaredId = await this.deps.readWorkingDirId(entry.workingDir);
+      if (declaredId !== entry.id) {
+        this.deps.onFailure(
+          entry.id,
+          entry.workingDir,
+          `Source manifest id "${declaredId ?? '(none)'}" does not match "${entry.id}" — skipped hot-reload`
+        );
+        return;
+      }
+      const result = await this.deps.reinstall(entry.id, entry.workingDir);
+      if (!result.ok) {
+        this.deps.onFailure(entry.id, entry.workingDir, result.message);
+      }
+    } finally {
+      entry.reinstalling = false;
+      if (entry.pendingReinstall && this.entries.has(entry.workingDir)) {
+        entry.pendingReinstall = false;
+        void this.reinstall(entry);
+      } else {
+        entry.pendingReinstall = false;
+      }
     }
   }
 }

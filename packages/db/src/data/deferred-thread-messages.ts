@@ -62,7 +62,7 @@ export function listDeferredThreadMessages(
   return (db.sqlite.prepare(
     `SELECT * FROM deferred_thread_messages
       WHERE thread_id = ?
-      ORDER BY created_at ASC, id ASC`
+      ORDER BY created_at ASC, rowid ASC`
   ).all(threadId) as DeferredThreadMessageSqlRow[]).map(toRow);
 }
 

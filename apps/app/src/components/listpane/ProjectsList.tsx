@@ -473,13 +473,13 @@ export function ProjectsList({
   // open button does not immediately re-close.
   useEffect(() => {
     if (!sidebarAddOpen && !sidebarOrganizeOpen) return;
-    const onDown = (e: MouseEvent) => {
+    const onDown = (e: globalThis.MouseEvent) => {
       const t = e.target as Node;
       if (sidebarAddRef.current?.contains(t) || sidebarOrganizeRef.current?.contains(t)) return;
       setSidebarAddOpen(false);
       setSidebarOrganizeOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key === 'Escape') {
         setSidebarAddOpen(false);
         setSidebarOrganizeOpen(false);
@@ -530,12 +530,12 @@ export function ProjectsList({
 
   useEffect(() => {
     if (!confirmDeleteId) return;
-    const onDown = (e: MouseEvent) => {
+    const onDown = (e: globalThis.MouseEvent) => {
       const t = e.target as HTMLElement | null;
       if (t && t.closest('.project-delete-armed')) return;
       setConfirmDeleteId(null);
     };
-    const onKey = (e: KeyboardEvent) => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key === 'Escape') setConfirmDeleteId(null);
     };
     const timer = window.setTimeout(() => setConfirmDeleteId(null), 4000);

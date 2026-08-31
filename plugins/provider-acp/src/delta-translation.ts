@@ -1134,7 +1134,13 @@ export function createAcpDeltaTranslator(
         if (!params.success) {
           return [];
         }
-        if (mergeFsWriteIntoOpenToolCall(context, params.data)) {
+        if (
+          params.data.content !== undefined &&
+          mergeFsWriteIntoOpenToolCall(context, {
+            ...params.data,
+            content: params.data.content,
+          })
+        ) {
           return [];
         }
         const rawEvent: JsonRpcMessage = {

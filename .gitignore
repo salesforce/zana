@@ -31,6 +31,7 @@ e2e/.artifacts
 e2e-web/
 e2e-artifacts/
 *.log
+resources/scheduled-supervisor
 .env
 .env.local
 *.pre-vscode-bak

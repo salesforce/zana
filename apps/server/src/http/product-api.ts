@@ -1469,10 +1469,12 @@ export async function handleProductHttp(
           name: form.file.filename,
           type: form.file.mimeType,
           size: form.file.bytes.byteLength,
-          arrayBuffer: async () => form.file!.bytes.buffer.slice(
-            form.file!.bytes.byteOffset,
-            form.file!.bytes.byteOffset + form.file!.bytes.byteLength
-          )
+          arrayBuffer: async () => {
+            const source = form.file!.bytes;
+            const copy = new ArrayBuffer(source.byteLength);
+            new Uint8Array(copy).set(source);
+            return copy;
+          }
         });
         sendJson(response, 201, uploaded);
       } catch (error) {
@@ -1768,7 +1770,7 @@ export async function handleProductHttp(
             ok: false,
             code: 'DEST_EXISTS',
             message: error instanceof Error ? error.message : 'clone target already exists',
-            path: typeof (error as { path?: unknown }).path === 'string' ? (error as { path: string }).path : undefined
+            path: 'path' in error && typeof error.path === 'string' ? error.path : undefined
           });
           return true;
         }

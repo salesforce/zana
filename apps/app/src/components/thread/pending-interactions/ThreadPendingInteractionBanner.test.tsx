@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
-import type { PendingInteraction } from '@zana-ai/zcc-domain/thread-runtime';
+import type { ApprovalPendingInteraction, PendingInteraction } from '@zana-ai/zcc-domain/thread-runtime';
 import { product } from '../../../lib/product-client.js';
 import { ThreadPendingInteractionBanner } from './ThreadPendingInteractionBanner.js';
 
@@ -21,7 +21,7 @@ vi.mock('../../../lib/product-client.js', () => ({
   }
 }));
 
-function commandInteraction(): PendingInteraction {
+function commandInteraction(): ApprovalPendingInteraction {
   return {
     id: 'pint_1',
     threadId: 'thr-1',
@@ -75,7 +75,7 @@ describe('ThreadPendingInteractionBanner', () => {
   });
 
   it('renders a source-thread link and a question form', () => {
-    const question: PendingInteraction = {
+    const question = {
       ...commandInteraction(),
       payload: {
         kind: 'user_question',
@@ -86,12 +86,13 @@ describe('ThreadPendingInteractionBanner', () => {
           allowFreeText: true,
           options: [{ value: 'yes', label: 'Yes' }]
         }]
-      }
+      },
+      resolution: null
     };
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <ThreadPendingInteractionBanner
-          interaction={question}
+          interaction={question as any}
           threadId="thr-child"
           sourceThread={{ href: '/threads/thr-child', title: 'Child work' }}
         />
@@ -106,7 +107,7 @@ describe('ThreadPendingInteractionBanner', () => {
   });
 
   it('shows one question at a time for a multi-question ask', () => {
-    const question: PendingInteraction = {
+    const question = {
       ...commandInteraction(),
       payload: {
         kind: 'user_question',
@@ -131,11 +132,12 @@ describe('ThreadPendingInteractionBanner', () => {
             options: []
           }
         ]
-      }
+      },
+      resolution: null
     };
     const html = renderToStaticMarkup(
       <MemoryRouter>
-        <ThreadPendingInteractionBanner interaction={question} threadId="thr-1" />
+        <ThreadPendingInteractionBanner interaction={question as any} threadId="thr-1" />
       </MemoryRouter>
     );
     expect(html).toContain('Waiting for answers to 2 questions');
@@ -150,7 +152,7 @@ describe('ThreadPendingInteractionBanner', () => {
   });
 
   it('shows a free-text input for an open question', () => {
-    const question: PendingInteraction = {
+    const question = {
       ...commandInteraction(),
       payload: {
         kind: 'user_question',
@@ -160,11 +162,12 @@ describe('ThreadPendingInteractionBanner', () => {
           multiSelect: false,
           allowFreeText: true
         }]
-      }
+      },
+      resolution: null
     };
     const html = renderToStaticMarkup(
       <MemoryRouter>
-        <ThreadPendingInteractionBanner interaction={question} threadId="thr-1" />
+        <ThreadPendingInteractionBanner interaction={question as any} threadId="thr-1" />
       </MemoryRouter>
     );
     expect(html).toContain('thread-pending-question-input');
@@ -176,10 +179,12 @@ describe('ThreadPendingInteractionBanner', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <ThreadPendingInteractionBanner
-          interaction={{
+          interaction={{...({} as any),
             ...commandInteraction(),
+            turnId: null,
             origin: { kind: 'plugin', pluginId: 'ask-user', rendererId: 'form' },
-            payload: { kind: 'plugin', title: 'Confirm delete', data: { path: '/tmp' } }
+            payload: { kind: 'plugin', title: 'Confirm delete', data: { path: '/tmp' } },
+            resolution: null
           }}
           threadId="thr-1"
         />
@@ -194,7 +199,7 @@ describe('ThreadPendingInteractionBanner', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <ThreadPendingInteractionBanner
-          interaction={{
+          interaction={{...({} as any),
             ...commandInteraction(),
             payload: {
               kind: 'approval',
@@ -225,7 +230,7 @@ describe('ThreadPendingInteractionBanner', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <ThreadPendingInteractionBanner
-          interaction={{
+          interaction={{...({} as any),
             ...commandInteraction(),
             payload: {
               kind: 'approval',

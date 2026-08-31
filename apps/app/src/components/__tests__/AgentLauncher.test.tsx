@@ -101,7 +101,7 @@ describe('launch mode', () => {
     expect(source).toContain('<AutonomousTeamComposer');
     expect(source).toContain('initialText={initialPrompt}');
     expect(source).toContain('onCreated={onClose}');
-    expect(source).toContain("{mode === 'autonomous' && (<>");
+    expect(source).toContain("{mode === 'autonomous' && (");
     expect(source).not.toContain('<PromptComposer');
   });
 

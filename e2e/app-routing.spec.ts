@@ -48,12 +48,14 @@ test('a project-locked window cannot leave /projects/:id', async ({ app }) => {
   expect(projectId).toBeTruthy();
 
   try {
-    const projectsNav = window.locator('.nav-item').filter({ hasText: 'Projects' });
-    await projectsNav.first().click();
-    await window.locator('button[aria-label="Reload project list"]').click();
-    const filter = window.locator('.list-filter input');
-    if (await filter.count()) {
-      await filter.fill(projectName);
+    // The global sidebar always renders the Projects ("Workspaces") list section
+    // (there is no longer a top-level "Projects" nav row nor a list-pane reload
+    // button); an in-app `projects.add` broadcasts `projects:onChanged`, so the
+    // row appears live. The section is collapsed by default — expand it so the
+    // filter and rows are visible, then filter to isolate the just-added project.
+    const workspaces = window.locator('[data-testid="sidebar-projects-heading"]');
+    if ((await workspaces.getAttribute('aria-expanded')) === 'false') {
+      await workspaces.click();
     }
     await expect(
       window.locator('.project-item').filter({ hasText: projectName }).first()

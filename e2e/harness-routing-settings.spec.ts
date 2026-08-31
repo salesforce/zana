@@ -34,14 +34,15 @@ test('Global and Project harness settings persist provider, model, execution, an
       opencodeBinary: undefined
     }));
     await window.evaluate((bin) => window.cc.config.set({ opencodeBinary: bin }), openCode.path);
-    await window.locator('[data-testid="nav-settings"]').click();
+    await window.getByRole('link', { name: 'Settings' }).click();
     await window.locator('.settings-section-item').filter({ hasText: 'Code Harness' }).click();
     await expect(window.locator('.settings-header')).toContainText('Code Harness');
 
     // Updating binary config does not retroactively change boot-time availability.
-    // Re-open tab after its mount-time probe sees our deterministic fake binary.
-    await window.locator('[data-testid="nav-agents"]').click();
-    await window.locator('[data-testid="nav-settings"]').click();
+    // Leave Settings (its section nav replaces the global rail) and re-open the
+    // tab so its mount-time probe sees our deterministic fake binary.
+    await window.locator('.settings-app-back').click();
+    await window.getByRole('link', { name: 'Settings' }).click();
     await window.locator('.settings-section-item').filter({ hasText: 'Code Harness' }).click();
 
     await window.getByRole('tab', { name: 'CLI Agent' }).click();
@@ -71,10 +72,14 @@ test('Global and Project harness settings persist provider, model, execution, an
     await expect(globalProvider).toContainText('Use harness default');
     await expect(globalModel).toContainText('Use harness default');
 
-    await window.locator('[data-testid="nav-projects"]').click();
-    await window.locator('button[aria-label="Reload project list"]').click();
-    await window.locator('[data-testid="nav-settings"]').click();
-    await window.locator('.settings-section-item').filter({ hasText: 'Project settings' }).click();
+    // Project-scoped harness settings live in the Project settings section. Its
+    // nav link resolves to the global route until a project is scoped, so open
+    // the section's alias route directly; it renders the project-only scope
+    // dropdown ("Select a project…") that we then point at our tmp project.
+    await window.evaluate(() => {
+      window.history.pushState({}, '', '/settings/project');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
     const scope = window.getByRole('button', { name: 'Project', exact: true });
     await scope.click();
     await window.getByRole('listbox', { name: 'Project' }).getByRole('option', { name: projectName, exact: true }).click();

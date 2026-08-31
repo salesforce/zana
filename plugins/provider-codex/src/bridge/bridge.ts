@@ -842,7 +842,12 @@ function handleChildRequest(
         payload: request.payload,
         resolution: result,
       });
-      responder.result(buildCodexInteractiveResponse(outcome));
+      responder.result(
+        buildCodexInteractiveResponse({
+          request,
+          resolution: outcome.resolution,
+        }),
+      );
     })
     .catch((error: unknown) => {
       responder.error(

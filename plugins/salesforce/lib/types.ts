@@ -149,6 +149,8 @@ export interface EvalEvidence {
   at: number;
 }
 
+export type ToolFailure = { ok: false; error: string; code: string };
+
 export type ToolResult =
   | { ok: true; summary: string; data?: unknown; artifactId?: string }
-  | { ok: false; error: string; code: string };
+  | ToolFailure;

@@ -4,7 +4,7 @@
  * (mirrors `project-focus-navigation.test.ts`) and dynamically import the
  * store + module registry fresh per test so state doesn't leak.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import type { InboxEntry } from '@zana-ai/zcc-domain/product';
 
 function makeEntry(overrides: Partial<InboxEntry> = {}): InboxEntry {
@@ -18,6 +18,20 @@ function makeEntry(overrides: Partial<InboxEntry> = {}): InboxEntry {
 }
 
 describe('focusInboxEntry', () => {
+  // Every test below dynamically imports store.ts fresh (vi.resetModules() in
+  // afterEach forces this, for state isolation). resetModules() only clears
+  // the module-INSTANTIATION cache, not Vite's compiled-code transform cache —
+  // so whichever test runs first still pays the one-time COLD TRANSFORM of the
+  // ~3600-line store.ts (+ transitive deps), measured ~550ms solo vs ~30ms once
+  // warm. Under the full parallel `vitest run` (pre-push hook, CI), many worker
+  // forks cold-transforming their own large modules at once can push that cost
+  // past the default 5s test timeout — a false-flake, not a logic race. Pay it
+  // here instead, in a hook with its own generous timeout, before any test's
+  // budget starts ticking.
+  beforeAll(async () => {
+    await import('../../store.js');
+  }, 20_000);
+
   beforeEach(() => {
     const storage = new Map<string, string>();
     const localStorage = {

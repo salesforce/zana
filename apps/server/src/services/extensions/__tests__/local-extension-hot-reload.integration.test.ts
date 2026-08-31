@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync, watch as fsWatch } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,6 +31,27 @@ async function importModules() {
   return { discovery, localExtension, installer };
 }
 
+/**
+ * Lay down a LEGACY `extension.json` working dir (manifest + `dist/renderer.js`).
+ *
+ * `scaffoldLocalExtension` now emits a `package.json` `zcc` plugin, which the real
+ * `packAndInstallLocal` routes through PluginService (`runtimeSupervisor`) — a
+ * desktop-runtime dependency this "real fs, no mocks" suite can't spin up. The
+ * hot-reload path under test is the still-live `packLocalExtension` →
+ * `installFromDir` branch (the `packAndInstallLocal` mirror below), which serves
+ * leftover `extension.json` dirs, so the dummy extension is an extension.json
+ * working dir written directly.
+ */
+async function writeLegacyWorkingDir(workingDir: string, id: string, title = 'Ext'): Promise<void> {
+  await mkdir(join(workingDir, 'dist'), { recursive: true });
+  await writeFile(
+    join(workingDir, 'extension.json'),
+    JSON.stringify({ id, version: '1.0.0', engines: { zccApi: '>=1 <2' }, title }, null, 2),
+    'utf-8'
+  );
+  await writeFile(join(workingDir, 'dist', 'renderer.js'), '// dummy renderer\n', 'utf-8');
+}
+
 /** Mirrors index.ts's packAndInstallLocal verbatim (sans runDiskSync, which needs the live app store). */
 async function packAndInstallLocal(id: string, workingDir: string) {
   const { installer, localExtension } = await importModules();
@@ -49,7 +70,18 @@ async function packAndInstallLocal(id: string, workingDir: string) {
 async function waitFor(predicate: () => boolean | Promise<boolean>, what: string, timeoutMs = 4000) {
   const start = Date.now();
   for (;;) {
-    if (await predicate()) return;
+    // A reinstall replaces the install dir atomically (rm old + rename new), so
+    // a predicate that stats-then-reads the installed file can race the swap:
+    // existsSync sees the old file, the dir is torn down, then readFile hits
+    // ENOENT. That is a transient not-ready state, not a failure — swallow the
+    // throw and keep polling; a genuine stall still surfaces via the timeout.
+    let ok = false;
+    try {
+      ok = await predicate();
+    } catch {
+      ok = false;
+    }
+    if (ok) return;
     if (Date.now() - start > timeoutMs) throw new Error(`timed out waiting for: ${what}`);
     await new Promise((r) => setTimeout(r, 20));
   }
@@ -74,13 +106,8 @@ describe('local-extension hot-reload (real fs, real fs.watch, dummy extension)',
       const id = 'hot-reload-dummy-c3d4';
       const workingDir = localExtension.workingDirFor(workRoot, id);
 
-      const scaffolded = await localExtension.scaffoldLocalExtension(workingDir, {
-        id,
-        name: 'Hot Reload Dummy',
-        description: 'a dummy extension for automated hot-reload verification',
-        kind: 'panel'
-      });
-      expect(scaffolded.ok).toBe(true);
+      await writeLegacyWorkingDir(workingDir, id, 'Hot Reload Dummy');
+      expect(existsSync(join(workingDir, 'extension.json'))).toBe(true);
       await discovery.markLocal(id, workingDir);
 
       // First install — this is what createLocalExtension does right after
@@ -144,11 +171,7 @@ describe('local-extension hot-reload (real fs, real fs.watch, dummy extension)',
       const id = 'hot-reload-flatwatch-e5f6';
       const workingDir = localExtension.workingDirFor(workRoot, id);
 
-      await localExtension.scaffoldLocalExtension(workingDir, {
-        id,
-        name: 'Flat Watch Dummy',
-        kind: 'panel'
-      });
+      await writeLegacyWorkingDir(workingDir, id, 'Flat Watch Dummy');
       await discovery.markLocal(id, workingDir);
       const first = await packAndInstallLocal(id, workingDir);
       expect(first.ok).toBe(true);

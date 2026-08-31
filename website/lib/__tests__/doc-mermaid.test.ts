@@ -48,7 +48,7 @@ describe('renderDoc mermaid fences', () => {
     const cli = DOCS.find((d) => d.slug === 'cli');
     expect(cli).toBeTruthy();
     const { html } = await renderDoc(cli!);
-    const dumpAt = html.indexOf('READ COMMANDS');
+    const dumpAt = html.indexOf('OFFLINE (no app required)');
     expect(dumpAt).toBeGreaterThan(-1);
     expect(html).toContain('plugin ls');
     const lastShiki = html.lastIndexOf('class="shiki', dumpAt);

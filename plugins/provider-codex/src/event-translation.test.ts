@@ -1,25 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { threadScope, turnScope } from "@zana-ai/zcc-domain/thread-runtime";
 import type { ServerNotification as CodexServerNotification } from "./generated/codex-app-server/schema/ServerNotification.js";
 import type { Turn } from "./generated/codex-app-server/schema/v2/Turn.js";
+import { CODEX_GOAL_EXTENSION_KIND } from "./extension-kinds.js";
 import { createCodexEventTranslator } from "./translator.js";
 
 /**
  * Per-event Codex translation invariants (codex/event-translation.ts).
  *
- * These moved off codex/adapter.test.ts, which was deleted when the codex
- * legacy adapter graduated. They outlive that adapter because
- * event-translation.ts and translator.ts are shared verbatim with the canonical
- * codex bridge: the legacy adapter's `translateEvent` was a pure pass-through to
- * `createCodexEventTranslator(...).translateEvent`, so every assertion here
- * still pins live bridge behavior.
+ * `translateEvent` returns narrow-grammar `ThreadDelta[]` (translator.ts):
+ * every delta carries codex's own turn id as the vouched `providerTurnId` join
+ * key and item ids as `key.providerItemId`; threadId / providerThreadId / scope
+ * are stamped downstream by the runtime assembler, so they never appear here.
  *
  * Split of responsibility with codex/translator.test.ts: that file keeps the
  * *stateful* correlation invariants — command-output recovery across event
  * reordering, subagent/delegation parent links, accepted-turn correlation —
  * which need multi-event sequences against one translator instance. This file
- * holds the per-event translation surface: one event in, translated bb events
- * out.
+ * holds the per-event translation surface: one event in, translated deltas out.
  */
 
 function codexEvent<M extends CodexServerNotification["method"]>(
@@ -65,10 +62,8 @@ describe("codex turn lifecycle translation", () => {
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "turn/started",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "turn.open",
+        providerTurnId: "turn-1",
       }),
     );
   });
@@ -85,15 +80,13 @@ describe("codex turn lifecycle translation", () => {
 
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "turn/started",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "turn.open",
+        providerTurnId: "turn-1",
       }),
     );
   });
 
-  it("translateEvent surfaces malformed handled Codex events as provider/unhandled", () => {
+  it("translateEvent surfaces malformed handled Codex events as an unhandled delta", () => {
     const translator = createTranslator();
     const events = translator.translateEvent({
       jsonrpc: "2.0",
@@ -105,10 +98,8 @@ describe("codex turn lifecycle translation", () => {
 
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "provider/unhandled",
-        providerId: "codex",
+        kind: "unhandled",
         rawType: "turn/started",
-        threadId: "t1",
       }),
     );
   });
@@ -164,9 +155,8 @@ describe("codex turn lifecycle translation", () => {
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "turn/completed",
-        threadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "turn.boundary",
+        providerTurnId: "turn-1",
         status: "failed",
         error: { message: "rate limited" },
       }),
@@ -183,7 +173,7 @@ describe("codex turn lifecycle translation", () => {
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "turn/completed",
+        kind: "turn.boundary",
         status: "interrupted",
       }),
     );
@@ -225,23 +215,19 @@ describe("codex thread lifecycle translation", () => {
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "thread/started",
-        threadId: "codex-uuid-123",
+        kind: "thread.started",
       }),
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "thread/identity",
-        threadId: "codex-uuid-123",
+        kind: "thread.identity",
         providerThreadId: "codex-uuid-123",
       }),
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "thread/name/updated",
-        threadId: "codex-uuid-123",
-        providerThreadId: "codex-uuid-123",
-        threadName: "Fix the tests",
+        kind: "thread.name",
+        name: "Fix the tests",
       }),
     );
   });
@@ -256,10 +242,8 @@ describe("codex thread lifecycle translation", () => {
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "thread/name/updated",
-        threadId: "t1",
-        providerThreadId: "t1",
-        threadName: "Updated title",
+        kind: "thread.name",
+        name: "Updated title",
       }),
     );
   });
@@ -296,10 +280,9 @@ describe("codex thread lifecycle translation", () => {
       ),
     ).toEqual([
       {
-        type: "thread/goal/cleared",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: threadScope(),
+        kind: "extension.state",
+        extensionKind: CODEX_GOAL_EXTENSION_KIND,
+        payload: null,
       },
     ]);
     expect(
@@ -321,30 +304,28 @@ describe("codex thread lifecycle translation", () => {
       ),
     ).toEqual([
       {
-        type: "thread/goal/updated",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: threadScope(),
-        objective: "Finish the task",
-        status: "active",
-        tokenBudget: null,
-        tokensUsed: 0,
-        timeUsedSeconds: 0,
+        kind: "extension.state",
+        extensionKind: CODEX_GOAL_EXTENSION_KIND,
+        payload: {
+          objective: "Finish the task",
+          status: "active",
+          tokenBudget: null,
+          tokensUsed: 0,
+          timeUsedSeconds: 0,
+        },
       },
     ]);
   });
 
-  it("translateEvent thread/compacted emits a compacted event", () => {
+  it("translateEvent thread/compacted emits a compacted delta", () => {
     const translator = createTranslator();
     const events = translator.translateEvent(
       codexEvent("thread/compacted", { threadId: "t1", turnId: "turn-1" }),
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "thread/compacted",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "context.compacted",
+        providerTurnId: "turn-1",
       }),
     );
   });
@@ -373,11 +354,10 @@ describe("codex item translation", () => {
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/started",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
-        item: { type: "agentMessage", id: "item-1", text: "Hello" },
+        kind: "item.open",
+        key: { providerItemId: "item-1" },
+        providerTurnId: "turn-1",
+        item: { type: "agentMessage", text: "Hello" },
       }),
     );
   });
@@ -422,14 +402,10 @@ describe("codex item translation", () => {
 
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/started",
-        threadId: "t1",
-        scope: turnScope("turn-1"),
-        item: {
-          type: "imageView",
-          id: "image-1",
-          path: "/tmp/image.png",
-        },
+        kind: "item.open",
+        key: { providerItemId: "image-1" },
+        providerTurnId: "turn-1",
+        item: { type: "imageView", path: "/tmp/image.png" },
       }),
     );
   });
@@ -451,20 +427,15 @@ describe("codex item translation", () => {
 
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/completed",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
-        item: {
-          type: "imageView",
-          id: "image-1",
-          path: "/tmp/image.png",
-        },
+        kind: "item.close",
+        key: { providerItemId: "image-1" },
+        providerTurnId: "turn-1",
+        item: { type: "imageView", path: "/tmp/image.png" },
       }),
     );
   });
 
-  it("translateEvent unknown codex notifications fall back to provider/unhandled", () => {
+  it("translateEvent unknown codex notifications fall back to an unhandled delta", () => {
     const translator = createTranslator();
     const events = translator.translateEvent({
       jsonrpc: "2.0",
@@ -475,18 +446,13 @@ describe("codex item translation", () => {
       },
     });
 
-    // Thread scope, not turnScope("turn-1"): this notification failed schema
-    // parsing, so nothing here vouches for that turn id being one bb started.
-    // Turn-scoping an event whose turn/started the server never stored gets the
-    // event dropped; thread scope keeps it. Codex notifications bb *does* parse
-    // still carry turn scope — see the handled item/started cases above.
+    // Unvouched turn: this notification failed schema parsing, so nothing here
+    // vouches for that turn id — the unhandled delta carries no providerTurnId
+    // and stays thread-scoped downstream.
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "provider/unhandled",
-        providerId: "codex",
+        kind: "unhandled",
         rawType: "item/tool/requestUserInput",
-        threadId: "t1",
-        scope: threadScope(),
       }),
     );
   });
@@ -547,11 +513,9 @@ describe("codex item translation", () => {
 
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/toolCall/progress",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
-        itemId: "mcp-1",
+        kind: "item.progress",
+        key: { providerItemId: "mcp-1" },
+        providerTurnId: "turn-1",
         message: "Connecting to MCP server",
       }),
     );
@@ -581,15 +545,13 @@ describe("codex item translation", () => {
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/completed",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "item.close",
+        key: { providerItemId: "cmd-1" },
+        providerTurnId: "turn-1",
+        status: "completed",
         item: expect.objectContaining({
-          type: "commandExecution",
-          id: "cmd-1",
+          type: "command",
           command: "ls -la",
-          status: "completed",
           exitCode: 0,
           durationMs: 150,
         }),
@@ -622,21 +584,20 @@ describe("codex item translation", () => {
 
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/completed",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "item.close",
+        key: { providerItemId: "cmd-1" },
+        providerTurnId: "turn-1",
+        status: "interrupted",
+        approvalStatus: "denied",
         item: expect.objectContaining({
-          type: "commandExecution",
-          id: "cmd-1",
-          status: "interrupted",
-          approvalStatus: "denied",
+          type: "command",
+          command: "ls -la",
         }),
       }),
     );
   });
 
-  it("translateEvent item/started normalizes commandExecution to pending", () => {
+  it("translateEvent item/started opens a commandExecution row", () => {
     const translator = createTranslator();
     const events = translator.translateEvent(
       codexEvent("item/started", {
@@ -661,16 +622,12 @@ describe("codex item translation", () => {
 
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/started",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "item.open",
+        key: { providerItemId: "cmd-1" },
+        providerTurnId: "turn-1",
         item: expect.objectContaining({
-          type: "commandExecution",
-          id: "cmd-1",
+          type: "command",
           command: "ls -la",
-          status: "pending",
-          approvalStatus: null,
         }),
       }),
     );
@@ -698,12 +655,9 @@ describe("codex item translation", () => {
         },
       }),
     );
-    const itemEvent = events.find((e) => e.type === "item/completed");
+    const itemEvent = events.find((e) => e.kind === "item.close");
     expect(itemEvent).toBeDefined();
-    if (
-      itemEvent?.type === "item/completed" &&
-      itemEvent.item.type === "fileChange"
-    ) {
+    if (itemEvent?.kind === "item.close" && itemEvent.item.type === "fileChange") {
       expect(itemEvent.item.changes).toMatchObject([
         {
           path: "src/foo.ts",
@@ -715,11 +669,11 @@ describe("codex item translation", () => {
           kind: "add",
         },
       ]);
-      expect(itemEvent.item.status).toBe("completed");
+      expect(itemEvent.status).toBe("completed");
     }
   });
 
-  it("translateEvent item/completed with mcpToolCall maps to toolCall", () => {
+  it("translateEvent item/completed with mcpToolCall maps to a tool row", () => {
     const translator = createTranslator();
     const events = translator.translateEvent(
       codexEvent("item/completed", {
@@ -742,16 +696,14 @@ describe("codex item translation", () => {
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/completed",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "item.close",
+        key: { providerItemId: "mcp-1" },
+        providerTurnId: "turn-1",
+        status: "completed",
         item: expect.objectContaining({
-          type: "toolCall",
-          id: "mcp-1",
+          type: "tool",
           server: "myserver",
           tool: "search",
-          status: "completed",
           durationMs: 200,
         }),
       }),
@@ -782,21 +734,19 @@ describe("codex item translation", () => {
 
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/completed",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "item.close",
+        key: { providerItemId: "edit-1" },
+        providerTurnId: "turn-1",
+        status: "interrupted",
+        approvalStatus: "denied",
         item: expect.objectContaining({
           type: "fileChange",
-          id: "edit-1",
-          status: "interrupted",
-          approvalStatus: "denied",
         }),
       }),
     );
   });
 
-  it("translateEvent item/completed with dynamicToolCall maps to toolCall", () => {
+  it("translateEvent item/completed with dynamicToolCall maps to a tool row", () => {
     const translator = createTranslator();
     const events = translator.translateEvent(
       codexEvent("item/completed", {
@@ -818,15 +768,13 @@ describe("codex item translation", () => {
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/completed",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "item.close",
+        key: { providerItemId: "dyn-1" },
+        providerTurnId: "turn-1",
+        status: "completed",
         item: expect.objectContaining({
-          type: "toolCall",
-          id: "dyn-1",
+          type: "tool",
           tool: "bb_test_ping",
-          status: "completed",
           result: "PONG_FROM_TOOL",
           durationMs: 3,
         }),
@@ -858,14 +806,12 @@ describe("codex item translation", () => {
 
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/completed",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "item.close",
+        key: { providerItemId: "dyn-err-1" },
+        providerTurnId: "turn-1",
+        status: "failed",
         item: expect.objectContaining({
-          type: "toolCall",
-          id: "dyn-err-1",
-          status: "failed",
+          type: "tool",
           result: "permission denied",
           error: "permission denied",
         }),
@@ -901,14 +847,12 @@ describe("codex item translation", () => {
 
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/completed",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "item.close",
+        key: { providerItemId: "dyn-img-1" },
+        providerTurnId: "turn-1",
+        status: "failed",
         item: expect.objectContaining({
-          type: "toolCall",
-          id: "dyn-img-1",
-          status: "failed",
+          type: "tool",
           result: "[image: https://example.com/tool-result.png]",
           error: "[image: https://example.com/tool-result.png]",
         }),
@@ -916,7 +860,7 @@ describe("codex item translation", () => {
     );
   });
 
-  it("translateEvent item/completed with collabAgentToolCall maps to toolCall", () => {
+  it("translateEvent item/completed with collabAgentToolCall maps to a delegation", () => {
     const translator = createTranslator();
     const events = translator.translateEvent(
       codexEvent("item/completed", {
@@ -941,25 +885,15 @@ describe("codex item translation", () => {
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/completed",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "item.close",
+        key: { providerItemId: "collab-1" },
+        providerTurnId: "turn-1",
+        status: "completed",
         item: expect.objectContaining({
-          type: "toolCall",
-          id: "collab-1",
-          tool: "spawnAgent",
-          status: "completed",
-          arguments: expect.objectContaining({
-            senderThreadId: "t1",
-            receiverThreadIds: ["sub-thread-1"],
-            prompt: "Inspect the docs directory",
-            model: "gpt-5.4",
-            reasoningEffort: "medium",
-          }),
-          result: {
-            "sub-thread-1": { status: "completed", message: "done" },
-          },
+          type: "delegation",
+          childRef: "sub-thread-1",
+          label: "Inspect the docs directory",
+          background: false,
         }),
       }),
     );
@@ -990,14 +924,13 @@ describe("codex item translation", () => {
 
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/completed",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "item.close",
+        key: { providerItemId: "collab-declined-1" },
+        providerTurnId: "turn-1",
+        status: "interrupted",
         item: expect.objectContaining({
-          type: "toolCall",
-          id: "collab-declined-1",
-          status: "interrupted",
+          type: "delegation",
+          childRef: "sub-thread-1",
         }),
       }),
     );
@@ -1020,13 +953,11 @@ describe("codex item translation", () => {
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/completed",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "item.close",
+        key: { providerItemId: "reasoning-1" },
+        providerTurnId: "turn-1",
         item: {
           type: "reasoning",
-          id: "reasoning-1",
           summary: ["Read the search flow"],
           content: ["Investigated the search sidebar state machine."],
         },
@@ -1050,20 +981,18 @@ describe("codex item translation", () => {
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/completed",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "item.close",
+        key: { providerItemId: "plan-1" },
+        providerTurnId: "turn-1",
         item: {
           type: "plan",
-          id: "plan-1",
           text: "1. Read the file\n2. Edit the function",
         },
       }),
     );
   });
 
-  it("translateEvent item/started with contextCompaction maps to contextCompaction", () => {
+  it("translateEvent item/started with contextCompaction maps to compaction", () => {
     const translator = createTranslator();
     const events = translator.translateEvent(
       codexEvent("item/started", {
@@ -1078,13 +1007,11 @@ describe("codex item translation", () => {
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/started",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "item.open",
+        key: { providerItemId: "compact-1" },
+        providerTurnId: "turn-1",
         item: {
-          type: "contextCompaction",
-          id: "compact-1",
+          type: "compaction",
         },
       }),
     );
@@ -1113,15 +1040,12 @@ describe("codex web item translation", () => {
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/completed",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "item.close",
+        key: { providerItemId: "web-1" },
+        providerTurnId: "turn-1",
         item: {
           type: "webSearch",
-          id: "web-1",
           queries: ["react suspense"],
-          resultText: null,
         },
       }),
     );
@@ -1149,19 +1073,16 @@ describe("codex web item translation", () => {
 
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/started",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "item.open",
+        key: { providerItemId: "web-start-1" },
+        providerTurnId: "turn-1",
         item: {
           type: "webSearch",
-          id: "web-start-1",
           queries: [
             "react suspense primary",
             "react suspense secondary",
             "react suspense fallback",
           ],
-          resultText: null,
         },
       }),
     );
@@ -1185,17 +1106,13 @@ describe("codex web item translation", () => {
 
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/started",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "item.open",
+        key: { providerItemId: "web-open-start-1" },
+        providerTurnId: "turn-1",
         item: {
           type: "webFetch",
-          id: "web-open-start-1",
           url: "https://example.com",
-          prompt: null,
           pattern: null,
-          resultText: null,
         },
       }),
     );
@@ -1223,17 +1140,13 @@ describe("codex web item translation", () => {
 
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/started",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "item.open",
+        key: { providerItemId: "web-find-start-1" },
+        providerTurnId: "turn-1",
         item: {
           type: "webFetch",
-          id: "web-find-start-1",
           url: "https://example.com",
-          prompt: null,
           pattern: "Example Domain",
-          resultText: null,
         },
       }),
     );
@@ -1257,23 +1170,19 @@ describe("codex web item translation", () => {
 
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/completed",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "item.close",
+        key: { providerItemId: "web-open-1" },
+        providerTurnId: "turn-1",
         item: {
           type: "webFetch",
-          id: "web-open-1",
           url: "https://example.com",
-          prompt: null,
           pattern: null,
-          resultText: null,
         },
       }),
     );
     expect(events).not.toContainEqual(
       expect.objectContaining({
-        type: "provider/unhandled",
+        kind: "unhandled",
       }),
     );
   });
@@ -1300,23 +1209,19 @@ describe("codex web item translation", () => {
 
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/completed",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "item.close",
+        key: { providerItemId: "web-find-1" },
+        providerTurnId: "turn-1",
         item: {
           type: "webFetch",
-          id: "web-find-1",
           url: "https://example.com",
-          prompt: null,
           pattern: "Example Domain",
-          resultText: null,
         },
       }),
     );
     expect(events).not.toContainEqual(
       expect.objectContaining({
-        type: "provider/unhandled",
+        kind: "unhandled",
       }),
     );
   });
@@ -1359,7 +1264,7 @@ describe("codex web item translation", () => {
     expect(events).toMatchObject([]);
   });
 
-  it("translateEvent item/completed with missing openPage url falls back to provider/unhandled", () => {
+  it("translateEvent item/completed with missing openPage url falls back to an unhandled delta", () => {
     const translator = createTranslator();
     const events = translator.translateEvent(
       codexEvent("item/completed", {
@@ -1378,14 +1283,13 @@ describe("codex web item translation", () => {
     expect(
       events.some(
         (event) =>
-          event.type === "provider/unhandled" &&
-          event.rawType === "item/completed",
+          event.kind === "unhandled" && event.rawType === "item/completed",
       ),
     ).toBe(true);
     expect(
       events.some(
         (event) =>
-          event.type === "item/completed" && event.item.type === "webFetch",
+          event.kind === "item.close" && event.item.type === "webFetch",
       ),
     ).toBe(false);
   });
@@ -1408,12 +1312,11 @@ describe("codex delta and usage translation", () => {
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/agentMessage/delta",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
-        itemId: "item-1",
-        delta: "hello ",
+        kind: "item.textDelta",
+        key: { providerItemId: "item-1" },
+        channel: "agentMessage",
+        text: "hello ",
+        providerTurnId: "turn-1",
       }),
     );
   });
@@ -1430,17 +1333,16 @@ describe("codex delta and usage translation", () => {
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "item/commandExecution/outputDelta",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
-        itemId: "cmd-1",
-        delta: "output line\n",
+        kind: "item.outputDelta",
+        key: { providerItemId: "cmd-1" },
+        channel: "command",
+        text: "output line\n",
+        providerTurnId: "turn-1",
       }),
     );
   });
 
-  it("translateEvent thread/tokenUsage/updated", () => {
+  it("translateEvent thread/tokenUsage/updated emits usage + contextWindow deltas", () => {
     const translator = createTranslator();
     const events = translator.translateEvent(
       codexEvent("thread/tokenUsage/updated", {
@@ -1467,22 +1369,19 @@ describe("codex delta and usage translation", () => {
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "thread/tokenUsage/updated",
-        threadId: "t1",
-        tokenUsage: expect.objectContaining({
-          total: expect.objectContaining({ totalTokens: 100 }),
-          modelContextWindow: 128000,
-        }),
+        kind: "usage",
+        total: expect.objectContaining({ totalTokens: 100 }),
+        modelContextWindow: 128000,
+        providerTurnId: "turn-1",
       }),
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "thread/contextWindowUsage/updated",
-        contextWindowUsage: {
-          usedTokens: 50,
-          modelContextWindow: 128000,
-          estimated: false,
-        },
+        kind: "contextWindow",
+        used: 50,
+        size: 128000,
+        estimated: false,
+        providerTurnId: "turn-1",
       }),
     );
   });
@@ -1509,16 +1408,18 @@ describe("codex plan translation", () => {
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "turn/plan/updated",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
-        explanation: "Here's the plan",
-        plan: [
-          { step: "Read the file", status: "completed" },
-          { step: "Edit the function", status: "active" },
-          { step: "Run tests", status: "pending" },
-        ],
+        kind: "item.close",
+        key: { channel: "planSteps" },
+        providerTurnId: "turn-1",
+        item: expect.objectContaining({
+          type: "planSteps",
+          explanation: "Here's the plan",
+          steps: [
+            { step: "Read the file", status: "completed" },
+            { step: "Edit the function", status: "active" },
+            { step: "Run tests", status: "pending" },
+          ],
+        }),
       }),
     );
   });
@@ -1540,14 +1441,16 @@ describe("codex plan translation", () => {
 
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "turn/plan/updated",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
-        plan: [
-          { step: "Read the file", status: "completed" },
-          { step: "Run tests", status: "pending" },
-        ],
+        kind: "item.close",
+        key: { channel: "planSteps" },
+        providerTurnId: "turn-1",
+        item: expect.objectContaining({
+          type: "planSteps",
+          steps: [
+            { step: "Read the file", status: "completed" },
+            { step: "Run tests", status: "pending" },
+          ],
+        }),
       }),
     );
   });
@@ -1574,10 +1477,8 @@ describe("codex error and warning translation", () => {
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "provider/error",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "provider.error",
+        providerTurnId: "turn-1",
         message: "Provider error",
         detail: "Rate limited\nretry after 30s",
         willRetry: true,
@@ -1604,10 +1505,8 @@ describe("codex error and warning translation", () => {
 
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "provider/error",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "provider.error",
+        providerTurnId: "turn-1",
         message: "Provider error",
         detail: "stream disconnected",
         willRetry: false,
@@ -1630,9 +1529,7 @@ describe("codex error and warning translation", () => {
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "provider/warning",
-        threadId: "",
-        providerThreadId: "",
+        kind: "provider.warning",
         category: "deprecation",
         summary: "Model deprecated",
         details: "Use newer model",
@@ -1650,9 +1547,7 @@ describe("codex error and warning translation", () => {
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "provider/warning",
-        threadId: "",
-        providerThreadId: "",
+        kind: "provider.warning",
         category: "config",
         summary: "Bad config",
       }),
@@ -1712,8 +1607,7 @@ describe("codex account rate-limit translation", () => {
     );
     expect(events).toEqual([
       expect.objectContaining({
-        type: "provider/rateLimits/updated",
-        scope: threadScope(),
+        kind: "provider.rateLimits",
         rateLimits: expect.objectContaining({
           providerId: "codex",
           status: "blocked",
@@ -1763,7 +1657,7 @@ describe("codex account rate-limit translation", () => {
     );
 
     expect(event).toMatchObject({
-      type: "provider/rateLimits/updated",
+      kind: "provider.rateLimits",
       rateLimits: {
         status: "blocked",
         kind: "subscription-window",
@@ -1815,7 +1709,7 @@ describe("codex account rate-limit translation", () => {
       },
     });
     expect(sparseEvent).toMatchObject({
-      type: "provider/rateLimits/updated",
+      kind: "provider.rateLimits",
       rateLimits: {
         status: "blocked",
         kind: "subscription-window",
@@ -1844,7 +1738,7 @@ describe("codex account rate-limit translation", () => {
       },
     });
     expect(resetEvent).toMatchObject({
-      type: "provider/rateLimits/updated",
+      kind: "provider.rateLimits",
       rateLimits: {
         status: "allowed",
         kind: "subscription-window",
