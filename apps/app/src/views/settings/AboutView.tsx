@@ -15,6 +15,7 @@ import {
   CLAUDE_CODE_URL,
   CODEX_URL,
   CURSOR_URL,
+  GITHUB_REPO_URL,
   type AppConfig
 } from '@zana-ai/zcc-domain/product';
 import { useUpdates, openWhatsNewAll } from '@/store';
@@ -225,6 +226,10 @@ export function AboutView({
           shows the release notes in-app, or{' '}
           <a href={RELEASE_NOTES_URL} target="_blank" rel="noopener noreferrer">
             view them on GitHub
+          </a>
+          . If Zana is useful,{' '}
+          <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer">
+            Star on GitHub
           </a>
           .
         </p>

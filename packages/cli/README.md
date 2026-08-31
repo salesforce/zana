@@ -18,9 +18,8 @@ return `FORBIDDEN_AGENT` (exit 5) except the host-stamped orchestrator spawn/clo
 
 ```bash
 # From the monorepo root
-npm install
-cd packages/cli
-npm run build
+pnpm install
+pnpm --filter @zcc/cli build
 ```
 
 ## Usage

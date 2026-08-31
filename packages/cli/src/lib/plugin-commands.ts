@@ -3,7 +3,13 @@ import { spawnSync } from 'node:child_process';
 import { join, relative, resolve } from 'node:path';
 import { PLUGIN_SDK_VERSION, derivePluginId } from '@zana-ai/zcc-plugin-sdk';
 import { clampPluginStarterKind, scaffoldPlugin } from '@zana-ai/zcc-plugin-templates';
-import { buildPlugin, createPluginDevLoop, syncPluginTypes } from '@zana-ai/zcc-plugin-build';
+import {
+  buildPlugin,
+  buildPluginApp,
+  buildPluginServer,
+  createPluginDevLoop,
+  syncPluginTypes
+} from '@zana-ai/zcc-plugin-build';
 import { callControlPlane, isAppRunning } from './control-client.js';
 
 interface CliResult {
@@ -198,15 +204,18 @@ export async function runPluginCommand(
         2
       );
     }
+    const hasApp = Boolean(pkg.zcc?.app);
+    const hasServer = Boolean(pkg.zcc?.server) && !/\.tsx?$/.test(pkg.zcc?.server ?? '');
+    await syncPluginTypes(dir).catch(() => undefined);
     const loop = createPluginDevLoop({
       pluginId: id,
-      hasApp: Boolean(pkg.zcc?.app),
-      hasServer: Boolean(pkg.zcc?.server) && !/\.tsx?$/.test(pkg.zcc?.server ?? ''),
+      hasApp,
+      hasServer,
       buildApp: async () => {
-        await buildPlugin(dir, '1.0.0');
+        await buildPluginApp(dir, '1.0.0', { minify: false, sourcemap: true });
       },
       buildServer: async () => {
-        await buildPlugin(dir, '1.0.0');
+        await buildPluginServer(dir, '1.0.0', { minify: false, sourcemap: true });
       },
       reloadPlugin: async () => {
         const reloaded = await live(dataDir, 'plugin.reload', { id }, false);
@@ -222,6 +231,10 @@ export async function runPluginCommand(
       loop.dispose();
       return { exitCode: 0, stdout: `Reloaded ${id}\n` };
     }
+    const rebuild = [hasApp ? 'frontend' : null, hasServer ? 'server' : null].filter(Boolean).join(' + ');
+    process.stderr.write(
+      `Watching ${dir} for plugin "${id}"${rebuild ? ` (${rebuild} rebuild + reload on change)` : ' (reload on change)'} — Ctrl+C to stop.\n`
+    );
     const watcher = watch(dir, { recursive: true }, (_event, filename) => {
       if (typeof filename === 'string') loop.handleChange(relative(dir, join(dir, filename)));
     });

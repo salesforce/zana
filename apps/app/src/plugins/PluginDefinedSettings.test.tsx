@@ -1,22 +1,32 @@
 /**
  * @vitest-environment happy-dom
  */
-import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { definePluginApp } from '@zana-ai/zcc-plugin-sdk';
-import type { PluginSettingsSnapshot } from '@zana-ai/zcc-domain/product';
 import { PluginDefinedSettings, PluginSettingsForm } from './PluginDefinedSettings.js';
 import { clearPluginSlots, interpretPluginApp } from './plugin-slots.js';
 
-const snap: PluginSettingsSnapshot = {
-  descriptors: {
-    enabled: { type: 'boolean', label: 'Enabled' },
-    mode: { type: 'select', label: 'Mode', options: ['fast', 'slow'] },
-    token: { type: 'string', label: 'Token', secret: true }
-  },
-  values: { enabled: true, mode: 'fast', token: 'secret' }
-};
+const { snap } = vi.hoisted(() => ({
+  snap: {
+    descriptors: {
+      enabled: { type: 'boolean' as const, label: 'Enabled' },
+      mode: { type: 'select' as const, label: 'Mode', options: ['fast', 'slow'] },
+      token: { type: 'string' as const, label: 'Token', secret: true as const }
+    },
+    values: { enabled: true, mode: 'fast', token: 'secret' }
+  }
+}));
+
+vi.mock('../lib/product-client.js', () => ({
+  product: {
+    pluginApps: {
+      getSettings: vi.fn(async () => snap),
+      setSettings: vi.fn(async () => snap)
+    }
+  }
+}));
 
 describe('PluginSettingsForm', () => {
   it('renders boolean, select, and secret string fields', () => {
@@ -47,7 +57,7 @@ describe('PluginDefinedSettings', () => {
     clearPluginSlots('custom-instructions');
   });
 
-  it('hides the define() form when the plugin mounts its own settings section', () => {
+  it('still renders the define() form when the plugin also mounts a settings section', async () => {
     interpretPluginApp(
       'custom-instructions',
       definePluginApp((app) => {
@@ -58,7 +68,8 @@ describe('PluginDefinedSettings', () => {
       })
     );
     render(<PluginDefinedSettings pluginId="custom-instructions" />);
-    expect(screen.queryByText('Plugin settings')).toBeNull();
-    expect(screen.queryByText('Persisted on the server for this plugin.')).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByText('Plugin settings')).toBeTruthy();
+    });
   });
 });

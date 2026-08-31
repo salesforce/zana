@@ -1,13 +1,15 @@
-import type { AgentState } from '@zana-ai/zcc-domain/product';
+import type { AgentState, ScheduledTask } from '@zana-ai/zcc-domain/product';
 import type { AgentCard, LaneKey } from './AgentBoard.js';
 import type { ThreadListItem } from '../thread-store.js';
 import { threadStatusToAgentState } from './thread/thread-timeline-model.js';
 
-export type FleetKind = 'agent' | 'thread';
+export type FleetKind = 'agent' | 'thread' | 'schedule';
 
-/** Compact kind word for rail subtitles and chips: Thread vs CLI Agent. */
+/** Compact kind word for rail subtitles and chips. */
 export function fleetKindLabel(kind: FleetKind): string {
-  return kind === 'thread' ? 'Thread' : 'CLI Agent';
+  if (kind === 'thread') return 'Thread';
+  if (kind === 'schedule') return 'Schedule';
+  return 'CLI Agent';
 }
 
 export type FleetItem =
@@ -30,6 +32,16 @@ export type FleetItem =
       projectName: string;
       projectColor?: string;
       thread: ThreadListItem;
+    }
+  | {
+      kind: 'schedule';
+      id: string;
+      state: AgentState;
+      title: string;
+      projectId: string;
+      projectName: string;
+      projectColor?: string;
+      task: ScheduledTask;
     };
 
 export function isVisibleThread(thread: ThreadListItem): boolean {
@@ -77,8 +89,66 @@ export function isThreadFleet(item: FleetItem): item is Extract<FleetItem, { kin
   return item.kind === 'thread';
 }
 
+export function isScheduleFleet(item: FleetItem): item is Extract<FleetItem, { kind: 'schedule' }> {
+  return item.kind === 'schedule';
+}
+
 export function fleetAgentCards(items: FleetItem[]): AgentCard[] {
   return items.filter(isAgentFleet).map((item) => item.card);
+}
+
+export function scheduleFleetItem(
+  task: ScheduledTask,
+  project?: { name: string; color?: string }
+): Extract<FleetItem, { kind: 'schedule' }> {
+  return {
+    kind: 'schedule',
+    id: task.id,
+    state: task.enabled ? 'idle' : 'done',
+    title: task.name,
+    projectId: task.projectId,
+    projectName: project?.name ?? 'Unknown',
+    projectColor: project?.color,
+    task
+  };
+}
+
+/**
+ * Armed (and paused) jobs for the Agents board Scheduled column. Empty unless
+ * the user opted schedules into Agent View — the column is hidden otherwise,
+ * and dropping these items would leave them matching no visible lane.
+ */
+export function schedulesForAgentView(
+  tasks: readonly ScheduledTask[],
+  projects: readonly { id: string; name: string; color?: string }[],
+  includeScheduled: boolean,
+  scopedProjectId?: string
+): Extract<FleetItem, { kind: 'schedule' }>[] {
+  if (!includeScheduled) return [];
+  const byProjectId = new Map(projects.map((p) => [p.id, p]));
+  const out: Extract<FleetItem, { kind: 'schedule' }>[] = [];
+  for (const task of tasks) {
+    if (scopedProjectId && task.projectId !== scopedProjectId) continue;
+    out.push(scheduleFleetItem(task, byProjectId.get(task.projectId)));
+  }
+  return out;
+}
+
+/** Wall-clock of the next fire, or Infinity when unarmed / unparseable. */
+export function scheduleNextRunAt(task: Pick<ScheduledTask, 'enabled' | 'status'>): number {
+  if (!task.enabled) return Infinity;
+  const ts = task.status?.nextRunAt ? Date.parse(task.status.nextRunAt) : NaN;
+  return Number.isNaN(ts) ? Infinity : ts;
+}
+
+export function compareScheduleFleet(
+  a: Extract<FleetItem, { kind: 'schedule' }>,
+  b: Extract<FleetItem, { kind: 'schedule' }>
+): number {
+  if (a.task.enabled !== b.task.enabled) return a.task.enabled ? -1 : 1;
+  const byRun = scheduleNextRunAt(a.task) - scheduleNextRunAt(b.task);
+  if (byRun !== 0) return byRun;
+  return a.title.localeCompare(b.title);
 }
 
 /** Nested Projects-rail rows: busy, waiting, or failed threads. */
@@ -179,6 +249,7 @@ export function fleetMatchesLane(
   matchAgent: (card: AgentCard) => boolean
 ): boolean {
   if (item.kind === 'thread') return fleetThreadLane(item) === lane;
+  if (item.kind === 'schedule') return lane === 'scheduled';
   return matchAgent(item.card);
 }
 

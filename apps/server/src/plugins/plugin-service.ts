@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, watch } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -89,6 +89,7 @@ import {
   type PluginSessionTools
 } from './plugin-agent-tools.js';
 import { startPluginUpdateSweep } from './plugin-updates.js';
+import { buildPluginApp, buildPluginServer, createPluginDevLoop } from '@zana-ai/zcc-plugin-build';
 
 export interface CatalogSearchHit {
   marketplace: string;
@@ -178,6 +179,8 @@ export interface PluginUiSnapshot {
   mcpServers: PluginUiMcpServer[];
   extra: Record<string, unknown>;
   themes: PluginThemeSnapshot[];
+  statusDetail: string | null;
+  cliNames: string[];
   availableVersion?: string;
 }
 
@@ -199,9 +202,17 @@ export function toPluginAppSnapshot(row: PluginUiSnapshot) {
     enabled: row.enabled,
     provenance: row.provenance,
     status: row.status,
+    statusDetail: row.statusDetail,
     appUrl: row.appUrl,
     ...(row.availableVersion ? { availableVersion: row.availableVersion } : {}),
-    projectTab: row.projectTab
+    projectTab: row.projectTab,
+    skillNames: row.skillNames,
+    mcpServers: row.mcpServers.map((server) => ({
+      name: server.name,
+      type: server.type,
+      ...(server.alwaysOn ? { alwaysOn: true } : {})
+    })),
+    cliNames: row.cliNames
   };
 }
 
@@ -266,6 +277,11 @@ export interface PluginServiceOptions {
   listProjects?: (args: { pluginId: string }) => Promise<Array<{ id: string; name: string; path?: string }>>;
   /** Shared live host-artifact map; omitted tests get a private registry. */
   pluginHostArtifacts?: PluginHostArtifactRegistry;
+  /**
+   * When true, watch installed builtin plugin source dirs and rebuild+reload
+   * on change. Gated by ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD at attach.
+   */
+  watchBuiltinPluginSources?: boolean;
 }
 
 interface LivePlugin {
@@ -357,6 +373,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   const hostArtifacts = opts.pluginHostArtifacts ?? new PluginHostArtifactRegistry();
   mkdirSync(kvRoot, { recursive: true });
   let updateSweep: { stop(): void } | null = null;
+  const builtinWatchers: Array<{ close(): void }> = [];
 
   function agentContributions(): PluginAgentContribution[] {
     return store.list().map((row) => {
@@ -962,6 +979,10 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         mcpServers,
         extra,
         themes,
+        statusDetail: row.statusDetail,
+        cliNames: live.get(row.id)?.handle?.cli.registration
+          ? [live.get(row.id)!.handle!.cli.registration!.name]
+          : [],
         ...(availableUpdates.has(row.id)
           ? { availableVersion: availableUpdates.get(row.id) }
           : {})
@@ -1005,6 +1026,45 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       }
       removeInstalledPluginCopy(opts.dataDir, id);
       removeLeftoverSidecar(opts.dataDir, id);
+    }
+  }
+
+  function startBuiltinSourceWatchers(): void {
+    if (!opts.watchBuiltinPluginSources) return;
+    for (const row of store.list()) {
+      if (row.sourceKind !== 'builtin' || !existsSync(row.rootDir)) continue;
+      const rootDir = row.rootDir;
+      const pluginId = row.id;
+      const hasApp = Boolean(row.appEntry);
+      const hasServer = Boolean(row.serverEntry) && !/\.tsx?$/.test(row.serverEntry ?? '');
+      const loop = createPluginDevLoop({
+        pluginId,
+        hasApp,
+        hasServer,
+        buildApp: async () => {
+          await buildPluginApp(rootDir, hostVersion, { minify: false, sourcemap: true });
+        },
+        buildServer: async () => {
+          await buildPluginServer(rootDir, hostVersion, { minify: false, sourcemap: true });
+        },
+        reloadPlugin: async () => {
+          await service.reload(pluginId);
+        },
+        log: (line) => {
+          console.info(`[plugins] ${line}`);
+        }
+      });
+      const watcher = watch(rootDir, { recursive: true }, (_event, filename) => {
+        if (typeof filename === 'string' && filename.length > 0) {
+          loop.handleChange(relative(rootDir, join(rootDir, filename)));
+        }
+      });
+      builtinWatchers.push({
+        close() {
+          loop.dispose();
+          watcher.close();
+        }
+      });
     }
   }
 
@@ -1107,8 +1167,11 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         if (store.get(def.pluginId)) continue;
         try {
           installed.push(await installParsed({ kind: 'builtin', name: def.name }, def.defaultEnabled));
-        } catch {
-          /* bundled artifact may be absent in tests or a stripped build */
+        } catch (error) {
+          console.error(
+            `[plugins] failed to auto-install builtin ${def.pluginId}:`,
+            error instanceof Error ? error.message : error
+          );
         }
       }
       return installed;
@@ -1127,8 +1190,10 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       updateSweep = startPluginUpdateSweep({
         checkUpdates: () => service.checkUpdates()
       });
+      startBuiltinSourceWatchers();
     },
     stop() {
+      for (const watcher of builtinWatchers.splice(0)) watcher.close();
       updateSweep?.stop();
       updateSweep = null;
     },

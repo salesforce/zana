@@ -10,7 +10,10 @@ function canonicalizeSidebarNavId(id: string, available: Set<string>): string {
   return id;
 }
 
-/** Keep a saved order valid as optional features and extensions come and go. */
+/** Keep a saved order valid as optional features and extensions come and go.
+ *  Unseen ids insert before the next already-placed neighbor from `availableIds`
+ *  so a new plugin rail lands above Workspaces, not under it.
+ */
 export function normalizeSidebarNavOrder(
   value: unknown,
   availableIds: readonly string[],
@@ -32,7 +35,15 @@ export function normalizeSidebarNavOrder(
     }
   }
   for (const id of availableIds) {
-    if (!seen.has(id)) order.push(id);
+    if (seen.has(id)) continue;
+    const at = availableIds.indexOf(id);
+    const nextKnown = availableIds.slice(at + 1).find((candidate) => seen.has(candidate));
+    if (nextKnown) {
+      order.splice(order.indexOf(nextKnown), 0, id);
+    } else {
+      order.push(id);
+    }
+    seen.add(id);
   }
   return order;
 }

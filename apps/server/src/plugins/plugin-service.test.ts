@@ -869,8 +869,21 @@ describe('listBundledPluginCatalog', () => {
     const out = listBundledPluginCatalog(pluginsRoot);
     expect(out.some((entry) => entry.id === 'docs' && entry.title === 'Docs')).toBe(true);
     expect(out.map((entry) => entry.id)).toEqual(
-      expect.arrayContaining(['docs', 'tasks', 'custom-instructions', 'ask-user-question', 'salesforce', 'pr-monitor'])
+      expect.arrayContaining(['docs', 'tasks', 'custom-instructions', 'ask-user-question', 'salesforce', 'pr-monitor', 'plugin-guide'])
     );
+  });
+
+  it('auto-installs plugin-guide from the repo plugins tree with a compiled app', async () => {
+    const pluginsRoot = join(dirname(fileURLToPath(import.meta.url)), '../../../../plugins');
+    const service = createPluginService({ dataDir: root(), bundledRoot: pluginsRoot });
+    try {
+      await service.start();
+      const snap = service.snapshot().find((row) => row.id === 'plugin-guide');
+      expect(snap?.status).toBe('running');
+      expect(snap?.appUrl).toMatch(/\/plugins\/plugin-guide\/assets\/app\.js/);
+    } finally {
+      service.stop();
+    }
   });
 
   it('lists and invokes plugin agent tools after configure()', async () => {
@@ -980,5 +993,26 @@ describe('installBundledPlugin', () => {
     expect(snapshot?.path).toBe(join(pluginDir, 'dist', 'host.js'));
     await service.disable('hosty');
     expect(pluginHostArtifacts.get('hosty')).toBeUndefined();
+  });
+
+  it('hot-reloads a watched builtin plugin when a source file changes', async () => {
+    const dataDir = root();
+    const bundled = root();
+    const pluginDir = writePlugin(join(bundled, 'docs'), 'docs');
+    writeFileSync(join(pluginDir, 'notes.md'), 'v1\n');
+    const service = createPluginService({
+      dataDir,
+      bundledRoot: bundled,
+      watchBuiltinPluginSources: true
+    });
+    await service.start();
+    const before = service.get('docs')?.updatedAt ?? 0;
+    writeFileSync(join(pluginDir, 'notes.md'), 'v2\n');
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline && (service.get('docs')?.updatedAt ?? 0) <= before) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(service.get('docs')?.updatedAt ?? 0).toBeGreaterThan(before);
+    service.stop();
   });
 });

@@ -503,7 +503,16 @@ function httpProduct(): Pick<
       relaunchLocal: async () => apiJson<{ ok: true } | { ok: false; message: string }>(
         '/hosts/relaunch-local',
         { method: 'POST', body: '{}' }
-      )
+      ),
+      pairing: {
+        start: async () => ({ ok: false as const, message: 'SSH pairing requires the desktop app' }),
+        write: async () => undefined,
+        resize: async () => undefined,
+        stop: async () => undefined,
+        status: async () => ({ running: false, sshHost: null, backlog: '', exitCode: null }),
+        onData: () => () => {},
+        onExit: () => () => {}
+      }
     } as CcApi['hosts'],
     relay: {
       status: async () => apiJson<{
@@ -910,6 +919,23 @@ function httpProduct(): Pick<
           };
         }
       },
+      reload: async (id) => {
+        try {
+          await apiJson(`/plugin-apps/${encodeURIComponent(id)}/reload`, {
+            method: 'POST',
+            body: '{}'
+          });
+          const listed = await apiJson<{ apps?: PluginAppEntry[] }>('/plugin-apps');
+          emitPluginApps(Array.isArray(listed.apps) ? listed.apps : []);
+          return { ok: true as const, value: true as const };
+        } catch (error) {
+          return {
+            ok: false as const,
+            code: 'WRITE_FAILED',
+            message: error instanceof Error ? error.message : String(error)
+          };
+        }
+      },
       callRpc: async (pluginId, method, args) => {
         const body = await apiJson<{ value?: unknown }>(
           `/plugin-apps/${encodeURIComponent(pluginId)}/rpc`,
@@ -1042,7 +1068,8 @@ export const product: CcApi = new Proxy({} as CcApi, {
         const desktop = (window.cc as unknown as CcApi).hosts;
         return withStubs('hosts', {
           ...http,
-          relaunchLocal: desktop?.relaunchLocal ?? http.relaunchLocal
+          relaunchLocal: desktop?.relaunchLocal ?? http.relaunchLocal,
+          pairing: desktop?.pairing ?? http.pairing
         });
       }
       return withStubs('hosts', http);

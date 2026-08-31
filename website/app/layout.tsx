@@ -1,25 +1,20 @@
 import type { Metadata } from 'next';
-import { Inter, Fraunces } from 'next/font/google';
+import { Inter, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import { Nav, Footer } from './components/Nav';
+import { StarBanner } from './components/StarBanner';
 import { Reveal } from './components/Reveal';
 import { site } from '@/lib/site';
 
-// Self-hosted at build time (no third-party render-blocking stylesheet), with
-// font-display: swap so text paints immediately in the fallback and swaps in
-// when the webfont arrives. Exposed as CSS variables that globals.css's
-// --font-sans / --font-display point at.
 const inter = Inter({
   subsets: ['latin'],
   display: 'swap',
   variable: '--font-inter'
 });
-const fraunces = Fraunces({
+const jetbrains = JetBrains_Mono({
   subsets: ['latin'],
   display: 'swap',
-  weight: ['400', '500', '600', '700'],
-  style: ['normal'],
-  variable: '--font-fraunces'
+  variable: '--font-jetbrains'
 });
 
 export const metadata: Metadata = {
@@ -48,9 +43,6 @@ export const metadata: Metadata = {
     description: site.tagline,
     type: 'website',
     siteName: site.name,
-    // Explicit reference so every route inherits the generated card even when a
-    // child segment declares its own openGraph block (which otherwise drops the
-    // file-convention image). Resolved against metadataBase.
     images: [{ url: '/opengraph-image', width: 1200, height: 630, alt: 'Zana Command Center — the control plane for AI coding harnesses' }]
   },
   twitter: {
@@ -65,21 +57,20 @@ export const metadata: Metadata = {
 };
 
 /**
- * Set data-theme before first paint to avoid a flash. Honors a saved choice
- * (localStorage "zcc-theme"), otherwise using the public site's light default.
- * Kept inline + tiny so it runs synchronously in <head>.
+ * Set data-theme before first paint. Honors localStorage "zcc-theme";
+ * otherwise dark — the same default as the desktop app.
  */
 const NO_FLASH_THEME = `
 (function(){try{
   var t = localStorage.getItem('zcc-theme');
-  if(!t){ t = 'light'; }
+  if(!t){ t = 'dark'; }
   document.documentElement.setAttribute('data-theme', t);
-}catch(e){ document.documentElement.setAttribute('data-theme','light'); }})();
+}catch(e){ document.documentElement.setAttribute('data-theme','dark'); }})();
 `;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${inter.variable} ${fraunces.variable}`} suppressHydrationWarning>
+    <html lang="en" className={`${inter.variable} ${jetbrains.variable}`} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: NO_FLASH_THEME }} />
       </head>
@@ -90,6 +81,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Nav />
         <main id="main">{children}</main>
         <Footer />
+        <StarBanner />
         <Reveal />
       </body>
     </html>

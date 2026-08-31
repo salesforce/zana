@@ -13,6 +13,7 @@ import {
   checkPluginUpdatesFromProductServer,
   applyPluginUpdateOnProductServer,
   removePluginAppOnProductServer,
+  reloadPluginAppOnProductServer,
   callPluginRpcOnProductServer,
   getPluginSettingsFromProductServer,
   setPluginSettingsOnProductServer
@@ -169,6 +170,34 @@ export function registerPluginsIpc(): void {
         }
       }
       const result = await removePluginAppOnProductServer(id);
+      if (result.ok) {
+        const apps = await listPluginAppsFromProductServer();
+        ctx.safeSend(IPC.pluginApps.onChanged, apps);
+      }
+      return result;
+    },
+    (err): Result<true> => ({
+      ok: false,
+      code: 'WRITE_FAILED',
+      message: err instanceof Error ? err.message : String(err)
+    })
+  );
+  ctx.safeHandle(
+    IPC.pluginApps.reload,
+    async (id: string) => {
+      if (ctx.runtimeSupervisor) {
+        try {
+          await ctx.runtimeSupervisor.reloadPlugin(id);
+          return { ok: true as const, value: true as const };
+        } catch (err) {
+          return {
+            ok: false as const,
+            code: 'WRITE_FAILED',
+            message: err instanceof Error ? err.message : String(err)
+          };
+        }
+      }
+      const result = await reloadPluginAppOnProductServer(id);
       if (result.ok) {
         const apps = await listPluginAppsFromProductServer();
         ctx.safeSend(IPC.pluginApps.onChanged, apps);

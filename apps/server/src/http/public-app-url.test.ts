@@ -11,19 +11,29 @@ import {
 } from './public-app-url.js';
 
 describe('public app URL', () => {
-  it('prefers ZCC_APP_URL over config and strips a trailing slash', () => {
+  it('prefers runtime ZCC_APP_URL over a compile-time bake', () => {
     expect(resolvePublicAppUrl({
       env: { ZCC_APP_URL: 'https://box.tailnet.ts.net/' },
-      configUrl: 'https://other.example',
-      cwd: mkdtempSync(join(tmpdir(), 'zcc-url-'))
+      bundledUrl: 'https://baked.example'
     })).toBe('https://box.tailnet.ts.net');
+  });
+
+  it('uses the bake when env is empty and ignores Settings / the repo file', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'zcc-url-file-'));
+    writeFileSync(
+      join(cwd, 'public-app-url'),
+      '# comment\nhttps://zcc-7808c5bc8f3d.herokuapp.com/\n'
+    );
+    expect(readPublicAppUrlFile(cwd)).toBe('https://zcc-7808c5bc8f3d.herokuapp.com/');
     expect(resolvePublicAppUrl({
       env: {},
       configUrl: 'https://box.tailnet.ts.net:443/',
-      cwd: mkdtempSync(join(tmpdir(), 'zcc-url-'))
-    })).toBe('https://box.tailnet.ts.net');
-    expect(resolvePublicAppUrl({ env: {}, configUrl: 'not a url', cwd: mkdtempSync(join(tmpdir(), 'zcc-url-')) })).toBeUndefined();
-    expect(resolvePublicAppUrl({ env: {}, configUrl: 'ftp://x', cwd: mkdtempSync(join(tmpdir(), 'zcc-url-')) })).toBeUndefined();
+      cwd,
+      bundledUrl: 'https://baked.example/'
+    })).toBe('https://baked.example');
+    expect(resolvePublicAppUrl({ env: {}, configUrl: 'https://other.example', cwd })).toBeUndefined();
+    expect(resolvePublicAppUrl({ env: {}, bundledUrl: 'not a url' })).toBeUndefined();
+    expect(resolvePublicAppUrl({ env: {}, bundledUrl: 'ftp://x' })).toBeUndefined();
   });
 
   it('does not read the repo-root file during vitest unless cwd is passed', () => {
@@ -31,37 +41,29 @@ describe('public app URL', () => {
     expect(resolvePublicAppUrl({ env: {}, configUrl: undefined })).toBeUndefined();
   });
 
-  it('falls back to the repo public-app-url file and skips comments', () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'zcc-url-file-'));
-    writeFileSync(
-      join(cwd, 'public-app-url'),
-      '# comment\nhttps://zcc-7808c5bc8f3d.herokuapp.com/\n'
-    );
-    expect(readPublicAppUrlFile(cwd)).toBe('https://zcc-7808c5bc8f3d.herokuapp.com/');
-    expect(resolvePublicAppUrl({ env: {}, cwd })).toBe('https://zcc-7808c5bc8f3d.herokuapp.com');
-    expect(resolvePublicAppUrl({
+  it('presents the resolved public origin and strips a stored relay token', () => {
+    expect(presentAppConfig({ theme: 'dark' }, {
       env: {},
-      configUrl: 'https://box.tailnet.ts.net',
-      cwd
-    })).toBe('https://box.tailnet.ts.net');
-  });
-
-  it('presents the resolved public origin on config without writing it back', () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'zcc-url-present-'));
-    writeFileSync(join(cwd, 'public-app-url'), 'https://zcc-7808c5bc8f3d.herokuapp.com\n');
-    expect(presentAppConfig({ theme: 'dark' }, { env: {}, cwd })).toEqual({
+      bundledUrl: 'https://zcc-7808c5bc8f3d.herokuapp.com'
+    })).toEqual({
       theme: 'dark',
-      publicAppUrl: 'https://zcc-7808c5bc8f3d.herokuapp.com'
+      publicAppUrl: 'https://zcc-7808c5bc8f3d.herokuapp.com',
+      relayToken: undefined
     });
     expect(presentAppConfig(
-      { publicAppUrl: 'https://box.tailnet.ts.net' },
-      { env: { ZCC_APP_URL: 'https://from-env.example' }, cwd }
-    ).publicAppUrl).toBe('https://from-env.example');
+      { publicAppUrl: 'https://box.tailnet.ts.net', relayToken: 'secret' },
+      { env: { ZCC_APP_URL: 'https://from-env.example' } }
+    )).toEqual({
+      publicAppUrl: 'https://from-env.example',
+      relayToken: undefined
+    });
     const stored = { publicAppUrl: 'https://box.tailnet.ts.net' };
-    expect(presentAppConfig(stored, { env: {}, cwd: mkdtempSync(join(tmpdir(), 'zcc-url-empty-')) })).toBe(stored);
-    const emptyCwd = mkdtempSync(join(tmpdir(), 'zcc-url-none-'));
+    expect(presentAppConfig(stored, { env: {}, bundledUrl: '' })).toEqual({
+      publicAppUrl: undefined,
+      relayToken: undefined
+    });
     const bare = { theme: 'light' };
-    expect(presentAppConfig(bare, { env: {}, cwd: emptyCwd })).toBe(bare);
+    expect(presentAppConfig(bare, { env: {}, bundledUrl: '' })).toBe(bare);
   });
 
   it('allowlists loopback or the configured public Host header', () => {

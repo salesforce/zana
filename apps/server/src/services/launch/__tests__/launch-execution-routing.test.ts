@@ -155,6 +155,33 @@ describe('production execution routing preflight', () => {
     }, { ...services, provider })).resolves.toEqual({ decision: 'blocked', reason: 'role target unavailable' });
   });
 
+  it('allows a live-listed Pi model when the static adapter catalog is empty', async () => {
+    const services = deps();
+    services.installedVersion = vi.fn(async () => '0.52.12');
+    await expect(preflightTerminalExecution({
+      config: { version: 1, theme: 'dark', harnessPiEnabled: true } as AppConfig,
+      profile: 'pi',
+      projectId: 'p1',
+      scope: 'local',
+      mode: 'interactive',
+      idempotencyKey: 'pi-live-model',
+      harnessRouting: { schemaVersion: 1, byAdapter: { pi: { modelTargetId: 'openai/gpt-5.2' } } }
+    }, services)).resolves.toEqual({ decision: 'allowed', scope: 'local' });
+  });
+
+  it('blocks a live-listed id on adapters that own a static model catalog', async () => {
+    const services = deps();
+    await expect(preflightTerminalExecution({
+      config: config(),
+      profile: 'opencode',
+      projectId: 'p1',
+      scope: 'local',
+      mode: 'interactive',
+      idempotencyKey: 'unknown-catalog-model',
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'openai/gpt-5.2' } } }
+    }, services)).rejects.toThrow('Unknown model target');
+  });
+
   it('allows launching an unrestricted (yolo) profile without a per-tab execution target', async () => {
     const services = deps();
     await expect(preflightTerminalExecution({

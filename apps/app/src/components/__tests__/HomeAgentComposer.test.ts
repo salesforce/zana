@@ -120,6 +120,14 @@ describe('ThreadCommandComposer pinning', () => {
   });
 });
 
+describe('ThreadCommandComposer pairing copy', () => {
+  it('copies pairing commands through the desktop clipboard bridge', () => {
+    const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('void copyText(pairingCommand)');
+    expect(source).not.toContain('navigator.clipboard');
+  });
+});
+
 describe('ThreadCommandComposer submit path', () => {
   it('creates and follows up through the Thread HTTP API', () => {
     const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');

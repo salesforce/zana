@@ -3,6 +3,10 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import * as pluginSdkApp from '@zana-ai/zcc-plugin-sdk/app';
 import type {
+  PluginAgentCardActionContext,
+  PluginAgentCardActionRegistration,
+  PluginAgentsBoardActionContext,
+  PluginAgentsBoardActionRegistration,
   PluginAppBuilder,
   PluginAppSlots,
   PluginFileOpenerProps,
@@ -17,7 +21,13 @@ import type {
   PluginNewThreadPanelProps,
   PluginPendingInteractionProps,
   PluginProjectTabRegistration,
+  PluginProjectMenuActionContext,
+  PluginProjectMenuActionRegistration,
   PluginProviderIconRegistration,
+  PluginCommandPaletteActionContext,
+  PluginCommandPaletteActionRegistration,
+  PluginTimelineRendererProps,
+  PluginTimelineRendererRegistration,
   PluginSettingDescriptor,
   PluginSettingsSectionRegistration,
   PluginSidebarFooterActionRegistration,
@@ -110,6 +120,11 @@ type SlotPropsByName = {
   fileOpener: PluginFileOpenerProps;
   messageDirective: PluginMessageDirectiveProps;
   messageAction: PluginMessageActionContext;
+  experimental_agentCardAction: PluginAgentCardActionContext;
+  experimental_agentsBoardAction: PluginAgentsBoardActionContext;
+  experimental_timelineRenderer: PluginTimelineRendererProps;
+  commandPaletteAction: PluginCommandPaletteActionContext;
+  experimental_projectMenuAction: PluginProjectMenuActionContext;
   experimental_providerIcon: { className?: string };
 };
 
@@ -131,6 +146,7 @@ const NAV_PANEL_REGISTRATION_FIELDS = [
   'title',
   'icon',
   'path',
+  'placement',
   'component',
   'experimental_sidebarAccessory',
   'headerContent'
@@ -215,10 +231,45 @@ const MESSAGE_ACTION_REGISTRATION_FIELDS = [
   'run'
 ] as const satisfies readonly (keyof Omit<PluginMessageActionRegistration, 'generation' | 'pluginId'>)[];
 
+const AGENT_CARD_ACTION_REGISTRATION_FIELDS = [
+  'id',
+  'title',
+  'icon',
+  'isAvailable',
+  'run'
+] as const satisfies readonly (keyof Omit<PluginAgentCardActionRegistration, 'generation' | 'pluginId'>)[];
+
+const AGENTS_BOARD_ACTION_REGISTRATION_FIELDS = [
+  'id',
+  'title',
+  'icon',
+  'run'
+] as const satisfies readonly (keyof Omit<PluginAgentsBoardActionRegistration, 'generation' | 'pluginId'>)[];
+
 const PROVIDER_ICON_REGISTRATION_FIELDS = [
   'providerId',
   'icon'
 ] as const satisfies readonly (keyof Omit<PluginProviderIconRegistration, 'generation' | 'pluginId'>)[];
+
+const PROJECT_MENU_ACTION_REGISTRATION_FIELDS = [
+  'id',
+  'title',
+  'icon',
+  'placement',
+  'run'
+] as const satisfies readonly (keyof Omit<PluginProjectMenuActionRegistration, 'generation' | 'pluginId'>)[];
+
+const COMMAND_PALETTE_ACTION_REGISTRATION_FIELDS = [
+  'id',
+  'title',
+  'isAvailable',
+  'run'
+] as const satisfies readonly (keyof Omit<PluginCommandPaletteActionRegistration, 'generation' | 'pluginId'>)[];
+
+const TIMELINE_RENDERER_REGISTRATION_FIELDS = [
+  'kind',
+  'component'
+] as const satisfies readonly (keyof Omit<PluginTimelineRendererRegistration, 'generation' | 'pluginId' | 'id'>)[];
 
 const FRONTEND_SLOT_PROP_FIELDS = {
   homepageSection: ['pluginId', 'projectId'],
@@ -242,6 +293,11 @@ const FRONTEND_SLOT_PROP_FIELDS = {
   fileOpener: ['pluginId', 'path', 'source', 'experimental_Original'],
   messageDirective: ['pluginId', 'attributes', 'source', 'message', 'openWorkspaceFile'],
   messageAction: ['threadId', 'message', 'selectedText', 'openPanel'],
+  experimental_agentCardAction: ['sessionId', 'projectId'],
+  experimental_agentsBoardAction: ['projectId'],
+  experimental_timelineRenderer: ['row', 'payload', 'presentation', 'thread', 'Original'],
+  commandPaletteAction: ['threadId', 'projectId', 'openPanel', 'toPluginPanel'],
+  experimental_projectMenuAction: ['projectId'],
   experimental_providerIcon: ['className']
 } as const satisfies {
   [S in keyof SlotPropsByName]: readonly (keyof SlotPropsByName[S])[];
@@ -325,8 +381,23 @@ describe('zcc-plugin-authoring skill', () => {
     for (const field of MESSAGE_ACTION_REGISTRATION_FIELDS) {
       expect(skill, `messageAction registration field "${field}" is not documented`).toContain(field);
     }
+    for (const field of AGENT_CARD_ACTION_REGISTRATION_FIELDS) {
+      expect(skill, `experimental_agentCardAction registration field "${field}" is not documented`).toContain(field);
+    }
+    for (const field of AGENTS_BOARD_ACTION_REGISTRATION_FIELDS) {
+      expect(skill, `experimental_agentsBoardAction registration field "${field}" is not documented`).toContain(field);
+    }
     for (const field of PROVIDER_ICON_REGISTRATION_FIELDS) {
       expect(skill, `experimental_providerIcon registration field "${field}" is not documented`).toContain(field);
+    }
+    for (const field of PROJECT_MENU_ACTION_REGISTRATION_FIELDS) {
+      expect(skill, `experimental_projectMenuAction registration field "${field}" is not documented`).toContain(field);
+    }
+    for (const field of COMMAND_PALETTE_ACTION_REGISTRATION_FIELDS) {
+      expect(skill, `commandPaletteAction registration field "${field}" is not documented`).toContain(field);
+    }
+    for (const field of TIMELINE_RENDERER_REGISTRATION_FIELDS) {
+      expect(skill, `experimental_timelineRenderer registration field "${field}" is not documented`).toContain(field);
     }
   });
 
@@ -347,5 +418,9 @@ describe('zcc-plugin-authoring skill', () => {
     expect(skill).toContain('zcc plugin logs');
     expect(skill).toContain('server.ts');
     expect(skill).toContain('plugin_cli_output_too_large');
+    expect(skill).toContain('zcc.skills');
+    expect(skill).toContain('contributeSkills');
+    expect(skill).toContain('plugin-commands');
+    expect(skill).toContain('Plugin Guide');
   });
 });

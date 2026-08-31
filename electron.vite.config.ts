@@ -108,6 +108,13 @@ const sdkAlias = [
 
 export default defineConfig({
   main: {
+    // Official releases set ZCC_APP_URL + ZCC_RELAY_TOKEN in the build env so
+    // packaged laptops can dial the Heroku pairing door without Settings.
+    // Runtime process.env still wins. Never define these on the renderer.
+    define: {
+      __ZCC_BUNDLED_APP_URL__: JSON.stringify(process.env.ZCC_APP_URL ?? ''),
+      __ZCC_BUNDLED_RELAY_TOKEN__: JSON.stringify(process.env.ZCC_RELAY_TOKEN ?? '')
+    },
     plugins: [externalizeDepsPlugin()],
     resolve: { alias: sdkAlias, conditions: ['source'] },
     build: {

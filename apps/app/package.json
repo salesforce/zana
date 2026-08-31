@@ -6,7 +6,7 @@
   "description": "ZCC product renderer application.",
   "scripts": {
     "build": "pnpm --dir ../.. run build",
-    "dev": "pnpm --dir ../.. run dev",
+    "dev": "vite --config vite.dev.config.ts",
     "dev:web": "pnpm --dir ../.. run dev:web",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run --config vitest.config.ts"

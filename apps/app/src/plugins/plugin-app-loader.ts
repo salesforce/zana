@@ -133,10 +133,12 @@ async function loadPluginApp(
 
 let reconcileSequence = 0;
 let activePluginIds = new Set<string>();
+const appliedAppUrls = new Map<string, string>();
+const loadedModules = new Map<string, PluginAppModule | null>();
 
 /**
- * Replaces all visible server-plugin app registrations. The sequence guard keeps
- * a slow prior import from overwriting the newest lifecycle snapshot.
+ * Replaces visible server-plugin app registrations. Unchanged `appUrl`s skip
+ * re-import so a reload of one plugin does not remount every other panel.
  */
 export async function reconcilePluginApps(
   entries: readonly PluginAppEntry[],
@@ -145,14 +147,30 @@ export async function reconcilePluginApps(
   const sequence = ++reconcileSequence;
   const wanted = entries.filter((entry) => entry.status === 'running' && entry.appUrl);
   const wantedIds = new Set(wanted.map((entry) => entry.id));
-  const modules = (await Promise.all(wanted.map((entry) => loadPluginApp(entry, options.importer ?? importPluginApp))))
-    .filter((module): module is PluginAppModule => module !== null);
+  const importer = options.importer ?? importPluginApp;
+  const modules: PluginAppModule[] = [];
+
+  for (const entry of wanted) {
+    const url = entry.appUrl as string;
+    if (appliedAppUrls.get(entry.id) === url && loadedModules.has(entry.id)) {
+      const previous = loadedModules.get(entry.id);
+      if (previous) modules.push(previous);
+      continue;
+    }
+    const module = await loadPluginApp(entry, importer);
+    if (sequence !== reconcileSequence) return;
+    appliedAppUrls.set(entry.id, url);
+    loadedModules.set(entry.id, module);
+    if (module) modules.push(module);
+  }
 
   if (sequence !== reconcileSequence) return;
   for (const id of activePluginIds) {
     if (!wantedIds.has(id)) {
       clearPluginSlots(id);
       evictHost(id);
+      appliedAppUrls.delete(id);
+      loadedModules.delete(id);
     }
   }
   activePluginIds = wantedIds;

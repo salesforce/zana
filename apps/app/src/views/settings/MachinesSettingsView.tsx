@@ -8,14 +8,13 @@ import type {
 } from '@zana-ai/zcc-contracts/host-rpc';
 import { product } from '../../lib/product-client.js';
 import { useData } from '@/store';
-import { Field, Section } from '@/components/settings/FormFields';
+import { Section } from '@/components/settings/FormFields';
 import { useHosts } from '../../hooks/useHosts.js';
 import { HostSshIdentityDialog } from '../../components/HostSshIdentityDialog.js';
 import { AddMachineDialog } from './AddMachineDialog.js';
 import { MachineCard } from './MachineCard.js';
 import {
   defaultSshHost,
-  formatJoinCountdown,
   sshHostOptionsFromProjects
 } from './machine-pairing.js';
 import { reconnectMachine } from './machine-reconnect.js';
@@ -25,91 +24,6 @@ import {
   orderedProviderCliRows
 } from './machine-provider-clis.js';
 
-type RelayState = 'connected' | 'offline' | 'unconfigured';
-type RelaySnapshot = {
-  state: RelayState;
-  sessionId?: string;
-  joinUntil?: number;
-};
-
-function relayCopy(state: RelayState): { label: string; tone: 'ok' | 'warn' | 'muted' } {
-  if (state === 'connected') return { label: 'Connected', tone: 'ok' };
-  if (state === 'offline') return { label: 'Offline', tone: 'warn' };
-  return { label: 'Not configured', tone: 'muted' };
-}
-
-export function RelayStatusLine({ state }: { state?: RelayState }) {
-  const [live, setLive] = useState<RelaySnapshot>({ state: state ?? 'unconfigured' });
-  const [now, setNow] = useState(Date.now());
-  const [renewing, setRenewing] = useState(false);
-  useEffect(() => {
-    if (state) {
-      setLive({ state });
-      return;
-    }
-    let cancelled = false;
-    product.relay.status().then((row) => {
-      if (!cancelled) setLive(row);
-    }).catch(() => undefined);
-    const unsub = product.relay.onChanged((row) => {
-      if (!cancelled) setLive(row);
-    });
-    return () => {
-      cancelled = true;
-      unsub();
-    };
-  }, [state]);
-  useEffect(() => {
-    if (live.state !== 'connected' || typeof live.joinUntil !== 'number') return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [live.state, live.joinUntil]);
-  const copy = relayCopy(live.state);
-  const joinRemaining = typeof live.joinUntil === 'number' ? live.joinUntil - now : null;
-  const joinOpen = live.state === 'connected' && joinRemaining !== null && joinRemaining > 0;
-  const renew = async () => {
-    setRenewing(true);
-    try {
-      const next = await product.relay.renewJoinWindow();
-      setLive(next);
-    } catch {
-      /* keep current snapshot */
-    } finally {
-      setRenewing(false);
-    }
-  };
-  return (
-    <p className="settings-help" data-testid="relay-status">
-      Relay:{' '}
-      <span
-        className={`settings-badge${copy.tone === 'ok' ? ' settings-badge--ok' : copy.tone === 'warn' ? ' settings-badge--warn' : ''}`}
-      >
-        {copy.label}
-      </span>
-      {live.state === 'connected' && joinRemaining !== null ? (
-        <>
-          {' '}
-          {joinOpen ? (
-            <span data-testid="relay-join-window">Join window {formatJoinCountdown(joinRemaining)}</span>
-          ) : (
-            <span data-testid="relay-join-window">Join window closed</span>
-          )}
-          {' '}
-          <button
-            type="button"
-            className="settings-btn"
-            data-testid="relay-renew-join"
-            disabled={renewing}
-            onClick={() => void renew()}
-          >
-            Renew join window
-          </button>
-        </>
-      ) : null}
-    </p>
-  );
-}
-
 interface MachinesTabProps {
   config: AppConfig;
   onConfigDraft: (config: AppConfig) => void;
@@ -117,9 +31,7 @@ interface MachinesTabProps {
 }
 
 export function MachinesSettingsView({
-  config,
-  onConfigDraft,
-  onUpdate
+  config
 }: MachinesTabProps) {
   const hosts = useHosts();
   const projects = useData((s) => s.projects);
@@ -248,32 +160,6 @@ export function MachinesSettingsView({
         title="Machines"
         help="Pair another computer so projects and agents can run there. SSH remotes stay a separate path — they use this machine’s daemon to ssh in. Connected machines follow the server version automatically; Codex, Claude Code, and the other harness CLIs update from the rows below."
       >
-        <Field
-          label="Public app URL"
-          help="Hostname remotes use to reach this app (Heroku pairing relay, Tailscale Serve, …). Env ZCC_APP_URL wins over this field. Product HTTP still binds loopback; this laptop dials that origin outbound."
-        >
-          <input
-            type="url"
-            placeholder="https://your-app.herokuapp.com"
-            value={config.publicAppUrl ?? ''}
-            onChange={(event) => onConfigDraft({ ...config, publicAppUrl: event.target.value })}
-            onBlur={(event) => onUpdate({ publicAppUrl: event.target.value.trim() || undefined })}
-          />
-        </Field>
-        <Field
-          label="Relay token"
-          help="Must match Heroku config ZCC_RELAY_TOKEN. Env ZCC_RELAY_TOKEN wins over this field. Authenticates this laptop; several desktops may share one token. Each gets a short join window on its own session URL."
-        >
-          <input
-            type="password"
-            autoComplete="off"
-            placeholder="Heroku ZCC_RELAY_TOKEN"
-            value={config.relayToken ?? ''}
-            onChange={(event) => onConfigDraft({ ...config, relayToken: event.target.value })}
-            onBlur={(event) => onUpdate({ relayToken: event.target.value.trim() || undefined })}
-          />
-        </Field>
-        <RelayStatusLine />
         <div className="machines-toolbar">
           <button type="button" className="settings-btn" onClick={() => setAdding(true)}>
             <Plus size={13} aria-hidden="true" />

@@ -7,6 +7,7 @@ describe('product-client pluginApps', () => {
     expect(source).toContain("apiJson<{ apps?: PluginAppEntry[] }>('/plugin-apps')");
     expect(source).toContain('/plugin-apps/${encodeURIComponent(id)}/');
     expect(source).toContain('/plugin-apps/${encodeURIComponent(id)}/remove');
+    expect(source).toContain('/plugin-apps/${encodeURIComponent(id)}/reload');
     expect(source).toContain("'/plugin-apps/updates'");
     expect(source).toContain('/plugin-apps/${encodeURIComponent(pluginId)}/rpc');
     expect(source).toContain('/plugin-apps/${encodeURIComponent(pluginId)}/settings');

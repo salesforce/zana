@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { AddMachineDialogView } from './AddMachineDialog.js';
@@ -47,7 +48,8 @@ describe('AddMachineDialogView', () => {
     const html = renderToStaticMarkup(view({
       command: loopbackCommand,
       remainingMs: 60_000,
-      loopbackWarning: true
+      loopbackWarning: true,
+      pairingMethod: 'ssh'
     }));
     expect(html).toContain('data-testid="machines-join-command"');
     expect(html).toContain('http://127.0.0.1:8780/install.sh');
@@ -64,6 +66,7 @@ describe('AddMachineDialogView', () => {
       remainingMs: 60_000,
       loopbackWarning: true,
       viaSsh: true,
+      pairingMethod: 'ssh',
       sshHost: 'limited-pony',
       sshHosts: [
         { host: 'educational-roadrunner', label: 'Roadrunner', detail: 'educational-roadrunner', group: 'project' },
@@ -73,9 +76,8 @@ describe('AddMachineDialogView', () => {
       ]
     }));
     expect(html).toContain('ssh -o ExitOnForwardFailure=yes -R 18782:127.0.0.1:8780 limited-pony');
-    expect(html).toContain('Run this in a terminal on this computer');
-    expect(html).toContain('Paste it locally');
-    expect(html).toContain('Remote projects');
+    expect(html).toContain('Run this on this computer');
+    expect(html).toContain('copy and paste it locally');
     expect(html).toContain('educational-roadrunner');
     expect(html).toContain('kit-kat');
     expect(html).toContain('limited-pony');
@@ -90,6 +92,7 @@ describe('AddMachineDialogView', () => {
   it('keeps a typed SSH host visible when it is not in the list', () => {
     const html = renderToStaticMarkup(view({
       loopbackWarning: true,
+      pairingMethod: 'ssh',
       sshHost: 'custom-box',
       sshHosts: [{ host: 'limited-pony', label: 'limited-pony', group: 'project' }]
     }));
@@ -148,5 +151,61 @@ describe('AddMachineDialogView', () => {
     }));
     expect(html).toContain('Creating a join code…');
     expect(html).toContain('Waiting for the machine to connect…');
+  });
+
+  it('does not offer Run for the remote curl installer', () => {
+    const html = renderToStaticMarkup(view());
+    expect(html).toContain('Copy');
+    expect(html).not.toContain('data-testid="add-machine-run"');
+    expect(html).not.toContain('Stop tunnel');
+  });
+
+  it('offers Run and a mini terminal for SSH pairing on this computer', () => {
+    const html = renderToStaticMarkup(view({
+      command: sshCommand,
+      remainingMs: 60_000,
+      loopbackWarning: true,
+      viaSsh: true,
+      pairingMethod: 'ssh',
+      canRun: true,
+      pairingRunning: true,
+      pairingVisible: true,
+      pairingSlot: <div data-testid="add-machine-pairing-terminal" />,
+      sshHost: 'limited-pony',
+      sshHosts: [{ host: 'limited-pony', label: 'limited-pony', group: 'project' }]
+    }));
+    expect(html).toContain('Copy');
+    expect(html).toContain('data-testid="add-machine-run"');
+    expect(html).toContain('Stop tunnel');
+    expect(html).toContain('data-testid="add-machine-pairing-terminal"');
+    expect(html).toContain('Run it here');
+  });
+
+  it('lets the user choose SSH or the installer command', () => {
+    const html = renderToStaticMarkup(view({
+      showMethodToggle: true,
+      pairingMethod: 'command'
+    }));
+    expect(html).toContain('data-testid="add-machine-method-ssh"');
+    expect(html).toContain('data-testid="add-machine-method-command"');
+    expect(html).toContain('Installer command');
+    expect(html).not.toContain('data-testid="add-machine-ssh-host"');
+    expect(html).not.toContain('data-testid="add-machine-run"');
+
+    const ssh = renderToStaticMarkup(view({
+      showMethodToggle: true,
+      pairingMethod: 'ssh',
+      canRun: true,
+      sshHost: 'limited-pony',
+      sshHosts: [{ host: 'limited-pony', label: 'limited-pony', group: 'project' }]
+    }));
+    expect(ssh).toContain('data-testid="add-machine-ssh-host"');
+    expect(ssh).toContain('data-testid="add-machine-run"');
+  });
+
+  it('copies through the desktop clipboard bridge', () => {
+    const source = readFileSync(new URL('./AddMachineDialog.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('await copyText(command)');
+    expect(source).not.toContain('navigator.clipboard');
   });
 });

@@ -1,6 +1,11 @@
 node_modules
 out
 dist
+.turbo/
+# Salesforce Agent Script playground (Monaco iframe) — served from the
+# installed plugin tree at /plugins/salesforce/assets/playground/dist/.
+!plugins/salesforce/playground/dist/
+!plugins/salesforce/playground/dist/**
 # Embedded opencode binaries, downloaded at build time by
 # scripts/fetch-opencode-binaries.mjs (npm run fetch:opencode) — not source.
 vendor/opencode

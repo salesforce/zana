@@ -23,14 +23,14 @@ flowchart LR
 
 ## 1. Install
 
-Download the app from the [**Download**](/download/) page and open it. macOS is
-available today; Windows and Linux are on the way.
+Download the app from the [**Download**](https://zcc-7808c5bc8f3d.herokuapp.com/download/)
+page and open it. macOS is available today; Windows and Linux are on the way.
 
-**Prerequisites:** [Node](https://nodejs.org) 20 or newer on this Mac, `git`,
-and at least one supported harness CLI on your `PATH`: Claude Code, Cursor,
-OpenCode, Codex, or Pi. If the harness works in your terminal, ZCC can launch
-it. Remote execution hosts need **Node 22+** — see
-[Using Zana on multiple machines](/docs/multiple-devices/).
+**Prerequisites:** [Node](https://nodejs.org) 20 or newer on this Mac (**22+**
+matches CI and is required on remotes), `git`, and at least one supported
+harness CLI on your `PATH`: Claude Code, Cursor, OpenCode, Codex, or Pi. If
+the harness works in your terminal, ZCC can launch it. Remote execution hosts
+need **Node 22+** — see [Using Zana on multiple machines](/docs/multiple-devices/).
 
 On first launch the app opens to an empty cockpit — no projects yet. That's the
 next step.
@@ -116,9 +116,9 @@ letting the agents carry the rest.
 - **[Using Zana Command Center](/docs/using-zana/)** — a fuller tour of the
   Inbox, Agents, Teams, and the day-to-day workflows.
 - **[Using Zana on multiple machines](/docs/multiple-devices/)** — pair another
-  computer from Settings → Machines (public origin / relay; Tailscale Serve
-  remains a fallback when no relay token is set).
-- **[The `zcc` CLI](/docs/cli/)** — a command-line companion that reads the
-  same stores and can drive the running app.
+  computer from Settings → Machines (public origin / relay; SSH reverse-tunnel
+  when this build has no public origin).
+- **[The `zcc` CLI](/docs/cli/)** — a command-line companion that talks to the
+  running app over the product HTTP API.
 - **[Plugins overview](/docs/extensions/)** — add panels, tabs, commands,
   personas, and teams without editing core.

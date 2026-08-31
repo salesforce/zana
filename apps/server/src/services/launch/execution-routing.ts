@@ -8,7 +8,7 @@ import type { LaunchProvider } from '@zana-ai/zcc-host-daemon/harness/launch-pro
 import { providerFor, registrationFor } from '@zana-ai/zcc-host-daemon/harness/registry';
 import { harnessEnabledFromProbe } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
 import { resolveExecutionState } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
-import { resolveModelTarget, resolveRoleTarget } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
+import { allowsLiveListedModelTarget, resolveModelTarget, resolveRoleTarget } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
 import { evaluateFacetEvidence, evaluateTargetEvidence } from '@zana-ai/zcc-host-daemon/harness/routing-evidence';
 import type { ExecutionAuthorizationInput, ExecutionPreflightDecision } from './preflight.js';
 import { preflightExecutionAuthorization } from './preflight.js';
@@ -155,9 +155,12 @@ async function preflightStructuredRouting(
   }
   if (model.targetId && model.structuredSelected) {
     const target = provider.adapter.descriptor.targets?.models.find(({ id }) => id === model.targetId);
-    if (!target) return 'model target unavailable';
-    const evaluated = evaluateTargetEvidence(provider, target, input.scope, installedVersion);
-    if (evaluated.classification === 'unavailable') return `model target: ${evaluated.reason}`;
+    if (!target) {
+      if (!allowsLiveListedModelTarget(provider, model.targetId)) return 'model target unavailable';
+    } else {
+      const evaluated = evaluateTargetEvidence(provider, target, input.scope, installedVersion);
+      if (evaluated.classification === 'unavailable') return `model target: ${evaluated.reason}`;
+    }
   }
   return undefined;
 }

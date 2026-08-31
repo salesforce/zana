@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEve
 import { createPortal } from 'react-dom';
 import {
   Bot,
+  Calendar,
   ExternalLink,
   Inbox,
   Loader2,
@@ -165,6 +166,10 @@ export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) 
                 showProject={showProject}
                 onSelect={() => setPickedId(item.id)}
                 onContextMenu={(e) => {
+                  if (item.kind === 'schedule') {
+                    e.preventDefault();
+                    return;
+                  }
                   if (item.kind === 'thread') {
                     setMenu(null);
                     openThreadMenu(e, item.thread, setThreadMenu);
@@ -227,6 +232,36 @@ interface RowProps {
 
 function AgentMonitorRow({ item, laneKey, active, showProject, onSelect, onContextMenu }: RowProps) {
   const personas = usePersonas((s) => s.personas);
+  if (item.kind === 'schedule') {
+    return (
+      <button
+        type="button"
+        className={`agent-monitor-row is-schedule lane-${laneKey} ${active ? 'active' : ''}${item.task.enabled ? '' : ' exited'}`}
+        data-kind="schedule"
+        onClick={() => useUi.getState().revealSchedule(item.task.id)}
+        onContextMenu={onContextMenu}
+        title={`${item.title} · ${item.projectName}`}
+      >
+        <span className="agent-monitor-row-icon">
+          <Calendar size={14} aria-hidden="true" />
+        </span>
+        <span className="agent-monitor-row-text">
+          <span className="agent-monitor-row-title-line">
+            <span className="agent-monitor-row-title">{item.title}</span>
+            <FleetKindChip kind="schedule" />
+          </span>
+          <span className="agent-monitor-row-meta">
+            {showProject && (
+              <span className="agent-monitor-row-project" title={item.projectName}>
+                {item.projectName}
+              </span>
+            )}
+            <span className="agent-monitor-row-dur">{item.task.enabled ? 'Armed' : 'Paused'}</span>
+          </span>
+        </span>
+      </button>
+    );
+  }
   if (item.kind === 'thread') {
     return (
       <button

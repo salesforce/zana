@@ -44,6 +44,7 @@ import { sanitizeExtraArgs } from '@zana-ai/zcc-domain/launch-sanitize';
 import { providerCapabilities, isClaudeProfile, isCodexProfile, isOpenCodeProfile, seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
 import { EXTENSION_PROJECT_CATEGORY, store, scratchWorkspaceRoot, worktreeRoot, worktreeTargetDir } from '@zana-ai/zcc-server/services/projects/store';
 import { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
+import { sshPairingSession } from '@zana-ai/zcc-host-daemon/ssh-pairing-pty';
 import { resolveMaxLiveSessions } from '@zana-ai/zcc-host-daemon/capacity';
 import { revalidateLaunchCommit as revalidateCommonLaunchCommit } from '@zana-ai/zcc-server/services/launch/commit-revalidation';
 import { LaunchAuthorizationService } from '@zana-ai/zcc-server/services/launch/authorization';
@@ -6578,6 +6579,7 @@ app.on('before-quit', (event) => {
   // client naturally; explicitly killing it emits a false terminal exit that
   // marks Team lifecycle state dead before next launch can reattach.
   ptys.killAll({ preserveLocalTmux: true });
+  sshPairingSession.stop();
   desktopBrowserViewManager.destroyAll();
   setBrowserAutomationHost(null);
   if (mcpServer) {

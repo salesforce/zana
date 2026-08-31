@@ -19,7 +19,8 @@ import {
   type NavId
 } from '../store.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
-import { getNavRoutePath, getPluginPanelRoutePath } from '../lib/route-paths.js';
+import { getNavRoutePath } from '../lib/route-paths.js';
+import { hrefForPluginNavPanel } from '../plugins/plugin-nav-href.js';
 import { useMergedModules } from '../modules/index.js';
 import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js';
 import { useRouteState } from '../hooks/useRouteState.js';
@@ -75,10 +76,14 @@ export function Sidebar() {
   const followUpsEnabled = useData((s) => s.followUpsEnabled);
   const routeMemory = useAppSettingsRouteMemory();
   const modules = useMergedModules();
-  const pluginPanels = useSyncExternalStore(subscribePluginSlots, listNavPanels, listNavPanels);
+  const navPanels = useSyncExternalStore(subscribePluginSlots, listNavPanels, listNavPanels);
   const pluginIds = useMemo(
-    () => new Set(pluginPanels.map((panel) => panel.pluginId)),
-    [pluginPanels]
+    () => new Set(navPanels.map((panel) => panel.pluginId)),
+    [navPanels]
+  );
+  const pluginPanels = useMemo(
+    () => navPanels.filter((panel) => panel.placement !== 'extensions'),
+    [navPanels]
   );
   const extraItems = useMemo(() => {
     const extras: NavEntry[] = [];
@@ -182,7 +187,7 @@ export function Sidebar() {
         id,
         label: panel.title,
         icon: <Icon size={16} />,
-        to: getPluginPanelRoutePath({ pluginId: panel.pluginId, path }),
+        to: hrefForPluginNavPanel(panel.pluginId, path),
         testId: `nav-${id}`,
         active,
         title: collapsed ? panel.title : undefined

@@ -3,10 +3,17 @@ import { createPluginDevLoop, isIgnoredPluginDevPath } from './plugin-dev-loop.j
 import { createPluginArtifactMeta } from './build-plugin.js';
 
 describe('plugin dev loop', () => {
-  it('ignores dist and node_modules paths', () => {
+  it('ignores dist, node_modules, types, and generated artifact basenames', () => {
     expect(isIgnoredPluginDevPath('dist/app.js')).toBe(true);
     expect(isIgnoredPluginDevPath('node_modules/x')).toBe(true);
+    expect(isIgnoredPluginDevPath('types/zcc-plugin-sdk.d.ts')).toBe(true);
+    expect(isIgnoredPluginDevPath('app.js')).toBe(true);
+    expect(isIgnoredPluginDevPath('app.js.map')).toBe(true);
+    expect(isIgnoredPluginDevPath('app.meta.json')).toBe(true);
+    expect(isIgnoredPluginDevPath('server.mjs')).toBe(true);
+    expect(isIgnoredPluginDevPath('server.meta.json')).toBe(true);
     expect(isIgnoredPluginDevPath('app.tsx')).toBe(false);
+    expect(isIgnoredPluginDevPath('server.ts')).toBe(false);
   });
 
   it('rebuilds then reloads, and skips reload when the build fails', async () => {

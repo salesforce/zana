@@ -6,7 +6,9 @@ import { resolve } from 'node:path';
 // (e.g. the markdown helper, now re-exported through the SDK).
 export default defineConfig({
   define: {
-    __ZCC_DEV_WS_PORT__: 'undefined'
+    __ZCC_DEV_WS_PORT__: 'undefined',
+    __ZCC_BUNDLED_APP_URL__: JSON.stringify(''),
+    __ZCC_BUNDLED_RELAY_TOKEN__: JSON.stringify('')
   },
   test: {
     // Runs once per worker before any test file — scrubs inherited GIT_* vars

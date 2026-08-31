@@ -5,7 +5,7 @@ import type { AgentState, TerminalSession } from '@zana-ai/zcc-domain/product';
 
 // Build a minimal AgentCard for lane-classification tests. Only the fields the
 // LANE matchers read (`status`, `exitCode`, `state`) matter.
-function card(state: AgentState, status: TerminalSession['status'], exitCode?: number): AgentCard {
+function card(state: AgentState, status: TerminalSession['status'], exitCode?: number, scheduled = false): AgentCard {
   return {
     session: {
       id: 's',
@@ -15,7 +15,8 @@ function card(state: AgentState, status: TerminalSession['status'], exitCode?: n
       cwd: '/tmp',
       status,
       exitCode,
-      createdAt: 0
+      createdAt: 0,
+      ...(scheduled ? { scheduled: true } : {})
     } as TerminalSession,
     state,
     projectId: 'p',
@@ -62,12 +63,23 @@ describe('AgentBoard LANES classification', () => {
   it('classifies every card into exactly one lane (no agent ever hidden)', () => {
     const states: AgentState[] = ['blocked', 'working', 'idle', 'done', 'unknown'];
     const statuses: TerminalSession['status'][] = ['starting', 'running', 'exited'];
-    for (const s of states) {
-      for (const st of statuses) {
-        const matches = LANES.filter((l) => l.match(card(s, st)));
-        expect(matches.length).toBe(1);
+    for (const scheduled of [false, true]) {
+      for (const s of states) {
+        for (const st of statuses) {
+          const matches = LANES.filter((l) => l.match(card(s, st, undefined, scheduled)));
+          expect(matches.length).toBe(1);
+        }
       }
     }
+  });
+
+  it('routes waiting scheduled agents to Scheduled, running ones to Working', () => {
+    expect(laneFor(card('idle', 'running', undefined, true))).toBe('scheduled');
+    expect(laneFor(card('unknown', 'running', undefined, true))).toBe('scheduled');
+    expect(laneFor(card('working', 'running', undefined, true))).toBe('working');
+    expect(laneFor(card('blocked', 'running', undefined, true))).toBe('working');
+    expect(laneFor(card('idle', 'exited', 0, true))).toBe('done');
+    expect(laneFor(card('idle', 'running'))).toBe('idle');
   });
 });
 
@@ -82,5 +94,13 @@ describe('AgentBoard thread cards', () => {
     expect(source).not.toContain('? renderThreadCard(item, laneKey) :');
     expect(source).toContain('<ProviderIcon providerId={item.thread.providerId}');
     expect(source).not.toContain('MessageSquare');
+  });
+
+  it('renders schedule jobs as board cards in the Scheduled lane', () => {
+    const source = readFileSync(new URL('../AgentBoard.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('renderScheduleCard');
+    expect(source).toContain('isScheduleFleet');
+    expect(source).toContain('compareScheduleFleet');
+    expect(source).toContain('data-kind="schedule"');
   });
 });

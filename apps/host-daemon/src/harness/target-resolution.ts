@@ -54,6 +54,12 @@ export function isLiveListedModelTargetId(id: string): boolean {
   return !id.startsWith('-') && LIVE_LISTED_MODEL_TARGET_ID.test(id);
 }
 
+/** Pi-style adapters list models at runtime; an empty static catalog still accepts those ids. */
+export function allowsLiveListedModelTarget(provider: LaunchProvider, targetId: string): boolean {
+  const catalog = provider.adapter.descriptor.targets?.models ?? [];
+  return catalog.length === 0 && isLiveListedModelTargetId(targetId) && !!provider.modelContribution;
+}
+
 const MODEL_LEVELS: readonly ModelLevel[] = ['low', 'medium', 'high', 'extra-high'];
 const EXECUTION_STATES = ['plan', 'interactive', 'accept-edits', 'autonomous'] as const;
 
@@ -219,7 +225,7 @@ export function resolveModelTarget(provider: LaunchProvider, input: TargetResolu
     const catalogModels = provider.adapter.descriptor.targets?.models ?? [];
     const target = catalogModels.find((candidate) => candidate.id === targetId);
     if (!target) {
-      if (catalogModels.length > 0 || !isLiveListedModelTargetId(targetId) || !provider.modelContribution) {
+      if (!allowsLiveListedModelTarget(provider, targetId)) {
         throw new Error(`Unknown model target for ${provider.adapter.descriptor.label}.`);
       }
     } else if (input.scope && !target.scope.includes(input.scope)) {

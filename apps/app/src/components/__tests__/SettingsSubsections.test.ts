@@ -69,11 +69,37 @@ describe('Settings subsection navigation', () => {
     ]);
   });
 
+  it('lists Scheduled under Agent settings', () => {
+    expect(SETTINGS_SUBSECTIONS.agents).toContainEqual({
+      id: 'scheduled',
+      label: 'Scheduled'
+    });
+    const ids = SETTINGS_SUBSECTIONS.agents?.map((section) => section.id) ?? [];
+    expect(ids.indexOf('agent-attention')).toBeLessThan(ids.indexOf('scheduled'));
+    expect(ids.indexOf('scheduled')).toBeLessThan(ids.indexOf('agent-automation'));
+  });
+
   it('lists Git worktrees under global Agent settings', () => {
     expect(SETTINGS_SUBSECTIONS.agents).toContainEqual({
       id: 'git-worktrees',
       label: 'Git worktrees'
     });
+  });
+
+  it('puts the CLI Agent cluster last on Agent settings, with Auto mode last', () => {
+    const ids = SETTINGS_SUBSECTIONS.agents?.map((section) => section.id) ?? [];
+    expect(ids).toEqual([
+      'git-worktrees',
+      'agent-tabs',
+      'agent-attention',
+      'scheduled',
+      'agent-automation',
+      'agent-heartbeat',
+      'auto-close-idle',
+      'legacy-agent',
+      'overseer',
+      'auto-mode'
+    ]);
   });
 
   it('lists Credits under About', () => {

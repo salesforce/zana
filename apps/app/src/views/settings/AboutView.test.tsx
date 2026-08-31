@@ -5,7 +5,8 @@ import {
   BB_IDE_URL,
   CLAUDE_CODE_URL,
   CODEX_URL,
-  CURSOR_URL
+  CURSOR_URL,
+  GITHUB_REPO_URL
 } from '@zana-ai/zcc-domain/product';
 
 vi.mock('../../lib/product-client.js', () => ({
@@ -49,5 +50,13 @@ describe('AboutView credits', () => {
     expect(html).toContain('Cursor');
     expect(html).toContain('Codex');
     expect(html).toContain('Claude Code');
+  });
+
+  it('keeps a Star on GitHub link next to the release notes', () => {
+    const html = renderToStaticMarkup(
+      <AboutView config={config} onUpdate={async () => undefined} />
+    );
+    expect(html).toContain(`href="${GITHUB_REPO_URL}"`);
+    expect(html).toContain('Star on GitHub');
   });
 });

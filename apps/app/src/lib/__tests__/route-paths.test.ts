@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_PLUGIN_PANEL_PATH,
   getAgentsRoutePath,
+  getExtensionsHubPageRoutePath,
   getExtensionsTabRoutePath,
   getFollowUpsRoutePath,
   getGoalsRoutePath,
@@ -57,6 +58,9 @@ describe('route path helpers', () => {
     expect(getExtensionsTabRoutePath('installed', 'slack')).toBe('/extensions/plugins/slack');
     expect(getExtensionsTabRoutePath('skills')).toBe(TOOLS_SKILLS_ROUTE_PATH);
     expect(getExtensionsTabRoutePath('mcp')).toBe('/extensions/mcp');
+    expect(
+      getExtensionsHubPageRoutePath({ pluginId: 'plugin-guide', pageId: 'plugin-guide', subPath: 'app-shell' })
+    ).toBe('/extensions/pages/plugin-guide/plugin-guide/app-shell');
   });
 
   it('maps core nav ids and module ids', () => {
@@ -86,6 +90,7 @@ describe('route path helpers', () => {
       '/settings',
       '/settings/global#appearance',
       '/extensions/plugins/browse',
+      '/extensions/pages/plugin-guide/plugin-guide',
       '/projects/p1/terminals?x=1',
       '/plugins/docs/panel',
       '/threads/new',

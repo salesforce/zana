@@ -1,7 +1,11 @@
 # Zana Command Center — website
 
 The public face of the app: **marketing landing**, **plugin marketplace**,
-**docs**, and **download**. Built with Next.js (App Router) in standalone-server
+**docs**, and **download**.
+
+**Live:** [https://zcc-7808c5bc8f3d.herokuapp.com/](https://zcc-7808c5bc8f3d.herokuapp.com/)
+
+Built with Next.js (App Router) in standalone-server
 mode so the site can serve its authenticated publishing API and plugin feed
 routes alongside static marketing and documentation pages.
 
@@ -36,7 +40,10 @@ The Dockerfile builds Next standalone **and** runs the pairing front door
 (`node relay/front-door.mjs`). Next listens on container loopback; the front
 door binds `0.0.0.0:$PORT`. Pairing paths (`/install.sh`, enroll, host ws) are
 relayed only while a laptop is connected to `/_zcc/relay`. Set `ZCC_RELAY_TOKEN`
-in the platform config (never in the image).
+in the platform config (never in the image). Official desktop releases inline
+the same origin (`ZCC_APP_URL`) and token at `electron-vite build` time — set
+GitHub secrets `ZCC_APP_URL` and `ZCC_RELAY_TOKEN` (never commit them), or
+export them before local `pnpm run release:mac`.
 
 `NEXT_PUBLIC_*` values are inlined at **build time**, so pass feed URLs as Docker
 build arguments rather than runtime environment variables. Set `PUBLIC_BASE_URL`

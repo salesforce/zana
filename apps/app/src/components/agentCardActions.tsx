@@ -1,9 +1,15 @@
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { product } from '../lib/product-client.js';
-import { useEffect, useState } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Puzzle, Trash2 } from 'lucide-react';
 import { useData, useIdleTriage } from '../store.js';
 import { cardNeedsAttention, type AgentCard } from './AgentBoard.js';
 import type { TerminalSession } from '@zana-ai/zcc-domain/product';
+import { resolveIcon } from '../lib/resolveIcon.js';
+import {
+  availableAgentCardActions,
+  invokeAgentCardAction
+} from '../plugins/plugin-agent-actions.js';
+import { listAgentCardActions, subscribePluginSlots } from '../plugins/plugin-slots.js';
 
 /**
  * Shared agent-card lifecycle actions + right-click menu, used by the kanban
@@ -184,6 +190,9 @@ export function AgentCardMenu({ menu, setMenu, actions, onPick }: AgentCardMenuP
   // triaged card isn't stuck nagging — gate on the same predicate the lane uses.
   const sensitivity = useData((s) => s.idleAttentionSensitivity);
   const needsYou = !exited && (card.state === 'blocked' || cardNeedsAttention(card, sensitivity));
+  const pluginSlots = useSyncExternalStore(subscribePluginSlots, listAgentCardActions, listAgentCardActions);
+  const pluginCtx = { sessionId: card.session.id, projectId: card.projectId };
+  const pluginActions = availableAgentCardActions(pluginSlots, pluginCtx);
   return (
     <div
       className="tab-context-menu"
@@ -238,6 +247,24 @@ export function AgentCardMenu({ menu, setMenu, actions, onPick }: AgentCardMenuP
         </button>
       )}
       <button onClick={() => { setMenu(null); actions.rename(card); }}>Rename…</button>
+      {pluginActions.length > 0 ? <div className="tab-context-sep" /> : null}
+      {pluginActions.map((slot) => {
+        const Icon = slot.icon ? resolveIcon(slot.icon) : Puzzle;
+        return (
+          <button
+            key={`${slot.pluginId}/${slot.id}`}
+            type="button"
+            data-testid={`agent-card-plugin-${slot.pluginId}-${slot.id}`}
+            onClick={() => {
+              setMenu(null);
+              invokeAgentCardAction(slot, pluginCtx);
+            }}
+          >
+            <Icon size={14} aria-hidden="true" />
+            {slot.title}
+          </button>
+        );
+      })}
       <div className="tab-context-sep" />
       <button
         className="tab-context-danger"

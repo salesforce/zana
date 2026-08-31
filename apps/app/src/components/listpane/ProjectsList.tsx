@@ -1,5 +1,5 @@
 import { product } from '../../lib/product-client.js';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   DndContext,
@@ -65,6 +65,8 @@ import {
 } from '../fleet-item.js';
 import { POST_DRAG_CLICK_SUPPRESS_MS, suppressPostDragClick } from '../../lib/suppress-post-drag-click.js';
 import { composerProjectLabel } from '../composer-project-default.js';
+import { resolveIcon } from '../../lib/resolveIcon.js';
+import { listProjectMenuActions, subscribePluginSlots } from '../../plugins/plugin-slots.js';
 
 interface MenuState {
   projectId: string;
@@ -192,6 +194,13 @@ export function ProjectsList({
   const toggleSection = useUi((s) => s.toggleSection);
   // Non-null in a per-project window: the rail is locked to this one project.
   const scopedProjectId = getScopedProjectId();
+  const projectMenuActions = useSyncExternalStore(
+    subscribePluginSlots,
+    listProjectMenuActions,
+    listProjectMenuActions
+  );
+  const workspaceMenuActions = projectMenuActions.filter((row) => row.placement === 'workspace');
+  const rowMenuActions = projectMenuActions.filter((row) => row.placement === 'project');
   const threads = useThreads((s) => s.threads);
   useEnsureThreads();
   const navigate = useNavigate();
@@ -841,6 +850,28 @@ export function ProjectsList({
                         {sidebarProjectSort === sort && <Check size={14} aria-hidden="true" />}
                       </button>
                     ))}
+                    {workspaceMenuActions.length > 0 && (
+                      <>
+                        <span className="sidebar-projects-menu-label">Plugins</span>
+                        {workspaceMenuActions.map((action) => {
+                          const Icon = resolveIcon(action.icon ?? 'Puzzle');
+                          return (
+                            <button
+                              key={`${action.pluginId}:${action.id}:${action.generation}`}
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                setSidebarOrganizeOpen(false);
+                                void action.run({ projectId: null });
+                              }}
+                            >
+                              <Icon size={14} />
+                              <span>{action.title}</span>
+                            </button>
+                          );
+                        })}
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -1135,6 +1166,27 @@ export function ProjectsList({
                   <AppWindow size={12} />
                   <span>Open in new window</span>
                 </button>
+              )}
+              {rowMenuActions.length > 0 && (
+                <>
+                  <div className="project-menu-sep" />
+                  {rowMenuActions.map((action) => {
+                    const Icon = resolveIcon(action.icon ?? 'Puzzle');
+                    return (
+                      <button
+                        key={`${action.pluginId}:${action.id}:${action.generation}`}
+                        className="project-menu-item"
+                        onClick={() => {
+                          setMenu(null);
+                          void action.run({ projectId: p.id });
+                        }}
+                      >
+                        <Icon size={12} />
+                        <span>{action.title}</span>
+                      </button>
+                    );
+                  })}
+                </>
               )}
               <div className="project-menu-sep" />
               <button

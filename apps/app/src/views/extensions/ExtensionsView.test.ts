@@ -13,14 +13,21 @@ describe('ExtensionsView aurora background', () => {
     expect(view.indexOf('<AuroraGrid />')).toBeLessThan(view.indexOf('className={`settings-inner'));
   });
 
+  it('mounts hub pages from plugin navPanels inside the extensions panel', () => {
+    expect(view).toContain('PluginPanelPaneView');
+    expect(view).toContain('extensionsHubPluginId');
+  });
+
   it('does not dump plugin settings sections under the plugin list', () => {
     expect(view).not.toContain('PluginSettingsSections');
   });
 
   it('mounts plugin settings sections on the plugin detail page', () => {
-    expect(hub).toContain('PluginSettingsSections');
-    expect(hub).toContain('<PluginSettingsSections pluginId={module.id} />');
-    expect(hub).toContain('{hasSlotSettings ? null : <PluginDefinedSettings pluginId={module.id} />}');
+        expect(hub).toContain('PluginSettingsSections');
+        expect(hub).toContain('<PluginSettingsSections pluginId={module.id} />');
+        expect(hub).toContain('<PluginDefinedSettings pluginId={module.id} />');
+        expect(hub).toContain('PluginHubIncludes');
+        expect(hub).toContain('id="plugin-configure"');
   });
 
   it('pins the grid to the panel and lifts hub content above it', () => {

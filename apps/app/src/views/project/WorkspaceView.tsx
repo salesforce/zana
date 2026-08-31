@@ -1,5 +1,5 @@
 import { product } from '../../lib/product-client.js';
-import { lazy, Suspense, useEffect } from 'react';
+import { lazy, Suspense, useEffect, useSyncExternalStore } from 'react';
 import { TerminalSquare, GitBranch, Columns2, Rows2, LayoutGrid, Square, Bot } from 'lucide-react';
 import type { SplitLayout, ProjectView } from '@/store';
 import { useData, useUi, visibleTerminals, backgroundTerminals } from '@/store';
@@ -13,6 +13,8 @@ import { ProjectExtensionTab } from '@/views/project/ProjectExtensionTab';
 import { useProjectTabModules } from '@/modules';
 import { resolveProjectTabModule } from '@/lib/libraryPlugin';
 import { DelayedStencilList } from '@/components/ui/Skeleton';
+import { PluginSlotBoundary } from '@/plugins/PluginSlotBoundary';
+import { listProjectTabs, projectTabWorkspaceMode, subscribePluginSlots } from '@/plugins/plugin-slots';
 
 // Lazy-load the editor surface. monaco-editor registers default editor
 // extensions into a global `RegistryImpl` singleton, so it's lazy-loaded to
@@ -67,6 +69,9 @@ export function WorkspaceView() {
   // Extension-contributed project tabs (modules that declared `projectTab`).
   // Generic — core never names a concrete extension here (Rule 6).
   const projectTabModules = useProjectTabModules();
+  const slotTabs = useSyncExternalStore(subscribePluginSlots, listProjectTabs, listProjectTabs);
+  const slotPluginIds = new Set(slotTabs.map((tab) => tab.pluginId));
+  const diskProjectTabModules = projectTabModules.filter((module) => !slotPluginIds.has(module.id));
 
   const route = useRouteState();
   const workspaceShown = route.nav === 'projects' && !!route.focusedProjectId;
@@ -94,8 +99,11 @@ export function WorkspaceView() {
   // project-tab module's id (not a core mode). An id whose extension is gone is
   // tolerated: `extModule` is undefined and the view falls through to the
   // Terminals catch-all below.
-  const extModule = project ? resolveProjectTabModule(mode, projectTabModules) : undefined;
-  const isExtTab = !!extModule;
+  const slotTab = project
+    ? slotTabs.find((tab) => projectTabWorkspaceMode(tab, slotTabs) === mode)
+    : undefined;
+  const extModule = project ? resolveProjectTabModule(mode, diskProjectTabModules) : undefined;
+  const isExtTab = !!extModule || !!slotTab;
   const isNewThread = route.isNewThread && !!project;
   const isThreadView = route.isThreadView && !!project && !!route.threadId;
   const isAgents = mode === 'agents' && !!project && !isNewThread && !isThreadView;
@@ -377,7 +385,17 @@ export function WorkspaceView() {
               <ProjectFeedView project={project} />
             </Suspense>
           )}
-          {isExtTab && project && extModule && (
+          {isExtTab && project && slotTab && (
+            <div className="project-ext-tab">
+              <PluginSlotBoundary pluginId={slotTab.pluginId} generation={slotTab.generation}>
+                {(() => {
+                  const Component = slotTab.component;
+                  return <Component pluginId={slotTab.pluginId} projectId={project.id} />;
+                })()}
+              </PluginSlotBoundary>
+            </div>
+          )}
+          {isExtTab && project && extModule && !slotTab && (
             // Extension-contributed project tab: the extension's own panel,
             // mounted scoped to this project. Wrapped in its own error boundary
             // inside ProjectExtensionTab so a throwing extension is contained.

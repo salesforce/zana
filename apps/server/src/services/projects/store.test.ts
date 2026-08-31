@@ -59,6 +59,7 @@ describe('config — boolean feature flags round-trip through setConfig', () => 
   it.each([
     'idleTriageEnabled',
     'agentListNeedsYouFromTriage',
+    'includeScheduledAgentsInAgentView',
     'agentSelfCloseEnabled',
     'closeIdlePeersEnabled',
     'teamLaunchEnabled',

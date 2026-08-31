@@ -70,15 +70,18 @@ export default { Badge, __zccPluginApp: true, setup() {} };
     );
     writeFileSync(
       join(dir, 'app.tsx'),
-      `import { definePluginApp, callPluginRpc } from '@zana-ai/zcc-plugin-sdk/app';
+      `import { definePluginApp, callPluginRpc, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 export default definePluginApp((app) => {
   app.slots.navPanel({
     id: 'main',
     title: 'Demo',
     icon: 'Box',
-    component: () => null
+    component: function Panel() {
+      useZccNavigate();
+      return null;
+    }
   });
-  void callPluginRpc;
+  void callPluginRpc('demo', 'ping');
 });
 `
     );
@@ -89,5 +92,25 @@ export default definePluginApp((app) => {
     expect(js).toContain('__ZCC_PLUGIN_HOST__');
     expect(js).toContain('__ZCC_PLUGIN_RUNTIME__');
     expect(js).toContain('__zccPluginApp');
+  });
+
+  it('writes an unminified sourcemap when requested for live reload', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-dev-map-'));
+    dirs.push(dir);
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({ name: '@zcc-ext/map-demo', version: '0.0.1' })
+    );
+    writeFileSync(
+      join(dir, 'app.tsx'),
+      `export default { __zccPluginApp: true, setup() { const readableName = 1; return readableName; } };
+`
+    );
+    const result = await buildPluginApp(dir, '1.0.0', { minify: false, sourcemap: true });
+    expect(result?.jsPath).toBe(join(dir, 'app.js'));
+    const js = readFileSync(join(dir, 'app.js'), 'utf8');
+    expect(js).toContain('readableName');
+    expect(js).toContain('sourceMappingURL=app.js.map');
+    expect(readFileSync(join(dir, 'app.js.map'), 'utf8')).toMatch(/app\.tsx/);
   });
 });

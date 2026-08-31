@@ -51,7 +51,7 @@ describe('sidebar navigation order', () => {
     const projectIds = ['inbox', 'agents', 'feed', 'terminals'];
     expect(
       normalizeSidebarNavOrder(['feed', 'inbox', 'terminals'], projectIds, ['inbox'])
-    ).toEqual(['inbox', 'feed', 'terminals', 'agents']);
+    ).toEqual(['inbox', 'agents', 'feed', 'terminals']);
     expect(
       reorderSidebarNavItems(projectIds, 'inbox', 'feed', ['inbox'])
     ).toEqual(projectIds);
@@ -71,6 +71,21 @@ describe('sidebar navigation order', () => {
         ['inbox']
       )
     ).toEqual(['inbox', 'feed', 'agents', 'terminals']);
+  });
+
+  it('inserts a new plugin rail row above Workspaces instead of after the project list', () => {
+    expect(
+      normalizeSidebarNavOrder(
+        ['home', 'inbox', 'extensions', 'sidebar-section:workspaces'],
+        ['home', 'inbox', 'extensions', 'plugin-guide/plugin-guide', 'sidebar-section:workspaces']
+      )
+    ).toEqual([
+      'home',
+      'inbox',
+      'extensions',
+      'plugin-guide/plugin-guide',
+      'sidebar-section:workspaces'
+    ]);
   });
 
   it('persists collection sections alongside ordinary destinations', () => {

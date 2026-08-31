@@ -37,12 +37,12 @@ function bearerToken(headers: IncomingMessage['headers']): string | null {
   return token.length > 0 ? token : null;
 }
 
-function publicOrigin(ctx: ProductHttpContext): string | undefined {
-  return resolvePublicAppUrl({ configUrl: ctx.config.getConfig().publicAppUrl });
+function publicOrigin(): string | undefined {
+  return resolvePublicAppUrl();
 }
 
 function hostInternalAllowed(request: IncomingMessage, ctx: ProductHttpContext): boolean {
-  return isAllowedHostInternalHost(requestHostHeader(request), publicOrigin(ctx));
+  return isAllowedHostInternalHost(requestHostHeader(request), publicOrigin());
 }
 
 function hasBrowserOrigin(request: IncomingMessage): boolean {

@@ -25,7 +25,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run --config vitest.config.ts",
-    "listen": "node --conditions=source --import tsx src/http/listen.ts"
+    "listen": "node --conditions=source --import tsx src/http/listen.ts",
+    "dev": "pnpm --dir ../.. exec node --conditions=source --import tsx apps/server/src/http/listen.ts"
   },
   "dependencies": {
     "@zana-ai/zcc-contracts": "workspace:*",

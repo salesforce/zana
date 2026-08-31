@@ -1001,6 +1001,8 @@ importers:
 
   plugins/memory: {}
 
+  plugins/plugin-guide: {}
+
   plugins/pr-monitor:
     dependencies:
       lucide-react:

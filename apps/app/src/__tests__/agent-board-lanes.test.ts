@@ -6,6 +6,7 @@ import {
   isReclaimableIdle,
   cardNeedsAttention,
   LANES,
+  visibleAgentLanes,
   groupCardsByProject,
   partitionSquads,
   scheduleBySessionId,
@@ -69,7 +70,18 @@ describe('Idle lane predicates', () => {
   });
 
   it('LANES has no Delegating column', () => {
-    expect(LANES.map((l) => l.key)).toEqual(['blocked', 'working', 'idle', 'done']);
+    expect(LANES.map((l) => l.key)).toEqual(['blocked', 'working', 'scheduled', 'idle', 'done']);
+  });
+
+  it('hides the Scheduled column unless includeScheduled is on', () => {
+    expect(visibleAgentLanes(false).map((l) => l.key)).toEqual(['blocked', 'working', 'idle', 'done']);
+    expect(visibleAgentLanes(true).map((l) => l.key)).toEqual([
+      'blocked',
+      'working',
+      'scheduled',
+      'idle',
+      'done'
+    ]);
   });
 });
 
@@ -128,6 +140,38 @@ function bgWorker(state: AgentCard['state'], over: Partial<AgentCard> = {}): Age
 
 const needsYou = LANES.find((l) => l.key === 'blocked')!;
 const working = LANES.find((l) => l.key === 'working')!;
+const scheduledLane = LANES.find((l) => l.key === 'scheduled')!;
+const idleLane = LANES.find((l) => l.key === 'idle')!;
+
+function scheduledRun(state: AgentCard['state']): AgentCard {
+  const session = {
+    id: 'sch1',
+    status: 'running',
+    profile: 'claude',
+    scheduled: true,
+    headless: true
+  } as unknown as TerminalSession;
+  return { session, state, projectId: 'p1', projectName: 'P1', liveSubagents: 0 };
+}
+
+describe('scheduled agents in Agent View lanes', () => {
+  it('waiting scheduled jobs sit in Scheduled, not Idle', () => {
+    expect(scheduledLane.match(scheduledRun('idle'))).toBe(true);
+    expect(idleLane.match(scheduledRun('idle'))).toBe(false);
+    expect(scheduledLane.match(scheduledRun('unknown'))).toBe(true);
+  });
+
+  it('working scheduled jobs use Working', () => {
+    expect(working.match(scheduledRun('working'))).toBe(true);
+    expect(scheduledLane.match(scheduledRun('working'))).toBe(false);
+  });
+
+  it('blocked scheduled jobs stay in Working, not Needs you', () => {
+    expect(needsYou.match(scheduledRun('blocked'))).toBe(false);
+    expect(working.match(scheduledRun('blocked'))).toBe(true);
+    expect(scheduledLane.match(scheduledRun('blocked'))).toBe(false);
+  });
+});
 
 describe('background agents never reach the "Needs you" lane', () => {
   it('isBackgroundAgent is true for a headless worker, false for a plain agent', () => {

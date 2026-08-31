@@ -1,6 +1,15 @@
-export const PAIRING_TUNNEL_PORT = 18782;
+import { isLoopbackOrigin, sanitizeSshHost } from '@zana-ai/zcc-domain/machine-pairing';
 
-const SSH_HOST_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+export {
+  PAIRING_TUNNEL_PORT,
+  formatSshPairingCommand,
+  isLoopbackOrigin,
+  localListenPort,
+  sanitizeSshHost,
+  sshPairingArgv,
+  sshPairingCommand,
+  sshPublicPairingArgv
+} from '@zana-ai/zcc-domain/machine-pairing';
 
 export function pairingCommand(input: {
   publicAppUrl?: string | null;
@@ -58,36 +67,6 @@ export function joinCountdownMs(
   return end - now;
 }
 
-/**
- * Laptop-side one-liner for SSH remotes (Salesforce workspaces, no Tailscale).
- * Reverse-forwards product HTTP to the remote loopback so the copied installer
- * can enroll without a public app URL.
- */
-export function sshPairingCommand(input: {
-  sshHost: string;
-  localServerUrl: string;
-  joinCode: string;
-  hostId: string;
-  remoteTunnelPort?: number;
-}): string | null {
-  const host = sanitizeSshHost(input.sshHost);
-  const localPort = localListenPort(input.localServerUrl);
-  if (!host || localPort === null) return null;
-  const remotePort = input.remoteTunnelPort ?? PAIRING_TUNNEL_PORT;
-  const remoteServer = `http://127.0.0.1:${remotePort}`;
-  const remote =
-    `curl -fL --progress-meter --connect-timeout 10 --max-time 60 --retry 2 ${remoteServer}/install.sh` +
-    ` | sh -s -- --join-code ${input.joinCode} --host-id ${input.hostId} --server ${remoteServer}` +
-    ` && echo Host daemon installed. Leave this SSH session open to keep the tunnel. && sleep infinity`;
-  return `ssh -o ExitOnForwardFailure=yes -R ${remotePort}:127.0.0.1:${localPort} ${host} '${remote}'`;
-}
-
-export function sanitizeSshHost(raw: string | null | undefined): string | null {
-  const host = raw?.trim() ?? '';
-  if (!host || host.startsWith('-')) return null;
-  if (!SSH_HOST_RE.test(host)) return null;
-  return host;
-}
 
 export type PairingSshHostGroup = 'project' | 'ssh-config';
 
@@ -183,22 +162,6 @@ export function defaultSshHost(
   return sshHostOptionsFromProjects(projects)[0]?.host ?? '';
 }
 
-export function localListenPort(serverUrl: string | null | undefined): number | null {
-  if (!serverUrl) return null;
-  try {
-    const url = new URL(serverUrl);
-    if (url.port) {
-      const port = Number(url.port);
-      return Number.isInteger(port) && port > 0 ? port : null;
-    }
-    if (url.protocol === 'http:') return 80;
-    if (url.protocol === 'https:') return 443;
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 /** Prefer a reachable public origin; otherwise the local product server, like BB. */
 export function resolvePairingServerUrl(publicAppUrl?: string | null): string | null {
   const trimmed = publicAppUrl?.trim().replace(/\/$/, '') || undefined;
@@ -216,15 +179,6 @@ export function localProductOrigin(): string | null {
     return window.location.origin;
   }
   return null;
-}
-
-export function isLoopbackOrigin(url: string): boolean {
-  try {
-    const host = new URL(url).hostname.toLowerCase();
-    return host === '127.0.0.1' || host === 'localhost' || host === '::1';
-  } catch {
-    return true;
-  }
 }
 
 export function formatJoinCountdown(remainingMs: number): string {

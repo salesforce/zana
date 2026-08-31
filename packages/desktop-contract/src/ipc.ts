@@ -29,7 +29,14 @@ export const IPC = {
     syncHosts: 'ssh:syncHosts'
   },
   hosts: {
-    relaunchLocal: 'hosts:relaunchLocal'
+    relaunchLocal: 'hosts:relaunchLocal',
+    pairingStart: 'hosts:pairingStart',
+    pairingWrite: 'hosts:pairingWrite',
+    pairingResize: 'hosts:pairingResize',
+    pairingStop: 'hosts:pairingStop',
+    pairingStatus: 'hosts:pairingStatus',
+    pairingOnData: 'hosts:pairingOnData',
+    pairingOnExit: 'hosts:pairingOnExit'
   },
   terminals: {
     list: 'terminals:list',
@@ -332,7 +339,8 @@ export const IPC = {
     setSettings: 'pluginApps:setSettings',
     checkUpdates: 'pluginApps:checkUpdates',
     applyUpdate: 'pluginApps:applyUpdate',
-    remove: 'pluginApps:remove'
+    remove: 'pluginApps:remove',
+    reload: 'pluginApps:reload'
   },
   /**
    * Runtime extensions under `~/.zcc/extensions/<id>/`. Mirrors the

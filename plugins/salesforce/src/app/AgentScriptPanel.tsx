@@ -10,7 +10,15 @@ import {
   type HostToPlayground,
   type PlaygroundFileRef
 } from './playground-bridge.js';
-import { filePickerValue, parseFilePickerValue, playgroundHint, saveIsDisabled } from './agent-script-panel-logic.js';
+import {
+  filePickerValue,
+  parseFilePickerValue,
+  PLAYGROUND_LOAD_ERROR,
+  PLAYGROUND_READY_MS,
+  playgroundHint,
+  saveIsDisabled,
+  shouldShowPlaygroundFailure
+} from './agent-script-panel-logic.js';
 
 const PLUGIN_ID = 'salesforce';
 const PANEL_ROOT: CSSProperties = { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' };
@@ -43,6 +51,9 @@ export function AgentScriptPanel(props: { pluginId: string; subPath: string }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [dialectOverride, setDialectOverride] = useState<AgentScriptDialect | null>(null);
+  const [playgroundReady, setPlaygroundReady] = useState(false);
+  const [iframeError, setIframeError] = useState(false);
+  const [playgroundTimedOut, setPlaygroundTimedOut] = useState(false);
   const dialect =
     dialectOverride ??
     normalizeAgentScriptDialect((settings.values as Record<string, unknown> | undefined)?.agentScriptDialect);
@@ -163,6 +174,9 @@ export function AgentScriptPanel(props: { pluginId: string; subPath: string }) {
       if (!isPlaygroundToHost(event.data)) return;
       const message = event.data;
       if (message.type === 'ready') {
+        setPlaygroundReady(true);
+        setIframeError(false);
+        setPlaygroundTimedOut(false);
         postToPlayground(frameRef.current, {
           source: PLAYGROUND_BRIDGE_SOURCE,
           type: 'init',
@@ -192,6 +206,21 @@ export function AgentScriptPanel(props: { pluginId: string; subPath: string }) {
   }, [dialect, files, openFile, persistFromPlayground, props.subPath, saveEnabled]);
 
   useEffect(() => {
+    if (typeof process !== 'undefined' && process.env.VITEST) return;
+    if (playgroundReady || iframeError) return;
+    const timer = window.setTimeout(() => setPlaygroundTimedOut(true), PLAYGROUND_READY_MS);
+    return () => window.clearTimeout(timer);
+  }, [playgroundReady, iframeError]);
+
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    const onError = () => setIframeError(true);
+    frame.addEventListener('error', onError);
+    return () => frame.removeEventListener('error', onError);
+  }, []);
+
+  useEffect(() => {
     const root = document.documentElement;
     const observer = new MutationObserver(() => {
       postToPlayground(frameRef.current, {
@@ -206,6 +235,11 @@ export function AgentScriptPanel(props: { pluginId: string; subPath: string }) {
 
   const hint = useMemo(() => playgroundHint(Boolean(status), status?.dxProject), [status]);
   const fileValue = filePickerValue(activePath, exampleId);
+  const playgroundFailed = shouldShowPlaygroundFailure({
+    ready: playgroundReady,
+    iframeError,
+    timedOut: playgroundTimedOut
+  });
 
   return (
     <div style={PANEL_ROOT} data-testid="salesforce-agent-script-panel">
@@ -269,12 +303,18 @@ export function AgentScriptPanel(props: { pluginId: string; subPath: string }) {
         {hint ? <span style={{ color: 'var(--text-muted)' }}>{hint}</span> : null}
         {error ? <span style={{ color: 'var(--danger, #c00)' }}>{error}</span> : null}
       </div>
-      <iframe
-        ref={frameRef}
-        title="Agent Script playground"
-        src={typeof process !== 'undefined' && process.env.VITEST ? 'about:blank' : PLAYGROUND_ASSET_SRC}
-        style={{ flex: 1, minHeight: 0, width: '100%', border: 0, background: 'transparent' }}
-      />
+      {playgroundFailed ? (
+        <p data-testid="salesforce-agent-script-playground-error" style={{ color: 'var(--danger, #c00)', padding: 16 }}>
+          {PLAYGROUND_LOAD_ERROR}
+        </p>
+      ) : (
+        <iframe
+          ref={frameRef}
+          title="Agent Script playground"
+          src={typeof process !== 'undefined' && process.env.VITEST ? 'about:blank' : PLAYGROUND_ASSET_SRC}
+          style={{ flex: 1, minHeight: 0, width: '100%', border: 0, background: 'transparent' }}
+        />
+      )}
     </div>
   );
 }

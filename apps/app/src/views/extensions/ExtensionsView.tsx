@@ -13,7 +13,9 @@
  * Personas/Teams use for their list-less panels.
  */
 import { AuroraGrid } from '@/components/AuroraGrid';
+import { useRouteState } from '@/hooks/useRouteState';
 import { useUi } from '@/store';
+import { PluginPanelPaneView } from '@/views/thread-detail/PluginPanelPaneView';
 import { ExtensionsHub } from '@/views/extensions/ExtensionsHub';
 import { SkillsBody } from '@/views/extensions/SkillsView';
 import { McpBody } from '@/views/extensions/McpView';
@@ -21,7 +23,16 @@ import { McpBody } from '@/views/extensions/McpView';
 export function ExtensionsView() {
   const tab = useUi((s) => s.extensionsTab);
   const setExtensionsTab = useUi((s) => s.setExtensionsTab);
+  const route = useRouteState();
   const showingCatalogue = tab === 'skills' || tab === 'mcp';
+  const hubPage =
+    tab === 'page' && route.extensionsHubPluginId && route.pluginPanelPath
+      ? {
+          pluginId: route.extensionsHubPluginId,
+          pageId: route.pluginPanelPath,
+          subPath: route.pluginSubPath
+        }
+      : null;
 
   return (
     <div className="settings-panel extensions-panel aurora-host">
@@ -31,9 +42,15 @@ export function ExtensionsView() {
           <SkillsBody showHeader={false} />
         ) : tab === 'mcp' ? (
           <McpBody showHeader={false} />
+        ) : hubPage ? (
+          <PluginPanelPaneView
+            pluginId={hubPage.pluginId}
+            panelPath={hubPage.pageId}
+            subPath={hubPage.subPath}
+          />
         ) : (
           <ExtensionsHub
-            tab={tab}
+            tab={tab === 'page' ? 'installed' : tab}
             onTabChange={(next) => setExtensionsTab(next)}
             showTabs={false}
           />

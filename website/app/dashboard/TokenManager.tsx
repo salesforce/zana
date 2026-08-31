@@ -86,42 +86,42 @@ export function TokenManager({ initialTokens }: { initialTokens: TokenSummary[] 
   }
 
   return (
-    <div className="clean-token-manager">
+    <div>
       {mintedToken && (
-        <div className="clean-token-notice">
+        <div className="token-notice">
           <p>
             Copy this token now — it is shown only once and cannot be retrieved again.
           </p>
-          <div className="clean-token-value">
+          <div className="token-value">
             <code>{mintedToken}</code>
-            <button type="button" className="clean-button clean-button-small" onClick={copyMinted}>
-              {copied ? 'Copied ✓' : 'Copy'}
+            <button type="button" className="zcc-btn zcc-btn-sm" onClick={copyMinted}>
+              {copied ? 'Copied' : 'Copy'}
             </button>
           </div>
         </div>
       )}
 
-      <div className="clean-token-create">
+      <div className="token-create">
         <input
-          className="clean-token-input"
+          className="token-input"
           placeholder="Token name (optional)"
           aria-label="Token name (optional)"
           value={name}
           onChange={(e) => setName(e.target.value)}
           disabled={busy}
         />
-        <button type="button" className="clean-button clean-button-dark" onClick={createToken} disabled={busy}>
+        <button type="button" className="zcc-btn zcc-btn-primary" onClick={createToken} disabled={busy}>
           Create token
         </button>
       </div>
 
-      {error && <p className="clean-token-error" role="alert">{error}</p>}
+      {error && <p className="token-error" role="alert">{error}</p>}
 
       {tokens.length === 0 ? (
         <div className="empty">No publish tokens yet. Create one to publish from the CLI.</div>
       ) : (
-        <div className="clean-token-table-wrap">
-          <table className="clean-token-table">
+        <div className="token-table-wrap">
+          <table className="token-table">
           <thead>
             <tr>
               <th>Name</th>
@@ -143,7 +143,7 @@ export function TokenManager({ initialTokens }: { initialTokens: TokenSummary[] 
                 <td>
                   <button
                     type="button"
-                    className="clean-button clean-button-small"
+                    className="zcc-btn zcc-btn-sm"
                     onClick={() => revokeToken(t.id)}
                     disabled={busy}
                     aria-label={`Revoke token ${t.name ?? t.prefix}`}

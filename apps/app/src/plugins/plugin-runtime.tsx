@@ -12,12 +12,12 @@ import { useRouteState } from '../hooks/useRouteState.js';
 import { useThreads } from '../thread-store.js';
 import {
   getPluginDetailRoutePath,
-  getPluginPanelRoutePath,
   getProjectRoutePath,
   getThreadRoutePath,
   NEW_THREAD_ROUTE_PATH
 } from '../lib/route-paths.js';
 import { appNavigate } from '../lib/app-navigate.js';
+import { hrefForPluginNavPanel } from './plugin-nav-href.js';
 import { getActiveComposerApi } from './plugin-composer-api.js';
 import { usePluginRuntimeContext } from './PluginSlotBoundary.js';
 import { openPluginThreadPanel } from './plugin-thread-panel.js';
@@ -83,7 +83,7 @@ function useZccNavigateImpl(): ZccNavigate {
         void navigate(getProjectRoutePath(projectId));
       },
       toPluginPanel(path: string, options?: { subPath?: string; replace?: boolean }) {
-        const to = getPluginPanelRoutePath({ pluginId, path, subPath: options?.subPath });
+        const to = hrefForPluginNavPanel(pluginId, path, options?.subPath);
         void navigate(to, { replace: options?.replace });
       },
       toCompose(options?: { initialPrompt?: string; focusPrompt?: boolean }) {

@@ -35,7 +35,8 @@
     "build": "tsc -p tsconfig.json",
     "build:join": "node scripts/build-join.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run --config vitest.config.ts"
+    "test": "vitest run --config vitest.config.ts",
+    "dev": "pnpm --dir ../.. exec node --conditions=source --import tsx apps/host-daemon/src/enroll-entry.ts"
   },
   "dependencies": {
     "@zana-ai/zcc-agent-runtime": "workspace:*",

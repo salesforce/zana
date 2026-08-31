@@ -2,6 +2,10 @@ import { defineConfig } from 'vitest/config';
 import { resolve } from 'node:path';
 
 export default defineConfig({
+  define: {
+    __ZCC_BUNDLED_APP_URL__: JSON.stringify(''),
+    __ZCC_BUNDLED_RELAY_TOKEN__: JSON.stringify('')
+  },
   resolve: {
     alias: {
       '@zana-ai/zcc-host-daemon': resolve(__dirname, '../host-daemon/src/index.ts'),

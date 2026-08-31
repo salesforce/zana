@@ -42,4 +42,21 @@ describe('PluginSettingsSections', () => {
     expect(screen.getByText('Host-wide extra instructions.')).toBeTruthy();
     expect(screen.queryByText('Memory settings')).toBeNull();
   });
+
+  it('renders settingsSection title', () => {
+    interpretPluginApp(
+      'memory',
+      definePluginApp((app) => {
+        app.slots.settingsSection({
+          id: 'memory',
+          title: 'Memory',
+          description: 'Persisted notes.',
+          component: () => <p>Memory settings</p>
+        });
+      })
+    );
+    render(<PluginSettingsSections pluginId="memory" />);
+    expect(screen.getByText('Memory')).toBeTruthy();
+    expect(screen.getByText('Persisted notes.')).toBeTruthy();
+  });
 });

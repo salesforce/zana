@@ -270,11 +270,18 @@ export const PluginAppSnapshotSchema = z.object({
   description: z.string().max(4096),
   icon: z.string().min(1).max(256),
   enabled: z.boolean(),
-  provenance: z.enum(['builtin', 'direct', 'catalog']),
+    provenance: z.enum(['builtin', 'direct', 'catalog']),
   status: z.enum(['running', 'disabled', 'degraded', 'needs-configuration']),
+  statusDetail: z.string().max(4096).nullable().optional(),
   appUrl: z.string().max(4096).nullable(),
   availableVersion: z.string().min(1).max(256).optional(),
-  projectTab: PluginAppProjectTabSchema.optional()
+  projectTab: PluginAppProjectTabSchema.optional(),
+  skillNames: z.array(z.string().min(1).max(256)).max(64).optional(),
+  mcpServers: z.array(z.object({
+    name: z.string().min(1).max(256),
+    type: z.string().min(1).max(64)
+  }).passthrough()).max(32).optional(),
+  cliNames: z.array(z.string().min(1).max(256)).max(32).optional()
 }).strict();
 
 export const PluginAppsChangedMessageSchema = z.object({

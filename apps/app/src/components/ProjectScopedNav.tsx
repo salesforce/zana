@@ -1,5 +1,5 @@
 import { product } from '../lib/product-client.js';
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, type ReactNode, useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Inbox,
@@ -30,6 +30,7 @@ import {
 import { useProjectTabModules } from '../modules/index.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
 import { resolveProjectTabModule } from '../lib/libraryPlugin.js';
+import { listProjectTabs, projectTabWorkspaceMode, subscribePluginSlots } from '../plugins/plugin-slots.js';
 import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js';
 import { useRouteState } from '../hooks/useRouteState.js';
 import {
@@ -113,6 +114,9 @@ export function ProjectScopedNav({
   const scheduleCount = useProjectScheduleCount(project.id);
   const runningTerminals = useProjectRunningTerminalCount(project.id);
   const projectTabModules = useProjectTabModules();
+  const slotTabs = useSyncExternalStore(subscribePluginSlots, listProjectTabs, listProjectTabs);
+  const slotPluginIds = new Set(slotTabs.map((tab) => tab.pluginId));
+  const diskProjectTabModules = projectTabModules.filter((module) => !slotPluginIds.has(module.id));
   const onProjects = nav === 'projects';
 
   const modeItems = MODE_ITEMS.filter(
@@ -235,7 +239,7 @@ export function ProjectScopedNav({
         badge
       };
     }),
-    ...projectTabModules.map((m): SidebarRailItem => {
+    ...diskProjectTabModules.map((m): SidebarRailItem => {
       const Icon = resolveIcon(m.projectTab?.icon ?? m.icon);
       const label = m.projectTab?.label ?? m.title;
       const extActive = resolveProjectTabModule(mode, [m])?.id === m.id;
@@ -247,6 +251,19 @@ export function ProjectScopedNav({
         to: getProjectWorkspaceRoutePath(project.id, m.id),
         testId: `project-nav-${m.id}`,
         active: onProjects && (mode === m.id || extActive)
+      };
+    }),
+    ...slotTabs.map((tab): SidebarRailItem => {
+      const railId = projectTabWorkspaceMode(tab, slotTabs);
+      const Icon = resolveIcon(tab.icon);
+      return {
+        kind: 'row',
+        id: railId,
+        label: tab.label,
+        icon: <Icon size={16} />,
+        to: getProjectWorkspaceRoutePath(project.id, railId),
+        testId: `project-nav-${railId}`,
+        active: onProjects && mode === railId
       };
     })
   ];

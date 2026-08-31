@@ -22,40 +22,31 @@ Copy-paste join remains for boxes you cannot SSH to from this machine.
 ## Reachability (public origin)
 
 The product server still binds **loopback** (`127.0.0.1`). Another computer
-cannot enroll against `http://127.0.0.1:<port>`. The public door is Heroku
-app `zcc`: the same hostname serves the docs/marketplace site **and** pairing
-(`/install.sh`, enroll, host websocket). Zana on this Mac dials out to
+cannot enroll against `http://127.0.0.1:<port>`. Official desktop builds carry
+the public Heroku origin and relay token (inlined at `electron-vite build` from
+`ZCC_APP_URL` and `ZCC_RELAY_TOKEN`). This laptop dials
 `wss://<origin>/_zcc/relay` — Heroku never inbound-connects to the laptop.
 
-Set the hostname in **one** of these places (first match wins):
+Precedence: runtime env, then the values baked into that build. Settings and
+the repo `public-app-url` file are not used. Do not commit the token; set the
+same `ZCC_RELAY_TOKEN` on Heroku and in the release/CI environment (GitHub
+secrets `ZCC_APP_URL` / `ZCC_RELAY_TOKEN`, or export them before
+`pnpm run release:mac`).
 
-1. Env `ZCC_APP_URL`
-2. **Settings → Machines → Public app URL**
-3. The repo-root file [`public-app-url`](../public-app-url) (one URL, comments allowed)
-
-Set the matching **Relay token** (Settings or env `ZCC_RELAY_TOKEN`). It must
-equal Heroku config `ZCC_RELAY_TOKEN`. The token authenticates a laptop to
-open a session — several desktops may share it. Each connection gets its own
-session id. Join/enroll through that id expires after **5 minutes**; already
-connected host websockets keep working until this app quits. Renew the join
-window from Settings → Machines.
+The token authenticates a laptop to open a session. Isolation between laptops
+is the session URL (`/t/<sessionId>`), not a personal key. Join/enroll through
+that id expires after **5 minutes**; already connected host websockets keep
+working until this app quits.
 
 Join commands use `https://<origin>/t/<sessionId>` so remotes route to the
-right laptop. A second desktop no longer steals the tunnel.
+right laptop.
 
-```bash
-# public-app-url
-https://zcc-7808c5bc8f3d.herokuapp.com
-```
-
-Machines shows **Relay: Connected**, **Offline**, or **Not configured**. If the
-origin is set but the tunnel is down, Install fails with `relay_offline` (keep
-Zana running). If no token is configured, a Tailscale Serve origin still works
-as before.
+If the origin is baked/set but the tunnel is down, Install fails with
+`relay_offline` (keep Zana running). Dev builds without those env vars stay
+loopback; use SSH reverse-tunnel pairing.
 
 That origin is used in the join command and as the **Host-header allowlist**
-on the laptop (enroll, host websocket, `/install.sh`). Change the file (or
-Settings) when the hostname changes — no code edits.
+on the laptop (enroll, host websocket, `/install.sh`).
 
 The Heroku dyno has a separate **path allowlist** (`website/relay/allowlist.json`,
 mirrored in the product server): `/install.sh`, `/install/version`,
@@ -128,9 +119,9 @@ stored an SSH alias for that host, Fix restarts the LaunchAgent or systemd user
 unit and reinstalls if restart does not reconnect. If no SSH alias is stored,
 Fix asks you to pick a host from `~/.ssh/config`, then retries.
 
-Fix needs the same **Public app URL** as Add machine (not loopback). This
-machine's host daemon must be connected — it owns `~/.ssh` and performs the
-SSH. If SSH cannot run, copy the Settings → Add machine join command.
+Fix needs a public origin (baked into the official app, or `ZCC_APP_URL`), not
+loopback. This machine's host daemon must be connected — it owns `~/.ssh` and
+performs the SSH. If SSH cannot run, copy the Settings → Add machine join command.
 
 **Add remote project** registers the SSH workspace and, by default, installs a
 host daemon over SSH. Uncheck the install box (or skip after a failed install)
@@ -183,8 +174,7 @@ zcc-join --join-code <zcde_...> --host-id <id> --server <url>
 
 Or mint and enroll in one step (`pnpm dev` must be running). If the laptop
 relay is connected, this uses `https://<origin>/t/<sessionId>`; otherwise it
-publishes a loopback proxy so Docker can reach `127.0.0.1` (and temporarily
-points Public app URL at that proxy):
+publishes a loopback proxy so Docker can reach `127.0.0.1`:
 
 ```bash
 pnpm docker:host-daemon

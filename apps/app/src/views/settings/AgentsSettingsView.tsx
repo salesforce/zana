@@ -18,123 +18,6 @@ export function AgentsSettingsView({
   const autoModeOn = config.autoModeEnabled ?? true;
   return (
     <>
-      {/* Auto mode — Claude Code's native, classifier-backed permission mode.
-          The default gate for every interactive claude agent. */}
-      <Section
-        anchorId="auto-mode"
-        title="Auto mode"
-        help={
-          <>
-            Launch every claude agent in Claude Code&rsquo;s native{' '}
-            <strong>auto mode</strong> — a server-side classifier reviews each tool
-            call, blocking anything irreversible, destructive, or aimed outside
-            your environment while skipping the routine permission prompts. Unlike
-            the Overseer below (which can only ever loosen), auto mode is a real
-            guardrail that both allows and blocks. On by default. Applies to new
-            sessions; an explicitly-chosen permission mode (global, persona,
-            project, or per-tab) overrides it for that launch, and agents on a model
-            that can&rsquo;t support auto mode fall back automatically.{' '}
-            <a
-              href="https://code.claude.com/docs/en/permission-modes#eliminate-prompts-with-auto-mode"
-              target="_blank"
-              rel="noreferrer"
-            >
-              Docs
-            </a>
-            .
-          </>
-        }
-      >
-        <CheckboxField
-          label="Use auto mode by default"
-          help="When on, new claude agents launch with --permission-mode auto (and the enable flag on Bedrock/Vertex/Foundry). When off, agents use your default permission mode and the Overseer fallback below (if armed)."
-          checked={autoModeOn}
-          onChange={(v) => onUpdate({ autoModeEnabled: v })}
-        />
-        {autoModeOn && (
-          <>
-            <Field
-              label="Trusted environment"
-              help="One rule per line, added on top of Claude Code's built-in defaults (they're never replaced). Natural-language descriptions of repos, buckets, domains, and services the classifier should treat as inside your boundary, so routine internal operations stop getting blocked. Example: “Source control: github.com/my-org and all repos under it”."
-            >
-              <textarea
-                rows={3}
-                defaultValue={(config.autoModeEnvironment ?? []).join('\n')}
-                placeholder={'Source control: github.com/my-org\nTrusted internal domains: *.corp.example.com'}
-                onBlur={(e) =>
-                  onUpdate({
-                    autoModeEnvironment: e.target.value
-                      .split('\n')
-                      .map((s) => s.trim())
-                      .filter(Boolean)
-                  })
-                }
-              />
-            </Field>
-            <Field
-              label="Allow rules"
-              help="Exceptions to the built-in soft-block rules (one per line, additive). Use when the classifier repeatedly flags a routine pattern the defaults don't cover. Example: “Writing to s3://my-scratch/ is allowed: ephemeral bucket with a 7-day lifecycle”."
-            >
-              <textarea
-                rows={2}
-                defaultValue={(config.autoModeAllow ?? []).join('\n')}
-                placeholder={'Deploying to the staging namespace is allowed'}
-                onBlur={(e) =>
-                  onUpdate({
-                    autoModeAllow: e.target.value
-                      .split('\n')
-                      .map((s) => s.trim())
-                      .filter(Boolean)
-                  })
-                }
-              />
-            </Field>
-            <Field
-              label="Extra soft-deny rules"
-              help="Destructive actions specific to your environment that user intent can still clear (one per line, additive to the defaults). Example: “Never run database migrations outside the migrations CLI, even against dev databases”."
-            >
-              <textarea
-                rows={2}
-                defaultValue={(config.autoModeSoftDeny ?? []).join('\n')}
-                placeholder={'Never modify files under infra/terraform/prod/'}
-                onBlur={(e) =>
-                  onUpdate({
-                    autoModeSoftDeny: e.target.value
-                      .split('\n')
-                      .map((s) => s.trim())
-                      .filter(Boolean)
-                  })
-                }
-              />
-            </Field>
-            <Field
-              label="Extra hard-deny rules"
-              help="Unconditional security boundaries — user intent and allow rules never override these (one per line, additive to the defaults). Example: “Never send repository contents to third-party code-review APIs”."
-            >
-              <textarea
-                rows={2}
-                defaultValue={(config.autoModeHardDeny ?? []).join('\n')}
-                placeholder={'Never send repository contents to third-party APIs'}
-                onBlur={(e) =>
-                  onUpdate({
-                    autoModeHardDeny: e.target.value
-                      .split('\n')
-                      .map((s) => s.trim())
-                      .filter(Boolean)
-                  })
-                }
-              />
-            </Field>
-            <CheckboxField
-              label="Classify all shell commands"
-              help="Route every Bash/PowerShell command through the classifier while auto mode is active, even ones a narrow allow rule would approve instantly. More coverage, a little more latency per shell command. Off by default."
-              checked={config.autoModeClassifyAllShell ?? false}
-              onChange={(v) => onUpdate({ autoModeClassifyAllShell: v })}
-            />
-          </>
-        )}
-      </Section>
-
       <Section
         anchorId="git-worktrees"
         title="Git worktrees"
@@ -259,6 +142,19 @@ export function AgentsSettingsView({
           help="When an agent writes a report-looking markdown file (a report/summary/analysis/audit name, or any bare .md dropped at the project root) but never calls inbox_push itself, link it to the inbox automatically as soon as the agent goes idle — so it still shows up in that session’s Report tab. Pure filename match, spends no tokens. On by default."
           checked={config.autoReportLinkEnabled ?? true}
           onChange={(v) => onUpdate({ autoReportLinkEnabled: v })}
+        />
+      </Section>
+
+      <Section
+        anchorId="scheduled"
+        title="Scheduled"
+        help="How schedules and their live runs show up in Agent View. The Scheduler panel remains the editor; this also puts armed jobs in the Agents board Scheduled column."
+      >
+        <CheckboxField
+          label="Include scheduled agents in Agent View"
+          help="Show your schedules and their live runs on the Agents board, list, and flow. Armed jobs sit in a Scheduled column; while a run is working it uses Working, and finished runs use Done. Off by default — scheduled jobs otherwise stay on the Scheduler panel and in the inbox."
+          checked={config.includeScheduledAgentsInAgentView ?? false}
+          onChange={(v) => onUpdate({ includeScheduledAgentsInAgentView: v })}
         />
       </Section>
 
@@ -483,6 +379,71 @@ export function AgentsSettingsView({
         )}
       </Section>
 
+      <Section
+        anchorId="legacy-agent"
+        title="CLI Agent"
+        help="Resource ceilings for PTY (CLI Agent) terminal sessions so many or runaway agents can't exhaust this machine."
+      >
+        <Field
+          label="Max live sessions"
+          help={`Hard cap on how many terminal sessions can run at once (visible, hidden, and scheduled alike). Leave blank to auto-size from this machine’s RAM — a long agent on a large-context model can hold several GB, so too many at once can exhaust memory. Range ${SESSION_MEMORY_DEFAULTS.minLiveSessions}–${SESSION_MEMORY_DEFAULTS.maxLiveSessionsCeiling}.`}
+        >
+          <input
+            type="number"
+            min={SESSION_MEMORY_DEFAULTS.minLiveSessions}
+            max={SESSION_MEMORY_DEFAULTS.maxLiveSessionsCeiling}
+            placeholder="auto"
+            value={config.maxLiveSessions ?? ''}
+            onChange={(e) => {
+              const raw = e.target.value;
+              if (raw === '') {
+                onConfigDraft({ ...config, maxLiveSessions: undefined });
+                return;
+              }
+              const n = parseInt(raw, 10);
+              if (!Number.isNaN(n)) onConfigDraft({ ...config, maxLiveSessions: n });
+            }}
+            onBlur={(e) => {
+              const raw = e.target.value.trim();
+              if (raw === '') {
+                onUpdate({ maxLiveSessions: undefined });
+                return;
+              }
+              const n = Math.max(
+                SESSION_MEMORY_DEFAULTS.minLiveSessions,
+                Math.min(SESSION_MEMORY_DEFAULTS.maxLiveSessionsCeiling, parseInt(raw, 10) || 0)
+              );
+              onUpdate({ maxLiveSessions: n });
+            }}
+          />
+        </Field>
+        <Field
+          label="Agent heap limit (MB)"
+          help={`Per-session memory ceiling for claude agents, passed via NODE_OPTIONS=--max-old-space-size and inherited by any subagents the session spawns. Bounds a runaway agent so it fails its own turn instead of taking the whole app down. Default ${SESSION_MEMORY_DEFAULTS.claudeMaxOldSpaceMB}. Set to 0 to disable (let V8 auto-size). Takes effect on the next session launch.`}
+        >
+          <input
+            type="number"
+            min={0}
+            max={32768}
+            step={512}
+            value={config.claudeMaxOldSpaceMB ?? SESSION_MEMORY_DEFAULTS.claudeMaxOldSpaceMB}
+            onChange={(e) => {
+              const n = parseInt(e.target.value, 10);
+              if (!Number.isNaN(n)) onConfigDraft({ ...config, claudeMaxOldSpaceMB: n });
+            }}
+            onBlur={(e) => {
+              const n = parseInt(e.target.value, 10);
+              const clamped = Number.isNaN(n)
+                ? SESSION_MEMORY_DEFAULTS.claudeMaxOldSpaceMB
+                : n <= 0
+                  ? 0
+                  : Math.max(512, Math.min(32768, n));
+              onUpdate({ claudeMaxOldSpaceMB: clamped });
+            }}
+          />
+        </Field>
+      </Section>
+
       {/* Overseer — the auto-mode-OFF fallback auto-approval cascade. The
           sub-settings (LLM tier, deny patterns) only show once it's armed. */}
       <Section
@@ -556,69 +517,122 @@ export function AgentsSettingsView({
         )}
       </Section>
 
+      {/* Auto mode — Claude Code's native, classifier-backed permission mode.
+          The default gate for every interactive claude agent. Last because the
+          extra rule fields take a lot of space. */}
       <Section
-        anchorId="legacy-agent"
-        title="CLI Agent"
-        help="Resource ceilings for PTY (CLI Agent) terminal sessions so many or runaway agents can't exhaust this machine."
+        anchorId="auto-mode"
+        title="Auto mode"
+        help={
+          <>
+            Launch every claude agent in Claude Code&rsquo;s native{' '}
+            <strong>auto mode</strong> — a server-side classifier reviews each tool
+            call, blocking anything irreversible, destructive, or aimed outside
+            your environment while skipping the routine permission prompts. Unlike
+            the Overseer above (which can only ever loosen), auto mode is a real
+            guardrail that both allows and blocks. On by default. Applies to new
+            sessions; an explicitly-chosen permission mode (global, persona,
+            project, or per-tab) overrides it for that launch, and agents on a model
+            that can&rsquo;t support auto mode fall back automatically.{' '}
+            <a
+              href="https://code.claude.com/docs/en/permission-modes#eliminate-prompts-with-auto-mode"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Docs
+            </a>
+            .
+          </>
+        }
       >
-        <Field
-          label="Max live sessions"
-          help={`Hard cap on how many terminal sessions can run at once (visible, hidden, and scheduled alike). Leave blank to auto-size from this machine’s RAM — a long agent on a large-context model can hold several GB, so too many at once can exhaust memory. Range ${SESSION_MEMORY_DEFAULTS.minLiveSessions}–${SESSION_MEMORY_DEFAULTS.maxLiveSessionsCeiling}.`}
-        >
-          <input
-            type="number"
-            min={SESSION_MEMORY_DEFAULTS.minLiveSessions}
-            max={SESSION_MEMORY_DEFAULTS.maxLiveSessionsCeiling}
-            placeholder="auto"
-            value={config.maxLiveSessions ?? ''}
-            onChange={(e) => {
-              const raw = e.target.value;
-              if (raw === '') {
-                onConfigDraft({ ...config, maxLiveSessions: undefined });
-                return;
-              }
-              const n = parseInt(raw, 10);
-              if (!Number.isNaN(n)) onConfigDraft({ ...config, maxLiveSessions: n });
-            }}
-            onBlur={(e) => {
-              const raw = e.target.value.trim();
-              if (raw === '') {
-                onUpdate({ maxLiveSessions: undefined });
-                return;
-              }
-              const n = Math.max(
-                SESSION_MEMORY_DEFAULTS.minLiveSessions,
-                Math.min(SESSION_MEMORY_DEFAULTS.maxLiveSessionsCeiling, parseInt(raw, 10) || 0)
-              );
-              onUpdate({ maxLiveSessions: n });
-            }}
-          />
-        </Field>
-        <Field
-          label="Agent heap limit (MB)"
-          help={`Per-session memory ceiling for claude agents, passed via NODE_OPTIONS=--max-old-space-size and inherited by any subagents the session spawns. Bounds a runaway agent so it fails its own turn instead of taking the whole app down. Default ${SESSION_MEMORY_DEFAULTS.claudeMaxOldSpaceMB}. Set to 0 to disable (let V8 auto-size). Takes effect on the next session launch.`}
-        >
-          <input
-            type="number"
-            min={0}
-            max={32768}
-            step={512}
-            value={config.claudeMaxOldSpaceMB ?? SESSION_MEMORY_DEFAULTS.claudeMaxOldSpaceMB}
-            onChange={(e) => {
-              const n = parseInt(e.target.value, 10);
-              if (!Number.isNaN(n)) onConfigDraft({ ...config, claudeMaxOldSpaceMB: n });
-            }}
-            onBlur={(e) => {
-              const n = parseInt(e.target.value, 10);
-              const clamped = Number.isNaN(n)
-                ? SESSION_MEMORY_DEFAULTS.claudeMaxOldSpaceMB
-                : n <= 0
-                  ? 0
-                  : Math.max(512, Math.min(32768, n));
-              onUpdate({ claudeMaxOldSpaceMB: clamped });
-            }}
-          />
-        </Field>
+        <CheckboxField
+          label="Use auto mode by default"
+          help="When on, new claude agents launch with --permission-mode auto (and the enable flag on Bedrock/Vertex/Foundry). When off, agents use your default permission mode and the Overseer fallback above (if armed)."
+          checked={autoModeOn}
+          onChange={(v) => onUpdate({ autoModeEnabled: v })}
+        />
+        {autoModeOn && (
+          <>
+            <Field
+              label="Trusted environment"
+              help="One rule per line, added on top of Claude Code's built-in defaults (they're never replaced). Natural-language descriptions of repos, buckets, domains, and services the classifier should treat as inside your boundary, so routine internal operations stop getting blocked. Example: “Source control: github.com/my-org and all repos under it”."
+            >
+              <textarea
+                rows={3}
+                defaultValue={(config.autoModeEnvironment ?? []).join('\n')}
+                placeholder={'Source control: github.com/my-org\nTrusted internal domains: *.corp.example.com'}
+                onBlur={(e) =>
+                  onUpdate({
+                    autoModeEnvironment: e.target.value
+                      .split('\n')
+                      .map((s) => s.trim())
+                      .filter(Boolean)
+                  })
+                }
+              />
+            </Field>
+            <Field
+              label="Allow rules"
+              help="Exceptions to the built-in soft-block rules (one per line, additive). Use when the classifier repeatedly flags a routine pattern the defaults don't cover. Example: “Writing to s3://my-scratch/ is allowed: ephemeral bucket with a 7-day lifecycle”."
+            >
+              <textarea
+                rows={2}
+                defaultValue={(config.autoModeAllow ?? []).join('\n')}
+                placeholder={'Deploying to the staging namespace is allowed'}
+                onBlur={(e) =>
+                  onUpdate({
+                    autoModeAllow: e.target.value
+                      .split('\n')
+                      .map((s) => s.trim())
+                      .filter(Boolean)
+                  })
+                }
+              />
+            </Field>
+            <Field
+              label="Extra soft-deny rules"
+              help="Destructive actions specific to your environment that user intent can still clear (one per line, additive to the defaults). Example: “Never run database migrations outside the migrations CLI, even against dev databases”."
+            >
+              <textarea
+                rows={2}
+                defaultValue={(config.autoModeSoftDeny ?? []).join('\n')}
+                placeholder={'Never modify files under infra/terraform/prod/'}
+                onBlur={(e) =>
+                  onUpdate({
+                    autoModeSoftDeny: e.target.value
+                      .split('\n')
+                      .map((s) => s.trim())
+                      .filter(Boolean)
+                  })
+                }
+              />
+            </Field>
+            <Field
+              label="Extra hard-deny rules"
+              help="Unconditional security boundaries — user intent and allow rules never override these (one per line, additive to the defaults). Example: “Never send repository contents to third-party code-review APIs”."
+            >
+              <textarea
+                rows={2}
+                defaultValue={(config.autoModeHardDeny ?? []).join('\n')}
+                placeholder={'Never send repository contents to third-party APIs'}
+                onBlur={(e) =>
+                  onUpdate({
+                    autoModeHardDeny: e.target.value
+                      .split('\n')
+                      .map((s) => s.trim())
+                      .filter(Boolean)
+                  })
+                }
+              />
+            </Field>
+            <CheckboxField
+              label="Classify all shell commands"
+              help="Route every Bash/PowerShell command through the classifier while auto mode is active, even ones a narrow allow rule would approve instantly. More coverage, a little more latency per shell command. Off by default."
+              checked={config.autoModeClassifyAllShell ?? false}
+              onChange={(v) => onUpdate({ autoModeClassifyAllShell: v })}
+            />
+          </>
+        )}
       </Section>
     </>
   );

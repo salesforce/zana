@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { Bot, AlertCircle, Zap, Moon, CheckCircle2, HelpCircle, CheckCheck, PauseCircle, Network, Crown, Users, Clock, GitBranch, ShieldCheck, ShieldAlert, Boxes, Unplug } from 'lucide-react';
+import { Bot, AlertCircle, Zap, Moon, CheckCircle2, HelpCircle, CheckCheck, PauseCircle, Network, Crown, Users, Clock, Calendar, GitBranch, ShieldCheck, ShieldAlert, Boxes, Unplug } from 'lucide-react';
 import type { AgentState, IdleResolution, IdleTriageResult, OverseerActivity, Persona, ScheduledTask, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { scheduleSummary } from '@zana-ai/zcc-domain/schedule-spec';
 import { profileIcon, personaIcon } from '../lib/profileIcon.js';
@@ -14,9 +14,11 @@ import { FleetKindChip } from './FleetKindChip.js';
 import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
 import {
   agentFleetItem,
+  compareScheduleFleet,
   fleetAgentCards,
   fleetMatchesLane,
   groupFleetByProject,
+  isScheduleFleet,
   threadCardRuntimeLabel,
   threadCardShowsProject,
   type FleetItem
@@ -154,7 +156,7 @@ export function cardNeedsAttention(
   );
 }
 
-export type LaneKey = 'blocked' | 'working' | 'idle' | 'done';
+export type LaneKey = 'blocked' | 'working' | 'scheduled' | 'idle' | 'done';
 
 /**
  * An at-rest agent: a live (non-exited) session that is neither working nor
@@ -238,14 +240,26 @@ export const LANES: LaneDef[] = [
       (c.state === 'working' || (isBackgroundAgent(c) && c.state === 'blocked'))
   },
   {
+    key: 'scheduled',
+    label: 'Scheduled',
+    icon: Calendar,
+    // Waiting scheduler-spawned jobs (idle/unknown on a live pty). Armed
+    // ScheduledTask cards also land here via fleetMatchesLane (they are not
+    // AgentCards). Working scheduled runs already match Working above; blocked
+    // ones remap there via isBackgroundAgent. Only shown when
+    // includeScheduledAgentsInAgentView is on.
+    match: (c) => c.session.status !== 'exited' && !!c.session.scheduled && isIdleAgent(c)
+  },
+  {
     key: 'idle',
     label: 'Idle',
     icon: Moon,
-    // At-rest agents that AREN'T promoted to "Needs you" — so a surfaced
-    // awaiting-reply card lands in exactly one lane. `done` verdicts stay here
+    // At-rest agents that AREN'T promoted to "Needs you" and AREN'T waiting
+    // scheduled jobs (those sit in Scheduled). `done` verdicts stay here
     // (bottom-sorted, "Ready to close" badge); paused/unknown stay here too
     // (except at `high`, where they surface above).
-    match: (c, sensitivity) => isIdleAgent(c) && !cardNeedsAttention(c, sensitivity)
+    match: (c, sensitivity) =>
+      isIdleAgent(c) && !c.session.scheduled && !cardNeedsAttention(c, sensitivity)
   },
   {
     key: 'done',
@@ -254,6 +268,11 @@ export const LANES: LaneDef[] = [
     match: (c) => c.session.status === 'exited'
   }
 ];
+
+/** Kanban columns: hide Scheduled unless the user opted scheduled jobs into Agent View. */
+export function visibleAgentLanes(includeScheduled: boolean): LaneDef[] {
+  return includeScheduled ? LANES : LANES.filter((l) => l.key !== 'scheduled');
+}
 
 /**
  * Result of collapsing a launched squad into a single board card: the cards that
@@ -559,7 +578,7 @@ interface AgentBoardLanesProps {
 }
 
 /**
- * The four lanes + their cards. Owns the 1s tick that advances the live
+ * The lanes + their cards. Owns the 1s tick that advances the live
  * "running for X" timers. Caller computes `cards` behind a memo so a status
  * tick doesn't rebuild the world (render-storm guard).
  */
@@ -569,6 +588,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
   // store): governs which triaged idle agents the "Needs you" lane pulls up.
   // Advisory per CLAUDE.md rule 1 — main owns/normalizes the value.
   const sensitivity = useData((s) => s.idleAttentionSensitivity);
+  const includeScheduled = useData((s) => s.includeScheduledAgentsInAgentView);
   const projects = useData((s) => s.projects);
   // Schedules, indexed by the session ids they've fired, so a scheduled card
   // can surface its next-run countdown. Memoized off the raw list so the 1s
@@ -591,6 +611,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
   const now = Date.now();
   const agentCards = useMemo(() => fleetAgentCards(cards), [cards]);
   const threadItems = useMemo(() => cards.filter((item) => item.kind === 'thread'), [cards]);
+  const scheduleItems = useMemo(() => cards.filter(isScheduleFleet), [cards]);
   // Collapse each launched squad into a single board card: a cohort with a live
   // orchestrator keeps only that card in the lanes, with its workers nested
   // underneath — so a team reads as one unit instead of spraying worker cards
@@ -602,8 +623,8 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
     [agentCards]
   );
   const boardCards = useMemo<FleetItem[]>(
-    () => [...squadCards.map(agentFleetItem), ...threadItems],
-    [squadCards, threadItems]
+    () => [...squadCards.map(agentFleetItem), ...threadItems, ...scheduleItems],
+    [squadCards, threadItems, scheduleItems]
   );
   // The expensive part — filtering every card into its lane and sorting the
   // idle lane — depends ONLY on `boardCards` + `sensitivity`, not on the 1s
@@ -613,7 +634,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
   // outside the memo, because it genuinely needs `now`.
   const sortedLanes = useMemo(
     () =>
-      LANES.map((lane) => {
+      visibleAgentLanes(includeScheduled).map((lane) => {
         const laneCards = boardCards.filter((item) =>
           fleetMatchesLane(item, lane.key, (card) => lane.match(card, sensitivity))
         );
@@ -628,14 +649,19 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
             const aDone = a.kind === 'agent' && a.card.triage?.resolution === 'done' ? 1 : 0;
             const bDone = b.kind === 'agent' && b.card.triage?.resolution === 'done' ? 1 : 0;
             if (aDone !== bDone) return aDone - bDone;
-            const aSince = a.kind === 'agent' ? (a.card.stateSince ?? 0) : a.thread.createdAt;
-            const bSince = b.kind === 'agent' ? (b.card.stateSince ?? 0) : b.thread.createdAt;
+            const aSince = a.kind === 'agent' ? (a.card.stateSince ?? 0) : a.kind === 'thread' ? a.thread.createdAt : 0;
+            const bSince = b.kind === 'agent' ? (b.card.stateSince ?? 0) : b.kind === 'thread' ? b.thread.createdAt : 0;
             return bSince - aSince;
           });
         }
+        if (lane.key === 'scheduled') {
+          const jobs = laneCards.filter(isScheduleFleet).sort(compareScheduleFleet);
+          const waiting = laneCards.filter((item) => !isScheduleFleet(item));
+          return { lane, cards: [...jobs, ...waiting] };
+        }
         return { lane, cards: laneCards };
       }),
-    [boardCards, sensitivity]
+    [boardCards, sensitivity, includeScheduled]
   );
 
   const lanes = sortedLanes.map(({ lane, cards: laneCards }) => {
@@ -920,8 +946,67 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
     );
   };
 
-  const renderItem = (item: FleetItem, laneKey: LaneKey, grouped = false) =>
-    item.kind === 'thread' ? renderThreadCard(item, laneKey, grouped) : renderCard(item.card, laneKey, grouped);
+  const renderScheduleCard = (
+    item: Extract<FleetItem, { kind: 'schedule' }>,
+    laneKey: LaneKey,
+    grouped = false
+  ) => {
+    const nextMs = item.task.enabled && item.task.status?.nextRunAt
+      ? Date.parse(item.task.status.nextRunAt) - now
+      : null;
+    const cadence = scheduleSummary(item.task.schedule);
+    const showProjectChip = threadCardShowsProject(Boolean(showProject), grouped);
+    const paused = !item.task.enabled;
+    return (
+      <button
+        key={item.id}
+        type="button"
+        className={`agent-card is-schedule lane-${laneKey}${paused ? ' is-schedule-off' : ''}`}
+        data-kind="schedule"
+        data-testid={`agent-schedule-card-${item.task.id}`}
+        onClick={() => onInspect(item)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+        title={`${item.title} · ${cadence}${showProjectChip ? ` · ${item.projectName}` : ''}`}
+      >
+        <span className="agent-card-head">
+          <span className="agent-card-icon">
+            <Calendar size={14} aria-hidden="true" />
+          </span>
+          <span className="agent-card-title">{item.title}</span>
+          <FleetKindChip kind="schedule" />
+        </span>
+        <span className="agent-card-meta">
+          {showProjectChip && (
+            <span className="agent-card-project" title={item.projectName}>
+              <span className="agent-card-project-name">{item.projectName}</span>
+            </span>
+          )}
+          {(!showProject || grouped) && <span className="agent-card-sub">{cadence}</span>}
+          <span className="grow" />
+          {paused ? (
+            <span className="agent-card-badge">Paused</span>
+          ) : nextMs != null && !Number.isNaN(nextMs) ? (
+            <span
+              className="agent-card-badge sched-next"
+              title={`"${item.task.name}" runs again ${formatCountdown(nextMs)} from now (${cadence})`}
+            >
+              <Clock size={9} aria-hidden="true" />
+              next {formatCountdown(nextMs)}
+            </span>
+          ) : null}
+        </span>
+      </button>
+    );
+  };
+
+  const renderItem = (item: FleetItem, laneKey: LaneKey, grouped = false) => {
+    if (item.kind === 'thread') return renderThreadCard(item, laneKey, grouped);
+    if (item.kind === 'schedule') return renderScheduleCard(item, laneKey, grouped);
+    return renderCard(item.card, laneKey, grouped);
+  };
 
   return (
     <div className="agents-board-lanes">

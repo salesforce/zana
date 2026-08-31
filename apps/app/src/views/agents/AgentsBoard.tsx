@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useSyncExternalStore } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Bot, Moon, Plus, Search, X, Loader2 } from 'lucide-react';
+import { Bot, Moon, Plus, Puzzle, Search, X, Loader2 } from 'lucide-react';
 import type { Project, TerminalSession } from '@zana-ai/zcc-domain/product';
 import {
   useData,
@@ -10,8 +10,9 @@ import {
   useOverseerActivity,
   useSubagents,
   useFavoriteAgents,
+  useScheduler,
   favoriteKey,
-  listedTerminals
+  agentViewTerminals
 } from '@/store';
 import { useThreads } from '@/thread-store';
 import { useEnsureThreads } from '@/hooks/useEnsureThreads';
@@ -28,9 +29,13 @@ import {
   agentFleetItem,
   fleetAgentCards,
   isVisibleThread,
+  schedulesForAgentView,
   threadFleetItem,
   type FleetItem
 } from '@/components/fleet-item';
+import { resolveIcon } from '@/lib/resolveIcon';
+import { invokeAgentsBoardAction } from '@/plugins/plugin-agent-actions';
+import { listAgentsBoardActions, subscribePluginSlots } from '@/plugins/plugin-slots';
 
 /**
  * One Agents Kanban, two scopes. Global (`kind: 'global'`) flattens every
@@ -97,6 +102,8 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const selectedTabId = useUi((s) => s.selectedTabId);
   const restoreTerminal = useData((s) => s.restoreTerminal);
   const closeIdleAgents = useData((s) => s.closeIdleAgents);
+  const includeScheduled = useData((s) => s.includeScheduledAgentsInAgentView);
+  const scheduledTasks = useScheduler((s) => s.tasks);
   const favoriteIds = useFavoriteAgents((s) => s.favoriteIds);
   const boardView = useUi((s) => s.agentsBoardView);
   const threads = useThreads((s) => s.threads);
@@ -106,11 +113,17 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const [filter, setFilter] = useState('');
   const [closeIdleTarget, setCloseIdleTarget] = useState<AgentCard[] | null>(null);
   const [busyAction, setBusyAction] = useState<null | 'close'>(null);
+  const boardPluginActions = useSyncExternalStore(
+    subscribePluginSlots,
+    listAgentsBoardActions,
+    listAgentsBoardActions
+  );
+  const boardPluginCtx = { projectId: scopedProject?.id ?? null };
 
   const cards = useMemo<AgentCard[]>(() => {
     const byProjectId = new Map(projects.map((p) => [p.id, p]));
     if (scopedProject) {
-      return listedTerminals(terminals[scopedProject.id])
+      return agentViewTerminals(terminals[scopedProject.id], includeScheduled)
         .filter((s) => s.profile !== 'shell')
         .map((s) =>
           toCard(s, scopedProject, byId, sinceById, triageById, overseerById, subagentsById)
@@ -120,7 +133,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
     for (const [projectId, list] of Object.entries(terminals)) {
       const project = byProjectId.get(projectId);
       if (!project) continue;
-      for (const s of listedTerminals(list)) {
+      for (const s of agentViewTerminals(list, includeScheduled)) {
         if (s.profile === 'shell') continue;
         out.push(toCard(s, project, byId, sinceById, triageById, overseerById, subagentsById));
       }
@@ -130,6 +143,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
     terminals,
     projects,
     scopedProject,
+    includeScheduled,
     byId,
     sinceById,
     triageById,
@@ -145,8 +159,16 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
       if (scopedProject && thread.projectId !== scopedProject.id) continue;
       items.push(threadFleetItem(thread, byProjectId.get(thread.projectId)));
     }
+    items.push(
+      ...schedulesForAgentView(
+        scheduledTasks,
+        projects,
+        includeScheduled,
+        scopedProject?.id
+      )
+    );
     return items;
-  }, [cards, threads, projects, scopedProject]);
+  }, [cards, threads, projects, scopedProject, scheduledTasks, includeScheduled]);
 
   const q = isGlobal ? filter.trim().toLowerCase() : '';
   const visibleFleet = q
@@ -171,12 +193,20 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
       useUi.getState().openThreadModal(item.id);
       return;
     }
+    if (item.kind === 'schedule') {
+      useUi.getState().revealSchedule(item.task.id);
+      return;
+    }
     useUi.getState().openAgentModal(item.card.session.id, item.projectId);
   };
 
   const pick = (item: FleetItem) => {
     if (item.kind === 'thread') {
       navigate(getThreadRoutePath(item.id, threadProjectId));
+      return;
+    }
+    if (item.kind === 'schedule') {
+      useUi.getState().revealSchedule(item.task.id);
       return;
     }
     const c = item.card;
@@ -259,6 +289,22 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
               )}
             </div>
           )}
+          {boardPluginActions.map((slot) => {
+            const Icon = slot.icon ? resolveIcon(slot.icon) : Puzzle;
+            return (
+              <button
+                key={`${slot.pluginId}/${slot.id}`}
+                type="button"
+                className="btn agents-board-plugin-action"
+                data-testid={`agents-board-plugin-${slot.pluginId}-${slot.id}`}
+                onClick={() => invokeAgentsBoardAction(slot, boardPluginCtx)}
+                title={slot.title}
+              >
+                <Icon size={14} aria-hidden="true" />
+                <span className="agents-board-btn-label">{slot.title}</span>
+              </button>
+            );
+          })}
           <button
             type="button"
             className="btn primary agents-board-new"

@@ -23,6 +23,16 @@ describe('decodeRoutePath', () => {
     ['/extensions/plugins/slack', { nav: 'extensions', extensionsTab: 'installed', settingsExtensionId: 'slack' }],
     ['/extensions/skills', { nav: 'extensions', extensionsTab: 'skills' }],
     ['/extensions/mcp', { nav: 'extensions', extensionsTab: 'mcp' }],
+    [
+      '/extensions/pages/plugin-guide/plugin-guide',
+      {
+        nav: 'extensions',
+        extensionsTab: 'page',
+        extensionsHubPluginId: 'plugin-guide',
+        pluginPanelPath: 'plugin-guide',
+        pluginSubPath: ''
+      }
+    ],
     ['/projects/p1', { nav: 'projects', focusedProjectId: 'p1', workspaceMode: 'agents', isProjectWorkspace: true }],
     ['/projects/p1/threads/new', { nav: 'projects', focusedProjectId: 'p1', workspaceMode: 'agents', isProjectWorkspace: true, isNewThread: true }],
     ['/projects/p1/threads/abc', { nav: 'projects', focusedProjectId: 'p1', workspaceMode: 'agents', isProjectWorkspace: true, isThreadView: true, threadId: 'abc' }],
@@ -59,6 +69,18 @@ describe('decodeRoutePath', () => {
   it('lets /extensions/plugins/browse win over :pluginId', () => {
     expect(decodeRoutePath('/extensions/plugins/browse').extensionsTab).toBe('marketplace');
     expect(decodeRoutePath('/extensions/plugins/browse').settingsExtensionId).toBeNull();
+  });
+
+  it('round-trips Plugins hub page subPaths', () => {
+    expect(decodeRoutePath('/extensions/pages/guide/guide/app-shell')).toEqual(
+      expect.objectContaining({
+        nav: 'extensions',
+        extensionsTab: 'page',
+        extensionsHubPluginId: 'guide',
+        pluginPanelPath: 'guide',
+        pluginSubPath: 'app-shell'
+      })
+    );
   });
 
   it('round-trips nested plugin panel subPaths', () => {

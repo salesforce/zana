@@ -25,6 +25,8 @@ import {
   TOOLS_PLUGINS_ROUTE_PATH,
   TOOLS_ROUTE_PATH,
   TOOLS_SKILLS_ROUTE_PATH,
+  TOOLS_HUB_PAGE_ROOT_ROUTE_PATH,
+  TOOLS_HUB_PAGE_ROUTE_PATH,
   getNewThreadRoutePath,
   getProjectRoutePath,
   getThreadRoutePath
@@ -34,8 +36,9 @@ export interface DecodedRoute {
   nav: string;
   settingsTab: string;
   settingsAnchor: string | null;
-  extensionsTab: 'marketplace' | 'installed' | 'skills' | 'mcp';
+  extensionsTab: 'marketplace' | 'installed' | 'skills' | 'mcp' | 'page';
   settingsExtensionId: string | null;
+  extensionsHubPluginId: string | null;
   focusedProjectId: string | null;
   workspaceMode: string | null;
   isProjectSettings: boolean;
@@ -53,6 +56,7 @@ const DEFAULT_DECODED: DecodedRoute = {
   settingsAnchor: null,
   extensionsTab: 'installed',
   settingsExtensionId: null,
+  extensionsHubPluginId: null,
   focusedProjectId: null,
   workspaceMode: null,
   isProjectSettings: false,
@@ -155,6 +159,38 @@ export function decodeRoutePath(pathname: string, hash = ''): DecodedRoute {
   }
   if (pathname === TOOLS_MCP_ROUTE_PATH) {
     return { ...DEFAULT_DECODED, nav: 'extensions', extensionsTab: 'mcp' };
+  }
+  const hubPage =
+    matchPath(TOOLS_HUB_PAGE_ROUTE_PATH, pathname) ??
+    matchPath(TOOLS_HUB_PAGE_ROOT_ROUTE_PATH, pathname);
+  if (hubPage) {
+    const pluginId = param(hubPage, 'pluginId');
+    const pageId = param(hubPage, 'pageId');
+    const splat = hubPage.params['*'];
+    let subPath = '';
+    if (typeof splat === 'string' && splat.length > 0) {
+      subPath = splat
+        .split('/')
+        .filter((segment) => segment.length > 0)
+        .map((segment) => {
+          try {
+            return decodeURIComponent(segment);
+          } catch {
+            return segment;
+          }
+        })
+        .join('/');
+    }
+    if (pluginId && pageId) {
+      return {
+        ...DEFAULT_DECODED,
+        nav: 'extensions',
+        extensionsTab: 'page',
+        extensionsHubPluginId: pluginId,
+        pluginPanelPath: pageId,
+        pluginSubPath: subPath
+      };
+    }
   }
   const pluginDetail = matchPath(TOOLS_PLUGIN_DETAIL_ROUTE_PATH, pathname);
   if (pluginDetail) {

@@ -144,9 +144,11 @@ runs a headless same-origin script with an `AbortSignal` on unload.
 
 `PluginAppSlots` (every slot name and its props):
 
-- `navPanel` — registration fields `id`, `title`, `icon`, `path`, `component`,
+- `navPanel` — registration fields `id`, `title`, `icon`, `path`, `placement`
+  (`sidebar` | `extensions`, default `sidebar`), `component`,
   `headerContent`, `experimental_sidebarAccessory`.
-  Component props: `pluginId`, `subPath`.
+  Component props: `pluginId`, `subPath`. `placement: "extensions"` lists the
+  page under Plugins instead of the global sidebar.
 - `settingsSection` — `id`, `title`, `description`, `component`. Props: `pluginId`.
 - `homepageSection` — `id`, `title`, `component`. Props: `pluginId`, `projectId`.
 - `projectTab` — `id`, `label`, `icon`, `order`, `global`, `component`.
@@ -171,12 +173,36 @@ runs a headless same-origin script with an `AbortSignal` on unload.
   Props: `pluginId`, `attributes`, `source`, `message`, `openWorkspaceFile`.
 - `messageAction` — `id`, `title`, `icon`, `run`. Context: `threadId`,
   `message`, `selectedText`, `openPanel`.
+- `experimental_agentCardAction` — `id`, `title`, `icon`, `isAvailable`, `run`.
+  Context: `sessionId`, `projectId`.
+- `experimental_agentsBoardAction` — `id`, `title`, `icon`, `run`. Context:
+  `projectId`.
+- `experimental_timelineRenderer` — `kind`, `component`. Props: `row`,
+  `payload`, `presentation`, `thread`, `Original`.
+- `commandPaletteAction` — `id`, `title`, `isAvailable`, `run`. Context:
+  `threadId`, `projectId`, `openPanel`, `toPluginPanel`.
+- `experimental_projectMenuAction` — `id`, `title`, `icon`, `placement`
+  (`project` | `workspace`), `run`. `run` receives `{ projectId }` (`null`
+  for workspace placement).
 - `experimental_providerIcon` — `providerId`, `icon` (`className` on the
   icon component).
 
 The host React instance is `globalThis.__ZCC_HOST_REACT__`. Plugin UI is not a
 security sandbox; registrations apply in reverse registration order when two
 plugins claim the same slot id.
+
+Open **Plugin Guide** under Plugins for annotated wireframes of every surface
+(Copy for agent). After `plugin install .` + `plugin dev`, those slots remount
+without restarting the app. In-repo builtins: `ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD=1`.
+
+## Skill channels
+
+Three ways a plugin teaches an agent:
+
+- Manifest `package.json` → `zcc.skills` (directory roots of `SKILL.md`; default
+  `["skills"]`; `[]` opts out).
+- Runtime `zcc.agents.contributeSkills(rootPaths)`.
+- Generated `plugin-commands` from `zcc.cli.register`.
 
 ## Closed loop
 

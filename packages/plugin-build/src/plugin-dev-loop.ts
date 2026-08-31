@@ -1,8 +1,19 @@
 const DEFAULT_DEBOUNCE_MS = 300;
-const IGNORED_SEGMENTS = new Set(['dist', 'node_modules', '.git', 'share']);
+const IGNORED_SEGMENTS = new Set(['dist', 'node_modules', '.git', 'share', 'types']);
+const IGNORED_BASENAMES = new Set([
+  'app.js',
+  'app.js.map',
+  'app.meta.json',
+  'server.mjs',
+  'server.mjs.map',
+  'server.meta.json'
+]);
 
 export function isIgnoredPluginDevPath(relativePath: string): boolean {
-  return relativePath.split(/[\\/]/).some((segment) => IGNORED_SEGMENTS.has(segment));
+  const segments = relativePath.split(/[\\/]/);
+  if (segments.some((segment) => IGNORED_SEGMENTS.has(segment))) return true;
+  const basename = segments[segments.length - 1] ?? '';
+  return IGNORED_BASENAMES.has(basename);
 }
 
 export interface PluginDevLoopDeps {

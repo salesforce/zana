@@ -268,7 +268,24 @@ const api: CcApi = {
     providerCliStatus: async () => ({}),
     installProviderCli: async () => [],
     onChanged: () => () => {},
-    relaunchLocal: () => ipcRenderer.invoke(IPC.hosts.relaunchLocal)
+    relaunchLocal: () => ipcRenderer.invoke(IPC.hosts.relaunchLocal),
+    pairing: {
+      start: (req) => ipcRenderer.invoke(IPC.hosts.pairingStart, req),
+      write: (data) => ipcRenderer.invoke(IPC.hosts.pairingWrite, data),
+      resize: (cols, rows) => ipcRenderer.invoke(IPC.hosts.pairingResize, cols, rows),
+      stop: () => ipcRenderer.invoke(IPC.hosts.pairingStop),
+      status: () => ipcRenderer.invoke(IPC.hosts.pairingStatus),
+      onData: (cb) => {
+        const handler = (_e: unknown, data: string) => cb(data);
+        ipcRenderer.on(IPC.hosts.pairingOnData, handler);
+        return () => ipcRenderer.off(IPC.hosts.pairingOnData, handler);
+      },
+      onExit: (cb) => {
+        const handler = (_e: unknown, code: number) => cb(code);
+        ipcRenderer.on(IPC.hosts.pairingOnExit, handler);
+        return () => ipcRenderer.off(IPC.hosts.pairingOnExit, handler);
+      }
+    }
   },
   relay: {
     status: async () => ({ state: 'unconfigured' as const }),
@@ -727,6 +744,7 @@ const api: CcApi = {
     checkUpdates: () => ipcRenderer.invoke(IPC.pluginApps.checkUpdates),
     applyUpdate: (id) => ipcRenderer.invoke(IPC.pluginApps.applyUpdate, id),
     remove: (id) => ipcRenderer.invoke(IPC.pluginApps.remove, id),
+    reload: (id) => ipcRenderer.invoke(IPC.pluginApps.reload, id),
     onChanged: (cb) => {
       const handler = (_e: unknown, entries: PluginAppEntry[]) => cb(entries);
       ipcRenderer.on(IPC.pluginApps.onChanged, handler);

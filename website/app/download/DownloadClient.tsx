@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { site } from '@/lib/site';
+import { AuroraGrid } from '../components/AuroraGrid';
 
 /** Minimal latest-mac.yml fields we surface. */
 interface FeedInfo {
@@ -16,12 +17,6 @@ function parseFeed(text: string): FeedInfo | null {
   if (!version) return null;
   return { version, releaseDate };
 }
-
-const PLATFORMS = [
-  { os: '🍎', name: 'macOS', note: 'Apple Silicon or Intel · signed & notarized · .dmg', primary: true },
-  { os: '🪟', name: 'Windows', note: 'NSIS installer · .exe', wip: true },
-  { os: '🐧', name: 'Linux', note: 'AppImage', wip: true }
-];
 
 export function DownloadClient() {
   const [version, setVersion] = useState(site.latestVersion);
@@ -43,10 +38,11 @@ export function DownloadClient() {
   }, []);
 
   return (
-    <section className="clean-download-page">
+    <div className="zcc-page aurora-host">
+      <AuroraGrid beams={false} />
       <div className="wrap">
-        <div className="clean-page-hero clean-download-hero">
-          <span className="clean-page-kicker">Download</span>
+        <div className="zcc-hero">
+          <span className="zcc-kicker">Download</span>
           <h1>Get Zana Command Center</h1>
           <p>
             Latest version <strong>v{version}</strong>
@@ -55,48 +51,44 @@ export function DownloadClient() {
           </p>
         </div>
 
-        <div className="dl-grid" data-reveal-stagger>
-          {PLATFORMS.map((p) => (
-            <div
-              className={`clean-platform-card ${p.primary ? 'clean-platform-card-primary' : ''} ${p.wip ? 'wip' : ''}`}
-              key={p.name}
-            >
-              {p.wip && <span className="wip-badge">Coming soon</span>}
-              <div className="os">{p.os}</div>
-              <h3>{p.name}</h3>
-              <p className="ver">{p.note}</p>
-              <div style={{ marginTop: 18 }}>
-                {p.wip ? (
-                  <button className="clean-button" disabled>
-                    In progress
-                  </button>
-                ) : (
-                  <a className={`clean-button ${p.primary ? 'clean-button-dark' : ''}`} href={`${site.releasesRepo}/releases/latest`}>
-                    Download for {p.name} <span aria-hidden="true">→</span>
-                  </a>
-                )}
-              </div>
-            </div>
-          ))}
+        <div className="zcc-panel dl-primary" data-reveal>
+          <h2>macOS</h2>
+          <p>Apple Silicon or Intel · signed and notarized · .dmg</p>
+          <a className="zcc-btn zcc-btn-primary" href={`${site.releasesRepo}/releases/latest`}>
+            Download for macOS
+          </a>
         </div>
 
-        <div className="clean-source-card">
+        <div className="dl-soon" data-reveal-stagger>
+          <div className="zcc-panel dl-soon-row">
+            <h3>Windows</h3>
+            <p>NSIS installer · .exe</p>
+            <span className="wip-badge">Coming soon</span>
+          </div>
+          <div className="zcc-panel dl-soon-row">
+            <h3>Linux</h3>
+            <p>AppImage</p>
+            <span className="wip-badge">Coming soon</span>
+          </div>
+        </div>
+
+        <div className="source-split zcc-panel">
           <div>
-            <span className="clean-page-kicker">From source</span>
+            <span className="zcc-kicker">From source</span>
             <h2>Build Zana locally.</h2>
             <p>Clone the repository, install dependencies, and run the development app.</p>
           </div>
           <div>
-            <pre className="clean-command-block">
+            <pre className="command-block">
               <code>git clone {site.repo}.git{'\n'}cd zana{'\n'}pnpm install{'\n'}pnpm dev</code>
             </pre>
-            <p className="clean-source-note">
-              Prerequisites: Node 20+, pnpm, and <code>git</code>. See the{' '}
+            <p className="source-note">
+              Prerequisites: Node 20+ (22+ recommended; remotes need 22+), pnpm, and <code>git</code>. See the{' '}
               <a href="/docs/">docs</a> for source-build guidance.
             </p>
           </div>
         </div>
       </div>
-    </section>
+    </div>
   );
 }
