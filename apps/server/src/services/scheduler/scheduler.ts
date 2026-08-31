@@ -80,6 +80,9 @@ interface Live {
    *  showing the run twice. Insertion-ordered + bounded so it can't grow
    *  unboundedly over the app's lifetime. */
   countedRunIds: Set<string>;
+  /** True when a fire operation is actively launching and we haven't finished
+   *  launching yet. Prevents simultaneous duplicate fires due to TOCTOU. */
+  firing?: boolean;
 }
 
 type DeferredClose = {
@@ -133,6 +136,10 @@ export class SchedulerManager extends EventEmitter {
   private nonHookWatchdogs = new Map<string, NodeJS.Timeout>();
   /** Hook-capable auto-close sessions waiting for background Task completion. */
   private deferredCloses = new Map<string, DeferredClose>();
+  /** Custom run-duration watchdogs, keyed by the fired session id. */
+  private maxDurationWatchdogs = new Map<string, NodeJS.Timeout>();
+  /** Sessions that timed out, so onExit can record the proper error message. */
+  private timedOutSessions = new Set<string>();
   /** Coordinator commits are async; count in-flight launches before PTY appears. */
   private pendingLaunches = 0;
   /** Lazily set after the window opens. We don't fire before then. */
@@ -228,7 +235,8 @@ export class SchedulerManager extends EventEmitter {
       // the agent finishes so sessions don't pile up at the prompt. The form
       // always sends an explicit value; this default only applies to callers
       // (e.g. the skill-authored create path) that omit it.
-      autoCloseOnFinish: input.autoCloseOnFinish ?? true
+      autoCloseOnFinish: input.autoCloseOnFinish ?? true,
+      maxDurationMinutes: input.maxDurationMinutes
     };
     this.persist(task);
     this.live.set(task.id, this.makeLive(task));
@@ -277,6 +285,9 @@ export class SchedulerManager extends EventEmitter {
     if (patch.retain !== undefined) next.history = { retain: clampRetain(patch.retain) };
     if (patch.inboxLevel !== undefined) next.inboxLevel = patch.inboxLevel;
     if (patch.autoCloseOnFinish !== undefined) next.autoCloseOnFinish = patch.autoCloseOnFinish;
+    if (patch.maxDurationMinutes !== undefined) {
+      next.maxDurationMinutes = patch.maxDurationMinutes || undefined;
+    }
     // `null` clears the group (→ Ungrouped); a string sets it; undefined leaves
     // it unchanged. Only meaningful for global schedules.
     if (patch.group !== undefined) {
@@ -327,6 +338,9 @@ export class SchedulerManager extends EventEmitter {
     this.nonHookWatchdogs.clear();
     for (const deferred of this.deferredCloses.values()) clearTimeout(deferred.timeout);
     this.deferredCloses.clear();
+    for (const watchdog of this.maxDurationWatchdogs.values()) clearTimeout(watchdog);
+    this.maxDurationWatchdogs.clear();
+    this.timedOutSessions.clear();
   }
 
   /**
@@ -580,8 +594,27 @@ export class SchedulerManager extends EventEmitter {
     if (!live || !this.deps) return;
     live.timer = null;
 
+    // Concurrent-duplicate guard: a fire whose launch is async (remote/coordinator
+    // commit) hasn't returned yet when the next tick (or a watcher-driven reload's
+    // re-arm) calls fire again. `firing` marks an in-flight launch so the second
+    // fire records a skip instead of spawning a duplicate session. Manual "Run
+    // now" bypasses it — an explicit click is the user's deliberate override.
+    if (!opts.manual && live.firing) {
+      this.log(`fire ${id}`, 'skipped: previous fire/launch is already in progress');
+      this.recordRun(id, {
+        id: randomUUID(),
+        at: new Date().toISOString(),
+        result: 'skipped',
+        message: 'previous fire/launch is already in progress'
+      });
+      if (live.task.enabled) this.arm(id);
+      return;
+    }
+    if (!opts.manual) live.firing = true;
+
     const project = this.deps.store.listProjects().find((p) => p.id === live.task.projectId);
     if (!project) {
+      if (!opts.manual) live.firing = false;
       this.log(
         `fire ${id}`,
         `project ${live.task.projectId} not found for schedule "${live.task.name}"`
@@ -625,6 +658,7 @@ export class SchedulerManager extends EventEmitter {
         .map((r) => r.sessionId)
         .find((sid): sid is string => !!sid && aliveIds.has(sid));
       if (aliveRunSessionId) {
+        if (!opts.manual) live.firing = false;
         this.log(
           `fire ${id}`,
           `skipped: previous run ${aliveRunSessionId} still active`
@@ -649,6 +683,7 @@ export class SchedulerManager extends EventEmitter {
       // overlap: an explicit click is the user's deliberate override.
       const liveScheduledRuns = this.countLiveScheduledRuns() + this.pendingLaunches;
       if (liveScheduledRuns >= MAX_CONCURRENT_SCHEDULED_RUNS) {
+        if (!opts.manual) live.firing = false;
         this.log(
           `fire ${id}`,
           `skipped: concurrency cap (${liveScheduledRuns}/${MAX_CONCURRENT_SCHEDULED_RUNS} scheduled runs active)`
@@ -738,6 +773,7 @@ export class SchedulerManager extends EventEmitter {
   }
 
   private recordLaunchFailure(id: string, runId: string, live: Live, opts: { manual: boolean }, err: unknown) {
+    if (!opts.manual) live.firing = false;
     this.log(`fire ${id} launch`, err);
     this.recordRun(id, {
       id: runId,
@@ -757,6 +793,8 @@ export class SchedulerManager extends EventEmitter {
     effectiveProfile: Parameters<typeof providerCapabilities>[0],
     session: ReturnType<PtyManager['create']>
   ) {
+    if (!opts.manual) live.firing = false;
+
     // A reload can replace this Live while durable coordinator commit is in
     // flight. Session remains valid, but stale scheduler state must not mutate.
     if (this.live.get(id) !== live) return;
@@ -792,6 +830,25 @@ export class SchedulerManager extends EventEmitter {
       this.nonHookWatchdogs.set(session.id, watchdog);
     }
 
+    // Custom max-duration watchdog: independent of the non-hook fallback above,
+    // this force-closes ANY scheduled run (hook-capable or not) that exceeds the
+    // user-configured `maxDurationMinutes`. The run is marked timed-out so onExit
+    // records an `error` with a duration-exceeded message rather than success.
+    if (live.task.maxDurationMinutes && live.task.maxDurationMinutes > 0) {
+      const maxMs = live.task.maxDurationMinutes * 60 * 1000;
+      const watchdog = setTimeout(() => {
+        this.maxDurationWatchdogs.delete(session.id);
+        this.timedOutSessions.add(session.id);
+        this.deps?.ptys.closeExpected(session.id);
+        this.log(
+          `watchdog ${id}`,
+          `force-closed scheduled run ${session.id} after exceeding max duration of ${live.task.maxDurationMinutes} minutes`
+        );
+      }, maxMs);
+      watchdog.unref?.();
+      this.maxDurationWatchdogs.set(session.id, watchdog);
+    }
+
     const onExit = (sessionId: string, exitCode: number) => {
       if (sessionId !== session.id) return;
       this.deps?.ptys.off('exit', onExit);
@@ -800,6 +857,13 @@ export class SchedulerManager extends EventEmitter {
         clearTimeout(watchdog);
         this.nonHookWatchdogs.delete(session.id);
       }
+      const maxWatchdog = this.maxDurationWatchdogs.get(session.id);
+      if (maxWatchdog) {
+        clearTimeout(maxWatchdog);
+        this.maxDurationWatchdogs.delete(session.id);
+      }
+      const timedOut = this.timedOutSessions.has(session.id);
+      if (timedOut) this.timedOutSessions.delete(session.id);
       this.clearDeferredClose(session.id);
       const exitMs = Date.now();
 
@@ -820,13 +884,14 @@ export class SchedulerManager extends EventEmitter {
       );
       const hasReport = !!existingRun?.report || !!existingRun?.reportStatus;
       const terminalError = existingRun?.result === 'error';
-      const result: ScheduleRun['result'] = terminalError
-        ? 'error'
-        : exitCode !== 0
-        ? 'error'
-        : expectsReport && !hasReport
-        ? 'incomplete'
-        : 'success';
+      const result: ScheduleRun['result'] =
+        timedOut || terminalError
+          ? 'error'
+          : exitCode !== 0
+          ? 'error'
+          : expectsReport && !hasReport
+          ? 'incomplete'
+          : 'success';
 
       const finalRun: ScheduleRun = {
         id: runId,
@@ -834,14 +899,15 @@ export class SchedulerManager extends EventEmitter {
         result,
         sessionId: session.id,
         durationMs: exitMs - runStartMs,
-        message:
-          terminalError
-            ? existingRun?.message
-            : exitCode !== 0
-            ? `exit ${exitCode}`
-            : result === 'incomplete'
-            ? 'exited without filing a schedule_report — possible silent failure'
-            : undefined
+        message: timedOut
+          ? `exceeded maximum duration of ${live.task.maxDurationMinutes} minutes`
+          : terminalError
+          ? existingRun?.message
+          : exitCode !== 0
+          ? `exit ${exitCode}`
+          : result === 'incomplete'
+          ? 'exited without filing a schedule_report — possible silent failure'
+          : undefined
       };
       this.recordRun(id, finalRun);
       // `silent` schedules never write a completion summary; `quiet`/`loud`
