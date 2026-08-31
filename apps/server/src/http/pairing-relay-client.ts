@@ -11,6 +11,8 @@ import {
   encodeJsonPayload
 } from './pairing-relay-protocol.js';
 import { isRelaySessionId, type PairingRelaySnapshot } from './pairing-session-url.js';
+
+export type { PairingRelaySnapshot } from './pairing-session-url.js';
 import { resolvePublicAppUrl } from './public-app-url.js';
 
 export type PairingRelayState = 'connected' | 'offline' | 'unconfigured';
