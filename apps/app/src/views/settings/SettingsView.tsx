@@ -96,15 +96,16 @@ export const SETTINGS_SECTIONS: Array<{
  */
 export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: string; label: string }>>> = {
   agents: [
-    { id: 'auto-mode', label: 'Auto mode' },
     { id: 'git-worktrees', label: 'Git worktrees' },
     { id: 'agent-tabs', label: 'Tabs' },
     { id: 'agent-attention', label: 'Agent attention' },
+    { id: 'scheduled', label: 'Scheduled' },
     { id: 'agent-automation', label: 'Agent automation' },
     { id: 'agent-heartbeat', label: 'Agent heartbeat' },
     { id: 'auto-close-idle', label: 'Idle handling & follow-ups' },
+    { id: 'legacy-agent', label: 'CLI Agent' },
     { id: 'overseer', label: 'Overseer' },
-    { id: 'legacy-agent', label: 'CLI Agent' }
+    { id: 'auto-mode', label: 'Auto mode' }
   ],
   global: [
     { id: 'appearance', label: 'Appearance' },
@@ -263,6 +264,9 @@ export function SettingsView() {
       }
       if (typeof patch.agentListNeedsYouFromTriage === 'boolean') {
         useData.getState().setAgentListNeedsYouFromTriage(patch.agentListNeedsYouFromTriage);
+      }
+      if (typeof patch.includeScheduledAgentsInAgentView === 'boolean') {
+        useData.getState().setIncludeScheduledAgentsInAgentView(patch.includeScheduledAgentsInAgentView);
       }
       if (typeof patch.voiceInputEnabled === 'boolean') {
         useData.getState().setVoiceInputEnabled(patch.voiceInputEnabled);

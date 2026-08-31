@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PLUGIN_SDK_API_MAJOR, PLUGIN_SDK_VERSION, derivePluginId } from '@zana-ai/zcc-plugin-sdk';
 
@@ -134,10 +134,17 @@ function hostPluginSdkPlugin(): {
   };
 }
 
+export interface PluginBundleOptions {
+  minify?: boolean;
+  sourcemap?: boolean;
+}
+
 async function bundle(opts: {
   entry: string;
   outfile: string;
   platform: 'node' | 'browser';
+  minify?: boolean;
+  sourcemap?: boolean;
 }): Promise<void> {
   const esbuild = await import('esbuild');
   const stagingDir = join(dirname(opts.outfile), `.stage-${process.pid}`);
@@ -153,6 +160,8 @@ async function bundle(opts: {
       platform: opts.platform,
       target: 'es2022',
       jsx: 'automatic',
+      minify: opts.minify ?? true,
+      sourcemap: opts.sourcemap ?? false,
       logLevel: 'silent',
       loader: opts.platform === 'browser' ? { '.css': 'text' } : undefined,
       plugins: opts.platform === 'browser' ? [hostReactPlugin(), hostPluginSdkPlugin()] : undefined,
@@ -163,6 +172,14 @@ async function bundle(opts: {
     });
     mkdirSync(dirname(opts.outfile), { recursive: true });
     renameSync(staged, opts.outfile);
+    const stagedMap = `${staged}.map`;
+    if (existsSync(stagedMap)) {
+      const mapFile = `${opts.outfile}.map`;
+      renameSync(stagedMap, mapFile);
+      const js = readFileSync(opts.outfile, 'utf8');
+      const next = js.replace(/sourceMappingURL=out\.js\.map/g, `sourceMappingURL=${basename(opts.outfile)}.map`);
+      if (next !== js) writeFileSync(opts.outfile, next);
+    }
   } finally {
     rmSync(stagingDir, { recursive: true, force: true });
   }
@@ -176,12 +193,22 @@ function resolveSource(rootDir: string, candidates: string[]): string | null {
   return null;
 }
 
-export async function buildPluginServer(rootDir: string, zccVersion: string): Promise<{ jsPath: string; metaPath: string } | null> {
+export async function buildPluginServer(
+  rootDir: string,
+  zccVersion: string,
+  options: PluginBundleOptions = {}
+): Promise<{ jsPath: string; metaPath: string } | null> {
   const pkg = readPkg(rootDir);
   const entry = resolveSource(rootDir, ['server.ts', 'server.mts', 'src/server.ts']);
   if (!entry) return null;
   const jsPath = join(rootDir, 'server.mjs');
-  await bundle({ entry, outfile: jsPath, platform: 'node' });
+  await bundle({
+    entry,
+    outfile: jsPath,
+    platform: 'node',
+    minify: options.minify ?? true,
+    sourcemap: options.sourcemap ?? false
+  });
   const metaPath = join(rootDir, 'server.meta.json');
   writePluginArtifactMeta(metaPath, createPluginArtifactMeta({
     packageName: pkg.name,
@@ -191,12 +218,22 @@ export async function buildPluginServer(rootDir: string, zccVersion: string): Pr
   return { jsPath, metaPath };
 }
 
-export async function buildPluginApp(rootDir: string, zccVersion: string): Promise<{ jsPath: string; metaPath: string } | null> {
+export async function buildPluginApp(
+  rootDir: string,
+  zccVersion: string,
+  options: PluginBundleOptions = {}
+): Promise<{ jsPath: string; metaPath: string } | null> {
   const pkg = readPkg(rootDir);
   const entry = resolveSource(rootDir, ['app.tsx', 'app.jsx', 'app.ts', 'src/app.tsx']);
   if (!entry) return null;
   const jsPath = join(rootDir, 'app.js');
-  await bundle({ entry, outfile: jsPath, platform: 'browser' });
+  await bundle({
+    entry,
+    outfile: jsPath,
+    platform: 'browser',
+    minify: options.minify ?? true,
+    sourcemap: options.sourcemap ?? false
+  });
   const metaPath = join(rootDir, 'app.meta.json');
   writePluginArtifactMeta(metaPath, createPluginArtifactMeta({
     packageName: pkg.name,
@@ -242,13 +279,17 @@ export async function syncPluginTypes(rootDir: string, options?: { check?: boole
   return [{ path: 'types/zcc-plugin-sdk.d.ts', outcome: 'written' }];
 }
 
-export async function buildPlugin(rootDir: string, zccVersion: string): Promise<{
+export async function buildPlugin(
+  rootDir: string,
+  zccVersion: string,
+  options: PluginBundleOptions = {}
+): Promise<{
   server: Awaited<ReturnType<typeof buildPluginServer>>;
   app: Awaited<ReturnType<typeof buildPluginApp>>;
 }> {
   await syncPluginTypes(rootDir);
   return {
-    server: await buildPluginServer(rootDir, zccVersion),
-    app: await buildPluginApp(rootDir, zccVersion)
+    server: await buildPluginServer(rootDir, zccVersion, options),
+    app: await buildPluginApp(rootDir, zccVersion, options)
   };
 }

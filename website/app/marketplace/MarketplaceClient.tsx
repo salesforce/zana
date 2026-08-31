@@ -10,6 +10,7 @@ import {
   type MarketplaceCard,
   type OfficialMarketplaceIndex
 } from '@/lib/official-marketplace';
+import { AuroraGrid } from '../components/AuroraGrid';
 
 type Status = 'loading' | 'live' | 'sample';
 
@@ -52,12 +53,13 @@ export function MarketplaceClient({ publicBaseUrl }: { publicBaseUrl: string }) 
   );
 
   return (
-    <section className="clean-marketplace-page">
+    <div className="zcc-page aurora-host">
+      <AuroraGrid beams={false} />
       <div className="wrap">
-        <div className="clean-page-hero clean-marketplace-hero">
-          <span className="clean-page-kicker">Marketplace</span>
+        <div className="zcc-hero">
+          <span className="zcc-kicker">Marketplace</span>
           <h1>
-            Plugins
+            Plugins{' '}
             <span className={`feed-pill ${status === 'live' ? 'live' : ''}`}>
               <span className="fdot" />
               {status === 'loading' ? 'connecting…' : status === 'live' ? 'live feed' : 'bundled catalog'}
@@ -70,23 +72,23 @@ export function MarketplaceClient({ publicBaseUrl }: { publicBaseUrl: string }) 
           </p>
         </div>
 
-        <div className="clean-marketplace-guide" data-reveal>
+        <div className="mk-install zcc-panel" data-reveal>
           <div>
-            <span className="clean-page-kicker">How installation works</span>
+            <span className="zcc-kicker">How installation works</span>
             <h2>Discover here. Install from Zana.</h2>
             <p>
               Add this catalog, then install from <strong>Plugins → Browse</strong>. Plugins run
               in-process on the server after a loud full-trust confirm.
             </p>
-            <p className="clean-marketplace-install-command">
+            <p className="mk-cmd">
               <code>{addCommand}</code>
             </p>
           </div>
-          <div className="clean-marketplace-actions">
-            <Link className="clean-button clean-button-dark" href="/extensions/install/">
-              See install paths <span aria-hidden="true">→</span>
+          <div className="mk-install-actions">
+            <Link className="zcc-btn zcc-btn-primary" href="/extensions/install/">
+              See install paths
             </Link>
-            <Link className="clean-button" href="/extensions/">
+            <Link className="zcc-btn zcc-btn-ghost" href="/extensions/">
               Build a plugin
             </Link>
           </div>
@@ -100,10 +102,10 @@ export function MarketplaceClient({ publicBaseUrl }: { publicBaseUrl: string }) 
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
-          <span style={{ color: 'var(--muted-2)', fontSize: 13 }}>
+          <span style={{ color: 'var(--text-dim)', fontSize: 13 }}>
             {filtered.length} {filtered.length === 1 ? 'plugin' : 'plugins'}
           </span>
-          <Link href="/dashboard/" className="clean-button clean-button-small clean-marketplace-publish">
+          <Link href="/dashboard/" className="zcc-btn zcc-btn-sm mk-publish">
             Publish yours
           </Link>
         </div>
@@ -113,15 +115,15 @@ export function MarketplaceClient({ publicBaseUrl }: { publicBaseUrl: string }) 
         ) : (
           <div className="mk-grid" data-reveal-stagger>
             {filtered.map((e) => (
-              <div className="clean-marketplace-card" key={e.id}>
+              <div className="zcc-panel" key={e.id}>
                 <div className="mk-head">
                   <span className="mk-icon">{e.title.charAt(0).toUpperCase()}</span>
                   <h3>{e.title}</h3>
                   <span className="mk-badge">{e.version}</span>
                 </div>
-                {e.author && <p className="clean-marketplace-author">by {e.author}</p>}
-                <p>{e.description}</p>
-                <p className="clean-marketplace-install-command">
+                {e.author && <p className="mk-meta">by {e.author}</p>}
+                <p className="mk-meta" style={{ marginTop: 8, fontSize: 13 }}>{e.description}</p>
+                <p className="mk-cmd">
                   Install in Zana: <code>Plugins → Browse → {e.id}</code>
                 </p>
               </div>
@@ -129,6 +131,6 @@ export function MarketplaceClient({ publicBaseUrl }: { publicBaseUrl: string }) 
           </div>
         )}
       </div>
-    </section>
+    </div>
   );
 }

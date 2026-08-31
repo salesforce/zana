@@ -304,6 +304,29 @@
       }
     },
     {
+      "id": "plugin-guide",
+      "displayName": "Plugin Guide",
+      "description": "Annotated map of every surface a plugin can own — Copy for agent, then live-reload with zcc plugin dev.",
+      "icon": {
+        "lucide": "Puzzle"
+      },
+      "tags": [
+        "official"
+      ],
+      "author": {
+        "name": "Zana",
+        "github": "salesforce",
+        "url": "https://github.com/salesforce/zana"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/salesforce/zana",
+          "subdir": "plugins/plugin-guide",
+          "ref": "HEAD"
+        }
+      }
+    },
+    {
       "id": "pr-monitor",
       "displayName": "PR Monitor",
       "description": "Keep your authored pull requests visible: CI, review, merge-readiness, and inbox alerts.",

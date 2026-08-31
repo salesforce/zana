@@ -44,13 +44,17 @@ const MAX_WS = 8;
 
 export function resolveRelayToken(input?: {
   env?: NodeJS.ProcessEnv;
+  bundledToken?: string | null;
+  /** @deprecated Ignored — pairing does not read Settings. */
   configToken?: string | null;
 }): string | undefined {
   const env = input?.env ?? process.env;
   const fromEnv = env.ZCC_RELAY_TOKEN?.trim();
   if (fromEnv) return fromEnv;
-  const fromConfig = input?.configToken?.trim();
-  return fromConfig || undefined;
+  const bundled = input && 'bundledToken' in input
+    ? input.bundledToken?.trim()
+    : (typeof __ZCC_BUNDLED_RELAY_TOKEN__ === 'string' ? __ZCC_BUNDLED_RELAY_TOKEN__.trim() : undefined);
+  return bundled || undefined;
 }
 
 function relayWsUrl(origin: string): string {
@@ -468,14 +472,21 @@ export function createPairingRelayClient(options: PairingRelayClientOptions): Pa
 
 export function pairingRelayTargets(input: {
   env?: NodeJS.ProcessEnv;
+  bundledUrl?: string | null;
+  bundledToken?: string | null;
+  /** @deprecated Ignored. */
   configUrl?: string | null;
+  /** @deprecated Ignored. */
   configToken?: string | null;
 }): { origin?: string; token?: string } {
   const origin = resolvePublicAppUrl({
     env: input.env,
-    configUrl: input.configUrl
+    ...('bundledUrl' in input ? { bundledUrl: input.bundledUrl } : {})
   });
-  const token = resolveRelayToken({ env: input.env, configToken: input.configToken });
+  const token = resolveRelayToken({
+    env: input.env,
+    ...('bundledToken' in input ? { bundledToken: input.bundledToken } : {})
+  });
   if (!origin || !isPublicOrigin(origin) || !token) return {};
   return { origin, token };
 }

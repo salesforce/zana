@@ -163,7 +163,7 @@ export function SkillsBody({
 
   const toggleSkill = async (skill: SkillEntry, enabled: boolean) => {
     // Only skills whose tool supports toggling are writable: Claude user/project
-    // skills go through `skillOverrides`. Plugin skills (managed via /plugin) and
+    // skills go through `skillOverrides`. Plugin skills (installed ZCC plugin / `zcc plugin dev`) and
     // read-only tools (Cursor rules today) declare `toggle.supported === false`;
     // the UI renders them without a switch, but defend in depth here too.
     if (!skill.toggle.supported) return;
@@ -199,7 +199,7 @@ export function SkillsBody({
       if (result.skippedPlugin > 0) {
         const skill = result.skippedPlugin === 1 ? 'skill' : 'skills';
         setApplyNote(
-          `${result.skippedPlugin} plugin ${skill} skipped (managed by /plugin).`
+          `${result.skippedPlugin} plugin ${skill} skipped (managed by the installed plugin; reload with zcc plugin dev).`
         );
         window.setTimeout(() => setApplyNote(null), 5000);
       } else {
@@ -224,12 +224,11 @@ export function SkillsBody({
               <p className="settings-help scheduler-subtitle">
                 Discover skills across your agent tools — Claude Code
                 (<code>~/.claude/skills</code>, <code>~/.claude/plugins</code>, a
-                project's <code>.claude/skills</code>) and Cursor rules
-                (<code>.cursor/rules</code>). Toggling a Claude user or project skill
-                writes to <code>skillOverrides</code> in{' '}
-                <code>~/.claude/settings.json</code>; read-only tools (plugin skills,
-                Cursor rules) appear for visibility. Group skills into bundles to
-                enable/disable them in batches.
+                project's <code>.claude/skills</code>), skills shipped by an
+                installed ZCC plugin, and Cursor rules (<code>.cursor/rules</code>).
+                Toggling a Claude user or project skill writes to{' '}
+                <code>skillOverrides</code> in <code>~/.claude/settings.json</code>.
+                Installed ZCC plugin skills reload with <code>zcc plugin dev</code>.
               </p>
             </div>
           </div>
@@ -238,10 +237,12 @@ export function SkillsBody({
         {!pluginBannerDismissed && (
           <aside className="skills-plugin-banner" role="note">
             <div>
-              <strong>Plugin skills are managed by Claude Code's <code>/plugin</code> command.</strong>{' '}
-              The toggle in this panel only takes effect for user and project skills —
-              plugin skills appear here for visibility but must be enabled or disabled
-              via the CLI.
+              <strong>Installed plugin skills reload with <code>zcc plugin dev</code>.</strong>{' '}
+              Skills contributed by a ZCC plugin (manifest <code>zcc.skills</code> or{' '}
+              <code>contributeSkills</code>) are not toggled here — edit the plugin
+              and live-reload. Claude Code marketplace plugins under{' '}
+              <code>~/.claude/plugins</code> still use Claude&apos;s <code>/plugin</code>{' '}
+              command.
             </div>
             <button
               type="button"
@@ -390,14 +391,14 @@ function SkillRow({
 }) {
   const subtitle = (() => {
     if (skill.source === 'plugin' && skill.pluginName) {
-      return `Plugin · ${skill.pluginName}`;
+      return `Installed plugin · ${skill.pluginName}`;
     }
     if (skill.source === 'project') return 'Project';
     return 'User';
   })();
 
   // A row is read-only when its tool doesn't support toggling — plugin skills
-  // (managed by /plugin) and read-only tools like Cursor rules. The chip shows
+  // (managed by the installed plugin / zcc plugin dev) and read-only tools like Cursor rules.
   // the tool's own hint (`toggle.reason`) rather than assuming "plugin".
   const isReadOnly = !skill.toggle.supported;
   const readOnlyReason = skill.toggle.reason ?? 'Read-only';

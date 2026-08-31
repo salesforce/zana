@@ -1,125 +1,133 @@
 # `zcc` CLI Reference
 
-`zcc` is the command-line companion to Zana Command Center (ZCC). It is a
-**thin, no-daemon CLI** — it has no long-running process of its own. Every
-invocation does one of two things:
-
-- **Read tier** — reads the same `~/.zcc/` store files the desktop app uses
-  (`projects.json`, `personas/`, `schedules/`, `inbox/`). These commands work
-  **whether the app is running or not**.
-- **Live tier** — connects to the running app's control plane (a Unix-domain
-  socket at `~/.zcc/control.sock`, guarded by a per-boot token). These commands
-  **require the desktop app to be running**; if it is down they fail cleanly
-  rather than hang.
+`zcc` is the command-line companion to Zana Command Center (ZCC). It has no
+long-running process of its own. Almost every command talks to the **running
+app** over the **product HTTP API** (`ZCC_SERVER_URL`, default
+`http://127.0.0.1:8780`). A few file-read and scaffold commands still work
+with the app down.
 
 ```mermaid
 flowchart TD
-    CLI["zcc CLI"] --> Probe{"~/.zcc/control.sock present?"}
-    Probe -->|"read commands"| Files["~/.zcc/*.json — work app up OR down"]
-    Probe -->|"live commands, app up"| Sock["UDS control plane → app authorizes"]
-    Probe -->|"live commands, app down"| Err["APP_NOT_RUNNING (exit 1)"]
+    CLI["zcc CLI"] --> Guide["zcc guide — offline"]
+    CLI --> Http{"App listening on ZCC_SERVER_URL?"}
+    Http -->|"yes"| Api["thread / machine / project / …"]
+    Http -->|"no"| Down["APP_NOT_RUNNING (exit 1)"]
+    CLI --> Files["inbox / followup / personas / schedule ls"]
+    Files --> Disk["~/.zcc files — app up or down"]
 ```
 
-> Related docs: [`cli-verification-2026-06-15.md`](./cli-verification-2026-06-15.md)
-> (the empirical verification report this reference is grounded in) and
-> [`../packages/cli/README.md`](../packages/cli/README.md) (the package readme).
+Prefer product nouns: `thread`, `machine`, `project`, `skill`, `settings`,
+`terminal`, `environment`. `zcc run` and `zcc agent send` are **deprecated
+aliases** of `thread spawn` and `thread tell`. `zcc term` aliases `terminal`
+(except `term reply` / `term close-summary`, which still use the control plane).
+
+`zcc --help` is the flag surface. `zcc guide [chapter]` is the long-form
+companion and works with no app. Keep this page, the `zcc-cli` skill, and
+`--help` in lockstep (`docs/cli-guide-and-skill.md`).
+
+> Related: [`../packages/cli/README.md`](../packages/cli/README.md).
 
 ---
 
 ## Overview & install
 
-The CLI lives in the monorepo at `packages/cli`. Build it with `tsc`, then run
-the compiled entry point directly with `node`, or put it on your `PATH`.
+The CLI lives in the monorepo at `packages/cli`. From the repo root:
 
 ```bash
-# From the monorepo root: install deps once, then build the CLI
 pnpm install
 pnpm --filter @zcc/cli build
 
-# Run via node (from repo root)
-node packages/cli/dist/bin/zcc.js projects ls
+node packages/cli/dist/bin/zcc.js status --json
 
-# Or add the built bin dir to PATH so `zcc` resolves directly
 export PATH="$PWD/packages/cli/dist/bin:$PATH"
-zcc projects ls
+zcc thread list --json
 ```
 
-Throughout this doc, `zcc` stands for either form
-(`node packages/cli/dist/bin/zcc.js` or the on-`PATH` binary).
+Packaged desktop builds also put `zcc` on `PATH` for terminals the app
+spawns. Throughout this doc, `zcc` means either form.
 
-### Read tier vs. live tier
+### Tiers
 
-| | Read tier | Live tier |
-|---|---|---|
-| Commands | `projects ls`, `personas ls`, `schedule ls`, `inbox ls`, `inbox show`, `followup ls`, `plugin ls` / `new` / `types` / `build` | `status`, `agent ls/send`, `term ls/close/reply/close-summary`, `run`, `schedule run-now/enable/disable`, `plugin install/enable/disable/reload/remove/dev/search/outdated/update/run`, `marketplace *`, `team ls` |
-| Source | `~/.zcc/` store files on disk (`plugin ls` reads `~/.zcc/plugins`) | the app's control socket |
-| App must be running? | **No** | **Yes** — else `APP_NOT_RUNNING` (exit 1) |
-| Mutates state? | Scaffold/build helpers may write a plugin dir | Some (`agent send`, `term close*`, `run`, `schedule enable/disable/run-now`, plugin install/enable/remove, marketplace add/install) |
+| | Offline / file | Product HTTP | Control plane |
+|---|---|---|---|
+| Commands | `guide`; `plugin new` / `types` / `build`; `inbox` / `followup` / `personas ls` / `schedule ls` | `status`, `thread *`, `machine *`, `project *` / `projects ls`, `skill *`, `settings *`, `terminal *`, `environment *` | `plugin` install/dev/…, `marketplace *`, `agent ls`, `team ls`, `term reply` / `close-summary`, `schedule run-now` / enable / disable |
+| App must be running? | **No** (`guide` and file reads) | **Yes** | **Yes** |
+| Override | — | `ZCC_SERVER_URL` | `~/.zcc/control.sock` + token |
 
-The read tier is defensive: a missing or malformed store file never crashes the
-CLI — it returns an empty list plus a warning on **stderr** and still exits `0`.
+Missing or malformed store files on the file-read path never crash the CLI —
+empty list + stderr warning, exit `0`.
 
 ---
 
 ## Every command
 
-Quick view of the full surface (this mirrors `zcc --help`):
+This mirrors `zcc --help`:
 
 ```text
-READ COMMANDS (work whether the app is running or not):
-  status                   Live dashboard: projects, agents, schedules
-  projects ls              List projects
+OFFLINE (no app required):
+  guide [chapter]          Print a chapter (overview, threads, projects, machines,
+                           terminals, plugins, automations, agent-configuration,
+                           environments)
+  plugin new <name>        Scaffold a TypeScript plugin (package.json zcc)
+  plugin types [dir]       Sync bundled SDK .d.ts into the plugin [--check]
+  plugin build [dir]       Bundle zcc.app / zcc.server for CI
+
+PRODUCT API (app must be running — ZCC_SERVER_URL, default http://127.0.0.1:8780):
+  status                   Live dashboard: projects and threads
+  thread list [--project ID]
+  thread spawn --project <id> --prompt "..." [--provider <id>] [--wait]
+  thread show|log|tell|wait|stop|fork|archive|unarchive|interactions <id>
+  thread open <id> [--file PATH] [--source workspace|thread-storage] [--line N]
+  machine list|show|join-code|rename|remove|provider-cli
+  project list|show|create|files|content|skills
+  projects ls              Alias of project list
+  skill list|show|files|cli-skills-status|install-cli-skills
+  settings show|general|experiment|appearance
+  terminal list|create|send|close
+  environment status|diff|diff-files|pull-request <id>
+  run <project> <prompt>   Deprecated alias of thread spawn
+  agent send <id> <msg>    Deprecated alias of thread tell
+  term ls|close            Deprecated aliases of terminal list|close
+
+FILE READS (work if the app is down; prefer HTTP groups above when it is up):
   personas ls              List personas
   schedule ls              List scheduled tasks
   inbox ls [--project ID]  List inbox entries
   inbox show <id>          Show full inbox entry
   followup ls              List follow-ups (parked questions/decisions)
-  plugin ls                List installed plugins (from ~/.zcc/plugins)
-  plugin new <name>        Scaffold a TypeScript plugin (package.json zcc)
-  plugin types [dir]       Sync bundled SDK .d.ts into the plugin
-  plugin build [dir]       Bundle zcc.app / zcc.server for CI
 
-LIVE COMMANDS (require the app to be running):
-  plugin install <source>  Install path: | git: | npm: | builtin:<name>
-  plugin enable <id>       Enable and load a plugin
-  plugin disable <id>      Unload a plugin
-  plugin reload <id>       Dispose and load again
-  plugin logs <id>         Tail plugin logs (use -n N / -f)
-  plugin remove <id>       Unregister (path sources stay on disk)
-  plugin dev [dir]         Watch, rebuild, and reload
-  plugin search [query]    Search official shipped plugins + configured catalogs
-  plugin outdated          List installed plugins with a newer catalog version
-  plugin update <id>       Reinstall from the recorded catalog pointer
-  plugin run <id> <args…>  Run a plugin CLI contribution by plugin id
-  marketplace ls           List configured marketplace catalogs
-  marketplace add <source> Add a provenance-only marketplace index
-  marketplace refresh <source>
-                           Re-fetch a catalog; keeps the last good index on failure
-  marketplace remove <source>
-                           Drop a catalog (installed plugins keep running)
-  marketplace install <id@marketplace>
-                           Install through the catalog pointer
+LIVE CONTROL PLANE (app must be running):
+  plugin ls|install|enable|disable|reload|remove|dev|search|outdated|update|run|logs
+  marketplace ls|add|refresh|remove|install
   agent ls                 List live agents + their state
   team ls                  List the team catalogue
-  agent send <h> <msg>     Send a message to agent <handle>
-  term ls [--project ID]   List live terminal sessions
-  term close <sessionId>   Close a live session
   term reply <sessionId> <message>
-                           Inject a follow-up turn at a live session's prompt
   term close-summary <projectId> <sessionId...>
-  run <project> <prompt>   Spawn a claude agent in a project
-  schedule run-now <id>    Fire a schedule once now
-  schedule enable <id>     Enable a schedule
-  schedule disable <id>    Disable a schedule
+  schedule run-now|enable|disable <id>
 ```
 
-> Note on naming: `status` is listed under read commands in `--help`, but it
-> talks to the control plane — it needs the app running.
+I made a typo: `pull-return` should be `pull-request`. Fix that.
+
+### Product verbs (preferred)
+
+```bash
+zcc status --json
+zcc thread spawn --project <id> --prompt "…" [--wait]
+zcc thread list|show|tell|wait|stop
+zcc machine list
+zcc project list
+zcc skill install-cli-skills
+zcc terminal list
+zcc guide [chapter]
+```
+
+`zcc run <project> <prompt>` → `thread spawn`. `zcc agent send <id> <msg>` →
+`thread tell`.
 
 ### `status`
 
-Compact live dashboard: project count, live agents and their state, and enabled
-schedules. **Live tier — needs the app running.**
+Compact live dashboard: project count, live threads/agents, and related
+state. **Product HTTP — needs the app running.**
 
 ```bash
 zcc status
@@ -153,10 +161,11 @@ zcc status --json
 }
 ```
 
-### `projects ls`
+### `projects ls` / `project list`
 
-List every registered project. **Read tier.** Reads `~/.zcc/projects.json`
-(handles both the v0 bare-array and v1 `{version, projects}` shapes).
+List every registered project. **`projects ls` is an alias of `project list`.**
+With the app running this hits the product HTTP API; it is not a disk-only
+read of `projects.json`.
 
 ```bash
 zcc projects ls
@@ -327,10 +336,12 @@ live agents it prints `No live agents.`
 zcc agent ls --json
 ```
 
-### `agent send <handle> <msg>`
+### `agent send <handle> <msg>` (deprecated)
+
+**Deprecated alias of `zcc thread tell`.** Prefer `zcc thread tell <id> "…"`.
 
 Send a message to a live agent by handle. The app best-effort injects it if the
-agent is idle, else queues it. **Live tier — mutating.**
+agent is idle, else queues it. **Product HTTP — mutating.**
 
 ```bash
 zcc agent send reviewer "PR #214 is ready for a look"
@@ -348,9 +359,12 @@ but recommended. Both a handle and a non-empty message are required (else exit
 zcc agent send reviewer "ack" --json
 ```
 
-### `term ls [--project ID]`
+### `term ls` / `terminal list`
 
-List live terminal sessions, optionally scoped to one project. **Live tier.**
+`zcc term ls` is a **deprecated alias of `zcc terminal list`**. Prefer
+`terminal list`.
+
+List live terminal sessions, optionally scoped to one project. **Product HTTP.**
 
 ```bash
 zcc term ls
@@ -365,9 +379,11 @@ e5f6a7b8	shell	idle	zsh
 Columns: short `sessionId`, `profile`, `status`, `title`. With no sessions it
 prints `No live sessions.` Use `--json` for the full records.
 
-### `term close <sessionId>`
+### `term close` / `terminal close`
 
-Close one live session. **Live tier — mutating.**
+`zcc term close` is a **deprecated alias of `zcc terminal close`**.
+
+Close one live session. **Product HTTP — mutating.**
 
 ```bash
 zcc term close a1b2c3d4
@@ -396,11 +412,16 @@ The first positional is the **project id**; every positional after it is a
 **session id** (at least one is required, else exit `2`). `--no-summary` may
 appear anywhere among the positionals.
 
-### `run <project> <prompt> [flags]`
+### `run <project> <prompt> [flags]` (deprecated)
 
-Spawn a fresh `claude` agent in a project and run a prompt. **Live tier —
-mutating.** This is the workhorse command; see [The `run` command in
-depth](#the-run-command-in-depth) below.
+**Deprecated alias of `zcc thread spawn`.** Prefer:
+
+```bash
+zcc thread spawn --project <id> --prompt "…" [--wait]
+```
+
+The flags below still apply to `zcc run` for compatibility. **Product HTTP —
+mutating.** See [The `run` command in depth](#the-run-command-in-depth).
 
 ```bash
 zcc run api "review the diff in src/auth" --persona reviewer --wait
@@ -476,9 +497,9 @@ plugin.
 
 ## The `run` command in depth
 
-`zcc run <project> <prompt>` creates a new session in a project, injects the
-prompt, and (optionally) waits for the agent to finish. It requires the app to
-be running — if the control socket is absent the command errors immediately.
+`zcc run` is a **deprecated alias of `thread spawn`**. It creates a new session
+in a project, injects the prompt, and (optionally) waits for the agent to
+finish. The app must be running (`ZCC_SERVER_URL`).
 
 ### Project resolution
 
@@ -527,8 +548,7 @@ zcc run api -- document the --data-dir flag
 This was the Major bug noted in the verification report and is now fixed: the
 global-flag vs. `--`-tail split happens **once at the top level**, so
 `--json` / `--data-dir` appearing inside a `-- …` prompt tail are preserved as
-text. See [`cli-verification-2026-06-15.md`](./cli-verification-2026-06-15.md)
-(finding M1).
+text.
 
 > Because of this, a real global flag must come **before** the `--` sentinel
 > (see [Global options](#global-options)).
@@ -609,7 +629,7 @@ zcc run api "huge refactor" --wait --timeout 30s
 zcc projects ls --json
 zcc --data-dir /tmp/zcc-test projects ls
 zcc --help
-zcc --version          # → zcc version 0.1.0
+zcc --version
 ```
 
 `--json` may appear anywhere **before** a `--` prompt sentinel; the `inbox`,
@@ -630,6 +650,12 @@ honor it.
 ---
 
 ## Environment
+
+### `ZCC_SERVER_URL`
+
+Product HTTP base for `status`, `thread`, `machine`, `project`, `skill`,
+`settings`, `terminal`, and `environment`. Default `http://127.0.0.1:8780`.
+If the app is down, those commands exit **1** with `APP_NOT_RUNNING`.
 
 ### `ZCC_CENTER_DIR`
 
@@ -660,7 +686,7 @@ the CLI surfaces as **exit `5`**.
 
 ```bash
 # Inside an agent's terminal, ZCC_SESSION_ID is already set by the app:
-zcc agent send reviewer "hi"
+zcc thread tell <id> "hi"
 # → Error: FORBIDDEN_AGENT     [exit 5]
 ```
 
@@ -696,7 +722,7 @@ For automation, drive `zcc` with `--json` and branch on the exit code.
 Capture a session id from a detached run and parse JSON output:
 
 ```bash
-sid=$(zcc run api "audit error handling" --json | jq -r .sessionId)
+sid=$(zcc thread spawn --project api --prompt "audit error handling" --json | jq -r .sessionId)
 echo "spawned $sid"
 ```
 
@@ -715,25 +741,25 @@ else
 fi
 ```
 
-Read-tier commands are safe to call from any context (app up or down) and never
-throw — they degrade to an empty list plus a stderr warning:
+Read-tier file commands (`inbox`, `followup`, `personas ls`, `schedule ls`)
+are safe with the app down — empty list + stderr warning, exit `0`.
+`project list` needs the app.
 
 ```bash
-# Machine-parse the project list regardless of whether the app is running
-zcc projects ls --json | jq -r '.[].name'
+# Prefer product HTTP when the app is up
+zcc project list --json | jq -r '.[].name'
 
-# Filter inbox to one project, newest first
+# Filter inbox to one project, newest first (file read; works app-down)
 zcc inbox ls --project api --json | jq -r '.[] | "\(.id) \(.projectLabel)"'
 ```
 
-> When invoked **inside an agent terminal**, mutating live commands are refused
-> with exit `5` (see [`ZCC_SESSION_ID`](#zcc_session_id)). Design agent
-> automation around the read tier and `agent send`/`run` from the operator
-> shell, not from within a spawned agent.
+> When invoked **inside an agent terminal**, mutating commands are refused
+> with exit `5` (see [`ZCC_SESSION_ID`](#zcc_session_id)). Drive
+> `thread spawn` / `thread tell` from the operator shell, not from within a
+> spawned agent.
 
 ---
 
-*Grounded in the verified CLI source as of 2026-06-15. See
-[`cli-verification-2026-06-15.md`](./cli-verification-2026-06-15.md) for the
-verification report and [`../packages/cli/README.md`](../packages/cli/README.md)
-for the package readme.*
+Keep this page, the `zcc-cli` skill, and `zcc --help` in lockstep
+(`docs/cli-guide-and-skill.md`). Package notes:
+[`../packages/cli/README.md`](../packages/cli/README.md).

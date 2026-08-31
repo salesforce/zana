@@ -26,7 +26,17 @@ const h = vi.hoisted(() => {
     modules: [] as AppModule[],
     agentCounts: { active: 0, blocked: 0 },
     enabledSchedules: 0,
-    runningSchedules: 0
+    runningSchedules: 0,
+    navPanels: [] as Array<{
+      pluginId: string;
+      path: string;
+      id: string;
+      title: string;
+      icon: string;
+      generation: number;
+      component: () => null;
+      placement?: 'sidebar' | 'extensions';
+    }>
   };
 });
 
@@ -55,7 +65,8 @@ vi.mock('../../plugins/plugin-slots', () => ({
     return () => undefined;
   },
   listSidebarFooterActions: () => [],
-  listNavPanels: () => []
+  listNavPanels: () => h.navPanels,
+  listSidebarNavPanels: () => h.navPanels.filter((panel) => panel.placement !== 'extensions')
 }));
 
 import { Sidebar } from '../Sidebar.js';
@@ -207,6 +218,39 @@ describe('Sidebar structure and compact accessibility', () => {
     expect(markup.indexOf('data-sortable-nav-id="library-surface"')).toBeLessThan(
       markup.indexOf('data-testid="sidebar-projects"')
     );
+    h.modules = [];
+  });
+
+  it('keeps Plugins hub pages off the global rail', () => {
+    h.state.sidebarCollapsed = false;
+    h.modules = [
+      {
+        id: 'plugin-guide',
+        title: 'Plugin Guide',
+        icon: 'Puzzle',
+        panel: () => null
+      } as AppModule
+    ];
+    h.navPanels = [
+      {
+        pluginId: 'plugin-guide',
+        path: 'plugin-guide',
+        id: 'plugin-guide',
+        title: 'Plugin Guide',
+        icon: 'Puzzle',
+        placement: 'extensions',
+        generation: 1,
+        component: () => null
+      }
+    ];
+
+    const markup = renderSidebar();
+    expect(markup).not.toContain('data-testid="nav-plugin-guide/plugin-guide"');
+    expect(markup).not.toContain('data-testid="nav-plugin-guide"');
+    expect(markup).not.toContain('>Plugin Guide<');
+
+    h.navPanels = [];
+    h.modules = [];
   });
 
   it('keeps failed, settings-only, and project-only plugin modules off the rail', () => {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   HostBootstrapError,
   parseSshIdentity,
@@ -7,6 +7,21 @@ import {
   resolveRepairPlan,
   sshRemoteFromProject
 } from './host-bootstrap.js';
+
+afterEach(() => {
+  delete process.env.ZCC_APP_URL;
+});
+
+function ctxWithRelay(
+  url: string,
+  pairingRelay: { state: () => string; snapshot: () => unknown }
+) {
+  process.env.ZCC_APP_URL = url;
+  return {
+    config: { getConfig: () => ({}) },
+    pairingRelay
+  };
+}
 
 describe('host bootstrap helpers', () => {
   it('parses a confined SSH identity', () => {
@@ -62,10 +77,10 @@ describe('host bootstrap helpers', () => {
   });
 
   it('fails with relay_offline when a token is configured but the tunnel is down', () => {
-    const ctx = {
-      config: { getConfig: () => ({ publicAppUrl: 'https://zcc.herokuapp.com' }) },
-      pairingRelay: { state: () => 'offline' as const, snapshot: () => ({ state: 'offline' as const }) }
-    };
+    const ctx = ctxWithRelay('https://zcc.herokuapp.com', {
+      state: () => 'offline' as const,
+      snapshot: () => ({ state: 'offline' as const })
+    });
     try {
       requirePublicAppUrl(ctx as never);
       throw new Error('expected relay_offline');
@@ -76,42 +91,36 @@ describe('host bootstrap helpers', () => {
   });
 
   it('allows bootstrap against a public origin when the relay is unconfigured', () => {
-    const ctx = {
-      config: { getConfig: () => ({ publicAppUrl: 'https://box.tailnet.ts.net' }) },
-      pairingRelay: { state: () => 'unconfigured' as const, snapshot: () => ({ state: 'unconfigured' as const }) }
-    };
+    const ctx = ctxWithRelay('https://box.tailnet.ts.net', {
+      state: () => 'unconfigured' as const,
+      snapshot: () => ({ state: 'unconfigured' as const })
+    });
     expect(requirePublicAppUrl(ctx as never)).toBe('https://box.tailnet.ts.net');
   });
 
   it('prefixes the session origin when the relay is connected', () => {
-    const ctx = {
-      config: { getConfig: () => ({ publicAppUrl: 'https://zcc.herokuapp.com' }) },
-      pairingRelay: {
-        state: () => 'connected' as const,
-        snapshot: () => ({
-          state: 'connected' as const,
-          sessionId: 'zcrs_abcdefghijklmnopqr1234',
-          joinUntil: Date.now() + 60_000
-        })
-      }
-    };
+    const ctx = ctxWithRelay('https://zcc.herokuapp.com', {
+      state: () => 'connected' as const,
+      snapshot: () => ({
+        state: 'connected' as const,
+        sessionId: 'zcrs_abcdefghijklmnopqr1234',
+        joinUntil: Date.now() + 60_000
+      })
+    });
     expect(requirePublicAppUrl(ctx as never)).toBe(
       'https://zcc.herokuapp.com/t/zcrs_abcdefghijklmnopqr1234'
     );
   });
 
   it('fails with join_expired when the relay join window has closed', () => {
-    const ctx = {
-      config: { getConfig: () => ({ publicAppUrl: 'https://zcc.herokuapp.com' }) },
-      pairingRelay: {
-        state: () => 'connected' as const,
-        snapshot: () => ({
-          state: 'connected' as const,
-          sessionId: 'zcrs_abcdefghijklmnopqr1234',
-          joinUntil: Date.now() - 1
-        })
-      }
-    };
+    const ctx = ctxWithRelay('https://zcc.herokuapp.com', {
+      state: () => 'connected' as const,
+      snapshot: () => ({
+        state: 'connected' as const,
+        sessionId: 'zcrs_abcdefghijklmnopqr1234',
+        joinUntil: Date.now() - 1
+      })
+    });
     try {
       requirePublicAppUrl(ctx as never);
       throw new Error('expected join_expired');

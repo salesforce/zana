@@ -11,6 +11,7 @@ describe('plugin-apps HTTP surface', () => {
     expect(source).toContain("path === '/api/v1/plugin-apps/updates'");
     expect(source).toContain("routeParams(path, '/api/v1/plugin-apps/:id/update')");
     expect(source).toContain("routeParams(path, '/api/v1/plugin-apps/:id/remove')");
+    expect(source).toContain("routeParams(path, '/api/v1/plugin-apps/:id/reload')");
     expect(source).toContain("routeParams(path, '/api/v1/plugin-apps/:id/rpc')");
     expect(source).toContain("routeParams(path, '/api/v1/plugin-apps/:id/settings')");
   });

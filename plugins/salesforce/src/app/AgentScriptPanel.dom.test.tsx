@@ -145,6 +145,19 @@ describe('AgentScriptPanel', () => {
     expect(rpc).toHaveBeenCalledWith('salesforce', 'agentFiles.read', { path: 'force-app/Bot.agent' });
   });
 
+  it('shows a load error when the playground iframe fails', async () => {
+    const el = await mount();
+    const iframe = el.querySelector('iframe');
+    expect(iframe).toBeTruthy();
+    await act(async () => {
+      iframe?.dispatchEvent(new Event('error', { bubbles: true }));
+    });
+    expect(el.querySelector('[data-testid="salesforce-agent-script-playground-error"]')?.textContent).toMatch(
+      /Could not load the Agent Script playground/
+    );
+    expect(el.querySelector('iframe')).toBeNull();
+  });
+
   it('ignores playground messages from other origins', async () => {
     await mount();
     const calls = rpc.mock.calls.length;

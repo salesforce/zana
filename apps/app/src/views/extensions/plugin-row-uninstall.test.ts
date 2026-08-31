@@ -54,16 +54,16 @@ describe('uninstallHubRow', () => {
 
   it('uninstalls a leftover disk extension when there is no plugin snapshot', async () => {
     const host = api();
-    await uninstallHubRow(row({ entry: entry('zana') }), host);
-    expect(host.extensions.uninstall).toHaveBeenCalledWith('zana');
+    await uninstallHubRow(row({ entry: entry('sample-ext') }), host);
+    expect(host.extensions.uninstall).toHaveBeenCalledWith('sample-ext');
     expect(host.pluginApps.remove).not.toHaveBeenCalled();
   });
 
   it('removes both layers when a plugin and a leftover sidecar share an id', async () => {
     const host = api();
-    await uninstallHubRow(row({ plugin: plugin('zana'), entry: entry('zana') }), host);
-    expect(host.pluginApps.remove).toHaveBeenCalledWith('zana');
-    expect(host.extensions.uninstall).toHaveBeenCalledWith('zana');
+    await uninstallHubRow(row({ plugin: plugin('sample-ext'), entry: entry('sample-ext') }), host);
+    expect(host.pluginApps.remove).toHaveBeenCalledWith('sample-ext');
+    expect(host.extensions.uninstall).toHaveBeenCalledWith('sample-ext');
   });
 
   it('treats a missing leftover sidecar as success after the plugin is gone', async () => {

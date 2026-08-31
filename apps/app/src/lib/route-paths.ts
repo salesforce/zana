@@ -20,6 +20,8 @@ export const TOOLS_PLUGIN_BROWSE_ROUTE_PATH = '/extensions/plugins/browse';
 export const TOOLS_PLUGIN_DETAIL_ROUTE_PATH = '/extensions/plugins/:pluginId';
 export const TOOLS_SKILLS_ROUTE_PATH = '/extensions/skills';
 export const TOOLS_MCP_ROUTE_PATH = '/extensions/mcp';
+export const TOOLS_HUB_PAGE_ROOT_ROUTE_PATH = '/extensions/pages/:pluginId/:pageId';
+export const TOOLS_HUB_PAGE_ROUTE_PATH = '/extensions/pages/:pluginId/:pageId/*';
 
 export const PROJECT_ROUTE_PATH = '/projects/:projectId';
 export const PROJECT_SETTINGS_ROUTE_PATH = '/projects/:projectId/settings';
@@ -187,7 +189,7 @@ export function getPluginDetailRoutePath(pluginId: string): string {
 }
 
 export function getExtensionsTabRoutePath(
-  tab: 'marketplace' | 'installed' | 'skills' | 'mcp',
+  tab: 'marketplace' | 'installed' | 'skills' | 'mcp' | 'page',
   pluginId?: string | null
 ): string {
   switch (tab) {
@@ -199,7 +201,28 @@ export function getExtensionsTabRoutePath(
       return TOOLS_SKILLS_ROUTE_PATH;
     case 'mcp':
       return TOOLS_MCP_ROUTE_PATH;
+    case 'page':
+      return TOOLS_PLUGINS_ROUTE_PATH;
   }
+}
+
+export function getExtensionsHubPageRoutePath({
+  pluginId,
+  pageId,
+  subPath
+}: {
+  pluginId: string;
+  pageId: string;
+  subPath?: string;
+}): string {
+  const root = `/extensions/pages/${encodeURIComponent(pluginId)}/${encodeURIComponent(pageId)}`;
+  if (subPath === undefined || subPath === '') return root;
+  const encoded = subPath
+    .split('/')
+    .filter((segment) => segment.length > 0)
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+  return encoded.length > 0 ? `${root}/${encoded}` : root;
 }
 
 export function getPluginPanelRoutePath({
@@ -267,6 +290,8 @@ const baseRoutePatterns: readonly string[] = [
   TOOLS_PLUGIN_DETAIL_ROUTE_PATH,
   TOOLS_SKILLS_ROUTE_PATH,
   TOOLS_MCP_ROUTE_PATH,
+  TOOLS_HUB_PAGE_ROOT_ROUTE_PATH,
+  TOOLS_HUB_PAGE_ROUTE_PATH,
   PROJECT_ROUTE_PATH,
   PROJECT_SETTINGS_ROUTE_PATH,
   PROJECT_NEW_THREAD_ROUTE_PATH,

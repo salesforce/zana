@@ -1,9 +1,9 @@
 import { useSyncExternalStore } from 'react';
 import { Link } from 'react-router-dom';
 import { resolveIcon } from '../lib/resolveIcon.js';
-import { getPluginPanelRoutePath } from '../lib/route-paths.js';
 import { useRouteState } from '../hooks/useRouteState.js';
-import { listNavPanels, subscribePluginSlots } from './plugin-slots.js';
+import { hrefForPluginNavPanel } from './plugin-nav-href.js';
+import { listSidebarNavPanels, subscribePluginSlots } from './plugin-slots.js';
 import { PluginSlotBoundary } from './PluginSlotBoundary.js';
 
 export function pluginNavKey(pluginId: string, path: string): string {
@@ -11,14 +11,14 @@ export function pluginNavKey(pluginId: string, path: string): string {
 }
 
 export function PluginNavRows({ compact = false }: { compact?: boolean }) {
-  const panels = useSyncExternalStore(subscribePluginSlots, listNavPanels, listNavPanels);
+  const panels = useSyncExternalStore(subscribePluginSlots, listSidebarNavPanels, listSidebarNavPanels);
   const route = useRouteState();
   if (panels.length === 0) return null;
   return (
     <nav className="plugin-nav-rows" aria-label="Plugin panels" data-testid="plugin-nav-rows">
       {panels.map((panel) => {
         const path = panel.path ?? panel.id;
-        const to = getPluginPanelRoutePath({ pluginId: panel.pluginId, path });
+        const to = hrefForPluginNavPanel(panel.pluginId, path);
         const active =
           route.nav === panel.pluginId &&
           (route.pluginPanelPath === path || (!route.pluginPanelPath && path === panel.id));
@@ -48,7 +48,7 @@ export function PluginNavRows({ compact = false }: { compact?: boolean }) {
 }
 
 export function PluginNavListPane() {
-  const panels = useSyncExternalStore(subscribePluginSlots, listNavPanels, listNavPanels);
+  const panels = useSyncExternalStore(subscribePluginSlots, listSidebarNavPanels, listSidebarNavPanels);
   const route = useRouteState();
   const active = panels.find((panel) => {
     const path = panel.path ?? panel.id;

@@ -27,7 +27,7 @@ function DocsPager({ slug }: { slug: string }) {
   return (
     <nav className="docs-pager" aria-label="Pagination">
       {prev ? (
-        <Link href={`/docs/${prev.slug}/`} className="prev">
+        <Link href={`/docs/${prev.slug}/`} className="prev zcc-panel">
           <span className="dir">← Previous</span>
           <span className="ttl">{prev.title}</span>
         </Link>
@@ -35,7 +35,7 @@ function DocsPager({ slug }: { slug: string }) {
         <span />
       )}
       {next ? (
-        <Link href={`/docs/${next.slug}/`} className="next">
+        <Link href={`/docs/${next.slug}/`} className="next zcc-panel">
           <span className="dir">Next →</span>
           <span className="ttl">{next.title}</span>
         </Link>
@@ -82,9 +82,9 @@ function DocsNextStep({ slug }: { slug: string }) {
   const step = nextSteps[slug];
   if (!step) return null;
   return (
-    <aside className="docs-next-step" aria-label="Suggested next step">
+    <aside className="docs-next-step zcc-panel" aria-label="Suggested next step">
       <div><span>Suggested next step</span><h2>{step.title}</h2><p>{step.body}</p></div>
-      <Link className="btn btn-ghost" href={step.href}>{step.action} <span aria-hidden="true">→</span></Link>
+      <Link className="zcc-btn zcc-btn-ghost" href={step.href}>{step.action} <span aria-hidden="true">→</span></Link>
     </aside>
   );
 }

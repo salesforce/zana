@@ -4,7 +4,7 @@ import { isLoopbackHttpHost } from '../browser-bootstrap.js';
 import { headerValue } from './browser-request-guard.js';
 import type { IncomingMessage } from 'node:http';
 
-/** Repo-root one-line hostname file. Edit this when the public domain changes. */
+/** Repo-root one-line hostname file. Kept for operators; pairing no longer reads it. */
 export const PUBLIC_APP_URL_FILENAME = 'public-app-url';
 
 export function readPublicAppUrlFile(cwd?: string): string | undefined {
@@ -39,35 +39,44 @@ function parsePublicOrigin(raw: string | undefined): string | undefined {
   }
 }
 
+function compileTimeAppUrl(): string | undefined {
+  return typeof __ZCC_BUNDLED_APP_URL__ === 'string' ? __ZCC_BUNDLED_APP_URL__ : undefined;
+}
+
 /**
  * Public origin used for remote host-daemon join commands and Host-header
  * allowlisting on enroll/WS. Trailing slashes are stripped.
  *
- * Precedence: `ZCC_APP_URL` > Settings `publicAppUrl` > repo `public-app-url`.
+ * Precedence: runtime `ZCC_APP_URL` > compile-time bake (`electron-vite` main
+ * define from the same env). Settings `publicAppUrl` and the repo
+ * `public-app-url` file are not used.
  */
 export function resolvePublicAppUrl(input?: {
   env?: NodeJS.ProcessEnv;
+  bundledUrl?: string | null;
+  /** @deprecated Ignored — pairing does not read Settings. */
   configUrl?: string | null;
+  /** @deprecated Ignored — pairing does not read the repo file. */
   cwd?: string;
 }): string | undefined {
   const env = input?.env ?? process.env;
-  return parsePublicOrigin(env.ZCC_APP_URL)
-    ?? parsePublicOrigin(input?.configUrl ?? undefined)
-    ?? parsePublicOrigin(readPublicAppUrlFile(input?.cwd));
+  const bundled = input && 'bundledUrl' in input
+    ? input.bundledUrl ?? undefined
+    : compileTimeAppUrl();
+  return parsePublicOrigin(env.ZCC_APP_URL) ?? parsePublicOrigin(bundled);
 }
 
-/** Renderer-facing config: fill `publicAppUrl` from env / Settings / the repo file. */
-export function presentAppConfig<T extends { publicAppUrl?: string }>(
+/** Renderer-facing config: public origin from env/bake only; never the relay token. */
+export function presentAppConfig<T extends { publicAppUrl?: string; relayToken?: string }>(
   config: T,
-  input?: { env?: NodeJS.ProcessEnv; cwd?: string }
+  input?: { env?: NodeJS.ProcessEnv; bundledUrl?: string | null }
 ): T {
   const publicAppUrl = resolvePublicAppUrl({
     env: input?.env,
-    configUrl: config.publicAppUrl,
-    cwd: input?.cwd
+    bundledUrl: input?.bundledUrl
   });
-  if (!publicAppUrl || publicAppUrl === config.publicAppUrl) return config;
-  return { ...config, publicAppUrl };
+  if (publicAppUrl === config.publicAppUrl && config.relayToken === undefined) return config;
+  return { ...config, publicAppUrl, relayToken: undefined };
 }
 
 export function publicOriginHost(publicAppUrl: string | undefined): string | undefined {

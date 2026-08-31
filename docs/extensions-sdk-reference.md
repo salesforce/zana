@@ -25,16 +25,27 @@ server process and must not be given host-daemon tokens.
 
 ## App — `definePluginApp`
 
-v1 slots:
+Slots (also mapped in the in-app Plugin Guide):
 
-- `navPanel` — sidebar entry + full view
-- `settingsSection` — plugin settings in the Plugins hub / plugin detail
+- `navPanel` — sidebar entry + full view, or `placement: "extensions"` under Plugins
+- `settingsSection` — plugin settings on the Plugins hub detail (Configure)
 - `homepageSection` — Home dashboard
 - `projectTab` — per-project tab (`global: false` hides the sidebar entry)
+- `experimental_projectMenuAction` — project row overflow or workspace organize menu
 - `sidebarFooterAction` — host-rendered footer icon
+- `pendingInteraction` / `threadPanelAction` / `experimental_newThreadPanelAction` /
+  `experimental_threadList` / `experimental_threadHeaderAction` — thread chrome
+- `fileOpener` / `messageDirective` / `messageAction` / `experimental_timelineRenderer`
+- `experimental_agentCardAction` / `experimental_agentsBoardAction`
+- `commandPaletteAction` / `experimental_providerIcon`
+- `composer.customize` / `contentScripts.register`
+
+Headless (no pixels): `zcc.skills` / `contributeSkills`, `zcc.cli`, `zcc.mcpServers`,
+`zcc.settings.define`, `zcc.background`.
 
 Registrations replace wholesale per plugin id. Each carries a `generation` used
-as the React remount key. Wrap UI in `PluginSlotBoundary`.
+as the React remount key. Wrap UI in `PluginSlotBoundary`. Live-reload with
+`zcc plugin dev`.
 
 ## Manifest
 

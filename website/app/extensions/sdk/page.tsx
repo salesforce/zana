@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
+import { AuroraGrid } from '../../components/AuroraGrid';
 
 export const metadata: Metadata = {
   title: 'Plugin SDK',
@@ -16,75 +17,86 @@ const SDK_LAYERS = [
 
 export default function ExtensionSdkPage() {
   return (
-    <>
-      <section className="guide-hero">
+    <div className="zcc-page aurora-host">
+      <AuroraGrid beams={false} />
+      <section className="hub-hero" style={{ paddingBottom: 8 }}>
         <div className="wrap">
-          <div className="guide-hero-copy" data-reveal>
-            <span className="eyebrow">SDK overview</span>
-            <h1>Build against a stable host.<br /><span className="grad">Not app internals.</span></h1>
+          <div data-reveal>
+            <span className="zcc-kicker">SDK overview</span>
+            <h1>Build against a stable host. Not app internals.</h1>
             <p>The plugin SDK is the public contract between your TypeScript package and Zana. After a loud full-trust confirm, plugins load in-process on the server and register UI slots in the app.</p>
-            <div className="cta"><Link className="btn btn-primary btn-lg" href="/extensions/getting-started/">Start with a panel</Link><Link className="btn btn-ghost btn-lg" href="/docs/extensions-sdk-reference/">Open full SDK reference</Link></div>
-          </div>
-        </div>
-      </section>
-
-      <section className="sdk-layers-section">
-        <div className="wrap">
-          <div className="section-head center" data-reveal><span className="eyebrow">The contract</span><h2>Four layers, each with a clear responsibility.</h2></div>
-          <div className="sdk-layers" data-reveal-stagger>{SDK_LAYERS.map(([title, body], index) => <article key={title}><span>0{index + 1}</span><h3>{title}</h3><p>{body}</p></article>)}</div>
-        </div>
-      </section>
-
-      <section id="permissions" style={{ paddingTop: 0 }}>
-        <div className="wrap">
-          <div className="product-proof solo" data-reveal>
-            <div className="product-proof-copy">
-              <span className="eyebrow">Trust at install</span>
-              <h2>Full-trust in-process. Confirm it out loud.</h2>
-              <p>Plugins are not sandboxed Electron guests. The control is install/enable, exact version pinning, engines.zcc, and a loud confirm that lists skills, MCP, and extra the grant would add.</p>
-              <ul>
-                <li>Official catalogs install offline; community catalogs are npm/git pointers only</li>
-                <li>A failed reload keeps the last good generation running</li>
-                <li>Host-daemon tokens and signing keys never reach a plugin</li>
-              </ul>
-              <p style={{ marginTop: 20 }}><Link className="text-link" href="/docs/extensions-authoring/">Read the authoring guide <span aria-hidden="true">→</span></Link></p>
+            <div className="zcc-actions">
+              <Link className="zcc-btn zcc-btn-primary" href="/extensions/getting-started/">Start with a panel</Link>
+              <Link className="zcc-btn zcc-btn-ghost" href="/docs/extensions-sdk-reference/">Open full SDK reference</Link>
             </div>
           </div>
         </div>
       </section>
 
-      <section style={{ paddingTop: 0 }}>
+      <section style={{ paddingTop: 16 }}>
         <div className="wrap">
-          <div className="product-proof solo" data-reveal>
-            <div className="product-proof-copy">
-              <span className="eyebrow">Use the host surface</span>
-              <h2>Panels receive what they need from Zana.</h2>
-              <p>App entries register slots instead of importing core modules. That keeps plugins aligned with the host lifecycle and prevents fragile imports of implementation details.</p>
-              <ul>
-                <li>Register nav panels, homepage sections, and settings with definePluginApp</li>
-                <li>Use storage, RPC, realtime, and schedules through the SDK</li>
-                <li>Keep renderer input untrusted; the server still confines paths</li>
-              </ul>
-            </div>
+          <div className="section-head" data-reveal>
+            <span className="zcc-kicker">The contract</span>
+            <h2>Four layers, each with a clear responsibility.</h2>
+          </div>
+          <div className="sdk-layers" data-reveal-stagger>
+            {SDK_LAYERS.map(([title, body], index) => (
+              <article className="zcc-panel" key={title}>
+                <span>0{index + 1}</span>
+                <h3>{title}</h3>
+                <p>{body}</p>
+              </article>
+            ))}
           </div>
         </div>
       </section>
 
-      <section className="guide-next-section">
+      <section id="permissions" style={{ paddingTop: 8 }}>
         <div className="wrap">
-          <div className="guide-next-card" data-reveal>
+          <div className="proof" data-reveal>
+            <span className="zcc-kicker">Trust at install</span>
+            <h2>Full-trust in-process. Confirm it out loud.</h2>
+            <p>Plugins are not sandboxed Electron guests. The control is install/enable, exact version pinning, engines.zcc, and a loud confirm that lists skills, MCP, and extra the grant would add.</p>
+            <ul>
+              <li>Official catalogs install offline; community catalogs are npm/git pointers only</li>
+              <li>A failed reload keeps the last good generation running</li>
+              <li>Host-daemon tokens and signing keys never reach a plugin</li>
+            </ul>
+            <p style={{ marginTop: 16 }}><Link className="text-link" href="/docs/extensions-authoring/">Read the authoring guide →</Link></p>
+          </div>
+        </div>
+      </section>
+
+      <section style={{ paddingTop: 8 }}>
+        <div className="wrap">
+          <div className="proof" data-reveal>
+            <span className="zcc-kicker">Use the host surface</span>
+            <h2>Panels receive what they need from Zana.</h2>
+            <p>App entries register slots instead of importing core modules. That keeps plugins aligned with the host lifecycle and prevents fragile imports of implementation details.</p>
+            <ul>
+              <li>Register nav panels, homepage sections, and settings with definePluginApp</li>
+              <li>Use storage, RPC, realtime, and schedules through the SDK</li>
+              <li>Keep renderer input untrusted; the server still confines paths</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section style={{ paddingTop: 8, paddingBottom: 64 }}>
+        <div className="wrap">
+          <div className="next-card zcc-panel" data-reveal>
             <div>
-              <span className="eyebrow">Go deeper</span>
+              <span className="zcc-kicker">Go deeper</span>
               <h2>The reference contains the exact types, events, and lifecycle behavior.</h2>
               <p>Use it as the source of truth while implementing, and return to these guides when you need to orient a new contributor.</p>
             </div>
-            <div className="guide-next-actions">
-              <Link className="btn btn-primary" href="/docs/extensions-sdk-reference/">Read SDK reference</Link>
-              <Link className="btn btn-ghost" href="/docs/extensions-authoring/">Read authoring guide</Link>
+            <div className="next-actions">
+              <Link className="zcc-btn zcc-btn-primary" href="/docs/extensions-sdk-reference/">Read SDK reference</Link>
+              <Link className="zcc-btn zcc-btn-ghost" href="/docs/extensions-authoring/">Read authoring guide</Link>
             </div>
           </div>
         </div>
       </section>
-    </>
+    </div>
   );
 }

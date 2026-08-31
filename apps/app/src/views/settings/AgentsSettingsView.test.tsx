@@ -43,4 +43,40 @@ describe('AgentsTab worktree isolation', () => {
     expect(html).toContain('Agent heap limit (MB)');
     expect(html).not.toContain('Performance &amp; limits');
   });
+
+  it('offers a global toggle to include scheduled agents in Agent View', () => {
+    const html = renderToStaticMarkup(
+      <AgentsTab
+        config={config}
+        onConfigDraft={vi.fn()}
+        onUpdate={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+    expect(html).toContain('settings-anchor-scheduled');
+    expect(html).toContain('>Scheduled<');
+    expect(html).toContain('Include scheduled agents in Agent View');
+    expect(html).toContain('aria-label="Include scheduled agents in Agent View"');
+    expect(html).toContain('Scheduled column');
+  });
+
+  it('groups CLI Agent, Overseer, and Auto mode after general settings, Auto mode last', () => {
+    const html = renderToStaticMarkup(
+      <AgentsTab
+        config={config}
+        onConfigDraft={vi.fn()}
+        onUpdate={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+    const worktrees = html.indexOf('settings-anchor-git-worktrees');
+    const idle = html.indexOf('settings-anchor-auto-close-idle');
+    const cli = html.indexOf('settings-anchor-legacy-agent');
+    const overseer = html.indexOf('settings-anchor-overseer');
+    const autoMode = html.indexOf('settings-anchor-auto-mode');
+    expect(worktrees).toBeGreaterThan(-1);
+    expect(idle).toBeGreaterThan(worktrees);
+    expect(cli).toBeGreaterThan(idle);
+    expect(overseer).toBeGreaterThan(cli);
+    expect(autoMode).toBeGreaterThan(overseer);
+    expect(html.lastIndexOf('<h3>')).toBe(html.indexOf('<h3>Auto mode</h3>'));
+  });
 });

@@ -4,7 +4,7 @@ import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ProviderCliStatus } from '@zana-ai/zcc-contracts/host-rpc';
 import { MachineCard, MachineCliInventory } from './MachineCard.js';
-import { MachinesTab, RelayStatusLine } from './MachinesSettingsView.js';
+import { MachinesTab } from './MachinesSettingsView.js';
 
 const hostsState: { current: Host[] } = { current: [] };
 const projectsState: { current: Array<{ hostId?: string }> } = { current: [] };
@@ -93,7 +93,7 @@ function cli(overrides: Partial<ProviderCliStatus> = {}): ProviderCliStatus {
 }
 
 describe('MachinesTab', () => {
-  it('renders the public origin field and add-machine control', () => {
+  it('renders add-machine without public origin or relay fields', () => {
     hostsState.current = [];
     projectsState.current = [];
     const html = renderToStaticMarkup(
@@ -103,29 +103,13 @@ describe('MachinesTab', () => {
         onUpdate={vi.fn().mockResolvedValue(undefined)}
       />
     );
-    expect(html).toContain('Public app URL');
-    expect(html).toContain('Relay token');
+    expect(html).not.toContain('Public app URL');
+    expect(html).not.toContain('Relay token');
+    expect(html).not.toContain('data-testid="relay-status"');
     expect(html).toContain('Add a machine');
-    expect(html).toContain('https://box.tailnet.ts.net');
     expect(html).toContain('data-testid="machines-list"');
-    expect(html).toContain('data-testid="relay-status"');
     expect(html).not.toContain('data-testid="machines-empty"');
     expect(html).toContain('Connected machines follow the server version automatically');
-    expect(html).toContain('several desktops may share one token');
-    expect(html).not.toContain('steals the tunnel');
-  });
-
-  it('treats a blank public app URL as empty', () => {
-    hostsState.current = [];
-    const html = renderToStaticMarkup(
-      <MachinesTab
-        config={{ ...config, publicAppUrl: undefined }}
-        onConfigDraft={vi.fn()}
-        onUpdate={vi.fn().mockResolvedValue(undefined)}
-      />
-    );
-    expect(html).toContain('placeholder="https://your-app.herokuapp.com"');
-    expect(html).toContain('value=""');
   });
 
   it('renders paired machines as cards', () => {
@@ -161,14 +145,6 @@ describe('MachinesTab', () => {
     expect(html).toContain('limited-pony');
     expect(html).toContain('Reconnect');
     expect(html).toContain('data-testid="machine-reconnect-h1"');
-  });
-});
-
-describe('RelayStatusLine', () => {
-  it('renders connected and offline as status, not a layout preference', () => {
-    expect(renderToStaticMarkup(<RelayStatusLine state="connected" />)).toContain('Connected');
-    expect(renderToStaticMarkup(<RelayStatusLine state="offline" />)).toContain('Offline');
-    expect(renderToStaticMarkup(<RelayStatusLine state="unconfigured" />)).toContain('Not configured');
   });
 });
 

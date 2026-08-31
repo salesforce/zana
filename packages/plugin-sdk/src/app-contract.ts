@@ -19,6 +19,11 @@ export interface PluginNavPanelRegistration extends PluginSlotBase {
   title: string;
   icon: string;
   path?: string;
+  /**
+   * `sidebar` (default) is a global rail row. `extensions` lists the page
+   * under Plugins instead of on the main sidebar.
+   */
+  placement?: 'sidebar' | 'extensions';
   component: ComponentType<PluginNavPanelProps>;
   experimental_sidebarAccessory?: ComponentType;
   headerContent?: ComponentType<PluginNavPanelProps>;
@@ -41,6 +46,18 @@ export interface PluginProjectTabRegistration extends PluginSlotBase {
   order?: number;
   global?: boolean;
   component: ComponentType<{ pluginId: string; projectId: string }>;
+}
+
+export interface PluginProjectMenuActionContext {
+  projectId: string | null;
+}
+
+export interface PluginProjectMenuActionRegistration extends PluginSlotBase {
+  title: string;
+  icon?: string;
+  /** `project` = row overflow; `workspace` = list header organize menu */
+  placement: 'project' | 'workspace';
+  run: (ctx: PluginProjectMenuActionContext) => void | Promise<void>;
 }
 
 export interface PluginSidebarFooterActionContext {
@@ -204,6 +221,31 @@ export interface PluginMessageActionRegistration extends PluginSlotBase {
   title: string;
   icon?: string;
   run: (context: PluginMessageActionContext) => void | Promise<void>;
+}
+
+/** Context for a right-click item on an Agents board card. */
+export interface PluginAgentCardActionContext {
+  sessionId: string;
+  projectId: string;
+}
+
+export interface PluginAgentCardActionRegistration extends PluginSlotBase {
+  title: string;
+  icon?: string;
+  isAvailable?(context: PluginAgentCardActionContext): boolean;
+  run(context: PluginAgentCardActionContext): void | Promise<void>;
+}
+
+/** Context for a toolbar control on the global or project Agents board. */
+export interface PluginAgentsBoardActionContext {
+  /** `null` on the cross-project Agents nav. */
+  projectId: string | null;
+}
+
+export interface PluginAgentsBoardActionRegistration extends PluginSlotBase {
+  title: string;
+  icon?: string;
+  run(context: PluginAgentsBoardActionContext): void | Promise<void>;
 }
 
 export type PluginTimelineRowStatus = 'pending' | 'completed' | 'error' | 'interrupted';
@@ -382,6 +424,9 @@ export interface PluginAppSlots {
   settingsSection(registration: Omit<PluginSettingsSectionRegistration, 'generation' | 'pluginId'>): void;
   homepageSection(registration: Omit<PluginHomepageSectionRegistration, 'generation' | 'pluginId'>): void;
   projectTab(registration: Omit<PluginProjectTabRegistration, 'generation' | 'pluginId'>): void;
+  experimental_projectMenuAction(
+    registration: Omit<PluginProjectMenuActionRegistration, 'generation' | 'pluginId'>
+  ): void;
   sidebarFooterAction(registration: Omit<PluginSidebarFooterActionRegistration, 'generation' | 'pluginId'>): void;
   pendingInteraction(registration: Omit<PluginPendingInteractionRegistration, 'generation' | 'pluginId'>): void;
   threadPanelAction(registration: Omit<PluginThreadPanelActionRegistration, 'generation' | 'pluginId'>): void;
@@ -395,6 +440,12 @@ export interface PluginAppSlots {
   fileOpener(registration: Omit<PluginFileOpenerRegistration, 'generation' | 'pluginId'>): void;
   messageDirective(registration: Omit<PluginMessageDirectiveRegistration, 'generation' | 'pluginId'>): void;
   messageAction(registration: Omit<PluginMessageActionRegistration, 'generation' | 'pluginId'>): void;
+  experimental_agentCardAction(
+    registration: Omit<PluginAgentCardActionRegistration, 'generation' | 'pluginId'>
+  ): void;
+  experimental_agentsBoardAction(
+    registration: Omit<PluginAgentsBoardActionRegistration, 'generation' | 'pluginId'>
+  ): void;
   experimental_timelineRenderer(
     registration: Omit<PluginTimelineRendererRegistration, 'generation' | 'pluginId' | 'id'>
   ): void;
@@ -424,6 +475,7 @@ export interface PluginRegistrationSet {
   settingsSections: PluginSettingsSectionRegistration[];
   homepageSections: PluginHomepageSectionRegistration[];
   projectTabs: PluginProjectTabRegistration[];
+  projectMenuActions: PluginProjectMenuActionRegistration[];
   sidebarFooterActions: PluginSidebarFooterActionRegistration[];
   pendingInteractions: PluginPendingInteractionRegistration[];
   threadPanelActions: PluginThreadPanelActionRegistration[];
@@ -433,6 +485,8 @@ export interface PluginRegistrationSet {
   fileOpeners: PluginFileOpenerRegistration[];
   messageDirectives: PluginMessageDirectiveRegistration[];
   messageActions: PluginMessageActionRegistration[];
+  agentCardActions: PluginAgentCardActionRegistration[];
+  agentsBoardActions: PluginAgentsBoardActionRegistration[];
   timelineRenderers: PluginTimelineRendererRegistration[];
   commandPaletteActions: PluginCommandPaletteActionRegistration[];
   providerIcons: PluginProviderIconRegistration[];
@@ -527,6 +581,7 @@ export function emptyRegistrationSet(pluginId: string, generation: number): Plug
     settingsSections: [],
     homepageSections: [],
     projectTabs: [],
+    projectMenuActions: [],
     sidebarFooterActions: [],
     pendingInteractions: [],
     threadPanelActions: [],
@@ -536,6 +591,8 @@ export function emptyRegistrationSet(pluginId: string, generation: number): Plug
     fileOpeners: [],
     messageDirectives: [],
     messageActions: [],
+    agentCardActions: [],
+    agentsBoardActions: [],
     timelineRenderers: [],
     commandPaletteActions: [],
     providerIcons: [],
@@ -601,6 +658,7 @@ export function collectPluginApp(
     settingsSection: new Set<string>(),
     navPanel: new Set<string>(),
     projectTab: new Set<string>(),
+    projectMenuAction: new Set<string>(),
     threadPanelAction: new Set<string>(),
     newThreadPanelAction: new Set<string>(),
     composerCustomization: new Set<string>(),
@@ -611,6 +669,8 @@ export function collectPluginApp(
     fileOpener: new Set<string>(),
     messageDirective: new Set<string>(),
     messageAction: new Set<string>(),
+    agentCardAction: new Set<string>(),
+    agentsBoardAction: new Set<string>(),
     timelineRenderer: new Set<string>(),
     commandPaletteAction: new Set<string>(),
     providerIcon: new Set<string>(),
@@ -665,12 +725,16 @@ export function collectPluginApp(
         ) {
           throw new Error(`${kind}: "experimental_sidebarAccessory" must be a React component function when set`);
         }
+        if (registration.placement !== undefined && registration.placement !== 'sidebar' && registration.placement !== 'extensions') {
+          throw new Error(`${kind}: "placement" must be "sidebar" or "extensions"`);
+        }
         set.navPanels.push(
           stamp({
             id,
             title: requireNonEmptyString(kind, 'title', registration.title),
             icon: requireNonEmptyString(kind, 'icon', registration.icon),
             path,
+            ...(registration.placement ? { placement: registration.placement } : {}),
             component: requireComponent(kind, 'component', registration.component),
             ...(registration.experimental_sidebarAccessory
               ? { experimental_sidebarAccessory: registration.experimental_sidebarAccessory }
@@ -684,6 +748,28 @@ export function collectPluginApp(
         const id = requireSlotId(kind, registration.id);
         requireUniqueId(kind, seen.projectTab, id);
         set.projectTabs.push(stamp(registration));
+      },
+      experimental_projectMenuAction: (registration) => {
+        const kind = 'slots.experimental_projectMenuAction';
+        const id = requireSlotId(kind, registration.id);
+        requireUniqueId(kind, seen.projectMenuAction, id);
+        if (registration.placement !== 'project' && registration.placement !== 'workspace') {
+          throw new Error(`${kind}: "placement" must be "project" or "workspace"`);
+        }
+        if (typeof registration.run !== 'function') {
+          throw new Error(`${kind}: "run" must be a function`);
+        }
+        set.projectMenuActions.push(
+          stamp({
+            id,
+            title: requireNonEmptyString(kind, 'title', registration.title),
+            ...(registration.icon !== undefined
+              ? { icon: requireNonEmptyString(kind, 'icon', registration.icon) }
+              : {}),
+            placement: registration.placement,
+            run: registration.run
+          })
+        );
       },
       sidebarFooterAction: (registration) => {
         const kind = 'slots.sidebarFooterAction';
@@ -835,6 +921,46 @@ export function collectPluginApp(
           throw new Error(`${kind}: "run" must be a function`);
         }
         set.messageActions.push(
+          stamp({
+            id,
+            title: requireNonEmptyString(kind, 'title', registration.title),
+            ...(registration.icon !== undefined
+              ? { icon: requireNonEmptyString(kind, 'icon', registration.icon) }
+              : {}),
+            run: registration.run
+          })
+        );
+      },
+      experimental_agentCardAction: (registration) => {
+        const kind = 'slots.experimental_agentCardAction';
+        const id = requireSlotId(kind, registration.id);
+        requireUniqueId(kind, seen.agentCardAction, id);
+        if (typeof registration.run !== 'function') {
+          throw new Error(`${kind}: "run" must be a function`);
+        }
+        if (registration.isAvailable !== undefined && typeof registration.isAvailable !== 'function') {
+          throw new Error(`${kind}: "isAvailable" must be a function when set`);
+        }
+        set.agentCardActions.push(
+          stamp({
+            id,
+            title: requireNonEmptyString(kind, 'title', registration.title),
+            ...(registration.icon !== undefined
+              ? { icon: requireNonEmptyString(kind, 'icon', registration.icon) }
+              : {}),
+            ...(registration.isAvailable !== undefined ? { isAvailable: registration.isAvailable } : {}),
+            run: registration.run
+          })
+        );
+      },
+      experimental_agentsBoardAction: (registration) => {
+        const kind = 'slots.experimental_agentsBoardAction';
+        const id = requireSlotId(kind, registration.id);
+        requireUniqueId(kind, seen.agentsBoardAction, id);
+        if (typeof registration.run !== 'function') {
+          throw new Error(`${kind}: "run" must be a function`);
+        }
+        set.agentsBoardActions.push(
           stamp({
             id,
             title: requireNonEmptyString(kind, 'title', registration.title),

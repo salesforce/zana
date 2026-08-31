@@ -339,6 +339,30 @@ export interface CcApi {
      * is the fallback when that process is not running.
      */
     relaunchLocal(): Promise<{ ok: true } | { ok: false; message: string }>;
+    /**
+     * Laptop-side SSH reverse-tunnel pairing PTY. Main owns argv; the renderer
+     * only supplies a sanitized host plus the join tokens it already minted.
+     */
+    pairing: {
+      start(req: {
+        sshHost: string;
+        joinCode: string;
+        hostId: string;
+        cols?: number;
+        rows?: number;
+      }): Promise<{ ok: true } | { ok: false; message: string }>;
+      write(data: string): Promise<void>;
+      resize(cols: number, rows: number): Promise<void>;
+      stop(): Promise<void>;
+      status(): Promise<{
+        running: boolean;
+        sshHost: string | null;
+        backlog: string;
+        exitCode: number | null;
+      }>;
+      onData(cb: (data: string) => void): () => void;
+      onExit(cb: (code: number) => void): () => void;
+    };
   };
   /**
    * Outbound pairing-relay tunnel to the public origin (Heroku front door).
@@ -1334,6 +1358,7 @@ export interface CcApi {
     }>>;
     applyUpdate(id: string): Promise<Result<true>>;
     remove(id: string): Promise<Result<true>>;
+    reload(id: string): Promise<Result<true>>;
   };
   /**
    * Runtime extensions discovered under `~/.zcc/extensions/<id>/`.

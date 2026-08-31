@@ -1,6 +1,9 @@
 # Zana Command Center
 
 <p align="center">
+  <a href="https://zcc-7808c5bc8f3d.herokuapp.com/">
+    <img alt="Website and docs" src="https://img.shields.io/badge/Website-zcc--7808c5bc8f3d.herokuapp.com-2f81f7?style=for-the-badge">
+  </a>
   <a href="https://github.com/salesforce/zana/releases/latest">
     <img alt="Download the latest Zana release" src="https://img.shields.io/badge/Download-Latest_Release-2ea44f?style=for-the-badge">
   </a>
@@ -28,6 +31,12 @@ ways to operate the same workspace.
 </p>
 
 ## Use Zana
+
+### Website
+
+Docs, download, plugin marketplace, and pairing live on the public site:
+
+**[https://zcc-7808c5bc8f3d.herokuapp.com/](https://zcc-7808c5bc8f3d.herokuapp.com/)**
 
 ### Download the desktop app
 
@@ -142,6 +151,7 @@ environments it already uses.
 
 ## Further Reading
 
+- [Public website](https://zcc-7808c5bc8f3d.herokuapp.com/) — docs, download, marketplace.
 - [Getting started](docs/getting-started.md) for the first project-to-agent loop.
 - [Using Zana](docs/using-zana.md) for the day-to-day Inbox, Agents, Teams, and Scheduler workflows.
 - [Plugin authoring](docs/extensions-authoring.md) for `package.json` `zcc`, `definePluginApp`, and `ZccPluginApi`.

@@ -1825,6 +1825,22 @@ export async function handleProductHttp(
       }
       return true;
     }
+    const pluginAppReload = routeParams(path, '/api/v1/plugin-apps/:id/reload');
+    if (pluginAppReload && method === 'POST') {
+      if (!ctx.plugins) {
+        sendJson(response, 503, { error: 'plugin host is unavailable' });
+        return true;
+      }
+      try {
+        await ctx.plugins.reload(pluginAppReload.id);
+        sendJson(response, 200, { ok: true as const, value: true as const });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const notFound = /not installed/i.test(message);
+        sendJson(response, notFound ? 404 : 400, { error: message });
+      }
+      return true;
+    }
     const pluginAppRpc = routeParams(path, '/api/v1/plugin-apps/:id/rpc');
     if (pluginAppRpc && method === 'POST') {
       await handlePluginAppRpc(request, response, ctx, pluginAppRpc.id);

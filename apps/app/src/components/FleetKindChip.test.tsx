@@ -12,5 +12,8 @@ describe('FleetKindChip', () => {
     expect(agent).toContain('data-kind="agent"');
     expect(agent).toContain('CLI Agent');
     expect(agent).not.toContain('Thread');
+    const schedule = renderToStaticMarkup(<FleetKindChip kind="schedule" />);
+    expect(schedule).toContain('data-kind="schedule"');
+    expect(schedule).toContain('Schedule');
   });
 });

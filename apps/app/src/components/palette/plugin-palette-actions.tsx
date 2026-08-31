@@ -2,7 +2,7 @@ import type { PluginCommandPaletteActionRegistration } from '@zana-ai/zcc-plugin
 import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
 import { Puzzle } from 'lucide-react';
 import { appNavigate } from '../../lib/app-navigate.js';
-import { getPluginPanelRoutePath } from '../../lib/route-paths.js';
+import { hrefForPluginNavPanel } from '../../plugins/plugin-nav-href.js';
 import { openPluginThreadPanel } from '../../plugins/plugin-thread-panel.js';
 import type { PaletteItem } from './buildItems.js';
 
@@ -34,7 +34,7 @@ export function buildPluginPaletteItems(
           params: options.params ?? null
         }),
       toPluginPanel: (path: string, options?: { subPath?: string; replace?: boolean }) =>
-        appNavigate(getPluginPanelRoutePath({ pluginId: slot.pluginId, path, subPath: options?.subPath }), {
+        appNavigate(hrefForPluginNavPanel(slot.pluginId, path, options?.subPath), {
           replace: options?.replace
         })
     };

@@ -12,6 +12,7 @@ import {
   sanitizeSshHost,
   sshHostOptionsFromProjects,
   sshHostsFromProjects,
+  sshPairingArgv,
   sshPairingCommand
 } from './machine-pairing.js';
 
@@ -69,6 +70,13 @@ describe('machine pairing command', () => {
   });
 
   it('builds an SSH reverse-tunnel command for loopback pairing', () => {
+    const argv = sshPairingArgv({
+      sshHost: 'limited-pony',
+      localListenPort: 8780,
+      joinCode: 'zcde_abc',
+      hostId: '028c8627-a6d8-4c62-964e-8f6b35cb2335'
+    });
+    expect(argv?.command).toBe('ssh');
     expect(sshPairingCommand({
       sshHost: 'limited-pony',
       localServerUrl: 'http://127.0.0.1:8780',

@@ -22,3 +22,17 @@ export function playgroundHint(hasStatus: boolean, dxProject: boolean | undefine
   }
   return null;
 }
+
+export const PLAYGROUND_READY_MS = 12_000;
+
+export const PLAYGROUND_LOAD_ERROR =
+  'Could not load the Agent Script playground. Rebuild the Salesforce plugin (`pnpm --dir plugins/salesforce run build`) or reinstall it.';
+
+export function shouldShowPlaygroundFailure(args: {
+  ready: boolean;
+  iframeError: boolean;
+  timedOut: boolean;
+}): boolean {
+  if (args.ready) return false;
+  return args.iframeError || args.timedOut;
+}

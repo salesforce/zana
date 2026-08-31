@@ -890,6 +890,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.agentListNeedsYouFromTriage === 'boolean') {
     normalized.agentListNeedsYouFromTriage = input.agentListNeedsYouFromTriage;
   }
+  if (typeof input.includeScheduledAgentsInAgentView === 'boolean') {
+    normalized.includeScheduledAgentsInAgentView = input.includeScheduledAgentsInAgentView;
+  }
   if (typeof input.followupsFromIdle === 'boolean') {
     normalized.followupsFromIdle = input.followupsFromIdle;
   }

@@ -48,6 +48,9 @@ describe('AgentsBoard', () => {
     expect(board).toContain('threadIdFromPath');
     expect(board).toContain('setCloseIdleTarget(reclaimableAgents)');
     expect(board).toContain('<AgentMonitor cards={visibleFleet}');
+    expect(board).toContain('schedulesForAgentView');
+    expect(board).toContain('revealSchedule(item.task.id)');
+    expect(board).toContain('item.kind === \'schedule\'');
   });
 });
 
@@ -66,14 +69,15 @@ describe('AgentsBoard compact chrome contract', () => {
     expect(board).not.toContain('item live');
     expect(board).not.toContain('agents-board-legacy');
     expect(board).not.toContain('getNewThreadRoutePath');
-    expect(board).toContain('Close ${reclaimableAgents.length} idle agents');
+    expect(board).toContain('listAgentsBoardActions');
+    expect(board).toContain('agents-board-plugin-action');
   });
 
   it('uses a named board container to compact the toolbar then wrap the filter', () => {
     expect(css).toContain('container-name: agents-board;');
     expect(css).toContain('@container agents-board (max-width: 820px)');
     expect(css).toContain('.agents-board-btn-label {\n    display: none;');
-    expect(css).toContain('.agents-board-new,\n  .agents-board-close-idle');
+    expect(css).toContain('.agents-board-new,\n  .agents-board-close-idle,\n  .agents-board-plugin-action');
     expect(css).toContain('@container agents-board (max-width: 560px)');
     expect(css).toContain('.agents-board-filter {\n    flex: 1 1 100%;');
     expect(css).not.toContain('.agents-board-count-extra');

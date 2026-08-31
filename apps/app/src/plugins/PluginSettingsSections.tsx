@@ -3,9 +3,8 @@ import { listSettingsSections, subscribePluginSlots } from './plugin-slots.js';
 import { PluginSlotBoundary } from './PluginSlotBoundary.js';
 
 /**
- * Plugin `settingsSection` slot mounts on that plugin's detail page.
- * Slot UIs replace the host `settings.define` form — ExtensionDetail skips
- * PluginDefinedSettings when this component has sections for the plugin.
+ * Plugin `settingsSection` slot mounts on that plugin's hub Configure page
+ * alongside the host `settings.define` form.
  */
 export function PluginSettingsSections({ pluginId }: { pluginId: string }) {
   const sections = useSyncExternalStore(
@@ -23,6 +22,7 @@ export function PluginSettingsSections({ pluginId }: { pluginId: string }) {
             key={`${section.pluginId}:${section.id}:${section.generation}`}
             className="settings-section"
           >
+            {section.title ? <h3>{section.title}</h3> : null}
             {section.description ? (
               <p className="settings-help">{section.description}</p>
             ) : null}

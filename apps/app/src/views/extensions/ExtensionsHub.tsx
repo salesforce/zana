@@ -46,6 +46,7 @@ import { Marketplace } from '@/views/extensions/MarketplaceView';
 import { PluginDefinedSettings } from '@/plugins/PluginDefinedSettings';
 import { PluginSettingsSections } from '@/plugins/PluginSettingsSections';
 import { listSettingsSections, subscribePluginSlots } from '@/plugins/plugin-slots';
+import { PluginHubIncludes } from './PluginHubIncludes.js';
 import { useUi } from '@/store';
 import {
   buildHubRows,
@@ -726,7 +727,7 @@ function rowStatus(
  * "About" header. Plugin `settingsSection` slots mount here too — not on Global.
  */
 function ExtensionDetail({ row }: { row: HubRow }) {
-  const { module, entry } = row;
+  const { module, entry, plugin } = row;
   const SettingsPanel = hostSettingsPanelOf(row);
   const hasSlotSettings = useSyncExternalStore(
     subscribePluginSlots,
@@ -734,12 +735,20 @@ function ExtensionDetail({ row }: { row: HubRow }) {
     listSettingsSections
   ).some((section) => section.pluginId === module.id);
 
+  useEffect(() => {
+    if (typeof window === 'undefined' || window.location.hash !== '#plugin-configure') return;
+    document.getElementById('plugin-configure')?.scrollIntoView({ block: 'start' });
+    document.getElementById('plugin-configure')?.focus();
+  }, [module.id]);
+
   return (
     <>
       <AboutCard row={row} />
-      {entry && <InstallConfirmationCard entry={entry} />}
-      {hasSlotSettings ? null : <PluginDefinedSettings pluginId={module.id} />}
-      <PluginSettingsSections pluginId={module.id} />
+      {plugin ? <PluginHubIncludes plugin={plugin} /> : entry ? <InstallConfirmationCard entry={entry} /> : null}
+      <div id="plugin-configure" tabIndex={-1}>
+        <PluginDefinedSettings pluginId={module.id} />
+        <PluginSettingsSections pluginId={module.id} />
+      </div>
       {module.loadError ? (
         <section className="settings-section">
           <p className="modal-error">{module.loadError}</p>
@@ -756,7 +765,7 @@ function ExtensionDetail({ row }: { row: HubRow }) {
               : 'This leftover extension still uses the old module host, which is not running. Uninstall it and install the official plugin from the Marketplace.'}
           </p>
         </section>
-      ) : hasSlotSettings ? null : (
+      ) : hasSlotSettings || plugin ? null : (
         <section className="settings-section">
           <p className="settings-help settings-help--muted">
             {entry
@@ -975,7 +984,29 @@ function AboutCard({ row }: { row: HubRow }) {
   // README) under <workingDir>/share and reveal it, so the user can commit +
   // push it for others to install via "Install from repo". Main re-derives the
   // working dir from local.json (Rule 1).
+  const [pluginReloading, setPluginReloading] = useState(false);
+  const [pluginReloadError, setPluginReloadError] = useState<string | null>(null);
   const [sharing, setSharing] = useState(false);
+
+  const focusConfigure = () => {
+    const el = document.getElementById('plugin-configure');
+    el?.scrollIntoView({ block: 'start' });
+    el?.focus();
+  };
+
+  const reloadPlugin = async () => {
+    if (!plugin) return;
+    setPluginReloading(true);
+    setPluginReloadError(null);
+    try {
+      const res = await product.pluginApps.reload(plugin.id);
+      if (!res.ok) setPluginReloadError(res.message ?? 'Reload failed');
+    } catch (err) {
+      setPluginReloadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPluginReloading(false);
+    }
+  };
   const prepareForSharing = async () => {
     if (!entry) return;
     setSharing(true);
@@ -1069,7 +1100,17 @@ function AboutCard({ row }: { row: HubRow }) {
       </div>
       <div className="ext-hub-about-grid">
         <span className="ext-hub-about-key">Status</span>
-        <span className={`ext-hub-item-status ext-hub-item-status--${status.tone}`}>{status.label}</span>
+        {plugin?.status === 'needs-configuration' ? (
+          <button
+            type="button"
+            className={`ext-hub-item-status ext-hub-item-status--${status.tone} ext-hub-status-link`}
+            onClick={focusConfigure}
+          >
+            {status.label}
+          </button>
+        ) : (
+          <span className={`ext-hub-item-status ext-hub-item-status--${status.tone}`}>{status.label}</span>
+        )}
         <span className="ext-hub-about-key">Surface</span>
         <span className="ext-hub-about-val" title={moduleSurface(module, entry).hint}>
           {moduleSurface(module, entry).label}
@@ -1179,6 +1220,39 @@ function AboutCard({ row }: { row: HubRow }) {
       {/* Management footer — safe utility actions on the left, the destructive
           action pushed to the far right and separated by a hairline so it can't
           be hit by muscle memory. Confirm/Cancel replace Uninstall in place. */}
+      {plugin && (plugin.status === 'degraded' || plugin.status === 'needs-configuration' || plugin.statusDetail) ? (
+        <div className="ext-actions-group">
+          <div className="ext-actions-group-head">
+            <span className="ext-actions-group-title">Health</span>
+            <span className="ext-actions-group-hint">
+              {plugin.statusDetail ??
+                (plugin.status === 'needs-configuration'
+                  ? 'This plugin needs configuration before it can run fully.'
+                  : 'Reload the plugin process without restarting the app.')}
+            </span>
+          </div>
+          <div className="ext-actions">
+            <button type="button" className="settings-btn" onClick={() => void reloadPlugin()} disabled={pluginReloading}>
+              <RefreshCw size={14} className={pluginReloading ? 'ext-spin' : undefined} />
+              {pluginReloading ? 'Reloading…' : 'Reload'}
+            </button>
+            {plugin.status === 'needs-configuration' ? (
+              <button type="button" className="settings-btn" onClick={focusConfigure}>
+                Open configure
+              </button>
+            ) : null}
+          </div>
+          {pluginReloadError ? <p className="modal-error">{pluginReloadError}</p> : null}
+        </div>
+      ) : plugin ? (
+        <div className="ext-actions">
+          <button type="button" className="settings-btn" onClick={() => void reloadPlugin()} disabled={pluginReloading}>
+            <RefreshCw size={14} className={pluginReloading ? 'ext-spin' : undefined} />
+            {pluginReloading ? 'Reloading…' : 'Reload'}
+          </button>
+          {pluginReloadError ? <p className="modal-error">{pluginReloadError}</p> : null}
+        </div>
+      ) : null}
       {canToggle && (
         <div className="ext-actions-footer">
           <div className="ext-actions ext-actions--start">

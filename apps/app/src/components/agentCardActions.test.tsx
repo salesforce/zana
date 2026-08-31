@@ -49,6 +49,15 @@ describe('AgentDeleteQuickAction', () => {
   });
 });
 
+describe('plugin agent card menu', () => {
+  it('runs experimental_agentCardAction from the overflow menu', () => {
+    const source = readFileSync(new URL('./agentCardActions.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('listAgentCardActions');
+    expect(source).toContain('invokeAgentCardAction');
+    expect(source).toContain('agent-card-plugin-');
+  });
+});
+
 describe('CLI agent rail delete wiring', () => {
   it('shows a delete bin on workspace-rail CLI agents instead of a status dot', () => {
     const projects = readFileSync(new URL('./listpane/ProjectsList.tsx', import.meta.url), 'utf8');

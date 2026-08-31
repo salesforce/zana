@@ -6,10 +6,15 @@ import {
   interpretPluginApp,
   listHomepageSections,
   listNavPanels,
+  listExtensionsHubPanels,
+  listSidebarNavPanels,
   listPendingInteractionSlots,
   listCommandPaletteActions,
   listSidebarFooterActions,
-  listTimelineRenderers
+  listTimelineRenderers,
+  listProjectMenuActions,
+  listAgentCardActions,
+  listAgentsBoardActions
 } from './plugin-slots.js';
 
 describe('plugin slot registry', () => {
@@ -38,6 +43,22 @@ describe('plugin slot registry', () => {
           kind: 'tasks/card',
           component: () => null
         });
+        app.slots.experimental_projectMenuAction({
+          id: 'open-here',
+          title: 'Open in Tasks',
+          placement: 'project',
+          run: () => undefined
+        });
+        app.slots.experimental_agentCardAction({
+          id: 'card',
+          title: 'Card',
+          run: () => undefined
+        });
+        app.slots.experimental_agentsBoardAction({
+          id: 'board',
+          title: 'Board',
+          run: () => undefined
+        });
       })
     );
     expect(listNavPanels()).toHaveLength(1);
@@ -45,7 +66,33 @@ describe('plugin slot registry', () => {
     expect(listPendingInteractionSlots()).toHaveLength(1);
     expect(listCommandPaletteActions()).toHaveLength(1);
     expect(listTimelineRenderers()).toHaveLength(1);
+    expect(listProjectMenuActions()).toHaveLength(1);
+    expect(listAgentCardActions()).toHaveLength(1);
+    expect(listAgentsBoardActions()).toHaveLength(1);
     expect(listNavPanels()[0]?.generation).toBe(2);
+  });
+
+  it('keeps extensions-hub navPanels off the global sidebar list', () => {
+    clearPluginSlots('guide');
+    interpretPluginApp(
+      'guide',
+      definePluginApp((app) => {
+        app.slots.navPanel({
+          id: 'guide',
+          title: 'Guide',
+          icon: 'Puzzle',
+          path: 'guide',
+          placement: 'extensions',
+          component: () => null
+        });
+      })
+    );
+    expect(listNavPanels().some((panel) => panel.pluginId === 'guide')).toBe(true);
+    expect(listSidebarNavPanels().some((panel) => panel.pluginId === 'guide')).toBe(false);
+    expect(listExtensionsHubPanels()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ pluginId: 'guide', placement: 'extensions' })])
+    );
+    clearPluginSlots('guide');
   });
 
   it('appends never-ordered panels and keeps stored slots', () => {

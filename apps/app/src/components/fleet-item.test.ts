@@ -5,10 +5,14 @@ import type { ThreadListItem } from '../thread-store.js';
 import {
   agentFleetItem,
   agentRowStateClass,
+  compareScheduleFleet,
   fleetKindLabel,
   fleetMatchesLane,
   fleetThreadLane,
   resolveMonitorSelection,
+  scheduleFleetItem,
+  scheduleNextRunAt,
+  schedulesForAgentView,
   threadFleetItem,
   RAIL_IDLE_THREAD_LIMIT,
   railThreadsForProject,
@@ -46,6 +50,57 @@ function card(): AgentCard {
 }
 
 describe('fleet items', () => {
+  it('maps an armed schedule into the Scheduled lane and hides it when the setting is off', () => {
+    const task = {
+      id: 'job-1',
+      name: 'Nightly',
+      enabled: true,
+      projectId: 'p1',
+      status: { nextRunAt: new Date(Date.now() + 60_000).toISOString() }
+    } as import('@zana-ai/zcc-domain/product').ScheduledTask;
+    const item = scheduleFleetItem(task, { name: 'Alpha', color: '#abc' });
+    expect(item.kind).toBe('schedule');
+    expect(item.title).toBe('Nightly');
+    expect(item.projectName).toBe('Alpha');
+    expect(fleetKindLabel('schedule')).toBe('Schedule');
+    expect(fleetMatchesLane(item, 'scheduled', () => false)).toBe(true);
+    expect(fleetMatchesLane(item, 'idle', () => false)).toBe(false);
+    expect(schedulesForAgentView([task], [{ id: 'p1', name: 'Alpha' }], false)).toEqual([]);
+    expect(schedulesForAgentView([task], [{ id: 'p1', name: 'Alpha' }], true).map((row) => row.id)).toEqual([
+      'job-1'
+    ]);
+    expect(schedulesForAgentView([task], [{ id: 'p1', name: 'Alpha' }], true, 'other')).toEqual([]);
+  });
+
+  it('sorts armed schedules before paused, then by next fire', () => {
+    const later = scheduleFleetItem({
+      id: 'later',
+      name: 'B',
+      enabled: true,
+      projectId: 'p1',
+      status: { nextRunAt: '2099-01-02T00:00:00.000Z' }
+    } as import('@zana-ai/zcc-domain/product').ScheduledTask);
+    const sooner = scheduleFleetItem({
+      id: 'sooner',
+      name: 'A',
+      enabled: true,
+      projectId: 'p1',
+      status: { nextRunAt: '2099-01-01T00:00:00.000Z' }
+    } as import('@zana-ai/zcc-domain/product').ScheduledTask);
+    const paused = scheduleFleetItem({
+      id: 'off',
+      name: 'Z',
+      enabled: false,
+      projectId: 'p1',
+      status: { nextRunAt: '2099-01-01T00:00:00.000Z' }
+    } as import('@zana-ai/zcc-domain/product').ScheduledTask);
+    expect([paused, later, sooner].sort(compareScheduleFleet).map((row) => row.id)).toEqual([
+      'sooner',
+      'later',
+      'off'
+    ]);
+    expect(scheduleNextRunAt(paused.task)).toBe(Infinity);
+  });
   it('maps an active thread into the Working lane', () => {
     const item = threadFleetItem(thread({ id: 't1', status: 'active' }), { name: 'Alpha' });
     expect(item.kind).toBe('thread');

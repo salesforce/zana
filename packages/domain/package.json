@@ -143,6 +143,11 @@
       "types": "./src/thread-runtime.ts",
       "source": "./src/thread-runtime.ts",
       "default": "./src/thread-runtime.ts"
+    },
+    "./machine-pairing": {
+      "types": "./src/machine-pairing.ts",
+      "source": "./src/machine-pairing.ts",
+      "default": "./src/machine-pairing.ts"
     }
   },
   "scripts": {

@@ -1,7 +1,7 @@
 import { PluginAppSnapshotSchema } from '@zana-ai/zcc-contracts/runtime';
 import type { PluginAppEntry, Result } from '@zana-ai/zcc-domain/product';
 
-/** Loopback product server started by `scripts/dev-local.mjs` (`listen.ts`). */
+/** Loopback product server started by Turbo `@zana-ai/zcc-server#dev` (`listen.ts`). */
 export function loopbackProductServerUrl(env: NodeJS.ProcessEnv = process.env): string | null {
   const raw = env.ZCC_SERVER_URL?.trim();
   if (!raw) return null;
@@ -81,6 +81,30 @@ export async function checkPluginUpdatesFromProductServer(
       )
     )
     : [];
+}
+
+export async function reloadPluginAppOnProductServer(
+  id: string,
+  baseUrl = loopbackProductServerUrl()
+): Promise<Result<true>> {
+  if (!baseUrl) {
+    return { ok: false, code: 'UNAVAILABLE', message: 'plugin host is unavailable' };
+  }
+  const response = await fetch(
+    new URL(`api/v1/plugin-apps/${encodeURIComponent(id)}/reload`, baseUrl),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    }
+  );
+  if (response.ok) return { ok: true, value: true };
+  const message = await productServerError(response, `plugin host returned ${response.status}`);
+  return {
+    ok: false,
+    code: response.status === 404 ? 'NOT_FOUND' : 'WRITE_FAILED',
+    message
+  };
 }
 
 export async function applyPluginUpdateOnProductServer(

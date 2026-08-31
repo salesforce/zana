@@ -43,7 +43,7 @@ try {
             const rect = element.getBoundingClientRect();
             return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
           };
-          const selector = 'a.btn, button.btn, .theme-toggle, .nav-burger, .docs-search-btn, input, select';
+          const selector = 'a.btn, button.btn, a.zcc-btn, button.zcc-btn, .theme-toggle, .nav-burger, .docs-search-btn, input, select';
           const controls = [...document.querySelectorAll(selector)]
             .filter(visible)
             .map((element) => {

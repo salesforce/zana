@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import type { Project } from '@zana-ai/zcc-domain/product';
 import type { ThreadContextWindowUsage } from '@zana-ai/zcc-server-contract';
 import { product } from '../lib/product-client.js';
+import { copyText } from '../lib/copy-text.js';
 import { useData } from '../store.js';
 import { useThreads } from '../thread-store.js';
 import { getThreadRoutePath } from '../lib/route-paths.js';
@@ -598,7 +599,7 @@ export function ThreadCommandComposer({
                 pairingCommand={pairingCommand}
                 onAction={onHostAction}
                 onCopyPairing={pairingCommand
-                  ? () => void navigator.clipboard.writeText(pairingCommand)
+                  ? () => void copyText(pairingCommand)
                   : undefined}
               />
             </>
@@ -636,7 +637,7 @@ export function ThreadCommandComposer({
                 pairingCommand={pairingCommand}
                 onAction={onHostAction}
                 onCopyPairing={pairingCommand
-                  ? () => void navigator.clipboard.writeText(pairingCommand)
+                  ? () => void copyText(pairingCommand)
                   : undefined}
               />
               {remoteToolsMark ? (

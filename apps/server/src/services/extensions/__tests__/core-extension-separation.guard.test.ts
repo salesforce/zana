@@ -203,26 +203,25 @@ describe('Core-extension separation guard', () => {
     expect(existsSync(join(pluginsRoot, 'zana-hub'))).toBe(false);
   });
 
-  it('seed-extensions.mjs is a predev/prestart script, NOT part of npm run build', () => {
-    // Confirms the dev-time seeding convenience (seed-extensions.mjs, which builds
-    // + packages extensions into ~/.zcc/extensions) is NOT hooked into the
-    // production build — the build never compiles extension source.
+  it('seed-extensions.mjs runs in predev/prestart/prebuild, not inlined in dist scripts', () => {
+    // First-party plugins under plugins/ compile via seed-extensions (app.js +
+    // static playground assets). prebuild must seed so electron-builder
+    // extraResources copies playground/dist. dist/release still call `build`,
+    // which runs prebuild — they must not duplicate the seed command.
     const pkgPath = join(repoRoot, 'package.json');
     const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
     const { scripts } = pkg;
 
-    // Positive assertions: seed-extensions.mjs IS run in predev and prestart
     expect(scripts.predev).toContain('seed-extensions.mjs');
     expect(scripts.prestart).toContain('seed-extensions.mjs');
+    expect(scripts.prebuild).toContain('seed-extensions.mjs');
 
-    // Negative assertions: the build / dist / release scripts do NOT run it
     expect(scripts.build).not.toContain('seed-extensions');
     expect(scripts.dist).not.toContain('seed-extensions');
     expect(scripts['dist:mac']).not.toContain('seed-extensions');
     expect(scripts['release:mac']).not.toContain('seed-extensions');
     expect(scripts['release:static']).not.toContain('seed-extensions');
 
-    // Confirm electron-vite build is the actual build command (no hidden steps)
     expect(scripts.build).toBe('electron-vite build');
   });
 

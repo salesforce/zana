@@ -69,11 +69,11 @@ export function sshRemoteFromProject(project: ProjectRecord): ProjectRemote | nu
 }
 
 export function requirePublicAppUrl(ctx: ProductHttpContext): string {
-  const url = resolvePublicAppUrl({ configUrl: ctx.config.getConfig().publicAppUrl });
+  const url = resolvePublicAppUrl();
   if (!url) {
     throw new HostBootstrapError(
       'public_url_required',
-      'Set a public app URL before installing a remote host daemon.'
+      'Set ZCC_APP_URL (or build the app with it) before installing a remote host daemon.'
     );
   }
   let hostname: string;
@@ -85,7 +85,7 @@ export function requirePublicAppUrl(ctx: ProductHttpContext): string {
   if (isLoopbackHttpHost(hostname)) {
     throw new HostBootstrapError(
       'public_url_required',
-      'A loopback address cannot enroll another computer. Set a public app URL first.'
+      'A loopback address cannot enroll another computer. Set ZCC_APP_URL to a public origin first.'
     );
   }
   if (ctx.pairingRelay?.state() === 'offline') {
@@ -99,7 +99,7 @@ export function requirePublicAppUrl(ctx: ProductHttpContext): string {
     if (!relayJoinWindowOpen(snapshot)) {
       throw new HostBootstrapError(
         'join_expired',
-        'The pairing join window has closed. Renew it in Settings → Machines, then try again.'
+        'The pairing join window has closed. Reopen Add a machine so this laptop can renew the window, then try again.'
       );
     }
     return pairingSessionServerUrl(url, snapshot.sessionId!);

@@ -1,81 +1,103 @@
 #!/usr/bin/env node
 /**
- * Start the loopback product server, then either the standalone Vite app
- * (`ZCC_SKIP_DESKTOP=1`) or electron-vite (default). Browser local-dev also
- * starts an enrolled host-daemon.
+ * Prepare shared local-dev env, then run persistent workspace `dev` tasks
+ * through Turbo's TUI (`--ui tui`). Browser local-dev (`ZCC_SKIP_DESKTOP=1`)
+ * starts Vite; the default path starts electron-vite.
  */
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 
-const serverPort = process.env.ZCC_SERVER_PORT ?? '8780';
-const skipDesktop = process.env.ZCC_SKIP_DESKTOP === '1';
-const dataDir = process.env.ZCC_DATA_DIR ?? join(homedir(), '.zcc');
-mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-const enrollToken = process.env.ZCC_HOST_ENROLL_TOKEN && process.env.ZCC_HOST_ENROLL_TOKEN.length >= 16
-  ? process.env.ZCC_HOST_ENROLL_TOKEN
-  : randomBytes(32).toString('hex');
-writeFileSync(join(dataDir, 'host-enroll.token'), enrollToken, { encoding: 'utf8', mode: 0o600 });
+export const SERVER_PACKAGE = '@zana-ai/zcc-server';
+export const HOST_DAEMON_PACKAGE = '@zana-ai/zcc-host-daemon';
+export const APP_UI_PACKAGE = '@zana-ai/zcc-app-ui';
+export const DESKTOP_PACKAGE = '@zana-ai/zcc-desktop';
 
-const env = {
-  ...process.env,
-  ZCC_SERVER_PORT: serverPort,
-  ZCC_DATA_DIR: dataDir,
-  ZCC_HOST_ENROLL_TOKEN: enrollToken,
-  ZCC_SERVER_URL: `http://127.0.0.1:${serverPort}/`
-};
-const children = [];
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-function run(command, args) {
-  const child = spawn(command, args, {
+export function createDevTurboCommand(skipDesktop) {
+  const uiPackage = skipDesktop ? APP_UI_PACKAGE : DESKTOP_PACKAGE;
+  return {
+    command: 'pnpm',
+    args: [
+      'exec',
+      'turbo',
+      'run',
+      'dev',
+      `--filter=${uiPackage}`,
+      `--filter=${SERVER_PACKAGE}`,
+      `--filter=${HOST_DAEMON_PACKAGE}`,
+      '--ui',
+      'tui',
+      '--concurrency',
+      '20',
+      '--no-update-notifier'
+    ]
+  };
+}
+
+export function prepareLocalDevEnv(processEnv = process.env) {
+  const serverPort = processEnv.ZCC_SERVER_PORT ?? '8780';
+  const skipDesktop = processEnv.ZCC_SKIP_DESKTOP === '1';
+  const dataDir = processEnv.ZCC_DATA_DIR ?? join(homedir(), '.zcc');
+  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  const enrollToken =
+    processEnv.ZCC_HOST_ENROLL_TOKEN && processEnv.ZCC_HOST_ENROLL_TOKEN.length >= 16
+      ? processEnv.ZCC_HOST_ENROLL_TOKEN
+      : randomBytes(32).toString('hex');
+  writeFileSync(join(dataDir, 'host-enroll.token'), enrollToken, { encoding: 'utf8', mode: 0o600 });
+
+  return {
+    skipDesktop,
+    env: {
+      ...processEnv,
+      ZCC_SERVER_PORT: serverPort,
+      ZCC_DATA_DIR: dataDir,
+      ZCC_HOST_ENROLL_TOKEN: enrollToken,
+      ZCC_SERVER_URL: `http://127.0.0.1:${serverPort}/`
+    }
+  };
+}
+
+export function spawnDevTurbo(args) {
+  const command = createDevTurboCommand(args.skipDesktop);
+  return args.spawnImpl(command.command, command.args, {
     stdio: 'inherit',
-    env,
+    env: args.env,
+    cwd: args.cwd ?? repoRoot,
     shell: process.platform === 'win32'
   });
-  child.on('exit', (code, signal) => {
-    if (signal) return;
-    if (code && code !== 0) {
-      for (const other of children) {
-        if (other.pid && other.pid !== child.pid) other.kill('SIGTERM');
-      }
-      process.exit(code);
-    }
-  });
-  children.push(child);
-  return child;
 }
 
-async function waitForProductServer(port, timeoutMs = 20_000) {
-  const url = `http://127.0.0.1:${port}/api/v1/health`;
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(url);
-      if (response.ok) return;
-    } catch {
-      /* listen.ts has not bound yet */
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error(`product server did not become ready on ${url}`);
-}
-
-run(process.execPath, ['--conditions=source', '--import', 'tsx', 'apps/server/src/http/listen.ts']);
-await waitForProductServer(serverPort);
-run(process.execPath, ['--conditions=source', '--import', 'tsx', 'apps/host-daemon/src/enroll-entry.ts']);
-
-if (skipDesktop) {
-  run('pnpm', ['exec', 'vite', '--config', 'apps/app/vite.dev.config.ts']);
-} else {
-  run('pnpm', ['exec', 'electron-vite', 'dev']);
-}
-
-const shutdown = () => {
-  for (const child of children) {
+export function attachDevProcessLifecycle(child, proc = process) {
+  const shutdown = () => {
     if (child.pid) child.kill('SIGTERM');
-  }
-};
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+  };
+  proc.on('SIGINT', shutdown);
+  proc.on('SIGTERM', shutdown);
+  child.on('exit', (code, signal) => {
+    if (signal) {
+      proc.exitCode = 1;
+      return;
+    }
+    proc.exit(code ?? 0);
+  });
+  return shutdown;
+}
+
+export function isCliEntry(argv1, moduleHref = import.meta.url) {
+  return Boolean(argv1 && resolve(argv1) === fileURLToPath(moduleHref));
+}
+
+function runMain() {
+  const { env, skipDesktop } = prepareLocalDevEnv();
+  const child = spawnDevTurbo({ env, skipDesktop, spawnImpl: spawn });
+  attachDevProcessLifecycle(child);
+}
+
+if (isCliEntry(process.argv[1])) {
+  runMain();
+}

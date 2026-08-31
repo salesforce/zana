@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
 import { product } from '../../lib/product-client.js';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
+import { copyText } from '../../lib/copy-text.js';
 import { Modal } from '../../components/Modal.js';
 import { useHosts } from '../../hooks/useHosts.js';
+import { PairingTerminal } from './PairingTerminal.js';
 import {
   formatJoinCountdown,
+  formatSshPairingCommand,
   isLoopbackOrigin,
   joinCountdownMs,
   mergePairingSshHosts,
@@ -14,6 +17,7 @@ import {
   resolveRelayPairingServerUrl,
   sanitizeSshHost,
   sshPairingCommand,
+  sshPublicPairingArgv,
   TAILSCALE_SERVE_HINT,
   type PairingSshHostOption,
   type RelayStatus
@@ -101,6 +105,8 @@ function PairingSshHostGroup({
   );
 }
 
+export type PairingMethod = 'ssh' | 'command';
+
 export function AddMachineDialogView({
   command,
   copied,
@@ -110,11 +116,21 @@ export function AddMachineDialogView({
   joinWindowClosed,
   loopbackWarning,
   viaSsh,
+  pairingMethod = 'command',
+  showMethodToggle = false,
   sshHost,
   sshHosts,
   pairedName,
+  canRun = false,
+  pairingRunning = false,
+  pairingVisible = false,
+  pairingError = null,
+  pairingSlot = null,
   onSshHostChange,
+  onPairingMethodChange,
   onCopy,
+  onRun,
+  onStopPairing,
   onRetryMint,
   onClose
 }: {
@@ -126,11 +142,21 @@ export function AddMachineDialogView({
   joinWindowClosed?: boolean;
   loopbackWarning: boolean;
   viaSsh: boolean;
+  pairingMethod?: PairingMethod;
+  showMethodToggle?: boolean;
   sshHost: string;
   sshHosts: PairingSshHostOption[];
   pairedName: string | null;
+  canRun?: boolean;
+  pairingRunning?: boolean;
+  pairingVisible?: boolean;
+  pairingError?: string | null;
+  pairingSlot?: ReactNode;
   onSshHostChange: (value: string) => void;
+  onPairingMethodChange?: (method: PairingMethod) => void;
   onCopy: () => void;
+  onRun?: () => void;
+  onStopPairing?: () => void;
   onRetryMint: () => void;
   onClose: () => void;
 }) {
@@ -145,13 +171,40 @@ export function AddMachineDialogView({
         </button>
       )}
     >
+      {showMethodToggle ? (
+        <div className="add-machine-method" role="tablist" aria-label="How to add the machine">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={pairingMethod === 'ssh'}
+            className={pairingMethod === 'ssh' ? 'active' : undefined}
+            data-testid="add-machine-method-ssh"
+            onClick={() => onPairingMethodChange?.('ssh')}
+          >
+            SSH
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={pairingMethod === 'command'}
+            className={pairingMethod === 'command' ? 'active' : undefined}
+            data-testid="add-machine-method-command"
+            onClick={() => onPairingMethodChange?.('command')}
+          >
+            Installer command
+          </button>
+        </div>
+      ) : null}
+
       <p className="add-machine-lead">
-        {viaSsh
-          ? 'Run this in a terminal on this computer. It SSHs to the workspace with a reverse tunnel and installs the host daemon there.'
+        {pairingMethod === 'ssh'
+          ? viaSsh
+            ? 'Run this on this computer. It SSHs to the workspace with a reverse tunnel and installs the host daemon there.'
+            : 'Pick an SSH host. Run executes the installer on that machine from here.'
           : 'Run this on the machine you want to add. It pairs the machine to this server and keeps it available for your projects.'}
       </p>
 
-      {loopbackWarning ? (
+      {pairingMethod === 'ssh' ? (
         <div className="add-machine-ssh settings-field">
           <span className="settings-label" id="add-machine-ssh-label">SSH host</span>
           <div
@@ -209,6 +262,27 @@ export function AddMachineDialogView({
             >
               {copied ? 'Copied' : 'Copy'}
             </button>
+            {canRun ? (
+              <button
+                type="button"
+                className="settings-btn"
+                disabled={expired || pairingRunning}
+                data-testid="add-machine-run"
+                onClick={onRun}
+              >
+                {pairingRunning ? 'Running' : 'Run'}
+              </button>
+            ) : null}
+            {pairingRunning ? (
+              <button
+                type="button"
+                className="settings-btn"
+                data-testid="add-machine-stop-tunnel"
+                onClick={onStopPairing}
+              >
+                Stop{viaSsh ? ' tunnel' : ''}
+              </button>
+            ) : null}
             {expired ? (
               <>
                 <span className="add-machine-expiry">
@@ -225,10 +299,16 @@ export function AddMachineDialogView({
             ) : null}
           </div>
           <p className="add-machine-help">
-            {viaSsh
-              ? 'Paste it locally (not on the remote). The installer finds Node 22+ on PATH, nix, or nvm. Leave the terminal open so the reverse tunnel stays up.'
+            {pairingMethod === 'ssh'
+              ? viaSsh
+                ? 'Run it here, or copy and paste it locally (not on the remote). Leave the tunnel open so the reverse forward stays up.'
+                : 'Run SSHs to the selected host and executes this installer there. Copy is a fallback if you prefer to paste it yourself.'
               : 'This installs the host daemon, enrolls it, and configures it to reconnect automatically on the other machine.'}
           </p>
+          {pairingError ? <p className="modal-error">{pairingError}</p> : null}
+          {pairingVisible ? (
+            <div className="add-machine-pairing">{pairingSlot}</div>
+          ) : null}
           {loopbackWarning && !viaSsh ? (
             <p className="modal-warning">
               This address is only reachable on this computer. Enter an SSH host
@@ -281,6 +361,11 @@ function AddMachineDialogContent({
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const [copied, setCopied] = useState(false);
+  const [pairingRunning, setPairingRunning] = useState(false);
+  const [pairingVisible, setPairingVisible] = useState(false);
+  const [pairingError, setPairingError] = useState<string | null>(null);
+  const [pairingMethod, setPairingMethod] = useState<PairingMethod>('command');
+  const methodTouched = useRef(false);
   const [mintNonce, setMintNonce] = useState(0);
   const [sshHost, setSshHost] = useState(defaultSshHost);
   const [relay, setRelay] = useState<RelayStatus | null>(null);
@@ -313,7 +398,14 @@ function AddMachineDialogContent({
   const serverUrl = resolved.url ?? resolvePairingServerUrl(publicAppUrl);
   const joinWindowClosed = resolved.error === 'join_expired';
   const loopbackWarning = Boolean(serverUrl && isLoopbackOrigin(serverUrl));
-  const viaSsh = Boolean(loopbackWarning && serverUrl && join && sanitizeSshHost(sshHost));
+  const viaSsh = Boolean(
+    pairingMethod === 'ssh' && loopbackWarning && serverUrl && join && sanitizeSshHost(sshHost)
+  );
+
+  useEffect(() => {
+    if (methodTouched.current) return;
+    if (loopbackWarning) setPairingMethod('ssh');
+  }, [loopbackWarning]);
 
   const remint = useCallback(() => {
     void product.relay.renewJoinWindow().then((row) => {
@@ -375,19 +467,52 @@ function AddMachineDialogContent({
     if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
   }, []);
 
+  useEffect(() => {
+    if (!hasDesktopBridge()) return;
+    let cancelled = false;
+    void product.hosts.pairing.status().then((status) => {
+      if (cancelled) return;
+      setPairingRunning(status.running);
+      if (status.running || status.backlog) setPairingVisible(true);
+    }).catch(() => undefined);
+    const offExit = product.hosts.pairing.onExit(() => {
+      if (!cancelled) setPairingRunning(false);
+    });
+    return () => {
+      cancelled = true;
+      offExit();
+    };
+  }, []);
+
   const paired = join
     ? hosts.find((host) => host.id === join.hostId && host.status === 'connected')
       ?? hosts.find((host) => !baseline.current?.has(host.id) && host.status === 'connected')
     : hosts.find((host) => baseline.current !== null && !baseline.current.has(host.id) && host.status === 'connected');
 
   const command = join
-    ? viaSsh
-      ? sshPairingCommand({
-        sshHost,
-        localServerUrl: serverUrl!,
-        joinCode: join.joinCode,
-        hostId: join.hostId
-      })
+    ? pairingMethod === 'ssh' && sanitizeSshHost(sshHost)
+      ? viaSsh
+        ? sshPairingCommand({
+          sshHost,
+          localServerUrl: serverUrl!,
+          joinCode: join.joinCode,
+          hostId: join.hostId
+        })
+        : (() => {
+          const argv = serverUrl
+            ? sshPublicPairingArgv({
+              sshHost,
+              serverUrl,
+              joinCode: join.joinCode,
+              hostId: join.hostId
+            })
+            : null;
+          return argv ? formatSshPairingCommand(argv) : pairingCommand({
+            publicAppUrl: serverUrl,
+            joinCode: join.joinCode,
+            hostId: join.hostId
+          });
+        })()
       : pairingCommand({ publicAppUrl: serverUrl, joinCode: join.joinCode, hostId: join.hostId })
     : null;
   const remaining = join
@@ -398,13 +523,36 @@ function AddMachineDialogContent({
   const copy = async () => {
     if (!command) return;
     try {
-      await navigator.clipboard.writeText(command);
+      await copyText(command);
       setCopied(true);
       if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
       copiedTimer.current = window.setTimeout(() => setCopied(false), 1500);
     } catch {
       setCopied(false);
     }
+  };
+
+  const run = async () => {
+    if (!join || pairingMethod !== 'ssh' || !sanitizeSshHost(sshHost) || expired) return;
+    setPairingError(null);
+    const result = await product.hosts.pairing.start({
+      sshHost,
+      joinCode: join.joinCode,
+      hostId: join.hostId,
+      cols: 80,
+      rows: 24
+    });
+    if (result.ok === false) {
+      setPairingError(result.message);
+      return;
+    }
+    setPairingRunning(true);
+    setPairingVisible(true);
+  };
+
+  const stopPairing = async () => {
+    await product.hosts.pairing.stop();
+    setPairingRunning(false);
   };
 
   return (
@@ -417,11 +565,24 @@ function AddMachineDialogContent({
       joinWindowClosed={joinWindowClosed}
       loopbackWarning={loopbackWarning}
       viaSsh={viaSsh}
+      pairingMethod={pairingMethod}
+      showMethodToggle={hasDesktopBridge()}
       sshHost={sshHost}
       sshHosts={sshOptions}
       pairedName={paired?.name ?? null}
+      canRun={pairingMethod === 'ssh' && hasDesktopBridge() && Boolean(sanitizeSshHost(sshHost))}
+      pairingRunning={pairingRunning}
+      pairingVisible={pairingVisible && pairingMethod === 'ssh'}
+      pairingError={pairingError}
+      pairingSlot={pairingVisible && pairingMethod === 'ssh' ? <PairingTerminal /> : null}
       onSshHostChange={setSshHost}
+      onPairingMethodChange={(method) => {
+        methodTouched.current = true;
+        setPairingMethod(method);
+      }}
       onCopy={() => void copy()}
+      onRun={() => void run()}
+      onStopPairing={() => void stopPairing()}
       onRetryMint={remint}
       onClose={onClose}
     />

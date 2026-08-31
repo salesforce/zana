@@ -17,7 +17,7 @@ export const site = {
   updateFeedUrl: process.env.NEXT_PUBLIC_UPDATE_FEED_URL,
   /** Latest published app version (fallback when the feed is unreachable).
    *  Keep in sync with the current release when the update feed can't be read. */
-  latestVersion: process.env.NEXT_PUBLIC_APP_VERSION ?? '2.0.1',
+  latestVersion: process.env.NEXT_PUBLIC_APP_VERSION ?? '2.0.2',
   /** Base URL this deployment is served from (`PUBLIC_BASE_URL`). Used by the
    *  dashboard publish snippet, the marketplace `zcc marketplace add` command,
    *  canonical URLs, robots, and sitemap. Server-only — pass into client

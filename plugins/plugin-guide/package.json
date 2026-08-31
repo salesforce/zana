@@ -1,0 +1,18 @@
+{
+  "name": "@zcc-ext/plugin-guide",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "In-app Plugin Guide: annotated map of every ZCC plugin surface.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "zcc": {
+    "name": "Plugin Guide",
+    "description": "Annotated map of every surface a plugin can own — Copy for agent, then live-reload with zcc plugin dev.",
+    "branding": { "icon": "Puzzle" },
+    "server": "./server.mjs",
+    "app": "./app.js"
+  }
+}

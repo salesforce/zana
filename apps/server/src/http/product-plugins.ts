@@ -41,7 +41,10 @@ export function productListProjects(
 
 export async function attachProductPluginService(
   ctx: ProductHttpContext,
-  opts?: Pick<PluginServiceOptions, 'bundledRoot' | 'onAgentCapabilitiesChanged' | 'onAppsChanged'>
+  opts?: Pick<
+    PluginServiceOptions,
+    'bundledRoot' | 'onAgentCapabilitiesChanged' | 'onAppsChanged' | 'watchBuiltinPluginSources'
+  >
 ): Promise<PluginService> {
   const plugins = createPluginService({
     dataDir: ctx.dataDir,
@@ -53,6 +56,8 @@ export async function attachProductPluginService(
     },
     onAgentCapabilitiesChanged: opts?.onAgentCapabilitiesChanged,
     onAppsChanged: opts?.onAppsChanged,
+    watchBuiltinPluginSources:
+      opts?.watchBuiltinPluginSources ?? process.env.ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD === '1',
     pushInbox: (args) => productPushInbox(ctx, args),
     listProjects: async () => productListProjects(ctx),
     getThread: async ({ threadId }) => {

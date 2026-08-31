@@ -5,7 +5,7 @@ import {
   useIdleTriage,
   useOverseerActivity,
   useSubagents,
-  listedTerminals,
+  agentViewTerminals,
   useFavoriteAgents,
   favoriteKey
 } from '../store.js';
@@ -25,6 +25,7 @@ import type { AgentCard } from '../components/AgentBoard.js';
 export function useAllAgentCards(): AgentCard[] {
   const terminals = useData((s) => s.terminals);
   const projects = useData((s) => s.projects);
+  const includeScheduled = useData((s) => s.includeScheduledAgentsInAgentView);
   const byId = useAgentStatus((s) => s.byId);
   const sinceById = useAgentStatus((s) => s.since);
   const triageById = useIdleTriage((s) => s.byId);
@@ -37,7 +38,7 @@ export function useAllAgentCards(): AgentCard[] {
     for (const [projectId, list] of Object.entries(terminals)) {
       const project = byProjectId.get(projectId);
       if (!project) continue; // tombstoned/unknown project — skip
-      for (const s of listedTerminals(list)) {
+      for (const s of agentViewTerminals(list, includeScheduled)) {
         if (s.profile === 'shell') continue;
         out.push({
           session: s,
@@ -53,7 +54,7 @@ export function useAllAgentCards(): AgentCard[] {
       }
     }
     return out;
-  }, [terminals, projects, byId, sinceById, triageById, overseerById, subagentsById]);
+  }, [terminals, projects, includeScheduled, byId, sinceById, triageById, overseerById, subagentsById]);
 }
 
 /**

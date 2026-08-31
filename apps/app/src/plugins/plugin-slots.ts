@@ -12,12 +12,15 @@ import type {
   PluginFileOpenerRegistration,
   PluginHomepageSectionRegistration,
   PluginMessageActionRegistration,
+  PluginAgentCardActionRegistration,
+  PluginAgentsBoardActionRegistration,
   PluginCommandPaletteActionRegistration,
   PluginMessageDirectiveRegistration,
   PluginNavPanelRegistration,
   PluginNewThreadPanelActionRegistration,
   PluginPendingInteractionRegistration,
   PluginProjectTabRegistration,
+  PluginProjectMenuActionRegistration,
   PluginProviderIconRegistration,
   PluginRegistrationSet,
   PluginSettingsSectionRegistration,
@@ -47,6 +50,7 @@ function emptySnapshot() {
     homepageSections: [] as PluginHomepageSectionRegistration[],
     settingsSections: [] as PluginSettingsSectionRegistration[],
     projectTabs: [] as PluginProjectTabRegistration[],
+    projectMenuActions: [] as PluginProjectMenuActionRegistration[],
     sidebarFooterActions: [] as PluginSidebarFooterActionRegistration[],
     pendingInteractions: [] as PluginPendingInteractionRegistration[],
     threadPanelActions: [] as PluginThreadPanelActionRegistration[],
@@ -56,6 +60,8 @@ function emptySnapshot() {
     fileOpeners: [] as PluginFileOpenerRegistration[],
     messageDirectives: [] as PluginMessageDirectiveRegistration[],
     messageActions: [] as PluginMessageActionRegistration[],
+    agentCardActions: [] as PluginAgentCardActionRegistration[],
+    agentsBoardActions: [] as PluginAgentsBoardActionRegistration[],
     timelineRenderers: [] as PluginTimelineRendererRegistration[],
     commandPaletteActions: [] as PluginCommandPaletteActionRegistration[],
     providerIcons: [] as PluginProviderIconRegistration[],
@@ -72,6 +78,7 @@ function rebuildSnapshot(): void {
     homepageSections: orderedSets.flatMap((set) => set.homepageSections),
     settingsSections: orderedSets.flatMap((set) => set.settingsSections),
     projectTabs: orderedSets.flatMap((set) => set.projectTabs),
+    projectMenuActions: orderedSets.flatMap((set) => set.projectMenuActions),
     sidebarFooterActions: orderedSets.flatMap((set) => set.sidebarFooterActions),
     pendingInteractions: orderedSets.flatMap((set) => set.pendingInteractions),
     threadPanelActions: orderedSets.flatMap((set) => set.threadPanelActions),
@@ -81,6 +88,8 @@ function rebuildSnapshot(): void {
     fileOpeners: orderedSets.flatMap((set) => set.fileOpeners),
     messageDirectives: orderedSets.flatMap((set) => set.messageDirectives),
     messageActions: orderedSets.flatMap((set) => set.messageActions),
+    agentCardActions: orderedSets.flatMap((set) => set.agentCardActions),
+    agentsBoardActions: orderedSets.flatMap((set) => set.agentsBoardActions),
     timelineRenderers: orderedSets.flatMap((set) => set.timelineRenderers),
     commandPaletteActions: orderedSets.flatMap((set) => set.commandPaletteActions),
     providerIcons: orderedSets.flatMap((set) => set.providerIcons),
@@ -138,6 +147,14 @@ export function listNavPanels(): PluginNavPanelRegistration[] {
   return snapshot.navPanels;
 }
 
+export function listSidebarNavPanels(): PluginNavPanelRegistration[] {
+  return snapshot.navPanels.filter((panel) => panel.placement !== 'extensions');
+}
+
+export function listExtensionsHubPanels(): PluginNavPanelRegistration[] {
+  return snapshot.navPanels.filter((panel) => panel.placement === 'extensions');
+}
+
 export function listHomepageSections(): PluginHomepageSectionRegistration[] {
   return snapshot.homepageSections;
 }
@@ -148,6 +165,18 @@ export function listSettingsSections(): PluginSettingsSectionRegistration[] {
 
 export function listProjectTabs(): PluginProjectTabRegistration[] {
   return snapshot.projectTabs;
+}
+
+export function listProjectMenuActions(): PluginProjectMenuActionRegistration[] {
+  return snapshot.projectMenuActions;
+}
+
+export function projectTabWorkspaceMode(
+  tab: PluginProjectTabRegistration,
+  tabs: readonly PluginProjectTabRegistration[]
+): string {
+  const first = tabs.find((row) => row.pluginId === tab.pluginId);
+  return first?.id === tab.id ? tab.pluginId : `${tab.pluginId}:${tab.id}`;
 }
 
 export function listSidebarFooterActions(): PluginSidebarFooterActionRegistration[] {
@@ -184,6 +213,14 @@ export function listMessageDirectives(): PluginMessageDirectiveRegistration[] {
 
 export function listMessageActions(): PluginMessageActionRegistration[] {
   return snapshot.messageActions;
+}
+
+export function listAgentCardActions(): PluginAgentCardActionRegistration[] {
+  return snapshot.agentCardActions;
+}
+
+export function listAgentsBoardActions(): PluginAgentsBoardActionRegistration[] {
+  return snapshot.agentsBoardActions;
 }
 
 export function listTimelineRenderers(): PluginTimelineRendererRegistration[] {

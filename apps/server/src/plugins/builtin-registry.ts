@@ -65,6 +65,13 @@ export const BUILTIN_PLUGINS: BundledPluginDefinition[] = [
     autoInstall: true,
     defaultEnabled: true,
     category: 'Agent interaction'
+  },
+  {
+    name: 'plugin-guide',
+    pluginId: 'plugin-guide',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Developer tools'
   }
 ];
 

@@ -14,6 +14,7 @@ export {
   CLAUDE_CODE_URL,
   CODEX_URL,
   CURSOR_URL,
+  GITHUB_REPO_URL,
   REPORT_BUG_URL
 } from './about-credits.js';
 
@@ -1745,12 +1746,11 @@ export interface AppConfig {
    */
   setupDismissed?: boolean;
   /**
-   * Whether the one-time "Star us on GitHub" nudge (the small card that floats
-   * just above the footer on first launch) has been dismissed or acted on.
+   * Whether the one-time "Star us on GitHub" nudge (the small card at the
+   * bottom of the main window) has been dismissed or acted on.
    * Absent / false ⇒ the card auto-shows once in the main window; set true when
-   * the user stars, closes it, or clicks through. The permanent ♥ button in the
-   * footer stays regardless — this flag only gates the first-run popup. Follows
-   * the `walkthroughCompleted` / `setupDismissed` pattern (main window only).
+   * the user stars, closes it, or clicks through. Follows the
+   * `walkthroughCompleted` / `setupDismissed` pattern (main window only).
    */
   sponsorPromptDismissed?: boolean;
   /**
@@ -1931,6 +1931,14 @@ export interface AppConfig {
    * uses the same {@link idleAttentionSensitivity} mapping as the board.
    */
   agentListNeedsYouFromTriage?: boolean;
+  /**
+   * Include scheduler-spawned sessions (`session.scheduled`) on the Agents board,
+   * list, and flow. Default OFF: those runs stay out of Agent View (inbox /
+   * Scheduler). When on, waiting scheduled jobs sit in a **Scheduled** lane;
+   * working / exited ones use the normal Working / Done lanes. Does not change
+   * project session lists, the tab strip, or focus buckets.
+   */
+  includeScheduledAgentsInAgentView?: boolean;
   /**
    * Turn an `awaiting-reply` idle-triage verdict into a durable {@link FollowUp}
    * record (so a parked question survives a kill / app restart, unlike the
@@ -2248,17 +2256,13 @@ export interface AppConfig {
    */
   cloneRoot?: string;
   /**
-   * Public origin (Tailscale Serve URL, Heroku pairing relay, etc.) used to
-   * render remote host-daemon join commands and to allowlist Host headers on
-   * enroll/WS. The product HTTP API stays loopback-only. Env `ZCC_APP_URL`
-   * overrides this when set.
+   * Persisted leftover. Pairing uses runtime `ZCC_APP_URL` or the compile-time
+   * bake, not this field. `presentAppConfig` overwrites it for the renderer.
    */
   publicAppUrl?: string;
   /**
-   * Shared secret for the outbound pairing-relay tunnel (`wss://<origin>/_zcc/relay`).
-   * Must match Heroku `ZCC_RELAY_TOKEN`. Env `ZCC_RELAY_TOKEN` overrides this
-   * when set. Authenticates laptop attach; many desktops may share one token
-   * (each gets its own session id).
+   * Persisted leftover. Pairing uses runtime `ZCC_RELAY_TOKEN` or the
+   * compile-time bake. Never presented to the renderer.
    */
   relayToken?: string;
   /**
@@ -4523,6 +4527,7 @@ export interface PluginAppEntry {
   enabled: boolean;
   provenance: 'builtin' | 'direct' | 'catalog';
   status: 'running' | 'disabled' | 'degraded' | 'needs-configuration';
+  statusDetail?: string | null;
   appUrl: string | null;
   /** Newer catalog version from the last `checkUpdates()` sweep, when any. */
   availableVersion?: string;
@@ -4532,6 +4537,9 @@ export interface PluginAppEntry {
     order?: number;
     global?: boolean;
   };
+  skillNames?: string[];
+  mcpServers?: Array<{ name: string; type: string; alwaysOn?: boolean }>;
+  cliNames?: string[];
 }
 
 export interface PluginSettingsSnapshot {

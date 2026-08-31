@@ -47,6 +47,7 @@
     "apps/app/src/**/*.tsx",
     "apps/desktop/src/**/*.ts",
     "apps/server/src/**/*.ts",
+    "apps/server/src/**/*.d.ts",
     "apps/host-daemon/src/**/*.ts",
     "packages/plugin-sdk/src/**/*.ts",
     "packages/domain/src/**/*.ts",

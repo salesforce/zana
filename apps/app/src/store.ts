@@ -170,7 +170,7 @@ export type SettingsTab =
   | (string & {});
 
 /** The focused top-level Extensions workspace page. */
-export type ExtensionsTab = 'marketplace' | 'installed' | 'skills' | 'mcp';
+export type ExtensionsTab = 'marketplace' | 'installed' | 'skills' | 'mcp' | 'page';
 
 export interface Toast {
   id: string;
@@ -744,6 +744,7 @@ function mirroredConfigFlags(config: AppConfig) {
     followUpsEnabled: config.followUpsEnabled ?? false,
     idleAttentionSensitivity: config.idleAttentionSensitivity ?? 'medium',
     agentListNeedsYouFromTriage: config.agentListNeedsYouFromTriage ?? false,
+    includeScheduledAgentsInAgentView: config.includeScheduledAgentsInAgentView ?? false,
     voiceInputEnabled: config.voiceInputEnabled ?? false,
     autoCloseIdleEnabled: config.autoCloseIdleEnabled ?? false,
     overseerMode: config.overseerMode ?? 'off',
@@ -1418,6 +1419,10 @@ interface DataState {
    *  AgentsListPane also promotes triaged idle agents into its "Needs you" group
    *  (the board already does). Default off. */
   agentListNeedsYouFromTriage: boolean;
+  /** Mirror of AppConfig.includeScheduledAgentsInAgentView — when on, scheduler
+   *  jobs appear on the Agents board Scheduled column (plus live runs in
+   *  Working/Done). Default off. */
+  includeScheduledAgentsInAgentView: boolean;
   /** Mirror of AppConfig.voiceInputEnabled — gates the mic button in the prompt
    *  composer. Hydrated on init, kept live by the Settings toggle. Default off. */
   voiceInputEnabled: boolean;
@@ -1511,6 +1516,7 @@ interface DataState {
   setWorktreeIsolationDefault: (on: boolean) => void;
   setIdleAttentionSensitivity: (level: 'high' | 'medium' | 'low') => void;
   setAgentListNeedsYouFromTriage: (on: boolean) => void;
+  setIncludeScheduledAgentsInAgentView: (on: boolean) => void;
   setVoiceInputEnabled: (on: boolean) => void;
   /** Flip the auto-close-idle master switch and persist it (sidebar toggle). */
   setAutoCloseIdleEnabled: (on: boolean) => Promise<void>;
@@ -1733,6 +1739,19 @@ export function listedTerminals(list: TerminalSession[] | undefined): TerminalSe
 }
 
 /**
+ * Sessions for the Agents board / list / flow. Same as {@link listedTerminals}
+ * unless `includeScheduled` is on, in which case scheduler-spawned jobs are
+ * kept. Project rails and focus buckets keep using {@link listedTerminals}.
+ */
+export function agentViewTerminals(
+  list: TerminalSession[] | undefined,
+  includeScheduled: boolean
+): TerminalSession[] {
+  if (includeScheduled) return list ?? [];
+  return listedTerminals(list);
+}
+
+/**
  * Live sessions for a project's inline rail expansion: listed (non-scheduler)
  * sessions whose pty hasn't exited. Exited/dismissed agents drop out of the
  * rail automatically so it stays a view of what's actually running — the full
@@ -1795,6 +1814,7 @@ export const useData = create<DataState>((set, get) => ({
   followUpsEnabled: false,
   idleAttentionSensitivity: 'medium',
   agentListNeedsYouFromTriage: false,
+  includeScheduledAgentsInAgentView: false,
   voiceInputEnabled: false,
   steerActiveThreadOnEnter: false,
   autoCloseIdleEnabled: false,
@@ -1923,6 +1943,10 @@ export const useData = create<DataState>((set, get) => ({
 
   setAgentListNeedsYouFromTriage(on) {
     set({ agentListNeedsYouFromTriage: on });
+  },
+
+  setIncludeScheduledAgentsInAgentView(on) {
+    set({ includeScheduledAgentsInAgentView: on });
   },
 
   setVoiceInputEnabled(on) {

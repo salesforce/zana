@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -95,6 +95,14 @@ describe('salesforce plugin contract', () => {
     expect(set.navPanels[0]?.title).toBe('Agent Script');
     expect(set.fileOpeners[0]?.extensions).toEqual(['agent', 'afscript']);
     expect(set.commandPaletteActions[0]?.id).toBe('open-agent-script');
+  });
+
+  it('packages the Agent Script playground under playground/dist', () => {
+    const build = readFileSync(join(root, 'scripts/build-app.mjs'), 'utf8');
+    expect(build).toContain('playground/vite.config.ts');
+    const html = readFileSync(join(root, 'playground/dist/index.html'), 'utf8');
+    expect(html).toContain('/plugins/salesforce/assets/playground/dist/');
+    expect(existsSync(join(root, 'playground/dist/assets'))).toBe(true);
   });
 
   it('loads against the fake host and registers family tools plus zcc sf', async () => {

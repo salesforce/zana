@@ -148,4 +148,34 @@ describe('server plugin app loader', () => {
     expect(listNavPanels()).toEqual([]);
     expect(listPendingInteractionSlots().map((slot) => slot.pluginId)).toEqual(['ask-user-question']);
   });
+
+  it('does not re-import a plugin whose appUrl is unchanged', async () => {
+    const urls: string[] = [];
+    const importer = async (url: string) => {
+      urls.push(url);
+      return {
+        default: {
+          __zccPluginApp: true,
+          setup(app: { slots: { navPanel(registration: object): void } }) {
+            app.slots.navPanel({ id: 'main', title: 'Tasks', icon: 'ListTodo', component: () => null });
+          }
+        }
+      };
+    };
+    const entry = {
+      id: 'tasks',
+      name: 'Tasks',
+      description: '',
+      icon: 'ListTodo',
+      enabled: true,
+      provenance: 'builtin' as const,
+      status: 'running' as const,
+      appUrl: '/plugins/tasks/assets/app.js?v=1'
+    };
+    await reconcilePluginApps([entry], { importer });
+    await reconcilePluginApps([{ ...entry }], { importer });
+    expect(urls).toEqual(['/plugins/tasks/assets/app.js?v=1']);
+    await reconcilePluginApps([{ ...entry, appUrl: '/plugins/tasks/assets/app.js?v=2' }], { importer });
+    expect(urls).toEqual(['/plugins/tasks/assets/app.js?v=1', '/plugins/tasks/assets/app.js?v=2']);
+  });
 });

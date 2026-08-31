@@ -15,7 +15,8 @@ describe('SplitWorkspaceRoute', () => {
     expect(app).toContain('<Route path={THREAD_ROUTE_PATH} element={null} />');
     expect(app).toContain('<Route path={PLUGIN_PANEL_ROOT_ROUTE_PATH} element={null} />');
     expect(app).toContain('isSplitWorkspacePath(location.pathname)');
-    expect(route).toContain('paneContentForPathname(location.pathname)');
+    expect(route).toContain('extensionsHubRedirectForPath(location.pathname)');
+    expect(route).toContain('<Navigate to={hubRedirect} replace />');
     expect(route).toContain('<SplitThreadArea routeContent={routeContent} />');
   });
 

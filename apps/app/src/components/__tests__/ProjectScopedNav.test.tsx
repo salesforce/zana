@@ -63,7 +63,8 @@ vi.mock('../../plugins/plugin-slots', () => ({
     listener();
     return () => undefined;
   },
-  listSidebarFooterActions: () => []
+  listSidebarFooterActions: () => [],
+  listProjectTabs: () => []
 }));
 vi.mock('../../lib/resolveIcon', () => ({
   resolveIcon: () => () => null

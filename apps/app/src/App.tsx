@@ -34,6 +34,7 @@ import { PendingLaunches } from './components/PendingLaunches.js';
 import { HostDialogs } from './components/HostDialogs.js';
 import { nextHostDialogId as hostDialogId } from './modules/host.js';
 import { UpdateBanner } from './components/UpdateBanner.js';
+import { SponsorNudge } from './components/SponsorNudge.js';
 import { WhatsNewModal } from './components/WhatsNewModal.js';
 import { ExtensionConsent } from './components/ExtensionConsent.js';
 import { PluginContentScriptsHost } from './plugins/PluginContentScriptsHost.js';
@@ -65,7 +66,7 @@ import {
 import { useFavoriteCount } from './hooks/useAgentCards.js';
 import { focusInboxEntry } from './lib/inboxNavigation.js';
 import { projectDefaultLaunch } from './lib/launchProfile.js';
-import { getScopedProjectId } from './lib/windowScope.js';
+import { getScopedProjectId, isScopedWindow } from './lib/windowScope.js';
 import { keepsProjectFocusRail, resolveShellLayout, shellTitlebarLabel } from './lib/shellLayout.js';
 import { installShortcuts } from './shortcuts.js';
 import { isLibraryPluginModule } from './lib/libraryPlugin.js';
@@ -96,6 +97,8 @@ import {
   NEW_THREAD_ROUTE_PATH,
   THREAD_ROUTE_PATH,
   TOOLS_MCP_ROUTE_PATH,
+  TOOLS_HUB_PAGE_ROOT_ROUTE_PATH,
+  TOOLS_HUB_PAGE_ROUTE_PATH,
   TOOLS_PLUGIN_BROWSE_ROUTE_PATH,
   TOOLS_PLUGIN_DETAIL_ROUTE_PATH,
   TOOLS_PLUGINS_ROUTE_PATH,
@@ -145,6 +148,8 @@ function AppRoutes({ suggestionsEnabled }: { suggestionsEnabled: boolean }) {
         <Route path={TOOLS_PLUGIN_DETAIL_ROUTE_PATH} element={<ExtensionsView />} />
         <Route path={TOOLS_SKILLS_ROUTE_PATH} element={<ExtensionsView />} />
         <Route path={TOOLS_MCP_ROUTE_PATH} element={<ExtensionsView />} />
+        <Route path={TOOLS_HUB_PAGE_ROOT_ROUTE_PATH} element={<ExtensionsView />} />
+        <Route path={TOOLS_HUB_PAGE_ROUTE_PATH} element={<ExtensionsView />} />
         <Route path={SETTINGS_ROUTE_PATH} element={<SettingsView />} />
         <Route path={SETTINGS_PROJECT_ALIAS_ROUTE_PATH} element={<SettingsProjectAliasRedirect />} />
         <Route path={SETTINGS_SECTION_ROUTE_PATH} element={<SettingsView />} />
@@ -755,6 +760,7 @@ export function App() {
       <HostDialogs />
       <Toaster />
       <ExtensionConsent />
+      {!isScopedWindow() && <SponsorNudge />}
     </div>
   );
 }

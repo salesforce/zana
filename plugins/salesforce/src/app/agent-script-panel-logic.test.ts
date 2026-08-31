@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { filePickerValue, parseFilePickerValue, playgroundHint, saveIsDisabled } from './agent-script-panel-logic.js';
+import {
+  filePickerValue,
+  parseFilePickerValue,
+  PLAYGROUND_LOAD_ERROR,
+  playgroundHint,
+  saveIsDisabled,
+  shouldShowPlaygroundFailure
+} from './agent-script-panel-logic.js';
 import { readDocumentTheme } from './playground-bridge.js';
 
 describe('agent script panel logic', () => {
@@ -26,5 +33,13 @@ describe('agent script panel logic', () => {
 
   it('defaults theme to dark without a light document attribute', () => {
     expect(readDocumentTheme()).toBe('dark');
+  });
+
+  it('shows a playground failure only before ready', () => {
+    expect(shouldShowPlaygroundFailure({ ready: false, iframeError: false, timedOut: false })).toBe(false);
+    expect(shouldShowPlaygroundFailure({ ready: false, iframeError: true, timedOut: false })).toBe(true);
+    expect(shouldShowPlaygroundFailure({ ready: false, iframeError: false, timedOut: true })).toBe(true);
+    expect(shouldShowPlaygroundFailure({ ready: true, iframeError: true, timedOut: true })).toBe(false);
+    expect(PLAYGROUND_LOAD_ERROR).toMatch(/reinstall/i);
   });
 });

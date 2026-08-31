@@ -34,8 +34,7 @@ export function attachPairingRelay(ctx: ProductHttpContext, productPort: number)
     client?.stop();
     const config = ctx.config.getConfig();
     const targets = pairingRelayTargets({
-      configUrl: config.publicAppUrl,
-      configToken: config.relayToken
+      env: process.env
     });
     if (!targets.origin || !targets.token) {
       if (config.relaySessionId) ctx.config.setConfig({ relaySessionId: undefined });
