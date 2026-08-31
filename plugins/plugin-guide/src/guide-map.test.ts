@@ -15,6 +15,7 @@ import { ProductMap, SURFACE_NUMBERS } from './product-map.js';
 import {
   AppShellWireframe,
   ComposerWireframe,
+  HomeWireframe,
   PaletteWireframe,
   SurfaceMapContext,
   type SurfaceMapState
@@ -143,7 +144,21 @@ describe('fixtures', () => {
     expect(markup).toContain('Run release checklist');
   });
 
-  it('shows the composer plus menu while the composer is outlined', () => {
+  it('renders home as New Chat compose with aurora and plugin CTAs under the prompt', () => {
+    const markup = renderToStaticMarkup(
+      createElement(SurfaceMapContext.Provider, { value: mapState() }, createElement(HomeWireframe))
+    );
+    expect(markup).toContain('aurora-host');
+    expect(markup).toContain('aurora-grid');
+    expect(markup).toContain('New Chat');
+    expect(markup).toContain('Describe the task');
+    expect(markup).toContain('plugin-guide-composer-card');
+    expect(markup).toContain('Your action');
+    expect(markup).toContain('Your section');
+    expect(markup).not.toContain('Ask anything');
+  });
+
+  it('shows composer chrome: command card, plugin action, and banner', () => {
     const markup = renderToStaticMarkup(
       createElement(
         SurfaceMapContext.Provider,
@@ -153,6 +168,11 @@ describe('fixtures', () => {
     );
     expect(markup).toContain('data-guide-transient-for="composer"');
     expect(markup).toContain('Your action');
+    expect(markup).toContain('Your banner');
+    expect(markup).toContain('plugin-guide-composer-card');
+    expect(markup).toContain('Claude Code');
+    expect(markup).toContain('Full Access');
+    expect(markup).not.toContain('Ask anything');
   });
 });
 

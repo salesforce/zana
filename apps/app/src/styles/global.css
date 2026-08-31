@@ -37117,11 +37117,12 @@ textarea.thread-command-editor {
 .plugin-guide-home-cta {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   width: fit-content;
   padding: 6px 10px;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg-hover);
+  background: var(--bg-panel);
   color: var(--text-primary);
   font-size: 12px;
 }
@@ -37190,28 +37191,20 @@ textarea.thread-command-editor {
   background: color-mix(in srgb, var(--success) 10%, transparent);
 }
 
-.plugin-guide-composer-box--home {
-  max-width: 560px;
-  min-height: 96px;
-}
-
-.plugin-guide-composer-tools--bb {
-  height: 40px;
-}
-
-.plugin-guide-plus.is-lg,
-.plugin-guide-cta.is-lg,
-.plugin-guide-send.is-lg {
-  width: 36px;
-  height: 36px;
-}
-
 .plugin-guide-composer-meta {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  padding: 0 8px;
-  color: var(--text-dim);
+  gap: 8px;
+  padding: 0 4px;
+  color: var(--text-muted);
   font-size: 11px;
+}
+
+.plugin-guide-composer-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .plugin-guide-rich {
@@ -37221,18 +37214,8 @@ textarea.thread-command-editor {
   color: var(--text-primary);
 }
 
-.plugin-guide-provider em {
-  margin-left: 4px;
-  font-style: normal;
-  color: var(--text-dim);
-}
-
 .plugin-guide-timeline--dense {
   min-height: 510px;
-}
-
-.plugin-guide-home-main {
-  padding-top: 16px;
 }
 
 .plugin-guide-fx-list {
@@ -37350,58 +37333,49 @@ textarea.thread-command-editor {
 
 .plugin-guide-home {
   display: flex;
-  min-height: 420px;
+  min-height: 650px;
   color: var(--text-primary);
 }
 
 .plugin-guide-home-main {
+  position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
   flex: 1;
   min-width: 0;
-  padding: 24px 28px;
+  overflow: hidden;
+  padding: 32px 28px;
+  background: var(--bg-base);
 }
 
-.plugin-guide-home-main .plugin-guide-composer-box {
-  max-width: 560px;
-}
-
-.plugin-guide-home-actions {
-  width: 210px;
-  flex: 0 0 210px;
-  padding: 12px 8px;
-  border-left: 1px solid var(--border);
-  background: var(--sidebar-bg);
-}
-
-.plugin-guide-home-action {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 6px 8px;
-  border-radius: 8px;
-  color: var(--text-muted);
-}
-
-.plugin-guide-home-action.is-plugin {
-  color: var(--text-primary);
-}
-
-.plugin-guide-composer-box {
+.plugin-guide-home-column {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: 14px;
-  background: var(--bg-input);
+  align-items: stretch;
+  gap: 12px;
+  width: min(560px, 100%);
 }
 
-.plugin-guide-composer-box--tall {
-  min-height: 126px;
-  position: relative;
+.plugin-guide-composer-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-elevated);
+  box-shadow: 0 -4px 12px -4px rgb(0 0 0 / 18%);
+}
+
+.plugin-guide-composer-prompt {
+  min-height: 52px;
+  padding: 10px 14px 4px;
 }
 
 .plugin-guide-composer-placeholder,
@@ -37416,56 +37390,73 @@ textarea.thread-command-editor {
 .plugin-guide-composer-tools {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  margin-top: auto;
+  padding: 2px 8px 8px 8px;
 }
 
-.plugin-guide-plus,
-.plugin-guide-send,
-.plugin-guide-cta {
+.plugin-guide-composer-tools-start,
+.plugin-guide-composer-tools-end {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.plugin-guide-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px 0 6px;
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.plugin-guide-composer-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   border-radius: 8px;
-  background: var(--bg-hover);
-  color: var(--text-primary);
+  color: var(--text-muted);
 }
 
 .plugin-guide-send {
-  margin-left: auto;
-  background: var(--accent);
-  color: var(--bg-base);
-}
-
-.plugin-guide-plus-menu {
-  position: absolute;
-  left: 8px;
-  bottom: 100%;
-  z-index: 20;
-  margin-bottom: 4px;
-  width: 176px;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-elevated);
-  display: flex;
-  flex-direction: column;
-}
-
-.plugin-guide-plus-menu span {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 24px;
-  padding: 0 8px;
-  border-radius: 6px;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--accent-blue, #007aff);
+  color: #fff;
 }
 
-.plugin-guide-plus-menu span.is-plugin {
-  background: var(--bg-hover);
+.plugin-guide-send .plugin-guide-glyph {
+  width: 16px;
+  height: 16px;
+}
+
+.plugin-guide-composer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.plugin-guide-plus-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-panel);
   color: var(--text-primary);
+  font-size: 12px;
 }
 
 .plugin-guide-mention-pill {
@@ -37489,27 +37480,22 @@ textarea.thread-command-editor {
   color: var(--text-primary);
 }
 
-.plugin-guide-provider {
-  padding: 3px 8px;
-  border-radius: 8px;
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
 .plugin-guide-home-section {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 10px;
-  max-width: 560px;
-  padding: 12px;
-  border-radius: 12px;
+  gap: 8px;
+  max-width: 100%;
+  padding: 4px 0 0;
+  border-radius: 8px;
 }
 
 .plugin-guide-home-section-kicker {
   display: flex;
   align-items: center;
   gap: 6px;
+  margin: 0 0 8px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -37533,10 +37519,18 @@ textarea.thread-command-editor {
 
 .plugin-guide-thread-lite {
   display: flex;
-  flex-direction: column;
-  gap: 16px;
-  min-height: 420px;
-  padding: 0 0 16px;
+  min-height: 520px;
+  align-items: stretch;
+  color: var(--text-primary);
+}
+
+.plugin-guide-thread-lite .plugin-guide-thread-main {
+  padding-bottom: 12px;
+  background: var(--bg-panel);
+}
+
+.plugin-guide-thread-lite .plugin-guide-composer-mark {
+  margin: auto 16px 0;
 }
 
 .plugin-guide-composer-mark {
@@ -37565,10 +37559,12 @@ textarea.thread-command-editor {
 }
 
 .plugin-guide-head-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   margin-left: auto;
   width: 28px;
   height: 28px;
-  justify-content: center;
   border-radius: 8px;
   background: var(--bg-hover);
 }
