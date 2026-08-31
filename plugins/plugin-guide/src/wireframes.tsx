@@ -587,6 +587,58 @@ export function AppShellWireframe(): ReactNode {
   );
 }
 
+function GuideComposerCard({
+  variant,
+  children
+}: {
+  variant: 'home' | 'thread';
+  children: ReactNode;
+}): ReactNode {
+  return (
+    <div className={classNames('plugin-guide-composer-card', variant === 'home' && 'is-home')}>
+      <div className="plugin-guide-composer-prompt">{children}</div>
+      <div className="plugin-guide-composer-tools">
+        <div className="plugin-guide-composer-tools-start">
+          {variant === 'thread' ? <span className="plugin-guide-picker">Agent</span> : null}
+          <span className="plugin-guide-picker">
+            <Icon name="agents" />
+            Claude Code
+          </span>
+        </div>
+        <div className="plugin-guide-composer-tools-end">
+          <span className="plugin-guide-composer-icon" title="Attach files">
+            <Icon name="paperclip" />
+          </span>
+          <span className="plugin-guide-composer-icon" title="Voice input">
+            <Icon name="mic" />
+          </span>
+          <span className="plugin-guide-send" title="Send">
+            <Icon name="send" />
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GuideComposerMeta({
+  project,
+  permission
+}: {
+  project: string;
+  permission?: string;
+}): ReactNode {
+  return (
+    <div className="plugin-guide-composer-meta">
+      <span className="plugin-guide-composer-chip">
+        <Icon name="folder" />
+        {project}
+      </span>
+      {permission ? <span className="plugin-guide-picker">{permission}</span> : null}
+    </div>
+  );
+}
+
 export function HomeWireframe(): ReactNode {
   return (
     <div className="plugin-guide-stage">
@@ -604,13 +656,19 @@ export function HomeWireframe(): ReactNode {
               <Icon name="fwd" />
             </div>
             <div className="plugin-guide-fx-nav-row is-plugin">
-              <Icon name="plus" /> New Chat
+              <Icon name="pen" /> New Chat
             </div>
             <div className="plugin-guide-fx-nav-row">
               <Icon name="inbox" /> Inbox
             </div>
             <div className="plugin-guide-fx-nav-row">
               <Icon name="agents" /> Agents
+            </div>
+            <div className="plugin-guide-fx-nav-row">
+              <Icon name="cal" /> Scheduler
+            </div>
+            <div className="plugin-guide-fx-nav-row">
+              <Icon name="plugins" /> Plugins
             </div>
             <div className="plugin-guide-thread-stack">
               <div className="plugin-guide-ws-head">
@@ -631,39 +689,36 @@ export function HomeWireframe(): ReactNode {
               <span className="plugin-guide-fx-nav-row">Acme</span>
             </div>
           </aside>
-          <div className="plugin-guide-home-main">
-            <div className="plugin-guide-composer-box plugin-guide-composer-box--home">
-              <span className="plugin-guide-draft">Ask anything. @ to mention files, folders, or threads</span>
-              <div className="plugin-guide-composer-tools plugin-guide-composer-tools--bb">
-                <span className="plugin-guide-plus is-lg">+</span>
-                <span className="plugin-guide-provider">
-                  Claude <em>Code</em>
+          <div className="plugin-guide-home-main aurora-host">
+            <div className="aurora-grid" aria-hidden />
+            <div className="plugin-guide-home-column">
+              <GuideComposerCard variant="home">
+                <span className="plugin-guide-composer-placeholder">Describe the task…</span>
+              </GuideComposerCard>
+              <GuideComposerMeta project="Acme" />
+              <Mark
+                id="experimental_newThreadPanelAction"
+                label="New-thread action"
+                showChip={false}
+                className="plugin-guide-home-cta"
+              >
+                <Plug /> Your action
+              </Mark>
+              <Mark id="homepageSection" label="Home section" className="plugin-guide-home-section">
+                <span className="plugin-guide-home-section-kicker">
+                  <Plug /> Your section
                 </span>
-                <span className="plugin-guide-send is-lg">↵</span>
-              </div>
+                <div className="plugin-guide-home-tiles">
+                  {['Release 1.4', 'Bug triage', 'Design QA'].map((card) => (
+                    <span key={card} className="plugin-guide-home-tile">
+                      <strong>{card}</strong>
+                      <i className="plugin-guide-skel" />
+                      <i className="plugin-guide-skel is-short" />
+                    </span>
+                  ))}
+                </div>
+              </Mark>
             </div>
-            <Mark
-              id="experimental_newThreadPanelAction"
-              label="New-thread action"
-              showChip={false}
-              className="plugin-guide-home-cta"
-            >
-              <Plug /> Your action
-            </Mark>
-            <Mark id="homepageSection" label="Home section" className="plugin-guide-home-section">
-              <span className="plugin-guide-home-section-kicker">
-                <Plug /> Your section
-              </span>
-              <div className="plugin-guide-home-tiles">
-                {['Release 1.4', 'Bug triage', 'Design QA'].map((card) => (
-                  <span key={card} className="plugin-guide-home-tile">
-                    <strong>{card}</strong>
-                    <i className="plugin-guide-skel" />
-                    <i className="plugin-guide-skel is-short" />
-                  </span>
-                ))}
-              </div>
-            </Mark>
           </div>
         </div>
       </WindowFrame>
@@ -678,50 +733,62 @@ export function ComposerWireframe(): ReactNode {
       <MeasuredBadge id="composer" label="Composer chrome" anchor='[data-guide-region="composer"]' at="start" />
       <WindowFrame>
         <div className="plugin-guide-thread-lite">
-          <header className="plugin-guide-thread-head">
-            <span>Ship the pairing flow</span>
-            <Icon name="more" />
-          </header>
-          <div className="plugin-guide-timeline plugin-guide-timeline--short">
-            <div className="plugin-guide-bubble is-user">Draft the pairing notes</div>
-            <p className="plugin-guide-assistant-line">
-              Drafted. Two rough edges left in pairing — reply with what to fold in.
-            </p>
-          </div>
-          <Mark id="composer" label="Composer chrome" showChip={false} className="plugin-guide-composer-mark">
-            <div className="plugin-guide-banner">
-              <Plug /> Your banner
+          <aside className="plugin-guide-fx-nav">
+            <div className="plugin-guide-fx-titlebar plugin-guide-fx-titlebar--reserve">
+              <Icon name="back" />
+              <Icon name="fwd" />
             </div>
-            <div className="plugin-guide-composer-box plugin-guide-composer-box--tall">
-              {plus.outlined ? (
-                <div className="plugin-guide-plus-menu" data-guide-transient-for="composer" aria-hidden>
-                  <span>Attach files</span>
-                  <span>Skills</span>
-                  <span className="is-plugin">
-                    <Plug /> Your action
-                  </span>
-                </div>
-              ) : null}
-              <span className="plugin-guide-draft">
-                Summarize <span className="plugin-guide-mention-pill">@release-notes</span> and fix the{' '}
-                <span className="plugin-guide-rich">TODO</span> in checkout.
-              </span>
-              <div className="plugin-guide-composer-tools plugin-guide-composer-tools--bb">
-                <span className="plugin-guide-plus is-lg">+</span>
-                <span className="plugin-guide-provider">
-                  Claude <em>Code</em>
-                </span>
-                <span className="plugin-guide-cta is-lg">
-                  <Plug />
-                </span>
-                <span className="plugin-guide-send is-lg">↵</span>
+            <div className="plugin-guide-fx-nav-row">
+              <Icon name="pen" /> New Chat
+            </div>
+            <div className="plugin-guide-fx-nav-row">
+              <Icon name="inbox" /> Inbox
+            </div>
+            <div className="plugin-guide-fx-nav-row is-plugin">
+              <Icon name="agents" /> Agents
+            </div>
+            <div className="plugin-guide-thread-stack">
+              <div className="plugin-guide-ws-head">
+                <span className="plugin-guide-fx-section plugin-guide-ws-head-title">Workspaces</span>
               </div>
+              <span className="plugin-guide-fx-nav-row">Acme</span>
             </div>
-            <div className="plugin-guide-composer-meta">
-              <span>Acme</span>
-              <span>Full Access</span>
+          </aside>
+          <section className="plugin-guide-thread-main">
+            <header className="plugin-guide-thread-head">
+              <span>Ship the pairing flow</span>
+              <span className="plugin-guide-head-action">
+                <Icon name="more" />
+              </span>
+            </header>
+            <div className="plugin-guide-timeline plugin-guide-timeline--short">
+              <div className="plugin-guide-bubble is-user">Draft the pairing notes</div>
+              <p className="plugin-guide-assistant-line">
+                Drafted. Two rough edges left in pairing — reply with what to fold in.
+              </p>
             </div>
-          </Mark>
+            <Mark id="composer" label="Composer chrome" showChip={false} className="plugin-guide-composer-mark">
+              <div className="plugin-guide-banner">
+                <Plug /> Your banner
+              </div>
+              <GuideComposerCard variant="thread">
+                <span className="plugin-guide-draft">
+                  Summarize <span className="plugin-guide-mention-pill">@release-notes</span> and fix the{' '}
+                  <span className="plugin-guide-rich">TODO</span> in checkout.
+                </span>
+              </GuideComposerCard>
+              <div
+                className="plugin-guide-composer-actions"
+                data-guide-transient-for={plus.outlined ? 'composer' : undefined}
+                aria-hidden
+              >
+                <span className="plugin-guide-plus-chip is-plugin">
+                  <Plug /> Your action
+                </span>
+              </div>
+              <GuideComposerMeta project="Acme" permission="Full Access" />
+            </Mark>
+          </section>
         </div>
       </WindowFrame>
     </div>

@@ -40,6 +40,8 @@ const listeners = new Set<() => void>();
  * `useSyncExternalStore` compares snapshots by reference. Keep each derived
  * slot list stable until a registration changes; rebuilding it in a getter
  * makes every render look like a store update and can recurse indefinitely.
+ * That includes filtered views (`sidebarNavPanels`, `extensionsHubPanels`) —
+ * `.filter()` in a list getter is a new array every call.
  */
 let snapshot = emptySnapshot();
 
@@ -47,6 +49,8 @@ function emptySnapshot() {
   return {
     sets: [] as PluginRegistrationSet[],
     navPanels: [] as PluginNavPanelRegistration[],
+    sidebarNavPanels: [] as PluginNavPanelRegistration[],
+    extensionsHubPanels: [] as PluginNavPanelRegistration[],
     homepageSections: [] as PluginHomepageSectionRegistration[],
     settingsSections: [] as PluginSettingsSectionRegistration[],
     projectTabs: [] as PluginProjectTabRegistration[],
@@ -72,9 +76,12 @@ function emptySnapshot() {
 
 function rebuildSnapshot(): void {
   const orderedSets = [...sets.values()].sort((a, b) => a.pluginId.localeCompare(b.pluginId));
+  const navPanels = orderedSets.flatMap((set) => set.navPanels);
   snapshot = {
     sets: orderedSets,
-    navPanels: orderedSets.flatMap((set) => set.navPanels),
+    navPanels,
+    sidebarNavPanels: navPanels.filter((panel) => panel.placement !== 'extensions'),
+    extensionsHubPanels: navPanels.filter((panel) => panel.placement === 'extensions'),
     homepageSections: orderedSets.flatMap((set) => set.homepageSections),
     settingsSections: orderedSets.flatMap((set) => set.settingsSections),
     projectTabs: orderedSets.flatMap((set) => set.projectTabs),
@@ -148,11 +155,11 @@ export function listNavPanels(): PluginNavPanelRegistration[] {
 }
 
 export function listSidebarNavPanels(): PluginNavPanelRegistration[] {
-  return snapshot.navPanels.filter((panel) => panel.placement !== 'extensions');
+  return snapshot.sidebarNavPanels;
 }
 
 export function listExtensionsHubPanels(): PluginNavPanelRegistration[] {
-  return snapshot.navPanels.filter((panel) => panel.placement === 'extensions');
+  return snapshot.extensionsHubPanels;
 }
 
 export function listHomepageSections(): PluginHomepageSectionRegistration[] {

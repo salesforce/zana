@@ -92,6 +92,9 @@ describe('plugin slot registry', () => {
     expect(listExtensionsHubPanels()).toEqual(
       expect.arrayContaining([expect.objectContaining({ pluginId: 'guide', placement: 'extensions' })])
     );
+    // useSyncExternalStore identity: a fresh .filter() every call loops React.
+    expect(listSidebarNavPanels()).toBe(listSidebarNavPanels());
+    expect(listExtensionsHubPanels()).toBe(listExtensionsHubPanels());
     clearPluginSlots('guide');
   });
 
