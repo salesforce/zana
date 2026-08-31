@@ -1,13 +1,22 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const source = readFileSync(new URL('../index.ts', import.meta.url), 'utf8');
+// The terminal IPC handlers moved to apps/desktop/src/ipc/terminals.ts and the
+// launch/terminate helpers to apps/desktop/src/host.ts in the monorepo split.
+const terminalsSource = readFileSync(
+  new URL('../../../desktop/src/ipc/terminals.ts', import.meta.url),
+  'utf8'
+);
+const hostSource = readFileSync(
+  new URL('../../../desktop/src/host.ts', import.meta.url),
+  'utf8'
+);
 
 describe('restore/reconnect trust boundary', () => {
   it('routes capability-backed restore and reconnect through authorization coordinator', () => {
-    const handlers = source.slice(
-      source.indexOf('IPC.terminals.restore,'),
-      source.indexOf('IPC.terminals.write,')
+    const handlers = terminalsSource.slice(
+      terminalsSource.indexOf('IPC.terminals.restore,'),
+      terminalsSource.indexOf('IPC.terminals.write,')
     );
     expect(handlers).not.toContain('createTerminalConfined(');
     expect(handlers.match(/launchAuthorizedTerminal\(/g)).toHaveLength(3);
@@ -27,14 +36,14 @@ describe('restore/reconnect trust boundary', () => {
   });
 
   it('removes restore authority and cleanly terminates sessions on explicit close', () => {
-    const close = source.slice(
-      source.indexOf('IPC.terminals.close,'),
-      source.indexOf('IPC.terminals.backlog,')
+    const close = terminalsSource.slice(
+      terminalsSource.indexOf('IPC.terminals.close,'),
+      terminalsSource.indexOf('IPC.terminals.backlog,')
     );
-    expect(close).toContain('(id: string) => terminateSession(id)');
-    const terminate = source.slice(
-      source.indexOf('async function terminateSession('),
-      source.indexOf('const teamLifecycleIntegration')
+    expect(close).toContain('(id: string) => ctx.terminateSession(id)');
+    const terminate = hostSource.slice(
+      hostSource.indexOf('async function terminateSession('),
+      hostSource.indexOf('const teamLifecycleIntegration')
     );
     expect(terminate).toContain('restoreCapabilities.removeSession(sessionId)');
     expect(terminate).toContain('await ptys.killRemoteTmux(sessionId)');
@@ -43,9 +52,9 @@ describe('restore/reconnect trust boundary', () => {
   });
 
   it('resolves framework persona before immutable preflight and snapshots it for spawn', () => {
-    const launch = source.slice(
-      source.indexOf('async function launchAuthorizedTerminal('),
-      source.indexOf('/** Interactive renderer launch')
+    const launch = hostSource.slice(
+      hostSource.indexOf('async function launchAuthorizedTerminal('),
+      hostSource.indexOf('/** Interactive renderer launch')
     );
     expect(launch.indexOf('resolveFrameworkPersona(')).toBeLessThan(launch.indexOf('preflightLaunch('));
     expect(launch).toContain('frameworkPersona: authorizedPlan.resolved.frameworkPersona');

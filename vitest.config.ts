@@ -28,7 +28,12 @@ export default defineConfig({
       'salesforce-only/**',
       'packages/agent-runtime/src/integration*.test.ts',
       'packages/host-daemon-contract/test/**',
-      'packages/server-contract/test/**'
+      'packages/server-contract/test/**',
+      // bundled-bin asserts against packages/cli/dist (the built zcc bin) and
+      // does not build it — the root `pnpm test` deliberately never runs a
+      // build. It runs via packages/cli's own `test` script (`build && vitest`),
+      // so collecting it here fails on a stale/absent dist.
+      'packages/cli/src/__tests__/bundled-bin.test.ts'
     ]
   },
   resolve: {

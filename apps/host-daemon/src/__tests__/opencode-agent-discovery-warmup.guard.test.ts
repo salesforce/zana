@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
-const source = readFileSync(new URL('../index.ts', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../../../desktop/src/host.ts', import.meta.url), 'utf8');
 
 describe('Harness agent discovery startup warmup', () => {
   it('warms registered local-project catalogs after IPC registration without blocking bootstrap', () => {

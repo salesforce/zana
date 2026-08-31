@@ -43,8 +43,14 @@ const closeSpy = vi.fn((id: string) => {
   liveSessions.delete(id);
 });
 
-vi.mock('../pty.js', () => {
+vi.mock('@zana-ai/zcc-host-daemon/pty', () => {
   class PtyManager {
+    setMcpBaseUrl() {}
+    // Injected once at boot (spawn-time cwd confinement, Rule 2).
+    // A no-op here keeps the mock's surface in step with the real PtyManager.
+    setProjectRoots() {}
+    // Injected once at boot (WARP-C5 layered RULES.md).
+    setRulesResolver() {}
     create() {
       createCount += 1;
       const id = `s${createCount}`;
@@ -61,44 +67,59 @@ vi.mock('../pty.js', () => {
     close(id: string) {
       return closeSpy(id);
     }
-    // Injected once at boot by index.ts (spawn-time cwd confinement, Rule 2).
-    // A no-op here keeps the mock's surface in step with the real PtyManager.
-    setProjectRoots() {}
-    // Injected once at boot by index.ts (WARP-C5 layered RULES.md).
-    setRulesResolver() {}
+    closeExpected(id: string) {
+      closeSpy(id);
+      return true;
+    }
+    async killRemoteTmux() {
+      return false;
+    }
+    setRestoreCapabilityId() {}
     on() {}
   }
   return { PtyManager, isClaudeProfile: (p: string) => p === 'claude' };
 });
 
-vi.mock('../store.js', () => ({
+vi.mock('@zana-ai/zcc-server/services/projects/store', () => ({
   store: {
     listProjects: () => [PROJECT],
     getConfig: () => CONFIG,
     getProjectSettings: () => ({} as ProjectSettings),
     createScratchSubfolder: () => '/tmp/proj/scratch'
-  }
+  },
+  scratchWorkspaceRoot: () => '/tmp/scratch-root',
+  worktreeRoot: () => '/tmp/zcc-worktrees',
+  worktreeTargetDir: (_p: unknown, slug: string) => `/tmp/zcc-worktrees/${slug}`,
+  EXTENSION_PROJECT_CATEGORY: 'Extensions'
 }));
 
 // --- inbox mock: capture the run-ended notice ---
 const inboxAppendSpy = vi.fn(async (_input: { projectId: string; comments?: string }) => ({
   id: 'inbox-1'
 }));
-vi.mock('@zana-ai/zcc-server', () => ({
-  createInboxStore: () => ({
-    append: inboxAppendSpy,
-    read: () => [],
-    delete: () => {},
-    deleteMany: () => {},
-    onAppended: () => {},
-    onRemoved: () => {},
-    onUpdated: () => {},
-    onPruned: () => {}
-  })
-}));
+// host.ts imports many named exports from this package at module scope
+// (createSuggestionsStore, createSavedStore, FeedStore, InboxSummaryService,
+// readMcpPort/writeMcpPort, …). Keep them all real and only override
+// createInboxStore so we can spy on inbox appends.
+vi.mock('@zana-ai/zcc-server', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@zana-ai/zcc-server')>();
+  return {
+    ...actual,
+    createInboxStore: () => ({
+      append: inboxAppendSpy,
+      read: () => [],
+      delete: () => {},
+      deleteMany: () => {},
+      onAppended: () => {},
+      onRemoved: () => {},
+      onUpdated: () => {},
+      onPruned: () => {}
+    })
+  };
+});
 
-vi.mock('../persona-store.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../persona-store.js')>();
+vi.mock('@zana-ai/zcc-server/services/agents/persona-store', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@zana-ai/zcc-server/services/agents/persona-store')>();
   return {
     ...actual,
     PersonaStore: class {
@@ -113,8 +134,8 @@ vi.mock('../persona-store.js', async (importOriginal) => {
   };
 });
 
-vi.mock('../team-store.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../team-store.js')>();
+vi.mock('@zana-ai/zcc-server/services/agents/team-store', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@zana-ai/zcc-server/services/agents/team-store')>();
   return {
     ...actual,
     TeamStore: class {
@@ -160,7 +181,7 @@ vi.mock('electron', () => ({
 }));
 
 vi.mock('../../../../../desktop/src/updater.js', () => ({ createUpdater: () => ({}) }));
-vi.mock('-ai/zcc-host-daemon/mcp-config', () => ({
+vi.mock('@zana-ai/zcc-host-daemon/mcp-config', () => ({
   ensureMcpConfigForProject: () => '/tmp/p1/.mcp.json',
   ensureMcpConfigForProjectSync: () => '/tmp/p1/.mcp.json'
 }));

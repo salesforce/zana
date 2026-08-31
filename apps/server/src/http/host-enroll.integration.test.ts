@@ -615,6 +615,7 @@ describe('host enroll hub and thread create', () => {
       token: enrollToken
     });
     try {
+      await waitForHost(daemon.hostId);
       expect(server!.ctx.hostHub.connectedHostIds()).toContain(daemon.hostId);
       const listed = await fetch(`${server!.url}api/v1/hosts`).then((response) => response.json()) as Array<{
         id: string;

@@ -655,7 +655,7 @@ describe('conversation lifecycle', () => {
       }
     };
     walk(timeline.rows as Parameters<typeof walk>[0]);
-    expect(work).toEqual(expect.arrayContaining(['tool', 'command']));
+    expect(work).toEqual(expect.arrayContaining(['file-read', 'command']));
   });
 
   it('queues a send while a pending interaction is open', async () => {

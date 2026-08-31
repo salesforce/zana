@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 
 describe('Claude history IPC authority', () => {
   it('resolves a local project path in main instead of accepting renderer cwd', () => {
-    const source = readFileSync(new URL('../index.ts', import.meta.url), 'utf8');
+    const source = readFileSync(new URL('../ipc/sessions.ts', import.meta.url), 'utf8');
     const start = source.indexOf('IPC.claude.listSessions');
     const handler = source.slice(start, source.indexOf('IPC.opencode.listSessions', start));
 

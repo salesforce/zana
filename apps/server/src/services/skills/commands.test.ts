@@ -6,7 +6,7 @@ import { join } from 'node:path';
 // Mock the plugin enumeration so we control which plugin install paths
 // contribute commands (the real listPlugins walks ~/.claude).
 const listPluginsMock = vi.fn();
-vi.mock('../plugins.js', () => ({
+vi.mock('../extensions/plugins.js', () => ({
   listPlugins: () => listPluginsMock()
 }));
 

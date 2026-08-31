@@ -8,7 +8,6 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { turnScope } from "@zana-ai/zcc-domain/thread-runtime";
 import type { RuntimePermissionPolicy } from "@zana-ai/zcc-domain/thread-runtime";
 import type { ServerNotification as CodexServerNotification } from "./generated/codex-app-server/schema/ServerNotification.js";
 import type { Turn } from "./generated/codex-app-server/schema/v2/Turn.js";
@@ -339,25 +338,25 @@ function publishedCommandOutput(args: {
   translator.translateEvent(
     rawShellOutput({ ...call, output: args.rawOutput }),
   );
-  const events = translator.translateEvent(
+  const deltas = translator.translateEvent(
     completedCommand({
       ...call,
       aggregatedOutput: args.providerAggregatedOutput,
     }),
   );
-  const completed = events.find(
-    (event) =>
-      event.type === "item/completed" &&
-      event.item.type === "commandExecution" &&
-      event.item.id === "cmd-1",
+  const closed = deltas.find(
+    (delta) =>
+      delta.kind === "item.close" &&
+      delta.key.providerItemId === "cmd-1" &&
+      delta.item.type === "command",
   );
-  if (completed?.type !== "item/completed") {
-    throw new Error("Expected a completed commandExecution event");
+  if (closed?.kind !== "item.close") {
+    throw new Error("Expected a command close delta");
   }
-  if (completed.item.type !== "commandExecution") {
-    throw new Error("Expected a commandExecution item");
+  if (closed.item.type !== "command") {
+    throw new Error("Expected a command item");
   }
-  return completed.item.aggregatedOutput;
+  return closed.item.aggregatedOutput;
 }
 
 const METADATA_WRAPPER_LINES = [
@@ -486,13 +485,11 @@ describe("codex raw shell command-output recovery", () => {
         ),
       ).toContainEqual(
         expect.objectContaining({
-          type: "item/completed",
-          threadId: "t1",
-          providerThreadId: "t1",
-          scope: turnScope("turn-1"),
+          kind: "item.close",
+          key: { providerItemId: command.callId },
+          providerTurnId: "turn-1",
           item: expect.objectContaining({
-            type: "commandExecution",
-            id: command.callId,
+            type: "command",
             aggregatedOutput: command.output,
           }),
         }),
@@ -541,13 +538,11 @@ describe("codex raw shell command-output recovery", () => {
       ),
     ).toContainEqual(
       expect.objectContaining({
-        type: "item/completed",
-        threadId: "thread-b",
-        providerThreadId: "thread-b",
-        scope: turnScope("turn-b"),
+        kind: "item.close",
+        key: { providerItemId: "cmd-b" },
+        providerTurnId: "turn-b",
         item: expect.objectContaining({
-          type: "commandExecution",
-          id: "cmd-b",
+          type: "command",
           aggregatedOutput: "B-1\nB-2\n",
         }),
       }),
@@ -589,13 +584,11 @@ describe("codex raw shell command-output recovery", () => {
       ),
     ).toContainEqual(
       expect.objectContaining({
-        type: "item/completed",
-        threadId: "thread-a",
-        providerThreadId: "thread-a",
-        scope: turnScope("turn-a"),
+        kind: "item.close",
+        key: { providerItemId: "cmd-a" },
+        providerTurnId: "turn-a",
         item: expect.objectContaining({
-          type: "commandExecution",
-          id: "cmd-a",
+          type: "command",
           aggregatedOutput: "provider output\n",
         }),
       }),
@@ -633,13 +626,11 @@ describe("codex command output capture across reordering", () => {
       ),
     ).toContainEqual(
       expect.objectContaining({
-        type: "item/completed",
-        threadId: "t1",
-        providerThreadId: "t1",
-        scope: turnScope("turn-1"),
+        kind: "item.close",
+        key: { providerItemId: "cmd-1" },
+        providerTurnId: "turn-1",
         item: expect.objectContaining({
-          type: "commandExecution",
-          id: "cmd-1",
+          type: "command",
           aggregatedOutput: "OUT-1\nOUT-2\nOUT-3\n",
         }),
       }),
@@ -668,12 +659,13 @@ describe("codex command output capture across reordering", () => {
     );
 
     // Order matters: the item must settle inside the turn it belongs to.
-    expect(completedEvents.map((event) => event.type)).toEqual([
-      "item/completed",
-      "turn/completed",
+    expect(completedEvents.map((delta) => delta.kind)).toEqual([
+      "item.close",
+      "turn.boundary",
     ]);
     expect(completedEvents[0]).toMatchObject({
-      item: { id: "cmd-1", aggregatedOutput: "provider output\n" },
+      key: { providerItemId: "cmd-1" },
+      item: { aggregatedOutput: "provider output\n" },
     });
   });
 });
@@ -723,28 +715,38 @@ describe("codex subagent activity correlation", () => {
   }
 
   // Codex reports native subagents as tool calls rather than as bb background
-  // tasks, so the shared background-work state cannot see them. Releasing an
-  // idle session while a child agent is still running kills the child.
-  it("reports an unfinished subagent as open thread work", () => {
+  // tasks. Open-work is now inferred downstream from the delegation deltas: a
+  // started subagent opens a delegation row (open work) and its child turn
+  // completing closes it. Releasing an idle session while a child agent is
+  // still running kills the child, so the open→close pair must be observable.
+  it("opens a delegation for an unfinished subagent and closes it on completion", () => {
     const translator = createTranslator();
-    const work = { providerThreadId: rootProviderThreadId };
 
-    expect(translator.hasOpenThreadWork(work)).toBe(false);
-
-    translator.translateEvent(
-      subAgentActivity({ id: "subagent-call-1", kind: "started" }),
+    expect(
+      translator.translateEvent(
+        subAgentActivity({ id: "subagent-call-1", kind: "started" }),
+      ),
+    ).toContainEqual(
+      expect.objectContaining({
+        kind: "item.open",
+        key: { providerItemId: "subagent-call-1" },
+        providerTurnId: "parent-turn",
+        item: expect.objectContaining({ type: "delegation", background: false }),
+      }),
     );
 
-    expect(translator.hasOpenThreadWork(work)).toBe(true);
-    // Scoped per parent thread: another session must not be pinned open.
-    expect(
-      translator.hasOpenThreadWork({ providerThreadId: "other-thread" }),
-    ).toBe(false);
-
     translator.translateEvent(childTurnStarted("child-turn-1"));
-    translator.translateEvent(childTurnCompleted("child-turn-1"));
 
-    expect(translator.hasOpenThreadWork(work)).toBe(false);
+    expect(
+      translator.translateEvent(childTurnCompleted("child-turn-1")),
+    ).toContainEqual(
+      expect.objectContaining({
+        kind: "item.close",
+        key: { providerItemId: "subagent-call-1" },
+        status: "completed",
+        item: expect.objectContaining({ type: "delegation" }),
+      }),
+    );
   });
 
   // subAgentActivity is bookkeeping, not a timeline item: bb synthesizes the
@@ -760,21 +762,15 @@ describe("codex subagent activity correlation", () => {
       ),
     ).toEqual([
       expect.objectContaining({
-        type: "item/started",
-        threadId: rootProviderThreadId,
-        providerThreadId: rootProviderThreadId,
-        scope: turnScope("parent-turn"),
-        item: expect.objectContaining({
-          type: "toolCall",
-          id: "subagent-call-1",
-          tool: "spawnAgent",
-          status: "pending",
-          arguments: {
-            senderThreadId: rootProviderThreadId,
-            receiverThreadIds: ["agent-thread-1"],
-            description: "/root/lifecycle_child",
-          },
-        }),
+        kind: "item.open",
+        key: { providerItemId: "subagent-call-1" },
+        providerTurnId: "parent-turn",
+        item: {
+          type: "delegation",
+          childRef: "agent-thread-1",
+          label: "/root/lifecycle_child",
+          background: false,
+        },
       }),
     ]);
 
@@ -782,9 +778,9 @@ describe("codex subagent activity correlation", () => {
       translator.translateEvent(childTurnStarted("child-turn-1")),
     ).toContainEqual(
       expect.objectContaining({
-        type: "turn/started",
-        scope: turnScope("child-turn-1"),
-        parentToolCallId: "subagent-call-1",
+        kind: "turn.open",
+        providerTurnId: "child-turn-1",
+        parentRef: "subagent-call-1",
       }),
     );
 
@@ -811,11 +807,9 @@ describe("codex subagent activity correlation", () => {
       ),
     ).toContainEqual(
       expect.objectContaining({
-        type: "item/completed",
-        item: expect.objectContaining({
-          id: "child-message-1",
-          parentToolCallId: "subagent-call-1",
-        }),
+        kind: "item.close",
+        key: { providerItemId: "child-message-1", parentRef: "subagent-call-1" },
+        item: expect.objectContaining({ type: "agentMessage" }),
       }),
     );
 
@@ -823,18 +817,15 @@ describe("codex subagent activity correlation", () => {
       translator.translateEvent(childTurnCompleted("child-turn-1")),
     ).toEqual([
       expect.objectContaining({
-        type: "turn/completed",
-        scope: turnScope("child-turn-1"),
+        kind: "turn.boundary",
+        providerTurnId: "child-turn-1",
       }),
       expect.objectContaining({
-        type: "item/completed",
-        scope: turnScope("parent-turn"),
-        item: expect.objectContaining({
-          type: "toolCall",
-          id: "subagent-call-1",
-          tool: "spawnAgent",
-          status: "completed",
-        }),
+        kind: "item.close",
+        key: { providerItemId: "subagent-call-1" },
+        providerTurnId: "parent-turn",
+        status: "completed",
+        item: expect.objectContaining({ type: "delegation" }),
       }),
     ]);
   });
@@ -853,41 +844,48 @@ describe("codex subagent activity correlation", () => {
       translator.translateEvent(childTurnStarted("child-turn-1")),
     ).toContainEqual(
       expect.objectContaining({
-        type: "turn/started",
-        scope: turnScope("child-turn-1"),
-        parentToolCallId: "subagent-call-1",
+        kind: "turn.open",
+        providerTurnId: "child-turn-1",
+        parentRef: "subagent-call-1",
       }),
     );
     translator.translateEvent(childTurnCompleted("child-turn-1"));
 
-    // The interaction itself is bookkeeping, not a timeline item.
+    // Interacting with a settled subagent re-opens its delegation row so the
+    // resumed work nests under the same call.
     expect(
       translator.translateEvent(
         subAgentActivity({ id: "interaction-1", kind: "interacted" }),
       ),
-    ).toEqual([]);
+    ).toContainEqual(
+      expect.objectContaining({
+        kind: "item.open",
+        key: { providerItemId: "subagent-call-1" },
+        item: expect.objectContaining({ type: "delegation" }),
+      }),
+    );
 
     expect(
       translator.translateEvent(childTurnStarted("child-turn-2")),
     ).toContainEqual(
       expect.objectContaining({
-        type: "turn/started",
-        scope: turnScope("child-turn-2"),
-        parentToolCallId: "subagent-call-1",
+        kind: "turn.open",
+        providerTurnId: "child-turn-2",
+        parentRef: "subagent-call-1",
       }),
     );
 
-    // Re-arming must not re-complete the spawning tool call: the delegation
-    // item stays open across the resumed turn.
+    // Re-arming resumes and then re-closes the spawning delegation as the
+    // resumed turn completes.
     const resumedTurnCompleted = translator.translateEvent(
       childTurnCompleted("child-turn-2"),
     );
-    expect(resumedTurnCompleted).toEqual([
+    expect(resumedTurnCompleted).toContainEqual(
       expect.objectContaining({
-        type: "turn/completed",
-        scope: turnScope("child-turn-2"),
+        kind: "turn.boundary",
+        providerTurnId: "child-turn-2",
       }),
-    ]);
+    );
   });
 
   // Follow-ups queue: two interactions owe two more child turns. The re-arm is
@@ -912,19 +910,19 @@ describe("codex subagent activity correlation", () => {
         translator.translateEvent(childTurnStarted(`child-turn-${index}`)),
       ).toContainEqual(
         expect.objectContaining({
-          type: "turn/started",
-          scope: turnScope(`child-turn-${index}`),
-          parentToolCallId: "subagent-call-1",
+          kind: "turn.open",
+          providerTurnId: `child-turn-${index}`,
+          parentRef: "subagent-call-1",
         }),
       );
       expect(
         translator.translateEvent(childTurnCompleted(`child-turn-${index}`)),
-      ).toEqual([
+      ).toContainEqual(
         expect.objectContaining({
-          type: "turn/completed",
-          scope: turnScope(`child-turn-${index}`),
+          kind: "turn.boundary",
+          providerTurnId: `child-turn-${index}`,
         }),
-      ]);
+      );
     }
   });
 
@@ -953,22 +951,22 @@ describe("codex subagent activity correlation", () => {
 
     const humanTurnStarted = translator
       .translateEvent(childTurnStarted("human-turn"))
-      .find((event) => event.type === "turn/started");
+      .find((delta) => delta.kind === "turn.open");
     expect(humanTurnStarted).toEqual(
       expect.objectContaining({
-        type: "turn/started",
-        scope: turnScope("human-turn"),
+        kind: "turn.open",
+        providerTurnId: "human-turn",
       }),
     );
-    expect(humanTurnStarted).not.toHaveProperty("parentToolCallId");
+    expect(humanTurnStarted).not.toHaveProperty("parentRef");
 
     expect(
       translator.translateEvent(childTurnStarted("child-turn-2")),
     ).toContainEqual(
       expect.objectContaining({
-        type: "turn/started",
-        scope: turnScope("child-turn-2"),
-        parentToolCallId: "subagent-call-1",
+        kind: "turn.open",
+        providerTurnId: "child-turn-2",
+        parentRef: "subagent-call-1",
       }),
     );
   });
@@ -995,9 +993,9 @@ describe("codex subagent activity correlation", () => {
       translator.translateEvent(childTurnStarted("child-turn-2")),
     ).toContainEqual(
       expect.objectContaining({
-        type: "turn/started",
-        scope: turnScope("child-turn-2"),
-        parentToolCallId: "subagent-call-1",
+        kind: "turn.open",
+        providerTurnId: "child-turn-2",
+        parentRef: "subagent-call-1",
       }),
     );
     translator.translateEvent(childTurnCompleted("child-turn-2"));
@@ -1010,8 +1008,8 @@ describe("codex subagent activity correlation", () => {
     ).not.toBeNull();
     const laterHumanTurn = translator
       .translateEvent(childTurnStarted("human-turn"))
-      .find((event) => event.type === "turn/started");
-    expect(laterHumanTurn).not.toHaveProperty("parentToolCallId");
+      .find((delta) => delta.kind === "turn.open");
+    expect(laterHumanTurn).not.toHaveProperty("parentRef");
   });
 
   // Two resumed agents each owe a turn. When one of them announces itself on
@@ -1046,9 +1044,9 @@ describe("codex subagent activity correlation", () => {
       ),
     ).toContainEqual(
       expect.objectContaining({
-        type: "turn/started",
-        scope: turnScope("resumed-turn-2"),
-        parentToolCallId: "subagent-call-2",
+        kind: "turn.open",
+        providerTurnId: "resumed-turn-2",
+        parentRef: "subagent-call-2",
       }),
     );
 
@@ -1056,9 +1054,9 @@ describe("codex subagent activity correlation", () => {
       translator.translateEvent(childTurnStarted("resumed-turn-1")),
     ).toContainEqual(
       expect.objectContaining({
-        type: "turn/started",
-        scope: turnScope("resumed-turn-1"),
-        parentToolCallId: "subagent-call-1",
+        kind: "turn.open",
+        providerTurnId: "resumed-turn-1",
+        parentRef: "subagent-call-1",
       }),
     );
   });
@@ -1083,9 +1081,9 @@ describe("codex subagent activity correlation", () => {
         translator.translateEvent(childTurnStarted(`child-turn-${index}`)),
       ).toContainEqual(
         expect.objectContaining({
-          type: "turn/started",
-          scope: turnScope(`child-turn-${index}`),
-          parentToolCallId: `subagent-call-${index}`,
+          kind: "turn.open",
+          providerTurnId: `child-turn-${index}`,
+          parentRef: `subagent-call-${index}`,
         }),
       );
     }
@@ -1106,12 +1104,11 @@ describe("codex subagent activity correlation", () => {
       ),
     ).toEqual([
       expect.objectContaining({
-        type: "item/completed",
-        scope: turnScope("parent-turn"),
-        item: expect.objectContaining({
-          id: "subagent-call-1",
-          status: "interrupted",
-        }),
+        kind: "item.close",
+        key: { providerItemId: "subagent-call-1" },
+        providerTurnId: "parent-turn",
+        status: "interrupted",
+        item: expect.objectContaining({ type: "delegation" }),
       }),
     ]);
 
@@ -1154,19 +1151,15 @@ describe("codex accepted-input correlation", () => {
         }),
       ),
     ).toEqual([
-      {
-        type: "turn/started",
-        threadId: "provider-thread-1",
-        providerThreadId: "provider-thread-1",
-        scope: turnScope("turn-1"),
-      },
-      {
-        type: "turn/input/accepted",
-        threadId: "provider-thread-1",
-        providerThreadId: "provider-thread-1",
-        scope: turnScope("turn-1"),
+      expect.objectContaining({
+        kind: "turn.open",
+        providerTurnId: "turn-1",
+      }),
+      expect.objectContaining({
+        kind: "input.accepted",
+        providerTurnId: "turn-1",
         clientRequestId: "creq_23456789ag",
-      },
+      }),
     ]);
 
     // bb already owns the user message it sent; the provider's echo of it
@@ -1209,12 +1202,10 @@ describe("codex accepted-input correlation", () => {
         }),
       ),
     ).toEqual([
-      {
-        type: "turn/started",
-        threadId: "provider-thread-1",
-        providerThreadId: "provider-thread-1",
-        scope: turnScope("turn-1"),
-      },
+      expect.objectContaining({
+        kind: "turn.open",
+        providerTurnId: "turn-1",
+      }),
     ]);
   });
 });
@@ -1308,9 +1299,9 @@ describe("codex delegation-turn nesting", () => {
       ),
     ).toContainEqual(
       expect.objectContaining({
-        type: "turn/started",
-        parentToolCallId,
-        scope: turnScope("child-turn"),
+        kind: "turn.open",
+        parentRef: parentToolCallId,
+        providerTurnId: "child-turn",
       }),
     );
 
@@ -1337,12 +1328,9 @@ describe("codex delegation-turn nesting", () => {
       ),
     ).toContainEqual(
       expect.objectContaining({
-        type: "item/started",
-        item: expect.objectContaining({
-          type: "commandExecution",
-          id: "child-command",
-          parentToolCallId,
-        }),
+        kind: "item.open",
+        key: { providerItemId: "child-command", parentRef: parentToolCallId },
+        item: expect.objectContaining({ type: "command" }),
       }),
     );
 
@@ -1362,14 +1350,14 @@ describe("codex delegation-turn nesting", () => {
           }),
         }),
       )
-      .find((event) => event.type === "turn/started");
+      .find((delta) => delta.kind === "turn.open");
     expect(followUpTurnStarted).toEqual(
       expect.objectContaining({
-        type: "turn/started",
-        scope: turnScope("follow-up-turn"),
+        kind: "turn.open",
+        providerTurnId: "follow-up-turn",
       }),
     );
-    expect(followUpTurnStarted).not.toHaveProperty("parentToolCallId");
+    expect(followUpTurnStarted).not.toHaveProperty("parentRef");
 
     const followUpAssistant = translator
       .translateEvent(
@@ -1387,19 +1375,17 @@ describe("codex delegation-turn nesting", () => {
         }),
       )
       .find(
-        (event) =>
-          event.type === "item/completed" && event.item.type === "agentMessage",
+        (delta) =>
+          delta.kind === "item.close" && delta.item.type === "agentMessage",
       );
     expect(followUpAssistant).toEqual(
       expect.objectContaining({
-        type: "item/completed",
-        item: expect.objectContaining({
-          type: "agentMessage",
-          id: "follow-up-assistant",
-        }),
+        kind: "item.close",
+        key: { providerItemId: "follow-up-assistant" },
+        item: expect.objectContaining({ type: "agentMessage" }),
       }),
     );
-    expect(followUpAssistant).not.toHaveProperty("item.parentToolCallId");
+    expect(followUpAssistant).not.toHaveProperty("key.parentRef");
 
     // The delegated turn keeps its link even though a newer turn has opened.
     expect(
@@ -1413,9 +1399,9 @@ describe("codex delegation-turn nesting", () => {
       ),
     ).toContainEqual(
       expect.objectContaining({
-        type: "item/commandExecution/outputDelta",
-        parentToolCallId,
-        scope: turnScope("child-turn"),
+        kind: "item.outputDelta",
+        key: expect.objectContaining({ parentRef: parentToolCallId }),
+        providerTurnId: "child-turn",
       }),
     );
   });
@@ -1473,9 +1459,9 @@ describe("codex delegation-turn nesting", () => {
         ),
       ).toContainEqual(
         expect.objectContaining({
-          type: "turn/started",
-          parentToolCallId: "delegation-1",
-          scope: turnScope("child-turn"),
+          kind: "turn.open",
+          parentRef: "delegation-1",
+          providerTurnId: "child-turn",
         }),
       );
 
@@ -1496,12 +1482,9 @@ describe("codex delegation-turn nesting", () => {
         ),
       ).toContainEqual(
         expect.objectContaining({
-          type: "item/completed",
-          item: expect.objectContaining({
-            type: "agentMessage",
-            id: "child-assistant-1",
-            parentToolCallId: "delegation-1",
-          }),
+          kind: "item.close",
+          key: { providerItemId: "child-assistant-1", parentRef: "delegation-1" },
+          item: expect.objectContaining({ type: "agentMessage" }),
         }),
       );
     },
@@ -1551,10 +1534,9 @@ describe("codex delegation-turn nesting", () => {
         ),
       ).toContainEqual(
         expect.objectContaining({
-          type: "turn/started",
-          parentToolCallId: "delegation-1",
-          providerThreadId: "child-provider-thread",
-          scope: turnScope("child-turn"),
+          kind: "turn.open",
+          parentRef: "delegation-1",
+          providerTurnId: "child-turn",
         }),
       );
 
@@ -1575,13 +1557,9 @@ describe("codex delegation-turn nesting", () => {
         ),
       ).toContainEqual(
         expect.objectContaining({
-          type: "item/completed",
-          providerThreadId: "child-provider-thread",
-          item: expect.objectContaining({
-            type: "agentMessage",
-            id: "child-assistant-1",
-            parentToolCallId: "delegation-1",
-          }),
+          kind: "item.close",
+          key: { providerItemId: "child-assistant-1", parentRef: "delegation-1" },
+          item: expect.objectContaining({ type: "agentMessage" }),
         }),
       );
     },

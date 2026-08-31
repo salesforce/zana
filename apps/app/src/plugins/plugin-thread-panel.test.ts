@@ -1,3 +1,6 @@
+/**
+ * @vitest-environment happy-dom
+ */
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { interpretPluginApp, clearPluginSlots } from './plugin-slots.js';
 import { definePluginApp } from '@zana-ai/zcc-plugin-sdk';

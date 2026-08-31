@@ -41,7 +41,7 @@ describe('pr-monitor plugin contract', () => {
     expect(appJs).not.toMatch(/from ["']react["']/);
     expect(appJs).not.toMatch(/from ["']react\/jsx-runtime["']/);
     expect(existsSync(join(root, 'server.mjs'))).toBe(true);
-    expect(readFileSync(join(root, 'server.mjs'), 'utf8')).toContain('plugin as default');
+    expect(readFileSync(join(root, 'server.mjs'), 'utf8')).toMatch(/\bas default\b/);
   });
 
   it('registers RPC methods used by the panel', async () => {
