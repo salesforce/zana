@@ -2574,6 +2574,14 @@ function sendToFocused(channel: string, ...args: unknown[]) {
 function claimDock() {
   if (process.platform !== 'darwin') return;
   try {
+    // E2E ONLY: keep the app off the Dock and out of the foreground so a local
+    // Playwright run doesn't repeatedly steal macOS focus from the developer.
+    // Playwright drives the renderer over CDP, so activation/visibility is
+    // irrelevant to the tests. Production (ZCC_E2E unset) always claims regular.
+    if (E2E_TAP_ENABLED) {
+      app.setActivationPolicy('accessory');
+      return;
+    }
     app.setActivationPolicy('regular');
     app.dock?.show();
   } catch (err) {
@@ -2588,6 +2596,8 @@ function showMainWindow() {
     createWindow(undefined, startupState.mode === 'repair-required');
     return;
   }
+  // E2E: leave the window hidden so a local run never grabs macOS focus.
+  if (E2E_TAP_ENABLED) return;
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
@@ -2607,6 +2617,7 @@ function openProjectWindow(projectId: string) {
   }
   for (const { win, projectId: pid } of windows.values()) {
     if (pid === projectId && !win.isDestroyed()) {
+      if (E2E_TAP_ENABLED) return; // E2E: keep hidden, never steal focus
       if (win.isMinimized()) win.restore();
       win.show();
       win.focus();
@@ -4424,6 +4435,11 @@ function createWindow(projectId?: string, repairOnly = false) {
     title: 'Zana',
     icon: productIconImage(),
     backgroundColor: '#0b0f15',
+    // E2E ONLY: never auto-show the window. Playwright drives the renderer over
+    // CDP, so a hidden window still runs and is fully controllable, but a shown
+    // one repeatedly steals macOS focus from the developer during a local run.
+    // Production leaves the default (show: true).
+    ...(E2E_TAP_ENABLED ? { show: false } : {}),
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 14 },
     webPreferences: {
