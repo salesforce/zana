@@ -87,7 +87,7 @@ export function permissionModeForLaunchProfile(providerId: string): 'accept-edit
 
 export const DEFAULT_PLAN_COMMAND = { trigger: '/', name: 'plan' } as const;
 
-export function planCommandForProvider(providerId: string): { trigger: string; name: string } | null {
+export function planCommandForProvider(providerId: string) {
   const provider = getThreadProvider(providerId);
   if (!provider?.composerActions?.includes('plan')) return null;
   return DEFAULT_PLAN_COMMAND;

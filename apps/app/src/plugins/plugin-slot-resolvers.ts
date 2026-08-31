@@ -1,13 +1,20 @@
 import type {
   ComposerCustomization,
-  PluginComposerScopeKind,
+  PluginComposerScope,
   PluginFileOpenerRegistration,
   PluginProviderIconRegistration,
   PluginThreadListRegistration
-} from '@zana-ai/zcc-plugin-sdk';
+} from '@zana-ai/zcc-plugin-sdk/app';
 
 const FILE_OPENER_PIN_KEY = 'zcc.plugin.fileOpenerPins';
 const THREAD_LIST_PIN_KEY = 'zcc.plugin.threadListPin';
+
+/**
+ * The main `@zana-ai/zcc-plugin-sdk` entry doesn't export the bare
+ * `PluginComposerScope` union or its `kind` literal — pull the scope type from
+ * the `/app` subpath (which does) and derive the kind locally.
+ */
+type PluginComposerScopeKind = PluginComposerScope['kind'];
 
 export function composerCustomizationApplies(
   customization: ComposerCustomization,

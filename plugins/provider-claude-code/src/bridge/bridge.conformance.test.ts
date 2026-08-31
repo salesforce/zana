@@ -195,6 +195,12 @@ beforeEach(() => {
   queryMock.mockImplementation((call: ScriptedClaudeQueryCall) =>
     createScriptedClaudeQuery(call),
   );
+  // forkSession mints a fresh session UUID for the forked branch (real SDK
+  // shape: `{ sessionId }`). The forked session resumes through queryMock like
+  // any other turn.
+  forkSessionMock.mockImplementation(async (sourceSessionId: string) => ({
+    sessionId: `${sourceSessionId}-fork`,
+  }));
   output = captureBridgeJsonRpcOutput();
 });
 

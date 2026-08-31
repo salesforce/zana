@@ -44,7 +44,7 @@ describe('codex voice transcribe', () => {
   it('posts ChatGPT transcription with Codex tokens', async () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'zcc-voice-cg-'));
     const accessToken = writeChatGptAuth(homeDir);
-    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ text: 'hello world' }), { status: 200 }));
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ text: 'hello world' }), { status: 200 }));
     await expect(transcribeCodexVoice(command(), { homeDir, fetchImpl })).resolves.toEqual({
       model: 'gpt-transcribe',
       text: 'hello world'
@@ -85,7 +85,7 @@ describe('codex voice transcribe', () => {
       auth_mode: 'apikey',
       OPENAI_API_KEY: 'sk-codex-api-key'
     }));
-    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ text: 'hello openai' }), { status: 200 }));
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ text: 'hello openai' }), { status: 200 }));
     await expect(transcribeCodexVoice(command({ prompt: 'context' }), { homeDir, fetchImpl })).resolves.toEqual({
       model: 'gpt-transcribe',
       text: 'hello openai'

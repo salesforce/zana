@@ -41,14 +41,15 @@ export function appendClientTurnRequested(
   const input = promptInputForTurn(args.prompt, args.promptInput);
   if (input.length === 0) return undefined;
 
+  const requestId = encodeClientTurnRequestIdNumber({
+    value: Date.now() * 1000 + Math.floor(Math.random() * 1000)
+  });
   const parsed = threadEventSchema.safeParse({
     type: 'client/turn/requested',
     threadId: args.threadId,
     scope: threadScope(),
     direction: 'outbound',
-    requestId: encodeClientTurnRequestIdNumber({
-      value: Date.now() * 1000 + Math.floor(Math.random() * 1000)
-    }),
+    requestId,
     source: args.kind === 'thread-start' ? 'spawn' : 'tell',
     initiator: 'user',
     senderThreadId: null,
@@ -81,5 +82,5 @@ export function appendClientTurnRequested(
     type: event.type,
     payload: event
   });
-  return parsed.data.requestId;
+  return requestId;
 }

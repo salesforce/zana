@@ -1815,6 +1815,12 @@ export const AgentLauncher = memo(function AgentLauncher({
 
   const bg = projectMode ? backgroundTabs ?? [] : [];
 
+  // The legacy scratch-mode quick-prompt UI (starter chips, prompt editor,
+  // workflow arg form, project picker) is superseded by the composers above
+  // and kept only for reference — a `const` (rather than the literal `false`)
+  // so TS still narrows `editor`/`argPreset` inside these blocks.
+  const legacyQuickAgentUiDisabled = false;
+
   const content = (
       <div
         ref={dialogRef}
@@ -1891,7 +1897,7 @@ export const AgentLauncher = memo(function AgentLauncher({
             <AgentConversationHistory projectId={project!.id} unavailableProviders={unavailableHistoryProviders} onResumed={onClose} />
           )}
 
-          {mode === 'autonomous' && (<>
+          {mode === 'autonomous' && (
           <div className="launch-thread-composer">
             <AutonomousTeamComposer
               project={project}
@@ -1899,8 +1905,9 @@ export const AgentLauncher = memo(function AgentLauncher({
               onClose={onClose}
             />
           </div>
+          )}
 
-          {false && scratchIsTarget && !argPreset && !editor && (
+          {legacyQuickAgentUiDisabled && scratchIsTarget && !argPreset && !editor && (
             <div className="quick-prompt-chips" role="group" aria-label="Starter prompts">
               {(chipsExpanded ? presets : presets.slice(0, 2)).map((p) => (
                 <span key={p.id} className="quick-prompt-chip-wrap">
@@ -1949,7 +1956,7 @@ export const AgentLauncher = memo(function AgentLauncher({
             </div>
           )}
 
-          {false && editor && (
+          {legacyQuickAgentUiDisabled && editor && (
             <QuickPromptEditor
               initial={editor.mode === 'edit' ? editor.prompt : null}
               onSaved={() => setEditor(null)}
@@ -1957,7 +1964,7 @@ export const AgentLauncher = memo(function AgentLauncher({
             />
           )}
 
-          {false && argPreset && (
+          {legacyQuickAgentUiDisabled && argPreset && (
             <WorkflowArgForm
               preset={argPreset}
               values={argValues}
@@ -1968,7 +1975,7 @@ export const AgentLauncher = memo(function AgentLauncher({
             />
           )}
 
-          {false && !projectMode && (
+          {legacyQuickAgentUiDisabled && !projectMode && (
             <div className="launch-row">
               <span className="launch-row-label">Project</span>
               <div className="launch-folder">
@@ -2471,7 +2478,6 @@ export const AgentLauncher = memo(function AgentLauncher({
           )}
 
           {projectMode && <AgentConversationHistory projectId={project!.id} unavailableProviders={unavailableHistoryProviders} onResumed={onClose} />}
-          </>)}
           </div>
         </div>
       </div>

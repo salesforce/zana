@@ -104,6 +104,12 @@ export function pendingInteractionResolutionEquals(
       );
     });
   }
+  if (
+    !isApprovalPendingInteractionResolution(left)
+    || !isApprovalPendingInteractionResolution(right)
+  ) {
+    return false;
+  }
   switch (left.decision) {
     case 'deny':
       return right.decision === 'deny';

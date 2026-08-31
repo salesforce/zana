@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { marked } from 'marked';
 import { createHighlighter, type Highlighter } from 'shiki';
 import { isMermaidInfostring, mermaidFigureHtml } from './doc-mermaid';
@@ -30,7 +31,22 @@ export interface RenderedDoc {
   toc: TocItem[];
 }
 
-const CONTENT_DIR = join(process.cwd(), 'content', 'docs');
+// Next always runs this app with cwd = website/, so process.cwd() is the
+// right answer in the real app (dev, build, and prod). But a monorepo-root
+// test runner (`vitest run` from the repo root) invokes this module with a
+// different cwd, where that join resolves outside website/ entirely and the
+// manifest never exists. Fall back to a path resolved from this module's own
+// location (website/lib/docs.ts -> website/content/docs) whenever the
+// cwd-relative candidate doesn't have the manifest — the real app's
+// candidate is tried first and unconditionally wins there, so production
+// behavior is unchanged.
+const CONTENT_DIR_CANDIDATES = [
+  join(process.cwd(), 'content', 'docs'),
+  join(dirname(fileURLToPath(import.meta.url)), '..', 'content', 'docs')
+];
+const CONTENT_DIR =
+  CONTENT_DIR_CANDIDATES.find((dir) => existsSync(join(dir, '_manifest.json'))) ??
+  CONTENT_DIR_CANDIDATES[0];
 const MANIFEST = join(CONTENT_DIR, '_manifest.json');
 
 /** Read the generated manifest (sync, at module load — used by static params). */

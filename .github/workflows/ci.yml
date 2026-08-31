@@ -11,6 +11,9 @@ on:
   push:
     branches:
       - main
+  # Manual trigger — used to run the E2E job on demand (it is gated to
+  # workflow_dispatch only; see the e2e job below).
+  workflow_dispatch: {}
 
 # A new push to a PR cancels the previous run for that PR — no point burning
 # minutes on a commit that's already superseded. main pushes use the ref so they
@@ -54,9 +57,15 @@ jobs:
   # marketplace install path against a signed local HTTPS registry. Kept off the
   # branch-protection gate (which is `verify` only) so an E2E flake never blocks
   # a merge; promote it to required once it has proven stable over many runs.
+  #
+  # It builds the whole app (Monaco et al.) then runs real-Electron Playwright,
+  # which takes far longer than the `verify` unit job — so it does NOT run on
+  # every PR/push. It is gated to manual `workflow_dispatch` (Actions tab -> CI
+  # -> Run workflow) and can also be run locally with `pnpm run test:e2e:only`.
   e2e:
     name: E2E (Playwright + Electron)
     runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
     # Don't fail the overall workflow on an E2E flake while it bakes.
     continue-on-error: true
     steps:

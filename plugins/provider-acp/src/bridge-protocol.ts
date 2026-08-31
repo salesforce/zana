@@ -189,6 +189,8 @@ export const acpFsWriteNotificationParamsSchema = z
     threadId: z.string().min(1),
     path: z.string().min(1),
     kind: z.enum(["add", "update"]),
+    content: z.string().optional(),
+    oldText: z.string().optional(),
     diff: z.string().optional(),
   })
   .passthrough();

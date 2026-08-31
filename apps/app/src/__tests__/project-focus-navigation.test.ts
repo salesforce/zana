@@ -7,9 +7,24 @@
  * than testing the full store state machine (which would require extensive
  * mocking). The windowScope.test.ts already covers the detection logic.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 
 describe('project-focus navigation contract', () => {
+  // Every test below dynamically imports store.ts fresh (vi.resetModules() in
+  // afterEach forces this, for state isolation). resetModules() only clears
+  // the module-INSTANTIATION cache, not Vite's compiled-code transform cache —
+  // so whichever test runs first still pays the one-time COLD TRANSFORM of the
+  // ~3600-line store.ts (+ transitive deps), which can push past the default
+  // 5s test timeout under full-suite CPU contention (see the identical note
+  // in inboxNavigation.test.ts, which shares this exact isolation pattern and
+  // hit the same flake). Pay it here instead, in a hook with its own generous
+  // timeout, before any test's budget starts ticking. Safe to run before
+  // `window` exists — store.ts only touches `window` inside functions guarded
+  // by `typeof window`, never at module scope.
+  beforeAll(async () => {
+    await import('../store.js');
+  }, 20_000);
+
   let mockConfig: {
     get: ReturnType<typeof vi.fn>;
     set: ReturnType<typeof vi.fn>;

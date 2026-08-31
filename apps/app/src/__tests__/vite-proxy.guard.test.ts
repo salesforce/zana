@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-import { productDevProxy } from '../../vite-product-proxy.ts';
+import { productDevProxy } from '../../vite-product-proxy.js';
 
 describe('Vite product proxy', () => {
   it('forwards /api, /ws, and plugin asset URLs to the loopback product server', () => {
@@ -16,14 +16,20 @@ describe('Vite product proxy', () => {
     const plugins = proxy['/plugins'];
     expect(plugins).toMatchObject({ target: 'http://127.0.0.1:8780', changeOrigin: true });
     if (typeof plugins === 'string' || !plugins.bypass) throw new Error('expected plugin asset bypass');
-    expect(plugins.bypass({ url: '/plugins/ask-user-question/assets/app.js?v=1' } as never)).toBeUndefined();
     expect(
-      plugins.bypass({
-        url: '/plugins/provider-claude-code/assets/app.tsx?import&v=1'
-      } as never)
+      plugins.bypass({ url: '/plugins/ask-user-question/assets/app.js?v=1' } as never, undefined as never, {} as never)
     ).toBeUndefined();
-    expect(plugins.bypass({} as never)).toBeUndefined();
-    expect(plugins.bypass({ url: '/plugins/github/main' } as never)).toBe('/plugins/github/main');
+    expect(
+      plugins.bypass(
+        { url: '/plugins/provider-claude-code/assets/app.tsx?import&v=1' } as never,
+        undefined as never,
+        {} as never
+      )
+    ).toBeUndefined();
+    expect(plugins.bypass({} as never, undefined as never, {} as never)).toBeUndefined();
+    expect(
+      plugins.bypass({ url: '/plugins/github/main' } as never, undefined as never, {} as never)
+    ).toBe('/plugins/github/main');
   });
 
   it('registers a pre-transform proxy so Vite cannot claim plugin .tsx assets', () => {

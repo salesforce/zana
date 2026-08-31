@@ -24,6 +24,7 @@ export function agentNavCounts(input: {
     ? [input.terminals[input.scopeProjectId] ?? []]
     : Object.values(input.terminals);
   for (const list of lists) {
+    if (!list) continue;
     for (const session of list) {
       if (session.profile === 'shell') continue;
       const state = input.agentStateById[session.id];

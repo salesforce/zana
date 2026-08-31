@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, mkdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -28,6 +28,28 @@ async function importModules() {
   const localExtension = await import('../local-extension.js');
   const installer = await import('../extension-installer.js');
   return { discovery, localExtension, installer };
+}
+
+/**
+ * Lay down a LEGACY `extension.json` working dir (manifest + `dist/renderer.js`).
+ *
+ * `scaffoldLocalExtension` now emits a `package.json` `zcc` plugin, and the real
+ * `packAndInstallLocal` routes those through PluginService (`runtimeSupervisor`),
+ * a desktop-runtime dependency this "real fs, no mocks" server suite can't spin
+ * up. This suite exercises the OTHER, still-live branch of `packAndInstallLocal`
+ * (`isZccPluginWorkingDir === false` → `packLocalExtension` → `installFromDir`),
+ * which the module docstring keeps for leftover `extension.json` dirs — exactly
+ * the path the `installOwnExtension` mirror below runs. So it writes an
+ * extension.json working dir directly rather than scaffolding a plugin.
+ */
+async function writeLegacyWorkingDir(workingDir: string, id: string, title = 'Ext'): Promise<void> {
+  await mkdir(join(workingDir, 'dist'), { recursive: true });
+  await writeFile(
+    join(workingDir, 'extension.json'),
+    JSON.stringify({ id, version: '1.0.0', engines: { zccApi: '>=1 <2' }, title }, null, 2),
+    'utf-8'
+  );
+  await writeFile(join(workingDir, 'dist', 'renderer.js'), '// dummy renderer\n', 'utf-8');
 }
 
 /** Mirrors index.ts's `installOwnExtension` closure verbatim (sans ptys). */
@@ -80,13 +102,8 @@ describe('install_local_extension pipeline (real fs, no mocks)', () => {
     const id = 'my-tool-a1b2';
     const workingDir = localExtension.workingDirFor(workRoot, id);
 
-    const scaffolded = await localExtension.scaffoldLocalExtension(workingDir, {
-      id,
-      name: 'My Tool',
-      description: 'does things',
-      kind: 'panel'
-    });
-    expect(scaffolded.ok).toBe(true);
+    await writeLegacyWorkingDir(workingDir, id, 'My Tool');
+    expect(existsSync(join(workingDir, 'extension.json'))).toBe(true);
 
     // Not yet installed: no local.json entry, so a session cwd there resolves
     // to nothing — exactly what a bare working dir (before createLocal marks
@@ -120,7 +137,7 @@ describe('install_local_extension pipeline (real fs, no mocks)', () => {
     const { discovery, localExtension } = await importModules();
     const id = 'nested-cwd-9f3a';
     const workingDir = localExtension.workingDirFor(workRoot, id);
-    await localExtension.scaffoldLocalExtension(workingDir, { id, name: 'Nested', kind: 'panel' });
+    await writeLegacyWorkingDir(workingDir, id, 'Nested');
     await discovery.markLocal(id, workingDir);
 
     // Agent `cd`'d into dist/ within its own working dir.
@@ -148,11 +165,7 @@ describe('install_local_extension pipeline (real fs, no mocks)', () => {
     const { discovery, localExtension } = await importModules();
     const registeredId = 'registered-aaaa';
     const workingDir = localExtension.workingDirFor(workRoot, registeredId);
-    await localExtension.scaffoldLocalExtension(workingDir, {
-      id: registeredId,
-      name: 'X',
-      kind: 'panel'
-    });
+    await writeLegacyWorkingDir(workingDir, registeredId, 'X');
     await discovery.markLocal(registeredId, workingDir);
 
     // Hand-edit the manifest's id after registration (simulating a user/agent
@@ -173,7 +186,7 @@ describe('install_local_extension pipeline (real fs, no mocks)', () => {
   it('a reserved built-in id cannot be hijacked through the local-extension path', async () => {
     const { discovery, localExtension } = await importModules();
     const workingDir = localExtension.workingDirFor(workRoot, 'slack');
-    await localExtension.scaffoldLocalExtension(workingDir, { id: 'slack', name: 'Slack', kind: 'panel' });
+    await writeLegacyWorkingDir(workingDir, 'slack', 'Slack');
     await discovery.markLocal('slack', workingDir);
 
     const result = await installOwnExtension(workingDir);
@@ -185,7 +198,7 @@ describe('install_local_extension pipeline (real fs, no mocks)', () => {
     const { discovery, localExtension } = await importModules();
     const id = 'reinstall-bbbb';
     const workingDir = localExtension.workingDirFor(workRoot, id);
-    await localExtension.scaffoldLocalExtension(workingDir, { id, name: 'V1', kind: 'panel' });
+    await writeLegacyWorkingDir(workingDir, id, 'V1');
     await discovery.markLocal(id, workingDir);
 
     const first = await installOwnExtension(workingDir);

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -198,6 +198,41 @@ beforeEach(() => {
   workspaceDir = mkdtempSync(join(tmpdir(), "bb-pi-conformance-ws-"));
   sessionDir = mkdtempSync(join(tmpdir(), "bb-pi-conformance-sessions-"));
   process.env[PI_BRIDGE_SESSION_DIR_ENV] = sessionDir;
+  // The scripted SDK session never appends through the real SessionManager, so
+  // the source session file the fork-identity scenario forks would never
+  // materialize on disk. Seed a valid pi session file at the conformance
+  // thread's deterministic path so thread/fork exercises genuine
+  // SessionManager.forkFrom file copying (mirrors the fork tests in
+  // bridge.test.ts).
+  writeFileSync(
+    join(sessionDir, `${CONFORMANCE_THREAD_ID}.jsonl`),
+    `${[
+      JSON.stringify({
+        type: "session",
+        version: 3,
+        id: "conformance-source-session",
+        timestamp: "2026-06-15T00:00:00.000Z",
+        cwd: workspaceDir,
+      }),
+      JSON.stringify({
+        type: "message",
+        id: "e1",
+        parentId: null,
+        timestamp: "2026-06-15T00:00:01.000Z",
+        message: { role: "user", content: "say hello" },
+      }),
+      JSON.stringify({
+        type: "message",
+        id: "e2",
+        parentId: "e1",
+        timestamp: "2026-06-15T00:00:02.000Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "hello from turn 1" }],
+        },
+      }),
+    ].join("\n")}\n`,
+  );
   mockCreateAgentSession.mockImplementation(async () => ({
     session: createScriptedPiAgentSession(),
   }));

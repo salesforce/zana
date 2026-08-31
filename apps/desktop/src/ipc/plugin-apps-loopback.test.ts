@@ -65,7 +65,7 @@ describe('plugin-apps product-server fallback', () => {
   });
 
   it('POSTs enable/disable and maps failures', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith('/enable')) return new Response(JSON.stringify({ ok: true }), { status: 200 });
       return new Response(JSON.stringify({ error: 'plugin not installed: missing' }), { status: 404 });

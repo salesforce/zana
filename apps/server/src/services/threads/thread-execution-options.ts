@@ -118,9 +118,13 @@ function toProviderInfo(provider: ThreadProviderRecord, available: boolean): Thr
   const fork = provider.capabilities.fork;
   return {
     id: provider.id,
+    pluginId: provider.pluginId,
     displayName: provider.displayName,
     logoUrl: null,
     available,
+    // Sessionless maintenance requests are resolved at runtime through the
+    // bridge, not from this static options builder; none are advertised here.
+    maintenance: { health: false, usage: false, installation: false },
     composerActions: provider.composerActions ?? [],
     capabilities: {
       supportsThreadArchive: provider.capabilities.supportsThreadArchive,
@@ -129,7 +133,11 @@ function toProviderInfo(provider: ThreadProviderRecord, available: boolean): Thr
       supportsNativeUserQuestion: provider.capabilities.supportsNativeUserQuestion === true,
       supportsFork: fork !== 'none',
       supportsSessionRewind: fork === 'checkpoint',
-      permissionModes: parsePermissionModes(provider.capabilities.permissionModes)
+      permissionModes: parsePermissionModes(provider.capabilities.permissionModes),
+      // PluginProviderCapabilities does not carry the provider-declared model
+      // catalogue scope; default to host-scoped to match the runtime's own
+      // fallback (provider-registry.ts) until it is threaded through.
+      modelCatalogScope: 'host'
     }
   };
 }

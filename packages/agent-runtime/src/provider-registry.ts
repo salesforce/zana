@@ -58,6 +58,10 @@ function createBridgeProtocolAdapterForId(
       // A session-behavior fact the runtime never enforces, so the wire does
       // not carry it: the bridge answers per session (thread/identity).
       supportsNativeUserQuestion: false,
+      // The launch transport does not yet carry the provider-declared model
+      // catalogue scope; default to host-scoped (probe once per machine) until
+      // the server declaration is threaded through the bridge-launch spec.
+      modelCatalogScope: "host",
     },
     process: {
       command: options.bridgeNodeExecutablePath ?? "node",

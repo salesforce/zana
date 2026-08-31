@@ -23,7 +23,7 @@ import type {
   ProviderInteractiveResponse,
   ProviderPostInitializeRequest,
 } from "@zana-ai/zcc-provider-bridge-protocol/bridge-kit";
-import type { ProviderRecoveryHint } from "@zana-ai/zcc-provider-bridge-protocol";
+import type { ProviderRecoveryNotification } from "@zana-ai/zcc-provider-bridge-protocol";
 import type {
   AgentRuntimeBridgeLaunch,
   AgentRuntimeSkillRoot,
@@ -281,7 +281,9 @@ export interface ProviderAdapter {
    * Decode an unsolicited `provider/recovery` hint. Null when the event is
    * not a recovery notification (or is malformed). Never a timeline event.
    */
-  decodeRecoveryHint?(event: ProviderRuntimeEvent): ProviderRecoveryHint | null;
+  decodeRecoveryHint?(
+    event: ProviderRuntimeEvent,
+  ): ProviderRecoveryNotification | null;
   /**
    * Returns normalized events implied by a successful provider command.
    * Use this for provider protocol gaps where accepted commands do not produce

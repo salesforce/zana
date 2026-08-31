@@ -1,5 +1,10 @@
 import { product } from '../lib/product-client.js';
 import type { PluginHostBridge } from '@zana-ai/zcc-plugin-sdk';
+import type {
+  PluginSettingDescriptor,
+  PluginSettingsSnapshot as SdkPluginSettingsSnapshot
+} from '@zana-ai/zcc-plugin-sdk/server';
+import type { PluginSettingsSnapshot as DomainPluginSettingsSnapshot } from '@zana-ai/zcc-domain/product';
 /**
  * Loads renderer apps owned by the server-side PluginService. Bundles are served
  * from `/plugins/:id/assets/*` on the supervised same-origin static host (and,
@@ -177,11 +182,63 @@ export async function reconcilePluginApps(
   usePluginAppModules.getState().setModules(modules);
 }
 
+/**
+ * `product.pluginApps.getSettings` returns the wire-contract snapshot
+ * (`@zana-ai/zcc-domain/product`, a flattened descriptor shape), but
+ * `PluginHostBridge` expects the plugin-authoring SDK's discriminated-union
+ * snapshot (`@zana-ai/zcc-plugin-sdk/server`). Re-narrow per descriptor rather
+ * than casting across the two independently-declared types.
+ */
+function toSdkSettingDescriptor(
+  descriptor: DomainPluginSettingsSnapshot['descriptors'][string]
+): PluginSettingDescriptor {
+  switch (descriptor.type) {
+    case 'string':
+      return {
+        type: 'string',
+        label: descriptor.label,
+        description: descriptor.description,
+        secret: descriptor.secret,
+        default: typeof descriptor.default === 'string' ? descriptor.default : undefined
+      };
+    case 'boolean':
+      return {
+        type: 'boolean',
+        label: descriptor.label,
+        description: descriptor.description,
+        default: typeof descriptor.default === 'boolean' ? descriptor.default : undefined
+      };
+    case 'select':
+      return {
+        type: 'select',
+        label: descriptor.label,
+        description: descriptor.description,
+        options: descriptor.options ?? [],
+        default: typeof descriptor.default === 'string' ? descriptor.default : undefined
+      };
+    case 'project':
+      return {
+        type: 'project',
+        label: descriptor.label,
+        description: descriptor.description,
+        default: typeof descriptor.default === 'string' ? descriptor.default : undefined
+      };
+  }
+}
+
+function toSdkSettingsSnapshot(snapshot: DomainPluginSettingsSnapshot): SdkPluginSettingsSnapshot {
+  const descriptors: Record<string, PluginSettingDescriptor> = {};
+  for (const [key, descriptor] of Object.entries(snapshot.descriptors)) {
+    descriptors[key] = toSdkSettingDescriptor(descriptor);
+  }
+  return { descriptors, values: snapshot.values };
+}
+
 /** Initial snapshot for the server-owned plugin app registry. */
 export async function initPluginApps(): Promise<void> {
   const host: PluginHostBridge = {
     callRpc: (pluginId, method, args) => product.pluginApps.callRpc(pluginId, method, args),
-    getSettings: (pluginId) => product.pluginApps.getSettings(pluginId),
+    getSettings: (pluginId) => product.pluginApps.getSettings(pluginId).then(toSdkSettingsSnapshot),
     setSettings: async (pluginId, values) => {
       await product.pluginApps.setSettings(pluginId, values);
     }

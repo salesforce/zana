@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { request as httpRequest } from 'node:http';
 import type { Plugin, ProxyOptions } from 'vite';
-import { isPluginAssetPath } from '../server/src/http/plugin-assets.ts';
+import { isPluginAssetPath } from '../server/src/http/plugin-assets.js';
 
 /**
  * Loopback product-server proxy for Vite / electron-vite. `/api` and `/ws` are

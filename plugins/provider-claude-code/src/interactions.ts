@@ -294,6 +294,8 @@ function getClaudePermissionUpdateToolName(
       return null;
     case "permission_grant":
       return payload.subject.toolName;
+    case "tool_use":
+      return payload.subject.tool;
     // A plan verdict grants nothing, so it never reaches a session update.
     case "plan":
       return null;

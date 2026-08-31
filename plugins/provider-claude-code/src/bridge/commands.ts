@@ -1,5 +1,6 @@
 import {
   claudeCodeMockCliTrafficConfigSchema,
+  dynamicToolSchema,
   instructionModeValues,
   permissionEscalationValues,
   reasoningLevelValues,
@@ -36,12 +37,6 @@ const bridgeClaudeLocalPluginSchema = z.object({
 const bridgeClaudePluginsSchema = z
   .array(bridgeClaudeLocalPluginSchema)
   .optional();
-
-const dynamicToolSchema = z.object({
-  name: z.string(),
-  description: z.string(),
-  inputSchema: z.unknown(),
-});
 
 export const claudeThreadStartParamsSchema = z.object({
   threadId: z.string(),
