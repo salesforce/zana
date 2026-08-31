@@ -319,7 +319,11 @@ describe('ThreadPendingInteractionBanner keyboard', () => {
                 allowFreeText: true,
                 options: [{ value: 'yes', label: 'Yes' }]
               }]
-            }
+            },
+            // Payload and resolution are paired per union member (WS5 split): a
+            // user_question interaction must carry a user-answer/null resolution,
+            // not the approval resolution the spread base provides.
+            resolution: null
           }}
           threadId="thr-1"
         />
