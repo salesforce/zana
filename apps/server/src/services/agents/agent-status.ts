@@ -154,8 +154,7 @@ interface Entry {
   /**
    * How many sub-agents (Task tool spawns) are currently in flight for this
    * session. Incremented by the PreToolUse(Task) hook, decremented by
-   * SubagentStop, and clamped to 0 (a turn can't end with a live sub-agent, so
-   * the parent Stop hook also resets it as a drift guard). A purely
+   * SubagentStop, and clamped to 0. A purely
    * informational counter — kept OFF {@link resolve} so it never changes the
    * session's `working`/`blocked`/`idle` state, only the sub-agent badge.
    *
@@ -555,9 +554,8 @@ export class AgentStatusTracker extends EventEmitter {
   }
 
   /**
-   * Reset the live sub-agent count to 0 AND drain the child records (call on the
-   * parent's Stop hook / on exit — a finished turn can have no in-flight
-   * sub-agents, so this clears any drift from a SubagentStop that never fired).
+   * Reset the live sub-agent count to 0 AND drain child records on terminal PTY
+   * exit. Parent Stop can occur while background Task agents still run.
    * No-op (and no emit) when already clear.
    */
   clearSubagents(sessionId: string): void {

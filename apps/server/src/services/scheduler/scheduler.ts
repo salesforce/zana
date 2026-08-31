@@ -61,6 +61,9 @@ const MAX_CONCURRENT_SCHEDULED_RUNS = 5;
  */
 const SCHEDULED_NONHOOK_MAX_RUNTIME_MS = 30 * 60 * 1000; // 30 min
 
+/** Bound a hook-capable parent that never receives its matching SubagentStop. */
+const SCHEDULED_SUBAGENT_WAIT_TIMEOUT_MS = 10 * 60 * 1000; // 10 min
+
 export { parseEveryShared as parseEvery };
 
 interface Live {
@@ -78,6 +81,12 @@ interface Live {
    *  unboundedly over the app's lifetime. */
   countedRunIds: Set<string>;
 }
+
+type DeferredClose = {
+  taskId: string;
+  runId?: string;
+  timeout: NodeJS.Timeout;
+};
 
 /** Cap on {@link Live.countedRunIds}. Comfortably above any real `retain` so an
  *  in-flight run's id survives long enough to be recognized on exit, but bounded
@@ -99,6 +108,8 @@ type Deps = {
    * resolver = personas unavailable; a task's `personaId` is then ignored.
    */
   resolvePersona?: (id: string) => Persona | undefined;
+  /** Main-owned Task lifecycle state. Never accept this count from a hook request. */
+  getPendingSubagentCount?: (sessionId: string) => number;
 };
 
 /**
@@ -120,6 +131,8 @@ export class SchedulerManager extends EventEmitter {
    * (Rule 3). See {@link SCHEDULED_NONHOOK_MAX_RUNTIME_MS}.
    */
   private nonHookWatchdogs = new Map<string, NodeJS.Timeout>();
+  /** Hook-capable auto-close sessions waiting for background Task completion. */
+  private deferredCloses = new Map<string, DeferredClose>();
   /** Coordinator commits are async; count in-flight launches before PTY appears. */
   private pendingLaunches = 0;
   /** Lazily set after the window opens. We don't fire before then. */
@@ -286,6 +299,7 @@ export class SchedulerManager extends EventEmitter {
 
   remove(id: string) {
     this.disarm(id);
+    this.clearDeferredClosesForTask(id);
     this.live.delete(id);
     if (this.deps) {
       // Our own delete — keep the watcher quiet (mirrors persist()).
@@ -311,6 +325,8 @@ export class SchedulerManager extends EventEmitter {
     // change), not an app shutdown; the ptys have their own teardown (killAll).
     for (const watchdog of this.nonHookWatchdogs.values()) clearTimeout(watchdog);
     this.nonHookWatchdogs.clear();
+    for (const deferred of this.deferredCloses.values()) clearTimeout(deferred.timeout);
+    this.deferredCloses.clear();
   }
 
   /**
@@ -471,6 +487,7 @@ export class SchedulerManager extends EventEmitter {
       if (!live) continue;
       if (live.task.projectId === projectId) {
         this.disarm(id);
+        this.clearDeferredClosesForTask(id);
         this.live.delete(id);
         dropped += 1;
       }
@@ -783,6 +800,7 @@ export class SchedulerManager extends EventEmitter {
         clearTimeout(watchdog);
         this.nonHookWatchdogs.delete(session.id);
       }
+      this.clearDeferredClose(session.id);
       const exitMs = Date.now();
 
       // Exit code 0 alone doesn't mean the run actually completed: a severed
@@ -801,8 +819,14 @@ export class SchedulerManager extends EventEmitter {
         (r) => r.id === runId || r.sessionId === session.id
       );
       const hasReport = !!existingRun?.report || !!existingRun?.reportStatus;
-      const result: ScheduleRun['result'] =
-        exitCode !== 0 ? 'error' : expectsReport && !hasReport ? 'incomplete' : 'success';
+      const terminalError = existingRun?.result === 'error';
+      const result: ScheduleRun['result'] = terminalError
+        ? 'error'
+        : exitCode !== 0
+        ? 'error'
+        : expectsReport && !hasReport
+        ? 'incomplete'
+        : 'success';
 
       const finalRun: ScheduleRun = {
         id: runId,
@@ -811,7 +835,9 @@ export class SchedulerManager extends EventEmitter {
         sessionId: session.id,
         durationMs: exitMs - runStartMs,
         message:
-          exitCode !== 0
+          terminalError
+            ? existingRun?.message
+            : exitCode !== 0
             ? `exit ${exitCode}`
             : result === 'incomplete'
             ? 'exited without filing a schedule_report — possible silent failure'
@@ -824,7 +850,12 @@ export class SchedulerManager extends EventEmitter {
       // always escalates the notice to `loud` regardless of the schedule's
       // configured level, so a quiet schedule's silent failure still surfaces.
       if ((live.task.inboxLevel ?? 'quiet') !== 'silent') {
-        void this.notifyInboxOnExit(live.task, finalRun, project, result === 'incomplete');
+        void this.notifyInboxOnExit(
+          live.task,
+          finalRun,
+          project,
+          result === 'incomplete' || result === 'error'
+        );
       }
     };
     this.deps?.ptys.on('exit', onExit);
@@ -1039,12 +1070,68 @@ export class SchedulerManager extends EventEmitter {
       this.persist(live.task);
       this.emit('changed');
       if (live.task.autoCloseOnFinish) {
-        this.deps?.ptys.closeExpected(sessionId);
+        const pendingSubagents = this.deps?.getPendingSubagentCount?.(sessionId) ?? 0;
+        if (pendingSubagents > 0) {
+          this.deferClose(sessionId, live.task.id, run.id);
+        } else {
+          // Current main-owned count is authoritative for this later parent Stop.
+          this.clearDeferredClose(sessionId);
+          this.deps?.ptys.closeExpected(sessionId);
+        }
       }
       return;
     }
     // A non-scheduled interactive session is finished for now, not exited. Its
     // next UserPromptSubmit begins another lifecycle turn in the same PTY.
+  }
+
+  /**
+   * Re-evaluate a deferred scheduled session after a trusted Task hook transition.
+   * A zero count is intentionally not enough to close: parent must first process
+   * child output and send its later Stop hook.
+   */
+  onSubagentCountChanged(sessionId: string) {
+    // This only records readiness. Parent Stop remains close authorization so it
+    // can process Task output and publish a final result before its PTY closes.
+    if (!this.deferredCloses.has(sessionId)) return;
+    this.deps?.getPendingSubagentCount?.(sessionId);
+  }
+
+  private deferClose(sessionId: string, taskId: string, runId?: string) {
+    if (this.deferredCloses.has(sessionId)) return;
+    const timeout = setTimeout(() => {
+      const deferred = this.deferredCloses.get(sessionId);
+      if (!deferred) return;
+      this.deferredCloses.delete(sessionId);
+      const live = this.live.get(deferred.taskId);
+      if (!live) return;
+      const run = live.task.status.runs.find(
+        (candidate) => candidate.id === deferred.runId || candidate.sessionId === sessionId
+      );
+      if (run) {
+        this.recordRun(deferred.taskId, {
+          ...run,
+          result: 'error',
+          message: 'background subagent timed out'
+        });
+      }
+      this.deps?.ptys.closeExpected(sessionId);
+    }, SCHEDULED_SUBAGENT_WAIT_TIMEOUT_MS);
+    timeout.unref?.();
+    this.deferredCloses.set(sessionId, { taskId, runId, timeout });
+  }
+
+  private clearDeferredClose(sessionId: string) {
+    const deferred = this.deferredCloses.get(sessionId);
+    if (!deferred) return;
+    clearTimeout(deferred.timeout);
+    this.deferredCloses.delete(sessionId);
+  }
+
+  private clearDeferredClosesForTask(taskId: string) {
+    for (const [sessionId, deferred] of this.deferredCloses) {
+      if (deferred.taskId === taskId) this.clearDeferredClose(sessionId);
+    }
   }
 }
 
