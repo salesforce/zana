@@ -30,14 +30,7 @@ const thread: ThreadListItem = {
   isWorktree: false
 };
 
-function ctx(overrides: Partial<ThreadMenuContext> = {}): ThreadMenuContext & {
-  navigate: ReturnType<typeof vi.fn>;
-  confirm: ReturnType<typeof vi.fn>;
-  stop: ReturnType<typeof vi.fn>;
-  fork: ReturnType<typeof vi.fn>;
-  archive: ReturnType<typeof vi.fn>;
-  remove: ReturnType<typeof vi.fn>;
-} {
+function ctx(overrides: Partial<ThreadMenuContext> = {}): ThreadMenuContext {
   return {
     navigate: vi.fn(),
     pathname: '/agents',

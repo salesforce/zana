@@ -114,8 +114,8 @@ export function createPendingInteraction(
 ): PendingInteractionRow {
   const now = Date.now();
   const id = createPendingInteractionId();
-  const originKind = input.originKind ?? 'provider';
-  const isPlugin = originKind === 'plugin';
+  const isPlugin = input.originKind === 'plugin';
+  const originKind: PendingInteractionOriginKind = isPlugin ? 'plugin' : 'provider';
   db.sqlite.prepare(
     `INSERT INTO pending_interactions (
        id, thread_id, origin_kind, turn_id, provider_id, provider_thread_id, provider_request_id,
@@ -126,12 +126,12 @@ export function createPendingInteraction(
     id,
     input.threadId,
     originKind,
-    isPlugin ? (input.turnId ?? null) : input.turnId,
-    isPlugin ? null : input.providerId,
-    isPlugin ? null : input.providerThreadId,
-    isPlugin ? null : input.providerRequestId,
-    isPlugin ? input.pluginId : null,
-    isPlugin ? input.rendererId : null,
+    input.originKind === 'plugin' ? (input.turnId ?? null) : input.turnId,
+    input.originKind === 'plugin' ? null : input.providerId,
+    input.originKind === 'plugin' ? null : input.providerThreadId,
+    input.originKind === 'plugin' ? null : input.providerRequestId,
+    input.originKind === 'plugin' ? input.pluginId : null,
+    input.originKind === 'plugin' ? input.rendererId : null,
     input.payload,
     now,
     input.expiresAt ?? null,

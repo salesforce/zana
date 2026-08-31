@@ -4,7 +4,7 @@ import { resolve } from 'path';
 // @ts-expect-error js-yaml has no bundled type declarations
 import { load as loadYaml } from 'js-yaml';
 
-const ROOT = resolve(__dirname, '../../..');
+const ROOT = resolve(__dirname, '../../../../../..');
 
 describe('macOS microphone permission', () => {
   it('entitlements.mac.plist contains audio-input entitlement', () => {

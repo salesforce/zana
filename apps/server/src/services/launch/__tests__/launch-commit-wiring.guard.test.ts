@@ -1,7 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const source = readFileSync(new URL('../index.ts', import.meta.url), 'utf8');
+// The launch coordinators (interactive/background/team) moved to the Electron
+// main host during the monorepo migration; the commit-revalidation wiring this
+// guard pins now lives there rather than in a launch/index.ts barrel.
+const source = readFileSync(
+  new URL('../../../../../desktop/src/host.ts', import.meta.url),
+  'utf8'
+);
 
 describe('launch commit revalidation wiring', () => {
   it('rebuilds trusted framework persona before computing current store digest', () => {

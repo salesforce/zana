@@ -9,7 +9,7 @@ vi.mock('electron', () => ({
 const saveFollowUp = vi.fn();
 const deleteFollowUp = vi.fn();
 const listAllFollowUps = vi.fn((_a?: unknown, _b?: unknown): unknown[] => []);
-vi.mock('../followup-store.js', () => ({
+vi.mock('./followup-store.js', () => ({
   saveFollowUp: (a: unknown, b: unknown) => saveFollowUp(a, b),
   deleteFollowUp: (a: unknown, b: unknown) => deleteFollowUp(a, b),
   listAllFollowUps: (a: unknown, b: unknown) => listAllFollowUps(a, b),

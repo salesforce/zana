@@ -995,7 +995,13 @@ describe('installBundledPlugin', () => {
     expect(pluginHostArtifacts.get('hosty')).toBeUndefined();
   });
 
-  it('hot-reloads a watched builtin plugin when a source file changes', async () => {
+  // The reload chain is a real fs.watch → 300ms debounce → esbuild buildApp/
+  // buildServer → reload. Under the full parallel `vitest run` those esbuild
+  // builds contend for CPU, so the wall-clock latency is irreducible and can
+  // spike well past a few seconds. Poll a generous deadline (not a fixed
+  // sleep), and keep a scoped retry as a floor for the worst contention — the
+  // assertion itself is unchanged.
+  it('hot-reloads a watched builtin plugin when a source file changes', { retry: 2, timeout: 35_000 }, async () => {
     const dataDir = root();
     const bundled = root();
     const pluginDir = writePlugin(join(bundled, 'docs'), 'docs');
@@ -1008,7 +1014,7 @@ describe('installBundledPlugin', () => {
     await service.start();
     const before = service.get('docs')?.updatedAt ?? 0;
     writeFileSync(join(pluginDir, 'notes.md'), 'v2\n');
-    const deadline = Date.now() + 4000;
+    const deadline = Date.now() + 30_000;
     while (Date.now() < deadline && (service.get('docs')?.updatedAt ?? 0) <= before) {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }

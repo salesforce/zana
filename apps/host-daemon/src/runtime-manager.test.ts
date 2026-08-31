@@ -26,7 +26,7 @@ describe('runtime manager', () => {
       createRuntime: (options) =>
         createAgentRuntimeWithAdapters({
           ...options,
-          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         })
     });
     expect(manager.listLoadedEnvironments()).toEqual([]);
@@ -45,7 +45,7 @@ describe('runtime manager', () => {
         created += 1;
         return createAgentRuntimeWithAdapters({
           ...options,
-          adapterFactory: () => createFakeAdapter(fakeProviderScriptPath)
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
         });
       }
     });

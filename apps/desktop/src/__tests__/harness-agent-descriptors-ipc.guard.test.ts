@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const mainSource = readFileSync(new URL('../index.ts', import.meta.url), 'utf8');
-const preloadSource = readFileSync(new URL('../../../apps/desktop/src/preload.ts', import.meta.url), 'utf8');
+const mainSource = readFileSync(new URL('../ipc/execution.ts', import.meta.url), 'utf8');
+const preloadSource = readFileSync(new URL('../preload.ts', import.meta.url), 'utf8');
 
 describe('project-authorized harness agent descriptor IPC', () => {
   it('passes project id, selected profile, and a bounded refresh boolean through preload', () => {

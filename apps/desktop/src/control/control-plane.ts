@@ -584,6 +584,7 @@ export async function dispatchOp(
     case 'plugin.disable':
     case 'plugin.remove':
     case 'plugin.reload':
+    case 'plugin.logs':
     case 'plugin.search':
     case 'plugin.outdated':
     case 'plugin.update':

@@ -3386,7 +3386,13 @@ async function launchAuthorizedTerminal(
         effectiveLaunch: authorizedPlan.resolved.effectiveLaunch
       });
       if (!result.ok) throw new LaunchSpawnError(result.code, result.message);
-      return result.value;
+      // Block the slot until the spawned session reports ready, so launchTeam's
+      // per-slot loop serializes (each worker is durably recorded before the
+      // next starts) and the request stays `in-progress` for the readiness
+      // window (an exact retry gets IN_PROGRESS, not a premature completed
+      // replay). The pre-spawn deadline gate in launchTeam already refuses a
+      // launch whose deadline elapsed, so readiness no longer races a timeout.
+      return ptys.waitForReady(result.value.id);
     },
     onCommitted: ({ authorizationId, sessionId }) => onCommitted?.({ authorizationId, sessionId }),
     beforeSpawn: spawnLifecycle ? () => spawnLifecycle.maySpawn() : undefined,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ThreadTimelineViewRow, TimelineViewWorkRow } from '@zana-ai/zcc-thread-view';
+import type { TimelineCommandWorkRow } from '@zana-ai/zcc-server-contract';
 import {
   collectTimelineAutoExpansionRowIds,
   isNonExpandableSummary,
@@ -16,7 +17,7 @@ const base = {
   createdAt: 1
 };
 
-function command(status: 'pending' | 'completed', id = 'c1'): TimelineViewWorkRow {
+function command(status: 'pending' | 'completed', id = 'c1'): TimelineCommandWorkRow {
   return {
     ...base,
     id,
@@ -158,7 +159,6 @@ describe('timeline auto-expand', () => {
       kind: 'work',
       workKind: 'question',
       status: 'pending',
-      callId: 'q',
       interactionId: 'pi',
       lifecycle: 'pending',
       questions: [],
@@ -171,7 +171,6 @@ describe('timeline auto-expand', () => {
       kind: 'work',
       workKind: 'question',
       status: 'completed',
-      callId: 'q-done',
       interactionId: 'pi',
       lifecycle: 'answered',
       questions: [],
@@ -184,7 +183,6 @@ describe('timeline auto-expand', () => {
       kind: 'work',
       workKind: 'approval',
       status: 'pending',
-      callId: 'ap',
       interactionId: 'pi',
       approvalKind: 'file-edit',
       lifecycle: 'waiting',
@@ -224,6 +222,9 @@ describe('timeline auto-expand', () => {
       ...base,
       id: 'turn',
       kind: 'turn',
+      status: 'completed',
+      summaryCount: 0,
+      completedAt: 2,
       children: [command('completed')]
     })).toBe(true);
     const live = collectTimelineAutoExpansionRowIds({
@@ -237,9 +238,11 @@ describe('timeline auto-expand', () => {
       id: 'sys-p',
       kind: 'system',
       systemKind: 'operation',
+      operationKind: 'thread-provisioning',
       title: 'Provisioning',
       detail: 'starting',
-      status: 'pending'
+      status: 'pending',
+      completedAt: null
     };
     expect(collectTimelineAutoExpansionRowIds({
       rows: [systemPending],

@@ -117,7 +117,7 @@ export const ConversationRow = memo(function ConversationRow({
               openPanel(options) {
                 return openPluginThreadPanel({
                   pluginId: action.pluginId,
-                  threadId,
+                  threadId: threadId ?? null,
                   actionId: options.actionId,
                   title: options.title,
                   params: options.params ?? null

@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -83,7 +83,9 @@ describe('packed join artifact RPC', () => {
     ).then(async (response) => ({ status: response.status, body: await response.json() }));
     expect(listing.status).toBe(200);
     expect(listing.body).toMatchObject({
-      directory: listedRoot,
+      // The daemon canonicalizes the requested path (Rule 2) before listing, so
+      // /var/folders resolves to its /private/var realpath on macOS.
+      directory: realpathSync(listedRoot),
       entries: expect.arrayContaining([
         expect.objectContaining({ kind: 'file', name: 'hello.txt' })
       ])

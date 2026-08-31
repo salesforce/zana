@@ -1,11 +1,15 @@
 import type {
-  ProviderCliInstallAction,
   ProviderCliInstallActionKind,
   ProviderCliInstallEvent,
   ProviderCliKey,
   ProviderCliStatus,
   ProviderCliStatusResponse
 } from '@zana-ai/zcc-contracts/host-rpc';
+
+// `@zana-ai/zcc-contracts/host-rpc` re-exports the CLI-status types but not the
+// bare `ProviderCliInstallAction` member type — derive it from the field that
+// actually carries it instead of reaching into the underlying contract package.
+type ProviderCliInstallAction = NonNullable<ProviderCliStatus['installAction']>;
 
 const PROVIDER_CLI_ORDER: ProviderCliKey[] = ['codex', 'claudeCode', 'cursor', 'pi', 'opencode'];
 
@@ -100,7 +104,10 @@ const OUTPUT_SNIPPET_CHARS = 600;
 
 function streamText(events: ProviderCliInstallEvent[], stream: 'stderr' | 'stdout'): string {
   return events
-    .filter((event) => event.type === 'output' && event.stream === stream)
+    .filter(
+      (event): event is Extract<ProviderCliInstallEvent, { type: 'output' }> =>
+        event.type === 'output' && event.stream === stream
+    )
     .map((event) => event.text)
     .join('');
 }

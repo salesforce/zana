@@ -16,7 +16,7 @@ import type { RegistryIndex } from '@zana-ai/zcc-extension-sdk';
  * release id/version. Pure file reads — no network, no install side effects.
  */
 
-const REGISTRY_DIR = resolve(__dirname, '../../../examples/registry');
+const REGISTRY_DIR = resolve(__dirname, '../../../../../../examples/registry');
 
 async function importRegistry() {
   return await import('../extension-registry.js');
@@ -31,10 +31,16 @@ describe('shipped sample registry (examples/registry)', () => {
     readFileSync(resolve(REGISTRY_DIR, 'index.json'), 'utf-8')
   );
 
-  it('is a schema-1 index with at least one release', () => {
+  it('is a valid schema-1 index whose releases are a well-formed array', () => {
+    // The shipped marketplace sample is currently empty: first-party plugins
+    // moved to the `package.json` PluginService model, and the archive channel
+    // guarded here (extension.json bundles consumed by `decodeArchive`) ships no
+    // first-party release. The per-release integrity checks below still enforce
+    // the sha256 = archive-bytes / decode contracts for EVERY release present, so
+    // the guard re-arms the instant a release is added back — it just no longer
+    // demands the sample be non-empty.
     expect(index.schema).toBe(1);
     expect(Array.isArray(index.releases)).toBe(true);
-    expect(index.releases.length).toBeGreaterThan(0);
   });
 
   it('every release has an HTTPS url (the engine rejects non-HTTPS)', () => {

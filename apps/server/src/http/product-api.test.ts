@@ -1087,7 +1087,9 @@ describe('product HTTP plugins', () => {
         provenance: 'builtin',
         status: 'running',
         appUrl: '/plugins/docs/app.js',
-        projectTab: { label: 'Library', global: true }
+        projectTab: { label: 'Library', global: true },
+        skillNames: [],
+        mcpServers: []
       }
     ]);
     expect(body.apps[0]).not.toHaveProperty('rootDir');

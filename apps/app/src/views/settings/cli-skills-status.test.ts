@@ -9,8 +9,8 @@ import {
 
 function row(
   status: CliSkillMachineRow['status'],
-  hostId = status,
-  hostName = hostId
+  hostId: string = status,
+  hostName: string = hostId
 ): CliSkillMachineRow {
   return { hostId, hostName, status };
 }

@@ -76,7 +76,7 @@ describe('install-from-git install-seam guard', () => {
   });
 
   it('the checkout path is guarded by safeRef and never uses `--` with a ref', () => {
-    const git = stripComments(readFileSync(join(mainRoot, 'git-clone.ts'), 'utf8'));
+    const git = stripComments(readFileSync(join(mainRoot, '..', 'projects', 'git-clone.ts'), 'utf8'));
     // safeRef exists and is applied before any ref flows into argv.
     expect(git).toMatch(/function safeRef\b/);
     expect(git).toMatch(/safeRef\(/);
@@ -86,11 +86,11 @@ describe('install-from-git install-seam guard', () => {
     expect(git).not.toMatch(/'checkout'[^)]*'--'[^)]*ref/);
   });
 
-  it('the live-install path is index.ts wiring installFromGit → markGit(fail-closed) → runDiskSync', () => {
-    // Positive assertion: index.ts (the trusted orchestrator) crosses the seam and
-    // records provenance fail-closed on the INITIAL install before the shared
-    // install tail runs.
-    const index = readFileSync(join(mainRoot, 'index.ts'), 'utf8');
+  it('the live-install path is the IPC wiring installFromGit → markGit(fail-closed) → runDiskSync', () => {
+    // Positive assertion: the extensions IPC handler (the trusted orchestrator)
+    // crosses the seam and records provenance fail-closed on the INITIAL install
+    // before the shared install tail runs.
+    const index = readFileSync(join(mainRoot, '../../../../desktop/src/ipc/extensions.ts'), 'utf8');
     expect(index).toMatch(/installFromGit\(/);
     expect(index).toMatch(/markGit\(/);
     // A markGit failure on the FIRST install must abort (WRITE_FAILED) AND roll the

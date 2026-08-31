@@ -44,7 +44,7 @@ interface Props {
 // uses its own key so a wide workspace tree does not overflow a 352px panel.
 const WORKSPACE_TREE = { min: 220, max: 560, default: 260, key: 'zcc.explorerTreeWidth' } as const;
 const PANEL_TREE = { min: 140, max: 360, default: 168, key: 'zcc.threadExplorerTreeWidth' } as const;
-type TreeWidthPreset = typeof WORKSPACE_TREE;
+type TreeWidthPreset = typeof WORKSPACE_TREE | typeof PANEL_TREE;
 
 function loadExplorerTreeWidth(preset: TreeWidthPreset): number {
   if (typeof localStorage === 'undefined') return preset.default;

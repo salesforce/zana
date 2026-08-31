@@ -233,7 +233,12 @@ export function conversationItemsFromRows(rows: Array<{
       localFiles: number;
     } | null;
   }> | null;
-}>) {
+}>): Array<{
+  id: string;
+  role: 'user' | 'assistant';
+  preview: string;
+  attachmentSummary: { imageCount: number; fileCount: number } | null;
+}> {
   return rows.flatMap((row) => {
     if (row.kind !== 'conversation') {
       if (row.kind === 'turn') {

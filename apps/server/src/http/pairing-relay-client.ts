@@ -184,7 +184,7 @@ export function createPairingRelayClient(options: PairingRelayClientOptions): Pa
       const response = await fetchImpl(new URL(url, `${loopbackOrigin()}/`), {
         method,
         headers,
-        body: method === 'GET' || method === 'HEAD' ? undefined : body
+        body: method === 'GET' || method === 'HEAD' ? undefined : new Uint8Array(body)
       });
       const hasBody = Boolean(response.body) && method !== 'HEAD';
       send(

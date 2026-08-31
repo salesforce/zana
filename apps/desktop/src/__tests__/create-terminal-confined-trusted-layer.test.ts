@@ -57,7 +57,7 @@ const PERSONA: Persona = {
   permissionMode: 'acceptEdits'
 } as Persona;
 
-vi.mock('../store.js', () => ({
+vi.mock('@zana-ai/zcc-server/services/projects/store', () => ({
   store: {
     listProjects: () => [PROJECT],
     getConfig: () => CONFIG,
@@ -71,7 +71,7 @@ vi.mock('../store.js', () => ({
 
 // Seed one persona via PersonaStore.list(); keep the REAL resolvePersonaLaunch so
 // the persona→pty wiring is exercised end to end.
-vi.mock('../persona-store.js', async (importOriginal) => {
+vi.mock('@zana-ai/zcc-server/services/agents/persona-store', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@zana-ai/zcc-server/services/agents/persona-store')>();
   return {
     ...actual,
@@ -85,7 +85,7 @@ vi.mock('../persona-store.js', async (importOriginal) => {
 
 vi.mock('../updater.js', () => ({ createUpdater: () => ({}) }));
 
-vi.mock('-ai/zcc-host-daemon/mcp-config', () => ({
+vi.mock('@zana-ai/zcc-host-daemon/mcp-config', () => ({
   ensureMcpConfigForProject: () => '/tmp/p1/.mcp.json',
   ensureMcpConfigForProjectSync: () => '/tmp/p1/.mcp.json'
 }));

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
-import type { PendingInteraction } from '@zana-ai/zcc-domain/thread-runtime';
+import type { ApprovalPendingInteraction, PendingInteraction } from '@zana-ai/zcc-domain/thread-runtime';
 import { ThreadPendingInteractionBanner } from './ThreadPendingInteractionBanner.js';
 
 vi.mock('../../../lib/product-client.js', () => ({
@@ -16,7 +16,7 @@ vi.mock('../../../lib/product-client.js', () => ({
   }
 }));
 
-function commandInteraction(): PendingInteraction {
+function commandInteraction(): ApprovalPendingInteraction {
   return {
     id: 'pint_1',
     threadId: 'thr-1',
@@ -81,7 +81,8 @@ describe('ThreadPendingInteractionBanner', () => {
           allowFreeText: true,
           options: [{ value: 'yes', label: 'Yes' }]
         }]
-      }
+      },
+      resolution: null
     };
     const html = renderToStaticMarkup(
       <MemoryRouter>
@@ -126,7 +127,8 @@ describe('ThreadPendingInteractionBanner', () => {
             options: []
           }
         ]
-      }
+      },
+      resolution: null
     };
     const html = renderToStaticMarkup(
       <MemoryRouter>
@@ -155,7 +157,8 @@ describe('ThreadPendingInteractionBanner', () => {
           multiSelect: false,
           allowFreeText: true
         }]
-      }
+      },
+      resolution: null
     };
     const html = renderToStaticMarkup(
       <MemoryRouter>
@@ -173,8 +176,10 @@ describe('ThreadPendingInteractionBanner', () => {
         <ThreadPendingInteractionBanner
           interaction={{...({} as any),
             ...commandInteraction(),
+            turnId: null,
             origin: { kind: 'plugin', pluginId: 'ask-user', rendererId: 'form' },
-            payload: { kind: 'plugin', title: 'Confirm delete', data: { path: '/tmp' } }
+            payload: { kind: 'plugin', title: 'Confirm delete', data: { path: '/tmp' } },
+            resolution: null
           }}
           threadId="thr-1"
         />

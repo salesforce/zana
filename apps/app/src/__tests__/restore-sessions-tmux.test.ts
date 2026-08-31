@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TerminalSession } from '@zana-ai/zcc-domain/product';
 
 const listTmuxRestoreCandidates = vi.fn();
@@ -32,6 +32,17 @@ async function loadStore() {
   const { useData } = await import('../store.js');
   return useData;
 }
+
+// Same dynamic-import-per-test isolation pattern as inboxNavigation.test.ts
+// and project-focus-navigation.test.ts: `beforeEach`'s vi.resetModules() only
+// clears the module-INSTANTIATION cache, not Vite's compiled-code transform
+// cache, so whichever test runs first still pays the one-time COLD TRANSFORM
+// of the ~3600-line store.ts (+ transitive deps) — a cost that can spike past
+// the default 5s test timeout under full-suite CPU contention. Warm it here,
+// in a hook with its own generous timeout, before any test's budget starts.
+beforeAll(async () => {
+  await import('../store.js');
+}, 20_000);
 
 beforeEach(() => {
   vi.resetModules();

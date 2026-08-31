@@ -355,11 +355,12 @@ export type ThreadEventContextWindowUsage = z.infer<
   typeof threadEventContextWindowUsageSchema
 >;
 
-const threadEventTokenUsageSchema = z.object({
+export const threadEventTokenUsageSchema = z.object({
   total: threadEventTokenUsageBreakdownSchema,
   last: threadEventTokenUsageBreakdownSchema,
   modelContextWindow: z.number().nullable(),
 });
+export type ThreadEventTokenUsage = z.infer<typeof threadEventTokenUsageSchema>;
 
 export const threadEventWarningCategorySchema = z.enum([
   "deprecation",

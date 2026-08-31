@@ -18,7 +18,13 @@ describe("github plugin", () => {
 
   it("registers issue and PR mention providers", async () => {
     const { zcc, harness } = createFakePluginHost({ pluginId: "github" });
-    await plugin(zcc);
+    // Force the fallback path deterministically: never spawn the real `gh` CLI
+    // (a real subprocess flakes under full-suite parallel load, timing out).
+    await plugin(zcc, {
+      ghJson: async () => {
+        throw new Error("gh offline");
+      }
+    });
     expect(harness.mentionProviders.map((row) => row.id)).toEqual(["issue", "pr"]);
     harness.setSettings({ repo: "acme/app" });
     await expect(harness.mentionProviders[0]!.search({ query: "12" })).resolves.toEqual([

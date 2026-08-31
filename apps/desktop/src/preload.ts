@@ -261,6 +261,11 @@ const api: CcApi = {
     },
     retryUpdate: async () => ({ ok: true as const }),
     remove: async () => ({ ok: true as const }),
+    bootstrap: async () => [],
+    repair: async () => [],
+    updateSshIdentity: async () => {
+      throw new Error('hosts.updateSshIdentity is served over product HTTP');
+    },
     directory: async () => ({ directory: '/', parent: null, entries: [] }),
     pathsExist: async () => ({ existence: {} }),
     pickFolder: async () => ({ path: null }),
@@ -289,6 +294,7 @@ const api: CcApi = {
   },
   relay: {
     status: async () => ({ state: 'unconfigured' as const }),
+    renewJoinWindow: async () => ({ state: 'unconfigured' as const }),
     onChanged: () => () => {}
   },
   marketplaces: {
@@ -306,13 +312,74 @@ const api: CcApi = {
     install: async () => ({ results: [] })
   },
   threads: {
+    create: async () => ({
+      ok: false as const,
+      code: 'desktop-use-terminals',
+      message: 'desktop launches use terminals.create'
+    }),
     spawn: async () => ({
       ok: false as const,
       code: 'desktop-use-terminals',
       message: 'desktop launches use terminals.create'
     }),
     list: async () => [],
+    get: async () => ({ thread: {} }),
+    send: async () => ({ ok: false }),
+    stop: async () => ({ ok: false }),
+    cancelPlan: async () => ({ ok: false }),
+    resume: async () => ({ ok: false }),
+    timeline: async () => ({ rows: [], status: 'unknown' }),
+    read: async () => ({ thread: {} }),
+    unread: async () => ({ thread: {} }),
+    rename: async () => ({ thread: {} }),
+    conversationOutline: async () => ({ items: [], maxSeq: 0 }),
+    timelineTurnSummaryDetails: async () => ({ rows: [] }),
+    queuedMessages: async () => [],
+    createQueuedMessage: async () => {
+      throw new Error('threads require the product server');
+    },
+    updateQueuedMessage: async () => {
+      throw new Error('threads require the product server');
+    },
+    deleteQueuedMessage: async () => {
+      throw new Error('threads require the product server');
+    },
+    sendQueuedMessage: async () => {
+      throw new Error('threads require the product server');
+    },
+    reorderQueuedMessage: async () => {
+      throw new Error('threads require the product server');
+    },
+    editMessage: async () => {
+      throw new Error('threads require the product server');
+    },
+    hostFileContent: async () => {
+      throw new Error('threads require the product server');
+    },
+    storageFiles: async () => ({ files: [], truncated: false, storageRootPath: '' }),
+    storageContent: async () => {
+      throw new Error('threads require the product server');
+    },
+    open: async () => ({ delivered: 0 }),
+    onOpen: (cb) => {
+      void cb;
+      return () => {};
+    },
+    events: async () => ({ events: [] }),
+    executionOptions: async () => ({
+      providers: [],
+      models: [],
+      selectedOnlyModels: [],
+      permissionCeiling: 'full',
+      modelLoadError: null
+    }),
+    providers: async () => ({ providers: [] }),
+    commands: async () => ({ commands: [] }),
     onUpdated: (cb) => {
+      void cb;
+      return () => {};
+    },
+    onEvent: (cb) => {
       void cb;
       return () => {};
     },
@@ -332,17 +399,11 @@ const api: CcApi = {
       }
     },
     archive: async () => ({ ok: false }),
-    unread: async () => ({ thread: {} }),
-    rename: async () => ({ thread: {} }),
-    storageFiles: async () => ({ files: [], truncated: false, storageRootPath: '' }),
-    storageContent: async () => {
-      throw new Error('threads require the product server');
-    },
-    open: async () => ({ delivered: 0 }),
-    onOpen: (cb) => {
-      void cb;
-      return () => {};
-    }
+    fork: async () => ({
+      ok: false as const,
+      code: 'desktop-use-terminals',
+      message: 'desktop launches use terminals.create'
+    })
   },
     environments: {
       list: async () => [],
@@ -352,8 +413,15 @@ const api: CcApi = {
       diff: async () => {
         throw new Error('environments require the product server');
       },
+      diffFiles: async () => {
+        throw new Error('environments require the product server');
+      },
+      diffPatch: async () => {
+        throw new Error('environments require the product server');
+      },
       pullRequest: async () => ({ pullRequest: null }),
       action: async () => ({ ok: false }),
+      cancelProvision: async () => ({ ok: false }),
       destroy: async () => ({ ok: false })
     },
   terminals: {

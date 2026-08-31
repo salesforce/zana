@@ -423,7 +423,7 @@ describe('launchTeam', () => {
       expect(result).toMatchObject({ ok: true, value: { launched: 1 } });
       expect(createCalls[0]?.opts).toMatchObject({
         profile: 'opencode',
-        prompt: 'Inspect this project.'
+        extraArgs: ['--prompt', 'Inspect this project.']
       });
     } finally {
       delete CONFIG.harnessOpenCodeEnabled;

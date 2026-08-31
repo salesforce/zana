@@ -20,7 +20,7 @@ import type { RegistryIndex } from '@zana-ai/zcc-extension-sdk';
  * see because they hand-build the archive on both ends.
  */
 
-const SCRIPT = resolve(__dirname, '../../../scripts/publish-extension.mjs');
+const SCRIPT = resolve(__dirname, '../../../../../../scripts/publish-extension.mjs');
 const engines = { zccApi: '>=1 <2' };
 
 let installDir: string;
