@@ -51,7 +51,7 @@ describe('macOS Dock-icon guarantee', () => {
     expect(accessoryCalls.length).toBeLessThanOrEqual(1);
     if (accessoryCalls.length === 1) {
       expect(hostSrc).toMatch(
-        /if \(E2E_TAP_ENABLED\)[\s\S]{0,120}?setActivationPolicy\(\s*['"]accessory['"]\s*\)/
+        /if \(E2E_TAP_ENABLED[\s\S]{0,120}?setActivationPolicy\(\s*['"]accessory['"]\s*\)/
       );
     }
   });

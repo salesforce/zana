@@ -390,6 +390,19 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  */
 const E2E_TAP_ENABLED = process.env.ZCC_E2E === '1' || process.env.ZCC_E2E === 'true';
 
+// E2E ONLY: become an accessory (menu-bar-only, no-Dock, NON-ACTIVATING) app at
+// the earliest point in the main process — at module load, BEFORE
+// app.whenReady() and before any window — so launching the test app never
+// brings it to the macOS foreground and steals the developer's focus. The
+// activation policy must be set this early: Electron activates a `regular` app
+// on process launch, so setting it later (e.g. in claimDock during window
+// creation) is too late. Playwright drives the renderer over CDP and never
+// needs the app focused. Production (ZCC_E2E unset) stays regular (see
+// claimDock + the dock-icon guard).
+if (E2E_TAP_ENABLED && process.platform === 'darwin') {
+  app.setActivationPolicy('accessory');
+}
+
 export function logMainError(context: string, err: unknown) {
   const message = err instanceof Error ? err.stack || err.message : String(err);
   testTap.recordLog('error', context, message);
@@ -2573,15 +2586,10 @@ function sendToFocused(channel: string, ...args: unknown[]) {
  */
 function claimDock() {
   if (process.platform !== 'darwin') return;
+  // E2E: the accessory (non-activating, no-Dock) policy is set once at module
+  // load; never claim the Dock or foreground here or the run steals focus.
+  if (E2E_TAP_ENABLED) return;
   try {
-    // E2E ONLY: keep the app off the Dock and out of the foreground so a local
-    // Playwright run doesn't repeatedly steal macOS focus from the developer.
-    // Playwright drives the renderer over CDP, so activation/visibility is
-    // irrelevant to the tests. Production (ZCC_E2E unset) always claims regular.
-    if (E2E_TAP_ENABLED) {
-      app.setActivationPolicy('accessory');
-      return;
-    }
     app.setActivationPolicy('regular');
     app.dock?.show();
   } catch (err) {
