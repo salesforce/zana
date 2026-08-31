@@ -5401,6 +5401,7 @@ async function bootstrapNormal() {
     store,
     inbox: inboxStore,
     logger: logMainError,
+    getPendingSubagentCount: (sessionId) => agentStatus.subagents(sessionId),
     resolvePersona: (id) => personas.list().find((p) => p.id === id)
   });
   scheduler.loadAll(store.listProjects());
@@ -5689,10 +5690,6 @@ async function bootstrapNormal() {
        // A blocked overlay wins over turn completion. The next UserPromptSubmit
        // callback begins a new turn and clears it; clearing here would turn an
        // unanswered permission/question into an incorrect idle state.
-      // A finished turn can have no in-flight sub-agents — reset the count so a
-      // SubagentStop hook that never fired (e.g. a killed sub-agent) can't leave
-      // a phantom badge on the parent.
-      agentStatus.clearSubagents(sessionId);
       // A finished turn can't have a tool still in flight — reset the idle-veto
       // counter so a PostToolUse that never fired (e.g. a killed tool call)
       // can't permanently pin the session's status away from idle.
@@ -5805,11 +5802,11 @@ async function bootstrapNormal() {
       fireTabNamer(sessionId, text);
     },
     // Sub-agent (Task tool) start/stop callback → live "N sub-agents running"
-    // badge. PreToolUse(Task) increments, SubagentStop decrements; the parent's
-    // Stop hook (above) resets the count as a drift guard.
+    // badge. PreToolUse(Task) increments and SubagentStop decrements.
     onSubagentHook: (_projectId: string, sessionId: string, action, identity) => {
       if (action === 'start') agentStatus.subagentStarted(sessionId, identity);
       else agentStatus.subagentStopped(sessionId);
+      scheduler.onSubagentCountChanged(sessionId);
       console.log(`[subagent-hook] session=${sessionId.slice(0, 8)} action=${action}`);
     },
     // Generic tool-activity callback → the idle-veto. `start`/`stop` bracket
