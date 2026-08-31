@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createCoalescedRunner } from './coalesced-runner.js';
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve = () => undefined;
+  let resolve: () => void = () => undefined;
   const promise = new Promise<void>((next) => {
     resolve = () => next();
   });

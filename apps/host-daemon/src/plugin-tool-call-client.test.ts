@@ -23,7 +23,7 @@ function jsonResponse(status: number, body: unknown): Response {
 
 describe('plugin tool-call HTTP client', () => {
   it('posts the tool call with host credentials', async () => {
-    const fetchFn = vi.fn(async () => jsonResponse(200, {
+    const fetchFn = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () => jsonResponse(200, {
       success: true,
       contentItems: [{ type: 'inputText', text: '{"ok":true}' }]
     }));

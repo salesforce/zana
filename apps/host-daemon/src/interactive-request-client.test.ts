@@ -34,7 +34,7 @@ function jsonResponse(status: number, body: unknown): Response {
 
 describe('interactive request HTTP client', () => {
   it('registers a created interaction', async () => {
-    const fetchFn = vi.fn(async () => jsonResponse(200, {
+    const fetchFn = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () => jsonResponse(200, {
       outcome: 'created',
       interactionId: 'pint_1',
       status: 'pending'

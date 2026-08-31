@@ -473,7 +473,7 @@ export function ProjectsList({
   // open button does not immediately re-close.
   useEffect(() => {
     if (!sidebarAddOpen && !sidebarOrganizeOpen) return;
-    const onDown = (e: MouseEvent) => {
+    const onDown = (e: globalThis.MouseEvent) => {
       const t = e.target as Node;
       if (sidebarAddRef.current?.contains(t) || sidebarOrganizeRef.current?.contains(t)) return;
       setSidebarAddOpen(false);
@@ -530,7 +530,7 @@ export function ProjectsList({
 
   useEffect(() => {
     if (!confirmDeleteId) return;
-    const onDown = (e: MouseEvent) => {
+    const onDown = (e: globalThis.MouseEvent) => {
       const t = e.target as HTMLElement | null;
       if (t && t.closest('.project-delete-armed')) return;
       setConfirmDeleteId(null);

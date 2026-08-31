@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { dirname, join, basename, relative, sep } from 'node:path';
 import { isAbsolute } from 'node:path';
 import { Buffer, isUtf8 } from 'node:buffer';
-import { promises as fs } from 'node:fs';
+import { promises as fs, type Stats } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { isWithin } from '@zana-ai/zcc-path-confine';
@@ -523,7 +523,7 @@ export async function listHostPaths(command: {
 async function resolveExistingFile(command: {
   path: string;
   rootPath?: string;
-}): Promise<{ realPath: string; stat: Awaited<ReturnType<typeof fs.stat>> }> {
+}): Promise<{ realPath: string; stat: Stats }> {
   assertAbsolute(command.path, 'Path');
   const root = await requireRoot(command.rootPath);
   let realPath: string;

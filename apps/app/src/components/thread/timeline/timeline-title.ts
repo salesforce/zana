@@ -52,7 +52,7 @@ export function titleSegmentClass(segment: {
   ].filter(Boolean).join(' ');
 }
 
-export function isPastWorkRow(row: { kind: string; status?: string }): boolean {
+export function isPastWorkRow(row: { kind: string; status?: string | null }): boolean {
   if (row.kind === 'step-summary' || row.kind === 'turn') return true;
   if (row.kind === 'bundle-summary') return row.status === 'completed';
   if (row.kind === 'work' || row.kind === 'system') {

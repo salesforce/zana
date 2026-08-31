@@ -212,7 +212,7 @@ interface UtilityChild {
   postMessage(message: unknown): void;
   on(event: 'message', listener: (message: unknown) => void): void;
   off?(event: 'message', listener: (message: unknown) => void): void;
-  on(event: 'error', listener: (error: Error) => void): void;
+  on(event: 'error', listener: (type: string, location: string, report: string) => void): void;
   once(event: 'exit', listener: () => void): void;
   once(event: 'spawn', listener: () => void): void;
   kill(): void;
@@ -249,6 +249,8 @@ interface UtilityRuntime {
   request(operation: 'plugins-cli-run', pluginId: string, argv: string[]): Promise<unknown>;
   request(operation: 'marketplace-list'): Promise<unknown>;
   request(operation: 'marketplace-add', url: string): Promise<unknown>;
+  request(operation: 'marketplace-refresh', url: string): Promise<unknown>;
+  request(operation: 'marketplace-remove', url: string): Promise<unknown>;
   stop(): Promise<void>;
 }
 
@@ -290,8 +292,8 @@ function startUtility(
     child.once('exit', () => {
       if (!ready) finish(new Error('runtime child exited before ready'));
     });
-    child.on('error', (error) => {
-      finish(error instanceof Error ? error : new Error(String(error)));
+    child.on('error', (type, location, report) => {
+      finish(new Error(`runtime child fatal error (${type}) at ${location}: ${report}`));
     });
     child.on('message', (message: unknown) => {
       if (ready || settled) return;
@@ -593,7 +595,7 @@ function createUtilityRuntime(runtime: { child: UtilityChild; url: string }): Ut
     ...runtime,
     request(
       operation: 'app-version' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-call-rpc' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
-       ...args: [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, Record<string, string | boolean | null>] | []
+       ...args: [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, Record<string, string | boolean | null>] | [string, string[]] | []
     ) {
       const id = randomUUID();
       return new Promise<unknown>((resolveResult, rejectResult) => {

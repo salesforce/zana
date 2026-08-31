@@ -8,9 +8,9 @@ import {
   SCRATCH_WORKSPACE_NAME
 } from './composer-project-default.js';
 
-const alpha = { id: 'alpha', name: 'alpha-repo' };
+const alpha = { id: 'alpha', name: 'alpha-repo', quickAgent: false };
 const scratch = { id: 'scratch-1', name: SCRATCH_WORKSPACE_NAME, quickAgent: true };
-const coreRepo = { id: 'core-repo', name: 'zana-command-center' };
+const coreRepo = { id: 'core-repo', name: 'zana-command-center', quickAgent: false };
 
 describe('scratchWorkspaceProject', () => {
   it('prefers the quickAgent scratch project over a name match', () => {

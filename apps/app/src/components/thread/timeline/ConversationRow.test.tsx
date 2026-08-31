@@ -5,12 +5,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ConversationRow } from './ConversationRow.js';
 
-const editMessage = vi.fn(async () => ({ ok: true }));
+const editMessage = vi.fn(async (_threadId: string, _body: unknown) => ({ ok: true }));
 
 vi.mock('../../../lib/product-client.js', () => ({
   product: {
     threads: {
-      editMessage: (...args: unknown[]) => editMessage(...args),
+      editMessage: (threadId: string, body: unknown) => editMessage(threadId, body),
       createQueuedMessage: vi.fn(async () => ({ ok: true })),
       fork: vi.fn(async () => ({ ok: true }))
     }

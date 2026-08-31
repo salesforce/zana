@@ -140,7 +140,7 @@ export function ProjectFocusView({ project }: { project: Project }) {
   // Close the "+" launch menu on any outside click or Escape.
   useEffect(() => {
     if (!newMenuOpen) return;
-    const onDown = (e: MouseEvent) => {
+    const onDown = (e: globalThis.MouseEvent) => {
       if (newMenuRef.current?.contains(e.target as Node)) return;
       setNewMenuOpen(false);
     };

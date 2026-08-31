@@ -23,7 +23,7 @@ const workBase = {
 describe('timeline title helpers', () => {
   it('formats decorations and CSS classes', () => {
     expect(decorationText({ kind: 'diff-stats', added: 1, removed: 0 }, 0)).toBe('+1 −0');
-    expect(decorationText({ kind: 'status', status: 'error' }, 0)).toBe('error');
+    expect(decorationText({ kind: 'status', status: 'error', durationMs: null, emphasis: false }, 0)).toBe('error');
     expect(decorationText({
       kind: 'summary-status',
       errorCount: 1,
@@ -121,7 +121,7 @@ describe('WorkRowBody', () => {
         workKind: 'tool',
         status: 'completed',
         toolName: 'Bash',
-        toolArgs: 'echo hi',
+        toolArgs: { command: 'echo hi' },
         output: 'hi',
         completedAt: 2,
         approvalStatus: null,
@@ -384,12 +384,7 @@ describe('conversation and banners', () => {
           role: 'assistant',
           text: dump,
           attachments: null,
-          initiator: 'agent',
-          senderThreadId: null,
-          systemMessageKind: 'unlabeled',
-          systemMessageSubject: null,
-          turnRequest: { isGrouped: false, kind: 'message', status: 'accepted' },
-          mentions: []
+          turnRequest: null
         }}
       />
     );
@@ -410,12 +405,7 @@ describe('conversation and banners', () => {
           role: 'assistant',
           text: dump,
           attachments: null,
-          initiator: 'agent',
-          senderThreadId: null,
-          systemMessageKind: 'unlabeled',
-          systemMessageSubject: null,
-          turnRequest: { isGrouped: false, kind: 'message', status: 'accepted' },
-          mentions: []
+          turnRequest: null
         }}
       />
     );
@@ -431,12 +421,7 @@ describe('conversation and banners', () => {
           role: 'assistant',
           text: 'Done.',
           attachments: null,
-          initiator: 'agent',
-          senderThreadId: null,
-          systemMessageKind: 'unlabeled',
-          systemMessageSubject: null,
-          turnRequest: { isGrouped: false, kind: 'message', status: 'accepted' },
-          mentions: []
+          turnRequest: null
         }}
       />
     );
@@ -540,12 +525,7 @@ describe('conversation and banners', () => {
           role: 'assistant',
           text: 'Done.',
           attachments: null,
-          initiator: 'agent',
-          senderThreadId: null,
-          systemMessageKind: 'unlabeled',
-          systemMessageSubject: null,
-          turnRequest: { isGrouped: false, kind: 'message', status: 'accepted' },
-          mentions: []
+          turnRequest: null
         }}
       />
     );

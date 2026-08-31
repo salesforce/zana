@@ -1,5 +1,9 @@
-import type { ComponentType } from 'react';
-import { definePluginApp, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
+import type { ComponentType, ReactNode } from 'react';
+import {
+  definePluginApp,
+  useZccNavigate,
+  type PluginPendingInteractionProps,
+} from '@zana-ai/zcc-plugin-sdk/app';
 import { AgentScriptPanel } from './src/app/AgentScriptPanel.js';
 
 function hostReact() {
@@ -11,7 +15,7 @@ function pluginHost() {
     .__ZCC_PLUGIN_HOST__;
 }
 
-function pad(children: unknown) {
+function pad(children: ReactNode) {
   const React = hostReact();
   if (!React) return null;
   return React.createElement('div', { style: { padding: 16, height: '100%', boxSizing: 'border-box' } }, children);
@@ -101,11 +105,7 @@ function SalesforceProjectTab(props: { pluginId: string; projectId: string }) {
   );
 }
 
-function SalesforceGuardrailForm(props: {
-  interaction: { payload: unknown };
-  submit: (value: unknown) => void;
-  cancel: () => void;
-}) {
+function SalesforceGuardrailForm(props: PluginPendingInteractionProps) {
   const React = hostReact();
   if (!React) return null;
   const payload =

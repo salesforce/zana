@@ -160,13 +160,12 @@ export function decodeRoutePath(pathname: string, hash = ''): DecodedRoute {
   if (pathname === TOOLS_MCP_ROUTE_PATH) {
     return { ...DEFAULT_DECODED, nav: 'extensions', extensionsTab: 'mcp' };
   }
-  const hubPage =
-    matchPath(TOOLS_HUB_PAGE_ROUTE_PATH, pathname) ??
-    matchPath(TOOLS_HUB_PAGE_ROOT_ROUTE_PATH, pathname);
+  const hubPageWithSplat = matchPath(TOOLS_HUB_PAGE_ROUTE_PATH, pathname);
+  const hubPage = hubPageWithSplat ?? matchPath(TOOLS_HUB_PAGE_ROOT_ROUTE_PATH, pathname);
   if (hubPage) {
     const pluginId = param(hubPage, 'pluginId');
     const pageId = param(hubPage, 'pageId');
-    const splat = hubPage.params['*'];
+    const splat = hubPageWithSplat?.params['*'];
     let subPath = '';
     if (typeof splat === 'string' && splat.length > 0) {
       subPath = splat
@@ -268,13 +267,12 @@ export function decodeRoutePath(pathname: string, hash = ''): DecodedRoute {
     };
   }
 
-  const pluginPanel =
-    matchPath(PLUGIN_PANEL_ROUTE_PATH, pathname) ??
-    matchPath(PLUGIN_PANEL_ROOT_ROUTE_PATH, pathname);
+  const pluginPanelWithSplat = matchPath(PLUGIN_PANEL_ROUTE_PATH, pathname);
+  const pluginPanel = pluginPanelWithSplat ?? matchPath(PLUGIN_PANEL_ROOT_ROUTE_PATH, pathname);
   if (pluginPanel) {
     const pluginId = param(pluginPanel, 'pluginId');
     const panelPath = param(pluginPanel, 'panelPath');
-    const splat = pluginPanel.params['*'];
+    const splat = pluginPanelWithSplat?.params['*'];
     let subPath = '';
     if (typeof splat === 'string' && splat.length > 0) {
       subPath = splat

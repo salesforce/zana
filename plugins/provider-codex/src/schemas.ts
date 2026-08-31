@@ -480,8 +480,10 @@ const codexErrorHttpStatusSchema = z
 const codexErrorInfoSchema = z.union([
   z.literal("contextWindowExceeded"),
   z.literal("usageLimitExceeded"),
+  z.literal("sessionBudgetExceeded"),
   z.literal("serverOverloaded"),
   z.literal("cyberPolicy"),
+  z.literal("misalignmentPolicyViolation"),
   z.object({ httpConnectionFailed: codexErrorHttpStatusSchema }),
   z.object({ responseStreamConnectionFailed: codexErrorHttpStatusSchema }),
   z.literal("internalServerError"),
@@ -777,6 +779,7 @@ const codexRateLimitSnapshotUpdateSchema = z
     secondary: codexRateLimitWindowSchema.nullable().optional(),
     credits: codexCreditsSnapshotSchema.nullable().optional(),
     individualLimit: codexSpendControlLimitSnapshotSchema.nullable().optional(),
+    spendControlReached: z.boolean().nullable().optional(),
     planType: z.string().nullable().optional(),
     rateLimitReachedType: z.string().nullable().optional(),
   })
@@ -792,6 +795,7 @@ export interface CodexRateLimitSnapshot {
   secondary: z.output<typeof codexRateLimitWindowSchema> | null;
   credits: z.output<typeof codexCreditsSnapshotSchema> | null;
   individualLimit: z.output<typeof codexSpendControlLimitSnapshotSchema> | null;
+  spendControlReached: boolean | null;
   planType: string | null;
   rateLimitReachedType: string | null;
 }

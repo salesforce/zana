@@ -71,6 +71,7 @@ import {
   type ResolvedOrg,
   type SafetyEnvelope,
   type SalesforceDeps,
+  type ToolFailure,
   type ToolResult
 } from './types.js';
 
@@ -395,7 +396,7 @@ async function confirmEnvelope(
   return approved ? { approved: true, reason: 'submitted' } : { approved: false, reason: 'denied' };
 }
 
-function fail(code: string, error: string): ToolResult {
+function fail(code: string, error: string): ToolFailure {
   return { ok: false, code, error };
 }
 
@@ -713,7 +714,7 @@ async function runAgent(
 async function requireDxRoot(
   snapshot: PluginSettingsValues,
   deps: SalesforceDeps
-): Promise<{ ok: true; projectRoot: string } | ToolResult> {
+): Promise<{ ok: true; projectRoot: string } | ToolFailure> {
   if (!snapshot.projectRoot || !isDxProject(snapshot.projectRoot, deps.exists)) {
     return fail('not_configured', 'Set DX project root to a folder that contains sfdx-project.json.');
   }
@@ -794,7 +795,7 @@ async function loadAgentBundles(
   deps: SalesforceDeps
 ): Promise<
   | { ok: true; projectRoot: string; bundles: ReturnType<typeof scanAgentBundles>; bundle: ReturnType<typeof findAgentBundle> }
-  | ToolResult
+  | ToolFailure
 > {
   const root = await requireDxRoot(snapshot, deps);
   if (!('projectRoot' in root)) return root;
@@ -1150,7 +1151,7 @@ async function resolvePreviewIdentity(
   snapshot: PluginSettingsValues,
   deps: SalesforceDeps,
   requireIdentity: boolean
-): Promise<{ identity?: AgentPreviewIdentity; projectRoot?: string } | ToolResult> {
+): Promise<{ identity?: AgentPreviewIdentity; projectRoot?: string } | ToolFailure> {
   if (plan.published) {
     const apiName = plan.apiName;
     if (!apiName) return fail('invalid_input', 'published preview requires apiName.');

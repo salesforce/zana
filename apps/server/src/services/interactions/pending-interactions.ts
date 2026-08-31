@@ -414,9 +414,9 @@ export class PendingInteractionLifecycle {
           type: 'interactive.resolve',
           threadId: queued.threadId,
           interactionId: queued.id,
-          providerId: queued.providerId,
-          providerThreadId: queued.providerThreadId,
-          providerRequestId: queued.providerRequestId,
+          providerId: current.providerId,
+          providerThreadId: current.providerThreadId,
+          providerRequestId: current.providerRequestId,
           resolution: args.resolution
         }
       });

@@ -32,7 +32,7 @@ import {
   threadDeltaNotificationParamsSchema,
   providerRecoveryNotificationSchema,
   type BridgeCapabilities,
-  type ProviderRecoveryHint,
+  type ProviderRecoveryNotification,
   type SkillsConfigureRoot,
 } from "@zana-ai/zcc-provider-bridge-protocol";
 import {
@@ -613,7 +613,7 @@ export function createBridgeProtocolAdapter(
 
     decodeRecoveryHint(
       event: ProviderRuntimeEvent,
-    ): ProviderRecoveryHint | null {
+    ): ProviderRecoveryNotification | null {
       if (event.method !== BRIDGE_NOTIFICATION_METHODS.providerRecovery) {
         return null;
       }

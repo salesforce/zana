@@ -314,7 +314,14 @@ function toolCallItemEvent({
         tool,
         ...(toolArgs ? { arguments: toolArgs } : {}),
         ...(parentToolCallId ? { parentToolCallId } : {}),
-        ...(statusLabels ? { statusLabels } : {}),
+        ...(statusLabels
+          ? {
+              presentation: {
+                label: statusLabels,
+                icon: { glyph: "FileText" },
+              },
+            }
+          : {}),
         status: status ?? (type === "item/completed" ? "completed" : "pending"),
         ...(result ? { result } : {}),
       },

@@ -62,6 +62,10 @@ describe('runtime host execution environment', () => {
       callPluginRpc: async () => { throw new Error('not used'); },
       getPluginSettings: async () => ({ descriptors: {}, values: {} }),
       setPluginSettings: async () => { throw new Error('not used'); },
+      relaunchEnrolledHost: async () => ({ ok: true as const }),
+      pluginLogs: async () => [],
+      pluginCliContributions: async () => [],
+      runPluginCli: async () => { throw new Error('not used'); },
       close: async () => {}
     };
     const environment = createRuntimeHostExecutionEnvironment({
@@ -171,6 +175,10 @@ describe('runtime host execution environment', () => {
       callPluginRpc: async () => { throw new Error('not used'); },
       getPluginSettings: async () => ({ descriptors: {}, values: {} }),
       setPluginSettings: async () => { throw new Error('not used'); },
+      relaunchEnrolledHost: async () => ({ ok: true as const }),
+      pluginLogs: async () => [],
+      pluginCliContributions: async () => [],
+      runPluginCli: async () => { throw new Error('not used'); },
       close: async () => {}
     };
     const environment = createRuntimeHostExecutionEnvironment({ runtime });
@@ -240,6 +248,10 @@ describe('runtime host execution environment', () => {
       callPluginRpc: async () => { throw new Error('not used'); },
       getPluginSettings: async () => ({ descriptors: {}, values: {} }),
       setPluginSettings: async () => { throw new Error('not used'); },
+      relaunchEnrolledHost: async () => ({ ok: true as const }),
+      pluginLogs: async () => [],
+      pluginCliContributions: async () => [],
+      runPluginCli: async () => { throw new Error('not used'); },
       close: async () => {}
     };
     const environment = createRuntimeHostExecutionEnvironment({ runtime });
