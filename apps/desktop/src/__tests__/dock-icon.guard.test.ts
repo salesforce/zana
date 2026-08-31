@@ -42,8 +42,18 @@ describe('macOS Dock-icon guarantee', () => {
     expect(hostSrc).toMatch(/setActivationPolicy\(\s*['"]regular['"]\s*\)/);
   });
 
-  it('never sets the accessory (menu-bar-only, no-Dock) policy anywhere in main', () => {
-    expect(hostSrc).not.toMatch(/setActivationPolicy\(\s*['"]accessory['"]\s*\)/);
+  it('only sets the accessory policy inside the E2E gate, never in the production path', () => {
+    // Accessory (menu-bar-only, no-Dock) is allowed EXCLUSIVELY for local E2E so
+    // the test app doesn't steal macOS focus during a Playwright run; production
+    // (ZCC_E2E unset) must stay regular. Assert there is at most ONE accessory
+    // call and, if present, it sits behind the E2E_TAP_ENABLED gate.
+    const accessoryCalls = hostSrc.match(/setActivationPolicy\(\s*['"]accessory['"]\s*\)/g) ?? [];
+    expect(accessoryCalls.length).toBeLessThanOrEqual(1);
+    if (accessoryCalls.length === 1) {
+      expect(hostSrc).toMatch(
+        /if \(E2E_LAUNCH[\s\S]{0,120}?setActivationPolicy\(\s*['"]accessory['"]\s*\)/
+      );
+    }
   });
 
   it('explicitly shows the Dock at boot', () => {
@@ -55,7 +65,9 @@ describe('macOS Dock-icon guarantee', () => {
     // where the Dock/LSUIElement concept exists. It's expressed as an
     // early-return guard (`if (process.platform !== 'darwin') return;`) at the
     // top of `claimDock()`, immediately before the `setActivationPolicy` call.
-    const claim = /process\.platform !== 'darwin'[\s\S]{0,200}?setActivationPolicy\(\s*'regular'\s*\)/;
+    // Widened window: the production `regular` claim now sits just past the
+    // E2E-only accessory branch inside the same darwin-gated `claimDock()`.
+    const claim = /process\.platform !== 'darwin'[\s\S]{0,800}?setActivationPolicy\(\s*'regular'\s*\)/;
     expect(hostSrc).toMatch(claim);
   });
 

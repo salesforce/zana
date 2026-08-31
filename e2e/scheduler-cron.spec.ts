@@ -32,12 +32,12 @@ test('scheduler: the Cron cadence UI validates, previews, and saves a cron sched
   expect(projectId).toBeTruthy();
 
   try {
-    // Teach the renderer store about the project (see scheduler-open.spec.ts).
-    const projectsNav = window.locator('.nav-item').filter({ hasText: 'Projects' });
-    await projectsNav.first().click();
-    await window.locator('button[aria-label="Reload project list"]').click();
-    const filter = window.locator('.list-filter input');
-    await filter.fill(projectName);
+    // The global sidebar's "Workspaces" section renders the live project list
+    // (see scheduler-open.spec.ts). Expand it if collapsed, then assert the row.
+    const workspaces = window.locator('[data-testid="sidebar-projects-heading"]');
+    if ((await workspaces.getAttribute('aria-expanded')) === 'false') {
+      await workspaces.click();
+    }
     await expect(
       window.locator('.project-item').filter({ hasText: projectName }).first()
     ).toBeVisible({ timeout: 15_000 });

@@ -70,7 +70,18 @@ async function packAndInstallLocal(id: string, workingDir: string) {
 async function waitFor(predicate: () => boolean | Promise<boolean>, what: string, timeoutMs = 4000) {
   const start = Date.now();
   for (;;) {
-    if (await predicate()) return;
+    // A reinstall replaces the install dir atomically (rm old + rename new), so
+    // a predicate that stats-then-reads the installed file can race the swap:
+    // existsSync sees the old file, the dir is torn down, then readFile hits
+    // ENOENT. That is a transient not-ready state, not a failure — swallow the
+    // throw and keep polling; a genuine stall still surfaces via the timeout.
+    let ok = false;
+    try {
+      ok = await predicate();
+    } catch {
+      ok = false;
+    }
+    if (ok) return;
     if (Date.now() - start > timeoutMs) throw new Error(`timed out waiting for: ${what}`);
     await new Promise((r) => setTimeout(r, 20));
   }

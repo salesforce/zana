@@ -1958,7 +1958,7 @@ export const AgentLauncher = memo(function AgentLauncher({
 
           {legacyQuickAgentUiDisabled && editor && (
             <QuickPromptEditor
-              initial={editor.mode === 'edit' ? editor.prompt : null}
+              initial={editor?.mode === 'edit' ? (editor as any).prompt : null}
               onSaved={() => setEditor(null)}
               onCancel={() => setEditor(null)}
             />
@@ -1966,7 +1966,7 @@ export const AgentLauncher = memo(function AgentLauncher({
 
           {legacyQuickAgentUiDisabled && argPreset && (
             <WorkflowArgForm
-              preset={argPreset}
+              preset={argPreset!}
               values={argValues}
               onChange={(name, v) => setArgValues((prev) => ({ ...prev, [name]: v }))}
               onApply={applyArgForm}

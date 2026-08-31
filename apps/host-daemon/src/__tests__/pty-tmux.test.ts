@@ -111,7 +111,7 @@ describe('pty tmux wrapping (local)', () => {
     expect(spawned[0].command).toBe('/bin/zsh');
   });
 
-  it('does NOT wrap a scheduled run', () => {
+  it('runs a scheduled session through the non-tmux supervisor', () => {
     ptys.create({
       projectId: 'p1',
       profile: 'shell',
@@ -119,7 +119,8 @@ describe('pty tmux wrapping (local)', () => {
       scheduled: true,
       ...dims
     });
-    expect(spawned[0].command).toBe('/bin/zsh');
+    expect(spawned[0].command).toContain('scheduled-supervisor');
+    expect(spawned[0].args).toContain('/bin/zsh');
   });
 
   it('wraps a headless Team worker so lifecycle restoration can reattach it', () => {

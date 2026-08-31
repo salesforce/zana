@@ -479,7 +479,7 @@ export function ProjectsList({
       setSidebarAddOpen(false);
       setSidebarOrganizeOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key === 'Escape') {
         setSidebarAddOpen(false);
         setSidebarOrganizeOpen(false);
@@ -535,7 +535,7 @@ export function ProjectsList({
       if (t && t.closest('.project-delete-armed')) return;
       setConfirmDeleteId(null);
     };
-    const onKey = (e: KeyboardEvent) => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key === 'Escape') setConfirmDeleteId(null);
     };
     const timer = window.setTimeout(() => setConfirmDeleteId(null), 4000);

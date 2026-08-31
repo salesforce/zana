@@ -26,7 +26,7 @@
     "start:desktop": "pnpm --filter @zana-ai/zcc-desktop start",
     "seed:extensions": "node scripts/seed-extensions.mjs",
     "publish-extension": "node scripts/publish-extension.mjs",
-    "prebuild": "node scripts/ensure-node-pty-helper.mjs && node scripts/ensure-better-sqlite3.mjs && pnpm run build:cli && node scripts/seed-extensions.mjs",
+    "prebuild": "node scripts/ensure-node-pty-helper.mjs && node scripts/ensure-better-sqlite3.mjs && node scripts/build-scheduled-supervisor.mjs && pnpm run build:cli && node scripts/seed-extensions.mjs",
     "prebuild:legacy": "pnpm run prebuild",
     "build:legacy": "electron-vite build",
     "build": "electron-vite build",

@@ -41,16 +41,13 @@ test('scheduler: clicking "open" on a running scheduled session peeks the inspec
   // RENDERER STORE learns about the project. This matters: ListPane's focus
   // guard calls exitProjectFocus() if the focused project id isn't yet in the
   // store's project list, which would silently undo the open we're testing.
-  // (In real usage a scheduled task always targets a pre-existing project, so
-  // this guard never fires — the reload models that precondition.)
-  const projectsNav = window.locator('.nav-item').filter({ hasText: 'Projects' });
-  await projectsNav.first().click();
-  await window.locator('button[aria-label="Reload project list"]').click();
-
-  // Confirm the store now reflects it (isolate via the filter box, then assert
-  // the row rendered) before we rely on focus.
-  const filter = window.locator('.list-filter input');
-  await filter.fill(projectName);
+  // The global sidebar's "Workspaces" section renders the live project list
+  // (in-app projects.add broadcasts projects:onChanged). Expand it if collapsed,
+  // then assert the row rendered before we rely on focus.
+  const workspaces = window.locator('[data-testid="sidebar-projects-heading"]');
+  if ((await workspaces.getAttribute('aria-expanded')) === 'false') {
+    await workspaces.click();
+  }
   await expect(
     window.locator('.project-item').filter({ hasText: projectName }).first()
   ).toBeVisible({ timeout: 15_000 });

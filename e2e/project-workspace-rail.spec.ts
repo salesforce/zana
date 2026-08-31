@@ -22,12 +22,11 @@ test('selecting a project puts workspace modes in the side panel', async ({ app 
   expect(projectId).toBeTruthy();
 
   try {
-    const projectsNav = window.locator('.nav-item').filter({ hasText: 'Projects' });
-    await projectsNav.first().click();
-    await window.locator('button[aria-label="Reload project list"]').click();
-    const filter = window.locator('.list-filter input');
-    if (await filter.count()) {
-      await filter.fill(projectName);
+    // Expand the global sidebar's "Workspaces" section if collapsed, then select
+    // the live project row (in-app projects.add broadcasts projects:onChanged).
+    const workspaces = window.locator('[data-testid="sidebar-projects-heading"]');
+    if ((await workspaces.getAttribute('aria-expanded')) === 'false') {
+      await workspaces.click();
     }
     const row = window.locator('.project-item').filter({ hasText: projectName }).first();
     await expect(row).toBeVisible({ timeout: 15_000 });
