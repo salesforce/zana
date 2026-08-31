@@ -41,13 +41,13 @@ test('config: toggling Follow-ups in one window flips the tab in another live', 
   await window.evaluate(() => window.cc.config.set({ followUpsEnabled: false }));
 
   try {
-    // Teach the main window's renderer store about the project (raw projects.add
-    // persists in main but doesn't broadcast projects:onChanged).
-    const projectsNav = window.locator('.nav-item').filter({ hasText: 'Projects' });
-    await projectsNav.first().click();
-    await window.locator('button[aria-label="Reload project list"]').click();
-    const filter = window.locator('.list-filter input');
-    await filter.fill(projectName);
+    // The global sidebar's "Workspaces" section renders the live project list
+    // (in-app projects.add broadcasts projects:onChanged). Expand it if collapsed,
+    // then assert the just-added row rendered.
+    const workspaces = window.locator('[data-testid="sidebar-projects-heading"]');
+    if ((await workspaces.getAttribute('aria-expanded')) === 'false') {
+      await workspaces.click();
+    }
     await expect(
       window.locator('.project-item').filter({ hasText: projectName }).first()
     ).toBeVisible({ timeout: 15_000 });

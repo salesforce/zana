@@ -4475,6 +4475,18 @@ function createWindow(projectId?: string, repairOnly = false) {
   });
 
   windows.set(win.id, { win, projectId });
+  // E2E hard guarantee: never let a window become visible or take focus during a
+  // local Playwright run, no matter which code path (boot maximize, native
+  // restore, menu action, or a stray show()) tries to reveal it. `show: false`
+  // in the constructor covers the common path; this makes it airtight. Playwright
+  // drives the renderer over CDP, which paints offscreen, so a permanently hidden
+  // non-focusable window is still fully controllable. Production is untouched.
+  if (E2E_LAUNCH) {
+    win.setFocusable(false);
+    win.on('show', () => {
+      if (!win.isDestroyed()) win.hide();
+    });
+  }
   const hostWebContentsId = win.webContents.id;
   let browserResizeSettleTimer: ReturnType<typeof setTimeout> | null = null;
   const endBrowserWindowResize = () => {

@@ -63,7 +63,7 @@ test('launching an agent through the real UI opens its terminal and it goes work
     // The launcher hides uninstalled harnesses. Config changes do not update its
     // cached verification result, so mount Code Harness to re-probe fake Claude
     // before opening the modal. This matches the user-visible Settings refresh.
-    await window.locator('[data-testid="nav-settings"]').click();
+    await window.getByRole('link', { name: 'Settings' }).click();
     await window.locator('.settings-section-item').filter({ hasText: 'Code Harness' }).click();
     const claudeSettings = window.locator('#settings-anchor-harness-claude');
     await expect(claudeSettings).not.toHaveClass(/opener-row--off/);
@@ -71,7 +71,9 @@ test('launching an agent through the real UI opens its terminal and it goes work
     // not merely the always-visible Claude settings row, before opening the
     // launcher; unverified/missing harnesses are intentionally hidden there.
     await expect(claudeSettings.locator('.opener-row-status')).toHaveClass(/opener-row-status--ok/);
-    await window.locator('[data-testid="nav-agents"]').click();
+    // Settings replaces the global rail with its own section nav; leave it via
+    // the Back link before the global Agents rail entry is reachable again.
+    await window.locator('.settings-app-back').click();
 
     projectId = await window.evaluate(async (path) => {
       const res = await window.cc.projects.add(path);
@@ -82,55 +84,44 @@ test('launching an agent through the real UI opens its terminal and it goes work
     }, projectDir);
     expect(projectId).toBeTruthy();
 
-    // `projects.add` persists in main but doesn't broadcast `projects:onChanged`
-    // (only the renderer's own addProject action reloads). Land on Projects and
-    // click Reload so the renderer store picks up our tmp project — otherwise the
-    // launcher's Target-project <select> won't list it.
-    await window.locator('[data-testid="nav-projects"]').click();
-    await window.locator('button[aria-label="Reload project list"]').click();
+    // In-app `projects.add` broadcasts `projects:onChanged`, so the renderer
+    // store picks up our tmp project live and the launcher's Target-project
+    // picker lists it — no manual reload needed.
 
     // 1. Click the Agents rail entry.
     await window.locator('[data-testid="nav-agents"]').click();
 
-    // 2. Open the launcher — the header "+" when agents already exist, else the
-    //    empty-state primary button. Whichever is present.
-    const newBtn = window.locator('[data-testid="agents-new"]');
-    const newEmptyBtn = window.locator('[data-testid="agents-new-empty"]');
-    if (await newBtn.count()) {
-      await newBtn.click();
-    } else {
-      await newEmptyBtn.click();
-    }
+    // 2. Open the launcher. The global Agents board renders the "New agent"
+    //    button in both its header and its empty state, both with this testid
+    //    and both flipping useUi.launcherOpen — click whichever is first.
+    await window.locator('[data-testid="agents-board-new-thread"]').first().click();
 
     // 3. The launcher modal is up; switch to CLI Agent for the PTY path.
     const modal = window.locator('[data-testid="launch-modal"]');
     await expect(modal).toBeVisible();
     await modal.getByRole('button', { name: 'CLI Agent' }).click();
 
-    // 4. Type an instruction into the real composer textarea.
-    const instruction = modal.locator('[data-testid="launch-instruction"]');
+    // 4. Type an instruction into the CLI agent composer editor (TipTap).
+    const instruction = modal.getByTestId('legacy-agent-command-input');
+    await instruction.click();
     await instruction.fill('run the smoke check and report');
-    await expect(instruction).toHaveValue('run the smoke check and report');
+    await expect(instruction).toContainText('run the smoke check and report');
 
-    // 5. Pick the target project through the portal-rendered project list.
-    const targetProject = modal.getByRole('button', { name: 'Target project' });
+    // 5. Pick the target project through the composer's Project picklist.
+    const targetProject = modal.getByRole('button', { name: 'Project' });
     await targetProject.click();
     await window
-      .getByRole('listbox', { name: 'Target project' })
+      .getByRole('listbox', { name: 'Project' })
       .getByRole('option', { name: projectName, exact: true })
       .click();
     await expect(targetProject).toContainText(projectName);
 
-    // 6. Select verified Claude explicitly. Default routing is covered elsewhere;
-    // this flow needs a deterministic fake binary on every runner.
-    const harnessPicker = modal.getByLabel('Launch harness');
-    const claudeHarness = harnessPicker.locator('[data-testid="launch-profile-claude"]');
-    await expect(claudeHarness).toBeEnabled();
-    await claudeHarness.click();
-    await expect(claudeHarness).toHaveAttribute('aria-pressed', 'true');
-
-    // 7. Send. This is the real launch button — it calls doCreate → createTerminal.
-    await modal.locator('[data-testid="launch-send"]').click();
+    // 6. Harness is auto-resolved from the configured default (claude, pointed at
+    // the fake binary above); the composer flips its send button to enabled once
+    // effectiveDefault resolves. Send — this calls createTerminal.
+    const send = modal.getByTestId('legacy-agent-command-send');
+    await expect(send).toBeEnabled({ timeout: 15_000 });
+    await send.click();
 
     // 8. The launcher closes and the agent-inspector modal opens on the new
     //    session (AgentsView.onLauncherLaunched → openAgentModal).

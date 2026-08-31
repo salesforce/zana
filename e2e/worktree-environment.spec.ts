@@ -183,29 +183,42 @@ async function prepareClaudeAndProject(
 
 async function openWorktreeLauncher(window: Page, projectName: string, prompt: string): Promise<void> {
   await ensureSidebarExpanded(window);
+  // The per-project "New agent" button lives on the project row, which only
+  // renders when the sidebar's Workspaces section is expanded.
+  const workspaces = window.locator('[data-testid="sidebar-projects-heading"]');
+  if ((await workspaces.getAttribute('aria-expanded')) === 'false') {
+    await workspaces.click();
+  }
+  const projectRow = window.locator('.project-item').filter({ hasText: projectName }).first();
+  await expect(projectRow).toBeVisible({ timeout: 15_000 });
+  // The per-row "New agent" button is visibility:hidden until the row is
+  // hovered; reveal it before clicking.
+  await projectRow.hover();
   await window.getByRole('button', { name: `New agent in ${projectName}` }).click();
   const modal = window.locator('[data-testid="launch-modal"]');
   await expect(modal).toBeVisible();
-  await modal.locator('[data-testid="launch-instruction"]').fill(prompt);
-  const targetProject = modal.getByRole('button', { name: 'Target project' });
-  await targetProject.click();
-  const projectList = window.getByRole('listbox', { name: 'Target project' });
-  const projectSearch = projectList.locator('input');
-  if (await projectSearch.count()) {
-    await projectSearch.fill(projectName);
-  }
-  await projectList.getByRole('option', { name: projectName, exact: true }).click();
-  await expect(targetProject).toContainText(projectName);
-  const harnessPicker = modal.getByLabel('Launch harness');
-  const claudeHarness = harnessPicker.locator('[data-testid="launch-profile-claude"]');
-  if (await claudeHarness.count()) {
-    await claudeHarness.click();
-  }
-  await modal.locator('.launch-advanced-toggle').click();
-  await expect(modal.getByLabel('Workspace')).toBeVisible({ timeout: 15_000 });
-  await modal.getByLabel('Workspace').click();
-  await window.getByRole('option', { name: 'New worktree' }).click();
-  await expect(modal.locator('[data-testid="launch-send"]')).toBeEnabled({ timeout: 15_000 });
+  // The launcher's agent surface is the CLI Agent composer (TipTap). The
+  // launching row already pinned the project (enterProjectFocus), so the
+  // composer's project chip is locked — no target-project pick needed.
+  await modal.getByRole('button', { name: 'CLI Agent' }).click();
+  const instruction = modal.getByTestId('legacy-agent-command-input');
+  await instruction.click();
+  await instruction.fill(prompt);
+  await expect(instruction).toContainText(prompt);
+  // Workspace → New worktree via the composer's EnvironmentPicker picklist.
+  const workspace = modal.getByRole('button', { name: 'Workspace' });
+  await workspace.click();
+  await window
+    .getByRole('listbox', { name: 'Workspace' })
+    .getByRole('option', { name: 'New worktree', exact: true })
+    .click();
+  await expect(workspace).toContainText('New worktree');
+  // Harness auto-resolves from the configured default (claude → fake binary);
+  // the composer enables Send once effectiveDefault resolves.
+  await expect(modal.getByTestId('legacy-agent-command-send')).toBeEnabled({ timeout: 15_000 });
+  // The EnvironmentPicker re-snaps the choice once git branches load; confirm the
+  // worktree selection survives that async settle before we launch.
+  await expect(workspace).toContainText('New worktree');
 }
 
 async function listProductThreads(window: Page): Promise<Array<{ id: string; cwd?: string | null; environmentId?: string | null }>> {
@@ -255,8 +268,10 @@ test('launcher offers a workspace picker instead of an isolation checkbox', asyn
     await prepareClaudeAndProject(window, home, agent.path, projectDir);
     await openWorktreeLauncher(window, projectName, 'inspect the checkout');
     const modal = window.locator('[data-testid="launch-modal"]');
+    // The old isolation checkbox is gone; the composer offers a Workspace
+    // picklist whose "New worktree" option openWorktreeLauncher just selected.
     await expect(modal.getByText('Isolate in a git worktree')).toHaveCount(0);
-    await expect(modal.getByText('Used for branch and checkout directory.')).toBeVisible();
+    await expect(modal.getByRole('button', { name: 'Workspace' })).toContainText('New worktree');
   } finally {
     rmSync(projectDir, { recursive: true, force: true });
     agent.cleanup();
@@ -277,7 +292,7 @@ test('New worktree lands under ~/.zcc/worktrees and typing reaches the host PTY'
   try {
     await prepareClaudeAndProject(window, home, agent.path, projectDir);
     await openWorktreeLauncher(window, projectName, 'inspect the checkout');
-    await window.locator('[data-testid="launch-send"]').click();
+    await window.locator('[data-testid="legacy-agent-command-send"]').click();
     await openLaunchedAgent(window, 'inspect the checkout');
 
     await expect.poll(() => listManagedWorktreePaths(home).filter((path) => !before.has(path)).length, {
@@ -368,7 +383,7 @@ test('worktreeinclude copies .env and a failing setup script rolls back', async 
     await addProjectAndWait(window, failDir);
 
     await openWorktreeLauncher(window, includeName, 'copy env into the worktree');
-    await window.locator('[data-testid="launch-send"]').click();
+    await window.locator('[data-testid="legacy-agent-command-send"]').click();
     await openLaunchedAgent(window, 'copy env into the worktree');
     await expect.poll(() => listManagedWorktreePaths(home).filter((path) => !before.has(path)).length, {
       timeout: 30_000
@@ -383,7 +398,7 @@ test('worktreeinclude copies .env and a failing setup script rolls back', async 
 
     const afterInclude = new Set(listManagedWorktreePaths(home));
     await openWorktreeLauncher(window, failName, 'this setup should roll back');
-    await window.locator('[data-testid="launch-send"]').click();
+    await window.locator('[data-testid="legacy-agent-command-send"]').click();
     await expect(window.locator('[data-testid="launch-modal"]')).toBeVisible({ timeout: 15_000 });
     await expect.poll(() => listManagedWorktreePaths(home).filter((path) => !afterInclude.has(path)).length, {
       timeout: 20_000
