@@ -84,6 +84,7 @@ export function validateScheduleFile(raw: unknown): ScheduledTask | { error: str
     // background work and should close when the agent finishes. A schedule that
     // explicitly saved `false` keeps that choice.
     autoCloseOnFinish: typeof r.autoCloseOnFinish === 'boolean' ? r.autoCloseOnFinish : true,
+    maxDurationMinutes: typeof r.maxDurationMinutes === 'number' ? r.maxDurationMinutes : undefined,
     group: typeof r.group === 'string' && r.group.trim() ? r.group : undefined,
     schedule: cadence.cron
       ? { cron: cadence.cron, ...(cadence.tz ? { tz: cadence.tz } : {}) }

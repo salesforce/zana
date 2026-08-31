@@ -131,6 +131,7 @@ export interface ScheduledTask {
   source?: 'global' | { projectId: string };
   inboxLevel?: InboxNotifyLevel;
   autoCloseOnFinish?: boolean;
+  maxDurationMinutes?: number;
   group?: string;
 }
 

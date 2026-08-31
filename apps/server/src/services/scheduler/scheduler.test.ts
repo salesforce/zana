@@ -810,6 +810,56 @@ describe('SchedulerManager.onAgentFinished', () => {
 
     expect(ptys.closeExpectedCalls).toEqual([]);
   });
+
+  it('applies maxDurationMinutes watchdog to force-close runs on timeout', () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, ptys, task } = makeManager({
+        prompt: 'work',
+        maxDurationMinutes: 5,
+        autoCloseOnFinish: true
+      });
+      autoFire(manager, task.id);
+      const sid = ptys.sessions[0].id;
+      vi.advanceTimersByTime(4 * 60 * 1000);
+      expect(ptys.closeExpectedCalls).toEqual([]);
+      vi.advanceTimersByTime(1 * 60 * 1000);
+      expect(ptys.closeExpectedCalls).toEqual([sid]);
+      ptys.simulateExit(sid, 0);
+      const run = runsOf(manager, task.id).find((r) => r.sessionId === sid)!;
+      expect(run.result).toBe('error');
+      expect(run.message).toContain('exceeded maximum duration of 5 minutes');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('prevents concurrent duplicate fires when firing is true', async () => {
+    const { manager, ptys, task } = makeManager({ prompt: 'work' });
+    let resolvePromise: (v: unknown) => void;
+    const promise = new Promise<unknown>((resolve) => {
+      resolvePromise = resolve;
+    });
+    (manager as unknown as { deps: { launchTerminal: unknown } }).deps.launchTerminal = (() =>
+      promise) as never;
+    (manager as unknown as { fire: (id: string, o: { manual: boolean }) => void }).fire(task.id, {
+      manual: false
+    });
+    expect((manager as unknown as { live: Map<string, { firing?: boolean }> }).live.get(task.id)!.firing).toBe(true);
+    (manager as unknown as { fire: (id: string, o: { manual: boolean }) => void }).fire(task.id, {
+      manual: false
+    });
+    const runs = runsOf(manager, task.id);
+    expect(
+      runs.some(
+        (r) => r.result === 'skipped' && r.message === 'previous fire/launch is already in progress'
+      )
+    ).toBe(true);
+    resolvePromise!(ptys.create({ projectId: 'proj-1', title: 'Task' }));
+    await promise;
+    await new Promise((resolve) => process.nextTick(resolve));
+    expect((manager as unknown as { live: Map<string, { firing?: boolean }> }).live.get(task.id)!.firing).toBe(false);
+  });
 });
 
 /**
