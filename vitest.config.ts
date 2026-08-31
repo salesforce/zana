@@ -11,6 +11,18 @@ export default defineConfig({
     __ZCC_BUNDLED_RELAY_TOKEN__: JSON.stringify('')
   },
   test: {
+    // The default 5s per-test timeout is too tight for the full parallel run:
+    // several suites `vi.resetModules()` per test, and resetModules clears the
+    // module-instantiation cache but NOT Vite's transform cache, so the first
+    // test in such a file pays a one-time cold transform of a large module
+    // (e.g. store.ts, ~3600 lines) that, under full-suite CPU contention, can
+    // spike past 5s and fail as a timeout — not a logic failure. A wider ceiling
+    // absorbs that transform cost without masking real failures: an assertion
+    // failure still fails immediately, only genuine slow-timeouts get headroom.
+    // (Individual suites may still set a higher per-test timeout, e.g. the
+    // esbuild-bound plugin-service hot-reload test.)
+    testTimeout: 20_000,
+    hookTimeout: 20_000,
     // Runs once per worker before any test file — scrubs inherited GIT_* vars
     // so a git-spawning test can never operate on the OUTER repo under the
     // pre-push hook (see vitest.setup.ts for the full rationale).

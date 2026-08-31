@@ -119,9 +119,13 @@ describe('ConversationHistoryService', () => {
       opencode: async () => []
     });
 
-    const snapshot = service.start(10);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(service.get(10, snapshot.snapshotId).status).toBe('ready');
+    // Drive settlement through refresh() — it awaits settle() and resolves
+    // with the ready snapshot — so the concurrency cap is observed
+    // deterministically instead of racing a wall-clock poll (flaked under
+    // parallel-run CPU contention because settlement's chained setTimeout(0)
+    // rounds did not finish inside the fixed 20ms window).
+    const ready = await service.refresh(10);
+    expect(ready.status).toBe('ready');
     expect(peak).toBeLessThanOrEqual(2);
   });
 });
