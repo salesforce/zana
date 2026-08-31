@@ -19,12 +19,14 @@ describe('ThreadDetailOverflowMenu', () => {
         onFork={() => undefined}
         onStop={() => undefined}
         onArchive={() => undefined}
+        onCloseFollowup={() => undefined}
       />
     );
     expect(html).toContain('data-testid="thread-overflow-menu"');
     expect(html).toContain('Mark unread');
     expect(html).toContain('Rename');
     expect(html).toContain('Fork');
+    expect(html).toContain('Close with follow-up');
     expect(html).toContain('Archive');
     expect(html).not.toContain('Stop');
     expect(html).toContain('tab-context-danger');
@@ -39,6 +41,7 @@ describe('ThreadDetailOverflowMenu', () => {
         onFork={() => undefined}
         onStop={() => undefined}
         onArchive={() => undefined}
+        onCloseFollowup={() => undefined}
       />
     );
     expect(html).toContain('Stop');
@@ -54,6 +57,7 @@ describe('ThreadDetailOverflow wiring', () => {
     expect(source).toContain('product.threads.rename');
     expect(source).toContain('product.threads.fork');
     expect(source).toContain('product.threads.archive');
+    expect(source).toContain('product.threads.closeFollowup');
     expect(source).toContain('product.threads.stop');
     expect(source).toContain('<PromptModal');
     expect(source).toContain('shouldShowThreadStop');

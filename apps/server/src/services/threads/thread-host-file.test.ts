@@ -83,6 +83,26 @@ describe('readThreadHostFile', () => {
     const file = await readThreadHostFile(ctx, 't1', 'logo.svg');
     expect(file.relPath).toBe('logo.svg');
     expect(file.contentType).toBe('image/svg+xml');
+    expect(file.encoding).toBe('utf8');
     expect(file.content).toContain('svg');
+  });
+
+  it('passes through host base64 encoding for raster images', async () => {
+    vi.mocked(getConversationThread).mockReturnValueOnce({
+      id: 't1',
+      environmentId: 'e1',
+      hostId: 'h1'
+    } as never);
+    vi.mocked(getEnvironment).mockReturnValueOnce({ path: '/tmp/env' } as never);
+    const ctx = {
+      db: {},
+      hostHub: {
+        callHostOnlineRpc: vi.fn(async () => ({ content: 'iVBORw0KGgo=', encoding: 'base64' }))
+      }
+    } as unknown as ProductHttpContext;
+    const file = await readThreadHostFile(ctx, 't1', 'shot.png');
+    expect(file.contentType).toBe('image/png');
+    expect(file.encoding).toBe('base64');
+    expect(file.content).toBe('iVBORw0KGgo=');
   });
 });

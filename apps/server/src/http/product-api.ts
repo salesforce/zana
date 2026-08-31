@@ -34,6 +34,7 @@ import {
   unarchiveConversation,
   type ThreadSendMode
 } from '../services/threads/conversation-lifecycle.js';
+import { closeConversationWithFollowup } from '../services/threads/thread-close-followup.js';
 import {
   conversationOutline,
   conversationTimeline,
@@ -1358,6 +1359,20 @@ export async function handleProductHttp(
         return true;
       }
       sendJson(response, 200, ctx.pendingInteractions.listPendingThreadInteractions(thread.id));
+      return true;
+    }
+
+    const threadCloseFollowup = routeParams(path, '/api/v1/threads/:id/close-followup');
+    if (threadCloseFollowup && method === 'POST') {
+      try {
+        sendJson(response, 200, await closeConversationWithFollowup(ctx, threadCloseFollowup.id));
+      } catch (error) {
+        if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
       return true;
     }
 

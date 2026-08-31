@@ -9,9 +9,16 @@ dist
 # Embedded opencode binaries, downloaded at build time by
 # scripts/fetch-opencode-binaries.mjs (npm run fetch:opencode) — not source.
 vendor/opencode
-# Stray root main-bundle artifact (electron-vite emits the real bundle to
-# out/main/index.js — package.json `main` points there, never at ./index.js).
+# Stray electron-vite / Vite 8 dumps at repo root. Real bundles live in
+# out/main/ (package.json `main` → out/main/index.js). Vite 8+rolldown has
+# been seen writing named entries and hashed chunks next to cwd as well.
 /index.js
+/main.js
+/server-runtime.js
+/host-runtime.js
+/host-child.js
+/*-*.js
+/chunks/
 .DS_Store
 *.orig
 *.rej

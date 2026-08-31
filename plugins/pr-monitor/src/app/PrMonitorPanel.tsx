@@ -10,8 +10,8 @@
  * `host.call`. This is an APP-SCOPED cross-project monitor (AC-NAV-2.2/2.3) —
  * the view always shows ALL PRs, never filtered to a single project.
  *
- * Styling is fully self-contained under `.prm-*` (styles.css) — no shared
- * `gus-*` classes; it consumes only host design tokens (`var(--bg-*)`, etc.).
+ * Layout uses the shared `@zana-ai/zcc-ui/kanban` canvas. Card chrome stays
+ * under `.prm-*` and consumes host design tokens (`var(--bg-*)`, etc.).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';

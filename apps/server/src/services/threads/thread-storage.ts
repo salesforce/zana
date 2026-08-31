@@ -6,7 +6,7 @@ import { ThreadCreateError } from '../../http/thread-create.js';
 import { ProjectFsError } from '../../http/project-fs-via-host.js';
 import { isSafeRelPath } from '../../http/library-via-host.js';
 import { confinePathToRoot } from './thread-path-confine.js';
-import { imageContentType } from './thread-host-file.js';
+import { IMAGE_READ_MAX_BYTES, imageContentType } from './thread-host-file.js';
 
 const STORAGE_WALK_CAP = 500;
 const STORAGE_FILE_BYTE_CAP = 2_000_000;
@@ -69,7 +69,7 @@ export async function readThreadStorageFile(
   ctx: ProductHttpContext,
   threadId: string,
   candidate: string
-): Promise<{ path: string; relPath: string; content: string; encoding: 'utf8'; contentType: string | null }> {
+): Promise<{ path: string; relPath: string; content: string; encoding: 'utf8' | 'base64'; contentType: string | null }> {
   assertThreadId(threadId);
   const thread = getConversationThread(ctx.db, threadId);
   if (!thread) {
@@ -86,8 +86,20 @@ export async function readThreadStorageFile(
     if (!info.isFile()) {
       throw new ProjectFsError(404, 'path_not_found', 'file not found');
     }
-    if (info.size > STORAGE_FILE_BYTE_CAP) {
+    const contentType = imageContentType(relPath);
+    const cap = contentType ? IMAGE_READ_MAX_BYTES : STORAGE_FILE_BYTE_CAP;
+    if (info.size > cap) {
       throw new ProjectFsError(413, 'too_large', 'file exceeds the read cap');
+    }
+    if (contentType) {
+      const buf = await readFile(abs);
+      return {
+        path: candidate,
+        relPath,
+        content: buf.toString('base64'),
+        encoding: 'base64',
+        contentType
+      };
     }
     const content = await readFile(abs, 'utf8');
     return {
@@ -95,7 +107,7 @@ export async function readThreadStorageFile(
       relPath,
       content,
       encoding: 'utf8',
-      contentType: imageContentType(relPath)
+      contentType
     };
   } catch (error) {
     if (error instanceof ProjectFsError) throw error;

@@ -246,6 +246,27 @@ describe('host command dispatch', () => {
     })).rejects.toBeInstanceOf(HostCommandError);
   });
 
+  it('reads text as utf8 and images as base64', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'zcc-read-file-'));
+    writeFileSync(join(root, 'note.md'), '# hello\n');
+    writeFileSync(join(root, 'shot.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]));
+    const runtime = createCommandRuntime({
+      verifyProviders: async () => installedClaude
+    });
+    await expect(dispatchHostCommand(runtime, {
+      type: 'host.read_file',
+      root,
+      relPath: 'note.md'
+    })).resolves.toEqual({ content: '# hello\n', encoding: 'utf8' });
+    const image = await dispatchHostCommand(runtime, {
+      type: 'host.read_file',
+      root,
+      relPath: 'shot.png'
+    }) as { content: string; encoding: string };
+    expect(image.encoding).toBe('base64');
+    expect(Buffer.from(image.content, 'base64')).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]));
+  });
+
   it('lists a single directory and skips denied names', async () => {
     const root = mkdtempSync(join(tmpdir(), 'zcc-listdir-'));
     writeFileSync(join(root, 'note.md'), '# hello\n');

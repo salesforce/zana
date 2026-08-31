@@ -12,7 +12,7 @@ const sdkAlias = [
   { find: /^@zana-ai\/zcc-path-confine$/, replacement: resolve(repoRoot, 'packages/path-confine/src/index.ts') },
   { find: /^@zana-ai\/zcc-spawn-plan$/, replacement: resolve(repoRoot, 'packages/spawn-plan/src/index.ts') },
   { find: /^@zana-ai\/zcc-process-utils$/, replacement: resolve(repoRoot, 'packages/process-utils/src/index.ts') },
-  { find: /^@zana-ai\/zcc-ui\/(.*)$/, replacement: resolve(repoRoot, 'packages/ui/src/$1.tsx') },
+  { find: /^@zana-ai\/zcc-ui\/(.*)$/, replacement: resolve(repoRoot, 'packages/ui/src') + '/$1' },
   { find: /^@zana-ai\/zcc-desktop-contract$/, replacement: resolve(repoRoot, 'packages/desktop-contract/src/index.ts') },
   { find: /^@zana-ai\/zcc-domain\/(.*)$/, replacement: resolve(repoRoot, 'packages/domain/src/$1.ts') },
   { find: /^@zana-ai\/zcc-domain$/, replacement: resolve(repoRoot, 'packages/domain/src/index.ts') },

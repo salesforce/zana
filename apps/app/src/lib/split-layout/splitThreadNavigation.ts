@@ -1,5 +1,6 @@
 import { matchPath } from 'react-router-dom';
 import {
+  AGENTS_ROUTE_PATH,
   APP_ROOT_ROUTE_PATH,
   NEW_THREAD_ROUTE_PATH,
   PLUGIN_PANEL_ROOT_ROUTE_PATH,
@@ -7,6 +8,7 @@ import {
   PROJECT_NEW_THREAD_ROUTE_PATH,
   PROJECT_THREAD_ROUTE_PATH,
   THREAD_ROUTE_PATH,
+  getAgentsRoutePath,
   getNewThreadRoutePath,
   getPluginDetailRoutePath,
   getPluginPanelRoutePath,
@@ -46,6 +48,9 @@ export function paneContentRoute(content: PaneContent): string {
   if (content.kind === 'home') {
     return getRootRoutePath();
   }
+  if (content.kind === 'agents') {
+    return getAgentsRoutePath();
+  }
   if (content.kind === 'new-thread') {
     return getNewThreadRoutePath(content.projectId ?? undefined);
   }
@@ -72,6 +77,7 @@ function splatParam(match: ReturnType<typeof matchPath>): string {
 /** The pane content a pathname addresses, or null when the page cannot live in a split pane. */
 export function paneContentForPathname(pathname: string): PaneContent | null {
   if (pathname === APP_ROOT_ROUTE_PATH) return { kind: 'home' };
+  if (pathname === AGENTS_ROUTE_PATH) return { kind: 'agents' };
   if (pathname === NEW_THREAD_ROUTE_PATH) return { kind: 'new-thread' };
   const projectNew = matchPath(PROJECT_NEW_THREAD_ROUTE_PATH, pathname);
   if (projectNew) {

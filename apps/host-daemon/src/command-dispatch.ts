@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { extname, join, relative, sep } from 'node:path';
 import { isWithin, resolveContainedReal } from '@zana-ai/zcc-path-confine';
 import type {
   HostDirEntry,
@@ -62,6 +62,12 @@ import {
 const MAX_LISTED_FILES = 500;
 const MAX_DIR_ENTRIES = 2000;
 const MAX_READ_BYTES = 1_000_000;
+const MAX_IMAGE_READ_BYTES = 10 * 1024 * 1024;
+const IMAGE_EXTS = new Set(['.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp']);
+
+function isImageRelPath(relPath: string): boolean {
+  return IMAGE_EXTS.has(extname(relPath).toLowerCase());
+}
 const LIST_DIR_DENY = new Set([
   'node_modules',
   '.git',
@@ -816,8 +822,13 @@ export async function dispatchHostCommand(
         throw new HostCommandError('path_not_found', 'file not found');
       }
       if (!stat.isFile()) throw new HostCommandError('path_not_found', 'not a file');
-      if (stat.size > MAX_READ_BYTES) {
+      const image = isImageRelPath(command.relPath);
+      const cap = image ? MAX_IMAGE_READ_BYTES : MAX_READ_BYTES;
+      if (stat.size > cap) {
         throw new HostCommandError('too_large', 'file exceeds the read cap');
+      }
+      if (image) {
+        return { content: readFileSync(contained).toString('base64'), encoding: 'base64' as const };
       }
       return { content: readFileSync(contained, 'utf8'), encoding: 'utf8' as const };
     }

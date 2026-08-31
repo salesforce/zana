@@ -12,7 +12,7 @@ import {
   type ThreadMenuContext
 } from './threadCardActions.js';
 import type { ThreadListItem } from '../thread-store.js';
-import { countPanes, findPaneByThread } from '../lib/split-layout/ops.js';
+import { countPanes, findPaneByThread, listPanes } from '../lib/split-layout/ops.js';
 import { createSinglePaneLayout, threadPaneContent } from '../lib/split-layout/splitThreadNavigation.js';
 import { useSplitWorkspace } from '../lib/split-layout/store.js';
 
@@ -45,6 +45,7 @@ function ctx(overrides: Partial<ThreadMenuContext> = {}): ThreadMenuContext & {
     stop: vi.fn(async () => ({ ok: true })),
     fork: vi.fn(async () => ({ ok: true, value: { id: 'fork-1' } })),
     archive: vi.fn(async () => ({ ok: true })),
+    closeFollowup: vi.fn(async () => ({ ok: true, summarized: 1, followedUp: 1 })),
     remove: vi.fn(),
     ...overrides
   };
@@ -100,6 +101,19 @@ describe('runThreadMenuAction', () => {
     expect(c.navigate).toHaveBeenCalledWith(`/projects/p1/threads/${thread.id}`);
   });
 
+  it('keeps the agents board beside a thread opened from /agents', async () => {
+    useSplitWorkspace.setState({ layout: null, maximizedPaneId: null });
+    const c = ctx();
+    await runThreadMenuAction('open-split', thread, c);
+    const layout = useSplitWorkspace.getState().layout;
+    expect(layout).not.toBeNull();
+    if (!layout) return;
+    expect(countPanes(layout.root)).toBe(2);
+    expect(findPaneByThread(layout.root, null, thread.id)).not.toBeNull();
+    expect(listPanes(layout.root).some((pane) => pane.content.kind === 'agents')).toBe(true);
+    expect(c.navigate).toHaveBeenCalledWith(`/threads/${thread.id}`);
+  });
+
   it('stops the running thread', async () => {
     const c = ctx();
     await runThreadMenuAction('stop', thread, c);
@@ -147,6 +161,22 @@ describe('runThreadMenuAction', () => {
     expect(c.navigate).toHaveBeenCalledWith('/projects/p1');
   });
 
+  it('closes with follow-up after confirm and drops the row', async () => {
+    const c = ctx({ pathname: `/threads/${thread.id}` });
+    await runThreadMenuAction('close-followup', thread, c);
+    expect(c.closeFollowup).toHaveBeenCalledWith(thread.id);
+    expect(c.archive).not.toHaveBeenCalled();
+    expect(c.remove).toHaveBeenCalledWith(thread.id);
+    expect(c.navigate).toHaveBeenCalledWith('/agents');
+  });
+
+  it('does not close with follow-up when the user cancels', async () => {
+    const c = ctx({ confirm: vi.fn(() => false) });
+    await runThreadMenuAction('close-followup', thread, c);
+    expect(c.closeFollowup).not.toHaveBeenCalled();
+    expect(c.remove).not.toHaveBeenCalled();
+  });
+
   it('archives without navigating when some other thread is open', async () => {
     const c = ctx({ pathname: '/threads/other' });
     await runThreadMenuAction('archive', thread, c);
@@ -181,6 +211,7 @@ describe('ThreadCardMenu', () => {
     expect(idle).toContain('Open');
     expect(idle).toContain('Open in split');
     expect(idle).toContain('Fork');
+    expect(idle).toContain('Close with follow-up');
     expect(idle).toContain('Archive');
     expect(idle).not.toContain('Stop');
 

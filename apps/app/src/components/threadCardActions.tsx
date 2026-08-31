@@ -20,7 +20,7 @@ export interface ThreadMenu {
   y: number;
 }
 
-export type ThreadMenuAction = 'open' | 'open-split' | 'stop' | 'fork' | 'archive';
+export type ThreadMenuAction = 'open' | 'open-split' | 'stop' | 'fork' | 'archive' | 'close-followup';
 
 export interface ThreadMenuContext {
   navigate: (path: string) => void;
@@ -30,6 +30,7 @@ export interface ThreadMenuContext {
   stop: (id: string) => Promise<unknown>;
   fork: (id: string) => Promise<{ ok: boolean; value?: { id: string } }>;
   archive: (id: string) => Promise<{ ok?: boolean }>;
+  closeFollowup: (id: string) => Promise<{ ok?: boolean; summarized?: number; followedUp?: number }>;
   remove: (id: string) => void;
 }
 
@@ -56,7 +57,8 @@ export async function runThreadMenuAction(
       navigate: ctx.navigate,
       projectId: projectId ?? null,
       threadId: thread.id,
-      isCompact: isCompactViewport()
+      isCompact: isCompactViewport(),
+      currentPathname: ctx.pathname
     });
     return;
   }
@@ -70,6 +72,25 @@ export async function runThreadMenuAction(
     return;
   }
   const title = threadTitle(thread);
+  if (action === 'close-followup') {
+    if (ctx.confirm && !ctx.confirm(`Close “${title}” and file a follow-up if work is left?`)) return;
+    const result = await ctx.closeFollowup(thread.id);
+    if (result && result.ok === false) return;
+    ctx.remove(thread.id);
+    const closed = useSplitWorkspace.getState().closePanesForThreads([thread.id]);
+    if (closed.removedAny && closed.focusedRouteContent) {
+      const route = focusedPaneRoute(closed.focusedRouteContent);
+      if (route) {
+        ctx.navigate(route);
+        return;
+      }
+    }
+    if (viewingThread(ctx.pathname, thread.id)) {
+      const scoped = ctx.projectId || projectIdFromThreadPath(ctx.pathname) || undefined;
+      ctx.navigate(scoped ? getProjectRoutePath(scoped) : getAgentsRoutePath());
+    }
+    return;
+  }
   if (action === 'archive' && ctx.confirm && !ctx.confirm(`Archive “${title}”?`)) return;
   await archiveThreadWithoutConfirm(thread, ctx);
 }
@@ -159,6 +180,7 @@ export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
       stop: (id) => product.threads.stop(id),
       fork: (id) => product.threads.fork(id),
       archive: (id) => product.threads.archive(id),
+      closeFollowup: (id) => product.threads.closeFollowup(id),
       remove: (id) => useThreads.getState().remove(id)
     });
   };
@@ -194,6 +216,15 @@ export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
           Fork
         </button>
       ) : null}
+      {!thread.archivedAt && (
+        <button
+          type="button"
+          onClick={() => run('close-followup')}
+          title="Close the agent, summarising its work to your inbox and filing a follow-up if it left something unfinished"
+        >
+          Close with follow-up
+        </button>
+      )}
       <div className="tab-context-sep" />
       <button
         type="button"
@@ -232,6 +263,7 @@ export function ThreadArchiveQuickAction({ thread }: { thread: ThreadListItem })
           stop: (id) => product.threads.stop(id),
           fork: (id) => product.threads.fork(id),
           archive: (id) => product.threads.archive(id),
+          closeFollowup: (id) => product.threads.closeFollowup(id),
           remove: (id) => useThreads.getState().remove(id)
         });
       }}

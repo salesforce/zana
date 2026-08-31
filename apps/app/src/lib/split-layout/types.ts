@@ -8,6 +8,9 @@ export type PaneContent =
       kind: 'home';
     }
   | {
+      kind: 'agents';
+    }
+  | {
       kind: 'new-thread';
       projectId?: string | null;
     }

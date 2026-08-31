@@ -16,6 +16,11 @@ import {
   ExperimentalBadge,
   type AnnotationChipPlacement
 } from './annotation.js';
+import {
+  ANNOTATION_CHIP_GAP,
+  ANNOTATION_CHIP_LAYOUT_SIZE,
+  measuredChipLayoutPosition
+} from './chip-position.js';
 
 export interface SurfaceMapState {
   activeId: string | null;
@@ -301,9 +306,6 @@ function Mark({
   );
 }
 
-const CHIP_SIZE = 20;
-const CHIP_GAP = 8;
-
 function MeasuredBadge({
   id,
   label,
@@ -333,30 +335,24 @@ function MeasuredBadge({
       const strategy = container.closest<HTMLElement>('[data-guide-responsive-strategy]');
       const scale = Number(strategy?.dataset.guideScale ?? '1') || 1;
       const counter = annotationChipCounterScale(scale);
-      const chipBox = CHIP_SIZE * counter;
-      const gap = CHIP_GAP * counter;
       const cr = container.getBoundingClientRect();
       const tr = target.getBoundingClientRect();
       const fr = (container.querySelector<HTMLElement>('[data-guide-frame]') ?? container).getBoundingClientRect();
-      const local = {
-        left: (tr.left - cr.left) / scale,
-        top: (tr.top - cr.top) / scale,
-        width: tr.width / scale,
-        height: tr.height / scale
-      };
-      const frame = {
-        left: (fr.left - cr.left) / scale,
-        right: (fr.right - cr.left) / scale
-      };
-      const next =
-        at === 'start'
-          ? { left: frame.left - chipBox - gap, top: local.top + local.height / 2 - chipBox / 2 }
-          : at === 'end'
-            ? { left: frame.right + gap, top: local.top + local.height / 2 - chipBox / 2 }
-            : {
-                left: local.left + local.width / 2 - chipBox / 2,
-                top: local.top - chipBox - 4
-              };
+      const next = measuredChipLayoutPosition({
+        at,
+        local: {
+          left: (tr.left - cr.left) / scale,
+          top: (tr.top - cr.top) / scale,
+          width: tr.width / scale,
+          height: tr.height / scale
+        },
+        frame: {
+          left: (fr.left - cr.left) / scale,
+          right: (fr.right - cr.left) / scale
+        },
+        visualSize: ANNOTATION_CHIP_LAYOUT_SIZE * counter,
+        gap: ANNOTATION_CHIP_GAP * counter
+      });
       setPosition((current) =>
         current && Math.abs(current.left - next.left) < 0.5 && Math.abs(current.top - next.top) < 0.5
           ? current
@@ -508,8 +504,12 @@ export function AppShellWireframe(): ReactNode {
               <span className="plugin-guide-fx-footer-plug">
                 <Plug />
               </span>
-              <Icon name="settings" />
-              <Icon name="bug" />
+              <span className="plugin-guide-icon-hit" title="Settings">
+                <Icon name="settings" />
+              </span>
+              <span className="plugin-guide-icon-hit" title="Report a bug">
+                <Icon name="bug" />
+              </span>
             </Mark>
           </aside>
           <aside className="plugin-guide-fx-list">

@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -10,6 +10,8 @@ import {
   type ZccDatabase
 } from '@zana-ai/zcc-db';
 import { ClaudeCliProvider, LlmService, PromptRegistry } from '@zana-ai/zcc-llm';
+import { listJsonFiles, writeJsonFile } from './disk-json.js';
+import { CloseSummaryService } from '../services/followups/close-summary.js';
 import { createProjectStore, type ProjectStore } from '../project-store.js';
 import { createConfigStore } from '../services/config/config-store.js';
 import { createInboxStore, type IInboxStore } from '../services/inbox/inbox-store.js';
@@ -46,6 +48,7 @@ export interface ProductHttpContext {
   hub: ProductHub;
   pendingInteractions: PendingInteractionLifecycle;
   threadTitleNamer: ThreadTitleNamer;
+  closeSummary: CloseSummaryService;
   terminalSessions: Map<string, ProductTerminalRecord>;
   plugins?: PluginService;
   pluginHostArtifacts: PluginHostArtifactRegistry;
@@ -151,6 +154,65 @@ export function createProductHttpContext(
     stillLive: (threadId) => Boolean(getConversationThread(db, threadId))
   });
 
+  const closeSummary = new CloseSummaryService({
+    getSession: () => null,
+    hasTranscript: () => false,
+    readLastTurn: async () => '',
+    runSummary: (lastTurn, dedupeKey) => {
+      const entry = promptRegistry.get('builtin:close-summary');
+      if (!entry) {
+        return Promise.resolve({
+          ok: false,
+          text: '',
+          error: 'no close-summary prompt',
+          provider: 'claude-cli',
+          ms: 0
+        });
+      }
+      llmService.setProvider(new ClaudeCliProvider(config.getConfig().claudeBinary || 'claude'));
+      return llmService.run(entry, { lastTurn }, dedupeKey);
+    },
+    runTurnSummary: async () => ({ ok: false, text: '', error: 'unused', provider: 'claude-cli', ms: 0 }),
+    readDigest: async () => '',
+    runSessionSummary: async () => ({ ok: false, text: '', error: 'unused', provider: 'claude-cli', ms: 0 }),
+    appendInbox: async (input) => {
+      const entry = await inbox.append({
+        projectId: input.projectId,
+        projectLabel: input.projectLabel,
+        sessionId: input.sessionId,
+        comments: input.comments
+      });
+      return { id: entry.id };
+    },
+    projectLabel: (projectId) =>
+      (projects.list() as unknown as Project[]).find((p) => p.id === projectId)?.name,
+    createFollowUp: ({ projectId, sessionId, title, detail }) => {
+      const id = randomUUID();
+      const now = new Date().toISOString();
+      const project = (projects.list() as unknown as Project[]).find((p) => p.id === projectId);
+      const dir = project ? join(project.path, '.zcc', 'followups') : join(dataDir, 'followups');
+      writeJsonFile(dir, id, {
+        id,
+        projectId,
+        title,
+        detail,
+        kind: 'note',
+        status: 'open',
+        origin: { source: 'agent', sessionId },
+        sessionId,
+        createdAt: now,
+        updatedAt: now
+      });
+      hub.emit('followups:changed', [
+        ...listJsonFiles(join(dataDir, 'followups')),
+        ...(projects.list() as unknown as Project[]).flatMap((p) =>
+          listJsonFiles(join(p.path, '.zcc', 'followups'))
+        )
+      ]);
+      return id;
+    }
+  });
+
   ctx = {
     origins: options.origins,
     dataDir,
@@ -166,6 +228,7 @@ export function createProductHttpContext(
     hub,
     pendingInteractions,
     threadTitleNamer,
+    closeSummary,
     terminalSessions,
     pluginHostArtifacts: new PluginHostArtifactRegistry(),
     toProjects: () => projects.list() as unknown as Project[],

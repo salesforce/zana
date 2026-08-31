@@ -153,7 +153,12 @@ export function ThreadFilePreviewTab({
       hostReader,
       threadId,
       path,
-      storage ? { skipLocal: true } : undefined
+      {
+        skipLocal: storage ? true : undefined,
+        readDataUrl: typeof product.fs.readDataUrl === 'function'
+          ? product.fs.readDataUrl
+          : undefined
+      }
     ).then((result) => {
       applyPreviewResult(cancelled, result, setError, setContent);
     });

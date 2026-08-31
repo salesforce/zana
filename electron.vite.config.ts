@@ -28,7 +28,7 @@ const sdkAlias = [
   },
   {
     find: /^@zana-ai\/zcc-ui\/(.*)$/,
-    replacement: resolve(__dirname, 'packages/ui/src/$1.tsx')
+    replacement: resolve(__dirname, 'packages/ui/src') + '/$1'
   },
   {
     find: /^@zana-ai\/zcc-desktop-contract$/,
@@ -106,6 +106,21 @@ const sdkAlias = [
   }
 ];
 
+// Named Electron-main / utility-process entries. Keep rollupOptions and
+// rolldownOptions in lockstep: electron-vite 6 copies rollup→rolldown only
+// when rolldownOptions is unset (`??=`), and Vite 8 reads rolldownOptions.
+const mainEntries = {
+  index: resolve(__dirname, 'apps/desktop/src/bootstrap.ts'),
+  main: resolve(__dirname, 'apps/desktop/src/main.ts'),
+  'host-child': resolve(__dirname, 'apps/desktop/src/extensions/host-child.ts'),
+  'server-runtime': resolve(__dirname, 'apps/server/src/utility-entry.ts'),
+  'host-runtime': resolve(__dirname, 'apps/host-daemon/src/utility-entry.ts')
+};
+const mainOutput = {
+  entryFileNames: '[name].js',
+  chunkFileNames: 'chunks/[name]-[hash].js'
+};
+
 export default defineConfig({
   main: {
     // Official releases set ZCC_APP_URL + ZCC_RELAY_TOKEN in the build env so
@@ -118,12 +133,20 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     resolve: { alias: sdkAlias, conditions: ['source'] },
     build: {
+      // Pin this absolutely. Vite 8/rolldown has dumped named entries
+      // (`server-runtime.js`) and hashed chunks (`main-*.js`) at repo root
+      // when outDir is left implicit.
+      outDir: resolve(__dirname, 'out/main'),
       // In `dev`, watch app-module sources under `plugins/` as well as `src/`.
       // A module's main side (e.g. plugins/docs) is pulled into the main
       // bundle via the registry, but lives outside `src/`; without this the
       // dev watcher won't restart the main process when a plugin file changes,
       // leaving a stale main that answers `modules:call` with "Unknown module".
       watch: { include: ['src/**', 'plugins/**', 'apps/**', 'packages/**'] },
+      rolldownOptions: {
+        input: mainEntries,
+        output: mainOutput
+      },
       rollupOptions: {
         // `host-child` is the core-owned bootstrap that runs inside each
         // per-extension `utilityProcess` (P3-A). Build it as a SEPARATE main
@@ -131,13 +154,8 @@ export default defineConfig({
         // spawn factory resolves it via `join(__dirname, 'host-child.js')` at
         // runtime. It's a Node/utilityProcess context — same externalize-node/
         // electron treatment as the main entry (externalizeDepsPlugin above).
-        input: {
-          index: resolve(__dirname, 'apps/desktop/src/bootstrap.ts'),
-          main: resolve(__dirname, 'apps/desktop/src/main.ts'),
-          'host-child': resolve(__dirname, 'apps/desktop/src/extensions/host-child.ts'),
-          'server-runtime': resolve(__dirname, 'apps/server/src/utility-entry.ts'),
-          'host-runtime': resolve(__dirname, 'apps/host-daemon/src/utility-entry.ts')
-        }
+        input: mainEntries,
+        output: mainOutput
       }
     }
   },

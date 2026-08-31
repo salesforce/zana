@@ -67,7 +67,8 @@ describe('ThreadModal', () => {
     expect(modalSource).not.toContain('agent-modal-title');
     expect(modalSource).toContain('className="agent-modal-body"');
     expect(modalSource).toContain('embedded');
-    expect(modalSource).toContain('<ThreadDetail threadId={threadId} embedded modal />');
+    expect(modalSource).toContain("FavoriteStar session={{ id: threadId, kind: 'thread' }}");
+    expect(modalSource).toContain('className="agent-modal-fav"');
     expect(modalSource).not.toContain('onToggleFullScreen={toggleFullScreen}');
     expect(css).toContain('.agent-modal-body > .thread-detail-view');
     expect(css).toContain('.thread-detail-view--modal');
@@ -104,6 +105,9 @@ describe('ThreadModal', () => {
     expect(html).toContain('data-modal="true"');
     expect(html).toContain('data-testid="thread-modal-close"');
     expect(html).toContain('data-testid="thread-modal-fullscreen"');
+    expect(html).toContain('favorite-star');
+    expect(html).toContain('agent-modal-fav');
+    expect(html).toContain('Follow this agent');
     expect(html.indexOf('data-testid="thread-modal-header"')).toBeLessThan(
       html.indexOf('data-testid="thread-detail"')
     );

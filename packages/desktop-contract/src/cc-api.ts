@@ -528,7 +528,7 @@ export interface CcApi {
       path: string;
       relPath: string;
       content: string;
-      encoding: 'utf8';
+      encoding: 'utf8' | 'base64';
       contentType: string | null;
     }>;
     storageFiles(threadId: string): Promise<{
@@ -540,7 +540,7 @@ export interface CcApi {
       path: string;
       relPath: string;
       content: string;
-      encoding: 'utf8';
+      encoding: 'utf8' | 'base64';
       contentType: string | null;
     }>;
     open(threadId: string, body: {
@@ -599,6 +599,7 @@ export interface CcApi {
       cancel(threadId: string, interactionId: string): Promise<PendingInteraction>;
     };
     archive(threadId: string): Promise<{ ok: boolean }>;
+    closeFollowup(threadId: string): Promise<{ ok: boolean; summarized: number; followedUp: number }>;
     fork(threadId: string, options?: { sourceSeqEnd?: number }): Promise<Result<{
       id: string;
       projectId: string;

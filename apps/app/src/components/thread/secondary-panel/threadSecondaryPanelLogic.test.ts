@@ -98,7 +98,8 @@ describe('threadSecondaryPanelLogic', () => {
     expect(isPreviewImagePath('a.png')).toBe(true);
     expect(isPreviewImagePath('a.ts')).toBe(false);
     expect(contentFromLocalRead({ ok: true, content: 'hi' })).toBe('hi');
-    expect(contentFromLocalRead({ ok: true })).toBe('');
+    expect(contentFromLocalRead({ ok: true })).toBeNull();
+    expect(contentFromLocalRead({ ok: true, binary: true, content: '' })).toBeNull();
     expect(contentFromLocalRead({ ok: false })).toBeNull();
     expect(contentFromLocalRead(null)).toBeNull();
     expect(previewKind('/tmp/a.png', 'data:image/png;base64,xx')).toBe('image');
@@ -285,6 +286,41 @@ describe('threadSecondaryPanelLogic', () => {
       'notes/a.md',
       { skipLocal: true }
     )).resolves.toEqual({ content: 'storage' });
+    await expect(loadFilePreview(
+      async () => ({ ok: true, binary: true }),
+      async () => ({ content: 'abc', encoding: 'base64' }),
+      't',
+      'logo.webp'
+    )).resolves.toEqual({ content: 'data:image/webp;base64,abc' });
+    await expect(loadFilePreview(
+      async () => ({ ok: true, binary: true }),
+      async () => ({ content: 'host-should-not-run' }),
+      't',
+      '/tmp/shot.png',
+      { readDataUrl: async () => ({ ok: true, dataUrl: 'data:image/png;base64,local' }) }
+    )).resolves.toEqual({ content: 'data:image/png;base64,local' });
+    await expect(loadFilePreview(
+      async () => ({ ok: true, binary: true }),
+      async () => ({ content: 'iVBORw0KGgo=', encoding: 'base64', contentType: 'image/png' }),
+      't',
+      '/tmp/shot.png',
+      {
+        skipLocal: true,
+        readDataUrl: async () => ({ ok: true, dataUrl: 'data:image/png;base64,local' })
+      }
+    )).resolves.toEqual({ content: 'data:image/png;base64,iVBORw0KGgo=' });
+    await expect(loadFilePreview(
+      async () => ({ ok: true, binary: true }),
+      async () => ({ content: 'x' }),
+      't',
+      '/tmp/shot.png'
+    )).resolves.toEqual({ error: 'Could not read file' });
+    await expect(loadFilePreview(
+      async () => ({ ok: false }),
+      undefined,
+      undefined,
+      '/tmp/shot.png'
+    )).resolves.toEqual({ error: 'Could not read file' });
     await expect(loadWalkedFiles(undefined, '/tmp')).resolves.toEqual([]);
     await expect(loadWalkedFiles(async () => [{ path: '/tmp/a.ts', rel: 'a.ts' }], '/tmp')).resolves.toEqual([
       { path: '/tmp/a.ts', rel: 'a.ts' }

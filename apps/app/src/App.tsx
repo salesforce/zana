@@ -8,7 +8,6 @@ import { SettingsPane } from './components/listpane/SettingsPane.js';
 import { ExtensionsPane } from './components/listpane/ExtensionsPane.js';
 import { WorkspaceView } from '@/views/project/WorkspaceView';
 import { TerminalSurface } from './components/TerminalSurface.js';
-import { AgentsView } from '@/views/agents/AgentsView';
 import { SplitWorkspaceRoute } from '@/views/SplitWorkspaceRoute';
 import { ProjectScopedNav } from './components/ProjectScopedNav.js';
 import { SettingsView } from '@/views/settings/SettingsView';
@@ -61,6 +60,8 @@ import {
   visibleTerminals,
   installInboxCrossWindowSync,
   useFavoriteAgents,
+  mergeFavoritesFromMain,
+  ptyFavoriteKeys,
   type PendingLaunch
 } from './store.js';
 import { useFavoriteCount } from './hooks/useAgentCards.js';
@@ -132,7 +133,7 @@ function AppRoutes({ suggestionsEnabled }: { suggestionsEnabled: boolean }) {
       <Routes>
         <Route path={APP_ROOT_ROUTE_PATH} element={null} />
         <Route path={INBOX_ROUTE_PATH} element={<InboxView />} />
-        <Route path={AGENTS_ROUTE_PATH} element={<AgentsView />} />
+        <Route path={AGENTS_ROUTE_PATH} element={null} />
         <Route path={NEW_THREAD_ROUTE_PATH} element={null} />
         <Route path={THREAD_ROUTE_PATH} element={null} />
         <Route path={FOLLOWUPS_ROUTE_PATH} element={<FollowUpsView />} />
@@ -329,7 +330,7 @@ export function App() {
   // last-write-wins on main is idempotent. Fire-and-forget on every change.
   const favoriteIds = useFavoriteAgents((s) => s.favoriteIds);
   useEffect(() => {
-    product.terminals.setFavorites(Object.keys(favoriteIds)).catch(() => {});
+    product.terminals.setFavorites(ptyFavoriteKeys(favoriteIds)).catch(() => {});
   }, [favoriteIds]);
 
   // The menu-bar popover can toggle a pin (favorite) from main. Reflect main's
@@ -339,11 +340,11 @@ export function App() {
   useEffect(() => {
     return product.app.onFavoritesChanged((keys) => {
       const current = useFavoriteAgents.getState().favoriteIds;
-      const next: Record<string, true> = {};
-      for (const k of keys) next[k] = true;
+      const next = mergeFavoritesFromMain(current, keys);
       const currentKeys = Object.keys(current);
+      const nextKeys = Object.keys(next);
       const same =
-        currentKeys.length === keys.length && keys.every((k) => current[k]);
+        currentKeys.length === nextKeys.length && nextKeys.every((k) => current[k]);
       if (!same) useFavoriteAgents.setState({ favoriteIds: next });
     });
   }, []);

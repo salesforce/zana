@@ -899,19 +899,60 @@ export const useSavedMark = create<SavedMarkState>()(
  * (no claudeSessionId) fall back to `session.id`: they aren't restored anyway,
  * so the star is session-scoped for them, matching the old behavior.
  */
-export function favoriteKey(s: { id: string; claudeSessionId?: string }): string {
+export const THREAD_FAVORITE_PREFIX = 'thread:';
+
+export function threadFavoriteKey(id: string): string {
+  return `${THREAD_FAVORITE_PREFIX}${id}`;
+}
+
+export function isThreadFavoriteKey(key: string): boolean {
+  return key.startsWith(THREAD_FAVORITE_PREFIX);
+}
+
+/** Keys that auto-close-idle may spare — never conversation-thread follows. */
+export function ptyFavoriteKeys(favoriteIds: Record<string, true>): string[] {
+  return Object.keys(favoriteIds).filter((k) => !isThreadFavoriteKey(k));
+}
+
+/**
+ * Merge the menu-bar / main pin set into the persisted star set without dropping
+ * conversation-thread follows. Main only knows PTY keys (we never report
+ * `thread:` ids over `terminals.setFavorites`), so a full replace would wipe
+ * starred threads every time the popover echoed back.
+ */
+export function mergeFavoritesFromMain(
+  current: Record<string, true>,
+  keys: string[]
+): Record<string, true> {
+  const next: Record<string, true> = {};
+  for (const k of Object.keys(current)) {
+    if (isThreadFavoriteKey(k)) next[k] = true;
+  }
+  for (const k of keys) {
+    if (!isThreadFavoriteKey(k)) next[k] = true;
+  }
+  return next;
+}
+
+export function favoriteKey(s: { id: string; claudeSessionId?: string; kind?: 'thread' }): string {
+  if (s.kind === 'thread') return threadFavoriteKey(s.id);
   return s.claudeSessionId ?? s.id;
 }
 
 /**
- * Starred ("favorite") agents — a set of {@link favoriteKey}s the user has
- * flagged to follow, surfaced in the right-edge Favorites drawer. Persisted to
- * localStorage (like the inbox-saved store) so the set survives relaunch, and
- * wired into {@link installInboxCrossWindowSync} so starring in one window
- * reflects in every other open window. A starred key whose agent isn't
- * currently live is simply filtered out at render (the badge count uses the
- * same live intersection, so the two can't diverge); a restored agent that
- * comes back with the same `claudeSessionId` keeps its star.
+ * Starred ("favorite") agents and conversation threads — a set of
+ * {@link favoriteKey}s the user has flagged to follow, surfaced in the
+ * right-edge Favorites drawer. Persisted to localStorage (like the
+ * inbox-saved store) so the set survives relaunch, and wired into
+ * {@link installInboxCrossWindowSync} so starring in one window reflects in
+ * every other open window. A starred key whose agent/thread isn't currently
+ * live is simply filtered out at render (the badge count uses the same live
+ * intersection, so the two can't diverge); a restored CLI agent that comes
+ * back with the same `claudeSessionId` keeps its star.
+ *
+ * Conversation threads are namespaced `thread:<id>` so they never collide
+ * with a PTY session id and are never reported over `terminals.setFavorites`
+ * (auto-close-idle only spares CLI sessions).
  *
  * v2: the key scheme changed from the ephemeral `session.id` to {@link
  * favoriteKey}. Old v1 entries are session-id-keyed and can never match a

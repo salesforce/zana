@@ -81,6 +81,21 @@ describe('listProjectDir / readProjectFile', () => {
     ]);
   });
 
+  it('marks host base64 image reads as binary without exposing bytes as text', async () => {
+    const ctx = {
+      toProjects: () => [project({ id: 'zcc', name: 'zcc', path: '/tmp/proj' })],
+      hostHub: {
+        resolveHostId: () => 'host-1',
+        callHostOnlineRpc: async () => ({ content: 'iVBORw0KGgo=', encoding: 'base64' })
+      }
+    } as unknown as ProductHttpContext;
+    await expect(readProjectFile(ctx, '/tmp/proj/shot.png')).resolves.toEqual({
+      ok: true,
+      binary: true,
+      bytes: Buffer.byteLength('iVBORw0KGgo=', 'base64')
+    });
+  });
+
   it('does not RPC when the path escapes every project', async () => {
     const ctx = {
       toProjects: () => [project({ id: 'zcc', name: 'zcc', path: '/tmp/proj' })],

@@ -57,6 +57,9 @@ describe('AgentsTab worktree isolation', () => {
     expect(html).toContain('Include scheduled agents in Agent View');
     expect(html).toContain('aria-label="Include scheduled agents in Agent View"');
     expect(html).toContain('Scheduled column');
+    expect(html).toContain(
+      'aria-checked="true" aria-label="Include scheduled agents in Agent View"'
+    );
   });
 
   it('groups CLI Agent, Overseer, and Auto mode after general settings, Auto mode last', () => {

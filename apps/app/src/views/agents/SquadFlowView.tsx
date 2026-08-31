@@ -10,6 +10,7 @@ import {
   useSubagentChildren,
   agentViewTerminals
 } from '@/store';
+import { useCanvasPan } from '@/hooks/useCanvasPan';
 import { buildSquadFlow } from '@/lib/squadFlow';
 import {
   ALL_SQUADS,
@@ -394,6 +395,7 @@ function SquadGraph({ graph }: { graph: SquadFlowGraph }) {
 
   const newestTs = graph.edges.reduce((mx, e) => Math.max(mx, e.lastTs), 0);
   const rollup = graph.summary;
+  const { isPanning, canvasPanProps } = useCanvasPan();
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLButtonElement>, node: SquadFlowNode, baseX: number, baseY: number) => {
@@ -460,7 +462,11 @@ function SquadGraph({ graph }: { graph: SquadFlowGraph }) {
         </span>
       </header>
 
-      <div className="squad-flow-canvas">
+      <div
+        className={`squad-flow-canvas${isPanning ? ' is-panning' : ''}`}
+        aria-label="Squad canvas. Drag empty space to pan."
+        {...canvasPanProps}
+      >
         <div className="squad-flow-content" style={{ width, height }}>
           <svg
             className="squad-flow-edges"

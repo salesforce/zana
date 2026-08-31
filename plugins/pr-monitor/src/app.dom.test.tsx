@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { collectTestPluginApp } from '@zana-ai/zcc-plugin-sdk/testing/app';
 
 vi.mock('./app/styles.css', () => ({ default: '.prm-panel{color:red}' }));
+vi.mock('@zana-ai/zcc-ui/kanban.css', () => ({ default: '.zcc-kanban{}' }));
 vi.mock('./app/PrMonitorPanel.js', () => ({
   default: function MockPanel() {
     return <div data-testid="prm-panel-mock">panel</div>;

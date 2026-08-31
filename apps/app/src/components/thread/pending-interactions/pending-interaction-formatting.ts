@@ -256,3 +256,27 @@ export function approvalDecisionTone(
       return 'ghost';
   }
 }
+
+export function initialApprovalDecisionIndex(
+  decisions: readonly PendingInteractionApprovalDecision[]
+): number {
+  const once = decisions.indexOf('allow_once');
+  return once >= 0 ? once : 0;
+}
+
+export function approvalDecisionIndexForKey(
+  key: string,
+  current: number,
+  count: number
+): number | undefined {
+  if (count < 1) return undefined;
+  if (key === 'ArrowRight' || key === 'ArrowDown') return (current + 1) % count;
+  if (key === 'ArrowLeft' || key === 'ArrowUp') return (current - 1 + count) % count;
+  if (key === 'Home') return 0;
+  if (key === 'End') return count - 1;
+  return undefined;
+}
+
+export function approvalDecisionTabIndex(index: number, activeIndex: number): 0 | -1 {
+  return index === activeIndex ? 0 : -1;
+}

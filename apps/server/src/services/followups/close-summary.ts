@@ -333,7 +333,13 @@ export class CloseSummaryService {
     projectId: string,
     sessionIds: string[]
   ): Promise<{ summarized: number; followedUp: number }> {
-    const notes = await this.collectNotes(projectId, sessionIds);
+    return this.applyNotes(projectId, await this.collectNotes(projectId, sessionIds));
+  }
+
+  private async applyNotes(
+    projectId: string,
+    notes: ResolvedNote[]
+  ): Promise<{ summarized: number; followedUp: number }> {
     const label = this.deps.projectLabel(projectId);
 
     // ONE folded inbox entry for the whole batch (only when something distilled).
@@ -374,6 +380,29 @@ export class CloseSummaryService {
     }
 
     return { summarized, followedUp };
+  }
+
+  /**
+   * Same inbox + follow-up paper trail as {@link summarizeAndFollowUp}, but the
+   * last-turn text is already in hand (conversation threads have no PTY
+   * transcript). Never throws. Empty / unparsable last-turn → zeros.
+   */
+  async summarizeAndFollowUpFromLastTurn(
+    projectId: string,
+    item: { sessionId: string; title: string; lastTurn: string }
+  ): Promise<{ summarized: number; followedUp: number }> {
+    if (!item.lastTurn.trim()) return { summarized: 0, followedUp: 0 };
+    try {
+      const result = await this.deps.runSummary(item.lastTurn, `close-summary:${item.sessionId}`);
+      if (!result.ok) return { summarized: 0, followedUp: 0 };
+      const note = parseCloseSummary(result.text);
+      if (!note) return { summarized: 0, followedUp: 0 };
+      return this.applyNotes(projectId, [
+        { sessionId: item.sessionId, title: item.title, note }
+      ]);
+    } catch {
+      return { summarized: 0, followedUp: 0 };
+    }
   }
 
   /**

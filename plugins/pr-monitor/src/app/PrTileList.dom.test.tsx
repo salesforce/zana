@@ -721,7 +721,7 @@ describe('PrTileList toolbar', () => {
     );
     expect(container.querySelector('[data-board-column="failed"]')).toBeTruthy();
     fireEvent.click(
-      container.querySelector<HTMLButtonElement>('[data-board-column="green"] .prm-board-col-collapse')!
+      container.querySelector<HTMLButtonElement>('[data-board-column="green"] .zcc-kanban-col-collapse')!
     );
     expect(container.querySelector('[data-board-column="green"]')?.getAttribute('data-collapsed')).toBe('true');
     expect(container.querySelector('[data-board-column="green"] .prm-board-card')).toBeNull();

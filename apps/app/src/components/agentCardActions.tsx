@@ -4,6 +4,7 @@ import { Puzzle, Trash2 } from 'lucide-react';
 import { useData, useIdleTriage } from '../store.js';
 import { cardNeedsAttention, type AgentCard } from './AgentBoard.js';
 import type { TerminalSession } from '@zana-ai/zcc-domain/product';
+import { isClaudeProfile } from '../lib/launchProfile.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
 import {
   availableAgentCardActions,
@@ -49,8 +50,37 @@ export interface AgentCardActions {
    */
   clearBlocked: (c: AgentCard) => void;
   rename: (c: AgentCard) => void;
+  /**
+   * Close a live Claude-family agent after summarizing to the inbox and filing
+   * a follow-up if work is left. Same path as the agent-modal footer.
+   */
+  closeWithFollowup: (c: AgentCard) => void;
   /** Terminate + remove the card (confirms while live). */
   remove: (c: AgentCard) => void;
+}
+
+/** Live Claude-family sessions can leave a transcript; shells cannot. */
+export function canCloseWithFollowup(
+  session: Pick<TerminalSession, 'status' | 'profile'>
+): boolean {
+  return session.status !== 'exited' && isClaudeProfile(session.profile);
+}
+
+/**
+ * Confirm, then fold a work summary (+ follow-up if unfinished) and close.
+ * Returns false if the user cancelled. Callers that hide the control behind
+ * {@link canCloseWithFollowup} still go through this so confirm copy and the
+ * store call stay in one place.
+ */
+export async function closeAgentWithFollowup(
+  session: Pick<TerminalSession, 'id' | 'title'>,
+  projectId: string
+): Promise<boolean> {
+  if (!globalThis.confirm(`Close “${session.title}” and file a follow-up if work is left?`)) {
+    return false;
+  }
+  await useData.getState().closeIdleAgents(projectId, [session.id], true);
+  return true;
 }
 
 /**
@@ -135,6 +165,9 @@ export function useAgentCardActions(): {
     // from the returned `rename` state and calls submitRename on confirm.
     rename: (c) => {
       setRename({ card: c });
+    },
+    closeWithFollowup: (c) => {
+      void closeAgentWithFollowup(c.session, c.projectId);
     },
     remove: (c) => {
       const live = c.session.status !== 'exited';
@@ -247,6 +280,14 @@ export function AgentCardMenu({ menu, setMenu, actions, onPick }: AgentCardMenuP
         </button>
       )}
       <button onClick={() => { setMenu(null); actions.rename(card); }}>Rename…</button>
+      {canCloseWithFollowup(card.session) && (
+        <button
+          onClick={() => { setMenu(null); actions.closeWithFollowup(card); }}
+          title="Close the agent, summarising its work to your inbox and filing a follow-up if it left something unfinished"
+        >
+          Close with follow-up
+        </button>
+      )}
       {pluginActions.length > 0 ? <div className="tab-context-sep" /> : null}
       {pluginActions.map((slot) => {
         const Icon = slot.icon ? resolveIcon(slot.icon) : Puzzle;

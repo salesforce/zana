@@ -1,6 +1,7 @@
 import { getThreadRoutePath } from '../route-paths.js';
 import { decideThreadDrop } from '../split-drag/zones.js';
 import { countPanes, findPaneByContent, findPaneByThread, MAX_PANES, replacePaneContent, setFocus, splitPane } from './ops.js';
+import { createSinglePaneLayout, paneContentForPathname } from './splitThreadNavigation.js';
 import { useSplitWorkspace } from './store.js';
 import type { PaneContent } from './types.js';
 
@@ -9,6 +10,21 @@ interface OpenThreadInSplitArgs {
   projectId: string | null;
   threadId: string;
   isCompact: boolean;
+  currentPathname?: string;
+}
+
+function paneToKeepBesideThread(
+  pathname: string | undefined,
+  projectId: string | null,
+  threadId: string
+): PaneContent | null {
+  if (!pathname) return null;
+  const keep = paneContentForPathname(pathname);
+  if (keep === null) return null;
+  if (keep.kind === 'thread' && keep.threadId === threadId && keep.projectId === projectId) {
+    return null;
+  }
+  return keep;
 }
 
 /**
@@ -20,11 +36,25 @@ export function openThreadInSplit({
   navigate,
   projectId,
   threadId,
-  isCompact
+  isCompact,
+  currentPathname
 }: OpenThreadInSplitArgs): void {
   const route = getThreadRoutePath(threadId, projectId);
   const layout = useSplitWorkspace.getState().layout;
-  if (isCompact || layout === null) {
+  if (isCompact) {
+    navigate(route);
+    return;
+  }
+  if (layout === null) {
+    const keep = paneToKeepBesideThread(currentPathname, projectId, threadId);
+    if (keep === null) {
+      navigate(route);
+      return;
+    }
+    const seeded = createSinglePaneLayout(keep);
+    const content: PaneContent = { kind: 'thread', projectId, threadId };
+    const next = splitPane(seeded, seeded.focusedPaneId, 'right', content);
+    useSplitWorkspace.getState().setLayout(next);
     navigate(route);
     return;
   }

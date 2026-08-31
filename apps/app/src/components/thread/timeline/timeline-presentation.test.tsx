@@ -5,7 +5,7 @@ import { ThreadGoalBanner, ThreadWorkingIndicator } from './ThreadBanners.js';
 import { ConversationRow } from './ConversationRow.js';
 import { TimelineTitleView, stopTitleEvent } from './TimelineTitleView.js';
 import { mentionPillLabel } from './mention-pills.js';
-import { imagePreviewSrc, resolveQuestionAnswer } from './work-row-helpers.js';
+import { imageContentTypeFromPath, imagePreviewSrc, resolveQuestionAnswer } from './work-row-helpers.js';
 import { decorationText, isPastWorkRow, titleSegmentClass } from './timeline-title.js';
 import { firstUnreadRowId, isNearBottom, pinScrollToBottom, shouldStickToBottom } from './timeline-scroll.js';
 
@@ -599,6 +599,17 @@ describe('conversation and banners', () => {
   it('builds image data URLs and question answers', () => {
     expect(imagePreviewSrc({ contentType: 'image/svg+xml', content: '<svg />' })).toContain('data:image/svg+xml');
     expect(imagePreviewSrc({ contentType: 'image/png', content: 'x' })).toBeNull();
+    expect(imagePreviewSrc({ contentType: 'image/png', content: 'abc', encoding: 'base64' }))
+      .toBe('data:image/png;base64,abc');
+    expect(imagePreviewSrc({ contentType: 'image/jpeg', content: 'abc', encoding: 'base64' }))
+      .toBe('data:image/jpeg;base64,abc');
+    expect(imagePreviewSrc({ contentType: 'image/svg+xml', content: 'PHN2Zy8+', encoding: 'base64' }))
+      .toBe('data:image/svg+xml;base64,PHN2Zy8+');
+    expect(imagePreviewSrc({ contentType: 'text/plain', content: 'x', encoding: 'base64' })).toBeNull();
+    expect(imagePreviewSrc({ contentType: 'image/png', content: '', encoding: 'base64' })).toBeNull();
+    expect(imageContentTypeFromPath('shot.PNG')).toBe('image/png');
+    expect(imageContentTypeFromPath('docs/logo.svg')).toBe('image/svg+xml');
+    expect(imageContentTypeFromPath('a.ts')).toBeNull();
     expect(resolveQuestionAnswer(' yes ', ['Continue?'])).toBe('yes');
     expect(resolveQuestionAnswer('  ', ['Continue?'])).toBe('Continue?');
   });

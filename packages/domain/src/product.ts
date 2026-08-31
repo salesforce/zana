@@ -1933,10 +1933,10 @@ export interface AppConfig {
   agentListNeedsYouFromTriage?: boolean;
   /**
    * Include scheduler-spawned sessions (`session.scheduled`) on the Agents board,
-   * list, and flow. Default OFF: those runs stay out of Agent View (inbox /
-   * Scheduler). When on, waiting scheduled jobs sit in a **Scheduled** lane;
-   * working / exited ones use the normal Working / Done lanes. Does not change
-   * project session lists, the tab strip, or focus buckets.
+   * list, and flow. Default ON: waiting scheduled jobs sit in a **Scheduled**
+   * lane; working / exited ones use the normal Working / Done lanes. Turn off
+   * to keep those runs on the Scheduler panel and in the inbox only. Does not
+   * change project session lists, the tab strip, or focus buckets.
    */
   includeScheduledAgentsInAgentView?: boolean;
   /**

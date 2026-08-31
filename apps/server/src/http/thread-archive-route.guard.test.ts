@@ -14,4 +14,13 @@ describe('thread archive HTTP surface', () => {
     expect(conversation).toBeGreaterThan(-1);
     expect(legacy).toBeGreaterThan(conversation);
   });
+
+  it('exposes close-followup before archive', () => {
+    const source = readFileSync(new URL('./product-api.ts', import.meta.url), 'utf8');
+    expect(source).toContain("routeParams(path, '/api/v1/threads/:id/close-followup')");
+    expect(source).toContain('closeConversationWithFollowup');
+    expect(source.indexOf("'/api/v1/threads/:id/close-followup'")).toBeLessThan(
+      source.indexOf("'/api/v1/threads/:id/archive'")
+    );
+  });
 });

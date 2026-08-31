@@ -1,5 +1,5 @@
 import { useCallback, type PointerEvent as ReactPointerEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useIsCompactViewport } from '../../hooks/useIsCompactViewport.js';
 import {
   beginSplitDrag,
@@ -38,6 +38,7 @@ export function useThreadRowSplitDrag({
   openInSplit: () => void;
 } {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const isCompact = useIsCompactViewport();
 
   const onPointerDown = useCallback(
@@ -80,7 +81,13 @@ export function useThreadRowSplitDrag({
         onDrop: (target) => {
           const layout = useSplitWorkspace.getState().layout ?? startLayout;
           if (layout === null) {
-            openThreadInSplit({ navigate, projectId, threadId, isCompact: false });
+            openThreadInSplit({
+              navigate,
+              projectId,
+              threadId,
+              isCompact: false,
+              currentPathname: pathname
+            });
             return;
           }
           const existing = findPaneByThread(layout.root, projectId, threadId);
@@ -101,12 +108,12 @@ export function useThreadRowSplitDrag({
         }
       });
     },
-    [isCompact, navigate, projectId, threadId, title]
+    [isCompact, navigate, pathname, projectId, threadId, title]
   );
 
   const openInSplit = useCallback(() => {
-    openThreadInSplit({ navigate, projectId, threadId, isCompact });
-  }, [isCompact, navigate, projectId, threadId]);
+    openThreadInSplit({ navigate, projectId, threadId, isCompact, currentPathname: pathname });
+  }, [isCompact, navigate, pathname, projectId, threadId]);
 
   if (isCompact) {
     return { onPointerDown: undefined, openInSplit };

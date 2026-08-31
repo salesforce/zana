@@ -332,6 +332,7 @@ const api: CcApi = {
       }
     },
     archive: async () => ({ ok: false }),
+    closeFollowup: async () => ({ ok: false, summarized: 0, followedUp: 0 }),
     unread: async () => ({ thread: {} }),
     rename: async () => ({ thread: {} }),
     storageFiles: async () => ({ files: [], truncated: false, storageRootPath: '' }),

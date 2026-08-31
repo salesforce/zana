@@ -10,6 +10,11 @@ import {
   renderSurfaceCopy,
   spatialFixtureScale
 } from './annotation.js';
+import {
+  ANNOTATION_CHIP_GAP,
+  ANNOTATION_CHIP_LAYOUT_SIZE,
+  measuredChipLayoutPosition
+} from './chip-position.js';
 import { SURFACE_GROUPS } from './surfaces.js';
 import { ProductMap, SURFACE_NUMBERS } from './product-map.js';
 import {
@@ -87,6 +92,52 @@ describe('spatial scale', () => {
     expect(annotationChipCounterScale(0)).toBe(1);
     expect(annotationChipCounterScale(Number.NaN)).toBe(1);
   });
+
+  it('keeps a measured chip centered on the target after counter-scale', () => {
+    const local = { left: 40, top: 200, width: 80, height: 44 };
+    const frame = { left: 24, right: 400 };
+    const layout = ANNOTATION_CHIP_LAYOUT_SIZE;
+    const unscaled = measuredChipLayoutPosition({
+      at: 'start',
+      local,
+      frame,
+      visualSize: layout,
+      gap: ANNOTATION_CHIP_GAP
+    });
+    expect(unscaled.top + layout / 2).toBe(local.top + local.height / 2);
+    expect(unscaled.left).toBe(frame.left - ANNOTATION_CHIP_GAP - layout);
+
+    const counter = 2;
+    const scaled = measuredChipLayoutPosition({
+      at: 'start',
+      local,
+      frame,
+      visualSize: layout * counter,
+      gap: ANNOTATION_CHIP_GAP * counter
+    });
+    expect(scaled.top + layout / 2).toBe(local.top + local.height / 2);
+    expect(scaled.left + layout / 2 + (layout * counter) / 2).toBe(
+      frame.left - ANNOTATION_CHIP_GAP * counter
+    );
+
+    const end = measuredChipLayoutPosition({
+      at: 'end',
+      local,
+      frame,
+      visualSize: layout * counter,
+      gap: ANNOTATION_CHIP_GAP * counter
+    });
+    expect(end.left + layout / 2 - (layout * counter) / 2).toBe(frame.right + ANNOTATION_CHIP_GAP * counter);
+
+    const above = measuredChipLayoutPosition({
+      at: 'above',
+      local,
+      frame,
+      visualSize: layout
+    });
+    expect(above.left + layout / 2).toBe(local.left + local.width / 2);
+    expect(above.top + layout).toBe(local.top - 4);
+  });
 });
 
 describe('renderSurfaceCopy', () => {
@@ -132,6 +183,9 @@ describe('fixtures', () => {
     expect(markup).toContain('plugin-guide-workspace');
     expect(markup).toContain('plugin-guide-ws-topbar');
     expect(markup).toContain('plugin-guide-ws-rail-head');
+    expect(markup).toContain('plugin-guide-fx-footer-plug');
+    expect(markup).toContain('title="Settings"');
+    expect(markup).toContain('title="Report a bug"');
     expect(markup).toContain('Explorer');
     expect(markup).toContain('Library');
   });

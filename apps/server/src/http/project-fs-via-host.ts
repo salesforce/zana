@@ -111,6 +111,13 @@ export async function readProjectFile(ctx: ProductHttpContext, path: string): Pr
         relPath: authorized.relPath
       }
     });
+    if (result.encoding === 'base64') {
+      return {
+        ok: true,
+        binary: true,
+        bytes: Buffer.byteLength(result.content, 'base64')
+      };
+    }
     return { ok: true, content: result.content, bytes: Buffer.byteLength(result.content, 'utf8'), binary: false };
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error && (error as { code: string }).code === 'path_not_found') {

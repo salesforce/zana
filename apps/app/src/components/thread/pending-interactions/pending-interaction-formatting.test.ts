@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { PendingInteraction } from '@zana-ai/zcc-domain/thread-runtime';
 import {
+  approvalDecisionIndexForKey,
   approvalDecisionLabel,
+  approvalDecisionTabIndex,
   approvalDecisionTone,
   buildPendingInteractionApprovalResolution,
   formatPendingInteractionSubjectDetailLines,
+  initialApprovalDecisionIndex,
   pendingInteractionSubjectDetails,
   shouldShowPendingInteractionReason,
   summarizePendingInteractionRequestedPermissions
@@ -280,5 +283,27 @@ describe('pending interaction formatting', () => {
       decision: 'allow_once',
       grantedPermissions: { network: { enabled: true }, fileSystem: { read: ['/tmp'], write: [] } }
     });
+  });
+});
+
+describe('approval decision keyboard helpers', () => {
+  it('starts on allow_once when present, otherwise the first decision', () => {
+    expect(initialApprovalDecisionIndex(['allow_once', 'allow_for_session', 'deny'])).toBe(0);
+    expect(initialApprovalDecisionIndex(['allow_for_session', 'deny'])).toBe(0);
+    expect(initialApprovalDecisionIndex(['deny', 'allow_once'])).toBe(1);
+  });
+
+  it('moves with arrows plus Home and End with wrapping', () => {
+    expect(approvalDecisionIndexForKey('ArrowRight', 0, 3)).toBe(1);
+    expect(approvalDecisionIndexForKey('ArrowDown', 2, 3)).toBe(0);
+    expect(approvalDecisionIndexForKey('ArrowLeft', 0, 3)).toBe(2);
+    expect(approvalDecisionIndexForKey('ArrowUp', 1, 3)).toBe(0);
+    expect(approvalDecisionIndexForKey('Home', 2, 3)).toBe(0);
+    expect(approvalDecisionIndexForKey('End', 0, 3)).toBe(2);
+    expect(approvalDecisionIndexForKey('Enter', 0, 3)).toBeUndefined();
+  });
+
+  it('uses one roving tab stop for decision buttons', () => {
+    expect([0, 1, 2].map((index) => approvalDecisionTabIndex(index, 1))).toEqual([-1, 0, -1]);
   });
 });

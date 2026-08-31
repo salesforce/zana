@@ -11,6 +11,7 @@ describe('SplitWorkspaceRoute', () => {
   it('stays mounted from App so focus changes do not remount the tree', () => {
     expect(app).toContain('<SplitWorkspaceRoute />');
     expect(app).toContain('<Route path={APP_ROOT_ROUTE_PATH} element={null} />');
+    expect(app).toContain('<Route path={AGENTS_ROUTE_PATH} element={null} />');
     expect(app).toContain('<Route path={NEW_THREAD_ROUTE_PATH} element={null} />');
     expect(app).toContain('<Route path={THREAD_ROUTE_PATH} element={null} />');
     expect(app).toContain('<Route path={PLUGIN_PANEL_ROOT_ROUTE_PATH} element={null} />');
@@ -34,5 +35,6 @@ describe('SplitWorkspaceRoute', () => {
     expect(css).toContain('.split-pane > *:not(.split-pane-scrim) {');
     expect(css).toContain('.thread-detail-view--split-pane .thread-detail-column {');
     expect(css).toContain('.split-tree-child {');
+    expect(css).toContain('.split-workspace .agents-board,');
   });
 });

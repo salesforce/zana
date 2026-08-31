@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { Kanban, KanbanColumn } from '@zana-ai/zcc-ui/kanban';
 import { Bot, AlertCircle, Zap, Moon, CheckCircle2, HelpCircle, CheckCheck, PauseCircle, Network, Crown, Users, Clock, Calendar, GitBranch, ShieldCheck, ShieldAlert, Boxes, Unplug } from 'lucide-react';
 import type { AgentState, IdleResolution, IdleTriageResult, OverseerActivity, Persona, ScheduledTask, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { scheduleSummary } from '@zana-ai/zcc-domain/schedule-spec';
@@ -30,9 +31,10 @@ import {
  * owns the lane definitions, the live-timer tick, and the card/lane rendering
  * (pulse/sweep on working, red pulse on blocked).
  *
- * Unlike a classic Kanban, cards aren't dragged — the lane is decided by the
- * agent's own live {@link AgentState}, so cards flow left→right on their own as
- * the agent works / blocks / idles / finishes.
+ * Unlike a classic Kanban, cards aren't dragged between lanes — the lane is
+ * decided by the agent's own live {@link AgentState}, so cards flow left→right
+ * on their own as the agent works / blocks / idles / finishes. The board
+ * itself pans like a canvas (drag empty space, or two-finger scroll).
  */
 
 export interface AgentCard {
@@ -929,8 +931,9 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
             <ProviderIcon providerId={item.thread.providerId} size={14} />
           </span>
           <span className="agent-card-title">{item.title}</span>
-          <span className={`tab-agent-dot agent-${item.state}`} aria-hidden="true" />
           <FleetKindChip kind="thread" />
+          <span className={`tab-agent-dot agent-${item.state}`} aria-hidden="true" />
+          <FavoriteStar session={{ id: item.thread.id, kind: 'thread' }} className="agent-card-fav" />
         </span>
         <span className="agent-card-meta">
           {/* Grouped under a project header: the project is already named above —
@@ -1009,24 +1012,22 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
   };
 
   return (
-    <div className="agents-board-lanes">
-      {lanes.map((lane) => {
-        const Icon = lane.icon;
-        return (
-          <section key={lane.key} className={`agents-lane lane-${lane.key}`}>
-            <header className="agents-lane-head">
-              <Icon size={13} className="agents-lane-icon" aria-hidden="true" />
-              <span className="agents-lane-label">{lane.label}</span>
-              <span className="agents-lane-count">{lane.cards.length}</span>
-            </header>
-            <div className="agents-lane-cards">
+    <>
+      <Kanban label="Agents board. Drag empty space to pan; two-finger scroll also pans.">
+        {lanes.map((lane) => {
+          const Icon = lane.icon;
+          return (
+            <KanbanColumn
+              key={lane.key}
+              columnId={lane.key}
+              className={`agents-lane lane-${lane.key}`}
+              label={lane.label}
+              count={lane.cards.length}
+              icon={<Icon size={13} aria-hidden="true" />}
+            >
               {lane.cards.length === 0 ? (
                 <div className="agents-lane-empty" aria-hidden="true" />
               ) : showProject ? (
-                // Global board: group a lane's cards by project so the fleet
-                // reads project-by-project. Preserve the lane's card order
-                // (e.g. idle's most-recent-first) when forming groups — the
-                // first card seen for a project fixes that project's position.
                 groupFleetByProject(lane.cards).map((group) => (
                   <div key={group.projectId} className="agents-lane-group">
                     <div className="agents-lane-group-head" title={group.projectName}>
@@ -1044,11 +1045,10 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
               ) : (
                 lane.cards.map((item) => renderItem(item, lane.key))
               )}
-            </div>
-          </section>
-        );
-      })}
-
+            </KanbanColumn>
+          );
+        })}
+      </Kanban>
       {menu && (
         <AgentCardMenu menu={menu} setMenu={setMenu} actions={actions} onPick={(card) => onPick(agentFleetItem(card))} />
       )}
@@ -1065,6 +1065,6 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
           onClose={closeRename}
         />
       )}
-    </div>
+    </>
   );
 }
