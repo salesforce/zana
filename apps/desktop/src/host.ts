@@ -390,6 +390,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  */
 const E2E_TAP_ENABLED = process.env.ZCC_E2E === '1' || process.env.ZCC_E2E === 'true';
 
+// True for EVERY E2E app launch. The Playwright fixture always sets
+// ZCC_E2E_HOME (launchApp), whereas E2E_TAP_ENABLED (ZCC_E2E) is only set when a
+// spec opts into the event tap with `test.use({ e2e: true })`. Focus
+// suppression must cover ALL E2E launches, so it keys off this signal — never
+// set in production.
+const E2E_LAUNCH = Boolean(process.env.ZCC_E2E_HOME);
+
 // E2E ONLY: become an accessory (menu-bar-only, no-Dock, NON-ACTIVATING) app at
 // the earliest point in the main process — at module load, BEFORE
 // app.whenReady() and before any window — so launching the test app never
@@ -397,9 +404,9 @@ const E2E_TAP_ENABLED = process.env.ZCC_E2E === '1' || process.env.ZCC_E2E === '
 // activation policy must be set this early: Electron activates a `regular` app
 // on process launch, so setting it later (e.g. in claimDock during window
 // creation) is too late. Playwright drives the renderer over CDP and never
-// needs the app focused. Production (ZCC_E2E unset) stays regular (see
+// needs the app focused. Production (not an E2E launch) stays regular (see
 // claimDock + the dock-icon guard).
-if (E2E_TAP_ENABLED && process.platform === 'darwin') {
+if (E2E_LAUNCH && process.platform === 'darwin') {
   app.setActivationPolicy('accessory');
 }
 
@@ -2588,7 +2595,7 @@ function claimDock() {
   if (process.platform !== 'darwin') return;
   // E2E: the accessory (non-activating, no-Dock) policy is set once at module
   // load; never claim the Dock or foreground here or the run steals focus.
-  if (E2E_TAP_ENABLED) return;
+  if (E2E_LAUNCH) return;
   try {
     app.setActivationPolicy('regular');
     app.dock?.show();
@@ -2605,7 +2612,7 @@ function showMainWindow() {
     return;
   }
   // E2E: leave the window hidden so a local run never grabs macOS focus.
-  if (E2E_TAP_ENABLED) return;
+  if (E2E_LAUNCH) return;
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
@@ -2625,7 +2632,7 @@ function openProjectWindow(projectId: string) {
   }
   for (const { win, projectId: pid } of windows.values()) {
     if (pid === projectId && !win.isDestroyed()) {
-      if (E2E_TAP_ENABLED) return; // E2E: keep hidden, never steal focus
+      if (E2E_LAUNCH) return; // E2E: keep hidden, never steal focus
       if (win.isMinimized()) win.restore();
       win.show();
       win.focus();
@@ -4447,7 +4454,7 @@ function createWindow(projectId?: string, repairOnly = false) {
     // CDP, so a hidden window still runs and is fully controllable, but a shown
     // one repeatedly steals macOS focus from the developer during a local run.
     // Production leaves the default (show: true).
-    ...(E2E_TAP_ENABLED ? { show: false } : {}),
+    ...(E2E_LAUNCH ? { show: false } : {}),
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 14 },
     webPreferences: {
