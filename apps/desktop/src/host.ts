@@ -2673,7 +2673,7 @@ function handleLoudInboxEntry(entry: InboxEntry) {
   }
   try {
     const notification = new Notification({
-      title: entry.subject ?? entry.projectLabel ?? 'Zana Command Center',
+      title: entry.subject ?? entry.projectLabel ?? 'Zana',
       body: entry.comments ?? 'New notification'
     });
     notification.on('click', () => {
@@ -6265,7 +6265,7 @@ async function bootstrapNormal() {
               subject: `Update available — v${status.version}`,
               comments:
                 `**Update available — v${status.version}**\n\n` +
-                'A newer version of Zana Command Center is ready. Open **Settings → About** ' +
+                'A newer version of Zana is ready. Open **Settings → About** ' +
                 'to install it now or have it apply on your next restart.'
             })
             .catch((err) => logMainError('updater inbox notify', err));

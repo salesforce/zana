@@ -1,6 +1,6 @@
 ---
 name: submit-a-plugin
-description: Submit a Zana Command Center plugin to the community marketplace. Use when the user asks to submit, list, publish, or add a plugin to the marketplace, or asks for a marketplace pull request.
+description: Submit a Zana plugin to the community marketplace. Use when the user asks to submit, list, publish, or add a plugin to the marketplace, or asks for a marketplace pull request.
 ---
 
 # Submit a plugin
@@ -40,7 +40,7 @@ An entry is provenance, not a bundle:
 {
   "id": "notes",
   "displayName": "Notes",
-  "description": "A notes panel for Zana Command Center.",
+  "description": "A notes panel for Zana.",
   "author": { "name": "Ada", "github": "ada" },
   "source": {
     "git": { "url": "https://github.com/ada/zcc-plugin-notes", "ref": "v1.0.0" }

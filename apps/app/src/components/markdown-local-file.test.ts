@@ -20,7 +20,7 @@ describe('conversationFilePreviewPaths', () => {
     const dump = [
       'docs/architecture/high-level-architecture.md',
       '',
-      '# Zana Command Center',
+      '# Zana',
       '',
       'See also packages/thread-view/src/timeline-row-title.ts for titles.'
     ].join('\n');

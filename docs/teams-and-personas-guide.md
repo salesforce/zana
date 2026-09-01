@@ -1,6 +1,6 @@
 # Teams & Personas — Developer Guide
 
-How to create, configure, and launch multi-agent teams in Zana Command Center (ZCC).
+How to create, configure, and launch multi-agent teams in Zana (ZCC).
 
 ---
 

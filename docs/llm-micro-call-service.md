@@ -1,6 +1,6 @@
 # LLM Micro-Call Service — architecture & reuse guide
 
-**Status:** shipped. **Providers:** ✅ `claude-cli`, ✅ `openai`, ✅ `gemini` — Anthropic SDK still to come. **Audience:** anyone adding an AI-powered feature to Zana Command Center.
+**Status:** shipped. **Providers:** ✅ `claude-cli`, ✅ `openai`, ✅ `gemini` — Anthropic SDK still to come. **Audience:** anyone adding an AI-powered feature to Zana.
 
 This is the app's reusable layer for **one-shot LLM calls** — "prompt in, one text answer out," sub-agent style. It is *not* the terminal/`claude`-CLI agent path (that spawns interactive PTY sessions). Use this when a feature needs a quick model answer that it then processes in code: naming a tab from the first instruction, summarizing an inbox entry, classifying a notification, etc.
 

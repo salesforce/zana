@@ -1,11 +1,11 @@
 ---
 name: brainstorm
-description: Run a brainstorming / ideation session with the user and capture the idea into the Zana Command Center library so it's kept for later. Use when the user wants to brainstorm, think through an idea, jot something down to revisit, develop a half-formed thought, or asks to recall / build on a previous idea — e.g. "let's brainstorm X", "I have an idea, help me flesh it out", "save this idea", "what ideas did I have about Y".
+description: Run a brainstorming / ideation session with the user and capture the idea into the Zana library so it's kept for later. Use when the user wants to brainstorm, think through an idea, jot something down to revisit, develop a half-formed thought, or asks to recall / build on a previous idea — e.g. "let's brainstorm X", "I have an idea, help me flesh it out", "save this idea", "what ideas did I have about Y".
 ---
 
 # brainstorm — ideate, then keep it for later
 
-Zana Command Center (the desktop app this session is likely running
+Zana (the desktop app this session is likely running
 inside) has a **Library** — a browsable store of markdown/pdf/image/code docs.
 Ideas and brainstorms live there as markdown notes, so a thought the user has
 today is still findable weeks later.

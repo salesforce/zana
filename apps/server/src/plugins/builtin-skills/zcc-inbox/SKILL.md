@@ -1,11 +1,11 @@
 ---
 name: zcc-inbox
-description: Push project updates to, and search, the user's inbox in Zana Command Center.
+description: Push project updates to, and search, the user's inbox in Zana.
 ---
 
 # zcc-inbox — the user's inbox
 
-Zana Command Center exposes an MCP server, `zcc-inbox`, with these inbox tools:
+Zana exposes an MCP server, `zcc-inbox`, with these inbox tools:
 
 - **`inbox_push`** — surface something the user should see (a finished analysis,
   a question, a blocked task, a status check-in) without making them re-read

@@ -1,11 +1,11 @@
 ---
 name: saved-reports
-description: Find, read, and reuse reports the user saved from the Zana Command Center inbox. Use when the user asks to recall, search, reuse, or reference a previously saved report, message, or analysis — e.g. "pull up the RCA I saved", "what saved reports do we have for project X", "reuse last week's saved summary".
+description: Find, read, and reuse reports the user saved from the Zana inbox. Use when the user asks to recall, search, reuse, or reference a previously saved report, message, or analysis — e.g. "pull up the RCA I saved", "what saved reports do we have for project X", "reuse last week's saved summary".
 ---
 
 # saved-reports — find & reuse saved inbox reports
 
-Zana Command Center (the desktop app this session likely runs inside)
+Zana (the desktop app this session likely runs inside)
 lets the user **save** an inbox message for later. A saved report is a frozen
 snapshot: the agent's comments plus a **copy of each referenced doc's content
 captured at save time**, so it stays usable even after the project's files

@@ -1,4 +1,4 @@
-# Zana Command Center
+# Zana
 
 <p align="center">
   <a href="https://zcc-7808c5bc8f3d.herokuapp.com/">
@@ -9,7 +9,7 @@
   </a>
 </p>
 
-Zana Command Center is a desktop control plane for running, coordinating, and
+Zana is a desktop control plane for running, coordinating, and
 reviewing AI coding agents across your projects. **New Chat** starts a Thread
 with the coding CLI you already use (CLI Agent is a real PTY when you want
 it), then gives you one place to see the fleet, answer questions, reuse proven
@@ -27,7 +27,7 @@ ways to operate the same workspace.
 > supported coding-agent CLI on your `PATH`.
 
 <p align="center">
-  <img alt="Zana Command Center Agents board showing a multi-agent workspace" src="docs/assets/screenshot-agents-board.gif" width="100%">
+  <img alt="Zana Agents board showing a multi-agent workspace" src="docs/assets/screenshot-agents-board.gif" width="100%">
 </p>
 
 ## Use Zana
@@ -98,7 +98,7 @@ pnpm dev
 
 ## Architecture at a Glance
 
-![Zana Command Center stakeholder overview](docs/assets/zana-command-center-stakeholder-one-pager.png)
+![Zana stakeholder overview](docs/assets/zana-command-center-stakeholder-one-pager.png)
 
 ## Core Surfaces
 

@@ -1,11 +1,11 @@
 ---
 name: library-curator
-description: Discover, maintain, and curate durable project knowledge in the Zana Command Center library. Use before work that may duplicate existing findings, or when asked to capture, improve, consolidate, refresh, organize, or retrieve library documents, architecture notes, runbooks, decisions, or postmortems.
+description: Discover, maintain, and curate durable project knowledge in the Zana library. Use before work that may duplicate existing findings, or when asked to capture, improve, consolidate, refresh, organize, or retrieve library documents, architecture notes, runbooks, decisions, or postmortems.
 ---
 
 # library-curator - maintain durable project knowledge
 
-Use the Zana Command Center Library for durable, reusable project knowledge.
+Use the Zana Library for durable, reusable project knowledge.
 Use the project inbox for notifications and historical reports. Use repository
 `docs/` for source-controlled product documentation. Do not create duplicate
 documents when an existing canonical document can be improved instead.

@@ -398,7 +398,7 @@ const BUILTIN: Persona[] = [
     permissionMode: 'acceptEdits',
     allowedTools: ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash'],
     appendSystemPrompt: [
-      'You are the Plugin Creator. You help the user build a LOCAL Zana Command Center plugin by editing source files in the current working directory.',
+      'You are the Plugin Creator. You help the user build a LOCAL Zana plugin by editing source files in the current working directory.',
       'A starter template has already been scaffolded here (package.json zcc + server.ts/app.tsx). Read them first.',
       '',
       'The full authoring contract — definePluginApp, ZccPluginApi, and the build/reload loop — is in the `extension-creator` skill. Follow it.',

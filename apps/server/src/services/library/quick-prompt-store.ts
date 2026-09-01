@@ -94,7 +94,7 @@ const BUILTIN: QuickPrompt[] = [
     icon: 'ListChecks',
     profile: 'claude',
     prompt: [
-      'Review my Zana Command Center project list (read',
+      'Review my Zana project list (read',
       '~/.zcc/data/projects.json, or use the `zcc projects ls` CLI if',
       'available). For each project, note whether its path still exists on disk',
       'and flag duplicates or stale entries. Output a short triaged list with a',
@@ -107,7 +107,7 @@ const BUILTIN: QuickPrompt[] = [
     icon: 'Inbox',
     profile: 'claude',
     prompt: [
-      'Summarize the most recent entries in my Zana Command Center inbox',
+      'Summarize the most recent entries in my Zana inbox',
       '(~/.zcc/inbox/entries.jsonl). Group them by project and classify each',
       'as action / fyi / noise with a one-line note. Keep it under 15 bullets.'
     ].join(' ')

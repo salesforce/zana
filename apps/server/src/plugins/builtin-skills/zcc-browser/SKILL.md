@@ -1,6 +1,6 @@
 ---
 name: zcc-browser
-description: Drive the visible in-app browser tab in Zana Command Center's thread side panel. Use when the user wants you to open, inspect, click, type, or evaluate a page they can watch. Prefer this over WebFetch when the task is interactive QA or the user should see the page.
+description: Drive the visible in-app browser tab in Zana's thread side panel. Use when the user wants you to open, inspect, click, type, or evaluate a page they can watch. Prefer this over WebFetch when the task is interactive QA or the user should see the page.
 ---
 
 # zcc-browser — visible in-app browser
