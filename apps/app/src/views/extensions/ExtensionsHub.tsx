@@ -761,7 +761,7 @@ function ExtensionDetail({ row }: { row: HubRow }) {
         <section className="settings-section">
           <p className="settings-help settings-help--muted">
             {entry
-              ? 'This extension’s main process is not running, so its settings cannot load. If you just turned it on, wait a moment or relaunch Command Center.'
+              ? 'This extension’s main process is not running, so its settings cannot load. If you just turned it on, wait a moment or relaunch Zana.'
               : 'This leftover extension still uses the old module host, which is not running. Uninstall it and install the official plugin from the Marketplace.'}
           </p>
         </section>

@@ -1,9 +1,9 @@
 ---
 name: zcc-cli
-description: Drive Zana Command Center from the terminal with the `zcc` CLI — status, threads, machines, projects, skills, settings, terminals. Use when you want to inspect or act on the running app from a shell instead of the desktop UI.
+description: Drive Zana from the terminal with the `zcc` CLI — status, threads, machines, projects, skills, settings, terminals. Use when you want to inspect or act on the running app from a shell instead of the desktop UI.
 ---
 
-# zcc-cli — drive Zana Command Center from the terminal
+# zcc-cli — drive Zana from the terminal
 
 `zcc` talks to the **running app** over the product HTTP API (`ZCC_SERVER_URL`,
 default `http://127.0.0.1:8780`). You are invoking a binary, not writing JSON

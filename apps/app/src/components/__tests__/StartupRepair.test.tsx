@@ -23,7 +23,7 @@ describe('StartupError', () => {
   it('renders bounded recovery actions and announces startup state failures', () => {
     const html = renderToStaticMarkup(<StartupError error="IPC unavailable" onRetry={() => {}} />);
 
-    expect(html).toContain('Command Center could not start');
+    expect(html).toContain('Zana could not start');
     expect(html).toContain('role="alert"');
     expect(html).toContain('IPC unavailable');
     expect(html).toContain('Retry');

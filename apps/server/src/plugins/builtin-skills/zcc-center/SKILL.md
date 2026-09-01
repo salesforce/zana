@@ -1,6 +1,6 @@
 ---
 name: zcc-center
-description: Author schedules, schedule templates, and personas for Zana Command Center by writing JSON files into .zcc. Use when the user asks to create, schedule, or automate a recurring agent/terminal task, to make a reusable schedule template, or to create/edit a persona (a reusable launch profile — role, model, system prompt, tools).
+description: Author schedules, schedule templates, and personas for Zana by writing JSON files into .zcc. Use when the user asks to create, schedule, or automate a recurring agent/terminal task, to make a reusable schedule template, or to create/edit a persona (a reusable launch profile — role, model, system prompt, tools).
 ---
 
 # zcc-center — schedule / template / persona file formats
@@ -10,7 +10,7 @@ description: Author schedules, schedule templates, and personas for Zana Command
 > This skill is a **file-format appendix** for when you must author JSON on
 > disk. Do not write JSON into `.zcc` as the default way to automate.
 
-Zana Command Center (the desktop app this session is likely running
+Zana (the desktop app this session is likely running
 inside) runs **scheduled terminal sessions** on a recurring interval, offers
 **reusable templates** that pre-fill the "new schedule" form, and lets you
 launch agents as named **personas** (a role with its own model, permission

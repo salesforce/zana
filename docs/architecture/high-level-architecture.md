@@ -1,4 +1,4 @@
-# Zana Command Center — high-level architecture
+# Zana — high-level architecture
 
 **Date:** 2026-08-28  
 **Scope:** Product architecture as implemented in this monorepo (pnpm workspace, Electron desktop).  
@@ -10,7 +10,7 @@ This note describes how the running system is split, who is trusted, and how wor
 
 ## What the product is
 
-Zana Command Center is a **desktop control plane** for AI coding agents. Users register projects (local folders, enrolled machines, SSH), start **Threads** (structured agent sessions) or **CLI Agents** (real PTYs for Claude Code, Cursor, Codex, Pi, OpenCode, shell), then operate the fleet from one UI: Inbox, Library, personas/teams, goals, scheduler, plugins.
+Zana is a **desktop control plane** for AI coding agents. Users register projects (local folders, enrolled machines, SSH), start **Threads** (structured agent sessions) or **CLI Agents** (real PTYs for Claude Code, Cursor, Codex, Pi, OpenCode, shell), then operate the fleet from one UI: Inbox, Library, personas/teams, goals, scheduler, plugins.
 
 The app is **macOS-first** Electron. A loopback **product HTTP/WebSocket API** is the same control surface used by the renderer, the `zcc` CLI, and (with tighter policy) agent tools.
 

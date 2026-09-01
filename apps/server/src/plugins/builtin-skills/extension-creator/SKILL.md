@@ -1,6 +1,6 @@
 ---
 name: extension-creator
-description: Continue work in an already-open local Zana Command Center plugin working directory. Use when editing a plugin under ~/zcc-workspace/extensions/<id> — not to start a new plugin.
+description: Continue work in an already-open local Zana plugin working directory. Use when editing a plugin under ~/zcc-workspace/extensions/<id> — not to start a new plugin.
 ---
 
 # Building a local Zana plugin

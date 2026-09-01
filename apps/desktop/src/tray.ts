@@ -87,7 +87,7 @@ export class TrayController {
   start() {
     if (this.tray) return;
     this.tray = new Tray(this.makeIcon(false));
-    this.tray.setToolTip('Zana Command Center');
+    this.tray.setToolTip('Zana');
     if (this.deps.popover) this.deps.popover.attachTray(this.tray);
     // Click behavior depends on the surface: with the popover enabled, the icon
     // toggles the frameless card (a real menu-bar app gesture). Otherwise it
@@ -195,7 +195,7 @@ export class TrayController {
     const parts: string[] = [];
     if (needsYou > 0) parts.push(`${needsYou} need${needsYou > 1 ? '' : 's'} you`);
     if (working > 0) parts.push(`${working} working`);
-    return parts.length ? parts.join(' · ') : 'Zana Command Center';
+    return parts.length ? parts.join(' · ') : 'Zana';
   }
 
   /**
@@ -312,7 +312,7 @@ export class TrayController {
           ? this.badgeTooltip(blocked, workingCount)
           : workingCount > 0
           ? `${workingCount} scheduled session${workingCount > 1 ? 's' : ''} running`
-          : 'Zana Command Center'
+          : 'Zana'
       );
 
       const items: Electron.MenuItemConstructorOptions[] = [];
@@ -352,7 +352,7 @@ export class TrayController {
         }
       });
       items.push({
-        label: 'Show Command Center',
+        label: 'Show Zana',
         click: () => this.deps.showWindow()
       });
       items.push({ type: 'separator' });

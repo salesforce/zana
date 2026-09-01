@@ -1,6 +1,6 @@
 # `zcc` CLI Reference
 
-`zcc` is the command-line companion to Zana Command Center (ZCC). It has no
+`zcc` is the command-line companion to Zana (ZCC). It has no
 long-running process of its own. Almost every command talks to the **running
 app** over the **product HTTP API** (`ZCC_SERVER_URL`, default
 `http://127.0.0.1:8780`). A few file-read and scaffold commands still work

@@ -38,7 +38,7 @@ export function StartupRepair() {
         <p className="startup-repair-eyebrow">Startup paused</p>
         <h1 id="startup-repair-title">Routing settings need repair</h1>
         <p className="startup-repair-copy">
-          Command Center stopped before loading projects or agents because routing settings could not be migrated safely.
+          Zana stopped before loading projects or agents because routing settings could not be migrated safely.
           Your existing files and a migration backup remain available in diagnostics.
         </p>
         <details className="startup-repair-copy">
@@ -70,9 +70,9 @@ export function StartupError({ error, onRetry }: { error: string; onRetry: () =>
       <section className="startup-repair-card">
         <AlertTriangle className="startup-repair-icon" aria-hidden="true" />
         <p className="startup-repair-eyebrow">Startup failed</p>
-        <h1 id="startup-error-title">Command Center could not start</h1>
+        <h1 id="startup-error-title">Zana could not start</h1>
         <p className="startup-repair-copy">
-          Startup state could not be loaded. Retry the check or quit and relaunch Command Center.
+          Startup state could not be loaded. Retry the check or quit and relaunch Zana.
         </p>
         <p className="startup-repair-status" role="alert">{error}</p>
         <div className="startup-repair-actions">

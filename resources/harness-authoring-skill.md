@@ -1,6 +1,6 @@
 ---
 name: harness-authoring
-description: Add or maintain a first-party coding-agent harness in Zana Command Center. Use when integrating a new CLI framework, adding launch profiles, wiring native MCP/hooks/auth/resume/transcripts, or changing harness registrations.
+description: Add or maintain a first-party coding-agent harness in Zana. Use when integrating a new CLI framework, adding launch profiles, wiring native MCP/hooks/auth/resume/transcripts, or changing harness registrations.
 ---
 
 # Authoring a Zana harness

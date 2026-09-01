@@ -1,6 +1,6 @@
 # Plugins
 
-Zana Command Center plugins are **full-trust TypeScript packages**, not sandboxed
+Zana plugins are **full-trust TypeScript packages**, not sandboxed
 Electron guests.
 
 - Manifest: `package.json` → `zcc` (not `extension.json`)

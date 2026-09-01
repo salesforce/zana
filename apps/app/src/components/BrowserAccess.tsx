@@ -28,7 +28,7 @@ export function BrowserAccess() {
       <section className="startup-repair-card">
         <Monitor className="startup-repair-icon" aria-hidden="true" />
         <p className="startup-repair-eyebrow">Local web preview</p>
-        <h1 id="browser-access-title">Command Center is running locally</h1>
+        <h1 id="browser-access-title">Zana is running locally</h1>
         <p className="startup-repair-copy">
           This browser surface can safely show local startup state. Terminal control, settings, extensions, and operating-system actions remain available only in the desktop app while their server APIs are migrated.
         </p>

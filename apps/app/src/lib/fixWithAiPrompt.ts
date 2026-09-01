@@ -10,7 +10,7 @@
  * permission prompt on every step.
  */
 export function buildFixWithAiPrompt(errorMessage: string): string {
-  return `A coding-agent launch failed inside Zana Command Center (an Electron desktop app) with this error:
+  return `A coding-agent launch failed inside Zana (an Electron desktop app) with this error:
 
 """
 ${errorMessage}

@@ -9,7 +9,7 @@ zcc plugin dev
 
 That writes `package.json` (with a `zcc` block), `server.ts`, optional `app.tsx`,
 and `skills/hello/SKILL.md`. Path installs load `server.ts` from source. Start
-Zana Command Center, then `zcc plugin ls` should show `hello` as running.
+Zana, then `zcc plugin ls` should show `hello` as running.
 `zcc plugin logs hello -f` tails persisted JSONL.
 
 Edit `app.tsx` (panel, project tab, project menu) while the app is running —

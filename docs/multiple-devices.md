@@ -1,6 +1,6 @@
 # Using Zana on multiple machines
 
-There are two separate ways to use another computer with Zana Command Center:
+There are two separate ways to use another computer with Zana:
 
 - **Enrolled machines** run a host daemon. The other box outbound-connects to
   this app. Add a folder on that machine from **Settings → Machines** (or the
@@ -207,5 +207,5 @@ then reload the service.
 ## Where to go next
 
 - **[Getting started](./getting-started.md)** — first project and first agent.
-- **[Using Zana Command Center](./using-zana.md)** — Inbox, Agents, and the
+- **[Using Zana](./using-zana.md)** — Inbox, Agents, and the
   day-to-day surfaces.

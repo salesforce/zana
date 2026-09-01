@@ -1,6 +1,6 @@
 ---
 name: zcc-preview
-description: Open a file in Zana Command Center's thread side-panel preview. Use when the user should see a file you wrote or found — a report, diagram, config, or source file. Prefer Read for your own inspection.
+description: Open a file in Zana's thread side-panel preview. Use when the user should see a file you wrote or found — a report, diagram, config, or source file. Prefer Read for your own inspection.
 ---
 
 # zcc-preview — visible file preview
