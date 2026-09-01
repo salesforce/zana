@@ -2,6 +2,10 @@ node_modules
 out
 dist
 .turbo/
+
+# Test/coverage artifacts (Vitest coverage HTML, Playwright traces/screenshots)
+coverage/
+test-results/
 # Salesforce Agent Script playground (Monaco iframe) — served from the
 # installed plugin tree at /plugins/salesforce/assets/playground/dist/.
 !plugins/salesforce/playground/dist/
