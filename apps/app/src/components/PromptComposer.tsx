@@ -57,6 +57,8 @@ interface Props {
   attachments: readonly string[];
   onAddAttachments: (paths: string[]) => void;
   onRemoveAttachment: (path: string) => void;
+  onPickAttachments?: () => void | Promise<void>;
+  attachmentDropEnabled?: boolean;
 }
 
 /** Most files to rank/show in the `@`-mention popover at once. */
@@ -200,7 +202,9 @@ export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function P
     mentionProjectPath,
     attachments,
     onAddAttachments,
-    onRemoveAttachment
+    onRemoveAttachment,
+    onPickAttachments,
+    attachmentDropEnabled = true
   },
   ref
 ) {
@@ -236,7 +240,7 @@ export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function P
     >
     <div
       className={`${homeVariant ? 'ui-command-composer prompt-composer--home' : 'prompt-composer'} ${dropOver ? (homeVariant ? 'is-drop-over' : 'drop-over') : ''}`}
-      {...dropHandlers}
+      {...(attachmentDropEnabled ? dropHandlers : {})}
       {...(homeVariant ? { role: 'group', 'aria-label': 'Agent instruction' } : {})}
     >
       <AttachmentPills paths={attachments} onRemove={onRemoveAttachment} />
@@ -289,7 +293,7 @@ export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function P
       {homeVariant ? (
         <div className="ui-command-composer-toolbar prompt-composer-home-toolbar">
           <ComposerIconButton
-            onClick={() => { void product.fs.pickFiles().then(onAddAttachments); }}
+            onClick={() => { void (onPickAttachments ? onPickAttachments() : product.fs.pickFiles().then(onAddAttachments)); }}
             title="Attach files"
             aria-label="Attach files"
           >
@@ -314,7 +318,7 @@ export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function P
         <div className="prompt-composer-actions">
           <div className="prompt-composer-input-actions">
             <ComposerIconButton
-              onClick={() => { void product.fs.pickFiles().then(onAddAttachments); }}
+              onClick={() => { void (onPickAttachments ? onPickAttachments() : product.fs.pickFiles().then(onAddAttachments)); }}
               title="Attach files"
               aria-label="Attach files"
             >

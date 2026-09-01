@@ -73,12 +73,12 @@ import { cleanExtraArgs } from '../argv-utils.js';
 import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from '../target-resolution.js';
 
 const OPENCODE_MIN_VERSION = '1.18.0';
-const OPENCODE_REVIEWED_AT = '2026-08-04';
+const OPENCODE_REVIEWED_AT = '2026-08-29';
 const openCodeEvidence = (id: string, observed: string, scope: 'local' | 'remote' = 'local') => ({
   id,
   versionRange: OPENCODE_MIN_VERSION,
   scope,
-  probe: 'opencode --version; opencode --help; opencode run --help; opencode models aisuite',
+  probe: 'opencode --version; opencode --help; opencode run --help; opencode models llmgw',
   observed: `Minimum supported/reviewed CLI floor: ${OPENCODE_MIN_VERSION}. ${observed}`,
   reviewedAt: OPENCODE_REVIEWED_AT
 });
@@ -110,23 +110,25 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
       ],
       providers: [
         { id: 'openai', label: 'OpenAI' },
-        { id: 'anthropic', label: 'Anthropic' },
-        { id: 'google', label: 'Google' }
+        { id: 'google', label: 'Google' },
+        { id: 'xai', label: 'xAI' }
       ],
       providerModelRelationship: 'combined-provider-model',
       models: [
-        { id: 'aisuite/gpt-5.6-luna', label: 'Luna', provider: 'openai', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'aisuite/gpt-5.6-terra', label: 'Terra', provider: 'openai', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'aisuite/gpt-5.6-sol', label: 'Sol', provider: 'openai', level: 'high', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'aisuite/us.anthropic.claude-haiku-4-5-20251001-v1:0', label: 'Haiku', provider: 'anthropic', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'aisuite/us.anthropic.claude-sonnet-5', label: 'Sonnet', provider: 'anthropic', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'aisuite/gemini-3.1-pro-preview', label: 'Gemini Pro', provider: 'google', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'aisuite/gemini-3.5-flash', label: 'Gemini Flash', provider: 'google', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION }
+        { id: 'llmgw/gpt-5.6-luna-1M', label: 'Luna', provider: 'openai', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/gpt-5.6-terra-1M', label: 'Terra', provider: 'openai', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/gpt-5.6-sol-1M', label: 'Sol', provider: 'openai', level: 'high', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/gemini-3.5-flash', label: 'Gemini Flash', provider: 'google', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/gemini-3.1-pro-preview', label: 'Gemini Pro', provider: 'google', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/grok-4.6', label: 'Grok', provider: 'xai', level: 'high', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION }
       ],
+      // Single-family monotonic ladder (matches claude haiku/sonnet/opus, codex
+      // openai): the gpt-5.6 family is the only family spanning all three tiers.
+      // gemini + grok stay catalog-selectable but off the default ladder.
       modelLevelMapping: {
-        low: 'aisuite/gpt-5.6-luna',
-        medium: 'aisuite/gpt-5.6-terra',
-        high: 'aisuite/gpt-5.6-sol',
+        low: 'llmgw/gpt-5.6-luna-1M',
+        medium: 'llmgw/gpt-5.6-terra-1M',
+        high: 'llmgw/gpt-5.6-sol-1M',
         'extra-high': undefined
       },
       executionStateMapping: {
@@ -165,13 +167,12 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
     }
   },
   evidence: [
-    openCodeEvidence('aisuite/gpt-5.6-luna', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
-    openCodeEvidence('aisuite/gpt-5.6-terra', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
-    openCodeEvidence('aisuite/gpt-5.6-sol', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
-    openCodeEvidence('aisuite/us.anthropic.claude-haiku-4-5-20251001-v1:0', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
-    openCodeEvidence('aisuite/us.anthropic.claude-sonnet-5', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
-    openCodeEvidence('aisuite/gemini-3.1-pro-preview', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
-    openCodeEvidence('aisuite/gemini-3.5-flash', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
+    openCodeEvidence('llmgw/gpt-5.6-luna-1M', 'Model appears in opencode models llmgw and --model accepts provider/model IDs.'),
+    openCodeEvidence('llmgw/gpt-5.6-terra-1M', 'Model appears in opencode models llmgw and --model accepts provider/model IDs.'),
+    openCodeEvidence('llmgw/gpt-5.6-sol-1M', 'Model appears in opencode models llmgw and --model accepts provider/model IDs.'),
+    openCodeEvidence('llmgw/gemini-3.5-flash', 'Model appears in opencode models llmgw and --model accepts provider/model IDs.'),
+    openCodeEvidence('llmgw/gemini-3.1-pro-preview', 'Model appears in opencode models llmgw and --model accepts provider/model IDs.'),
+    openCodeEvidence('llmgw/grok-4.6', 'Model appears in opencode models llmgw and --model accepts provider/model IDs.'),
     openCodeEvidence('build', 'Built-in build role appears in effective opencode agent list output.'),
     openCodeEvidence('plan', 'Built-in plan role appears in effective opencode agent list output.'),
     openCodeEvidence('opencode.role.discovery', 'Project-scoped opencode agent list supplies exact effective role names before launch.')
@@ -295,10 +296,12 @@ export class OpenCodeAgentDiscoveryCache {
 
   constructor(
     private readonly successTtlMs = Infinity,
-    private readonly maxEntries = 8,
+    // Boot warms every local project. Retain those catalogs for normal picker
+    // opens; only the user's Refresh action should invoke OpenCode again.
+    private readonly maxEntries = 64,
     private readonly now = Date.now,
     private readonly maxConcurrentLoads = 2,
-    private readonly maxPendingLoads = 16
+    private readonly maxPendingLoads = 128
   ) {}
 
   discover(command: string, cwd: string, load: DiscoveryLoader, options: DiscoveryOptions = {}) {
@@ -515,7 +518,7 @@ export class OpenCodeProvider extends BaseLaunchProvider {
     const state = targetId.replace('opencode.execution.', '');
     if (state === 'plan') return { args: ['--agent', 'plan'] };
     if (state === 'accept-edits' || state === 'autonomous') {
-      return { args: ['--agent', 'build', '--auto'] };
+      return { args: ['--auto'] };
     }
     return {};
   }

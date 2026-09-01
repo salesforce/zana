@@ -42,7 +42,8 @@ const STATE_LABEL: Record<AgentState, string> = {
   working: 'Working',
   idle: 'Idle',
   done: 'Done',
-  unknown: 'Idle'
+  unknown: 'Idle',
+  waiting: 'Waiting for model'
 };
 
 export type FollowedEntry =
@@ -69,6 +70,7 @@ export function sectionOfThread(state: AgentState): FavSectionId {
     case 'blocked':
       return 'blocked';
     case 'working':
+    case 'waiting':
       return 'working';
     default:
       return 'idle';

@@ -1,32 +1,35 @@
 /**
- * Agent Heartbeat — keep an opted-in agent moving when it settles into idle.
+ * Agent Heartbeat — keep an opted-in agent moving when it settles at rest.
  *
- * The agent-status tracker tells us WHEN an agent goes idle. This service acts
- * on that on a TIMER (unlike {@link IdleTriageService}, which fires on the
- * instant edge): if an enabled, non-background session stays idle for
- * `delaySeconds`, it types a nudge into the session (the configured message,
- * submitted like an inbox reply via `reply` — body + deferred CR) so the agent
- * resumes on its own. While the agent stays idle the timer re-arms, so a
- * stubborn idle agent is nudged again each interval.
+ * The agent-status tracker tells us WHEN an agent goes at rest (`idle` for
+ * claude; `waiting` for non-OSC harnesses like codex/cursor/pi/opencode, which
+ * never emit `idle`). This service acts on that on a TIMER (unlike
+ * {@link IdleTriageService}, which fires on the instant edge): if an enabled,
+ * non-background session stays at rest for `delaySeconds`, it types a nudge
+ * into the session (the configured message, submitted like an inbox reply via
+ * `reply` — body + deferred CR) so the agent resumes on its own. While the
+ * agent stays at rest the timer re-arms, so a stubborn agent is nudged again
+ * each interval.
  *
  * Safety:
- *  - Fires on `idle` ONLY — never `blocked` (a permission prompt / interactive
- *    question is left alone, so the nudge text can't answer a security prompt).
+ *  - Fires on at-rest states (`idle`/`waiting`) ONLY — never `blocked` (a
+ *    permission prompt / interactive question is left alone, so the nudge text
+ *    can't answer a security prompt).
  *  - Background agents (scheduled / headless) are never nudged; the per-agent
  *    toggle is hidden for them in the UI and `getSession` lets us re-check.
  *  - Runaway guard: after `maxNudges` consecutive nudges with no genuine
  *    activity in between, heartbeat auto-disables for that agent (via
  *    `setHeartbeat(id, false)`) and an inbox notice is pushed. The counter
- *    resets when the agent leaves idle WITHOUT a nudge having just fired; it is
- *    kept across the resume our own nudge triggers (tracked by `pendingResume`).
- *    The attribution is coarse — the FIRST non-idle edge after a nudge is always
- *    treated as "ours", so a human who jumps in right after a nudge fires has
- *    that resume counted toward the streak. This errs toward tripping the cap
- *    sooner (the safe direction): worst case the agent gets paused one nudge
- *    early, never that it nudges unboundedly.
+ *    resets when the agent leaves the at-rest state WITHOUT a nudge having
+ *    just fired; it is kept across the resume our own nudge triggers (tracked
+ *    by `pendingResume`). The attribution is coarse — the FIRST edge off of
+ *    rest after a nudge is always treated as "ours", so a human who jumps in
+ *    right after a nudge fires has that resume counted toward the streak. This
+ *    errs toward tripping the cap sooner (the safe direction): worst case the
+ *    agent gets paused one nudge early, never that it nudges unboundedly.
  *
  * Known imprecision: agent state is debounced upstream (~250ms) and only an
- * `idle` reading is observable — a cleanly FINISHED agent shows the same idle
+ * at-rest reading is observable — a cleanly FINISHED agent shows the same
  * glyph as a paused one, so it will be nudged (the default message tells it to
  * say so and stop). The runaway cap bounds the cost. A nudge can also land in
  * the brief debounce gap just as an agent resumes; harmless (it's working, not
@@ -38,6 +41,13 @@
 
 import { EventEmitter } from 'node:events';
 import type { AgentState } from '@zana-ai/zcc-domain/product';
+
+/**
+ * True for the two at-rest states. Claude rests in `idle`; non-OSC harnesses
+ * (codex/cursor/pi/opencode) rest in `waiting` instead — both gate arming /
+ * nudging / disarming identically.
+ */
+const atRest = (s: AgentState): boolean => s === 'idle' || s === 'waiting';
 
 /** What the service needs to know about a session to decide whether to nudge. */
 export interface HeartbeatSessionInfo {
@@ -124,11 +134,11 @@ export class HeartbeatService extends EventEmitter {
     entry.lastState = state;
     if (state === prev) return; // not an edge — nothing to do
 
-    if (state !== 'idle') {
-      // Left idle. Disarm any pending nudge. If we caused this resume (a nudge
-      // fired and the agent picked it up), keep the streak counter so repeated
-      // self-nudges still trip the runaway cap. Otherwise the agent moved on
-      // its own / by human input → reset the streak.
+    if (!atRest(state)) {
+      // Left idle/waiting. Disarm any pending nudge. If we caused this resume
+      // (a nudge fired and the agent picked it up), keep the streak counter so
+      // repeated self-nudges still trip the runaway cap. Otherwise the agent
+      // moved on its own / by human input → reset the streak.
       this.disarm(entry);
       if (entry.pendingResume) {
         entry.pendingResume = false;
@@ -138,7 +148,7 @@ export class HeartbeatService extends EventEmitter {
       return;
     }
 
-    // Entered idle. Arm the nudge if this session is eligible right now.
+    // Entered idle/waiting (at rest). Arm the nudge if this session is eligible right now.
     this.arm(sessionId, entry);
   }
 
@@ -171,7 +181,7 @@ export class HeartbeatService extends EventEmitter {
    */
   armIfIdle(sessionId: string): void {
     const entry = this.entries.get(sessionId);
-    if (!entry || entry.lastState !== 'idle') return;
+    if (!entry || !atRest(entry.lastState)) return;
     this.arm(sessionId, entry);
   }
 
@@ -212,9 +222,9 @@ export class HeartbeatService extends EventEmitter {
     if (!entry) return;
     entry.timer = null;
 
-    // Still idle? The agent may have moved during the wait; observe() would
+    // Still at rest? The agent may have moved during the wait; observe() would
     // have disarmed, but guard anyway in case the timer raced.
-    if (entry.lastState !== 'idle') return;
+    if (!atRest(entry.lastState)) return;
     if (!this.eligible(sessionId)) return;
 
     const max = Math.max(1, Math.round(this.deps.maxNudges()));

@@ -35,13 +35,7 @@
  */
 
 import { EventEmitter } from 'node:events';
-import type { AgentState, AgentExitState, AgentStatusReplay, LaunchProfileId, SubagentChild } from '@zana-ai/zcc-domain/product';
-import {
-  HARNESS_MONITOR_FACTS_VERSION,
-  resolveMonitorFacts,
-  type HarnessMonitorFacts,
-  type MonitorResolution
-} from '@zana-ai/zcc-host-daemon/harness-monitor-facts';
+import type { AgentState, AgentExitState, AgentStatusReplay, SubagentChild } from '@zana-ai/zcc-domain/product';
 
 /**
  * Max sub-agent child records retained per parent session (Rule 5 — bound an
@@ -237,18 +231,6 @@ export class AgentStatusTracker extends EventEmitter {
    *  renderer replays missed transitions via {@link since}. */
   private ring: Array<{ seq: number; sessionId: string; state: AgentState }> = [];
 
-  /** Resolve externally-normalized facts without exposing a new renderer contract. */
-  resolveFacts(facts: readonly HarnessMonitorFacts[], now = Date.now()): MonitorResolution {
-    return resolveMonitorFacts(facts, now);
-  }
-
-  /** Accept one normalized fact after main owns correlation to this session. */
-  reportFact(fact: HarnessMonitorFacts): MonitorResolution {
-    const result = this.resolveFacts([fact], Date.now());
-    if (result.state !== 'unknown') this.report(fact.sessionId, result.state);
-    return result;
-  }
-
   /** Current debounced state for a session (defaults to `unknown`). */
   get(sessionId: string): AgentState {
     return this.entries.get(sessionId)?.emitted ?? 'unknown';
@@ -365,11 +347,7 @@ export class AgentStatusTracker extends EventEmitter {
    * pty `data` event. Cheap: a regex over the chunk, only acts when the chunk
    * actually sets a title with an agent signal.
    */
-  observeData(sessionId: string, profileOrChunk: LaunchProfileId | string, maybeChunk?: string): void {
-    // Compatibility overload for existing trusted callers. Main passes a profile;
-    // tests and older integrations may pass only the PTY chunk.
-    const profile: LaunchProfileId = maybeChunk ? (profileOrChunk as LaunchProfileId) : 'shell';
-    const chunk = maybeChunk ?? profileOrChunk;
+  observeData(sessionId: string, chunk: string): void {
     const title = extractLastOscTitle(chunk);
     if (title === null) return;
     const state = classifyOscTitle(title);
@@ -390,16 +368,7 @@ export class AgentStatusTracker extends EventEmitter {
         }
       }
     }
-    this.reportFact({
-      version: HARNESS_MONITOR_FACTS_VERSION,
-      sessionId,
-      profile,
-      source: 'osc-title',
-      observedAt: Date.now(),
-      capability: 'supported',
-      kind: 'visual',
-      state
-    });
+    this.report(sessionId, state);
   }
 
   /**
@@ -409,7 +378,7 @@ export class AgentStatusTracker extends EventEmitter {
   report(sessionId: string, state: AgentState): void {
     const entry = this.entry(sessionId);
     entry.osc = state;
-    if (state === 'working') entry.blocked = false;
+    if (state === 'working' || state === 'waiting') entry.blocked = false;
     this.schedule(sessionId, entry);
   }
 

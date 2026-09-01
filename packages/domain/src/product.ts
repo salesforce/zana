@@ -616,6 +616,14 @@ export interface InboxEntry {
    * surface to land on by then.
    */
   target?: { moduleId: string };
+  /**
+   * OPTIONAL execution coordinates — set only when the host stamps this entry
+   * to link it to a durable Job blocker. When present, answering this question
+   * (or replying) routes through the execution-blocker response flow rather
+   * than a generic terminal write/reopen.
+   */
+  executionId?: string;
+  blockerId?: string;
 }
 
 /**
@@ -837,12 +845,31 @@ export interface SavedRecordInput {
  *  - `done`    — agent finished its turn but the user hasn't looked yet.
  *  - `idle`    — at the prompt, nothing pending, and the user has seen it.
  *  - `unknown` — plain shell, or no detector has a confident read yet.
+ *  - `waiting` — at rest but has produced no output yet this turn. This is the
+ *                resting state of non-OSC harnesses (codex/cursor/pi/opencode),
+ *                derived by the output-activity silence heuristic; `idle` is
+ *                claude's OSC-glyph equivalent. See {@link isRestfulAgentState}.
  *
  * See `docs/live-agent-status-plan.md`. State lives in a dedicated main-side
  * store and streams over the `onAgentStatus` IPC channel — NOT on this object
  * — so status ticks don't rebuild the `terminals` map (render-storm guard).
  */
-export type AgentState = 'working' | 'blocked' | 'done' | 'idle' | 'unknown';
+export type AgentState = 'working' | 'blocked' | 'done' | 'idle' | 'unknown' | 'waiting';
+
+/**
+ * At-rest states where it is safe to inject a peer message / nudge, on ANY
+ * harness. `waiting` is the resting state of non-OSC harnesses
+ * (codex/cursor/pi/opencode) before first output; `idle` is claude's. `unknown`
+ * is deliberately excluded — a plain shell reads `unknown` at all times
+ * (including mid-command) and an agent reads `unknown` transiently before first
+ * detection, so injecting then races the prompt. `blocked`/`working` are never
+ * restful. This is the single source of truth for "the agent is at its prompt,
+ * push now" — use it everywhere a peer message, mail nudge, or execution
+ * delivery must reach an at-rest worker.
+ */
+export function isRestfulAgentState(state: AgentState): boolean {
+  return state === 'idle' || state === 'done' || state === 'waiting';
+}
 
 /**
  * Why an agent (or an Agent-tool subagent) reached its terminal / idle state —
@@ -1137,7 +1164,15 @@ export interface SessionCohort {
   slotLabel?: string;
   /** Main-minted stable identity for this expanded slot within one cohort. */
   slotId?: string;
+  /** Durable execution identity stamped only by main's execution coordinator. */
+  executionId?: string;
+  /** Immutable execution title stamped by main for board display. */
+  executionJobTitle?: string;
+  /** Main-owned launch semantics. Renderer cannot select or widen this authority. */
+  coordinationMode?: TeamCoordinationMode;
 }
+
+export type TeamCoordinationMode = 'interactive-team' | 'autonomous-team' | 'job-team';
 
 /**
  * Canonical name for a PTY-spawned coding agent. Same shape as
@@ -1880,12 +1915,6 @@ export interface AppConfig {
    */
   idleTriageEnabled?: boolean;
   /**
-   * Explicit HTTP provider for monitor-only semantic work (idle triage and
-   * catch-up summaries). Absent means unavailable: monitor paths never fall
-   * back to a coding-harness CLI.
-   */
-  monitorSemanticProvider?: 'openai' | 'gemini';
-  /**
    * Suppress a BLOCKING inbox question (from `inbox_ask`, or an `inbox_push`
    * question marked `blocking`) WHILE its originating agent is still `working`,
    * flushing it to the inbox the moment the agent goes idle/blocked — or after a
@@ -2098,6 +2127,12 @@ export interface AppConfig {
    * mode regardless.
    */
   teamLaunchEnabled?: boolean;
+  /**
+   * Enable operator-launched durable Team jobs. Unlike autonomous Teams, jobs
+   * are owned by SquadExecutionService and remain monitorable after UI closes.
+   * Default on; explicit false provides an operator opt-out.
+   */
+  teamJobLaunchEnabled?: boolean;
   /**
    * Master switch for the EXPERIMENTAL Goals feature: when ON, the "Goals"
    * project-scoped nav tab appears (persistent objectives with falsifiable
@@ -3596,9 +3631,19 @@ export interface TeamLaunchAuthorizationInputSlot {
 }
 
 export interface TeamLaunchAuthorizationResult {
-  teamId: string;
+  teamId?: string;
   projectId: string;
   slots: Array<TeamLaunchTaskSlot & { personaId: string; authorizationId: string }>;
+  context?: TeamLaunchAuthorizationContextV1;
+}
+
+/** Main-issued audit snapshot. Historical only; never a reusable launch grant. */
+export interface TeamLaunchAuthorizationContextV1 {
+  version: 1;
+  principalId: string;
+  authorizedAt: number;
+  expiresAt: number;
+  slots: Array<{ slotId: string; personaId: string; authorizationIdDigest: string }>;
 }
 
 export interface TeamLaunchRequestInput {
@@ -3609,6 +3654,22 @@ export interface TeamLaunchRequestInput {
   goal?: string;
   /** Main route adapter stamps this for public structured launches. */
   requirePreauthorization?: boolean;
+  /** Main-only correlation for execution-managed Team launches. */
+  executionId?: string;
+  /** Main-only immutable execution display title for Team session cohorts. */
+  executionJobTitle?: string;
+  /** Main-owned team coordination contract. Public renderer input never carries this field. */
+  coordinationMode?: TeamCoordinationMode;
+  /** Main-owned durable job briefing composed after source snapshotting. */
+  jobContext?: {
+    goal: string;
+    title?: string;
+    summary?: string;
+    sourceBundle?: {
+      contentRef: string;
+      sources: Array<Omit<ExecutionSourceSnapshot, 'extractedText'>>;
+    };
+  };
 }
 
 export interface TeamLaunchedWorker {
@@ -3693,6 +3754,22 @@ export interface SquadBundle {
   version: 1;
   team: TeamInput & { id: string };
   personas: Array<PersonaInput & { id: string }>;
+  /** Optional portable workflow profile. Runtime execution authority stays in main. */
+  workflow?: SquadBundleWorkflowMetadataV1;
+}
+
+/**
+ * Declarative profile metadata for an importable Squad bundle. It identifies
+ * the intended controller and worker slots but never carries runtime grants,
+ * execution ids, resolved models, or task payloads.
+ */
+export interface SquadBundleWorkflowMetadataV1 {
+  schemaVersion: 1;
+  profileId: string;
+  profileVersion: string;
+  controller: { personaId: string; slotId: string };
+  workers: Array<{ role: string; personaId: string; slotId: string }>;
+  supportedRequestVersions: number[];
 }
 
 /**
@@ -3833,6 +3910,8 @@ export interface SquadFlowNode {
   /** True for the squad orchestrator: the node with the highest out-degree in
    *  the handoff graph, tie-broken by earliest `registeredAt`. Heuristic. */
   isOrchestrator: boolean;
+  /** Job execution status attached to an orchestrator node for attention display. */
+  job?: { executionId: string; blockerQuestion?: string; needsAttention: boolean };
 }
 
 /**
@@ -5054,4 +5133,122 @@ export interface ProjectExecutionConsentGrant {
   launchScope: 'local' | 'remote';
   createdAt: number;
   expiresAt?: number;
+}
+
+/** Non-secret execution status projected by main for one project Agent Board. */
+export interface ExecutionBoardProjection {
+  executionId: string;
+  projectId: string;
+  teamId?: string;
+  launchKind?: 'team';
+  launchDisplay?: { label: string };
+  jobTitle: string;
+  /** Main-owned coordination contract, so Job UI never infers its mode from a title. */
+  coordinationMode?: TeamCoordinationMode;
+  state: 'READY' | 'STARTING' | 'RUNNING' | 'COMPLETED' | 'BLOCKED' | 'STOPPED' | 'FAILED';
+  attempt: number;
+  stateVersion?: number;
+  createdAt: number;
+  updatedAt: number;
+  orchestratorSessionId?: string;
+  hasResumeToken?: boolean;
+  teamName?: string;
+  goal?: string;
+  summary?: string;
+  sources?: Array<{
+    id: string;
+    name: string;
+    mediaType: string;
+    byteSize: number;
+    contentDigest: string;
+    extractionWarnings: readonly string[];
+  }>;
+  work?: {
+    total: number;
+    completed: number;
+    counts: Record<'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED', number>;
+    assignments: Array<{ workUnitId: string; title: string; slotId?: string; state: 'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED' }>;
+    rosterSlotIds: string[];
+  };
+  currentBlocker?: {
+    id: string;
+    workUnitId: string;
+    slotId: string;
+    question: string;
+    options?: string[];
+    response?: string;
+    delivery?: {
+      id: string;
+      state: 'PENDING' | 'LEASED' | 'DELIVERED' | 'FAILED';
+      attempt: number;
+      maxAttempts: number;
+      error?: string;
+      retryEligible: boolean;
+    };
+  };
+  finalSummary?: string;
+  eventCursor?: number;
+  coordinator?: { status: 'live' | 'lost' | 'complete'; sessionId?: string };
+  recoveryAttention?: boolean;
+  recovery?: { status: 'available' | 'expired' | 'terminal'; deadlineAt?: number };
+}
+
+/** Renderer advisory input for a durable Team job. Main owns project and slot expansion. */
+export interface TeamJobLaunchInput {
+  teamId: string;
+  projectId: string;
+  goal: string;
+  title?: string;
+  summary?: string;
+  sourceCapabilityIds?: string[];
+}
+
+/** Safe renderer projection for a main-owned, short-lived selected-file capability. */
+export interface ExecutionSourceCapabilityView {
+  id: string;
+  name: string;
+  byteSize: number;
+  expiresAt: number;
+}
+
+/** Immutable normalized execution source metadata persisted outside argv/artifacts. */
+export interface ExecutionSourceSnapshot {
+  id: string;
+  name: string;
+  mediaType: string;
+  byteSize: number;
+  /** Digest of original captured file bytes. */
+  contentDigest: string;
+  /** Digest of normalized extractedText bytes; distinct from original contentDigest. */
+  extractedTextDigest?: string;
+  extractionStatus: 'READY' | 'UNSUPPORTED' | 'FAILED';
+  extractedText?: string;
+  extractionWarnings: readonly string[];
+}
+
+export interface TeamJobLaunchResult {
+  executionId: string;
+  state: ExecutionBoardProjection['state'];
+}
+
+export interface ExecutionBoardSnapshot {
+  execution: ExecutionBoardProjection;
+  events: Array<{
+    id: string;
+    sequence: number;
+    severity: 'info' | 'warning' | 'error';
+    summary: string;
+    createdAt: number;
+    detail?: string;
+    blocker?: { question: string; options?: string[] };
+    progress?: { completed: number; total: number };
+    slotId?: string;
+    producerRole?: 'worker' | 'orchestrator';
+    eventType?: 'progress' | 'blocker' | 'failure' | 'outcome';
+    references?: Array<{ label: string; uri: string }>;
+  }>;
+  nextAfter: number;
+  truncated: boolean;
+  artifacts: Array<{ id: string; name: string; mediaType: string; contentDigest: string; attempt: number; createdAt: number; producerRole?: 'worker' | 'orchestrator'; producerSlotId?: string }>;
+  artifactsTruncated: boolean;
 }

@@ -4,7 +4,7 @@ import type {
   HarnessScope
 } from '@zana-ai/zcc-domain/harness-adapter';
 import { createHash } from 'node:crypto';
-import { compareVersions } from '@zana-ai/zcc-extension-sdk';
+import { compareVersions } from '@zana-ai/zcc-domain';
 
 export interface ExecutionEvidenceFixture {
   id: string;

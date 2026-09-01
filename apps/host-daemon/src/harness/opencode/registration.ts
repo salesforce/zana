@@ -38,7 +38,6 @@ export const openCodeHarness: HarnessRegistration = {
     };
   },
   createTranscriptAdapter: ({ openCodeBinary }) => new OpenCodeTranscriptAdapter(openCodeBinary),
-  monitorCapability: { state: 'unsupported', sources: [], reason: 'No live native monitor fact is wired' },
   supportedScopes: ['local', 'remote'],
   verification: {
     enabledConfigKey: 'harnessOpenCodeEnabled',

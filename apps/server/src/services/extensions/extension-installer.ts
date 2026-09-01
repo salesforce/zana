@@ -229,16 +229,39 @@ export async function installFromBundled(
   return installFromDir(srcDir, opts);
 }
 
+const replacingDirs = new Map<string, Promise<void>>();
+
+/**
+ * Serialize replacements for one destination. Parallel hot-reload events can
+ * otherwise both remove the old directory before either rename completes.
+ */
+async function serializeDirReplace(destDir: string, work: () => Promise<void>): Promise<void> {
+  const previous = replacingDirs.get(destDir) ?? Promise.resolve();
+  const next = previous.catch(() => {}).then(work);
+  replacingDirs.set(destDir, next);
+  try {
+    await next;
+  } finally {
+    if (replacingDirs.get(destDir) === next) replacingDirs.delete(destDir);
+  }
+}
+
 /** Atomic-ish dir replace: copy into a temp sibling, then swap into place. */
 async function replaceDir(srcDir: string, destDir: string): Promise<void> {
-  const parent = dirname(destDir);
-  await mkdir(parent, { recursive: true });
-  const tmp = `${destDir}.tmp-${process.pid}-${randomBytes(4).toString('hex')}`;
-  await cp(srcDir, tmp, { recursive: true });
-  // rename onto an existing dir fails on some platforms — clear it first. The
-  // window between rm and rename is tiny and boot-only (no concurrent reader).
-  if (existsSync(destDir)) await rm(destDir, { recursive: true, force: true });
-  await rename(tmp, destDir);
+  await serializeDirReplace(destDir, async () => {
+    const parent = dirname(destDir);
+    await mkdir(parent, { recursive: true });
+    const tmp = `${destDir}.tmp-${process.pid}-${randomBytes(4).toString('hex')}`;
+    try {
+      await cp(srcDir, tmp, { recursive: true });
+      // rename onto an existing dir fails on some platforms, so replacements
+      // are serialized through this remove-and-rename window.
+      if (existsSync(destDir)) await rm(destDir, { recursive: true, force: true });
+      await rename(tmp, destDir);
+    } finally {
+      await rm(tmp, { recursive: true, force: true }).catch(() => {});
+    }
+  });
 }
 
 /**

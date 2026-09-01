@@ -238,12 +238,35 @@ describe('team lifecycle store', () => {
     await store.updateWorker(recovered.record.id, 'slot-recovered', { process: 'spawning' });
     await store.updateWorker(recovered.record.id, 'slot-recovered', { process: 'running' });
 
-    const first = await store.reconcileStartup(new Set(['session-recovered']));
+    // Reconcile models an application RESTART: a fresh store instance reads the
+    // persisted records (its in-flight set is empty), so prior-process orphans
+    // are reconciled while a live process's in-flight launches are not.
+    const restarted = createTeamLifecycleStore({ filePath });
+    const first = await restarted.reconcileStartup(new Set(['session-recovered']));
     expect(first.releasedSlotIds.sort()).toEqual(['slot-running', 'slot-spawning']);
     expect(await store.get(spawning.record.id)).toMatchObject({ workers: [{ process: 'spawn-failed' }] });
     expect(await store.get(running.record.id)).toMatchObject({ workers: [{ process: 'exited' }] });
     expect(await store.get(recovered.record.id)).toMatchObject({ workers: [{ process: 'running', capacityReleased: false }] });
-    expect((await store.reconcileStartup(new Set(['session-recovered']))).releasedSlotIds).toEqual([]);
+    expect((await restarted.reconcileStartup(new Set(['session-recovered']))).releasedSlotIds).toEqual([]);
+  }));
+
+  it('does NOT reconcile a launch the live process is mid-flight on (claim not yet completed)', async () => fixture(async (filePath) => {
+    // Regression: the boot reconcile (armed behind a grace timer) must not race
+    // an in-flight launch of the SAME process. The launch's own store instance
+    // holds the record in its in-flight set, so reconcileStartup leaves it
+    // in-progress instead of flipping it to completed=INTERRUPTED (which made
+    // the subsequent complete() throw "already finalized").
+    const store = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
+    const claimed = await store.claim(claimInput('principal-live'));
+    await markClaimedWorkerRunning(store, claimed.record.id);
+
+    const result = await store.reconcileStartup(new Set());
+
+    expect(result.records).toEqual([]);
+    expect(await store.get(claimed.record.id)).toMatchObject({ outcome: { status: 'in-progress' } });
+    // The launch can still finalize normally — no "already finalized" throw.
+    const completed = await store.complete(claimed.record.id, completedResult());
+    expect(completed.outcome).toMatchObject({ status: 'completed', result: { ok: true } });
   }));
 
   it('completes every stale in-progress request as interrupted on startup, including empty claims', async () => fixture(async (filePath) => {
@@ -253,7 +276,8 @@ describe('team lifecycle store', () => {
     const live = await store.claim(claimInput('principal-live'));
     await markClaimedWorkerRunning(store, live.record.id);
 
-    await store.reconcileStartup(new Set(['session-1']));
+    // A restart reconciles the persisted (prior-process) records: fresh instance.
+    await createTeamLifecycleStore({ filePath }).reconcileStartup(new Set(['session-1']));
 
     expect(await store.get(empty.record.id)).toMatchObject({
       outcome: { status: 'completed', result: { ok: false, code: 'INTERRUPTED' } }
@@ -533,5 +557,13 @@ describe('team lifecycle integration', () => {
       .rejects.toThrow('invalid worker task transition');
     expect(await integration.getTeamLaunch('principal-a', 'request-1'))
       .toMatchObject({ ok: true, record: { id: claimed.record.id } });
+  }));
+
+  it('accepts a task report only from the exact spawned worker session', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
+    await store.claim(claimInput('principal-a'));
+    const integration = createTeamLifecycleIntegration({ store, isLiveSession: () => true, closeSession: async () => true, releaseCapacity: () => undefined });
+    await expect(integration.reportWorkerTask('other-session', 'request-1', 'slot-1', 'complete')).resolves.toEqual({ ok: false, code: 'NOT_FOUND' });
+    await expect(integration.reportWorkerTask('session-1', 'request-1', 'slot-1', 'complete')).resolves.toMatchObject({ ok: true, record: { workers: [{ task: 'caller-reported-complete' }] } });
   }));
 });

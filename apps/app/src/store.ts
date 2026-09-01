@@ -760,6 +760,7 @@ function mirroredConfigFlags(config: AppConfig) {
     harnessPiEnabled: config.harnessPiEnabled ?? false,
     harnessOpenCodeEnabled: config.harnessOpenCodeEnabled ?? false,
     microVmEnabled: config.microVmEnabled ?? false,
+    teamJobLaunchEnabled: config.teamJobLaunchEnabled ?? true,
     openerHiddenTargets: config.openerHiddenTargets ?? [],
     steerActiveThreadOnEnter: config.steerActiveThreadOnEnter ?? false
   };
@@ -1489,6 +1490,8 @@ interface DataState {
   setOpenerHiddenTargets: (targets: OpenTarget[]) => void;
   /** Mirror of AppConfig.microVmEnabled — gates the microVM env in launch UI. */
   microVmEnabled: boolean;
+  /** Mirror of AppConfig.teamJobLaunchEnabled — gates durable Team job launch. */
+  teamJobLaunchEnabled: boolean;
   /** Mirror of AppConfig.worktreeIsolationDefault — the default workspace
    *  picker selection (new worktree vs this checkout), not a hidden mode.
    *  A per-project ProjectSettings.worktreeIsolation overrides it. */
@@ -1633,6 +1636,8 @@ interface DataState {
    * tab's X button, ⌘⇧W, middle-click, and the sidebar row X.
    */
   closeTerminal: (sessionId: string, projectId: string) => Promise<void>;
+  /** Remove terminal cards owned by a Job after its single dismiss action succeeds. */
+  dismissTerminals: (sessionIds: readonly string[]) => void;
   /**
    * Bulk-close the given at-rest agents in a project (the Agents board's Close
    * action and the modal's "Close with follow-up" item). When `summarize` is
@@ -1835,6 +1840,7 @@ export const useData = create<DataState>((set, get) => ({
   editorStatus: [],
   openerHiddenTargets: [],
   microVmEnabled: false,
+  teamJobLaunchEnabled: true,
   worktreeIsolationDefault: false,
 
   setFontSize(n) {
@@ -3027,6 +3033,31 @@ export const useData = create<DataState>((set, get) => ({
     }
   },
 
+  dismissTerminals(sessionIds) {
+    const ids = new Set(sessionIds);
+    if (ids.size === 0) return;
+    set((s) => ({
+      terminals: Object.fromEntries(Object.entries(s.terminals).map(([projectId, sessions]) => [
+        projectId,
+        sessions.filter((session) => !ids.has(session.id))
+      ])),
+      detachedStack: Object.fromEntries(Object.entries(s.detachedStack).map(([projectId, sessionIds]) => [
+        projectId,
+        sessionIds.filter((sessionId) => !ids.has(sessionId))
+      ]))
+    }));
+    for (const sessionId of ids) {
+      useUi.getState().clearUnread(sessionId);
+      const projectId = findProjectIdForSession(sessionId);
+      if (projectId) useAgentStatus.getState().clear(sessionId, projectId);
+      useIdleTriage.getState().clear(sessionId);
+      useOverseerActivity.getState().clear(sessionId);
+      useSubagents.getState().clear(sessionId);
+      useSubagentChildren.getState().clear(sessionId);
+      useCatchUpSummary.getState().clear(sessionId);
+    }
+  },
+
   async closeIdleAgents(projectId, sessionIds, summarize) {
     if (sessionIds.length === 0) return { closed: 0, summarized: 0, followedUp: 0 };
     // Re-check LIVE status right before we act. The confirm dialog is an open
@@ -3498,8 +3529,9 @@ export const useData = create<DataState>((set, get) => ({
     if (!projectId) return;
     const tab = (get().terminals[projectId] ?? []).find((t) => t.id === sessionId);
     if (!tab) return;
-    // Manual rename always wins (titleLocked), and skip a no-op title.
-    if (tab.titleLocked || tab.title === next) return;
+    // Job/Team cohort labels are main-owned execution identity. Like a manual
+    // rename, they must not be overwritten by a harness OSC/LLM title.
+    if (tab.titleLocked || tab.cohort?.role === 'worker' || tab.title === next) return;
     // Precedence: manual > LLM > first-OSC (once) > default.
     //  - An OSC idle-title is a ONE-SHOT fallback: it names a still-unnamed tab
     //    once, then stops. Once the tab has been OSC-named (autoTitledByOsc) or

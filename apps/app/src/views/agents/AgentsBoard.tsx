@@ -1,7 +1,7 @@
-import { useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Bot, Moon, Plus, Puzzle, Search, X, Loader2 } from 'lucide-react';
-import type { Project, TerminalSession } from '@zana-ai/zcc-domain/product';
+import type { ExecutionBoardProjection, Project, TerminalSession } from '@zana-ai/zcc-domain/product';
 import {
   useData,
   useUi,
@@ -24,6 +24,7 @@ import { AutonomousRunBanner } from '@/components/AutonomousRunBanner';
 import { AgentMonitor } from '@/components/AgentMonitor';
 import { CloseIdleAgentsDialog } from '@/components/CloseIdleAgentsDialog';
 import { CohortBar, type LiveCohort } from '@/components/CohortBar';
+import { ExecutionJobDetails } from '@/components/ExecutionJobDetails';
 import { AuroraGrid } from '@/components/AuroraGrid';
 import {
   agentFleetItem,
@@ -113,6 +114,62 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const [filter, setFilter] = useState('');
   const [closeIdleTarget, setCloseIdleTarget] = useState<AgentCard[] | null>(null);
   const [busyAction, setBusyAction] = useState<null | 'close'>(null);
+  // Durable Job Team executions surfaced on the board. In project scope they're
+  // scoped to one project (with `before`-paginated Load more); in global scope
+  // they're the flattened union across every project.
+  const [executions, setExecutions] = useState<ExecutionBoardProjection[]>([]);
+  const [hasMoreExecutions, setHasMoreExecutions] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [selectedExecution, setSelectedExecution] = useState<{ projectId: string; executionId: string } | null>(null);
+
+  const loadMoreExecutions = async () => {
+    if (loadingMore || !hasMoreExecutions || executions.length === 0) return;
+    setLoadingMore(true);
+    try {
+      const oldest = executions[executions.length - 1].createdAt;
+      const next = await window.cc.executionBoard.listProject(scopedProject!.id, oldest);
+      setExecutions((prev) => {
+        const existing = new Set(prev.map((e) => e.executionId));
+        const added = next.executions.filter((e) => !existing.has(e.executionId));
+        return [...prev, ...added];
+      });
+      setHasMoreExecutions(next.hasMore);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      if (scopedProject) {
+        void window.cc.executionBoard.listProject(scopedProject.id).then((next) => {
+          if (cancelled) return;
+          setExecutions((prev) => {
+            if (prev.length > next.executions.length) {
+              const nextMap = new Map(next.executions.map((e) => [e.executionId, e]));
+              return prev.map((e) => nextMap.get(e.executionId) ?? e);
+            }
+            return next.executions;
+          });
+          setHasMoreExecutions(next.hasMore);
+        });
+      } else {
+        void Promise.all(
+          projects.map((project) => window.cc.executionBoard.listProject(project.id))
+        ).then((lists) => {
+          if (!cancelled) setExecutions(lists.flatMap((list) => list.executions));
+        });
+      }
+    };
+    refresh();
+    const timer = setInterval(refresh, 5_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [scopedProject, projects, terminals]);
+
   const boardPluginActions = useSyncExternalStore(
     subscribePluginSlots,
     listAgentsBoardActions,
@@ -197,6 +254,11 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
       useUi.getState().revealSchedule(item.task.id);
       return;
     }
+    const executionId = item.card.session.cohort?.executionId;
+    if (executionId) {
+      setSelectedExecution({ projectId: item.projectId, executionId });
+      return;
+    }
     useUi.getState().openAgentModal(item.card.session.id, item.projectId);
   };
 
@@ -238,7 +300,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
 
   return (
     <div className={isGlobal ? 'agents-board agents-board--global panel-body--full' : 'agents-board'}>
-      {fleet.length > 0 && (
+      {(fleet.length > 0 || executions.length > 0) && (
         <div className="agents-board-toolbar">
           <AgentViewToggle />
           {reclaimableAgents.length > 0 && (
@@ -319,7 +381,15 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
         </div>
       )}
 
+      <div className="agents-board-content">
       {scopedProject && <AutonomousRunBanner projectId={scopedProject.id} />}
+      {selectedExecution && (
+        <ExecutionJobDetails
+          projectId={selectedExecution.projectId}
+          executionId={selectedExecution.executionId}
+          onClose={() => setSelectedExecution(null)}
+        />
+      )}
       {boardView === 'board' && (
         <CohortBar
           cards={visibleCards}
@@ -334,10 +404,18 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
       )}
 
       {boardView === 'flow' ? (
-        <SquadFlowView projectId={scopedProject?.id} />
+        <SquadFlowView
+          projectId={scopedProject?.id}
+          onInspectExecution={(projectId, executionId) => setSelectedExecution({ projectId, executionId })}
+        />
       ) : boardView === 'list' ? (
-        <AgentMonitor cards={visibleFleet} showProject={isGlobal} />
-      ) : fleet.length === 0 ? (
+        <AgentMonitor
+          cards={visibleFleet}
+          executions={executions}
+          showProject={isGlobal}
+          onInspectExecution={(projectId, executionId) => setSelectedExecution({ projectId, executionId })}
+        />
+      ) : fleet.length === 0 && executions.length === 0 ? (
         <div className="agents-board-empty agents-board-empty--launch aurora-host">
           <AuroraGrid />
           <div className="agents-board-empty-copy">
@@ -384,8 +462,16 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
           onInspect={inspect}
           onPick={pick}
           showProject={isGlobal}
+          executions={executions}
+          hasMoreExecutions={hasMoreExecutions}
+          onLoadMoreExecutions={loadMoreExecutions}
+          onDismissExecution={(executionId) => {
+            setExecutions((current) => current.filter((execution) => execution.executionId !== executionId));
+            setSelectedExecution((current) => (current?.executionId === executionId ? null : current));
+          }}
         />
       )}
+      </div>
 
       {closeIdleTarget && (
         <CloseIdleAgentsDialog

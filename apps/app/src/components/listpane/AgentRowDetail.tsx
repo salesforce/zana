@@ -9,7 +9,8 @@ const AGENT_STATE_SHORT: Record<AgentState, string> = {
   working: 'Working',
   done: 'Done',
   idle: 'Idle',
-  unknown: ''
+  unknown: '',
+  waiting: 'Waiting for model'
 };
 
 /** Relative "Ns/Nm/Nh/Nd ago" — mirrors OverviewPanel's timeAgo. */

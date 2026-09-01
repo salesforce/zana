@@ -93,13 +93,13 @@ describe('structured providers final local argv', () => {
 
   it('emits OpenCode model and execution policy in final order', () => {
     expect(spawn('opencode', routing('opencode', {
-      modelTargetId: 'aisuite/gpt-5.6-sol',
+      modelTargetId: 'llmgw/gpt-5.6-sol-1M',
       executionState: 'accept-edits'
     }))).toEqual({
       command: 'opencode',
       args: [
-        '--model', 'aisuite/gpt-5.6-sol',
-        '--agent', 'build', '--auto'
+        '--model', 'llmgw/gpt-5.6-sol-1M',
+        '--auto'
       ]
     });
   });

@@ -20,6 +20,7 @@
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AgentState } from '@zana-ai/zcc-domain/product';
+import { isRestfulAgentState } from '@zana-ai/zcc-domain/product';
 import { agentLabel, type IAgentRegistryStore } from './agent-registry-store.js';
 import type { IAgentMessageLog } from './agent-message-log.js';
 
@@ -84,10 +85,8 @@ export interface RegisterMessagingToolsOpts {
   injectToSession: (sessionId: string, text: string) => boolean;
 }
 
-/** States in which it's safe to inject a peer message at the prompt. */
-function isInjectable(state: AgentState): boolean {
-  return state === 'idle' || state === 'done';
-}
+/** States in which it's safe to inject a peer message at the prompt (any harness). */
+const isInjectable = isRestfulAgentState;
 
 export function registerAgentMessagingTools(
   server: McpServer,

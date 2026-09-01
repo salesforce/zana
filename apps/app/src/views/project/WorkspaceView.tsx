@@ -32,10 +32,8 @@ const ProjectFollowUpsView = lazy(() =>
 const ProjectFeedView = lazy(() =>
   import('@/views/project/FeedView').then((m) => ({ default: m.ProjectFeedView }))
 );
-const SchedulerPanel = lazy(() =>
-  import('@/views/scheduler/SchedulerView').then((m) => ({ default: m.SchedulerPanel }))
-);
 import type { LaunchProfileId } from '@zana-ai/zcc-domain/product';
+import { SchedulerPanel } from '@/views/scheduler/SchedulerView';
 
 export function WorkspaceView() {
   const projects = useData((s) => s.projects);
@@ -365,11 +363,7 @@ export function WorkspaceView() {
               <ExplorerView project={project} />
             </Suspense>
           )}
-          {isScheduler && project && (
-            <Suspense fallback={<DelayedStencilList label="Loading scheduler" className="zcc-stencil-padded" />}>
-              <SchedulerPanel projectId={project.id} />
-            </Suspense>
-          )}
+          {isScheduler && project && <SchedulerPanel projectId={project.id} />}
           {isGoals && project && (
             <Suspense fallback={<DelayedStencilList label="Loading goals" className="zcc-stencil-padded" />}>
               <ProjectGoalsView project={project} />

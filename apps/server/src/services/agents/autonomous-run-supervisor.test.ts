@@ -292,9 +292,7 @@ describe('AutonomousRunSupervisor', () => {
     expect(closeSession).toHaveBeenCalled();
   });
 
-  it('nudge delivery ALSO resets the timeout (activity signal)', () => {
-    // A nudge successfully delivered means the agent is still responding to
-    // idle state → the run is making progress, so timeout should reset.
+  it('successful nudge is not inactivity progress (does not reset the timeout)', () => {
     const { deps, clock, reply } = makeDeps();
     const svc = new AutonomousRunSupervisor(deps);
 
@@ -305,11 +303,10 @@ describe('AutonomousRunSupervisor', () => {
     svc.observe('w1', 'idle');
     clock.fireNext(); // fire the nudge timer
 
-    // Nudge delivered → timeout should have been reset
+    // Nudge delivered → timeout should NOT have been reset
     expect(reply).toHaveBeenCalledTimes(1);
-    expect(clock.clearTimer).toHaveBeenCalled(); // timeout was cleared
-    expect(clock.setTimer.mock.calls.length).toBeGreaterThan(initialSetCount + 1);
-    // At least: initial timeout + nudge timer + NEW timeout after reset
+    expect(clock.clearTimer).not.toHaveBeenCalled(); // timeout was NOT cleared
+    expect(clock.setTimer.mock.calls.length).toBe(initialSetCount + 2);
 
     const run = svc.list()[0];
     expect(run.state).toBe('running');

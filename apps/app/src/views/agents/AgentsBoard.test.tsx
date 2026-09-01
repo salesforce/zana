@@ -20,7 +20,7 @@ describe('AgentsBoard', () => {
   });
 
   it('embeds AuroraGrid on both empty scopes and keeps create off the board', () => {
-    const emptyStart = board.indexOf('fleet.length === 0 ? (');
+    const emptyStart = board.indexOf('fleet.length === 0 && executions.length === 0 ? (');
     const filterStart = board.indexOf('isGlobal && visibleFleet.length === 0');
     expect(emptyStart).toBeGreaterThan(-1);
     expect(filterStart).toBeGreaterThan(emptyStart);
@@ -31,7 +31,7 @@ describe('AgentsBoard', () => {
     expect(emptyBranch).toContain('No agents yet');
     expect(emptyBranch).toContain('setLauncherOpen(true)');
     expect(emptyBranch).toContain('data-testid="agents-board-new-thread"');
-    expect(board).toContain('{fleet.length > 0 && (');
+    expect(board).toContain('(fleet.length > 0 || executions.length > 0) && (');
     expect(board).not.toContain('<HomeAgentComposer');
 
     const filterBranch = board.slice(filterStart, board.indexOf('<AgentBoardLanes', filterStart));
@@ -47,7 +47,7 @@ describe('AgentsBoard', () => {
     expect(board).toContain('getThreadRoutePath(item.id, threadProjectId)');
     expect(board).toContain('threadIdFromPath');
     expect(board).toContain('setCloseIdleTarget(reclaimableAgents)');
-    expect(board).toContain('<AgentMonitor cards={visibleFleet}');
+    expect(board).toContain('<AgentMonitor\n          cards={visibleFleet}');
     expect(board).toContain('schedulesForAgentView');
     expect(board).toContain('revealSchedule(item.task.id)');
     expect(board).toContain('item.kind === \'schedule\'');

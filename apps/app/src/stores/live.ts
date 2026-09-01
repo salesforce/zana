@@ -177,6 +177,7 @@ const AGENT_STATE_RANK: Record<AgentState, number> = {
   blocked: 4,
   done: 3,
   working: 2,
+  waiting: 2,
   idle: 1,
   unknown: 0
 };

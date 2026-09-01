@@ -7,7 +7,7 @@ describe('launchMetadataSnapshot', () => {
     expect(launchMetadataSnapshot({
       provider: providerFor('opencode'),
       model: {
-        targetId: 'aisuite/gpt-5.6-terra', source: 'per-tab', structuredSelected: true, contribution: {}
+        targetId: 'llmgw/gpt-5.6-terra-1M', source: 'per-tab', structuredSelected: true, contribution: {}
       },
       role: { targetId: 'build', source: 'Agent', contribution: {} },
       execution: {
@@ -75,7 +75,7 @@ describe('launchMetadataSnapshot', () => {
     expect(snapshot.sections).toEqual([]);
   });
 
-  it('does not expose an unmatched provider-native target id', () => {
+  it('omits unmatched provider-native targets instead of showing unavailable values', () => {
     const snapshot = providerFor('opencode').launchMetadata({
       model: { targetId: 'provider/private-model', source: 'per-tab', structuredSelected: true, contribution: {} },
       role: { targetId: 'private-role', source: 'Agent', contribution: {} },
@@ -83,8 +83,7 @@ describe('launchMetadataSnapshot', () => {
       observedAt: 123
     });
 
-    expect(snapshot.sections[0].values).toContainEqual({ label: 'Model' });
-    expect(snapshot.sections[0].values).toContainEqual({ label: 'Role' });
+    expect(snapshot.sections).toEqual([]);
     expect(JSON.stringify(snapshot)).not.toContain('private');
   });
 });

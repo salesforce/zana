@@ -14,9 +14,10 @@
  * the "weird pickup" users hit.
  *
  * This service is the missing half: it watches the SAME resolved-state edge that
- * drives idle-triage and heartbeat, and on the transition INTO `idle`/`done` it
- * checks the target's queue and, if non-empty, injects a single coalesced
- * announcement telling the agent to run `agent_inbox`.
+ * drives idle-triage and heartbeat, and on the transition INTO a restful state
+ * (`idle`/`done`/`waiting` — see {@link isRestfulAgentState}) it checks the
+ * target's queue and, if non-empty, injects a single coalesced announcement
+ * telling the agent to run `agent_inbox`.
  *
  * ## Announce-only, never mark delivered
  *
@@ -33,14 +34,16 @@
  * mail has arrived since the last announcement. Once the agent drains via
  * `agent_inbox`, those ids leave the queue, so the set naturally shrinks.
  *
- * Fires on `idle`/`done` ONLY — never `blocked` (a permission prompt / question
- * is left untouched, so an announcement can't be misread as answering a security
- * prompt). All collaborators are injected, mirroring {@link HeartbeatService} /
+ * Fires on restful edges ONLY (`idle`/`done`/`waiting`) — never `blocked` (a
+ * permission prompt / question is left untouched, so an announcement can't be
+ * misread as answering a security prompt). All collaborators are injected,
+ * mirroring {@link HeartbeatService} /
  * {@link IdleTriageService}, so the trigger logic is unit-testable without
  * Electron or a real pty.
  */
 
 import type { AgentState } from '@zana-ai/zcc-domain/product';
+import { isRestfulAgentState } from '@zana-ai/zcc-domain/product';
 
 export interface AgentMailDrainDeps {
   /** Queued (undelivered) messages addressed to a session, oldest first. */
@@ -55,10 +58,8 @@ interface Entry {
   announced: Set<string>;
 }
 
-/** States in which it's safe to nudge an agent at its prompt. */
-function isRestful(state: AgentState): boolean {
-  return state === 'idle' || state === 'done';
-}
+/** States in which it's safe to nudge an agent at its prompt (any harness). */
+const isRestful = isRestfulAgentState;
 
 export class AgentMailDrainService {
   private entries = new Map<string, Entry>();

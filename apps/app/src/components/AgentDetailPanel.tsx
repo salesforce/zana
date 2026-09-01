@@ -32,7 +32,8 @@ const STATE_LABEL: Record<AgentState, string> = {
   working: 'Working',
   idle: 'Idle',
   done: 'Done',
-  unknown: 'Idle'
+  unknown: 'Idle',
+  waiting: 'Waiting for model'
 };
 
 /** Team membership for the Team fact (monitor board only). */
@@ -186,7 +187,14 @@ export function AgentDetailPanel({
                 {persona ? personaIcon(persona, 15) : profileIcon(t.profile, 15)}
               </span>
               <span className="agent-detail-heading">
-                <span className="agent-detail-title">{t.title}</span>
+                <span style={{ display: 'flex', alignItems: 'center' }}>
+                  {!!t.cohort?.executionId && (
+                    <span className="job-badge" title={`Execution-backed job member (Run ID: ${t.cohort.executionId})`} style={{ margin: 0, marginRight: 5 }}>
+                      job
+                    </span>
+                  )}
+                  <span className="agent-detail-title">{t.title}</span>
+                </span>
                 <span className="agent-detail-sub">{subtitle}</span>
               </span>
               <FavoriteStar session={t} size={15} className="agent-detail-fav" />

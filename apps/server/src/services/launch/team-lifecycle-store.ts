@@ -209,6 +209,15 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
   const id = opts.id ?? randomUUID;
   const durableWrite = opts.durableWrite ?? atomicDurableWrite;
   const runExclusive = <T>(task: () => Promise<T>): Promise<T> => lifecycleTransactionQueue.run(task);
+  // Record ids the CURRENT process is actively launching (claimed, not yet
+  // finalized). reconcileStartup must never finalize these: crash recovery is
+  // about orphans persisted by a PRIOR process, and a fresh process starts with
+  // an empty set, so a genuine orphan (loaded from disk) is still reconciled
+  // while an in-flight launch of the live process is left alone. Without this,
+  // the boot reconcile (armed behind a grace timer, running while the UI can
+  // already start jobs) races a new launch and flips its in-progress record to
+  // completed=INTERRUPTED between claim and complete -> "already finalized".
+  const inFlightLaunches = new Set<string>();
 
   function readState(): { state: TeamLifecycleStateFile; hash: string | null } {
     const bytes = readRawFile(opts.filePath);
@@ -251,6 +260,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
       };
       snapshot.state.records.push(record);
       persist(snapshot.state, snapshot.hash);
+      inFlightLaunches.add(record.id);
       return { outcome: 'claimed', record: clone(record) };
     });
   }
@@ -390,6 +400,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
       record.revision += 1;
       record.updatedAt = now();
       persist(snapshot.state, snapshot.hash);
+      inFlightLaunches.delete(safeRecordId);
       return clone(record);
     });
   }
@@ -443,6 +454,9 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
       const records: TeamLifecycleRecord[] = [];
       const releasedSlotIds: string[] = [];
       for (const record of snapshot.state.records) {
+        // Never reconcile a launch the live process is mid-flight on (claim not
+        // yet completed) — only crash orphans persisted by a prior process.
+        if (inFlightLaunches.has(record.id)) continue;
         let changed = false;
         for (const worker of record.workers) {
           if (recoveredSessionIds.has(worker.sessionId)) continue;
@@ -622,6 +636,22 @@ export function createTeamLifecycleIntegration(opts: TeamLifecycleIntegrationOpt
         if (!record || !record.workers.some((worker) => worker.slotId === slotId)) {
           return { ok: false as const, code: 'NOT_FOUND' as const };
         }
+        const updated = await opts.store.updateWorker(record.id, slotId, {
+          task: outcome === 'complete' ? 'caller-reported-complete' : 'caller-reported-failed'
+        });
+        return { ok: true as const, record: updated.record };
+      });
+    },
+    reportWorkerTask(
+      workerSessionId: string,
+      launchRequestId: string,
+      slotId: string,
+      outcome: 'complete' | 'failed'
+    ) {
+      return serialize(async () => {
+        const record = (await opts.store.list()).find((candidate) => candidate.launchRequestId === launchRequestId || candidate.id === launchRequestId);
+        const worker = record?.workers.find((candidate) => candidate.slotId === slotId && candidate.sessionId === workerSessionId);
+        if (!record || !worker) return { ok: false as const, code: 'NOT_FOUND' as const };
         const updated = await opts.store.updateWorker(record.id, slotId, {
           task: outcome === 'complete' ? 'caller-reported-complete' : 'caller-reported-failed'
         });

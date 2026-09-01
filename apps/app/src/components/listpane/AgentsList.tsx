@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Bot, PanelRight, Plus, Sparkles } from 'lucide-react';
-import type { AgentState, IdleTriageResult, TerminalSession } from '@zana-ai/zcc-domain/product';
+import { Bot, Crown, PanelRight, Plus, Sparkles, Users } from 'lucide-react';
+import type { AgentState, ExecutionBoardProjection, IdleTriageResult, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { useData, useUi, useAgentStatus, useIdleTriage, openWhatsNewAll } from '@/store';
 import { useThreads, type ThreadListItem } from '@/thread-store';
 import { useEnsureThreads } from '@/hooks/useEnsureThreads';
@@ -9,8 +9,9 @@ import { threadIdFromPath } from '@/lib/route-paths';
 import { getScopedProjectId } from '@/lib/windowScope';
 import { profileIcon } from '@/lib/profileIcon';
 import { isRecentlyFinished } from '@/lib/sessionBuckets';
-import { idleSurfacesToNeedsYou, partitionSquadMembers, type AgentCard } from '@/components/AgentBoard';
+import { idleSurfacesToNeedsYou, partitionSquadMembers, executionNeedsAttention, type AgentCard } from '@/components/AgentBoard';
 import { AgentLauncher } from '@/components/AgentLauncher';
+import { ExecutionJobDetails } from '@/components/ExecutionJobDetails';
 import { ThreadListEntry } from '@/components/ThreadListEntry';
 import { FleetKindChip } from '@/components/FleetKindChip';
 import { isVisibleThread } from '@/components/fleet-item';
@@ -40,6 +41,8 @@ interface AgentRow {
   /** Idle-triage verdict for this session, if the add-on has classified it.
    *  Only consulted when the "promote triaged agents" setting is on. */
   triage?: IdleTriageResult;
+  /** Durable Job projection when this row is (or hosts) an execution-backed cohort. */
+  execution?: ExecutionBoardProjection;
 }
 
 // Display priority: who needs attention first. Mirrors AGENT_STATE_RANK in the
@@ -47,6 +50,7 @@ interface AgentRow {
 const STATE_RANK: Record<AgentState, number> = {
   blocked: 0,
   working: 1,
+  waiting: 1.5,
   idle: 2,
   done: 3,
   unknown: 4
@@ -57,7 +61,8 @@ const STATE_LABEL: Record<AgentState, string> = {
   working: 'Working',
   idle: 'Idle',
   done: 'Done',
-  unknown: 'Idle'
+  unknown: 'Idle',
+  waiting: 'Waiting for model'
 };
 
 /**
@@ -143,6 +148,89 @@ function formatDuration(ms: number): string {
   return `${h}h ${m % 60}m`;
 }
 
+/**
+ * Collapse execution-backed rows the same way {@link partitionSquadMembers}
+ * collapses a live squad: one host row per running Job (its orchestrator, or a
+ * synthetic placeholder when the orchestrator hasn't spawned/registered yet),
+ * with every other cohort member nested underneath as a worker.
+ */
+function partitionExecutionRows(
+  items: AgentRow[],
+  executions: readonly ExecutionBoardProjection[] = []
+): { top: AgentRow[]; workersByHost: Map<string, AgentRow[]> } {
+  const executionById = new Map(executions.map((execution) => [execution.executionId, execution]));
+  const hostByExecution = new Map<string, AgentRow>();
+  for (const item of items) {
+    const cohort = item.session.cohort;
+    if (!cohort?.executionId || cohort.role !== 'orchestrator' || item.session.status === 'exited') continue;
+    const execution = executionById.get(cohort.executionId);
+    if (!hostByExecution.has(cohort.executionId)) {
+      hostByExecution.set(cohort.executionId, execution ? executionRowHost(item, execution, false) : item);
+    }
+  }
+  const syntheticByExecution = new Map<string, AgentRow>();
+  const top: AgentRow[] = [];
+  const workersByHost = new Map<string, AgentRow[]>();
+  for (const item of items) {
+    const executionId = item.session.cohort?.executionId;
+    let host = executionId ? hostByExecution.get(executionId) : undefined;
+    if (!host && executionId) {
+      const execution = executionById.get(executionId);
+      if (execution) {
+        host = syntheticByExecution.get(executionId);
+        if (!host) {
+          host = executionRowHost(item, execution, true);
+          syntheticByExecution.set(executionId, host);
+          top.push(host);
+        }
+      }
+    }
+    if (host && item.session.id !== host.session.id) {
+      const members = workersByHost.get(host.session.id) ?? [];
+      members.push(item);
+      workersByHost.set(host.session.id, members);
+    } else top.push(host ?? item);
+  }
+  for (const execution of executions) {
+    if (hostByExecution.has(execution.executionId) || syntheticByExecution.has(execution.executionId)) continue;
+    const template = items.find((item) => item.projectId === execution.projectId);
+    const host = executionRowHost(template, execution, true);
+    syntheticByExecution.set(execution.executionId, host);
+    top.push(host);
+  }
+  return { top, workersByHost };
+}
+
+/** Build (or re-skin) the one row that represents a Job's execution as a whole. */
+function executionRowHost(member: AgentRow | undefined, execution: ExecutionBoardProjection, synthetic = !member): AgentRow {
+  const terminal = execution.state === 'COMPLETED' || execution.state === 'FAILED' || execution.state === 'STOPPED';
+  const session = member?.session ?? {
+    id: `execution:${execution.executionId}`,
+    title: execution.jobTitle,
+    status: terminal ? 'exited' : 'running',
+    profile: 'claude'
+  } as TerminalSession;
+  return {
+    ...(member ?? { projectId: execution.projectId, projectName: 'Project', state: 'idle' }),
+    session: {
+      ...session,
+      id: synthetic ? `execution:${execution.executionId}` : session.id,
+      title: execution.jobTitle,
+      status: terminal ? 'exited' : 'running',
+      headless: synthetic || session.headless,
+      cohort: {
+        ...(session.cohort ?? { cohortId: execution.executionId, teamId: 'execution', teamName: 'Execution', role: 'orchestrator' }),
+        executionId: execution.executionId,
+        executionJobTitle: execution.jobTitle,
+        role: 'orchestrator'
+      }
+    },
+    state: terminal ? 'done' : executionNeedsAttention(execution) ? 'blocked'
+      : execution.state === 'RUNNING' || execution.state === 'STARTING' ? 'working' : 'idle',
+    execution
+  };
+}
+
 // ── Column 2: the agent list ────────────────────────────────────────────────
 
 export function AgentsListPane() {
@@ -154,6 +242,10 @@ export function AgentsListPane() {
   // off, only `blocked` agents are "Needs you" and a triaged idle one stays Idle.
   const promoteTriage = useData((s) => s.agentListNeedsYouFromTriage);
   const sensitivity = useData((s) => s.idleAttentionSensitivity);
+  // Durable Job Team executions surfaced on this list (mirrors AgentsBoard's
+  // own polling), so a Job-backed cohort collapses into one host row here too.
+  const [executions, setExecutions] = useState<ExecutionBoardProjection[]>([]);
+  const [selectedExecution, setSelectedExecution] = useState<{ projectId: string; executionId: string } | null>(null);
   const [launcherOpen, setLauncherOpen] = useState(false);
   const location = useLocation();
   const threads = useThreads((s) => s.threads);
@@ -173,11 +265,51 @@ export function AgentsListPane() {
   const { menu, setMenu, actions, rename, closeRename, submitRename } = useAgentCardActions();
   const { menu: threadMenu, setMenu: setThreadMenu } = useThreadCardActions();
 
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      const ids = scopedProjectId ? [scopedProjectId] : projects.map((project) => project.id);
+      void Promise.all(ids.map((id) => window.cc.executionBoard.listProject(id))).then((lists) => {
+        if (!cancelled) setExecutions(lists.flatMap((list) => list.executions));
+      });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 5_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [scopedProjectId, projects]);
+
+  // Fold each row's live execution (if its cohort names one) in, and promote its
+  // host row to `blocked` when the Job needs a response — mirrors the board's
+  // own `executionRowHost`/`executionNeedsAttention` promotion.
+  const executionRows = useMemo(() => {
+    const byExecutionId = new Map(executions.map((execution) => [execution.executionId, execution]));
+    return rows.map((row) => {
+      const executionId = row.session.cohort?.executionId;
+      const execution = executionId ? byExecutionId.get(executionId) : undefined;
+      if (!execution) return row;
+      const needsAttention = executionNeedsAttention(execution);
+      return {
+        ...row,
+        execution,
+        state: (needsAttention && row.session.cohort?.role === 'orchestrator') ? 'blocked' as const : row.state
+      };
+    });
+  }, [rows, executions]);
+
   // Clicking a row opens the agent-inspector modal — a peek at the live terminal
   // plus metadata, with "Open in workspace" as the escape hatch to the full
   // split-pane view. Same modal the board cards open; it doesn't navigate away
-  // from the Agents section, so the list stays put behind it.
+  // from the Agents section, so the list stays put behind it. A Job-backed row
+  // opens the Job details drawer instead — that's the shared inspector Job
+  // members (and needsAttention prompts) route through.
   const open = (r: AgentRow) => {
+    if (r.session.cohort?.executionId) {
+      setSelectedExecution({ projectId: r.projectId, executionId: r.session.cohort.executionId });
+      return;
+    }
     useUi.getState().openAgentModal(r.session.id, r.projectId);
   };
 
@@ -238,8 +370,8 @@ export function AgentsListPane() {
   // worker into every liveness bucket. Solo agents + driverless worker fleets
   // pass through untouched. `topRows` is what the groups below filter over.
   const { top: topRows, workersByHost } = useMemo(
-    () => partitionSquadMembers(rows),
-    [rows]
+    () => partitionExecutionRows(executionRows, executions),
+    [executionRows, executions]
   );
   // Exited agents linger here only briefly, then auto-dismiss: once a finished
   // run is older than FINISHED_LINGER_MS it drops out of the list (the 1s tick
@@ -314,12 +446,27 @@ export function AgentsListPane() {
         key={t.id}
         className={`agents-worker-row ${active ? 'active' : ''} ${exited ? 'exited' : ''}`}
         onClick={() => open(r)}
+        onDoubleClick={() => {
+          if (!t.id.startsWith('execution:')) {
+            useUi.getState().openAgentModal(t.id, r.projectId);
+          }
+        }}
         onContextMenu={(e) => onRowContextMenu(e, r)}
         aria-current={active ? 'true' : undefined}
         title={`${t.title} — ${r.projectName} · ${STATE_LABEL[r.state]}`}
       >
         <span className={`tab-agent-dot agent-${exited ? 'done' : r.state}`} aria-hidden="true" />
+        {!!t.cohort?.executionId && (
+          <span className="job-badge" title={`Execution-backed job member (Run ID: ${t.cohort.executionId})`} style={{ margin: 0, marginRight: 5 }}>
+            job
+          </span>
+        )}
         <span className="agents-worker-title">{label}</span>
+        {t.cohort?.role === 'worker' && (
+          <span title="Worker">
+            <Users size={10} className="agents-worker-role-icon" style={{ marginLeft: 4, opacity: 0.6 }} />
+          </span>
+        )}
         <span className="agents-worker-dur">{exited ? `ran ${dur}` : dur}</span>
       </button>
     );
@@ -346,6 +493,11 @@ export function AgentsListPane() {
           isOrch && workers.length ? 'is-squad-orch' : ''
         }`}
         onClick={() => open(r)}
+        onDoubleClick={() => {
+          if (!t.id.startsWith('execution:')) {
+            useUi.getState().openAgentModal(t.id, r.projectId);
+          }
+        }}
         onContextMenu={(e) => onRowContextMenu(e, r)}
         aria-current={active ? 'true' : undefined}
         title={`${t.title} — ${r.projectName} · ${STATE_LABEL[r.state]}`}
@@ -354,7 +506,22 @@ export function AgentsListPane() {
         <span className="agents-row-text">
           <span className="agents-row-title-line">
             {!exited && <span className={`tab-agent-dot agent-${r.state}`} aria-hidden="true" />}
+            {!!t.cohort?.executionId && (
+              <span className="job-badge" title={`Execution-backed job member (Run ID: ${t.cohort.executionId})`} style={{ margin: 0, marginRight: 5 }}>
+                job
+              </span>
+            )}
             <span className="agents-row-title">{t.title}</span>
+            {t.cohort?.role === 'orchestrator' && (
+              <span title="Coordinator">
+                <Crown size={12} className="agents-row-role-icon" style={{ marginLeft: 4, opacity: 0.6 }} />
+              </span>
+            )}
+            {t.cohort?.role === 'worker' && (
+              <span title="Worker">
+                <Users size={12} className="agents-row-role-icon" style={{ marginLeft: 4, opacity: 0.6 }} />
+              </span>
+            )}
             <FleetKindChip kind="agent" />
           </span>
           <span className="agents-row-meta">
@@ -379,6 +546,11 @@ export function AgentsListPane() {
                 header, so it'd be redundant. Scheduled stays — a background run
                 can also be a scheduled job, which is worth flagging. */}
             {t.scheduled && <span className="agents-row-badge">Scheduled</span>}
+            {r.execution && r.state === 'blocked' && (
+              <span className="agents-row-badge bad" title={r.execution.currentBlocker?.question}>
+                Needs you
+              </span>
+            )}
             {exited && (
               <span className={`agents-row-badge ${t.exitCode ? 'bad' : ''}`}>
                 {t.exitCode ? `Exited ${t.exitCode}` : 'Exited'}
@@ -535,6 +707,13 @@ export function AgentsListPane() {
           // new session instead of redirecting into its project — keeps the user
           // on the board, mirroring how clicking a row opens the modal.
           onLaunched={onLauncherLaunched}
+        />
+      )}
+      {selectedExecution && (
+        <ExecutionJobDetails
+          projectId={selectedExecution.projectId}
+          executionId={selectedExecution.executionId}
+          onClose={() => setSelectedExecution(null)}
         />
       )}
     </section>

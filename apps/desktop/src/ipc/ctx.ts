@@ -19,13 +19,21 @@ export interface IpcCtx {
   conversationHistory: any;
   createInteractiveTerminal: any;
   createLocalExtension: any;
+  createTerminalConfined: any;
   diskSpecsById: any;
   doctor: any;
   emitExtensionsChanged: any;
   extensionEntries: any;
   emitMcpChanged: any;
   emitPluginsChanged: any;
+  executionArtifacts: any;
   executionConsentManagement: any;
+  executionDeliveryDrain: any;
+  executionHandoffs: any;
+  executionResumeGrants: any;
+  executionResumeTokens: any;
+  executionSources: any;
+  executionStore: any;
   exitedSessionStats: any;
   extProcessHost: any;
   favoriteAgentKeys: any;
@@ -34,6 +42,7 @@ export interface IpcCtx {
   feedStore: any;
   feedSummary: any;
   followups: any;
+  getTeamLaunch: any;
   goals: any;
   handleLoudInboxEntry: any;
   heartbeat: any;
@@ -66,6 +75,7 @@ export interface IpcCtx {
   readLiveSessionStats: any;
   rebuildProviders: any;
   registerExtensionProject: any;
+  reportTeamTask: any;
   resolveTheme: any;
   resolveWorktreeForRequest: any;
   resolvedAppVersion: any;
@@ -83,8 +93,10 @@ export interface IpcCtx {
   setActiveProjectSkillsWatcher: any;
   showMainWindow: any;
   skillBundles: any;
+  squadExecutionService: any;
   sshHostProviderRegistry: any;
   stampFeedEvent: any;
+  startTeamJobFromUi: any;
   stopAutonomousRun: any;
   suggestionsStore: any;
   teams: any;
@@ -94,6 +106,7 @@ export interface IpcCtx {
   updater: any;
   usageService: any;
   voiceService: any;
+  windows: any;
   worktreeBySession: any;
   worktreeInUse: any;
 }

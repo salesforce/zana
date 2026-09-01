@@ -1,8 +1,9 @@
 /**
  * Catch-up summary add-on (EXPERIMENTAL, off by default; spends tokens).
  *
- * When a claude agent settles into idle OR enters a blocked state (keyboard-choice
- * / permission-prompt), this service reads the session transcript digest and runs
+ * When an agent settles into idle (or, for non-Claude harnesses, the analogous
+ * `waiting` at-rest state) OR enters a blocked state (keyboard-choice /
+ * permission-prompt), this service reads the session transcript digest and runs
  * the `builtin:catch-up-summary` LLM micro-call to generate a tight catch-up: a
  * one-line headline + up to ~4 bullets of "where are we / what changed". When the
  * trigger is 'blocked', the summary SHOULD include a recommended option + why. The
@@ -10,21 +11,23 @@
  * the terminal in the agent modal.
  *
  * Cost discipline (this is the whole reason it's opt-in):
- *  - It fires only after the agent has DWELLED in the trigger state (idle OR
- *    blocked) for `delaySeconds`, so the 1–2s idle flicker between tool calls
- *    never spends a call. Armed on working/blocked → idle OR on entering 'blocked'.
+ *  - It fires only after the agent has DWELLED in the trigger state (idle,
+ *    waiting, OR blocked) for `delaySeconds`, so the 1–2s idle flicker between
+ *    tool calls never spends a call. Armed on working/blocked → idle/waiting OR
+ *    on entering 'blocked'. `waiting` is normalized to trigger `'idle'` for the
+ *    recorded/prompted trigger (it's an idle-style dwell, not a blocked one).
  *  - One-shot per spell: re-armed only when the agent leaves the trigger state, so
  *    a steady idle or blocked agent is summarized exactly once (mirrors idle-triage).
- *  - It bails before spending anything when the add-on is disabled, it is a
- *    background (scheduled/headless) session, transcript text is unavailable, or
- *    no eligible monitor HTTP provider is configured.
+ *  - It bails before spending anything when the add-on is disabled, the session
+ *    isn't a live claude session, it's a background (scheduled/headless) session,
+ *    or there's no transcript text to summarize.
  *  - Re-checks isEnabled() AFTER the cheap transcript read and BEFORE the costly
  *    LLM spawn (CLAUDE.md #5) so toggling off mid-read doesn't still spend tokens.
  *  - Bounded concurrency (MAX_CONCURRENT_SUMMARIES) so a burst across many sessions
  *    can't stampede (mirrors close-summary.ts).
  *
  * All collaborators are injected so the service is unit-testable without Electron,
- * the filesystem, or a real provider call (mirrors {@link IdleTriageService}).
+ * the filesystem, or a real `claude --print` spawn (mirrors {@link IdleTriageService}).
  */
 
 import { EventEmitter } from 'node:events';
@@ -66,8 +69,6 @@ export interface CatchUpSummaryDeps {
    * profile without a transcript is skipped. Provider-agnostic.
    */
   hasTranscript: (profile: string) => boolean;
-  /** Only registrations with verified native monitor facts can use semantic work. */
-  hasMonitorCapability: (profile: string) => boolean;
   /**
    * Read the session transcript's digest (a role-tagged summary of the whole
    * session, not just the last turn — we want the arc). Returns '' when unavailable.
@@ -87,11 +88,28 @@ export interface CatchUpSummaryDeps {
 }
 
 /**
- * Cap on concurrent per-session micro-calls. Without a bound, a burst across
- * many sessions would stampede the configured HTTP provider. 5 keeps
- * responsiveness without stampeding (mirrors close-summary.ts).
+ * Cap on concurrent per-session micro-calls. Each {@link runSummary} spawns a
+ * `claude --print` child, so without a bound, a burst across many sessions would
+ * fork that many processes at once (CLAUDE.md #5 — keep heavy work off a single
+ * burst). 5 keeps responsiveness without stampeding (mirrors close-summary.ts).
  */
 const MAX_CONCURRENT_SUMMARIES = 5;
+
+/**
+ * True when `s` is a trigger-eligible at-rest/blocked state. `waiting` is the
+ * non-Claude-harness (codex/cursor/pi/opencode) analogue of `idle` — those
+ * harnesses never rest in `idle`, only claude does — so it arms the dwell
+ * timer identically to `idle`.
+ */
+const inTrigger = (s: AgentState) => s === 'idle' || s === 'blocked' || s === 'waiting';
+
+/**
+ * Normalize an armed {@link AgentState} down to the `Entry.trigger` /
+ * `runSummary` trigger type, which is deliberately narrower than
+ * {@link AgentState} (`'idle' | 'blocked'` only). `waiting` is a dwell/idle-
+ * style trigger, not a blocked one, so it normalizes to `'idle'`.
+ */
+const triggerOf = (s: AgentState): 'idle' | 'blocked' => (s === 'blocked' ? 'blocked' : 'idle');
 
 /**
  * Per-session summary gate. `fired` is true once we've claimed the one-shot for
@@ -100,7 +118,9 @@ const MAX_CONCURRENT_SUMMARIES = 5;
  * summarizes once. `timer` holds the pending dwell timer armed on the edge —
  * non-null only between entering the trigger and either the timer elapsing or
  * being cancelled (any non-trigger transition clears it). `trigger` remembers
- * which condition armed the timer so the LLM prompt knows 'idle' vs 'blocked'.
+ * which condition armed the timer so the LLM prompt knows 'idle' vs 'blocked'
+ * (a `waiting` armed state is normalized to `'idle'` via {@link triggerOf} —
+ * `Entry.trigger` stays `'idle' | 'blocked'`, never `'waiting'`).
  */
 interface Entry {
   /** Last agent state we saw, to detect edges. */
@@ -129,7 +149,8 @@ export class CatchUpSummaryService extends EventEmitter {
   }
 
   /**
-   * Feed a session's newly-resolved agent state. On the edge into idle OR into
+   * Feed a session's newly-resolved agent state. On the edge into idle, into
+   * 'waiting' (the non-Claude-harness at-rest analogue of idle), OR into
    * 'blocked' it arms a dwell timer of `delaySeconds()`; the summary micro-call
    * fires only when that timer elapses AND the agent is still in the trigger state
    * (so the 1–2s idle flicker between tool calls never summarizes). Any
@@ -143,8 +164,8 @@ export class CatchUpSummaryService extends EventEmitter {
       entry = { lastState: 'unknown', fired: false, timer: null, trigger: null };
       this.entries.set(sessionId, entry);
     }
-    const wasInTrigger = entry.lastState === 'idle' || entry.lastState === 'blocked';
-    const isInTrigger = state === 'idle' || state === 'blocked';
+    const wasInTrigger = inTrigger(entry.lastState);
+    const isInTrigger = inTrigger(state);
     entry.lastState = state;
 
     if (!isInTrigger) {
@@ -155,18 +176,19 @@ export class CatchUpSummaryService extends EventEmitter {
       entry.trigger = null;
       return;
     }
-    // state is 'idle' or 'blocked' from here.
+    // state is 'idle', 'waiting', or 'blocked' from here.
     // If we're already in the trigger state but the SPECIFIC state changed (e.g.
     // idle→blocked while the timer is armed), update the trigger label so the
     // prompt gets the right context (blocked needs "recommended option + why").
-    if (wasInTrigger && entry.trigger !== state) {
-      entry.trigger = state;
+    if (wasInTrigger && entry.trigger !== triggerOf(state)) {
+      entry.trigger = triggerOf(state);
     }
     // Don't re-arm if we're already in the trigger, already fired, or already waiting.
     if (wasInTrigger || entry.fired || entry.timer) return;
 
-    // Fresh edge into trigger: arm the dwell. Remember which condition triggered.
-    entry.trigger = state; // 'idle' or 'blocked'
+    // Fresh edge into trigger: arm the dwell. Remember which condition triggered
+    // ('waiting' normalizes to 'idle' — Entry.trigger stays 'idle' | 'blocked').
+    entry.trigger = triggerOf(state);
     const ms = Math.max(1, Math.round(this.deps.delaySeconds())) * 1000;
     entry.timer = this.deps.setTimer(() => this.onDwellElapsed(sessionId), ms);
   }
@@ -220,7 +242,7 @@ export class CatchUpSummaryService extends EventEmitter {
     const entry = this.entries.get(sessionId);
     if (!entry) return;
     entry.timer = null;
-    const isInTrigger = entry.lastState === 'idle' || entry.lastState === 'blocked';
+    const isInTrigger = inTrigger(entry.lastState);
     if (!isInTrigger || entry.fired) return;
     entry.fired = true; // claim the one-shot before any await
 
@@ -273,7 +295,6 @@ export class CatchUpSummaryService extends EventEmitter {
     if (!session || session.status === 'exited') return fail('ineligible');
     // Background agents (scheduled runs, team workers) never request attention.
     if (session.scheduled || session.headless) return fail('background');
-    if (!this.deps.hasMonitorCapability(session.profile)) return fail('monitor-unsupported');
     if (!this.deps.hasTranscript(session.profile)) return fail('no-transcript');
 
     const digest = await this.deps.readDigest({
@@ -303,8 +324,7 @@ export class CatchUpSummaryService extends EventEmitter {
     // The agent may have moved on during the ~10–20s call. Check once for both
     // success and failure paths (mirrors the success-path guard at line 309).
     const currentEntry = this.entries.get(sessionId);
-    const stillInTrigger =
-      currentEntry?.lastState === 'idle' || currentEntry?.lastState === 'blocked';
+    const stillInTrigger = currentEntry ? inTrigger(currentEntry.lastState) : false;
 
     if (!result.ok) {
       const failure: CatchUpSummaryResult = {
