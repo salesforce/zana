@@ -64,6 +64,7 @@ import { useData, useUi, usePersonas, useTeams, sortProjectsAlphabetically } fro
 import { profileIcon, personaIcon } from '../lib/profileIcon.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
 import { AutonomousTeamComposer } from './AutonomousTeamComposer.js';
+import { JobTeamComposer } from './JobTeamComposer.js';
 import { ThreadCommandComposer } from './ThreadCommandComposer.js';
 import { LegacyAgentHomeComposer } from './LegacyAgentHomeComposer.js';
 import { LaunchModeSegmented, type LaunchMode } from './LaunchModeSegmented.js';
@@ -1162,9 +1163,11 @@ export const AgentLauncher = memo(function AgentLauncher({
   const [attachments, setAttachments] = useState<string[]>([]);
   const [fixingWithAi, setFixingWithAi] = useState(false);
   const teams = useTeams(useShallow((s) => s.teams));
+  const teamJobLaunchEnabled = useData((s) => s.teamJobLaunchEnabled);
   useEffect(() => {
     if (mode === 'autonomous' && teams.length === 0) setMode('thread');
-  }, [mode, teams.length]);
+    if (mode === 'job' && (teams.length === 0 || !teamJobLaunchEnabled)) setMode('thread');
+  }, [mode, teams.length, teamJobLaunchEnabled]);
   const pushToast = useUi((s) => s.pushToast);
   const dialogRef = useRef<HTMLDivElement>(null);
   // Harness row icon-only fallback: whether the full labels ("claude",
@@ -1828,7 +1831,7 @@ export const AgentLauncher = memo(function AgentLauncher({
         className="palette launch-modal"
         role="dialog"
         aria-modal
-        aria-label={mode === 'autonomous' ? 'New autonomous team' : 'New agent'}
+        aria-label={mode === 'autonomous' ? 'New autonomous team' : mode === 'job' ? 'New job team' : 'New agent'}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="launch-panel">
@@ -1869,6 +1872,7 @@ export const AgentLauncher = memo(function AgentLauncher({
               value={mode}
               onChange={setMode}
               showAutonomousTeam={teams.length > 0}
+              showJobTeam={teamJobLaunchEnabled && teams.length > 0}
             />
           </div>
 
@@ -1900,6 +1904,16 @@ export const AgentLauncher = memo(function AgentLauncher({
           {mode === 'autonomous' && (
           <div className="launch-thread-composer">
             <AutonomousTeamComposer
+              project={project}
+              initialText={initialPrompt}
+              onClose={onClose}
+            />
+          </div>
+          )}
+
+          {mode === 'job' && (
+          <div className="launch-thread-composer">
+            <JobTeamComposer
               project={project}
               initialText={initialPrompt}
               onClose={onClose}

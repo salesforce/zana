@@ -95,13 +95,16 @@ describe('launch mode', () => {
     expect(source).toContain("useState<LaunchMode>('thread')");
     expect(source).toContain('<LaunchModeSegmented');
     expect(source).toContain('showAutonomousTeam={teams.length > 0}');
+    expect(source).toContain('showJobTeam={teamJobLaunchEnabled && teams.length > 0}');
     expect(source).not.toContain('Single agent');
     expect(source).toContain('<ThreadCommandComposer');
     expect(source).toContain('<LegacyAgentHomeComposer');
     expect(source).toContain('<AutonomousTeamComposer');
+    expect(source).toContain('<JobTeamComposer');
     expect(source).toContain('initialText={initialPrompt}');
     expect(source).toContain('onCreated={onClose}');
     expect(source).toContain("{mode === 'autonomous' && (");
+    expect(source).toContain("{mode === 'job' && (");
     expect(source).not.toContain('<PromptComposer');
   });
 

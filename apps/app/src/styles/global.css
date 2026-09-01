@@ -23463,6 +23463,76 @@ button.launch-persona {
   overflow: auto;
 }
 
+/* Job Team composer — optional Title/Summary fields and attached-source pills.
+   The shared classes below were dropped in the monorepo UI port; they live
+   here so JobTeamComposer renders self-contained. */
+.launch-job-details {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.launch-job-details textarea {
+  background: var(--bg-app, var(--bg-panel));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  resize: vertical;
+}
+
+.launch-job-details textarea:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+.launch-optional {
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+
+.launch-attachment-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.launch-attachment-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.launch-attachment-pill button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+}
+
+.launch-attachment-pill button:hover {
+  color: var(--text-primary);
+}
+
 .workflow-arg-actions {
   display: flex;
   justify-content: flex-end;

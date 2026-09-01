@@ -28,9 +28,12 @@ describe('HomeAgentComposer layout', () => {
     expect(source).toContain('<LaunchModeSegmented');
     expect(source).toContain('<LegacyAgentHomeComposer');
     expect(source).toContain('<AutonomousTeamComposer');
+    expect(source).toContain('<JobTeamComposer');
     expect(source).toContain("kind === 'agent'");
     expect(source).toContain("kind === 'autonomous'");
+    expect(source).toContain("kind === 'job'");
     expect(source).toContain('showAutonomousTeam={showAutonomousTeam}');
+    expect(source).toContain('showJobTeam={showJobTeam}');
     expect(source).not.toContain('HomeAutonomousComposer');
     expect(source).not.toContain('onSelectLegacyAgent');
   });
