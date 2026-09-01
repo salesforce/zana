@@ -17,6 +17,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     '/extensions/sdk/',
     '/marketplace/',
     '/download/',
+    '/features/',
     '/docs/'
   ];
   const docPaths = DOCS.map((d) => `/docs/${d.slug}/`);
