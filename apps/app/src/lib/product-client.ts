@@ -769,6 +769,16 @@ function httpProduct(): Pick<
         });
         return body;
       },
+      closeFollowup: async (threadId) => {
+        const body = await apiJson<{ ok: boolean; summarized: number; followedUp: number }>(
+          `/threads/${encodeURIComponent(threadId)}/close-followup`,
+          {
+            method: 'POST',
+            body: '{}'
+          }
+        );
+        return body;
+      },
       fork: async (threadId, options) => {
         const response = await fetchWithAppSurface(`/api/v1/threads/${encodeURIComponent(threadId)}/fork`, {
           method: 'POST',

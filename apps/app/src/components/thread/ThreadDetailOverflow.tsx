@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type Ref } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { Archive, GitFork, Mail, MoreHorizontal, Pencil, Square } from 'lucide-react';
+import { Archive, GitFork, Mail, MailCheck, MoreHorizontal, Pencil, Square } from 'lucide-react';
 import { product } from '../../lib/product-client.js';
 import { getAgentsRoutePath, getProjectRoutePath, getThreadRoutePath } from '../../lib/route-paths.js';
 import { useRouteState } from '../../hooks/useRouteState.js';
@@ -28,6 +28,7 @@ export function ThreadDetailOverflowMenu({
   onFork,
   onStop,
   onArchive,
+  onCloseFollowup,
   menuRef,
   style
 }: {
@@ -37,6 +38,7 @@ export function ThreadDetailOverflowMenu({
   onFork: () => void;
   onStop: () => void;
   onArchive: () => void;
+  onCloseFollowup: () => void;
   menuRef?: Ref<HTMLDivElement>;
   style?: CSSProperties;
 }) {
@@ -78,6 +80,14 @@ export function ThreadDetailOverflowMenu({
           <Square size={13} /> Stop
         </button>
       ) : null}
+      <button
+        type="button"
+        role="menuitem"
+        onClick={onCloseFollowup}
+        title="Close the agent, summarising its work to your inbox and filing a follow-up if it left something unfinished"
+      >
+        <MailCheck size={13} /> Close with follow-up
+      </button>
       <div className="tab-context-sep" />
       <button
         type="button"
@@ -165,6 +175,15 @@ export function ThreadDetailOverflow({
         close();
         dispatchThreadStopRequested(threadId);
         void product.threads.stop(threadId);
+      }}
+      onCloseFollowup={() => {
+        close();
+        if (!window.confirm(`Close “${title}” and file a follow-up if work is left?`)) return;
+        void product.threads.closeFollowup(threadId).then((result) => {
+          if (result && result.ok === false) return;
+          remove(threadId);
+          navigate(scopedProjectId ? getProjectRoutePath(scopedProjectId) : getAgentsRoutePath());
+        });
       }}
       onArchive={() => {
         close();

@@ -50,14 +50,14 @@ describe('split layout persistence', () => {
     expect(deserializeSplitLayout(serialized)).toEqual(layout);
   });
 
-  it('round-trips mixed home, new-thread, and plugin panel content', () => {
+  it('round-trips mixed home, agents, new-thread, and plugin panel content', () => {
     const mixed: SplitLayout = {
       root: {
         type: 'split',
         dir: 'row',
         sizes: [0.5, 0.5],
         children: [
-          { type: 'pane', paneId: 'pane-1', content: { kind: 'home' } },
+          { type: 'pane', paneId: 'pane-1', content: { kind: 'agents' } },
           {
             type: 'pane',
             paneId: 'pane-2',

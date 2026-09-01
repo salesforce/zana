@@ -908,7 +908,7 @@ export type HostListDirResult = z.infer<typeof HostListDirResultSchema>;
 
 export const HostReadFileResultSchema = z.object({
   content: z.string(),
-  encoding: z.literal('utf8')
+  encoding: z.enum(['utf8', 'base64'])
 }).strict();
 export type HostReadFileResult = z.infer<typeof HostReadFileResultSchema>;
 

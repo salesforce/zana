@@ -8,6 +8,7 @@ import {
 } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { HomeView } from '../home/HomeView.js';
+import { AgentsView } from '../agents/AgentsView.js';
 import { NewThreadView } from '../threads/NewThreadView.js';
 import { ThreadDetail } from '../threads/ThreadDetailView.js';
 import { useData } from '../../store.js';
@@ -494,6 +495,9 @@ function PaneBody({ content }: { content: PaneContent }) {
   }
   if (content.kind === 'home') {
     return <HomeView />;
+  }
+  if (content.kind === 'agents') {
+    return <AgentsView />;
   }
   if (content.kind === 'new-thread') {
     const project = content.projectId

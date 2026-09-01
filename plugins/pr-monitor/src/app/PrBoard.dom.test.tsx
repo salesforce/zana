@@ -97,8 +97,8 @@ describe('PrBoard', () => {
     const failing = container.querySelector('[data-board-column="failed"]');
     expect(ready?.querySelectorAll('.prm-board-card').length).toBe(1);
     expect(failing?.querySelectorAll('.prm-board-card').length).toBe(2);
-    expect(ready?.querySelector('.prm-board-col-count')?.textContent).toBe('1');
-    expect(failing?.querySelector('.prm-board-col-count')?.textContent).toBe('2');
+    expect(ready?.querySelector('.zcc-kanban-col-count')?.textContent).toBe('1');
+    expect(failing?.querySelector('.zcc-kanban-col-count')?.textContent).toBe('2');
   });
 
   it('hides empty Merged and Closed columns and shows them once they have cards', () => {
@@ -116,15 +116,15 @@ describe('PrBoard', () => {
       makePr('green', 1, { lastSeenAt: 0, lastStatusChange: 10 }),
       makePr('green', 2, { lastSeenAt: 50, lastStatusChange: 10 }),
     ]);
-    expect(container.querySelector('[data-board-column="green"] .prm-board-col-unread')?.textContent).toBe('1');
-    expect(container.querySelector('[data-board-column="failed"] .prm-board-col-unread')).toBeNull();
+    expect(container.querySelector('[data-board-column="green"] .zcc-kanban-col-badge')?.textContent).toBe('1');
+    expect(container.querySelector('[data-board-column="failed"] .zcc-kanban-col-badge')).toBeNull();
   });
 
   it('treats a never-seen card as unread when lastSeenAt is omitted', () => {
     const container = mount([
       makePr('green', 1, { lastSeenAt: undefined, lastStatusChange: 10, addedAt: 1 }),
     ]);
-    expect(container.querySelector('[data-board-column="green"] .prm-board-col-unread')?.textContent).toBe('1');
+    expect(container.querySelector('[data-board-column="green"] .zcc-kanban-col-badge')?.textContent).toBe('1');
   });
 
   it('resolves per-repo ignore lists onto cards', () => {
@@ -167,7 +167,7 @@ describe('PrBoard', () => {
     expect(ready?.getAttribute('data-collapsed')).toBe('true');
     expect(ready?.querySelector('.prm-board-card')).toBeNull();
     expect(container.querySelector('[data-board-column="failed"]')?.getAttribute('data-collapsed')).toBe('false');
-    fireEvent.click(ready!.querySelector<HTMLButtonElement>('.prm-board-col-collapse')!);
+    fireEvent.click(ready!.querySelector<HTMLButtonElement>('.zcc-kanban-col-collapse')!);
     expect(toggled).toEqual(['green']);
   });
 });

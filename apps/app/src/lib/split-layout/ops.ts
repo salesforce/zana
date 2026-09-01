@@ -62,13 +62,13 @@ export function findPaneByThread(
 
 /** Finds the pane representing the same routable page as `content`. Plugin
  * subpaths belong to one panel identity, so navigating within a panel updates
- * that pane instead of opening duplicates. Home and compose are singletons. */
+ * that pane instead of opening duplicates. Home, Agents, and compose are singletons. */
 export function findPaneByContent(root: LayoutNode, content: PaneContent): PaneNode | null {
   return (
     listPanes(root).find((pane) => {
       const candidate = pane.content;
       if (candidate.kind !== content.kind) return false;
-      if (content.kind === 'home') return true;
+      if (content.kind === 'home' || content.kind === 'agents') return true;
       if (content.kind === 'new-thread') {
         return (
           candidate.kind === 'new-thread' &&

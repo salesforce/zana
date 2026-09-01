@@ -7,6 +7,7 @@ import { isSafeRelPath } from '../../http/library-via-host.js';
 import { confinePathToRoot } from './thread-path-confine.js';
 
 const IMAGE_EXT = new Set(['.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp']);
+export const IMAGE_READ_MAX_BYTES = 10 * 1024 * 1024;
 
 export function imageContentType(path: string): string | null {
   const lower = path.toLowerCase();
@@ -25,7 +26,7 @@ export async function readThreadHostFile(
   ctx: ProductHttpContext,
   threadId: string,
   candidate: string
-): Promise<{ path: string; relPath: string; content: string; encoding: 'utf8'; contentType: string | null }> {
+): Promise<{ path: string; relPath: string; content: string; encoding: 'utf8' | 'base64'; contentType: string | null }> {
   const thread = getConversationThread(ctx.db, threadId);
   if (!thread) {
     throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
@@ -51,7 +52,7 @@ export async function readThreadHostFile(
       path: candidate,
       relPath,
       content: result.content,
-      encoding: 'utf8',
+      encoding: result.encoding,
       contentType: imageContentType(relPath)
     };
   } catch (error) {

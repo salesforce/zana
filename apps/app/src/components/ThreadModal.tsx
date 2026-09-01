@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Maximize2, Minimize2, X } from 'lucide-react';
 import { product } from '../lib/product-client.js';
 import { useThreads } from '../thread-store.js';
+import { FavoriteStar } from './FavoriteStar.js';
 import { ThreadDetail } from '../views/threads/ThreadDetailView.js';
 
 export function threadModalLabel(title: string | null | undefined): string {
@@ -78,6 +79,7 @@ export function ThreadModal({
         tabIndex={-1}
       >
         <header className="modal-header agent-modal-header thread-modal-header" data-testid="thread-modal-header">
+          <FavoriteStar session={{ id: threadId, kind: 'thread' }} size={16} className="agent-modal-fav" />
           <button
             type="button"
             className="icon-button"

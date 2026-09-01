@@ -13,6 +13,8 @@ describe('splitThreadNavigation', () => {
   it('maps splittable pathnames to pane content and back', () => {
     expect(paneContentForPathname('/')).toEqual({ kind: 'home' });
     expect(paneContentRoute({ kind: 'home' })).toBe('/');
+    expect(paneContentForPathname('/agents')).toEqual({ kind: 'agents' });
+    expect(paneContentRoute({ kind: 'agents' })).toBe('/agents');
     expect(paneContentForPathname('/threads/new')).toEqual({ kind: 'new-thread' });
     expect(paneContentForPathname('/threads/abc')).toEqual({
       kind: 'thread',
@@ -36,10 +38,9 @@ describe('splitThreadNavigation', () => {
     });
     expect(paneContentForPathname('/inbox')).toBeNull();
     expect(paneContentForPathname('/extensions/plugins/docs')).toBeNull();
-    expect(paneContentForPathname('/agents')).toBeNull();
     expect(isSplitWorkspacePath('/threads/abc')).toBe(true);
     expect(isSplitWorkspacePath('/plugins/docs/panel')).toBe(true);
-    expect(isSplitWorkspacePath('/agents')).toBe(false);
+    expect(isSplitWorkspacePath('/agents')).toBe(true);
   });
 
   it('seeds a single pane and focuses an existing pane on reconcile', () => {

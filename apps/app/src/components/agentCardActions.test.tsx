@@ -3,16 +3,29 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { readFileSync } from 'node:fs';
 
 const h = vi.hoisted(() => ({
-  closeTerminal: vi.fn()
+  closeTerminal: vi.fn(),
+  closeIdleAgents: vi.fn(async () => ({ closed: 1, summarized: 1, followedUp: 1 }))
 }));
 
 vi.mock('../store.js', () => ({
-  useData: (selector: (s: { closeTerminal: typeof h.closeTerminal }) => unknown) =>
-    selector({ closeTerminal: h.closeTerminal }),
+  useData: Object.assign(
+    (selector: (s: { closeTerminal: typeof h.closeTerminal }) => unknown) =>
+      selector({ closeTerminal: h.closeTerminal }),
+    {
+      getState: () => ({
+        closeTerminal: h.closeTerminal,
+        closeIdleAgents: h.closeIdleAgents
+      })
+    }
+  ),
   useIdleTriage: () => undefined
 }));
 
-import { AgentDeleteQuickAction } from './agentCardActions.js';
+import {
+  AgentDeleteQuickAction,
+  canCloseWithFollowup,
+  closeAgentWithFollowup
+} from './agentCardActions.js';
 
 describe('AgentDeleteQuickAction', () => {
   it('renders a bin control to delete a live CLI agent', () => {
@@ -55,6 +68,45 @@ describe('plugin agent card menu', () => {
     expect(source).toContain('listAgentCardActions');
     expect(source).toContain('invokeAgentCardAction');
     expect(source).toContain('agent-card-plugin-');
+  });
+
+  it('offers Close with follow-up on live Claude-family cards', () => {
+    const source = readFileSync(new URL('./agentCardActions.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('canCloseWithFollowup(card.session)');
+    expect(source).toContain('actions.closeWithFollowup(card)');
+    expect(source).toContain('Close with follow-up');
+    expect(source).toContain('closeIdleAgents(projectId, [session.id], true)');
+  });
+});
+
+describe('canCloseWithFollowup', () => {
+  it('allows a live Claude session and rejects shells and exited sessions', () => {
+    expect(canCloseWithFollowup({ status: 'running', profile: 'claude' })).toBe(true);
+    expect(canCloseWithFollowup({ status: 'running', profile: 'shell' })).toBe(false);
+    expect(canCloseWithFollowup({ status: 'exited', profile: 'claude' })).toBe(false);
+  });
+});
+
+describe('closeAgentWithFollowup', () => {
+  it('confirms then closes with summarize=true', async () => {
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal('confirm', confirm);
+    h.closeIdleAgents.mockClear();
+    const ok = await closeAgentWithFollowup({ id: 's1', title: 'Review' }, 'p1');
+    expect(ok).toBe(true);
+    expect(confirm).toHaveBeenCalled();
+    expect(h.closeIdleAgents).toHaveBeenCalledWith('p1', ['s1'], true);
+    vi.unstubAllGlobals();
+  });
+
+  it('returns false without closing when the user cancels', async () => {
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirm);
+    h.closeIdleAgents.mockClear();
+    const ok = await closeAgentWithFollowup({ id: 's1', title: 'Review' }, 'p1');
+    expect(ok).toBe(false);
+    expect(h.closeIdleAgents).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 });
 

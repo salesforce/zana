@@ -1,24 +1,23 @@
 /**
  * Horizontal kanban board: one column per rollup status, compact cards.
  * Status is GitHub-derived, so columns are a layout — cards are not
- * drag-reordered between lanes.
+ * drag-reordered between lanes. Pan is the shared {@link Kanban} canvas.
  */
 
 import { useMemo } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
-  ChevronRight,
   CircleDashed,
   Eye,
   GitMerge,
   GitPullRequestClosed,
   Loader2,
-  PanelLeftClose,
   ShieldAlert,
   XCircle,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { Kanban, KanbanColumn } from '@zana-ai/zcc-ui/kanban';
 import type { ModuleHost } from './host.js';
 import type { MonitoredPr, MonitoredRepo, PrRollupStatus } from '../../lib/types.js';
 import { resolveBuildThresholds } from '../../lib/types.js';
@@ -74,7 +73,7 @@ export function PrBoard({
   const selectionActive = selected.size > 0 || selectMode;
 
   return (
-    <div className="prm-board" role="list" aria-label="Pull requests by status">
+    <Kanban label="Pull requests by status" columnWidth={260} className="prm-board">
       {visible.map((status) => {
         const cards = columns[status];
         const Icon = COLUMN_ICONS[status];
@@ -83,71 +82,57 @@ export function PrBoard({
           (pr) => pr.lastSeenAt === 0 || pr.lastStatusChange > (pr.lastSeenAt ?? pr.addedAt)
         ).length;
         return (
-          <section
+          <KanbanColumn
             key={status}
-            className={`prm-board-col prm-board-col--${status}${isCollapsed ? ' prm-board-col--collapsed' : ''}`}
-            aria-label={`${BOARD_COLUMN_LABELS[status]} (${cards.length})`}
-            data-board-column={status}
-            data-collapsed={isCollapsed ? 'true' : 'false'}
-          >
-            <header className="prm-board-col-header">
-              <Icon size={14} className="prm-board-col-icon" aria-hidden />
-              <span className="prm-board-col-title">{BOARD_COLUMN_LABELS[status]}</span>
-              <span className="prm-board-col-count">{cards.length}</span>
-              {unread > 0 && (
-                <span className="prm-board-col-unread" title={`${unread} unread`}>
+            columnId={status}
+            className={`prm-board-col--${status}`}
+            label={BOARD_COLUMN_LABELS[status]}
+            count={cards.length}
+            icon={<Icon size={14} aria-hidden />}
+            badge={
+              unread > 0 ? (
+                <span className="zcc-kanban-col-badge" title={`${unread} unread`}>
                   {unread}
                 </span>
-              )}
-              <button
-                type="button"
-                className="prm-board-col-collapse"
-                title={isCollapsed ? `Expand ${BOARD_COLUMN_LABELS[status]}` : `Collapse ${BOARD_COLUMN_LABELS[status]}`}
-                aria-label={isCollapsed ? `Expand ${BOARD_COLUMN_LABELS[status]}` : `Collapse ${BOARD_COLUMN_LABELS[status]}`}
-                aria-expanded={!isCollapsed}
-                onClick={() => onToggleCollapse(status)}
-              >
-                {isCollapsed ? <ChevronRight size={13} /> : <PanelLeftClose size={13} />}
-              </button>
-            </header>
-            {!isCollapsed && (
-              <div className="prm-board-col-body">
-                {cards.length === 0 ? (
-                  <div className="prm-board-col-empty">No PRs</div>
-                ) : (
-                  cards.map((pr) => {
-                    const build = resolveBuildThresholds(
-                      pr.repo,
-                      repositories,
-                      tisWarnHours ?? DEFAULT_TIS_WARN_HOURS,
-                      tisDangerHours ?? DEFAULT_TIS_DANGER_HOURS
-                    );
-                    const repoRec = (repositories ?? []).find(
-                      (r) => `${r.owner}/${r.repo}`.toLowerCase() === pr.repo.toLowerCase()
-                    );
-                    return (
-                      <PrBoardCard
-                        key={pr.url}
-                        pr={pr}
-                        host={host}
-                        tisWarnHours={build.warnHours}
-                        tisDangerHours={build.dangerHours}
-                        ignoredFailingChecks={repoRec?.ignoredFailingChecks}
-                        selected={selected.has(pr.url)}
-                        selectionActive={selectionActive}
-                        selectMode={selectMode}
-                        onToggleSelect={onToggleSelect}
-                        onDismiss={onDismiss}
-                        onOpen={onOpen}
-                      />
-                    );
-                  })
-                )}
-              </div>
+              ) : null
+            }
+            collapsed={isCollapsed}
+            onToggleCollapse={(columnId) => onToggleCollapse(columnId as PrRollupStatus)}
+          >
+            {cards.length === 0 ? (
+              <div className="prm-board-col-empty">No PRs</div>
+            ) : (
+              cards.map((pr) => {
+                const build = resolveBuildThresholds(
+                  pr.repo,
+                  repositories,
+                  tisWarnHours ?? DEFAULT_TIS_WARN_HOURS,
+                  tisDangerHours ?? DEFAULT_TIS_DANGER_HOURS
+                );
+                const repoRec = (repositories ?? []).find(
+                  (r) => `${r.owner}/${r.repo}`.toLowerCase() === pr.repo.toLowerCase()
+                );
+                return (
+                  <PrBoardCard
+                    key={pr.url}
+                    pr={pr}
+                    host={host}
+                    tisWarnHours={build.warnHours}
+                    tisDangerHours={build.dangerHours}
+                    ignoredFailingChecks={repoRec?.ignoredFailingChecks}
+                    selected={selected.has(pr.url)}
+                    selectionActive={selectionActive}
+                    selectMode={selectMode}
+                    onToggleSelect={onToggleSelect}
+                    onDismiss={onDismiss}
+                    onOpen={onOpen}
+                  />
+                );
+              })
             )}
-          </section>
+          </KanbanColumn>
         );
       })}
-    </div>
+    </Kanban>
   );
 }

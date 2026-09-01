@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
@@ -113,5 +114,11 @@ describe('AgentTray', () => {
     );
     expect(global).not.toContain('Idle review');
     expect(global).toContain('No active agents');
+  });
+
+  it('stars thread rows with the same favorite control as CLI agents', () => {
+    const source = readFileSync(new URL('../AgentTray.tsx', import.meta.url), 'utf8');
+    expect(source).toContain("FavoriteStar session={{ id: item.id, kind: 'thread' }}");
+    expect(source).toContain('<FavoriteStar session={item.session} className="agent-tray-fav" />');
   });
 });

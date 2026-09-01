@@ -1,4 +1,5 @@
 import { copyText } from '../../../lib/copy-text.js';
+import { imageContentTypeFromPath, imagePreviewSrc } from '../timeline/work-row-helpers.js';
 import {
   activateClosableTab,
   addClosableTab,
@@ -139,10 +140,23 @@ export function isPreviewImagePath(path: string): boolean {
 
 export function contentFromLocalRead(local: unknown): string | null {
   if (!local || typeof local !== 'object' || !('ok' in local)) return null;
-  const result = local as { ok: boolean; content?: string };
-  if (!result.ok) return null;
-  return String(result.content ?? '');
+  const result = local as { ok: boolean; content?: string; binary?: boolean };
+  if (!result.ok || result.binary) return null;
+  if (typeof result.content !== 'string') return null;
+  return result.content;
 }
+
+export type HostFileContentResult = {
+  content: string;
+  encoding?: 'utf8' | 'base64';
+  contentType?: string | null;
+};
+
+export type ReadDataUrlResult = {
+  ok: boolean;
+  dataUrl?: string;
+  message?: string;
+};
 
 export function previewKind(path: string, content: string): 'image' | 'text' {
   return isPreviewImagePath(path) && content.startsWith('data:') ? 'image' : 'text';
@@ -300,13 +314,49 @@ export async function loadWorkspaceMeta(
   return { status: nextStatus, pullRequest: pr?.pullRequest ?? null };
 }
 
-export async function loadFilePreview(
-  readFile: (path: string) => Promise<unknown>,
-  hostFileContent: ((threadId: string, path: string) => Promise<{ content: string }>) | undefined,
+async function loadImagePreview(
+  hostFileContent: ((threadId: string, path: string) => Promise<HostFileContentResult>) | undefined,
   threadId: string | undefined,
   path: string,
-  options?: { skipLocal?: boolean }
+  options?: { skipLocal?: boolean; readDataUrl?: (path: string) => Promise<ReadDataUrlResult> }
 ): Promise<{ content: string } | { error: string }> {
+  if (!options?.skipLocal && typeof options?.readDataUrl === 'function') {
+    try {
+      const local = await options.readDataUrl(path);
+      if (local.ok && typeof local.dataUrl === 'string' && local.dataUrl.startsWith('data:')) {
+        return { content: local.dataUrl };
+      }
+    } catch {
+      /* host */
+    }
+  }
+  if (!threadId || typeof hostFileContent !== 'function') {
+    return { error: 'Could not read file' };
+  }
+  try {
+    const host = await hostFileContent(threadId, path);
+    const preview = imagePreviewSrc({
+      content: host.content,
+      encoding: host.encoding,
+      contentType: host.contentType ?? imageContentTypeFromPath(path)
+    });
+    if (preview) return { content: preview };
+    return { error: 'Could not read file' };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Could not read file' };
+  }
+}
+
+export async function loadFilePreview(
+  readFile: (path: string) => Promise<unknown>,
+  hostFileContent: ((threadId: string, path: string) => Promise<HostFileContentResult>) | undefined,
+  threadId: string | undefined,
+  path: string,
+  options?: { skipLocal?: boolean; readDataUrl?: (path: string) => Promise<ReadDataUrlResult> }
+): Promise<{ content: string } | { error: string }> {
+  if (isPreviewImagePath(path)) {
+    return loadImagePreview(hostFileContent, threadId, path, options);
+  }
   if (!options?.skipLocal) {
     try {
       const fromLocal = contentFromLocalRead(await readFile(path));

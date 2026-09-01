@@ -191,6 +191,12 @@ The host React instance is `globalThis.__ZCC_HOST_REACT__`. Plugin UI is not a
 security sandbox; registrations apply in reverse registration order when two
 plugins claim the same slot id.
 
+Reusable chrome lives in `@zana-ai/zcc-ui` (workspace dependency). For a
+pannable status board, import `Kanban` / `KanbanColumn` from
+`@zana-ai/zcc-ui/kanban` and inject `@zana-ai/zcc-ui/kanban.css` with the
+plugin's own styles (`esbuild` loads `.css` as text). Columns are layout only
+— cards are not drag-reordered. Agents and PR Monitor both use this canvas.
+
 Open **Plugin Guide** under Plugins for annotated wireframes of every surface
 (Copy for agent). After `plugin install .` + `plugin dev`, those slots remount
 without restarting the app. In-repo builtins: `ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD=1`.

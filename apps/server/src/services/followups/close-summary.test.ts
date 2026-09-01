@@ -512,6 +512,55 @@ describe('CloseSummaryService.summarizeAndFollowUp', () => {
   });
 });
 
+describe('CloseSummaryService.summarizeAndFollowUpFromLastTurn', () => {
+  const okResult = (text: string): LlmRunResult => ({ ok: true, text, provider: 'claude-cli', ms: 1 });
+
+  function makeDeps(over: Partial<CloseSummaryDeps> = {}): CloseSummaryDeps {
+    return {
+      getSession: () => null,
+      hasTranscript: () => false,
+      readLastTurn: vi.fn(async () => ''),
+      runSummary: vi.fn(async () => okResult('{"did":"Shipped the page","left":"Write tests"}')),
+      runTurnSummary: vi.fn(async () => okResult('note')),
+      readDigest: vi.fn(async () => ''),
+      runSessionSummary: vi.fn(async () => okResult('y')),
+      appendInbox: vi.fn(async () => ({ id: 'entry-1' })),
+      projectLabel: () => 'Proj One',
+      createFollowUp: vi.fn(() => 'followup-1'),
+      ...over
+    };
+  }
+
+  it('distills a supplied last-turn into inbox + follow-up without reading a PTY', async () => {
+    const deps = makeDeps();
+    const res = await new CloseSummaryService(deps).summarizeAndFollowUpFromLastTurn('p1', {
+      sessionId: 'thread-1',
+      title: 'Ship page',
+      lastTurn: 'I shipped the page. Tests still missing.'
+    });
+    expect(res).toEqual({ summarized: 1, followedUp: 1 });
+    expect(deps.readLastTurn).not.toHaveBeenCalled();
+    expect(deps.runSummary).toHaveBeenCalledWith(
+      'I shipped the page. Tests still missing.',
+      'close-summary:thread-1'
+    );
+    expect(deps.createFollowUp).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'thread-1', title: 'Follow up: Ship page' })
+    );
+  });
+
+  it('returns zeros for an empty last-turn (no LLM spend)', async () => {
+    const deps = makeDeps();
+    const res = await new CloseSummaryService(deps).summarizeAndFollowUpFromLastTurn('p1', {
+      sessionId: 'thread-1',
+      title: 'Empty',
+      lastTurn: '  '
+    });
+    expect(res).toEqual({ summarized: 0, followedUp: 0 });
+    expect(deps.runSummary).not.toHaveBeenCalled();
+  });
+});
+
 describe('CloseSummaryService.summarizeTurn', () => {
   const session = (over: Partial<CloseSummarySessionInfo> = {}): CloseSummarySessionInfo => ({
     projectId: 'p1',

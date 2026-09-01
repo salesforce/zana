@@ -26,6 +26,20 @@ describe('thread storage', () => {
     expect(listed.files).toEqual([{ path: 'notes/a.md', name: 'a.md' }]);
     const file = await readThreadStorageFile(ctx, 'thr_storage', 'notes/a.md');
     expect(file.content).toContain('hello');
+    expect(file.encoding).toBe('utf8');
+  });
+
+  it('reads a confined image as base64', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-storage-img-'));
+    vi.mocked(getConversationThread).mockReturnValue({ id: 'thr_storage' } as never);
+    const ctx = { dataDir, db: {} } as unknown as ProductHttpContext;
+    const root = threadStorageRoot(dataDir, 'thr_storage');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'shot.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const file = await readThreadStorageFile(ctx, 'thr_storage', 'shot.png');
+    expect(file.encoding).toBe('base64');
+    expect(file.contentType).toBe('image/png');
+    expect(Buffer.from(file.content, 'base64')).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
   });
 
   it('rejects missing threads and path escapes', async () => {

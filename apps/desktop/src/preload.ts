@@ -399,6 +399,7 @@ const api: CcApi = {
       }
     },
     archive: async () => ({ ok: false }),
+    closeFollowup: async () => ({ ok: false, summarized: 0, followedUp: 0 }),
     fork: async () => ({
       ok: false as const,
       code: 'desktop-use-terminals',

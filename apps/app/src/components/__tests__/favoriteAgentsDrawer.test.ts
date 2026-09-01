@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { sectionOf } from '../FavoriteAgentsDrawer.js';
+import { readFileSync } from 'node:fs';
+import { sectionOf, sectionOfThread, sectionOfEntry } from '../FavoriteAgentsDrawer.js';
 import type { AgentCard } from '../AgentBoard.js';
 import type { AgentState, TerminalSession } from '@zana-ai/zcc-domain/product';
+import type { ThreadListItem } from '../../thread-store.js';
 
 // Minimal AgentCard for section-bucketing tests. Only the fields sectionOf reads
 // (`status`, `headless`, and the card `state`) matter here.
@@ -53,5 +55,40 @@ describe('FavoriteAgentsDrawer sectionOf', () => {
     expect(sectionOf(card('working', 'exited', { exitCode: 0 }))).toBe('done');
     expect(sectionOf(card('idle', 'exited', { exitCode: 1 }))).toBe('done');
     expect(sectionOf(card('idle', 'exited', { headless: true, exitCode: 0 }))).toBe('done');
+  });
+
+  it('lanes a conversation thread by state (no headless/exited PTY status)', () => {
+    expect(sectionOfThread('blocked')).toBe('blocked');
+    expect(sectionOfThread('working')).toBe('working');
+    expect(sectionOfThread('idle')).toBe('idle');
+    expect(sectionOfThread('unknown')).toBe('idle');
+    const thread: ThreadListItem = {
+      id: 'thr-1',
+      projectId: 'p',
+      hostId: 'local',
+      environmentId: null,
+      providerId: 'claude-code',
+      status: 'idle',
+      title: 'Hello',
+      createdAt: 0,
+      cwd: null,
+      branchName: null,
+      isWorktree: false
+    };
+    expect(
+      sectionOfEntry({
+        kind: 'thread',
+        thread,
+        projectName: 'Proj',
+        state: 'working'
+      })
+    ).toBe('working');
+  });
+
+  it('opens a starred thread in the thread inspector, not the CLI modal', () => {
+    const source = readFileSync(new URL('../FavoriteAgentsDrawer.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('openThreadModal(entry.thread.id)');
+    expect(source).toContain("data-kind=\"thread\"");
+    expect(source).toContain("kind: 'thread'");
   });
 });

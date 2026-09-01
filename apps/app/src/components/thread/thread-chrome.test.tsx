@@ -671,7 +671,7 @@ describe('expandable row and chips', () => {
     expect(column).toContain('<ThreadWorkspaceBanner');
     expect(column).toContain('<ThreadCommandComposer');
     expect(source).toContain('inFlightRetry={inFlightRetry}');
-    expect(source).toContain('autoFocus={!embedded && pane?.isFocused !== false}');
+    expect(source).toContain('autoFocus={!embedded && pane?.isFocused !== false && pendingInteractions.length === 0}');
     expect(column).toContain('thread-composer-dock');
     expect(column).toContain('<ThreadPromptModeCard');
     expect(column).toContain('<ThreadTodoCard');

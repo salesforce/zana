@@ -3284,7 +3284,7 @@ body.resizing-col {
 }
 
 /* Thread inspector: title lives on ThreadDetail. Keep this chrome as
-   fullscreen + close only, flush to the right. */
+   follow star + fullscreen + close, flush to the right. */
 .agent-modal-header.thread-modal-header {
   justify-content: flex-end;
 }
@@ -12533,82 +12533,17 @@ body.resizing-col .explorer-resizer::after {
   margin-bottom: 0;
 }
 
-/* The lanes row: four equal columns that scroll horizontally if the pane is
-   narrow, each scrolling its own cards vertically. */
-.agents-board-lanes {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  /* Lanes flow into a single row regardless of count (4, 5, …). Each gets at
-     least 200px and shares the surplus equally when the board is wide enough;
-     when the lanes can't all fit, they hold their min width and the board
-     scrolls horizontally instead of wrapping a lane onto a second row. */
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(200px, 1fr);
-  gap: 10px;
-  padding: 10px;
-  overflow-x: auto;
-}
+/* Lane accent stripes on the shared kanban header. */
+.zcc-kanban-col.lane-blocked .zcc-kanban-col-header { border-bottom-color: var(--danger); }
+.zcc-kanban-col.lane-working .zcc-kanban-col-header { border-bottom-color: var(--accent-gold); }
+.zcc-kanban-col.lane-scheduled .zcc-kanban-col-header { border-bottom-color: var(--accent-blue); }
+.zcc-kanban-col.lane-idle .zcc-kanban-col-header { border-bottom-color: var(--border-strong); }
+.zcc-kanban-col.lane-done .zcc-kanban-col-header { border-bottom-color: var(--success); }
 
-.agents-lane {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  min-width: 0;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
-}
-
-.agents-lane-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 12px;
-  position: sticky;
-  top: 0;
-  background: var(--bg-panel);
-  z-index: 1;
-  border-bottom: 1px solid var(--border);
-}
-
-.agents-lane-icon {
-  color: var(--text-dim);
-}
-
-.agents-lane-label {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-
-.agents-lane-count {
-  margin-left: auto;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-dim);
-  background: var(--bg-elevated);
-  border-radius: 9px;
-  padding: 0 7px;
-  line-height: 16px;
-  min-width: 16px;
-  text-align: center;
-}
-
-/* Lane accent stripes on the header bottom border. */
-.agents-lane.lane-blocked .agents-lane-head { border-bottom-color: var(--danger); }
-.agents-lane.lane-working .agents-lane-head { border-bottom-color: var(--accent-gold); }
-.agents-lane.lane-scheduled .agents-lane-head { border-bottom-color: var(--accent-blue); }
-.agents-lane.lane-idle .agents-lane-head { border-bottom-color: var(--border-strong); }
-.agents-lane.lane-done .agents-lane-head { border-bottom-color: var(--success); }
-
-.agents-lane.lane-blocked .agents-lane-icon { color: var(--danger); }
-.agents-lane.lane-working .agents-lane-icon { color: var(--accent-gold); }
-.agents-lane.lane-scheduled .agents-lane-icon { color: var(--accent-blue); }
-.agents-lane.lane-done .agents-lane-icon { color: var(--success); }
+.zcc-kanban-col.lane-blocked .zcc-kanban-col-icon { color: var(--danger); }
+.zcc-kanban-col.lane-working .zcc-kanban-col-icon { color: var(--accent-gold); }
+.zcc-kanban-col.lane-scheduled .zcc-kanban-col-icon { color: var(--accent-blue); }
+.zcc-kanban-col.lane-done .zcc-kanban-col-icon { color: var(--success); }
 
 /* Sub-agent count badge on a card (parent with live Task spawns). Blue so
    in-flight children stay glanceable on an Idle or Working card. Inline icon + count. */
@@ -12681,30 +12616,9 @@ body.resizing-col .explorer-resizer::after {
   color: var(--text-muted);
 }
 
-.agents-lane-cards {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px;
-  /* Smooth, scrollbar-free vertical scroll for an overflowing lane — same
-     treatment as the zana ticket columns, so a tall lane scrolls without the
-     scrollbar gutter chewing into the cards. */
-  scroll-behavior: smooth;
-  overscroll-behavior: contain;
-  scrollbar-width: none; /* Firefox */
-}
-
-.agents-lane-cards::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-}
-
-/* Cards keep their natural height — overflow the lane (which scrolls) rather
-   than compressing to fit. */
-.agents-lane .agent-card {
+/* Cards keep their natural height — the lanes canvas pans instead of
+   compressing cards to fit a column. */
+.zcc-kanban-col .agent-card {
   flex-shrink: 0;
 }
 
@@ -29292,23 +29206,6 @@ body.resizing-col .library-split-resizer::after {
   margin-left: 0;
 }
 
-/* The lanes row: four equal columns that scroll horizontally if the pane is
-   narrow, each scrolling its own cards vertically. */
-.agents-board-lanes {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  /* Lanes flow into a single row regardless of count (4, 5, …). Each gets at
-     least 200px and shares the surplus equally when the board is wide enough;
-     when the lanes can't all fit, they hold their min width and the board
-     scrolls horizontally instead of wrapping a lane onto a second row. */
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(200px, 1fr);
-  gap: 10px;
-  padding: 10px;
-  overflow-x: auto;
-}
-
 /* Sub-agent count badge on a card (parent with live Task spawns). Blue so
    in-flight children stay glanceable on an Idle or Working card. Inline icon + count. */
 .agent-card-subagents {
@@ -31717,6 +31614,7 @@ textarea.thread-command-editor {
 .split-workspace .home-panel,
 .split-workspace .new-thread-view,
 .split-workspace .thread-detail-view,
+.split-workspace .agents-board,
 .split-workspace .module-panel-host,
 .split-workspace .split-plugin-pane {
   grid-column: auto;
@@ -35693,6 +35591,11 @@ textarea.thread-command-editor {
   flex: 1;
   min-height: 0;
   overscroll-behavior: contain;
+  cursor: grab;
+}
+.squad-flow-canvas.is-panning {
+  cursor: grabbing;
+  user-select: none;
 }
 
 .squad-flow-switcher {
@@ -37135,16 +37038,26 @@ textarea.thread-command-editor {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 6px 2px;
+  padding: 8px 6px 0;
   border-top: 1px solid var(--border);
+  line-height: 0;
+}
+
+.plugin-guide-fx-footer .plugin-guide-icon-hit,
+.plugin-guide-fx-footer-plug {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  padding: 0;
+  border-radius: 7px;
 }
 
 .plugin-guide-fx-footer-plug {
-  width: 28px;
-  height: 28px;
-  justify-content: center;
-  border-radius: 8px;
   background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .plugin-guide-fx-footer--bb {

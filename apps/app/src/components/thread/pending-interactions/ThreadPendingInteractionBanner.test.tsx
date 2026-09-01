@@ -1,16 +1,21 @@
-import { describe, expect, it, vi } from 'vitest';
+/**
+ * @vitest-environment happy-dom
+ */
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import type { ApprovalPendingInteraction, PendingInteraction } from '@zana-ai/zcc-domain/thread-runtime';
+import { product } from '../../../lib/product-client.js';
 import { ThreadPendingInteractionBanner } from './ThreadPendingInteractionBanner.js';
 
 vi.mock('../../../lib/product-client.js', () => ({
   product: {
     threads: {
       interactions: {
-        resolve: vi.fn(),
-        respond: vi.fn(),
-        cancel: vi.fn()
+        resolve: vi.fn(() => Promise.resolve()),
+        respond: vi.fn(() => Promise.resolve()),
+        cancel: vi.fn(() => Promise.resolve())
       }
     }
   }
@@ -251,5 +256,80 @@ describe('ThreadPendingInteractionBanner', () => {
     expect(html).toContain('Keep planning');
     expect(html).not.toContain('Allow once');
     expect(html).not.toContain('Deny');
+  });
+});
+
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
+
+describe('ThreadPendingInteractionBanner keyboard', () => {
+  it('auto-focuses the primary decision and moves with arrows', () => {
+    render(
+      <MemoryRouter>
+        <ThreadPendingInteractionBanner interaction={commandInteraction()} threadId="thr-1" />
+      </MemoryRouter>
+    );
+    const allowOnce = screen.getByTestId('thread-pending-decision-allow_once');
+    const allowSession = screen.getByTestId('thread-pending-decision-allow_for_session');
+    const deny = screen.getByTestId('thread-pending-decision-deny');
+    const toolbar = screen.getByTestId('thread-pending-decision-toolbar');
+    expect(document.activeElement).toBe(allowOnce);
+    expect(toolbar.getAttribute('role')).toBe('toolbar');
+
+    fireEvent.keyDown(toolbar, { key: 'ArrowRight' });
+    expect(document.activeElement).toBe(allowSession);
+    fireEvent.keyDown(toolbar, { key: 'ArrowRight' });
+    expect(document.activeElement).toBe(deny);
+    fireEvent.keyDown(toolbar, { key: 'ArrowRight' });
+    expect(document.activeElement).toBe(allowOnce);
+  });
+
+  it('resolves deny when Enter is pressed on the focused decision', () => {
+    render(
+      <MemoryRouter>
+        <ThreadPendingInteractionBanner interaction={commandInteraction()} threadId="thr-1" />
+      </MemoryRouter>
+    );
+    const toolbar = screen.getByTestId('thread-pending-decision-toolbar');
+    fireEvent.keyDown(toolbar, { key: 'ArrowRight' });
+    fireEvent.keyDown(toolbar, { key: 'ArrowRight' });
+    expect(document.activeElement).toBe(screen.getByTestId('thread-pending-decision-deny'));
+    fireEvent.keyDown(toolbar, { key: 'Enter' });
+    expect(product.threads.interactions.resolve).toHaveBeenCalledWith(
+      'thr-1',
+      'pint_1',
+      { decision: 'deny' }
+    );
+  });
+
+  it('does not auto-focus the question submit button', () => {
+    render(
+      <MemoryRouter>
+        <ThreadPendingInteractionBanner
+          interaction={{
+            ...commandInteraction(),
+            payload: {
+              kind: 'user_question',
+              questions: [{
+                id: 'q1',
+                prompt: 'Continue?',
+                multiSelect: false,
+                allowFreeText: true,
+                options: [{ value: 'yes', label: 'Yes' }]
+              }]
+            },
+            // Payload and resolution are paired per union member (WS5 split): a
+            // user_question interaction must carry a user-answer/null resolution,
+            // not the approval resolution the spread base provides.
+            resolution: null
+          }}
+          threadId="thr-1"
+        />
+      </MemoryRouter>
+    );
+    expect(document.activeElement).not.toBe(screen.getByTestId('thread-pending-question-submit'));
+    expect(screen.queryByTestId('thread-pending-decision-toolbar')).toBeNull();
   });
 });

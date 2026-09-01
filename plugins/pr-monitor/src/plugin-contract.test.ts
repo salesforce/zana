@@ -9,6 +9,7 @@ import { derivePluginId, readPluginManifest } from '@zana-ai/zcc-domain';
 import plugin from '../server.ts';
 
 vi.mock('../src/app/styles.css', () => ({ default: '.prm-panel{}' }));
+vi.mock('@zana-ai/zcc-ui/kanban.css', () => ({ default: '.zcc-kanban{}' }));
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dirs: string[] = [];
@@ -38,6 +39,7 @@ describe('pr-monitor plugin contract', () => {
     const appJs = readFileSync(join(root, 'app.js'), 'utf8');
     expect(appJs).toContain('__ZCC_HOST_REACT__');
     expect(appJs).toContain('prm-panel');
+    expect(appJs).toContain('zcc-kanban');
     expect(appJs).not.toMatch(/from ["']react["']/);
     expect(appJs).not.toMatch(/from ["']react\/jsx-runtime["']/);
     expect(existsSync(join(root, 'server.mjs'))).toBe(true);

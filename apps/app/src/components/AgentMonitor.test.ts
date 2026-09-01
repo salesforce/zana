@@ -36,6 +36,15 @@ describe('AgentMonitor thread selection', () => {
     expect(source).toContain('openAgentInWorkspace');
   });
 
+  it('offers Close with follow-up in the session footer next to Summarize', () => {
+    const source = readFileSync(new URL('./AgentMonitor.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('canCloseWithFollowup');
+    expect(source).toContain('closeAgentWithFollowup');
+    expect(source).toContain('Close with follow-up');
+    expect(source).toContain("summarizing ? 'Summarizing…' : 'Summarize'");
+    expect(source.indexOf('Close with follow-up')).toBeLessThan(source.indexOf("summarizing ? 'Summarizing…' : 'Summarize'"));
+  });
+
   it('uses the thread harness icon instead of a chat bubble', () => {
     const source = readFileSync(new URL('./AgentMonitor.tsx', import.meta.url), 'utf8');
     expect(source).toContain('<ProviderIcon providerId={item.thread.providerId}');

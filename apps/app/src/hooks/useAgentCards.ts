@@ -7,9 +7,12 @@ import {
   useSubagents,
   agentViewTerminals,
   useFavoriteAgents,
-  favoriteKey
+  favoriteKey,
+  threadFavoriteKey
 } from '../store.js';
+import { useThreads } from '../thread-store.js';
 import type { AgentCard } from '../components/AgentBoard.js';
+import { isVisibleThread } from '../components/fleet-item.js';
 
 /**
  * Flatten every project's listed (visible + hidden-but-alive) non-shell sessions
@@ -58,19 +61,38 @@ export function useAllAgentCards(): AgentCard[] {
 }
 
 /**
+ * Live intersection the Favorites drawer and titlebar badge share: starred
+ * keys ∩ (live CLI cards ∪ visible threads). A star whose agent/thread isn't
+ * running is omitted so the badge never disagrees with the drawer.
+ */
+export function liveFavoriteCount(
+  favoriteIds: Record<string, true>,
+  cards: Array<{ session: { id: string; claudeSessionId?: string } }>,
+  visibleThreadIds: string[]
+): number {
+  let n = 0;
+  for (const c of cards) if (favoriteIds[favoriteKey(c.session)]) n += 1;
+  for (const id of visibleThreadIds) if (favoriteIds[threadFavoriteKey(id)]) n += 1;
+  return n;
+}
+
+/**
  * How many followed agents are CURRENTLY LIVE — the titlebar star badge count.
  *
- * Deliberately the SAME live intersection the Favorites drawer renders (starred
- * keys ∩ live agent cards), NOT the raw persisted set size: a star whose agent
- * isn't running right now isn't shown in the drawer, so counting it on the
- * badge made the badge ("3") disagree with the drawer ("0") after a relaunch.
- * Keying both off this hook keeps them in lockstep.
+ * Deliberately the SAME live intersection the Favorites drawer renders, NOT
+ * the raw persisted set size.
  */
 export function useFavoriteCount(): number {
   const cards = useAllAgentCards();
+  const threads = useThreads((s) => s.threads);
   const favoriteIds = useFavoriteAgents((s) => s.favoriteIds);
   return useMemo(
-    () => cards.reduce((n, c) => (favoriteIds[favoriteKey(c.session)] ? n + 1 : n), 0),
-    [cards, favoriteIds]
+    () =>
+      liveFavoriteCount(
+        favoriteIds,
+        cards,
+        threads.filter(isVisibleThread).map((t) => t.id)
+      ),
+    [cards, favoriteIds, threads]
   );
 }

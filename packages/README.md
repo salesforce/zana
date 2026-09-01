@@ -25,7 +25,7 @@ shared code. A package is added when two apps need it, or it is a public SDK.
 | `@zana-ai/zcc-contracts` | IPC payload Zod schemas | domain |
 | `@zana-ai/zcc-desktop-contract` | `CcApi`, preload events, IPC channel names | domain, contracts |
 | `@zana-ai/zcc-llm` | `packages/llm` (moved from `src/main/llm`) | domain; Node fetch/spawn |
-| `@zana-ai/zcc-ui` | `components/ui` primitives (`PopoverPicklist`, `Button`) | React peer |
+| `@zana-ai/zcc-ui` | `components/ui` primitives (`PopoverPicklist`, `Button`, `Kanban`) | React peer |
 | `@zana-ai/zcc-path-confine` | Rule-2 `isWithin` / `resolveContained` / `resolveContainedReal` | Node `path`/`fs`; no Electron |
 | `@zana-ai/zcc-spawn-plan` | pure spawn-plan helpers from `src/main/harness/spawn-plan.ts` | domain |
 | `@zana-ai/zcc-process-utils` | untrusted-child env allowlist (`buildChildEnv`) | Node only |

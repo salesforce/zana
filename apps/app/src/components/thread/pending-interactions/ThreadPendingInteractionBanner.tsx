@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { Check } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import {
@@ -14,9 +14,12 @@ import { MarkdownContent } from '../../MarkdownContent.js';
 import { product } from '../../../lib/product-client.js';
 import { listPendingInteractionSlots, subscribePluginSlots } from '../../../plugins/plugin-slots.js';
 import {
+  approvalDecisionIndexForKey,
   approvalDecisionLabel,
+  approvalDecisionTabIndex,
   approvalDecisionTone,
   buildPendingInteractionApprovalResolution,
+  initialApprovalDecisionIndex,
   pendingInteractionSubjectDetails,
   shouldShowPendingInteractionReason,
   type PendingInteractionDetail
@@ -82,12 +85,16 @@ function BannerShell({
   sourceThread,
   errorMessage,
   footer,
+  footerAriaLabel,
+  onFooterKeyDown,
   children
 }: {
   title?: string;
   sourceThread?: SourceThread;
   errorMessage?: string | null;
   footer?: ReactNode;
+  footerAriaLabel?: string;
+  onFooterKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
   children?: ReactNode;
 }) {
   return (
@@ -99,7 +106,17 @@ function BannerShell({
       ) : null}
       {title ? <h3 className="thread-pending-banner-title">{title}</h3> : null}
       {children}
-      {footer ? <div className="thread-pending-banner-actions">{footer}</div> : null}
+      {footer ? (
+        <div
+          className="thread-pending-banner-actions"
+          role={footerAriaLabel ? 'toolbar' : undefined}
+          aria-label={footerAriaLabel}
+          data-testid={footerAriaLabel ? 'thread-pending-decision-toolbar' : undefined}
+          onKeyDown={onFooterKeyDown}
+        >
+          {footer}
+        </div>
+      ) : null}
       {errorMessage ? <p className="thread-pending-banner-error">{errorMessage}</p> : null}
     </div>
   );
@@ -118,6 +135,19 @@ function ApprovalPendingInteractionBanner({
   const [busy, setBusy] = useState(false);
   const payload = isApprovalPendingInteractionPayload(interaction.payload) ? interaction.payload : null;
   const details = useMemo(() => pendingInteractionSubjectDetails(interaction), [interaction]);
+  const decisions = payload?.availableDecisions ?? [];
+  const [activeInteractionId, setActiveInteractionId] = useState(interaction.id);
+  const [activeIndex, setActiveIndex] = useState(() => initialApprovalDecisionIndex(decisions));
+  const buttonRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  if (activeInteractionId !== interaction.id) {
+    setActiveInteractionId(interaction.id);
+    setActiveIndex(initialApprovalDecisionIndex(decisions));
+  }
+  useEffect(() => {
+    const alreadyFocused = document.activeElement?.closest('[data-testid="thread-pending-decision-toolbar"]');
+    if (alreadyFocused) return;
+    buttonRefs.current[initialApprovalDecisionIndex(decisions)]?.focus();
+  }, [interaction.id]); // eslint-disable-line react-hooks/exhaustive-deps -- only steal focus when a new prompt appears
   if (!payload) return null;
   const title = payload.subject.kind === 'command'
     ? 'Waiting for approval'
@@ -139,18 +169,43 @@ function ApprovalPendingInteractionBanner({
       setError(caught instanceof Error ? caught.message : 'Failed to resolve pending interaction');
     }).finally(() => setBusy(false));
   };
+  const moveFocus = (index: number) => {
+    setActiveIndex(index);
+    buttonRefs.current[index]?.focus();
+  };
+  const onFooterKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (busy || interaction.status === 'resolving') return;
+    if (event.key === 'Enter' || event.key === ' ') {
+      const decision = decisions[activeIndex];
+      if (!decision) return;
+      event.preventDefault();
+      submit(decision);
+      return;
+    }
+    const next = approvalDecisionIndexForKey(event.key, activeIndex, decisions.length);
+    if (next === undefined) return;
+    event.preventDefault();
+    moveFocus(next);
+  };
   return (
     <BannerShell
       title={title}
       sourceThread={sourceThread}
       errorMessage={error}
-      footer={payload.availableDecisions.map((decision) => (
+      footerAriaLabel="Approval decisions"
+      onFooterKeyDown={onFooterKeyDown}
+      footer={decisions.map((decision, index) => (
         <button
           key={decision}
+          ref={(node) => {
+            buttonRefs.current[index] = node;
+          }}
           type="button"
           className={`thread-pending-banner-decision is-${approvalDecisionTone(decision)}`}
           data-testid={`thread-pending-decision-${decision}`}
+          tabIndex={approvalDecisionTabIndex(index, activeIndex)}
           disabled={busy || interaction.status === 'resolving'}
+          onFocus={() => setActiveIndex(index)}
           onClick={() => submit(decision)}
         >
           {approvalDecisionLabel(decision, payload.subject.kind)}

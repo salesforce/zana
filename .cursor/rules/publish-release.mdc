@@ -1,0 +1,29 @@
+---
+description: When cutting, naming, or publishing a Zana Command Center GitHub release (release:mac, gh release, tags, latest-mac.yml).
+alwaysApply: false
+---
+
+# Publishing a release
+
+Every app release must be published to **both** feeds. Do not treat one as optional.
+
+- Public product / auto-update: https://github.com/salesforce/zana/releases
+- Mirror feed: https://github.com/grebmann1/zcc-releases/releases
+
+`electron-builder` (`npm run release:mac`, `publish.owner`/`repo` in `apps/desktop/electron-builder.yml`) only writes **salesforce/zana**. After that succeeds, create or update the matching release on **grebmann1/zcc-releases** with the same tag, body, and artifacts (`*.dmg`, `*.zip`, `*.blockmap`, `latest-mac.yml`).
+
+## Release name is `x.y.z` only
+
+The GitHub **release name** (title) is the semver triple from `package.json`, nothing else.
+
+```text
+✅ 2.0.3
+❌ Zana Command Center 2.0.3
+❌ Zana Command Center v2.0.3
+❌ v2.0.3
+❌ 2.0.3-arm64
+```
+
+The git **tag** stays `vx.y.z` (example: `v2.0.3`). Do not put product copy, architecture, or a leading `v` in the release name.
+
+When using `gh release create` / `gh release edit`, pass `--title "x.y.z"` (or equivalent) on **both** repos. If a draft or published release already has a prose title, rename it to `x.y.z` before calling the release done.

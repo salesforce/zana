@@ -6,6 +6,7 @@ import type { AgentState, InboxEntry, TerminalSession } from '@zana-ai/zcc-domai
 import { isClaudeProfile } from '../lib/launchProfile.js';
 import { providerCapabilities } from '@zana-ai/zcc-domain/launch-provider';
 import { useData, useAgentStatus, useCatchUpSummary, useSubagents, useOverseerActivity, useIdleTriage, useInbox, useInboxAnswered } from '../store.js';
+import { canCloseWithFollowup, closeAgentWithFollowup } from './agentCardActions.js';
 import { idleSurfacesToNeedsYou } from './AgentBoard.js';
 import { inboxPrimaryTitle } from '../lib/inboxPresentation.js';
 import { QuestionBlock } from './InboxQuestionBlock.js';
@@ -181,15 +182,12 @@ export function AgentTerminalModal({
   const [closingWithFollowup, setClosingWithFollowup] = useState(false);
   const closeWithFollowup = async () => {
     if (closingWithFollowup) return;
-    if (!window.confirm(`Close “${session.title}” and file a follow-up if work is left?`)) return;
     setClosingWithFollowup(true);
     try {
-      // Reuse the board's Close path with summarize=on: it folds a summary and
-      // files a follow-up if work is left, then closes the one agent.
-      await useData.getState().closeIdleAgents(projectId, [session.id], true);
+      const confirmed = await closeAgentWithFollowup(session, projectId);
+      if (confirmed) onClose();
     } finally {
       setClosingWithFollowup(false);
-      onClose();
     }
   };
 
@@ -259,7 +257,7 @@ export function AgentTerminalModal({
           <Square size={13} /> Close Session
         </button>
       )}
-      {!exited && isClaudeProfile(session.profile) && (
+      {!exited && canCloseWithFollowup(session) && (
         <button
           type="button"
           className="agent-monitor-action"

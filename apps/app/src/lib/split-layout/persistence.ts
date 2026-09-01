@@ -15,6 +15,7 @@ function isNonEmptyString(value: unknown): value is string {
 function parsePaneContent(value: unknown): PaneContent | null {
   if (!isRecord(value) || typeof value.kind !== 'string') return null;
   if (value.kind === 'home') return { kind: 'home' };
+  if (value.kind === 'agents') return { kind: 'agents' };
   if (value.kind === 'new-thread') {
     const projectId = value.projectId;
     if (projectId === undefined || projectId === null) return { kind: 'new-thread' };

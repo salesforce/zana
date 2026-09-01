@@ -6,6 +6,7 @@ import {
   ExternalLink,
   Inbox,
   Loader2,
+  MailCheck,
   RotateCw,
   Square,
   Trash2,
@@ -16,7 +17,13 @@ import { useData, useUi, usePersonas } from '../store.js';
 import { profileIcon, personaIcon } from '../lib/profileIcon.js';
 import { isClaudeProfile } from '../lib/launchProfile.js';
 import { AGENT_MONITOR_TERMINAL_ANCHOR_ID } from './TerminalSurface.js';
-import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from './agentCardActions.js';
+import {
+  useAgentCardActions,
+  AgentCardMenu,
+  clampMenuAnchor,
+  canCloseWithFollowup,
+  closeAgentWithFollowup
+} from './agentCardActions.js';
 import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from './threadCardActions.js';
 import { PromptModal } from './PromptModal.js';
 import { AgentSessionView } from './AgentSessionView.js';
@@ -407,7 +414,9 @@ function AgentMonitorSession({ card, showProject }: { card: AgentCard; showProje
   const project = useData((s) => s.projects.find((row) => row.id === card.projectId));
   const openInWorkspace = () => openAgentInWorkspace(card);
   const canSummarize = isClaudeProfile(t.profile);
+  const canFollowupClose = canCloseWithFollowup(t);
   const [summarizing, setSummarizing] = useState(false);
+  const [closingWithFollowup, setClosingWithFollowup] = useState(false);
   const summarize = async () => {
     if (summarizing) return;
     setSummarizing(true);
@@ -417,10 +426,20 @@ function AgentMonitorSession({ card, showProject }: { card: AgentCard; showProje
       setSummarizing(false);
     }
   };
+  const closeWithFollowup = async () => {
+    if (closingWithFollowup) return;
+    setClosingWithFollowup(true);
+    try {
+      await closeAgentWithFollowup(t, card.projectId);
+    } finally {
+      setClosingWithFollowup(false);
+    }
+  };
   const prevId = useRef(t.id);
   if (prevId.current !== t.id) {
     prevId.current = t.id;
     if (summarizing) setSummarizing(false);
+    if (closingWithFollowup) setClosingWithFollowup(false);
   }
 
   const monitorActions = (
@@ -447,6 +466,18 @@ function AgentMonitorSession({ card, showProject }: { card: AgentCard; showProje
       >
         <RotateCw size={13} /> Restart
       </button>
+      {canFollowupClose && (
+        <button
+          type="button"
+          className="agent-monitor-action"
+          onClick={closeWithFollowup}
+          disabled={closingWithFollowup}
+          title="Close the agent, summarising its work to your inbox and filing a follow-up if it left something unfinished"
+        >
+          {closingWithFollowup ? <Loader2 size={13} className="spin" /> : <MailCheck size={13} />}
+          {closingWithFollowup ? 'Closing…' : 'Close with follow-up'}
+        </button>
+      )}
       {canSummarize && (
         <button
           type="button"

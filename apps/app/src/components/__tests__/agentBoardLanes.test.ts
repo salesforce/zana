@@ -96,11 +96,54 @@ describe('AgentBoard thread cards', () => {
     expect(source).not.toContain('MessageSquare');
   });
 
+  it('keeps chip then status dot then favorite star on both CLI and thread cards', () => {
+    const source = readFileSync(new URL('../AgentBoard.tsx', import.meta.url), 'utf8');
+    const agentHeadStart = source.indexOf('<span className="agent-card-head">');
+    const agentHead = source.slice(
+      agentHeadStart,
+      source.indexOf('{triageBadge &&', agentHeadStart)
+    );
+    const threadFn = source.indexOf('const renderThreadCard');
+    const threadHeadStart = source.indexOf('<span className="agent-card-head">', threadFn);
+    const threadHead = source.slice(
+      threadHeadStart,
+      source.indexOf('<span className="agent-card-meta">', threadHeadStart)
+    );
+    for (const head of [agentHead, threadHead]) {
+      const chip = head.indexOf('FleetKindChip');
+      const dot = head.indexOf('tab-agent-dot');
+      const star = head.indexOf('FavoriteStar');
+      expect(chip).toBeGreaterThan(-1);
+      expect(dot).toBeGreaterThan(chip);
+      expect(star).toBeGreaterThan(dot);
+    }
+    expect(threadHead).toContain("kind: 'thread'");
+    expect(threadHead).not.toContain('idle for');
+  });
+
   it('renders schedule jobs as board cards in the Scheduled lane', () => {
     const source = readFileSync(new URL('../AgentBoard.tsx', import.meta.url), 'utf8');
     expect(source).toContain('renderScheduleCard');
     expect(source).toContain('isScheduleFleet');
     expect(source).toContain('compareScheduleFleet');
     expect(source).toContain('data-kind="schedule"');
+  });
+
+  it('pans the lanes canvas on empty-space drag', () => {
+    const source = readFileSync(new URL('../AgentBoard.tsx', import.meta.url), 'utf8');
+    const kanban = readFileSync(
+      new URL('../../../../../packages/ui/src/kanban.tsx', import.meta.url),
+      'utf8'
+    );
+    const kanbanCss = readFileSync(
+      new URL('../../../../../packages/ui/src/kanban.css', import.meta.url),
+      'utf8'
+    );
+    expect(source).toContain("from '@zana-ai/zcc-ui/kanban'");
+    expect(source).toContain('<Kanban');
+    expect(source).toContain('<KanbanColumn');
+    expect(kanban).toContain("import './kanban.css'");
+    expect(kanbanCss).toContain('.zcc-kanban.is-panning');
+    expect(kanbanCss).toMatch(/\.zcc-kanban \{[^}]*overflow:\s*auto;/);
   });
 });

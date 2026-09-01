@@ -3,12 +3,12 @@ import { useFavoriteAgents, favoriteKey } from '../store.js';
 
 interface FavoriteStarProps {
   /**
-   * The session to star/unstar. We derive the persisted favorite key from it
-   * ({@link favoriteKey}) — the STABLE `claudeSessionId` when present, so the
-   * star survives a relaunch (a restored agent resumes the same conversation
-   * id), falling back to the ephemeral `session.id` for non-claude agents.
+   * The session or conversation thread to star/unstar. We derive the
+   * persisted favorite key from it ({@link favoriteKey}): `kind: 'thread'`
+   * namespaces as `thread:<id>`; otherwise the STABLE `claudeSessionId` when
+   * present, falling back to the ephemeral `session.id` for non-claude agents.
    */
-  session: { id: string; claudeSessionId?: string };
+  session: { id: string; claudeSessionId?: string; kind?: 'thread' };
   /** Pixel size of the star glyph (default 14). */
   size?: number;
   /** Extra class on the toggle (placement tweaks live in the call site's CSS). */

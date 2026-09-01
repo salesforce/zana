@@ -3,6 +3,7 @@ import { callPluginRpc, definePluginApp } from '@zana-ai/zcc-plugin-sdk/app';
 import PrMonitorPanel from './src/app/PrMonitorPanel.js';
 import { createPluginPanelHost, setBadgeRefresh } from './src/app/adapter.js';
 import styles from './src/app/styles.css';
+import kanbanCss from '@zana-ai/zcc-ui/kanban.css';
 
 const PLUGIN_ID = 'pr-monitor';
 const STYLE_TAG_ID = 'prm-plugin-styles';
@@ -11,12 +12,12 @@ export function injectStyles(): void {
   if (typeof document === 'undefined') return;
   const existing = document.getElementById(STYLE_TAG_ID);
   if (existing instanceof HTMLStyleElement) {
-    existing.textContent = styles;
+    existing.textContent = `${kanbanCss}\n${styles}`;
     return;
   }
   const tag = document.createElement('style');
   tag.id = STYLE_TAG_ID;
-  tag.textContent = styles;
+  tag.textContent = `${kanbanCss}\n${styles}`;
   document.head.appendChild(tag);
 }
 

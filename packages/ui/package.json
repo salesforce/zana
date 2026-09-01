@@ -10,11 +10,12 @@
       "source": "./src/button.tsx",
       "default": "./src/button.tsx"
     },
-    "./popover-picklist": {
-      "types": "./src/popover-picklist.tsx",
-      "source": "./src/popover-picklist.tsx",
-      "default": "./src/popover-picklist.tsx"
-    }
+    "./kanban": {
+      "types": "./src/kanban.tsx",
+      "source": "./src/kanban.tsx",
+      "default": "./src/kanban.tsx"
+    },
+    "./kanban.css": "./src/kanban.css"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json"

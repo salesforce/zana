@@ -755,7 +755,7 @@ export function ThreadDetail({
               <ThreadCommandComposer
                 threadId={threadId}
                 project={project ?? undefined}
-                autoFocus={!embedded && pane?.isFocused !== false}
+                autoFocus={!embedded && pane?.isFocused !== false && pendingInteractions.length === 0}
                 status={status}
                 inFlightRetry={inFlightRetry}
                 sendBlocked={pendingInteractions.length > 0}

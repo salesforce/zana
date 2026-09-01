@@ -45,11 +45,15 @@ describe('single shell <main> landmark', () => {
     expect(src('components/TerminalSurface.tsx')).not.toMatch(/terminal-surface-host/);
   });
 
-  it('mounts AgentsView on the /agents route', () => {
+  it('serves AgentsView as split-workspace pane content on /agents', () => {
     const app = src('App.tsx');
+    const area = src('views/thread-detail/SplitThreadArea.tsx');
     expect(app).toMatch(/path=\{AGENTS_ROUTE_PATH\}/);
-    expect(app).toMatch(/element=\{<AgentsView \/>\}/);
+    expect(app).toMatch(/path=\{AGENTS_ROUTE_PATH\} element=\{null\}/);
+    expect(app).not.toMatch(/element=\{<AgentsView \/>\}/);
     expect(app).not.toMatch(/nav === 'projects' && !focusedProjectId/);
+    expect(area).toContain("content.kind === 'agents'");
+    expect(area).toContain('<AgentsView />');
   });
 
   it('never mounts ListPane as a shell column and always applies scoped-no-list', () => {

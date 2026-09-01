@@ -551,6 +551,14 @@ describe('host-rpc contract', () => {
       path: '/tmp/proj/a.ts',
       rootPath: '/tmp/proj'
     }).type).toBe('host.read_path');
+    expect(parseHostRpcResult('host.read_file', {
+      content: '# Notes',
+      encoding: 'utf8'
+    })).toEqual({ content: '# Notes', encoding: 'utf8' });
+    expect(parseHostRpcResult('host.read_file', {
+      content: 'iVBORw0KGgo=',
+      encoding: 'base64'
+    })).toEqual({ content: 'iVBORw0KGgo=', encoding: 'base64' });
     expect(parseHostRpcResult('host.read_path', {
       path: '/tmp/proj/a.ts',
       content: 'hello',

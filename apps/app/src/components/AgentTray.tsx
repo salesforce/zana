@@ -261,6 +261,7 @@ export function AgentTray({
                 {item.state === 'blocked' && (
                   <span className="agent-tray-needs-you">{STATE_LABEL[item.state]}</span>
                 )}
+                <FavoriteStar session={{ id: item.id, kind: 'thread' }} className="agent-tray-fav" />
               </button>
             );
           }

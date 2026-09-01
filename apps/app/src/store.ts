@@ -744,7 +744,7 @@ function mirroredConfigFlags(config: AppConfig) {
     followUpsEnabled: config.followUpsEnabled ?? false,
     idleAttentionSensitivity: config.idleAttentionSensitivity ?? 'medium',
     agentListNeedsYouFromTriage: config.agentListNeedsYouFromTriage ?? false,
-    includeScheduledAgentsInAgentView: config.includeScheduledAgentsInAgentView ?? false,
+    includeScheduledAgentsInAgentView: config.includeScheduledAgentsInAgentView ?? true,
     voiceInputEnabled: config.voiceInputEnabled ?? false,
     autoCloseIdleEnabled: config.autoCloseIdleEnabled ?? false,
     overseerMode: config.overseerMode ?? 'off',
@@ -1421,7 +1421,7 @@ interface DataState {
   agentListNeedsYouFromTriage: boolean;
   /** Mirror of AppConfig.includeScheduledAgentsInAgentView — when on, scheduler
    *  jobs appear on the Agents board Scheduled column (plus live runs in
-   *  Working/Done). Default off. */
+   *  Working/Done). Default on. */
   includeScheduledAgentsInAgentView: boolean;
   /** Mirror of AppConfig.voiceInputEnabled — gates the mic button in the prompt
    *  composer. Hydrated on init, kept live by the Settings toggle. Default off. */
@@ -1814,7 +1814,7 @@ export const useData = create<DataState>((set, get) => ({
   followUpsEnabled: false,
   idleAttentionSensitivity: 'medium',
   agentListNeedsYouFromTriage: false,
-  includeScheduledAgentsInAgentView: false,
+  includeScheduledAgentsInAgentView: true,
   voiceInputEnabled: false,
   steerActiveThreadOnEnter: false,
   autoCloseIdleEnabled: false,

@@ -120,7 +120,7 @@ export default defineConfig({
       },
       {
         find: /^@zana-ai\/zcc-ui\/(.*)$/,
-        replacement: resolve(__dirname, 'packages/ui/src/$1.tsx')
+        replacement: resolve(__dirname, 'packages/ui/src') + '/$1'
       },
       {
         find: /^@zana-ai\/zcc-desktop-contract$/,
