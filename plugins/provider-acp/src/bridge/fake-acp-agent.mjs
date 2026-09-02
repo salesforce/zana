@@ -74,7 +74,6 @@ const acceptNativeReasoning =
   process.env.FAKE_ACP_ACCEPT_NATIVE_REASONING === "1";
 const setConfigModelError = process.env.FAKE_ACP_SET_CONFIG_MODEL_ERROR === "1";
 const setConfigFastError = process.env.FAKE_ACP_SET_CONFIG_FAST_ERROR === "1";
-const modeConfig = process.env.FAKE_ACP_MODE_CONFIG === "1";
 const cursorParameterizedModels =
   process.env.FAKE_ACP_CURSOR_PARAMETERIZED_MODELS === "1";
 const requestLog = process.env.FAKE_ACP_REQUEST_LOG;
@@ -111,7 +110,6 @@ let nextAgentRequestId = 1000;
 let selectedModel = "fake/default";
 let selectedEffort = "none";
 let selectedFast = process.env.FAKE_ACP_INITIAL_FAST ?? "false";
-let selectedMode = "build";
 let clientSupportsParameterizedModels = false;
 let authenticatedMethod = null;
 let activeSessionId = sessionId;
@@ -271,6 +269,14 @@ function configOptions() {
   if (modelConfig) {
     options.push(
       {
+        id: "mode",
+        name: "Mode",
+        category: "mode",
+        type: "select",
+        currentValue: true,
+        options: [{ value: "build", name: "Build" }],
+      },
+      {
         id: "model",
         name: "Model",
         category: "model",
@@ -279,19 +285,6 @@ function configOptions() {
         options: fakeModels,
       },
     );
-  }
-  if (modeConfig) {
-    options.push({
-      id: "mode",
-      name: "Mode",
-      category: "mode",
-      type: "select",
-      currentValue: selectedMode,
-      options: [
-        { value: "build", name: "Build" },
-        { value: "plan", name: "Plan" },
-      ],
-    });
   }
   const effort = effortOptionForModel(selectedModel);
   if (effort) {
@@ -444,8 +437,6 @@ async function handlePrompt(message) {
     notifyUpdate(messageChunk(`argv:${process.argv.slice(2).join(" ")}`));
   } else if (text.includes("echo-selected-model")) {
     notifyUpdate(messageChunk(`selected-model:${selectedModel}`));
-  } else if (text.includes("echo-selected-mode")) {
-    notifyUpdate(messageChunk(`selected-mode:${selectedMode}`));
   } else if (text.includes("echo-selected-effort")) {
     notifyUpdate(messageChunk(`selected-effort:${selectedEffort}`));
   } else if (text.includes("echo-selected-fast")) {
@@ -695,19 +686,6 @@ async function handleMessage(message) {
           return;
         }
         selectedEffort = value;
-        send({ jsonrpc: "2.0", id: message.id, result: configState() });
-        return;
-      }
-      if (configId === "mode" && modeConfig) {
-        if (value !== "build" && value !== "plan") {
-          send({
-            jsonrpc: "2.0",
-            id: message.id,
-            error: { code: -32602, message: `mode not found: ${value}` },
-          });
-          return;
-        }
-        selectedMode = value;
         send({ jsonrpc: "2.0", id: message.id, result: configState() });
         return;
       }

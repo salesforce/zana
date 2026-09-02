@@ -118,7 +118,6 @@ import {
   splitPrimaryModels,
   type AcpNativeReasoningSupport,
   type AgentModelCatalog,
-  findAcpModeConfigOption,
 } from "./model-catalog.js";
 import {
   buildAcpMcpServerConfig,
@@ -170,8 +169,6 @@ interface AcpThreadSession {
   /** Resolves when the in-flight turn or maintenance prompt fully settles. */
   turnSettled: Promise<void> | undefined;
   pendingPermissions: Set<PendingAcpPermission>;
-  configOptions: readonly AcpConfigOption[] | undefined;
-  acpMode: string | undefined;
 }
 
 const sessionsByBbThreadId = new Map<string, AcpThreadSession>();
@@ -712,7 +709,6 @@ const SESSION_MODEL_DISCOVERY_TTL_MS = 60_000;
 let cachedSessionDiscoveredModels: {
   key: string;
   models: AvailableModel[];
-  acpMode?: { currentValue?: string; options: Array<{ value: string; name?: string }> };
   fetchedAt: number;
 } | null = null;
 
@@ -829,7 +825,7 @@ async function loadSessionDiscoveredModels(
   agent: AcpBridgeAgentCommand,
   reasoningProbePriorityModelIds: readonly string[],
   parameterizedModelPicker: boolean,
-): Promise<{ models: AvailableModel[]; acpMode?: { currentValue?: string; options: Array<{ value: string; name?: string }> } } | null> {
+): Promise<AvailableModel[] | null> {
   const key = JSON.stringify({
     agent,
     reasoningProbePriorityModelIds,
@@ -840,12 +836,7 @@ async function loadSessionDiscoveredModels(
     Date.now() - cachedSessionDiscoveredModels.fetchedAt <
       SESSION_MODEL_DISCOVERY_TTL_MS
   ) {
-    return {
-      models: cachedSessionDiscoveredModels.models,
-      ...(cachedSessionDiscoveredModels.acpMode
-        ? { acpMode: cachedSessionDiscoveredModels.acpMode }
-        : {}),
-    };
+    return cachedSessionDiscoveredModels.models;
   }
 
   const childEnv = {
@@ -945,28 +936,12 @@ async function loadSessionDiscoveredModels(
               newSession.models,
               reasoningByModel,
             );
-    const modeOption = findAcpModeConfigOption(newSession.configOptions);
-    const acpMode = modeOption?.options
-      ? {
-          ...(modeOption.currentValue !== undefined
-            ? { currentValue: modeOption.currentValue }
-            : {}),
-          options: modeOption.options.map((option) => ({
-            value: option.value,
-            ...(option.name !== undefined ? { name: option.name } : {}),
-          })),
-        }
-      : undefined;
     cachedSessionDiscoveredModels = {
       key,
       models,
-      ...(acpMode ? { acpMode } : {}),
       fetchedAt: Date.now(),
     };
-    return {
-      models,
-      ...(acpMode ? { acpMode } : {}),
-    };
+    return models;
   } catch (error) {
     process.stderr.write(
       `acp bridge: ACP-native model discovery for "${agent.command}" failed: ${
@@ -1339,36 +1314,6 @@ async function selectAcpNativeServiceTier(args: {
     },
     resultSchema: acpConfigStateResultSchema,
   });
-}
-
-async function selectAcpNativeMode(args: {
-  connection: AcpAgentConnection;
-  sessionId: string;
-  configOptions: readonly AcpConfigOption[] | undefined;
-  acpMode: string | undefined;
-}): Promise<readonly AcpConfigOption[] | undefined> {
-  if (args.acpMode === undefined) return args.configOptions;
-  const modeOption = findAcpModeConfigOption(args.configOptions);
-  if (
-    !modeOption?.options?.some((option) => option.value === args.acpMode) ||
-    modeOption.currentValue === args.acpMode
-  ) {
-    return args.configOptions;
-  }
-  try {
-    const configState = await args.connection.request({
-      method: "session/set_config_option",
-      params: {
-        sessionId: args.sessionId,
-        configId: modeOption.id,
-        value: args.acpMode,
-      },
-      resultSchema: acpConfigStateResultSchema,
-    });
-    return configState.configOptions ?? args.configOptions;
-  } catch {
-    return args.configOptions;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1811,8 +1756,6 @@ async function startAgentSession(
     stopping: false,
     turnSettled: undefined,
     pendingPermissions: new Set(),
-    configOptions: undefined,
-    acpMode: params.acpMode,
   };
 
   try {
@@ -1917,13 +1860,6 @@ async function startAgentSession(
         modelSelection: params.modelSelection,
         nativeReasoning: params.nativeReasoning,
       });
-      session.configOptions = newSession.configOptions;
-      session.configOptions = await selectAcpNativeMode({
-        connection,
-        sessionId,
-        configOptions: session.configOptions,
-        acpMode: params.acpMode,
-      });
       if (request.kind === "resume") {
         emitStartNotification(ACP_WARNING_METHOD, {
           threadId: bbThreadId,
@@ -1938,13 +1874,6 @@ async function startAgentSession(
         models: loadedModels,
         modelSelection: params.modelSelection,
         nativeReasoning: params.nativeReasoning,
-      });
-      session.configOptions = loadedConfigOptions;
-      session.configOptions = await selectAcpNativeMode({
-        connection,
-        sessionId,
-        configOptions: session.configOptions,
-        acpMode: params.acpMode,
       });
       const loadUsageUpdate = session.pendingLoadUsageUpdate;
       session.loading = false;
@@ -2320,18 +2249,16 @@ async function handleModelList(
       )
     : null;
   if (sessionDiscoveredModels) {
-    sendResult(id, {
-      ...splitPrimaryModels(
-        applyConfiguredReasoningToModels(sessionDiscoveredModels.models, {
+    sendResult(
+      id,
+      splitPrimaryModels(
+        applyConfiguredReasoningToModels(sessionDiscoveredModels, {
           reasoningCli: params.reasoningCli,
           nativeReasoning: params.nativeReasoning,
         }),
         params.primaryModels,
       ),
-      ...(sessionDiscoveredModels.acpMode
-        ? { acpMode: sessionDiscoveredModels.acpMode }
-        : {}),
-    });
+    );
     return;
   }
   const catalog = params.listCommand
@@ -2576,17 +2503,6 @@ async function handleRequest(
       sendThreadDeltas(session.bbThreadId, [
         { kind: "input.accepted", clientRequestId: params.clientRequestId },
       ]);
-      const requestedMode =
-        typeof params.options.providerOptions?.acpMode === "string"
-          ? params.options.providerOptions.acpMode
-          : undefined;
-      session.configOptions = await selectAcpNativeMode({
-        connection: session.connection,
-        sessionId: session.providerThreadId,
-        configOptions: session.configOptions,
-        acpMode: requestedMode,
-      });
-      session.acpMode = requestedMode;
       // A standalone builtin `/compact` mention is bb's manual-compaction
       // request, not model input: it runs the agent's own compaction command
       // instead of becoming a prompt.

@@ -145,6 +145,7 @@ test.describe('Quick Agent OpenCode startup warmup', () => {
       await goToAgents(window);
       const modal = await openLegacyAgentLauncher(window);
       await modal.getByLabel('Launch harness').locator('[data-testid="launch-profile-opencode"]').click();
+      await modal.getByRole('button', { name: 'Customize launch' }).click();
       const picker = modal.locator('#launch-role-target');
       await expect(picker).toBeEnabled();
       await expect(picker.locator('option')).toHaveText([
@@ -189,6 +190,8 @@ test('real OpenCode CLI agents become selectable through Electron UI', async ({ 
     const harness = modal.getByLabel('Launch harness').locator('[data-testid="launch-profile-opencode"]');
     await expect(harness).toBeEnabled();
     await harness.click();
+    await modal.getByRole('button', { name: 'Customize launch' }).click();
+
     const picker = modal.locator('#launch-role-target');
     await expect(picker).toBeEnabled({ timeout: 30_000 });
     await expect(picker.locator('option')).toContainText(['build [Accept Edits, Autonomous]', 'plan [Plan]', 'custom-agent', 'test-primary']);
@@ -233,6 +236,8 @@ test.describe('real OpenCode home integration', () => {
       const harness = modal.getByLabel('Launch harness').locator('[data-testid="launch-profile-opencode"]');
       await expect(harness).toBeEnabled();
       await harness.click();
+      await modal.getByRole('button', { name: 'Customize launch' }).click();
+
       const picker = modal.locator('#launch-role-target');
       await expect(picker).toBeEnabled({ timeout: 30_000 }).catch(async (error) => {
         await events.poll();
@@ -244,11 +249,10 @@ test.describe('real OpenCode home integration', () => {
       const options = await picker.locator('option').allTextContents();
       expect(options).toEqual(expect.arrayContaining([
         'build [Accept Edits, Autonomous]',
-        'plan [Plan]'
+        'plan [Plan]',
+        'custom-agent'
       ]));
-      expect(options.some((option) => option !== 'Use harness default'
-        && !option.startsWith('build')
-        && !option.startsWith('plan'))).toBe(true);
+      expect(options.some((option) => option.startsWith('test-primary'))).toBe(true);
       expect(options).not.toEqual(expect.arrayContaining(['compaction', 'summary', 'title', 'test-subagent']));
       await picker.selectOption('plan');
       await expect(picker).toHaveValue('plan');

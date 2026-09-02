@@ -21,7 +21,6 @@ export interface ThreadRuntimeAdapter {
     mode?: string;
     model?: string;
     reasoningLevel?: ReasoningLevel;
-    acpMode?: string;
     clientRequestId?: string;
   }): Promise<void>;
   resumeWork(input: ThreadResumeInput): Promise<{ providerThreadId?: string } | void>;

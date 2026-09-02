@@ -80,7 +80,6 @@ export type ProviderExecutionContext = {
   instructions?: string;
   envVars?: Record<string, string>;
   skillRoots?: readonly AgentRuntimeSkillRoot[];
-  providerOptions?: Record<string, unknown>;
 } & RuntimePermissionPolicy;
 
 export type AdapterCommand =
@@ -273,7 +272,6 @@ export interface ProviderAdapter {
   parseModelListResult(result: unknown): {
     models: AvailableModel[];
     selectedOnlyModels: AvailableModel[];
-    acpMode?: { currentValue?: string; options: Array<{ value: string; name?: string }> };
   };
   translateEvent(
     event: ProviderRuntimeEvent,

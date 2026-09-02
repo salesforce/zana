@@ -190,10 +190,6 @@ export const modelListResultSchema = z
   .object({
     models: z.array(availableModelSchema),
     selectedOnlyModels: z.array(availableModelSchema).default([]),
-    acpMode: z.object({
-      currentValue: z.string().optional(),
-      options: z.array(z.object({ value: z.string(), name: z.string().optional() })),
-    }).optional(),
   })
   .passthrough();
 

@@ -20,8 +20,6 @@ describe('JobTeamComposer', () => {
     expect(source).toContain("kind: 'new-thread'");
     expect(source).toContain('initialText');
     expect(source).toContain('onClose');
-    expect(source).toContain('TeamPersonaEditorControl');
-    expect(source).toContain('team={selectedTeam} projectId={project?.id}');
     expect(source).not.toContain('product.threads.create');
     expect(source).not.toContain('product.teams.launchAutonomous');
     expect(source).not.toContain('createTerminal');

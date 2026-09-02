@@ -29,7 +29,6 @@ export interface ThreadExecutionOptionsResponse {
   models: AvailableModel[];
   selectedOnlyModels: AvailableModel[];
   modelLoadError: { providerId: string; code: ThreadModelLoadErrorCode } | null;
-  acpMode?: { currentValue?: string; options: Array<{ value: string; name?: string }> };
 }
 
 const CLAUDE_REASONING_LEVELS: readonly ReasoningLevel[] = [
@@ -345,7 +344,7 @@ export function classifyModelListError(error: unknown): Exclude<ThreadModelLoadE
 export function buildThreadExecutionOptions(input: {
   providerId?: string;
   availability: readonly HarnessVerifyResult[];
-  listed?: { models: AvailableModel[]; selectedOnlyModels: AvailableModel[]; acpMode?: { currentValue?: string; options: Array<{ value: string; name?: string }> } } | null;
+  listed?: { models: AvailableModel[]; selectedOnlyModels: AvailableModel[] } | null;
   listError?: ThreadModelLoadErrorCode | null;
 }): ThreadExecutionOptionsResponse {
   const catalog = listThreadProviders();
@@ -368,7 +367,6 @@ export function buildThreadExecutionOptions(input: {
     permissionCeiling: 'full',
     models: useListed ? input.listed!.models : staticModels,
     selectedOnlyModels: useListed ? input.listed!.selectedOnlyModels : staticMore,
-    modelLoadError,
-    ...(input.listed?.acpMode ? { acpMode: input.listed.acpMode } : {})
+    modelLoadError
   };
 }

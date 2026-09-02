@@ -36,7 +36,6 @@ export interface AcpSessionExecutionOptions {
   permissionMode: PermissionMode;
   permissionEscalation: PermissionEscalation | null;
   skillRoots?: readonly AcpSkillRoot[] | undefined;
-  providerOptions?: Record<string, unknown> | undefined;
 }
 
 /**
@@ -118,7 +117,6 @@ export interface AcpSessionParams {
   cwd: string;
   agent: { command: string; args: string[] };
   modelSelection?: AcpModelSelection;
-  acpMode?: string;
   /**
    * Launch-time reasoning level for agents that take reasoning as a global CLI
    * flag rather than an ACP `thought_level` config option.
@@ -413,9 +411,6 @@ export function buildAcpSessionParams(
       args.parameterizedModelPicker,
       args.dialectId,
     ),
-    ...(typeof options.providerOptions?.acpMode === "string"
-      ? { acpMode: options.providerOptions.acpMode }
-      : {}),
     parameterizedModelPicker: args.parameterizedModelPicker,
     ...(profile.reasoningCli !== undefined
       ? { reasoningCli: profile.reasoningCli }
