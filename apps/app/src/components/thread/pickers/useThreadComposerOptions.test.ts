@@ -31,4 +31,13 @@ describe('useThreadComposerOptions', () => {
     expect(source).toContain('preferredComposerModel');
     expect(source).toContain('if (persistSelection)');
   });
+
+  it('gates Native role on advertised modes, adopts the session default, and exposes refresh', () => {
+    const source = readFileSync(new URL('./useThreadComposerOptions.ts', import.meta.url), 'utf8');
+    expect(source).toContain("const acpModeOptions = cached?.acpMode?.options ?? []");
+    expect(source).toContain('setAcpMode(current)');
+    expect(source).toContain('acpModeOptions.some((option) => option.value === acpMode)');
+    expect(source).toContain('reloadThreadProviderModels(providerId)');
+    expect(source).toContain('refreshAcpModeOptions');
+  });
 });

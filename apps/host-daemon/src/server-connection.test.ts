@@ -13,6 +13,7 @@ function stubRuntime(dataDir: string): CommandRuntime {
     terminals: new Map(),
     provisionSignals: new Map(),
     lanes: new Map(),
+    loadConfig: () => ({}) as ReturnType<CommandRuntime['loadConfig']>,
     verifyProviders: async () => ({ providers: [] }),
     emit: () => undefined
   };

@@ -16,7 +16,7 @@ export interface DeferredSendPayload {
   kind: 'send';
   input: unknown;
   mode: ThreadSendMode;
-  execution?: { model?: string; reasoningLevel?: ReasoningLevel };
+  execution?: { model?: string; reasoningLevel?: ReasoningLevel; acpMode?: string };
 }
 
 function isDeferredSendPayload(value: unknown): value is DeferredSendPayload {
@@ -39,7 +39,7 @@ export function deferConversationSend(
     threadId: string;
     input: unknown;
     mode: ThreadSendMode;
-    execution?: { model?: string; reasoningLevel?: ReasoningLevel };
+    execution?: { model?: string; reasoningLevel?: ReasoningLevel; acpMode?: string };
   }
 ): void {
   if (countDeferredThreadMessages(ctx.db, args.threadId) >= DEFERRED_THREAD_MESSAGE_CAP) {

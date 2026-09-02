@@ -21,6 +21,7 @@ import { ComposerPromptField } from './composer/ComposerPromptField.js';
 import { useComposerPromptField } from './composer/use-composer-prompt-field.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import { defaultAutonomousTeamId } from './autonomous-team-composer.js';
+import { TeamPersonaEditorControl } from './TeamPersonaEditorControl.js';
 import {
   absolutePathMentions,
   assembleCliLaunchPrompt,
@@ -208,7 +209,7 @@ export function AutonomousTeamComposer({
             />
           ) : (
             <>
-              <div className="thread-command-footer-start">
+               <div className="thread-command-footer-start">
                 <div className="thread-command-chip">
                   <Users size={14} aria-hidden="true" />
                   <PopoverPicklist
@@ -227,6 +228,7 @@ export function AutonomousTeamComposer({
                     emptyHint="No teams configured"
                   />
                 </div>
+                <TeamPersonaEditorControl team={selectedTeam} projectId={project?.id} />
               </div>
               <div className="thread-command-footer-end">
                 <ComposerIconButton

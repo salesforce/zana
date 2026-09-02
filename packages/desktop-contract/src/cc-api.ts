@@ -422,6 +422,7 @@ export interface CcApi {
       permissionMode?: 'accept-edits' | 'auto' | 'full';
       model?: string;
       reasoningLevel?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'ultracode' | 'max' | 'ultra';
+      acpMode?: string;
     }): Promise<Result<{
       id: string;
       projectId: string;
@@ -483,6 +484,7 @@ export interface CcApi {
       extras?: {
         model?: string;
         reasoningLevel?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'ultracode' | 'max' | 'ultra';
+        acpMode?: string;
       }
     ): Promise<{ ok: boolean }>;
     stop(threadId: string): Promise<{ ok: boolean }>;
@@ -600,6 +602,10 @@ export interface CcApi {
       }>;
       permissionCeiling: string;
       modelLoadError: { providerId: string; code: string } | null;
+      acpMode?: {
+        currentValue?: string;
+        options: Array<{ value: string; name?: string }>;
+      };
     }>;
     providers(): Promise<{ providers: Array<{
       id: string;

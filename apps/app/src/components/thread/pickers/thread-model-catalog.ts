@@ -11,6 +11,7 @@ export type ThreadModelCatalogEntry = {
   models: AvailableModel[];
   selectedOnlyModels: AvailableModel[];
   modelLoadError: string | null;
+  acpMode?: { currentValue?: string; options: Array<{ value: string; name?: string }> };
 };
 
 export type ThreadModelCatalogSnapshot = {
@@ -65,7 +66,7 @@ function mapProviders(rows: ExecutionOptionsBody['providers'] | undefined): Thre
 
 function entryFor(
   providerId: string,
-  body: Pick<ExecutionOptionsBody, 'models' | 'selectedOnlyModels' | 'modelLoadError'> | null
+  body: Pick<ExecutionOptionsBody, 'models' | 'selectedOnlyModels' | 'modelLoadError' | 'acpMode'> | null
 ): ThreadModelCatalogEntry {
   const models = (body?.models ?? []) as AvailableModel[];
   const selectedOnlyModels = (body?.selectedOnlyModels ?? []) as AvailableModel[];
@@ -75,7 +76,8 @@ function entryFor(
       selectedOnlyModels.length > 0
         ? selectedOnlyModels
         : fallbackMoreModelsForProvider(providerId),
-    modelLoadError: body?.modelLoadError?.code ?? (body ? null : 'failed')
+    modelLoadError: body?.modelLoadError?.code ?? (body ? null : 'failed'),
+    ...(body?.acpMode ? { acpMode: body.acpMode } : {})
   };
 }
 

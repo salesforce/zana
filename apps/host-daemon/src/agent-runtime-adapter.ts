@@ -136,8 +136,12 @@ function executionOptions(input: {
   permissionMode?: RuntimeThreadExecutionOptions['permissionMode'];
   model?: string;
   reasoningLevel?: ReasoningLevel;
+  acpMode?: string;
 }): RuntimeThreadExecutionOptions {
-  return threadExecutionOptions(input);
+  return {
+    ...threadExecutionOptions(input),
+    ...(input.acpMode ? { providerOptions: { acpMode: input.acpMode } } : {})
+  };
 }
 
 function toRuntimeBridgeLaunch(
@@ -369,7 +373,8 @@ export function createAgentRuntimeAdapter(options: {
       });
       return {
         models: listed.models,
-        selectedOnlyModels: listed.selectedOnlyModels
+        selectedOnlyModels: listed.selectedOnlyModels,
+        ...(listed.acpMode ? { acpMode: listed.acpMode } : {})
       };
     },
     async startWork(input: ThreadWorkInput) {
@@ -395,7 +400,8 @@ export function createAgentRuntimeAdapter(options: {
         options: executionOptions({
           permissionMode: input.permissionMode,
           model: input.model,
-          reasoningLevel: input.reasoningLevel
+          reasoningLevel: input.reasoningLevel,
+          acpMode: input.acpMode
         }),
         ...(input.bridgeLaunch ? { bridgeLaunch: await resolveLaunch(input.bridgeLaunch) } : {}),
         ...mergeSessionTooling({
@@ -414,7 +420,8 @@ export function createAgentRuntimeAdapter(options: {
         clientRequestId: input.clientRequestId ?? encodeClientTurnRequestIdNumber({ value: Date.now() }),
         options: executionOptions({
           model: input.model,
-          reasoningLevel: input.reasoningLevel
+          reasoningLevel: input.reasoningLevel,
+          acpMode: input.acpMode
         })
       });
     },
@@ -431,7 +438,8 @@ export function createAgentRuntimeAdapter(options: {
         options: executionOptions({
           permissionMode: input.permissionMode,
           model: input.model,
-          reasoningLevel: input.reasoningLevel
+          reasoningLevel: input.reasoningLevel,
+          acpMode: input.acpMode
         }),
         ...(input.bridgeLaunch ? { bridgeLaunch: await resolveLaunch(input.bridgeLaunch) } : {}),
         ...mergeSessionTooling({
