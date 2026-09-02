@@ -41,8 +41,9 @@ import { HOST_ARTIFACT_MAX_BYTES } from '@zana-ai/zcc-host-daemon-contract';
  * 18: HostBridgeLaunch is digest+byteLength (no laptop artifactPath/dataDir);
  * remotes fetch packed dist/host.js from GET /internal/plugins/:id/host/:digest.
  * 19: host FS discovery (list_paths, read_path, file_metadata, pick_folder).
+ * 20: project-authorized native harness agent descriptor discovery.
  */
-export const HOST_RPC_PROTOCOL_VERSION = 19;
+export const HOST_RPC_PROTOCOL_VERSION = 20;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
 
 const UuidSchema = z.string().uuid();
@@ -53,6 +54,7 @@ const RelPathSchema = z.string().min(1).max(1024);
 
 export const HostRpcCommandTypeSchema = z.enum([
   'provider.status',
+  'provider.agent_descriptors',
   'provider.list_models',
   'environment.provision',
   'environment.provision.cancel',
@@ -121,6 +123,13 @@ export type WorkspaceContext = z.infer<typeof workspaceContextSchema>;
 
 export const ProviderStatusCommandSchema = z.object({
   type: z.literal('provider.status')
+}).strict();
+
+export const ProviderAgentDescriptorsCommandSchema = z.object({
+  type: z.literal('provider.agent_descriptors'),
+  cwd: PathSchema,
+  profile: z.string().min(1).max(128),
+  refresh: z.boolean()
 }).strict();
 
 const unmanagedCheckoutSchema = z.discriminatedUnion('kind', [
@@ -276,6 +285,7 @@ export const ThreadStartCommandSchema = z.object({
   permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional(),
   model: z.string().min(1).max(200).optional(),
   reasoningLevel: reasoningLevelSchema.optional(),
+  acpMode: z.string().min(1).max(200).optional(),
   providerThreadId: z.string().min(1).optional(),
   /** Correlates turn/input/accepted with the server's client/turn/requested. */
   clientRequestId: clientTurnRequestIdSchema.optional(),
@@ -317,6 +327,7 @@ export const ThreadResumeFieldsSchema = z.object({
   permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional(),
   model: z.string().min(1).max(200).optional(),
   reasoningLevel: reasoningLevelSchema.optional(),
+  acpMode: z.string().min(1).max(200).optional(),
   dynamicTools: z.array(dynamicToolSchema).max(128).optional(),
   instructions: z.string().max(100_000).optional()
 }).strict();
@@ -331,6 +342,7 @@ export const TurnSubmitCommandSchema = z.object({
   resume: ThreadResumeFieldsSchema.optional(),
   model: z.string().min(1).max(200).optional(),
   reasoningLevel: reasoningLevelSchema.optional(),
+  acpMode: z.string().min(1).max(200).optional(),
   clientRequestId: clientTurnRequestIdSchema.optional()
 }).strict();
 
@@ -674,6 +686,7 @@ export type PeerDaemonInstallCommand = z.infer<typeof PeerDaemonInstallCommandSc
 
 export const HostRpcCommandSchema = z.union([
   ProviderStatusCommandSchema,
+  ProviderAgentDescriptorsCommandSchema,
   ProviderListModelsCommandSchema,
   EnvironmentProvisionCommandSchema,
   EnvironmentProvisionCancelCommandSchema,
@@ -753,9 +766,32 @@ export const ProviderStatusResultSchema = z.object({
 }).strict();
 export type ProviderStatusResult = z.infer<typeof ProviderStatusResultSchema>;
 
+export const ProviderAgentDescriptorsResultSchema = z.union([
+  z.object({
+    status: z.literal('success'),
+    descriptors: z.array(z.object({
+      id: z.string().min(1).max(256),
+      label: z.string().min(1).max(256),
+      directLaunchAllowed: z.boolean(),
+      mode: z.enum(['primary', 'subagent', 'all']).optional(),
+      hidden: z.boolean().optional()
+    }).passthrough())
+  }).strict(),
+  z.object({
+    status: z.literal('failure'),
+    reason: z.string().min(1).max(128).optional(),
+    agentId: z.string().min(1).max(256).optional()
+  }).strict()
+]);
+export type ProviderAgentDescriptorsResult = z.infer<typeof ProviderAgentDescriptorsResultSchema>;
+
 export const ProviderListModelsResultSchema = z.object({
   models: z.array(availableModelSchema),
-  selectedOnlyModels: z.array(availableModelSchema)
+  selectedOnlyModels: z.array(availableModelSchema),
+  acpMode: z.object({
+    currentValue: z.string().optional(),
+    options: z.array(z.object({ value: z.string(), name: z.string().optional() }))
+  }).optional()
 }).strict();
 export type ProviderListModelsResult = z.infer<typeof ProviderListModelsResultSchema>;
 
@@ -1099,6 +1135,7 @@ export type {
 
 export const HostRpcResultSchemaByType = {
   'provider.status': ProviderStatusResultSchema,
+  'provider.agent_descriptors': ProviderAgentDescriptorsResultSchema,
   'provider.list_models': ProviderListModelsResultSchema,
   'environment.provision': EnvironmentProvisionResultSchema,
   'environment.provision.cancel': EnvironmentProvisionCancelResultSchema,

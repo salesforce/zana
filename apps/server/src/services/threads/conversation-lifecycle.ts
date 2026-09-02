@@ -38,7 +38,7 @@ export async function sendConversationTurn(
   threadId: string,
   input: unknown,
   mode: ThreadSendMode = 'auto',
-  execution?: { model?: string; reasoningLevel?: ReasoningLevel }
+  execution?: { model?: string; reasoningLevel?: ReasoningLevel; acpMode?: string }
 ): Promise<ConversationThreadRow> {
   const thread = getConversationThread(ctx.db, threadId);
   if (!thread) {
@@ -305,7 +305,7 @@ async function submitTurnOnHost(
   thread: ConversationThreadRow,
   prompt: string[],
   mode: ThreadSendMode,
-  execution?: { model?: string; reasoningLevel?: ReasoningLevel },
+  execution?: { model?: string; reasoningLevel?: ReasoningLevel; acpMode?: string },
   clientRequestId?: string
 ): Promise<void> {
   if (!thread.environmentId) {
@@ -323,6 +323,7 @@ async function submitTurnOnHost(
       ...(resume ? { resume } : {}),
       ...(execution?.model ? { model: execution.model } : {}),
       ...(execution?.reasoningLevel ? { reasoningLevel: execution.reasoningLevel } : {}),
+      ...(execution?.acpMode ? { acpMode: execution.acpMode } : {}),
       ...(clientRequestId ? { clientRequestId } : {})
     }
   });

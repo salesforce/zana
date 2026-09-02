@@ -1,7 +1,7 @@
 import { product } from '../lib/product-client.js';
 import { useEffect, useRef, useState } from 'react';
 import { X, Trash2, Copy, Pencil, FolderOpen, ChevronRight } from 'lucide-react';
-import type { HarnessAdapterDescriptor } from '@zana-ai/zcc-domain/harness-adapter';
+import type { HarnessAdapterDescriptor, HarnessAgentDiscoveryResult, HarnessRoleTarget } from '@zana-ai/zcc-domain/harness-adapter';
 import type { HarnessFamily, LaunchProfileId, Persona, PersonaInput } from '@zana-ai/zcc-domain/product';
 import {
   harnessFamilyOf,
@@ -172,10 +172,12 @@ function portableLabel(value: string): string {
 function PersonaHarnessRoutingFields({
   descriptor,
   routing,
+  projectId,
   onChange
 }: {
   descriptor: HarnessAdapterDescriptor;
   routing: NonNullable<PersonaRouting[HarnessFamily]>;
+  projectId?: string;
   onChange: (patch: Partial<NonNullable<PersonaRouting[HarnessFamily]>>) => void;
 }) {
   const targets = descriptor.targets;
@@ -191,21 +193,55 @@ function PersonaHarnessRoutingFields({
     : targets?.models ?? [];
   const codexUi = providerUiSchema('codex');
 
+  const [agentDiscovery, setAgentDiscovery] = useState<HarnessAgentDiscoveryResult | { status: 'loading' }>({ status: 'success', descriptors: [] });
+  const dynamicAgentsActive = descriptor.id === 'opencode';
+  const roleOptions: readonly HarnessRoleTarget[] = dynamicAgentsActive && agentDiscovery.status === 'success'
+    ? agentDiscovery.descriptors.filter((agent) => agent.directLaunchAllowed).map((agent) => ({ id: agent.id, label: agent.label, scope: ['local'] }))
+    : dynamicAgentsActive ? [] : targets?.roles ?? [];
+  const refreshAgents = () => {
+    if (!projectId || !dynamicAgentsActive) return;
+    setAgentDiscovery({ status: 'loading' });
+    void product.harness.agentDescriptors(projectId, 'opencode', true)
+      .then(setAgentDiscovery)
+      .catch(() => setAgentDiscovery({ status: 'failure' }));
+  };
+
+  useEffect(() => {
+    if (!projectId || !dynamicAgentsActive) return;
+    setAgentDiscovery({ status: 'loading' });
+    let cancelled = false;
+    void product.harness.agentDescriptors(projectId, 'opencode').then((result) => {
+      if (!cancelled) setAgentDiscovery(result);
+    }).catch(() => {
+      if (!cancelled) setAgentDiscovery({ status: 'failure' });
+    });
+    return () => { cancelled = true; };
+  }, [projectId, dynamicAgentsActive]);
+
   return (
     <div className="persona-harness-routing" data-testid="persona-harness-routing">
       {!!targets?.roles.length && !targets.executionStateMapping && (
         <div className="scheduler-form-field">
-          <label htmlFor="persona-role-target">Native role</label>
-          <input
-            id="persona-role-target"
-            list={`persona-role-targets-${descriptor.id}`}
-            value={routing.roleTargetId ?? ''}
-             onChange={(event) => onChange({ roleTargetId: event.target.value || undefined })}
-            placeholder="Use harness default"
-          />
-          <datalist id={`persona-role-targets-${descriptor.id}`}>
-            {targets.roles.map((target) => <option key={target.id} value={target.id}>{target.label}</option>)}
-          </datalist>
+          <label htmlFor="persona-role-target">{dynamicAgentsActive ? 'Effective OpenCode agent' : 'Native role'}</label>
+          {dynamicAgentsActive ? (
+            <div className="launch-opencode-role-control">
+              <select
+                id="persona-role-target"
+                value={roleOptions.some((target) => target.id === routing.roleTargetId) ? routing.roleTargetId ?? '' : ''}
+                disabled={!projectId || agentDiscovery.status === 'loading' || agentDiscovery.status === 'failure'}
+                onChange={(event) => onChange({ roleTargetId: event.target.value || undefined })}
+              >
+                <option value="">{agentDiscovery.status === 'loading' ? 'Loading agents…' : 'Use harness default'}</option>
+                {roleOptions.map((target) => <option key={target.id} value={target.id}>{target.label}</option>)}
+              </select>
+              <button type="button" className="launch-advanced-toggle" onClick={refreshAgents} disabled={!projectId || agentDiscovery.status === 'loading'}>↻</button>
+            </div>
+          ) : (
+            <>
+              <input id="persona-role-target" list={`persona-role-targets-${descriptor.id}`} value={routing.roleTargetId ?? ''} onChange={(event) => onChange({ roleTargetId: event.target.value || undefined })} placeholder="Use harness default" />
+              <datalist id={`persona-role-targets-${descriptor.id}`}>{roleOptions.map((target) => <option key={target.id} value={target.id}>{target.label}</option>)}</datalist>
+            </>
+          )}
         </div>
       )}
       {!!targets?.providers?.length && (
@@ -319,12 +355,15 @@ function PersonaHarnessRoutingFields({
 export function PersonaEditor({
   persona,
   mode: initialMode,
+  projectId,
   onClose
 }: {
   /** The persona to view/edit, or null for a brand-new one. */
   persona: Persona | null;
   /** 'view' opens read-only (builtins/project); 'edit' opens the form. */
   mode: 'view' | 'edit';
+  /** Registered project used only for main-authorized dynamic native agent discovery. */
+  projectId?: string;
   onClose: () => void;
 }) {
   const [mode, setMode] = useState(initialMode);
@@ -363,7 +402,7 @@ export function PersonaEditor({
             onEdit={() => setMode('edit')}
           />
         ) : (
-          <PersonaForm key={renderKey} persona={persona} onClose={onClose} />
+          <PersonaForm key={renderKey} persona={persona} projectId={projectId} onClose={onClose} />
         )}
       </div>
     </div>
@@ -471,7 +510,7 @@ function PersonaField({ label, value }: { label: string; value: string }) {
 }
 
 /** The create/edit form. */
-function PersonaForm({ persona, onClose }: { persona: Persona | null; onClose: () => void }) {
+function PersonaForm({ persona, projectId, onClose }: { persona: Persona | null; projectId?: string; onClose: () => void }) {
   const pushToast = useUi((s) => s.pushToast);
 
   // A project persona opened for "edit" becomes a NEW user persona (we never
@@ -726,6 +765,7 @@ function PersonaForm({ persona, onClose }: { persona: Persona | null; onClose: (
           <PersonaHarnessRoutingFields
             descriptor={selectedDescriptor}
             routing={selectedRouting}
+            projectId={projectId}
             onChange={updateSelectedRouting}
           />
         ) : (

@@ -12,9 +12,30 @@ describe('packedBridgeBundleDir', () => {
     expect(packedBridgeBundleDir(pathToFileURL(join(dir, 'join.mjs')).href)).toBe(dir);
   });
 
-  it('returns undefined when the packed worker is absent', () => {
+  it('returns undefined when the packed worker and checkout bundle are absent', () => {
     const dir = mkdtempSync(join(tmpdir(), 'zcc-packed-bridge-missing-'));
-    expect(packedBridgeBundleDir(pathToFileURL(join(dir, 'join.mjs')).href)).toBeUndefined();
+    const previous = process.cwd();
+    process.chdir(dir);
+    try {
+      expect(packedBridgeBundleDir(pathToFileURL(join(dir, 'join.mjs')).href)).toBeUndefined();
+    } finally {
+      process.chdir(previous);
+    }
+  });
+
+  it('uses the checkout host-daemon bundle in an unpackaged built app', () => {
+    const checkout = mkdtempSync(join(tmpdir(), 'zcc-packed-bridge-checkout-'));
+    const dist = join(checkout, 'apps', 'host-daemon', 'dist');
+    mkdirSync(dist, { recursive: true });
+    writeFileSync(join(dist, PACKED_BRIDGE_WORKER_FILE), '');
+    const previous = process.cwd();
+    process.chdir(checkout);
+    try {
+      const caller = mkdtempSync(join(tmpdir(), 'zcc-packed-bridge-caller-'));
+      expect(packedBridgeBundleDir(pathToFileURL(join(caller, 'main.js')).href)).toBe(join(process.cwd(), 'apps', 'host-daemon', 'dist'));
+    } finally {
+      process.chdir(previous);
+    }
   });
 
   it('falls back to process.resourcesPath/host-bridge for the packaged app', () => {

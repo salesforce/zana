@@ -280,6 +280,7 @@ const hostDaemonThreadRuntimeContextSchema = z
     acpLaunchSpec: hostDaemonAcpLaunchSpecSchema.optional(),
     bridgeLaunch: hostDaemonBridgeLaunchSchema,
     options: runtimeThreadExecutionOptionsSchema,
+    acpMode: z.string().min(1).optional(),
     instructions: z.string().min(1),
     dynamicTools: z.array(dynamicToolSchema),
     injectedSkillSources: z.array(hostDaemonInjectedSkillSourceSchema),
@@ -422,6 +423,7 @@ const turnSubmitCommandSchema = hostDaemonThreadTargetSchema
     input: z.array(promptInputSchema).min(1),
     inputGroups: z.array(z.array(promptInputSchema).min(1)).min(1).optional(),
     options: runtimeThreadExecutionOptionsSchema,
+    acpMode: z.string().min(1).optional(),
     acpLaunchSpec: hostDaemonAcpLaunchSpecSchema.optional(),
     bridgeLaunch: hostDaemonBridgeLaunchSchema,
     resumeContext: turnResumeContextSchema,
@@ -1456,6 +1458,10 @@ const writeSkillResultSchema = z.discriminatedUnion("outcome", [
 const providerListModelsResultSchema = z.object({
   models: z.array(availableModelSchema),
   selectedOnlyModels: z.array(availableModelSchema),
+  acpMode: z.object({
+    currentValue: z.string().optional(),
+    options: z.array(z.object({ value: z.string(), name: z.string().optional() })),
+  }).optional(),
 });
 
 const knownAcpAgentExecutableStatusSchema = z

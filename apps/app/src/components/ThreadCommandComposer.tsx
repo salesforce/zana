@@ -367,7 +367,8 @@ export function ThreadCommandComposer({
         try {
           await product.threads.send(threadId, input, sendMode, {
             model: options.model,
-            reasoningLevel: options.reasoningLevel
+            reasoningLevel: options.reasoningLevel,
+            acpMode: options.acpMode
           });
           field.clear();
         } catch (error) {
@@ -385,7 +386,8 @@ export function ThreadCommandComposer({
         cwd: foreignHost ? undefined : selected!.path,
         permissionMode: permissionMode as 'accept-edits' | 'auto' | 'full',
         model: options.model,
-        reasoningLevel: options.reasoningLevel
+        reasoningLevel: options.reasoningLevel,
+        acpMode: options.acpMode
       });
       if (!created.ok) {
         setError(created.message ?? 'Could not create thread');
@@ -416,6 +418,7 @@ export function ThreadCommandComposer({
     onCreated,
     options.model,
     options.reasoningLevel,
+    options.acpMode,
     options.rosterReady,
     options.providers,
     permissionMode,
@@ -533,6 +536,33 @@ export function ThreadCommandComposer({
                   options={options.reasoningOptions}
                   onChange={options.setReasoningLevel}
                 />
+                {options.acpModeOptions.length > 0 ? (
+                  <label className="thread-command-acp-mode">
+                    <span className="sr-only">Native role</span>
+                    <span className="launch-opencode-role-control">
+                      <select
+                        aria-label="Native role"
+                        value={options.acpMode ?? ''}
+                        onChange={(event) => options.setAcpMode(event.target.value || undefined)}
+                      >
+                        {options.acpModeOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.name ?? option.value}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="launch-advanced-toggle"
+                        onClick={options.refreshAcpModeOptions}
+                        aria-label="Refresh native roles"
+                        title="Refresh native roles"
+                      >
+                        ↻
+                      </button>
+                    </span>
+                  </label>
+                ) : null}
               </div>
               <div className="thread-command-footer-end">
                 <ThreadContextMeter usage={contextWindowUsage} />

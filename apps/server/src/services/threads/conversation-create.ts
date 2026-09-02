@@ -65,6 +65,7 @@ export interface CreateConversationInput {
   permissionMode?: 'accept-edits' | 'auto' | 'full';
   model?: string;
   reasoningLevel?: ReasoningLevel;
+  acpMode?: string;
 }
 
 const THREAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -211,6 +212,7 @@ async function startConversationOnHost(
       permissionMode,
       ...(args.input.model ? { model: args.input.model } : {}),
       ...(args.input.reasoningLevel ? { reasoningLevel: args.input.reasoningLevel } : {}),
+      ...(args.input.acpMode ? { acpMode: args.input.acpMode } : {}),
       ...(clientRequestId ? { clientRequestId } : {}),
       ...sessionTooling,
       ...(args.remoteToolProxy ? {

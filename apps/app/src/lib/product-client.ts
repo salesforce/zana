@@ -619,7 +619,8 @@ function httpProduct(): Pick<
             title: input.title,
             permissionMode: input.permissionMode,
             model: input.model,
-            reasoningLevel: input.reasoningLevel
+            reasoningLevel: input.reasoningLevel,
+            acpMode: input.acpMode
           })
         });
         const body = (await response.json()) as Awaited<ReturnType<CcApi['threads']['create']>> & {
@@ -649,6 +650,7 @@ function httpProduct(): Pick<
             mode,
             ...(extras?.model ? { model: extras.model } : {}),
             ...(extras?.reasoningLevel ? { reasoningLevel: extras.reasoningLevel } : {})
+            , ...(extras?.acpMode ? { acpMode: extras.acpMode } : {})
           })
         }),
       stop: async (threadId) =>
@@ -844,7 +846,13 @@ function httpProduct(): Pick<
         );
         return body.descriptors;
       },
-      agentDescriptors: async () => ({ status: 'failure' as const, reason: 'unavailable in the browser' }),
+      agentDescriptors: async (projectId, profile, refresh = false) => {
+        const params = new URLSearchParams({ projectId, profile });
+        if (refresh) params.set('refresh', 'true');
+        return apiJson<Awaited<ReturnType<CcApi['harness']['agentDescriptors']>>>(
+          `/harness/agent-descriptors?${params.toString()}`
+        );
+      },
       effectiveDefault: async (projectId: string) =>
         apiJson<Awaited<ReturnType<CcApi['harness']['effectiveDefault']>>>(
           `/harness/effective-default?projectId=${encodeURIComponent(projectId)}`

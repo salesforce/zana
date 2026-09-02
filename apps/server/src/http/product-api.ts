@@ -65,11 +65,12 @@ import {
   runEnvironmentAction
 } from '../services/environments/environment-actions.js';
 import { spawnEnvironmentChoiceSchema } from '@zana-ai/zcc-domain';
+import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
 import { jsonValueSchema, pendingInteractionResolutionSchema, reasoningLevelSchema, type ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
 import { systemInstallCliSkillsRequestSchema, threadOpenRequestSchema, editMessageRequestSchema, hostFileWriteRequestSchema, hostMkdirRequestSchema, hostMovePathRequestSchema, hostRemovePathRequestSchema, hostFileReadRequestSchema, hostFileListRequestSchema, hostPathListRequestSchema } from '@zana-ai/zcc-server-contract';
 import { normalizeRepoUrl } from '../services/projects/git-clone.js';
-import { harnessDescriptors, harnessEffectiveDefault, harnessVerify } from './harness-via-rpc.js';
+import { harnessAgentDescriptors, harnessDescriptors, harnessEffectiveDefault, harnessVerify } from './harness-via-rpc.js';
 import { isSafeRelPath, listLibraryDocs, listQuickPrompts, readLibraryDoc } from './library-via-host.js';
 import { listProjectDir, listProjectPaths, readProjectFile } from './project-fs-via-host.js';
 import { listHostFiles, listHostPaths, mkdirHostPath, moveHostPath, readHostFile, removeHostPath, writeHostFile } from './files-via-host.js';
@@ -739,6 +740,26 @@ export async function handleProductHttp(
       return true;
     }
 
+    if (path === '/api/v1/harness/agent-descriptors' && method === 'GET') {
+      const projectId = requestUrl.searchParams.get('projectId') ?? '';
+      const profile = requestUrl.searchParams.get('profile') as LaunchProfileId;
+      if (!projectId || !profile || !VALID_PROFILES.includes(profile)) {
+        sendJson(response, 400, { error: 'invalid-input', message: 'projectId and profile are required' });
+        return true;
+      }
+      try {
+        sendJson(response, 200, await harnessAgentDescriptors({
+          hub: ctx.hostHub,
+          project: ctx.toProjects().find((row) => row.id === projectId),
+          profile,
+          refresh: requestUrl.searchParams.get('refresh') === 'true'
+        }));
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
     if (path === '/api/v1/harness/effective-default' && method === 'GET') {
       const projectId = requestUrl.searchParams.get('projectId') ?? '';
       const project = ctx.toProjects().find((row) => row.id === projectId);
@@ -1199,6 +1220,7 @@ export async function handleProductHttp(
         mode?: unknown;
         model?: unknown;
         reasoningLevel?: unknown;
+        acpMode?: unknown;
       };
       const mode = body.mode === 'start' || body.mode === 'auto' || body.mode === 'steer'
         || body.mode === 'queue-if-active' || body.mode === 'steer-if-active'
@@ -1207,7 +1229,8 @@ export async function handleProductHttp(
       try {
         const thread = await sendConversationTurn(ctx, id!, body.input ?? body.text, mode, {
           model: typeof body.model === 'string' ? body.model : undefined,
-          reasoningLevel: parseReasoningLevel(body.reasoningLevel)
+          reasoningLevel: parseReasoningLevel(body.reasoningLevel),
+          acpMode: typeof body.acpMode === 'string' ? body.acpMode : undefined
         });
         sendJson(response, 200, { ok: true, thread: conversationThreadView(ctx, thread) });
       } catch (error) {
@@ -1252,7 +1275,8 @@ export async function handleProductHttp(
             ? body.permissionMode
             : undefined,
           model: typeof body.model === 'string' ? body.model : undefined,
-          reasoningLevel: parseReasoningLevel(body.reasoningLevel)
+          reasoningLevel: parseReasoningLevel(body.reasoningLevel),
+          acpMode: typeof body.acpMode === 'string' ? body.acpMode : undefined
         });
         sendJson(response, 201, { ok: true, value: conversationThreadView(ctx, thread), thread: conversationThreadView(ctx, thread) });
       } catch (error) {

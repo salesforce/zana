@@ -384,6 +384,14 @@ describe('OpenCode project agent discovery', () => {
     expect(source).not.toContain('launch-opencode-role-meta');
   });
 
+  it('shows an OpenCode native role before Customize launch expands', () => {
+    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
+    const nativeRouting = source.indexOf('data-testid="launch-native-routing"');
+    const advancedToggle = source.indexOf('aria-controls="agent-launcher-advanced"');
+    expect(nativeRouting).toBeGreaterThan(-1);
+    expect(nativeRouting).toBeLessThan(advancedToggle);
+  });
+
   it('hides OpenCode Execution State without changing stored routing semantics', () => {
     const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
     expect(source).toContain("descriptor.id !== 'opencode'");

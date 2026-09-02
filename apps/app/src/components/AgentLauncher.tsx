@@ -2136,6 +2136,30 @@ export const AgentLauncher = memo(function AgentLauncher({
             </div>
           )}
 
+          {mode === 'agent' && profileChosen && selectedHarnessDescriptor && (
+            <div className="launch-native-routing" data-testid="launch-native-routing">
+              <span className="launch-native-routing-label">Harness settings</span>
+              <div className="launch-native-routing-fields">
+                <NativeAgentRoutingFields
+                  descriptor={selectedHarnessDescriptor}
+                  routing={selectedNativeRouting}
+                  agentDiscovery={openCodeAgentDiscovery}
+                  onRefreshAgentDescriptors={() => {
+                    if (openCodeAgentDiscoveryProjectId && openCodeAgentDiscoveryProfile) {
+                      setOpenCodeAgentDiscoverySnapshot({
+                        projectId: openCodeAgentDiscoveryProjectId,
+                        profile: openCodeAgentDiscoveryProfile,
+                        discovery: { status: 'loading' }
+                      });
+                    }
+                    setAgentDescriptorsRefresh((value) => value + 1);
+                  }}
+                  onChange={(patch) => updateNativeRouting(family!.id, patch)}
+                />
+              </div>
+            </div>
+          )}
+
           {mode === 'agent' && (
             <button
               type="button"
@@ -2202,30 +2226,6 @@ export const AgentLauncher = memo(function AgentLauncher({
                         ]}
                       />
                     </label>
-                  </div>
-                </div>
-              )}
-
-              {profileChosen && selectedHarnessDescriptor && (
-                <div className="launch-native-routing" data-testid="launch-native-routing">
-                  <span className="launch-native-routing-label">Harness settings</span>
-                  <div className="launch-native-routing-fields">
-                    <NativeAgentRoutingFields
-                      descriptor={selectedHarnessDescriptor}
-                      routing={selectedNativeRouting}
-                      agentDiscovery={openCodeAgentDiscovery}
-                      onRefreshAgentDescriptors={() => {
-                        if (openCodeAgentDiscoveryProjectId && openCodeAgentDiscoveryProfile) {
-                          setOpenCodeAgentDiscoverySnapshot({
-                            projectId: openCodeAgentDiscoveryProjectId,
-                            profile: openCodeAgentDiscoveryProfile,
-                            discovery: { status: 'loading' }
-                          });
-                        }
-                        setAgentDescriptorsRefresh((value) => value + 1);
-                      }}
-                      onChange={(patch) => updateNativeRouting(family!.id, patch)}
-                    />
                   </div>
                 </div>
               )}
