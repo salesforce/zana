@@ -479,8 +479,8 @@ const codexErrorHttpStatusSchema = z
 
 const codexErrorInfoSchema = z.union([
   z.literal("contextWindowExceeded"),
-  z.literal("usageLimitExceeded"),
   z.literal("sessionBudgetExceeded"),
+  z.literal("usageLimitExceeded"),
   z.literal("serverOverloaded"),
   z.literal("cyberPolicy"),
   z.literal("misalignmentPolicyViolation"),

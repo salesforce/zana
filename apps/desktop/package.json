@@ -12,7 +12,7 @@
     "test": "pnpm --dir ../.. exec vitest run --config apps/desktop/vitest.config.ts",
     "package": "pnpm --dir ../.. run check:release-notes && pnpm --dir ../.. run build:cli && pnpm --dir ../.. run fetch:opencode && pnpm --dir ../.. exec tsx scripts/build-plugin-hosts.mjs && pnpm --dir ../.. exec node apps/host-daemon/scripts/build-join.mjs && pnpm run build && pnpm --dir ../.. exec electron-builder --config apps/desktop/electron-builder.yml",
     "package:mac": "pnpm run package -- --mac",
-    "release:mac": "pnpm --dir ../.. run check:release-notes && pnpm --dir ../.. run build:cli && pnpm --dir ../.. run fetch:opencode && pnpm --dir ../.. exec tsx scripts/build-plugin-hosts.mjs && pnpm --dir ../.. exec node apps/host-daemon/scripts/build-join.mjs && GH_TOKEN=$(GH_HOST=github.com gh auth token) pnpm run build && GH_TOKEN=$(GH_HOST=github.com gh auth token) pnpm --dir ../.. exec electron-builder --config apps/desktop/electron-builder.yml --mac --publish always"
+    "release:mac": "pnpm --dir ../.. run check:release-notes && pnpm --dir ../.. run build:cli && pnpm --dir ../.. run fetch:opencode && pnpm --dir ../.. exec tsx scripts/build-plugin-hosts.mjs && pnpm --dir ../.. exec node apps/host-daemon/scripts/build-join.mjs && pnpm run build && pnpm --dir ../.. exec electron-builder --config apps/desktop/electron-builder.yml --mac --publish never"
   },
   "dependencies": {
     "@zana-ai/zcc-contracts": "workspace:*",
