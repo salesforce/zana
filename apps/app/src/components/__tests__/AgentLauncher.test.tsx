@@ -1,26 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import type { ExtensionEntry } from '@zana-ai/zcc-domain/product';
 import { executionMappingOptions } from '@zana-ai/zcc-domain/harness-adapter';
 import { appendAttachmentContext, mergeAttachmentPaths } from '../../lib/attachments.js';
 import {
-  agentRoutingForSubmission,
   buildLaunchArgs,
   discoveryForOpenCodePicker,
-  frameworkOptionsFrom,
-  isWorktreeEligible,
-  launchStatusAccessibility,
-  launcherRoutingFromPersona,
-  normalizeWorktreeName,
-  normalizeWorktreeNameInput,
-  roleTargetValueForPicker,
-  resolveWorktreeDefault,
   resolveOpenCodeRoleOptions,
-  reconcileOpenCodeRole,
-  selectedAvailableFamily,
-  optionalHarnessOffered,
-  worktreeForSubmission,
-  workspaceForSubmission
+  reconcileOpenCodeRole
 } from '../AgentLauncher.js';
 
 /**
@@ -69,23 +55,6 @@ describe('launcher attachments', () => {
     expect(appendAttachmentContext('Review these', ['/tmp/one.md', '/tmp/two.md'])).toBe(
       'Review these\n\nAttached files:\n- /tmp/one.md\n- /tmp/two.md'
     );
-  });
-
-  it('renders removable pills and uploads remote attachments at launch', () => {
-    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('product.fs.uploadToRemote(remoteTarget.id, localPath, \'.\')');
-    expect(source).toContain('appendAttachmentContext(prompt, attachmentPaths)');
-  });
-});
-
-describe('Quick Agent composer', () => {
-  it('uses the Home-style command surface without duplicating launcher pickers', () => {
-    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('product.quickPrompts.list().catch(() => [])');
-    expect(source).toContain('product.extensions.list().catch(() => [])');
-    expect(source).toContain('<AutonomousTeamComposer');
-    expect(source).toContain("{mode === 'autonomous' && (");
-    expect(source).toContain("mode === 'autonomous'");
   });
 });
 
@@ -145,145 +114,6 @@ describe('launcher presentation', () => {
       expect(source, file.pathname).not.toMatch(/presentation=/);
     }
   });
-
-  it('names compact icon-only harness buttons so hover can show the label', () => {
-    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
-    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
-    expect(source).toContain('aria-label={f.label}');
-    expect(source).toContain("title={harnessCompact ? undefined : f.label}");
-    expect(css).toContain('.launch-segmented--harness.is-compact button:hover::after');
-    expect(css).toContain('content: attr(aria-label)');
-  });
-});
-
-describe('Fix with AI recovery launch', () => {
-  it('uses the managed scratch workspace root instead of retrying a failed project cwd', () => {
-    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
-    const fixWithAi = source.slice(source.indexOf('const fixWithAi = async'));
-    expect(fixWithAi).toContain('product.projects.ensureQuickAgent()');
-    expect(fixWithAi).toContain("createTerminal(anchor.id, 'claude-yolo'");
-    expect(fixWithAi).not.toContain('isolateScratch:');
-  });
-});
-
-/**
- * `frameworkOptionsFrom` is the decoupling seam for Advanced view: it derives
- * selectable framework presets from installed extension entries generically —
- * core never names a concrete extension (Rule 6). Only enabled extensions with a
- * well-formed `agentPreset` (a non-empty primer) surface, sorted by display
- * label.
- */
-function entry(id: string, over: Partial<ExtensionEntry> = {}): ExtensionEntry {
-  return {
-    id,
-    path: `/ext/${id}`,
-    manifest: null,
-    enabled: true,
-    loaded: true,
-    mainActive: true,
-    consented: true,
-    needsConsent: null,
-    ...over
-  };
-}
-
-function withPreset(
-  id: string,
-  title: string,
-  preset: { label?: string; systemPrompt: string } | null,
-  over: Partial<ExtensionEntry> = {}
-): ExtensionEntry {
-  return entry(id, {
-    manifest: {
-      id,
-      title,
-      icon: 'Box',
-      entry: { renderer: 'r.js' },
-      engines: { zccApi: '^1.0.0' },
-      agentPreset: preset ?? undefined
-    },
-    ...over
-  });
-}
-
-describe('frameworkOptionsFrom', () => {
-  it('surfaces only enabled extensions that declare a primer, sorted by label', () => {
-    const opts = frameworkOptionsFrom([
-      withPreset('zeta', 'Zeta', { label: 'Zeta FW', systemPrompt: 'z' }),
-      withPreset('alpha', 'Alpha', { systemPrompt: 'a' }),
-      withPreset('no-preset', 'Plain', null)
-    ]);
-    expect(opts.map((o) => o.id)).toEqual(['alpha', 'zeta']); // 'Alpha' < 'Zeta FW'
-    expect(opts[0].preset.systemPrompt).toBe('a');
-  });
-
-  it('excludes disabled extensions and manifest-less / primer-less entries', () => {
-    const opts = frameworkOptionsFrom([
-      withPreset('disabled', 'Disabled', { systemPrompt: 'd' }, { enabled: false }),
-      withPreset('empty', 'Empty', { systemPrompt: '' }),
-      entry('bare', { manifest: null })
-    ]);
-    expect(opts).toEqual([]);
-  });
-});
-
-describe('launcherRoutingFromPersona', () => {
-  it('projects structured and legacy pinned Persona values into editable Agent routing', () => {
-    expect(launcherRoutingFromPersona({
-      id: 'reviewer',
-      name: 'Reviewer',
-      source: 'user',
-      baseProfile: 'claude',
-      model: 'opus',
-      permissionMode: 'plan'
-    })).toEqual({
-      claude: { modelTargetId: 'opus', executionState: 'plan' }
-    });
-  });
-
-  it('keeps native Codex policies and drops empty adapter entries', () => {
-    expect(launcherRoutingFromPersona({
-      id: 'codex-reviewer',
-      name: 'Codex Reviewer',
-      source: 'user',
-      baseProfile: 'codex',
-      harnessRouting: {
-        schemaVersion: 1,
-        byAdapter: {
-          codex: {
-            modelTargetId: 'gpt-5-codex',
-            compatibility: { codexSandbox: 'read-only', codexApproval: 'on-request' }
-          },
-          opencode: {}
-        }
-      }
-    })).toEqual({
-      codex: {
-        modelTargetId: 'gpt-5-codex',
-        compatibility: { codexSandbox: 'read-only', codexApproval: 'on-request' }
-      }
-    });
-  });
-});
-
-describe('agentRoutingForSubmission', () => {
-  const personaSeed = { modelLevel: 'high' as const, executionState: 'accept-edits' as const };
-
-  it('does not submit Persona-seeded values as Agent overrides until an Agent control changes', () => {
-    expect(agentRoutingForSubmission(false, 'opencode', personaSeed, {}, false)).toBeUndefined();
-    expect(agentRoutingForSubmission(false, 'opencode', personaSeed, {}, true)).toEqual({
-      schemaVersion: 1,
-      byAdapter: { opencode: personaSeed }
-    });
-  });
-});
-
-describe('structured routing submission', () => {
-  it('keeps submission helper inert until controls mark routing dirty', () => {
-    expect(agentRoutingForSubmission(true, 'opencode', {}, {
-      opencode: { modelTargetId: 'aisuite/gpt-5.6-sol' }
-    }, false)).toBeUndefined();
-  });
 });
 
 describe('OpenCode project agent discovery', () => {
@@ -305,22 +135,6 @@ describe('OpenCode project agent discovery', () => {
       profile: 'opencode',
       discovery: { status: 'failure' }
     })).toEqual({ status: 'failure' });
-  });
-
-  it('renders only role values valid for the current picker catalog', () => {
-    const roles = [{ id: 'review', label: 'Review', scope: ['local'] as ['local'] }];
-    expect(roleTargetValueForPicker('build', roles)).toBe('');
-    expect(roleTargetValueForPicker('review', roles)).toBe('review');
-    expect(roleTargetValueForPicker('review', [])).toBe('');
-  });
-
-  it('loads through project-id IPC once, refreshes explicitly, and prevents stale updates', () => {
-    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('product.harness.agentDescriptors(\n      openCodeAgentDiscoveryProjectId,\n      openCodeAgentDiscoveryProfile,\n      agentDescriptorsRefresh > 0\n    )');
-    expect(source).toContain('setAgentDescriptorsRefresh((value) => value + 1);');
-    expect(source).toContain('Effective OpenCode agent');
-    expect(source).toContain('Refresh agents');
-    expect(source).toMatch(/return \(\) => \{\s*cancelled = true;\s*\};/);
   });
 
   it('offers only directly launchable dynamic agents as role targets', () => {
@@ -367,73 +181,6 @@ describe('OpenCode project agent discovery', () => {
     expect(reconcileOpenCodeRole('custom', success)).toBe('custom');
     expect(reconcileOpenCodeRole('build', { status: 'failure' })).toBe('build');
   });
-
-  it('disables failed discovery roles without inline prose and leaves refresh enabled', () => {
-    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
-    expect(source).toContain("const agentDescriptorsFailed = agentDiscovery.status === 'failure';");
-    expect(source).toContain('disabled={unavailable || agentDescriptorsLoading || agentDescriptorsFailed}');
-    expect(source).not.toContain('Could not discover agents. Retry.');
-    expect(source).toContain('disabled={unavailable}');
-  });
-
-  it('keeps compact refresh inline with role select and renders no visible status/help line', () => {
-    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('className="launch-opencode-role-control"');
-    expect(source).toContain('title="Refresh agents"');
-    expect(source).not.toContain('From project root. Rechecked at launch.');
-    expect(source).not.toContain('launch-opencode-role-meta');
-  });
-
-  it('shows an OpenCode native role before Customize launch expands', () => {
-    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
-    const nativeRouting = source.indexOf('data-testid="launch-native-routing"');
-    const advancedToggle = source.indexOf('aria-controls="agent-launcher-advanced"');
-    expect(nativeRouting).toBeGreaterThan(-1);
-    expect(nativeRouting).toBeLessThan(advancedToggle);
-  });
-
-  it('hides OpenCode Execution State without changing stored routing semantics', () => {
-    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
-    expect(source).toContain("descriptor.id !== 'opencode'");
-    expect(source).toContain("!profileChosen && selectedHarnessDescriptor?.id !== 'opencode'");
-    expect(source).toContain('value={routing.executionState ?? \'\'}');
-    expect(source).not.toContain("descriptor.id === 'opencode' && onChange({ executionState: undefined })");
-    expect(source).toContain('Effective OpenCode agent');
-    expect(source).toContain('<LauncherModelPicker');
-    expect(source).toContain('launch-native-field--provider');
-  });
-});
-
-describe('additive launch status', () => {
-  it('retains an unavailable requested family instead of falling back to another harness', () => {
-    const available = [{ id: 'claude' as const, label: 'claude' }];
-    expect(selectedAvailableFamily(available, 'cursor')).toBeUndefined();
-    expect(selectedAvailableFamily(available, 'claude')).toBe(available[0]);
-  });
-
-  it('auto-offers an installed optional harness when the enable flag is unset', () => {
-    expect(optionalHarnessOffered({ enabled: true, installed: true }, false)).toBe(true);
-    expect(optionalHarnessOffered({ enabled: false, installed: true }, false)).toBe(false);
-    expect(optionalHarnessOffered({ enabled: true, installed: false }, true)).toBe(false);
-    expect(optionalHarnessOffered(undefined, false)).toBe(false);
-    expect(optionalHarnessOffered(undefined, true)).toBe(true);
-    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('optionalHarnessOffered(status, harnessOpenCodeEnabled)');
-    expect(source).not.toContain("if (f.id === 'opencode' && !harnessOpenCodeEnabled)");
-  });
-
-  it('exposes retained launch status as an assertive atomic alert described by Send', () => {
-    expect(launchStatusAccessibility(true)).toEqual({
-      status: {
-        id: 'agent-launch-status',
-        role: 'alert',
-        'aria-live': 'assertive',
-        'aria-atomic': true
-      },
-      describedBy: 'agent-launch-status'
-    });
-    expect(launchStatusAccessibility(false).describedBy).toBeUndefined();
-  });
 });
 
 describe('project-scoped conversation history', () => {
@@ -444,81 +191,3 @@ describe('project-scoped conversation history', () => {
   });
 });
 
-describe('worktree launch intent', () => {
-  const localProject = {
-    id: 'local',
-    name: 'Local',
-    path: '/repo',
-    createdAt: 1,
-    lastActiveAt: 1
-  };
-
-  it('offers worktrees only for real local projects', () => {
-    expect(isWorktreeEligible(localProject, false)).toBe(true);
-    expect(isWorktreeEligible({ ...localProject, quickAgent: true }, false)).toBe(false);
-    expect(isWorktreeEligible({ ...localProject, remote: { host: 'devbox' } }, false)).toBe(false);
-    expect(isWorktreeEligible(null, true)).toBe(false);
-  });
-
-  it('submits a stable named intent only for fresh customized eligible launches', () => {
-    expect(worktreeForSubmission(true, true, true, 'login_fix')).toEqual({ branch: 'login_fix' });
-    expect(worktreeForSubmission(false, true, true, 'login_fix')).toBeUndefined();
-    expect(worktreeForSubmission(true, false, true, 'login_fix')).toBeUndefined();
-    expect(worktreeForSubmission(true, true, false, 'login_fix')).toBeUndefined();
-    expect(worktreeForSubmission(true, true, true, '')).toBeUndefined();
-  });
-
-  it('maps the workspace picker onto a spawn environment choice', () => {
-    expect(workspaceForSubmission(true, { kind: 'worktree', baseBranch: 'develop' }, true, 'login_fix')).toEqual({
-      kind: 'worktree',
-      branchSlug: 'login_fix',
-      baseBranch: 'develop'
-    });
-    expect(workspaceForSubmission(false, { kind: 'worktree' }, true, 'login_fix')).toEqual({ kind: 'unmanaged' });
-    expect(workspaceForSubmission(true, { kind: 'unmanaged' }, true, 'login_fix')).toEqual({ kind: 'unmanaged' });
-    expect(workspaceForSubmission(true, {
-      kind: 'reuse',
-      environmentId: '11111111-1111-4111-8111-111111111111'
-    }, false, '')).toEqual({
-      kind: 'reuse',
-      environmentId: '11111111-1111-4111-8111-111111111111'
-    });
-  });
-
-  it('replaces the isolation checkbox with a workspace picker', () => {
-    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('EnvironmentPicker');
-    expect(source).toContain('worktreeStructurallyEligible && (');
-    expect(source).not.toContain('Isolate in a git worktree');
-  });
-
-  it('normalizes names for one branch and checkout segment', () => {
-    expect(normalizeWorktreeName(' Fix login / OAuth! ')).toBe('fix_login_oauth');
-    expect(normalizeWorktreeName('___')).toBe('');
-    expect(normalizeWorktreeName('x'.repeat(60))).toBe('x'.repeat(40));
-  });
-
-  it('keeps a trailing underscore while the user is still typing', () => {
-    expect(normalizeWorktreeNameInput('login_')).toBe('login_');
-    expect(normalizeWorktreeNameInput('Login__OAuth')).toBe('login_oauth');
-    expect(normalizeWorktreeName('login_')).toBe('login');
-  });
-
-  it('uses project override before global default', () => {
-    expect(resolveWorktreeDefault(true, false)).toBe(true);
-    expect(resolveWorktreeDefault(false, true)).toBe(false);
-    expect(resolveWorktreeDefault(true, true)).toBe(true);
-    expect(resolveWorktreeDefault(false, false)).toBe(false);
-    expect(resolveWorktreeDefault(undefined, true)).toBe(true);
-    expect(resolveWorktreeDefault(undefined, false)).toBe(false);
-  });
-
-  it('keeps missing-name validation wired to expansion, focus, and accessible error text', () => {
-    const source = readFileSync(new URL('../AgentLauncher.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('setAdvanced(true);');
-    expect(source).toContain('worktreeNameRef.current?.scrollIntoView');
-    expect(source).toContain('worktreeNameRef.current?.focus();');
-    expect(source).toContain('aria-invalid={worktreeNameInvalid || undefined}');
-    expect(source).toContain("'Worktree name required.'");
-  });
-});

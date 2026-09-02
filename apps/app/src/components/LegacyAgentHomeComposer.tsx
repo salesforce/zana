@@ -10,7 +10,13 @@ import type {
   Project,
   TerminalSession
 } from '@zana-ai/zcc-domain/product';
-import { buildLaunchArgs } from './AgentLauncher.js';
+import {
+  buildLaunchArgs,
+  discoveryForOpenCodePicker,
+  reconcileOpenCodeRole,
+  resolveOpenCodeRoleOptions,
+  type OpenCodeAgentDiscoverySnapshot
+} from './AgentLauncher.js';
 import { EnvironmentPicker, defaultWorkspaceChoice, type WorkspacePickerValue } from './EnvironmentPicker.js';
 import {
   CommandComposer,
@@ -27,10 +33,16 @@ import { persistComposerImages } from '../lib/prompt-attachments.js';
 import { ComposerProjectPicker } from './ComposerProjectPicker.js';
 import { composerProjectOptions, resolveComposerProjectId } from './composer-project-default.js';
 import { ModelReasoningPicker } from './thread/pickers/ModelReasoningPicker.js';
+import { NativeRolePicker } from './thread/pickers/NativeRolePicker.js';
 import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
 import { ComposerPromptField } from './composer/ComposerPromptField.js';
 import { useComposerPromptField } from './composer/use-composer-prompt-field.js';
-import { composerProvidersFromCatalog } from './thread/pickers/fallback-models.js';
+import { composerProvidersFromCatalog, fallbackModelsForProvider } from './thread/pickers/fallback-models.js';
+import {
+  preferredComposerModel,
+  rememberedProviderId,
+  rememberedSelectionFor
+} from './thread/pickers/composer-selection-preference.js';
 import {
   absolutePathMentions,
   assembleCliLaunchPrompt,
@@ -85,7 +97,16 @@ export function LegacyAgentHomeComposer({
   const [selectionMessage, setSelectionMessage] = useState<string | null>(null);
   const [selectionProvenance, setSelectionProvenance] = useState<'automatic' | 'explicit'>('automatic');
   const [modelId, setModelId] = useState('');
+  // OpenCode native-role selection (`--agent <role>`). Roles are LIVE-discovered
+  // from the project's `opencode agent list` (filtered to directly-launchable
+  // primaries); the snapshot is keyed by (project, profile) and only refreshed on
+  // explicit request. Non-opencode harnesses have no role axis.
+  const [roleTargetId, setRoleTargetId] = useState<string | undefined>(undefined);
+  const [openCodeAgentDiscoverySnapshot, setOpenCodeAgentDiscoverySnapshot] =
+    useState<OpenCodeAgentDiscoverySnapshot | null>(null);
+  const [agentDescriptorsRefresh, setAgentDescriptorsRefresh] = useState(0);
   const [descriptors, setDescriptors] = useState<HarnessAdapterDescriptor[]>([]);
+  const [descriptorsLoaded, setDescriptorsLoaded] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -120,6 +141,39 @@ export function LegacyAgentHomeComposer({
     && (selectedHarness?.targets?.models?.length ?? 0) === 0
     && (catalog.inflight.has(selectedProviderId) || !catalogEntry)
   );
+  // Concrete default model for the resting provider — mirrors the Modern
+  // composer's defaultFallbackModel so the model chip shows a real model
+  // rather than "Select model".
+  const defaultModelId = useMemo(() => {
+    if (models.length === 0) return '';
+    if (!selectedProviderId) return models[0].id;
+    const rows = fallbackModelsForProvider(selectedProviderId);
+    const preferred = (rows.find((row) => row.isDefault) ?? rows[0])?.model;
+    return models.find((model) => model.id === preferred)?.id ?? models[0].id;
+  }, [models, selectedProviderId]);
+  // Concrete profile the launch would use — needed to key OpenCode role discovery
+  // the same way the launch does (automatic → seeded default, explicit → harness/
+  // family default).
+  const resolvedProfile = selectionProvenance === 'automatic'
+    ? automaticProfile ?? undefined
+    : selectedHarness?.defaultProfileId ?? (familyId ? PROFILE_BY_FAMILY[familyId] : undefined);
+  const openCodeDiscoveryProjectId =
+    familyId === 'opencode'
+    && selectedHarness?.availability.enabled
+    && selectedHarness?.availability.installed
+    && project
+    && !project.remote
+      ? project.id
+      : undefined;
+  const openCodeDiscoveryProfile = openCodeDiscoveryProjectId ? resolvedProfile : undefined;
+  const openCodeAgentDiscovery = discoveryForOpenCodePicker(
+    openCodeDiscoveryProjectId,
+    openCodeDiscoveryProfile,
+    openCodeAgentDiscoverySnapshot
+  );
+  const roleOptions = familyId === 'opencode' && openCodeAgentDiscovery.status !== 'loading'
+    ? resolveOpenCodeRoleOptions(selectedHarness?.targets?.roles ?? [], openCodeAgentDiscovery)
+    : [];
 
   const field = useComposerPromptField({
     placeholder: 'Describe the task… Leave empty to open an interactive session',
@@ -147,12 +201,59 @@ export function LegacyAgentHomeComposer({
     if (selectedProviderId) void ensureThreadProviderModels(selectedProviderId);
   }, [selectedProviderId]);
 
+  // Live OpenCode role discovery, keyed by (project, profile). Refreshed only on
+  // explicit request (`agentDescriptorsRefresh`); a stale selection that the
+  // freshly-discovered set no longer offers is dropped (reconcileOpenCodeRole).
+  useEffect(() => {
+    let cancelled = false;
+    if (!openCodeDiscoveryProjectId || !openCodeDiscoveryProfile) {
+      return () => {
+        cancelled = true;
+      };
+    }
+    setOpenCodeAgentDiscoverySnapshot({
+      projectId: openCodeDiscoveryProjectId,
+      profile: openCodeDiscoveryProfile,
+      discovery: { status: 'loading' }
+    });
+    void product.harness.agentDescriptors(
+      openCodeDiscoveryProjectId,
+      openCodeDiscoveryProfile,
+      agentDescriptorsRefresh > 0
+    )
+      .then((discovery) => {
+        if (cancelled) return;
+        setOpenCodeAgentDiscoverySnapshot({
+          projectId: openCodeDiscoveryProjectId,
+          profile: openCodeDiscoveryProfile,
+          discovery
+        });
+        setRoleTargetId((current) => reconcileOpenCodeRole(current, discovery));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setOpenCodeAgentDiscoverySnapshot({
+            projectId: openCodeDiscoveryProjectId,
+            profile: openCodeDiscoveryProfile,
+            discovery: { status: 'failure' }
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [openCodeDiscoveryProjectId, openCodeDiscoveryProfile, agentDescriptorsRefresh]);
+
   useEffect(() => {
     const generation = ++descriptorGeneration.current;
     void product.harness.descriptors().then((next) => {
-      if (generation === descriptorGeneration.current) setDescriptors(next);
+      if (generation !== descriptorGeneration.current) return;
+      setDescriptors(next);
+      setDescriptorsLoaded(true);
     }).catch(() => {
-      if (generation === descriptorGeneration.current) setDescriptors([]);
+      if (generation !== descriptorGeneration.current) return;
+      setDescriptors([]);
+      setDescriptorsLoaded(true);
     });
   }, [harnessCursorEnabled, harnessCodexEnabled, harnessPiEnabled, harnessOpenCodeEnabled]);
 
@@ -190,13 +291,40 @@ export function LegacyAgentHomeComposer({
     );
   }, [project?.id, project?.quickAgent, project?.remote, worktreeIsolationDefault]);
 
+  // Resolve a concrete model like the Modern composer instead of resting on
+  // "Select model": keep a still-valid pick, otherwise adopt the remembered or
+  // default model for the provider. Clears only when no models are offered.
   useEffect(() => {
-    if (selectionState !== 'resolved' || (modelId && models.some((model) => model.id === modelId))) return;
-    setModelId('');
-  }, [modelId, models, selectionState]);
+    if (selectionState !== 'resolved') return;
+    if (modelId && models.some((model) => model.id === modelId)) return;
+    if (models.length === 0) {
+      if (modelId) setModelId('');
+      return;
+    }
+    const next = preferredComposerModel({
+      rememberedModel: selectedProviderId ? rememberedSelectionFor(selectedProviderId)?.model : undefined,
+      currentModel: modelId,
+      persistRemembered: true,
+      offeredModels: models.map((model) => model.id),
+      fallbackModel: defaultModelId,
+      loading: catalogModelsLoading
+    });
+    if (next && next !== modelId) setModelId(next);
+  }, [modelId, models, selectionState, selectedProviderId, defaultModelId, catalogModelsLoading]);
 
+  // Default the harness PROJECT-INDEPENDENTLY, like the Modern composer: the
+  // last-used provider (else claude-code) mapped to its family, resolved
+  // against the loaded descriptors. Only when that family is unavailable do we
+  // fall back to the project's configured effective default. This stops the CLI
+  // composer pre-committing to a project's OpenCode default (Terra models);
+  // OpenCode roles surface only after the user explicitly picks that harness.
   useEffect(() => {
-    if (!projectId) return;
+    if (!projectId || !descriptorsLoaded) return;
+    // An explicit harness pick is sticky: never let a late async dep (personas,
+    // catalog, config) re-fire this effect and clobber the user's choice back to
+    // the default. Project change resets provenance to 'automatic' (below), which
+    // re-enables defaulting for the new project.
+    if (selectionProvenance === 'explicit') return;
     const generation = ++selectionGeneration.current;
     setSelectionProvenance('automatic');
     setSelectionState('loading');
@@ -204,6 +332,18 @@ export function LegacyAgentHomeComposer({
     setSelectionMessage(null);
     setFamilyId('');
     setAutomaticProfile(null);
+
+    const preferredFamily =
+      familyForThreadProviderId(rememberedProviderId() ?? 'claude-code') ?? 'claude';
+    const preferredHarness = harnesses.find((descriptor) => descriptor.id === preferredFamily);
+    if (preferredHarness) {
+      setFamilyId(preferredFamily);
+      setAutomaticProfile(preferredHarness.defaultProfileId ?? PROFILE_BY_FAMILY[preferredFamily]);
+      setSelectionState('resolved');
+      setResolvedProjectId(projectId);
+      return;
+    }
+
     void product.harness.effectiveDefault(projectId).then((result: EffectiveHarnessDefaultResult) => {
       if (generation !== selectionGeneration.current) return;
       if (result.ok) {
@@ -222,6 +362,9 @@ export function LegacyAgentHomeComposer({
     });
   }, [
     projectId,
+    descriptorsLoaded,
+    selectionProvenance,
+    harnesses,
     project?.launchDefault,
     project?.defaultAgents,
     project?.defaultPersonas,
@@ -277,8 +420,17 @@ export function LegacyAgentHomeComposer({
         selectedHarness?.label ?? familyId
       );
       const validModelId = models.some((model) => model.id === modelId) ? modelId : '';
-      const harnessRouting: HarnessModelRoutingV1 | undefined = validModelId
-        ? { schemaVersion: 1, byAdapter: { [familyId]: { modelTargetId: modelId } } }
+      const validRoleId = familyId === 'opencode'
+        && roleTargetId
+        && roleOptions.some((role) => role.id === roleTargetId)
+        ? roleTargetId
+        : '';
+      const adapterEntry = {
+        ...(validModelId ? { modelTargetId: validModelId } : {}),
+        ...(validRoleId ? { roleTargetId: validRoleId } : {})
+      };
+      const harnessRouting: HarnessModelRoutingV1 | undefined = Object.keys(adapterEntry).length
+        ? { schemaVersion: 1, byAdapter: { [familyId]: adapterEntry } }
         : undefined;
 
       const session = await createTerminal(project.id, profile, 80, 24, {
@@ -383,6 +535,7 @@ export function LegacyAgentHomeComposer({
                     setFamilyId(nextFamilyId);
                     setAutomaticProfile(null);
                     setModelId('');
+                    setRoleTargetId(undefined);
                     setSelectionProvenance('explicit');
                     setSelectionState('resolved');
                     setResolvedProjectId(projectId);
@@ -400,6 +553,14 @@ export function LegacyAgentHomeComposer({
                   onModelChange={setModelId}
                   disabled={harnessProviderOptions.length === 0}
                 />
+                {familyId === 'opencode' ? (
+                  <NativeRolePicker
+                    value={roleTargetId}
+                    options={roleOptions.map((role) => ({ value: role.id, name: role.label }))}
+                    onChange={setRoleTargetId}
+                    onRefresh={() => setAgentDescriptorsRefresh((value) => value + 1)}
+                  />
+                ) : null}
               </div>
               <div className="thread-command-footer-end">
                 <ComposerIconButton
@@ -465,6 +626,9 @@ export function LegacyAgentHomeComposer({
                 setFamilyId('');
                 setAutomaticProfile(null);
                 setModelId('');
+                // Re-enable auto-defaulting for the newly picked project — a prior
+                // explicit harness pick must not stick across a project switch.
+                setSelectionProvenance('automatic');
                 setProjectId(nextProjectId);
               }}
               disabled={Boolean(pinnedProject)}

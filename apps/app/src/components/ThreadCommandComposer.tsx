@@ -33,6 +33,7 @@ import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import { ComposerModePicker } from './thread/pickers/ComposerModePicker.js';
 import { ModelReasoningPicker } from './thread/pickers/ModelReasoningPicker.js';
 import { ReasoningEffortPicker } from './thread/pickers/ReasoningEffortPicker.js';
+import { NativeRolePicker } from './thread/pickers/NativeRolePicker.js';
 import { permissionModeOptionsFor } from './thread/pickers/permission-mode-options.js';
 import {
   applyComposerModePrefix,
@@ -537,31 +538,12 @@ export function ThreadCommandComposer({
                   onChange={options.setReasoningLevel}
                 />
                 {options.acpModeOptions.length > 0 ? (
-                  <label className="thread-command-acp-mode">
-                    <span className="sr-only">Native role</span>
-                    <span className="launch-opencode-role-control">
-                      <select
-                        aria-label="Native role"
-                        value={options.acpMode ?? ''}
-                        onChange={(event) => options.setAcpMode(event.target.value || undefined)}
-                      >
-                        {options.acpModeOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.name ?? option.value}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        className="launch-advanced-toggle"
-                        onClick={options.refreshAcpModeOptions}
-                        aria-label="Refresh native roles"
-                        title="Refresh native roles"
-                      >
-                        ↻
-                      </button>
-                    </span>
-                  </label>
+                  <NativeRolePicker
+                    value={options.acpMode}
+                    options={options.acpModeOptions}
+                    onChange={options.setAcpMode}
+                    onRefresh={options.refreshAcpModeOptions}
+                  />
                 ) : null}
               </div>
               <div className="thread-command-footer-end">

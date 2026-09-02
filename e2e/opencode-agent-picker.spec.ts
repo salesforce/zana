@@ -37,6 +37,55 @@ async function openLegacyAgentLauncher(window: Page) {
   return modal;
 }
 
+// The native-role picker is a popover chip that only renders for the OpenCode
+// family. Its trigger lives in the composer; its menu portals to document.body.
+// There is no "Use harness default" sentinel — discovered roles are listed
+// directly and the first role is the resting selection.
+function roleTrigger(modal: Locator) {
+  return modal.locator('[data-testid="native-role-picker-trigger"]');
+}
+
+async function openRoleMenu(window: Page, modal: Locator, timeout = 5_000) {
+  const trigger = roleTrigger(modal);
+  await expect(trigger).toBeVisible({ timeout });
+  await trigger.click();
+  const menu = window.locator('[data-testid="native-role-picker-menu"]');
+  await expect(menu).toBeVisible();
+  return menu;
+}
+
+async function readRoleLabels(window: Page, modal: Locator, timeout = 5_000) {
+  const menu = await openRoleMenu(window, modal, timeout);
+  const labels = (await menu.getByRole('option').allTextContents()).map((label) => label.trim());
+  await roleTrigger(modal).click(); // toggle the popover closed
+  await expect(menu).toBeHidden();
+  return labels;
+}
+
+async function selectRole(window: Page, modal: Locator, value: string) {
+  await openRoleMenu(window, modal);
+  await window.locator(`[data-testid="native-role-${value}"]`).click();
+}
+
+async function refreshRoles(window: Page, modal: Locator) {
+  await openRoleMenu(window, modal);
+  await window.locator('[data-testid="native-role-refresh"]').click();
+}
+
+// The CLI Agent composer now rests on claude-code (Modern-parity default), so
+// the OpenCode harness — and its native-role picker — only appear after the
+// user explicitly picks OpenCode in the model/harness popover. Provider tab
+// ids are the thread provider id; OpenCode maps to `acp-opencode`.
+async function selectHarness(window: Page, modal: Locator, providerId: string) {
+  const trigger = modal.locator('[data-testid="model-reasoning-picker-trigger"]');
+  await expect(trigger).toBeVisible({ timeout: 30_000 });
+  await trigger.click();
+  const tab = window.locator(`[data-testid="model-reasoning-provider-${providerId}"]`);
+  await expect(tab).toBeVisible({ timeout: 30_000 });
+  await tab.click();
+  await trigger.click(); // switching harness leaves the popover open; close it
+}
+
 test('OpenCode agent picker loads effective visible primary agents through real IPC', async ({ app }) => {
   const { window } = app;
   const openCode = makeFakeOpenCodeBinary();
@@ -62,19 +111,19 @@ test('OpenCode agent picker loads effective visible primary agents through real 
     await goToAgents(window);
     const modal = await openLegacyAgentLauncher(window);
     await selectTargetProject(window, modal, projectName);
-    const harness = modal.getByLabel('Launch harness').locator('[data-testid="launch-profile-opencode"]');
-    await expect(harness).toBeEnabled();
-    await harness.click();
-    await modal.getByRole('button', { name: 'Customize launch' }).click();
+    await selectHarness(window, modal, 'acp-opencode');
 
-    const picker = modal.locator('#launch-role-target');
-    await expect(picker).toBeEnabled();
-    await expect(picker.locator('option')).toHaveText(['Use harness default', 'build [Accept Edits, Autonomous]', 'plan [Plan]']);
-    await picker.selectOption('plan');
-    await expect(picker).toHaveValue('plan');
-    await modal.getByRole('button', { name: 'Refresh agents' }).click();
-    await expect(picker).toBeEnabled();
-    await expect(picker.locator('option')).toHaveText(['Use harness default', 'build [Accept Edits, Autonomous]', 'plan [Plan]']);
+    expect(await readRoleLabels(window, modal, 30_000)).toEqual([
+      'build [Accept Edits, Autonomous]',
+      'plan [Plan]'
+    ]);
+    await selectRole(window, modal, 'plan');
+    await expect(roleTrigger(modal)).toContainText('plan [Plan]');
+    await refreshRoles(window, modal);
+    expect(await readRoleLabels(window, modal)).toEqual([
+      'build [Accept Edits, Autonomous]',
+      'plan [Plan]'
+    ]);
   } finally {
     if (projectId) await window.evaluate((id) => window.cc.projects.remove(id), projectId);
     await window.evaluate(() => window.cc.config.set({
@@ -109,15 +158,22 @@ test('OpenCode picker holds cached agents until explicit Refresh', async ({ app 
     await goToAgents(window);
     const modal = await openLegacyAgentLauncher(window);
     await selectTargetProject(window, modal, projectName);
-    await modal.getByLabel('Launch harness').locator('[data-testid="launch-profile-opencode"]').click();
-    await modal.getByRole('button', { name: 'Customize launch' }).click();
+    await selectHarness(window, modal, 'acp-opencode');
 
-    const picker = modal.locator('#launch-role-target');
-    await expect(picker.locator('option')).toHaveText(['Use harness default', 'build [Accept Edits, Autonomous]', 'plan [Plan]']);
+    expect(await readRoleLabels(window, modal, 30_000)).toEqual([
+      'build [Accept Edits, Autonomous]',
+      'plan [Plan]'
+    ]);
     writeFileSync(openCode.refreshMarker, 'updated');
-    await expect(picker.locator('option')).toHaveText(['Use harness default', 'build [Accept Edits, Autonomous]', 'plan [Plan]']);
-    await modal.getByRole('button', { name: 'Refresh agents' }).click();
-    await expect(picker.locator('option')).toHaveText(['Use harness default', 'build [Accept Edits, Autonomous]', 'review']);
+    expect(await readRoleLabels(window, modal)).toEqual([
+      'build [Accept Edits, Autonomous]',
+      'plan [Plan]'
+    ]);
+    await refreshRoles(window, modal);
+    expect(await readRoleLabels(window, modal)).toEqual([
+      'build [Accept Edits, Autonomous]',
+      'review'
+    ]);
   } finally {
     if (projectId) await window.evaluate((id) => window.cc.projects.remove(id), projectId);
     await window.evaluate(() => window.cc.config.set({ defaultHarness: undefined, opencodeBinary: undefined }));
@@ -144,11 +200,8 @@ test.describe('Quick Agent OpenCode startup warmup', () => {
         : 0).toBe(1);
       await goToAgents(window);
       const modal = await openLegacyAgentLauncher(window);
-      await modal.getByLabel('Launch harness').locator('[data-testid="launch-profile-opencode"]').click();
-      const picker = modal.locator('#launch-role-target');
-      await expect(picker).toBeEnabled();
-      await expect(picker.locator('option')).toHaveText([
-        'Use harness default',
+      await selectHarness(window, modal, 'acp-opencode');
+      expect(await readRoleLabels(window, modal, 30_000)).toEqual([
         'build [Accept Edits, Autonomous]',
         'plan [Plan]'
       ]);
@@ -186,15 +239,18 @@ test('real OpenCode CLI agents become selectable through Electron UI', async ({ 
     await goToAgents(window);
     const modal = await openLegacyAgentLauncher(window);
     await selectTargetProject(window, modal, projectName);
-    const harness = modal.getByLabel('Launch harness').locator('[data-testid="launch-profile-opencode"]');
-    await expect(harness).toBeEnabled();
-    await harness.click();
-    const picker = modal.locator('#launch-role-target');
-    await expect(picker).toBeEnabled({ timeout: 30_000 });
-    await expect(picker.locator('option')).toContainText(['build [Accept Edits, Autonomous]', 'plan [Plan]', 'doc-vault', 'test-primary']);
-    await expect(picker.locator('option')).not.toContainText(['compaction', 'summary', 'title', 'test-subagent']);
-    await picker.selectOption('plan');
-    await expect(picker).toHaveValue('plan');
+    await selectHarness(window, modal, 'acp-opencode');
+
+    const labels = await readRoleLabels(window, modal, 30_000);
+    expect(labels).toEqual(expect.arrayContaining([
+      'build [Accept Edits, Autonomous]',
+      'plan [Plan]',
+      'doc-vault',
+      'test-primary'
+    ]));
+    expect(labels).not.toEqual(expect.arrayContaining(['compaction', 'summary', 'title', 'test-subagent']));
+    await selectRole(window, modal, 'plan');
+    await expect(roleTrigger(modal)).toContainText('plan [Plan]');
   } finally {
     if (projectId) await window.evaluate((id) => window.cc.projects.remove(id), projectId);
     rmSync(projectDir, { recursive: true, force: true });
@@ -230,28 +286,25 @@ test.describe('real OpenCode home integration', () => {
       await goToAgents(window);
       const modal = await openLegacyAgentLauncher(window);
       await selectTargetProject(window, modal, projectName);
-      const harness = modal.getByLabel('Launch harness').locator('[data-testid="launch-profile-opencode"]');
-      await expect(harness).toBeEnabled();
-      await harness.click();
-      const picker = modal.locator('#launch-role-target');
-      await expect(picker).toBeEnabled({ timeout: 30_000 }).catch(async (error) => {
+    await selectHarness(window, modal, 'acp-opencode');
+
+      await expect(roleTrigger(modal)).toBeVisible({ timeout: 30_000 }).catch(async (error) => {
         await events.poll();
         const harnessLogs = events.collect().filter((entry) =>
           entry.kind === 'log' && JSON.stringify(entry.args).includes('OpenCode')
         );
         throw new Error(`${error.message}\nRelevant main logs:\n${JSON.stringify(harnessLogs, null, 2)}`);
       });
-      const options = await picker.locator('option').allTextContents();
+      const options = await readRoleLabels(window, modal, 30_000);
       expect(options).toEqual(expect.arrayContaining([
         'build [Accept Edits, Autonomous]',
         'plan [Plan]'
       ]));
-      expect(options.some((option) => option !== 'Use harness default'
-        && !option.startsWith('build')
-        && !option.startsWith('plan'))).toBe(true);
+      expect(options.some((option) =>
+        !option.startsWith('build') && !option.startsWith('plan'))).toBe(true);
       expect(options).not.toEqual(expect.arrayContaining(['compaction', 'summary', 'title', 'test-subagent']));
-      await picker.selectOption('plan');
-      await expect(picker).toHaveValue('plan');
+      await selectRole(window, modal, 'plan');
+      await expect(roleTrigger(modal)).toContainText('plan [Plan]');
     } finally {
       if (projectId) await window.evaluate((id) => window.cc.projects.remove(id), projectId);
     }
