@@ -350,6 +350,8 @@ function getProviderErrorCategory(
         return "sandbox";
       case "other":
         return "unknown";
+      default:
+        return assertNever(errorInfo);
     }
   }
   if ("httpConnectionFailed" in errorInfo) {

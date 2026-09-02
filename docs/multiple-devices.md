@@ -30,8 +30,9 @@ the public Heroku origin and relay token (inlined at `electron-vite build` from
 Precedence: runtime env, then the values baked into that build. Settings and
 the repo `public-app-url` file are not used. Do not commit the token; set the
 same `ZCC_RELAY_TOKEN` on Heroku and in the release/CI environment (GitHub
-secrets `ZCC_APP_URL` / `ZCC_RELAY_TOKEN`, or export them before
-`pnpm run release:mac`).
+secrets `ZCC_APP_URL` / `ZCC_RELAY_TOKEN`, or export them before a local
+`pnpm run release:mac` package). The public dual-arch build is produced by
+pushing a `vx.y.z` tag.
 
 The token authenticates a laptop to open a session. Isolation between laptops
 is the session URL (`/t/<sessionId>`), not a personal key. Join/enroll through

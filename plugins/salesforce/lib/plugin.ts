@@ -71,7 +71,6 @@ import {
   type ResolvedOrg,
   type SafetyEnvelope,
   type SalesforceDeps,
-  type ToolFailure,
   type ToolResult
 } from './types.js';
 
@@ -396,7 +395,7 @@ async function confirmEnvelope(
   return approved ? { approved: true, reason: 'submitted' } : { approved: false, reason: 'denied' };
 }
 
-function fail(code: string, error: string): ToolFailure {
+function fail(code: string, error: string): ToolResult {
   return { ok: false, code, error };
 }
 
@@ -714,7 +713,7 @@ async function runAgent(
 async function requireDxRoot(
   snapshot: PluginSettingsValues,
   deps: SalesforceDeps
-): Promise<{ ok: true; projectRoot: string } | ToolFailure> {
+): Promise<{ ok: true; projectRoot: string } | ToolResult> {
   if (!snapshot.projectRoot || !isDxProject(snapshot.projectRoot, deps.exists)) {
     return fail('not_configured', 'Set DX project root to a folder that contains sfdx-project.json.');
   }
@@ -795,7 +794,7 @@ async function loadAgentBundles(
   deps: SalesforceDeps
 ): Promise<
   | { ok: true; projectRoot: string; bundles: ReturnType<typeof scanAgentBundles>; bundle: ReturnType<typeof findAgentBundle> }
-  | ToolFailure
+  | ToolResult
 > {
   const root = await requireDxRoot(snapshot, deps);
   if (!('projectRoot' in root)) return root;
@@ -845,7 +844,7 @@ async function runAgentPreview(
 ): Promise<ToolResult> {
   const verb = plan.action === 'preview.start' ? 'start' : plan.action === 'preview.send' ? 'send' : 'end';
   const resolved = await resolvePreviewIdentity(plan, snapshot, deps, verb === 'start');
-  if ('code' in resolved) return resolved;
+  if ('ok' in resolved) return resolved;
   const label = resolved.identity?.apiName ?? plan.sessionId ?? '';
   const { org, mediated } = await mediateOrgRead(
     ctx,
@@ -1021,7 +1020,7 @@ async function pollEvalRun(
       apiVersion: EVAL_API_VERSION
     });
     if (response.status >= 400) {
-      return fail('api_error', compactError(response.status, response.json, response.text));
+      return { ok: false, code: 'api_error', error: compactError(response.status, response.json, response.text) };
     }
     payload = response.json;
     if (isEvalTerminal(evalRunStatus(payload))) {
@@ -1029,7 +1028,7 @@ async function pollEvalRun(
     }
     if (attempt < EVAL_POLL_MAX_ATTEMPTS - 1) await sleep(EVAL_POLL_INTERVAL_MS);
   }
-  return fail('eval_timeout', `Eval run ${runId} did not complete.`);
+  return { ok: false, code: 'eval_timeout', error: `Eval run ${runId} did not complete.` };
 }
 
 async function runAgentList(
@@ -1151,7 +1150,7 @@ async function resolvePreviewIdentity(
   snapshot: PluginSettingsValues,
   deps: SalesforceDeps,
   requireIdentity: boolean
-): Promise<{ identity?: AgentPreviewIdentity; projectRoot?: string } | ToolFailure> {
+): Promise<{ identity?: AgentPreviewIdentity; projectRoot?: string } | ToolResult> {
   if (plan.published) {
     const apiName = plan.apiName;
     if (!apiName) return fail('invalid_input', 'published preview requires apiName.');

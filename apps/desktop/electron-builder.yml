@@ -138,7 +138,7 @@ mac:
     NSMicrophoneUsageDescription: "Zana Command Center uses the microphone to transcribe voice input for agent prompts."
   # Arch is selected per build via the CLI flag (e.g. `electron-builder --mac
   # --arm64`). node-pty is a native module, so each arch must be packaged on a
-  # runner of that arch — the release workflow uses a macos-13/macos-14 matrix.
+  # runner of that arch — the release workflow uses a macos-15 / macos-15-intel matrix.
   # Listing arch here would override the flag and force a cross-rebuild.
   #
   # dmg = first-install artifact; zip = the artifact Squirrel.Mac swaps in for

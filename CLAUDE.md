@@ -392,8 +392,10 @@ Core rules. Rationale: `docs/review-consensus-2026-06.md`.
   distributed extension, never in the app source tree.
 
 - **Release artifacts are published to the configured public GitHub release feed.**
-  The auto-updater reads that feed anonymously. When cutting a release, publish
-  the new build with `npm run release:mac` so the auto-updater can offer it.
+  The auto-updater reads that feed anonymously. When cutting a release, push a
+  `vx.y.z` tag so `.github/workflows/release.yml` builds Apple Silicon + Intel
+  and publishes both feeds. Local `pnpm run release:mac` packages the host arch
+  only (`--publish never`) and must not upload.
 
 - **The local-spawn argv/env assembly lives in `PtyManager.create()` and
   dispatches through the per-profile `LaunchProvider`; `@zana-ai/zcc-spawn-plan` is now the

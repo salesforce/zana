@@ -1,9 +1,5 @@
 import type { ComponentType, ReactNode } from 'react';
-import {
-  definePluginApp,
-  useZccNavigate,
-  type PluginPendingInteractionProps,
-} from '@zana-ai/zcc-plugin-sdk/app';
+import { definePluginApp, useZccNavigate, type PluginPendingInteractionProps } from '@zana-ai/zcc-plugin-sdk/app';
 import { AgentScriptPanel } from './src/app/AgentScriptPanel.js';
 
 function hostReact() {
@@ -133,8 +129,12 @@ function SalesforceGuardrailForm(props: PluginPendingInteractionProps) {
     React.createElement(
       'div',
       { style: { display: 'flex', gap: 8 } },
-      React.createElement('button', { type: 'button', onClick: () => props.submit({ approved: true }) }, 'Allow this action'),
-      React.createElement('button', { type: 'button', onClick: () => props.cancel() }, 'Deny')
+      React.createElement(
+        'button',
+        { type: 'button', onClick: () => void props.submit({ approved: true }) },
+        'Allow this action'
+      ),
+      React.createElement('button', { type: 'button', onClick: () => void props.cancel() }, 'Deny')
     )
   );
 }

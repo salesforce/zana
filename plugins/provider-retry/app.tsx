@@ -8,18 +8,23 @@ import {
 
 const REALTIME_CHANNEL = "provider-retry";
 
-function hostReact() {
-  return (globalThis as { __ZCC_HOST_REACT__?: typeof import("react") })
-    .__ZCC_HOST_REACT__;
+type HostReact = typeof import("react");
+
+function hostReact(): HostReact | undefined {
+  return (globalThis as { __ZCC_HOST_REACT__?: HostReact }).__ZCC_HOST_REACT__;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function payloadThreadId(payload: unknown): string | null {
-  if (typeof payload !== "object" || payload === null) return null;
-  const threadId = (payload as { threadId?: unknown }).threadId;
+  if (!isRecord(payload)) return null;
+  const threadId = payload.threadId;
   return typeof threadId === "string" ? threadId : null;
 }
 
-function retryLabel(retryAtMs: number) {
+function retryLabel(retryAtMs: number): string {
   return new Intl.DateTimeFormat(undefined, {
     weekday: "short",
     hour: "numeric",
@@ -36,9 +41,9 @@ function ProviderRetryBanner() {
   });
 }
 
-function hostReactCreate<P extends Record<string, unknown>>(
-  component: ComponentType<P>,
-  props: P & { key?: string },
+function hostReactCreate(
+  component: ComponentType<{ threadId: string }>,
+  props: { key: string; threadId: string },
 ) {
   const React = hostReact();
   if (!React) return null;
@@ -55,26 +60,15 @@ function ProviderRetryBannerForThread({ threadId }: { threadId: string }) {
 
   const load = useCallback(async () => {
     const result = await rpc.call("providerRetryStatus", { threadId });
-    const nextView =
-      result && typeof result === "object"
-        ? (result as { view?: unknown }).view
-        : null;
-    setView(
-      nextView && typeof nextView === "object"
-        ? (nextView as Record<string, unknown>)
-        : null,
-    );
+    const nextView = isRecord(result) ? result.view : null;
+    setView(isRecord(nextView) ? nextView : null);
   }, [rpc, threadId]);
 
   const cancel = useCallback(async () => {
     setCancelling(true);
     try {
       const result = await rpc.call("providerRetryCancel", { threadId });
-      if (
-        result &&
-        typeof result === "object" &&
-        (result as { cancelled?: unknown }).cancelled
-      ) {
+      if (isRecord(result) && result.cancelled) {
         setView(null);
       } else {
         await load();
@@ -96,7 +90,7 @@ function ProviderRetryBannerForThread({ threadId }: { threadId: string }) {
     }
   });
 
-  if (view === null || typeof view !== "object") return null;
+  if (view === null) return null;
   const retryAtMs = view.retryAtMs;
   const providerId = typeof view.providerId === "string" ? view.providerId : "Provider";
   const retry =

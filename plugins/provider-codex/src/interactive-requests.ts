@@ -264,7 +264,6 @@ export function buildCodexInteractiveResponse(
       throw new ProviderResponseEncodeError(
         "Codex plan-review interactive requests are unsupported",
       );
-    // Generic tool-use approvals are raised by other bridges; Codex never does.
     case "tool_use":
       throw new ProviderResponseEncodeError(
         "Codex tool-use interactive requests are unsupported",
