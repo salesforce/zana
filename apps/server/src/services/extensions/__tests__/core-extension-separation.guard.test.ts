@@ -225,6 +225,21 @@ describe('Core-extension separation guard', () => {
     expect(scripts.build).toBe('electron-vite build');
   });
 
+  it('tag-push CI publishes dual-arch macOS; local release:mac does not upload', () => {
+    const desktopPkg = JSON.parse(
+      readFileSync(join(repoRoot, 'apps/desktop/package.json'), 'utf8'),
+    ) as { scripts: Record<string, string> };
+    expect(desktopPkg.scripts['release:mac']).toContain('--publish never');
+    expect(desktopPkg.scripts['release:mac']).not.toContain('--publish always');
+
+    const workflow = readFileSync(join(repoRoot, '.github/workflows/release.yml'), 'utf8');
+    expect(workflow).toContain('macos-15-intel');
+    expect(workflow).not.toMatch(/macos-13\b/);
+    expect(workflow).toContain('merge-latest-mac-yml.mjs');
+    expect(workflow).toContain('grebmann1/zcc-releases');
+    expect(workflow).toContain('ZCC_RELEASES_TOKEN');
+  });
+
   it('electron.vite.config.ts watches plugins/* (built-ins) but NOT extensions/* (runtime)', () => {
     // The vite config explicitly watches `plugins/**` (built-in modules that ARE
     // bundled) but does NOT watch `extensions/**` (runtime-loaded disk extensions).

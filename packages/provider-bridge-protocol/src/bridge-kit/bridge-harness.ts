@@ -1,3 +1,5 @@
+import type { BridgeErrorData } from "../errors.js";
+
 export type BridgeJsonRpcId = string | number;
 
 type BridgeJsonRpcResponse =
@@ -9,23 +11,25 @@ type BridgeJsonRpcResponse =
   | {
       jsonrpc: "2.0";
       id: BridgeJsonRpcId;
-      error: { code: number; message: string; data?: unknown };
+      error: { code: number; message: string; data?: BridgeErrorData };
     };
 
 interface CreateBridgeIoArgs {
   write?: (line: string) => void;
 }
 
+export type BridgeSendError = (
+  id: BridgeJsonRpcId,
+  code: number,
+  message: string,
+  data?: BridgeErrorData,
+) => void;
+
 export function createBridgeIo<TMessage>({
   write = (line) => process.stdout.write(line),
 }: CreateBridgeIoArgs = {}): {
   send: (message: TMessage | BridgeJsonRpcResponse) => void;
-  sendError: (
-    id: BridgeJsonRpcId,
-    code: number,
-    message: string,
-    data?: unknown,
-  ) => void;
+  sendError: BridgeSendError;
   sendResult: (id: BridgeJsonRpcId, result: unknown) => void;
 } {
   const send = (message: TMessage | BridgeJsonRpcResponse): void => {
@@ -34,7 +38,11 @@ export function createBridgeIo<TMessage>({
   return {
     send,
     sendError: (id, code, message, data) => {
-      send({ jsonrpc: "2.0", id, error: { code, message, data } });
+      send({
+        jsonrpc: "2.0",
+        id,
+        error: data === undefined ? { code, message } : { code, message, data },
+      });
     },
     sendResult: (id, result) => {
       send({ jsonrpc: "2.0", id, result });
@@ -66,7 +74,7 @@ export function runBridgeRequest<
 >(args: {
   handleRequest: (request: TRequest) => Promise<void>;
   request: TRequest;
-  sendError: (id: BridgeJsonRpcId, code: number, message: string) => void;
+  sendError: BridgeSendError;
 }): void {
   void args.handleRequest(args.request).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);

@@ -115,10 +115,9 @@ function mergeCodexRateLimitSnapshot(
     credits: update.credits ?? previous?.credits ?? null,
     individualLimit:
       update.individualLimit ?? previous?.individualLimit ?? null,
+    spendControlReached: update.spendControlReached ?? null,
     planType: update.planType ?? previous?.planType ?? null,
     rateLimitReachedType: update.rateLimitReachedType ?? null,
-    spendControlReached:
-      update.spendControlReached ?? previous?.spendControlReached ?? null,
   };
   if (
     merged.rateLimitReachedType === null &&
@@ -275,11 +274,14 @@ function getProviderErrorCategory(
     switch (errorInfo) {
       case "contextWindowExceeded":
         return "context-window-exceeded";
+      case "sessionBudgetExceeded":
+        return "budget-exceeded";
       case "usageLimitExceeded":
         return "rate-limit";
       case "serverOverloaded":
         return "overloaded";
       case "cyberPolicy":
+      case "misalignmentPolicyViolation":
         return "policy";
       case "internalServerError":
         return "internal";
@@ -291,12 +293,10 @@ function getProviderErrorCategory(
         return "thread-rollback-failed";
       case "sandboxError":
         return "sandbox";
-      case "sessionBudgetExceeded":
-        return "budget-exceeded";
-      case "misalignmentPolicyViolation":
-        return "policy";
       case "other":
         return "unknown";
+      default:
+        return assertNever(errorInfo);
     }
   }
   if ("httpConnectionFailed" in errorInfo) {

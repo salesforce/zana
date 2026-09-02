@@ -10,7 +10,13 @@ Every app release must be published to **both** feeds. Do not treat one as optio
 - Public product / auto-update: https://github.com/salesforce/zana/releases
 - Mirror feed: https://github.com/grebmann1/zcc-releases/releases
 
-`electron-builder` (`npm run release:mac`, `publish.owner`/`repo` in `apps/desktop/electron-builder.yml`) only writes **salesforce/zana**. After that succeeds, create or update the matching release on **grebmann1/zcc-releases** with the same tag, body, and artifacts (`*.dmg`, `*.zip`, `*.blockmap`, `latest-mac.yml`).
+## Tag push is the publisher
+
+Cut a release by tagging `vx.y.z` and pushing it. `.github/workflows/release.yml` builds **Apple Silicon (arm64)** on `macos-15` and **Intel (x64)** on `macos-15-intel`, merges `latest-mac.yml`, and publishes both architectures to **salesforce/zana**. The same job then mirrors the tag, title, body, and artifacts (`*.dmg`, `*.zip`, `*.blockmap`, `latest-mac.yml`) to **grebmann1/zcc-releases**.
+
+Local `pnpm run release:mac` only packages the **host** architecture (`electron-builder --publish never`). It must not upload — a laptop arm64 publish would replace the dual-arch feed.
+
+Repo secret `ZCC_RELEASES_TOKEN` (a PAT with `contents: write` on `grebmann1/zcc-releases`) is required for the mirror. Signing/notarization still uses `CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`.
 
 ## Release name is `x.y.z` only
 

@@ -1,20 +1,28 @@
 name: Release
 
-# Build and publish a macOS release when a version tag is pushed.
+# Build and publish a dual-arch macOS release when a version tag is pushed.
 #
 #   git tag v0.2.0
 #   git push origin v0.2.0
 #
+# This workflow is the only publisher. Local `pnpm run release:mac` packages
+# the host arch with --publish never and must not upload to GitHub.
+#
 # node-pty is a native module, so each architecture is built on a runner of
-# that architecture (no reliable cross-compile): macos-13 = Intel/x64,
-# macos-14 = Apple Silicon/arm64. Both .dmg artifacts attach to one Release.
+# that architecture (no reliable cross-compile): macos-15-intel = Intel/x64,
+# macos-15 = Apple Silicon/arm64. Both .dmg/.zip artifacts attach to one
+# Release. Per-arch latest-mac.yml files are merged so electron-updater can
+# serve the right build per machine.
 #
 # The app is signed with an Apple Developer ID certificate and notarized so that
 # electron-updater can auto-update one build to the next — Squirrel.Mac refuses
 # to update an unsigned app. The signing cert is imported from the CSC_LINK +
 # CSC_KEY_PASSWORD repo secrets; notarization requires APPLE_ID,
-# APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID (see docs/auto-update-setup.md).
-# With Developer ID + notarization, fresh installs open without Gatekeeper prompts.
+# APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID. With Developer ID +
+# notarization, fresh installs open without Gatekeeper prompts.
+#
+# After salesforce/zana is published, the same tag/title/assets are mirrored to
+# grebmann1/zcc-releases via ZCC_RELEASES_TOKEN.
 
 on:
   push:
@@ -113,12 +121,12 @@ jobs:
       matrix:
         include:
           # node-pty can't cross-compile, so each arch is built on a runner of
-          # that arch: macos-14 = Apple Silicon/arm64, macos-13 = Intel/x64.
-          # Both artifacts attach to one Release; latest-mac.yml lists both so
-          # electron-updater serves the right build per machine.
-          - os: macos-14
+          # that arch: macos-15 = Apple Silicon/arm64, macos-15-intel = Intel/x64.
+          # Both artifacts attach to one Release; a merged latest-mac.yml lists
+          # both so electron-updater serves the right build per machine.
+          - os: macos-15
             arch: arm64
-          - os: macos-13
+          - os: macos-15-intel
             arch: x64
     runs-on: ${{ matrix.os }}
     steps:
@@ -142,9 +150,11 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build and package
-        # electron-builder rebuilds node-pty for the bundled Electron's ABI
-        # automatically (npmRebuild defaults to true). Build only this runner's
-        # arch so the native binary matches.
+        # Same pre-electron-builder chain as local package:mac / release:mac
+        # (fetch:opencode, plugin hosts, join-cli). electron-builder rebuilds
+        # node-pty for the bundled Electron's ABI automatically (npmRebuild
+        # defaults to true). Build only this runner's arch so the native binary
+        # matches.
         #
         # Signing + notarization: when CSC_LINK is present electron-builder imports
         # the cert (Developer ID Application) and signs (required for
@@ -162,10 +172,17 @@ jobs:
         # For unsigned builds, pass --config.mac.notarize=false to override the
         # config's notarize: true (electron-builder 25.x CLI flag overrides config).
         run: |
+          pnpm run fetch:opencode
+          pnpm exec tsx scripts/build-plugin-hosts.mjs
+          pnpm exec node apps/host-daemon/scripts/build-join.mjs
           pnpm run build
+          case "$ZCC_MAC_ARCH" in
+            arm64|x64) ;;
+            *) echo "ERROR: unexpected ZCC_MAC_ARCH=$ZCC_MAC_ARCH" >&2; exit 1 ;;
+          esac
           if [ -n "$CSC_LINK_SECRET" ]; then
             # Fail-fast: signing enabled but missing notarization secrets
-            : "${APPLE_ID_SECRET:?ERROR: CSC_LINK is set but APPLE_ID secret is missing. Add all 5 secrets (see docs/auto-update-setup.md).}"
+            : "${APPLE_ID_SECRET:?ERROR: CSC_LINK is set but APPLE_ID secret is missing.}"
             : "${APPLE_APP_SPECIFIC_PASSWORD_SECRET:?ERROR: CSC_LINK is set but APPLE_APP_SPECIFIC_PASSWORD secret is missing.}"
             : "${APPLE_TEAM_ID_SECRET:?ERROR: CSC_LINK is set but APPLE_TEAM_ID secret is missing.}"
             echo "Signing + notarization enabled (all secrets present)."
@@ -174,14 +191,16 @@ jobs:
             export APPLE_ID="$APPLE_ID_SECRET"
             export APPLE_APP_SPECIFIC_PASSWORD="$APPLE_APP_SPECIFIC_PASSWORD_SECRET"
             export APPLE_TEAM_ID="$APPLE_TEAM_ID_SECRET"
-            pnpm exec electron-builder --mac --${{ matrix.arch }} --publish never
+            pnpm exec electron-builder --mac "--$ZCC_MAC_ARCH" --publish never
           else
             echo "No signing cert — building UNSIGNED (auto-update disabled, notarization disabled)."
             export CSC_IDENTITY_AUTO_DISCOVERY=false
             # Override config's notarize: true for unsigned builds (would fail without Apple secrets)
-            pnpm exec electron-builder --mac --${{ matrix.arch }} --publish never --config.mac.notarize=false
+            pnpm exec electron-builder --mac "--$ZCC_MAC_ARCH" --publish never --config.mac.notarize=false
           fi
+          mv dist/latest-mac.yml "dist/latest-mac-${ZCC_MAC_ARCH}.yml"
         env:
+          ZCC_MAC_ARCH: ${{ matrix.arch }}
           # The renderer bundle pulls in the heavy monaco-vscode packages, which
           # blow past Node's default ~2 GB heap during `electron-vite build`
           # (FATAL: JavaScript heap out of memory). Raise the limit; macos
@@ -191,8 +210,7 @@ jobs:
           ZCC_RELAY_TOKEN: ${{ secrets.ZCC_RELAY_TOKEN }}
           # Passed in under *_SECRET names; the script promotes them to the real
           # env vars only when non-empty (see above). To enable signed +
-          # notarized auto-updating builds, add these repo secrets per
-          # docs/auto-update-setup.md:
+          # notarized auto-updating builds, add these repo secrets:
           #   CSC_LINK                      = base64 of the Developer ID Application .p12 export
           #   CSC_KEY_PASSWORD              = the .p12 export password
           #   APPLE_ID                      = your Apple ID email (e.g., dev@example.com)
@@ -208,13 +226,13 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.arch }}
-          # dmg = first install; zip + latest-mac.yml = the auto-update feed
-          # electron-updater reads. blockmaps enable differential downloads.
+          # dmg = first install; zip + per-arch yml = inputs to the merged
+          # auto-update feed. blockmaps enable differential downloads.
           path: |
             dist/*.dmg
             dist/*.zip
             dist/*.blockmap
-            dist/latest-mac.yml
+            dist/latest-mac-${{ matrix.arch }}.yml
           if-no-files-found: error
 
   release:
@@ -224,11 +242,24 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+
       - name: Download all artifacts
         uses: actions/download-artifact@v8
         with:
           path: artifacts
-          merge-multiple: true
+
+      - name: Merge update feed and stage assets
+        id: meta
+        run: |
+          mkdir -p merged
+          cp artifacts/release-arm64/*.dmg artifacts/release-arm64/*.zip artifacts/release-arm64/*.blockmap merged/
+          cp artifacts/release-x64/*.dmg artifacts/release-x64/*.zip artifacts/release-x64/*.blockmap merged/
+          node scripts/merge-latest-mac-yml.mjs \
+            artifacts/release-arm64/latest-mac-arm64.yml \
+            artifacts/release-x64/latest-mac-x64.yml \
+            merged/latest-mac.yml
+          echo "title=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
@@ -239,15 +270,16 @@ jobs:
           # dmg + zip + blockmap + latest-mac.yml must all be attached:
           # electron-updater reads latest-mac.yml to detect a new version and
           # downloads the zip (the dmg is for first-install only).
+          name: ${{ steps.meta.outputs.title }}
           files: |
-            artifacts/*.dmg
-            artifacts/*.zip
-            artifacts/*.blockmap
-            artifacts/latest-mac.yml
+            merged/*.dmg
+            merged/*.zip
+            merged/*.blockmap
+            merged/latest-mac.yml
           generate_release_notes: true
           fail_on_unmatched_files: true
           body: |
-            ### Zana Command Center ${{ github.ref_name }}
+            ### Zana Command Center ${{ steps.meta.outputs.title }}
 
             macOS builds (Apple Silicon + Intel), signed with Developer ID and
             notarized. First launch should open without Gatekeeper prompts.
@@ -260,10 +292,26 @@ jobs:
             > auto-update is disabled and you will need to bypass Gatekeeper manually:
             > **System Settings → Privacy & Security → Open Anyway**, or run
             > `xattr -dr com.apple.quarantine` on the app. Once signing + notarization
-            > secrets are configured (see `docs/auto-update-setup.md`), builds will be
-            > fully notarized and auto-update seamlessly.
+            > secrets are configured, builds will be fully notarized and auto-update
+            > seamlessly.
 
             | Mac | Download |
             | --- | --- |
             | Apple Silicon (M-series) | `*-arm64.dmg` |
             | Intel | `*-x64.dmg` |
+
+      - name: Mirror to grebmann1/zcc-releases
+        env:
+          GH_TOKEN: ${{ secrets.ZCC_RELEASES_TOKEN }}
+          RELEASE_TITLE: ${{ steps.meta.outputs.title }}
+        run: |
+          : "${GH_TOKEN:?ERROR: ZCC_RELEASES_TOKEN secret is missing. Add a PAT with contents:write on grebmann1/zcc-releases.}"
+          NOTES="$(gh release view "$GITHUB_REF_NAME" --json body --jq .body)"
+          if gh release view "$GITHUB_REF_NAME" --repo grebmann1/zcc-releases >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" --repo grebmann1/zcc-releases --clobber \
+              merged/*.dmg merged/*.zip merged/*.blockmap merged/latest-mac.yml
+            gh release edit "$GITHUB_REF_NAME" --repo grebmann1/zcc-releases --title "$RELEASE_TITLE" --notes "$NOTES"
+          else
+            gh release create "$GITHUB_REF_NAME" --repo grebmann1/zcc-releases --title "$RELEASE_TITLE" --notes "$NOTES" \
+              merged/*.dmg merged/*.zip merged/*.blockmap merged/latest-mac.yml
+          fi
