@@ -21,8 +21,8 @@ name: Release
 # APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID. With Developer ID +
 # notarization, fresh installs open without Gatekeeper prompts.
 #
-# After salesforce/zana is published, the same tag/title/assets are mirrored to
-# grebmann1/zcc-releases via ZCC_RELEASES_TOKEN.
+# After salesforce/zana is created as a draft, the same tag/title/assets
+# are mirrored as a draft to grebmann1/zcc-releases via ZCC_RELEASES_TOKEN.
 
 on:
   push:
@@ -267,10 +267,11 @@ jobs:
           # Keep the published feed aligned with electron-builder.yml
           # (owner: salesforce, repo: zana). Publish into this repository
           # with the workflow GITHUB_TOKEN — no cross-repo release token.
-          # dmg + zip + blockmap + latest-mac.yml must all be attached:
-          # electron-updater reads latest-mac.yml to detect a new version and
-          # downloads the zip (the dmg is for first-install only).
+          # dmg + zip + blockmap + latest-mac.yml must all be attached.
+          # Leave this as a draft: electron-updater ignores drafts, so a tag
+          # does not ship until a human publishes the release on both feeds.
           name: ${{ steps.meta.outputs.title }}
+          draft: true
           files: |
             merged/*.dmg
             merged/*.zip
@@ -303,15 +304,16 @@ jobs:
       - name: Mirror to grebmann1/zcc-releases
         env:
           GH_TOKEN: ${{ secrets.ZCC_RELEASES_TOKEN }}
+          SOURCE_TOKEN: ${{ github.token }}
           RELEASE_TITLE: ${{ steps.meta.outputs.title }}
         run: |
           : "${GH_TOKEN:?ERROR: ZCC_RELEASES_TOKEN secret is missing. Add a PAT with contents:write on grebmann1/zcc-releases.}"
-          NOTES="$(gh release view "$GITHUB_REF_NAME" --json body --jq .body)"
+          NOTES="$(GH_TOKEN="$SOURCE_TOKEN" gh release view "$GITHUB_REF_NAME" --json body --jq .body)"
           if gh release view "$GITHUB_REF_NAME" --repo grebmann1/zcc-releases >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" --repo grebmann1/zcc-releases --clobber \
               merged/*.dmg merged/*.zip merged/*.blockmap merged/latest-mac.yml
             gh release edit "$GITHUB_REF_NAME" --repo grebmann1/zcc-releases --title "$RELEASE_TITLE" --notes "$NOTES"
           else
-            gh release create "$GITHUB_REF_NAME" --repo grebmann1/zcc-releases --title "$RELEASE_TITLE" --notes "$NOTES" \
+            gh release create "$GITHUB_REF_NAME" --repo grebmann1/zcc-releases --draft --title "$RELEASE_TITLE" --notes "$NOTES" \
               merged/*.dmg merged/*.zip merged/*.blockmap merged/latest-mac.yml
           fi

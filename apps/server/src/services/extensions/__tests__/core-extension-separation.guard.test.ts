@@ -238,6 +238,8 @@ describe('Core-extension separation guard', () => {
     expect(workflow).toContain('merge-latest-mac-yml.mjs');
     expect(workflow).toContain('grebmann1/zcc-releases');
     expect(workflow).toContain('ZCC_RELEASES_TOKEN');
+    expect(workflow).toMatch(/^\s*draft:\s*true\s*$/m);
+    expect(workflow).toContain('--draft');
   });
 
   it('electron.vite.config.ts watches plugins/* (built-ins) but NOT extensions/* (runtime)', () => {
