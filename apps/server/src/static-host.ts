@@ -1,5 +1,5 @@
 import { createReadStream, existsSync } from 'node:fs';
-import { realpath, stat } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, resolve, sep } from 'node:path';
 import { handleProductHttp } from './http/product-api.js';
@@ -83,6 +83,20 @@ function pathForRequest(rootDir: string, pathname: string): string | null {
   const relativePath = decoded.replace(/^\/+/, '');
   const candidate = resolve(rootDir, relativePath || 'index.html');
   return isContained(rootDir, candidate) ? candidate : null;
+}
+
+/**
+ * The renderer artifact is built with a RELATIVE base so the startup-repair
+ * surface can load `index.html` straight off disk over `file://`. The same
+ * markup is served here for every client route, including nested ones like
+ * `/settings/global`, where `./assets/...` would resolve against the route
+ * directory and 404 on reload. Pin the document base so assets always resolve
+ * from the artifact root; the `file://` surface never passes through here and
+ * keeps its relative resolution.
+ */
+function withDocumentBase(html: string): string {
+  if (/<base[\s>]/i.test(html)) return html;
+  return html.replace(/<head(\s[^>]*)?>/i, (head) => `${head}<base href="/">`);
 }
 
 /**
@@ -194,6 +208,14 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
     });
     if (request.method === 'HEAD') {
       response.end();
+      return;
+    }
+    if (spaPage) {
+      try {
+        response.end(withDocumentBase(await readFile(file, 'utf8')));
+      } catch {
+        response.destroy();
+      }
       return;
     }
     createReadStream(file).on('error', () => response.destroy()).pipe(response);

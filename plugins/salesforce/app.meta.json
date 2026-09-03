@@ -5,7 +5,7 @@
   "pluginId": "salesforce",
   "pluginVersion": "0.1.0",
   "builtWith": {
-    "zccVersion": "2.0.4",
+    "zccVersion": "2.0.5",
     "pluginSdkVersion": "0.1.0"
   }
 }

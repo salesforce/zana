@@ -436,8 +436,8 @@ Core rules. Rationale: `docs/review-consensus-2026-06.md`.
 - **Release artifacts are published to the configured public GitHub release feed.**
   The auto-updater reads that feed anonymously. When cutting a release, push a
   `vx.y.z` tag so `.github/workflows/release.yml` builds Apple Silicon + Intel
-  and creates **draft** releases on both feeds. A human then publishes the
-  drafts. Local `pnpm run release:mac` packages the host arch only
+  and creates a **draft** release on `salesforce/zana`. A human then publishes
+  that draft. Local `pnpm run release:mac` packages the host arch only
   (`--publish never`) and must not upload.
 
 - **The local-spawn argv/env assembly lives in `PtyManager.create()` and

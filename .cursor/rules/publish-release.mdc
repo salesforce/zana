@@ -5,31 +5,27 @@ alwaysApply: false
 
 # Publishing a release
 
-Every app release must be published to **both** feeds. Do not treat one as optional.
-
-- Public product / auto-update: https://github.com/salesforce/zana/releases
-- Mirror feed: https://github.com/grebmann1/zcc-releases/releases
+Every app release is published to the public product / auto-update feed:
+https://github.com/salesforce/zana/releases
 
 ## Tag push is the publisher
 
-Cut a release by tagging `vx.y.z` and pushing it. `.github/workflows/release.yml` builds **Apple Silicon (arm64)** on `macos-15` and **Intel (x64)** on `macos-15-intel`, merges `latest-mac.yml`, and creates a **draft** GitHub Release on **salesforce/zana**. The same job then mirrors the tag, title, body, and artifacts (`*.dmg`, `*.zip`, `*.blockmap`, `latest-mac.yml`) to a **draft** on **grebmann1/zcc-releases**.
+Cut a release by tagging `vx.y.z` and pushing it. `.github/workflows/release.yml` builds **Apple Silicon (arm64)** on `macos-15` and **Intel (x64)** on `macos-15-intel`, merges `latest-mac.yml`, and creates a **draft** GitHub Release on **salesforce/zana**.
 
 Local `pnpm run release:mac` only packages the **host** architecture (`electron-builder --publish never`). It must not upload — a laptop arm64 publish would replace the dual-arch feed.
 
-Repo secret `ZCC_RELEASES_TOKEN` (a PAT with `contents: write` on `grebmann1/zcc-releases`) is required for the mirror. Signing/notarization still uses `CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`.
+Signing/notarization uses `CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`.
 
 ## Always start as a draft
 
-A new version must land as a **draft** on both feeds. Drafts are invisible to electron-updater, so a tag does not ship to users until a human publishes it.
+A new version must land as a **draft**. Drafts are invisible to electron-updater, so a tag does not ship to users until a human publishes it.
 
 ```text
 ✅  action-gh-release  draft: true
-✅  gh release create … --draft
 ❌  published / latest on tag push
-❌  undrafting only one of the two repos
 ```
 
-The release is not done until both drafts are published (GitHub UI **Publish release**, or `gh release edit TAG --draft=false` on **both** repos).
+The release is not done until the draft on `salesforce/zana` is published (GitHub UI **Publish release**, or `gh release edit TAG --draft=false`).
 
 ## Release name is `x.y.z` only
 
@@ -45,4 +41,4 @@ The GitHub **release name** (title) is the semver triple from `package.json`, no
 
 The git **tag** stays `vx.y.z` (example: `v2.0.3`). Do not put product copy, architecture, or a leading `v` in the release name.
 
-When using `gh release create` / `gh release edit`, pass `--title "x.y.z"` (or equivalent) on **both** repos. If a draft or published release already has a prose title, rename it to `x.y.z` before calling the release done.
+When using `gh release create` / `gh release edit`, pass `--title "x.y.z"` (or equivalent). If a draft or published release already has a prose title, rename it to `x.y.z` before calling the release done.
