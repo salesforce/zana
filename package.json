@@ -50,6 +50,7 @@
     "test:smoke:only": "playwright test e2e/smoke.spec.ts",
     "test:codex:live": "ZCC_LIVE_CODEX=1 vitest run apps/host-daemon/src/harness/__tests__/codex-provider.live.test.ts",
     "rebuild": "electron-rebuild -f -w node-pty && node scripts/ensure-better-sqlite3.mjs",
+    "rebuild:electron": "electron-rebuild -f -w node-pty -w better-sqlite3",
     "check:release-notes": "node scripts/check-release-notes.mjs",
     "dist": "pnpm --filter @zana-ai/zcc-desktop package",
     "dist:mac": "pnpm --filter @zana-ai/zcc-desktop package:mac",

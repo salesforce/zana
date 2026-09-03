@@ -106,6 +106,13 @@ jobs:
           ZCC_APP_URL: ${{ secrets.ZCC_APP_URL }}
           ZCC_RELAY_TOKEN: ${{ secrets.ZCC_RELAY_TOKEN }}
 
+      # `pnpm run build` → prebuild → ensure-better-sqlite3 compiles SQLite for
+      # Node (vitest / listen.ts). Unpackaged Electron forks a utilityProcess
+      # that loads the same .node with Electron's ABI (148 vs Node 22's 127),
+      # so rebuild for Electron before the smoke launch.
+      - name: Rebuild native modules for Electron
+        run: pnpm run rebuild:electron
+
       - name: Smoke test (boot + IPC round-trip)
         run: xvfb-run -a pnpm run test:smoke:only
 
