@@ -108,8 +108,9 @@ test('launches a directly-launchable OpenCode role validated by preflight discov
 
     // The made-up `reviewer` agent is offered (as an ACP mode) and is a primary
     // in `agent list`, so preflight discovery resolves it and the launch spawns.
-    // The composer auto-defaults an `aisuite/*` catalog model, which the fixture
-    // rejects (ProviderModelNotFoundError → exit 64). A successful launch here
+    // The composer auto-defaults a catalog `--model`, which the fixture rejects
+    // whenever it co-occurs with `--agent` (ProviderModelNotFoundError → exit 64).
+    // A successful launch here
     // therefore PROVES the composer dropped the forced model once a native role
     // was picked — the native agent pins its own model.
     await selectRole(window, modal, 'reviewer');

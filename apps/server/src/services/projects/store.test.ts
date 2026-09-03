@@ -46,6 +46,11 @@ describe('scratchWorkspaceRoot', () => {
     expect(scratchWorkspaceRoot()).toBe(join(h.home, 'zcc-workspace'));
     expect(SCRATCH_DIR_NAME).toBe('zcc-workspace');
   });
+
+  it('keeps the project store on electronZccDataDir (~/.zcc unless ZCC_DATA_DIR)', () => {
+    const src = readFileSync(new URL('./store.ts', import.meta.url), 'utf8');
+    expect(src).toContain('const dataDir = electronZccDataDir()');
+  });
 });
 
 describe('config — boolean feature flags round-trip through setConfig', () => {
@@ -322,8 +327,8 @@ describe('config — voiceModel / voiceLanguage normalization', () => {
   });
 });
 
-describe('config — workspaceModes normalization (shape-only: non-empty string)', () => {
-  // A project view is either a core WorkspaceMode OR an opaque extension module
+describe('config — projectViews normalization (shape-only: non-empty string)', () => {
+  // A project view is either a core mode OR an opaque extension module
   // id (an extension-contributed project tab, e.g. the `zana-tickets`
   // extension). Core can't value-whitelist extension ids, so normalizeConfig
   // validates SHAPE only — any non-empty string round-trips; empty/non-string
@@ -331,7 +336,7 @@ describe('config — workspaceModes normalization (shape-only: non-empty string)
   // the goals/followups/feed core modes) persist across launches.
   it('keeps every non-empty string (core modes + extension ids), drops empty/non-string', () => {
     store.setConfig({
-      workspaceModes: {
+      projectViews: {
         p: 'terminals',
         q: 'agents',
         r: 'library',
@@ -342,11 +347,24 @@ describe('config — workspaceModes normalization (shape-only: non-empty string)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } as any
     });
-    expect(store.getConfig().workspaceModes).toEqual({
+    expect(store.getConfig().projectViews).toEqual({
       p: 'terminals',
       q: 'agents',
       r: 'library',
       s: 'feed',
+      ext: 'zana-tickets'
+    });
+  });
+
+  it('reads legacy workspaceModes into projectViews', () => {
+    store.setConfig({
+      workspaceModes: {
+        p: 'terminals',
+        ext: 'zana-tickets'
+      }
+    });
+    expect(store.getConfig().projectViews).toEqual({
+      p: 'terminals',
       ext: 'zana-tickets'
     });
   });
@@ -633,7 +651,7 @@ describe('ensureQuickAgentProject — legacy migration', () => {
     expect(existsSync(join(scratchWorkspaceRoot(), 'keepme.txt'))).toBe(true);
     expect(project.path).toBe(scratchWorkspaceRoot());
     expect(project.quickAgent).toBe(true);
-    expect(project.name).toBe('Default Workspace');
+    expect(project.name).toBe('Default Project');
     expect(project.tag).toBe('zcc-workspace');
   });
 
@@ -650,7 +668,7 @@ describe('ensureQuickAgentProject — legacy migration', () => {
     expect(rows.length).toBe(1);
     // same id survived the rename (re-pointed, not orphaned + re-added)
     expect(rows[0].id).toBe(existing.id);
-    expect(rows[0].name).toBe('Default Workspace');
+    expect(rows[0].name).toBe('Default Project');
     expect(store.listProjects().some((p) => p.path === legacy)).toBe(false);
   });
 
@@ -691,7 +709,7 @@ describe('ensureQuickAgentProject — legacy migration', () => {
     expect(existsSync(scratchWorkspaceRoot())).toBe(true);
     expect(project.path).toBe(scratchWorkspaceRoot());
     expect(project.quickAgent).toBe(true);
-    expect(project.name).toBe('Default Workspace');
+    expect(project.name).toBe('Default Project');
     expect(project.tag).toBe('zcc-workspace');
     // exactly one scratch dir, freshly made
     expect(readdirSync(h.home)).toContain('zcc-workspace');
@@ -704,7 +722,7 @@ describe('ensureQuickAgentProject — legacy migration', () => {
     const project = store.ensureQuickAgentProject();
 
     expect(project.id).toBe(first.id);
-    expect(project.name).toBe('Default Workspace');
+    expect(project.name).toBe('Default Project');
     expect(project.tag).toBe('zcc-workspace');
     expect(project.path).toBe(scratchWorkspaceRoot());
   });
@@ -714,5 +732,16 @@ describe('ensureQuickAgentProject — legacy migration', () => {
     store.updateProject(first.id, { name: 'My Scratch' });
 
     expect(store.ensureQuickAgentProject().name).toBe('My Scratch');
+  });
+
+  it('rewrites a stored Default Workspace label to Default Project', () => {
+    const first = store.ensureQuickAgentProject();
+    store.updateProject(first.id, { name: 'Default Workspace' });
+
+    const project = store.ensureQuickAgentProject();
+
+    expect(project.id).toBe(first.id);
+    expect(project.name).toBe('Default Project');
+    expect(project.tag).toBe('zcc-workspace');
   });
 });

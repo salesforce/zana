@@ -1,40 +1,36 @@
 import { product } from '../../lib/product-client.js';
-import React, { useState, useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Sparkles, Copy } from 'lucide-react';
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
 import type {
   LaunchProfileId,
   ScheduledTask,
   ScheduleCreateInput,
-  ScheduleTemplate,
   InboxNotifyLevel
 } from '@zana-ai/zcc-domain/product';
 import { parseEvery, formatInterval } from '@zana-ai/zcc-domain/parse-every';
 import { isValidCron, nextCronRuns } from '@zana-ai/zcc-domain/parse-cron';
 import { useData, useUi, useScheduleGroups } from '../../store.js';
-import { Modal } from '../Modal.js';
 import { ImprovePromptButton } from '../ImprovePromptButton.js';
 import { PopoverPicklist } from '../ui/PopoverPicklist.js';
 import { PROFILE_LABEL, INBOX_LEVELS, scopeLabel, sourceLabel } from './schedulerUtils.js';
-
-/** Seed values handed to ScheduleModal. May come from a template ("Use this")
- *  or a duplicate of an existing schedule ("Duplicate"). */
-type Seed =
-  | { kind: 'template'; template: ScheduleTemplate }
-  | { kind: 'duplicate'; source: ScheduledTask };
-
-interface ScheduleModalProps {
-  task: ScheduledTask | null;
-  seed?: Seed | null;
-  /** When the panel is locked to one project (the per-project tab), a NEW
-   *  schedule pre-selects that project + project scope. */
-  lockedProjectId?: string | null;
-  onClose: () => void;
-}
+import type { ScheduleSeed } from './schedule-seed.js';
 
 const PROFILES = VALID_PROFILES;
 
-export function ScheduleModal({ task, seed, lockedProjectId, onClose }: ScheduleModalProps) {
+export function ScheduleEditor({
+  task,
+  seed,
+  lockedProjectId,
+  readOnly = false,
+  onSaved
+}: {
+  task: ScheduledTask | null;
+  seed?: ScheduleSeed | null;
+  lockedProjectId?: string | null;
+  readOnly?: boolean;
+  onSaved?: (scheduleId: string) => void;
+}) {
   const projects = useData((s) => s.projects);
   const schedulerTab = useUi((s) => s.schedulerTab);
   const selectedProjectId = useUi((s) => s.selectedProjectId);
@@ -68,8 +64,6 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
   const [profile, setProfile] = useState<LaunchProfileId>(
     task?.profile ?? seededTask?.profile ?? seededTemplate?.defaults.profile ?? 'claude'
   );
-  // Cadence mode: interval ("every 1h") vs cron ("0 9 * * 1-5"). Seeded from the
-  // task/duplicate source; templates only carry intervals.
   const seedCron = task?.schedule.cron ?? seededTask?.schedule.cron;
   const [cadenceMode, setCadenceMode] = useState<'interval' | 'cron'>(
     seedCron ? 'cron' : 'interval'
@@ -85,9 +79,6 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
   const [inboxLevel, setInboxLevel] = useState<InboxNotifyLevel>(
     task?.inboxLevel ?? seededTask?.inboxLevel ?? 'quiet'
   );
-  // Default ON for new schedules: a scheduled run is background work, so closing
-  // the session once the agent finishes keeps the tab strip clean. Existing
-  // schedules keep whatever they saved; duplicates inherit the source's choice.
   const [autoCloseOnFinish, setAutoCloseOnFinish] = useState<boolean>(
     task?.autoCloseOnFinish ?? seededTask?.autoCloseOnFinish ?? true
   );
@@ -100,8 +91,6 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
     }
     return 'global';
   });
-  // Group (global scope only). New schedules created from inside a group tab
-  // pre-select that group; otherwise inherit from the task / duplicate source.
   const [group, setGroup] = useState<string>(
     task?.group
       ?? seededTask?.group
@@ -117,16 +106,14 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
     () => isValidCron(cron, tz.trim() || undefined),
     [cron, tz]
   );
-  // Live preview of the next few cron fires, recomputed as the user types. `now`
-  // is captured per-render (not memoized on a timer) — good enough for a preview.
   const cronPreview = useMemo(() => {
     if (cadenceMode !== 'cron' || !cronValid) return [];
     return nextCronRuns(cron, tz.trim() || undefined, 3, new Date());
   }, [cadenceMode, cronValid, cron, tz]);
   const cadenceValid = cadenceMode === 'cron' ? cronValid : intervalValid;
   const canSave = useMemo(
-    () => name.trim().length > 0 && Boolean(projectId) && cadenceValid,
-    [name, projectId, cadenceValid]
+    () => !readOnly && name.trim().length > 0 && Boolean(projectId) && cadenceValid,
+    [readOnly, name, projectId, cadenceValid]
   );
 
   const banner = (() => {
@@ -179,19 +166,16 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
           scope: scope === 'project' ? { projectId } : 'global',
           inboxLevel,
           autoCloseOnFinish,
-          // Group only applies to global scope; main drops it for project scope.
           group: scope === 'global' && group ? group : undefined
         };
         const result = await product.scheduler.create(input);
         if (!result.ok) {
           setError(result.message);
-          setSaving(false);
           return;
         }
+        onSaved?.(result.value.id);
       } else {
         const isGlobalTask = !task!.source || task!.source === 'global';
-        // Send only the active cadence — main clears the other side. `tz: null`
-        // on a cron edit clears any stale zone when the field is emptied.
         const cadence =
           cadenceMode === 'cron'
             ? { cron: cron.trim(), tz: tz.trim() || null }
@@ -205,50 +189,47 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
           prompt,
           inboxLevel,
           autoCloseOnFinish,
-          // Only global schedules carry a group. `null` clears → Ungrouped.
           ...(isGlobalTask ? { group: group || null } : {})
         });
         if (!result.ok) {
           setError(result.message);
-          setSaving(false);
           return;
         }
+        onSaved?.(task!.id);
       }
-      onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
       setSaving(false);
     }
   };
 
+  const disabled = readOnly;
+
   return (
-    <Modal
-      title={
+    <form
+      className="schedule-editor"
+      data-testid="schedule-editor"
+      aria-label={
         isNew
           ? seededTemplate
             ? `New schedule · ${seededTemplate.name}`
             : seededTask
-            ? 'Duplicate schedule'
-            : 'New schedule'
+              ? 'Duplicate schedule'
+              : 'New schedule'
           : 'Edit schedule'
       }
-      onClose={onClose}
-      className="scheduler-modal"
-      footer={
-        <>
-          <button className="btn" onClick={onClose}>Cancel</button>
-          <button
-            className="btn primary"
-            onClick={save}
-            disabled={!canSave || saving}
-            title={canSave ? '⌘+Enter to save' : 'Fix the errors above'}
-          >
-            {saving ? 'Saving…' : isNew ? 'Create schedule' : 'Save changes'}
-          </button>
-        </>
-      }
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save();
+      }}
     >
       {banner}
+      {readOnly ? (
+        <p className="scheduler-readonly-note">
+          Read-only — manage with Claude Code (e.g. /loop, or cancel from the session that created it).
+        </p>
+      ) : null}
       <div className="scheduler-form-field">
         <label htmlFor="sched-name">Name</label>
         <input
@@ -256,7 +237,8 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          autoFocus
+          autoFocus={!readOnly}
+          disabled={disabled}
           placeholder="Morning standup digest"
         />
       </div>
@@ -267,6 +249,7 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
           type="text"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
+          disabled={disabled}
         />
       </div>
       <div className="scheduler-form-row">
@@ -290,7 +273,7 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
             value={profile}
             searchable={false}
             onChange={(nextProfile) => setProfile(nextProfile as LaunchProfileId)}
-            options={PROFILES.map((profile) => ({ value: profile, label: PROFILE_LABEL[profile] }))}
+            options={PROFILES.map((row) => ({ value: row, label: PROFILE_LABEL[row] }))}
           />
         </div>
       </div>
@@ -303,6 +286,7 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
                 type="radio"
                 name="sched-scope"
                 checked={scope === 'global'}
+                disabled={disabled}
                 onChange={() => setScope('global')}
               />
               <div className="scheduler-scope-option-body">
@@ -315,6 +299,7 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
                 type="radio"
                 name="sched-scope"
                 checked={scope === 'project'}
+                disabled={disabled}
                 onChange={() => setScope('project')}
               />
               <div className="scheduler-scope-option-body">
@@ -371,6 +356,7 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
             role="tab"
             aria-selected={cadenceMode === 'interval'}
             className={cadenceMode === 'interval' ? 'active' : ''}
+            disabled={disabled}
             onClick={() => setCadenceMode('interval')}
           >
             Interval
@@ -380,6 +366,7 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
             role="tab"
             aria-selected={cadenceMode === 'cron'}
             className={cadenceMode === 'cron' ? 'active' : ''}
+            disabled={disabled}
             onClick={() => setCadenceMode('cron')}
           >
             Cron
@@ -393,6 +380,7 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
               value={every}
               onChange={(e) => setEvery(e.target.value)}
               placeholder="5m, 1h, 24h"
+              disabled={disabled}
               className={every.trim() && !intervalValid ? 'is-invalid' : ''}
             />
             {every.trim() ? (
@@ -418,6 +406,7 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
               onChange={(e) => setCron(e.target.value)}
               placeholder="0 9 * * 1-5"
               spellCheck={false}
+              disabled={disabled}
               className={cron.trim() && !cronValid ? 'is-invalid' : ''}
             />
             <input
@@ -427,6 +416,7 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
               onChange={(e) => setTz(e.target.value)}
               placeholder="Timezone (optional, e.g. Europe/Paris)"
               spellCheck={false}
+              disabled={disabled}
               style={{ marginTop: 6 }}
             />
             {cron.trim() && !cronValid ? (
@@ -451,10 +441,11 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
           id="sched-prompt"
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
-          rows={4}
+          rows={8}
+          disabled={disabled}
           placeholder="Passed to the spawned terminal as the initial prompt."
         />
-        <ImprovePromptButton value={prompt} onChange={setPrompt} />
+        {!readOnly ? <ImprovePromptButton value={prompt} onChange={setPrompt} /> : null}
       </div>
       <div className="scheduler-form-field">
         <label>Inbox notifications</label>
@@ -468,6 +459,7 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
                 type="radio"
                 name="sched-inbox-level"
                 checked={inboxLevel === value}
+                disabled={disabled}
                 onChange={() => setInboxLevel(value)}
               />
               <div className="scheduler-scope-option-body">
@@ -490,7 +482,7 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
           <input
             type="checkbox"
             checked={autoCloseOnFinish && profile !== 'shell'}
-            disabled={profile === 'shell'}
+            disabled={disabled || profile === 'shell'}
             onChange={(e) => setAutoCloseOnFinish(e.target.checked)}
           />
           <span>
@@ -503,6 +495,18 @@ export function ScheduleModal({ task, seed, lockedProjectId, onClose }: Schedule
         </label>
       </div>
       {error && <div className="modal-error">{error}</div>}
-    </Modal>
+      {!readOnly ? (
+        <div className="schedule-editor-actions">
+          <button
+            type="submit"
+            className="btn primary"
+            disabled={!canSave || saving}
+            title={canSave ? '⌘+Enter to save' : 'Fix the errors above'}
+          >
+            {saving ? 'Saving…' : isNew ? 'Create schedule' : 'Save changes'}
+          </button>
+        </div>
+      ) : null}
+    </form>
   );
 }

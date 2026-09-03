@@ -1,25 +1,21 @@
 import { product } from '../../lib/product-client.js';
-import React, { useState, useEffect, useLayoutEffect, useRef, type MouseEvent as ReactMouseEvent } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
   Play,
-  Pencil,
   Trash2,
-  ChevronDown,
-  History,
   Copy,
   Square,
   ExternalLink,
   FileText,
   Power,
-  PowerOff
+  PowerOff,
+  Columns2
 } from 'lucide-react';
-import type { ScheduledTask, ScheduleRun, ScheduleGroup } from '@zana-ai/zcc-domain/product';
+import type { ScheduledTask, ScheduleGroup } from '@zana-ai/zcc-domain/product';
 import { useData, useUi } from '../../store.js';
 import { groupIcon, GROUP_FALLBACK_COLOR } from '../scheduleGroupMeta.js';
 import {
   pickLiveRun,
-  formatRelative,
-  formatDuration,
   formatCountdown,
   PROFILE_LABEL
 } from './schedulerUtils.js';
@@ -29,65 +25,24 @@ interface ScheduleRowProps {
   task: ScheduledTask;
   projectName: string;
   group?: ScheduleGroup | null;
-  reveal?: boolean;
-  onEdit: () => void;
+  onOpen: () => void;
+  onOpenInSplit: () => void;
   onDuplicate: () => void;
   onAskDelete: () => void;
-  onShowReport: (run: ScheduleRun, taskName: string) => void;
 }
 
 export const ScheduleRow = React.memo(function ScheduleRow({
   task,
   projectName,
   group,
-  reveal,
-  onEdit,
+  onOpen,
+  onOpenInSplit,
   onDuplicate,
-  onAskDelete,
-  onShowReport
+  onAskDelete
 }: ScheduleRowProps) {
-  // A Claude Code `/loop` cron mirrored read-only into the Scheduler: the app
-  // doesn't own its timer, so we show it with a "Claude" badge and hide every
-  // mutating control (toggle / run / stop / edit / delete). See claude-loops-store.
   const isExternal = task.external?.kind === 'claude-loop';
-  const lastRun = task.status.lastRunAt ? new Date(task.status.lastRunAt) : null;
   const nextRun = task.status.nextRunAt ? new Date(task.status.nextRunAt) : null;
-  const [expanded, setExpanded] = useState(false);
-  const cardRef = useRef<HTMLLIElement | null>(null);
-  const [highlighted, setHighlighted] = useState(false);
-  const highlightTimerRef = useRef<number | null>(null);
-
-  // When the menu-bar tray asks to reveal this schedule, scroll it into view,
-  // expand it, and pulse a highlight. The store clears revealScheduleId once we
-  // pick it up so re-renders (the 1Hz tick) don't re-trigger the scroll.
-  // NOTE: the highlight timer lives in a ref, NOT the effect cleanup — calling
-  // clearRevealSchedule() flips `reveal` back to false, which (with `[reveal]`
-  // deps) would run the cleanup and cancel the timer before it fires, leaving
-  // the row highlighted forever.
-  useEffect(() => {
-    if (!reveal) return;
-    useUi.getState().clearRevealSchedule();
-    setExpanded(true);
-    setHighlighted(true);
-    cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    if (highlightTimerRef.current !== null) clearTimeout(highlightTimerRef.current);
-    highlightTimerRef.current = window.setTimeout(() => {
-      setHighlighted(false);
-      highlightTimerRef.current = null;
-    }, 1600);
-  }, [reveal]);
-
-  // Clear a pending highlight timer on unmount.
-  useEffect(() => {
-    return () => {
-      if (highlightTimerRef.current !== null) clearTimeout(highlightTimerRef.current);
-    };
-  }, []);
   const terminals = useData((s) => s.terminals);
-  const restoreTerminal = useData((s) => s.restoreTerminal);
-  const setNav = useUi((s) => s.setNav);
-  const enterProjectFocus = useUi((s) => s.enterProjectFocus);
-  const setWorkspaceMode = useUi((s) => s.setWorkspaceMode);
   const pushToast = useUi((s) => s.pushToast);
 
   const toggle = async () => {
@@ -100,9 +55,6 @@ export const ScheduleRow = React.memo(function ScheduleRow({
       pushToast(`Run failed: ${result.message}`, 'error');
       return;
     }
-    // The fire spawns a headless background session (surfaced under the
-    // project's "Background" list and via the inbox); the toast confirms it
-    // took effect, and "Running now" / row deep-links can promote it to a tab.
     pushToast(`Fired "${task.name}"`, 'info');
   };
 
@@ -113,42 +65,11 @@ export const ScheduleRow = React.memo(function ScheduleRow({
     );
 
   const runs = task.status.runs ?? [];
-  const hasHistory = runs.length > 0;
-  // Most-recent run that carries an agent-authored report — surfaced as a
-  // one-click "see what happened" affordance on the collapsed row, so the run
-  // report isn't buried behind expand + hunt-for-the-icon.
   const lastReportRun = runs.find((r) => !!r.report) ?? null;
-
-  // The whole run is kept (not just the id) so the row can tell "working" (turn
-  // in progress) from "done · session open" (agent finished — `finishedAt` set —
-  // but the pty is still at the prompt). See {@link pickLiveRun} for why a
-  // still-working run wins over a newer finished-open one.
   const liveRun = pickLiveRun(runs, isSessionAlive);
   const liveSessionId = liveRun?.sessionId ?? null;
-  // The agent is still working only while the live run has no `finishedAt`.
   const isWorking = !!liveRun && !liveRun.finishedAt;
-  // Alive but the turn ended — open at the prompt, resumable.
   const isFinishedOpen = !!liveRun && !!liveRun.finishedAt;
-  const promoteAndOpen = (sessionId: string) => {
-    // Scheduled fires spawn headless, so the session is filtered out of the
-    // visible tab strip. restoreTerminal un-hides it (no-op if already visible)
-    // AND selects it — selectTab alone would be reverted by Workspace's
-    // reconciliation effect, since the headless id isn't in the visible list.
-    // enterProjectFocus (not selectProject) is what actually mounts the
-    // Workspace + its tab strip (gated on focusedProjectId), and the mode flip
-    // lands on the terminal rather than the project's Agents board — matching
-    // AgentsBoard's "open into workspace" path.
-    setNav('projects');
-    enterProjectFocus(task.projectId);
-    void restoreTerminal(sessionId, task.projectId);
-    setWorkspaceMode(task.projectId, 'terminals');
-  };
-
-  const jumpToRun = (sessionId: string | undefined) => {
-    if (!sessionId) return;
-    if (!isSessionAlive(sessionId)) return;
-    void promoteAndOpen(sessionId);
-  };
 
   const stopLive = async (e?: ReactMouseEvent) => {
     e?.stopPropagation();
@@ -166,34 +87,19 @@ export const ScheduleRow = React.memo(function ScheduleRow({
   const openLive = (e?: ReactMouseEvent) => {
     e?.stopPropagation();
     if (!liveSessionId) return;
-    // Peek without leaving Scheduler — agent modal for a pty run, thread
-    // modal when the live id is a conversation thread.
     openScheduledLive(task.projectId, liveSessionId);
   };
 
   const statusKind = isWorking
     ? 'running'
     : isFinishedOpen
-    ? 'done'
-    : task.enabled
-    ? 'idle'
-    : 'off';
-  const statusLabel = isWorking
-    ? 'running'
-    : isFinishedOpen
-    ? 'done'
-    : task.enabled
-    ? 'idle'
-    : 'off';
-
-  // Stop the row's expand-toggle from firing when the user clicks
-  // an inner control. Each handler still runs normally.
+      ? 'done'
+      : task.enabled
+        ? 'idle'
+        : 'off';
+  const statusLabel = statusKind;
   const stop = (e: ReactMouseEvent) => e.stopPropagation();
 
-  // Right-click lifecycle menu — mirrors the inline hover/detail buttons
-  // (Run now / Open / Stop / Report / Edit / Duplicate / Enable-Disable /
-  // Delete) at the cursor, matching the Agents & Inbox lists. External
-  // Claude /loop rows are read-only, so they never open the menu.
   const [rowMenu, setRowMenu] = useState<{ x: number; y: number } | null>(null);
   const openRowMenu = (e: ReactMouseEvent) => {
     if (isExternal) return;
@@ -203,21 +109,20 @@ export const ScheduleRow = React.memo(function ScheduleRow({
   };
 
   return (
-    <li ref={cardRef} className={`scheduler-card ${task.enabled ? '' : 'is-disabled'} ${expanded ? 'is-expanded' : ''} ${isWorking ? 'is-running' : ''} ${isFinishedOpen ? 'is-done' : ''} ${highlighted ? 'is-revealed' : ''}`}>
+    <li className={`scheduler-card ${task.enabled ? '' : 'is-disabled'} ${isWorking ? 'is-running' : ''} ${isFinishedOpen ? 'is-done' : ''}`}>
       <div
         className="scheduler-card-main scheduler-card-main--compact"
         role="button"
         tabIndex={0}
-        onClick={() => setExpanded((v) => !v)}
+        onClick={onOpen}
         onContextMenu={openRowMenu}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
-            setExpanded((v) => !v);
+            onOpen();
           }
         }}
-        aria-expanded={expanded}
-        title={expanded ? 'Click to collapse' : 'Click to expand'}
+        title="Open schedule"
       >
         <span
           className={`scheduler-status-dot scheduler-status-dot--${statusKind}`}
@@ -225,7 +130,6 @@ export const ScheduleRow = React.memo(function ScheduleRow({
           title={statusLabel}
         />
         {isExternal ? (
-          // No toggle for a foreign loop — the app can't enable/disable it.
           <span className="scheduler-toggle scheduler-toggle--readonly" aria-hidden title="Managed by Claude Code" />
         ) : (
           <label className="scheduler-toggle" onClick={stop} title={task.enabled ? 'Disable schedule' : 'Enable schedule'}>
@@ -319,171 +223,16 @@ export const ScheduleRow = React.memo(function ScheduleRow({
               className="scheduler-icon-btn scheduler-icon-btn--report"
               onClick={(e) => {
                 e.stopPropagation();
-                onShowReport(lastReportRun, task.name);
+                onOpen();
               }}
-              title="See what happened — view the latest run report"
-              aria-label="View latest run report"
+              title="See what happened — open the schedule"
+              aria-label="Open schedule report"
             >
               <FileText size={14} strokeWidth={1.75} />
             </button>
           )}
-          <button
-            className={`scheduler-icon-btn scheduler-icon-btn--chevron ${expanded ? 'is-open' : ''}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              setExpanded((v) => !v);
-            }}
-            title={expanded ? 'Hide details' : 'Show details'}
-            aria-label="Toggle details"
-            aria-expanded={expanded}
-          >
-            <ChevronDown size={14} />
-          </button>
         </div>
       </div>
-      {expanded && (
-        <div className="scheduler-card-detail">
-          {task.description && (
-            <div className="scheduler-card-desc">{task.description}</div>
-          )}
-          <div className="scheduler-card-status">
-            <span className="scheduler-status-item">
-              <span className="scheduler-status-label">Last</span>
-              {lastRun ? (
-                <span className={`scheduler-status-value scheduler-status-value--${task.status.lastRunResult ?? 'none'}`}>
-                  {formatRelative(lastRun)}
-                  {task.status.lastRunResult ? ` · ${task.status.lastRunResult}` : ''}
-                </span>
-              ) : (
-                <span className="scheduler-status-value scheduler-status-value--none">never</span>
-              )}
-            </span>
-            <span className="scheduler-status-item">
-              <span className="scheduler-status-label">Next</span>
-              <span className="scheduler-status-value">
-                {task.enabled && nextRun ? `in ${formatCountdown(nextRun)}` : 'paused'}
-              </span>
-              {task.enabled && (
-                <span className="scheduler-pill scheduler-pill--app-open" title="Schedule fires only while this app is running">
-                  app open
-                </span>
-              )}
-            </span>
-            <span className="scheduler-status-item">
-              <span className="scheduler-status-label">Runs</span>
-              <span className="scheduler-status-value">{task.status.runCount}</span>
-            </span>
-          </div>
-          <div className="scheduler-card-detail-actions">
-            {isExternal ? (
-              <span className="scheduler-readonly-note" title="The Claude Code harness owns this loop">
-                Read-only — manage with Claude Code (e.g. /loop, or cancel from the session that created it).
-              </span>
-            ) : (
-              <>
-                <button className="scheduler-icon-btn" onClick={onEdit} title="Edit" aria-label="Edit">
-                  <Pencil size={14} />
-                </button>
-                <button
-                  className="scheduler-icon-btn"
-                  onClick={onDuplicate}
-                  title="Duplicate"
-                  aria-label="Duplicate"
-                >
-                  <Copy size={14} />
-                </button>
-                <button
-                  className="scheduler-icon-btn scheduler-icon-btn--danger"
-                  onClick={onAskDelete}
-                  title="Delete"
-                  aria-label="Delete"
-                >
-                  <Trash2 size={14} />
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-      {expanded && !isExternal && (
-        <div className="scheduler-card-history">
-          <div className="scheduler-card-history-header">
-            <History size={12} />
-            <span>Recent runs</span>
-            <span className="scheduler-card-history-count">
-              {hasHistory ? `${runs.length} of ${task.history?.retain ?? 10}` : 'none yet'}
-            </span>
-          </div>
-          {hasHistory ? (
-            <ul className="scheduler-run-list">
-              {runs.map((run, i) => {
-                const alive = run.sessionId ? isSessionAlive(run.sessionId) : false;
-                const clickable = alive;
-                return (
-                  <li
-                    key={`${run.at}-${run.sessionId ?? i}`}
-                    className={`scheduler-run-row scheduler-run-row--${run.result} ${
-                      clickable ? 'is-clickable' : run.sessionId ? 'is-closed' : ''
-                    }`}
-                    role={clickable ? 'button' : undefined}
-                    tabIndex={clickable ? 0 : undefined}
-                    onClick={clickable ? () => jumpToRun(run.sessionId) : undefined}
-                    onKeyDown={
-                      clickable
-                        ? (e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              jumpToRun(run.sessionId);
-                            }
-                          }
-                        : undefined
-                    }
-                    title={
-                      clickable
-                        ? 'Jump to terminal'
-                        : run.sessionId
-                        ? 'Session closed'
-                        : undefined
-                    }
-                  >
-                    <span className={`scheduler-run-dot scheduler-run-dot--${run.result}`} />
-                    <span className="scheduler-run-when" title={new Date(run.at).toLocaleString()}>
-                      {formatRelative(new Date(run.at))}
-                    </span>
-                    <span className="scheduler-run-result">{run.result}</span>
-                    <span className="scheduler-run-duration">
-                      {run.durationMs !== undefined ? formatDuration(run.durationMs) : '—'}
-                    </span>
-                    {run.message && (
-                      <span className="scheduler-run-message" title={run.message}>
-                        {run.message}
-                      </span>
-                    )}
-                    {run.report && (
-                      <button
-                        type="button"
-                        className="scheduler-run-report-btn"
-                        title="View run report"
-                        aria-label="View run report"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onShowReport(run, task.name);
-                        }}
-                      >
-                        <FileText size={13} strokeWidth={1.75} />
-                      </button>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <div className="scheduler-run-empty">
-              No runs recorded yet. The first fire will appear here.
-            </div>
-          )}
-        </div>
-      )}
       {rowMenu && (
         <ScheduleRowMenu
           anchor={rowMenu}
@@ -492,12 +241,13 @@ export const ScheduleRow = React.memo(function ScheduleRow({
           isFinishedOpen={isFinishedOpen}
           hasReport={!!lastReportRun}
           onClose={() => setRowMenu(null)}
+          onOpen={onOpen}
+          onOpenInSplit={onOpenInSplit}
           onRunNow={() => void runNow()}
           onOpenLive={() => openLive()}
           onStopLive={() => void stopLive()}
-          onShowReport={() => lastReportRun && onShowReport(lastReportRun, task.name)}
+          onShowReport={onOpen}
           onToggleEnabled={() => void toggle()}
-          onEdit={onEdit}
           onDuplicate={onDuplicate}
           onDelete={onAskDelete}
         />
@@ -506,13 +256,6 @@ export const ScheduleRow = React.memo(function ScheduleRow({
   );
 });
 
-/**
- * Right-click lifecycle menu for a schedule row — the same actions as the row's
- * inline buttons (run / open / stop / report / edit / duplicate / enable-disable
- * / delete), surfaced at the cursor. Shares the app-wide `.tab-context-menu`
- * styling and the self-contained positioning + outside-click/Escape/scroll close
- * used by the Agents & Inbox row menus.
- */
 function ScheduleRowMenu({
   anchor,
   enabled,
@@ -520,12 +263,13 @@ function ScheduleRowMenu({
   isFinishedOpen,
   hasReport,
   onClose,
+  onOpen,
+  onOpenInSplit,
   onRunNow,
   onOpenLive,
   onStopLive,
   onShowReport,
   onToggleEnabled,
-  onEdit,
   onDuplicate,
   onDelete
 }: {
@@ -535,12 +279,13 @@ function ScheduleRowMenu({
   isFinishedOpen: boolean;
   hasReport: boolean;
   onClose: () => void;
+  onOpen: () => void;
+  onOpenInSplit: () => void;
   onRunNow: () => void;
   onOpenLive: () => void;
   onStopLive: () => void;
   onShowReport: () => void;
   onToggleEnabled: () => void;
-  onEdit: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
@@ -590,6 +335,13 @@ function ScheduleRowMenu({
       style={{ top: anchor.y, left: anchor.x }}
       onMouseDown={(e) => e.stopPropagation()}
     >
+      <button role="menuitem" onClick={() => { onClose(); onOpen(); }}>
+        Open
+      </button>
+      <button role="menuitem" onClick={() => { onClose(); onOpenInSplit(); }}>
+        <Columns2 size={13} /> Open in split
+      </button>
+      <div className="tab-context-sep" />
       {liveSessionId ? (
         <>
           <button role="menuitem" onClick={() => { onClose(); onOpenLive(); }}>
@@ -612,9 +364,6 @@ function ScheduleRowMenu({
       <div className="tab-context-sep" />
       <button role="menuitem" onClick={() => { onClose(); onToggleEnabled(); }}>
         {enabled ? <><PowerOff size={13} /> Disable</> : <><Power size={13} /> Enable</>}
-      </button>
-      <button role="menuitem" onClick={() => { onClose(); onEdit(); }}>
-        <Pencil size={13} /> Edit
       </button>
       <button role="menuitem" onClick={() => { onClose(); onDuplicate(); }}>
         <Copy size={13} /> Duplicate

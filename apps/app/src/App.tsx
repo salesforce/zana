@@ -6,12 +6,11 @@ import { SidebarTriggerOverlay } from './components/SidebarTriggerOverlay.js';
 import { AgentLauncher } from './components/AgentLauncher.js';
 import { SettingsPane } from './components/listpane/SettingsPane.js';
 import { ExtensionsPane } from './components/listpane/ExtensionsPane.js';
-import { WorkspaceView } from '@/views/project/WorkspaceView';
+import { ProjectView } from '@/views/project/ProjectView';
 import { TerminalSurface } from './components/TerminalSurface.js';
 import { SplitWorkspaceRoute } from '@/views/SplitWorkspaceRoute';
 import { ProjectScopedNav } from './components/ProjectScopedNav.js';
 import { SettingsView } from '@/views/settings/SettingsView';
-import { SchedulerView } from '@/views/scheduler/SchedulerView';
 import { ExtensionsView } from '@/views/extensions/ExtensionsView';
 import { InboxView } from '@/views/inbox/InboxView';
 import { FollowUpsView } from '@/views/follow-ups/FollowUpsView';
@@ -88,9 +87,15 @@ import {
   PROJECT_ROUTE_PATH,
   PROJECT_SETTINGS_ROUTE_PATH,
   PROJECT_NEW_THREAD_ROUTE_PATH,
+  PROJECT_SESSION_ROUTE_PATH,
+  PROJECT_NEW_SCHEDULE_ROUTE_PATH,
+  PROJECT_SCHEDULE_ROUTE_PATH,
   PROJECT_THREAD_ROUTE_PATH,
-  PROJECT_WORKSPACE_ROUTE_PATH,
+  SESSION_ROUTE_PATH,
+  PROJECT_MODE_ROUTE_PATH,
   SCHEDULER_ROUTE_PATH,
+  NEW_SCHEDULE_ROUTE_PATH,
+  SCHEDULE_ROUTE_PATH,
   SETTINGS_PROJECT_ALIAS_ROUTE_PATH,
   SETTINGS_ROUTE_PATH,
   SETTINGS_SECTION_ROUTE_PATH,
@@ -126,7 +131,7 @@ function AppRoutes({ suggestionsEnabled }: { suggestionsEnabled: boolean }) {
   const route = useRouteState();
   const location = useLocation();
   const splitWorkspace = isSplitWorkspacePath(location.pathname);
-  const showProjectWorkspace =
+  const showProjectShell =
     route.nav === 'projects' && !!route.focusedProjectId && !splitWorkspace;
   return (
     <>
@@ -136,12 +141,15 @@ function AppRoutes({ suggestionsEnabled }: { suggestionsEnabled: boolean }) {
         <Route path={AGENTS_ROUTE_PATH} element={null} />
         <Route path={NEW_THREAD_ROUTE_PATH} element={null} />
         <Route path={THREAD_ROUTE_PATH} element={null} />
+        <Route path={SESSION_ROUTE_PATH} element={null} />
         <Route path={FOLLOWUPS_ROUTE_PATH} element={<FollowUpsView />} />
         <Route
           path={SUGGESTIONS_ROUTE_PATH}
           element={suggestionsEnabled ? <SuggestionsView /> : <Navigate to={APP_ROOT_ROUTE_PATH} replace />}
         />
-        <Route path={SCHEDULER_ROUTE_PATH} element={<SchedulerView />} />
+        <Route path={SCHEDULER_ROUTE_PATH} element={null} />
+        <Route path={NEW_SCHEDULE_ROUTE_PATH} element={null} />
+        <Route path={SCHEDULE_ROUTE_PATH} element={null} />
         <Route path={GOALS_ROUTE_PATH} element={<GoalsPanel />} />
         <Route path={TOOLS_ROUTE_PATH} element={<ExtensionsLandingRedirect />} />
         <Route path={TOOLS_PLUGINS_ROUTE_PATH} element={<ExtensionsView />} />
@@ -157,16 +165,19 @@ function AppRoutes({ suggestionsEnabled }: { suggestionsEnabled: boolean }) {
         <Route path={PROJECT_SETTINGS_ROUTE_PATH} element={<SettingsView />} />
         <Route path={PROJECT_NEW_THREAD_ROUTE_PATH} element={null} />
         <Route path={PROJECT_THREAD_ROUTE_PATH} element={null} />
+        <Route path={PROJECT_SESSION_ROUTE_PATH} element={null} />
+        <Route path={PROJECT_NEW_SCHEDULE_ROUTE_PATH} element={null} />
+        <Route path={PROJECT_SCHEDULE_ROUTE_PATH} element={null} />
         <Route path={PROJECT_ROUTE_PATH} element={null} />
-        <Route path={PROJECT_WORKSPACE_ROUTE_PATH} element={null} />
+        <Route path={PROJECT_MODE_ROUTE_PATH} element={null} />
         <Route path={PLUGIN_PANEL_ROOT_ROUTE_PATH} element={null} />
         <Route path={PLUGIN_PANEL_ROUTE_PATH} element={null} />
         <Route path="*" element={<Navigate to={APP_ROOT_ROUTE_PATH} replace />} />
       </Routes>
       <SplitWorkspaceRoute />
       <ModulePanelHost />
-      <div className={`workspace-slot ${showProjectWorkspace ? 'show' : 'hide'}`}>
-        <WorkspaceView />
+      <div className={`project-slot ${showProjectShell ? 'show' : 'hide'}`}>
+        <ProjectView />
       </div>
       <TerminalSurface />
     </>
@@ -433,8 +444,8 @@ export function App() {
         case 'app:openShortcuts':
           ui.setShortcutsOpen(!ui.shortcutsOpen);
           return;
-        case 'app:toggleWorkspaceMode':
-          if (projectId) ui.toggleWorkspaceMode(projectId);
+        case 'app:toggleProjectView':
+          if (projectId) ui.toggleProjectView(projectId);
           return;
         case 'app:newClaudeTab':
           if (projectId) {
@@ -490,7 +501,7 @@ export function App() {
       // the tray "focus session" click would otherwise focus nothing. Safe for
       // already-visible sessions too.
       void useData.getState().restoreTerminal(sessionId, projectId);
-      // Also pop the agent-inspector modal — a menu-bar "Open in workspace" click
+      // Also pop the agent-inspector modal — a menu-bar "Open in project" click
       // lands the user on the live terminal peek + status/actions right away,
       // rather than just switching tabs behind the still-open popover.
       ui.openAgentModal(sessionId, projectId);

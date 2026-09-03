@@ -8,7 +8,7 @@ const base: WhenContext = {
   tabCount: 3,
   activeTabStatus: 'running',
   activeTabProfile: 'claude',
-  workspaceMode: 'terminals',
+  projectView: 'terminals',
   platform: 'darwin',
   panelFocused: false,
   scopedWindow: false
@@ -42,6 +42,8 @@ describe('evaluateWhen', () => {
     expect(ev('activeNav == projects')).toBe(true);
     expect(ev('activeNav == settings')).toBe(false);
     expect(ev('activeNav != settings')).toBe(true);
+    expect(ev("projectView == 'terminals'")).toBe(true);
+    expect(ev('projectView == "explorer"')).toBe(false);
     expect(ev("workspaceMode == 'terminals'")).toBe(true);
     expect(ev('workspaceMode == "explorer"')).toBe(false);
   });
@@ -56,7 +58,7 @@ describe('evaluateWhen', () => {
     expect(ev('hasActiveProject && hasActiveTab')).toBe(true);
     expect(ev('hasActiveProject && panelFocused')).toBe(false);
     expect(ev('panelFocused || hasActiveProject')).toBe(true);
-    expect(ev('(panelFocused || hasActiveProject) && workspaceMode == terminals')).toBe(true);
+    expect(ev('(panelFocused || hasActiveProject) && projectView == terminals')).toBe(true);
     expect(ev('panelFocused || (hasActiveTab && tabCount == 1)')).toBe(false);
   });
 

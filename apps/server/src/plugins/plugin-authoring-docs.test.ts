@@ -187,6 +187,7 @@ const THREAD_PANEL_ACTION_REGISTRATION_FIELDS = [
   'icon',
   'component',
   'layout',
+  'scopes',
   'run'
 ] as const satisfies readonly (keyof Omit<PluginThreadPanelActionRegistration, 'generation' | 'pluginId'>)[];
 

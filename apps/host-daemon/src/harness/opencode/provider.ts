@@ -74,6 +74,15 @@ import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from '..
 
 const OPENCODE_MIN_VERSION = '1.18.0';
 const OPENCODE_REVIEWED_AT = '2026-09-02';
+const OPENCODE_VERIFIED_SCOPES = ['local', 'remote'] as const;
+const OPENCODE_MODEL_IDS = [
+  'llmgw/gpt-5.6-luna-1M',
+  'llmgw/gpt-5.6-terra-1M',
+  'llmgw/gpt-5.6-sol-1M',
+  'llmgw/gemini-3.1-pro-preview',
+  'llmgw/gemini-3.5-flash',
+  'llmgw/grok-4.6'
+] as const;
 const openCodeEvidence = (id: string, observed: string, scope: 'local' | 'remote' = 'local') => ({
   id,
   versionRange: OPENCODE_MIN_VERSION,
@@ -105,8 +114,8 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
     configFiles: [{ id: 'native-settings', label: 'Native settings', scopes: [], effect: 'unsupported', rawEdit: false, reason: 'Native project settings file is not verified.' }],
     targets: {
       roles: [
-        { id: 'build', label: 'Build', executionStates: ['accept-edits', 'autonomous'], scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'plan', label: 'Plan', executionStates: ['plan'], scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION }
+        { id: 'build', label: 'Build', executionStates: ['accept-edits', 'autonomous'], scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'plan', label: 'Plan', executionStates: ['plan'], scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION }
       ],
       // One opencode provider namespace (`llmgw/…`) serves every model; the
       // `provider` field groups by underlying vendor for the picker/provider
@@ -118,12 +127,12 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
       ],
       providerModelRelationship: 'combined-provider-model',
       models: [
-        { id: 'llmgw/gpt-5.6-luna-1M', label: 'Luna', provider: 'openai', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'llmgw/gpt-5.6-terra-1M', label: 'Terra', provider: 'openai', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'llmgw/gpt-5.6-sol-1M', label: 'Sol', provider: 'openai', level: 'high', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'llmgw/gemini-3.1-pro-preview', label: 'Gemini Pro', provider: 'google', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'llmgw/gemini-3.5-flash', label: 'Gemini Flash', provider: 'google', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'llmgw/grok-4.6', label: 'Grok', provider: 'xai', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION }
+        { id: 'llmgw/gpt-5.6-luna-1M', label: 'Luna', provider: 'openai', level: 'low', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/gpt-5.6-terra-1M', label: 'Terra', provider: 'openai', level: 'medium', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/gpt-5.6-sol-1M', label: 'Sol', provider: 'openai', level: 'high', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/gemini-3.1-pro-preview', label: 'Gemini Pro', provider: 'google', level: 'medium', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/gemini-3.5-flash', label: 'Gemini Flash', provider: 'google', level: 'low', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/grok-4.6', label: 'Grok', provider: 'xai', level: 'medium', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION }
       ],
       modelLevelMapping: {
         low: 'llmgw/gpt-5.6-luna-1M',
@@ -141,10 +150,10 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
     initialTaskDelivery: { local: 'spawn-arg', remote: 'spawn-arg', readinessSignal: 'process-spawned', acceptanceSignal: 'argv-bound' }
   },
   executionTargetMetadata: {
-    plan: { equivalence: 'exact', scopes: ['local'] },
-    interactive: { equivalence: 'conditional', scopes: ['local'] },
-    'accept-edits': { equivalence: 'closest', scopes: ['local'] },
-    autonomous: { equivalence: 'exact', scopes: ['local'] }
+    plan: { equivalence: 'exact', scopes: [...OPENCODE_VERIFIED_SCOPES] },
+    interactive: { equivalence: 'conditional', scopes: [...OPENCODE_VERIFIED_SCOPES] },
+    'accept-edits': { equivalence: 'closest', scopes: [...OPENCODE_VERIFIED_SCOPES] },
+    autonomous: { equivalence: 'exact', scopes: [...OPENCODE_VERIFIED_SCOPES] }
   },
   collision: {
     role: [{ names: ['--agent'], arity: 1, acceptsAttachedValue: true }],
@@ -167,14 +176,14 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
     }
   },
   evidence: [
-    openCodeEvidence('llmgw/gpt-5.6-luna-1M', 'Model appears in opencode models and --model accepts provider/model IDs.'),
-    openCodeEvidence('llmgw/gpt-5.6-terra-1M', 'Model appears in opencode models and --model accepts provider/model IDs.'),
-    openCodeEvidence('llmgw/gpt-5.6-sol-1M', 'Model appears in opencode models and --model accepts provider/model IDs.'),
-    openCodeEvidence('llmgw/gemini-3.1-pro-preview', 'Model appears in opencode models and --model accepts provider/model IDs.'),
-    openCodeEvidence('llmgw/gemini-3.5-flash', 'Model appears in opencode models and --model accepts provider/model IDs.'),
-    openCodeEvidence('llmgw/grok-4.6', 'Model appears in opencode models and --model accepts provider/model IDs.'),
+    ...OPENCODE_MODEL_IDS.flatMap((id) => [
+      openCodeEvidence(id, 'Model appears in opencode models and --model accepts provider/model IDs.'),
+      openCodeEvidence(id, 'Remote login-shell command binds --model provider/model IDs.', 'remote')
+    ]),
     openCodeEvidence('build', 'Built-in build role appears in effective opencode agent list output.'),
+    openCodeEvidence('build', 'Remote login-shell command binds --agent build.', 'remote'),
     openCodeEvidence('plan', 'Built-in plan role appears in effective opencode agent list output.'),
+    openCodeEvidence('plan', 'Remote login-shell command binds --agent plan.', 'remote'),
     openCodeEvidence('opencode.role.discovery', 'Project-scoped opencode agent list supplies exact effective role names before launch.')
   ]
 };

@@ -1,6 +1,6 @@
 import { mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { resolveZccDataDir } from './host-config.js';
 import type { HostBridgeLaunch, HostEventEnvelope, ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
 import {
   createAgentRuntime,
@@ -267,7 +267,7 @@ export function createAgentRuntimeAdapter(options: {
     if (!options.loadConfig) return;
     syncProviderBridgeRecordDirEnv({
       enabled: options.loadConfig().providerBridgeRecordingEnabled === true,
-      dataDir: options.dataDir ?? join(homedir(), '.zcc'),
+      dataDir: options.dataDir ?? resolveZccDataDir(),
       env: process.env
     });
   }

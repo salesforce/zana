@@ -1,6 +1,6 @@
 import { useAgentStatus, useSubagents } from '../../store.js';
 import type { TerminalSession, AgentState } from '@zana-ai/zcc-domain/product';
-import { agentRowStateClass, fleetKindLabel } from '../fleet-item.js';
+import { agentCardRuntimeLabel, agentRowStateClass } from '../fleet-item.js';
 
 /** Compact state words for an agent's detail subtitle (the verbose
  *  AGENT_STATE_LABEL reads as a tooltip; the inline line stays terse). */
@@ -26,10 +26,17 @@ function timeAgo(ts: number): string {
 
 /**
  * One-line agent detail under the session title in the rail: live state +
- * how long it's been running (or when it exited). Subscribes by id to the
- * state PRIMITIVE so a sibling's transition doesn't repaint this row.
+ * harness/runtime (same copy as the board card) + how long it's been running.
+ * Subscribes by id to the state PRIMITIVE so a sibling's transition doesn't
+ * repaint this row.
  */
-export function AgentRowDetail({ session }: { session: TerminalSession }) {
+export function AgentRowDetail({
+  session,
+  projectRemote = false
+}: {
+  session: TerminalSession;
+  projectRemote?: boolean;
+}) {
   const state = useAgentStatus((s) => s.byId[session.id] ?? 'unknown');
   // Live sub-agent (Task tool) fan-out count — primitive subscription so a
   // sibling's spawn doesn't repaint this row. Suppressed once exited.
@@ -45,7 +52,8 @@ export function AgentRowDetail({ session }: { session: TerminalSession }) {
     : session.status === 'starting'
       ? 'starting…'
       : `started ${timeAgo(session.createdAt)}`;
-  const detailParts = [fleetKindLabel('agent'), subagentText, timeText].filter(Boolean);
+  const runtime = agentCardRuntimeLabel({ profile: session.profile, remote: projectRemote });
+  const detailParts = [runtime, subagentText, timeText].filter(Boolean);
   if (!stateText && detailParts.length === 0) return null;
   return (
     <span className="project-terminal-detail">

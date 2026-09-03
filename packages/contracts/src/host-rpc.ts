@@ -41,9 +41,10 @@ import { HOST_ARTIFACT_MAX_BYTES } from '@zana-ai/zcc-host-daemon-contract';
  * 18: HostBridgeLaunch is digest+byteLength (no laptop artifactPath/dataDir);
  * remotes fetch packed dist/host.js from GET /internal/plugins/:id/host/:digest.
  * 19: host FS discovery (list_paths, read_path, file_metadata, pick_folder).
- * 20: project-authorized native harness agent descriptor discovery.
+ * 20: optional terminal.start command (login shell -lc).
+ * 21: project-authorized native harness agent descriptor discovery.
  */
-export const HOST_RPC_PROTOCOL_VERSION = 20;
+export const HOST_RPC_PROTOCOL_VERSION = 21;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
 
 const UuidSchema = z.string().uuid();
@@ -414,7 +415,8 @@ export const TerminalStartCommandSchema = z.object({
   root: PathSchema,
   cwd: PathSchema.optional(),
   cols: z.number().int().min(20).max(300).optional(),
-  rows: z.number().int().min(8).max(100).optional()
+  rows: z.number().int().min(8).max(100).optional(),
+  command: z.string().max(10_000).optional()
 }).strict();
 
 export const TerminalInputCommandSchema = z.object({

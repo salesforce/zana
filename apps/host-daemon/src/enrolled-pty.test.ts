@@ -59,4 +59,31 @@ describe('enrolled pty', () => {
       }
     ]);
   });
+
+  it('passes a login-shell -lc argv when a launch string is set', async () => {
+    const spawned: Array<{ args: string[] }> = [];
+    const handle = fakeHandle();
+    const pty = createEnrolledPty({
+      emit: () => {},
+      spawn: (_file, args) => {
+        spawned.push({ args });
+        return handle;
+      }
+    });
+    await pty.startTerminal({
+      sessionId: '11111111-1111-4111-8111-111111111111',
+      cwd: '/tmp',
+      cols: 80,
+      rows: 24,
+      command: '  npm run dev  '
+    });
+    expect(spawned).toEqual([{ args: ['-lc', 'npm run dev'] }]);
+    await pty.startTerminal({
+      sessionId: '11111111-1111-4111-8111-111111111112',
+      cwd: '/tmp',
+      cols: 80,
+      rows: 24
+    });
+    expect(spawned[1]).toEqual({ args: ['-l'] });
+  });
 });

@@ -101,7 +101,7 @@ describe('focusInboxEntry', () => {
 
     expect(useUi.getState().nav).toBe('projects');
     expect(useUi.getState().focusedProjectId).toBe('proj-1');
-    expect(useUi.getState().workspaceMode['proj-1']).toBe('ext-a');
+    expect(useUi.getState().projectView['proj-1']).toBe('ext-a');
   });
 
   it('with a target naming a non-projectTab module: selects the project and navigates to that module id', async () => {

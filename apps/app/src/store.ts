@@ -57,7 +57,8 @@ import {
   getNavRoutePath,
   getPluginDetailRoutePath,
   getProjectSettingsRoutePath,
-  getProjectWorkspaceRoutePath,
+  getProjectModeRoutePath,
+  getScheduleRoutePath,
   getSchedulerRoutePath,
   getSettingsTabRoutePath
 } from './lib/route-paths.js';
@@ -270,7 +271,7 @@ export interface PendingLaunch {
   parkedAt: string;
 }
 
-export type WorkspaceMode =
+export type CoreProjectView =
   | 'agents'
   | 'terminals'
   | 'explorer'
@@ -282,7 +283,7 @@ export type WorkspaceMode =
   | 'feed';
 
 /**
- * The active per-project view. Either a core {@link WorkspaceMode} OR an
+ * The active per-project view. Either a core {@link CoreProjectView} OR an
  * extension module id, when the project's active tab is an
  * extension-contributed project tab (see the SDK `ProjectTabContribution`). An
  * extension id is an opaque string; core never enumerates them, so this widens
@@ -290,11 +291,11 @@ export type WorkspaceMode =
  * (many) call sites that set a core mode. Consumers that only understand core
  * modes must tolerate an unknown string (treat it as "not my mode").
  */
-export type ProjectView = WorkspaceMode | (string & {});
+export type ProjectView = CoreProjectView | (string & {});
 
-/** Core workspace modes that round-trip to AppConfig. An extension-id project
- *  view also persists — see {@link persistWorkspaceModes}. */
-export const PERSISTED_CORE_MODES: readonly WorkspaceMode[] = [
+/** Core project views that round-trip to AppConfig. An extension-id project
+ *  view also persists — see {@link persistProjectViews}. */
+export const PERSISTED_CORE_MODES: readonly CoreProjectView[] = [
   'agents',
   'terminals',
   'explorer',
@@ -429,10 +430,10 @@ interface UiState {
   settleHostDialog: (id: string, answer: unknown) => void;
   // unread tabs (received output while not active)
   unread: Record<string, boolean>;
-  // workspace mode per project (default: terminals). A value may be a core
-  // WorkspaceMode or an extension module id (an extension-contributed project
+  // per-project view (default: agents). A value may be a core
+  // CoreProjectView or an extension module id (an extension-contributed project
   // tab) — see ProjectView.
-  workspaceMode: Record<string, ProjectView>;
+  projectView: Record<string, ProjectView>;
   // Agents board layout — kanban lanes vs. a grouped vertical list. One global
   // preference shared by the cross-project and per-project boards (persisted to
   // AppConfig.agentsBoardView). Default 'board'.
@@ -645,8 +646,8 @@ interface UiState {
   dismissToast: (id: string) => void;
   markUnread: (sessionId: string) => void;
   clearUnread: (sessionId: string) => void;
-  setWorkspaceMode: (projectId: string, mode: ProjectView) => void;
-  toggleWorkspaceMode: (projectId: string) => void;
+  setProjectView: (projectId: string, mode: ProjectView) => void;
+  toggleProjectView: (projectId: string) => void;
   setExplorerFile: (projectId: string, path: string | undefined) => void;
   requestExplorerGoto: (projectId: string, line: number, column: number) => void;
 }
@@ -779,13 +780,13 @@ function readCollapsedSections(): Record<string, boolean> {
   }
 }
 
-// Debounced write of workspaceMode -> AppConfig.workspaceModes.
+// Debounced write of projectView -> AppConfig.projectViews.
 let persistTimer: number | null = null;
-function persistWorkspaceModes() {
+function persistProjectViews() {
   if (persistTimer !== null) window.clearTimeout(persistTimer);
   persistTimer = window.setTimeout(() => {
     persistTimer = null;
-    const map = useUi.getState().workspaceMode;
+    const map = useUi.getState().projectView;
     // Every mode round-trips, INCLUDING an extension-id project view (an
     // extension-contributed project tab): the value is an opaque string, and an
     // id whose extension is gone on next launch is tolerated at render time
@@ -794,7 +795,7 @@ function persistWorkspaceModes() {
     for (const [k, v] of Object.entries(map)) {
       if (v) persisted[k] = v;
     }
-    product.config.set({ workspaceModes: persisted }).catch(() => {});
+    product.config.set({ projectViews: persisted }).catch(() => {});
   }, 200);
 }
 
@@ -849,13 +850,13 @@ function applyDestination(
       extensionsTab: decoded.extensionsTab,
       settingsExtensionId: decoded.settingsExtensionId,
       focusedProjectId: decoded.focusedProjectId ?? (keepFocus ? s.focusedProjectId : null),
-      workspaceMode:
-        decoded.focusedProjectId && decoded.workspaceMode
+      projectView:
+        decoded.focusedProjectId && decoded.projectMode
           ? {
-              ...s.workspaceMode,
-              [decoded.focusedProjectId]: decoded.workspaceMode as ProjectView
+              ...s.projectView,
+              [decoded.focusedProjectId]: decoded.projectMode as ProjectView
             }
-          : s.workspaceMode,
+          : s.projectView,
       ...extra
     };
   });
@@ -897,7 +898,7 @@ export const useUi = create<UiState>((set, get) => ({
   pendingLaunches: [],
   hostDialogs: [],
   unread: {},
-  workspaceMode: {},
+  projectView: {},
   agentsBoardView: 'board',
   explorerFile: {},
   explorerGoto: {},
@@ -1048,7 +1049,7 @@ export const useUi = create<UiState>((set, get) => ({
     set({ focusedProjectId: id, nav: 'projects' });
     // Keep selection in sync with focus so the workspace tracks the column.
     get().selectProject(id);
-    get().setWorkspaceMode(id, 'agents');
+    get().setProjectView(id, 'agents');
     product.config.set({ focusedProjectId: id }).catch(() => {});
   },
   exitProjectFocus: () => {
@@ -1078,8 +1079,13 @@ export const useUi = create<UiState>((set, get) => ({
   closeAgentModal: () => set({ agentModal: null }),
   openThreadModal: (threadId) => set({ threadModal: { threadId }, agentModal: null }),
   closeThreadModal: () => set({ threadModal: null }),
-  selectMonitorAgent: (sessionId, projectId) => set({ agentMonitor: { sessionId, projectId } }),
-  clearMonitorAgent: () => set({ agentMonitor: null }),
+  selectMonitorAgent: (sessionId, projectId) =>
+    set((s) => (
+      s.agentMonitor?.sessionId === sessionId && s.agentMonitor.projectId === projectId
+        ? s
+        : { agentMonitor: { sessionId, projectId } }
+    )),
+  clearMonitorAgent: () => set((s) => (s.agentMonitor === null ? s : { agentMonitor: null })),
   selectThreadPanelTerminal: (sessionId, projectId) => set({ threadPanelTerminal: { sessionId, projectId } }),
   clearThreadPanelTerminal: () => set({ threadPanelTerminal: null }),
   setSettingsTab: (settingsTab) =>
@@ -1101,20 +1107,13 @@ export const useUi = create<UiState>((set, get) => ({
   selectGroup: (groupId) => set({ schedulerTab: 'group', selectedGroupId: groupId }),
   revealSchedule: (taskId) => {
     const task = useScheduler.getState().tasks.find((t) => t.id === taskId);
-    // applyDestination('/scheduler') forces schedulerTab back to 'overview' via
-    // setNav, so set the scope tab AFTER it. A project-scoped task also needs
-    // its project selected so the project scope renders the right list.
-    applyDestination(set, getSchedulerRoutePath(), { revealScheduleId: taskId });
-    if (task?.source && task.source !== 'global') {
-      get().selectProject((task.source as { projectId: string }).projectId);
-      set({ schedulerTab: 'project' });
-    } else if (task?.group && useScheduleGroups.getState().groups.some((g) => g.id === task.group)) {
-      // Global + resolvable group → land on that group's tab; otherwise the
-      // task lives in the Ungrouped (global) bucket.
-      set({ schedulerTab: 'group', selectedGroupId: task.group });
-    } else {
-      set({ schedulerTab: 'global' });
+    if (!task) {
+      applyDestination(set, getSchedulerRoutePath(), { revealScheduleId: taskId });
+      return;
     }
+    const projectId =
+      task.source && task.source !== 'global' ? task.source.projectId : null;
+    applyDestination(set, getScheduleRoutePath(task.id, projectId));
   },
   clearRevealSchedule: () => set({ revealScheduleId: null }),
   revealLibraryDoc: (projectId, docId) => {
@@ -1123,7 +1122,7 @@ export const useUi = create<UiState>((set, get) => ({
     get().enterProjectFocus(projectId);
     // `'library'` is the pre-plugin persisted alias; Workspace remaps it onto
     // the Docs plugin's project tab without naming that plugin's id here.
-    get().setWorkspaceMode(projectId, 'library');
+    get().setProjectView(projectId, 'library');
     set({ revealLibraryDocId: docId });
   },
   clearRevealLibraryDoc: () => set({ revealLibraryDocId: null }),
@@ -1231,14 +1230,14 @@ export const useUi = create<UiState>((set, get) => ({
       delete next[sessionId];
       return { unread: next };
     }),
-  setWorkspaceMode: (projectId, mode) => {
+  setProjectView: (projectId, mode) => {
     set((s) => ({
       nav: 'projects',
       focusedProjectId: s.focusedProjectId ?? projectId,
-      workspaceMode: { ...s.workspaceMode, [projectId]: mode }
+      projectView: { ...s.projectView, [projectId]: mode }
     }));
-    persistWorkspaceModes();
-    applyDestination(set, getProjectWorkspaceRoutePath(projectId, mode), {
+    persistProjectViews();
+    applyDestination(set, getProjectModeRoutePath(projectId, mode), {
       nav: 'projects',
       focusedProjectId: projectId
     });
@@ -1247,9 +1246,9 @@ export const useUi = create<UiState>((set, get) => ({
     set({ agentsBoardView: view });
     persistAgentsBoardView(view);
   },
-  toggleWorkspaceMode: (projectId) => {
-    const cur = get().workspaceMode[projectId] ?? 'terminals';
-    get().setWorkspaceMode(projectId, cur === 'terminals' ? 'explorer' : 'terminals');
+  toggleProjectView: (projectId) => {
+    const cur = get().projectView[projectId] ?? 'terminals';
+    get().setProjectView(projectId, cur === 'terminals' ? 'explorer' : 'terminals');
   },
   setExplorerFile: (projectId, path) =>
     set((s) => {
@@ -1421,7 +1420,8 @@ interface DataState {
   agentListNeedsYouFromTriage: boolean;
   /** Mirror of AppConfig.includeScheduledAgentsInAgentView — when on, scheduler
    *  jobs appear on the Agents board Scheduled column (plus live runs in
-   *  Working/Done). Default on. */
+   *  Working/Done). Backs the board-toolbar toggle and the Settings checkbox.
+   *  Default on. */
   includeScheduledAgentsInAgentView: boolean;
   /** Mirror of AppConfig.voiceInputEnabled — gates the mic button in the prompt
    *  composer. Hydrated on init, kept live by the Settings toggle. Default off. */
@@ -1516,7 +1516,8 @@ interface DataState {
   setWorktreeIsolationDefault: (on: boolean) => void;
   setIdleAttentionSensitivity: (level: 'high' | 'medium' | 'low') => void;
   setAgentListNeedsYouFromTriage: (on: boolean) => void;
-  setIncludeScheduledAgentsInAgentView: (on: boolean) => void;
+  /** Flip Scheduled-column visibility and persist it (board toolbar toggle). */
+  setIncludeScheduledAgentsInAgentView: (on: boolean) => Promise<void>;
   setVoiceInputEnabled: (on: boolean) => void;
   /** Flip the auto-close-idle master switch and persist it (sidebar toggle). */
   setAutoCloseIdleEnabled: (on: boolean) => Promise<void>;
@@ -1945,8 +1946,18 @@ export const useData = create<DataState>((set, get) => ({
     set({ agentListNeedsYouFromTriage: on });
   },
 
-  setIncludeScheduledAgentsInAgentView(on) {
+  async setIncludeScheduledAgentsInAgentView(on) {
+    // Optimistic flip, persist, roll back on failure. The board toolbar owns
+    // this round-trip (same shape as the sidebar automation toggles); Settings
+    // still writes AppConfig itself and hydrates via config.onChanged.
+    const prev = get().includeScheduledAgentsInAgentView;
     set({ includeScheduledAgentsInAgentView: on });
+    try {
+      await product.config.set({ includeScheduledAgentsInAgentView: on });
+    } catch (err) {
+      pushErrorToast(errorMessage(err, 'Failed to toggle Scheduled column'));
+      set({ includeScheduledAgentsInAgentView: prev });
+    }
   },
 
   setVoiceInputEnabled(on) {
@@ -2054,8 +2065,9 @@ export const useData = create<DataState>((set, get) => ({
           applySidebarWidth(next.sidebarWidth);
         }
       });
-      if (config.workspaceModes) {
-        useUi.setState({ workspaceMode: config.workspaceModes });
+      const views = config.projectViews ?? config.workspaceModes;
+      if (views) {
+        useUi.setState({ projectView: views });
       }
       if (
         config.agentsBoardView === 'board' ||
@@ -2859,7 +2871,7 @@ export const useData = create<DataState>((set, get) => ({
           (patch as Record<string, unknown>)[key as string] = next;
         }
       };
-      drop('workspaceMode');
+      drop('projectView');
       drop('splitLayout');
       drop('splitTabIds');
       drop('selectedTabId');
@@ -2871,7 +2883,7 @@ export const useData = create<DataState>((set, get) => ({
       drop('explorerTreeMode');
       return patch;
     });
-    persistWorkspaceModes();
+    persistProjectViews();
   },
 
   async createTerminal(projectId, profile, cols, rows, opts) {

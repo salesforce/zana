@@ -168,7 +168,7 @@ export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
   const route = useRouteState();
   const { thread } = menu;
   const canStop = shouldShowThreadStop(thread.id, thread.status);
-  const projectId = route.isProjectWorkspace ? route.focusedProjectId : null;
+  const projectId = route.isProjectFocused ? route.focusedProjectId : null;
 
   const run = (action: ThreadMenuAction) => {
     setMenu(null);
@@ -243,7 +243,7 @@ export function ThreadArchiveQuickAction({ thread }: { thread: ThreadListItem })
   const navigate = useNavigate();
   const location = useLocation();
   const route = useRouteState();
-  const projectId = route.isProjectWorkspace ? route.focusedProjectId : null;
+  const projectId = route.isProjectFocused ? route.focusedProjectId : null;
   return (
     <button
       type="button"

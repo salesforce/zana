@@ -21,10 +21,10 @@
  * pathological file can't bloat every argv on the box (Rule 5).
  */
 
-import { app } from 'electron';
 import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { confine } from './fs.js';
+import { electronZccDataDir } from '../../electron-data-dir.js';
 
 /** Filename convention, shared by both scopes. */
 export const RULES_FILENAME = 'RULES.md';
@@ -38,7 +38,7 @@ export const RULES_FILENAME = 'RULES.md';
  */
 export const RULES_MAX_BYTES = 32 * 1024; // 32 KiB
 
-const globalRulesPath = () => join(app.getPath('home'), '.zcc', RULES_FILENAME);
+const globalRulesPath = () => join(electronZccDataDir(), RULES_FILENAME);
 
 /**
  * Read one rules file, returning its trimmed text or null. Best-effort: any

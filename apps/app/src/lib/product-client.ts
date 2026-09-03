@@ -1107,7 +1107,8 @@ function httpProduct(): Pick<
       onFocusInboxEntry: noopSubscribe,
       homedir: async () => '',
       version: async () => '',
-      microVmSupported: async () => false
+      microVmSupported: async () => false,
+      saveCrashReport: async () => ({ ok: false as const })
     } as CcApi['app']
   };
 }

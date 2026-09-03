@@ -83,9 +83,15 @@ export function ModelReasoningPicker({
     [modelOptions, moreModelOptions, modelValue]
   );
   const selectedModel = displayed.modelOptions.concat(displayed.moreModelOptions).find((row) => row.value === modelValue);
+  const hasNoModels = displayed.modelOptions.length + displayed.moreModelOptions.length === 0;
   const triggerModelLabel = modelIsLoading
     ? 'Loading models...'
-    : stripModelBrandPrefix(selectedModel?.label ?? (modelValue || 'Select model'), selectedProviderId);
+    : stripModelBrandPrefix(
+      selectedModel?.label
+        ?? (modelValue
+          || (hasNoModels ? emptyModelsHint(selectedProviderId, modelLoadError) : 'Select model')),
+      selectedProviderId
+    );
   const { base: triggerModelBase, tag: triggerModelTag } = splitModelLabelTag(triggerModelLabel);
   const triggerTitle = `${selectedProvider?.label ?? selectedProviderId}: ${triggerModelLabel}`;
 

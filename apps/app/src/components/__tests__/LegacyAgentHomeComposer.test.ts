@@ -19,6 +19,10 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('cliAgentModelOptions');
     expect(source).toContain('ensureThreadProviderModels');
     expect(source).toContain('prefetchThreadModelCatalog');
+    expect(source).toContain('pickOfferedComposerModel');
+    expect(source).toContain('rememberComposerSelection');
+    expect(source).toContain('resolveCliAgentFamily');
+    expect(source).toContain('rememberedSelectionFor');
     expect(source).toContain('useComposerPromptField');
     expect(source).toContain("kind: 'cli'");
     expect(source).toContain('assembleCliLaunchPrompt');
@@ -88,31 +92,28 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('onChange={setRoleTargetId}');
   });
 
-  it('defaults the harness project-independently like Modern, keeping effectiveDefault as fallback', () => {
+  it('defaults the harness like Modern via resolveCliAgentFamily (current → remembered → effectiveDefault)', () => {
     const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
-    // Modern-parity provider default: last-used provider (else claude-code)
-    // mapped to a family, resolved once descriptors have loaded.
-    expect(source).toContain("familyForThreadProviderId(rememberedProviderId() ?? 'claude-code') ?? 'claude'");
-    expect(source).toContain('descriptorsLoaded');
-    expect(source).toContain('const preferredHarness = harnesses.find((descriptor) => descriptor.id === preferredFamily);');
-    // effectiveDefault survives only as the fallback when the preferred family is unavailable.
+    // Family precedence is delegated to the shared helper: keep the current pick,
+    // else the last-used (remembered) family, else the project's effective default.
+    expect(source).toContain('resolveCliAgentFamily({');
+    expect(source).toContain("familyForThreadProviderId(rememberedProviderId() ?? '')");
+    // effectiveDefault survives only as the async fallback.
     expect(source).toContain('product.harness.effectiveDefault(projectId)');
     // Concrete model resolution instead of resting on "Select model".
-    expect(source).toContain('preferredComposerModel({');
-    expect(source).toContain('fallbackModelsForProvider(selectedProviderId)');
+    expect(source).toContain('pickOfferedComposerModel({');
+    expect(source).toContain('offeredModels: offeredModelIds');
     expect(source).not.toContain('if (selectionState !== \'resolved\' || (modelId && models.some((model) => model.id === modelId))) return;');
   });
 
-  it('keeps an explicit harness pick sticky against late async re-renders', () => {
+  it('keeps the current harness pick sticky by feeding familyIdRef into resolveCliAgentFamily', () => {
     const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
-    // The auto-default effect must bail when the user has explicitly switched
-    // harness, so a late personas/catalog/config load can't clobber the pick.
-    expect(source).toContain("if (selectionProvenance === 'explicit') return;");
-    // Project change re-enables auto-defaulting for the new project.
-    const onChange = source.slice(source.indexOf('onChange={(nextProjectId) => {'));
-    expect(onChange).toContain("setSelectionProvenance('automatic');");
-    expect(onChange.indexOf("setSelectionProvenance('automatic');"))
-      .toBeLessThan(onChange.indexOf('setProjectId(nextProjectId);'));
+    // No explicit-provenance guard: the helper keeps the current family when it is
+    // still available, so a late personas/catalog/config load can't clobber the pick.
+    expect(source).toContain('const currentFamilyId = familyIdRef.current;');
+    expect(source).toContain('currentFamilyId,');
+    // A remembered family restores its remembered model on switch.
+    expect(source).toContain('rememberedSelectionFor(providerId)?.model');
   });
 
   it('replaces the isolation checkbox with a workspace picker for real local projects', () => {

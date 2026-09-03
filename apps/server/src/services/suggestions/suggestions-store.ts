@@ -16,9 +16,9 @@
 import { randomUUID } from 'node:crypto';
 import { readFile, appendFile, mkdir, writeFile, rename } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { homedir } from 'node:os';
 import { EventEmitter } from 'node:events';
 import type { Suggestion, SuggestionInput, SuggestedActionKind } from '@zana-ai/zcc-domain/product';
+import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
 
 export type { Suggestion, SuggestionInput } from '@zana-ai/zcc-domain/product';
 
@@ -39,8 +39,10 @@ export interface ISuggestionsStore {
   onPruned(listener: (removedIds: string[]) => void): () => void;
 }
 
-/** Default on-disk JSONL path: `~/.zcc/suggestions/entries.jsonl`. */
-export const DEFAULT_SUGGESTIONS_FILE = join(homedir(), '.zcc', 'suggestions', 'entries.jsonl');
+/** Default on-disk JSONL path: `$ZCC_DATA_DIR/suggestions/entries.jsonl` (else `~/.zcc/...`). */
+export function defaultSuggestionsFile(): string {
+  return join(resolveZccDataDir(), 'suggestions', 'entries.jsonl');
+}
 
 /**
  * Single-tier retention cap: how many newest suggestions the JSONL keeps. Unlike
@@ -106,7 +108,7 @@ export interface SuggestionsStoreOptions {
 }
 
 export function createSuggestionsStore(opts: SuggestionsStoreOptions = {}): ISuggestionsStore {
-  const filePath = opts.filePath ?? DEFAULT_SUGGESTIONS_FILE;
+  const filePath = opts.filePath ?? defaultSuggestionsFile();
   const maxEntries = opts.maxEntries ?? DEFAULT_MAX_SUGGESTIONS;
   const clock = opts.clock ?? (() => Date.now());
   const emitter = new EventEmitter();

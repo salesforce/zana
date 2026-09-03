@@ -277,6 +277,7 @@ export function inboxAllowedTools(scheduled: boolean): string[] {
     'mcp__zcc-inbox__inbox_push',
     'mcp__zcc-inbox__inbox_ask',
     'mcp__zcc-inbox__inbox_search',
+    'mcp__zcc-inbox__schedule_list',
     'mcp__zcc-inbox__preview_file',
     'mcp__zcc-inbox__suggest_action'
   ];

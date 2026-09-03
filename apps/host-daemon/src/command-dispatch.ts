@@ -1,6 +1,6 @@
-import { homedir } from 'node:os';
 import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { extname, join, relative, sep } from 'node:path';
+import { resolveZccDataDir } from './host-config.js';
 import { isWithin, resolveContainedReal } from '@zana-ai/zcc-path-confine';
 import type {
   HostDirEntry,
@@ -165,7 +165,7 @@ export interface CommandRuntime {
   archiveWork?: (input: ThreadArchiveInput) => Promise<void>;
   unarchiveWork?: (input: ThreadArchiveInput) => Promise<void>;
   clearGoal?: (input: { threadId: string }) => Promise<{ cleared: boolean }>;
-  startTerminal?: (input: { sessionId: string; cwd: string; cols: number; rows: number }) => Promise<{ pid?: number } | void>;
+  startTerminal?: (input: { sessionId: string; cwd: string; cols: number; rows: number; command?: string }) => Promise<{ pid?: number } | void>;
   writeTerminal?: (input: { sessionId: string; data: string }) => Promise<void>;
   resizeTerminal?: (input: { sessionId: string; cols: number; rows: number }) => Promise<void>;
   stopTerminal?: (input: { sessionId: string }) => Promise<void>;
@@ -211,7 +211,7 @@ export function createCommandRuntime(options: {
   archiveWork?: (input: ThreadArchiveInput) => Promise<void>;
   unarchiveWork?: (input: ThreadArchiveInput) => Promise<void>;
   clearGoal?: (input: { threadId: string }) => Promise<{ cleared: boolean }>;
-  startTerminal?: (input: { sessionId: string; cwd: string; cols: number; rows: number }) => Promise<{ pid?: number } | void>;
+  startTerminal?: (input: { sessionId: string; cwd: string; cols: number; rows: number; command?: string }) => Promise<{ pid?: number } | void>;
   writeTerminal?: (input: { sessionId: string; data: string }) => Promise<void>;
   resizeTerminal?: (input: { sessionId: string; cols: number; rows: number }) => Promise<void>;
   stopTerminal?: (input: { sessionId: string }) => Promise<void>;
@@ -225,7 +225,7 @@ export function createCommandRuntime(options: {
 }): CommandRuntime {
   const loadConfig = options.loadConfig ?? (() => ({ version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null }) as AppConfig);
   return {
-    dataDir: options.dataDir ?? join(homedir(), '.zcc'),
+    dataDir: options.dataDir ?? resolveZccDataDir(),
     loadConfig,
     environments: new Map(),
     threads: new Map(),
@@ -786,7 +786,8 @@ export async function dispatchHostCommand(
           sessionId: command.sessionId,
           cwd,
           cols,
-          rows
+          rows,
+          command: command.command
         });
         pid = started?.pid;
       }

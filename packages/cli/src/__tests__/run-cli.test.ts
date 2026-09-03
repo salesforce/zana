@@ -416,6 +416,21 @@ describe('cc CLI', () => {
     expect(result.stdout).not.toContain('No schedules found');
   });
 
+  it('honors ZCC_DATA_DIR over the default ~/.zcc', async () => {
+    const prev = process.env.ZCC_DATA_DIR;
+    process.env.ZCC_DATA_DIR = fixtureDir;
+    try {
+      const result = await runCli(['node', 'zcc', 'inbox', 'ls', '--json']);
+      expect(result.exitCode).toBe(0);
+      const parsed = JSON.parse(result.stdout);
+      expect(Array.isArray(parsed)).toBe(true);
+      expect(parsed.length).toBeGreaterThan(0);
+    } finally {
+      if (prev === undefined) delete process.env.ZCC_DATA_DIR;
+      else process.env.ZCC_DATA_DIR = prev;
+    }
+  });
+
   it('lists a single project from the product API', async () => {
     const result = await runCli(['node', 'zcc', 'projects', 'ls', '--json'], {
       fetchImpl: projectsFetch([

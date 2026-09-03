@@ -62,6 +62,9 @@ describe('thread search', () => {
 describe('timeline window', () => {
   it('retains terminal expansion ids with a cap and windows long lists', () => {
     expect(retainTerminalExpansionIds(['a'], ['b', 'c'], 2)).toEqual(['b', 'c']);
+    const previous = ['a'];
+    expect(retainTerminalExpansionIds(previous, ['a'])).toBe(previous);
+    expect(retainTerminalExpansionIds(['a', 'b'], ['c'], 2)).toEqual(['b', 'c']);
     const rows = Array.from({ length: 5 }, (_, index) => ({ id: `r${index}` }));
     expect(windowTimelineRows(rows, 3).hiddenCount).toBe(2);
     expect(windowTimelineRows(rows, 3, { keepId: 'r0' }).visible[0]?.id).toBe('r0');

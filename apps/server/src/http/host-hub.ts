@@ -41,12 +41,16 @@ import {
 } from '../services/threads/conversation-host-recovery.js';
 import { conversationStatusForHostEvent } from '../services/threads/conversation-host-event-status.js';
 import type { ProductHub } from './product-hub.js';
+import { isBackgroundTaskLifecyclePayload } from '@zana-ai/zcc-thread-view';
+import { appendBoundedTerminalOutput } from './terminal-output-buffer.js';
 
 export interface HostTerminalSessionRecord {
   hostId: string;
   status: 'starting' | 'running' | 'exited';
   exitCode?: number;
   finishedAt?: number;
+  outputText?: string;
+  outputTruncated?: boolean;
 }
 
 export class HostUnavailableError extends Error {
@@ -100,6 +104,11 @@ export function createHostHub(
   terminalSessions: Map<string, HostTerminalSessionRecord> = new Map(),
   options?: {
     onNewHostInstance?: (hostId: string) => void;
+    onConversationEvent?: (input: {
+      threadId: string;
+      type: string;
+      payload: unknown;
+    }) => void;
   }
 ) {
   const sessions = new Map<string, ConnectedHostSession>();
@@ -260,6 +269,17 @@ export function createHostHub(
             const data = event.payload && typeof event.payload === 'object' && 'data' in event.payload
               ? String((event.payload as { data: unknown }).data)
               : '';
+            const record = terminalSessions.get(event.terminalId);
+            if (record) {
+              const next = appendBoundedTerminalOutput(
+                record.outputText !== undefined
+                  ? { text: record.outputText, truncated: record.outputTruncated ?? false }
+                  : undefined,
+                data
+              );
+              record.outputText = next.text;
+              record.outputTruncated = next.truncated;
+            }
             hub.emit('terminals:data', { sessionId: event.terminalId, data });
           } else {
             const exitCode = event.payload && typeof event.payload === 'object' && 'exitCode' in event.payload
@@ -315,6 +335,13 @@ export function createHostHub(
             type: eventType,
             payload: event.payload
           });
+          if (isBackgroundTaskLifecyclePayload(eventType, event.payload)) {
+            options?.onConversationEvent?.({
+              threadId: event.threadId,
+              type: eventType,
+              payload: event.payload
+            });
+          }
           return;
         }
         const thread = getThread(db, event.threadId);

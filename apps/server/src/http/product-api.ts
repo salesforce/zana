@@ -17,6 +17,7 @@ import { listJsonFiles, readJsonFile, writeJsonFile } from './disk-json.js';
 import { applyTrustedOriginCors, readJsonBody, sendBytes, sendJson } from './json.js';
 import type { ProductHttpContext, ProductTerminalRecord } from './product-context.js';
 import { ThreadCreateError } from './thread-create.js';
+import { terminalOutputSlice } from './terminal-output-buffer.js';
 import {
   conversationThreadView,
   conversationThreadViews,
@@ -255,8 +256,21 @@ function routeParams(pathname: string, pattern: string): Record<string, string> 
 }
 
 function publicTerminal(record: ProductTerminalRecord): TerminalSession {
-  const { hostId: _hostId, ...session } = record;
+  const { hostId: _hostId, outputText: _outputText, outputTruncated: _outputTruncated, ...session } = record;
   return session;
+}
+
+const TERMINAL_LAUNCH_MAX = 10_000;
+
+function launchStringFromBody(body: { command?: unknown; prompt?: unknown }): string | undefined {
+  const raw = typeof body.command === 'string'
+    ? body.command
+    : typeof body.prompt === 'string'
+      ? body.prompt
+      : undefined;
+  const trimmed = raw?.trim();
+  if (!trimmed) return undefined;
+  return trimmed.slice(0, TERMINAL_LAUNCH_MAX);
 }
 
 function requireTerminalSession(
@@ -2074,7 +2088,7 @@ export async function handleProductHttp(
     }
 
     if (path === '/api/v1/terminals' && method === 'POST') {
-      const body = (await readJsonBody(request)) as CreateTerminalRequest;
+      const body = (await readJsonBody(request)) as CreateTerminalRequest & { command?: unknown };
       if (typeof body?.projectId !== 'string' || body.projectId.length === 0) {
         sendJson(response, 400, { ok: false, code: 'invalid-project', message: 'projectId is required' });
         return true;
@@ -2126,6 +2140,7 @@ export async function handleProductHttp(
         const sessionId = randomUUID();
         const cols = typeof body.cols === 'number' ? body.cols : 80;
         const rows = typeof body.rows === 'number' ? body.rows : 24;
+        const launchCommand = launchStringFromBody(body);
         const started = await ctx.hostHub.callHostOnlineRpc<{
           sessionId: string;
           started: true;
@@ -2138,19 +2153,24 @@ export async function handleProductHttp(
             root: realpathSync(project.path),
             cwd,
             cols,
-            rows
+            rows,
+            ...(launchCommand ? { command: launchCommand } : {})
           }
         });
+        const title = typeof body.title === 'string' && body.title.length > 0
+          ? body.title
+          : (launchCommand ?? 'Terminal');
         const record: ProductTerminalRecord = {
           id: sessionId,
           projectId: project.id,
-          title: typeof body.title === 'string' && body.title.length > 0 ? body.title : 'Terminal',
+          title,
           profile: (typeof body.profile === 'string' ? body.profile : 'shell') as LaunchProfileId,
           cwd,
           pid: started.pid,
           status: 'running',
           createdAt: Date.now(),
-          hostId
+          hostId,
+          ...(launchCommand ? { launchCommand } : {})
         };
         ctx.terminalSessions.set(sessionId, record);
         ctx.hub.emit('terminals:updated', publicTerminal(record));
@@ -2158,6 +2178,43 @@ export async function handleProductHttp(
       } catch (error) {
         sendHostFailure(response, error);
       }
+      return true;
+    }
+
+    const terminalOutput = routeParams(path, '/api/v1/terminals/:id/output');
+    if (terminalOutput && method === 'GET') {
+      const session = requireTerminalSession(ctx, terminalOutput.id);
+      if (!session) {
+        sendJson(response, 404, { ok: false, code: 'unknown-session', message: 'terminal is not registered' });
+        return true;
+      }
+      const tailRaw = requestUrl.searchParams.get('tailBytes');
+      let tailBytes: number | undefined;
+      if (tailRaw !== null && tailRaw !== '') {
+        const parsed = Number(tailRaw);
+        if (!Number.isInteger(parsed) || parsed < 1) {
+          sendJson(response, 400, { ok: false, code: 'invalid-tail', message: 'tailBytes must be a positive integer' });
+          return true;
+        }
+        tailBytes = parsed;
+      }
+      sendJson(response, 200, terminalOutputSlice(
+        session.outputText !== undefined
+          ? { text: session.outputText, truncated: session.outputTruncated ?? false }
+          : undefined,
+        tailBytes
+      ));
+      return true;
+    }
+
+    const terminalById = routeParams(path, '/api/v1/terminals/:id');
+    if (terminalById && method === 'GET') {
+      const session = requireTerminalSession(ctx, terminalById.id);
+      if (!session) {
+        sendJson(response, 404, { ok: false, code: 'unknown-session', message: 'terminal is not registered' });
+        return true;
+      }
+      sendJson(response, 200, { session: publicTerminal(session) });
       return true;
     }
 

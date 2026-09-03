@@ -60,38 +60,54 @@ export function findPaneByThread(
   );
 }
 
+/** Byte-for-byte pane identity, including plugin subpaths and session project ids. */
+export function paneContentEquals(a: PaneContent, b: PaneContent): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === 'home' || a.kind === 'agents' || a.kind === 'scheduler') return true;
+  if (a.kind === 'new-thread' || a.kind === 'new-schedule') {
+    return b.kind === a.kind && (a.projectId ?? null) === (b.projectId ?? null);
+  }
+  if (a.kind === 'thread') {
+    return b.kind === 'thread' && a.threadId === b.threadId && a.projectId === b.projectId;
+  }
+  if (a.kind === 'agent-session') {
+    return b.kind === 'agent-session' && a.sessionId === b.sessionId && a.projectId === b.projectId;
+  }
+  if (a.kind === 'schedule') {
+    return b.kind === 'schedule' && a.scheduleId === b.scheduleId && a.projectId === b.projectId;
+  }
+  if (a.kind === 'plugin-detail') {
+    return b.kind === 'plugin-detail' && a.pluginId === b.pluginId;
+  }
+  return (
+    b.kind === 'plugin-panel' &&
+    a.pluginId === b.pluginId &&
+    a.panelPath === b.panelPath &&
+    a.subPath === b.subPath
+  );
+}
+
+/** Same routable page as `content`. Plugin subpaths share a pane; CLI-agent
+ * sessions are unique by session id so `/sessions/:id` reuses a pane opened
+ * with a project id (and the reverse) instead of fighting the URL. */
+export function paneContentMatches(a: PaneContent, b: PaneContent): boolean {
+  if (a.kind === 'agent-session' && b.kind === 'agent-session') {
+    return a.sessionId === b.sessionId;
+  }
+  if (a.kind === 'schedule' && b.kind === 'schedule') {
+    return a.scheduleId === b.scheduleId;
+  }
+  if (a.kind === 'plugin-panel' && b.kind === 'plugin-panel') {
+    return a.pluginId === b.pluginId && a.panelPath === b.panelPath;
+  }
+  return paneContentEquals(a, b);
+}
+
 /** Finds the pane representing the same routable page as `content`. Plugin
  * subpaths belong to one panel identity, so navigating within a panel updates
  * that pane instead of opening duplicates. Home, Agents, and compose are singletons. */
 export function findPaneByContent(root: LayoutNode, content: PaneContent): PaneNode | null {
-  return (
-    listPanes(root).find((pane) => {
-      const candidate = pane.content;
-      if (candidate.kind !== content.kind) return false;
-      if (content.kind === 'home' || content.kind === 'agents') return true;
-      if (content.kind === 'new-thread') {
-        return (
-          candidate.kind === 'new-thread' &&
-          (candidate.projectId ?? null) === (content.projectId ?? null)
-        );
-      }
-      if (content.kind === 'thread') {
-        return (
-          candidate.kind === 'thread' &&
-          candidate.projectId === content.projectId &&
-          candidate.threadId === content.threadId
-        );
-      }
-      if (content.kind === 'plugin-detail') {
-        return candidate.kind === 'plugin-detail' && candidate.pluginId === content.pluginId;
-      }
-      return (
-        candidate.kind === 'plugin-panel' &&
-        candidate.pluginId === content.pluginId &&
-        candidate.panelPath === content.panelPath
-      );
-    }) ?? null
-  );
+  return listPanes(root).find((pane) => paneContentMatches(pane.content, content)) ?? null;
 }
 
 function replacePaneNode(node: LayoutNode, paneId: string, replacement: LayoutNode): LayoutNode {
@@ -183,6 +199,9 @@ export function replacePaneContent(
   const pane = findPane(layout.root, paneId);
   if (pane === null) {
     return layout;
+  }
+  if (paneContentEquals(pane.content, content)) {
+    return layout.focusedPaneId === paneId ? layout : { ...layout, focusedPaneId: paneId };
   }
   return {
     root: replacePaneNode(layout.root, paneId, { ...pane, content }),
@@ -410,7 +429,7 @@ export function resizeSplit(
 }
 
 export function setFocus(layout: SplitLayout, paneId: string): SplitLayout {
-  if (findPane(layout.root, paneId) === null) {
+  if (layout.focusedPaneId === paneId || findPane(layout.root, paneId) === null) {
     return layout;
   }
   return { ...layout, focusedPaneId: paneId };

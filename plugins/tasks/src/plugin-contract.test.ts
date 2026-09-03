@@ -41,6 +41,7 @@ describe('tasks plugin', () => {
     const set = collectTestPluginApp(app, 'tasks');
     expect(set.navPanels[0]?.title).toBe('Tasks');
     expect(set.threadPanelActions[0]?.id).toBe('board');
+    expect(set.threadPanelActions[0]?.scopes).toEqual(['thread', 'agent-session']);
     expect(set.messageDirectives[0]?.id).toBe('task');
   });
 });

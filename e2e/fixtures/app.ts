@@ -39,13 +39,20 @@ import {
 } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { startLocalRegistry, type LocalRegistry, type DummyExtensionSpec } from './registry.js';
 import { EventRecorder } from '../sdk/events.js';
+import { linuxCiElectronArgs, linuxCiElectronEnv } from './linux-electron-launch.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const MAIN_ENTRY = join(REPO_ROOT, 'out/main/index.js');
 const PACKAGE_VERSION = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')).version as string;
+
+/** This repo's Electron binary — ABI-matched to node-pty / better-sqlite3. */
+function projectElectronBinary(): string {
+  return createRequire(import.meta.url)('electron') as string;
+}
 
 export interface RegistryConfig {
   enabled: boolean;
@@ -207,6 +214,7 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
     ZCC_E2E_APP_VERSION: PACKAGE_VERSION,
     ...(opts.e2e ? { ZCC_E2E: '1' } : {}),
     ...opts.env,
+    ...linuxCiElectronEnv(),
   };
   // A parent `electron-vite dev` / leftover diagnostic must not steal this
   // unpackaged E2E boot onto the live renderer or product server.
@@ -217,14 +225,28 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
   if (opts.caCertPath) env.NODE_EXTRA_CA_CERTS = opts.caCertPath;
 
   const app = await electron.launch({
-    args: [`--user-data-dir=${userDataDir}`, MAIN_ENTRY],
+    // Without this, Playwright downloads its own Electron (log: "Downloading
+    // Electron binary...") which will not load this repo's native addons.
+    executablePath: projectElectronBinary(),
+    args: [...linuxCiElectronArgs(), `--user-data-dir=${userDataDir}`, MAIN_ENTRY],
     env,
     timeout: 60_000
   });
-  const window = await appWindow(app);
-  await window.waitForSelector('#root', { timeout: 30_000 });
-  await dismissConsentOverlays(window);
-  return { electron: app, window, home };
+  const stderrChunks: string[] = [];
+  app.process()?.stderr?.on('data', (chunk: Buffer | string) => {
+    stderrChunks.push(String(chunk));
+  });
+  try {
+    const window = await appWindow(app);
+    await window.waitForSelector('#root', { timeout: 30_000 });
+    await dismissConsentOverlays(window);
+    return { electron: app, window, home };
+  } catch (err) {
+    const stderr = stderrChunks.join('').trim();
+    if (!stderr) throw err;
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`${message}\n\nmain stderr:\n${stderr}`);
+  }
 }
 
 /**

@@ -10,15 +10,27 @@ vi.mock('../../../lib/product-client.js', () => ({
 vi.mock('../../../store.js', () => ({
   useData: (selector: (s: { projects: unknown[] }) => unknown) => selector({ projects: [] })
 }));
+const slots = vi.hoisted(() => ({
+  thread: [
+    { pluginId: 'tasks', id: 'board', title: 'Tasks', layout: 'padded' as const },
+    {
+      pluginId: 'tasks',
+      id: 'live',
+      title: 'Live board',
+      layout: 'padded' as const,
+      scopes: ['agent-session'] as const
+    }
+  ],
+  compose: [{ pluginId: 'tasks', id: 'compose', title: 'Compose tasks' }]
+}));
+
 vi.mock('../../../plugins/plugin-slots.js', () => ({
   subscribePluginSlots: (listener: () => void) => {
     listener();
     return () => undefined;
   },
-  listThreadPanelActions: () => [
-    { pluginId: 'tasks', id: 'board', title: 'Tasks', layout: 'padded' }
-  ],
-  listNewThreadPanelActions: () => []
+  listThreadPanelActions: () => slots.thread,
+  listNewThreadPanelActions: () => slots.compose
 }));
 
 import { ThreadNewTabPage, ThreadNewTabView } from './ThreadNewTabPage.js';
@@ -40,7 +52,9 @@ describe('ThreadNewTabPage', () => {
     expect(html).toContain('Start terminal');
     expect(html).not.toContain('data-testid="thread-new-tab-browser"');
     expect(html).not.toContain('data-testid="thread-new-tab-explorer"');
-    expect(html).toContain('Tasks');
+    expect(html).toContain('data-testid="thread-new-tab-plugin-tasks-board"');
+    expect(html).toContain('data-testid="thread-new-tab-plugin-tasks-compose"');
+    expect(html).not.toContain('data-testid="thread-new-tab-plugin-tasks-live"');
 
     const withProject = renderToStaticMarkup(
       <ThreadNewTabPage
@@ -141,5 +155,22 @@ describe('ThreadNewTabPage', () => {
     expect(noSidecar).not.toContain('data-testid="thread-new-tab-terminal"');
     expect(noSidecar).not.toContain('Start terminal');
     expect(noSidecar).not.toContain('data-testid="thread-new-tab-explorer"');
+  });
+
+  it('lists only agent-session-scoped plugin actions on the CLI-agent inspector', () => {
+    const html = renderToStaticMarkup(
+      <ThreadNewTabPage
+        projectId="p1"
+        cwd={null}
+        panelScope="agent-session"
+        onOpenFile={() => undefined}
+        onOpenBrowser={() => undefined}
+        onStartTerminal={() => undefined}
+        onOpenPlugin={() => undefined}
+      />
+    );
+    expect(html).toContain('data-testid="thread-new-tab-plugin-tasks-live"');
+    expect(html).not.toContain('data-testid="thread-new-tab-plugin-tasks-board"');
+    expect(html).not.toContain('data-testid="thread-new-tab-plugin-tasks-compose"');
   });
 });

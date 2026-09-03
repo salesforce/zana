@@ -412,7 +412,7 @@ describe('OpenCodeProvider', () => {
     expect(p.resolveLaunch('opencode', cfg, false).command).toBe('/opt/opencode/opencode');
   });
 
-  it('exposes every configured OpenCode model target for verified local launches only', () => {
+  it('exposes every configured OpenCode model target for verified local and remote launches', () => {
     const models = p.adapter.descriptor.targets?.models ?? [];
     expect(models.map((model) => model.id)).toEqual([
       'llmgw/gpt-5.6-luna-1M',
@@ -430,9 +430,10 @@ describe('OpenCodeProvider', () => {
       'llmgw/gemini-3.5-flash': 'low',
       'llmgw/grok-4.6': 'medium'
     });
-    expect(models.every((model) => model.scope.length === 1 && model.scope[0] === 'local')).toBe(true);
+    expect(models.every((model) => model.scope.length === 2 && model.scope.includes('local') && model.scope.includes('remote'))).toBe(true);
     expect(models.every((model) => model.evidenceVersion === '1.18.0')).toBe(true);
     expect(p.adapter.evidence.map(({ id }) => id)).toEqual(expect.arrayContaining(models.map(({ id }) => id)));
+    expect(p.adapter.evidence.filter(({ id, scope }) => id === models[0]?.id).map(({ scope }) => scope)).toEqual(['local', 'remote']);
   });
 
   it('describes 1.18.0 as a minimum supported and reviewed floor', () => {
@@ -571,8 +572,8 @@ describe('OpenCodeProvider', () => {
     expect(cmd).not.toContain('/opt/local/opencode');
   });
 
-  it('remote command rejects unverified structured target routing', () => {
-    expect(() => p.buildRemoteCommand({
+  it('remote command binds verified structured target routing', () => {
+    const { cmd } = p.buildRemoteCommand({
       profile: 'opencode',
       config: {
         ...CONFIG,
@@ -599,7 +600,12 @@ describe('OpenCodeProvider', () => {
           opencode: { modelTargetId: 'llmgw/gemini-3.5-flash', executionState: 'autonomous' }
         }
       }
-    })).toThrow('model target is unavailable for remote launches');
+    });
+    expect(cmd).toBe(
+      `cd '/home/sfwork/core' && exec 'bash' '-lic' ${shellQuote(
+        `exec ${shellQuoteArgv(['opencode', '--model', 'llmgw/gemini-3.5-flash', '--agent', 'build', '--auto'])}`
+      )}`
+    );
   });
 
   it('title maps each profile', () => {

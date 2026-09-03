@@ -129,7 +129,7 @@ export function ThreadDetailOverflow({
   const [renaming, setRenaming] = useState(false);
   const [menuPos, setMenuPos] = useState<CSSProperties>({});
   const canStop = shouldShowThreadStop(threadId, status, inFlightRetry);
-  const scopedProjectId = projectId && route.isProjectWorkspace ? projectId : null;
+  const scopedProjectId = projectId && route.isProjectFocused ? projectId : null;
 
   useEffect(() => {
     if (!open) return;

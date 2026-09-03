@@ -960,4 +960,112 @@ describe('inbox MCP server (end-to-end)', () => {
     const listed = await projectOnly.listTools();
     expect(listed.tools.find((t) => t.name === 'preview_file')).toBeFalsy();
   });
+
+  it('9. schedule_* tools are absent when scheduleAgentApi is not wired', async () => {
+    const h = await boot(createMemoryInboxStore(), [makeProject('proj-1', 'P1')]);
+    const client = await connectClient(h.url, 'proj-1/sess-A');
+    clients.push(client);
+    const tools = await client.listTools();
+    expect(tools.tools.find((t) => t.name === 'schedule_list')).toBeFalsy();
+    expect(tools.tools.find((t) => t.name === 'schedule_run_now')).toBeFalsy();
+    expect(tools.tools.find((t) => t.name === 'schedule_set_enabled')).toBeFalsy();
+  });
+
+  it('9a. schedule_list/run_now/set_enabled: URL project scopes list; schema hides projectId', async () => {
+    const local = {
+      id: 'qa-hourly',
+      name: 'Hourly QA sweep',
+      enabled: true,
+      projectId: 'proj-1',
+      profile: 'claude' as const,
+      schedule: { every: '1h' },
+      overlap: 'skip' as const,
+      history: { retain: 10 },
+      status: { runCount: 1, lastRunResult: 'success' as const, runs: [] as [] },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z'
+    };
+    const other = {
+      ...local,
+      id: 'gift-qa',
+      name: 'Gift-card QA',
+      projectId: 'proj-2',
+      prompt: 'secret'
+    };
+    const runNow = vi.fn((id: string) => (id === local.id ? local : other));
+    const setEnabled = vi.fn((id: string, enabled: boolean) =>
+      id === local.id ? { ...local, enabled } : { ...other, enabled }
+    );
+    handle = await startMcpServer({
+      inboxStore: createMemoryInboxStore(),
+      suggestionsStore: createMemorySuggestionsStore(),
+      projects: { get: (id) => (id === 'proj-1' ? makeProject('proj-1', 'P1') : null) },
+      scheduleAgentApi: {
+        list: () => [local, other],
+        runNow,
+        setEnabled
+      },
+      log: () => {}
+    });
+
+    const client = await connectClient(handle.url, 'proj-1/sess-A');
+    clients.push(client);
+
+    const tools = await client.listTools();
+    const listTool = tools.tools.find((t) => t.name === 'schedule_list');
+    expect(listTool, 'schedule_list is registered on the session route').toBeTruthy();
+    const listProps = (listTool!.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
+    expect(Object.keys(listProps)).toEqual(['allProjects']);
+    expect(Object.keys(listProps)).not.toContain('projectId');
+    const runTool = tools.tools.find((t) => t.name === 'schedule_run_now');
+    const runProps = (runTool!.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
+    expect(Object.keys(runProps).sort()).toEqual(['allProjects', 'id']);
+    expect(Object.keys(runProps)).not.toContain('projectId');
+
+    const listed = await client.callTool({ name: 'schedule_list', arguments: {} });
+    expect((listed as { isError?: boolean }).isError).toBeFalsy();
+    const listedText = (listed as { content?: Array<{ text?: string }> }).content?.[0]?.text ?? '{}';
+    const listedBody = JSON.parse(listedText);
+    expect(listedBody.scope).toBe('project:proj-1');
+    expect(listedBody.schedules.map((s: { id: string }) => s.id)).toEqual(['qa-hourly']);
+    expect(listedBody.schedules[0]).not.toHaveProperty('prompt');
+
+    const all = await client.callTool({
+      name: 'schedule_list',
+      arguments: { allProjects: true, projectId: 'forged' }
+    });
+    const allBody = JSON.parse((all as { content?: Array<{ text?: string }> }).content?.[0]?.text ?? '{}');
+    expect(allBody.scope).toBe('all-projects');
+    expect(allBody.schedules.map((s: { id: string }) => s.id).sort()).toEqual(['gift-qa', 'qa-hourly']);
+
+    const byName = await client.callTool({
+      name: 'schedule_run_now',
+      arguments: { id: 'Hourly QA sweep' }
+    });
+    expect((byName as { isError?: boolean }).isError).toBeFalsy();
+    expect(runNow).toHaveBeenCalledWith('qa-hourly');
+
+    const hidden = await client.callTool({ name: 'schedule_run_now', arguments: { id: 'gift-qa' } });
+    expect((hidden as { isError?: boolean }).isError).toBe(true);
+    expect((hidden as { content?: Array<{ text?: string }> }).content?.[0]?.text).toContain(
+      'schedule not found: gift-qa'
+    );
+    expect(runNow).not.toHaveBeenCalledWith('gift-qa');
+
+    const enabled = await client.callTool({
+      name: 'schedule_set_enabled',
+      arguments: { id: 'qa-hourly', enabled: false }
+    });
+    expect((enabled as { isError?: boolean }).isError).toBeFalsy();
+    expect(setEnabled).toHaveBeenCalledWith('qa-hourly', false);
+
+    // Same tools on the project-scoped route (no session id).
+    const projectOnly = await connectClient(handle.url, 'proj-1');
+    clients.push(projectOnly);
+    const projectTools = await projectOnly.listTools();
+    expect(projectTools.tools.find((t) => t.name === 'schedule_list')).toBeTruthy();
+    expect(projectTools.tools.find((t) => t.name === 'schedule_run_now')).toBeTruthy();
+    expect(projectTools.tools.find((t) => t.name === 'schedule_set_enabled')).toBeTruthy();
+    expect(projectTools.tools.find((t) => t.name === 'schedule_report')).toBeFalsy();
+  });
 });

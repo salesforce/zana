@@ -24,6 +24,12 @@ export function emptyModelsHint(providerId: string, modelLoadError: string | nul
     const command = loginCommandForProvider(providerId);
     return command ? `Sign in with ${command}` : 'Sign in to load models';
   }
+  // Pi has no static fallback catalog. An empty list after a successful
+  // `model/list` means no provider credentials in ~/.pi (or env keys the
+  // GUI app can see) — not a picker bug.
+  if (providerId === 'pi' && !modelLoadError) {
+    return 'No models available. Verify your PI configuration.';
+  }
   return 'No models available';
 }
 

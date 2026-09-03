@@ -1,10 +1,10 @@
-import { DEFAULT_WORKSPACE_DISPLAY_NAME, type Project } from '@zana-ai/zcc-domain/product';
+import { DEFAULT_PROJECT_DISPLAY_NAME, type Project } from '@zana-ai/zcc-domain/product';
 
 /** Folder basename of the built-in scratch workspace (`~/zcc-workspace`). */
 export const SCRATCH_WORKSPACE_NAME = 'zcc-workspace';
 
 /** Picker label for the scratch default when the user has not chosen a project. */
-export const DEFAULT_COMPOSER_WORKSPACE_LABEL = DEFAULT_WORKSPACE_DISPLAY_NAME;
+export const DEFAULT_COMPOSER_WORKSPACE_LABEL = DEFAULT_PROJECT_DISPLAY_NAME;
 
 const SCRATCH_FOLDER_NAMES = new Set([SCRATCH_WORKSPACE_NAME, 'cc-workspace']);
 

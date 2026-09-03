@@ -49,6 +49,7 @@ describe('cli / guide / skill keep-in-sync', () => {
     expect(SKILL).toContain('APP_NOT_RUNNING');
     expect(SKILL).toContain('--json');
     expect(SKILL).toContain('ZCC_SERVER_URL');
+    expect(SKILL).toContain('ZCC_DATA_DIR');
     expect(SKILL).toContain('zcc-plugin-authoring');
     expect(SKILL).toContain('plugin-commands');
   });

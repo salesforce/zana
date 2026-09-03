@@ -31,15 +31,15 @@ describe('project-row workspace actions', () => {
     expect(source).toContain('enterProjectFocus(p.id);');
   });
 
-  it('drags a thread row into a split and shows a mini-map when it is already open', () => {
+  it('opens a CLI agent row as a session page, with the same split drag as threads', () => {
     const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('useThreadRowSplitDrag');
-    expect(source).toContain('openInSplit()');
-    expect(source).toContain('<SplitPaneMiniMap');
-    expect(source).toContain('e.metaKey || e.ctrlKey');
+    expect(source).toContain('getAgentSessionRoutePath(t.id, scopedProjectId)');
+    expect(source).not.toContain('openAgentModal');
+    expect(source).toContain('usePaneContentSplitDrag');
+    expect(source).toContain("kind: 'agent-session'");
   });
 
-  it('shows Default Workspace for the scratch folder without renaming the tag', () => {
+  it('shows Default Project for the scratch folder without renaming the tag', () => {
     const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
     expect(source).toContain('composerProjectLabel');
     expect(source).toContain('<span className="project-name">{displayName}</span>');
@@ -146,7 +146,7 @@ describe('sidebar workspace scrolling', () => {
     expect(source).toContain('.sidebar-section-sortable {\n  display: flex;\n  flex: 0 0 auto;\n  flex-direction: column;');
     expect(source).toContain('.sidebar-projects--collapsed {\n  flex: 0 0 auto;\n  min-height: 0;\n  /* An open workspace tree belongs at the rail bottom; a collapsed heading is');
     expect(source).toContain('margin-top: 12px;');
-    expect(source).toContain('.sidebar-agents--collapsed {\n  /* Hug the heading. A fixed 36px basis (header min-height + padding) plus\n   * Workspaces\' collection margin left a dead band between two collapsed rows. */\n  flex: 0 0 auto;\n  height: auto;');
+    expect(source).toContain('.sidebar-agents--collapsed {\n  /* Hug the heading. A fixed 36px basis (header min-height + padding) plus\n   * Projects\' collection margin left a dead band between two collapsed rows. */\n  flex: 0 0 auto;\n  height: auto;');
     expect(source).toContain('.sidebar-agents--collapsed .sidebar-agents-header,\n.sidebar-projects--collapsed .sidebar-projects-header {\n  padding-bottom: 0;\n}');
     expect(source).toContain('.sidebar-section-sortable:has(.sidebar-agents--collapsed) + .sidebar-section-sortable .sidebar-projects,\n.sidebar-section-sortable:has(.sidebar-projects--collapsed) + .sidebar-section-sortable .sidebar-agents {\n  margin-top: 0;\n}');
     expect(source).toContain('.sidebar-nav--sortable {\n  display: flex;\n  flex: 1 1 auto;\n  flex-direction: column;\n  gap: 2px;\n  min-width: 0;\n  min-height: 0;\n  overflow: hidden;');
@@ -224,12 +224,13 @@ describe('nested live threads', () => {
     expect(source).toContain('useRouteState()');
     expect(source).toContain('railThreadsByProject.get(p.id)');
     expect(source).toContain('liveList.length === 0 && railThreads.length === 0');
-    expect(source).toContain('isWorkspaceRailExpanded(projectExpanded[p.id], projectHasNestableSessions(p))');
+    expect(source).toContain('isProjectRailExpanded(projectExpanded[p.id], projectHasNestableSessions(p))');
     expect(source).toContain('pinFavoriteProjectsFirst(sorted)');
     expect(source).not.toContain('p.id === selectedId && projectHasNestableSessions(p)');
     expect(source).toContain('<ProviderIcon providerId={thread.providerId}');
     expect(source).toContain('threadRailStatus');
     expect(source).toContain('threadRailStatusClass');
+    expect(source).toContain('projectRemote={Boolean(p.remote)}');
     const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
     const working = css.slice(
       css.indexOf('.agents-row-working {'),
@@ -249,7 +250,7 @@ describe('nested live threads', () => {
       'agentRowStateClass'
     );
     expect(readFileSync(new URL('./AgentRowDetail.tsx', import.meta.url), 'utf8')).toContain(
-      "fleetKindLabel('agent')"
+      'agentCardRuntimeLabel'
     );
   });
 });

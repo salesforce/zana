@@ -95,7 +95,7 @@ describe('Sidebar structure and compact accessibility', () => {
     expect(markup).not.toContain('role="group"');
     expect(markup).toContain('data-testid="sidebar-projects"');
     expect(markup).not.toContain('data-sortable-sidebar-section-id="sidebar-section:agents"');
-    expect(markup).toContain('data-sortable-sidebar-section-id="sidebar-section:workspaces"');
+    expect(markup).toContain('data-sortable-sidebar-section-id="sidebar-section:projects"');
     expect(markup.indexOf('data-testid="nav-home"')).toBeLessThan(
       markup.indexOf('data-testid="nav-inbox"')
     );

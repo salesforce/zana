@@ -519,7 +519,7 @@ export function createModuleHost(
       const ui = useUi.getState();
       ui.enterProjectFocus(projectId);
       ui.selectTab(projectId, session.id);
-      ui.setWorkspaceMode(projectId, 'terminals');
+      ui.setProjectView(projectId, 'terminals');
       return { id: session.id };
     },
     replyToSession: async (sessionId: string, text: string) => {

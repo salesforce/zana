@@ -1,4 +1,3 @@
-import { app } from 'electron';
 import {
   existsSync,
   mkdirSync,
@@ -21,7 +20,9 @@ import type {
 } from '@zana-ai/zcc-domain/product';
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
 
-export const globalDir = () => join(app.getPath('home'), '.zcc', 'goals');
+import { electronZccDataDir } from '../../electron-data-dir.js';
+
+export const globalDir = () => join(electronZccDataDir(), 'goals');
 export const projectDir = (project: Project) => join(project.path, '.zcc', 'goals');
 const VALID_DRIVERS: GoalDriver[] = ['native', 'zana-autopilot'];
 const VALID_STATUS: GoalStatus[] = [

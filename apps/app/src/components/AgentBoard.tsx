@@ -14,6 +14,7 @@ import { PromptModal } from './PromptModal.js';
 import { FleetKindChip } from './FleetKindChip.js';
 import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
 import {
+  agentCardRuntimeLabel,
   agentFleetItem,
   compareScheduleFleet,
   fleetAgentCards,
@@ -158,7 +159,7 @@ export function cardNeedsAttention(
   );
 }
 
-export type LaneKey = 'blocked' | 'working' | 'scheduled' | 'idle' | 'done';
+export type LaneKey = 'blocked' | 'working' | 'idle' | 'done' | 'scheduled';
 
 /**
  * An at-rest agent: a live (non-exited) session that is neither working nor
@@ -212,7 +213,9 @@ interface LaneDef {
 
 // Lane order = the pipeline, most-urgent first. `done` collects exited sessions
 // (success or crash); `idle` collects at-rest live agents (idle/done/unknown
-// state but still running). A blocked agent always leads.
+// state but still running). A blocked agent always leads. Not-yet-running
+// scheduled jobs sit last (list bottom / kanban right) so they don't interrupt
+// live work.
 export const LANES: LaneDef[] = [
   {
     key: 'blocked',
@@ -242,17 +245,6 @@ export const LANES: LaneDef[] = [
       (c.state === 'working' || (isBackgroundAgent(c) && c.state === 'blocked'))
   },
   {
-    key: 'scheduled',
-    label: 'Scheduled',
-    icon: Calendar,
-    // Waiting scheduler-spawned jobs (idle/unknown on a live pty). Armed
-    // ScheduledTask cards also land here via fleetMatchesLane (they are not
-    // AgentCards). Working scheduled runs already match Working above; blocked
-    // ones remap there via isBackgroundAgent. Only shown when
-    // includeScheduledAgentsInAgentView is on.
-    match: (c) => c.session.status !== 'exited' && !!c.session.scheduled && isIdleAgent(c)
-  },
-  {
     key: 'idle',
     label: 'Idle',
     icon: Moon,
@@ -268,6 +260,17 @@ export const LANES: LaneDef[] = [
     label: 'Done',
     icon: CheckCircle2,
     match: (c) => c.session.status === 'exited'
+  },
+  {
+    key: 'scheduled',
+    label: 'Scheduled',
+    icon: Calendar,
+    // Waiting scheduler-spawned jobs (idle/unknown on a live pty). Armed
+    // ScheduledTask cards also land here via fleetMatchesLane (they are not
+    // AgentCards). Working scheduled runs already match Working above; blocked
+    // ones remap there via isBackgroundAgent. Only shown when
+    // includeScheduledAgentsInAgentView is on.
+    match: (c) => c.session.status !== 'exited' && !!c.session.scheduled && isIdleAgent(c)
   }
 ];
 
@@ -697,7 +700,11 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
     // on children, or still Working), so the parent never reads as plain at-rest.
     const subagents = !exited ? c.liveSubagents ?? 0 : 0;
     const persona = t.personaId ? personas.find((p) => p.id === t.personaId) : undefined;
-    const subtitle = persona?.name ?? t.profile;
+    const subtitle = agentCardRuntimeLabel({
+      profile: t.profile,
+      personaName: persona?.name,
+      remote: Boolean(c.projectRemote)
+    });
     // Idle-triage badge: only in the idle lane, only when the add-on classified
     // this idle spell to something actionable (awaiting-reply / done / paused).
     const triageBadge =
@@ -781,7 +788,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
         )}
         <span className="agent-card-meta">
           {/* When cards are grouped under a project header (global board), the
-              project is already named above — show the persona/profile subtitle
+              project is already named above — show the harness/runtime subtitle
               instead of a redundant project chip. */}
           {showProject && !grouped && (
             <span className="agent-card-project" title={c.projectName}>

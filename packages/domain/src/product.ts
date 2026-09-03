@@ -17,6 +17,19 @@ export {
   GITHUB_REPO_URL,
   REPORT_BUG_URL
 } from './about-credits.js';
+export {
+  CRASH_ISSUE_TITLE_MAX,
+  CRASH_ISSUE_URL_MAX,
+  CRASH_REPORT_FIELD_MAX,
+  CRASH_REPORT_MARKDOWN_MAX,
+  boundCrashText,
+  crashIssueMarkdown,
+  crashIssueTitle,
+  crashIssueUrl,
+  type CrashIssueContext,
+  type RendererCrashPayload,
+  type SaveCrashReportResult
+} from './crash-report.js';
 
 export type {
   Environment,
@@ -171,10 +184,12 @@ export type PersonaSource =
   | { extensionId: string; extensionTitle?: string };
 
 /**
- * User-facing label for the built-in scratch workspace. The on-disk folder
+ * User-facing label for the built-in scratch project. The on-disk folder
  * and project tag stay `zcc-workspace` (the API / handle name).
  */
-export const DEFAULT_WORKSPACE_DISPLAY_NAME = 'Default Workspace';
+export const DEFAULT_PROJECT_DISPLAY_NAME = 'Default Project';
+/** @deprecated Use {@link DEFAULT_PROJECT_DISPLAY_NAME}. */
+export const DEFAULT_WORKSPACE_DISPLAY_NAME = DEFAULT_PROJECT_DISPLAY_NAME;
 
 export interface Project {
   id: string;
@@ -1156,6 +1171,8 @@ export interface TerminalSession {
   cwd: string;
   pid?: number;
   status: 'starting' | 'running' | 'exited';
+  /** Command passed to `terminal.start` for a product PTY, when set. */
+  launchCommand?: string;
   exitCode?: number;
   createdAt: number;
   /**
@@ -1647,13 +1664,17 @@ export interface AppConfig {
    */
   focusedProjectId?: string | null;
   /**
-   * Per-project active workspace view. A value is either a core
-   * {@link WorkspaceMode} OR an
+   * Per-project active view. A value is either a core project mode OR an
    * extension module id, when that project's active tab is an
    * extension-contributed project tab (see `ProjectTabContribution`). Stored as
    * a bare string so an arbitrary extension id round-trips; the renderer
    * tolerates an id whose extension is no longer installed (falls back to the
    * default view).
+   */
+  projectViews?: Record<string, string>;
+  /**
+   * Legacy key for {@link projectViews}. Still accepted on read.
+   * @deprecated
    */
   workspaceModes?: Record<string, string>;
   /** Global Agents-board layout preference: kanban lanes, grouped list, or the

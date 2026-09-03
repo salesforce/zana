@@ -12,6 +12,26 @@ const FALLBACK: AppConfig = {
   lastProjectId: null
 };
 
+/** Packaged / production data-dir name under HOME. */
+export const ZCC_DATA_DIR_NAME = '.zcc';
+
+/** Isolated `pnpm dev` data-dir name under HOME. */
+export const ZCC_DEV_DATA_DIR_NAME = '.zcc-dev';
+
+/**
+ * Resolve the app state directory. `ZCC_DATA_DIR` (then `ZCC_CENTER_DIR`)
+ * wins so `pnpm dev` can keep `~/.zcc-dev` while the packaged app owns `~/.zcc`.
+ * Pass `home` when Electron remaps `app.getPath('home')` (E2E).
+ */
+export function resolveZccDataDir(
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = homedir()
+): string {
+  const explicit = env.ZCC_DATA_DIR?.trim() || env.ZCC_CENTER_DIR?.trim();
+  if (explicit) return explicit;
+  return join(home, ZCC_DATA_DIR_NAME);
+}
+
 export function hostConfigPath(dataDir: string): string {
   return join(dataDir, 'config.json');
 }
@@ -19,9 +39,7 @@ export function hostConfigPath(dataDir: string): string {
 function resolveHostConfigDir(dataDir?: string, env: NodeJS.ProcessEnv = process.env): string {
   const explicit = dataDir?.trim();
   if (explicit) return explicit;
-  const fromEnv = env.ZCC_DATA_DIR?.trim();
-  if (fromEnv) return fromEnv;
-  return join(homedir(), '.zcc');
+  return resolveZccDataDir(env);
 }
 
 /** Read the host data-dir config at spawn time so Settings `claudeBinary` reaches PtyManager. */

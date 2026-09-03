@@ -18,6 +18,7 @@ interface ThreadRow {
   environmentId?: string | null;
   parentThreadId?: string | null;
   archivedAt?: number | null;
+  activity?: { activeBackgroundCommandCount?: number };
 }
 
 function formatThread(row: ThreadRow): string {
@@ -37,11 +38,21 @@ function parseDuration(raw: string): number | undefined {
   return n * 3_600_000;
 }
 
+type WaitUntil = 'turn' | 'quiet';
+
+function threadIsQuiet(row: ThreadRow, until: WaitUntil): boolean {
+  const status = row.status ?? '';
+  if (status !== 'idle' && status !== 'error') return false;
+  if (until === 'turn') return true;
+  return (row.activity?.activeBackgroundCommandCount ?? 0) === 0;
+}
+
 async function waitForThread(
   id: string,
   timeoutMs: number,
   json: boolean,
-  deps?: ProductHttpDeps
+  deps: ProductHttpDeps | undefined,
+  until: WaitUntil
 ): Promise<CliResult> {
   const deadline = nowMs(deps) + timeoutMs;
   while (nowMs(deps) < deadline) {
@@ -55,9 +66,8 @@ async function waitForThread(
       await sleepMs(500, deps);
       continue;
     }
-    const status = shown.data.thread?.status ?? '';
-    if (status === 'idle' || status === 'error') {
-      return renderOrJson(json, shown.data.thread, `${id} ${status}\n`);
+    if (threadIsQuiet(shown.data.thread, until)) {
+      return renderOrJson(json, shown.data.thread, `${id} ${shown.data.thread?.status ?? ''}\n`);
     }
     await sleepMs(500, deps);
   }
@@ -118,7 +128,95 @@ async function spawnThread(
   if (!wait) {
     return renderOrJson(json, row, `${row.id}\t${row.status ?? 'starting'}\n`);
   }
-  return waitForThread(row.id, timeoutMs, json, deps);
+  return waitForThread(row.id, timeoutMs, json, deps, 'turn');
+}
+
+interface BackgroundCommandRow {
+  itemId?: string;
+  id?: string;
+  description?: string;
+  taskType?: string;
+}
+
+function formatBackgroundCommand(row: BackgroundCommandRow): string {
+  const id = row.itemId ?? row.id ?? '?';
+  const taskType = row.taskType ?? '?';
+  const description = row.description?.trim() || '(no description)';
+  return `${id}\t${taskType}\t${description}`;
+}
+
+function backgroundStopPrompt(commands: BackgroundCommandRow[]): string {
+  const names = commands
+    .map((row) => row.description?.trim())
+    .filter((name): name is string => Boolean(name));
+  const listed = names.length > 0 ? names.join('; ') : 'the running background shells';
+  return (
+    `Stop these running background shells now: ${listed}. ` +
+    'Use KillShell (or the equivalent tool) so they exit. Do not start new ones.'
+  );
+}
+
+async function runThreadBackground(
+  rest: string[],
+  json: boolean,
+  deps?: ProductHttpDeps
+): Promise<CliResult> {
+  const force = hasFlag(rest, '--force');
+  const timeoutRaw = flagValue(rest, '--timeout') ?? '2m';
+  const positional = stripFlags(rest, ['--timeout'], ['--force']);
+  const action = positional[0];
+  const id = positional[1];
+  if (action !== 'list' && action !== 'stop') {
+    return errResult('thread background requires list or stop <threadId>', 2);
+  }
+  if (!id) return errResult(`thread background ${action} requires a <threadId>`, 2);
+
+  if (action === 'list') {
+    const timeline = await productRequest<{
+      activeBackgroundCommands?: BackgroundCommandRow[];
+    }>(
+      'GET',
+      `/api/v1/threads/${encodeURIComponent(id)}/timeline`,
+      { deps, query: { summaryOnly: 'true' } }
+    );
+    if (!timeline.ok) return timeline.result;
+    const commands = timeline.data.activeBackgroundCommands ?? [];
+    if (json) return renderOrJson(true, commands, '');
+    if (commands.length === 0) return renderOrJson(false, commands, 'No background commands\n');
+    return renderOrJson(false, commands, `${commands.map(formatBackgroundCommand).join('\n')}\n`);
+  }
+
+  if (force) {
+    const stopped = await productRequest<unknown>(
+      'POST',
+      `/api/v1/threads/${encodeURIComponent(id)}/stop`,
+      { deps, body: {} }
+    );
+    if (!stopped.ok) return stopped.result;
+    return renderOrJson(json, stopped.data, `${id} stopped\n`);
+  }
+
+  const timeoutMs = parseDuration(timeoutRaw);
+  if (timeoutMs === undefined) return errResult(`invalid --timeout '${timeoutRaw}'`, 2);
+  const timeline = await productRequest<{
+    activeBackgroundCommands?: BackgroundCommandRow[];
+  }>(
+    'GET',
+    `/api/v1/threads/${encodeURIComponent(id)}/timeline`,
+    { deps, query: { summaryOnly: 'true' } }
+  );
+  if (!timeline.ok) return timeline.result;
+  const commands = timeline.data.activeBackgroundCommands ?? [];
+  if (commands.length === 0) {
+    return renderOrJson(json, commands, 'No background commands\n');
+  }
+  const sent = await productRequest<{ thread?: ThreadRow }>(
+    'POST',
+    `/api/v1/threads/${encodeURIComponent(id)}/send`,
+    { deps, body: { text: backgroundStopPrompt(commands), mode: 'auto' } }
+  );
+  if (!sent.ok) return sent.result;
+  return waitForThread(id, timeoutMs, json, deps, 'quiet');
 }
 
 export async function runThreadCommand(
@@ -186,12 +284,20 @@ export async function runThreadCommand(
   }
 
   if (subcommand === 'wait') {
-    const id = rest[0];
-    if (!id) return errResult('thread wait requires a <threadId>', 2);
     const timeoutRaw = flagValue(rest, '--timeout') ?? '20m';
     const timeoutMs = parseDuration(timeoutRaw);
     if (timeoutMs === undefined) return errResult(`invalid --timeout '${timeoutRaw}'`, 2);
-    return waitForThread(id, timeoutMs, json, deps);
+    const untilRaw = flagValue(rest, '--until') ?? 'turn';
+    if (untilRaw !== 'turn' && untilRaw !== 'quiet') {
+      return errResult("thread wait --until must be 'turn' or 'quiet'", 2);
+    }
+    const id = stripFlags(rest, ['--timeout', '--until'], [])[0];
+    if (!id) return errResult('thread wait requires a <threadId>', 2);
+    return waitForThread(id, timeoutMs, json, deps, untilRaw);
+  }
+
+  if (subcommand === 'background') {
+    return runThreadBackground(rest, json, deps);
   }
 
   if (subcommand === 'stop') {
@@ -280,7 +386,7 @@ export async function runThreadCommand(
   }
 
   return errResult(
-    `unknown thread command '${subcommand}'. Try list, spawn, show, log, tell, wait, stop, fork, archive, unarchive, open, interactions.`,
+    `unknown thread command '${subcommand}'. Try list, spawn, show, log, tell, wait, background, stop, fork, archive, unarchive, open, interactions.`,
     2
   );
 }

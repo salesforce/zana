@@ -8,7 +8,6 @@
  *  - tolerant validation so a hand-edited / older file still loads with defaults.
  */
 
-import { app } from 'electron';
 import {
   existsSync,
   mkdirSync,
@@ -27,7 +26,9 @@ import type {
   Project
 } from '@zana-ai/zcc-domain/product';
 
-export const globalDir = () => join(app.getPath('home'), '.zcc', 'followups');
+import { electronZccDataDir } from '../../electron-data-dir.js';
+
+export const globalDir = () => join(electronZccDataDir(), 'followups');
 export const projectDir = (project: Project) => join(project.path, '.zcc', 'followups');
 
 const VALID_STATUS: FollowUpStatus[] = ['open', 'resolved', 'dismissed'];

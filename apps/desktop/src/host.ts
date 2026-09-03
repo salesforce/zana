@@ -308,6 +308,7 @@ import type {
 } from '@zana-ai/zcc-domain/product';
 import { MAIN_MODULES } from './modules/index.js';
 import { homedir } from 'node:os';
+import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
 import {
   AUTO_CLOSE_IDLE_DEFAULTS,
   HEARTBEAT_DEFAULTS,
@@ -2480,7 +2481,7 @@ async function ensureRendererStaticHost(): Promise<void> {
   const rootDir = join(__dirname, '../renderer');
   runtimeSupervisor = await startRuntimeSupervisor({
     rendererRoot: rootDir,
-    dataDir: process.env.ZCC_DATA_DIR?.trim() || join(app.getPath('home'), '.zcc'),
+    dataDir: resolveZccDataDir(process.env, app.getPath('home')),
     runtimeDir: __dirname,
     version: resolvedAppVersion()
   });
@@ -5120,7 +5121,7 @@ function buildAppMenu() {
           label: 'Toggle Terminals / Explorer',
           accelerator: 'CmdOrCtrl+B',
           registerAccelerator: false,
-          click: () => sendToFocused('app:toggleWorkspaceMode')
+          click: () => sendToFocused('app:toggleProjectView')
         },
         {
           label: 'Toggle Inbox',
@@ -5235,7 +5236,7 @@ function migrationDataDir(): string {
     e2eRepairInjected = true;
     throw new MigrationRepairRequiredError('e2e-repair-once');
   }
-  return join(app.getPath('home'), '.zcc');
+  return resolveZccDataDir(process.env, app.getPath('home'));
 }
 
 function registerStartupStateIpc(): void {
@@ -6157,6 +6158,15 @@ async function bootstrapNormal() {
         if (!target || target.projectId !== projectId) return null;
         return followups.setStatus(id, status, resolution);
       }
+    },
+    // schedule_list / schedule_run_now / schedule_set_enabled: the agent-facing
+    // twin of the Scheduler UI. Main's SchedulerManager is the authority
+    // (Rule 1) — tools never read a renderer-supplied catalogue. Scope
+    // filtering happens in the tool (route projectId, optional allProjects).
+    scheduleAgentApi: {
+      list: () => scheduler.list(),
+      runNow: (id) => scheduler.runNow(id),
+      setEnabled: (id, enabled) => scheduler.setEnabled(id, enabled)
     }
   })
     .then(async (handle) => {
@@ -6334,9 +6344,10 @@ async function bootstrapNormal() {
   // #3), torn down in before-quit. All op handlers reuse main's existing
   // authority: createTerminalConfined for path confinement, the scheduler/store
   // APIs the IPC handlers use, and the agent registry/message log the mesh uses.
+  const controlDir = resolveZccDataDir(process.env, app.getPath('home'));
   startControlPlane({
-    socketPath: join(homedir(), '.zcc', 'control.sock'),
-    tokenPath: join(homedir(), '.zcc', 'control.token'),
+    socketPath: join(controlDir, 'control.sock'),
+    tokenPath: join(controlDir, 'control.token'),
     log: (m) => console.log(m),
     listProjects: () =>
       store.listProjects().map((p) => ({ id: p.id, name: p.name, tag: p.tag, path: p.path })),

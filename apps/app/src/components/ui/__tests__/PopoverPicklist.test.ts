@@ -33,7 +33,7 @@ describe('PopoverPicklist', () => {
     expect(picklistOptionVisible({ label: 'Claude Sonnet', compactLabel: 'Sonnet' }, 'sonnet')).toBe(true);
     expect(picklistOptionVisible({ label: 'Ask', description: 'Plan first' }, 'plan')).toBe(true);
     expect(picklistOptionVisible({ label: 'core-repo' }, 'salesforce')).toBe(false);
-    expect(picklistOptionVisible({ label: 'Default Workspace' }, '')).toBe(true);
+    expect(picklistOptionVisible({ label: 'Default Project' }, '')).toBe(true);
   });
 
   it('pins sticky actions below a filtered scrolling list', () => {

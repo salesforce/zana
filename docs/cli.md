@@ -77,13 +77,14 @@ PRODUCT API (app must be running — ZCC_SERVER_URL, default http://127.0.0.1:87
   thread list [--project ID]
   thread spawn --project <id> --prompt "..." [--provider <id>] [--wait]
   thread show|log|tell|wait|stop|fork|archive|unarchive|interactions <id>
+  thread background list|stop <id>
   thread open <id> [--file PATH] [--source workspace|thread-storage] [--line N]
   machine list|show|join-code|rename|remove|provider-cli
   project list|show|create|files|content|skills
   projects ls              Alias of project list
   skill list|show|files|cli-skills-status|install-cli-skills
   settings show|general|experiment|appearance
-  terminal list|create|send|close
+  terminal list|create|show|output|wait|send|close
   environment status|diff|diff-files|pull-request <id>
   run <project> <prompt>   Deprecated alias of thread spawn
   agent send <id> <msg>    Deprecated alias of thread tell
@@ -114,10 +115,11 @@ I made a typo: `pull-return` should be `pull-request`. Fix that.
 zcc status --json
 zcc thread spawn --project <id> --prompt "…" [--wait]
 zcc thread list|show|tell|wait|stop
+zcc thread background list|stop <id>
 zcc machine list
 zcc project list
 zcc skill install-cli-skills
-zcc terminal list
+zcc terminal list|create|show|output|wait|close
 zcc guide [chapter]
 ```
 
@@ -357,6 +359,40 @@ but recommended. Both a handle and a non-empty message are required (else exit
 
 ```bash
 zcc agent send reviewer "ack" --json
+```
+
+### Long-running servers
+
+Asking a **thread** to "start the app" usually runs Claude Bash in the
+background (`local_bash`). That is **not** a ZCC terminal. The thread can
+return to idle while Vite is still up.
+
+Prefer a product PTY when you need to inspect or stop the process yourself:
+
+```bash
+zcc terminal create --project <id> --command "npm run dev"
+zcc terminal wait <id> --contains "Local:"
+zcc terminal output <id>
+zcc terminal close <id>
+```
+
+Detect leftover Bash on a conversation:
+
+```bash
+zcc thread show <id> --json     # activity.activeBackgroundCommandCount
+zcc thread background list <id>
+```
+
+`zcc thread wait` returns when the **turn** finishes (`idle`/`error`) so
+`spawn --wait` does not hang on leftover Vite. Wait until background shells
+are gone with `--until quiet`.
+
+Stop leftover Bash:
+
+```bash
+zcc thread background stop <id>          # tell the agent to KillShell
+zcc thread background stop <id> --force  # thread.stop (children usually die;
+                                         # fully detached processes can leak)
 ```
 
 ### `term ls` / `terminal list`
@@ -657,15 +693,23 @@ Product HTTP base for `status`, `thread`, `machine`, `project`, `skill`,
 `settings`, `terminal`, and `environment`. Default `http://127.0.0.1:8780`.
 If the app is down, those commands exit **1** with `APP_NOT_RUNNING`.
 
-### `ZCC_CENTER_DIR`
+### `ZCC_DATA_DIR` / `ZCC_CENTER_DIR`
 
 Overrides the data directory the CLI reads from. The resolved directory is
 chosen by this precedence (highest wins):
 
 1. an injected `deps.dataDir` (test harness only)
 2. the `--data-dir <path>` flag
-3. the `ZCC_CENTER_DIR` environment variable
-4. the default `~/.zcc`
+3. the `ZCC_DATA_DIR` environment variable
+4. the `ZCC_CENTER_DIR` environment variable (legacy alias)
+5. the default `~/.zcc`
+
+Bare `zcc` talks to the packaged app (`~/.zcc`, port `8780`), including while
+`pnpm dev:prod` is running. To drive isolated `pnpm dev`:
+
+```bash
+ZCC_DATA_DIR="$HOME/.zcc-dev" ZCC_SERVER_URL=http://127.0.0.1:8781 zcc status --json
+```
 
 ```bash
 ZCC_CENTER_DIR=/custom/path zcc projects ls

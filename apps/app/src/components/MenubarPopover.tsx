@@ -236,8 +236,8 @@ function Row({
           </button>
           <button
             className="mbp-icon-btn mbp-open"
-            title="Open in workspace"
-            aria-label="Open in workspace"
+            title="Open in project"
+            aria-label="Open in project"
             onClick={() => product.menubar.focusSession(agent.sessionId, agent.projectId)}
           >
             <ArrowRight size={14} />
