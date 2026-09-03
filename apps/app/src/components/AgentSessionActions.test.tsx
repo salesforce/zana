@@ -6,12 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TerminalSession } from '@zana-ai/zcc-domain/product';
 
 const closeTerminal = vi.fn();
-const summarizeSession = vi.fn(async () => undefined);
+const summarizeSession = vi.fn(async (): Promise<void> => {});
 const clearBlocked = vi.fn();
 const clearTriage = vi.fn();
-const closeAgentWithFollowup = vi.fn(async () => true);
-const canCloseWithFollowup = vi.fn(() => true);
-const idleSurfacesToNeedsYou = vi.fn(() => false);
+const closeAgentWithFollowup = vi.fn(async (..._args: unknown[]) => true);
+const canCloseWithFollowup = vi.fn((..._args: unknown[]) => true);
+const idleSurfacesToNeedsYou = vi.fn((..._args: unknown[]) => false);
 const dataState = {
   catchUpSummaryEnabled: true,
   idleAttentionSensitivity: 'medium'

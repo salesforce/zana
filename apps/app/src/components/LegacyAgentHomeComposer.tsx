@@ -225,7 +225,7 @@ export function LegacyAgentHomeComposer({
   useEffect(() => {
     if (!projectId) return;
     const generation = ++selectionGeneration.current;
-    const availableFamilyIds = harnesses.map((row) => row.id);
+    const availableFamilyIds: string[] = harnesses.map((row) => row.id);
     const rememberedFamily = familyForThreadProviderId(rememberedProviderId() ?? '');
     const currentFamilyId = familyIdRef.current;
     const kept = resolveCliAgentFamily({

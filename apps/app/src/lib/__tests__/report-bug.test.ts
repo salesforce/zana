@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { REPORT_BUG_URL } from '@zana-ai/zcc-domain/product';
 
-const copyText = vi.fn(async () => undefined);
-const saveCrashReport = vi.fn();
+const copyText = vi.fn(async (..._args: unknown[]) => undefined);
+const saveCrashReport = vi.fn<(...args: unknown[]) => Promise<unknown>>();
 const version = vi.fn(async () => '2.0.1');
 const hasDesktopBridge = vi.fn(() => false);
 

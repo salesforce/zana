@@ -49,7 +49,7 @@ const baseTask = {
   schedule: { every: '1h' },
   overlap: 'skip',
   history: { retain: 10 },
-  status: { runCount: 0, runs: [], lastRunAt: null, nextRunAt: null },
+  status: { runCount: 0, runs: [], lastRunAt: undefined, nextRunAt: undefined },
   createdAt: '2026-01-01T00:00:00Z',
   updatedAt: '2026-01-01T00:00:00Z'
 } as ScheduledTask;
@@ -89,12 +89,12 @@ describe('ScheduleInfoPanel', () => {
       status: {
         runCount: 1,
         lastRunAt: '2026-01-01T00:00:00Z',
-        lastRunResult: 'ok',
+        lastRunResult: 'success',
         nextRunAt: new Date(Date.now() + 60_000).toISOString(),
         runs: [
           {
             at: '2026-01-01T00:00:00Z',
-            result: 'ok',
+            result: 'success',
             durationMs: 1200,
             report: '# Done'
           }
@@ -129,7 +129,7 @@ describe('ScheduleInfoPanel', () => {
       ...baseTask,
       status: {
         runCount: 1,
-        runs: [{ at: '2026-01-01T00:00:00Z', result: 'ok', sessionId: 'sess-1' }]
+        runs: [{ at: '2026-01-01T00:00:00Z', result: 'success', sessionId: 'sess-1' }]
       }
     } as ScheduledTask;
     render(
@@ -175,7 +175,7 @@ describe('ScheduleInfoPanel', () => {
       ...baseTask,
       status: {
         runCount: 1,
-        runs: [{ at: '2026-01-01T00:00:00Z', result: 'ok', sessionId: 'sess-1' }]
+        runs: [{ at: '2026-01-01T00:00:00Z', result: 'success', sessionId: 'sess-1' }]
       }
     } as ScheduledTask;
     const { rerender } = render(

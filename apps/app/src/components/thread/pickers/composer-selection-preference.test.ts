@@ -194,7 +194,8 @@ describe('defaultOfferedComposerModel', () => {
   });
 
   it('falls through to the first offered row when nothing is marked default', () => {
-    expect(defaultOfferedComposerModel(
+    type Row = { model: string; isDefault?: boolean };
+    expect(defaultOfferedComposerModel<Row>(
       [],
       [{ model: 'pinned' }, { model: 'other' }]
     )).toEqual({ model: 'pinned' });

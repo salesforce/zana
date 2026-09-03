@@ -4,7 +4,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const reportRendererCrash = vi.fn(async () => 'Crash details copied. Paste into What happened?');
+const reportRendererCrash = vi.fn(async (..._args: unknown[]) => 'Crash details copied. Paste into What happened?');
 
 vi.mock('../lib/report-bug.js', () => ({
   reportRendererCrash: (...args: unknown[]) => reportRendererCrash(...args)

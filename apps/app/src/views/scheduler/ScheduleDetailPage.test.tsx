@@ -4,6 +4,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
+import type { ReactNode } from 'react';
 import type { ScheduledTask } from '@zana-ai/zcc-domain/product';
 
 const tasks: ScheduledTask[] = [];
@@ -162,7 +163,7 @@ vi.mock('../../components/thread/secondary-panel/ThreadSecondaryPanel.js', () =>
     onHide,
     onResize
   }: {
-    children?: unknown;
+    children?: ReactNode;
     onSelectInfo: () => void;
     onSelectDiff: () => void;
     onNewTab: () => void;

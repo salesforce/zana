@@ -4,6 +4,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
+import type { ReactNode } from 'react';
 import type { TerminalSession } from '@zana-ai/zcc-domain/product';
 
 const setHeartbeat = vi.fn();
@@ -46,7 +47,7 @@ vi.mock('../../components/AgentSessionView.js', () => ({
     projectName?: string;
     projectRemote?: boolean;
     state?: string;
-    footer?: unknown;
+    footer?: ReactNode;
   }) => (
     <div
       data-testid="agent-session-view"

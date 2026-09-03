@@ -12,7 +12,9 @@ describe('openThreadInSplit', () => {
     const routes: string[] = [];
     useSplitWorkspace.setState({ layout: null });
     openThreadInSplit({
-      navigate: (route) => routes.push(route),
+      navigate: (route) => {
+        routes.push(route);
+      },
       projectId: 'p1',
       threadId: 't1',
       isCompact: true,
@@ -26,7 +28,9 @@ describe('openThreadInSplit', () => {
     const routes: string[] = [];
     useSplitWorkspace.setState({ layout: null });
     openThreadInSplit({
-      navigate: (route) => routes.push(route),
+      navigate: (route) => {
+        routes.push(route);
+      },
       projectId: 'p1',
       threadId: 't1',
       isCompact: false,
@@ -40,7 +44,9 @@ describe('openThreadInSplit', () => {
     const routes: string[] = [];
     useSplitWorkspace.setState({ layout: null });
     openThreadInSplit({
-      navigate: (route) => routes.push(route),
+      navigate: (route) => {
+        routes.push(route);
+      },
       projectId: 'p1',
       threadId: 't1',
       isCompact: false,
@@ -61,7 +67,9 @@ describe('openThreadInSplit', () => {
     useSplitWorkspace.setState({ layout: seeded, maximizedPaneId: null });
     const routes: Array<{ route: string; replace?: boolean }> = [];
     openThreadInSplit({
-      navigate: (route, options) => routes.push({ route, replace: options?.replace }),
+      navigate: (route, options) => {
+        routes.push({ route, replace: options?.replace });
+      },
       projectId: 'p1',
       threadId: 't1',
       isCompact: false
@@ -112,7 +120,9 @@ describe('openAgentSessionInSplit', () => {
     const routes: string[] = [];
     useSplitWorkspace.setState({ layout: null });
     openAgentSessionInSplit({
-      navigate: (route) => routes.push(route),
+      navigate: (route) => {
+        routes.push(route);
+      },
       projectId: 'p1',
       sessionId: 's1',
       isCompact: false,
@@ -134,7 +144,9 @@ describe('openAgentSessionInSplit', () => {
     const routes: string[] = [];
     useSplitWorkspace.setState({ layout: null });
     openAgentSessionInSplit({
-      navigate: (route) => routes.push(route),
+      navigate: (route) => {
+        routes.push(route);
+      },
       projectId: 'p1',
       sessionId: 's1',
       isCompact: true,
@@ -149,7 +161,9 @@ describe('openAgentSessionInSplit', () => {
     useSplitWorkspace.setState({ layout: seeded, maximizedPaneId: null });
     const routes: Array<{ route: string; replace?: boolean }> = [];
     openAgentSessionInSplit({
-      navigate: (route, options) => routes.push({ route, replace: options?.replace }),
+      navigate: (route, options) => {
+        routes.push({ route, replace: options?.replace });
+      },
       projectId: 'p1',
       sessionId: 's1',
       isCompact: false
@@ -162,7 +176,9 @@ describe('openAgentSessionInSplit', () => {
     const routes: string[] = [];
     useSplitWorkspace.setState({ layout: null });
     openAgentSessionInSplit({
-      navigate: (route) => routes.push(route),
+      navigate: (route) => {
+        routes.push(route);
+      },
       projectId: 'p1',
       sessionId: 's1',
       isCompact: false,
@@ -176,7 +192,9 @@ describe('openAgentSessionInSplit', () => {
     const routes: string[] = [];
     useSplitWorkspace.setState({ layout: null });
     openAgentSessionInSplit({
-      navigate: (route) => routes.push(route),
+      navigate: (route) => {
+        routes.push(route);
+      },
       projectId: null,
       sessionId: 's1',
       isCompact: false,
@@ -202,7 +220,9 @@ describe('openScheduleInSplit', () => {
     const routes: string[] = [];
     useSplitWorkspace.setState({ layout: null });
     openScheduleInSplit({
-      navigate: (route) => routes.push(route),
+      navigate: (route) => {
+        routes.push(route);
+      },
       projectId: null,
       scheduleId: 'sched-1',
       isCompact: false,
@@ -224,7 +244,9 @@ describe('openScheduleInSplit', () => {
     const routes: string[] = [];
     useSplitWorkspace.setState({ layout: null });
     openScheduleInSplit({
-      navigate: (route) => routes.push(route),
+      navigate: (route) => {
+        routes.push(route);
+      },
       projectId: 'p1',
       scheduleId: 'sched-1',
       isCompact: true,
@@ -243,7 +265,9 @@ describe('openPaneContentInSplit', () => {
   it('navigates only when split is disabled or the layout is empty', () => {
     const routes: string[] = [];
     openPaneContentInSplit({
-      navigate: (route) => routes.push(route),
+      navigate: (route) => {
+        routes.push(route);
+      },
       content: { kind: 'agents' },
       route: '/agents',
       enabled: false
@@ -252,7 +276,9 @@ describe('openPaneContentInSplit', () => {
 
     useSplitWorkspace.setState({ layout: null });
     openPaneContentInSplit({
-      navigate: (route) => routes.push(route),
+      navigate: (route) => {
+        routes.push(route);
+      },
       content: { kind: 'home' },
       route: '/',
       enabled: true
@@ -265,7 +291,9 @@ describe('openPaneContentInSplit', () => {
     useSplitWorkspace.setState({ layout: seeded });
     const routes: Array<{ route: string; replace?: boolean }> = [];
     openPaneContentInSplit({
-      navigate: (route, options) => routes.push({ route, replace: options?.replace }),
+      navigate: (route, options) => {
+        routes.push({ route, replace: options?.replace });
+      },
       content: { kind: 'agents' },
       route: '/agents',
       enabled: true
@@ -274,7 +302,9 @@ describe('openPaneContentInSplit', () => {
     expect(routes.at(-1)?.replace).toBe(true);
 
     openPaneContentInSplit({
-      navigate: (route) => routes.push({ route }),
+      navigate: (route) => {
+        routes.push({ route });
+      },
       content: { kind: 'home' },
       route: '/',
       enabled: true
