@@ -105,6 +105,9 @@ jobs:
           # on GitHub-hosted runners.
           NODE_OPTIONS: --max-old-space-size=6144
 
+      - name: Rebuild native modules for Electron
+        run: pnpm run rebuild:electron
+
       - name: E2E tests
         run: xvfb-run -a pnpm run test:e2e:only
 

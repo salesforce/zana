@@ -25,5 +25,7 @@ describe('ensure-better-sqlite3', () => {
     expect(pkg.scripts.prestart).toContain('ensure-better-sqlite3.mjs');
     expect(pkg.scripts.prepare).toContain('ensure-better-sqlite3.mjs');
     expect(pkg.scripts.rebuild).toBe('electron-rebuild -f -w node-pty && node scripts/ensure-better-sqlite3.mjs');
+    expect(pkg.scripts['rebuild:electron']).toBe('electron-rebuild -f -w node-pty -w better-sqlite3');
+    expect(pkg.scripts['rebuild:electron']).not.toContain('ensure-better-sqlite3');
   });
 });

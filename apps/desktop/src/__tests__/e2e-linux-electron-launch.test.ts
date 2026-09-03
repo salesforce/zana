@@ -42,4 +42,12 @@ describe('linux CI Electron launch', () => {
     expect(sysctlAt).toBeGreaterThan(0);
     expect(smokeAt).toBeGreaterThan(sysctlAt);
   });
+
+  it('release smoke rebuilds native addons for Electron after the Node-ABI build', () => {
+    expect(workflow).toContain('pnpm run rebuild:electron');
+    const rebuildAt = workflow.indexOf('pnpm run rebuild:electron');
+    const smokeAt = workflow.indexOf('xvfb-run -a pnpm run test:smoke:only');
+    expect(rebuildAt).toBeGreaterThan(0);
+    expect(smokeAt).toBeGreaterThan(rebuildAt);
+  });
 });
