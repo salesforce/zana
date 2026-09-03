@@ -72,7 +72,7 @@ export function threadFleetItem(
   return {
     kind: 'thread',
     id: thread.id,
-    state: threadStatusToAgentState(thread.status, thread.hasPendingInteraction),
+    state: threadStatusToAgentState(thread.status, thread.hasPendingInteraction, thread.activity),
     title: threadTitle(thread),
     projectId: thread.projectId,
     projectName: project?.name ?? 'Unknown',
@@ -155,7 +155,7 @@ export function compareScheduleFleet(
 export function threadIsLiveForRail(thread: ThreadListItem): boolean {
   if (!isVisibleThread(thread)) return false;
   if (thread.status === 'error') return true;
-  const state = threadStatusToAgentState(thread.status, thread.hasPendingInteraction);
+  const state = threadStatusToAgentState(thread.status, thread.hasPendingInteraction, thread.activity);
   return state === 'working' || state === 'blocked';
 }
 
@@ -181,10 +181,10 @@ export function railThreadsForProject(threads: ThreadListItem[]): ThreadListItem
 export type ThreadRailStatus = 'Needs you' | 'Working' | 'Idle' | 'Error';
 
 export function threadRailStatus(
-  thread: Pick<ThreadListItem, 'status' | 'hasPendingInteraction'>
+  thread: Pick<ThreadListItem, 'status' | 'hasPendingInteraction' | 'activity'>
 ): ThreadRailStatus {
   if (thread.status === 'error') return 'Error';
-  const state = threadStatusToAgentState(thread.status, thread.hasPendingInteraction);
+  const state = threadStatusToAgentState(thread.status, thread.hasPendingInteraction, thread.activity);
   if (state === 'blocked') return 'Needs you';
   if (state === 'working') return 'Working';
   return 'Idle';
@@ -205,8 +205,20 @@ export function agentRowStateClass(state: AgentState, exited: boolean): string |
   return undefined;
 }
 
-export function threadRailDetail(thread: Pick<ThreadListItem, 'status' | 'hasPendingInteraction'>): string {
-  return `${threadRailStatus(thread)} · ${fleetKindLabel('thread')}`;
+export function threadRailDetail(
+  thread: Pick<ThreadListItem, 'status' | 'hasPendingInteraction' | 'activity'>
+): string {
+  const status = threadRailStatus(thread);
+  if (
+    status === 'Working'
+    && (thread.activity?.activeBackgroundCommandCount ?? 0) > 0
+    && thread.status !== 'starting'
+    && thread.status !== 'active'
+    && thread.status !== 'stopping'
+  ) {
+    return 'Working · background command';
+  }
+  return `${status} · ${fleetKindLabel('thread')}`;
 }
 
 /** Humanize a thread provider id (`claude-code` → `Claude Code`, `acp-cursor` → `Cursor`). */
@@ -289,8 +301,10 @@ export function resolveMonitorSelection(
   pickedId: string | null
 ): FleetItem | null {
   if (pickedId) {
-    const found = items.find((item) => item.id === pickedId);
-    if (found) return found;
+    // A picked row that is missing from this snapshot must not fall through to
+    // items[0] (usually a WORKING agent) — that remounts ThreadDetail and can
+    // re-enter a render loop.
+    return items.find((item) => item.id === pickedId) ?? null;
   }
   if (storeSelection) {
     const pty = items.find(

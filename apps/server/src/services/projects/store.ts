@@ -11,6 +11,7 @@ import { registeredAdapters } from '@zana-ai/zcc-host-daemon/harness/registry';
 import { atomicDurableWrite } from '../harness-routing/storage.js';
 import { normalizeRepoUrl } from './git-clone.js';
 import { createConfigStore } from '../config/config-store.js';
+import { electronZccDataDir } from '../../electron-data-dir.js';
 
 const HARNESS_FAMILIES = ['claude', 'cursor', 'codex', 'pi', 'opencode'] as const;
 
@@ -253,7 +254,7 @@ function canonicalProjectSettingsForWrite(settings: ProjectSettings): ProjectSet
   return next;
 }
 
-const dataDir = join(app.getPath('home'), '.zcc');
+const dataDir = electronZccDataDir();
 const projectsFile = join(dataDir, 'projects.json');
 const configFile = join(dataDir, 'config.json');
 const projectSettingsFile = join(dataDir, 'project-settings.json');

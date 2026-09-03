@@ -19,6 +19,10 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('cliAgentModelOptions');
     expect(source).toContain('ensureThreadProviderModels');
     expect(source).toContain('prefetchThreadModelCatalog');
+    expect(source).toContain('pickOfferedComposerModel');
+    expect(source).toContain('rememberComposerSelection');
+    expect(source).toContain('resolveCliAgentFamily');
+    expect(source).toContain('rememberedSelectionFor');
     expect(source).toContain('useComposerPromptField');
     expect(source).toContain("kind: 'cli'");
     expect(source).toContain('assembleCliLaunchPrompt');

@@ -60,8 +60,30 @@ pnpm run rebuild
 pnpm dev
 ```
 
-`pnpm dev` launches the Electron development app. The pre-dev step builds the
-`zcc` CLI and seeds bundled plugins automatically.
+`pnpm dev` launches the Electron development app against an isolated data
+dir (`~/.zcc-dev`) and product port (`8781`) so it can run beside the
+installed app, which keeps `~/.zcc`. The pre-dev step builds the `zcc` CLI
+and seeds bundled plugins automatically.
+
+Swap the unpackaged app onto the packaged workspace (exclusive — quit the
+installed Zana app first; only one host-daemon may own `~/.zcc`):
+
+```bash
+pnpm dev:prod
+```
+
+That is `~/.zcc` on port `8780`. Switch back with `pnpm dev`. Do not run
+`pnpm dev --prod` — that is pnpm's production-deps flag; use `pnpm dev:prod`
+or `pnpm dev -- --packaged`.
+
+To drive the isolated DEV app from the CLI:
+
+```bash
+ZCC_DATA_DIR="$HOME/.zcc-dev" ZCC_SERVER_URL=http://127.0.0.1:8781 zcc …
+```
+
+Plain `zcc` talks to the packaged app (`~/.zcc`, port `8780`), including
+while `pnpm dev:prod` is running.
 
 ## The Operating Loop
 

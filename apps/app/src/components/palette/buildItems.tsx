@@ -24,6 +24,7 @@ import { resolveIcon } from '../../lib/resolveIcon.js';
 import { evaluateWhen, type WhenContext } from './whenContext.js';
 import { buildPluginPaletteItems } from './plugin-palette-actions.js';
 import type { PluginCommandPaletteActionRegistration } from '@zana-ai/zcc-plugin-sdk';
+import { cliAgentRestartConfirm } from '../agentCardActions.js';
 
 /** A category a palette item belongs to, used for empty-query grouping. */
 export type PaletteCategory = 'Projects' | 'Tabs' | 'Actions' | 'Extensions';
@@ -518,7 +519,7 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
         key: 'action:restart-active',
         icon: <RotateCcw size={14} />,
         label: `Restart "${activeTab.title}"`,
-        hint: activeTab.status === 'exited' ? 'exited' : 'kill and restart',
+        hint: activeTab.status === 'exited' ? 'exited' : 'stop and relaunch',
         category: 'Actions',
         source: 'core',
         run: () => {
@@ -526,7 +527,7 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
           const pid = selectedProject.id;
           const live = activeTab.status !== 'exited';
           onClose();
-          if (live && !window.confirm(`Kill and restart "${activeTab.title}"?`)) return;
+          if (live && !window.confirm(cliAgentRestartConfirm(activeTab.title))) return;
           void restartTerminal(sid, pid);
         }
       });

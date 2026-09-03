@@ -5,6 +5,7 @@ import type { SplitLayout, ProjectView } from '@/store';
 import { useData, useUi, visibleTerminals, backgroundTerminals } from '@/store';
 import { useRouteState } from '@/hooks/useRouteState';
 import { TabBar } from '@/components/TabBar';
+import { cliAgentRestartConfirm } from '@/components/agentCardActions';
 import { PROJECTS_TERMINAL_ANCHOR_ID } from '@/components/TerminalSurface';
 import { AgentLauncher } from '@/components/AgentLauncher';
 import { FindBar } from '@/components/FindBar';
@@ -270,7 +271,7 @@ export function WorkspaceView() {
               if (!src) return;
               if (
                 src.status !== 'exited' &&
-                !window.confirm(`Kill and restart "${src.title}"?`)
+                !window.confirm(cliAgentRestartConfirm(src.title))
               ) {
                 return;
               }

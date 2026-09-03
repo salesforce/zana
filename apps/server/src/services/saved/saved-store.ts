@@ -20,14 +20,16 @@
 import { randomUUID } from 'node:crypto';
 import { readFile, readdir, mkdir, writeFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { EventEmitter } from 'node:events';
 import type { SavedRecord, SavedRecordInput } from '@zana-ai/zcc-domain/product';
+import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
 
 export type { SavedRecord, SavedRecordInput } from '@zana-ai/zcc-domain/product';
 
-/** Default directory: `~/.zcc/saved/`. One file per record `<id>.json`. */
-export const DEFAULT_SAVED_DIR = join(homedir(), '.zcc', 'saved');
+/** Default directory: `$ZCC_DATA_DIR/saved/` (else `~/.zcc/saved`). One file per record. */
+export function defaultSavedDir(): string {
+  return join(resolveZccDataDir(), 'saved');
+}
 
 export interface ISavedStore {
   /** Persist a new record (assigns id + savedAt). Emits 'changed'. */
@@ -64,7 +66,7 @@ export interface SavedStoreOptions {
 }
 
 export function createSavedStore(opts: SavedStoreOptions = {}): ISavedStore {
-  const dir = opts.dir ?? DEFAULT_SAVED_DIR;
+  const dir = opts.dir ?? defaultSavedDir();
   const emitter = new EventEmitter();
   emitter.setMaxListeners(50);
 

@@ -605,6 +605,8 @@ describe('expandable row and chips', () => {
     expect(source).toContain("selectPin('diff')");
     expect(source).toContain("selectPin('plan')");
     expect(source).toContain('<ThreadPlanPanel');
+    expect(source).not.toContain('[panel, pin, planDocument]');
+    expect(source).toContain('[pin, planDocument, selectPin]');
     expect(source).toContain('<ThreadExplorerTab');
     expect(source).toContain('showPlanPin={showPlanPin}');
     expect(source).toContain('thread-secondary-show');

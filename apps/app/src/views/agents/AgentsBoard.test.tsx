@@ -31,7 +31,9 @@ describe('AgentsBoard', () => {
     expect(emptyBranch).toContain('No agents yet');
     expect(emptyBranch).toContain('setLauncherOpen(true)');
     expect(emptyBranch).toContain('data-testid="agents-board-new-thread"');
-    expect(board).toContain('{fleet.length > 0 && (');
+    expect(board).toContain('{showToolbar && (');
+    expect(board).toContain('const showToolbar = fleet.length > 0 || !includeScheduled');
+    expect(board).toContain('<ScheduledColumnToggle />');
     expect(board).not.toContain('<HomeAgentComposer');
 
     const filterBranch = board.slice(filterStart, board.indexOf('<AgentBoardLanes', filterStart));
@@ -63,6 +65,7 @@ describe('AgentsBoard compact chrome contract', () => {
     expect(board).toContain('aria-label="New agent"');
     expect(board).toContain('data-testid="agents-board-new-thread"');
     expect(board).toContain('btn primary agents-board-new');
+    expect(board).toContain('<ScheduledColumnToggle />');
     expect(board).not.toContain('agents-board-header');
     expect(board).not.toContain('<h1>Agents</h1>');
     expect(board).not.toContain('agents-board-count');

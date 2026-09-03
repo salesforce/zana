@@ -94,13 +94,22 @@ describe('production execution routing preflight', () => {
     }, services)).resolves.toMatchObject({ decision: 'allowed', scope: 'local', evidenceDigest: expect.any(String) });
   });
 
-  it('uses main-derived remote scope instead of authorizing remote launch as local', async () => {
+  it('uses main-derived remote scope for OpenCode execution authorization', async () => {
     const services = deps();
     await expect(preflightTerminalExecution({
       config: config(), profile: 'opencode', projectId: 'p1', scope: 'remote',
       mode: 'interactive', idempotencyKey: 'one',
       harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { executionTargetId: 'opencode.execution.plan' } } }
-    }, services)).resolves.toEqual({ decision: 'blocked', reason: 'scope mismatch' });
+    }, services)).resolves.toMatchObject({ decision: 'allowed', scope: 'remote', evidenceDigest: expect.any(String) });
+  });
+
+  it('allows an approved OpenCode model target on remote launches', async () => {
+    const services = deps();
+    await expect(preflightTerminalExecution({
+      config: config(), profile: 'opencode', projectId: 'p1', scope: 'remote',
+      mode: 'interactive', idempotencyKey: 'remote-model',
+      harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'aisuite/gpt-5.6-sol' } } }
+    }, services)).resolves.toEqual({ decision: 'allowed', scope: 'remote' });
   });
 
   it('blocks competing OpenCode native role and execution selectors', async () => {
@@ -179,7 +188,10 @@ describe('production execution routing preflight', () => {
       mode: 'interactive',
       idempotencyKey: 'unknown-catalog-model',
       harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'openai/gpt-5.2' } } }
-    }, services)).rejects.toThrow('Unknown model target');
+    }, services)).resolves.toEqual({
+      decision: 'blocked',
+      reason: 'Unknown model target for OpenCode.'
+    });
   });
 
   it('allows launching an unrestricted (yolo) profile without a per-tab execution target', async () => {

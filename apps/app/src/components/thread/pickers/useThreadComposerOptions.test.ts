@@ -29,6 +29,8 @@ describe('useThreadComposerOptions', () => {
     expect(source).toContain('rememberComposerSelection({ providerId, model: value, reasoningLevel })');
     expect(source).toContain('const persistSelection = !input.threadId');
     expect(source).toContain('preferredComposerModel');
-    expect(source).toContain('if (persistSelection)');
+    expect(source).toContain('defaultOfferedComposerModel');
+    expect(source).toContain('persistRemembered: persistSelection');
+    expect(source).toContain('rememberComposerSelection({ providerId, model: nextModel, reasoningLevel })');
   });
 });

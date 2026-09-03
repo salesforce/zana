@@ -897,7 +897,7 @@ export function ThreadWireframe(): ReactNode {
           </section>
           <aside className="plugin-guide-side">
             <header className="plugin-guide-side-tabs">
-              <Mark id="threadPanelAction" label="Thread panel" chip="outside-above" className="plugin-guide-side-tab is-active">
+              <Mark id="threadPanelAction" label="Thread side-panel tabs" chip="outside-above" className="plugin-guide-side-tab is-active">
                 <Plug /> Tasks
               </Mark>
               <span className="plugin-guide-side-tab">Files</span>

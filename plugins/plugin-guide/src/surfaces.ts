@@ -114,10 +114,15 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
     surfaces: [
       {
         id: 'threadPanelAction',
-        title: 'Thread panel',
-        summary: 'A tab beside an existing thread.',
+        title: 'Thread side-panel tabs',
+        summary: 'Adds a tab to the side panel that opens to the right of a thread.',
         apiSymbols: ['PluginAppSlots.threadPanelAction', 'PluginThreadPanelActionRegistration'],
-        bullets: ['`run` can open the panel with params.'],
+        bullets: [
+          'Render the tab and receive the thread id (or CLI-agent session id when scoped).',
+          'Open from a message action, the + / New Tab list, or `openPanel`.',
+          'Omit `run` to open immediately. `layout` is `padded` or `flush`.',
+          '`scopes` default to `["thread"]`. Include `"agent-session"` for the CLI-agent inspector.'
+        ],
         firstParty: ['Tasks', 'Side chat']
       },
       {

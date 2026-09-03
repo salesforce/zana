@@ -17,7 +17,9 @@ import type { Project, Team, TeamSlot } from '@zana-ai/zcc-domain/product';
 import type { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-team-registry.js';
 import { uniqueCopyName } from '../projects/unique-copy-name.js';
 
-const userTeamsDir = () => join(app.getPath('home'), '.zcc', 'teams');
+import { electronZccDataDir } from '../../electron-data-dir.js';
+
+const userTeamsDir = () => join(electronZccDataDir(), 'teams');
 const projectTeamsDir = (project: Project) => join(project.path, '.zcc', 'teams');
 
 function canonicalDir(dir: string): string {

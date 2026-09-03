@@ -18,7 +18,7 @@ import { useThreads } from '@/thread-store';
 import { useEnsureThreads } from '@/hooks/useEnsureThreads';
 import { getThreadRoutePath, threadIdFromPath } from '@/lib/route-paths';
 import { AgentBoardLanes, isReclaimableIdle, type AgentCard } from '@/components/AgentBoard';
-import { AgentViewToggle } from '@/components/AgentViewToggle';
+import { AgentViewToggle, ScheduledColumnToggle } from '@/components/AgentViewToggle';
 import { SquadFlowView } from '@/views/agents/SquadFlowView';
 import { AutonomousRunBanner } from '@/components/AutonomousRunBanner';
 import { AgentMonitor } from '@/components/AgentMonitor';
@@ -187,6 +187,9 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const activeThreadId = threadIdFromPath(location.pathname);
   const activeId = activeThreadId ?? activeTabId;
   const threadProjectId = isGlobal ? undefined : scopedProject?.id;
+  // Keep the toolbar (and this toggle) mounted after the user hides Scheduled
+  // so they can turn the column back on even if that was the only fleet.
+  const showToolbar = fleet.length > 0 || !includeScheduled;
 
   const inspect = (item: FleetItem) => {
     if (item.kind === 'thread') {
@@ -238,9 +241,10 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
 
   return (
     <div className={isGlobal ? 'agents-board agents-board--global panel-body--full' : 'agents-board'}>
-      {fleet.length > 0 && (
+      {showToolbar && (
         <div className="agents-board-toolbar">
           <AgentViewToggle />
+          <ScheduledColumnToggle />
           {reclaimableAgents.length > 0 && (
             <button
               type="button"
@@ -355,15 +359,17 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
                 <p>Start an agent in this project and watch it move across the board.</p>
               </>
             )}
-            <button
-              type="button"
-              className="btn primary"
-              data-testid="agents-board-new-thread"
-              onClick={() => useUi.getState().setLauncherOpen(true)}
-            >
-              <Plus size={14} />
-              New agent
-            </button>
+            {!showToolbar && (
+              <button
+                type="button"
+                className="btn primary"
+                data-testid="agents-board-new-thread"
+                onClick={() => useUi.getState().setLauncherOpen(true)}
+              >
+                <Plus size={14} />
+                New agent
+              </button>
+            )}
           </div>
         </div>
       ) : isGlobal && visibleFleet.length === 0 ? (

@@ -1,6 +1,7 @@
 import { useData, useUi, usePersonas, sortProjectsForDisplay } from './store.js';
 import { getTerminal } from './lib/findRegistry.js';
 import { projectDefaultLaunch, type ProjectDefaultLaunch } from './lib/launchProfile.js';
+import { cliAgentDeleteConfirm, cliAgentRestartConfirm } from './components/agentCardActions.js';
 
 /** The project's one-click "+" default: a pinned persona (on its baseProfile)
  *  or the profile default. Shared with TabBar / the menu so ⌘T agrees. */
@@ -70,7 +71,7 @@ export function installShortcuts(): () => void {
       if (!active) return;
       e.preventDefault();
       const live = active.status !== 'exited';
-      if (live && !window.confirm(`Kill and restart "${active.title}"?`)) return;
+      if (live && !window.confirm(cliAgentRestartConfirm(active.title))) return;
       data.restartTerminal(activeTabId, projectId).catch(() => {});
       return;
     }
@@ -220,7 +221,7 @@ export function installShortcuts(): () => void {
       if (
         active &&
         active.status !== 'exited' &&
-        !window.confirm(`Delete “${active.title}”? The process will be terminated.`)
+        !window.confirm(cliAgentDeleteConfirm(active.title))
       ) {
         return;
       }

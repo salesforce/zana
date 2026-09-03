@@ -1,9 +1,12 @@
-import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+/**
+ * @vitest-environment happy-dom
+ */
+import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup, render, screen } from '@testing-library/react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
-  THREAD_WORKING_PHRASE_INTERVAL_MS,
   THREAD_WORKING_PHRASES,
+  nextWorkingPhraseTick,
   threadStatusLabel,
   threadWorkingIndicatorLabel,
   threadWorkingPhrase,
@@ -21,7 +24,6 @@ describe('thread working phrases', () => {
     expect(new Set(THREAD_WORKING_PHRASES).size).toBe(10);
     expect(THREAD_WORKING_PHRASES[0]).toBe('Planning next move');
     expect(THREAD_WORKING_PHRASES).not.toContain('Working');
-    expect(THREAD_WORKING_PHRASE_INTERVAL_MS).toBe(3500);
   });
 
   it('wraps the phrase index and maps ticks onto the roster', () => {
@@ -33,6 +35,15 @@ describe('thread working phrases', () => {
     expect(threadWorkingPhrase(1)).toBe(THREAD_WORKING_PHRASES[1]);
     expect(threadWorkingPhrase(10)).toBe('Planning next move');
     expect(threadWorkingPhrase(9)).toBe(THREAD_WORKING_PHRASES[9]);
+  });
+
+  it('advances the tick only when a working display ends', () => {
+    expect(nextWorkingPhraseTick(0, false, false)).toBe(0);
+    expect(nextWorkingPhraseTick(0, false, true)).toBe(0);
+    expect(nextWorkingPhraseTick(0, true, true)).toBe(0);
+    expect(nextWorkingPhraseTick(0, true, false)).toBe(1);
+    expect(nextWorkingPhraseTick(9, true, false)).toBe(10);
+    expect(threadWorkingPhrase(nextWorkingPhraseTick(9, true, false))).toBe(THREAD_WORKING_PHRASES[0]);
   });
 
   it('adds an ellipsis for the in-thread indicator and keeps Thinking distinct', () => {
@@ -48,17 +59,29 @@ describe('thread working phrases', () => {
 });
 
 describe('useThreadWorkingPhrase', () => {
-  it('starts on the first phrase and resets when inactive', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('starts on the first phrase when active or idle', () => {
     expect(renderToStaticMarkup(<Probe />)).toContain('Planning next move');
     expect(renderToStaticMarkup(<Probe active={false} />)).toContain('Planning next move');
   });
 
-  it('advances on a timer and clears it on teardown', () => {
-    const source = readFileSync(new URL('./useThreadWorkingPhrase.ts', import.meta.url), 'utf8');
-    expect(source).toContain('window.setInterval');
-    expect(source).toContain('THREAD_WORKING_PHRASE_INTERVAL_MS');
-    expect(source).toContain('setTick((n) => n + 1)');
-    expect(source).toContain('window.clearInterval(id)');
-    expect(source).toContain('setTick(0)');
+  it('keeps the same phrase while working stays displayed', () => {
+    const { rerender } = render(<Probe active />);
+    expect(screen.getByText('Planning next move')).toBeTruthy();
+    rerender(<Probe active />);
+    expect(screen.getByText('Planning next move')).toBeTruthy();
+    expect(screen.queryByText(THREAD_WORKING_PHRASES[1])).toBeNull();
+  });
+
+  it('swaps to the next phrase the next time working is displayed', () => {
+    const { rerender } = render(<Probe active />);
+    expect(screen.getByText('Planning next move')).toBeTruthy();
+    rerender(<Probe active={false} />);
+    rerender(<Probe active />);
+    expect(screen.getByText(THREAD_WORKING_PHRASES[1])).toBeTruthy();
+    expect(screen.queryByText('Planning next move')).toBeNull();
   });
 });

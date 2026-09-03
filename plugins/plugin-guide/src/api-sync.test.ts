@@ -36,6 +36,13 @@ describe('plugin guide surfaces', () => {
     }
   });
 
+  it('names threadPanelAction as thread side-panel tabs', () => {
+    const surface = SURFACES.find((row) => row.id === 'threadPanelAction');
+    expect(surface?.title).toBe('Thread side-panel tabs');
+    expect(surface?.summary).toMatch(/side panel/);
+    expect(surface?.bullets.some((line) => line.includes('agent-session'))).toBe(true);
+  });
+
   it('documents composer, content scripts, and skill channels', () => {
     const ids = new Set(SURFACES.map((surface) => surface.id));
     expect(ids.has('composer')).toBe(true);

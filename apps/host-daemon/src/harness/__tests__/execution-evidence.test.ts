@@ -152,12 +152,12 @@ describe('execution evidence', () => {
     });
     expect(executionTargetFor(registeredAdapters()[4], 'autonomous')).toMatchObject({
       equivalence: 'exact',
-      scopes: ['local']
+      scopes: ['local', 'remote']
     });
 
     const descriptors = harnessAdapterDescriptors(new Map());
     expect(descriptors.find(({ id }) => id === 'cursor')?.targets?.models.every(({ scope }) => !scope.includes('remote'))).toBe(true);
-    expect(descriptors.find(({ id }) => id === 'opencode')?.targets?.models.every(({ scope }) => !scope.includes('remote'))).toBe(true);
-    expect(descriptors.find(({ id }) => id === 'opencode')?.targets?.roles.every(({ scope }) => !scope.includes('remote'))).toBe(true);
+    expect(descriptors.find(({ id }) => id === 'opencode')?.targets?.models.every(({ scope }) => scope.includes('local') && scope.includes('remote'))).toBe(true);
+    expect(descriptors.find(({ id }) => id === 'opencode')?.targets?.roles.every(({ scope }) => scope.includes('local') && scope.includes('remote'))).toBe(true);
   });
 });

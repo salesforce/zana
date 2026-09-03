@@ -50,7 +50,9 @@ describe('single shell <main> landmark', () => {
     const area = src('views/thread-detail/SplitThreadArea.tsx');
     expect(app).toMatch(/path=\{AGENTS_ROUTE_PATH\}/);
     expect(app).toMatch(/path=\{AGENTS_ROUTE_PATH\} element=\{null\}/);
+    expect(app).toMatch(/path=\{SCHEDULER_ROUTE_PATH\} element=\{null\}/);
     expect(app).not.toMatch(/element=\{<AgentsView \/>\}/);
+    expect(app).not.toMatch(/element=\{<SchedulerView \/>\}/);
     expect(app).not.toMatch(/nav === 'projects' && !focusedProjectId/);
     expect(area).toContain("content.kind === 'agents'");
     expect(area).toContain('<AgentsView />');

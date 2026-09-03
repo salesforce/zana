@@ -93,7 +93,7 @@ export async function runCli(argv: string[], deps?: Partial<CliDeps>): Promise<C
 
   // Resolve the `--data-dir <path>` flag (and its `--data-dir=<path>` form)
   // out of the head so it doesn't get parsed as a positional. Precedence:
-  // injected deps.dataDir → --data-dir flag → ZCC_CENTER_DIR env → default ~/.zcc.
+  // injected deps.dataDir → --data-dir flag → ZCC_DATA_DIR / ZCC_CENTER_DIR → default ~/.zcc.
   const extracted = extractDataDir(head);
   if (extracted.error) {
     return errResult(extracted.error, 2);
@@ -102,6 +102,7 @@ export async function runCli(argv: string[], deps?: Partial<CliDeps>): Promise<C
   const argsNoData = extracted.rest;
   const dataDir = deps?.dataDir ||
                   flagDataDir ||
+                  process.env.ZCC_DATA_DIR ||
                   process.env.ZCC_CENTER_DIR ||
                   defaultDataDir();
 
@@ -275,13 +276,14 @@ PRODUCT API (app must be running — ZCC_SERVER_URL, default http://127.0.0.1:87
   thread list [--project ID]
   thread spawn --project <id> --prompt "..." [--provider <id>] [--wait]
   thread show|log|tell|wait|stop|fork|archive|unarchive|interactions <id>
+  thread background list|stop <id>
   thread open <id> [--file PATH] [--source workspace|thread-storage] [--line N]
   machine list|show|join-code|rename|remove|provider-cli
   project list|show|create|files|content|skills
   projects ls              Alias of project list
   skill list|show|files|cli-skills-status|install-cli-skills
   settings show|general|experiment|appearance
-  terminal list|create|send|close
+  terminal list|create|show|output|wait|send|close
   environment status|diff|diff-files|pull-request <id>
   run <project> <prompt>   Deprecated alias of thread spawn
   agent send <id> <msg>    Deprecated alias of thread tell
@@ -306,13 +308,15 @@ LIVE CONTROL PLANE (app must be running):
 
 OPTIONS:
   --json                   Output as JSON (machine-readable)
-  --data-dir <path>        Override data directory (takes precedence over ZCC_CENTER_DIR)
+  --data-dir <path>        Override data directory (takes precedence over ZCC_DATA_DIR / ZCC_CENTER_DIR)
   --help, -h               Show this help
   --version, -v            Show version
 
 ENVIRONMENT:
   ZCC_SERVER_URL            Product HTTP base (default http://127.0.0.1:8780)
-  ZCC_CENTER_DIR            Override data directory (default: ~/.zcc)
+  ZCC_DATA_DIR              Override data directory (default: ~/.zcc). Use ~/.zcc-dev
+                            with ZCC_SERVER_URL=http://127.0.0.1:8781 to drive pnpm dev.
+  ZCC_CENTER_DIR            Legacy alias for ZCC_DATA_DIR
   ZCC_SESSION_ID            Set by the app inside agent terminals. When present,
                             the CLI is treated as an AGENT caller (read-only) —
                             mutating commands are refused (FORBIDDEN_AGENT, exit 5).

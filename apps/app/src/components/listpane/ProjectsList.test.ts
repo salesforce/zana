@@ -31,12 +31,12 @@ describe('project-row workspace actions', () => {
     expect(source).toContain('enterProjectFocus(p.id);');
   });
 
-  it('drags a thread row into a split and shows a mini-map when it is already open', () => {
+  it('opens a CLI agent row as a session page, with the same split drag as threads', () => {
     const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('useThreadRowSplitDrag');
-    expect(source).toContain('openInSplit()');
-    expect(source).toContain('<SplitPaneMiniMap');
-    expect(source).toContain('e.metaKey || e.ctrlKey');
+    expect(source).toContain('getAgentSessionRoutePath(t.id, scopedProjectId)');
+    expect(source).not.toContain('openAgentModal');
+    expect(source).toContain('usePaneContentSplitDrag');
+    expect(source).toContain("kind: 'agent-session'");
   });
 
   it('shows Default Workspace for the scratch folder without renaming the tag', () => {

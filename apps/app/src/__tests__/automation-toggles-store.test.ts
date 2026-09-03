@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useData } from '../store.js';
 
 /**
- * The two fleet-automation switches under the Agents rail entry
- * (auto-close-idle + Overseer) own the whole config round-trip themselves —
- * unlike the pure-local Settings mirrors, the sidebar toggle writes AppConfig.
+ * Switches that own the AppConfig round-trip from a surface outside Settings
+ * (sidebar automation + the Agents board Scheduled-column toggle). Unlike the
+ * pure-local Settings mirrors, these write AppConfig themselves.
  * These pin that contract: optimistic flip → persist → roll back on failure.
  */
 
@@ -17,7 +17,11 @@ beforeEach(() => {
   (globalThis as { window?: unknown }).window = {
     cc: { config: { set: configSet } }
   };
-  useData.setState({ autoCloseIdleEnabled: false, overseerMode: 'off' });
+  useData.setState({
+    autoCloseIdleEnabled: false,
+    overseerMode: 'off',
+    includeScheduledAgentsInAgentView: true
+  });
 });
 
 describe('useData.setAutoCloseIdleEnabled', () => {
@@ -53,5 +57,19 @@ describe('useData.setOverseerMode', () => {
     configSet.mockRejectedValueOnce(new Error('boom'));
     await useData.getState().setOverseerMode('on');
     expect(useData.getState().overseerMode).toBe('dryRun');
+  });
+});
+
+describe('useData.setIncludeScheduledAgentsInAgentView', () => {
+  it('optimistically flips and persists to AppConfig', async () => {
+    await useData.getState().setIncludeScheduledAgentsInAgentView(false);
+    expect(useData.getState().includeScheduledAgentsInAgentView).toBe(false);
+    expect(configSet).toHaveBeenCalledWith({ includeScheduledAgentsInAgentView: false });
+  });
+
+  it('rolls back the flip when the persist fails', async () => {
+    configSet.mockRejectedValueOnce(new Error('boom'));
+    await useData.getState().setIncludeScheduledAgentsInAgentView(false);
+    expect(useData.getState().includeScheduledAgentsInAgentView).toBe(true);
   });
 });

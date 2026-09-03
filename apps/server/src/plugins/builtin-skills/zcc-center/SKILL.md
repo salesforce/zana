@@ -5,10 +5,15 @@ description: Author schedules, schedule templates, and personas for Zana by writ
 
 # zcc-center — schedule / template / persona file formats
 
-> **Prefer the CLI.** `zcc schedule ls`, `zcc schedule run-now`, and
-> `zcc schedule enable|disable` are the happy path for operating schedules.
-> This skill is a **file-format appendix** for when you must author JSON on
-> disk. Do not write JSON into `.zcc` as the default way to automate.
+> **Prefer MCP in-session, CLI in a human shell.** Inside a Zana agent
+> terminal, list / fire / enable / disable with `schedule_list`,
+> `schedule_run_now`, and `schedule_set_enabled` on the `zcc-inbox` MCP
+> server (same `.zcc/schedules` store the Scheduler UI uses — not
+> `zana_schedule_*` / `.zana/scheduler` YAML). `zcc schedule run-now|enable|disable`
+> is refused for agents (`FORBIDDEN_AGENT`). In an operator shell, the CLI
+> verbs are the happy path. This skill is a **file-format appendix** for when
+> you must author JSON on disk. Do not write JSON into `.zcc` as the default
+> way to automate.
 
 Zana (the desktop app this session is likely running
 inside) runs **scheduled terminal sessions** on a recurring interval, offers

@@ -158,7 +158,7 @@ export function cardNeedsAttention(
   );
 }
 
-export type LaneKey = 'blocked' | 'working' | 'scheduled' | 'idle' | 'done';
+export type LaneKey = 'blocked' | 'working' | 'idle' | 'done' | 'scheduled';
 
 /**
  * An at-rest agent: a live (non-exited) session that is neither working nor
@@ -212,7 +212,9 @@ interface LaneDef {
 
 // Lane order = the pipeline, most-urgent first. `done` collects exited sessions
 // (success or crash); `idle` collects at-rest live agents (idle/done/unknown
-// state but still running). A blocked agent always leads.
+// state but still running). A blocked agent always leads. Not-yet-running
+// scheduled jobs sit last (list bottom / kanban right) so they don't interrupt
+// live work.
 export const LANES: LaneDef[] = [
   {
     key: 'blocked',
@@ -242,17 +244,6 @@ export const LANES: LaneDef[] = [
       (c.state === 'working' || (isBackgroundAgent(c) && c.state === 'blocked'))
   },
   {
-    key: 'scheduled',
-    label: 'Scheduled',
-    icon: Calendar,
-    // Waiting scheduler-spawned jobs (idle/unknown on a live pty). Armed
-    // ScheduledTask cards also land here via fleetMatchesLane (they are not
-    // AgentCards). Working scheduled runs already match Working above; blocked
-    // ones remap there via isBackgroundAgent. Only shown when
-    // includeScheduledAgentsInAgentView is on.
-    match: (c) => c.session.status !== 'exited' && !!c.session.scheduled && isIdleAgent(c)
-  },
-  {
     key: 'idle',
     label: 'Idle',
     icon: Moon,
@@ -268,6 +259,17 @@ export const LANES: LaneDef[] = [
     label: 'Done',
     icon: CheckCircle2,
     match: (c) => c.session.status === 'exited'
+  },
+  {
+    key: 'scheduled',
+    label: 'Scheduled',
+    icon: Calendar,
+    // Waiting scheduler-spawned jobs (idle/unknown on a live pty). Armed
+    // ScheduledTask cards also land here via fleetMatchesLane (they are not
+    // AgentCards). Working scheduled runs already match Working above; blocked
+    // ones remap there via isBackgroundAgent. Only shown when
+    // includeScheduledAgentsInAgentView is on.
+    match: (c) => c.session.status !== 'exited' && !!c.session.scheduled && isIdleAgent(c)
   }
 ];
 

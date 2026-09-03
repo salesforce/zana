@@ -48,7 +48,7 @@ export function evaluateTargetEvidence(
 ): RoutingEvidenceDecision {
   if (!target.scope.includes(scope)) return { classification: 'unavailable', reason: 'scope mismatch' };
   if (!target.evidenceVersion) return { classification: 'unavailable', reason: 'missing evidence version' };
-  const evidence = provider.adapter.evidence.find((candidate) => candidate.id === target.id);
+  const evidence = provider.adapter.evidence.find((candidate) => candidate.id === target.id && candidate.scope === scope);
   const evaluated = evidenceMatches(evidence, installedVersion, scope);
   if (evaluated.classification === 'unavailable') return evaluated;
   if (evaluated.evidence.versionRange !== target.evidenceVersion) {

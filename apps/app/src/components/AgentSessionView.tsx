@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
-import { PanelRight } from 'lucide-react';
+import { Maximize2, Minimize2, PanelRight, X } from 'lucide-react';
 import type { AgentState, SessionStats, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { AgentDetailPanel } from './AgentDetailPanel.js';
 import { AgentDiffPanel } from './AgentDiffPanel.js';
@@ -20,6 +20,7 @@ import {
 } from './thread/secondary-panel/threadSecondaryPanelState.js';
 import { getDesktopBrowserApi } from '../lib/desktop-browser.js';
 import { getBrowserUrlHost } from '../lib/browser-url.js';
+import { useOptionalPaneContext } from '../views/thread-detail/PaneContext.js';
 
 /**
  * CLI-agent inspector split: live PTY on the left, the same secondary-panel
@@ -79,6 +80,7 @@ export function AgentSessionView({
   focusDiffKey?: number;
   modal?: boolean;
 }) {
+  const pane = useOptionalPaneContext();
   const panel = useSecondaryPanel(modal ? `${session.id}:modal` : session.id, { defaultOpen: !modal });
   useInAppBrowserPanel(modal ? `${session.id}:modal` : session.id, panel);
   useThreadOpenFileSignal({
@@ -112,6 +114,8 @@ export function AgentSessionView({
     'thread-detail-view',
     'agent-session-view',
     modal ? 'thread-detail-view--modal' : '',
+    pane?.isSplitPane ? 'thread-detail-view--split-pane' : '',
+    pane?.isFocused === false ? 'is-pane-inactive' : '',
     panelOpen ? 'is-secondary-open' : '',
     panel.state.isMaximized ? 'is-secondary-maximized' : ''
   ].filter(Boolean).join(' ');
@@ -171,6 +175,7 @@ export function AgentSessionView({
           });
         }}
         onOpenRecent={(item) => panel.addTab(tabInputFromRecentItem(item))}
+        panelScope="agent-session"
       />
     );
   } else if ((closable?.kind === 'file-preview' || closable?.kind === 'storage-preview') && closable.path) {
@@ -190,6 +195,7 @@ export function AgentSessionView({
       <ThreadPluginTab
         moduleId={closable.moduleId}
         projectId={projectId}
+        threadId={session.id}
         actionId={closable.actionId}
         params={closable.params}
         layout={closable.layout}
@@ -218,6 +224,30 @@ export function AgentSessionView({
             <h1>{session.title}</h1>
           </div>
           <div className="thread-detail-actions">
+            {pane?.onToggleMaximize ? (
+              <button
+                type="button"
+                className="icon-btn"
+                title={pane.isMaximized ? 'Restore pane' : 'Maximize pane'}
+                aria-label={pane.isMaximized ? 'Restore pane' : 'Maximize pane'}
+                data-testid="split-pane-maximize"
+                onClick={pane.onToggleMaximize}
+              >
+                {pane.isMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+              </button>
+            ) : null}
+            {pane?.onRequestClose ? (
+              <button
+                type="button"
+                className="icon-btn"
+                title="Close pane"
+                aria-label="Close pane"
+                data-testid="split-pane-close"
+                onClick={pane.onRequestClose}
+              >
+                <X size={14} />
+              </button>
+            ) : null}
             {!panelOpen ? (
               <button
                 type="button"

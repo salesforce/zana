@@ -12,6 +12,7 @@ import { execFile } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync, existsSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
 import type {
   MainModule,
   MainModuleContext,
@@ -244,7 +245,7 @@ export class MainModuleHost {
   private readonly storageDir: string;
 
   constructor(private readonly deps: ModuleHostDeps) {
-    this.storageDir = join(app.getPath('home'), '.zcc', 'modules');
+    this.storageDir = join(resolveZccDataDir(process.env, app.getPath('home')), 'modules');
     try {
       mkdirSync(this.storageDir, { recursive: true });
     } catch (err) {

@@ -17,6 +17,19 @@ export {
   GITHUB_REPO_URL,
   REPORT_BUG_URL
 } from './about-credits.js';
+export {
+  CRASH_ISSUE_TITLE_MAX,
+  CRASH_ISSUE_URL_MAX,
+  CRASH_REPORT_FIELD_MAX,
+  CRASH_REPORT_MARKDOWN_MAX,
+  boundCrashText,
+  crashIssueMarkdown,
+  crashIssueTitle,
+  crashIssueUrl,
+  type CrashIssueContext,
+  type RendererCrashPayload,
+  type SaveCrashReportResult
+} from './crash-report.js';
 
 export type {
   Environment,
@@ -1156,6 +1169,8 @@ export interface TerminalSession {
   cwd: string;
   pid?: number;
   status: 'starting' | 'running' | 'exited';
+  /** Command passed to `terminal.start` for a product PTY, when set. */
+  launchCommand?: string;
   exitCode?: number;
   createdAt: number;
   /**

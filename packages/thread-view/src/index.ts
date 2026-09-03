@@ -59,6 +59,11 @@ export {
   type ThreadTimelineActivePlanTurn,
 } from "./active-prompt-mode-extraction.js";
 export { extractThreadTimelineGoal } from "./goal-snapshot-extraction.js";
+export {
+  EMPTY_THREAD_ACTIVITY,
+  isBackgroundTaskLifecyclePayload,
+  threadActivityFromEvents,
+} from "./thread-activity-from-events.js";
 export { extractThreadTimelineModelFallback } from "./model-fallback-extraction.js";
 export type { AcceptedClientRequestContext } from "./accepted-client-request-context.js";
 export { EMPTY_ACCEPTED_CLIENT_REQUEST_CONTEXT } from "./accepted-client-request-context.js";

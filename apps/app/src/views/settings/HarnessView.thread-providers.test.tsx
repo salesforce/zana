@@ -144,6 +144,21 @@ describe('ThreadProviderCatalog', () => {
     expect(screen.getByRole('button', { name: 'Load' })).toBeTruthy();
   });
 
+  it('asks to verify PI configuration when that catalog is empty', async () => {
+    const fetcher: ThreadExecutionOptionsFetcher = async () => ({
+      providers: [providerRow('pi', 'Pi')],
+      models: [],
+      selectedOnlyModels: [],
+      permissionCeiling: 'full',
+      modelLoadError: null
+    });
+    resetThreadModelCatalog(fetcher);
+    await prefetchThreadModelCatalog();
+
+    render(<ThreadProviderCatalog providers={[{ id: 'pi', displayName: 'Pi', pluginId: 'provider-pi' }]} />);
+    expect(screen.getByText('No models available. Verify your PI configuration.')).toBeTruthy();
+  });
+
   it('shows Loading on the closed row and disables Load while a fetch is in flight', async () => {
     const fetcher: ThreadExecutionOptionsFetcher = async (query) => {
       if (query?.providerId === 'pi') {

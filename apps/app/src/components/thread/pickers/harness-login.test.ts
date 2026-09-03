@@ -48,4 +48,11 @@ describe('harness login status', () => {
     expect(emptyModelsHint('codex', 'auth_required')).toBe('Sign in with codex login');
     expect(emptyModelsHint('acp-cursor', null)).toBe('No models available');
   });
+
+  it('asks to verify PI configuration when that catalog is empty', () => {
+    expect(emptyModelsHint('pi', null)).toBe('No models available. Verify your PI configuration.');
+    expect(emptyModelsHint('pi', undefined)).toBe('No models available. Verify your PI configuration.');
+    expect(emptyModelsHint('pi', 'timeout')).toBe('No models available');
+    expect(emptyModelsHint('pi', 'failed')).toBe('No models available');
+  });
 });

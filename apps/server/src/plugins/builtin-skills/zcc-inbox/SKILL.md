@@ -1,6 +1,6 @@
 ---
 name: zcc-inbox
-description: Push project updates to, and search, the user's inbox in Zana.
+description: Push project updates to, and search, the user's inbox in Zana. Also list, run, and enable/disable the Scheduler UI's .zcc/schedules.
 ---
 
 # zcc-inbox — the user's inbox
@@ -18,6 +18,10 @@ Zana exposes an MCP server, `zcc-inbox`, with these inbox tools:
 - **`inbox_search`** — read back what's already in the inbox: list recent
   entries or substring-search them. Use it to answer "what's in my inbox?",
   find an earlier entry, or check whether you already reported something.
+- **`schedule_list`** / **`schedule_run_now`** / **`schedule_set_enabled`** —
+  list, fire, and enable/disable the same schedules the desktop Scheduler UI
+  shows (`.zcc/schedules` JSON). Not the marketplace `zana_schedule_*` YAML
+  tools.
 - **`remote_exec`** — run a shell command on a registered **remote (SSH)**
   project and get its output back. Use it to inspect or act on a remote
   workspace without opening a terminal there. First use asks the user for
@@ -290,6 +294,63 @@ inbox_search({ query: "migration audit" })
 inbox_search({ query: "deploy failed", allProjects: true })
 ```
 
+## Operating schedules the Scheduler UI shows
+
+These tools read and mutate **Zana** schedules — JSON files at
+`~/.zcc/schedules/` and `<project>/.zcc/schedules/`, the same store the
+desktop Scheduler UI aggregates. They do **not** read
+`<workspace>/.zana/scheduler/*.yml`. If you see `zana_schedule_list` returning
+`[]` while the Scheduler UI has rows, you are on the marketplace MCP; use
+these `zcc-inbox` tools instead.
+
+**Tools:** `schedule_list` (read-only, pre-approved) · `schedule_run_now` ·
+`schedule_set_enabled` (first use asks permission unless Trust ZCC tools is on)
+
+```ts
+// schedule_list
+{ allProjects?: boolean }   // default false → this project only
+
+// schedule_run_now / schedule_set_enabled
+{
+  id: string,               // exact id, unique name, or unique id prefix
+  enabled?: boolean,        // schedule_set_enabled only
+  allProjects?: boolean     // default false → this project only
+}
+```
+
+The project identity comes from the MCP URL. A schedule in another project is
+invisible (and "not found" on mutate) unless you pass `allProjects: true`.
+Each list row is `{ id, name, enabled, projectId, schedule, lastRunAt?, nextRunAt?, lastRunResult?, runCount }`
+— no prompt, extraArgs, or run history.
+
+**List this project's schedules:**
+
+```
+schedule_list({})
+```
+
+**See every schedule the UI shows:**
+
+```
+schedule_list({ allProjects: true })
+```
+
+**Fire one now** (by name or id):
+
+```
+schedule_run_now({ id: "Hourly QA sweep" })
+```
+
+**Disable without deleting:**
+
+```
+schedule_set_enabled({ id: "qa-hourly", enabled: false })
+```
+
+Creating or editing a schedule's prompt/cadence is still the UI or writing
+JSON (see the `zcc-center` skill). `zcc schedule run-now|enable|disable` from
+inside this session is refused (`FORBIDDEN_AGENT`); use these MCP tools.
+
 ## Running a command on a remote project — `remote_exec`
 
 **Tool:** `zcc-inbox.remote_exec`
@@ -343,6 +404,9 @@ To find remote project ids, call `list_projects` — remote projects carry a
 - `remote_exec` only works against a project the user registered as remote; a
   local or unknown id returns an error. You never supply the host or credentials.
 - `inbox_search` is read-only: it never creates, edits, or removes entries.
+- `schedule_list` is read-only. `schedule_run_now` / `schedule_set_enabled` are
+  the in-session way to fire or toggle a Scheduler UI schedule; they never
+  touch `.zana/scheduler` YAML.
 - `docs` are pointers, never snapshots. If you regenerate `report.md` later,
   the user sees the new content next time they open the entry.
 - Don't push noise — every entry buys the user's attention. One good push at

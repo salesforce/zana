@@ -1069,7 +1069,8 @@ const api: CcApi = {
       const handler = (_e: unknown, isFullScreen: boolean) => cb(isFullScreen);
       ipcRenderer.on(IPC.app.onFullScreenChanged, handler);
       return () => ipcRenderer.off(IPC.app.onFullScreenChanged, handler);
-    }
+    },
+    saveCrashReport: (input) => ipcRenderer.invoke(IPC.app.saveCrashReport, input)
   },
   menubar: {
     request: () => ipcRenderer.invoke(IPC.menubar.request),

@@ -1,4 +1,3 @@
-import { app } from 'electron';
 import { EventEmitter } from 'node:events';
 import {
   existsSync,
@@ -12,7 +11,9 @@ import {
 import { join } from 'node:path';
 import type { ScheduleGroup, ScheduleGroupInput } from '@zana-ai/zcc-domain/product';
 
-const centerDir = () => join(app.getPath('home'), '.zcc');
+import { electronZccDataDir } from '../../electron-data-dir.js';
+
+const centerDir = () => electronZccDataDir();
 const groupsFile = () => join(centerDir(), 'groups.json');
 
 /** Slug pattern shared with Project.tag — URL-safe, stable handle. */

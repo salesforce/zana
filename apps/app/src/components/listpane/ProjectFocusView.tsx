@@ -13,7 +13,13 @@ import { SectionHeader } from './SectionHeader.js';
 import { AgentStatusDot } from './AgentStatusDot.js';
 import { ProjectRollupDot } from './ProjectRollupDot.js';
 import { AppPageHeader } from '../AppPageHeader.js';
-import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from '../agentCardActions.js';
+import {
+  useAgentCardActions,
+  AgentCardMenu,
+  clampMenuAnchor,
+  cliAgentDeleteConfirm,
+  cliAgentRemoveLabel
+} from '../agentCardActions.js';
 import { PromptModal } from '../PromptModal.js';
 import type { AgentCard } from '../AgentBoard.js';
 
@@ -359,15 +365,13 @@ export function ProjectFocusView({ project }: { project: Project }) {
                           <button
                             type="button"
                             className="project-terminal-close"
-                            aria-label={exited ? `Dismiss ${t.title}` : `Delete ${t.title}`}
-                            title={exited ? 'Dismiss' : 'Delete (ends the process)'}
+                            aria-label={`${cliAgentRemoveLabel(exited)} ${t.title}`}
+                            title={exited ? cliAgentRemoveLabel(true) : 'Delete (ends the process)'}
                             onClick={(e) => {
                               e.stopPropagation();
                               if (
                                 !exited &&
-                                !window.confirm(
-                                  `Delete "${t.title}"? The process will be terminated.`
-                                )
+                                !window.confirm(cliAgentDeleteConfirm(t.title))
                               ) {
                                 return;
                               }

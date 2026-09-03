@@ -58,6 +58,7 @@ import {
   getPluginDetailRoutePath,
   getProjectSettingsRoutePath,
   getProjectWorkspaceRoutePath,
+  getScheduleRoutePath,
   getSchedulerRoutePath,
   getSettingsTabRoutePath
 } from './lib/route-paths.js';
@@ -1078,8 +1079,13 @@ export const useUi = create<UiState>((set, get) => ({
   closeAgentModal: () => set({ agentModal: null }),
   openThreadModal: (threadId) => set({ threadModal: { threadId }, agentModal: null }),
   closeThreadModal: () => set({ threadModal: null }),
-  selectMonitorAgent: (sessionId, projectId) => set({ agentMonitor: { sessionId, projectId } }),
-  clearMonitorAgent: () => set({ agentMonitor: null }),
+  selectMonitorAgent: (sessionId, projectId) =>
+    set((s) => (
+      s.agentMonitor?.sessionId === sessionId && s.agentMonitor.projectId === projectId
+        ? s
+        : { agentMonitor: { sessionId, projectId } }
+    )),
+  clearMonitorAgent: () => set((s) => (s.agentMonitor === null ? s : { agentMonitor: null })),
   selectThreadPanelTerminal: (sessionId, projectId) => set({ threadPanelTerminal: { sessionId, projectId } }),
   clearThreadPanelTerminal: () => set({ threadPanelTerminal: null }),
   setSettingsTab: (settingsTab) =>
@@ -1101,20 +1107,13 @@ export const useUi = create<UiState>((set, get) => ({
   selectGroup: (groupId) => set({ schedulerTab: 'group', selectedGroupId: groupId }),
   revealSchedule: (taskId) => {
     const task = useScheduler.getState().tasks.find((t) => t.id === taskId);
-    // applyDestination('/scheduler') forces schedulerTab back to 'overview' via
-    // setNav, so set the scope tab AFTER it. A project-scoped task also needs
-    // its project selected so the project scope renders the right list.
-    applyDestination(set, getSchedulerRoutePath(), { revealScheduleId: taskId });
-    if (task?.source && task.source !== 'global') {
-      get().selectProject((task.source as { projectId: string }).projectId);
-      set({ schedulerTab: 'project' });
-    } else if (task?.group && useScheduleGroups.getState().groups.some((g) => g.id === task.group)) {
-      // Global + resolvable group → land on that group's tab; otherwise the
-      // task lives in the Ungrouped (global) bucket.
-      set({ schedulerTab: 'group', selectedGroupId: task.group });
-    } else {
-      set({ schedulerTab: 'global' });
+    if (!task) {
+      applyDestination(set, getSchedulerRoutePath(), { revealScheduleId: taskId });
+      return;
     }
+    const projectId =
+      task.source && task.source !== 'global' ? task.source.projectId : null;
+    applyDestination(set, getScheduleRoutePath(task.id, projectId));
   },
   clearRevealSchedule: () => set({ revealScheduleId: null }),
   revealLibraryDoc: (projectId, docId) => {
@@ -1421,7 +1420,8 @@ interface DataState {
   agentListNeedsYouFromTriage: boolean;
   /** Mirror of AppConfig.includeScheduledAgentsInAgentView — when on, scheduler
    *  jobs appear on the Agents board Scheduled column (plus live runs in
-   *  Working/Done). Default on. */
+   *  Working/Done). Backs the board-toolbar toggle and the Settings checkbox.
+   *  Default on. */
   includeScheduledAgentsInAgentView: boolean;
   /** Mirror of AppConfig.voiceInputEnabled — gates the mic button in the prompt
    *  composer. Hydrated on init, kept live by the Settings toggle. Default off. */
@@ -1516,7 +1516,8 @@ interface DataState {
   setWorktreeIsolationDefault: (on: boolean) => void;
   setIdleAttentionSensitivity: (level: 'high' | 'medium' | 'low') => void;
   setAgentListNeedsYouFromTriage: (on: boolean) => void;
-  setIncludeScheduledAgentsInAgentView: (on: boolean) => void;
+  /** Flip Scheduled-column visibility and persist it (board toolbar toggle). */
+  setIncludeScheduledAgentsInAgentView: (on: boolean) => Promise<void>;
   setVoiceInputEnabled: (on: boolean) => void;
   /** Flip the auto-close-idle master switch and persist it (sidebar toggle). */
   setAutoCloseIdleEnabled: (on: boolean) => Promise<void>;
@@ -1945,8 +1946,18 @@ export const useData = create<DataState>((set, get) => ({
     set({ agentListNeedsYouFromTriage: on });
   },
 
-  setIncludeScheduledAgentsInAgentView(on) {
+  async setIncludeScheduledAgentsInAgentView(on) {
+    // Optimistic flip, persist, roll back on failure. The board toolbar owns
+    // this round-trip (same shape as the sidebar automation toggles); Settings
+    // still writes AppConfig itself and hydrates via config.onChanged.
+    const prev = get().includeScheduledAgentsInAgentView;
     set({ includeScheduledAgentsInAgentView: on });
+    try {
+      await product.config.set({ includeScheduledAgentsInAgentView: on });
+    } catch (err) {
+      pushErrorToast(errorMessage(err, 'Failed to toggle Scheduled column'));
+      set({ includeScheduledAgentsInAgentView: prev });
+    }
   },
 
   setVoiceInputEnabled(on) {

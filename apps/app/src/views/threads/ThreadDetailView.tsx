@@ -397,17 +397,21 @@ export function ThreadDetail({
   );
   const showPlanPin = planDocument !== null;
   const openedPlanPanel = useRef(false);
+  const selectPin = panel.selectPin;
 
   useEffect(() => {
     if (!planDocument) {
       openedPlanPanel.current = false;
-      if (pin === 'plan') panel.selectPin('info');
+      if (pin === 'plan') selectPin('info');
       return;
     }
     if (planDocument.source !== 'approval' || openedPlanPanel.current) return;
     openedPlanPanel.current = true;
-    panel.selectPin('plan');
-  }, [panel, pin, planDocument]);
+    selectPin('plan');
+    // selectPin is stable once the panel hook memoizes commands; pin + plan
+    // document are the only triggers. Do not depend on `panel` (new object
+    // every state change) or React #185 loops on the Agents List embed.
+  }, [pin, planDocument, selectPin]);
 
   const viewClass = [
     'thread-detail-view',

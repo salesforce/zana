@@ -25,9 +25,9 @@
 import { randomUUID } from 'node:crypto';
 import { readFile, appendFile, mkdir, writeFile, rename } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { homedir } from 'node:os';
 import { EventEmitter } from 'node:events';
 import type { InboxDoc, InboxEntry, InboxNotifyLevel, InboxQuestion } from '@zana-ai/zcc-domain/product';
+import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
 
 export type { InboxDoc, InboxEntry } from '@zana-ai/zcc-domain/product';
 
@@ -148,8 +148,10 @@ export interface IInboxStore {
   onPruned(listener: (removedIds: string[]) => void): () => void;
 }
 
-/** Default on-disk JSONL path: `~/.zcc/inbox/entries.jsonl`. */
-export const DEFAULT_INBOX_FILE = join(homedir(), '.zcc', 'inbox', 'entries.jsonl');
+/** Default on-disk JSONL path: `$ZCC_DATA_DIR/inbox/entries.jsonl` (else `~/.zcc/...`). */
+export function defaultInboxFile(): string {
+  return join(resolveZccDataDir(), 'inbox', 'entries.jsonl');
+}
 
 /**
  * Retention cap: how many of the newest entries the JSONL keeps. The inbox is
@@ -300,7 +302,7 @@ export interface InboxStoreOptions {
 }
 
 export function createInboxStore(opts: InboxStoreOptions = {}): IInboxStore {
-  const filePath = opts.filePath ?? DEFAULT_INBOX_FILE;
+  const filePath = opts.filePath ?? defaultInboxFile();
   const maxEntries = opts.maxEntries ?? DEFAULT_MAX_INBOX_ENTRIES;
   const quietMaxEntries = opts.quietMaxEntries ?? DEFAULT_MAX_QUIET_INBOX_ENTRIES;
   const emitter = new EventEmitter();

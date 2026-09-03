@@ -7,7 +7,7 @@ describe('AgentMonitor thread selection', () => {
     expect(source).toContain('resolveMonitorSelection');
     expect(source).toContain("selected.kind === 'agent'");
     expect(source).toContain('selectMonitorAgent(selected.card.session.id, selected.projectId)');
-    expect(source).toContain('clearMonitorAgent()');
+    expect(source).toContain('if (selection) clearMonitorAgent()');
     expect(source).toContain('data-testid="agent-monitor-thread"');
     expect(source).not.toContain('selectMonitorAgent(selected.id');
     expect(source).not.toContain('selectMonitorAgent(item.id');
@@ -45,9 +45,23 @@ describe('AgentMonitor thread selection', () => {
     expect(source.indexOf('Close with follow-up')).toBeLessThan(source.indexOf("summarizing ? 'Summarizing…' : 'Summarize'"));
   });
 
+  it('labels live remove as Delete and restart without Kill', () => {
+    const source = readFileSync(new URL('./AgentMonitor.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('cliAgentRemoveLabel(exited)');
+    expect(source).toContain('cliAgentRestartLiveTitle()');
+    expect(source).not.toContain("'Kill'");
+    expect(source).not.toContain('Kill and');
+  });
+
   it('uses the thread harness icon instead of a chat bubble', () => {
     const source = readFileSync(new URL('./AgentMonitor.tsx', import.meta.url), 'utf8');
     expect(source).toContain('<ProviderIcon providerId={item.thread.providerId}');
     expect(source).not.toContain('MessageSquare');
+  });
+
+  it('hides the Scheduled group when the Scheduled column is off', () => {
+    const source = readFileSync(new URL('./AgentMonitor.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('visibleAgentLanes(includeScheduled)');
+    expect(source).toContain('includeScheduledAgentsInAgentView');
   });
 });

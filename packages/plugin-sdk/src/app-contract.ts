@@ -89,8 +89,24 @@ export interface PluginPendingInteractionRegistration extends PluginSlotBase {
   component: ComponentType<PluginPendingInteractionProps>;
 }
 
+export const PLUGIN_THREAD_PANEL_SCOPES = ['thread', 'agent-session'] as const;
+export type PluginThreadPanelScope = (typeof PLUGIN_THREAD_PANEL_SCOPES)[number];
+export const DEFAULT_PLUGIN_THREAD_PANEL_SCOPES: readonly PluginThreadPanelScope[] = ['thread'];
+
+export function threadPanelActionMatchesScope(
+  action: { scopes?: readonly PluginThreadPanelScope[] },
+  scope: PluginThreadPanelScope
+): boolean {
+  const scopes = action.scopes ?? DEFAULT_PLUGIN_THREAD_PANEL_SCOPES;
+  return scopes.includes(scope);
+}
+
 export interface PluginThreadPanelProps {
   pluginId: string;
+  /**
+   * The thread id, or the CLI-agent session id when this tab was opened from
+   * an agent-session side panel (`scopes` includes `"agent-session"`).
+   */
   threadId: string;
   params: JsonValue | null;
 }
@@ -106,6 +122,12 @@ export interface PluginThreadPanelActionRegistration extends PluginSlotBase {
   icon?: string;
   component: ComponentType<PluginThreadPanelProps>;
   layout?: 'padded' | 'flush';
+  /**
+   * New Tab launchers that list this action. Default `['thread']` — thread
+   * workbench only. Include `'agent-session'` to also list it on the CLI-agent
+   * inspector side panel.
+   */
+  scopes?: readonly PluginThreadPanelScope[];
   run?(context: PluginThreadPanelActionContext): void | Promise<void>;
 }
 
@@ -642,6 +664,28 @@ function requireLayout(kind: string, value: unknown): 'padded' | 'flush' | undef
   return value;
 }
 
+function requireThreadPanelScopes(
+  kind: string,
+  value: unknown
+): readonly PluginThreadPanelScope[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`${kind}: "scopes" must be a non-empty array of "thread" | "agent-session"`);
+  }
+  const allowed = new Set<string>(PLUGIN_THREAD_PANEL_SCOPES);
+  const out: PluginThreadPanelScope[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== 'string' || !allowed.has(item)) {
+      throw new Error(`${kind}: "scopes" must be a non-empty array of "thread" | "agent-session"`);
+    }
+    if (seen.has(item)) continue;
+    seen.add(item);
+    out.push(item as PluginThreadPanelScope);
+  }
+  return out;
+}
+
 export function collectPluginApp(
   pluginId: string,
   generation: number,
@@ -805,6 +849,7 @@ export function collectPluginApp(
         if (registration.run !== undefined && typeof registration.run !== 'function') {
           throw new Error(`${kind}: "run" must be a function when set`);
         }
+        const scopes = requireThreadPanelScopes(kind, registration.scopes);
         set.threadPanelActions.push(
           stamp({
             id,
@@ -816,6 +861,7 @@ export function collectPluginApp(
             ...(requireLayout(kind, registration.layout)
               ? { layout: registration.layout }
               : {}),
+            ...(scopes !== undefined ? { scopes } : {}),
             ...(registration.run !== undefined ? { run: registration.run } : {})
           })
         );

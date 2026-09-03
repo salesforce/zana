@@ -101,7 +101,7 @@ export function FavoriteAgentsDrawer() {
         thread,
         projectName: project?.name ?? 'Unknown',
         projectColor: project?.color,
-        state: threadStatusToAgentState(thread.status, thread.hasPendingInteraction)
+        state: threadStatusToAgentState(thread.status, thread.hasPendingInteraction, thread.activity)
       });
     }
     const byId: Record<FavSectionId, FollowedEntry[]> = {

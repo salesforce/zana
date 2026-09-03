@@ -53,6 +53,13 @@ exits **1** with **APP_NOT_RUNNING**: `Error: Zana Command Center is not running
 Ask the user to open the app. The only fully offline command is `zcc guide`.
 
 Override the base URL with `ZCC_SERVER_URL` when the server is not on 8780.
+To drive isolated `pnpm dev` (`~/.zcc-dev` on port 8781):
+
+```bash
+ZCC_DATA_DIR="$HOME/.zcc-dev" ZCC_SERVER_URL=http://127.0.0.1:8781 zcc status --json
+```
+
+`pnpm dev:prod` shares the packaged workspace; plain `zcc` is the right client.
 
 ---
 
@@ -66,9 +73,12 @@ When `zcc` runs **inside a Zana agent terminal**, the app has injected
 read-only.
 
 **Refused:** `thread spawn` / `run`, `thread tell` / `agent send`, `thread stop`,
-`terminal create|send|close`, `machine rename|remove`, `settings` writes,
+`thread background stop`, `terminal create|send|close`, `machine rename|remove`,
+`settings` writes,
 `schedule run-now|enable|disable`, unless you are the **host-stamped orchestrator**
 (the app's own spawn/close set). Do not set `ZCC_SESSION_ID` by hand.
+In-session, fire or toggle a Scheduler UI schedule with MCP
+(`schedule_run_now` / `schedule_set_enabled` on `zcc-inbox`), not the CLI.
 
 See `references/agent-gate.md`.
 
@@ -85,7 +95,8 @@ zcc thread spawn --project <id> --prompt "…" [--provider <id>] [--wait] [--tim
 zcc thread show <id>
 zcc thread log <id>
 zcc thread tell <id> "…"
-zcc thread wait <id> [--timeout 20m]
+zcc thread wait <id> [--timeout 20m] [--until turn|quiet]
+zcc thread background list|stop <id> [--force]
 zcc thread stop <id>
 zcc thread fork|archive|unarchive <id>
 zcc thread open <id> [--file PATH] [--source workspace|thread-storage] [--line N]
@@ -93,6 +104,12 @@ zcc thread interactions <id>
 ```
 
 `zcc run <project> <prompt>` → `thread spawn`. `zcc agent send <id> <msg>` → `thread tell`.
+
+`thread wait` defaults to `--until turn` (idle/error) so `spawn --wait` does not
+hang on leftover Vite. Use `--until quiet` to wait until
+`activity.activeBackgroundCommandCount` is 0. Inspect with
+`zcc thread show --json` or `zcc thread background list`. Soft stop tells the
+agent to KillShell; `--force` is `thread stop` (detached processes can leak).
 
 Give spawned threads a clear objective, constraints, deliverable, and what to
 report back. Use `--` before a prompt that contains flag-like tokens:
@@ -132,10 +149,15 @@ zcc settings general|experiment|appearance <key> <value>
 
 zcc terminal list [--project <id>]
 zcc terminal create --project <id> [--title …] [--command …]
+zcc terminal show|output|wait <id>
 zcc terminal send <id> --text "…"
 zcc terminal close <id>
 zcc term                        # deprecated alias of terminal
 ```
+
+Prefer `zcc terminal create --command` for long-lived servers the user may
+inspect or stop. A thread that "starts the app" usually creates background Bash
+instead; that is not a PTY (`terminal close` will not stop it).
 
 `install-cli-skills` copies this playbook onto each machine's `~/.claude/skills`
 and `~/.agents/skills` so agents *outside* ZCC can drive the CLI.
@@ -159,7 +181,9 @@ zcc team ls
 ```
 
 Inbox mutations for agents are MCP (`inbox_push` / `inbox_search`) via the
-`zcc-inbox` skill, not this CLI.
+`zcc-inbox` skill, not this CLI. Schedule fire/toggle for agents is also MCP
+(`schedule_list` / `schedule_run_now` / `schedule_set_enabled`) — the CLI
+verbs stay operator-only.
 
 ---
 

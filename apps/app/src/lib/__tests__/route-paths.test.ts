@@ -17,9 +17,12 @@ import {
   getPluginsRoutePath,
   getProjectRoutePath,
   getProjectSettingsRoutePath,
+  getAgentSessionRoutePath,
   getProjectWorkspaceRoutePath,
   getRootRoutePath,
   getSchedulerRoutePath,
+  getScheduleRoutePath,
+  getNewScheduleRoutePath,
   getSettingsRoutePath,
   getSettingsTabRoutePath,
   getSkillsRoutePath,
@@ -29,8 +32,12 @@ import {
   isProjectRoutePath,
   isRoutePath,
   isSettingsRoutePath,
+  projectIdFromSessionPath,
   projectIdFromThreadPath,
   resolveRouteHref,
+  sessionIdFromPath,
+  scheduleIdFromPath,
+  projectIdFromSchedulePath,
   threadIdFromPath,
   TOOLS_PLUGIN_BROWSE_ROUTE_PATH,
   TOOLS_PLUGINS_ROUTE_PATH,
@@ -96,7 +103,14 @@ describe('route path helpers', () => {
       '/threads/new',
       '/projects/p1/threads/new',
       '/threads/abc',
-      '/projects/p1/threads/abc'
+      '/projects/p1/threads/abc',
+      '/sessions/sess-1',
+      '/projects/p1/sessions/sess-1',
+      '/scheduler',
+      '/schedules/new',
+      '/schedules/sched-1',
+      '/projects/p1/schedules/new',
+      '/projects/p1/schedules/sched-1'
     ]) {
       expect(isRoutePath({ path })).toBe(true);
     }
@@ -119,9 +133,26 @@ describe('route path helpers', () => {
     expect(threadIdFromPath('/projects/p1/threads/new')).toBeUndefined();
     expect(projectIdFromThreadPath('/projects/p1/threads/abc')).toBe('p1');
     expect(projectIdFromThreadPath('/threads/abc')).toBeUndefined();
+    expect(getAgentSessionRoutePath('sess-1')).toBe('/sessions/sess-1');
+    expect(getAgentSessionRoutePath('sess/2', 'proj/1')).toBe('/projects/proj%2F1/sessions/sess%2F2');
+    expect(sessionIdFromPath('/sessions/sess-1')).toBe('sess-1');
+    expect(sessionIdFromPath('/projects/p1/sessions/sess-1')).toBe('sess-1');
+    expect(sessionIdFromPath('/projects/p1/threads/abc')).toBeUndefined();
+    expect(projectIdFromSessionPath('/projects/p1/sessions/sess-1')).toBe('p1');
+    expect(projectIdFromSessionPath('/sessions/sess-1')).toBeUndefined();
     expect(getFollowUpsRoutePath()).toBe('/followups');
     expect(getSuggestionsRoutePath()).toBe('/suggestions');
     expect(getSchedulerRoutePath()).toBe('/scheduler');
+    expect(getScheduleRoutePath('sched-1')).toBe('/schedules/sched-1');
+    expect(getScheduleRoutePath('sched/1', 'proj/1')).toBe('/projects/proj%2F1/schedules/sched%2F1');
+    expect(getNewScheduleRoutePath()).toBe('/schedules/new');
+    expect(getNewScheduleRoutePath('proj/1')).toBe('/projects/proj%2F1/schedules/new');
+    expect(scheduleIdFromPath('/schedules/sched-1')).toBe('sched-1');
+    expect(scheduleIdFromPath('/projects/p1/schedules/sched-1')).toBe('sched-1');
+    expect(scheduleIdFromPath('/schedules/new')).toBeUndefined();
+    expect(scheduleIdFromPath('/projects/p1/schedules/new')).toBeUndefined();
+    expect(projectIdFromSchedulePath('/projects/p1/schedules/sched-1')).toBe('p1');
+    expect(projectIdFromSchedulePath('/schedules/sched-1')).toBeUndefined();
     expect(getGoalsRoutePath()).toBe('/goals');
     expect(getPluginsRoutePath()).toBe(TOOLS_PLUGINS_ROUTE_PATH);
     expect(getPluginBrowseRoutePath()).toBe(TOOLS_PLUGIN_BROWSE_ROUTE_PATH);

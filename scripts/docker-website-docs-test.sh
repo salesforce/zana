@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Production-build the public docs, serve the machines page from a Docker image,
-# and assert the Tailscale / install copy is present.
+# Production-build the public website, serve the Plugin Guide page from a Docker
+# image, and assert the in-app map copy is present.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-IMAGE=${ZCC_WEBSITE_TEST_IMAGE:-zana-website-docs-test}
-CONTAINER="zana-website-docs-$$"
+IMAGE=${ZCC_WEBSITE_TEST_IMAGE:-zana-website-plugin-guide-test}
+CONTAINER="zana-website-guide-$$"
 PORT=${ZCC_WEBSITE_TEST_PORT:-14321}
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -17,7 +17,7 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
-STAGE=$(mktemp -d "${TMPDIR:-/tmp}/zcc-website-docs-XXXXXX")
+STAGE=$(mktemp -d "${TMPDIR:-/tmp}/zcc-website-guide-XXXXXX")
 cleanup() {
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   rm -rf "$STAGE"
@@ -25,28 +25,38 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 cd "$ROOT/website"
-node scripts/sync-docs.mjs
+node scripts/sync-plugin-guide.mjs
 npm run build
 
-html_src=.next/server/app/docs/multiple-devices.html
+html_src=.next/server/app/extensions.html
 if [[ ! -f "$html_src" ]]; then
-  printf 'next build did not emit %s\n' "$html_src" >&2
+  html_src=.next/server/app/extensions/page.js
+fi
+if [[ ! -f "$html_src" ]]; then
+  printf 'next build did not emit the extensions page\n' >&2
   exit 1
 fi
 
-mkdir -p "$STAGE/docs/multiple-devices"
-cp "$html_src" "$STAGE/docs/multiple-devices/index.html"
+mkdir -p "$STAGE/extensions"
+if [[ "$html_src" == *.html ]]; then
+  cp "$html_src" "$STAGE/extensions/index.html"
+else
+  # App Router may emit a JS server module; extract a readable HTML fallback
+  # by copying the RSC payload is not useful here — require the HTML artifact.
+  printf 'next build did not emit %s\n' '.next/server/app/extensions.html' >&2
+  exit 1
+fi
 
 docker build -t "$IMAGE" -f - "$STAGE" <<'EOF'
 FROM nginx:1.27-alpine
-COPY docs /usr/share/nginx/html/docs
+COPY extensions /usr/share/nginx/html/extensions
 EXPOSE 80
 EOF
 
 docker run -d --name "$CONTAINER" -p "${PORT}:80" "$IMAGE" >/dev/null
 
 deadline=$((SECONDS + 30))
-until curl -sf "http://127.0.0.1:${PORT}/docs/multiple-devices/" >/dev/null 2>&1; do
+until curl -sf "http://127.0.0.1:${PORT}/extensions/" >/dev/null 2>&1; do
   if [[ $SECONDS -ge $deadline ]]; then
     printf 'website container did not become ready\n' >&2
     docker logs "$CONTAINER" >&2 || true
@@ -55,11 +65,9 @@ until curl -sf "http://127.0.0.1:${PORT}/docs/multiple-devices/" >/dev/null 2>&1
   sleep 0.3
 done
 
-html=$(curl -sfL "http://127.0.0.1:${PORT}/docs/multiple-devices/")
-grep -Fq 'Settings → Machines' <<<"$html"
-grep -Fq 'tailscale' <<<"$html"
-grep -Fq 'install.sh' <<<"$html"
-grep -Fq '.zcc-machines' <<<"$html"
-grep -Fq 'SSH remotes' <<<"$html"
+html=$(curl -sfL "http://127.0.0.1:${PORT}/extensions/")
+grep -Fq 'Plugin Guide' <<<"$html"
+grep -Fq 'Every surface a plugin can own' <<<"$html"
+grep -Fq 'plugin-guide' <<<"$html"
 
-printf 'website docker docs ok: /docs/multiple-devices/ served from %s\n' "$IMAGE"
+printf 'website docker plugin guide ok: /extensions/ served from %s\n' "$IMAGE"

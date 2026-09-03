@@ -1,12 +1,18 @@
 import { app, safeStorage } from 'electron';
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
 
-const dataDir = join(app.getPath('home'), '.zcc');
-const secretsFile = join(dataDir, 'voice-secrets.enc');
+function dataDir(): string {
+  return resolveZccDataDir(process.env, app.getPath('home'));
+}
+function secretsFile(): string {
+  return join(dataDir(), 'voice-secrets.enc');
+}
 
 function ensureDir(): void {
-  if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
+  const dir = dataDir();
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 }
 
 interface SecretsBlob {
@@ -16,8 +22,8 @@ interface SecretsBlob {
 
 function readSecretsBlob(): SecretsBlob {
   try {
-    if (!existsSync(secretsFile)) return {};
-    const raw = readFileSync(secretsFile, 'utf8');
+    if (!existsSync(secretsFile())) return {};
+    const raw = readFileSync(secretsFile(), 'utf8');
     return JSON.parse(raw) as SecretsBlob;
   } catch {
     return {};
@@ -27,9 +33,10 @@ function readSecretsBlob(): SecretsBlob {
 function writeSecretsBlob(blob: SecretsBlob): void {
   ensureDir();
   const payload = JSON.stringify(blob);
-  const tmp = `${secretsFile}.tmp-${process.pid}-${Date.now()}`;
+  const file = secretsFile();
+  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
   writeFileSync(tmp, payload, 'utf8');
-  renameSync(tmp, secretsFile);
+  renameSync(tmp, file);
 }
 
 export function setOpenAiKey(key: string): void {

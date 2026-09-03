@@ -270,7 +270,10 @@ jobs:
           # dmg + zip + blockmap + latest-mac.yml must all be attached:
           # electron-updater reads latest-mac.yml to detect a new version and
           # downloads the zip (the dmg is for first-install only).
+          # Leave this as a draft: electron-updater ignores drafts, so a tag
+          # does not ship until a human publishes the release on both feeds.
           name: ${{ steps.meta.outputs.title }}
+          draft: true
           files: |
             merged/*.dmg
             merged/*.zip
@@ -312,6 +315,6 @@ jobs:
               merged/*.dmg merged/*.zip merged/*.blockmap merged/latest-mac.yml
             gh release edit "$GITHUB_REF_NAME" --repo grebmann1/zcc-releases --title "$RELEASE_TITLE" --notes "$NOTES"
           else
-            gh release create "$GITHUB_REF_NAME" --repo grebmann1/zcc-releases --title "$RELEASE_TITLE" --notes "$NOTES" \
+            gh release create "$GITHUB_REF_NAME" --repo grebmann1/zcc-releases --draft --title "$RELEASE_TITLE" --notes "$NOTES" \
               merged/*.dmg merged/*.zip merged/*.blockmap merged/latest-mac.yml
           fi

@@ -46,6 +46,11 @@ describe('scratchWorkspaceRoot', () => {
     expect(scratchWorkspaceRoot()).toBe(join(h.home, 'zcc-workspace'));
     expect(SCRATCH_DIR_NAME).toBe('zcc-workspace');
   });
+
+  it('keeps the project store on electronZccDataDir (~/.zcc unless ZCC_DATA_DIR)', () => {
+    const src = readFileSync(new URL('./store.ts', import.meta.url), 'utf8');
+    expect(src).toContain('const dataDir = electronZccDataDir()');
+  });
 });
 
 describe('config — boolean feature flags round-trip through setConfig', () => {

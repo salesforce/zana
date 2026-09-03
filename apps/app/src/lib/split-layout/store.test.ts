@@ -28,6 +28,15 @@ describe('split workspace store', () => {
     }
   });
 
+  it('skips a maximized-pane write when the id is already set', () => {
+    useSplitWorkspace.setState({ layout: null, maximizedPaneId: 'pane-1' });
+    const before = useSplitWorkspace.getState();
+    useSplitWorkspace.getState().setMaximizedPaneId('pane-1');
+    expect(useSplitWorkspace.getState()).toBe(before);
+    useSplitWorkspace.getState().setMaximizedPaneId(null);
+    expect(useSplitWorkspace.getState().maximizedPaneId).toBeNull();
+  });
+
   it('clears the layout when the last thread pane is archived', () => {
     useSplitWorkspace.setState({
       layout: createSinglePaneLayout(threadPaneContent('t1', 'p1')),

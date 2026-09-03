@@ -5,6 +5,7 @@ import { useUi, useAgentStatus, usePersonas } from '../store.js';
 import { getTerminal } from '../lib/findRegistry.js';
 import { profileIcon, personaIcon } from '../lib/profileIcon.js';
 import type { AgentState } from '@zana-ai/zcc-domain/product';
+import { cliAgentDeleteConfirm, cliAgentRestartLiveTitle } from './agentCardActions.js';
 
 /** Human label for the status dot's tooltip + aria. */
 const AGENT_STATE_LABEL: Record<AgentState, string> = {
@@ -140,7 +141,7 @@ export function TabBar({ tabs, activeTabId, onSelect, onClose, onDetach, onNewTe
   const deleteOne = (t: TerminalSession) => {
     if (
       t.status === 'exited' ||
-      window.confirm(`Delete “${t.title}”? The process will be terminated.`)
+      window.confirm(cliAgentDeleteConfirm(t.title))
     ) {
       onClose(t.id);
     }
@@ -394,7 +395,7 @@ export function TabBar({ tabs, activeTabId, onSelect, onClose, onDetach, onNewTe
                 title={
                   t.status === 'exited'
                     ? 'Restart this session'
-                    : 'Kill and restart this session with the same profile and args'
+                    : cliAgentRestartLiveTitle()
                 }
               >
                 {t.status === 'exited' ? 'Restart' : 'Restart…'}

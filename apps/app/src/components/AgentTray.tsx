@@ -157,7 +157,7 @@ export function AgentTray({
     for (const thread of threads) {
       if (!isVisibleThread(thread)) continue;
       if (projectId && thread.projectId !== projectId) continue;
-      const state = threadStatusToAgentState(thread.status, thread.hasPendingInteraction);
+      const state = threadStatusToAgentState(thread.status, thread.hasPendingInteraction, thread.activity);
       if (!allowed.includes(state)) continue;
       const project = byProjectId.get(thread.projectId);
       out.push({

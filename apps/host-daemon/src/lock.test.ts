@@ -10,6 +10,7 @@ describe('daemon.lock', () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-daemon-lock-'));
     const release = acquireDaemonLock(dataDir);
     expect(() => acquireDaemonLock(dataDir)).toThrow(DaemonLockError);
+    expect(() => acquireDaemonLock(dataDir)).toThrow(/defaults to ~\/\.zcc-dev/);
     release();
     const second = acquireDaemonLock(dataDir);
     second();

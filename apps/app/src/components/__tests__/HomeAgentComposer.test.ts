@@ -80,7 +80,11 @@ describe('ThreadCommandComposer chrome', () => {
       css.indexOf('@media (min-width: 1280px) {'),
       css.indexOf('.thread-detail-header {')
     );
-    expect(wide).toContain('max-width: 60rem;');
+    expect(wide).toContain('max-width: 72rem;');
+    expect(wide).toContain('@media (min-width: 1600px)');
+    expect(wide).toContain('max-width: 90rem;');
+    expect(wide).toContain('@media (min-width: 1920px)');
+    expect(wide).toContain('max-width: 108rem;');
     expect(wide).toContain('min-height: 52px;');
     expect(wide).toContain('max-height: 16rem;');
   });

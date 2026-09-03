@@ -11,8 +11,14 @@ import {
   PROJECT_SETTINGS_ROUTE_PATH,
   PROJECT_NEW_THREAD_ROUTE_PATH,
   PROJECT_THREAD_ROUTE_PATH,
+  PROJECT_SESSION_ROUTE_PATH,
+  PROJECT_NEW_SCHEDULE_ROUTE_PATH,
+  PROJECT_SCHEDULE_ROUTE_PATH,
   PROJECT_WORKSPACE_ROUTE_PATH,
+  SESSION_ROUTE_PATH,
   SCHEDULER_ROUTE_PATH,
+  NEW_SCHEDULE_ROUTE_PATH,
+  SCHEDULE_ROUTE_PATH,
   SETTINGS_PROJECT_ALIAS_ROUTE_PATH,
   SETTINGS_ROUTE_PATH,
   SETTINGS_SECTION_ROUTE_PATH,
@@ -27,8 +33,11 @@ import {
   TOOLS_SKILLS_ROUTE_PATH,
   TOOLS_HUB_PAGE_ROOT_ROUTE_PATH,
   TOOLS_HUB_PAGE_ROUTE_PATH,
+  getAgentSessionRoutePath,
+  getNewScheduleRoutePath,
   getNewThreadRoutePath,
   getProjectRoutePath,
+  getScheduleRoutePath,
   getThreadRoutePath
 } from './route-paths.js';
 
@@ -46,6 +55,9 @@ export interface DecodedRoute {
   isNewThread: boolean;
   isThreadView: boolean;
   threadId: string | null;
+  sessionId: string | null;
+  scheduleId: string | null;
+  isNewSchedule: boolean;
   pluginPanelPath: string | null;
   pluginSubPath: string;
 }
@@ -64,6 +76,9 @@ const DEFAULT_DECODED: DecodedRoute = {
   isNewThread: false,
   isThreadView: false,
   threadId: null,
+  sessionId: null,
+  scheduleId: null,
+  isNewSchedule: false,
   pluginPanelPath: null,
   pluginSubPath: ''
 };
@@ -116,6 +131,15 @@ export function decodeRoutePath(pathname: string, hash = ''): DecodedRoute {
       threadId: param(threadMatch, 'threadId') ?? null
     };
   }
+  const sessionMatch = matchPath(SESSION_ROUTE_PATH, pathname);
+  if (sessionMatch) {
+    return {
+      ...DEFAULT_DECODED,
+      nav: 'agents',
+      settingsAnchor: anchor,
+      sessionId: param(sessionMatch, 'sessionId') ?? null
+    };
+  }
   if (pathname === FOLLOWUPS_ROUTE_PATH) {
     return { ...DEFAULT_DECODED, nav: 'followups', settingsAnchor: anchor };
   }
@@ -124,6 +148,18 @@ export function decodeRoutePath(pathname: string, hash = ''): DecodedRoute {
   }
   if (pathname === SCHEDULER_ROUTE_PATH) {
     return { ...DEFAULT_DECODED, nav: 'scheduler', settingsAnchor: anchor };
+  }
+  if (pathname === NEW_SCHEDULE_ROUTE_PATH) {
+    return { ...DEFAULT_DECODED, nav: 'scheduler', isNewSchedule: true, settingsAnchor: anchor };
+  }
+  const scheduleMatch = matchPath(SCHEDULE_ROUTE_PATH, pathname);
+  if (scheduleMatch) {
+    return {
+      ...DEFAULT_DECODED,
+      nav: 'scheduler',
+      settingsAnchor: anchor,
+      scheduleId: param(scheduleMatch, 'scheduleId') ?? null
+    };
   }
   if (pathname === GOALS_ROUTE_PATH) {
     return { ...DEFAULT_DECODED, nav: 'goals', settingsAnchor: anchor };
@@ -215,6 +251,32 @@ export function decodeRoutePath(pathname: string, hash = ''): DecodedRoute {
     };
   }
 
+  const projectNewSchedule = matchPath(PROJECT_NEW_SCHEDULE_ROUTE_PATH, pathname);
+  if (projectNewSchedule) {
+    const projectId = param(projectNewSchedule, 'projectId') ?? null;
+    return {
+      ...DEFAULT_DECODED,
+      nav: 'projects',
+      focusedProjectId: projectId,
+      workspaceMode: 'scheduler',
+      isProjectWorkspace: true,
+      isNewSchedule: true
+    };
+  }
+
+  const projectSchedule = matchPath(PROJECT_SCHEDULE_ROUTE_PATH, pathname);
+  if (projectSchedule) {
+    const projectId = param(projectSchedule, 'projectId') ?? null;
+    return {
+      ...DEFAULT_DECODED,
+      nav: 'projects',
+      focusedProjectId: projectId,
+      workspaceMode: 'scheduler',
+      isProjectWorkspace: true,
+      scheduleId: param(projectSchedule, 'scheduleId') ?? null
+    };
+  }
+
   const projectNewThread = matchPath(PROJECT_NEW_THREAD_ROUTE_PATH, pathname);
   if (projectNewThread) {
     const projectId = param(projectNewThread, 'projectId') ?? null;
@@ -239,6 +301,19 @@ export function decodeRoutePath(pathname: string, hash = ''): DecodedRoute {
       isProjectWorkspace: true,
       isThreadView: true,
       threadId: param(projectThread, 'threadId') ?? null
+    };
+  }
+
+  const projectSession = matchPath(PROJECT_SESSION_ROUTE_PATH, pathname);
+  if (projectSession) {
+    const projectId = param(projectSession, 'projectId') ?? null;
+    return {
+      ...DEFAULT_DECODED,
+      nav: 'projects',
+      focusedProjectId: projectId,
+      workspaceMode: 'agents',
+      isProjectWorkspace: true,
+      sessionId: param(projectSession, 'sessionId') ?? null
     };
   }
 
@@ -330,6 +405,27 @@ export function scopedWindowLockReplace(
   if (decoded.threadId) {
     return {
       pathname: getThreadRoutePath(decoded.threadId, lockId),
+      search,
+      hash: location.hash
+    };
+  }
+  if (decoded.sessionId) {
+    return {
+      pathname: getAgentSessionRoutePath(decoded.sessionId, lockId),
+      search,
+      hash: location.hash
+    };
+  }
+  if (decoded.scheduleId) {
+    return {
+      pathname: getScheduleRoutePath(decoded.scheduleId, lockId),
+      search,
+      hash: location.hash
+    };
+  }
+  if (decoded.isNewSchedule || location.pathname === NEW_SCHEDULE_ROUTE_PATH) {
+    return {
+      pathname: getNewScheduleRoutePath(lockId),
       search,
       hash: location.hash
     };
