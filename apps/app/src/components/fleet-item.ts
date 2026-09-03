@@ -1,4 +1,12 @@
 import type { AgentState, ScheduledTask } from '@zana-ai/zcc-domain/product';
+import {
+  isClaudeProfile,
+  isCodexProfile,
+  isCursorProfile,
+  isOpenCodeProfile,
+  isPiProfile,
+  parseProfile
+} from '@zana-ai/zcc-domain/launch-provider';
 import type { AgentCard, LaneKey } from './AgentBoard.js';
 import type { ThreadListItem } from '../thread-store.js';
 import { threadStatusToAgentState } from './thread/thread-timeline-model.js';
@@ -251,18 +259,13 @@ export function threadCardRuntimeLabel(
  * `profileLabel` copy.
  */
 export function cliHarnessLabel(profile: string): string {
-  if (profile === 'claude' || profile === 'claude-resume' || profile === 'claude-yolo') {
-    return 'Claude Code';
-  }
-  if (profile === 'cursor' || profile === 'cursor-resume' || profile === 'cursor-yolo') {
-    return 'Cursor';
-  }
-  if (profile === 'codex' || profile === 'codex-resume' || profile === 'codex-yolo') {
-    return 'Codex';
-  }
-  if (profile === 'pi' || profile === 'pi-resume') return 'Pi';
-  if (profile === 'opencode' || profile === 'opencode-resume') return 'OpenCode';
-  if (profile === 'shell') return 'Shell';
+  const parsed = parseProfile(profile);
+  if (parsed && isClaudeProfile(parsed)) return 'Claude Code';
+  if (parsed && isCursorProfile(parsed)) return 'Cursor';
+  if (parsed && isCodexProfile(parsed)) return 'Codex';
+  if (parsed && isPiProfile(parsed)) return 'Pi';
+  if (parsed && isOpenCodeProfile(parsed)) return 'OpenCode';
+  if (parsed === 'shell') return 'Shell';
   return threadHarnessLabel(profile);
 }
 
