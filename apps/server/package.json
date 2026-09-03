@@ -41,7 +41,7 @@
     "@zana-ai/zcc-plugin-templates": "workspace:*",
     "@zana-ai/zcc-server-contract": "workspace:*",
     "@zana-ai/zcc-thread-view": "workspace:*",
-    "better-sqlite3": "^12.11.1",
+    "better-sqlite3": "^13.0.3",
     "jiti": "^2.6.1",
     "ws": "^8.21.3"
   },
