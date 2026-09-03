@@ -25,6 +25,7 @@ import {
   ensureThreadProviderModels,
   getThreadModelCatalog,
   prefetchThreadModelCatalog,
+  reloadThreadProviderModels,
   subscribeThreadModelCatalog
 } from './thread-model-catalog.js';
 
@@ -81,6 +82,7 @@ export function useThreadComposerOptions(input: {
     const provider = input.lockedProviderId ?? rememberedProviderId() ?? 'claude-code';
     return restoreProviderSelection(provider).reasoningLevel;
   });
+  const [acpMode, setAcpMode] = useState<string | undefined>();
   const persistSelection = !input.threadId;
 
   const setModel = useCallback((value: string) => {
@@ -108,6 +110,10 @@ export function useThreadComposerOptions(input: {
       });
     }
   }, [model, providerId, reasoningLevel]);
+
+  const refreshAcpModeOptions = useCallback(() => {
+    void reloadThreadProviderModels(providerId);
+  }, [providerId]);
 
   useEffect(() => {
     if (input.lockedProviderId) setProviderIdState(input.lockedProviderId);
@@ -140,6 +146,14 @@ export function useThreadComposerOptions(input: {
   const moreModels = cached?.selectedOnlyModels ?? fallbackMoreModelsForProvider(providerId);
   const loading = !cached;
   const modelLoadError = cached?.modelLoadError ?? null;
+  const acpModeOptions = cached?.acpMode?.options ?? [];
+
+  useEffect(() => {
+    const current = cached?.acpMode?.currentValue;
+    if (current && !acpModeOptions.some((option) => option.value === acpMode)) {
+      setAcpMode(current);
+    }
+  }, [acpMode, acpModeOptions, cached?.acpMode?.currentValue]);
 
   useEffect(() => {
     if (input.threadId || input.lockedProviderId) return;
@@ -232,6 +246,10 @@ export function useThreadComposerOptions(input: {
     registeredProviderIds,
     model,
     setModel,
+    acpMode,
+    setAcpMode,
+    acpModeOptions,
+    refreshAcpModeOptions,
     modelOptions,
     moreModelOptions,
     modelIsLoading: loading,

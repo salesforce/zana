@@ -93,12 +93,12 @@ describe('structured providers final local argv', () => {
 
   it('emits OpenCode model and execution policy in final order', () => {
     expect(spawn('opencode', routing('opencode', {
-      modelTargetId: 'aisuite/gpt-5.6-sol',
+      modelTargetId: 'llmgw/gpt-5.6-sol-1M',
       executionState: 'accept-edits'
     }))).toEqual({
       command: 'opencode',
       args: [
-        '--model', 'aisuite/gpt-5.6-sol',
+        '--model', 'llmgw/gpt-5.6-sol-1M',
         '--agent', 'build', '--auto'
       ]
     });
@@ -108,6 +108,39 @@ describe('structured providers final local argv', () => {
     expect(spawn('opencode', routing('opencode', {
       roleTargetId: 'custom-agent'
     }))).toEqual({
+      command: 'opencode',
+      args: ['--agent', 'custom-agent']
+    });
+  });
+
+  it('drops a co-selected per-tab model when an OpenCode native role is picked', () => {
+    // A native `--agent` pins the agent's own model; a forced catalog `--model`
+    // alongside it dies with ProviderModelNotFoundError (exit 64) on any install
+    // whose inventory differs from the shipped snapshot. The role wins, no model.
+    expect(spawn('opencode', routing('opencode', {
+      modelTargetId: 'llmgw/gpt-5.6-sol-1M',
+      roleTargetId: 'custom-agent'
+    }))).toEqual({
+      command: 'opencode',
+      args: ['--agent', 'custom-agent']
+    });
+  });
+
+  it('suppresses a GLOBAL-routing OpenCode model when a per-tab native role is picked', () => {
+    // The real-world exit-64 bug: global harnessRouting injects a `--model` even
+    // when the composer sends none. A resolved native role must suppress it from
+    // ANY source (per-tab / persona / project / global), not just per-tab.
+    const manager = new PtyManager();
+    manager.create({
+      projectId: 'proj1',
+      profile: 'opencode',
+      cwd: '/tmp/work',
+      cols: 80,
+      rows: 24,
+      config: { ...CONFIG, harnessRouting: routing('opencode', { modelTargetId: 'llmgw/gpt-5.6-sol-1M' }) },
+      harnessRouting: routing('opencode', { roleTargetId: 'custom-agent' })
+    });
+    expect(spawns.at(-1)).toEqual({
       command: 'opencode',
       args: ['--agent', 'custom-agent']
     });

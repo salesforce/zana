@@ -152,9 +152,10 @@ function toBridgeWireOptions(
   } = options;
   const providerOptions = {
     ...staticProviderOptions,
+    ...(options.providerOptions ?? {}),
     ...Object.fromEntries(
       Object.entries(providerFlavored).filter(
-        ([, value]) => value !== undefined,
+        ([key, value]) => key !== "providerOptions" && value !== undefined,
       ),
     ),
   };

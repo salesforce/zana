@@ -628,6 +628,8 @@ const runtimeThreadExecutionBaseOptionsSchema = z.object({
   // Optional for legacy command compatibility; the server fills the current
   // provider preference before dispatching new runtime work.
   providerSubagentsEnabled: z.boolean().optional(),
+  /** Provider-scoped runtime options. Core transports this opaque bag only. */
+  providerOptions: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const runtimeThreadExecutionOptionsSchema =

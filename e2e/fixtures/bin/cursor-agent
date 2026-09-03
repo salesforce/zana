@@ -1,0 +1,7 @@
+#!/usr/bin/env node
+if (process.argv.includes('--version')) {
+  process.stdout.write('cursor-agent 1.0.0\n');
+  process.exit(0);
+}
+
+await import('../../../plugins/provider-acp/src/bridge/fake-acp-agent.mjs');

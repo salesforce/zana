@@ -1,0 +1,53 @@
+#!/usr/bin/env node
+// Polyglot `opencode` fixture for deterministic E2E. Serves every opencode
+// invocation the app makes on PATH from ONE binary:
+//   --version         → CLI version probe
+//   agent list        → PTY agent catalog (launch-preflight `discoverRoleTargets`)
+//   debug agent <id>  → per-agent metadata (hidden flag) for discovery enrichment
+//   acp               → the fake ACP bridge (populates the native-role picker's acpMode)
+//   <bare>            → the interactive TUI launch; paints a working OSC title and holds
+//
+// `reviewer` is a MADE-UP primary agent (directly launchable → preflight allows it);
+// `sandbox` is a subagent (NOT directly launchable → preflight must reject it). The
+// picker's role list is driven separately by the ACP `mode` configOptions
+// (FAKE_ACP_MODE_OPTIONS), so a spec advertises the same names as session modes.
+const args = process.argv.slice(2);
+
+if (args.includes('--version')) {
+  process.stdout.write('opencode 1.18.10\n');
+  process.exit(0);
+}
+
+if (args[0] === 'agent' && args[1] === 'list') {
+  process.stdout.write('build (primary)\nplan (primary)\nreviewer (primary)\nsandbox (subagent)\n');
+  process.exit(0);
+}
+
+if (args[0] === 'debug' && args[1] === 'agent') {
+  process.stdout.write(`${JSON.stringify({ name: args[2], permission: { read: true }, tools: { bash: true } })}\n`);
+  process.exit(0);
+}
+
+if (args[0] === 'acp') {
+  await import('../../../plugins/provider-acp/src/bridge/fake-acp-agent.mjs');
+} else {
+  // A native `--agent <role>` pins the agent's OWN model. A forced catalog
+  // `--model` riding alongside it overrides that pin and, on any install whose
+  // provider inventory differs from the shipped snapshot (e.g. `llmgw`-only),
+  // dies with ProviderModelNotFoundError. Reproduce BOTH failure shapes so the
+  // launch-boundary spec proves the role wins and carries no model:
+  //   1. `--model` co-present with `--agent` — the invariant the fix protects,
+  //      robust to catalog refreshes (any model id, not just the stale prefix).
+  //   2. a bare `--model aisuite/*` — the stale-snapshot id on an llmgw install.
+  const modelFlag = args.indexOf('--model');
+  const model = modelFlag >= 0 ? args[modelFlag + 1] : undefined;
+  const hasAgent = args.includes('--agent');
+  if (model && (hasAgent || model.startsWith('aisuite/'))) {
+    process.stderr.write(`ProviderModelNotFoundError: Model not found: ${model}.\n`);
+    process.exit(64);
+  }
+  // Bare interactive launch: braille "working" OSC-2 title (ESC ]2; <U+2809> BEL)
+  // so the agent session inspector shows data-state="working", then hold the pty.
+  process.stdout.write('\x1b]2;⠉ opencode\x07');
+  process.stdin.resume();
+}

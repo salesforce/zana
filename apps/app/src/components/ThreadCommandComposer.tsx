@@ -33,6 +33,7 @@ import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import { ComposerModePicker } from './thread/pickers/ComposerModePicker.js';
 import { ModelReasoningPicker } from './thread/pickers/ModelReasoningPicker.js';
 import { ReasoningEffortPicker } from './thread/pickers/ReasoningEffortPicker.js';
+import { NativeRolePicker } from './thread/pickers/NativeRolePicker.js';
 import { permissionModeOptionsFor } from './thread/pickers/permission-mode-options.js';
 import {
   applyComposerModePrefix,
@@ -367,7 +368,8 @@ export function ThreadCommandComposer({
         try {
           await product.threads.send(threadId, input, sendMode, {
             model: options.model,
-            reasoningLevel: options.reasoningLevel
+            reasoningLevel: options.reasoningLevel,
+            acpMode: options.acpMode
           });
           field.clear();
         } catch (error) {
@@ -385,7 +387,8 @@ export function ThreadCommandComposer({
         cwd: foreignHost ? undefined : selected!.path,
         permissionMode: permissionMode as 'accept-edits' | 'auto' | 'full',
         model: options.model,
-        reasoningLevel: options.reasoningLevel
+        reasoningLevel: options.reasoningLevel,
+        acpMode: options.acpMode
       });
       if (!created.ok) {
         setError(created.message ?? 'Could not create thread');
@@ -416,6 +419,7 @@ export function ThreadCommandComposer({
     onCreated,
     options.model,
     options.reasoningLevel,
+    options.acpMode,
     options.rosterReady,
     options.providers,
     permissionMode,
@@ -533,6 +537,14 @@ export function ThreadCommandComposer({
                   options={options.reasoningOptions}
                   onChange={options.setReasoningLevel}
                 />
+                {options.acpModeOptions.length > 0 ? (
+                  <NativeRolePicker
+                    value={options.acpMode}
+                    options={options.acpModeOptions}
+                    onChange={options.setAcpMode}
+                    onRefresh={options.refreshAcpModeOptions}
+                  />
+                ) : null}
               </div>
               <div className="thread-command-footer-end">
                 <ThreadContextMeter usage={contextWindowUsage} />

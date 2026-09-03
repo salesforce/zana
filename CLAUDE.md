@@ -43,12 +43,54 @@ Core rules. Rationale: `docs/review-consensus-2026-06.md`.
   on unit tests or shell reproduction. Mock tests remain useful for malformed
   output and failure paths, but they do not establish production-boundary behavior.
   OpenCode agent discovery is the current regression example:
-  `apps/host-daemon/src/harness/opencode-provider.ts` uses bounded temp-file capture, and any
-  change to its discovery, filtering, IPC, or launcher selection MUST run
-  `npm run build && ZCC_LIVE_OPENCODE=1 npx playwright test
+  `apps/host-daemon/src/harness/opencode/provider.ts` uses bounded temp-file
+  capture (`opencode agent list` + `opencode debug agent`). Its LIVE consumer is
+  now LAUNCH-TIME preflight, NOT the picker: `discoverRoleTargets`, called from
+  `preflightStructuredRouting` in
+  `apps/server/src/services/launch/execution-routing.ts`, validates the picked
+  `--agent` role and BLOCKS the spawn (`role target unavailable`, surfaced as a
+  `Structured execution unavailable: …` error toast) when the role is not a
+  directly-launchable (non-subagent, non-hidden) agent. The CLI Agent picker no
+  longer runs discovery — it sources native roles from the SAME ACP session-mode
+  list the Modern composer uses (`catalogEntry.acpMode`, from the `acp-opencode`
+  `session/new` `mode` configOption), so both surfaces show an identical,
+  plain-named list. A picked mode that maps to a subagent (surfaced as a mode but
+  not directly launchable) is therefore offered in the picker yet rejected at
+  preflight — deliberate. **A picked native role and a forced catalog `--model`
+  are MUTUALLY EXCLUSIVE — the role wins, carrying NO model.** An OpenCode agent
+  pins its OWN model; forcing a catalog model alongside `--agent <role>` overrides
+  that pin and dies with `ProviderModelNotFoundError` (a dead session / exit 64) on
+  any install whose provider inventory differs from the shipped static snapshot
+  (e.g. an `llmgw`-backed setup with a stale `aisuite/*` catalog). This is enforced
+  at TWO layers, because a forced model reaches argv from more than the composer:
+  (1) the composer (`LegacyAgentHomeComposer` `launch()`) builds `adapterEntry` as
+  role-XOR-model, so a PER-TAB model isn't co-sent; and (2) the AUTHORITATIVE gate
+  is at argv assembly — a resolved native role suppresses the injected `--model`
+  from ANY source (per-tab / persona / project / **global** `harnessRouting`), via
+  the `provider.nativeRolePinsModel` capability flag (`BaseLaunchProvider` default
+  `false`; `OpenCodeProvider` `true`, Rule-6-clean — no provider literal in core).
+  `pty.ts create()` gates both `modelTarget.contribution` splices on
+  `suppressModelForRole = roleTarget.targetId && provider.nativeRolePinsModel`; the
+  remote paths (`base-provider.ts simpleRemoteExec`, `OpenCodeProvider.buildRemoteCommand`)
+  gate identically. The composer fix alone was INSUFFICIENT — the observed exit-64
+  came from GLOBAL routing (`~/.zcc/config.json harnessRouting.byAdapter.opencode.modelTargetId`),
+  which the composer can't clear. The launch-boundary fixture
+  (`e2e/fixtures/bin/opencode`) reproduces the failure: its bare TUI exits 64 when
+  `--model` rides with `--agent` (any model id) OR on a bare `aisuite/*` `--model`,
+  so the positive `reviewer` launch passing PROVES the model was dropped. The
+  OpenCode model catalog (`opencode/provider.ts targets`) is a release-maintained
+  snapshot of `opencode models`; it DRIFTS (the gateway renamed `aisuite/*` →
+  `llmgw/*` with a `-1M` gpt suffix). Suppression protects role launches from that
+  drift; the NO-role path still needs a correct catalog. Any change to discovery,
+  filtering, IPC, launcher, or the model catalog MUST run BOTH: (1) the deterministic
+  launch-boundary spec `npm run
+  build && npx playwright test e2e/opencode-launch-boundary.spec.ts` — proves
+  preflight `discoverRoleTargets` resolves a directly-launchable role (spawns) and
+  rejects a subagent role (`role target unavailable` toast) at the real Electron
+  boundary; and (2) `ZCC_LIVE_OPENCODE=1 npx playwright test
   e2e/opencode-agent-picker.spec.ts -g 'actual project agents'` against this actual
-  project and HOME config. That test proves the picker enables, visible primary
-  agents are selectable, and hidden agents/subagents remain absent.
+  project + HOME config — proves the live ACP mode list reaches the picker with
+  plain names.
 
 - **Feed category registry — every inbox event type declares its feed impact
   in ONE place, and reports/ideas are pinned SIGNAL.** The Inbox feed splits

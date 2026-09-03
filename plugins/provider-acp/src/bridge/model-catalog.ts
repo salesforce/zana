@@ -149,6 +149,15 @@ export function findAcpThoughtLevelConfigOption(
   );
 }
 
+/** ACP mode is agent-defined. Only the protocol category is stable. */
+export function findAcpModeConfigOption(
+  configOptions: readonly AcpConfigOption[] | undefined,
+): AcpConfigOption | undefined {
+  return (configOptions ?? []).find(
+    (option) => option.category === "mode" && option.type === "select",
+  );
+}
+
 const ACP_NATIVE_REASONING_LEVEL_BY_VALUE: Readonly<
   Partial<Record<string, ReasoningLevel>>
 > = {

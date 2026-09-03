@@ -7,7 +7,7 @@ describe('launchMetadataSnapshot', () => {
     expect(launchMetadataSnapshot({
       provider: providerFor('opencode'),
       model: {
-        targetId: 'aisuite/gpt-5.6-terra', source: 'per-tab', structuredSelected: true, contribution: {}
+        targetId: 'llmgw/gpt-5.6-terra-1M', source: 'per-tab', structuredSelected: true, contribution: {}
       },
       role: { targetId: 'build', source: 'Agent', contribution: {} },
       execution: {

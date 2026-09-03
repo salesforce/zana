@@ -247,6 +247,7 @@ interface StartThreadArgs extends AgentLaunchArgs {
   reasoningLevel?: ReasoningLevel;
   serviceTier?: "default" | "fast";
   additionalWorkspaceWriteRoots?: string[];
+  acpMode?: string;
 }
 
 async function startThread(args?: StartThreadArgs): Promise<{
@@ -1233,6 +1234,35 @@ describe("acp bridge", () => {
     await waitForTurnCompleted();
 
     expect(agentMessageTexts()).toContain("selected-model:fake/strong");
+  });
+
+  it("applies advertised ACP mode at construction and updates it before the next turn", async () => {
+    const { providerThreadId } = await startThread({
+      envVars: { FAKE_ACP_MODE_CONFIG: "1" },
+      acpMode: "plan",
+    });
+    sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "echo-selected-mode", mentions: [] }],
+      options: executionOptions({
+        providerOptions: { acpMode: "build" },
+      }),
+    });
+    await waitForTurnCompleted();
+
+    expect(agentMessageTexts()).toContain("selected-mode:build");
+  });
+
+  it("does not send an unadvertised ACP mode", async () => {
+    const { providerThreadId } = await startThread({
+      envVars: { FAKE_ACP_MODE_CONFIG: "1" },
+      acpMode: "missing",
+    });
+    sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "echo-selected-mode", mentions: [] }],
+    });
+    await waitForTurnCompleted();
+
+    expect(agentMessageTexts()).toContain("selected-mode:build");
   });
 
   it("falls back to session/set_model when the model config option errors", async () => {
