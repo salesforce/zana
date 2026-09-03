@@ -113,7 +113,7 @@ export function AgentTray({
     } else {
       ui.selectTab(card.projectId, card.session.id);
     }
-    ui.setWorkspaceMode(card.projectId, 'terminals');
+    ui.setProjectView(card.projectId, 'terminals');
   };
 
   const openAgentMenu = (e: MouseEvent, a: TrayAgent) => {

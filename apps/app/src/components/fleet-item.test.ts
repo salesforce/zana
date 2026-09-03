@@ -16,6 +16,8 @@ import {
   threadFleetItem,
   RAIL_IDLE_THREAD_LIMIT,
   railThreadsForProject,
+  agentCardRuntimeLabel,
+  cliHarnessLabel,
   threadCardRuntimeLabel,
   threadCardShowsProject,
   threadHarnessLabel,
@@ -194,6 +196,24 @@ describe('fleet items', () => {
     expect(threadCardShowsProject(true, true)).toBe(false);
     expect(threadCardShowsProject(true, false)).toBe(true);
     expect(threadCardShowsProject(false, false)).toBe(false);
+  });
+
+  it('labels a CLI agent card with the same family name threads use', () => {
+    expect(cliHarnessLabel('claude')).toBe('Claude Code');
+    expect(cliHarnessLabel('claude-yolo')).toBe('Claude Code');
+    expect(cliHarnessLabel('claude-resume')).toBe('Claude Code');
+    expect(cliHarnessLabel('cursor')).toBe('Cursor');
+    expect(cliHarnessLabel('codex')).toBe('Codex');
+    expect(cliHarnessLabel('pi')).toBe('Pi');
+    expect(cliHarnessLabel('opencode')).toBe('OpenCode');
+    expect(agentCardRuntimeLabel({ profile: 'claude' })).toBe('Claude Code · Local');
+    expect(agentCardRuntimeLabel({ profile: 'claude-yolo', remote: true })).toBe(
+      'Claude Code · Remote host'
+    );
+    expect(agentCardRuntimeLabel({ profile: 'claude', remote: true, personaName: 'Reviewer' })).toBe(
+      'Reviewer · Remote host'
+    );
+    expect(agentCardRuntimeLabel({ profile: 'claude', personaName: '  ' })).toBe('Claude Code · Local');
   });
 
   it('never feeds a thread id to the PTY monitor selection store', () => {

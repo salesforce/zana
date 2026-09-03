@@ -41,7 +41,7 @@ import { AddLocalProjectDialog } from '../AddLocalProjectDialog.js';
 import { AgentRowDetail } from './AgentRowDetail.js';
 import { ProjectRollupDot } from './ProjectRollupDot.js';
 import { reorderProjectIds } from './projectReordering.js';
-import { isWorkspaceRailExpanded, pinFavoriteProjectsFirst } from './workspace-rail.js';
+import { isProjectRailExpanded, pinFavoriteProjectsFirst } from './project-rail.js';
 import { useAgentCardActions, AgentCardMenu, AgentDeleteQuickAction, clampMenuAnchor } from '../agentCardActions.js';
 import { useThreadCardActions, ThreadCardMenu, ThreadArchiveQuickAction, openThreadMenu } from '../threadCardActions.js';
 import { PromptModal } from '../PromptModal.js';
@@ -199,7 +199,7 @@ export function ProjectsList({
     listProjectMenuActions,
     listProjectMenuActions
   );
-  const workspaceMenuActions = projectMenuActions.filter((row) => row.placement === 'workspace');
+  const headerMenuActions = projectMenuActions.filter((row) => row.placement === 'workspace');
   const rowMenuActions = projectMenuActions.filter((row) => row.placement === 'project');
   const threads = useThreads((s) => s.threads);
   useEnsureThreads();
@@ -333,7 +333,7 @@ export function ProjectsList({
     } else {
       ui.selectTab(card.projectId, card.session.id);
     }
-    ui.setWorkspaceMode(card.projectId, 'terminals');
+    ui.setProjectView(card.projectId, 'terminals');
   };
 
   const commitRename = () => {
@@ -380,7 +380,7 @@ export function ProjectsList({
   // that has something to nest so those sessions are visible without a click.
   // An explicit collapse still wins.
   const isProjectExpanded = (p: Project) =>
-    isWorkspaceRailExpanded(projectExpanded[p.id], projectHasNestableSessions(p));
+    isProjectRailExpanded(projectExpanded[p.id], projectHasNestableSessions(p));
 
   const visibleProjects = useMemo(() => {
     // A per-project window locks the rail to its one project — no other projects
@@ -766,6 +766,7 @@ export function ProjectsList({
                     }}
                     onContextMenu={(e) => openAgentCardMenu(e, t, p)}
                     projectId={scopedProjectId ?? p.id}
+                    projectRemote={Boolean(p.remote)}
                   />
                 ))}
               </div>
@@ -796,12 +797,12 @@ export function ProjectsList({
               if (event.defaultPrevented) return;
               toggleSection(SIDEBAR_PROJECTS_SECTION_KEY);
             }}
-            aria-label={`${sidebarProjectsCollapsed ? 'Expand' : 'Collapse'} Workspaces section`}
+            aria-label={`${sidebarProjectsCollapsed ? 'Expand' : 'Collapse'} Projects section`}
             aria-controls={SIDEBAR_PROJECTS_TREE_ID}
             aria-expanded={!sidebarProjectsCollapsed}
-            title={`${sidebarProjectsCollapsed ? 'Expand' : 'Collapse'} Workspaces`}
+            title={`${sidebarProjectsCollapsed ? 'Expand' : 'Collapse'} Projects`}
           >
-            <span>Workspaces</span>
+            <span>Projects</span>
             <ChevronRight
               size={14}
               aria-hidden="true"
@@ -811,7 +812,7 @@ export function ProjectsList({
         ) : (
           <h2>Projects</h2>
         )}
-        {/* The sidebar header keeps workspace creation under one + menu. The
+        {/* The sidebar header keeps project creation under one + menu. The
             overflow menu is intentionally reserved for non-creation actions. */}
         <div className="list-header-actions">
           {inSidebar ? (
@@ -819,10 +820,10 @@ export function ProjectsList({
               <div className="sidebar-projects-menu-wrap" ref={sidebarOrganizeRef}>
                 <button
                   className={`icon-btn ${hideIdleProjects ? 'on' : ''}`}
-                  aria-label="Organize workspaces"
+                  aria-label="Organize projects"
                   aria-haspopup="menu"
                   aria-expanded={sidebarOrganizeOpen}
-                  title="Organize workspaces"
+                  title="Organize projects"
                   onClick={() => {
                     setMenu(null);
                     setSidebarAddOpen(false);
@@ -832,7 +833,7 @@ export function ProjectsList({
                   <ListFilter size={14} />
                 </button>
                 {sidebarOrganizeOpen && (
-                  <div className="sidebar-projects-organize-menu" role="menu" aria-label="Organize workspaces">
+                  <div className="sidebar-projects-organize-menu" role="menu" aria-label="Organize projects">
                     <span className="sidebar-projects-menu-label">Sort by</span>
                     {([
                       ['manual', 'Manual order'],
@@ -851,10 +852,10 @@ export function ProjectsList({
                         {sidebarProjectSort === sort && <Check size={14} aria-hidden="true" />}
                       </button>
                     ))}
-                    {workspaceMenuActions.length > 0 && (
+                    {headerMenuActions.length > 0 && (
                       <>
                         <span className="sidebar-projects-menu-label">Plugins</span>
-                        {workspaceMenuActions.map((action) => {
+                        {headerMenuActions.map((action) => {
                           const Icon = resolveIcon(action.icon ?? 'Puzzle');
                           return (
                             <button
@@ -878,8 +879,8 @@ export function ProjectsList({
               </div>
               <button
                 className="icon-btn"
-                aria-label="Workspace menu"
-                title="Workspace menu"
+                aria-label="Project menu"
+                title="Project menu"
                 onClick={(event) => {
                   const rect = event.currentTarget.getBoundingClientRect();
                   setSidebarAddOpen(false);
@@ -1318,6 +1319,7 @@ export function ProjectsList({
 function ProjectAgentRailRow({
   session,
   projectId,
+  projectRemote = false,
   isUnread,
   active,
   onOpen,
@@ -1325,6 +1327,7 @@ function ProjectAgentRailRow({
 }: {
   session: TerminalSession;
   projectId: string;
+  projectRemote?: boolean;
   isUnread: boolean;
   active: boolean;
   onOpen: () => void;
@@ -1367,7 +1370,7 @@ function ProjectAgentRailRow({
         </span>
         <span className="project-terminal-text">
           <span className="project-terminal-name">{session.title}</span>
-          <AgentRowDetail session={session} />
+          <AgentRowDetail session={session} projectRemote={projectRemote} />
         </span>
         {indicator.miniMap ? (
           <SplitPaneMiniMap slots={indicator.miniMap} label={`${session.title} split position`} />

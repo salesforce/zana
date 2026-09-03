@@ -4,7 +4,7 @@ import { join, basename, dirname, isAbsolute } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import type { Project, ProjectRemote, AppConfig, ProjectSettings, OpenTarget, ProjectLaunchDefault, HarnessFamily } from '@zana-ai/zcc-domain/product';
-import { SESSION_MEMORY_DEFAULTS, AUTO_CLOSE_IDLE_DEFAULTS } from '@zana-ai/zcc-domain/product';
+import { SESSION_MEMORY_DEFAULTS, AUTO_CLOSE_IDLE_DEFAULTS, DEFAULT_PROJECT_DISPLAY_NAME } from '@zana-ai/zcc-domain/product';
 import { isTerminalThemeId } from '@zana-ai/zcc-domain/terminal-themes';
 import { PROJECT_COLORS, pickProjectColor } from '@zana-ai/zcc-domain/project-colors';
 import { registeredAdapters } from '@zana-ai/zcc-host-daemon/harness/registry';
@@ -269,8 +269,8 @@ export const PROJECTS_SCHEMA_VERSION = 1 as const;
 export const SCRATCH_DIR_NAME = 'zcc-workspace';
 /** Pre-rebrand scratch folder name, kept only so we can migrate it. */
 const LEGACY_SCRATCH_DIR_NAME = 'cc-workspace';
-/** User-facing label; folder and tag stay {@link SCRATCH_DIR_NAME}. */
-const DEFAULT_WORKSPACE_DISPLAY_NAME = 'Default Workspace';
+/** Pre-rename scratch display name; rewritten to {@link DEFAULT_PROJECT_DISPLAY_NAME}. */
+const LEGACY_DEFAULT_WORKSPACE_DISPLAY_NAME = 'Default Workspace';
 /** App-managed parent for isolated git worktrees. */
 export const WORKTREE_DIR_NAME = 'zcc-worktrees';
 
@@ -727,15 +727,22 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.lastProjectId === 'string' || input.lastProjectId === null) {
     normalized.lastProjectId = input.lastProjectId;
   }
-  if (input.workspaceModes && typeof input.workspaceModes === 'object') {
-    // A project view is either a core WorkspaceMode literal OR an opaque
+  if (input.projectViews && typeof input.projectViews === 'object') {
+    // A project view is either a core mode literal OR an opaque
     // extension module id (an extension-contributed project tab, e.g. the
     // `zana-tickets` extension). Core never enumerates extension ids, so we
     // can't value-whitelist here — validate shape only (non-empty string),
     // mirroring the renderer's own persist filter (`if (v) …`). A stale id
     // whose extension is gone on next launch is tolerated at render time
-    // (falls back to the default view). See ProjectView / AppConfig.workspaceModes.
-    normalized.workspaceModes = Object.fromEntries(
+    // (falls back to the default view). See ProjectView / AppConfig.projectViews.
+    normalized.projectViews = Object.fromEntries(
+      Object.entries(input.projectViews).filter(
+        (_entry): _entry is [string, string] =>
+          typeof _entry[1] === 'string' && _entry[1].length > 0
+      )
+    );
+  } else if (input.workspaceModes && typeof input.workspaceModes === 'object') {
+    normalized.projectViews = Object.fromEntries(
       Object.entries(input.workspaceModes).filter(
         (_entry): _entry is [string, string] =>
           typeof _entry[1] === 'string' && _entry[1].length > 0
@@ -1331,8 +1338,9 @@ export const store = {
    * The single built-in scratch project that backs the Agents-module Quick
    * Agent. Rooted at `~/zcc-workspace` (created on first call), reused on every
    * subsequent call via `addProject`'s path-dedup. Tagged `quickAgent` so the
-   * UI can treat it specially. Display name is `Default Workspace` when it is
-   * still the folder basename; the path and tag stay `zcc-workspace`. Idempotent.
+   * UI can treat it specially. Display name is `Default Project` when it is
+   * still the folder basename or the pre-rename `Default Workspace` label; the
+   * path and tag stay `zcc-workspace`. Idempotent.
    *
    * Migration: pre-rebrand installs anchored the scratch project at
    * `~/cc-workspace`. On first call we rename that folder to the new name (and
@@ -1345,7 +1353,9 @@ export const store = {
     const project = this.addProject(anchor);
     const needsQuickAgent = !project.quickAgent;
     const needsDisplayName =
-      project.name === SCRATCH_DIR_NAME || project.name === LEGACY_SCRATCH_DIR_NAME;
+      project.name === SCRATCH_DIR_NAME
+      || project.name === LEGACY_SCRATCH_DIR_NAME
+      || project.name === LEGACY_DEFAULT_WORKSPACE_DISPLAY_NAME;
     if (!needsQuickAgent && !needsDisplayName) return project;
     const projects = this.listProjects();
     const idx = projects.findIndex((p) => p.id === project.id);
@@ -1353,7 +1363,7 @@ export const store = {
     projects[idx] = {
       ...projects[idx],
       ...(needsQuickAgent ? { quickAgent: true } : {}),
-      ...(needsDisplayName ? { name: DEFAULT_WORKSPACE_DISPLAY_NAME } : {})
+      ...(needsDisplayName ? { name: DEFAULT_PROJECT_DISPLAY_NAME } : {})
     };
     writeProjects(projects);
     return projects[idx];

@@ -14,6 +14,7 @@ import { PromptModal } from './PromptModal.js';
 import { FleetKindChip } from './FleetKindChip.js';
 import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
 import {
+  agentCardRuntimeLabel,
   agentFleetItem,
   compareScheduleFleet,
   fleetAgentCards,
@@ -699,7 +700,11 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
     // on children, or still Working), so the parent never reads as plain at-rest.
     const subagents = !exited ? c.liveSubagents ?? 0 : 0;
     const persona = t.personaId ? personas.find((p) => p.id === t.personaId) : undefined;
-    const subtitle = persona?.name ?? t.profile;
+    const subtitle = agentCardRuntimeLabel({
+      profile: t.profile,
+      personaName: persona?.name,
+      remote: Boolean(c.projectRemote)
+    });
     // Idle-triage badge: only in the idle lane, only when the add-on classified
     // this idle spell to something actionable (awaiting-reply / done / paused).
     const triageBadge =
@@ -783,7 +788,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, onPick, showProjec
         )}
         <span className="agent-card-meta">
           {/* When cards are grouped under a project header (global board), the
-              project is already named above — show the persona/profile subtitle
+              project is already named above — show the harness/runtime subtitle
               instead of a redundant project chip. */}
           {showProject && !grouped && (
             <span className="agent-card-project" title={c.projectName}>

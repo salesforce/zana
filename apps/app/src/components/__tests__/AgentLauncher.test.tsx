@@ -132,7 +132,7 @@ describe('launcher presentation', () => {
     const files = [
       new URL('../AgentLauncher.tsx', import.meta.url),
       new URL('../../App.tsx', import.meta.url),
-      new URL('../../views/project/WorkspaceView.tsx', import.meta.url),
+      new URL('../../views/project/ProjectView.tsx', import.meta.url),
       new URL('../../views/agents/AgentsView.tsx', import.meta.url),
       new URL('../../views/agents/AgentsBoard.tsx', import.meta.url),
       new URL('../listpane/AgentsList.tsx', import.meta.url),

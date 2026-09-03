@@ -15,7 +15,7 @@ import { useProjectTabModules } from '@/modules';
 import { resolveProjectTabModule } from '@/lib/libraryPlugin';
 import { DelayedStencilList } from '@/components/ui/Skeleton';
 import { PluginSlotBoundary } from '@/plugins/PluginSlotBoundary';
-import { listProjectTabs, projectTabWorkspaceMode, subscribePluginSlots } from '@/plugins/plugin-slots';
+import { listProjectTabs, projectTabView, subscribePluginSlots } from '@/plugins/plugin-slots';
 
 // Lazy-load the editor surface. monaco-editor registers default editor
 // extensions into a global `RegistryImpl` singleton, so it's lazy-loaded to
@@ -38,7 +38,7 @@ const SchedulerPanel = lazy(() =>
 );
 import type { LaunchProfileId } from '@zana-ai/zcc-domain/product';
 
-export function WorkspaceView() {
+export function ProjectView() {
   const projects = useData((s) => s.projects);
   const terminals = useData((s) => s.terminals);
   const selectedProjectId = useUi((s) => s.selectedProjectId);
@@ -47,8 +47,8 @@ export function WorkspaceView() {
   const findOpen = useUi((s) => s.findOpen);
   const launcherOpen = useUi((s) => s.launcherOpen);
   const setLauncherOpen = useUi((s) => s.setLauncherOpen);
-  const workspaceModeMap = useUi((s) => s.workspaceMode);
-  const setWorkspaceMode = useUi((s) => s.setWorkspaceMode);
+  const projectViewMap = useUi((s) => s.projectView);
+  const setProjectView = useUi((s) => s.setProjectView);
   const splitLayoutMap = useUi((s) => s.splitLayout);
   const splitTabIdsMap = useUi((s) => s.splitTabIds);
   const setSplitLayout = useUi((s) => s.setSplitLayout);
@@ -94,14 +94,14 @@ export function WorkspaceView() {
   // Opening a project writes 'agents' in enterProjectFocus. This fallback
   // covers first paint / a project with no saved mode yet.
   const mode: ProjectView = project
-    ? workspaceModeMap[project.id] ?? 'agents'
+    ? projectViewMap[project.id] ?? 'agents'
     : 'agents';
   // The active view is an extension project tab when `mode` matches a
   // project-tab module's id (not a core mode). An id whose extension is gone is
   // tolerated: `extModule` is undefined and the view falls through to the
   // Terminals catch-all below.
   const slotTab = project
-    ? slotTabs.find((tab) => projectTabWorkspaceMode(tab, slotTabs) === mode)
+    ? slotTabs.find((tab) => projectTabView(tab, slotTabs) === mode)
     : undefined;
   const extModule = project ? resolveProjectTabModule(mode, diskProjectTabModules) : undefined;
   const isExtTab = !!extModule || !!slotTab;
@@ -136,8 +136,8 @@ export function WorkspaceView() {
   // a hidden/unreachable view.
   useEffect(() => {
     if (!project) return;
-    if (mode === 'skills') setWorkspaceMode(project.id, 'terminals');
-  }, [project, mode, setWorkspaceMode]);
+    if (mode === 'skills') setProjectView(project.id, 'terminals');
+  }, [project, mode, setProjectView]);
 
   const splitLayout: SplitLayout = (project && splitLayoutMap[project.id]) || 'single';
   const splitTabIds = (project && splitTabIdsMap[project.id]) || [];
@@ -186,7 +186,7 @@ export function WorkspaceView() {
     if (!res.ok) return; // ensureQuickAgent surfaces its own failure upstream
     await loadProjects();
     selectProject(res.value.id);
-    setWorkspaceMode(res.value.id, 'agents');
+    setProjectView(res.value.id, 'agents');
   };
 
   // Split layouts (vertical/horizontal/grid) are wired up in the store and
@@ -198,7 +198,7 @@ export function WorkspaceView() {
   // Layout picker: only meaningful when terminals are visible (not explorer
   // mode) and the project has at least one tab. Hidden otherwise.
   const layoutPicker = SPLIT_UI_ENABLED && project && isTerminals && terminalTabs.length > 0 && (
-    <div className="workspace-layout-picker" role="group" aria-label="Terminal layout">
+    <div className="project-layout-picker" role="group" aria-label="Terminal layout">
       <button
         type="button"
         className={splitLayout === 'single' ? 'active' : ''}
@@ -237,18 +237,18 @@ export function WorkspaceView() {
   // Always mount TerminalSurface (preserves scrollback). When in explorer mode
   // we visually swap the middle section to ExplorerView via display:none.
   return (
-    <div className="workspace panel-body--full">
+    <div className="project-shell panel-body--full">
       {!isThreadView && !isAgents && (
-      <div className="workspace-topbar">
+      <div className="project-topbar">
         {/* Layout picker only. Mode switching lives on ProjectScopedNav; mounting
             an empty modes row would leave a padded band where the old horizontal
             menu used to be. */}
         {project && layoutPicker && (
-          <div className="workspace-topbar-modes">
+          <div className="project-topbar-modes">
             {layoutPicker}
           </div>
         )}
-        <div className="workspace-topbar-tabs">
+        <div className="project-topbar-tabs">
         {isTerminals ? (
           <TabBar
             tabs={terminalTabs}
@@ -323,7 +323,7 @@ export function WorkspaceView() {
         </div>
       </div>
       )}
-      <div className="workspace-body">
+      <div className="project-body">
           <div
             id={PROJECTS_TERMINAL_ANCHOR_ID}
             className="terminal-host"
@@ -334,7 +334,7 @@ export function WorkspaceView() {
                so portal DOM order (appended last) doesn't affect stacking. */}
             {findOpen && activeTab && <FindBar sessionId={activeTab.id} />}
             {!project ? (
-              <div className="empty-workspace overlay">
+              <div className="empty-project overlay">
                 <div className="empty-inner">
                   <h3>Select a project</h3>
                   <p>Or add one with the + button on the left.</p>
@@ -349,7 +349,7 @@ export function WorkspaceView() {
                 </div>
               </div>
             ) : terminalTabs.length === 0 ? (
-              <div className="empty-workspace overlay">
+              <div className="empty-project overlay">
                 <div className="empty-inner">
                   <h3>No terminals open</h3>
                   <p>Start a shell in {project.name}.</p>
@@ -447,5 +447,3 @@ export function WorkspaceView() {
     </div>
   );
 }
-
-export { WorkspaceView as Workspace };

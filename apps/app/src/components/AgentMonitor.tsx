@@ -83,7 +83,7 @@ function laneOf(item: FleetItem, sensitivity: IdleAttentionSensitivity): LaneKey
 }
 
 /** Same workspace jump the status-rail Open button and the card menu share. */
-function openAgentInWorkspace(card: AgentCard): void {
+function openAgentInProject(card: AgentCard): void {
   const ui = useUi.getState();
   const data = useData.getState();
   ui.setNav('projects');
@@ -93,7 +93,7 @@ function openAgentInWorkspace(card: AgentCard): void {
   } else {
     ui.selectTab(card.projectId, card.session.id);
   }
-  ui.setWorkspaceMode(card.projectId, 'terminals');
+  ui.setProjectView(card.projectId, 'terminals');
 }
 
 export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) {
@@ -206,7 +206,7 @@ export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) 
             menu={menu}
             setMenu={setMenu}
             actions={actions}
-            onPick={openAgentInWorkspace}
+            onPick={openAgentInProject}
           />,
           document.body
         )}
@@ -416,7 +416,7 @@ function AgentMonitorSession({ card, showProject }: { card: AgentCard; showProje
   const background = isBackgroundAgent(card);
   const cohort = cardCohort(card);
   const project = useData((s) => s.projects.find((row) => row.id === card.projectId));
-  const openInWorkspace = () => openAgentInWorkspace(card);
+  const openInWorkspace = () => openAgentInProject(card);
   const canSummarize = isClaudeProfile(t.profile);
   const canFollowupClose = canCloseWithFollowup(t);
   const [summarizing, setSummarizing] = useState(false);
@@ -498,7 +498,7 @@ function AgentMonitorSession({ card, showProject }: { card: AgentCard; showProje
         type="button"
         className="agent-monitor-action"
         onClick={openInWorkspace}
-        title="Open this agent in the full workspace view"
+        title="Open this agent in the full project view"
       >
         <ExternalLink size={13} /> Open
       </button>

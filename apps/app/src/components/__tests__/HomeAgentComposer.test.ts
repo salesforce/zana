@@ -104,7 +104,7 @@ describe('ThreadCommandComposer initial text', () => {
 
   it('stays on the project thread URL after create from a workspace', () => {
     const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('route.isProjectWorkspace ? route.focusedProjectId');
+    expect(source).toContain('route.isProjectFocused ? route.focusedProjectId');
     expect(source).toContain('getThreadRoutePath');
   });
 });

@@ -1986,12 +1986,12 @@ export const AgentLauncher = memo(function AgentLauncher({
                   value={targetProjectId ?? ''}
                   ariaLabel="Target project"
                   onChange={(nextProjectId) => setTargetProjectId(nextProjectId || null)}
-                  placeholder="Quick workspace (scratch)"
+                  placeholder="Quick project (scratch)"
                   searchPlaceholder="Search projects"
                   emptyHint="No matching projects"
                   minWidth={320}
                   options={[
-                    { value: '', label: 'Quick workspace (scratch)' },
+                    { value: '', label: 'Quick project (scratch)' },
                     ...projectGroups.favorites.map((project) => ({ value: project.id, label: project.name, group: 'Favorites' })),
                     ...projectGroups.remote.map((project) => ({ value: project.id, label: project.name, group: 'Remote' })),
                     ...projectGroups.local.map((project) => ({ value: project.id, label: project.name, group: 'Local' }))

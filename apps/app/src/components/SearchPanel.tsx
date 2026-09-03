@@ -11,7 +11,7 @@ interface Props {
 
 export function SearchPanel({ project, onClose }: Props) {
   const setExplorerFile = useUi((s) => s.setExplorerFile);
-  const setWorkspaceMode = useUi((s) => s.setWorkspaceMode);
+  const setProjectView = useUi((s) => s.setProjectView);
   const requestExplorerGoto = useUi((s) => s.requestExplorerGoto);
   const pushToast = useUi((s) => s.pushToast);
 
@@ -83,7 +83,7 @@ export function SearchPanel({ project, onClose }: Props) {
   }, [query, regex, caseSensitive, result]);
 
   const choose = (hit: SearchHit) => {
-    setWorkspaceMode(project.id, 'explorer');
+    setProjectView(project.id, 'explorer');
     setExplorerFile(project.id, hit.path);
     requestExplorerGoto(project.id, hit.line, hit.column);
     onClose();

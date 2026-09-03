@@ -33,7 +33,7 @@ describe('AgentMonitor thread selection', () => {
     expect(source).toContain('<AgentCardMenu');
     expect(source).toContain('createPortal(');
     expect(source).toContain('document.body');
-    expect(source).toContain('openAgentInWorkspace');
+    expect(source).toContain('openAgentInProject');
   });
 
   it('offers Close with follow-up in the session footer next to Summarize', () => {

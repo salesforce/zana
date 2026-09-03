@@ -238,11 +238,11 @@ input {
   grid-column: 1 / -1;
 }
 
-/* Workspace is wrapped in `.workspace-slot` (display:contents), so it is not a
+/* ProjectView is wrapped in `.project-slot` (display:contents), so it is not a
  * `.shell-main >` child even though it participates in the shell grid. Without
  * this reset it auto-places into the leftover nav column and the Agents board
  * (header + empty state) squeezes into a left strip. */
-.app-shell.sidebar-is-collapsed.scoped-no-list .workspace {
+.app-shell.sidebar-is-collapsed.scoped-no-list .project-shell {
   grid-column: 1 / -1;
 }
 
@@ -1633,7 +1633,7 @@ body.resizing-col .sidebar-resizer::after {
   overflow: hidden;
 }
 
-/* Agents is the same kind of sidebar collection as Workspaces: a collapsible
+/* Agents is the same kind of sidebar collection as Projects: a collapsible
  * heading with compact actions and its live rows beneath it. */
 .sidebar-agents {
   position: relative;
@@ -1742,7 +1742,7 @@ body.resizing-col .sidebar-resizer::after {
 
 .sidebar-agents--collapsed {
   /* Hug the heading. A fixed 36px basis (header min-height + padding) plus
-   * Workspaces' collection margin left a dead band between two collapsed rows. */
+   * Projects' collection margin left a dead band between two collapsed rows. */
   flex: 0 0 auto;
   height: auto;
   min-height: 0;
@@ -4719,7 +4719,7 @@ body.resizing-col {
   padding: 2px 4px;
 }
 
-.workspace {
+.project-shell {
   display: grid;
   /* Same content-track placement as .home-panel / .inbox-view. Auto-placement
      only works while the sidebar occupies column 1; collapsing unmounts that
@@ -4744,7 +4744,7 @@ body.resizing-col {
   min-height: 0;
 }
 
-.workspace-topbar {
+.project-topbar {
   grid-area: topbar;
   display: flex;
   flex-direction: column;
@@ -4755,7 +4755,7 @@ body.resizing-col {
 
 /* Mode switcher row — sits above the tabs so a long tab strip can't squeeze
    it. Right-aligned, with a hairline separating it from the tabs below. */
-.workspace-topbar-modes {
+.project-topbar-modes {
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -4767,20 +4767,20 @@ body.resizing-col {
 
 /* Tabs row — the flex container the TabBar fills. Needs a definite height:
    tabs (.tab) size with height:100%, so without it the row collapses to 0. */
-.workspace-topbar-tabs {
+.project-topbar-tabs {
   display: flex;
   align-items: stretch;
   min-width: 0;
   height: 36px;
 }
 
-.workspace-topbar-tabs > .tabbar {
+.project-topbar-tabs > .tabbar {
   flex: 1;
   min-width: 0;
   border-bottom: none;
 }
 
-.workspace-body {
+.project-body {
   grid-area: body;
   position: relative;
   min-height: 0;
@@ -4788,23 +4788,23 @@ body.resizing-col {
   display: flex;
 }
 
-.workspace > .statusbar {
+.project-shell > .statusbar {
   grid-area: status;
 }
 
-.workspace-body > .terminal-host,
-.workspace-body > .explorer-view,
-.workspace-body > .project-ext-tab,
+.project-body > .terminal-host,
+.project-body > .explorer-view,
+.project-body > .project-ext-tab,
 /* Goals / Follow-ups (scheduler chrome) and Zana/Tickets (gus chrome) are
    flex children of the workspace body too — without flex-grow they'd size to
    content, so their inner max-width overrides had nothing to fill. Stretch the
    panel roots to the column; the per-view inner cap then decides the reading
    width. */
-.workspace-body > .settings-panel,
-.workspace-body > .feed-view,
-.workspace-body > .gus-panel,
-.workspace-body > .new-thread-view,
-.workspace-body > .thread-detail-view {
+.project-body > .settings-panel,
+.project-body > .feed-view,
+.project-body > .gus-panel,
+.project-body > .new-thread-view,
+.project-body > .thread-detail-view {
   flex: 1;
   min-width: 0;
 }
@@ -4860,7 +4860,7 @@ body.resizing-col {
   color: var(--text-primary);
 }
 
-.workspace-mode-toggle {
+.project-mode-toggle {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -4871,18 +4871,18 @@ body.resizing-col {
   flex: 0 0 auto;
 }
 
-.workspace-mode-toggle:hover {
+.project-mode-toggle:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
 }
 
-.workspace-layout-picker {
+.project-layout-picker {
   display: inline-flex;
   align-items: stretch;
   border-left: 1px solid var(--border);
   flex: 0 0 auto;
 }
-.workspace-layout-picker > button {
+.project-layout-picker > button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4892,11 +4892,11 @@ body.resizing-col {
   border: none;
   cursor: pointer;
 }
-.workspace-layout-picker > button:hover {
+.project-layout-picker > button:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
 }
-.workspace-layout-picker > button.active {
+.project-layout-picker > button.active {
   color: var(--accent-blue);
   background: var(--bg-hover);
 }
@@ -4919,11 +4919,11 @@ body.resizing-col {
   display: contents;
 }
 
-.workspace-slot {
+.project-slot {
   display: contents;
 }
 
-.workspace-slot.hide > * {
+.project-slot.hide > * {
   display: none !important;
 }
 
@@ -9091,7 +9091,7 @@ body.resizing-col .ext-hub-resizer::before {
   border-radius: 6px;
 }
 
-.empty-workspace.overlay {
+.empty-project.overlay {
   position: absolute;
   inset: 0;
   background: var(--bg-panel);
@@ -9105,7 +9105,7 @@ body.resizing-col .ext-hub-resizer::before {
   background-color: var(--bg-panel) !important;
 }
 
-.empty-workspace {
+.empty-project {
   display: grid;
   /* `safe` centering: center when the content fits, but fall back to
      top-alignment when it overflows so the first rows aren't clipped above the
@@ -9120,7 +9120,7 @@ body.resizing-col .ext-hub-resizer::before {
   box-sizing: border-box;
 }
 
-.empty-workspace h3 {
+.empty-project h3 {
   margin: 0 0 6px;
   font-size: 16px;
   color: var(--text-primary);
@@ -12170,7 +12170,7 @@ body.resizing-col .explorer-resizer::after {
 }
 
 /* The cross-project board is a grid item of the app shell's column-3 track
-   (like the other top-level panels), not a flex child of .workspace-body — so
+   (like the other top-level panels), not a flex child of .project-body — so
    it must establish its own full-height column flow and clip overflow. */
 .agents-board--global {
   grid-column: 2 / -1;
@@ -14762,7 +14762,7 @@ body.resizing-col .explorer-resizer::after {
 }
 
 /* ============================================================================
- * Overview button (in ListPane) + Workspaces Overview panel (column 3)
+ * Overview button (in ListPane) + Projects Overview panel (column 3)
  * ============================================================================ */
 
 .list-overview {
@@ -28910,7 +28910,7 @@ body.resizing-col .library-split-resizer::after {
 
 /* Mode switcher row — sits above the tabs so a long tab strip can't squeeze
    it. Right-aligned, with a hairline separating it from the tabs below. */
-.workspace-topbar-modes {
+.project-topbar-modes {
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -28922,7 +28922,7 @@ body.resizing-col .library-split-resizer::after {
 
 /* Tabs row — the flex container the TabBar fills. Needs a definite height:
    tabs (.tab) size with height:100%, so without it the row collapses to 0. */
-.workspace-topbar-tabs {
+.project-topbar-tabs {
   display: flex;
   align-items: stretch;
   min-width: 0;
@@ -29247,7 +29247,7 @@ body.resizing-col .library-split-resizer::after {
 }
 
 /* The cross-project board is a grid item of the app shell's column-3 track
-   (like the other top-level panels), not a flex child of .workspace-body — so
+   (like the other top-level panels), not a flex child of .project-body — so
    it must establish its own full-height column flow and clip overflow. */
 .agents-board--global {
   grid-column: 2 / -1;
@@ -31798,8 +31798,8 @@ textarea.thread-command-editor {
   margin: 0;
 }
 
-.workspace-body > .new-thread-view,
-.workspace-body > .thread-detail-view {
+.project-body > .new-thread-view,
+.project-body > .thread-detail-view {
   grid-column: auto;
   height: auto;
   min-height: 0;

@@ -14,7 +14,7 @@ function slotLinesFromSet(set: ReturnType<typeof getPluginRegistrationSets>[numb
     if (hub) lines.push(`Plugins hub pages (${hub})`);
   }
   if (set.projectTabs.length) lines.push(`Project tabs (${set.projectTabs.length})`);
-  if (set.projectMenuActions.length) lines.push(`Project/workspace menus (${set.projectMenuActions.length})`);
+  if (set.projectMenuActions.length) lines.push(`Project menus (${set.projectMenuActions.length})`);
   if (set.settingsSections.length) lines.push(`Settings sections (${set.settingsSections.length})`);
   if (set.homepageSections.length) lines.push(`Home sections (${set.homepageSections.length})`);
   if (set.sidebarFooterActions.length) lines.push(`Sidebar footer actions (${set.sidebarFooterActions.length})`);

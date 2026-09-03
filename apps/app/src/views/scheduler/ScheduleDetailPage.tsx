@@ -4,7 +4,7 @@ import { Maximize2, Minimize2, PanelRight, X } from 'lucide-react';
 import type { ScheduledTask } from '@zana-ai/zcc-domain/product';
 import { product } from '../../lib/product-client.js';
 import { useScheduler, useUi } from '../../store.js';
-import { getNewScheduleRoutePath, getScheduleRoutePath, getSchedulerRoutePath, getProjectWorkspaceRoutePath } from '../../lib/route-paths.js';
+import { getNewScheduleRoutePath, getScheduleRoutePath, getSchedulerRoutePath, getProjectModeRoutePath } from '../../lib/route-paths.js';
 import { useOptionalPaneContext, usePaneSecondaryPanelRegistration } from '../thread-detail/PaneContext.js';
 import { ThreadSecondaryPanel } from '../../components/thread/secondary-panel/ThreadSecondaryPanel.js';
 import { ThreadNewTabPage } from '../../components/thread/secondary-panel/ThreadNewTabPage.js';
@@ -224,7 +224,7 @@ function ScheduleDetailView({
   );
 
   const cataloguePath = projectId
-    ? getProjectWorkspaceRoutePath(projectId, 'scheduler')
+    ? getProjectModeRoutePath(projectId, 'scheduler')
     : getSchedulerRoutePath();
 
   return (

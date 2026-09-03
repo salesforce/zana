@@ -156,7 +156,7 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
   };
   const openProjectSchedules = (id: string) => {
     useUi.getState().enterProjectFocus(id);
-    useUi.getState().setWorkspaceMode(id, 'scheduler');
+    useUi.getState().setProjectView(id, 'scheduler');
   };
 
   const openByReport = (_run: unknown, taskName: string) => {

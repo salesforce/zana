@@ -68,7 +68,7 @@ export interface PaletteBuildContext {
   setNav: (nav: string) => void;
   selectProject: (id: string) => void;
   selectTab: (projectId: string, tabId: string) => void;
-  setWorkspaceMode: (projectId: string, mode: 'agents' | 'terminals' | 'explorer') => void;
+  setProjectView: (projectId: string, mode: 'agents' | 'terminals' | 'explorer') => void;
   setSettingsTab: (tab: 'global' | 'project' | 'prompts' | 'personas' | 'squads' | 'usage') => void;
   setExtensionsTab: (tab: 'marketplace' | 'installed' | 'skills' | 'mcp') => void;
   setOverviewOpen: (open: boolean) => void;
@@ -148,7 +148,7 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
   const {
     projects, terminals, selectedProject, selectedProjectTabs, activeTab,
     scheduledTasks, personas, overviewOpen, onClose, launch, launchPersona,
-    addProject, setNav, selectProject, selectTab, setWorkspaceMode,
+    addProject, setNav, selectProject, selectTab, setProjectView,
     setSettingsTab, setExtensionsTab, setOverviewOpen, setPinned, restartTerminal, closeTerminal,
     reopenLastClosed, restoreLastDetached, pushToast
   } = ctx;
@@ -326,7 +326,7 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
       run: () => {
         useUi.getState().enterProjectFocus(proj.id);
         selectTab(proj.id, t.id);
-        setWorkspaceMode(proj.id, 'terminals');
+        setProjectView(proj.id, 'terminals');
         onClose();
       }
     });
@@ -356,7 +356,7 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
         source: 'core',
         run: () => {
           useUi.getState().enterProjectFocus(selectedProject.id);
-          setWorkspaceMode(selectedProject.id, 'agents');
+          setProjectView(selectedProject.id, 'agents');
           onClose();
         }
       },

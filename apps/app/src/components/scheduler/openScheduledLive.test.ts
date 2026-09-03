@@ -71,7 +71,7 @@ describe('Running now / live-row wiring', () => {
     expect(helper).toContain('openAgentModal(sessionId, projectId)');
     expect(view).toContain('openScheduledLive(t.projectId, sessionId)');
     expect(view).not.toContain('restoreTerminal');
-    expect(view).not.toContain("setWorkspaceMode(t.projectId, 'terminals')");
+    expect(view).not.toContain("setProjectView(t.projectId, 'terminals')");
     expect(row).toContain('openScheduledLive(task.projectId, liveSessionId)');
     expect(overview).toContain('onOpenTerminal(task, sessionId)');
     expect(overview).toContain('title="Peek the running session"');

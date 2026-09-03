@@ -23,8 +23,8 @@ describe('scratchWorkspaceProject', () => {
 });
 
 describe('composerProjectLabel', () => {
-  it('shows Default Workspace for the scratch folder name and keeps other names', () => {
-    expect(composerProjectLabel(scratch)).toBe('Default Workspace');
+  it('shows Default Project for the scratch folder name and keeps other names', () => {
+    expect(composerProjectLabel(scratch)).toBe('Default Project');
     expect(composerProjectLabel({ id: 'ws', name: SCRATCH_WORKSPACE_NAME })).toBe(DEFAULT_COMPOSER_WORKSPACE_LABEL);
     expect(composerProjectLabel(coreRepo)).toBe('zana-command-center');
   });

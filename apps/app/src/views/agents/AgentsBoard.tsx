@@ -77,6 +77,7 @@ function toCard(
     projectId: project.id,
     projectName: project.name,
     projectColor: project.color,
+    projectRemote: Boolean(project.remote),
     triage: triageById[session.id],
     overseer: overseerById[session.id],
     liveSubagents: subagentsById[session.id] ?? 0
@@ -98,7 +99,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const setNav = useUi((s) => s.setNav);
   const selectTab = useUi((s) => s.selectTab);
   const selectProject = useUi((s) => s.selectProject);
-  const setWorkspaceMode = useUi((s) => s.setWorkspaceMode);
+  const setProjectView = useUi((s) => s.setProjectView);
   const selectedTabId = useUi((s) => s.selectedTabId);
   const restoreTerminal = useData((s) => s.restoreTerminal);
   const closeIdleAgents = useData((s) => s.closeIdleAgents);
@@ -224,7 +225,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
     } else {
       selectTab(c.projectId, c.session.id);
     }
-    setWorkspaceMode(c.projectId, 'terminals');
+    setProjectView(c.projectId, 'terminals');
   };
 
   const confirmCloseIdle = (summarize: boolean) => {

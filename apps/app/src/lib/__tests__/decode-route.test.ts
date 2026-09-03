@@ -8,7 +8,7 @@ describe('decodeRoutePath', () => {
     ['/agents', { nav: 'agents' }],
     ['/threads/new', { nav: 'agents' }],
     ['/threads/abc', { nav: 'agents' }],
-    ['/sessions/sess-1', { nav: 'agents', sessionId: 'sess-1', isProjectWorkspace: false, focusedProjectId: null }],
+    ['/sessions/sess-1', { nav: 'agents', sessionId: 'sess-1', isProjectFocused: false, focusedProjectId: null }],
     ['/followups', { nav: 'followups' }],
     ['/suggestions', { nav: 'suggestions' }],
     ['/scheduler', { nav: 'scheduler' }],
@@ -36,13 +36,13 @@ describe('decodeRoutePath', () => {
         pluginSubPath: ''
       }
     ],
-    ['/projects/p1', { nav: 'projects', focusedProjectId: 'p1', workspaceMode: 'agents', isProjectWorkspace: true }],
-    ['/projects/p1/threads/new', { nav: 'projects', focusedProjectId: 'p1', workspaceMode: 'agents', isProjectWorkspace: true, isNewThread: true }],
-    ['/projects/p1/threads/abc', { nav: 'projects', focusedProjectId: 'p1', workspaceMode: 'agents', isProjectWorkspace: true, isThreadView: true, threadId: 'abc' }],
-    ['/projects/p1/sessions/sess-1', { nav: 'projects', focusedProjectId: 'p1', workspaceMode: 'agents', isProjectWorkspace: true, sessionId: 'sess-1' }],
-    ['/projects/p1/schedules/new', { nav: 'projects', focusedProjectId: 'p1', workspaceMode: 'scheduler', isProjectWorkspace: true, isNewSchedule: true }],
-    ['/projects/p1/schedules/sched-1', { nav: 'projects', focusedProjectId: 'p1', workspaceMode: 'scheduler', isProjectWorkspace: true, scheduleId: 'sched-1' }],
-    ['/projects/p1/terminals', { nav: 'projects', focusedProjectId: 'p1', workspaceMode: 'terminals', isProjectWorkspace: true }],
+    ['/projects/p1', { nav: 'projects', focusedProjectId: 'p1', projectMode: 'agents', isProjectFocused: true }],
+    ['/projects/p1/threads/new', { nav: 'projects', focusedProjectId: 'p1', projectMode: 'agents', isProjectFocused: true, isNewThread: true }],
+    ['/projects/p1/threads/abc', { nav: 'projects', focusedProjectId: 'p1', projectMode: 'agents', isProjectFocused: true, isThreadView: true, threadId: 'abc' }],
+    ['/projects/p1/sessions/sess-1', { nav: 'projects', focusedProjectId: 'p1', projectMode: 'agents', isProjectFocused: true, sessionId: 'sess-1' }],
+    ['/projects/p1/schedules/new', { nav: 'projects', focusedProjectId: 'p1', projectMode: 'scheduler', isProjectFocused: true, isNewSchedule: true }],
+    ['/projects/p1/schedules/sched-1', { nav: 'projects', focusedProjectId: 'p1', projectMode: 'scheduler', isProjectFocused: true, scheduleId: 'sched-1' }],
+    ['/projects/p1/terminals', { nav: 'projects', focusedProjectId: 'p1', projectMode: 'terminals', isProjectFocused: true }],
     ['/projects/p1/settings', { nav: 'settings', settingsTab: 'project', focusedProjectId: 'p1', isProjectSettings: true }],
     ['/plugins/docs/panel', { nav: 'docs', pluginPanelPath: 'panel', pluginSubPath: '' }],
     ['/plugins/docs/panel/sub', { nav: 'docs', pluginPanelPath: 'panel', pluginSubPath: 'sub' }]
@@ -103,7 +103,7 @@ describe('decodeRoutePath', () => {
   it('lets /projects/:id/settings win over :mode', () => {
     const decoded = decodeRoutePath('/projects/p1/settings');
     expect(decoded.isProjectSettings).toBe(true);
-    expect(decoded.workspaceMode).toBeNull();
+    expect(decoded.projectMode).toBeNull();
   });
 
   it('reads scoped project ids from the query alias', () => {

@@ -14,9 +14,9 @@ import { useSplitWorkspace } from '../lib/split-layout/store.js';
 //
 // This component is mounted ONCE at app level (TerminalSurfaceHost) and never
 // unmounted, so its child xterm instances — and their scrollback — survive
-// every nav change. To make the same live terminals appear inside the Workspace
-// (which owns column 3 under `projects`) — or inside the agent-inspector modal —
-// the rendered grid is RE-PARENTED between anchor nodes.
+// every nav change. To make the same live terminals appear inside the project
+// shell (which owns column 3 under `projects`) — or inside the agent-inspector
+// modal — the rendered grid is RE-PARENTED between anchor nodes.
 //
 // CRITICAL: we do NOT do this by changing the container passed to createPortal.
 // React tears a portal's children down and rebuilds them in the new container
@@ -27,7 +27,7 @@ import { useSplitWorkspace } from '../lib/split-layout/store.js';
 // with appendChild. A DOM move leaves the portal container unchanged, so React
 // never remounts — the one-xterm-per-session invariant (and its scrollback)
 // holds. When no modal/monitor is open the node parks on the always-mounted
-// Workspace terminal-host (CSS-hidden with the workspace-slot).
+// project-shell terminal-host (CSS-hidden with the project-slot).
 //
 // Pane placement (`area`) is one of:
 //   'a' — primary (always present when any pane is shown)
@@ -39,8 +39,8 @@ type Area = 'a' | 'b' | 'c' | 'd';
 
 const SLOT_AREA: Array<Area> = ['b', 'c', 'd'];
 
-// DOM id of the Workspace's portal anchor. The surface parks its grid here
-// whenever no modal or List-monitor anchor is active. Workspace stays mounted
+// DOM id of the project shell's portal anchor. The surface parks its grid here
+// whenever no modal or List-monitor anchor is active. ProjectView stays mounted
 // (CSS-hidden) so this node is always in the tree.
 export const PROJECTS_TERMINAL_ANCHOR_ID = 'cc-terminal-anchor-projects';
 
@@ -103,7 +103,7 @@ export function TerminalSurface() {
   // when nav OR the modal/monitor/session-page selection changes. Precedence:
   // the agent-inspector modal (when open) outranks the routed session page,
   // which outranks the inline monitor, which outranks the always-mounted
-  // Workspace park. appendChild is a no-op when the node is already the
+  // project-shell park. appendChild is a no-op when the node is already the
   // anchor's child, so a re-render that doesn't change the target won't thrash
   // the DOM.
   const modalSessionId = agentModal?.sessionId ?? null;
@@ -211,7 +211,7 @@ export function TerminalSurface() {
 
   // Always portal into the SAME persistent node; the node itself is what moves
   // between anchors (see the layout effect above). First paint parks on the
-  // Workspace terminal-host; the layout effect relocates it if a modal/monitor
+  // project-shell terminal-host; the layout effect relocates it if a modal/monitor
   // outranks that park.
   return createPortal(surface, portalNodeRef.current);
 }

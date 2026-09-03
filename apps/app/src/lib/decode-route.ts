@@ -14,7 +14,7 @@ import {
   PROJECT_SESSION_ROUTE_PATH,
   PROJECT_NEW_SCHEDULE_ROUTE_PATH,
   PROJECT_SCHEDULE_ROUTE_PATH,
-  PROJECT_WORKSPACE_ROUTE_PATH,
+  PROJECT_MODE_ROUTE_PATH,
   SESSION_ROUTE_PATH,
   SCHEDULER_ROUTE_PATH,
   NEW_SCHEDULE_ROUTE_PATH,
@@ -49,9 +49,9 @@ export interface DecodedRoute {
   settingsExtensionId: string | null;
   extensionsHubPluginId: string | null;
   focusedProjectId: string | null;
-  workspaceMode: string | null;
+  projectMode: string | null;
   isProjectSettings: boolean;
-  isProjectWorkspace: boolean;
+  isProjectFocused: boolean;
   isNewThread: boolean;
   isThreadView: boolean;
   threadId: string | null;
@@ -70,9 +70,9 @@ const DEFAULT_DECODED: DecodedRoute = {
   settingsExtensionId: null,
   extensionsHubPluginId: null,
   focusedProjectId: null,
-  workspaceMode: null,
+  projectMode: null,
   isProjectSettings: false,
-  isProjectWorkspace: false,
+  isProjectFocused: false,
   isNewThread: false,
   isThreadView: false,
   threadId: null,
@@ -258,8 +258,8 @@ export function decodeRoutePath(pathname: string, hash = ''): DecodedRoute {
       ...DEFAULT_DECODED,
       nav: 'projects',
       focusedProjectId: projectId,
-      workspaceMode: 'scheduler',
-      isProjectWorkspace: true,
+      projectMode: 'scheduler',
+      isProjectFocused: true,
       isNewSchedule: true
     };
   }
@@ -271,8 +271,8 @@ export function decodeRoutePath(pathname: string, hash = ''): DecodedRoute {
       ...DEFAULT_DECODED,
       nav: 'projects',
       focusedProjectId: projectId,
-      workspaceMode: 'scheduler',
-      isProjectWorkspace: true,
+      projectMode: 'scheduler',
+      isProjectFocused: true,
       scheduleId: param(projectSchedule, 'scheduleId') ?? null
     };
   }
@@ -284,8 +284,8 @@ export function decodeRoutePath(pathname: string, hash = ''): DecodedRoute {
       ...DEFAULT_DECODED,
       nav: 'projects',
       focusedProjectId: projectId,
-      workspaceMode: 'agents',
-      isProjectWorkspace: true,
+      projectMode: 'agents',
+      isProjectFocused: true,
       isNewThread: true
     };
   }
@@ -297,8 +297,8 @@ export function decodeRoutePath(pathname: string, hash = ''): DecodedRoute {
       ...DEFAULT_DECODED,
       nav: 'projects',
       focusedProjectId: projectId,
-      workspaceMode: 'agents',
-      isProjectWorkspace: true,
+      projectMode: 'agents',
+      isProjectFocused: true,
       isThreadView: true,
       threadId: param(projectThread, 'threadId') ?? null
     };
@@ -311,8 +311,8 @@ export function decodeRoutePath(pathname: string, hash = ''): DecodedRoute {
       ...DEFAULT_DECODED,
       nav: 'projects',
       focusedProjectId: projectId,
-      workspaceMode: 'agents',
-      isProjectWorkspace: true,
+      projectMode: 'agents',
+      isProjectFocused: true,
       sessionId: param(projectSession, 'sessionId') ?? null
     };
   }
@@ -324,12 +324,12 @@ export function decodeRoutePath(pathname: string, hash = ''): DecodedRoute {
       ...DEFAULT_DECODED,
       nav: 'projects',
       focusedProjectId: projectId,
-      workspaceMode: 'agents',
-      isProjectWorkspace: true
+      projectMode: 'agents',
+      isProjectFocused: true
     };
   }
 
-  const projectMode = matchPath(PROJECT_WORKSPACE_ROUTE_PATH, pathname);
+  const projectMode = matchPath(PROJECT_MODE_ROUTE_PATH, pathname);
   if (projectMode) {
     const projectId = param(projectMode, 'projectId') ?? null;
     const mode = param(projectMode, 'mode') ?? 'agents';
@@ -337,8 +337,8 @@ export function decodeRoutePath(pathname: string, hash = ''): DecodedRoute {
       ...DEFAULT_DECODED,
       nav: 'projects',
       focusedProjectId: projectId,
-      workspaceMode: mode,
-      isProjectWorkspace: true
+      projectMode: mode,
+      isProjectFocused: true
     };
   }
 

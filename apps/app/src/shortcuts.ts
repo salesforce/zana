@@ -38,8 +38,8 @@ export function installShortcuts(): () => void {
     if (e.key === 'b' && !e.shiftKey) {
       if (!projectId) return;
       e.preventDefault();
-      const cur = ui.workspaceMode[projectId] ?? 'terminals';
-      ui.setWorkspaceMode(projectId, cur === 'explorer' ? 'terminals' : 'explorer');
+      const cur = ui.projectView[projectId] ?? 'terminals';
+      ui.setProjectView(projectId, cur === 'explorer' ? 'terminals' : 'explorer');
       return;
     }
     // cmd+p — project switcher / command palette
@@ -135,7 +135,7 @@ export function installShortcuts(): () => void {
     // explorer mode; no-op in terminal mode so we don't clobber chrome).
     if ((e.key === 'G' || e.key === 'g') && e.shiftKey) {
       if (!projectId) return;
-      const mode = ui.workspaceMode[projectId] ?? 'terminals';
+      const mode = ui.projectView[projectId] ?? 'terminals';
       if (mode !== 'explorer') return;
       e.preventDefault();
       ui.toggleExplorerTreeMode(projectId);
@@ -145,7 +145,7 @@ export function installShortcuts(): () => void {
     // when the explorer is the active surface.
     if (e.key === 'd' && !e.shiftKey) {
       if (!projectId) return;
-      const mode = ui.workspaceMode[projectId] ?? 'terminals';
+      const mode = ui.projectView[projectId] ?? 'terminals';
       if (mode !== 'explorer') return;
       if (!ui.explorerFile[projectId]) return;
       e.preventDefault();

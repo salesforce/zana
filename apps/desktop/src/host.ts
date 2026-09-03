@@ -5121,7 +5121,7 @@ function buildAppMenu() {
           label: 'Toggle Terminals / Explorer',
           accelerator: 'CmdOrCtrl+B',
           registerAccelerator: false,
-          click: () => sendToFocused('app:toggleWorkspaceMode')
+          click: () => sendToFocused('app:toggleProjectView')
         },
         {
           label: 'Toggle Inbox',

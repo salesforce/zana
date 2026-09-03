@@ -693,7 +693,7 @@ export function ThreadDetail({
               }}
               onTitleLink={(link) => {
                 if (link.kind === 'thread') {
-                  const nextProjectId = route.isProjectWorkspace ? route.focusedProjectId : projectId;
+                  const nextProjectId = route.isProjectFocused ? route.focusedProjectId : projectId;
                   if (pane?.isSplitPane) {
                     pane.navigateInPane(link.threadId, nextProjectId ?? null);
                     return;
@@ -711,7 +711,7 @@ export function ThreadDetail({
                   if (forked.ok && forked.value?.id) {
                     navigate(getThreadRoutePath(
                       forked.value.id,
-                      route.isProjectWorkspace ? route.focusedProjectId : projectId ?? undefined
+                      route.isProjectFocused ? route.focusedProjectId : projectId ?? undefined
                     ));
                   }
                 });

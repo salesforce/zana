@@ -33,13 +33,13 @@ export const PROJECT_THREAD_ROUTE_PATH = '/projects/:projectId/threads/:threadId
 export const PROJECT_SESSION_ROUTE_PATH = '/projects/:projectId/sessions/:sessionId';
 export const PROJECT_NEW_SCHEDULE_ROUTE_PATH = '/projects/:projectId/schedules/new';
 export const PROJECT_SCHEDULE_ROUTE_PATH = '/projects/:projectId/schedules/:scheduleId';
-export const PROJECT_WORKSPACE_ROUTE_PATH = '/projects/:projectId/:mode';
+export const PROJECT_MODE_ROUTE_PATH = '/projects/:projectId/:mode';
 
 export const DEFAULT_PLUGIN_PANEL_PATH = 'panel';
 export const PLUGIN_PANEL_ROOT_ROUTE_PATH = '/plugins/:pluginId/:panelPath';
 export const PLUGIN_PANEL_ROUTE_PATH = '/plugins/:pluginId/:panelPath/*';
 
-export const PROJECT_WORKSPACE_MODES = [
+export const PROJECT_MODES = [
   'agents',
   'terminals',
   'explorer',
@@ -51,9 +51,9 @@ export const PROJECT_WORKSPACE_MODES = [
   'feed'
 ] as const;
 
-export type ProjectWorkspaceMode = (typeof PROJECT_WORKSPACE_MODES)[number];
+export type ProjectMode = (typeof PROJECT_MODES)[number];
 
-export const PROJECT_WORKSPACE_MODE_SET = new Set<string>(PROJECT_WORKSPACE_MODES);
+export const PROJECT_MODE_SET = new Set<string>(PROJECT_MODES);
 
 export interface PluginPanelRoutePathArgs {
   pluginId: string;
@@ -188,7 +188,7 @@ export function getProjectRoutePath(projectId: string): string {
   return `/projects/${encodeURIComponent(projectId)}`;
 }
 
-export function getProjectWorkspaceRoutePath(projectId: string, mode: string): string {
+export function getProjectModeRoutePath(projectId: string, mode: string): string {
   if (mode === 'agents') return getProjectRoutePath(projectId);
   return `/projects/${encodeURIComponent(projectId)}/${encodeURIComponent(mode)}`;
 }
@@ -305,7 +305,7 @@ const GLOBAL_NAV_PATHS: Record<string, string> = {
 /**
  * Map a shell nav id to its canonical path. Module ids become plugin-panel URLs.
  * `projects` without a project falls back to the app root — callers that have a
- * project should use {@link getProjectWorkspaceRoutePath}.
+ * project should use {@link getProjectModeRoutePath}.
  */
 export function getNavRoutePath(nav: string): string {
   const known = GLOBAL_NAV_PATHS[nav];
@@ -351,7 +351,7 @@ const baseRoutePatterns: readonly string[] = [
   PROJECT_SESSION_ROUTE_PATH,
   PROJECT_NEW_SCHEDULE_ROUTE_PATH,
   PROJECT_SCHEDULE_ROUTE_PATH,
-  PROJECT_WORKSPACE_ROUTE_PATH,
+  PROJECT_MODE_ROUTE_PATH,
   PLUGIN_PANEL_ROOT_ROUTE_PATH,
   PLUGIN_PANEL_ROUTE_PATH
 ];

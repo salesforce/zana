@@ -245,6 +245,38 @@ export function threadCardRuntimeLabel(
   return `${harness} · ${runtime}`;
 }
 
+/**
+ * Map a CLI launch profile to the same family name threads use
+ * (`claude` / `claude-yolo` → `Claude Code`). Does not change launcher
+ * `profileLabel` copy.
+ */
+export function cliHarnessLabel(profile: string): string {
+  if (profile === 'claude' || profile === 'claude-resume' || profile === 'claude-yolo') {
+    return 'Claude Code';
+  }
+  if (profile === 'cursor' || profile === 'cursor-resume' || profile === 'cursor-yolo') {
+    return 'Cursor';
+  }
+  if (profile === 'codex' || profile === 'codex-resume' || profile === 'codex-yolo') {
+    return 'Codex';
+  }
+  if (profile === 'pi' || profile === 'pi-resume') return 'Pi';
+  if (profile === 'opencode' || profile === 'opencode-resume') return 'OpenCode';
+  if (profile === 'shell') return 'Shell';
+  return threadHarnessLabel(profile);
+}
+
+/** Runtime + harness line for a CLI agent card (twin of {@link threadCardRuntimeLabel}). */
+export function agentCardRuntimeLabel(input: {
+  profile: string;
+  personaName?: string | null;
+  remote?: boolean;
+}): string {
+  const name = input.personaName?.trim();
+  const harness = name || cliHarnessLabel(input.profile);
+  return `${harness} · ${input.remote ? 'Remote host' : 'Local'}`;
+}
+
 export function threadCardShowsProject(showProject: boolean, grouped: boolean): boolean {
   return showProject && !grouped;
 }

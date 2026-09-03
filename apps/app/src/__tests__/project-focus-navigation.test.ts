@@ -40,7 +40,7 @@ describe('project-focus navigation contract', () => {
 
     // These tests run in the node environment (no jsdom), so `window` must be
     // hand-rolled. Delegate setTimeout/clearTimeout to the node globals — the
-    // store's debounced workspace-mode persist (persistWorkspaceModes) calls
+    // store's debounced workspace-mode persist (persistProjectViews) calls
     // window.setTimeout, so a bare object would throw. enterProjectFocus →
     // selectProject touches the project (fire-and-forget) and loadGitStatus
     // early-returns for a project absent from the (empty) store list, so
@@ -91,11 +91,11 @@ describe('project-focus navigation contract', () => {
   it('enterProjectFocus opens Projects on the Agents board', async () => {
     const { useUi } = await import('../store.js');
 
-    useUi.getState().setWorkspaceMode('proj-123', 'explorer');
+    useUi.getState().setProjectView('proj-123', 'explorer');
     useUi.getState().enterProjectFocus('proj-123');
 
     expect(useUi.getState().nav).toBe('projects');
-    expect(useUi.getState().workspaceMode['proj-123']).toBe('agents');
+    expect(useUi.getState().projectView['proj-123']).toBe('agents');
   });
 
   it('defaults to Home rather than an unfocused Projects board', async () => {

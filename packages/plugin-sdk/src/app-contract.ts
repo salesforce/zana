@@ -55,7 +55,7 @@ export interface PluginProjectMenuActionContext {
 export interface PluginProjectMenuActionRegistration extends PluginSlotBase {
   title: string;
   icon?: string;
-  /** `project` = row overflow; `workspace` = list header organize menu */
+  /** `project` = row overflow; `workspace` = Projects list-header organize menu (legacy name kept) */
   placement: 'project' | 'workspace';
   run: (ctx: PluginProjectMenuActionContext) => void | Promise<void>;
 }

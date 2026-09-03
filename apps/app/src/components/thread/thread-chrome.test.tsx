@@ -787,7 +787,7 @@ describe('expandable row and chips', () => {
     expect(source).toContain("data-embedded={embedded ? 'true' : undefined}");
     expect(source).toContain('void copyText(text)');
     expect(source).not.toContain('navigator.clipboard');
-    expect(source).toContain('route.isProjectWorkspace ? route.focusedProjectId');
+    expect(source).toContain('route.isProjectFocused ? route.focusedProjectId');
     expect(source).toContain('pendingChildThreads(threads, threadId)');
     expect(source).not.toContain('useThreads((s) => s.threads.filter');
     expect(source).toContain('lastReadSeq: typeof timeline.lastReadSeq === \'number\' ? timeline.lastReadSeq : null');

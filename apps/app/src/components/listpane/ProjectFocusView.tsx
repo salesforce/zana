@@ -39,7 +39,7 @@ export function ProjectFocusView({ project }: { project: Project }) {
   const exitProjectFocus = useUi((s) => s.exitProjectFocus);
   const selectProject = useUi((s) => s.selectProject);
   const selectTab = useUi((s) => s.selectTab);
-  const setWorkspaceMode = useUi((s) => s.setWorkspaceMode);
+  const setProjectView = useUi((s) => s.setProjectView);
   const selectedTabId = useUi((s) => s.selectedTabId);
   const selectedId = useUi((s) => s.selectedProjectId);
   const collapsedSections = useUi((s) => s.collapsedSections);
@@ -79,7 +79,7 @@ export function ProjectFocusView({ project }: { project: Project }) {
     } else {
       selectTab(card.projectId, card.session.id);
     }
-    setWorkspaceMode(card.projectId, 'terminals');
+    setProjectView(card.projectId, 'terminals');
   };
 
   // Inline rename of an agent row, mirroring the tab strip's double-click→edit.
@@ -303,7 +303,7 @@ export function ProjectFocusView({ project }: { project: Project }) {
                             } else {
                               selectTab(project.id, t.id);
                             }
-                            setWorkspaceMode(project.id, 'terminals');
+                            setProjectView(project.id, 'terminals');
                           }}
                           onContextMenu={(e) => openAgentCardMenu(e, t)}
                           aria-label={isUnread ? `${t.title} · unread output` : undefined}

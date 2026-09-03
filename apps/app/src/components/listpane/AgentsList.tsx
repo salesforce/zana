@@ -199,7 +199,7 @@ export function AgentsListPane() {
     } else {
       ui.selectTab(c.projectId, c.session.id);
     }
-    ui.setWorkspaceMode(c.projectId, 'terminals');
+    ui.setProjectView(c.projectId, 'terminals');
   };
 
   const onRowContextMenu = (e: MouseEvent, r: AgentRow) => {

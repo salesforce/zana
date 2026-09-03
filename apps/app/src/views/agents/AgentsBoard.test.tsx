@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 
 const board = readFileSync(new URL('./AgentsBoard.tsx', import.meta.url), 'utf8');
 const view = readFileSync(new URL('./AgentsView.tsx', import.meta.url), 'utf8');
-const workspace = readFileSync(new URL('../project/WorkspaceView.tsx', import.meta.url), 'utf8');
+const workspace = readFileSync(new URL('../project/ProjectView.tsx', import.meta.url), 'utf8');
 const app = readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8');
 
 describe('AgentsBoard', () => {
@@ -50,6 +50,7 @@ describe('AgentsBoard', () => {
     expect(board).toContain('threadIdFromPath');
     expect(board).toContain('setCloseIdleTarget(reclaimableAgents)');
     expect(board).toContain('<AgentMonitor cards={visibleFleet}');
+    expect(board).toContain('projectRemote: Boolean(project.remote)');
     expect(board).toContain('schedulesForAgentView');
     expect(board).toContain('revealSchedule(item.task.id)');
     expect(board).toContain('item.kind === \'schedule\'');

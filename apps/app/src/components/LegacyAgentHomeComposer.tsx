@@ -550,7 +550,7 @@ export function LegacyAgentHomeComposer({
                 setProjectId(nextProjectId);
               }}
               disabled={Boolean(pinnedProject)}
-              title={pinnedProject ? 'Workspace is locked to this project' : undefined}
+              title={pinnedProject ? 'Locked to this project' : undefined}
             />
           </div>
           {project && !project.remote && (

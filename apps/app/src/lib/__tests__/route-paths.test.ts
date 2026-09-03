@@ -18,7 +18,7 @@ import {
   getProjectRoutePath,
   getProjectSettingsRoutePath,
   getAgentSessionRoutePath,
-  getProjectWorkspaceRoutePath,
+  getProjectModeRoutePath,
   getRootRoutePath,
   getSchedulerRoutePath,
   getScheduleRoutePath,
@@ -51,8 +51,8 @@ describe('route path helpers', () => {
     expect(getSettingsRoutePath('global', 'appearance')).toBe('/settings/global#appearance');
     expect(getProjectRoutePath('proj/1')).toBe('/projects/proj%2F1');
     expect(getProjectSettingsRoutePath('proj 1')).toBe('/projects/proj%201/settings');
-    expect(getProjectWorkspaceRoutePath('p1', 'agents')).toBe('/projects/p1');
-    expect(getProjectWorkspaceRoutePath('p1', 'terminals')).toBe('/projects/p1/terminals');
+    expect(getProjectModeRoutePath('p1', 'agents')).toBe('/projects/p1');
+    expect(getProjectModeRoutePath('p1', 'terminals')).toBe('/projects/p1/terminals');
     expect(getPluginDetailRoutePath('github')).toBe('/extensions/plugins/github');
     expect(
       getPluginPanelRoutePath({ pluginId: 'docs', path: DEFAULT_PLUGIN_PANEL_PATH, subPath: 'a/b' })

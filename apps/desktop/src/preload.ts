@@ -1021,7 +1021,7 @@ const api: CcApi = {
         'app:newClaudeTab',
         'app:reopenTab',
         'app:closeTab',
-        'app:toggleWorkspaceMode',
+        'app:toggleProjectView',
         'app:openPalette',
         'app:openShortcuts'
       ];

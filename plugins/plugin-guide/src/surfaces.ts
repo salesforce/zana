@@ -23,7 +23,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
     id: 'app-shell',
     title: 'App shell',
     fixtureKind: 'spatial',
-    blurb: 'Global sidebar, Workspaces header, project rail, and workspace topbar.',
+    blurb: 'Global sidebar, Projects header, project rail, and project topbar.',
     surfaces: [
       {
         id: 'navPanel',
@@ -51,8 +51,8 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
       },
       {
         id: 'experimental_projectMenuAction',
-        title: 'Project / workspace menu',
-        summary: 'An item on the Workspaces Organize menu or a project-row overflow.',
+        title: 'Project menu',
+        summary: 'An item on the Projects Organize menu or a project-row overflow.',
         bullets: ['`placement: "project"` gets that `projectId`.', '`placement: "workspace"` runs with `projectId: null`.'],
         apiSymbols: ['PluginAppSlots.experimental_projectMenuAction', 'PluginProjectMenuActionRegistration'],
         experimental: true

@@ -264,7 +264,7 @@ export function AgentCardMenu({ menu, setMenu, actions, onPick }: AgentCardMenuP
           setMenu(null);
           openAgentSessionInSplit({
             navigate,
-            projectId: route.isProjectWorkspace
+            projectId: route.isProjectFocused
               ? route.focusedProjectId
               : (getScopedProjectId() ?? null),
             sessionId: card.session.id,

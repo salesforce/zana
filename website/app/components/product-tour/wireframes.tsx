@@ -372,7 +372,7 @@ function AppShell({
           ))}
           <div className="product-tour-thread-stack">
             <div className="product-tour-ws-head">
-              <span className="product-tour-section product-tour-ws-head-title">Workspaces</span>
+              <span className="product-tour-section product-tour-ws-head-title">Projects</span>
               <span className="product-tour-ws-head-actions">
                 <span className="product-tour-icon-hit">
                   <Icon name="filter" size={14} />
