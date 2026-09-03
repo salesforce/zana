@@ -5,10 +5,14 @@ const DEFAULT_HOST = 'https://us.posthog.com';
 
 function makeZcc(values) {
   const handlers = new Map();
+  const rpc = new Map();
   const kv = new Map();
   return {
     events: {
       on: (name, handler) => handlers.set(name, handler)
+    },
+    rpc: {
+      method: (name, handler) => rpc.set(name, handler)
     },
     settings: {
       define: () => ({ get: async () => values })
@@ -22,7 +26,8 @@ function makeZcc(values) {
       }
     },
     log: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() },
-    _handlers: handlers
+    _handlers: handlers,
+    _rpc: rpc
   };
 }
 
@@ -94,5 +99,62 @@ describe('posthog-analytics plugin', () => {
     for (const name of ['thread.created', 'thread.active', 'thread.idle', 'thread.failed', 'thread.archived', 'thread.deleted']) {
       expect(zcc._handlers.has(name)).toBe(true);
     }
+  });
+
+  describe('trackUiClick RPC', () => {
+    it('does not fetch when UI-click tracking is off (even if enabled)', async () => {
+      const zcc = makeZcc({ enabled: true, trackUiClicks: false, apiKey: 'k', host: DEFAULT_HOST });
+      plugin(zcc);
+      const res = await zcc._rpc.get('trackUiClick')({ testid: 'agent-delete-quick', role: 'button' });
+      expect(res).toEqual({ ok: false });
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('does not fetch when the master switch is off', async () => {
+      const zcc = makeZcc({ enabled: false, trackUiClicks: true, apiKey: 'k', host: DEFAULT_HOST });
+      plugin(zcc);
+      await zcc._rpc.get('trackUiClick')({ testid: 'x', role: 'button' });
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('sends only testid + role, never any other field', async () => {
+      const zcc = makeZcc({ enabled: true, trackUiClicks: true, apiKey: 'k-9', host: DEFAULT_HOST });
+      plugin(zcc);
+      const res = await zcc._rpc.get('trackUiClick')({
+        testid: 'agent-delete-quick',
+        role: 'button',
+        // hostile extras that must be dropped:
+        text: 'Delete My Secret Project',
+        ariaLabel: 'Delete thread about acquisition',
+        value: 'user typed this'
+      });
+      expect(res).toEqual({ ok: true });
+      expect(fetch).toHaveBeenCalledTimes(1);
+      const [url, init] = fetch.mock.calls[0];
+      expect(url).toBe('https://us.posthog.com/capture/');
+      const body = JSON.parse(init.body);
+      expect(body.event).toBe('zcc_ui_click');
+      expect(body.properties).toEqual({ testid: 'agent-delete-quick', role: 'button' });
+      const serialized = JSON.stringify(body);
+      expect(serialized).not.toContain('Secret');
+      expect(serialized).not.toContain('acquisition');
+      expect(serialized).not.toContain('user typed this');
+    });
+
+    it('ignores a payload with neither testid nor role', async () => {
+      const zcc = makeZcc({ enabled: true, trackUiClicks: true, apiKey: 'k', host: DEFAULT_HOST });
+      plugin(zcc);
+      const res = await zcc._rpc.get('trackUiClick')({ text: 'nope' });
+      expect(res).toEqual({ ok: false });
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('drops an over-long or non-string field rather than forwarding it', async () => {
+      const zcc = makeZcc({ enabled: true, trackUiClicks: true, apiKey: 'k', host: DEFAULT_HOST });
+      plugin(zcc);
+      await zcc._rpc.get('trackUiClick')({ testid: 'x'.repeat(500), role: 42 });
+      // testid too long, role not a string → nothing identifiable left → no send
+      expect(fetch).not.toHaveBeenCalled();
+    });
   });
 });

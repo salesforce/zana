@@ -31,6 +31,27 @@ Each event's payload is exactly:
 plugin's local KV storage — it identifies an *installation*, not a person,
 and is never derived from any account/email.
 
+### Optional: coarse UI-click events
+
+If you additionally turn on **Also track UI clicks (button ids only)**, the
+plugin emits a `zcc_ui_click` event on each click of an actionable element,
+carrying only:
+
+```json
+{ "event": "zcc_ui_click", "distinct_id": "…", "properties": { "testid": "agent-delete-quick", "role": "button" } }
+```
+
+- `testid` is the developer-authored `data-testid` on the element (stable,
+  content-free), resolved by walking up from the clicked node.
+- `role` is the element role or tag (`button` / `link` / `tab` / …).
+
+It **never** reads button text, `aria-label`, or input values — those routinely
+embed project names and thread titles, so they are deliberately never captured.
+The renderer content script only reports these two fields, and the server
+re-validates them (dropping anything else, non-strings, or over-long values)
+before sending. A click with no `data-testid` and no actionable role sends
+nothing. This toggle is independent and also off by default.
+
 ## Enabling it
 
 1. Install the plugin (`zcc plugin install ./plugins/posthog-analytics` from
@@ -43,17 +64,30 @@ and is never derived from any account/email.
 4. Optionally change **PostHog Host** if you run a self-hosted PostHog
    (defaults to `https://us.posthog.com`).
 5. Turn on **Send anonymous usage events to PostHog**.
+6. Optionally turn on **Also track UI clicks (button ids only)** for
+   content-free click events (see above).
 
 Nothing is sent until both the toggle is on AND an API key is set. Turning
-the toggle off stops all outbound requests immediately.
+the toggle off stops all outbound requests immediately. UI-click tracking has
+its own separate toggle and is likewise off by default.
 
-## Why no click/prompt tracking
+## Why no prompt/content tracking
 
-This plugin deliberately does not capture UI clicks or prompt/response
-content. The app's core has no generic click-instrumentation hook to piggy
-back on (adding one would mean hand-instrumenting core UI code, which this
-project's own conventions reserve for genuine product needs, not analytics),
-and sending prompt/response text to a third-party service risks leaking
-proprietary code or secrets. If you need deeper usage insight, see
-**Settings → Usage** in the app itself, which computes a purely local,
-content-free usage summary and never leaves your device.
+This plugin deliberately never captures prompt/response content, button text,
+labels, or input values — only lifecycle events and (optionally) content-free
+click ids. Sending prompt/response text to a third-party service risks leaking
+proprietary code or secrets, so it is out of scope by design. UI-click tracking
+is intentionally limited to developer-authored `data-testid`s + element roles
+rather than autocapture, to avoid ever reading user-generated text. If you need
+richer local insight, see **Settings → Usage** in the app itself, which computes
+a purely local, content-free usage summary that never leaves your device.
+
+## How it works (no core changes)
+
+The plugin lives entirely in this directory and touches no core files. It
+consumes the existing plugin surfaces:
+
+- `zcc.events.on('thread.*')` for lifecycle events (server side).
+- A renderer **content script** (`app.js`, via `app.contentScripts.register`)
+  for the optional click listener, which reports to the plugin server over
+  `zcc.rpc` — so the API key stays server-side and the renderer never sees it.
