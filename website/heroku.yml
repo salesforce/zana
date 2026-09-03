@@ -14,7 +14,7 @@ build:
   # NEXT_PUBLIC_* are inlined at BUILD time. When Heroku builds from heroku.yml,
   # supply them here as build args so the pre-rendered pages embed the live feeds.
   config:
-    NEXT_PUBLIC_APP_VERSION: "2.0.4"
+    NEXT_PUBLIC_APP_VERSION: "2.0.5"
     # NEXT_PUBLIC_REGISTRY_URL: "https://<cdn>/extensions/index.json"
     # NEXT_PUBLIC_UPDATE_FEED_URL: "https://<cdn>/app-updates/"
 run:

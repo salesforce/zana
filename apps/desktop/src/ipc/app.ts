@@ -100,7 +100,13 @@ export function registerAppIpc(): void {
   ctx.safeHandle(
     IPC.updates.quitAndInstall,
     () => {
-      ctx.updater?.quitAndInstall();
+      // Defer so this `ipcMain.handle` can return. Calling quitAndInstall
+      // synchronously inside invoke deadlocks the quit on Electron (the
+      // renderer is still awaiting the round-trip, so "Restart now" is a
+      // silent no-op).
+      setImmediate(() => {
+        ctx.updater?.quitAndInstall();
+      });
     },
     () => undefined
   );

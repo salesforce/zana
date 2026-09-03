@@ -1004,6 +1004,10 @@ function menubarPopoverEnabled(): boolean {
 // Created in whenReady (needs `app` ready); a no-op shim in dev. Module-level
 // so the IPC handlers can reach it.
 let updater: Updater | null = null;
+// Set once the user has confirmed a quit (or an update restart already
+// consented via "Restart now"). Shared with `before-quit` so an in-flight
+// auto-update cannot be cancelled by the live-sessions prompt.
+let quitConfirmed = false;
 let doctor: Doctor | null = null;
 /**
  * Pending "What's New" window, computed once at boot when the running version
@@ -6295,7 +6299,12 @@ async function bootstrapNormal() {
     // `enableUpdateSimulation` config re-checked in the `updates:simulate` IPC
     // handler (Rule 1 — main authorizes, and the flag can toggle at runtime);
     // this just lets an armed IPC call through.
-    allowSimulation: true
+    allowSimulation: true,
+    // "Restart now" is already consent to kill live terminals — skip the
+    // before-quit prompt so the button cannot look like a no-op.
+    prepareQuitForUpdate: () => {
+      quitConfirmed = true;
+    }
   });
   updater.checkForUpdates({ manual: false }).catch((err) => logMainError('updater.checkForUpdates', err));
   updater.start();
@@ -6530,11 +6539,6 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// Set once the user has confirmed (or there was nothing to confirm) so the
-// teardown path runs exactly once and re-entrant before-quit events don't
-// re-prompt.
-let quitConfirmed = false;
-
 app.on('before-quit', (event) => {
   // Guard the user's running work: if any ptys are still alive, make quitting
   // a deliberate choice instead of silently killing in-flight agents and
@@ -6544,7 +6548,8 @@ app.on('before-quit', (event) => {
   // Auto-update interaction: a downloaded update installs on quit
   // (`autoInstallOnAppQuit`). Squirrel's quit hook runs *after* this handler, so
   // preventing the quit here (user clicks Cancel on the live-sessions prompt)
-  // also cancels the install — the update simply applies on the next real quit.
+  // also cancels the install. `prepareQuitForUpdate` sets `quitConfirmed` so
+  // "Restart now" skips this prompt — that button is the confirmation.
   if (!quitConfirmed) {
     const live = ptys.liveCount();
     // The guard is opt-out: a user who churns through many short-lived sessions
