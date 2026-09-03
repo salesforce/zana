@@ -12,6 +12,11 @@ describe('plugin host build', () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
+  it('resolves the plugin SDK from source so packaging does not need dist/', async () => {
+    const source = await readFile(new URL('./build-plugin-host.ts', import.meta.url), 'utf8');
+    expect(source).toMatch(/conditions:\s*\[\s*'source'\s*\]/);
+  });
+
   it('builds a self-contained Node artifact with identity and digest metadata', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'zcc-host-build-test-'));
     tempDirs.push(dir);
