@@ -90,6 +90,13 @@ jobs:
           sudo apt-get install -y xvfb
           npx playwright install-deps chromium
 
+      # ubuntu-24.04 (ubuntu-latest) sets
+      # kernel.apparmor_restrict_unprivileged_userns=1, which blocks Chromium's
+      # sandbox even with --no-sandbox. Electron then never creates a window and
+      # Playwright's firstWindow times out (microsoft/playwright#34251).
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - name: Build app
         run: pnpm run build
         env:
