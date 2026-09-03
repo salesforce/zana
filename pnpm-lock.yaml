@@ -1003,6 +1003,8 @@ importers:
 
   plugins/plugin-guide: {}
 
+  plugins/posthog-analytics: {}
+
   plugins/pr-monitor:
     dependencies:
       '@zana-ai/zcc-ui':

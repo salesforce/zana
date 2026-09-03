@@ -1,0 +1,19 @@
+{
+  "name": "@zcc-ext/posthog-analytics",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Opt-in, event-only usage analytics sent to a PostHog project you configure. Never sends prompt or response content.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "zcc": {
+    "name": "PostHog Analytics",
+    "description": "Opt-in, event-only usage analytics sent to a PostHog project you configure. Never sends prompt or response content.",
+    "branding": {
+      "icon": "LineChart"
+    },
+    "server": "./server.mjs"
+  }
+}
