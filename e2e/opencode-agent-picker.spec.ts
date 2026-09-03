@@ -1,9 +1,12 @@
 import { test, expect } from './fixtures/app.js';
 import type { Locator, Page } from '@playwright/test';
-import { makeFakeOpenCodeBinary, makeRefreshableFakeOpenCodeBinary } from './sdk/harness.js';
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, delimiter, dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const repoRoot = dirname(fileURLToPath(new URL('../package.json', import.meta.url)));
+const fixtureBin = join(repoRoot, 'e2e', 'fixtures', 'bin');
 
 async function selectTargetProject(
   window: Page,
@@ -39,8 +42,8 @@ async function openLegacyAgentLauncher(window: Page) {
 
 // The native-role picker is a popover chip that only renders for the OpenCode
 // family. Its trigger lives in the composer; its menu portals to document.body.
-// There is no "Use harness default" sentinel — discovered roles are listed
-// directly and the first role is the resting selection.
+// It now sources the SAME ACP session-mode list the Modern composer uses
+// (`catalogEntry.acpMode`), so both surfaces show an identical, plain-named list.
 function roleTrigger(modal: Locator) {
   return modal.locator('[data-testid="native-role-picker-trigger"]');
 }
@@ -72,10 +75,10 @@ async function refreshRoles(window: Page, modal: Locator) {
   await window.locator('[data-testid="native-role-refresh"]').click();
 }
 
-// The CLI Agent composer now rests on claude-code (Modern-parity default), so
-// the OpenCode harness — and its native-role picker — only appear after the
-// user explicitly picks OpenCode in the model/harness popover. Provider tab
-// ids are the thread provider id; OpenCode maps to `acp-opencode`.
+// The CLI Agent composer rests on claude-code (Modern-parity default), so the
+// OpenCode harness — and its native-role picker — only appear after the user
+// explicitly picks OpenCode in the model/harness popover. Provider tab ids are
+// the thread provider id; OpenCode maps to `acp-opencode`.
 async function selectHarness(window: Page, modal: Locator, providerId: string) {
   const trigger = modal.locator('[data-testid="model-reasoning-picker-trigger"]');
   await expect(trigger).toBeVisible({ timeout: 30_000 });
@@ -86,128 +89,59 @@ async function selectHarness(window: Page, modal: Locator, providerId: string) {
   await trigger.click(); // switching harness leaves the popover open; close it
 }
 
-test('OpenCode agent picker loads effective visible primary agents through real IPC', async ({ app }) => {
-  const { window } = app;
-  const openCode = makeFakeOpenCodeBinary();
-  const projectDir = mkdtempSync(join(tmpdir(), 'zcc-opencode-picker-'));
-  const projectName = basename(projectDir);
-  let projectId: string | null = null;
-
-  try {
-    await window.evaluate((bin) => window.cc.config.set({
-      harnessOpenCodeEnabled: true,
-      defaultHarness: 'opencode',
-      opencodeBinary: bin
-    }), openCode.path);
-    await window.getByRole('link', { name: 'Settings' }).click();
-    await window.locator('.settings-section-item').filter({ hasText: 'Code Harness' }).click();
-    const openCodeSettings = window.locator('#settings-anchor-harness-opencode');
-    await expect(openCodeSettings.locator('.opener-row-status')).toHaveClass(/opener-row-status--ok/);
-
-    projectId = await window.evaluate(async (path) => {
-      const result = await window.cc.projects.add(path);
-      return (result as { value: { id: string } }).value.id;
-    }, projectDir);
-    await goToAgents(window);
-    const modal = await openLegacyAgentLauncher(window);
-    await selectTargetProject(window, modal, projectName);
-    await selectHarness(window, modal, 'acp-opencode');
-
-    expect(await readRoleLabels(window, modal, 30_000)).toEqual([
-      'build [Accept Edits, Autonomous]',
-      'plan [Plan]'
-    ]);
-    await selectRole(window, modal, 'plan');
-    await expect(roleTrigger(modal)).toContainText('plan [Plan]');
-    await refreshRoles(window, modal);
-    expect(await readRoleLabels(window, modal)).toEqual([
-      'build [Accept Edits, Autonomous]',
-      'plan [Plan]'
-    ]);
-  } finally {
-    if (projectId) await window.evaluate((id) => window.cc.projects.remove(id), projectId);
-    await window.evaluate(() => window.cc.config.set({
-      defaultHarness: undefined,
-      opencodeBinary: undefined
-    }));
-    openCode.cleanup();
-    rmSync(projectDir, { recursive: true, force: true });
-  }
-});
-
-test('OpenCode picker holds cached agents until explicit Refresh', async ({ app }) => {
-  const { window } = app;
-  const openCode = makeRefreshableFakeOpenCodeBinary();
-  const projectDir = mkdtempSync(join(tmpdir(), 'zcc-opencode-refresh-'));
-  const projectName = basename(projectDir);
-  let projectId: string | null = null;
-
-  try {
-    await window.evaluate((bin) => window.cc.config.set({
-      harnessOpenCodeEnabled: true,
-      defaultHarness: 'opencode',
-      opencodeBinary: bin
-    }), openCode.path);
-    await window.getByRole('link', { name: 'Settings' }).click();
-    await window.locator('.settings-section-item').filter({ hasText: 'Code Harness' }).click();
-    await expect(window.locator('#settings-anchor-harness-opencode .opener-row-status')).toHaveClass(/opener-row-status--ok/);
-    projectId = await window.evaluate(async (path) => {
-      const result = await window.cc.projects.add(path);
-      return (result as { value: { id: string } }).value.id;
-    }, projectDir);
-    await goToAgents(window);
-    const modal = await openLegacyAgentLauncher(window);
-    await selectTargetProject(window, modal, projectName);
-    await selectHarness(window, modal, 'acp-opencode');
-
-    expect(await readRoleLabels(window, modal, 30_000)).toEqual([
-      'build [Accept Edits, Autonomous]',
-      'plan [Plan]'
-    ]);
-    writeFileSync(openCode.refreshMarker, 'updated');
-    expect(await readRoleLabels(window, modal)).toEqual([
-      'build [Accept Edits, Autonomous]',
-      'plan [Plan]'
-    ]);
-    await refreshRoles(window, modal);
-    expect(await readRoleLabels(window, modal)).toEqual([
-      'build [Accept Edits, Autonomous]',
-      'review'
-    ]);
-  } finally {
-    if (projectId) await window.evaluate((id) => window.cc.projects.remove(id), projectId);
-    await window.evaluate(() => window.cc.config.set({ defaultHarness: undefined, opencodeBinary: undefined }));
-    openCode.cleanup();
-    rmSync(projectDir, { recursive: true, force: true });
-  }
-});
-
-test.describe('Quick Agent OpenCode startup warmup', () => {
-  const openCode = makeRefreshableFakeOpenCodeBinary();
+// Deterministic coverage: the CLI picker reads native roles from the ACP
+// session-mode list — the SAME source as the Modern composer. The fake ACP
+// agent (shimmed as `opencode` on PATH) advertises a `mode` configOption on
+// `session/new`; enabling `FAKE_ACP_MODE_CONFIG` makes it offer Build/Plan.
+test.describe('OpenCode native-role picker (ACP mode parity)', () => {
   test.use({
-    initialConfig: {
-      harnessOpenCodeEnabled: true,
-      defaultHarness: 'opencode',
-      opencodeBinary: openCode.path
+    launchEnv: {
+      PATH: `${fixtureBin}${delimiter}${process.env.PATH ?? ''}`,
+      FAKE_ACP_MODEL_CONFIG: '1',
+      FAKE_ACP_MODE_CONFIG: '1'
     }
   });
 
-  test('picker uses startup-prewarmed catalog without a second discovery', async ({ app }) => {
+  test('lists the session-advertised ACP modes with plain names, matching Modern', async ({ app }) => {
     const { window } = app;
+    const projectDir = mkdtempSync(join(tmpdir(), 'zcc-opencode-picker-'));
+    const projectName = basename(projectDir);
+    let projectId: string | null = null;
+
     try {
-      await expect.poll(() => existsSync(openCode.catalogCalls)
-        ? readFileSync(openCode.catalogCalls, 'utf8').trim().split('\n').filter(Boolean).length
-        : 0).toBe(1);
+      await window.evaluate(() => window.cc.config.set({
+        harnessOpenCodeEnabled: true,
+        defaultHarness: 'opencode',
+        opencodeBinary: undefined
+      }));
+      await window.getByRole('link', { name: 'Settings' }).click();
+      await window.locator('.settings-section-item').filter({ hasText: 'Code Harness' }).click();
+      const openCodeSettings = window.locator('#settings-anchor-harness-opencode');
+      await expect(openCodeSettings.locator('.opener-row-status')).toHaveClass(/opener-row-status--ok/);
+
+      projectId = await window.evaluate(async (path) => {
+        const result = await window.cc.projects.add(path);
+        return (result as { value: { id: string } }).value.id;
+      }, projectDir);
       await goToAgents(window);
       const modal = await openLegacyAgentLauncher(window);
+      await selectTargetProject(window, modal, projectName);
       await selectHarness(window, modal, 'acp-opencode');
-      expect(await readRoleLabels(window, modal, 30_000)).toEqual([
-        'build [Accept Edits, Autonomous]',
-        'plan [Plan]'
-      ]);
-      expect(readFileSync(openCode.catalogCalls, 'utf8').trim().split('\n')).toHaveLength(1);
+
+      // Plain names, no `[state]` decoration — identical to the Modern list.
+      expect(await readRoleLabels(window, modal, 30_000)).toEqual(['Build', 'Plan']);
+      await selectRole(window, modal, 'plan');
+      await expect(roleTrigger(modal)).toContainText('Plan');
+      // Refresh re-fetches the provider catalog; the fake advertises the same set.
+      await refreshRoles(window, modal);
+      expect(await readRoleLabels(window, modal)).toEqual(['Build', 'Plan']);
     } finally {
-      openCode.cleanup();
+      if (projectId) await window.evaluate((id) => window.cc.projects.remove(id), projectId);
+      await window.evaluate(() => window.cc.config.set({
+        defaultHarness: undefined,
+        opencodeBinary: undefined
+      }));
+      rmSync(projectDir, { recursive: true, force: true });
     }
   });
 });
@@ -241,16 +175,15 @@ test('real OpenCode CLI agents become selectable through Electron UI', async ({ 
     await selectTargetProject(window, modal, projectName);
     await selectHarness(window, modal, 'acp-opencode');
 
+    // Native roles are the real opencode ACP session modes — plain names,
+    // identical to the Modern composer. A mode that maps to a subagent is still
+    // offered here even though the legacy CLI picker used to filter it out.
     const labels = await readRoleLabels(window, modal, 30_000);
-    expect(labels).toEqual(expect.arrayContaining([
-      'build [Accept Edits, Autonomous]',
-      'plan [Plan]',
-      'doc-vault',
-      'test-primary'
-    ]));
-    expect(labels).not.toEqual(expect.arrayContaining(['compaction', 'summary', 'title', 'test-subagent']));
+    expect(labels).toEqual(expect.arrayContaining(['build', 'plan']));
+    // No `[state]` decoration — plain names only.
+    expect(labels.some((label) => label.includes('['))).toBe(false);
     await selectRole(window, modal, 'plan');
-    await expect(roleTrigger(modal)).toContainText('plan [Plan]');
+    await expect(roleTrigger(modal)).toContainText('plan');
   } finally {
     if (projectId) await window.evaluate((id) => window.cc.projects.remove(id), projectId);
     rmSync(projectDir, { recursive: true, force: true });
@@ -286,7 +219,7 @@ test.describe('real OpenCode home integration', () => {
       await goToAgents(window);
       const modal = await openLegacyAgentLauncher(window);
       await selectTargetProject(window, modal, projectName);
-    await selectHarness(window, modal, 'acp-opencode');
+      await selectHarness(window, modal, 'acp-opencode');
 
       await expect(roleTrigger(modal)).toBeVisible({ timeout: 30_000 }).catch(async (error) => {
         await events.poll();
@@ -296,15 +229,12 @@ test.describe('real OpenCode home integration', () => {
         throw new Error(`${error.message}\nRelevant main logs:\n${JSON.stringify(harnessLogs, null, 2)}`);
       });
       const options = await readRoleLabels(window, modal, 30_000);
-      expect(options).toEqual(expect.arrayContaining([
-        'build [Accept Edits, Autonomous]',
-        'plan [Plan]'
-      ]));
-      expect(options.some((option) =>
-        !option.startsWith('build') && !option.startsWith('plan'))).toBe(true);
-      expect(options).not.toEqual(expect.arrayContaining(['compaction', 'summary', 'title', 'test-subagent']));
+      expect(options).toEqual(expect.arrayContaining(['build', 'plan']));
+      // Plain names, and at least one project-specific mode beyond build/plan.
+      expect(options.some((label) => label.includes('['))).toBe(false);
+      expect(options.some((label) => label !== 'build' && label !== 'plan')).toBe(true);
       await selectRole(window, modal, 'plan');
-      await expect(roleTrigger(modal)).toContainText('plan [Plan]');
+      await expect(roleTrigger(modal)).toContainText('plan');
     } finally {
       if (projectId) await window.evaluate((id) => window.cc.projects.remove(id), projectId);
     }

@@ -385,7 +385,7 @@ describe('launchTeam', () => {
         byAdapter: {
           opencode: {
             providerTargetId: 'openai',
-            modelTargetId: 'aisuite/gpt-5.6-terra',
+            modelTargetId: 'llmgw/gpt-5.6-terra-1M',
             executionState: 'autonomous'
           }
         }

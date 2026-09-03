@@ -230,6 +230,16 @@ export interface LaunchProvider {
   /** Dynamic role catalogs are revalidated in main before launch. */
   acceptsDynamicRoleTargets?: boolean;
 
+  /**
+   * A resolved native role pins its OWN model, so any host-injected `--model`
+   * (from per-tab / persona / project / global routing) must be SUPPRESSED when
+   * a role target resolves — forcing a catalog model alongside `--agent <role>`
+   * overrides the agent's pin and dies with a provider-model-not-found error on
+   * any install whose model inventory differs from the shipped snapshot. Default
+   * false; only OpenCode overrides. See CLAUDE.md OpenCode coupling note.
+   */
+  readonly nativeRolePinsModel?: boolean;
+
   /** Return the adapter-owned evidence identity for a discovered role target. */
   dynamicRoleEvidenceTarget?(target: import('@zana-ai/zcc-domain/harness-adapter').HarnessRoleTarget, installedVersion: string): import('@zana-ai/zcc-domain/harness-adapter').HarnessRoleTarget;
 

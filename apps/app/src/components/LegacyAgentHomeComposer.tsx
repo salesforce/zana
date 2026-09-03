@@ -10,13 +10,7 @@ import type {
   Project,
   TerminalSession
 } from '@zana-ai/zcc-domain/product';
-import {
-  buildLaunchArgs,
-  discoveryForOpenCodePicker,
-  reconcileOpenCodeRole,
-  resolveOpenCodeRoleOptions,
-  type OpenCodeAgentDiscoverySnapshot
-} from './AgentLauncher.js';
+import { buildLaunchArgs } from './AgentLauncher.js';
 import { EnvironmentPicker, defaultWorkspaceChoice, type WorkspacePickerValue } from './EnvironmentPicker.js';
 import {
   CommandComposer,
@@ -57,6 +51,7 @@ import {
   ensureThreadProviderModels,
   getThreadModelCatalog,
   prefetchThreadModelCatalog,
+  reloadThreadProviderModels,
   subscribeThreadModelCatalog
 } from './thread/pickers/thread-model-catalog.js';
 
@@ -97,14 +92,11 @@ export function LegacyAgentHomeComposer({
   const [selectionMessage, setSelectionMessage] = useState<string | null>(null);
   const [selectionProvenance, setSelectionProvenance] = useState<'automatic' | 'explicit'>('automatic');
   const [modelId, setModelId] = useState('');
-  // OpenCode native-role selection (`--agent <role>`). Roles are LIVE-discovered
-  // from the project's `opencode agent list` (filtered to directly-launchable
-  // primaries); the snapshot is keyed by (project, profile) and only refreshed on
-  // explicit request. Non-opencode harnesses have no role axis.
+  // OpenCode native-role selection (`--agent <role>`). Roles come from the SAME
+  // ACP session-mode list the Modern composer uses (`catalogEntry.acpMode`), so
+  // both surfaces show an identical, plain-named list. Non-opencode harnesses
+  // have no role axis.
   const [roleTargetId, setRoleTargetId] = useState<string | undefined>(undefined);
-  const [openCodeAgentDiscoverySnapshot, setOpenCodeAgentDiscoverySnapshot] =
-    useState<OpenCodeAgentDiscoverySnapshot | null>(null);
-  const [agentDescriptorsRefresh, setAgentDescriptorsRefresh] = useState(0);
   const [descriptors, setDescriptors] = useState<HarnessAdapterDescriptor[]>([]);
   const [descriptorsLoaded, setDescriptorsLoaded] = useState(false);
   const [launching, setLaunching] = useState(false);
@@ -151,28 +143,9 @@ export function LegacyAgentHomeComposer({
     const preferred = (rows.find((row) => row.isDefault) ?? rows[0])?.model;
     return models.find((model) => model.id === preferred)?.id ?? models[0].id;
   }, [models, selectedProviderId]);
-  // Concrete profile the launch would use — needed to key OpenCode role discovery
-  // the same way the launch does (automatic → seeded default, explicit → harness/
-  // family default).
-  const resolvedProfile = selectionProvenance === 'automatic'
-    ? automaticProfile ?? undefined
-    : selectedHarness?.defaultProfileId ?? (familyId ? PROFILE_BY_FAMILY[familyId] : undefined);
-  const openCodeDiscoveryProjectId =
-    familyId === 'opencode'
-    && selectedHarness?.availability.enabled
-    && selectedHarness?.availability.installed
-    && project
-    && !project.remote
-      ? project.id
-      : undefined;
-  const openCodeDiscoveryProfile = openCodeDiscoveryProjectId ? resolvedProfile : undefined;
-  const openCodeAgentDiscovery = discoveryForOpenCodePicker(
-    openCodeDiscoveryProjectId,
-    openCodeDiscoveryProfile,
-    openCodeAgentDiscoverySnapshot
-  );
-  const roleOptions = familyId === 'opencode' && openCodeAgentDiscovery.status !== 'loading'
-    ? resolveOpenCodeRoleOptions(selectedHarness?.targets?.roles ?? [], openCodeAgentDiscovery)
+  // OpenCode native roles = the ACP session-mode list (identical to Modern).
+  const roleOptions = familyId === 'opencode'
+    ? catalogEntry?.acpMode?.options ?? []
     : [];
 
   const field = useComposerPromptField({
@@ -201,48 +174,24 @@ export function LegacyAgentHomeComposer({
     if (selectedProviderId) void ensureThreadProviderModels(selectedProviderId);
   }, [selectedProviderId]);
 
-  // Live OpenCode role discovery, keyed by (project, profile). Refreshed only on
-  // explicit request (`agentDescriptorsRefresh`); a stale selection that the
-  // freshly-discovered set no longer offers is dropped (reconcileOpenCodeRole).
+  // Keep the role pick coherent with the ACP mode list (same discipline as the
+  // Modern composer): seed from `acpMode.currentValue` when unset, and drop a
+  // selection the freshly-loaded list no longer offers.
   useEffect(() => {
-    let cancelled = false;
-    if (!openCodeDiscoveryProjectId || !openCodeDiscoveryProfile) {
-      return () => {
-        cancelled = true;
-      };
+    if (familyId !== 'opencode') {
+      if (roleTargetId) setRoleTargetId(undefined);
+      return;
     }
-    setOpenCodeAgentDiscoverySnapshot({
-      projectId: openCodeDiscoveryProjectId,
-      profile: openCodeDiscoveryProfile,
-      discovery: { status: 'loading' }
-    });
-    void product.harness.agentDescriptors(
-      openCodeDiscoveryProjectId,
-      openCodeDiscoveryProfile,
-      agentDescriptorsRefresh > 0
-    )
-      .then((discovery) => {
-        if (cancelled) return;
-        setOpenCodeAgentDiscoverySnapshot({
-          projectId: openCodeDiscoveryProjectId,
-          profile: openCodeDiscoveryProfile,
-          discovery
-        });
-        setRoleTargetId((current) => reconcileOpenCodeRole(current, discovery));
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setOpenCodeAgentDiscoverySnapshot({
-            projectId: openCodeDiscoveryProjectId,
-            profile: openCodeDiscoveryProfile,
-            discovery: { status: 'failure' }
-          });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [openCodeDiscoveryProjectId, openCodeDiscoveryProfile, agentDescriptorsRefresh]);
+    const options = catalogEntry?.acpMode?.options;
+    if (!options) return;
+    if (roleTargetId && !options.some((option) => option.value === roleTargetId)) {
+      setRoleTargetId(catalogEntry?.acpMode?.currentValue);
+      return;
+    }
+    if (!roleTargetId && catalogEntry?.acpMode?.currentValue) {
+      setRoleTargetId(catalogEntry.acpMode.currentValue);
+    }
+  }, [familyId, catalogEntry?.acpMode, roleTargetId]);
 
   useEffect(() => {
     const generation = ++descriptorGeneration.current;
@@ -422,13 +371,20 @@ export function LegacyAgentHomeComposer({
       const validModelId = models.some((model) => model.id === modelId) ? modelId : '';
       const validRoleId = familyId === 'opencode'
         && roleTargetId
-        && roleOptions.some((role) => role.id === roleTargetId)
+        && roleOptions.some((role) => role.value === roleTargetId)
         ? roleTargetId
         : '';
-      const adapterEntry = {
-        ...(validModelId ? { modelTargetId: validModelId } : {}),
-        ...(validRoleId ? { roleTargetId: validRoleId } : {})
-      };
+      // A picked OpenCode native agent pins its OWN model. Forcing a catalog
+      // `--model` alongside `--agent <role>` overrides that pin and dies with
+      // ProviderModelNotFoundError on any install whose provider inventory
+      // differs from the static `aisuite/*` snapshot (e.g. an `llmgw`-backed
+      // setup) — the exit-64 dead-session bug. So a native role and a forced
+      // model are mutually exclusive here: the role wins and carries no model.
+      const adapterEntry = validRoleId
+        ? { roleTargetId: validRoleId }
+        : validModelId
+          ? { modelTargetId: validModelId }
+          : {};
       const harnessRouting: HarnessModelRoutingV1 | undefined = Object.keys(adapterEntry).length
         ? { schemaVersion: 1, byAdapter: { [familyId]: adapterEntry } }
         : undefined;
@@ -556,9 +512,11 @@ export function LegacyAgentHomeComposer({
                 {familyId === 'opencode' ? (
                   <NativeRolePicker
                     value={roleTargetId}
-                    options={roleOptions.map((role) => ({ value: role.id, name: role.label }))}
+                    options={roleOptions.map((role) => ({ value: role.value, name: role.name }))}
                     onChange={setRoleTargetId}
-                    onRefresh={() => setAgentDescriptorsRefresh((value) => value + 1)}
+                    onRefresh={() => {
+                      if (selectedProviderId) void reloadThreadProviderModels(selectedProviderId);
+                    }}
                   />
                 ) : null}
               </div>

@@ -758,6 +758,11 @@ export class PtyManager extends EventEmitter {
       extraArgs: preCleanedExtra,
       scope: 'local'
     });
+    // A resolved native role pins its own model — suppress any host-injected
+    // `--model` (per-tab / persona / project / global routing) so the forced
+    // catalog model can't override the agent's pin (ProviderModelNotFoundError /
+    // exit 64). See CLAUDE.md OpenCode coupling note + provider.nativeRolePinsModel.
+    const suppressModelForRole = Boolean(roleTarget.targetId && provider.nativeRolePinsModel);
     const metadata = provider.launchMetadata({
       model: modelTarget,
       role: roleTarget,
@@ -1164,7 +1169,7 @@ export class PtyManager extends EventEmitter {
       mergeAllowedTools(
         [
           ...args,
-          ...(!modelTarget.structuredSelected ? (modelTarget.contribution.args ?? []) : []),
+          ...(!suppressModelForRole && !modelTarget.structuredSelected ? (modelTarget.contribution.args ?? []) : []),
           ...sessionIdArgs,
           ...claudeMcpArgs,
            ...(providerIntegration.mcpArgs ?? []),
@@ -1173,7 +1178,7 @@ export class PtyManager extends EventEmitter {
            ...(providerIntegration.authArgs ?? []),
           ...psArgs,
           ...personaArgs,
-          ...(modelTarget.structuredSelected ? (modelTarget.contribution.args ?? []) : []),
+          ...(!suppressModelForRole && modelTarget.structuredSelected ? (modelTarget.contribution.args ?? []) : []),
           ...(roleTarget.contribution.args ?? []),
           ...(execution.contribution.args ?? []),
           ...autonomousArgs,

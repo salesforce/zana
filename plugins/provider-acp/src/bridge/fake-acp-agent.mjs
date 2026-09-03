@@ -29,6 +29,9 @@
  * - FAKE_ACP_ACCEPT_NATIVE_REASONING=1
  *                            → accept reasoning_effort config updates without
  *                              advertising a thought_level config option
+ * - FAKE_ACP_MODE_OPTIONS    → comma-separated `value:Name` pairs overriding the
+ *                              default build/plan `mode` configOptions (lets a
+ *                              spec advertise a made-up agent as a session mode)
  * - FAKE_ACP_SET_CONFIG_MODEL_ERROR=1
  *                            → fail session/set_config_option for model values
  * - FAKE_ACP_SET_CONFIG_FAST_ERROR=1
@@ -75,6 +78,14 @@ const acceptNativeReasoning =
 const setConfigModelError = process.env.FAKE_ACP_SET_CONFIG_MODEL_ERROR === "1";
 const setConfigFastError = process.env.FAKE_ACP_SET_CONFIG_FAST_ERROR === "1";
 const modeConfig = process.env.FAKE_ACP_MODE_CONFIG === "1";
+const modeOptions = (process.env.FAKE_ACP_MODE_OPTIONS ?? "build:Build,plan:Plan")
+  .split(",")
+  .map((pair) => pair.trim())
+  .filter(Boolean)
+  .map((pair) => {
+    const [value, name] = pair.split(":");
+    return { value, name: name ?? value };
+  });
 const cursorParameterizedModels =
   process.env.FAKE_ACP_CURSOR_PARAMETERIZED_MODELS === "1";
 const requestLog = process.env.FAKE_ACP_REQUEST_LOG;
@@ -111,7 +122,7 @@ let nextAgentRequestId = 1000;
 let selectedModel = "fake/default";
 let selectedEffort = "none";
 let selectedFast = process.env.FAKE_ACP_INITIAL_FAST ?? "false";
-let selectedMode = "build";
+let selectedMode = modeOptions[0]?.value ?? "build";
 let clientSupportsParameterizedModels = false;
 let authenticatedMethod = null;
 let activeSessionId = sessionId;
@@ -287,10 +298,7 @@ function configOptions() {
       category: "mode",
       type: "select",
       currentValue: selectedMode,
-      options: [
-        { value: "build", name: "Build" },
-        { value: "plan", name: "Plan" },
-      ],
+      options: modeOptions,
     });
   }
   const effort = effortOptionForModel(selectedModel);
@@ -699,7 +707,7 @@ async function handleMessage(message) {
         return;
       }
       if (configId === "mode" && modeConfig) {
-        if (value !== "build" && value !== "plan") {
+        if (!modeOptions.some((option) => option.value === value)) {
           send({
             jsonrpc: "2.0",
             id: message.id,

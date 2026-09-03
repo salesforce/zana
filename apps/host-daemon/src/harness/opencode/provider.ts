@@ -73,12 +73,12 @@ import { cleanExtraArgs } from '../argv-utils.js';
 import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from '../target-resolution.js';
 
 const OPENCODE_MIN_VERSION = '1.18.0';
-const OPENCODE_REVIEWED_AT = '2026-08-04';
+const OPENCODE_REVIEWED_AT = '2026-09-02';
 const openCodeEvidence = (id: string, observed: string, scope: 'local' | 'remote' = 'local') => ({
   id,
   versionRange: OPENCODE_MIN_VERSION,
   scope,
-  probe: 'opencode --version; opencode --help; opencode run --help; opencode models aisuite',
+  probe: 'opencode --version; opencode --help; opencode run --help; opencode models',
   observed: `Minimum supported/reviewed CLI floor: ${OPENCODE_MIN_VERSION}. ${observed}`,
   reviewedAt: OPENCODE_REVIEWED_AT
 });
@@ -108,25 +108,27 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
         { id: 'build', label: 'Build', executionStates: ['accept-edits', 'autonomous'], scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
         { id: 'plan', label: 'Plan', executionStates: ['plan'], scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION }
       ],
+      // One opencode provider namespace (`llmgw/…`) serves every model; the
+      // `provider` field groups by underlying vendor for the picker/provider
+      // filter only — it never reconstructs the `--model` id (the full id ships).
       providers: [
         { id: 'openai', label: 'OpenAI' },
-        { id: 'anthropic', label: 'Anthropic' },
-        { id: 'google', label: 'Google' }
+        { id: 'google', label: 'Google' },
+        { id: 'xai', label: 'xAI' }
       ],
       providerModelRelationship: 'combined-provider-model',
       models: [
-        { id: 'aisuite/gpt-5.6-luna', label: 'Luna', provider: 'openai', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'aisuite/gpt-5.6-terra', label: 'Terra', provider: 'openai', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'aisuite/gpt-5.6-sol', label: 'Sol', provider: 'openai', level: 'high', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'aisuite/us.anthropic.claude-haiku-4-5-20251001-v1:0', label: 'Haiku', provider: 'anthropic', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'aisuite/us.anthropic.claude-sonnet-5', label: 'Sonnet', provider: 'anthropic', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'aisuite/gemini-3.1-pro-preview', label: 'Gemini Pro', provider: 'google', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'aisuite/gemini-3.5-flash', label: 'Gemini Flash', provider: 'google', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION }
+        { id: 'llmgw/gpt-5.6-luna-1M', label: 'Luna', provider: 'openai', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/gpt-5.6-terra-1M', label: 'Terra', provider: 'openai', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/gpt-5.6-sol-1M', label: 'Sol', provider: 'openai', level: 'high', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/gemini-3.1-pro-preview', label: 'Gemini Pro', provider: 'google', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/gemini-3.5-flash', label: 'Gemini Flash', provider: 'google', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/grok-4.6', label: 'Grok', provider: 'xai', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION }
       ],
       modelLevelMapping: {
-        low: 'aisuite/gpt-5.6-luna',
-        medium: 'aisuite/gpt-5.6-terra',
-        high: 'aisuite/gpt-5.6-sol',
+        low: 'llmgw/gpt-5.6-luna-1M',
+        medium: 'llmgw/gpt-5.6-terra-1M',
+        high: 'llmgw/gpt-5.6-sol-1M',
         'extra-high': undefined
       },
       executionStateMapping: {
@@ -165,13 +167,12 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
     }
   },
   evidence: [
-    openCodeEvidence('aisuite/gpt-5.6-luna', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
-    openCodeEvidence('aisuite/gpt-5.6-terra', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
-    openCodeEvidence('aisuite/gpt-5.6-sol', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
-    openCodeEvidence('aisuite/us.anthropic.claude-haiku-4-5-20251001-v1:0', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
-    openCodeEvidence('aisuite/us.anthropic.claude-sonnet-5', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
-    openCodeEvidence('aisuite/gemini-3.1-pro-preview', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
-    openCodeEvidence('aisuite/gemini-3.5-flash', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
+    openCodeEvidence('llmgw/gpt-5.6-luna-1M', 'Model appears in opencode models and --model accepts provider/model IDs.'),
+    openCodeEvidence('llmgw/gpt-5.6-terra-1M', 'Model appears in opencode models and --model accepts provider/model IDs.'),
+    openCodeEvidence('llmgw/gpt-5.6-sol-1M', 'Model appears in opencode models and --model accepts provider/model IDs.'),
+    openCodeEvidence('llmgw/gemini-3.1-pro-preview', 'Model appears in opencode models and --model accepts provider/model IDs.'),
+    openCodeEvidence('llmgw/gemini-3.5-flash', 'Model appears in opencode models and --model accepts provider/model IDs.'),
+    openCodeEvidence('llmgw/grok-4.6', 'Model appears in opencode models and --model accepts provider/model IDs.'),
     openCodeEvidence('build', 'Built-in build role appears in effective opencode agent list output.'),
     openCodeEvidence('plan', 'Built-in plan role appears in effective opencode agent list output.'),
     openCodeEvidence('opencode.role.discovery', 'Project-scoped opencode agent list supplies exact effective role names before launch.')
@@ -450,6 +451,11 @@ export class OpenCodeProvider extends BaseLaunchProvider {
   readonly id = 'opencode';
   readonly adapter = OPENCODE_ADAPTER;
   readonly acceptsDynamicRoleTargets = true;
+  // An OpenCode `--agent <role>` pins the agent's own model; a forced catalog
+  // `--model` overrides that pin and dies with ProviderModelNotFoundError (dead
+  // session / exit 64) on any install whose provider inventory differs from the
+  // shipped snapshot. So a resolved native role suppresses the injected model.
+  readonly nativeRolePinsModel = true;
 
   dynamicRoleEvidenceTarget(target: { id: string; label: string; scope: readonly ('local' | 'remote')[] }, _installedVersion: string) {
     return { ...target, id: 'opencode.role.discovery', scope: [...target.scope], evidenceVersion: OPENCODE_MIN_VERSION };
@@ -667,10 +673,12 @@ export class OpenCodeProvider extends BaseLaunchProvider {
     });
     // Remote tmux inherits its server's stale PATH. A pane-local login shell loads
     // the remote user's CLI installation without mutating that shared environment.
+    // A native role pins its own model — drop any injected `--model` (nativeRolePinsModel).
+    const suppressModelForRole = Boolean(roleTarget.targetId && this.nativeRolePinsModel);
     const argv = [
       'opencode',
       ...baseArgs,
-      ...(modelTarget.contribution.args || []),
+      ...(suppressModelForRole ? [] : (modelTarget.contribution.args || [])),
       ...(roleTarget.contribution.args || []),
       ...(execution.contribution.args || []),
       ...remoteExtra

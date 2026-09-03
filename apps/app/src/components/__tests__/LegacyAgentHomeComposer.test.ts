@@ -52,14 +52,32 @@ describe('LegacyAgentHomeComposer', () => {
     expect(source).toContain('rewritePromptPaths(promptText, uploaded)');
   });
 
-  it('discovers OpenCode roles through project-id IPC once, refreshing only on explicit request', () => {
+  it('sources OpenCode roles from the SAME ACP mode list as the Modern composer', () => {
     const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('product.harness.agentDescriptors(\n      openCodeDiscoveryProjectId,\n      openCodeDiscoveryProfile,\n      agentDescriptorsRefresh > 0\n    )');
-    expect(source).toContain('setAgentDescriptorsRefresh((value) => value + 1)');
-    expect(source).toContain('discoveryForOpenCodePicker');
-    expect(source).toContain('resolveOpenCodeRoleOptions');
-    expect(source).toContain('setRoleTargetId((current) => reconcileOpenCodeRole(current, discovery));');
-    expect(source).toMatch(/return \(\) => \{\s*cancelled = true;\s*\};/);
+    // Full parity: the CLI picker reads the shared ACP session-mode list off the
+    // model catalog rather than running its own `opencode agent list` discovery.
+    expect(source).toContain("familyId === 'opencode'\n    ? catalogEntry?.acpMode?.options ?? []");
+    // The divergent PTY-discovery path is gone.
+    expect(source).not.toContain('product.harness.agentDescriptors');
+    expect(source).not.toContain('discoveryForOpenCodePicker');
+    expect(source).not.toContain('resolveOpenCodeRoleOptions');
+    expect(source).not.toContain('reconcileOpenCodeRole');
+    // Refresh re-fetches the provider's catalog entry (same as Modern's refresh).
+    expect(source).toContain('reloadThreadProviderModels(selectedProviderId)');
+    // Role selection stays coherent with the loaded mode list.
+    expect(source).toContain('setRoleTargetId(catalogEntry.acpMode.currentValue)');
+  });
+
+  it('drops the forced catalog model when a native OpenCode role is picked', () => {
+    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    // A native agent pins its own model; forcing an `aisuite/*` catalog `--model`
+    // alongside `--agent <role>` breaks with ProviderModelNotFoundError on any
+    // install whose provider inventory differs from the shipped snapshot. Role and
+    // forced model are therefore mutually exclusive — the role wins, no model.
+    expect(source).toContain('const adapterEntry = validRoleId\n        ? { roleTargetId: validRoleId }');
+    expect(source).toContain('        : validModelId\n          ? { modelTargetId: validModelId }\n          : {};');
+    // The old shape spread BOTH selectors into the adapter entry.
+    expect(source).not.toContain('...(validRoleId ? { roleTargetId: validRoleId } : {})');
   });
 
   it('offers the OpenCode native role via a popover picker only for the opencode family', () => {

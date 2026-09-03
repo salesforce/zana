@@ -4,14 +4,9 @@ import { createPortal } from 'react-dom';
 import { useShallow } from 'zustand/react/shallow';
 import { Terminal as TerminalIcon } from 'lucide-react';
 import type {
-  LaunchProfileId,
   Project,
   TerminalSession
 } from '@zana-ai/zcc-domain/product';
-import type {
-  HarnessAgentDiscoveryResult,
-  HarnessRoleTarget,
-} from '@zana-ai/zcc-domain/harness-adapter';
 import { useData, useTeams } from '../store.js';
 import { profileIcon } from '../lib/profileIcon.js';
 import { AutonomousTeamComposer } from './AutonomousTeamComposer.js';
@@ -42,53 +37,6 @@ import { useDialogFocusTrap } from '../hooks/useDialogFocusTrap.js';
  * Agent-only by design: shell launches live in the Terminals view (the TabBar
  * "+" spawns a shell directly), so "New agent" never offers a non-agent option.
  */
-
-export type OpenCodeAgentDiscoveryState = HarnessAgentDiscoveryResult | { status: 'loading' };
-export type OpenCodeAgentDiscoverySnapshot = {
-  projectId: string;
-  profile: LaunchProfileId;
-  discovery: OpenCodeAgentDiscoveryState;
-};
-
-export function discoveryForOpenCodePicker(
-  projectId: string | undefined,
-  profile: LaunchProfileId | undefined,
-  snapshot: OpenCodeAgentDiscoverySnapshot | null
-): OpenCodeAgentDiscoveryState {
-  if (!projectId || !profile) return { status: 'failure' };
-  return snapshot?.projectId === projectId && snapshot.profile === profile
-    ? snapshot.discovery
-    : { status: 'loading' };
-}
-
-export function resolveOpenCodeRoleOptions(
-  staticRoles: readonly HarnessRoleTarget[],
-  discovery: HarnessAgentDiscoveryResult
-): readonly HarnessRoleTarget[] {
-  if (discovery.status === 'failure') return [];
-  const knownRoles = new Map(staticRoles.map((role) => [role.id, role]));
-  return discovery.descriptors
-    .filter(({ directLaunchAllowed }) => directLaunchAllowed)
-    .map(({ id, label }) => {
-      const known = knownRoles.get(id);
-      const stateLabel = known?.executionStates?.map(portableLabel).join(', ');
-      return { id, label: stateLabel ? `${label} [${stateLabel}]` : label, scope: ['local'] };
-    });
-}
-
-export function reconcileOpenCodeRole(
-  selectedRole: string | undefined,
-  discovery: HarnessAgentDiscoveryResult
-): string | undefined {
-  if (!selectedRole || discovery.status === 'failure') return selectedRole;
-  return discovery.descriptors.some(({ id, directLaunchAllowed }) => id === selectedRole && directLaunchAllowed)
-    ? selectedRole
-    : undefined;
-}
-
-function portableLabel(value: string): string {
-  return value.split('-').map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
-}
 
 /**
  * Build raw prompt intent and title for a launch. Main converts `prompt` to

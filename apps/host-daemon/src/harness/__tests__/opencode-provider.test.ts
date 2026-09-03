@@ -415,22 +415,20 @@ describe('OpenCodeProvider', () => {
   it('exposes every configured OpenCode model target for verified local launches only', () => {
     const models = p.adapter.descriptor.targets?.models ?? [];
     expect(models.map((model) => model.id)).toEqual([
-      'aisuite/gpt-5.6-luna',
-      'aisuite/gpt-5.6-terra',
-      'aisuite/gpt-5.6-sol',
-      'aisuite/us.anthropic.claude-haiku-4-5-20251001-v1:0',
-      'aisuite/us.anthropic.claude-sonnet-5',
-      'aisuite/gemini-3.1-pro-preview',
-      'aisuite/gemini-3.5-flash'
+      'llmgw/gpt-5.6-luna-1M',
+      'llmgw/gpt-5.6-terra-1M',
+      'llmgw/gpt-5.6-sol-1M',
+      'llmgw/gemini-3.1-pro-preview',
+      'llmgw/gemini-3.5-flash',
+      'llmgw/grok-4.6'
     ]);
     expect(Object.fromEntries(models.map((model) => [model.id, model.level]))).toMatchObject({
-      'aisuite/gpt-5.6-luna': 'low',
-      'aisuite/gpt-5.6-terra': 'medium',
-      'aisuite/gpt-5.6-sol': 'high',
-      'aisuite/us.anthropic.claude-haiku-4-5-20251001-v1:0': 'low',
-      'aisuite/us.anthropic.claude-sonnet-5': 'medium',
-      'aisuite/gemini-3.1-pro-preview': 'medium',
-      'aisuite/gemini-3.5-flash': 'low'
+      'llmgw/gpt-5.6-luna-1M': 'low',
+      'llmgw/gpt-5.6-terra-1M': 'medium',
+      'llmgw/gpt-5.6-sol-1M': 'high',
+      'llmgw/gemini-3.1-pro-preview': 'medium',
+      'llmgw/gemini-3.5-flash': 'low',
+      'llmgw/grok-4.6': 'medium'
     });
     expect(models.every((model) => model.scope.length === 1 && model.scope[0] === 'local')).toBe(true);
     expect(models.every((model) => model.evidenceVersion === '1.18.0')).toBe(true);
@@ -445,10 +443,10 @@ describe('OpenCodeProvider', () => {
 
   it('maps dynamic roles to explicit reviewed discovery evidence', () => {
     expect(p.dynamicRoleEvidenceTarget(
-      { id: 'doc-vault', label: 'doc-vault', scope: ['local'] },
+      { id: 'custom-reviewer', label: 'custom-reviewer', scope: ['local'] },
       '1.18.10'
     )).toEqual({
-      id: 'opencode.role.discovery', label: 'doc-vault', scope: ['local'], evidenceVersion: '1.18.0'
+      id: 'opencode.role.discovery', label: 'custom-reviewer', scope: ['local'], evidenceVersion: '1.18.0'
     });
   });
 
@@ -581,7 +579,7 @@ describe('OpenCodeProvider', () => {
         harnessRouting: {
           schemaVersion: 1,
           byAdapter: {
-            opencode: { modelTargetId: 'aisuite/gpt-5.6-luna', executionState: 'plan' }
+            opencode: { modelTargetId: 'llmgw/gpt-5.6-luna-1M', executionState: 'plan' }
           }
         }
       },
@@ -590,7 +588,7 @@ describe('OpenCodeProvider', () => {
         harnessRouting: {
           schemaVersion: 1,
           byAdapter: {
-            opencode: { modelTargetId: 'aisuite/gpt-5.6-terra', executionState: 'interactive' }
+            opencode: { modelTargetId: 'llmgw/gpt-5.6-terra-1M', executionState: 'interactive' }
           }
         }
       },
@@ -598,7 +596,7 @@ describe('OpenCodeProvider', () => {
       harnessRouting: {
         schemaVersion: 1,
         byAdapter: {
-          opencode: { modelTargetId: 'aisuite/gemini-3.5-flash', executionState: 'autonomous' }
+          opencode: { modelTargetId: 'llmgw/gemini-3.5-flash', executionState: 'autonomous' }
         }
       }
     })).toThrow('model target is unavailable for remote launches');
@@ -698,8 +696,10 @@ describe.runIf(process.env.ZCC_LIVE_OPENCODE === '1')('OpenCodeProvider live dis
     }, { bypassCache: true });
     expect(result).toMatchObject({ status: 'success' });
     if (result.status === 'success') {
+      // Assert only the built-in primaries every install has — never a
+      // developer-local custom agent name (kept out of the committed suite).
       expect(result.descriptors.filter(({ directLaunchAllowed }) => directLaunchAllowed).map(({ id }) => id))
-        .toEqual(expect.arrayContaining(['build', 'plan', 'doc-vault', 'test-primary']));
+        .toEqual(expect.arrayContaining(['build', 'plan']));
       expect(result.descriptors.filter(({ hidden }) => hidden).map(({ id }) => id))
         .toEqual(expect.arrayContaining(['compaction', 'summary', 'title']));
     }

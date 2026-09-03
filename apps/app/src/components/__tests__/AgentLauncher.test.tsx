@@ -2,12 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { executionMappingOptions } from '@zana-ai/zcc-domain/harness-adapter';
 import { appendAttachmentContext, mergeAttachmentPaths } from '../../lib/attachments.js';
-import {
-  buildLaunchArgs,
-  discoveryForOpenCodePicker,
-  resolveOpenCodeRoleOptions,
-  reconcileOpenCodeRole
-} from '../AgentLauncher.js';
+import { buildLaunchArgs } from '../AgentLauncher.js';
 
 /**
  * `buildLaunchArgs` carries raw prompt intent to main, which resolves the
@@ -116,49 +111,7 @@ describe('launcher presentation', () => {
   });
 });
 
-describe('OpenCode project agent discovery', () => {
-  it('shows loading instead of another project or profile discovery snapshot', () => {
-    expect(discoveryForOpenCodePicker('project-b', 'opencode', {
-      projectId: 'project-a',
-      profile: 'opencode',
-      discovery: { status: 'success', descriptors: [
-        { id: 'prior-role', label: 'prior-role', mode: 'primary', hidden: false, directLaunchAllowed: true }
-      ] }
-    })).toEqual({ status: 'loading' });
-    expect(discoveryForOpenCodePicker('project-b', 'opencode', {
-      projectId: 'project-b',
-      profile: 'opencode-resume',
-      discovery: { status: 'failure' }
-    })).toEqual({ status: 'loading' });
-    expect(discoveryForOpenCodePicker('project-b', 'opencode', {
-      projectId: 'project-b',
-      profile: 'opencode',
-      discovery: { status: 'failure' }
-    })).toEqual({ status: 'failure' });
-  });
-
-  it('offers only directly launchable dynamic agents as role targets', () => {
-    const staticRoles = [
-      { id: 'build', label: 'Build', scope: ['local'] as ['local'] },
-      { id: 'plan', label: 'Plan', scope: ['local'] as ['local'] }
-    ];
-    const mappedRoles = [
-      ...staticRoles,
-      { id: 'build', label: 'Build', executionStates: ['accept-edits', 'autonomous'] as const, scope: ['local'] as ['local'] }
-    ];
-    expect(resolveOpenCodeRoleOptions(mappedRoles, { status: 'success', descriptors: [
-      { id: 'build', label: 'build', mode: 'subagent', hidden: false, directLaunchAllowed: false },
-      { id: 'hidden-system', label: 'hidden-system', mode: 'primary', hidden: true, directLaunchAllowed: false },
-      { id: 'build', label: 'build', mode: 'primary', hidden: false, directLaunchAllowed: true },
-      { id: 'custom', label: 'custom', mode: 'primary', hidden: false, directLaunchAllowed: true }
-    ] })).toEqual([
-      { id: 'build', label: 'build [Accept Edits, Autonomous]', scope: ['local'] },
-      { id: 'custom', label: 'custom', scope: ['local'] }
-    ]);
-    expect(resolveOpenCodeRoleOptions(staticRoles, { status: 'success', descriptors: [] })).toEqual([]);
-    expect(resolveOpenCodeRoleOptions(staticRoles, { status: 'failure' })).toEqual([]);
-  });
-
+describe('execution mapping options', () => {
   it('combines portable states that share one native execution policy', () => {
     expect(executionMappingOptions({
       plan: 'plan',
@@ -171,15 +124,6 @@ describe('OpenCode project agent discovery', () => {
       { id: 'accept-edits', native: 'force', states: ['accept-edits', 'autonomous'] },
       { id: 'autonomous', native: 'force', states: ['accept-edits', 'autonomous'] }
     ]);
-  });
-
-  it('reconciles selected role against authoritative current discovery state', () => {
-    const success = { status: 'success' as const, descriptors: [
-      { id: 'custom', label: 'custom', mode: 'all' as const, hidden: false, directLaunchAllowed: true }
-    ] };
-    expect(reconcileOpenCodeRole('build', success)).toBeUndefined();
-    expect(reconcileOpenCodeRole('custom', success)).toBe('custom');
-    expect(reconcileOpenCodeRole('build', { status: 'failure' })).toBe('build');
   });
 });
 
