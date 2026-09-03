@@ -605,6 +605,8 @@ describe('expandable row and chips', () => {
     expect(source).toContain("selectPin('diff')");
     expect(source).toContain("selectPin('plan')");
     expect(source).toContain('<ThreadPlanPanel');
+    expect(source).not.toContain('[panel, pin, planDocument]');
+    expect(source).toContain('[pin, planDocument, selectPin]');
     expect(source).toContain('<ThreadExplorerTab');
     expect(source).toContain('showPlanPin={showPlanPin}');
     expect(source).toContain('thread-secondary-show');
@@ -785,7 +787,7 @@ describe('expandable row and chips', () => {
     expect(source).toContain("data-embedded={embedded ? 'true' : undefined}");
     expect(source).toContain('void copyText(text)');
     expect(source).not.toContain('navigator.clipboard');
-    expect(source).toContain('route.isProjectWorkspace ? route.focusedProjectId');
+    expect(source).toContain('route.isProjectFocused ? route.focusedProjectId');
     expect(source).toContain('pendingChildThreads(threads, threadId)');
     expect(source).not.toContain('useThreads((s) => s.threads.filter');
     expect(source).toContain('lastReadSeq: typeof timeline.lastReadSeq === \'number\' ? timeline.lastReadSeq : null');

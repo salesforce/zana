@@ -47,13 +47,14 @@ export function createEnrolledPty(options: {
   const spawn = options.spawn ?? defaultSpawn;
   const shell = options.shell ?? process.env.SHELL ?? '/bin/zsh';
 
-  function startTerminal(input: { sessionId: string; cwd: string; cols: number; rows: number }): { pid?: number } {
+  function startTerminal(input: { sessionId: string; cwd: string; cols: number; rows: number; command?: string }): { pid?: number } {
     const existing = sessions.get(input.sessionId);
     if (existing) {
       existing.kill();
       sessions.delete(input.sessionId);
     }
-    const handle = spawn(shell, ['-l'], {
+    const launch = input.command?.trim();
+    const handle = spawn(shell, launch ? ['-lc', launch] : ['-l'], {
       cwd: input.cwd,
       cols: input.cols,
       rows: input.rows,
@@ -88,7 +89,7 @@ export function createEnrolledPty(options: {
   }
 
   return {
-    startTerminal: async (input: { sessionId: string; cwd: string; cols: number; rows: number }) =>
+    startTerminal: async (input: { sessionId: string; cwd: string; cols: number; rows: number; command?: string }) =>
       startTerminal(input),
     writeTerminal: async (input: { sessionId: string; data: string }) => {
       requireSession(input.sessionId).write(input.data);

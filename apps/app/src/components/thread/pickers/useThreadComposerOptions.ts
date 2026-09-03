@@ -15,6 +15,7 @@ import {
   type ThreadComposerProviderOption
 } from './fallback-models.js';
 import {
+  defaultOfferedComposerModel,
   preferredComposerModel,
   rememberComposerSelection,
   rememberedProviderId,
@@ -84,35 +85,29 @@ export function useThreadComposerOptions(input: {
 
   const setModel = useCallback((value: string) => {
     setModelState(value);
-    if (persistSelection) {
-      rememberComposerSelection({ providerId, model: value, reasoningLevel });
-    }
-  }, [persistSelection, providerId, reasoningLevel]);
+    rememberComposerSelection({ providerId, model: value, reasoningLevel });
+  }, [providerId, reasoningLevel]);
 
   const setReasoningLevel = useCallback((value: ReasoningLevel) => {
     setReasoningLevelState(value);
-    if (persistSelection) {
-      rememberComposerSelection({ providerId, model, reasoningLevel: value });
-    }
-  }, [model, persistSelection, providerId]);
+    rememberComposerSelection({ providerId, model, reasoningLevel: value });
+  }, [model, providerId]);
 
   const setProviderId = useCallback((value: string) => {
     if (value === providerId) return;
-    if (persistSelection) {
-      rememberComposerSelection({ providerId, model, reasoningLevel });
-    }
+    rememberComposerSelection({ providerId, model, reasoningLevel });
     setProviderIdState(value);
     const restored = restoreProviderSelection(value);
     setModelState(restored.model);
     setReasoningLevelState(restored.reasoningLevel);
-    if (persistSelection && restored.model) {
+    if (restored.model) {
       rememberComposerSelection({
         providerId: value,
         model: restored.model,
         reasoningLevel: restored.reasoningLevel
       });
     }
-  }, [model, persistSelection, providerId, reasoningLevel]);
+  }, [model, providerId, reasoningLevel]);
 
   useEffect(() => {
     if (input.lockedProviderId) setProviderIdState(input.lockedProviderId);
@@ -155,28 +150,48 @@ export function useThreadComposerOptions(input: {
     const restored = restoreProviderSelection(next);
     setModelState(restored.model);
     setReasoningLevelState(restored.reasoningLevel);
+    if (restored.model) {
+      rememberComposerSelection({
+        providerId: next,
+        model: restored.model,
+        reasoningLevel: restored.reasoningLevel
+      });
+    }
   }, [input.threadId, input.lockedProviderId, catalog.providers, providerId]);
 
   const activeModel = useMemo(
-    () => models.concat(moreModels).find((row) => row.model === model) ?? models.find((row) => row.isDefault) ?? models[0],
+    () => {
+      const offered = models.concat(moreModels);
+      return offered.find((row) => row.model === model) ?? defaultOfferedComposerModel(models, moreModels);
+    },
     [model, models, moreModels]
   );
 
   useEffect(() => {
-    if (!activeModel) return;
+    const offeredRows = models.concat(moreModels);
+    const offeredIds = offeredRows.map((row) => row.model);
+    if (offeredIds.length === 0) {
+      if (!loading && model) setModelState('');
+      return;
+    }
+    const fallback = defaultOfferedComposerModel(models, moreModels)?.model ?? offeredIds[0]!;
     const nextModel = preferredComposerModel({
       rememberedModel: persistSelection ? rememberedSelectionFor(providerId)?.model : undefined,
       currentModel: model,
       persistRemembered: persistSelection,
-      offeredModels: models.concat(moreModels).map((row) => row.model),
-      fallbackModel: activeModel.model,
+      offeredModels: offeredIds,
+      fallbackModel: fallback,
       loading
     });
+    if (!nextModel) return;
     if (nextModel !== model) {
       setModelState(nextModel);
+      rememberComposerSelection({ providerId, model: nextModel, reasoningLevel });
       return;
     }
-    const row = models.concat(moreModels).find((item) => item.model === nextModel) ?? activeModel;
+    rememberComposerSelection({ providerId, model: nextModel, reasoningLevel });
+    const row = offeredRows.find((item) => item.model === nextModel) ?? activeModel;
+    if (!row) return;
     const supported = visibleComposerReasoningLevels(
       row.supportedReasoningEfforts.map((effort) => effort.reasoningEffort)
     );

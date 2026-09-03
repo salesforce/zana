@@ -4,6 +4,7 @@ import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
 import { product } from '../../../lib/product-client.js';
 import { hasDesktopBridge } from '../../../lib/app-surface.js';
 import { useData } from '../../../store.js';
+import { threadPanelActionMatchesScope, type PluginThreadPanelScope } from '@zana-ai/zcc-plugin-sdk';
 import { listNewThreadPanelActions, listThreadPanelActions, subscribePluginSlots } from '../../../plugins/plugin-slots.js';
 import { applyIfCurrent, loadWalkedFiles, matchNewTabFiles, newTabFileTitle } from './threadSecondaryPanelLogic.js';
 import {
@@ -152,7 +153,8 @@ export function ThreadNewTabPage({
   onStartTerminal,
   onOpenPlugin,
   onOpenRecent,
-  allowSidecarTerminal = true
+  allowSidecarTerminal = true,
+  panelScope = 'thread'
 }: {
   projectId: string | null;
   cwd: string | null;
@@ -164,6 +166,7 @@ export function ThreadNewTabPage({
   onOpenPlugin: (moduleId: string, title: string, options?: OpenPluginOptions) => void;
   onOpenRecent?: (item: ThreadRecentItem) => void;
   allowSidecarTerminal?: boolean;
+  panelScope?: PluginThreadPanelScope;
 }) {
   const project = useData((s) => s.projects.find((row) => row.id === projectId) ?? null);
   const threadActions = useSyncExternalStore(
@@ -176,7 +179,10 @@ export function ThreadNewTabPage({
     listNewThreadPanelActions,
     listNewThreadPanelActions
   );
-  const actions = [...threadActions, ...composeActions];
+  const actions = [
+    ...threadActions.filter((action) => threadPanelActionMatchesScope(action, panelScope)),
+    ...(panelScope === 'thread' ? composeActions : [])
+  ];
   const [query, setQuery] = useState('');
   const [files, setFiles] = useState<Array<{ path: string; rel?: string }>>([]);
   const desktop = hasDesktopBridge();

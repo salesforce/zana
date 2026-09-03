@@ -11,7 +11,7 @@ const FOREIGN_PROJECT_MESSAGE =
   'This project’s folder is not on the selected machine. Add a folder on that machine, or pick the host this project lives on.';
 
 /**
- * Local checkouts are host-specific. Default Workspace on another machine
+ * Local checkouts are host-specific. Default Project on another machine
  * becomes a personal scratch there; any other local folder is refused.
  * SSH remotes keep their own proxy / remotePath handling.
  */

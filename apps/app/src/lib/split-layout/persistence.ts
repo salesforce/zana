@@ -16,11 +16,17 @@ function parsePaneContent(value: unknown): PaneContent | null {
   if (!isRecord(value) || typeof value.kind !== 'string') return null;
   if (value.kind === 'home') return { kind: 'home' };
   if (value.kind === 'agents') return { kind: 'agents' };
-  if (value.kind === 'new-thread') {
+  if (value.kind === 'scheduler') {
     const projectId = value.projectId;
-    if (projectId === undefined || projectId === null) return { kind: 'new-thread' };
+    if (projectId === undefined || projectId === null) return { kind: 'scheduler' };
     if (typeof projectId !== 'string') return null;
-    return { kind: 'new-thread', projectId };
+    return { kind: 'scheduler', projectId };
+  }
+  if (value.kind === 'new-thread' || value.kind === 'new-schedule') {
+    const projectId = value.projectId;
+    if (projectId === undefined || projectId === null) return { kind: value.kind };
+    if (typeof projectId !== 'string') return null;
+    return { kind: value.kind, projectId };
   }
   if (value.kind === 'thread') {
     if (!isNonEmptyString(value.threadId)) return null;
@@ -29,6 +35,24 @@ function parsePaneContent(value: unknown): PaneContent | null {
       kind: 'thread',
       projectId: value.projectId === null ? null : value.projectId,
       threadId: value.threadId
+    };
+  }
+  if (value.kind === 'agent-session') {
+    if (!isNonEmptyString(value.sessionId)) return null;
+    if (value.projectId !== null && !isNonEmptyString(value.projectId)) return null;
+    return {
+      kind: 'agent-session',
+      projectId: value.projectId === null ? null : value.projectId,
+      sessionId: value.sessionId
+    };
+  }
+  if (value.kind === 'schedule') {
+    if (!isNonEmptyString(value.scheduleId)) return null;
+    if (value.projectId !== null && !isNonEmptyString(value.projectId)) return null;
+    return {
+      kind: 'schedule',
+      projectId: value.projectId === null ? null : value.projectId,
+      scheduleId: value.scheduleId
     };
   }
   if (value.kind === 'plugin-detail') {

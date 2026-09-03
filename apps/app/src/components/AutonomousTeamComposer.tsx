@@ -288,7 +288,7 @@ export function AutonomousTeamComposer({
               value={projectId}
               onChange={setProjectId}
               disabled={Boolean(pinnedProject)}
-              title={pinnedProject ? 'Workspace is locked to this project' : undefined}
+              title={pinnedProject ? 'Locked to this project' : undefined}
             />
           </div>
         </div>

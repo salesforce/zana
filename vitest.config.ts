@@ -29,14 +29,16 @@ export default defineConfig({
     setupFiles: [resolve(__dirname, './vitest.setup.ts')],
     // e2e/ holds Playwright `*.spec.ts` that launch a real Electron app — they
     // are NOT vitest unit tests and must not be collected by `npm test`.
-    // .claude/worktrees/** are git worktrees for other in-progress branches
-    // (git-ignored): their tests belong to THAT checkout and may import symbols
-    // that don't exist on this branch — collect them and `pnpm test` fails on
-    // unrelated code and masks real failures.
+    // .worktrees/** and .claude/worktrees/** are git worktrees for other
+    // in-progress branches (git-ignored): their tests belong to THAT checkout
+    // and may import symbols that don't exist on this branch — collect them and
+    // `pnpm test` fails on unrelated code and masks real failures.
     exclude: [
       ...configDefaults.exclude,
       'e2e/**',
+      'e2e-web/**',
       '.claude/worktrees/**',
+      '.worktrees/**',
       'salesforce-only/**',
       'packages/agent-runtime/src/integration*.test.ts',
       'packages/host-daemon-contract/test/**',

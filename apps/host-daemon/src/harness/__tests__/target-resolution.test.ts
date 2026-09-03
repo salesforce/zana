@@ -84,14 +84,15 @@ describe('target-resolution main authorization', () => {
     })).toThrow('Invalid structured model routing request.');
   });
 
-  it('rejects remote model targets when adapter metadata does not support them', () => {
-    expect(() => resolveModelTarget(opencode, {
+  it('emits native arguments for a catalog model on remote launches', () => {
+    const resolved = resolveModelTarget(opencode, {
       config: config(),
       profile: 'opencode',
       extraArgs: [],
       perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'aisuite/gpt-5.6-terra' } } },
       scope: 'remote'
-    })).toThrow('model target is unavailable for remote launches');
+    });
+    expect(resolved.contribution.args).toEqual(['--model', 'aisuite/gpt-5.6-terra']);
   });
 
   it('only emits native arguments from a trusted catalog target', () => {

@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createConversationThread, createEnvironment, updateConversationThreadStatus, upsertHost, appendConversationThreadEvent } from '@zana-ai/zcc-db';
+import { turnScope } from '@zana-ai/zcc-domain/thread-runtime';
+import { EMPTY_THREAD_ACTIVITY } from '@zana-ai/zcc-thread-view';
 import { startProductServer, type ProductServer } from './product-server.js';
 import { HostUnavailableError } from './host-hub.js';
 import { registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
@@ -238,23 +240,47 @@ describe('product HTTP', () => {
     const launch = await fetch(`${server.url}api/v1/terminals`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ projectId: 'proj-1', profile: 'claude' })
+      body: JSON.stringify({ projectId: 'proj-1', profile: 'shell', command: 'npm run dev' })
     });
     expect(launch.status).toBe(201);
-    const created = await launch.json() as { ok: true; value: { id: string; status: string; pid?: number } };
+    const created = await launch.json() as {
+      ok: true;
+      value: { id: string; status: string; pid?: number; title?: string; launchCommand?: string };
+    };
     expect(created).toMatchObject({
       ok: true,
-      value: { projectId: 'proj-1', profile: 'claude', status: 'running', pid: 4242 }
+      value: {
+        projectId: 'proj-1',
+        profile: 'shell',
+        status: 'running',
+        pid: 4242,
+        title: 'npm run dev',
+        launchCommand: 'npm run dev'
+      }
     });
     expect(created.value).not.toHaveProperty('hostId');
+    expect(created.value).not.toHaveProperty('outputText');
     expect(rpc).toHaveBeenCalledWith(expect.objectContaining({
       hostId: 'host-1',
       command: expect.objectContaining({
         type: 'terminal.start',
         root: realpathSync(projectRoot),
-        cwd: realpathSync(projectRoot)
+        cwd: realpathSync(projectRoot),
+        command: 'npm run dev'
       })
     }));
+
+    const shown = await fetch(`${server.url}api/v1/terminals/${created.value.id}`).then((response) => response.json());
+    expect(shown.session.id).toBe(created.value.id);
+    expect(shown.session.launchCommand).toBe('npm run dev');
+
+    const record = server.ctx.terminalSessions.get(created.value.id);
+    if (record) {
+      record.outputText = 'Local: http://localhost:5173\n';
+      record.outputTruncated = false;
+    }
+    const output = await fetch(`${server.url}api/v1/terminals/${created.value.id}/output`).then((response) => response.json());
+    expect(output).toEqual({ text: 'Local: http://localhost:5173\n', truncated: false });
 
     const listed = await fetch(`${server.url}api/v1/terminals`).then((response) => response.json());
     expect(listed.sessions).toHaveLength(1);
@@ -376,8 +402,68 @@ describe('product HTTP', () => {
       threads: Array<{ id: string; status: string; lastReadSeq: number | null; maxSeq: number }>;
     };
     expect(body.threads).toEqual([
-      expect.objectContaining({ id: thread.id, status: 'idle', lastReadSeq: null, maxSeq: 0 })
+      expect.objectContaining({
+        id: thread.id,
+        status: 'idle',
+        lastReadSeq: null,
+        maxSeq: 0,
+        activity: EMPTY_THREAD_ACTIVITY
+      })
     ]);
+  });
+
+  it('projects running background bash onto thread list activity', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-thread-activity-'));
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: '/tmp/proj'
+    });
+    const thread = createConversationThread(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      environmentId: environment.id,
+      providerId: 'claude-code',
+      title: 'Dev server'
+    });
+    updateConversationThreadStatus(server.ctx.db, thread.id, 'idle');
+    appendConversationThreadEvent(server.ctx.db, {
+      threadId: thread.id,
+      type: 'item/started',
+      payload: {
+        type: 'item/started',
+        threadId: thread.id,
+        providerThreadId: 'provider-1',
+        scope: turnScope('turn-1'),
+        item: {
+          type: 'backgroundTask',
+          id: 'task:bash-1',
+          taskType: 'local_bash',
+          description: 'npm run dev',
+          status: 'pending',
+          taskStatus: 'running',
+          skipTranscript: false
+        }
+      }
+    });
+    const body = await fetch(`${server.url}api/v1/threads`).then((response) => response.json()) as {
+      threads: Array<{ id: string; activity: { activeBackgroundCommandCount: number } }>;
+    };
+    expect(body.threads).toEqual([
+      expect.objectContaining({
+        id: thread.id,
+        activity: expect.objectContaining({ activeBackgroundCommandCount: 1 })
+      })
+    ]);
+    const shown = await fetch(`${server.url}api/v1/threads/${thread.id}`).then((response) => response.json()) as {
+      thread: { activity: { activeBackgroundCommandCount: number } };
+    };
+    expect(shown.thread.activity.activeBackgroundCommandCount).toBe(1);
   });
 
   it('lists lastReadSeq and maxSeq and emits threads:updated on read', async () => {

@@ -89,6 +89,33 @@ export function rememberedSelectionFor(providerId: string): ComposerProviderSele
 }
 
 /**
+ * Once a harness has a non-empty model list, always return one of those ids.
+ * Remembered last-used wins when it is still offered, then the current pick,
+ * then the catalog default / first row. Empty catalogs stay empty.
+ */
+export function pickOfferedComposerModel(input: {
+  rememberedModel?: string;
+  currentModel: string;
+  offeredModels: readonly string[];
+  fallbackModel?: string;
+}): string {
+  const offered = input.offeredModels.filter((model) => model.trim().length > 0);
+  if (offered.length === 0) return '';
+  if (input.rememberedModel && offered.includes(input.rememberedModel)) return input.rememberedModel;
+  if (input.currentModel && offered.includes(input.currentModel)) return input.currentModel;
+  if (input.fallbackModel && offered.includes(input.fallbackModel)) return input.fallbackModel;
+  return offered[0]!;
+}
+
+export function defaultOfferedComposerModel<T extends { isDefault?: boolean }>(
+  models: readonly T[],
+  moreModels: readonly T[] = []
+): T | undefined {
+  const all = models.concat(moreModels);
+  return all.find((row) => row.isDefault) ?? all[0];
+}
+
+/**
  * New-thread composers keep the last picked model (e.g. Opus) instead of
  * snapping back to the catalog default (Sonnet) when the roster loads.
  * Existing threads ignore the cache and keep whatever the thread already uses.
@@ -101,14 +128,20 @@ export function preferredComposerModel(input: {
   fallbackModel: string;
   loading: boolean;
 }): string {
-  const offered = (model: string) => input.loading || input.offeredModels.includes(model);
-  if (input.persistRemembered && input.rememberedModel && offered(input.rememberedModel)) {
-    return input.rememberedModel;
-  }
-  if (input.currentModel && offered(input.currentModel)) {
-    return input.currentModel;
-  }
-  return input.fallbackModel;
+  const offered = input.loading
+    ? [
+      ...(input.persistRemembered && input.rememberedModel ? [input.rememberedModel] : []),
+      ...(input.currentModel ? [input.currentModel] : []),
+      ...input.offeredModels,
+      ...(input.fallbackModel ? [input.fallbackModel] : [])
+    ]
+    : input.offeredModels;
+  return pickOfferedComposerModel({
+    rememberedModel: input.persistRemembered ? input.rememberedModel : undefined,
+    currentModel: input.currentModel,
+    offeredModels: offered,
+    fallbackModel: input.fallbackModel
+  });
 }
 
 export function __clearComposerSelectionForTest(): void {

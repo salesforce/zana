@@ -89,6 +89,83 @@ describe('product API command groups', () => {
     expect(stopped.stdout).toContain('stopped');
   });
 
+  it('wait --until quiet stays until background commands drain', async () => {
+    let commands = 1;
+    const fetchImpl = router({
+      'GET /api/v1/threads/thr-1': () => ({
+        thread: {
+          ...sampleThread,
+          status: 'idle',
+          activity: { activeBackgroundCommandCount: commands }
+        }
+      })
+    });
+    let now = 0;
+    const pending = runCli(['node', 'zcc', 'thread', 'wait', 'thr-1', '--until', 'quiet', '--timeout', '2s'], {
+      fetchImpl,
+      nowMs: () => now,
+      sleep: async () => {
+        commands = 0;
+        now += 500;
+      }
+    });
+    const waited = await pending;
+    expect(waited.exitCode).toBe(0);
+  });
+
+  it('wait --until turn returns while a background command is still running', async () => {
+    const fetchImpl = router({
+      'GET /api/v1/threads/thr-1': {
+        thread: {
+          ...sampleThread,
+          status: 'idle',
+          activity: { activeBackgroundCommandCount: 1 }
+        }
+      }
+    });
+    const waited = await runCli(['node', 'zcc', 'thread', 'wait', 'thr-1', '--timeout', '2s'], {
+      fetchImpl,
+      nowMs: () => 0,
+      sleep: async () => undefined
+    });
+    expect(waited.exitCode).toBe(0);
+  });
+
+  it('lists and soft-stops background commands', async () => {
+    let commands = [{ itemId: 'task:1', taskType: 'local_bash', description: 'npm run dev' }];
+    let told = '';
+    const fetchImpl = router({
+      'GET /api/v1/threads/thr-1/timeline': () => ({ activeBackgroundCommands: commands }),
+      'POST /api/v1/threads/thr-1/send': (_url, init) => {
+        told = JSON.parse(String(init?.body)).text;
+        return { thread: sampleThread };
+      },
+      'GET /api/v1/threads/thr-1': () => ({
+        thread: {
+          ...sampleThread,
+          status: 'idle',
+          activity: { activeBackgroundCommandCount: commands.length }
+        }
+      }),
+      'POST /api/v1/threads/thr-1/stop': { ok: true }
+    });
+    const listed = await runCli(['node', 'zcc', 'thread', 'background', 'list', 'thr-1'], { fetchImpl });
+    expect(listed.stdout).toContain('npm run dev');
+    let now = 0;
+    const stopped = await runCli(['node', 'zcc', 'thread', 'background', 'stop', 'thr-1', '--timeout', '2s'], {
+      fetchImpl,
+      nowMs: () => now,
+      sleep: async () => {
+        commands = [];
+        now += 500;
+      }
+    });
+    expect(stopped.exitCode).toBe(0);
+    expect(told).toMatch(/KillShell/);
+    const forced = await runCli(['node', 'zcc', 'thread', 'background', 'stop', 'thr-1', '--force'], { fetchImpl });
+    expect(forced.stdout).toContain('stopped');
+  });
+
   it('prints a deprecation on zcc run / agent send / term', async () => {
     const fetchImpl = router({
       'POST /api/v1/threads': jsonResponse(201, { thread: sampleThread }),
@@ -149,6 +226,43 @@ describe('product API command groups', () => {
       { fetchImpl }
     );
     expect(term.stdout).toContain('s2');
+  });
+
+  it('shows, tails, and waits on a product terminal', async () => {
+    let status = 'running';
+    let text = '';
+    const fetchImpl = router({
+      'GET /api/v1/terminals/s2': () => ({ session: { id: 's2', status, title: 'vite', launchCommand: 'npm run dev' } }),
+      'GET /api/v1/terminals/s2/output': () => ({ text, truncated: false })
+    });
+    const shown = await runCli(['node', 'zcc', 'terminal', 'show', 's2', '--json'], { fetchImpl });
+    expect(JSON.parse(shown.stdout).launchCommand).toBe('npm run dev');
+    const output = await runCli(['node', 'zcc', 'terminal', 'output', 's2'], { fetchImpl });
+    expect(output.exitCode).toBe(0);
+    let now = 0;
+    const waited = await runCli(
+      ['node', 'zcc', 'terminal', 'wait', 's2', '--contains', 'Local:', '--timeout', '2s'],
+      {
+        fetchImpl,
+        nowMs: () => now,
+        sleep: async () => {
+          text = 'Local: http://localhost:5173';
+          now += 500;
+        }
+      }
+    );
+    expect(waited.exitCode).toBe(0);
+    now = 0;
+    status = 'running';
+    const exitWait = await runCli(['node', 'zcc', 'terminal', 'wait', 's2', '--exit', '--timeout', '2s'], {
+      fetchImpl,
+      nowMs: () => now,
+      sleep: async () => {
+        status = 'exited';
+        now += 500;
+      }
+    });
+    expect(exitWait.exitCode).toBe(0);
   });
 
   it('fails closed when the app is down', async () => {

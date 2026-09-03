@@ -456,14 +456,14 @@ export function AppShellWireframe(): ReactNode {
             </Mark>
             <div className="plugin-guide-thread-stack">
               <div className="plugin-guide-ws-head">
-                <span className="plugin-guide-fx-section plugin-guide-ws-head-title">Workspaces</span>
+                <span className="plugin-guide-fx-section plugin-guide-ws-head-title">Projects</span>
                 <span className="plugin-guide-ws-head-actions">
                   <Mark
                     id="experimental_projectMenuAction"
                     label="Project / workspace menu"
                     chip="side"
                     className="plugin-guide-icon-hit"
-                    title="Organize workspaces"
+                    title="Organize projects"
                   >
                     <Icon name="filter" />
                     {menu.outlined ? (
@@ -477,7 +477,7 @@ export function AppShellWireframe(): ReactNode {
                       </span>
                     ) : null}
                   </Mark>
-                  <span className="plugin-guide-icon-hit" title="Workspace menu">
+                  <span className="plugin-guide-icon-hit" title="Project menu">
                     <Icon name="more" />
                   </span>
                   <span className="plugin-guide-icon-hit" title="Add project">
@@ -672,7 +672,7 @@ export function HomeWireframe(): ReactNode {
             </div>
             <div className="plugin-guide-thread-stack">
               <div className="plugin-guide-ws-head">
-                <span className="plugin-guide-fx-section plugin-guide-ws-head-title">Workspaces</span>
+                <span className="plugin-guide-fx-section plugin-guide-ws-head-title">Projects</span>
                 <span className="plugin-guide-ws-head-actions">
                   <span className="plugin-guide-icon-hit">
                     <Icon name="filter" />
@@ -749,7 +749,7 @@ export function ComposerWireframe(): ReactNode {
             </div>
             <div className="plugin-guide-thread-stack">
               <div className="plugin-guide-ws-head">
-                <span className="plugin-guide-fx-section plugin-guide-ws-head-title">Workspaces</span>
+                <span className="plugin-guide-fx-section plugin-guide-ws-head-title">Projects</span>
               </div>
               <span className="plugin-guide-fx-nav-row">Acme</span>
             </div>
@@ -897,7 +897,7 @@ export function ThreadWireframe(): ReactNode {
           </section>
           <aside className="plugin-guide-side">
             <header className="plugin-guide-side-tabs">
-              <Mark id="threadPanelAction" label="Thread panel" chip="outside-above" className="plugin-guide-side-tab is-active">
+              <Mark id="threadPanelAction" label="Thread side-panel tabs" chip="outside-above" className="plugin-guide-side-tab is-active">
                 <Plug /> Tasks
               </Mark>
               <span className="plugin-guide-side-tab">Files</span>
@@ -952,7 +952,7 @@ export function PaletteWireframe(): ReactNode {
               </div>
               <div className="plugin-guide-thread-stack">
                 <div className="plugin-guide-ws-head">
-                  <span className="plugin-guide-fx-section plugin-guide-ws-head-title">Workspaces</span>
+                  <span className="plugin-guide-fx-section plugin-guide-ws-head-title">Projects</span>
                 </div>
                 <div className="plugin-guide-fx-nav-row">Acme</div>
               </div>

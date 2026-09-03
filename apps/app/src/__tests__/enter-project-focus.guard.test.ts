@@ -9,6 +9,6 @@ describe('enterProjectFocus', () => {
     expect(start).toBeGreaterThan(-1);
     expect(next).toBeGreaterThan(start);
     const body = source.slice(start, next);
-    expect(body).toContain("get().setWorkspaceMode(id, 'agents')");
+    expect(body).toContain("get().setProjectView(id, 'agents')");
   });
 });

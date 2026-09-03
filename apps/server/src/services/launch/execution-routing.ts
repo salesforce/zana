@@ -47,22 +47,31 @@ export async function preflightTerminalExecution(
   const effectiveProfile = input.persona?.baseProfile ?? input.profile;
   const provider = deps.provider ?? providerFor(effectiveProfile);
   const adapterId = harnessFamilyOf(effectiveProfile) || provider.adapter.descriptor.id;
-  const resolved = resolveExecutionState(provider, {
-    config: input.config,
-    persona: input.persona,
-    projectSettings: input.projectSettings,
-    perTabRouting: input.harnessRouting,
-    profile: effectiveProfile,
-    extraArgs: input.extraArgs ?? [],
-    scope: input.scope
-  });
-  let installedVersion: string | undefined;
-  const preflight = resolveStructuredRouting(provider, input);
+  let resolved: ReturnType<typeof resolveExecutionState>;
+  let preflight: ReturnType<typeof resolveStructuredRouting>;
+  try {
+    resolved = resolveExecutionState(provider, {
+      config: input.config,
+      persona: input.persona,
+      projectSettings: input.projectSettings,
+      perTabRouting: input.harnessRouting,
+      profile: effectiveProfile,
+      extraArgs: input.extraArgs ?? [],
+      scope: input.scope
+    });
+    preflight = resolveStructuredRouting(provider, input);
+  } catch (error) {
+    return {
+      decision: 'blocked',
+      reason: error instanceof Error ? error.message : String(error)
+    };
+  }
   const combinationError = provider.validateRoutingCombination?.({
     roleTargetId: preflight.role.targetId,
     executionOrigin: preflight.execution.origin
   });
   if (combinationError) return { decision: 'blocked', reason: combinationError };
+  let installedVersion: string | undefined;
   if (preflight.requested) {
     installedVersion = await deps.installedVersion(adapterId);
     const unavailable = await preflightStructuredRouting(provider, input, installedVersion, preflight);

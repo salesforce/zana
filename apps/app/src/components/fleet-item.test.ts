@@ -16,6 +16,8 @@ import {
   threadFleetItem,
   RAIL_IDLE_THREAD_LIMIT,
   railThreadsForProject,
+  agentCardRuntimeLabel,
+  cliHarnessLabel,
   threadCardRuntimeLabel,
   threadCardShowsProject,
   threadHarnessLabel,
@@ -115,6 +117,31 @@ describe('fleet items', () => {
     expect(fleetThreadLane(threadFleetItem(thread({ id: 't1', status: 'error' })))).toBe('idle');
   });
 
+  it('treats leftover background commands as Working unless the thread is blocked', () => {
+    const running = thread({
+      id: 't1',
+      status: 'idle',
+      activity: {
+        activeWorkflowCount: 0,
+        activeBackgroundAgentCount: 0,
+        activeBackgroundCommandCount: 1,
+        activePlanModeCount: 0,
+        activeGoalCount: 0
+      }
+    });
+    expect(threadFleetItem(running).state).toBe('working');
+    expect(fleetThreadLane(threadFleetItem(running))).toBe('working');
+    expect(threadIsLiveForRail(running)).toBe(true);
+    expect(threadRailStatus(running)).toBe('Working');
+    expect(threadRailDetail(running)).toBe('Working · background command');
+    expect(
+      threadFleetItem({ ...running, hasPendingInteraction: true }).state
+    ).toBe('blocked');
+    expect(
+      threadFleetItem({ ...running, status: 'error' }).state
+    ).toBe('idle');
+  });
+
   it('treats busy and failed threads as live for the Projects rail', () => {
     expect(threadIsLiveForRail(thread({ id: 't1', status: 'active' }))).toBe(true);
     expect(threadIsLiveForRail(thread({ id: 't1', status: 'error' }))).toBe(true);
@@ -171,6 +198,24 @@ describe('fleet items', () => {
     expect(threadCardShowsProject(false, false)).toBe(false);
   });
 
+  it('labels a CLI agent card with the same family name threads use', () => {
+    expect(cliHarnessLabel('claude')).toBe('Claude Code');
+    expect(cliHarnessLabel('claude-yolo')).toBe('Claude Code');
+    expect(cliHarnessLabel('claude-resume')).toBe('Claude Code');
+    expect(cliHarnessLabel('cursor')).toBe('Cursor');
+    expect(cliHarnessLabel('codex')).toBe('Codex');
+    expect(cliHarnessLabel('pi')).toBe('Pi');
+    expect(cliHarnessLabel('opencode')).toBe('OpenCode');
+    expect(agentCardRuntimeLabel({ profile: 'claude' })).toBe('Claude Code · Local');
+    expect(agentCardRuntimeLabel({ profile: 'claude-yolo', remote: true })).toBe(
+      'Claude Code · Remote host'
+    );
+    expect(agentCardRuntimeLabel({ profile: 'claude', remote: true, personaName: 'Reviewer' })).toBe(
+      'Reviewer · Remote host'
+    );
+    expect(agentCardRuntimeLabel({ profile: 'claude', personaName: '  ' })).toBe('Claude Code · Local');
+  });
+
   it('never feeds a thread id to the PTY monitor selection store', () => {
     const items = [
       threadFleetItem(thread({ id: 't1', status: 'active' })),
@@ -179,5 +224,15 @@ describe('fleet items', () => {
     expect(resolveMonitorSelection(items, { sessionId: 's1', projectId: 'p1' }, null)?.kind).toBe('agent');
     expect(resolveMonitorSelection(items, null, 't1')?.kind).toBe('thread');
     expect(resolveMonitorSelection(items, { sessionId: 's1', projectId: 'p1' }, 't1')?.id).toBe('t1');
+  });
+
+  it('keeps a missing picked row empty instead of snapping to the first fleet item', () => {
+    const items = [
+      agentFleetItem(card()),
+      threadFleetItem(thread({ id: 't1', status: 'idle' }))
+    ];
+    expect(resolveMonitorSelection(items, { sessionId: 's1', projectId: 'p1' }, 'gone')).toBeNull();
+    expect(resolveMonitorSelection(items, null, 'gone')).toBeNull();
+    expect(resolveMonitorSelection(items, null, null)?.kind).toBe('agent');
   });
 });

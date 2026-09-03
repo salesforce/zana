@@ -57,7 +57,11 @@ describe('split layout persistence', () => {
         dir: 'row',
         sizes: [0.5, 0.5],
         children: [
-          { type: 'pane', paneId: 'pane-1', content: { kind: 'agents' } },
+          {
+            type: 'pane',
+            paneId: 'pane-1',
+            content: { kind: 'agent-session', projectId: 'p1', sessionId: 'sess-1' }
+          },
           {
             type: 'pane',
             paneId: 'pane-2',
@@ -73,6 +77,42 @@ describe('split layout persistence', () => {
       focusedPaneId: 'pane-2'
     };
     expect(deserializeSplitLayout(serializeSplitLayout(mixed))).toEqual(mixed);
+  });
+
+  it('round-trips scheduler, schedule, and new-schedule pane content', () => {
+    const mixed: SplitLayout = {
+      root: {
+        type: 'split',
+        dir: 'row',
+        sizes: [0.5, 0.5],
+        children: [
+          {
+            type: 'pane',
+            paneId: 'pane-1',
+            content: { kind: 'scheduler' }
+          },
+          {
+            type: 'pane',
+            paneId: 'pane-2',
+            content: { kind: 'schedule', projectId: null, scheduleId: 'sched-1' }
+          }
+        ]
+      },
+      focusedPaneId: 'pane-2'
+    };
+    expect(deserializeSplitLayout(serializeSplitLayout(mixed))).toEqual(mixed);
+  });
+
+  it('round-trips an unscoped agent-session pane', () => {
+    const unscoped: SplitLayout = {
+      root: {
+        type: 'pane',
+        paneId: 'pane-1',
+        content: { kind: 'agent-session', projectId: null, sessionId: 'sess-1' }
+      },
+      focusedPaneId: 'pane-1'
+    };
+    expect(deserializeSplitLayout(serializeSplitLayout(unscoped))).toEqual(unscoped);
   });
 
   it('round-trips and restores all eight panes with focus and sizes intact', () => {
@@ -101,5 +141,20 @@ describe('split layout persistence', () => {
       )
     ).toBeNull();
     expect(deserializeSplitLayout(serializeSplitLayout(layoutWithPaneCount(9)))).toBeNull();
+    expect(
+      deserializeSplitLayout(
+        JSON.stringify({
+          version: SPLIT_LAYOUT_SCHEMA_VERSION,
+          layout: {
+            root: {
+              type: 'pane',
+              paneId: 'pane-1',
+              content: { kind: 'agent-session', projectId: 'p1' }
+            },
+            focusedPaneId: 'pane-1'
+          }
+        })
+      )
+    ).toBeNull();
   });
 });

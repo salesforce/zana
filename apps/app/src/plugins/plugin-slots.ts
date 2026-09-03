@@ -178,7 +178,7 @@ export function listProjectMenuActions(): PluginProjectMenuActionRegistration[] 
   return snapshot.projectMenuActions;
 }
 
-export function projectTabWorkspaceMode(
+export function projectTabView(
   tab: PluginProjectTabRegistration,
   tabs: readonly PluginProjectTabRegistration[]
 ): string {

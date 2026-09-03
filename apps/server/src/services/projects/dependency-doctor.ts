@@ -25,8 +25,8 @@
  */
 
 import { execFile } from 'node:child_process';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
 import { readFile, readdir } from 'node:fs/promises';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import type {
@@ -150,7 +150,7 @@ export function createDoctor(deps: DoctorDeps): Doctor {
 
   /** Detect the bundled disk extensions seeded under ~/.zcc/extensions/<id>. */
   async function detectBundledExtensions(): Promise<void> {
-    const root = process.env.ZCC_EXTENSIONS_DIR ?? join(homedir(), '.zcc', 'extensions');
+    const root = process.env.ZCC_EXTENSIONS_DIR ?? join(resolveZccDataDir(), 'extensions');
     let names: string[] = [];
     try {
       names = (await readdir(root, { withFileTypes: true }))

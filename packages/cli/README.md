@@ -52,7 +52,7 @@ zcc plugin new <name> [--app]
 | Variable / flag | Meaning |
 | --- | --- |
 | `ZCC_SERVER_URL` | Product HTTP base (default `http://127.0.0.1:8780`) |
-| `ZCC_CENTER_DIR` / `--data-dir` | Data directory (default `~/.zcc`) — still used for inbox/followup/schedule file reads and the control-plane token |
+| `ZCC_DATA_DIR` / `ZCC_CENTER_DIR` / `--data-dir` | Data directory (default `~/.zcc`). Use `~/.zcc-dev` with `ZCC_SERVER_URL=http://127.0.0.1:8781` to drive `pnpm dev` |
 | `ZCC_SESSION_ID` | Injected by the app inside agent terminals. Do not set by hand. |
 
 ## Testing

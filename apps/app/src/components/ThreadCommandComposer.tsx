@@ -397,7 +397,7 @@ export function ThreadCommandComposer({
       if (navigateOnCreate) {
         navigate(getThreadRoutePath(
           created.value.id,
-          route.isProjectWorkspace ? route.focusedProjectId : undefined
+          route.isProjectFocused ? route.focusedProjectId : undefined
         ));
       }
     } catch (error) {
@@ -424,7 +424,7 @@ export function ThreadCommandComposer({
     projects,
     resolvedProviderId,
     route.focusedProjectId,
-    route.isProjectWorkspace,
+    route.isProjectFocused,
     status,
     inFlightRetry,
     steerOnEnter,
@@ -612,7 +612,7 @@ export function ThreadCommandComposer({
                   value={projectId}
                   onChange={setProjectId}
                   disabled={Boolean(pinnedProject)}
-                  title={pinnedProject ? 'Workspace is locked to this project' : undefined}
+                  title={pinnedProject ? 'Locked to this project' : undefined}
                 />
               </div>
               {!selectedProject?.remote && !foreignHost && (

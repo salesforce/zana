@@ -18,7 +18,7 @@ import { useThreads } from '@/thread-store';
 import { useEnsureThreads } from '@/hooks/useEnsureThreads';
 import { getThreadRoutePath, threadIdFromPath } from '@/lib/route-paths';
 import { AgentBoardLanes, isReclaimableIdle, type AgentCard } from '@/components/AgentBoard';
-import { AgentViewToggle } from '@/components/AgentViewToggle';
+import { AgentViewToggle, ScheduledColumnToggle } from '@/components/AgentViewToggle';
 import { SquadFlowView } from '@/views/agents/SquadFlowView';
 import { AutonomousRunBanner } from '@/components/AutonomousRunBanner';
 import { AgentMonitor } from '@/components/AgentMonitor';
@@ -77,6 +77,7 @@ function toCard(
     projectId: project.id,
     projectName: project.name,
     projectColor: project.color,
+    projectRemote: Boolean(project.remote),
     triage: triageById[session.id],
     overseer: overseerById[session.id],
     liveSubagents: subagentsById[session.id] ?? 0
@@ -98,7 +99,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const setNav = useUi((s) => s.setNav);
   const selectTab = useUi((s) => s.selectTab);
   const selectProject = useUi((s) => s.selectProject);
-  const setWorkspaceMode = useUi((s) => s.setWorkspaceMode);
+  const setProjectView = useUi((s) => s.setProjectView);
   const selectedTabId = useUi((s) => s.selectedTabId);
   const restoreTerminal = useData((s) => s.restoreTerminal);
   const closeIdleAgents = useData((s) => s.closeIdleAgents);
@@ -187,6 +188,9 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const activeThreadId = threadIdFromPath(location.pathname);
   const activeId = activeThreadId ?? activeTabId;
   const threadProjectId = isGlobal ? undefined : scopedProject?.id;
+  // Keep the toolbar (and this toggle) mounted after the user hides Scheduled
+  // so they can turn the column back on even if that was the only fleet.
+  const showToolbar = fleet.length > 0 || !includeScheduled;
 
   const inspect = (item: FleetItem) => {
     if (item.kind === 'thread') {
@@ -221,7 +225,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
     } else {
       selectTab(c.projectId, c.session.id);
     }
-    setWorkspaceMode(c.projectId, 'terminals');
+    setProjectView(c.projectId, 'terminals');
   };
 
   const confirmCloseIdle = (summarize: boolean) => {
@@ -238,9 +242,10 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
 
   return (
     <div className={isGlobal ? 'agents-board agents-board--global panel-body--full' : 'agents-board'}>
-      {fleet.length > 0 && (
+      {showToolbar && (
         <div className="agents-board-toolbar">
           <AgentViewToggle />
+          <ScheduledColumnToggle />
           {reclaimableAgents.length > 0 && (
             <button
               type="button"
@@ -355,15 +360,17 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
                 <p>Start an agent in this project and watch it move across the board.</p>
               </>
             )}
-            <button
-              type="button"
-              className="btn primary"
-              data-testid="agents-board-new-thread"
-              onClick={() => useUi.getState().setLauncherOpen(true)}
-            >
-              <Plus size={14} />
-              New agent
-            </button>
+            {!showToolbar && (
+              <button
+                type="button"
+                className="btn primary"
+                data-testid="agents-board-new-thread"
+                onClick={() => useUi.getState().setLauncherOpen(true)}
+              >
+                <Plus size={14} />
+                New agent
+              </button>
+            )}
           </div>
         </div>
       ) : isGlobal && visibleFleet.length === 0 ? (

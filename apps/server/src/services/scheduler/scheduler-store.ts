@@ -1,4 +1,3 @@
-import { app } from 'electron';
 import {
   existsSync,
   mkdirSync,
@@ -12,8 +11,9 @@ import { join } from 'node:path';
 import type { LaunchProfileId, Project, ScheduledTask } from '@zana-ai/zcc-domain/product';
 import { validateCadence } from '@zana-ai/zcc-domain/schedule-spec';
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
+import { electronZccDataDir } from '../../electron-data-dir.js';
 
-export const globalDir = () => join(app.getPath('home'), '.zcc', 'schedules');
+export const globalDir = () => join(electronZccDataDir(), 'schedules');
 export const projectDir = (project: Project) => join(project.path, '.zcc', 'schedules');
 
 function ensureDir(dir: string) {

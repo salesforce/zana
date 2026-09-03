@@ -6,7 +6,7 @@ body:
     id: what
     attributes:
       label: What happened?
-      description: What you saw, and what you expected.
+      description: What you saw, and what you expected. If this came from the in-app crash screen, paste the copied report here.
     validations:
       required: true
   - type: textarea

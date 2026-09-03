@@ -74,6 +74,16 @@ import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from '..
 
 const OPENCODE_MIN_VERSION = '1.18.0';
 const OPENCODE_REVIEWED_AT = '2026-08-04';
+const OPENCODE_VERIFIED_SCOPES = ['local', 'remote'] as const;
+const OPENCODE_MODEL_IDS = [
+  'aisuite/gpt-5.6-luna',
+  'aisuite/gpt-5.6-terra',
+  'aisuite/gpt-5.6-sol',
+  'aisuite/us.anthropic.claude-haiku-4-5-20251001-v1:0',
+  'aisuite/us.anthropic.claude-sonnet-5',
+  'aisuite/gemini-3.1-pro-preview',
+  'aisuite/gemini-3.5-flash'
+] as const;
 const openCodeEvidence = (id: string, observed: string, scope: 'local' | 'remote' = 'local') => ({
   id,
   versionRange: OPENCODE_MIN_VERSION,
@@ -105,8 +115,8 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
     configFiles: [{ id: 'native-settings', label: 'Native settings', scopes: [], effect: 'unsupported', rawEdit: false, reason: 'Native project settings file is not verified.' }],
     targets: {
       roles: [
-        { id: 'build', label: 'Build', executionStates: ['accept-edits', 'autonomous'], scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'plan', label: 'Plan', executionStates: ['plan'], scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION }
+        { id: 'build', label: 'Build', executionStates: ['accept-edits', 'autonomous'], scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'plan', label: 'Plan', executionStates: ['plan'], scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION }
       ],
       providers: [
         { id: 'openai', label: 'OpenAI' },
@@ -115,13 +125,13 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
       ],
       providerModelRelationship: 'combined-provider-model',
       models: [
-        { id: 'aisuite/gpt-5.6-luna', label: 'Luna', provider: 'openai', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'aisuite/gpt-5.6-terra', label: 'Terra', provider: 'openai', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'aisuite/gpt-5.6-sol', label: 'Sol', provider: 'openai', level: 'high', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'aisuite/us.anthropic.claude-haiku-4-5-20251001-v1:0', label: 'Haiku', provider: 'anthropic', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'aisuite/us.anthropic.claude-sonnet-5', label: 'Sonnet', provider: 'anthropic', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'aisuite/gemini-3.1-pro-preview', label: 'Gemini Pro', provider: 'google', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'aisuite/gemini-3.5-flash', label: 'Gemini Flash', provider: 'google', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION }
+        { id: 'aisuite/gpt-5.6-luna', label: 'Luna', provider: 'openai', level: 'low', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'aisuite/gpt-5.6-terra', label: 'Terra', provider: 'openai', level: 'medium', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'aisuite/gpt-5.6-sol', label: 'Sol', provider: 'openai', level: 'high', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'aisuite/us.anthropic.claude-haiku-4-5-20251001-v1:0', label: 'Haiku', provider: 'anthropic', level: 'low', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'aisuite/us.anthropic.claude-sonnet-5', label: 'Sonnet', provider: 'anthropic', level: 'medium', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'aisuite/gemini-3.1-pro-preview', label: 'Gemini Pro', provider: 'google', level: 'medium', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'aisuite/gemini-3.5-flash', label: 'Gemini Flash', provider: 'google', level: 'low', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION }
       ],
       modelLevelMapping: {
         low: 'aisuite/gpt-5.6-luna',
@@ -139,10 +149,10 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
     initialTaskDelivery: { local: 'spawn-arg', remote: 'spawn-arg', readinessSignal: 'process-spawned', acceptanceSignal: 'argv-bound' }
   },
   executionTargetMetadata: {
-    plan: { equivalence: 'exact', scopes: ['local'] },
-    interactive: { equivalence: 'conditional', scopes: ['local'] },
-    'accept-edits': { equivalence: 'closest', scopes: ['local'] },
-    autonomous: { equivalence: 'exact', scopes: ['local'] }
+    plan: { equivalence: 'exact', scopes: [...OPENCODE_VERIFIED_SCOPES] },
+    interactive: { equivalence: 'conditional', scopes: [...OPENCODE_VERIFIED_SCOPES] },
+    'accept-edits': { equivalence: 'closest', scopes: [...OPENCODE_VERIFIED_SCOPES] },
+    autonomous: { equivalence: 'exact', scopes: [...OPENCODE_VERIFIED_SCOPES] }
   },
   collision: {
     role: [{ names: ['--agent'], arity: 1, acceptsAttachedValue: true }],
@@ -165,15 +175,14 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
     }
   },
   evidence: [
-    openCodeEvidence('aisuite/gpt-5.6-luna', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
-    openCodeEvidence('aisuite/gpt-5.6-terra', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
-    openCodeEvidence('aisuite/gpt-5.6-sol', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
-    openCodeEvidence('aisuite/us.anthropic.claude-haiku-4-5-20251001-v1:0', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
-    openCodeEvidence('aisuite/us.anthropic.claude-sonnet-5', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
-    openCodeEvidence('aisuite/gemini-3.1-pro-preview', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
-    openCodeEvidence('aisuite/gemini-3.5-flash', 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
+    ...OPENCODE_MODEL_IDS.flatMap((id) => [
+      openCodeEvidence(id, 'Model appears in opencode models aisuite and --model accepts provider/model IDs.'),
+      openCodeEvidence(id, 'Remote login-shell command binds --model provider/model IDs.', 'remote')
+    ]),
     openCodeEvidence('build', 'Built-in build role appears in effective opencode agent list output.'),
+    openCodeEvidence('build', 'Remote login-shell command binds --agent build.', 'remote'),
     openCodeEvidence('plan', 'Built-in plan role appears in effective opencode agent list output.'),
+    openCodeEvidence('plan', 'Remote login-shell command binds --agent plan.', 'remote'),
     openCodeEvidence('opencode.role.discovery', 'Project-scoped opencode agent list supplies exact effective role names before launch.')
   ]
 };

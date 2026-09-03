@@ -24,7 +24,7 @@ const fileCache = new Map<string, WalkedFile[]>();
 
 export function QuickOpen({ project, onClose }: Props) {
   const setExplorerFile = useUi((s) => s.setExplorerFile);
-  const setWorkspaceMode = useUi((s) => s.setWorkspaceMode);
+  const setProjectView = useUi((s) => s.setProjectView);
   const recents = useUi((s) => s.recentFiles[project.id]);
 
   const [files, setFiles] = useState<WalkedFile[] | null>(
@@ -101,7 +101,7 @@ export function QuickOpen({ project, onClose }: Props) {
   }, [results, activeIdx]);
 
   const choose = (entry: ScoredEntry) => {
-    setWorkspaceMode(project.id, 'explorer');
+    setProjectView(project.id, 'explorer');
     setExplorerFile(project.id, entry.file.path);
     onClose();
   };

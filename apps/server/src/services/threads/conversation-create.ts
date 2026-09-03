@@ -23,7 +23,7 @@ import {
   type SpawnEnvironmentChoice
 } from '@zana-ai/zcc-domain';
 import type { Project } from '@zana-ai/zcc-domain/product';
-import type { ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
+import type { ReasoningLevel, ThreadActivityState } from '@zana-ai/zcc-domain/thread-runtime';
 import { clampPermissionModeToHost } from '../hosts/permission-ceiling.js';
 import type { EnvironmentProvisionCommand, EnvironmentProvisionResult } from '@zana-ai/zcc-contracts/host-rpc';
 import { AmbiguousHostError, HostUnavailableError } from '../../http/host-hub.js';
@@ -50,6 +50,7 @@ import { safePackPluginSession } from '../../plugins/plugin-agent-tools.js';
 import { hostPromptFromInput, resolvePromptAttachmentPath } from '../projects/attachments.js';
 import { withResolvedPluginMentionContext } from '../../plugins/plugin-mentions.js';
 import { loadThreadReads, peekThreadReadSeq } from './thread-reads.js';
+import { threadActivityForConversation } from './conversation-thread-activity.js';
 
 export interface CreateConversationInput {
   projectId: string;
@@ -245,18 +246,20 @@ export interface ConversationThreadView {
   hasPendingInteraction: boolean;
   lastReadSeq: number | null;
   maxSeq: number;
+  activity: ThreadActivityState;
 }
 
 export function conversationThreadView(
   ctx: ProductHttpContext,
   thread: ConversationThreadRow,
-  extras?: { lastReadSeq?: number | null; maxSeq?: number }
+  extras?: { lastReadSeq?: number | null; maxSeq?: number; activity?: ThreadActivityState }
 ): ConversationThreadView {
   const environment = thread.environmentId ? getEnvironment(ctx.db, thread.environmentId) : null;
   const lastReadSeq = extras && 'lastReadSeq' in extras
     ? extras.lastReadSeq ?? null
     : peekThreadReadSeq(ctx.dataDir, thread.id);
   const maxSeq = extras?.maxSeq ?? Math.max(0, nextConversationEventSequence(ctx.db, thread.id) - 1);
+  const activity = extras?.activity ?? threadActivityForConversation(ctx, thread.id, maxSeq);
   return {
     ...thread,
     cwd: environment?.path ?? null,
@@ -264,7 +267,8 @@ export function conversationThreadView(
     isWorktree: environment?.isWorktree ?? false,
     hasPendingInteraction: hasPendingInteractionForThread(ctx.db, thread.id),
     lastReadSeq,
-    maxSeq
+    maxSeq,
+    activity
   };
 }
 
@@ -274,10 +278,14 @@ export function conversationThreadViews(
 ): ConversationThreadView[] {
   const maxById = maxConversationEventSequenceByThreadIds(ctx.db, threads.map((thread) => thread.id));
   const reads = loadThreadReads(ctx.dataDir);
-  return threads.map((thread) => conversationThreadView(ctx, thread, {
-    lastReadSeq: Object.prototype.hasOwnProperty.call(reads, thread.id) ? reads[thread.id]! : null,
-    maxSeq: maxById[thread.id] ?? 0
-  }));
+  return threads.map((thread) => {
+    const maxSeq = maxById[thread.id] ?? 0;
+    return conversationThreadView(ctx, thread, {
+      lastReadSeq: Object.prototype.hasOwnProperty.call(reads, thread.id) ? reads[thread.id]! : null,
+      maxSeq,
+      activity: threadActivityForConversation(ctx, thread.id, maxSeq)
+    });
+  });
 }
 
 export async function createConversationFromRequest(

@@ -22,6 +22,8 @@ import {
   AgentCardMenu,
   clampMenuAnchor,
   canCloseWithFollowup,
+  cliAgentRemoveLabel,
+  cliAgentRestartLiveTitle,
   closeAgentWithFollowup
 } from './agentCardActions.js';
 import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from './threadCardActions.js';
@@ -32,6 +34,7 @@ import {
   cardCohort,
   formatDuration,
   isBackgroundAgent,
+  visibleAgentLanes,
   type AgentCard,
   type IdleAttentionSensitivity,
   type LaneKey
@@ -80,7 +83,7 @@ function laneOf(item: FleetItem, sensitivity: IdleAttentionSensitivity): LaneKey
 }
 
 /** Same workspace jump the status-rail Open button and the card menu share. */
-function openAgentInWorkspace(card: AgentCard): void {
+function openAgentInProject(card: AgentCard): void {
   const ui = useUi.getState();
   const data = useData.getState();
   ui.setNav('projects');
@@ -90,11 +93,12 @@ function openAgentInWorkspace(card: AgentCard): void {
   } else {
     ui.selectTab(card.projectId, card.session.id);
   }
-  ui.setWorkspaceMode(card.projectId, 'terminals');
+  ui.setProjectView(card.projectId, 'terminals');
 }
 
 export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) {
   const sensitivity = useData((s) => s.idleAttentionSensitivity);
+  const includeScheduled = useData((s) => s.includeScheduledAgentsInAgentView);
   const selection = useUi((s) => s.agentMonitor);
   const selectMonitorAgent = useUi((s) => s.selectMonitorAgent);
   const clearMonitorAgent = useUi((s) => s.clearMonitorAgent);
@@ -112,10 +116,10 @@ export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) 
       list.push(item);
       byLane.set(key, list);
     }
-    return LANES.map((l) => ({ key: l.key, label: l.label, cards: byLane.get(l.key) ?? [] })).filter(
-      (g) => g.cards.length > 0
-    );
-  }, [cards, sensitivity]);
+    return visibleAgentLanes(includeScheduled)
+      .map((l) => ({ key: l.key, label: l.label, cards: byLane.get(l.key) ?? [] }))
+      .filter((g) => g.cards.length > 0);
+  }, [cards, sensitivity, includeScheduled]);
 
   const selected = useMemo(
     () =>
@@ -129,7 +133,7 @@ export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) 
 
   useEffect(() => {
     if (!selected) {
-      clearMonitorAgent();
+      if (selection) clearMonitorAgent();
       return;
     }
     if (selected.kind === 'agent') {
@@ -138,7 +142,7 @@ export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) 
       }
       return;
     }
-    clearMonitorAgent();
+    if (selection) clearMonitorAgent();
   }, [selected, selection, selectMonitorAgent, clearMonitorAgent]);
 
   if (cards.length === 0) {
@@ -202,7 +206,7 @@ export function AgentMonitor({ cards, showProject = false }: AgentMonitorProps) 
             menu={menu}
             setMenu={setMenu}
             actions={actions}
-            onPick={openAgentInWorkspace}
+            onPick={openAgentInProject}
           />,
           document.body
         )}
@@ -412,7 +416,7 @@ function AgentMonitorSession({ card, showProject }: { card: AgentCard; showProje
   const background = isBackgroundAgent(card);
   const cohort = cardCohort(card);
   const project = useData((s) => s.projects.find((row) => row.id === card.projectId));
-  const openInWorkspace = () => openAgentInWorkspace(card);
+  const openInWorkspace = () => openAgentInProject(card);
   const canSummarize = isClaudeProfile(t.profile);
   const canFollowupClose = canCloseWithFollowup(t);
   const [summarizing, setSummarizing] = useState(false);
@@ -461,7 +465,7 @@ function AgentMonitorSession({ card, showProject }: { card: AgentCard; showProje
         title={
           exited
             ? 'Relaunch this session with the same profile and args'
-            : 'Kill and relaunch this session with the same profile and args'
+            : cliAgentRestartLiveTitle()
         }
       >
         <RotateCw size={13} /> Restart
@@ -494,7 +498,7 @@ function AgentMonitorSession({ card, showProject }: { card: AgentCard; showProje
         type="button"
         className="agent-monitor-action"
         onClick={openInWorkspace}
-        title="Open this agent in the full workspace view"
+        title="Open this agent in the full project view"
       >
         <ExternalLink size={13} /> Open
       </button>
@@ -506,7 +510,7 @@ function AgentMonitorSession({ card, showProject }: { card: AgentCard; showProje
           exited ? 'Dismiss this finished agent' : 'Terminate this agent and remove it from the board'
         }
       >
-        <Trash2 size={13} /> {exited ? 'Dismiss' : 'Kill'}
+        <Trash2 size={13} /> {cliAgentRemoveLabel(exited)}
       </button>
     </>
   );

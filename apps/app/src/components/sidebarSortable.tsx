@@ -13,9 +13,11 @@ import {
 import { sortableKeyboardCoordinates, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { POST_DRAG_CLICK_SUPPRESS_MS, suppressPostDragClick } from '../lib/suppress-post-drag-click.js';
-import { normalizeSidebarNavOrder, reorderSidebarNavItems } from './sidebarNavOrder.js';
+import { normalizeSidebarNavOrder, reorderSidebarNavItems, PROJECTS_SECTION_SORT_ID } from './sidebarNavOrder.js';
 
-export const WORKSPACES_SECTION_SORT_ID = 'sidebar-section:workspaces';
+export { PROJECTS_SECTION_SORT_ID };
+/** @deprecated Use {@link PROJECTS_SECTION_SORT_ID}. */
+export const WORKSPACES_SECTION_SORT_ID = PROJECTS_SECTION_SORT_ID;
 export const GLOBAL_NAV_ORDER_KEY = 'zcc.sidebarNavOrder';
 export const PROJECT_NAV_ORDER_KEY = 'zcc.projectSidebarNavOrder';
 export const PINNED_PROJECT_NAV_IDS = ['inbox'] as const;

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 
 const board = readFileSync(new URL('./AgentsBoard.tsx', import.meta.url), 'utf8');
 const view = readFileSync(new URL('./AgentsView.tsx', import.meta.url), 'utf8');
-const workspace = readFileSync(new URL('../project/WorkspaceView.tsx', import.meta.url), 'utf8');
+const workspace = readFileSync(new URL('../project/ProjectView.tsx', import.meta.url), 'utf8');
 const app = readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8');
 
 describe('AgentsBoard', () => {
@@ -31,7 +31,9 @@ describe('AgentsBoard', () => {
     expect(emptyBranch).toContain('No agents yet');
     expect(emptyBranch).toContain('setLauncherOpen(true)');
     expect(emptyBranch).toContain('data-testid="agents-board-new-thread"');
-    expect(board).toContain('{fleet.length > 0 && (');
+    expect(board).toContain('{showToolbar && (');
+    expect(board).toContain('const showToolbar = fleet.length > 0 || !includeScheduled');
+    expect(board).toContain('<ScheduledColumnToggle />');
     expect(board).not.toContain('<HomeAgentComposer');
 
     const filterBranch = board.slice(filterStart, board.indexOf('<AgentBoardLanes', filterStart));
@@ -48,6 +50,7 @@ describe('AgentsBoard', () => {
     expect(board).toContain('threadIdFromPath');
     expect(board).toContain('setCloseIdleTarget(reclaimableAgents)');
     expect(board).toContain('<AgentMonitor cards={visibleFleet}');
+    expect(board).toContain('projectRemote: Boolean(project.remote)');
     expect(board).toContain('schedulesForAgentView');
     expect(board).toContain('revealSchedule(item.task.id)');
     expect(board).toContain('item.kind === \'schedule\'');
@@ -63,6 +66,7 @@ describe('AgentsBoard compact chrome contract', () => {
     expect(board).toContain('aria-label="New agent"');
     expect(board).toContain('data-testid="agents-board-new-thread"');
     expect(board).toContain('btn primary agents-board-new');
+    expect(board).toContain('<ScheduledColumnToggle />');
     expect(board).not.toContain('agents-board-header');
     expect(board).not.toContain('<h1>Agents</h1>');
     expect(board).not.toContain('agents-board-count');

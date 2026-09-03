@@ -29,8 +29,8 @@
  * are injected so the engine is unit-testable without network or a real key.
  */
 
-import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
+import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
 import { existsSync } from 'node:fs';
 import { readFile, writeFile, mkdir, cp, rm, rename } from 'node:fs/promises';
 import { createHash, verify as cryptoVerify } from 'node:crypto';
@@ -59,7 +59,7 @@ const noopLog: LogFn = () => {};
 
 /** Runtime install root the discovery scanner reads. Honors the test override. */
 function installRoot(): string {
-  return process.env.ZCC_EXTENSIONS_DIR ?? join(homedir(), '.zcc', 'extensions');
+  return process.env.ZCC_EXTENSIONS_DIR ?? join(resolveZccDataDir(), 'extensions');
 }
 
 /** Injected dependencies — replaced in tests with in-memory fakes. */
@@ -366,7 +366,7 @@ export interface RegistryConfig {
 export async function readRegistryConfig(): Promise<(RegistryConfig & { registryUrl: string }) | null> {
   const file =
     process.env.ZCC_EXTENSION_REGISTRY_CONFIG ??
-    join(homedir(), '.zcc', 'extension-registry.json');
+    join(resolveZccDataDir(), 'extension-registry.json');
   if (!existsSync(file)) return null;
   try {
     const cfg = JSON.parse(await readFile(file, 'utf-8')) as RegistryConfig;

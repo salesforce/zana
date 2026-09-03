@@ -735,12 +735,12 @@ describe('host command dispatch', () => {
 
   it('starts and drives a confined terminal session', async () => {
     const project = mkdtempSync(join(tmpdir(), 'zcc-term-'));
-    const started: Array<{ cwd: string; cols: number; rows: number }> = [];
+    const started: Array<{ cwd: string; cols: number; rows: number; command?: string }> = [];
     const written: string[] = [];
     const runtime = createCommandRuntime({
       verifyProviders: async () => installedClaude,
       startTerminal: async (input) => {
-        started.push({ cwd: input.cwd, cols: input.cols, rows: input.rows });
+        started.push({ cwd: input.cwd, cols: input.cols, rows: input.rows, command: input.command });
         return { pid: 9 };
       },
       writeTerminal: async (input) => {
@@ -754,9 +754,10 @@ describe('host command dispatch', () => {
       root: project,
       cwd: project,
       cols: 100,
-      rows: 30
+      rows: 30,
+      command: 'npm run dev'
     })).resolves.toMatchObject({ started: true, pid: 9 });
-    expect(started).toEqual([{ cwd: realpathSync(project), cols: 100, rows: 30 }]);
+    expect(started).toEqual([{ cwd: realpathSync(project), cols: 100, rows: 30, command: 'npm run dev' }]);
     await expect(dispatchHostCommand(runtime, {
       type: 'terminal.input',
       sessionId,

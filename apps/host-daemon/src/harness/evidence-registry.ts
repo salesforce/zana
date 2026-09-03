@@ -19,9 +19,9 @@ const openCodeExecutionEvidence = (
   version: 1,
   status: 'approved',
   cliVersion: '1.18.0',
-  scopes: ['local'],
+  scopes: ['local', 'remote'],
   probe: 'opencode --version; opencode --help; opencode run --help; opencode agent list',
-  environmentAssumptions: ['local registered project', 'OpenCode built-in plan and build agents'],
+  environmentAssumptions: ['registered project', 'OpenCode built-in plan and build agents'],
   observed,
   reviewedAt: '2026-08-04',
   adapterOwnerApproval: 'ZCC harness execution approval'

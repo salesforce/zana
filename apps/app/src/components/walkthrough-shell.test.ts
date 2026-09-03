@@ -10,7 +10,7 @@ describe('walkthroughShellFor', () => {
     expect(walkthroughShellFor('legacy')).toEqual({ nav: 'home', homeMode: 'agent' });
   });
 
-  it('keeps New Chat visible while pointing at Workspaces, then Scheduler', () => {
+  it('keeps New Chat visible while pointing at Projects, then Scheduler', () => {
     expect(walkthroughShellFor('project')).toEqual({ nav: 'home', homeMode: null });
     expect(walkthroughShellFor('schedule')).toEqual({ nav: 'scheduler', homeMode: null });
   });

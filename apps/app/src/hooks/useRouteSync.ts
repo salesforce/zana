@@ -74,7 +74,7 @@ export function useRouteSync(): void {
       extensionsTab?: ExtensionsTab;
       settingsExtensionId?: string | null;
       focusedProjectId?: string | null;
-      workspaceMode?: Record<string, ProjectView>;
+      projectView?: Record<string, ProjectView>;
     } = {};
     if (current.nav !== decoded.nav) patch.nav = decoded.nav;
     if (current.settingsTab !== decoded.settingsTab) {
@@ -90,12 +90,12 @@ export function useRouteSync(): void {
       patch.settingsExtensionId = decoded.settingsExtensionId;
     }
     if (current.focusedProjectId !== focusedProjectId) patch.focusedProjectId = focusedProjectId;
-    if (decoded.workspaceMode && decoded.focusedProjectId) {
-      const prev = current.workspaceMode[decoded.focusedProjectId];
-      if (prev !== decoded.workspaceMode) {
-        patch.workspaceMode = {
-          ...current.workspaceMode,
-          [decoded.focusedProjectId]: decoded.workspaceMode as ProjectView
+    if (decoded.projectMode && decoded.focusedProjectId) {
+      const prev = current.projectView[decoded.focusedProjectId];
+      if (prev !== decoded.projectMode) {
+        patch.projectView = {
+          ...current.projectView,
+          [decoded.focusedProjectId]: decoded.projectMode as ProjectView
         };
       }
     }

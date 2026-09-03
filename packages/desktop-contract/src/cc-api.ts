@@ -109,6 +109,7 @@ import type {
   Result,
   SavedRecord,
   SavedRecordInput,
+  SaveCrashReportResult,
   ScheduleCreateInput,
   ScheduleGroup,
   ScheduleGroupInput,
@@ -453,6 +454,13 @@ export interface CcApi {
       lastReadSeq?: number | null;
       maxSeq?: number;
       updatedAt?: number;
+      activity?: {
+        activeWorkflowCount: number;
+        activeBackgroundAgentCount: number;
+        activeBackgroundCommandCount: number;
+        activePlanModeCount: number;
+        activeGoalCount: number;
+      };
     }>>;
     get(threadId: string): Promise<{ thread: Record<string, unknown> }>;
     send(
@@ -1084,6 +1092,15 @@ export interface CcApi {
     isFullScreen(): Promise<boolean>;
     /** Fired on 'enter-full-screen'/'leave-full-screen' for this window (OS-initiated or IPC-initiated). */
     onFullScreenChanged(cb: (isFullScreen: boolean) => void): () => void;
+    /**
+     * Persist a renderer crash report under the main-owned crashes dir and
+     * return version/OS plus the saved basename (never an absolute path).
+     */
+    saveCrashReport(input: {
+      message: string;
+      stack?: string;
+      componentStack?: string;
+    }): Promise<SaveCrashReportResult>;
   };
   /**
    * Menu-bar popover surface. Read-only for the popover renderer: it subscribes

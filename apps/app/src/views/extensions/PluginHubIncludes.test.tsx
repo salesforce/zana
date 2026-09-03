@@ -120,4 +120,33 @@ describe('PluginHubIncludes', () => {
     expect(screen.getByText('Agent card actions (1)')).toBeTruthy();
     expect(screen.getByText('Agents board actions (1)')).toBeTruthy();
   });
+
+  it('lists side-panel tabs', () => {
+    interpretPluginApp(
+      'hello',
+      definePluginApp((app) => {
+        app.slots.threadPanelAction({
+          id: 'board',
+          title: 'Board',
+          component: () => null
+        });
+      })
+    );
+    const plugin: PluginAppEntry = {
+      id: 'hello',
+      name: 'Hello',
+      description: '',
+      icon: 'Puzzle',
+      enabled: true,
+      provenance: 'direct',
+      status: 'running',
+      appUrl: null
+    };
+    render(
+      <MemoryRouter>
+        <PluginHubIncludes plugin={plugin} />
+      </MemoryRouter>
+    );
+    expect(screen.getByText('Side-panel tabs (1)')).toBeTruthy();
+  });
 });

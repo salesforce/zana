@@ -80,7 +80,11 @@ describe('ThreadCommandComposer chrome', () => {
       css.indexOf('@media (min-width: 1280px) {'),
       css.indexOf('.thread-detail-header {')
     );
-    expect(wide).toContain('max-width: 60rem;');
+    expect(wide).toContain('max-width: 72rem;');
+    expect(wide).toContain('@media (min-width: 1600px)');
+    expect(wide).toContain('max-width: 90rem;');
+    expect(wide).toContain('@media (min-width: 1920px)');
+    expect(wide).toContain('max-width: 108rem;');
     expect(wide).toContain('min-height: 52px;');
     expect(wide).toContain('max-height: 16rem;');
   });
@@ -100,7 +104,7 @@ describe('ThreadCommandComposer initial text', () => {
 
   it('stays on the project thread URL after create from a workspace', () => {
     const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('route.isProjectWorkspace ? route.focusedProjectId');
+    expect(source).toContain('route.isProjectFocused ? route.focusedProjectId');
     expect(source).toContain('getThreadRoutePath');
   });
 });

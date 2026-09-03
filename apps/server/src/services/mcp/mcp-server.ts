@@ -53,6 +53,10 @@ import { registerMicrovmExecTool, type RegisterMicrovmExecOpts } from '@zana-ai/
 import { registerSuggestActionTool } from '../suggestions/suggest-action-mcp-tool.js';
 import type { ISuggestionsStore } from '../suggestions/suggestions-store.js';
 import { registerScheduleReportTool } from '../scheduler/schedule-report-mcp-tool.js';
+import {
+  registerScheduleManageTools,
+  type ScheduleAgentApi
+} from '../scheduler/schedule-manage-mcp-tools.js';
 import { registerRegisterProjectTool } from '../projects/register-project-mcp-tool.js';
 import { registerCloneProjectTool } from '../projects/clone-project-mcp-tool.js';
 import { registerCloseSessionTools } from '../followups/close-session-mcp-tool.js';
@@ -447,6 +451,15 @@ export interface McpServerOptions {
    */
   followupAgentApi?: FollowUpAgentApi;
   /**
+   * Live SchedulerManager slice for `schedule_list` / `schedule_run_now` /
+   * `schedule_set_enabled`. These operate on the same `.zcc/schedules` store
+   * the Scheduler UI uses. The route's projectId is the default confined
+   * scope; `allProjects: true` is an explicit widen. Available on both route
+   * shapes. Absent ⇒ the tools aren't registered (e.g. tests that don't
+   * exercise the scheduler).
+   */
+  scheduleAgentApi?: ScheduleAgentApi;
+  /**
    * Open a file in this session's visible side-panel preview. Session-scoped
    * only — identity is closed over from the MCP URL. The implementation confines
    * the path (Rule 2) and broadcasts `threads:open`. Absent disables the tool
@@ -518,6 +531,7 @@ function buildProjectMcpServer(opts: {
   libraryAgentApi?: McpServerOptions['libraryAgentApi'];
   goalAgentApi?: McpServerOptions['goalAgentApi'];
   followupAgentApi?: McpServerOptions['followupAgentApi'];
+  scheduleAgentApi?: McpServerOptions['scheduleAgentApi'];
   previewFile?: McpServerOptions['previewFile'];
 }): McpServer {
   const mcp = new McpServer({ name: 'zcc-inbox', version: '0.1.0' });
@@ -605,6 +619,17 @@ function buildProjectMcpServer(opts: {
       onReport: opts.onReport
         ? (sessionId, summary, status) => opts.onReport!(opts.projectId, sessionId, summary, status)
         : undefined
+    });
+  }
+  // schedule_list / schedule_run_now / schedule_set_enabled: the agent-facing
+  // twin of the Scheduler UI. Available on both route shapes (no originating
+  // session needed). projectId from the route is the default confined scope;
+  // the agent can widen to all projects explicitly. Gated on the scheduler
+  // slice being wired (absent in scheduler-less tests).
+  if (opts.scheduleAgentApi) {
+    registerScheduleManageTools(mcp, {
+      projectId: opts.projectId,
+      scheduleAgentApi: opts.scheduleAgentApi
     });
   }
   // Agent-registry discovery tools (register_agent / list_agents / find_agent).
@@ -1643,6 +1668,7 @@ async function handleRequest(
     libraryAgentApi: opts.libraryAgentApi,
     goalAgentApi: opts.goalAgentApi,
     followupAgentApi: opts.followupAgentApi,
+    scheduleAgentApi: opts.scheduleAgentApi,
     previewFile: opts.previewFile
   });
 

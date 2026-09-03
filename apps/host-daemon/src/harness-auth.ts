@@ -25,6 +25,7 @@ import * as electron from 'electron';
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { resolveZccDataDir } from './host-config.js';
 
 /** The harness families that can carry a per-harness credential. */
 export type HarnessAuthKey = 'claude' | 'codex' | 'cursor';
@@ -89,9 +90,8 @@ function electronApi(): {
  * computes it on demand. Node enroll (no Electron) falls back to HOME / ZCC_DATA_DIR.
  */
 function dataDir(): string {
-  if (process.env.ZCC_DATA_DIR) return process.env.ZCC_DATA_DIR;
   const home = electronApi().app?.getPath?.('home') ?? homedir();
-  return join(home, '.zcc');
+  return resolveZccDataDir(process.env, home);
 }
 function authFilePath(): string {
   return join(dataDir(), 'harness-auth.enc');

@@ -1,17 +1,15 @@
 import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { X, Square, Inbox, Loader2, RefreshCw, FileText, Sparkles, MailCheck, BellOff, Maximize2, Minimize2 } from 'lucide-react';
+import { X, FileText, Sparkles, Maximize2, Minimize2, Loader2, RefreshCw } from 'lucide-react';
 import { inboxQuestions } from '@zana-ai/zcc-domain/product';
 import type { AgentState, InboxEntry, TerminalSession } from '@zana-ai/zcc-domain/product';
-import { isClaudeProfile } from '../lib/launchProfile.js';
 import { providerCapabilities } from '@zana-ai/zcc-domain/launch-provider';
-import { useData, useAgentStatus, useCatchUpSummary, useSubagents, useOverseerActivity, useIdleTriage, useInbox, useInboxAnswered } from '../store.js';
-import { canCloseWithFollowup, closeAgentWithFollowup } from './agentCardActions.js';
-import { idleSurfacesToNeedsYou } from './AgentBoard.js';
+import { useData, useAgentStatus, useCatchUpSummary, useSubagents, useOverseerActivity, useInbox, useInboxAnswered } from '../store.js';
 import { inboxPrimaryTitle } from '../lib/inboxPresentation.js';
 import { QuestionBlock } from './InboxQuestionBlock.js';
 import { AGENT_MODAL_TERMINAL_ANCHOR_ID } from './TerminalSurface.js';
 import { AgentSessionView } from './AgentSessionView.js';
+import { AgentSessionActions } from './AgentSessionActions.js';
 import { AgentReportPanel } from './AgentReportPanel.js';
 import { useSessionStats } from './AgentInsights.js';
 import { FavoriteStar } from './FavoriteStar.js';
@@ -164,124 +162,13 @@ export function AgentTerminalModal({
     }
   };
 
-  // Kill the agent's process from the modal. Mirrors the board card's delete:
-  // a confirm guards a live session so a stray click can't silently terminate a
-  // running agent. closeTerminal tears down the pty and drops the session, so we
-  // close the modal afterwards (the live xterm it was peeking is now gone).
-  const stopProcess = () => {
-    if (!window.confirm(`Stop “${session.title}”? The process will be terminated.`)) return;
-    void useData.getState().closeTerminal(session.id, projectId);
-    onClose();
-  };
-
-  // Close the agent AND leave a paper trail: main summarizes its work to the
-  // inbox and files a follow-up if it left something unfinished, THEN the store
-  // closes it. Only claude-family sessions have a transcript to summarize, so
-  // this is hidden for shells (mirrors "Summarize to inbox"). Guard the async
-  // close against a double-click; close the modal once it kicks off.
-  const [closingWithFollowup, setClosingWithFollowup] = useState(false);
-  const closeWithFollowup = async () => {
-    if (closingWithFollowup) return;
-    setClosingWithFollowup(true);
-    try {
-      const confirmed = await closeAgentWithFollowup(session, projectId);
-      if (confirmed) onClose();
-    } finally {
-      setClosingWithFollowup(false);
-    }
-  };
-
-  // Summarize this agent's work to the inbox. Only claude-family sessions leave
-  // a transcript to summarize, so the button is hidden for shells. The modal
-  // stays open (the agent keeps running) — the result lands in the inbox feed,
-  // and the store toasts the outcome. Guard against double-clicks while the
-  // main-side LLM micro-call is in flight.
-  // The manual "Summarize to inbox" button rides the same experimental toggle as
-  // the auto catch-up summary card — one "Summary" switch governs both affordances.
-  const summaryEnabled = useData((s) => s.catchUpSummaryEnabled);
-  const canSummarize = summaryEnabled && isClaudeProfile(session.profile);
-  const [summarizing, setSummarizing] = useState(false);
-  const summarize = async () => {
-    if (summarizing) return;
-    setSummarizing(true);
-    try {
-      await useData.getState().summarizeSession(session.id, projectId);
-    } finally {
-      setSummarizing(false);
-    }
-  };
-
-  // Re-tag a "Needs you" agent as Idle without touching the process. A card
-  // reaches "Needs you" two ways: a sticky `blocked` overlay main set from the
-  // notification hook, OR a triage-promoted idle verdict (advisory, renderer
-  // side). Clear BOTH — drop the blocked flag in main (the same clear the Stop
-  // hook does) and the triage slice here — so an agent the user has decided to
-  // leave stops nagging in every fleet view regardless of which path promoted
-  // it. Offered whenever the agent is live and currently surfacing for attention.
-  const triageVerdict = useIdleTriage((s) => s.byId[session.id]);
-  const sensitivity = useData((s) => s.idleAttentionSensitivity);
-  const surfacingForAttention =
-    !exited &&
-    (state === 'blocked' ||
-      (state !== 'working' &&
-        !!triageVerdict &&
-        idleSurfacesToNeedsYou(triageVerdict.resolution, triageVerdict.confidence ?? 0, sensitivity)));
-  const markIdle = () => {
-    void product.terminals.clearAgentBlocked(projectId, session.id);
-    useIdleTriage.getState().clear(session.id);
-  };
-
-  // Modal action semantics differ from the monitor's: here "Stop process" is a
-  // KILL (terminate + close the modal), matching the old footer button — not the
-  // monitor's non-destructive Ctrl-C. Rendered with the shared action-button
-  // class so the look matches inside the shared panel.
   const modalActions = (
-    <>
-      {surfacingForAttention && (
-        <button
-          type="button"
-          className="agent-monitor-action"
-          onClick={markIdle}
-          title="Clear the “Needs you” flag and mark this agent as Idle. The process keeps running."
-        >
-          <BellOff size={13} /> Mark as Idle
-        </button>
-      )}
-      {!exited && (
-        <button
-          type="button"
-          className="agent-monitor-action danger"
-          onClick={stopProcess}
-          title="Terminate the agent's process and close this view"
-        >
-          <Square size={13} /> Close Session
-        </button>
-      )}
-      {!exited && canCloseWithFollowup(session) && (
-        <button
-          type="button"
-          className="agent-monitor-action"
-          onClick={closeWithFollowup}
-          disabled={closingWithFollowup}
-          title="Close the agent, summarising its work to your inbox and filing a follow-up if it left something unfinished"
-        >
-          {closingWithFollowup ? <Loader2 size={13} className="spin" /> : <MailCheck size={13} />}
-          {closingWithFollowup ? 'Closing…' : 'Close with follow-up'}
-        </button>
-      )}
-      {canSummarize && (
-        <button
-          type="button"
-          className="agent-monitor-action"
-          onClick={summarize}
-          disabled={summarizing}
-          title="Summarize this agent's work and send it to your inbox"
-        >
-          {summarizing ? <Loader2 size={13} className="spin" /> : <Inbox size={13} />}
-          {summarizing ? 'Summarizing…' : 'Summarize to inbox'}
-        </button>
-      )}
-    </>
+    <AgentSessionActions
+      session={session}
+      projectId={projectId}
+      state={state}
+      onSessionClosed={onClose}
+    />
   );
 
   return (
@@ -339,7 +226,7 @@ export function AgentTerminalModal({
         </header>
 
         {/* Body: live PTY beside the shared thread secondary panel (Info / Diff /
-            extra tabs). Actions stay in the panel footer so Close Session remains
+            extra tabs). Actions stay in the panel footer so Delete remains
             available while Diff or a tab is open. */}
         <div className="agent-modal-body">
           <AgentSessionView

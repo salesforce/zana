@@ -32,9 +32,9 @@ export function OverviewPanel() {
     <div className="overview-panel">
       <div className="settings-inner">
         <header className="overview-header">
-          <h2>Workspaces Overview</h2>
+          <h2>Projects Overview</h2>
           <span className="overview-count">
-            {sorted.length} {sorted.length === 1 ? 'workspace' : 'workspaces'}
+            {sorted.length} {sorted.length === 1 ? 'project' : 'projects'}
           </span>
         </header>
         {sorted.length === 0 ? (

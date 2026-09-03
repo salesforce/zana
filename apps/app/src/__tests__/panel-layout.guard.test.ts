@@ -30,4 +30,11 @@ describe('panel body layouts', () => {
   it('does not keep the hybrid scheduler-panel--full + settings-inner override', () => {
     expect(css).not.toMatch(/\.scheduler-panel--full\s+\.settings-inner/);
   });
+
+  it('keeps Scheduler on the shared 1040px centered cap, not a narrower column', () => {
+    const block = css.match(/\.scheduler-panel\s+\.settings-inner\s*\{[^}]+\}/);
+    expect(block, '.scheduler-panel .settings-inner rule is missing').toBeTruthy();
+    expect(block![0]).toMatch(/max-width:\s*min\(100%,\s*1040px\)/);
+    expect(block![0]).not.toMatch(/880px/);
+  });
 });
