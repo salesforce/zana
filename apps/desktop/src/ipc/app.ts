@@ -6,13 +6,47 @@ import { productServerUrl } from '../window/renderer-url.js';
 import { microVmPlatformSupported } from '@zana-ai/zcc-host-daemon/harness/microvm-environment';
 import { getReleaseNotes } from '../release-notes.js';
 import { store } from '@zana-ai/zcc-server/services/projects/store';
-import { homedir } from 'node:os';
-import type { ReleaseNote, Result, ScheduledTask, SetupStatus, UpdateStatus, WhatsNewEvent } from '@zana-ai/zcc-domain/product';
+import { arch, homedir, release } from 'node:os';
+import { electronZccDataDir } from '@zana-ai/zcc-server/electron-data-dir';
+import {
+  boundCrashText,
+  crashIssueMarkdown,
+  CRASH_REPORT_FIELD_MAX,
+  type ReleaseNote,
+  type Result,
+  type ScheduledTask,
+  type SetupStatus,
+  type UpdateStatus,
+  type WhatsNewEvent
+} from '@zana-ai/zcc-domain/product';
+import { crashReportsDir, saveRendererCrashReport } from '../crash-report-store.js';
 
 export function registerAppIpc(): void {
   
   ctx.safeHandle(IPC.app.homedir, () => homedir(), () => '');
   ctx.safeHandle(IPC.app.version, () => ctx.runtimeSupervisor?.appVersion() ?? ctx.resolvedAppVersion(), () => '');
+  ctx.safeHandle(
+    IPC.app.saveCrashReport,
+    async (input: { message?: unknown; stack?: unknown; componentStack?: unknown } | null) => {
+      const raw = input && typeof input === 'object' ? input : {};
+      const payload = {
+        message: boundCrashText(raw.message, CRASH_REPORT_FIELD_MAX),
+        stack: boundCrashText(raw.stack, CRASH_REPORT_FIELD_MAX),
+        componentStack: boundCrashText(raw.componentStack, CRASH_REPORT_FIELD_MAX)
+      };
+      const version = String(
+        await (ctx.runtimeSupervisor?.appVersion() ?? ctx.resolvedAppVersion() ?? '')
+      );
+      const osLabel = `${process.platform} ${release()} ${arch()}`;
+      const dataDir = electronZccDataDir();
+      const { fileName } = await saveRendererCrashReport({
+        dir: crashReportsDir(dataDir),
+        markdown: crashIssueMarkdown({ ...payload, version, osLabel })
+      });
+      return { ok: true, version, osLabel, fileName };
+    },
+    () => ({ ok: false })
+  );
   ctx.safeHandle(IPC.app.microVmSupported, () => microVmPlatformSupported(), () => false);
   // Renderer-driven fullscreen targets its sender window, never whichever window
   // happened to gain focus before main handles the request.

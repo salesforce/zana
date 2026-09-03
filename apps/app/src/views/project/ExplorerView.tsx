@@ -58,7 +58,7 @@ export function ExplorerView({ project, embedded = false }: Props) {
   const explorerFile = useUi((s) => s.explorerFile[project.id]);
   const goto = useUi((s) => s.explorerGoto[project.id]);
   const setExplorerFile = useUi((s) => s.setExplorerFile);
-  const setWorkspaceMode = useUi((s) => s.setWorkspaceMode);
+  const setProjectView = useUi((s) => s.setProjectView);
   const selectTab = useUi((s) => s.selectTab);
   const createTerminal = useData((s) => s.createTerminal);
   const storeGitStatus = useData((s) => s.gitStatus[project.id]);
@@ -181,7 +181,7 @@ export function ExplorerView({ project, embedded = false }: Props) {
     const session = await createTerminal(project.id, 'shell', 80, 24, { cwd });
     if (session) {
       selectTab(project.id, session.id);
-      setWorkspaceMode(project.id, 'terminals');
+      setProjectView(project.id, 'terminals');
     }
   };
 
@@ -1040,7 +1040,7 @@ export function ExplorerView({ project, embedded = false }: Props) {
             sendPathToTerminal(
               menu.entry.path,
               () => useUi.getState().selectedTabId[project.id],
-              setWorkspaceMode
+              setProjectView
             );
             setMenu(null);
           }}

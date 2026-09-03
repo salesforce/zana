@@ -1,6 +1,7 @@
 export { EmptyStateWithFeatured } from './EmptyStateWithFeatured.js';
 export { ScheduleRow } from './ScheduleRow.js';
-export { ScheduleModal } from './ScheduleModal.js';
+export { ScheduleEditor } from './ScheduleEditor.js';
+export { ScheduleInfoPanel } from './ScheduleInfoPanel.js';
 export { DeleteConfirmModal } from './DeleteConfirmModal.js';
 export { RunReportModal } from './RunReportModal.js';
 export { TemplatePickerModal } from './TemplatePickerModal.js';
@@ -18,4 +19,6 @@ export {
   PROFILE_LABEL,
   INBOX_LEVELS
 } from './schedulerUtils.js';
-export { openScheduledLive } from './openScheduledLive.js';
+export { openScheduledLive, openScheduledLiveInSplit } from './openScheduledLive.js';
+export { isScheduleSeed, scheduleSeedFromLocationState } from './schedule-seed.js';
+export type { ScheduleSeed } from './schedule-seed.js';

@@ -70,7 +70,7 @@ describe('Idle lane predicates', () => {
   });
 
   it('LANES has no Delegating column', () => {
-    expect(LANES.map((l) => l.key)).toEqual(['blocked', 'working', 'scheduled', 'idle', 'done']);
+    expect(LANES.map((l) => l.key)).toEqual(['blocked', 'working', 'idle', 'done', 'scheduled']);
   });
 
   it('hides the Scheduled column unless includeScheduled is on', () => {
@@ -78,9 +78,9 @@ describe('Idle lane predicates', () => {
     expect(visibleAgentLanes(true).map((l) => l.key)).toEqual([
       'blocked',
       'working',
-      'scheduled',
       'idle',
-      'done'
+      'done',
+      'scheduled'
     ]);
   });
 });

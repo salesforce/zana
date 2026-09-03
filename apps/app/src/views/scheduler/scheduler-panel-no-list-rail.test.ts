@@ -20,4 +20,11 @@ describe('SchedulerPanel has no inner list rail', () => {
     expect(panel).toContain('ScheduleGroupsModal');
     expect(panel).toContain('Manage schedule groups');
   });
+
+  it('opens schedules on dedicated routes instead of a modal editor', () => {
+    expect(panel).not.toContain('ScheduleModal');
+    expect(panel).toContain('getScheduleRoutePath');
+    expect(panel).toContain('getNewScheduleRoutePath');
+    expect(panel).toContain('openScheduleInSplit');
+  });
 });

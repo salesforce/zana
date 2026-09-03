@@ -22,10 +22,8 @@ describe('AgentTerminalModal secondary panel', () => {
     expect(css).not.toContain('.agent-modal-title');
     expect(css).not.toContain('.agent-modal-heading');
     expect(source).toContain('showProject\n            modal');
-    expect(source).toContain('Close Session');
-    expect(source).toContain('Close with follow-up');
-    expect(source).toContain('closeAgentWithFollowup(session, projectId)');
-    expect(source).toContain('canCloseWithFollowup(session)');
+    expect(source).toContain('<AgentSessionActions');
+    expect(source).toContain('onSessionClosed={onClose}');
     expect(source).not.toContain('AgentDetailPanel');
     expect(source).not.toContain('useAgentPanel');
     expect(source).not.toContain('product.threads.create');

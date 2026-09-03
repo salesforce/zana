@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createSecondaryPanelCommands } from './threadSecondaryPanelLogic.js';
 import {
   persistSecondaryPanel,
   restoreSecondaryPanel,
+  secondaryPanelStatesEqual,
   type ThreadSecondaryPanelState
 } from './threadSecondaryPanelState.js';
 
@@ -17,7 +18,8 @@ export function useSecondaryPanel(
 
   useEffect(() => {
     if (!ownerId) return;
-    setState(restoreSecondaryPanel(ownerId, { defaultOpen }));
+    const next = restoreSecondaryPanel(ownerId, { defaultOpen });
+    setState((current) => (secondaryPanelStatesEqual(current, next) ? current : next));
   }, [defaultOpen, ownerId]);
 
   useEffect(() => {
@@ -29,7 +31,10 @@ export function useSecondaryPanel(
     const onChanged = (event: Event) => {
       const detail = (event as CustomEvent<{ threadId?: string }>).detail;
       if (detail?.threadId && detail.threadId !== ownerId) return;
-      setState(restoreSecondaryPanel(ownerId, { defaultOpen }));
+      setState((current) => {
+        const next = restoreSecondaryPanel(ownerId, { defaultOpen });
+        return secondaryPanelStatesEqual(current, next) ? current : next;
+      });
     };
     window.addEventListener('zcc:secondary-panel-changed', onChanged);
     return () => window.removeEventListener('zcc:secondary-panel-changed', onChanged);
@@ -39,10 +44,8 @@ export function useSecondaryPanel(
     setState((current) => recipe(current));
   }, []);
 
-  return {
-    state,
-    ...createSecondaryPanelCommands(update)
-  };
+  const commands = useMemo(() => createSecondaryPanelCommands(update), [update]);
+  return useMemo(() => ({ state, ...commands }), [commands, state]);
 }
 
 export function useThreadSecondaryPanel(threadId: string | undefined) {

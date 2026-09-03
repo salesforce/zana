@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
+import { mkdirSync } from 'node:fs';
 import {
   PermissionBroker,
   PermissionDenied,
@@ -112,6 +113,29 @@ describe('PermissionBroker — deny-by-default', () => {
     expect(broker.can('alpha', 'fs:write', { kind: 'fs', path: sshKey })).toBe(false);
     const ccFile = resolve(homedir(), '.zcc', 'config.json');
     expect(broker.can('alpha', 'fs:write', { kind: 'fs', path: ccFile })).toBe(false);
+    const devFile = resolve(homedir(), '.zcc-dev', 'config.json');
+    expect(broker.can('alpha', 'fs:write', { kind: 'fs', path: devFile })).toBe(false);
+  });
+
+  it('fs:write is blocked for ZCC_DATA_DIR even when that root is granted', () => {
+    const extra = join(tmpdir(), `zcc-custom-data-${process.pid}`);
+    mkdirSync(extra, { recursive: true });
+    const prev = process.env.ZCC_DATA_DIR;
+    process.env.ZCC_DATA_DIR = extra;
+    try {
+      const grant = grantFromManifest(
+        ['fs:read', 'fs:write'],
+        { fsRoots: [homedir(), extra] },
+        EXT_DIR
+      );
+      const { broker } = brokerWith((id) => (id === 'alpha' ? grant : null));
+      expect(broker.can('alpha', 'fs:write', { kind: 'fs', path: join(extra, 'config.json') })).toBe(
+        false
+      );
+    } finally {
+      if (prev === undefined) delete process.env.ZCC_DATA_DIR;
+      else process.env.ZCC_DATA_DIR = prev;
+    }
   });
 
   // 0.4: the sensitive-root blocklist now also covers provider auth/session

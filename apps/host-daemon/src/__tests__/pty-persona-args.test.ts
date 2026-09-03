@@ -206,6 +206,7 @@ describe('PtyManager.create — persona layer integration', () => {
 
     const argv = spawned[0].args;
     expect(argv).toContain('llmgw/gemini-3.5-flash');
+    expect(argv).toContain('build');
     expect(argv).toContain('--auto');
     expect(argv).not.toContain('llmgw/gpt-5.6-luna-1M');
     expect(argv).not.toContain('llmgw/gpt-5.6-terra-1M');

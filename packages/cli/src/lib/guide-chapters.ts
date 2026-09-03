@@ -34,12 +34,16 @@ Chapters: threads, projects, machines, terminals, plugins, automations, agent-co
   zcc thread show <id>
   zcc thread log <id>
   zcc thread tell <id> "..."
-  zcc thread wait <id> [--timeout 20m]
+  zcc thread wait <id> [--timeout 20m] [--until turn|quiet]
+  zcc thread background list|stop <id> [--force]
   zcc thread stop <id>
   zcc thread fork|archive|unarchive <id>
   zcc thread open <id> [--file PATH] [--source workspace|thread-storage] [--line N]
   zcc thread interactions <id>
 
+Default wait (--until turn) returns on idle/error even if a background Bash
+(npm run dev) is still running. Use --until quiet to wait until
+activity.activeBackgroundCommandCount is 0.
 zcc run and zcc agent send are deprecated aliases for spawn and tell.
 Give spawned threads a clear objective, constraints, deliverable, and what to report back.
 `
@@ -75,9 +79,13 @@ zcc projects ls remains as an alias of project list.
 
   zcc terminal list [--project <id>]
   zcc terminal create --project <id> [--title ...] [--command ...]
+  zcc terminal show|output|wait <id>
   zcc terminal send <id> --text "..."
   zcc terminal close <id>
 
+Prefer --command for long-lived servers you may inspect or stop. A thread that
+"starts the app" usually leaves a background Bash instead; detect with
+zcc thread show --json (activity) or zcc thread background list.
 zcc term is a deprecated alias.
 `
   },

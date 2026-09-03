@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, watch } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
+import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
 import { fileURLToPath } from 'node:url';
 import { marketplaceInstallSpec, type MarketplaceEntry } from './marketplace.js';
 import {
@@ -1420,11 +1420,7 @@ export function defaultBundledRoot(): string {
 }
 
 export function defaultPluginDataDir(): string {
-  return (
-    process.env.ZCC_DATA_DIR?.trim() ||
-    process.env.ZCC_CENTER_DIR?.trim() ||
-    join(homedir(), '.zcc')
-  );
+  return resolveZccDataDir();
 }
 
 /**

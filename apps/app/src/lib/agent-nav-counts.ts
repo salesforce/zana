@@ -6,6 +6,7 @@ export interface AgentNavCountThread {
   status: string;
   archivedAt?: number | null;
   hasPendingInteraction?: boolean;
+  activity?: { activeBackgroundCommandCount?: number } | null;
 }
 
 function isLiveAgentProcess(session: Pick<TerminalSession, 'status'>): boolean {
@@ -42,7 +43,7 @@ export function agentNavCounts(input: {
   for (const thread of input.threads ?? []) {
     if (thread.archivedAt) continue;
     if (input.scopeProjectId && thread.projectId !== input.scopeProjectId) continue;
-    const state = threadStatusToAgentState(thread.status, thread.hasPendingInteraction);
+    const state = threadStatusToAgentState(thread.status, thread.hasPendingInteraction, thread.activity);
     if (state === 'blocked') {
       active += 1;
       blocked += 1;

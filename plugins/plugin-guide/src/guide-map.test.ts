@@ -172,13 +172,13 @@ describe('ProductMap chrome', () => {
 });
 
 describe('fixtures', () => {
-  it('renders the workspace shell: Workspaces header, project rail, and topbar', () => {
+  it('renders the project shell: Projects header, project rail, and topbar', () => {
     const markup = renderToStaticMarkup(
       createElement(SurfaceMapContext.Provider, { value: mapState() }, createElement(AppShellWireframe))
     );
-    expect(markup).toContain('Workspaces');
-    expect(markup).toContain('title="Organize workspaces"');
-    expect(markup).toContain('title="Workspace menu"');
+    expect(markup).toContain('Projects');
+    expect(markup).toContain('title="Organize projects"');
+    expect(markup).toContain('title="Project menu"');
     expect(markup).toContain('title="Add project"');
     expect(markup).toContain('plugin-guide-workspace');
     expect(markup).toContain('plugin-guide-ws-topbar');

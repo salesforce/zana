@@ -1,8 +1,9 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  defaultProjectsFile,
   isLoopbackHttpHost,
   readBrowserBootstrap,
   toBrowserProjectSummaries
@@ -47,6 +48,20 @@ describe('browser bootstrap projection', () => {
     expect(
       readBrowserBootstrap({ projectsFile: join(dir, 'missing.json'), appVersion: '' }).projects
     ).toEqual([]);
+  });
+
+  it('honors ZCC_DATA_DIR then ZCC_CENTER_DIR for the default catalogue path', () => {
+    expect(defaultProjectsFile({ ZCC_DATA_DIR: '/tmp/zcc-data', ZCC_CENTER_DIR: '/tmp/legacy' })).toBe(
+      join('/tmp/zcc-data', 'projects.json')
+    );
+    expect(defaultProjectsFile({ ZCC_CENTER_DIR: '/tmp/zcc-center' })).toBe(
+      join('/tmp/zcc-center', 'projects.json')
+    );
+  });
+
+  it('does not import host-daemon (this file is on the Vite config load path)', () => {
+    const src = readFileSync(new URL('./browser-bootstrap.ts', import.meta.url), 'utf8');
+    expect(src).not.toMatch(/from ['"]@zana-ai\/zcc-host-daemon/);
   });
 
   it('accepts only loopback Host headers', () => {

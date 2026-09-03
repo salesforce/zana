@@ -489,7 +489,8 @@ export const IPC = {
     microVmSupported: 'app:microVmSupported',
     setFullScreen: 'app:setFullScreen',
     isFullScreen: 'app:isFullScreen',
-    onFullScreenChanged: 'app:onFullScreenChanged'
+    onFullScreenChanged: 'app:onFullScreenChanged',
+    saveCrashReport: 'app:saveCrashReport'
   },
   /**
    * Menu-bar popover surface (macOS frameless-card tray, behind

@@ -647,11 +647,11 @@ export interface ExtensionCommand {
    *   - `tabCount` — number of visible tabs in the selected project (number)
    *   - `activeTabStatus` — active tab status string (e.g. `'running'`, `'exited'`), or `''`
    *   - `activeTabProfile` — active tab launch profile (e.g. `'claude'`, `'shell'`), or `''`
-   *   - `workspaceMode` — `'terminals' | 'explorer' | 'preview' | 'library'`
+   *   - `projectView` — `'terminals' | 'explorer' | 'preview' | 'library'` (legacy alias: `workspaceMode`)
    *   - `platform` — `'darwin' | 'win32' | 'linux'`
    *   - `panelFocused` — is THIS extension's own panel the active nav? (boolean)
    *
-   * @example `when: "hasActiveProject && workspaceMode == terminals"`
+   * @example `when: "hasActiveProject && projectView == terminals"`
    * @example `when: "activeNav == projects || panelFocused"`
    */
   when?: string;

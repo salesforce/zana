@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { PersonaEditor, savePersona } from '../PersonaEditor.js';
 import { useData } from '../../store.js';
 
@@ -98,6 +99,16 @@ describe('PersonaEditor harness-neutral fields', () => {
     );
 
     expect(html).not.toContain('persona-role-target');
+  });
+
+  it('accepts project scope for authoritative OpenCode agent discovery', () => {
+    const source = readFileSync(new URL('../PersonaEditor.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('projectId?: string;');
+    expect(source).toContain("descriptor.id === 'opencode'");
+    expect(source).toContain("product.harness.agentDescriptors(projectId, 'opencode')");
+    expect(source).toContain("product.harness.agentDescriptors(projectId, 'opencode', true)");
+    expect(source).toContain('Effective OpenCode agent');
+    expect(source).toContain('directLaunchAllowed');
   });
 
   it('turns a rejected save into an actionable error', async () => {

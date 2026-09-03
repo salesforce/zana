@@ -25,10 +25,9 @@ import { useMergedModules } from '../modules/index.js';
 import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js';
 import { useRouteState } from '../hooks/useRouteState.js';
 import { ProjectsList } from './listpane/ProjectsList.js';
-import { PINNED_SIDEBAR_NAV_IDS } from './sidebarNavOrder.js';
+import { PINNED_SIDEBAR_NAV_IDS, PROJECTS_SECTION_SORT_ID } from './sidebarNavOrder.js';
 import {
-  GLOBAL_NAV_ORDER_KEY,
-  WORKSPACES_SECTION_SORT_ID
+  GLOBAL_NAV_ORDER_KEY
 } from './sidebarSortable.js';
 import {
   SidebarCountBadge,
@@ -195,7 +194,7 @@ export function Sidebar() {
     }),
     {
       kind: 'section',
-      id: WORKSPACES_SECTION_SORT_ID,
+      id: PROJECTS_SECTION_SORT_ID,
       node: <ProjectsList placement="sidebar" />
     }
   ];

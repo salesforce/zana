@@ -2,6 +2,7 @@ import Link from 'next/link';
 import type { Metadata } from 'next';
 import { site } from '@/lib/site';
 import { AuroraGrid } from './components/AuroraGrid';
+import { ProductDemo } from './components/product-tour/ProductDemo';
 
 export const metadata: Metadata = {
   alternates: { canonical: '/' },
@@ -55,47 +56,8 @@ export default function Home() {
             <p className="home-note">Free and open source. macOS today; Windows and Linux are next.</p>
           </div>
 
-          <div className="wrap">
-            <div className="app-window">
-              <div className="app-window-bar">
-                <div className="app-window-dots" aria-hidden="true">
-                  <span /><span /><span />
-                </div>
-                <span className="app-window-title">Agents</span>
-              </div>
-              {/* next/image can freeze animated GIFs to the first frame. */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src="/product-shots/agents-board.gif"
-                alt="Zana Command Center Agents board with sessions grouped into Needs you, Working, Idle, and Done."
-              />
-              <div className="app-window-status">Needs you · Working · Idle · Done</div>
-            </div>
-          </div>
-        </section>
-
-        <section className="home-workbench" aria-label="Product surfaces">
-          <div className="wrap">
-            <div className="home-workbench-grid" data-reveal-stagger>
-              <article className="zcc-panel">
-                <h3>Agents board</h3>
-                <p>Every session in a lane so you can see who needs you, who is working, and who is done.</p>
-                <div className="lane-row">
-                  <span className="lane-chip need">Needs you</span>
-                  <span className="lane-chip work">Working</span>
-                  <span className="lane-chip idle">Idle</span>
-                  <span className="lane-chip done">Done</span>
-                </div>
-              </article>
-              <article className="zcc-panel">
-                <h3>Inbox</h3>
-                <p>Reports, ideas, and questions stay in view. Routine noise folds so it cannot bury the signal.</p>
-              </article>
-              <article className="zcc-panel">
-                <h3>Plugins</h3>
-                <p>Install marketplace capabilities or author a panel. Confirm full trust, then it runs in-process.</p>
-              </article>
-            </div>
+          <div className="wrap home-tour">
+            <ProductDemo />
           </div>
         </section>
 

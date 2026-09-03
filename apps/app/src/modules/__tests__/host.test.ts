@@ -15,7 +15,7 @@ const h = vi.hoisted(() => ({
   setNav: vi.fn(),
   selectProject: vi.fn(),
   selectTab: vi.fn(),
-  setWorkspaceMode: vi.fn(),
+  setProjectView: vi.fn(),
   enterProjectFocus: vi.fn(),
   projects: [] as Array<{ id: string; name: string; path: string }>,
   personas: [] as Array<{ id: string; name: string; baseProfile?: string }>
@@ -29,7 +29,7 @@ vi.mock('../../store', () => ({
       setNav: h.setNav,
       selectProject: h.selectProject,
       selectTab: h.selectTab,
-      setWorkspaceMode: h.setWorkspaceMode,
+      setProjectView: h.setProjectView,
       enterProjectFocus: h.enterProjectFocus,
       selectedProjectId: null
     }),

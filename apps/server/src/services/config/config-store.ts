@@ -50,7 +50,7 @@ export function createConfigStore(
     claudeBinary: 'claude',
     fontSize: 13,
     lastProjectId: null,
-    workspaceModes: {},
+    projectViews: {},
     agentsBoardView: 'board',
     inboxGrouping: 'project',
     autoModeEnabled: true,

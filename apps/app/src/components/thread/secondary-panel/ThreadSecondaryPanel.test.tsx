@@ -36,7 +36,7 @@ describe('ThreadSecondaryPanel chrome', () => {
     const html = renderToStaticMarkup(
       <ThreadSecondaryPanel
         state={openSecondaryPanel(emptySecondaryPanelState())}
-        footer={<button type="button">Close Session</button>}
+        footer={<button type="button">Delete</button>}
         onSelectInfo={noop}
         onSelectDiff={noop}
         onNewTab={noop}
@@ -50,7 +50,7 @@ describe('ThreadSecondaryPanel chrome', () => {
       </ThreadSecondaryPanel>
     );
     expect(html).toContain('data-testid="thread-secondary-footer"');
-    expect(html).toContain('Close Session');
+    expect(html).toContain('Delete');
   });
 
   it('renders closable New Tab pills', () => {

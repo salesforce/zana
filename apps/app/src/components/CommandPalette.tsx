@@ -92,14 +92,14 @@ export function CommandPalette({ onClose }: Props) {
   const setNav = useUi((s) => s.setNav);
   const setSettingsTab = useUi((s) => s.setSettingsTab);
   const setExtensionsTab = useUi((s) => s.setExtensionsTab);
-  const setWorkspaceMode = useUi((s) => s.setWorkspaceMode);
+  const setProjectView = useUi((s) => s.setProjectView);
   const setOverviewOpen = useUi((s) => s.setOverviewOpen);
   const overviewOpen = useUi((s) => s.overviewOpen);
   const setExplorerFile = useUi((s) => s.setExplorerFile);
   const nav = useUi((s) => s.nav);
   const selectedProjectId = useUi((s) => s.selectedProjectId);
   const selectedTabId = useUi((s) => s.selectedTabId);
-  const workspaceModeMap = useUi((s) => s.workspaceMode);
+  const projectViewMap = useUi((s) => s.projectView);
   const recentFilesMap = useUi((s) => s.recentFiles);
   const pushToast = useUi((s) => s.pushToast);
   const allPersonas = usePersonas((s) => s.personas);
@@ -129,7 +129,7 @@ export function CommandPalette({ onClose }: Props) {
     const session = await createTerminal(selectedProject.id, profile, 80, 24);
     if (session) {
       selectTab(selectedProject.id, session.id);
-      setWorkspaceMode(selectedProject.id, 'terminals');
+      setProjectView(selectedProject.id, 'terminals');
     }
   };
 
@@ -146,7 +146,7 @@ export function CommandPalette({ onClose }: Props) {
     );
     if (session) {
       selectTab(selectedProject.id, session.id);
-      setWorkspaceMode(selectedProject.id, 'terminals');
+      setProjectView(selectedProject.id, 'terminals');
     }
   };
 
@@ -161,7 +161,7 @@ export function CommandPalette({ onClose }: Props) {
     });
     if (session) {
       selectTab(selectedProject.id, session.id);
-      setWorkspaceMode(selectedProject.id, 'terminals');
+      setProjectView(selectedProject.id, 'terminals');
       useUi.getState().enterProjectFocus(selectedProject.id);
     }
   };
@@ -171,7 +171,7 @@ export function CommandPalette({ onClose }: Props) {
     if (!activeTab) return;
     void product.terminals.reply(activeTab.id, invocation);
     if (selectedProject) {
-      setWorkspaceMode(selectedProject.id, 'terminals');
+      setProjectView(selectedProject.id, 'terminals');
       useUi.getState().enterProjectFocus(selectedProject.id);
     }
   };
@@ -204,7 +204,7 @@ export function CommandPalette({ onClose }: Props) {
     if (session) {
       useUi.getState().enterProjectFocus(project.id);
       selectTab(project.id, session.id);
-      setWorkspaceMode(project.id, 'terminals');
+      setProjectView(project.id, 'terminals');
       onClose();
     }
   };
@@ -318,18 +318,18 @@ export function CommandPalette({ onClose }: Props) {
       tabCount: selectedProjectTabs.length,
       activeTabStatus: activeTab?.status ?? '',
       activeTabProfile: activeTab?.profile ?? '',
-      workspaceMode: selectedProject ? (workspaceModeMap[selectedProject.id] ?? 'terminals') : '',
+      projectView: selectedProject ? (projectViewMap[selectedProject.id] ?? 'terminals') : '',
       platform,
       // Per-command override happens in the adapter; default false here.
       panelFocused: false,
       scopedWindow: isScopedWindow()
     };
-  }, [nav, selectedProject, activeTab, selectedProjectTabs.length, workspaceModeMap]);
+  }, [nav, selectedProject, activeTab, selectedProjectTabs.length, projectViewMap]);
 
   const items = useMemo<PaletteItem[]>(() => buildPaletteItems({
     projects, terminals, selectedProject, selectedProjectTabs, activeTab,
     scheduledTasks, personas, modules, overviewOpen, whenCtx, onClose, launch,
-    launchPersona, addProject, setNav, selectProject, selectTab, setWorkspaceMode,
+    launchPersona, addProject, setNav, selectProject, selectTab, setProjectView,
     setSettingsTab, setExtensionsTab, setOverviewOpen, setPinned, restartTerminal, closeTerminal,
     reopenLastClosed, restoreLastDetached, pushToast,
     commandPaletteActions,
@@ -337,7 +337,7 @@ export function CommandPalette({ onClose }: Props) {
     projectId: route.focusedProjectId
   }), [projects, terminals, selectedProject, selectedProjectTabs, activeTab,
     scheduledTasks, personas, modules, overviewOpen, whenCtx, onClose, addProject, setNav,
-    selectProject, selectTab, setWorkspaceMode, setSettingsTab, setExtensionsTab, setOverviewOpen,
+    selectProject, selectTab, setProjectView, setSettingsTab, setExtensionsTab, setOverviewOpen,
     setPinned, restartTerminal, closeTerminal, reopenLastClosed, restoreLastDetached, pushToast,
     commandPaletteActions, route.threadId, route.focusedProjectId]);
 
@@ -539,7 +539,7 @@ export function CommandPalette({ onClose }: Props) {
 
   const chooseFile = (file: WalkedFile) => {
     if (!selectedProject) return;
-    setWorkspaceMode(selectedProject.id, 'explorer');
+    setProjectView(selectedProject.id, 'explorer');
     setExplorerFile(selectedProject.id, file.path);
     onClose();
   };

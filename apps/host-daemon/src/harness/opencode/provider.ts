@@ -73,12 +73,21 @@ import { cleanExtraArgs } from '../argv-utils.js';
 import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from '../target-resolution.js';
 
 const OPENCODE_MIN_VERSION = '1.18.0';
-const OPENCODE_REVIEWED_AT = '2026-08-29';
+const OPENCODE_REVIEWED_AT = '2026-09-02';
+const OPENCODE_VERIFIED_SCOPES = ['local', 'remote'] as const;
+const OPENCODE_MODEL_IDS = [
+  'llmgw/gpt-5.6-luna-1M',
+  'llmgw/gpt-5.6-terra-1M',
+  'llmgw/gpt-5.6-sol-1M',
+  'llmgw/gemini-3.1-pro-preview',
+  'llmgw/gemini-3.5-flash',
+  'llmgw/grok-4.6'
+] as const;
 const openCodeEvidence = (id: string, observed: string, scope: 'local' | 'remote' = 'local') => ({
   id,
   versionRange: OPENCODE_MIN_VERSION,
   scope,
-  probe: 'opencode --version; opencode --help; opencode run --help; opencode models llmgw',
+  probe: 'opencode --version; opencode --help; opencode run --help; opencode models',
   observed: `Minimum supported/reviewed CLI floor: ${OPENCODE_MIN_VERSION}. ${observed}`,
   reviewedAt: OPENCODE_REVIEWED_AT
 });
@@ -105,9 +114,12 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
     configFiles: [{ id: 'native-settings', label: 'Native settings', scopes: [], effect: 'unsupported', rawEdit: false, reason: 'Native project settings file is not verified.' }],
     targets: {
       roles: [
-        { id: 'build', label: 'Build', executionStates: ['accept-edits', 'autonomous'], scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'plan', label: 'Plan', executionStates: ['plan'], scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION }
+        { id: 'build', label: 'Build', executionStates: ['accept-edits', 'autonomous'], scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'plan', label: 'Plan', executionStates: ['plan'], scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION }
       ],
+      // One opencode provider namespace (`llmgw/…`) serves every model; the
+      // `provider` field groups by underlying vendor for the picker/provider
+      // filter only — it never reconstructs the `--model` id (the full id ships).
       providers: [
         { id: 'openai', label: 'OpenAI' },
         { id: 'google', label: 'Google' },
@@ -115,12 +127,12 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
       ],
       providerModelRelationship: 'combined-provider-model',
       models: [
-        { id: 'llmgw/gpt-5.6-luna-1M', label: 'Luna', provider: 'openai', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'llmgw/gpt-5.6-terra-1M', label: 'Terra', provider: 'openai', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'llmgw/gpt-5.6-sol-1M', label: 'Sol', provider: 'openai', level: 'high', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'llmgw/gemini-3.5-flash', label: 'Gemini Flash', provider: 'google', level: 'low', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'llmgw/gemini-3.1-pro-preview', label: 'Gemini Pro', provider: 'google', level: 'medium', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'llmgw/grok-4.6', label: 'Grok', provider: 'xai', level: 'high', scope: ['local'], evidenceVersion: OPENCODE_MIN_VERSION }
+        { id: 'llmgw/gpt-5.6-luna-1M', label: 'Luna', provider: 'openai', level: 'low', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/gpt-5.6-terra-1M', label: 'Terra', provider: 'openai', level: 'medium', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/gpt-5.6-sol-1M', label: 'Sol', provider: 'openai', level: 'high', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/gemini-3.1-pro-preview', label: 'Gemini Pro', provider: 'google', level: 'medium', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/gemini-3.5-flash', label: 'Gemini Flash', provider: 'google', level: 'low', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
+        { id: 'llmgw/grok-4.6', label: 'Grok', provider: 'xai', level: 'medium', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION }
       ],
       // Single-family monotonic ladder (matches claude haiku/sonnet/opus, codex
       // openai): the gpt-5.6 family is the only family spanning all three tiers.
@@ -141,10 +153,10 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
     initialTaskDelivery: { local: 'spawn-arg', remote: 'spawn-arg', readinessSignal: 'process-spawned', acceptanceSignal: 'argv-bound' }
   },
   executionTargetMetadata: {
-    plan: { equivalence: 'exact', scopes: ['local'] },
-    interactive: { equivalence: 'conditional', scopes: ['local'] },
-    'accept-edits': { equivalence: 'closest', scopes: ['local'] },
-    autonomous: { equivalence: 'exact', scopes: ['local'] }
+    plan: { equivalence: 'exact', scopes: [...OPENCODE_VERIFIED_SCOPES] },
+    interactive: { equivalence: 'conditional', scopes: [...OPENCODE_VERIFIED_SCOPES] },
+    'accept-edits': { equivalence: 'closest', scopes: [...OPENCODE_VERIFIED_SCOPES] },
+    autonomous: { equivalence: 'exact', scopes: [...OPENCODE_VERIFIED_SCOPES] }
   },
   collision: {
     role: [{ names: ['--agent'], arity: 1, acceptsAttachedValue: true }],
@@ -167,14 +179,14 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
     }
   },
   evidence: [
-    openCodeEvidence('llmgw/gpt-5.6-luna-1M', 'Model appears in opencode models llmgw and --model accepts provider/model IDs.'),
-    openCodeEvidence('llmgw/gpt-5.6-terra-1M', 'Model appears in opencode models llmgw and --model accepts provider/model IDs.'),
-    openCodeEvidence('llmgw/gpt-5.6-sol-1M', 'Model appears in opencode models llmgw and --model accepts provider/model IDs.'),
-    openCodeEvidence('llmgw/gemini-3.5-flash', 'Model appears in opencode models llmgw and --model accepts provider/model IDs.'),
-    openCodeEvidence('llmgw/gemini-3.1-pro-preview', 'Model appears in opencode models llmgw and --model accepts provider/model IDs.'),
-    openCodeEvidence('llmgw/grok-4.6', 'Model appears in opencode models llmgw and --model accepts provider/model IDs.'),
+    ...OPENCODE_MODEL_IDS.flatMap((id) => [
+      openCodeEvidence(id, 'Model appears in opencode models and --model accepts provider/model IDs.'),
+      openCodeEvidence(id, 'Remote login-shell command binds --model provider/model IDs.', 'remote')
+    ]),
     openCodeEvidence('build', 'Built-in build role appears in effective opencode agent list output.'),
+    openCodeEvidence('build', 'Remote login-shell command binds --agent build.', 'remote'),
     openCodeEvidence('plan', 'Built-in plan role appears in effective opencode agent list output.'),
+    openCodeEvidence('plan', 'Remote login-shell command binds --agent plan.', 'remote'),
     openCodeEvidence('opencode.role.discovery', 'Project-scoped opencode agent list supplies exact effective role names before launch.')
   ]
 };
@@ -453,6 +465,11 @@ export class OpenCodeProvider extends BaseLaunchProvider {
   readonly id = 'opencode';
   readonly adapter = OPENCODE_ADAPTER;
   readonly acceptsDynamicRoleTargets = true;
+  // An OpenCode `--agent <role>` pins the agent's own model; a forced catalog
+  // `--model` overrides that pin and dies with ProviderModelNotFoundError (dead
+  // session / exit 64) on any install whose provider inventory differs from the
+  // shipped snapshot. So a resolved native role suppresses the injected model.
+  readonly nativeRolePinsModel = true;
 
   dynamicRoleEvidenceTarget(target: { id: string; label: string; scope: readonly ('local' | 'remote')[] }, _installedVersion: string) {
     return { ...target, id: 'opencode.role.discovery', scope: [...target.scope], evidenceVersion: OPENCODE_MIN_VERSION };
@@ -518,7 +535,7 @@ export class OpenCodeProvider extends BaseLaunchProvider {
     const state = targetId.replace('opencode.execution.', '');
     if (state === 'plan') return { args: ['--agent', 'plan'] };
     if (state === 'accept-edits' || state === 'autonomous') {
-      return { args: ['--auto'] };
+      return { args: ['--agent', 'build', '--auto'] };
     }
     return {};
   }
@@ -670,10 +687,12 @@ export class OpenCodeProvider extends BaseLaunchProvider {
     });
     // Remote tmux inherits its server's stale PATH. A pane-local login shell loads
     // the remote user's CLI installation without mutating that shared environment.
+    // A native role pins its own model — drop any injected `--model` (nativeRolePinsModel).
+    const suppressModelForRole = Boolean(roleTarget.targetId && this.nativeRolePinsModel);
     const argv = [
       'opencode',
       ...baseArgs,
-      ...(modelTarget.contribution.args || []),
+      ...(suppressModelForRole ? [] : (modelTarget.contribution.args || [])),
       ...(roleTarget.contribution.args || []),
       ...(execution.contribution.args || []),
       ...remoteExtra

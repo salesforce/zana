@@ -412,27 +412,28 @@ describe('OpenCodeProvider', () => {
     expect(p.resolveLaunch('opencode', cfg, false).command).toBe('/opt/opencode/opencode');
   });
 
-  it('exposes every configured OpenCode model target for verified local launches only', () => {
+  it('exposes every configured OpenCode model target for verified local and remote launches', () => {
     const models = p.adapter.descriptor.targets?.models ?? [];
     expect(models.map((model) => model.id)).toEqual([
       'llmgw/gpt-5.6-luna-1M',
       'llmgw/gpt-5.6-terra-1M',
       'llmgw/gpt-5.6-sol-1M',
-      'llmgw/gemini-3.5-flash',
       'llmgw/gemini-3.1-pro-preview',
+      'llmgw/gemini-3.5-flash',
       'llmgw/grok-4.6'
     ]);
     expect(Object.fromEntries(models.map((model) => [model.id, model.level]))).toMatchObject({
       'llmgw/gpt-5.6-luna-1M': 'low',
       'llmgw/gpt-5.6-terra-1M': 'medium',
       'llmgw/gpt-5.6-sol-1M': 'high',
-      'llmgw/gemini-3.5-flash': 'low',
       'llmgw/gemini-3.1-pro-preview': 'medium',
-      'llmgw/grok-4.6': 'high'
+      'llmgw/gemini-3.5-flash': 'low',
+      'llmgw/grok-4.6': 'medium'
     });
-    expect(models.every((model) => model.scope.length === 1 && model.scope[0] === 'local')).toBe(true);
+    expect(models.every((model) => model.scope.length === 2 && model.scope.includes('local') && model.scope.includes('remote'))).toBe(true);
     expect(models.every((model) => model.evidenceVersion === '1.18.0')).toBe(true);
     expect(p.adapter.evidence.map(({ id }) => id)).toEqual(expect.arrayContaining(models.map(({ id }) => id)));
+    expect(p.adapter.evidence.filter(({ id, scope }) => id === models[0]?.id).map(({ scope }) => scope)).toEqual(['local', 'remote']);
   });
 
   it('describes 1.18.0 as a minimum supported and reviewed floor', () => {
@@ -443,10 +444,10 @@ describe('OpenCodeProvider', () => {
 
   it('maps dynamic roles to explicit reviewed discovery evidence', () => {
     expect(p.dynamicRoleEvidenceTarget(
-      { id: 'custom-agent', label: 'custom-agent', scope: ['local'] },
+      { id: 'custom-reviewer', label: 'custom-reviewer', scope: ['local'] },
       '1.18.10'
     )).toEqual({
-      id: 'opencode.role.discovery', label: 'custom-agent', scope: ['local'], evidenceVersion: '1.18.0'
+      id: 'opencode.role.discovery', label: 'custom-reviewer', scope: ['local'], evidenceVersion: '1.18.0'
     });
   });
 
@@ -571,8 +572,8 @@ describe('OpenCodeProvider', () => {
     expect(cmd).not.toContain('/opt/local/opencode');
   });
 
-  it('remote command rejects unverified structured target routing', () => {
-    expect(() => p.buildRemoteCommand({
+  it('remote command binds verified structured target routing', () => {
+    const { cmd } = p.buildRemoteCommand({
       profile: 'opencode',
       config: {
         ...CONFIG,
@@ -599,7 +600,12 @@ describe('OpenCodeProvider', () => {
           opencode: { modelTargetId: 'llmgw/gemini-3.5-flash', executionState: 'autonomous' }
         }
       }
-    })).toThrow('model target is unavailable for remote launches');
+    });
+    expect(cmd).toBe(
+      `cd '/home/sfwork/core' && exec 'bash' '-lic' ${shellQuote(
+        `exec ${shellQuoteArgv(['opencode', '--model', 'llmgw/gemini-3.5-flash', '--agent', 'build', '--auto'])}`
+      )}`
+    );
   });
 
   it('title maps each profile', () => {
@@ -696,8 +702,10 @@ describe.runIf(process.env.ZCC_LIVE_OPENCODE === '1')('OpenCodeProvider live dis
     }, { bypassCache: true });
     expect(result).toMatchObject({ status: 'success' });
     if (result.status === 'success') {
+      // Assert only the built-in primaries every install has — never a
+      // developer-local custom agent name (kept out of the committed suite).
       expect(result.descriptors.filter(({ directLaunchAllowed }) => directLaunchAllowed).map(({ id }) => id))
-        .toEqual(expect.arrayContaining(['build', 'plan', 'custom-agent', 'test-primary']));
+        .toEqual(expect.arrayContaining(['build', 'plan']));
       expect(result.descriptors.filter(({ hidden }) => hidden).map(({ id }) => id))
         .toEqual(expect.arrayContaining(['compaction', 'summary', 'title']));
     }

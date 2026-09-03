@@ -19,8 +19,8 @@ const h = vi.hoisted(() => {
     nav: 'projects',
     setNav: vi.fn(),
     sidebarCollapsed: false,
-    workspaceMode: {} as Record<string, string>,
-    setWorkspaceMode: vi.fn(),
+    projectView: {} as Record<string, string>,
+    setProjectView: vi.fn(),
     collapsedSections: {},
     toggleSection: vi.fn(),
     setLauncherOpen: vi.fn()
@@ -195,7 +195,7 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     const source = readFileSync(new URL('../ProjectScopedNav.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain("mode: 'agents'");
-    expect(source).toContain('getProjectWorkspaceRoutePath(project.id, item.mode)');
+    expect(source).toContain('getProjectModeRoutePath(project.id, item.mode)');
     expect(source).toContain('testId: `project-nav-${item.mode}`');
     expect(source).toContain('PROJECT_NAV_ORDER_KEY');
     expect(source).toContain('sidebar--titlebar-controls');

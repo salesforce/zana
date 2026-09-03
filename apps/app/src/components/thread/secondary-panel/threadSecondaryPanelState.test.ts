@@ -15,6 +15,7 @@ import {
   persistSecondaryPanelState,
   restoreIfThread,
   restoreSecondaryPanel,
+  secondaryPanelStatesEqual,
   selectPinnedView,
   setSecondaryPanelWidth,
   storageKeyForThread,
@@ -26,6 +27,13 @@ import {
 describe('thread secondary panel state', () => {
   afterEach(() => {
     if (typeof localStorage !== 'undefined') localStorage.clear();
+  });
+
+  it('returns the same width state when the clamp is a no-op', () => {
+    const state = emptySecondaryPanelState();
+    expect(setSecondaryPanelWidth(state, state.widthPx)).toBe(state);
+    expect(secondaryPanelStatesEqual(state, emptySecondaryPanelState())).toBe(true);
+    expect(secondaryPanelStatesEqual(state, { ...state, isOpen: true })).toBe(false);
   });
 
   it('opens onto the Info pin by default', () => {
@@ -47,6 +55,14 @@ describe('thread secondary panel state', () => {
     const next = selectPinnedView(emptySecondaryPanelState(), 'diff');
     expect(next.isOpen).toBe(true);
     expect(next.activeId).toBe('diff');
+  });
+
+  it('returns the same state when the pin is already active and open', () => {
+    const opened = selectPinnedView(emptySecondaryPanelState(), 'plan');
+    expect(selectPinnedView(opened, 'plan')).toBe(opened);
+    const closed = { ...opened, isOpen: false };
+    expect(selectPinnedView(closed, 'plan')).not.toBe(closed);
+    expect(selectPinnedView(closed, 'plan')).toMatchObject({ isOpen: true, activeId: 'plan' });
   });
 
   it('restores a persisted Plan pin', () => {
@@ -221,6 +237,8 @@ describe('thread secondary panel state', () => {
     const patched = patchClosableTab(opened, opened.tabs[0]!.id, { url: 'https://zana.ai' });
     expect(patched.tabs[0]?.url).toBe('https://zana.ai');
     expect(patched.tabs[0]?.id).toBe(opened.tabs[0]?.id);
+    expect(patchClosableTab(patched, patched.tabs[0]!.id, { url: 'https://zana.ai' })).toBe(patched);
+    expect(patchClosableTab(patched, 'missing', { title: 'Nope' })).toBe(patched);
   });
 
   it('falls back when persisted JSON is invalid or storage throws', () => {

@@ -207,10 +207,10 @@ describe('composer host status', () => {
     })).toBe('Set URL');
   });
 
-  it('lets Default Workspace run on another connected machine', () => {
+  it('lets Default Project run on another connected machine', () => {
     const scratch: Project = {
       id: 'p-scratch',
-      name: 'Default Workspace',
+      name: 'Default Project',
       path: '/Users/me/zcc-workspace',
       createdAt: 1,
       lastActiveAt: 1,

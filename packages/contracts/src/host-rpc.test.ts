@@ -195,8 +195,15 @@ describe('host-rpc contract', () => {
       root: '/tmp/proj',
       cwd: '/tmp/proj',
       cols: 80,
-      rows: 24
+      rows: 24,
+      command: 'npm run dev'
     }).type).toBe('terminal.start');
+    expect(HostRpcCommandSchema.safeParse({
+      type: 'terminal.start',
+      sessionId: threadId,
+      root: '/tmp/proj',
+      command: 'x'.repeat(10_001)
+    }).success).toBe(false);
     expect(HostRpcCommandSchema.parse({
       type: 'host.list_dir',
       root: '/tmp/proj',
@@ -344,7 +351,7 @@ describe('host-rpc contract', () => {
       }
     };
     expect(HostBridgeLaunchSchema.safeParse(launch).success).toBe(false);
-    expect(HOST_RPC_PROTOCOL_VERSION).toBeGreaterThanOrEqual(18);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBeGreaterThanOrEqual(20);
   });
 
   it('parses provider CLI status and install commands', () => {

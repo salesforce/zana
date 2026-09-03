@@ -67,12 +67,19 @@ export type {
   PluginThreadListRegistration,
   PluginThreadPanelActionRegistration,
   PluginThreadPanelProps,
+  PluginThreadPanelScope,
   ThreadChatProps,
   ZccContext,
   ZccNavigate
 } from './app-contract.js';
 
-export { collectPluginApp, emptyRegistrationSet } from './app-contract.js';
+export {
+  collectPluginApp,
+  DEFAULT_PLUGIN_THREAD_PANEL_SCOPES,
+  emptyRegistrationSet,
+  PLUGIN_THREAD_PANEL_SCOPES,
+  threadPanelActionMatchesScope
+} from './app-contract.js';
 
 export interface PluginHostBridge {
   callRpc(pluginId: string, method: string, args?: unknown): Promise<unknown>;

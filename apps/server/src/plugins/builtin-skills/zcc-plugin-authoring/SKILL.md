@@ -126,11 +126,16 @@ export default definePluginApp((app) => {
 `PluginAppBuilder` exposes `slots`, `composer`, and `contentScripts`.
 `isPluginAppDefinition` is the loader's type guard.
 `collectPluginApp` / `emptyRegistrationSet` collect registrations in tests.
+`threadPanelActionMatchesScope` (with `PLUGIN_THREAD_PANEL_SCOPES` /
+`DEFAULT_PLUGIN_THREAD_PANEL_SCOPES`) filters New Tab rows by `"thread"` or
+`"agent-session"`.
 
 Frontend runtime exports you may import from `@zana-ai/zcc-plugin-sdk/app`:
 `definePluginApp`, `isPluginAppDefinition`, `callPluginRpc`,
 `getPluginSettings`, `setPluginSettings`, `collectPluginApp`,
-`emptyRegistrationSet`, `useRpc`, `useRealtime`,
+`emptyRegistrationSet`, `PLUGIN_THREAD_PANEL_SCOPES`,
+`DEFAULT_PLUGIN_THREAD_PANEL_SCOPES`, `threadPanelActionMatchesScope`,
+`useRpc`, `useRealtime`,
 `useRealtimeConnectionState`, `useSettings`, `useZccContext`,
 `useZccNavigate`, `useComposer`, `useComposerView`,
 `experimental_useSidebarThreads`, `experimental_useSidebarThreadActions`,
@@ -157,8 +162,14 @@ runs a headless same-origin script with an `AbortSignal` on unload.
   `{ openSettings() }`.
 - `pendingInteraction` — `id` must match `rendererId` passed to
   `zcc.ui.requestInput`. Component props: `interaction`, `submit`, `cancel`.
-- `threadPanelAction` — `id`, `title`, `icon`, `component`, `layout`
-  (`padded` | `flush`), `run`. Props: `pluginId`, `threadId`, `params`.
+- `threadPanelAction` — a closable tab in the thread right-hand side panel.
+  Registration: `id`, `title`, `icon`, `component`, `layout` (`padded` | `flush`),
+  `scopes` (`"thread"` | `"agent-session"`, default `["thread"]`), `run`.
+  Props: `pluginId`, `threadId`, `params`. `threadId` is the thread, or the
+  CLI-agent session id when opened from an agent-session side panel.
+  Listed in + / New Tab. Omit `run` to open immediately; otherwise
+  `run({ threadId, openPanel })` may call `openPanel({ title?, params? })`.
+  Message actions and the command palette also receive `openPanel`.
 - `experimental_newThreadPanelAction` — same registration fields; props
   `pluginId`, `projectId`, `params`.
 - `experimental_threadList` — `id`, `title`, `description`, `component`.

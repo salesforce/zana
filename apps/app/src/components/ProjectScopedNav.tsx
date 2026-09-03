@@ -25,17 +25,17 @@ import {
   useProjectOpenFollowUpCount,
   useProjectScheduleCount,
   useProjectRunningTerminalCount,
-  type WorkspaceMode
+  type CoreProjectView
 } from '../store.js';
 import { useProjectTabModules } from '../modules/index.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
 import { resolveProjectTabModule } from '../lib/libraryPlugin.js';
-import { listProjectTabs, projectTabWorkspaceMode, subscribePluginSlots } from '../plugins/plugin-slots.js';
+import { listProjectTabs, projectTabView, subscribePluginSlots } from '../plugins/plugin-slots.js';
 import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js';
 import { useRouteState } from '../hooks/useRouteState.js';
 import {
   getInboxRoutePath,
-  getProjectWorkspaceRoutePath,
+  getProjectModeRoutePath,
   getSuggestionsRoutePath
 } from '../lib/route-paths.js';
 import {
@@ -52,13 +52,13 @@ import {
  * The left nav rail for a single-project FOCUSED VIEW. Replaces the global
  * {@link Sidebar} with the same chrome, flat destination list, utility dock,
  * and drag-and-drop reorder — only the destinations change (this project's
- * workspace modes instead of Home / Workspaces).
+ * views instead of Home / Projects).
  *
  * Inbox is pinned (same as the global rail). Everything else, including
  * Agents, can be reordered and is persisted separately from the global sidebar.
  *
- * Inbox switches `nav`; workspace modes set `nav='projects'` + the project's
- * `workspaceMode`. Agents is an ordinary destination: it opens this project's
+ * Inbox switches `nav`; project views set `nav='projects'` + the project's
+ * `projectView`. Agents is an ordinary destination: it opens this project's
  * Agents board.
  *
  * Two variants, same rail:
@@ -70,7 +70,7 @@ import {
  */
 
 interface ModeItem {
-  mode: WorkspaceMode;
+  mode: CoreProjectView;
   label: string;
   icon: LucideIcon;
 }
@@ -100,11 +100,11 @@ export function ProjectScopedNav({
   const route = useRouteState();
   const nav = route.nav;
   const isFocus = variant === 'focus';
-  const setWorkspaceMode = useUi((s) => s.setWorkspaceMode);
+  const setProjectView = useUi((s) => s.setProjectView);
   const goalsEnabled = useData((s) => s.goalsEnabled);
   const followUpsEnabled = useData((s) => s.followUpsEnabled);
   const suggestionsEnabled = useData((s) => s.suggestionsEnabled);
-  const mode = route.workspaceMode ?? 'agents';
+  const mode = route.projectMode ?? 'agents';
   const routeMemory = useAppSettingsRouteMemory();
   const navigate = useNavigate();
   const unreadInbox = useUnreadInboxCount();
@@ -126,9 +126,9 @@ export function ProjectScopedNav({
   );
   useEffect(() => {
     if ((mode === 'goals' && !goalsEnabled) || (mode === 'followups' && !followUpsEnabled)) {
-      setWorkspaceMode(project.id, 'agents');
+      setProjectView(project.id, 'agents');
     }
-  }, [mode, goalsEnabled, followUpsEnabled, project.id, setWorkspaceMode]);
+  }, [mode, goalsEnabled, followUpsEnabled, project.id, setProjectView]);
 
   const handleBack = () => {
     useUi.getState().exitProjectFocus();
@@ -232,7 +232,7 @@ export function ProjectScopedNav({
         id: item.mode,
         label: item.label,
         icon: <Icon size={16} />,
-        to: getProjectWorkspaceRoutePath(project.id, item.mode),
+        to: getProjectModeRoutePath(project.id, item.mode),
         testId: `project-nav-${item.mode}`,
         active,
         running: agentsLive || goalsActive || followupsOpen || terminalsRunning,
@@ -248,20 +248,20 @@ export function ProjectScopedNav({
         id: m.id,
         label,
         icon: <Icon size={16} />,
-        to: getProjectWorkspaceRoutePath(project.id, m.id),
+        to: getProjectModeRoutePath(project.id, m.id),
         testId: `project-nav-${m.id}`,
         active: onProjects && (mode === m.id || extActive)
       };
     }),
     ...slotTabs.map((tab): SidebarRailItem => {
-      const railId = projectTabWorkspaceMode(tab, slotTabs);
+      const railId = projectTabView(tab, slotTabs);
       const Icon = resolveIcon(tab.icon);
       return {
         kind: 'row',
         id: railId,
         label: tab.label,
         icon: <Icon size={16} />,
-        to: getProjectWorkspaceRoutePath(project.id, railId),
+        to: getProjectModeRoutePath(project.id, railId),
         testId: `project-nav-${railId}`,
         active: onProjects && mode === railId
       };

@@ -54,7 +54,7 @@ export function focusInboxEntry(entry: InboxEntry): void {
     // default-to-agents behavior).
     ui.setNav('projects');
     ui.enterProjectFocus(entry.projectId);
-    ui.setWorkspaceMode(entry.projectId, mod.id);
+    ui.setProjectView(entry.projectId, mod.id);
   } else {
     // Cross-project sidebar surface: just switch nav, still scoping the
     // selected project for context.

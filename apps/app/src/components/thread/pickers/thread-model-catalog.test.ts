@@ -175,6 +175,36 @@ describe('thread model catalog', () => {
     expect(getThreadModelCatalog().byProvider.codex?.models[0]?.model).toBe('codex-model');
   });
 
+  it('stores session-advertised ACP modes verbatim and refreshes them with the provider', async () => {
+    let load = 0;
+    const fetcher: ThreadExecutionOptionsFetcher = async (query) => {
+      load += 1;
+      const body = optionsBody(['acp-cursor'], query?.providerId ?? 'roster');
+      return {
+        ...body,
+        acpMode: {
+          currentValue: load < 3 ? 'build' : 'review',
+          options: load < 3
+            ? [{ value: 'build', name: 'Build' }, { value: 'plan', name: 'Plan' }]
+            : [{ value: 'review', name: 'Review changes' }]
+        }
+      };
+    };
+    resetThreadModelCatalog(fetcher);
+
+    await prefetchThreadModelCatalog();
+    expect(getThreadModelCatalog().byProvider['acp-cursor']?.acpMode).toEqual({
+      currentValue: 'build',
+      options: [{ value: 'build', name: 'Build' }, { value: 'plan', name: 'Plan' }]
+    });
+
+    await reloadThreadProviderModels('acp-cursor');
+    expect(getThreadModelCatalog().byProvider['acp-cursor']?.acpMode).toEqual({
+      currentValue: 'review',
+      options: [{ value: 'review', name: 'Review changes' }]
+    });
+  });
+
   it('shares an in-flight reload instead of starting a second fetch', async () => {
     let release: () => void = () => undefined;
     const gate = new Promise<void>((resolve) => {

@@ -16,8 +16,6 @@ export const THREAD_WORKING_PHRASES = [
   'Setting the next play'
 ] as const;
 
-export const THREAD_WORKING_PHRASE_INTERVAL_MS = 3500;
-
 export function threadWorkingPhraseIndex(tick: number): number {
   const count = THREAD_WORKING_PHRASES.length;
   return ((tick % count) + count) % count;
@@ -25,6 +23,11 @@ export function threadWorkingPhraseIndex(tick: number): number {
 
 export function threadWorkingPhrase(tick: number): string {
   return THREAD_WORKING_PHRASES[threadWorkingPhraseIndex(tick)]!;
+}
+
+/** Advance the roster when the busy indicator hides; hold the tick otherwise. */
+export function nextWorkingPhraseTick(tick: number, wasActive: boolean, isActive: boolean): number {
+  return wasActive && !isActive ? tick + 1 : tick;
 }
 
 export function threadWorkingIndicatorLabel(thinking: boolean, phrase: string): string {
@@ -68,10 +71,15 @@ export function shouldShowThreadStop(
 }
 
 /** Map a conversation-thread status onto the agent-board lanes. */
-export function threadStatusToAgentState(status: string, waitingOnUser = false): AgentState {
+export function threadStatusToAgentState(
+  status: string,
+  waitingOnUser = false,
+  activity?: { activeBackgroundCommandCount?: number } | null
+): AgentState {
   if (status === 'error') return 'idle';
   if (waitingOnUser) return 'blocked';
   if (isBusyThreadStatus(status)) return 'working';
+  if ((activity?.activeBackgroundCommandCount ?? 0) > 0) return 'working';
   return 'idle';
 }
 

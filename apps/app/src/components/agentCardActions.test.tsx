@@ -24,6 +24,10 @@ vi.mock('../store.js', () => ({
 import {
   AgentDeleteQuickAction,
   canCloseWithFollowup,
+  cliAgentDeleteConfirm,
+  cliAgentRemoveLabel,
+  cliAgentRestartConfirm,
+  cliAgentRestartLiveTitle,
   closeAgentWithFollowup
 } from './agentCardActions.js';
 
@@ -76,6 +80,38 @@ describe('plugin agent card menu', () => {
     expect(source).toContain('actions.closeWithFollowup(card)');
     expect(source).toContain('Close with follow-up');
     expect(source).toContain('closeIdleAgents(projectId, [session.id], true)');
+    expect(source).toContain('Open in split');
+    expect(source).toContain('openAgentSessionInSplit');
+    expect(source).toContain('cliAgentRemoveLabel(exited)');
+    expect(source).toContain('cliAgentRestartLiveTitle()');
+    expect(source).not.toContain('Kill and');
+  });
+});
+
+describe('cliAgentRemoveLabel', () => {
+  it('uses Delete for live agents and Dismiss for exited', () => {
+    expect(cliAgentRemoveLabel(false)).toBe('Delete');
+    expect(cliAgentRemoveLabel(true)).toBe('Dismiss');
+  });
+});
+
+describe('cliAgentDeleteConfirm', () => {
+  it('asks to delete without using Stop wording', () => {
+    expect(cliAgentDeleteConfirm('Review')).toBe(
+      'Delete “Review”? The process will be terminated.'
+    );
+    expect(cliAgentDeleteConfirm('Review')).not.toMatch(/Stop/);
+  });
+});
+
+describe('cliAgentRestart copy', () => {
+  it('mentions stopping the process without Kill', () => {
+    expect(cliAgentRestartLiveTitle()).toBe(
+      'Stop the process and relaunch this session with the same profile and args'
+    );
+    expect(cliAgentRestartConfirm('Hello')).toBe('Stop the process and relaunch "Hello"?');
+    expect(cliAgentRestartLiveTitle()).not.toMatch(/Kill/i);
+    expect(cliAgentRestartConfirm('Hello')).not.toMatch(/Kill/i);
   });
 });
 

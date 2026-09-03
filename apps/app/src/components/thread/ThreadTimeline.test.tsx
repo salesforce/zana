@@ -115,6 +115,9 @@ describe('thread timeline model', () => {
     expect(threadStatusToAgentState('error')).toBe('idle');
     expect(threadStatusToAgentState('error', true)).toBe('idle');
     expect(threadStatusToAgentState('active', true)).toBe('blocked');
+    expect(threadStatusToAgentState('idle', false, { activeBackgroundCommandCount: 1 })).toBe('working');
+    expect(threadStatusToAgentState('idle', true, { activeBackgroundCommandCount: 1 })).toBe('blocked');
+    expect(threadStatusToAgentState('error', false, { activeBackgroundCommandCount: 1 })).toBe('idle');
   });
 
   it('keeps an error tone distinct from Needs you', () => {

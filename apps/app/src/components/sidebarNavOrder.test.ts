@@ -73,25 +73,34 @@ describe('sidebar navigation order', () => {
     ).toEqual(['inbox', 'feed', 'agents', 'terminals']);
   });
 
-  it('inserts a new plugin rail row above Workspaces instead of after the project list', () => {
+  it('inserts a new plugin rail row above Projects instead of after the project list', () => {
     expect(
       normalizeSidebarNavOrder(
-        ['home', 'inbox', 'extensions', 'sidebar-section:workspaces'],
-        ['home', 'inbox', 'extensions', 'plugin-guide/plugin-guide', 'sidebar-section:workspaces']
+        ['home', 'inbox', 'extensions', 'sidebar-section:projects'],
+        ['home', 'inbox', 'extensions', 'plugin-guide/plugin-guide', 'sidebar-section:projects']
       )
     ).toEqual([
       'home',
       'inbox',
       'extensions',
       'plugin-guide/plugin-guide',
-      'sidebar-section:workspaces'
+      'sidebar-section:projects'
     ]);
   });
 
+  it('maps a saved sidebar-section:workspaces id onto Projects', () => {
+    expect(
+      normalizeSidebarNavOrder(
+        ['home', 'inbox', 'extensions', 'sidebar-section:workspaces'],
+        ['home', 'inbox', 'extensions', 'sidebar-section:projects']
+      )
+    ).toEqual(['home', 'inbox', 'extensions', 'sidebar-section:projects']);
+  });
+
   it('persists collection sections alongside ordinary destinations', () => {
-    const sections = ['home', 'inbox', 'agents', 'scheduler', 'sidebar-section:workspaces'];
-    expect(reorderSidebarNavItems(sections, 'sidebar-section:workspaces', 'scheduler')).toEqual([
-      'home', 'inbox', 'agents', 'sidebar-section:workspaces', 'scheduler'
+    const sections = ['home', 'inbox', 'agents', 'scheduler', 'sidebar-section:projects'];
+    expect(reorderSidebarNavItems(sections, 'sidebar-section:projects', 'scheduler')).toEqual([
+      'home', 'inbox', 'agents', 'sidebar-section:projects', 'scheduler'
     ]);
   });
 });

@@ -46,6 +46,13 @@ export const INFO_PIN_ID = 'info';
 export const DIFF_PIN_ID = 'diff';
 export const PLAN_PIN_ID = 'plan';
 
+export function secondaryPanelStatesEqual(
+  a: ThreadSecondaryPanelState,
+  b: ThreadSecondaryPanelState
+): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 export function emptySecondaryPanelState(options?: { isOpen?: boolean }): ThreadSecondaryPanelState {
   return {
     version: 1,
@@ -225,6 +232,7 @@ export function selectPinnedView(
   state: ThreadSecondaryPanelState,
   pin: PinnedSecondaryView
 ): ThreadSecondaryPanelState {
+  if (state.isOpen && state.activeId === pin) return state;
   return { ...state, isOpen: true, activeId: pin };
 }
 
@@ -233,7 +241,9 @@ export function setSecondaryPanelWidth(
   widthPx: number,
   containerWidthPx?: number
 ): ThreadSecondaryPanelState {
-  return { ...state, widthPx: clampWidth(widthPx, containerWidthPx) };
+  const nextWidth = clampWidth(widthPx, containerWidthPx);
+  if (state.widthPx === nextWidth) return state;
+  return { ...state, widthPx: nextWidth };
 }
 
 export function addClosableTab(
@@ -310,10 +320,30 @@ export function patchClosableTab(
   tabId: string,
   patch: Partial<Omit<ClosableSecondaryTab, 'id' | 'kind'>>
 ): ThreadSecondaryPanelState {
+  const tab = state.tabs.find((candidate) => candidate.id === tabId);
+  if (!tab || patchAlreadyApplied(tab, patch)) return state;
   return {
     ...state,
-    tabs: state.tabs.map((tab) => (tab.id === tabId ? { ...tab, ...patch } : tab))
+    tabs: state.tabs.map((candidate) => (candidate.id === tabId ? { ...candidate, ...patch } : candidate))
   };
+}
+
+function patchAlreadyApplied(
+  tab: ClosableSecondaryTab,
+  patch: Partial<Omit<ClosableSecondaryTab, 'id' | 'kind'>>
+): boolean {
+  if (patch.title !== undefined && patch.title !== tab.title) return false;
+  if (patch.path !== undefined && patch.path !== tab.path) return false;
+  if (patch.url !== undefined && patch.url !== tab.url) return false;
+  if (patch.sessionId !== undefined && patch.sessionId !== tab.sessionId) return false;
+  if (patch.moduleId !== undefined && patch.moduleId !== tab.moduleId) return false;
+  if (patch.actionId !== undefined && patch.actionId !== tab.actionId) return false;
+  if (patch.pluginId !== undefined && patch.pluginId !== tab.pluginId) return false;
+  if (patch.layout !== undefined && patch.layout !== tab.layout) return false;
+  if (patch.openerKey !== undefined && patch.openerKey !== tab.openerKey) return false;
+  if (patch.automationTargetId !== undefined && patch.automationTargetId !== tab.automationTargetId) return false;
+  if (patch.params !== undefined && stableParams(tab.params) !== stableParams(patch.params)) return false;
+  return true;
 }
 
 export function openNewTab(state: ThreadSecondaryPanelState): ThreadSecondaryPanelState {

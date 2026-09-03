@@ -58,7 +58,7 @@ export function isScopedWindow(): boolean {
  * drilled into a project (`focusedProjectId` set, a soft store-driven focus).
  *
  * This is the predicate for UI that should collapse to a single-project layout
- * in BOTH cases — e.g. suppressing the Workspace's horizontal mode-toggle when
+ * in BOTH cases — e.g. suppressing the project shell's horizontal mode-toggle when
  * the left rail already promotes those modes to first-class entries.
  *
  * Distinct from {@link isScopedWindow}, which means specifically "this window is

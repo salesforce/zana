@@ -63,6 +63,13 @@ describe('AgentsListPane', () => {
     expect(source).not.toContain('agents-legacy-new');
     expect(source).toContain('aria-label="New agent"');
     expect(source).toContain('threadIdFromPath');
+    expect(source).toContain('sessionIdFromPath');
+    expect(source).toContain('getAgentSessionRoutePath');
+    expect(source).not.toContain('openAgentModal');
+    expect(source).toContain('usePaneContentSplitDrag');
+    expect(source).toContain('onLaunched');
+    expect(source).toContain('getAgentSessionRoutePath(session.id, scopedProjectId)');
+    expect(source).toContain('getAgentSessionRoutePath(t.id, scopedProjectId)');
     expect(source).toContain('agents-row-needs-you');
   });
 });

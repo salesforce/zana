@@ -4,15 +4,21 @@ export const PINNED_SIDEBAR_NAV_IDS = ['home', 'inbox'] as const;
 
 /** Retired collapsible collection; saved orders map this onto the Agents row. */
 export const LEGACY_AGENTS_SECTION_ID = 'sidebar-section:agents';
+/** Pre-rename Projects section id; saved orders map this onto the new id. */
+export const LEGACY_WORKSPACES_SECTION_ID = 'sidebar-section:workspaces';
+export const PROJECTS_SECTION_SORT_ID = 'sidebar-section:projects';
 
 function canonicalizeSidebarNavId(id: string, available: Set<string>): string {
   if (id === LEGACY_AGENTS_SECTION_ID && available.has('agents')) return 'agents';
+  if (id === LEGACY_WORKSPACES_SECTION_ID && available.has(PROJECTS_SECTION_SORT_ID)) {
+    return PROJECTS_SECTION_SORT_ID;
+  }
   return id;
 }
 
 /** Keep a saved order valid as optional features and extensions come and go.
  *  Unseen ids insert before the next already-placed neighbor from `availableIds`
- *  so a new plugin rail lands above Workspaces, not under it.
+ *  so a new plugin rail lands above Projects, not under it.
  */
 export function normalizeSidebarNavOrder(
   value: unknown,

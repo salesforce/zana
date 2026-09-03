@@ -330,11 +330,11 @@ describe('host enroll hub and thread create', () => {
     expect(ambiguous.body.code).toBe('ambiguous-host');
   });
 
-  it('provisions a personal workspace when Default Workspace runs on another machine', async () => {
+  it('provisions a personal workspace when Default Project runs on another machine', async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-proj-'));
     const { enrollToken } = await startServer(projectRoot, 'enroll-token-enroll-token-enroll', {
       quickAgent: true,
-      name: 'Default Workspace'
+      name: 'Default Project'
     });
     const instanceA = randomUUID();
     const instanceB = randomUUID();

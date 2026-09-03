@@ -88,6 +88,7 @@ export const useSplitWorkspace = create<SplitWorkspaceStore>((set, get) => ({
     return next;
   },
   setMaximizedPaneId: (paneId) => {
+    if (get().maximizedPaneId === paneId) return;
     writeSession(MAXIMIZED_PANE_STORAGE_KEY, paneId ?? '');
     set({ maximizedPaneId: paneId });
   },

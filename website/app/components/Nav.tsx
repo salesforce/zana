@@ -8,6 +8,7 @@ import { site } from '@/lib/site';
 
 const LINKS = [
   { href: '/', label: 'Product' },
+  { href: '/features/', label: 'Features' },
   { href: '/docs/', label: 'Docs' },
   { href: '/extensions/', label: 'Plugins' },
   { href: '/marketplace/', label: 'Marketplace' },
@@ -157,6 +158,7 @@ export function Footer() {
           <div className="foot-col">
             <h4>Product</h4>
             <Link href="/">Home</Link>
+            <Link href="/features/">Features</Link>
             <Link href="/download/">Download</Link>
             <Link href="/marketplace/">Marketplace</Link>
             <Link href="/dashboard/">Publish</Link>

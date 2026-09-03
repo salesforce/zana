@@ -1,4 +1,12 @@
 import type { AgentState, ScheduledTask } from '@zana-ai/zcc-domain/product';
+import {
+  isClaudeProfile,
+  isCodexProfile,
+  isCursorProfile,
+  isOpenCodeProfile,
+  isPiProfile,
+  parseProfile
+} from '@zana-ai/zcc-domain/launch-provider';
 import type { AgentCard, LaneKey } from './AgentBoard.js';
 import type { ThreadListItem } from '../thread-store.js';
 import { threadStatusToAgentState } from './thread/thread-timeline-model.js';
@@ -72,7 +80,7 @@ export function threadFleetItem(
   return {
     kind: 'thread',
     id: thread.id,
-    state: threadStatusToAgentState(thread.status, thread.hasPendingInteraction),
+    state: threadStatusToAgentState(thread.status, thread.hasPendingInteraction, thread.activity),
     title: threadTitle(thread),
     projectId: thread.projectId,
     projectName: project?.name ?? 'Unknown',
@@ -155,7 +163,7 @@ export function compareScheduleFleet(
 export function threadIsLiveForRail(thread: ThreadListItem): boolean {
   if (!isVisibleThread(thread)) return false;
   if (thread.status === 'error') return true;
-  const state = threadStatusToAgentState(thread.status, thread.hasPendingInteraction);
+  const state = threadStatusToAgentState(thread.status, thread.hasPendingInteraction, thread.activity);
   return state === 'working' || state === 'blocked';
 }
 
@@ -181,10 +189,10 @@ export function railThreadsForProject(threads: ThreadListItem[]): ThreadListItem
 export type ThreadRailStatus = 'Needs you' | 'Working' | 'Idle' | 'Error';
 
 export function threadRailStatus(
-  thread: Pick<ThreadListItem, 'status' | 'hasPendingInteraction'>
+  thread: Pick<ThreadListItem, 'status' | 'hasPendingInteraction' | 'activity'>
 ): ThreadRailStatus {
   if (thread.status === 'error') return 'Error';
-  const state = threadStatusToAgentState(thread.status, thread.hasPendingInteraction);
+  const state = threadStatusToAgentState(thread.status, thread.hasPendingInteraction, thread.activity);
   if (state === 'blocked') return 'Needs you';
   if (state === 'working') return 'Working';
   return 'Idle';
@@ -205,8 +213,20 @@ export function agentRowStateClass(state: AgentState, exited: boolean): string |
   return undefined;
 }
 
-export function threadRailDetail(thread: Pick<ThreadListItem, 'status' | 'hasPendingInteraction'>): string {
-  return `${threadRailStatus(thread)} · ${fleetKindLabel('thread')}`;
+export function threadRailDetail(
+  thread: Pick<ThreadListItem, 'status' | 'hasPendingInteraction' | 'activity'>
+): string {
+  const status = threadRailStatus(thread);
+  if (
+    status === 'Working'
+    && (thread.activity?.activeBackgroundCommandCount ?? 0) > 0
+    && thread.status !== 'starting'
+    && thread.status !== 'active'
+    && thread.status !== 'stopping'
+  ) {
+    return 'Working · background command';
+  }
+  return `${status} · ${fleetKindLabel('thread')}`;
 }
 
 /** Humanize a thread provider id (`claude-code` → `Claude Code`, `acp-cursor` → `Cursor`). */
@@ -231,6 +251,33 @@ export function threadCardRuntimeLabel(
     ? 'Local agent · remote tools'
     : thread.isWorktree ? 'This checkout' : 'Local';
   return `${harness} · ${runtime}`;
+}
+
+/**
+ * Map a CLI launch profile to the same family name threads use
+ * (`claude` / `claude-yolo` → `Claude Code`). Does not change launcher
+ * `profileLabel` copy.
+ */
+export function cliHarnessLabel(profile: string): string {
+  const parsed = parseProfile(profile);
+  if (parsed && isClaudeProfile(parsed)) return 'Claude Code';
+  if (parsed && isCursorProfile(parsed)) return 'Cursor';
+  if (parsed && isCodexProfile(parsed)) return 'Codex';
+  if (parsed && isPiProfile(parsed)) return 'Pi';
+  if (parsed && isOpenCodeProfile(parsed)) return 'OpenCode';
+  if (parsed === 'shell') return 'Shell';
+  return threadHarnessLabel(profile);
+}
+
+/** Runtime + harness line for a CLI agent card (twin of {@link threadCardRuntimeLabel}). */
+export function agentCardRuntimeLabel(input: {
+  profile: string;
+  personaName?: string | null;
+  remote?: boolean;
+}): string {
+  const name = input.personaName?.trim();
+  const harness = name || cliHarnessLabel(input.profile);
+  return `${harness} · ${input.remote ? 'Remote host' : 'Local'}`;
 }
 
 export function threadCardShowsProject(showProject: boolean, grouped: boolean): boolean {
@@ -289,8 +336,10 @@ export function resolveMonitorSelection(
   pickedId: string | null
 ): FleetItem | null {
   if (pickedId) {
-    const found = items.find((item) => item.id === pickedId);
-    if (found) return found;
+    // A picked row that is missing from this snapshot must not fall through to
+    // items[0] (usually a WORKING agent) — that remounts ThreadDetail and can
+    // re-enter a render loop.
+    return items.find((item) => item.id === pickedId) ?? null;
   }
   if (storeSelection) {
     const pty = items.find(

@@ -23,7 +23,7 @@ describe('resolveSpawnChoiceForHost', () => {
     })).toEqual({ ok: true, choice: { kind: 'worktree' }, dropCwd: false });
   });
 
-  it('turns Default Workspace on another machine into a personal scratch', () => {
+  it('turns Default Project on another machine into a personal scratch', () => {
     expect(resolveSpawnChoiceForHost({
       project: scratch,
       choice: { kind: 'unmanaged' },

@@ -240,6 +240,7 @@ describe('SSH remotes', () => {
     expect(source).toContain('conversationThreadViews');
     expect(source).toContain('peekThreadReadSeq');
     expect(source).toContain('maxConversationEventSequenceByThreadIds');
+    expect(source).toContain('threadActivityForConversation');
     expect(source).toContain('isRemoteToolProxyActive(project, input.hostId)');
     expect(source).toContain('remoteWorkspacePath(project, remoteToolProxy)');
     expect(source).toContain('resolveSpawnChoiceForHost');

@@ -3,9 +3,9 @@ import { readFileSync } from 'node:fs';
 
 const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
 
-describe('WorkspaceView launcher host', () => {
-  it('mounts the project launcher as a modal for every workspace mode', () => {
-    const source = readFileSync(new URL('./WorkspaceView.tsx', import.meta.url), 'utf8');
+describe('ProjectView launcher host', () => {
+  it('mounts the project launcher as a modal for every project view', () => {
+    const source = readFileSync(new URL('./ProjectView.tsx', import.meta.url), 'utf8');
     expect(source).toContain('{launcherOpen && project && workspaceShown && (');
     expect(source).toContain("route.nav === 'projects' && !!route.focusedProjectId");
     expect(source).not.toContain('launcherOpen && project && !isAgents');
@@ -18,18 +18,18 @@ describe('WorkspaceView launcher host', () => {
     expect(source).toContain('mode === \'agents\' && !!project && !isNewThread && !isThreadView');
     expect(source).toContain('{!isThreadView && !isAgents && (');
     expect(source).not.toContain('explorer-topbar-label">Agents');
-    expect(css).toContain('.workspace-body > .thread-detail-view');
+    expect(css).toContain('.project-body > .thread-detail-view');
   });
 });
 
-describe('workspace shell placement', () => {
+describe('project shell placement', () => {
   it('occupies the content track and resets when the sidebar is collapsed', () => {
-    const start = css.indexOf('\n.workspace {\n');
+    const start = css.indexOf('\n.project-shell {\n');
     expect(start).toBeGreaterThan(-1);
     const block = css.slice(start, css.indexOf('\n}', start));
     expect(block).toContain('grid-column: 2 / -1;');
     expect(css).toContain(
-      '.app-shell.sidebar-is-collapsed.scoped-no-list .workspace {\n  grid-column: 1 / -1;\n}'
+      '.app-shell.sidebar-is-collapsed.scoped-no-list .project-shell {\n  grid-column: 1 / -1;\n}'
     );
     expect(css).toContain(
       '.app-shell.sidebar-is-collapsed.scoped-no-list {\n  grid-template-columns: minmax(0, 1fr);\n}'
@@ -37,7 +37,7 @@ describe('workspace shell placement', () => {
   });
 
   it('pins body and statusbar to named rows so omitting the topbar cannot shift them', () => {
-    const start = css.indexOf('\n.workspace {\n');
+    const start = css.indexOf('\n.project-shell {\n');
     expect(start).toBeGreaterThan(-1);
     const block = css.slice(start, css.indexOf('\n}', start));
     expect(block).toContain('grid-template-rows: auto 1fr var(--status-h);');
@@ -45,8 +45,8 @@ describe('workspace shell placement', () => {
     expect(block).toContain('"topbar"');
     expect(block).toContain('"body"');
     expect(block).toContain('"status"');
-    expect(css).toContain('.workspace-topbar {\n  grid-area: topbar;');
-    expect(css).toContain('.workspace-body {\n  grid-area: body;');
-    expect(css).toContain('.workspace > .statusbar {\n  grid-area: status;');
+    expect(css).toContain('.project-topbar {\n  grid-area: topbar;');
+    expect(css).toContain('.project-body {\n  grid-area: body;');
+    expect(css).toContain('.project-shell > .statusbar {\n  grid-area: status;');
   });
 });

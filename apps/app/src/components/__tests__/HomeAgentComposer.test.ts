@@ -83,7 +83,11 @@ describe('ThreadCommandComposer chrome', () => {
       css.indexOf('@media (min-width: 1280px) {'),
       css.indexOf('.thread-detail-header {')
     );
-    expect(wide).toContain('max-width: 60rem;');
+    expect(wide).toContain('max-width: 72rem;');
+    expect(wide).toContain('@media (min-width: 1600px)');
+    expect(wide).toContain('max-width: 90rem;');
+    expect(wide).toContain('@media (min-width: 1920px)');
+    expect(wide).toContain('max-width: 108rem;');
     expect(wide).toContain('min-height: 52px;');
     expect(wide).toContain('max-height: 16rem;');
   });
@@ -103,7 +107,7 @@ describe('ThreadCommandComposer initial text', () => {
 
   it('stays on the project thread URL after create from a workspace', () => {
     const source = readFileSync(new URL('../ThreadCommandComposer.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('route.isProjectWorkspace ? route.focusedProjectId');
+    expect(source).toContain('route.isProjectFocused ? route.focusedProjectId');
     expect(source).toContain('getThreadRoutePath');
   });
 });
@@ -148,6 +152,7 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain('That harness is not available for Modern threads');
     expect(source).toContain('permissionMode: permissionMode as');
     expect(source).toContain('permissionModeOptionsFor');
+    expect(source).toContain('acpMode: options.acpMode');
     expect(source).toContain('compactLabel: row.compactLabel');
     expect(source).toContain('description: row.description');
     expect(source).toContain('permissionOptions.length > 1');
@@ -191,6 +196,9 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).not.toContain('showLegacyAgent');
     expect(source).not.toContain('onSelectLegacyAgent');
     expect(source).toContain('reasoningLevel: options.reasoningLevel');
+    expect(source).toContain('options.acpModeOptions.length > 0');
+    expect(source).toContain('<NativeRolePicker');
+    expect(source).toContain('options.refreshAcpModeOptions');
     expect(source).toContain('moreModelOptions={options.moreModelOptions}');
     expect(source).toContain('applyComposerModePrefix');
     expect(source).toContain('nextComposerWorkMode');

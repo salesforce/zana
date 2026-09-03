@@ -3,6 +3,17 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { BrowserBootstrap, BrowserProjectSummary } from './static-host.js';
 
+/**
+ * Loaded by electron.vite.config via the Vite plugin, so this file cannot
+ * import `@zana-ai/zcc-host-daemon`. Keep env precedence in lockstep with
+ * `resolveZccDataDir` in host-daemon `host-config`.
+ */
+function dataDirFromEnv(env: NodeJS.ProcessEnv = process.env): string {
+  const explicit = env.ZCC_DATA_DIR?.trim() || env.ZCC_CENTER_DIR?.trim();
+  if (explicit) return explicit;
+  return join(homedir(), '.zcc');
+}
+
 function asOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
@@ -30,8 +41,8 @@ export function toBrowserProjectSummaries(projects: unknown): BrowserProjectSumm
   return summaries;
 }
 
-export function defaultProjectsFile(): string {
-  return join(homedir(), '.zcc', 'projects.json');
+export function defaultProjectsFile(env: NodeJS.ProcessEnv = process.env): string {
+  return join(dataDirFromEnv(env), 'projects.json');
 }
 
 /**

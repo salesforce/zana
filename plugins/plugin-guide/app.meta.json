@@ -5,7 +5,7 @@
   "pluginId": "plugin-guide",
   "pluginVersion": "0.1.0",
   "builtWith": {
-    "zccVersion": "2.0.3",
+    "zccVersion": "2.0.4",
     "pluginSdkVersion": "0.1.0"
   }
 }

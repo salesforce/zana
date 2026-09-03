@@ -1,7 +1,9 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import {
   __clearComposerSelectionForTest,
+  defaultOfferedComposerModel,
   parseComposerSelectionPreference,
+  pickOfferedComposerModel,
   preferredComposerModel,
   readComposerSelectionPreference,
   rememberComposerSelection,
@@ -121,5 +123,82 @@ describe('preferredComposerModel', () => {
       fallbackModel: 'claude-opus-5[1m]',
       loading: false
     })).toBe('claude-opus-5[1m]');
+  });
+
+  it('stays empty after load when the catalog has no models', () => {
+    expect(preferredComposerModel({
+      rememberedModel: 'retired-model',
+      currentModel: '',
+      persistRemembered: true,
+      offeredModels: [],
+      fallbackModel: 'claude-opus-5[1m]',
+      loading: false
+    })).toBe('');
+  });
+});
+
+describe('pickOfferedComposerModel', () => {
+  const offered = ['claude-opus-5[1m]', 'claude-sonnet-5'];
+
+  it('keeps the remembered model when it is still offered', () => {
+    expect(pickOfferedComposerModel({
+      rememberedModel: 'claude-sonnet-5',
+      currentModel: '',
+      offeredModels: offered,
+      fallbackModel: 'claude-opus-5[1m]'
+    })).toBe('claude-sonnet-5');
+  });
+
+  it('keeps the current model when remembered is missing or retired', () => {
+    expect(pickOfferedComposerModel({
+      rememberedModel: 'retired-model',
+      currentModel: 'claude-sonnet-5',
+      offeredModels: offered,
+      fallbackModel: 'claude-opus-5[1m]'
+    })).toBe('claude-sonnet-5');
+  });
+
+  it('picks the catalog default after load when nothing is selected', () => {
+    expect(pickOfferedComposerModel({
+      currentModel: '',
+      offeredModels: offered,
+      fallbackModel: 'claude-sonnet-5'
+    })).toBe('claude-sonnet-5');
+  });
+
+  it('picks the first offered model when there is no default or prior pick', () => {
+    expect(pickOfferedComposerModel({
+      currentModel: '',
+      offeredModels: offered
+    })).toBe('claude-opus-5[1m]');
+  });
+
+  it('never returns empty while any model is offered', () => {
+    expect(pickOfferedComposerModel({
+      currentModel: '',
+      offeredModels: ['gpt-5.5']
+    })).toBe('gpt-5.5');
+    expect(pickOfferedComposerModel({
+      currentModel: '',
+      offeredModels: []
+    })).toBe('');
+  });
+});
+
+describe('defaultOfferedComposerModel', () => {
+  it('prefers isDefault across the primary list and more-models', () => {
+    expect(defaultOfferedComposerModel(
+      [{ model: 'a', isDefault: false }],
+      [{ model: 'b', isDefault: true }]
+    )).toEqual({ model: 'b', isDefault: true });
+  });
+
+  it('falls through to the first offered row when nothing is marked default', () => {
+    type Row = { model: string; isDefault?: boolean };
+    expect(defaultOfferedComposerModel<Row>(
+      [],
+      [{ model: 'pinned' }, { model: 'other' }]
+    )).toEqual({ model: 'pinned' });
+    expect(defaultOfferedComposerModel([])).toBeUndefined();
   });
 });

@@ -5,9 +5,12 @@ export const INBOX_ROUTE_PATH = '/inbox';
 export const AGENTS_ROUTE_PATH = '/agents';
 export const NEW_THREAD_ROUTE_PATH = '/threads/new';
 export const THREAD_ROUTE_PATH = '/threads/:threadId';
+export const SESSION_ROUTE_PATH = '/sessions/:sessionId';
 export const FOLLOWUPS_ROUTE_PATH = '/followups';
 export const SUGGESTIONS_ROUTE_PATH = '/suggestions';
 export const SCHEDULER_ROUTE_PATH = '/scheduler';
+export const NEW_SCHEDULE_ROUTE_PATH = '/schedules/new';
+export const SCHEDULE_ROUTE_PATH = '/schedules/:scheduleId';
 export const GOALS_ROUTE_PATH = '/goals';
 
 export const SETTINGS_ROUTE_PATH = '/settings';
@@ -27,13 +30,16 @@ export const PROJECT_ROUTE_PATH = '/projects/:projectId';
 export const PROJECT_SETTINGS_ROUTE_PATH = '/projects/:projectId/settings';
 export const PROJECT_NEW_THREAD_ROUTE_PATH = '/projects/:projectId/threads/new';
 export const PROJECT_THREAD_ROUTE_PATH = '/projects/:projectId/threads/:threadId';
-export const PROJECT_WORKSPACE_ROUTE_PATH = '/projects/:projectId/:mode';
+export const PROJECT_SESSION_ROUTE_PATH = '/projects/:projectId/sessions/:sessionId';
+export const PROJECT_NEW_SCHEDULE_ROUTE_PATH = '/projects/:projectId/schedules/new';
+export const PROJECT_SCHEDULE_ROUTE_PATH = '/projects/:projectId/schedules/:scheduleId';
+export const PROJECT_MODE_ROUTE_PATH = '/projects/:projectId/:mode';
 
 export const DEFAULT_PLUGIN_PANEL_PATH = 'panel';
 export const PLUGIN_PANEL_ROOT_ROUTE_PATH = '/plugins/:pluginId/:panelPath';
 export const PLUGIN_PANEL_ROUTE_PATH = '/plugins/:pluginId/:panelPath/*';
 
-export const PROJECT_WORKSPACE_MODES = [
+export const PROJECT_MODES = [
   'agents',
   'terminals',
   'explorer',
@@ -45,9 +51,9 @@ export const PROJECT_WORKSPACE_MODES = [
   'feed'
 ] as const;
 
-export type ProjectWorkspaceMode = (typeof PROJECT_WORKSPACE_MODES)[number];
+export type ProjectMode = (typeof PROJECT_MODES)[number];
 
-export const PROJECT_WORKSPACE_MODE_SET = new Set<string>(PROJECT_WORKSPACE_MODES);
+export const PROJECT_MODE_SET = new Set<string>(PROJECT_MODES);
 
 export interface PluginPanelRoutePathArgs {
   pluginId: string;
@@ -101,6 +107,22 @@ export function projectIdFromThreadPath(pathname: string): string | undefined {
   return matchPath(PROJECT_THREAD_ROUTE_PATH, pathname)?.params.projectId;
 }
 
+export function getAgentSessionRoutePath(sessionId: string, projectId?: string | null): string {
+  if (!projectId) return `/sessions/${encodeURIComponent(sessionId)}`;
+  return `/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}`;
+}
+
+export function sessionIdFromPath(pathname: string): string | undefined {
+  return (
+    matchPath(SESSION_ROUTE_PATH, pathname)?.params.sessionId ??
+    matchPath(PROJECT_SESSION_ROUTE_PATH, pathname)?.params.sessionId
+  );
+}
+
+export function projectIdFromSessionPath(pathname: string): string | undefined {
+  return matchPath(PROJECT_SESSION_ROUTE_PATH, pathname)?.params.projectId;
+}
+
 export function getNewThreadRoutePath(projectId?: string): string {
   if (!projectId) return NEW_THREAD_ROUTE_PATH;
   return `/projects/${encodeURIComponent(projectId)}/threads/new`;
@@ -116,6 +138,33 @@ export function getSuggestionsRoutePath(): string {
 
 export function getSchedulerRoutePath(): string {
   return SCHEDULER_ROUTE_PATH;
+}
+
+export function getScheduleRoutePath(scheduleId: string, projectId?: string | null): string {
+  if (!projectId) return `/schedules/${encodeURIComponent(scheduleId)}`;
+  return `/projects/${encodeURIComponent(projectId)}/schedules/${encodeURIComponent(scheduleId)}`;
+}
+
+export function getNewScheduleRoutePath(projectId?: string | null): string {
+  if (!projectId) return NEW_SCHEDULE_ROUTE_PATH;
+  return `/projects/${encodeURIComponent(projectId)}/schedules/new`;
+}
+
+export function scheduleIdFromPath(pathname: string): string | undefined {
+  if (pathname === NEW_SCHEDULE_ROUTE_PATH || matchPath(PROJECT_NEW_SCHEDULE_ROUTE_PATH, pathname)) {
+    return undefined;
+  }
+  return (
+    matchPath(SCHEDULE_ROUTE_PATH, pathname)?.params.scheduleId ??
+    matchPath(PROJECT_SCHEDULE_ROUTE_PATH, pathname)?.params.scheduleId
+  );
+}
+
+export function projectIdFromSchedulePath(pathname: string): string | undefined {
+  return (
+    matchPath(PROJECT_SCHEDULE_ROUTE_PATH, pathname)?.params.projectId ??
+    matchPath(PROJECT_NEW_SCHEDULE_ROUTE_PATH, pathname)?.params.projectId
+  );
 }
 
 export function getGoalsRoutePath(): string {
@@ -139,7 +188,7 @@ export function getProjectRoutePath(projectId: string): string {
   return `/projects/${encodeURIComponent(projectId)}`;
 }
 
-export function getProjectWorkspaceRoutePath(projectId: string, mode: string): string {
+export function getProjectModeRoutePath(projectId: string, mode: string): string {
   if (mode === 'agents') return getProjectRoutePath(projectId);
   return `/projects/${encodeURIComponent(projectId)}/${encodeURIComponent(mode)}`;
 }
@@ -256,7 +305,7 @@ const GLOBAL_NAV_PATHS: Record<string, string> = {
 /**
  * Map a shell nav id to its canonical path. Module ids become plugin-panel URLs.
  * `projects` without a project falls back to the app root — callers that have a
- * project should use {@link getProjectWorkspaceRoutePath}.
+ * project should use {@link getProjectModeRoutePath}.
  */
 export function getNavRoutePath(nav: string): string {
   const known = GLOBAL_NAV_PATHS[nav];
@@ -277,9 +326,12 @@ const baseRoutePatterns: readonly string[] = [
   AGENTS_ROUTE_PATH,
   NEW_THREAD_ROUTE_PATH,
   THREAD_ROUTE_PATH,
+  SESSION_ROUTE_PATH,
   FOLLOWUPS_ROUTE_PATH,
   SUGGESTIONS_ROUTE_PATH,
   SCHEDULER_ROUTE_PATH,
+  NEW_SCHEDULE_ROUTE_PATH,
+  SCHEDULE_ROUTE_PATH,
   GOALS_ROUTE_PATH,
   SETTINGS_ROUTE_PATH,
   SETTINGS_SECTION_ROUTE_PATH,
@@ -296,7 +348,10 @@ const baseRoutePatterns: readonly string[] = [
   PROJECT_SETTINGS_ROUTE_PATH,
   PROJECT_NEW_THREAD_ROUTE_PATH,
   PROJECT_THREAD_ROUTE_PATH,
-  PROJECT_WORKSPACE_ROUTE_PATH,
+  PROJECT_SESSION_ROUTE_PATH,
+  PROJECT_NEW_SCHEDULE_ROUTE_PATH,
+  PROJECT_SCHEDULE_ROUTE_PATH,
+  PROJECT_MODE_ROUTE_PATH,
   PLUGIN_PANEL_ROOT_ROUTE_PATH,
   PLUGIN_PANEL_ROUTE_PATH
 ];

@@ -590,7 +590,7 @@ describe('PersonaStore', () => {
         byAdapter: {
           opencode: {
             providerTargetId: 'openai',
-            modelTargetId: 'aisuite/gpt-5.6-sol',
+            modelTargetId: 'llmgw/gpt-5.6-sol-1M',
             executionState: 'accept-edits'
           }
         }
@@ -598,7 +598,7 @@ describe('PersonaStore', () => {
     });
     expect(native.harnessRouting?.byAdapter.opencode).toEqual({
       providerTargetId: 'openai',
-      modelTargetId: 'aisuite/gpt-5.6-sol',
+      modelTargetId: 'llmgw/gpt-5.6-sol-1M',
       executionState: 'accept-edits'
     });
 

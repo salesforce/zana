@@ -4,11 +4,29 @@ export type PaneContent =
       projectId: string | null;
       threadId: string;
     }
+    | {
+      kind: 'agent-session';
+      projectId: string | null;
+      sessionId: string;
+    }
   | {
       kind: 'home';
     }
   | {
       kind: 'agents';
+    }
+  | {
+      kind: 'scheduler';
+      projectId?: string | null;
+    }
+  | {
+      kind: 'schedule';
+      projectId: string | null;
+      scheduleId: string;
+    }
+  | {
+      kind: 'new-schedule';
+      projectId?: string | null;
     }
   | {
       kind: 'new-thread';

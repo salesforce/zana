@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
 import type { AppConfig, Project, TerminalSession } from '@zana-ai/zcc-domain/product';
 import {
   getConversationThread,
@@ -31,6 +31,8 @@ import { disposeLocalHostDaemon } from '../services/hosts/host-relaunch.js';
 
 export interface ProductTerminalRecord extends TerminalSession {
   hostId: string;
+  outputText?: string;
+  outputTruncated?: boolean;
 }
 
 export interface ProductHttpContext {
@@ -76,7 +78,7 @@ const identityConfig = {
 export function createProductHttpContext(
   options: CreateProductHttpContextOptions
 ): ProductHttpContext {
-  const dataDir = options.dataDir ?? join(homedir(), '.zcc');
+  const dataDir = options.dataDir ?? resolveZccDataDir();
   const projects = options.projects ?? createProjectStore({
     projectsFile: join(dataDir, 'projects.json'),
     remotePlaceholderRoot: join(dataDir, 'remote-projects')
@@ -94,15 +96,20 @@ export function createProductHttpContext(
   const db = openDatabase(join(dataDir, 'zcc.sqlite'));
   const terminalSessions = new Map<string, ProductTerminalRecord>();
   let pendingInteractions: PendingInteractionLifecycle;
+  let ctx!: ProductHttpContext;
   const hostHub = createHostHub(db, hub, terminalSessions, {
     onNewHostInstance: (hostId) => {
       pendingInteractions?.interruptPendingInteractionsForHost(
         hostId,
         'host-daemon-restarted'
       );
+    },
+    onConversationEvent: ({ threadId }) => {
+      const thread = getConversationThread(db, threadId);
+      if (!thread) return;
+      hub.emit('threads:updated', conversationThreadView(ctx, thread));
     }
   });
-  let ctx: ProductHttpContext;
   pendingInteractions = new PendingInteractionLifecycle({
     db,
     hub,

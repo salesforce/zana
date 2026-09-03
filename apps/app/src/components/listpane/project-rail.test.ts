@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Project } from '@zana-ai/zcc-domain/product';
-import { isWorkspaceRailExpanded, pinFavoriteProjectsFirst } from './workspace-rail.js';
+import { isProjectRailExpanded, pinFavoriteProjectsFirst } from './project-rail.js';
 
 function project(id: string, favorite = false): Project {
   return {
@@ -14,7 +14,7 @@ function project(id: string, favorite = false): Project {
 }
 
 describe('pinFavoriteProjectsFirst', () => {
-  it('lifts starred workspaces while preserving relative order', () => {
+  it('lifts starred projects while preserving relative order', () => {
     expect(
       pinFavoriteProjectsFirst([
         project('a'),
@@ -31,11 +31,11 @@ describe('pinFavoriteProjectsFirst', () => {
   });
 });
 
-describe('isWorkspaceRailExpanded', () => {
-  it('auto-expands workspaces that have nested sessions unless the user toggled', () => {
-    expect(isWorkspaceRailExpanded(undefined, true)).toBe(true);
-    expect(isWorkspaceRailExpanded(undefined, false)).toBe(false);
-    expect(isWorkspaceRailExpanded(false, true)).toBe(false);
-    expect(isWorkspaceRailExpanded(true, false)).toBe(true);
+describe('isProjectRailExpanded', () => {
+  it('auto-expands projects that have nested sessions unless the user toggled', () => {
+    expect(isProjectRailExpanded(undefined, true)).toBe(true);
+    expect(isProjectRailExpanded(undefined, false)).toBe(false);
+    expect(isProjectRailExpanded(false, true)).toBe(false);
+    expect(isProjectRailExpanded(true, false)).toBe(true);
   });
 });

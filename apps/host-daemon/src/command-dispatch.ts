@@ -1,12 +1,13 @@
-import { homedir } from 'node:os';
 import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { extname, join, relative, sep } from 'node:path';
+import { resolveZccDataDir } from './host-config.js';
 import { isWithin, resolveContainedReal } from '@zana-ai/zcc-path-confine';
 import type {
   HostDirEntry,
   HostEventEnvelope,
   HostListedFile,
   HostRpcCommand,
+  ProviderAgentDescriptorsResult,
   ProviderListModelsResult,
   ProviderStatusResult,
   ThreadResumeFields,
@@ -35,6 +36,7 @@ import {
   workspaceStatus
 } from '@zana-ai/zcc-host-workspace';
 import { verifyHarnesses } from './harness/harness-verify.js';
+import { registrationFor } from './harness/registry.js';
 import { HostCommandError } from './host-command-error.js';
 import { transcribeCodexVoice } from './codex-voice-transcribe.js';
 import { getProviderCliStatus, runProviderCliInstall } from './provider-cli-health.js';
@@ -82,6 +84,7 @@ export type ThreadStartFields = z.infer<typeof ThreadStartCommandSchema>;
 
 export type ThreadWorkInput = Omit<ThreadStartFields, 'type' | 'cwd'> & {
   cwd: string;
+  acpMode?: string;
 };
 
 export type ThreadResumeInput = {
@@ -95,6 +98,7 @@ export type ThreadResumeInput = {
   permissionMode?: ThreadStartFields['permissionMode'];
   model?: string;
   reasoningLevel?: ThreadWorkInput['reasoningLevel'];
+  acpMode?: string;
   dynamicTools?: ThreadStartFields['dynamicTools'];
   instructions?: ThreadStartFields['instructions'];
 };
@@ -130,6 +134,7 @@ export interface CommandRuntime {
   terminals: Map<string, { cwd: string }>;
   provisionSignals: Map<string, AbortController>;
   lanes: Map<string, Promise<void>>;
+  loadConfig: () => AppConfig;
   verifyProviders: () => Promise<ProviderStatusResult>;
   emit: (event: HostEventEnvelope) => void;
   startWork?: (input: ThreadWorkInput) => Promise<{ providerThreadId?: string } | void>;
@@ -139,6 +144,7 @@ export interface CommandRuntime {
     mode?: string;
     model?: string;
     reasoningLevel?: ThreadWorkInput['reasoningLevel'];
+    acpMode?: string;
     clientRequestId?: ThreadWorkInput['clientRequestId'];
   }) => Promise<void>;
   resumeWork?: (input: ThreadResumeInput) => Promise<{ providerThreadId?: string } | void>;
@@ -159,7 +165,7 @@ export interface CommandRuntime {
   archiveWork?: (input: ThreadArchiveInput) => Promise<void>;
   unarchiveWork?: (input: ThreadArchiveInput) => Promise<void>;
   clearGoal?: (input: { threadId: string }) => Promise<{ cleared: boolean }>;
-  startTerminal?: (input: { sessionId: string; cwd: string; cols: number; rows: number }) => Promise<{ pid?: number } | void>;
+  startTerminal?: (input: { sessionId: string; cwd: string; cols: number; rows: number; command?: string }) => Promise<{ pid?: number } | void>;
   writeTerminal?: (input: { sessionId: string; data: string }) => Promise<void>;
   resizeTerminal?: (input: { sessionId: string; cols: number; rows: number }) => Promise<void>;
   stopTerminal?: (input: { sessionId: string }) => Promise<void>;
@@ -184,6 +190,7 @@ export function createCommandRuntime(options: {
     mode?: string;
     model?: string;
     reasoningLevel?: ThreadWorkInput['reasoningLevel'];
+    acpMode?: string;
     clientRequestId?: ThreadWorkInput['clientRequestId'];
   }) => Promise<void>;
   resumeWork?: (input: ThreadResumeInput) => Promise<{ providerThreadId?: string } | void>;
@@ -204,7 +211,7 @@ export function createCommandRuntime(options: {
   archiveWork?: (input: ThreadArchiveInput) => Promise<void>;
   unarchiveWork?: (input: ThreadArchiveInput) => Promise<void>;
   clearGoal?: (input: { threadId: string }) => Promise<{ cleared: boolean }>;
-  startTerminal?: (input: { sessionId: string; cwd: string; cols: number; rows: number }) => Promise<{ pid?: number } | void>;
+  startTerminal?: (input: { sessionId: string; cwd: string; cols: number; rows: number; command?: string }) => Promise<{ pid?: number } | void>;
   writeTerminal?: (input: { sessionId: string; data: string }) => Promise<void>;
   resizeTerminal?: (input: { sessionId: string; cols: number; rows: number }) => Promise<void>;
   stopTerminal?: (input: { sessionId: string }) => Promise<void>;
@@ -218,7 +225,8 @@ export function createCommandRuntime(options: {
 }): CommandRuntime {
   const loadConfig = options.loadConfig ?? (() => ({ version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null }) as AppConfig);
   return {
-    dataDir: options.dataDir ?? join(homedir(), '.zcc'),
+    dataDir: options.dataDir ?? resolveZccDataDir(),
+    loadConfig,
     environments: new Map(),
     threads: new Map(),
     terminals: new Map(),
@@ -498,6 +506,28 @@ export async function dispatchHostCommand(
   switch (command.type) {
     case 'provider.status':
       return runtime.verifyProviders();
+    case 'provider.agent_descriptors': {
+      const profile = parseProfile(command.profile);
+      if (!profile) {
+        return { status: 'failure' } satisfies ProviderAgentDescriptorsResult;
+      }
+      const registration = profile ? registrationFor(profile) : undefined;
+      if (!registration?.discoverAgentDescriptors) {
+        return { status: 'failure' } satisfies ProviderAgentDescriptorsResult;
+      }
+      const verified = (await runtime.verifyProviders()).providers.find(
+        (entry) => entry.family === registration.id
+      );
+      if (!verified?.enabled || !verified.installed) {
+        return { status: 'failure' } satisfies ProviderAgentDescriptorsResult;
+      }
+      return registration.discoverAgentDescriptors({
+        profile,
+        cwd: command.cwd,
+        config: runtime.loadConfig(),
+        refresh: command.refresh
+      });
+    }
     case 'provider.list_models': {
       if (!runtime.listModels) {
         throw new HostCommandError('unsupported', 'model listing is not available on this host');
@@ -738,6 +768,7 @@ export async function dispatchHostCommand(
           mode: command.mode,
           model: command.model,
           reasoningLevel: command.reasoningLevel,
+          acpMode: command.acpMode,
           clientRequestId: command.clientRequestId
         });
       } else {
@@ -755,7 +786,8 @@ export async function dispatchHostCommand(
           sessionId: command.sessionId,
           cwd,
           cols,
-          rows
+          rows,
+          command: command.command
         });
         pid = started?.pid;
       }

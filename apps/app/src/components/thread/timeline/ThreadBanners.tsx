@@ -147,7 +147,9 @@ export function ThreadWorkingIndicator({
 }) {
   const isThinking = thinking != null;
   const visible = !waitingOnUser && (isBusyThreadStatus(status) || isThinking);
-  const phrase = useThreadWorkingPhrase(visible && !isThinking);
+  // Keep the working phrase for the whole busy stretch. Thinking… is a label
+  // swap (BB: Working... / Thinking...), not a new working display.
+  const phrase = useThreadWorkingPhrase(visible);
   if (!visible) return null;
   const details = thinking?.text?.trim() ?? '';
   const label = threadWorkingIndicatorLabel(isThinking, phrase);

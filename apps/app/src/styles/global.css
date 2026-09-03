@@ -1,4 +1,5 @@
 @import url('@xterm/xterm/css/xterm.css');
+@import url('../../../../plugins/plugin-guide/plugin-guide.css');
 
 :root {
   --bg-base: #0b0f15;
@@ -237,11 +238,11 @@ input {
   grid-column: 1 / -1;
 }
 
-/* Workspace is wrapped in `.workspace-slot` (display:contents), so it is not a
+/* ProjectView is wrapped in `.project-slot` (display:contents), so it is not a
  * `.shell-main >` child even though it participates in the shell grid. Without
  * this reset it auto-places into the leftover nav column and the Agents board
  * (header + empty state) squeezes into a left strip. */
-.app-shell.sidebar-is-collapsed.scoped-no-list .workspace {
+.app-shell.sidebar-is-collapsed.scoped-no-list .project-shell {
   grid-column: 1 / -1;
 }
 
@@ -1632,7 +1633,7 @@ body.resizing-col .sidebar-resizer::after {
   overflow: hidden;
 }
 
-/* Agents is the same kind of sidebar collection as Workspaces: a collapsible
+/* Agents is the same kind of sidebar collection as Projects: a collapsible
  * heading with compact actions and its live rows beneath it. */
 .sidebar-agents {
   position: relative;
@@ -1741,7 +1742,7 @@ body.resizing-col .sidebar-resizer::after {
 
 .sidebar-agents--collapsed {
   /* Hug the heading. A fixed 36px basis (header min-height + padding) plus
-   * Workspaces' collection margin left a dead band between two collapsed rows. */
+   * Projects' collection margin left a dead band between two collapsed rows. */
   flex: 0 0 auto;
   height: auto;
   min-height: 0;
@@ -4721,7 +4722,7 @@ body.resizing-col {
   padding: 2px 4px;
 }
 
-.workspace {
+.project-shell {
   display: grid;
   /* Same content-track placement as .home-panel / .inbox-view. Auto-placement
      only works while the sidebar occupies column 1; collapsing unmounts that
@@ -4746,7 +4747,7 @@ body.resizing-col {
   min-height: 0;
 }
 
-.workspace-topbar {
+.project-topbar {
   grid-area: topbar;
   display: flex;
   flex-direction: column;
@@ -4757,7 +4758,7 @@ body.resizing-col {
 
 /* Mode switcher row — sits above the tabs so a long tab strip can't squeeze
    it. Right-aligned, with a hairline separating it from the tabs below. */
-.workspace-topbar-modes {
+.project-topbar-modes {
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -4769,20 +4770,20 @@ body.resizing-col {
 
 /* Tabs row — the flex container the TabBar fills. Needs a definite height:
    tabs (.tab) size with height:100%, so without it the row collapses to 0. */
-.workspace-topbar-tabs {
+.project-topbar-tabs {
   display: flex;
   align-items: stretch;
   min-width: 0;
   height: 36px;
 }
 
-.workspace-topbar-tabs > .tabbar {
+.project-topbar-tabs > .tabbar {
   flex: 1;
   min-width: 0;
   border-bottom: none;
 }
 
-.workspace-body {
+.project-body {
   grid-area: body;
   position: relative;
   min-height: 0;
@@ -4790,23 +4791,23 @@ body.resizing-col {
   display: flex;
 }
 
-.workspace > .statusbar {
+.project-shell > .statusbar {
   grid-area: status;
 }
 
-.workspace-body > .terminal-host,
-.workspace-body > .explorer-view,
-.workspace-body > .project-ext-tab,
+.project-body > .terminal-host,
+.project-body > .explorer-view,
+.project-body > .project-ext-tab,
 /* Goals / Follow-ups (scheduler chrome) and Zana/Tickets (gus chrome) are
    flex children of the workspace body too — without flex-grow they'd size to
    content, so their inner max-width overrides had nothing to fill. Stretch the
    panel roots to the column; the per-view inner cap then decides the reading
    width. */
-.workspace-body > .settings-panel,
-.workspace-body > .feed-view,
-.workspace-body > .gus-panel,
-.workspace-body > .new-thread-view,
-.workspace-body > .thread-detail-view {
+.project-body > .settings-panel,
+.project-body > .feed-view,
+.project-body > .gus-panel,
+.project-body > .new-thread-view,
+.project-body > .thread-detail-view {
   flex: 1;
   min-width: 0;
 }
@@ -4862,7 +4863,7 @@ body.resizing-col {
   color: var(--text-primary);
 }
 
-.workspace-mode-toggle {
+.project-mode-toggle {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -4873,18 +4874,18 @@ body.resizing-col {
   flex: 0 0 auto;
 }
 
-.workspace-mode-toggle:hover {
+.project-mode-toggle:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
 }
 
-.workspace-layout-picker {
+.project-layout-picker {
   display: inline-flex;
   align-items: stretch;
   border-left: 1px solid var(--border);
   flex: 0 0 auto;
 }
-.workspace-layout-picker > button {
+.project-layout-picker > button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4894,11 +4895,11 @@ body.resizing-col {
   border: none;
   cursor: pointer;
 }
-.workspace-layout-picker > button:hover {
+.project-layout-picker > button:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
 }
-.workspace-layout-picker > button.active {
+.project-layout-picker > button.active {
   color: var(--accent-blue);
   background: var(--bg-hover);
 }
@@ -4921,11 +4922,11 @@ body.resizing-col {
   display: contents;
 }
 
-.workspace-slot {
+.project-slot {
   display: contents;
 }
 
-.workspace-slot.hide > * {
+.project-slot.hide > * {
   display: none !important;
 }
 
@@ -9097,7 +9098,7 @@ body.resizing-col .ext-hub-resizer::before {
   border-radius: 6px;
 }
 
-.empty-workspace.overlay {
+.empty-project.overlay {
   position: absolute;
   inset: 0;
   background: var(--bg-panel);
@@ -9111,7 +9112,7 @@ body.resizing-col .ext-hub-resizer::before {
   background-color: var(--bg-panel) !important;
 }
 
-.empty-workspace {
+.empty-project {
   display: grid;
   /* `safe` centering: center when the content fits, but fall back to
      top-alignment when it overflows so the first rows aren't clipped above the
@@ -9126,7 +9127,7 @@ body.resizing-col .ext-hub-resizer::before {
   box-sizing: border-box;
 }
 
-.empty-workspace h3 {
+.empty-project h3 {
   margin: 0 0 6px;
   font-size: 16px;
   color: var(--text-primary);
@@ -9139,6 +9140,12 @@ body.resizing-col .ext-hub-resizer::before {
   gap: 8px;
   justify-content: center;
   flex-wrap: wrap;
+}
+
+.crash-report-status {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .btn {
@@ -12170,7 +12177,7 @@ body.resizing-col .explorer-resizer::after {
 }
 
 /* The cross-project board is a grid item of the app shell's column-3 track
-   (like the other top-level panels), not a flex child of .workspace-body — so
+   (like the other top-level panels), not a flex child of .project-body — so
    it must establish its own full-height column flow and clip overflow. */
 .agents-board--global {
   grid-column: 2 / -1;
@@ -12179,7 +12186,8 @@ body.resizing-col .explorer-resizer::after {
 }
 
 /* Actions strip — not a page header. Title/count live on the sidebar and
-   lane badges; this row only holds view toggle, filter, and New. */
+   lane badges; this row only holds view toggle, Scheduled-column toggle,
+   filter, and New. */
 .agents-board-toolbar {
   display: flex;
   min-width: 0;
@@ -14815,7 +14823,7 @@ body.resizing-col .explorer-resizer::after {
 }
 
 /* ============================================================================
- * Overview button (in ListPane) + Workspaces Overview panel (column 3)
+ * Overview button (in ListPane) + Projects Overview panel (column 3)
  * ============================================================================ */
 
 .list-overview {
@@ -15086,8 +15094,11 @@ body.resizing-col .explorer-resizer::after {
    Scheduler panel
    =========================================================================== */
 
+/* Scheduler stays in the centered family (same gutters as Settings). The
+   inner column used to be a narrower 880px reading cap; schedule cards need
+   the shared 1040px so cadence, project, next-run, and actions sit on one row. */
 .scheduler-panel .settings-inner {
-  max-width: 880px;
+  max-width: min(100%, 1040px);
 }
 
 /* Global Scheduler nav owns the full content track (no inner list rail).
@@ -15095,6 +15106,75 @@ body.resizing-col .explorer-resizer::after {
    lives inside Workspace, not the app-shell grid. */
 .scheduler-page {
   grid-column: 2 / -1;
+}
+
+.schedule-detail-view .schedule-editor-body {
+  overflow: auto;
+}
+
+.schedule-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 720px;
+  padding: 16px 20px 32px;
+}
+
+.schedule-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 8px;
+}
+
+.schedule-info-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 12px 14px 20px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.schedule-info-section h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.schedule-info-facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+  margin: 0;
+}
+
+.schedule-info-facts dt {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.schedule-info-facts dd {
+  margin: 2px 0 0;
+  font-size: 12px;
+}
+
+.schedule-info-live,
+.schedule-info-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.settings-btn--danger {
+  color: var(--danger, #e57373);
 }
 
 /* Overview / Schedules sub-view toggle — the per-project Scheduler tab's
@@ -28961,7 +29041,7 @@ body.resizing-col .library-split-resizer::after {
 
 /* Mode switcher row — sits above the tabs so a long tab strip can't squeeze
    it. Right-aligned, with a hairline separating it from the tabs below. */
-.workspace-topbar-modes {
+.project-topbar-modes {
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -28973,7 +29053,7 @@ body.resizing-col .library-split-resizer::after {
 
 /* Tabs row — the flex container the TabBar fills. Needs a definite height:
    tabs (.tab) size with height:100%, so without it the row collapses to 0. */
-.workspace-topbar-tabs {
+.project-topbar-tabs {
   display: flex;
   align-items: stretch;
   min-width: 0;
@@ -29298,7 +29378,7 @@ body.resizing-col .library-split-resizer::after {
 }
 
 /* The cross-project board is a grid item of the app shell's column-3 track
-   (like the other top-level panels), not a flex child of .workspace-body — so
+   (like the other top-level panels), not a flex child of .project-body — so
    it must establish its own full-height column flow and clip overflow. */
 .agents-board--global {
   grid-column: 2 / -1;
@@ -31746,6 +31826,7 @@ textarea.thread-command-editor {
 .split-workspace .new-thread-view,
 .split-workspace .thread-detail-view,
 .split-workspace .agents-board,
+.split-workspace .scheduler-page,
 .split-workspace .module-panel-host,
 .split-workspace .split-plugin-pane {
   grid-column: auto;
@@ -31848,8 +31929,8 @@ textarea.thread-command-editor {
   margin: 0;
 }
 
-.workspace-body > .new-thread-view,
-.workspace-body > .thread-detail-view {
+.project-body > .new-thread-view,
+.project-body > .thread-detail-view {
   grid-column: auto;
   height: auto;
   min-height: 0;
@@ -31877,7 +31958,7 @@ textarea.thread-command-editor {
 
 @media (min-width: 1280px) {
   .thread-detail-column {
-    max-width: 60rem;
+    max-width: 72rem;
   }
 
   .thread-detail-view .thread-command-editor-slot {
@@ -31892,6 +31973,18 @@ textarea.thread-command-editor {
   .thread-detail-view .thread-command-editor {
     min-height: 52px;
     max-height: 16rem;
+  }
+}
+
+@media (min-width: 1600px) {
+  .thread-detail-column {
+    max-width: 90rem;
+  }
+}
+
+@media (min-width: 1920px) {
+  .thread-detail-column {
+    max-width: 108rem;
   }
 }
 

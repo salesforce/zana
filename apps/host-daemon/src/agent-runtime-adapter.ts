@@ -1,6 +1,6 @@
 import { mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { resolveZccDataDir } from './host-config.js';
 import type { HostBridgeLaunch, HostEventEnvelope, ProviderListModelsResult } from '@zana-ai/zcc-contracts/host-rpc';
 import {
   createAgentRuntime,
@@ -136,8 +136,12 @@ function executionOptions(input: {
   permissionMode?: RuntimeThreadExecutionOptions['permissionMode'];
   model?: string;
   reasoningLevel?: ReasoningLevel;
+  acpMode?: string;
 }): RuntimeThreadExecutionOptions {
-  return threadExecutionOptions(input);
+  return {
+    ...threadExecutionOptions(input),
+    ...(input.acpMode ? { providerOptions: { acpMode: input.acpMode } } : {})
+  };
 }
 
 function toRuntimeBridgeLaunch(
@@ -263,7 +267,7 @@ export function createAgentRuntimeAdapter(options: {
     if (!options.loadConfig) return;
     syncProviderBridgeRecordDirEnv({
       enabled: options.loadConfig().providerBridgeRecordingEnabled === true,
-      dataDir: options.dataDir ?? join(homedir(), '.zcc'),
+      dataDir: options.dataDir ?? resolveZccDataDir(),
       env: process.env
     });
   }
@@ -369,7 +373,8 @@ export function createAgentRuntimeAdapter(options: {
       });
       return {
         models: listed.models,
-        selectedOnlyModels: listed.selectedOnlyModels
+        selectedOnlyModels: listed.selectedOnlyModels,
+        ...(listed.acpMode ? { acpMode: listed.acpMode } : {})
       };
     },
     async startWork(input: ThreadWorkInput) {
@@ -395,7 +400,8 @@ export function createAgentRuntimeAdapter(options: {
         options: executionOptions({
           permissionMode: input.permissionMode,
           model: input.model,
-          reasoningLevel: input.reasoningLevel
+          reasoningLevel: input.reasoningLevel,
+          acpMode: input.acpMode
         }),
         ...(input.bridgeLaunch ? { bridgeLaunch: await resolveLaunch(input.bridgeLaunch) } : {}),
         ...mergeSessionTooling({
@@ -414,7 +420,8 @@ export function createAgentRuntimeAdapter(options: {
         clientRequestId: input.clientRequestId ?? encodeClientTurnRequestIdNumber({ value: Date.now() }),
         options: executionOptions({
           model: input.model,
-          reasoningLevel: input.reasoningLevel
+          reasoningLevel: input.reasoningLevel,
+          acpMode: input.acpMode
         })
       });
     },
@@ -431,7 +438,8 @@ export function createAgentRuntimeAdapter(options: {
         options: executionOptions({
           permissionMode: input.permissionMode,
           model: input.model,
-          reasoningLevel: input.reasoningLevel
+          reasoningLevel: input.reasoningLevel,
+          acpMode: input.acpMode
         }),
         ...(input.bridgeLaunch ? { bridgeLaunch: await resolveLaunch(input.bridgeLaunch) } : {}),
         ...mergeSessionTooling({

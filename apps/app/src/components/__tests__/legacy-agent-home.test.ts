@@ -6,6 +6,7 @@ import {
   cliAgentModelOptions,
   familyForThreadProviderId,
   PROFILE_BY_FAMILY,
+  resolveCliAgentFamily,
   rewritePromptPaths,
   threadProviderIdForFamily
 } from '../legacy-agent-home.js';
@@ -46,6 +47,56 @@ describe('thread provider id mapping', () => {
     expect(familyForThreadProviderId('acp-opencode')).toBe('opencode');
     expect(familyForThreadProviderId('codex')).toBe('codex');
     expect(familyForThreadProviderId('unknown')).toBeNull();
+  });
+});
+
+describe('resolveCliAgentFamily', () => {
+  it('keeps the current family when it is still installed', () => {
+    expect(resolveCliAgentFamily({
+      currentFamilyId: 'codex',
+      availableFamilyIds: ['claude', 'codex'],
+      rememberedFamilyId: 'pi',
+      effectiveDefaultFamilyId: 'claude'
+    })).toBe('codex');
+  });
+
+  it('restores the last-used family when the current pick is empty or gone', () => {
+    expect(resolveCliAgentFamily({
+      currentFamilyId: '',
+      availableFamilyIds: ['claude', 'codex'],
+      rememberedFamilyId: 'codex',
+      effectiveDefaultFamilyId: 'claude'
+    })).toBe('codex');
+    expect(resolveCliAgentFamily({
+      currentFamilyId: 'pi',
+      availableFamilyIds: ['claude', 'codex'],
+      rememberedFamilyId: 'codex',
+      effectiveDefaultFamilyId: 'claude'
+    })).toBe('codex');
+  });
+
+  it('falls through to the configured default when nothing remembered is available', () => {
+    expect(resolveCliAgentFamily({
+      currentFamilyId: '',
+      availableFamilyIds: ['claude', 'codex'],
+      rememberedFamilyId: 'pi',
+      effectiveDefaultFamilyId: 'claude'
+    })).toBe('claude');
+  });
+
+  it('keeps current then remembered before descriptors arrive', () => {
+    expect(resolveCliAgentFamily({
+      currentFamilyId: 'codex',
+      availableFamilyIds: [],
+      rememberedFamilyId: 'pi',
+      effectiveDefaultFamilyId: 'claude'
+    })).toBe('codex');
+    expect(resolveCliAgentFamily({
+      currentFamilyId: '',
+      availableFamilyIds: [],
+      rememberedFamilyId: 'pi',
+      effectiveDefaultFamilyId: 'claude'
+    })).toBe('pi');
   });
 });
 

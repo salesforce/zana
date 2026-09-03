@@ -1,6 +1,6 @@
 import type { Project } from '@zana-ai/zcc-domain/product';
 
-/** Keep the incoming relative order, but lift starred workspaces to the top. */
+/** Keep the incoming relative order, but lift starred projects to the top. */
 export function pinFavoriteProjectsFirst(projects: readonly Project[]): Project[] {
   const favorites: Project[] = [];
   const rest: Project[] = [];
@@ -12,11 +12,11 @@ export function pinFavoriteProjectsFirst(projects: readonly Project[]): Project[
 }
 
 /**
- * Workspace-rail disclosure. An explicit user toggle always wins; otherwise
+ * Project-rail disclosure. An explicit user toggle always wins; otherwise
  * open the tree whenever there is something to nest (live agents or recent
  * threads) so those sessions are visible without a click.
  */
-export function isWorkspaceRailExpanded(
+export function isProjectRailExpanded(
   explicit: boolean | undefined,
   hasNestedSessions: boolean
 ): boolean {

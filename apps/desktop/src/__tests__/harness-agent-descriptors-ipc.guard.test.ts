@@ -32,4 +32,14 @@ describe('project-authorized harness agent descriptor IPC', () => {
     expect(handler).not.toContain('projectPath');
     expect(handler).not.toContain("providerFor('opencode')");
   });
+
+  it('keeps browser product discovery behind server project authorization and host RPC', () => {
+    const serverSource = readFileSync(new URL('../../../server/src/http/product-api.ts', import.meta.url), 'utf8');
+    const bridgeSource = readFileSync(new URL('../../../server/src/http/harness-via-rpc.ts', import.meta.url), 'utf8');
+    expect(serverSource).toContain("'/api/v1/harness/agent-descriptors'");
+    expect(serverSource).toContain("ctx.toProjects().find((row) => row.id === projectId)");
+    expect(bridgeSource).toContain("type: 'provider.agent_descriptors'");
+    expect(bridgeSource).toContain('cwd: input.project.path');
+    expect(bridgeSource).toContain('input.project.remote');
+  });
 });

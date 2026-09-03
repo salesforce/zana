@@ -1,6 +1,12 @@
 import { deprecation, errResult, type CliResult } from '../cli-result.js';
-import { flagValue } from '../flag-parse.js';
-import { productRequest, renderOrJson, type ProductHttpDeps } from '../product-http.js';
+import { flagValue, hasFlag, stripFlags } from '../flag-parse.js';
+import {
+  nowMs,
+  productRequest,
+  renderOrJson,
+  sleepMs,
+  type ProductHttpDeps
+} from '../product-http.js';
 
 interface TerminalRow {
   id?: string;
@@ -8,6 +14,9 @@ interface TerminalRow {
   title?: string;
   status?: string;
   cwd?: string;
+  pid?: number;
+  launchCommand?: string;
+  exitCode?: number;
 }
 
 function sessionsFrom(data: unknown): TerminalRow[] {
@@ -20,6 +29,18 @@ function sessionsFrom(data: unknown): TerminalRow[] {
 
 function formatSession(row: TerminalRow): string {
   return `${row.id ?? '?'}\t${row.status ?? '?'}\t${row.projectId ?? '-'}\t${row.title ?? ''}`;
+}
+
+function parseDuration(raw: string): number | undefined {
+  const match = /^(\d+)(ms|s|m|h)?$/.exec(raw.trim());
+  if (!match) return undefined;
+  const n = Number(match[1]);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  const unit = match[2] ?? 's';
+  if (unit === 'ms') return n;
+  if (unit === 's') return n * 1000;
+  if (unit === 'm') return n * 60_000;
+  return n * 3_600_000;
 }
 
 export async function runTerminalCommand(
@@ -46,11 +67,87 @@ export async function runTerminalCommand(
     if (!projectId) return errResult('terminal create requires --project <id>', 2);
     const created = await productRequest<{ ok?: boolean; value?: TerminalRow }>('POST', '/api/v1/terminals', {
       deps,
-      body: { projectId, title, prompt: command, profile: 'shell' }
+      body: { projectId, title, command, prompt: command, profile: 'shell' }
     });
     if (!created.ok) return created.result;
     const row = created.data.value;
     return renderOrJson(json, created.data, row ? `${formatSession(row)}\n` : 'ok\n');
+  }
+
+  if (subcommand === 'show') {
+    const id = rest[0];
+    if (!id) return errResult('terminal show requires <id>', 2);
+    const shown = await productRequest<{ session?: TerminalRow }>(
+      'GET',
+      `/api/v1/terminals/${encodeURIComponent(id)}`,
+      { deps }
+    );
+    if (!shown.ok) return shown.result;
+    const row = shown.data.session ?? (shown.data as TerminalRow);
+    return renderOrJson(json, row, `${formatSession(row)}\n`);
+  }
+
+  if (subcommand === 'output') {
+    const tailBytes = flagValue(rest, '--tail-bytes');
+    const id = stripFlags(rest, ['--tail-bytes'], [])[0];
+    if (!id) return errResult('terminal output requires <id>', 2);
+    const output = await productRequest<{ text?: string; truncated?: boolean }>(
+      'GET',
+      `/api/v1/terminals/${encodeURIComponent(id)}/output`,
+      { deps, query: { tailBytes } }
+    );
+    if (!output.ok) return output.result;
+    if (json) return renderOrJson(true, output.data, '');
+    return renderOrJson(false, output.data, output.data.text ?? '');
+  }
+
+  if (subcommand === 'wait') {
+    const timeoutRaw = flagValue(rest, '--timeout') ?? '2m';
+    const timeoutMs = parseDuration(timeoutRaw);
+    if (timeoutMs === undefined) return errResult(`invalid --timeout '${timeoutRaw}'`, 2);
+    const contains = flagValue(rest, '--contains');
+    const waitExit = hasFlag(rest, '--exit') || !contains;
+    const id = stripFlags(rest, ['--timeout', '--contains'], ['--exit'])[0];
+    if (!id) return errResult('terminal wait requires <id>', 2);
+    const deadline = nowMs(deps) + timeoutMs;
+    let sawContains = !contains;
+    let last: TerminalRow | undefined;
+    while (nowMs(deps) < deadline) {
+      const shown = await productRequest<{ session?: TerminalRow }>(
+        'GET',
+        `/api/v1/terminals/${encodeURIComponent(id)}`,
+        { deps }
+      );
+      if (!shown.ok) {
+        if (shown.result.exitCode === 3) return shown.result;
+        await sleepMs(500, deps);
+        continue;
+      }
+      last = shown.data.session ?? (shown.data as TerminalRow);
+      if (contains && !sawContains) {
+        const output = await productRequest<{ text?: string }>(
+          'GET',
+          `/api/v1/terminals/${encodeURIComponent(id)}/output`,
+          { deps }
+        );
+        if (output.ok && (output.data.text ?? '').includes(contains)) {
+          sawContains = true;
+        }
+      }
+      const exited = last.status === 'exited';
+      if (sawContains && (!waitExit || exited)) {
+        return renderOrJson(json, last, `${id} ${last.status ?? ''}\n`);
+      }
+      if (exited && contains && !sawContains) {
+        return errResult(`terminal ${id} exited without matching output`, 1);
+      }
+      await sleepMs(500, deps);
+    }
+    return {
+      exitCode: 124,
+      stdout: '',
+      stderr: `Error: timed out waiting for terminal ${id}\n`
+    };
   }
 
   if (subcommand === 'send') {
@@ -77,7 +174,7 @@ export async function runTerminalCommand(
   }
 
   return errResult(
-    `unknown terminal command '${subcommand}'. Try list, create, send, close.`,
+    `unknown terminal command '${subcommand}'. Try list, create, show, output, wait, send, close.`,
     2
   );
 }

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { definePluginApp, isPluginAppDefinition } from './app.js';
-import { collectPluginApp } from './app-contract.js';
+import {
+  collectPluginApp,
+  threadPanelActionMatchesScope
+} from './app-contract.js';
 import { shimLegacyExtensionManifest } from './legacy-shim.js';
 
 describe('definePluginApp', () => {
@@ -83,9 +86,45 @@ describe('definePluginApp', () => {
     expect(set.providerIcons).toHaveLength(1);
     expect(set.providerIcons[0]?.providerId).toBe('claude-code');
     expect(set.threadPanelActions[0]?.id).toBe('board');
+    expect(set.threadPanelActions[0]?.scopes).toBeUndefined();
+    expect(
+      collectPluginApp(
+        'tasks',
+        1,
+        definePluginApp((app) => {
+          app.slots.threadPanelAction({
+            id: 'live',
+            title: 'Live',
+            component: () => null,
+            scopes: ['thread', 'agent-session']
+          });
+        })
+      ).threadPanelActions[0]?.scopes
+    ).toEqual(['thread', 'agent-session']);
+    expect(() =>
+      collectPluginApp(
+        'tasks',
+        1,
+        definePluginApp((app) => {
+          app.slots.threadPanelAction({
+            id: 'bad',
+            title: 'Bad',
+            component: () => null,
+            scopes: ['sidebar'] as never
+          });
+        })
+      )
+    ).toThrow(/"scopes" must be a non-empty array/);
     expect(set.messageDirectives[0]?.id).toBe('task');
     expect(set.composerCustomizations[0]?.id).toBe('retry');
     expect(set.contentScripts[0]?.id).toBe('boot');
+  });
+
+  it('defaults threadPanelAction scopes to thread-only', () => {
+    expect(threadPanelActionMatchesScope({}, 'thread')).toBe(true);
+    expect(threadPanelActionMatchesScope({}, 'agent-session')).toBe(false);
+    expect(threadPanelActionMatchesScope({ scopes: ['agent-session'] }, 'thread')).toBe(false);
+    expect(threadPanelActionMatchesScope({ scopes: ['thread', 'agent-session'] }, 'agent-session')).toBe(true);
   });
 
   it('collects commandPaletteAction and rejects a missing run', () => {

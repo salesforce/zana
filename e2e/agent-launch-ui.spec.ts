@@ -140,7 +140,7 @@ test('launching an agent through the real UI opens its terminal and it goes work
     await agentModal.getByTestId('thread-secondary-show').click();
     await expect(agentModal.getByTestId('thread-secondary-panel')).toBeVisible();
     await expect(agentModal.getByTestId('thread-info-pin')).toBeVisible();
-    await expect(agentModal.getByRole('button', { name: 'Close Session' })).toBeVisible();
+    await expect(agentModal.getByRole('button', { name: 'Delete' })).toBeVisible();
 
     // 10. Secondary confirmation on the live event timeline: main classified the
     //     session `working` and pushed it. (The DOM assertion above already

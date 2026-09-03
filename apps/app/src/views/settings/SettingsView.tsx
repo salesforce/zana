@@ -265,9 +265,6 @@ export function SettingsView() {
       if (typeof patch.agentListNeedsYouFromTriage === 'boolean') {
         useData.getState().setAgentListNeedsYouFromTriage(patch.agentListNeedsYouFromTriage);
       }
-      if (typeof patch.includeScheduledAgentsInAgentView === 'boolean') {
-        useData.getState().setIncludeScheduledAgentsInAgentView(patch.includeScheduledAgentsInAgentView);
-      }
       if (typeof patch.voiceInputEnabled === 'boolean') {
         useData.getState().setVoiceInputEnabled(patch.voiceInputEnabled);
       }

@@ -31,7 +31,7 @@ describe('persona routing projection', () => {
         byAdapter: {
           opencode: {
             providerTargetId: 'openai',
-            modelTargetId: 'aisuite/gpt-5.6-sol',
+            modelTargetId: 'llmgw/gpt-5.6-sol-1M',
             executionState: 'accept-edits' as const
           }
         }
@@ -40,12 +40,12 @@ describe('persona routing projection', () => {
 
     expect(effectivePersonaRouting(persona).opencode).toMatchObject({
       providerTargetId: 'openai',
-      modelTargetId: 'aisuite/gpt-5.6-sol',
+      modelTargetId: 'llmgw/gpt-5.6-sol-1M',
       executionState: 'accept-edits'
     });
     expect(personaRoutingSummary(persona)).toEqual([
       'opencode',
-      'aisuite/gpt-5.6-sol',
+      'llmgw/gpt-5.6-sol-1M',
       'accept-edits'
     ]);
   });

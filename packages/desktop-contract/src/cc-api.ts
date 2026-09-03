@@ -112,6 +112,7 @@ import type {
   Result,
   SavedRecord,
   SavedRecordInput,
+  SaveCrashReportResult,
   ScheduleCreateInput,
   ScheduleGroup,
   ScheduleGroupInput,
@@ -422,6 +423,7 @@ export interface CcApi {
       permissionMode?: 'accept-edits' | 'auto' | 'full';
       model?: string;
       reasoningLevel?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'ultracode' | 'max' | 'ultra';
+      acpMode?: string;
     }): Promise<Result<{
       id: string;
       projectId: string;
@@ -474,6 +476,13 @@ export interface CcApi {
       lastReadSeq?: number | null;
       maxSeq?: number;
       updatedAt?: number;
+      activity?: {
+        activeWorkflowCount: number;
+        activeBackgroundAgentCount: number;
+        activeBackgroundCommandCount: number;
+        activePlanModeCount: number;
+        activeGoalCount: number;
+      };
     }>>;
     get(threadId: string): Promise<{ thread: Record<string, unknown> }>;
     send(
@@ -483,6 +492,7 @@ export interface CcApi {
       extras?: {
         model?: string;
         reasoningLevel?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'ultracode' | 'max' | 'ultra';
+        acpMode?: string;
       }
     ): Promise<{ ok: boolean }>;
     stop(threadId: string): Promise<{ ok: boolean }>;
@@ -600,6 +610,10 @@ export interface CcApi {
       }>;
       permissionCeiling: string;
       modelLoadError: { providerId: string; code: string } | null;
+      acpMode?: {
+        currentValue?: string;
+        options: Array<{ value: string; name?: string }>;
+      };
     }>;
     providers(): Promise<{ providers: Array<{
       id: string;
@@ -1109,6 +1123,15 @@ export interface CcApi {
     isFullScreen(): Promise<boolean>;
     /** Fired on 'enter-full-screen'/'leave-full-screen' for this window (OS-initiated or IPC-initiated). */
     onFullScreenChanged(cb: (isFullScreen: boolean) => void): () => void;
+    /**
+     * Persist a renderer crash report under the main-owned crashes dir and
+     * return version/OS plus the saved basename (never an absolute path).
+     */
+    saveCrashReport(input: {
+      message: string;
+      stack?: string;
+      componentStack?: string;
+    }): Promise<SaveCrashReportResult>;
   };
   /**
    * Menu-bar popover surface. Read-only for the popover renderer: it subscribes

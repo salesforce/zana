@@ -3,10 +3,12 @@ import {
   MAX_PANES,
   countPanes,
   findPane,
+  findPaneByContent,
   findPaneByThread,
   listPanes,
   movePane,
   normalize,
+  paneContentEquals,
   removePane,
   replacePaneContent,
   resizeSplit,
@@ -105,6 +107,47 @@ describe('split layout operations', () => {
     expect(eight.focusedPaneId).toBe('pane-8');
     expect(rejected).toBe(eight);
     expect(findPaneByThread(two.root, 'project-2', 'thread-2')?.paneId).toBe('pane-2');
+    expect(
+      findPaneByContent(two.root, { kind: 'thread', projectId: 'project-2', threadId: 'thread-2' })?.paneId
+    ).toBe('pane-2');
+  });
+
+  it('matches a schedule pane by schedule id across project ids', () => {
+    const schedule: PaneContent = { kind: 'schedule', projectId: 'p1', scheduleId: 'sched-1' };
+    const layout = splitPane(singlePaneLayout(), 'pane-1', 'right', schedule);
+    expect(findPaneByContent(layout.root, schedule)?.paneId).toBe('pane-2');
+    expect(
+      findPaneByContent(layout.root, { kind: 'schedule', projectId: null, scheduleId: 'sched-1' })?.paneId
+    ).toBe('pane-2');
+    expect(
+      paneContentEquals(schedule, { kind: 'schedule', projectId: null, scheduleId: 'sched-1' })
+    ).toBe(false);
+    expect(paneContentEquals({ kind: 'scheduler' }, { kind: 'scheduler', projectId: 'p1' })).toBe(true);
+  });
+
+  it('matches an agent-session pane by session id across project ids', () => {
+    const session: PaneContent = { kind: 'agent-session', projectId: 'p1', sessionId: 's1' };
+    const layout = splitPane(singlePaneLayout(), 'pane-1', 'right', session);
+    expect(findPaneByContent(layout.root, session)?.paneId).toBe('pane-2');
+    expect(
+      findPaneByContent(layout.root, { kind: 'agent-session', projectId: null, sessionId: 's1' })?.paneId
+    ).toBe('pane-2');
+    expect(
+      findPaneByContent(layout.root, { kind: 'agent-session', projectId: 'p1', sessionId: 'other' })
+    ).toBeNull();
+    expect(
+      paneContentEquals(session, { kind: 'agent-session', projectId: null, sessionId: 's1' })
+    ).toBe(false);
+  });
+
+  it('does not clone a layout when replacePaneContent is a no-op', () => {
+    const session: PaneContent = { kind: 'agent-session', projectId: null, sessionId: 's1' };
+    const layout: SplitLayout = {
+      root: { type: 'pane', paneId: 'pane-1', content: session },
+      focusedPaneId: 'pane-1'
+    };
+    expect(replacePaneContent(layout, 'pane-1', session)).toBe(layout);
+    expect(setFocus(layout, 'pane-1')).toBe(layout);
   });
 
   it('replaces and swaps content while applying the reference focus semantics', () => {

@@ -1,15 +1,17 @@
-import type { ProviderStatusResult } from '@zana-ai/zcc-contracts/host-rpc';
+import type { ProviderAgentDescriptorsResult, ProviderStatusResult } from '@zana-ai/zcc-contracts/host-rpc';
 import type {
   AppConfig,
   EffectiveHarnessDefaultResult,
   HarnessFamily,
   HarnessVerifyResult,
+  LaunchProfileId,
   Persona,
   Project
 } from '@zana-ai/zcc-domain/product';
 import { harnessAdapterDescriptorsFromVerify } from '@zana-ai/zcc-host-daemon/harness/registry';
 import { resolveEffectiveHarnessDefault } from '@zana-ai/zcc-host-daemon/harness/effective-default';
-import type { HarnessAdapterDescriptor } from '@zana-ai/zcc-domain/harness-adapter';
+import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
+import type { HarnessAdapterDescriptor, HarnessAgentDiscoveryResult } from '@zana-ai/zcc-domain/harness-adapter';
 import { HostUnavailableError, type HostHub } from './host-hub.js';
 
 const FAMILIES = new Set<HarnessFamily>(['claude', 'cursor', 'codex', 'pi', 'opencode']);
@@ -53,6 +55,33 @@ export async function harnessDescriptors(hub: HostHub, hostId?: string): Promise
   const results = await harnessVerify(hub, hostId);
   if (results.length === 0) return [];
   return harnessAdapterDescriptorsFromVerify(results);
+}
+
+/** Server validates project ownership before asking its assigned host to inspect native agents. */
+export async function harnessAgentDescriptors(input: {
+  hub: HostHub;
+  project: Project | undefined;
+  profile: LaunchProfileId;
+  refresh: boolean;
+}): Promise<HarnessAgentDiscoveryResult> {
+  if (!input.project || input.project.remote || !VALID_PROFILES.includes(input.profile)) {
+    return { status: 'failure' };
+  }
+  try {
+    const hostId = input.hub.resolveHostId(input.project.hostId);
+    return await input.hub.callHostOnlineRpc<ProviderAgentDescriptorsResult>({
+      hostId,
+      command: {
+        type: 'provider.agent_descriptors',
+        cwd: input.project.path,
+        profile: input.profile,
+        refresh: input.refresh
+      }
+    }) as HarnessAgentDiscoveryResult;
+  } catch (error) {
+    if (error instanceof HostUnavailableError) return { status: 'failure' };
+    throw error;
+  }
 }
 
 export async function harnessEffectiveDefault(input: {

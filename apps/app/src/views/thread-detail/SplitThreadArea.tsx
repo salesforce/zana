@@ -9,8 +9,11 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { HomeView } from '../home/HomeView.js';
 import { AgentsView } from '../agents/AgentsView.js';
+import { AgentSessionPage } from '../agents/AgentSessionPage.js';
 import { NewThreadView } from '../threads/NewThreadView.js';
 import { ThreadDetail } from '../threads/ThreadDetailView.js';
+import { SchedulerView } from '../scheduler/SchedulerView.js';
+import { ScheduleDetailPage } from '../scheduler/ScheduleDetailPage.js';
 import { useData } from '../../store.js';
 import { useIsCompactViewport } from '../../hooks/useIsCompactViewport.js';
 import {
@@ -40,6 +43,7 @@ import {
 import { useSplitWorkspace } from '../../lib/split-layout/store.js';
 import {
   focusedPaneRoute,
+  paneContentForPathname,
   paneContentRoute,
   reconcileLayoutForContent
 } from '../../lib/split-layout/splitThreadNavigation.js';
@@ -68,19 +72,28 @@ export function SplitThreadArea({ routeContent }: { routeContent: PaneContent })
   const maximizedPaneId = useSplitWorkspace((s) => s.maximizedPaneId);
   const setMaximizedPaneIdAtom = useSplitWorkspace((s) => s.setMaximizedPaneId);
   const secondaryPanelRegistry = useMemo(() => createPaneSecondaryPanelRegistry(), []);
+  const routeKey = paneContentRoute(routeContent);
 
   useEffect(() => {
-    updateLayout((previous) => reconcileLayoutForContent(previous, routeContent));
-  }, [routeContent, updateLayout]);
+    updateLayout((previous) =>
+      reconcileLayoutForContent(previous, paneContentForPathname(routeKey) ?? routeContent)
+    );
+    // Reconstruct from the path key. Depending on the `routeContent` object
+    // re-runs this on every parent render and hits React #185.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeKey, updateLayout]);
 
   const effectiveLayout: SplitLayout =
     layout ?? reconcileLayoutForContent(null, routeContent);
   const panes = listPanes(effectiveLayout.root);
   const isSplitActive = !isCompact && panes.length > 1;
+  const focusedPaneId = effectiveLayout.focusedPaneId;
+  const paneCount = countPanes(effectiveLayout.root);
   const maximizedPane =
     maximizedPaneId !== null ? findPane(effectiveLayout.root, maximizedPaneId) : null;
+  const maximizedPaneMissing = maximizedPaneId !== null && maximizedPane === null;
   const effectiveMaximizedPaneId =
-    countPanes(effectiveLayout.root) > 1 && maximizedPaneId !== null && maximizedPane !== null
+    paneCount > 1 && maximizedPaneId !== null && maximizedPane !== null
       ? maximizedPaneId
       : null;
 
@@ -94,14 +107,14 @@ export function SplitThreadArea({ routeContent }: { routeContent: PaneContent })
 
   useEffect(() => {
     if (maximizedPaneId === null) return;
-    if (countPanes(effectiveLayout.root) < 2 || maximizedPane === null) {
+    if (paneCount < 2 || maximizedPaneMissing) {
       setMaximizedPaneId(null);
       return;
     }
-    if (effectiveLayout.focusedPaneId !== maximizedPaneId) {
-      setMaximizedPaneId(effectiveLayout.focusedPaneId);
+    if (focusedPaneId !== maximizedPaneId) {
+      setMaximizedPaneId(focusedPaneId);
     }
-  }, [effectiveLayout, maximizedPane, maximizedPaneId, setMaximizedPaneId]);
+  }, [focusedPaneId, maximizedPaneId, maximizedPaneMissing, paneCount, setMaximizedPaneId]);
 
   const navigateInPane = useCallback<NavigateInPane>(
     (paneId, threadId, projectId) => {
@@ -467,6 +480,10 @@ function WorkspacePaneContent({
         : undefined,
     [onBeginPaneDrag, paneId]
   );
+  const navigateInThisPane = useCallback(
+    (threadId: string, projectId: string | null) => navigateInPane(paneId, threadId, projectId),
+    [navigateInPane, paneId]
+  );
   const value = usePaneContextValue({
     paneId,
     isFocused,
@@ -478,7 +495,7 @@ function WorkspacePaneContent({
     onMoveToSide,
     isBoundedPane,
     beginPaneDrag,
-    navigateInPane: (threadId, projectId) => navigateInPane(paneId, threadId, projectId)
+    navigateInPane: navigateInThisPane
   });
 
   return (
@@ -493,11 +510,41 @@ function PaneBody({ content }: { content: PaneContent }) {
   if (content.kind === 'thread') {
     return <ThreadDetail key={content.threadId} threadId={content.threadId} />;
   }
+  if (content.kind === 'agent-session') {
+    return (
+      <AgentSessionPage
+        key={content.sessionId}
+        projectId={content.projectId}
+        sessionId={content.sessionId}
+      />
+    );
+  }
   if (content.kind === 'home') {
     return <HomeView />;
   }
   if (content.kind === 'agents') {
     return <AgentsView />;
+  }
+  if (content.kind === 'scheduler') {
+    return <SchedulerView />;
+  }
+  if (content.kind === 'schedule') {
+    return (
+      <ScheduleDetailPage
+        key={content.scheduleId}
+        projectId={content.projectId}
+        scheduleId={content.scheduleId}
+      />
+    );
+  }
+  if (content.kind === 'new-schedule') {
+    return (
+      <ScheduleDetailPage
+        key={`new:${content.projectId ?? ''}`}
+        projectId={content.projectId ?? null}
+        scheduleId={null}
+      />
+    );
   }
   if (content.kind === 'new-thread') {
     const project = content.projectId

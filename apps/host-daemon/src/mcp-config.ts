@@ -12,18 +12,20 @@
  * deliberate — we don't own the project directory.
  */
 
-import { homedir } from 'node:os';
 import { join, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile, rename } from 'node:fs/promises';
 import { mkdirSync, writeFileSync, renameSync } from 'node:fs';
 import { rewritePluginMcpArgs } from '@zana-ai/zcc-server/plugins/plugin-skills';
+import { resolveZccDataDir } from './host-config.js';
 
-const MCP_CONFIG_DIR = join(homedir(), '.zcc', 'mcp');
+function mcpConfigDir(): string {
+  return join(resolveZccDataDir(), 'mcp');
+}
 
 /** Pure helper: returns the absolute path of the per-project `.mcp.json`. */
 export function mcpConfigPathForProject(projectId: string): string {
-  return join(MCP_CONFIG_DIR, `${projectId}.json`);
+  return join(mcpConfigDir(), `${projectId}.json`);
 }
 
 type McpServerDef = { type: string; url?: string; command?: string; args?: string[]; env?: Record<string, string> };
@@ -232,7 +234,7 @@ export async function ensureMcpConfigForProject(
   extraServerNames?: string[]
 ): Promise<string> {
   const target = mcpConfigPathForProject(projectId);
-  await mkdir(MCP_CONFIG_DIR, { recursive: true });
+  await mkdir(mcpConfigDir(), { recursive: true });
   // Unique per call (not just per pid+ms) so two concurrent writes for the same
   // project can't collide on the same tmp path before their renames land —
   // mirrors the sync twin below.
@@ -262,7 +264,7 @@ export function ensureMcpConfigForProjectSync(
   extraServerNames?: string[]
 ): string {
   const target = mcpConfigPathForProject(projectId);
-  mkdirSync(MCP_CONFIG_DIR, { recursive: true });
+  mkdirSync(mcpConfigDir(), { recursive: true });
   // Unique per call (not just per pid) so two concurrent spawns for the same
   // project can't race on the same tmp path before their renames land.
   const tmp = `${target}.tmp-${process.pid}-${randomUUID()}`;

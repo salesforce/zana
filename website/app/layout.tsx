@@ -1,8 +1,8 @@
 import type { Metadata } from 'next';
 import { Inter, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
+import './components/product-tour/product-tour.css';
 import { Nav, Footer } from './components/Nav';
-import { StarBanner } from './components/StarBanner';
 import { Reveal } from './components/Reveal';
 import { site } from '@/lib/site';
 
@@ -81,7 +81,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Nav />
         <main id="main">{children}</main>
         <Footer />
-        <StarBanner />
         <Reveal />
       </body>
     </html>

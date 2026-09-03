@@ -114,6 +114,7 @@ export type {
   PluginPendingInteractionProps,
   PluginPendingInteractionView,
   PluginThreadPanelActionRegistration,
+  PluginThreadPanelScope,
   PluginNewThreadPanelActionRegistration,
   PluginThreadListRegistration,
   PluginThreadHeaderActionRegistration,
@@ -158,7 +159,13 @@ export {
   experimental_NewThreadComposer
 } from './app.js';
 export type { PluginHostBridge } from './app.js';
-export { collectPluginApp, emptyRegistrationSet } from './app-contract.js';
+export {
+  collectPluginApp,
+  DEFAULT_PLUGIN_THREAD_PANEL_SCOPES,
+  emptyRegistrationSet,
+  PLUGIN_THREAD_PANEL_SCOPES,
+  threadPanelActionMatchesScope
+} from './app-contract.js';
 export { cronMatches, cronMinuteKey } from './cron.js';
 
 export { shimLegacyExtensionManifest, type LegacyExtensionJson } from './legacy-shim.js';

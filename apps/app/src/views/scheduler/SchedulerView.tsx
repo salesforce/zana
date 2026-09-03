@@ -1,46 +1,35 @@
 import { product } from '../../lib/product-client.js';
 import { DelayedStencilList } from '../../components/ui/Skeleton.js';
 import React, { useEffect, useMemo, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Clock, Plus, Sparkles, Pause, PlayCircle, AlertTriangle, Activity, Settings } from 'lucide-react';
-import type { ScheduledTask, ScheduleRun, ScheduleTemplate } from '@zana-ai/zcc-domain/product';
+import type { ScheduledTask, ScheduleTemplate } from '@zana-ai/zcc-domain/product';
 import { useData, useScheduler, useScheduleGroups, useUi } from '@/store';
 import { EmptyStateWithFeatured } from '@/components/scheduler/EmptyStateWithFeatured';
 import { openScheduledLive } from '@/components/scheduler/openScheduledLive';
 import { ScheduleRow } from '@/components/scheduler/ScheduleRow';
-import { ScheduleModal } from '@/components/scheduler/ScheduleModal';
 import { DeleteConfirmModal } from '@/components/scheduler/DeleteConfirmModal';
-import { RunReportModal } from '@/components/scheduler/RunReportModal';
 import { TemplatePickerModal } from '@/components/scheduler/TemplatePickerModal';
 import { SchedulerOverview } from '@/components/scheduler/SchedulerOverview';
 import { ScheduleGroupsModal } from '@/components/ScheduleGroupsModal';
-
-/** Seed values handed to ScheduleModal. May come from a template (“Use this”)
- *  or a duplicate of an existing schedule (“Duplicate”). */
-type Seed =
-  | { kind: 'template'; template: ScheduleTemplate }
-  | { kind: 'duplicate'; source: ScheduledTask };
+import { getNewScheduleRoutePath, getScheduleRoutePath } from '@/lib/route-paths';
+import { openScheduleInSplit } from '@/lib/split-layout/openThreadInSplit';
+import { isCompactViewport } from '@/hooks/useIsCompactViewport';
+import type { ScheduleSeed } from '@/components/scheduler/schedule-seed';
 
 export { pickLiveRun } from '@/components/scheduler/schedulerUtils';
 
-function isSeed(value: unknown): value is Seed {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'kind' in value &&
-    ((value as { kind: string }).kind === 'template' ||
-      (value as { kind: string }).kind === 'duplicate')
-  );
-}
-
 /**
- * The Scheduler view. Mounted two ways:
+ * The Scheduler catalogue. Mounted two ways:
  * - Cross-project (top-level nav, no props): every schedule, Overview first.
  * - Project-locked (`projectId` set — the per-project workspace tab): every
  *   schedule that spawns a terminal IN this project (filter on `t.projectId`,
  *   the spawn target), so a global-scoped schedule that targets the project
- *   appears here too. The create modal defaults to this project + project scope.
+ *   appears here too. New schedules default to this project + project scope.
  */
 export function SchedulerView({ projectId }: { projectId?: string } = {}) {
+  const navigate = useNavigate();
+  const location = useLocation();
   const tasks = useScheduler((s) => s.tasks);
   const loading = useScheduler((s) => s.loading);
   const projects = useData((s) => s.projects);
@@ -49,14 +38,9 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
   const lockedProject = lockedProjectId
     ? projects.find((p) => p.id === lockedProjectId) ?? null
     : null;
-  const [editing, setEditing] = useState<ScheduledTask | 'new' | Seed | null>(null);
   const [pickingTemplate, setPickingTemplate] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<ScheduledTask | null>(null);
   const [managingGroups, setManagingGroups] = useState(false);
-  // Run report viewer — lifted here so both the per-task run rows and the
-  // Overview "Recent activity" list open the same modal.
-  const [report, setReport] = useState<{ run: ScheduleRun; taskName: string } | null>(null);
-  const showReport = (run: ScheduleRun, taskName: string) => setReport({ run, taskName });
   const [tick, setTick] = useState(0);
   const [search, setSearch] = useState('');
   /** When the user hits "Pause all", we stash the ids that were enabled so
@@ -64,10 +48,6 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
   const [pausedSet, setPausedSet] = useState<Set<string> | null>(null);
   const [view, setView] = useState<'overview' | 'schedules'>('overview');
 
-  // 1Hz tick drives the per-row "fires in 14m 32s" countdown and the Overview's
-  // time-relative computations without the main process pushing the same number
-  // every second. `tick` is also passed into SchedulerOverview so that component
-  // shares this single timer instead of running its own.
   useEffect(() => {
     const t = setInterval(() => setTick((n) => n + 1), 1000);
     return () => clearInterval(t);
@@ -80,15 +60,38 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
     setPausedSet(null);
   }, [lockedProjectId, view]);
 
-  // Tray "Show in Scheduler" lands on the list so ScheduleRow can scroll to
-  // and highlight the matching card.
+  const openSchedule = (t: ScheduledTask) => {
+    navigate(getScheduleRoutePath(t.id, lockedProjectId));
+  };
+
+  const openScheduleSplit = (t: ScheduledTask) => {
+    openScheduleInSplit({
+      navigate,
+      projectId: lockedProjectId,
+      scheduleId: t.id,
+      isCompact: isCompactViewport(),
+      currentPathname: location.pathname
+    });
+  };
+
+  const openNew = (seed?: ScheduleSeed) => {
+    navigate(
+      getNewScheduleRoutePath(lockedProjectId),
+      seed ? { state: { seed } } : undefined
+    );
+  };
+
+  // Tray reveal may land on the catalogue before tasks hydrate; once the
+  // matching task is in the store, jump to its dedicated page.
   useEffect(() => {
-    if (revealScheduleId) setView('schedules');
-  }, [revealScheduleId]);
+    if (!revealScheduleId) return;
+    const task = tasks.find((t) => t.id === revealScheduleId);
+    if (!task) return;
+    useUi.getState().clearRevealSchedule();
+    navigate(getScheduleRoutePath(task.id, lockedProjectId));
+  }, [revealScheduleId, tasks, lockedProjectId, navigate]);
 
   const scopedTasks = useMemo(() => {
-    // Project-locked (per-project tab): every schedule that spawns in this
-    // project, regardless of where its JSON lives (global vs project scope).
     if (lockedProjectId) {
       return tasks.filter((t) => t.projectId === lockedProjectId);
     }
@@ -113,10 +116,6 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
   }, [scopedTasks, projects, search]);
 
   const pauseAll = async () => {
-    // External claude-loop rows are read-only projections the app can't toggle
-    // (main no-ops setEnabled for them since they're not in scheduler.live), so
-    // exclude them: adding them to pausedSet would falsely paint them "paused"
-    // while they keep running, and firing setEnabled on them is a wasted IPC.
     const pausable = scopedTasks.filter((t) => t.enabled && t.external?.kind !== 'claude-loop');
     setPausedSet(new Set(pausable.map((t) => t.id)));
     await Promise.all(
@@ -133,19 +132,10 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
     );
   };
 
-  const handleSeedFromTask = (source: ScheduledTask) => {
-    setEditing({ kind: 'duplicate', source });
-  };
-
-  // Shared SchedulerOverview handlers — used by both the cross-project overview
-  // and the per-project overview (the scoped tab).
   const toggleSchedule = async (t: ScheduledTask) => {
     const result = await product.scheduler.setEnabled(t.id, !t.enabled);
     if (!result.ok) useUi.getState().pushToast(result.message, 'error');
   };
-  // Fire a schedule immediately from the overview's "All schedules" list — the
-  // same gesture as a card's Run-now button (headless background fire; the
-  // toast confirms it took, deep-links / the live row can promote it to a tab).
   const runScheduleNow = async (t: ScheduledTask) => {
     const result = await product.scheduler.runNow(t.id);
     if (!result.ok) {
@@ -166,7 +156,12 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
   };
   const openProjectSchedules = (id: string) => {
     useUi.getState().enterProjectFocus(id);
-    useUi.getState().setWorkspaceMode(id, 'scheduler');
+    useUi.getState().setProjectView(id, 'scheduler');
+  };
+
+  const openByReport = (_run: unknown, taskName: string) => {
+    const match = scopedTasks.find((t) => t.name === taskName);
+    if (match) openSchedule(match);
   };
 
   return (
@@ -233,7 +228,7 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
             </button>
             <button
               className="settings-btn settings-btn--primary"
-              onClick={() => setEditing('new')}
+              onClick={() => openNew()}
               disabled={projects.length === 0}
               title={projects.length === 0 ? 'Add a project first' : 'New schedule'}
             >
@@ -274,19 +269,19 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
             projects={projects}
             tick={tick}
             hideByProject={Boolean(lockedProject)}
-            onJump={lockedProject ? () => setView('schedules') : (t) => setEditing(t)}
+            onJump={openSchedule}
             onOpenProject={lockedProject ? undefined : openProjectSchedules}
             onOpenTerminal={(t, sessionId) => openScheduledLive(t.projectId, sessionId)}
-            onEdit={(t) => setEditing(t)}
-            onShowReport={showReport}
+            onEdit={openSchedule}
+            onShowReport={openByReport}
             onToggle={toggleSchedule}
             onRunNow={runScheduleNow}
             onStopLive={stopScheduleLive}
           />
         ) : scopedTasks.length === 0 ? (
           <EmptyStateWithFeatured
-            onPick={(template) => setEditing({ kind: 'template', template })}
-            onCreateBlank={() => setEditing('new')}
+            onPick={(template: ScheduleTemplate) => openNew({ kind: 'template', template })}
+            onCreateBlank={() => openNew()}
           />
         ) : (
           <>
@@ -336,11 +331,10 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
                       projects.find((p) => p.id === t.projectId)?.name ?? '⟨missing⟩'
                     }
                     group={t.group ? groups.find((g) => g.id === t.group) ?? null : null}
-                    reveal={revealScheduleId === t.id}
-                    onEdit={() => setEditing(t)}
-                    onDuplicate={() => handleSeedFromTask(t)}
+                    onOpen={() => openSchedule(t)}
+                    onOpenInSplit={() => openScheduleSplit(t)}
+                    onDuplicate={() => openNew({ kind: 'duplicate', source: t })}
                     onAskDelete={() => setConfirmDelete(t)}
-                    onShowReport={showReport}
                   />
                 ))}
               </ul>
@@ -349,22 +343,12 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
         )}
       </div>
 
-      {editing && (
-        <ScheduleModal
-          task={
-            editing === 'new' || isSeed(editing) ? null : (editing as ScheduledTask)
-          }
-          seed={isSeed(editing) ? editing : null}
-          lockedProjectId={lockedProjectId}
-          onClose={() => setEditing(null)}
-        />
-      )}
       {pickingTemplate && (
         <TemplatePickerModal
           onClose={() => setPickingTemplate(false)}
           onPick={(template) => {
             setPickingTemplate(false);
-            setEditing({ kind: 'template', template });
+            openNew({ kind: 'template', template });
           }}
         />
       )}
@@ -380,13 +364,6 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
               useUi.getState().pushToast(`Delete failed: ${result.message}`, 'error');
             }
           }}
-        />
-      )}
-      {report && (
-        <RunReportModal
-          run={report.run}
-          taskName={report.taskName}
-          onClose={() => setReport(null)}
         />
       )}
       {managingGroups && (

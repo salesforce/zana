@@ -26,6 +26,7 @@ vi.mock('./identity.js', () => ({
 }));
 vi.mock('./server-connection.js', () => ({ startEnrolledHostConnection }));
 
+import { HOST_RPC_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/host-rpc';
 import { startEnrolledHostDaemon } from './enroll-runtime.js';
 
 function openConnection(): { ready: Promise<void>; close: () => Promise<void> } {
@@ -55,7 +56,7 @@ describe('startEnrolledHostDaemon', () => {
       hostName: 'test-host'
     });
     enrollDaemonHost.mockResolvedValue({
-      protocolVersion: 19,
+      protocolVersion: HOST_RPC_PROTOCOL_VERSION,
       hostId: '11111111-1111-4111-8111-111111111111',
       hostKey: 'fresh-key'
     });

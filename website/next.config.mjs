@@ -48,10 +48,13 @@ const nextConfig = {
   // Next is hoisted to the npm workspace root, so Turbopack must resolve from
   // there rather than the website package's partial node_modules directory.
   turbopack: { root: workspaceRoot },
+  // Next 16 treats 127.0.0.1 and localhost as different origins and 403s
+  // `/_next/static` chunks unless listed — the tour then never hydrates.
+  allowedDevOrigins: ['127.0.0.1', 'localhost'],
   async redirects() {
     return [
       { source: '/how-it-works', destination: '/docs', permanent: true },
-      { source: '/features', destination: '/docs', permanent: true }
+      { source: '/tour', destination: '/features/', permanent: true }
     ];
   }
 };

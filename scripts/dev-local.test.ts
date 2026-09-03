@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,9 +7,15 @@ import {
   APP_UI_PACKAGE,
   attachDevProcessLifecycle,
   createDevTurboCommand,
+  DEFAULT_DEV_DATA_DIR_NAME,
+  DEFAULT_DEV_SERVER_PORT,
+  DEFAULT_PACKAGED_SERVER_PORT,
   DESKTOP_PACKAGE,
+  formatDevTargetBanner,
   HOST_DAEMON_PACKAGE,
   isCliEntry,
+  PACKAGED_DATA_DIR_NAME,
+  parseDevTarget,
   prepareLocalDevEnv,
   SERVER_PACKAGE,
   spawnDevTurbo
@@ -72,9 +78,98 @@ describe('dev-local turbo TUI', () => {
     expect(prepared.env.ZCC_SERVER_PORT).toBe('8781');
     expect(prepared.env.ZCC_SERVER_URL).toBe('http://127.0.0.1:8781/');
     expect(prepared.env.ZCC_HOST_ENROLL_TOKEN.length).toBeGreaterThanOrEqual(16);
+    expect(prepared.env.ZCC_EXTENSIONS_DIR).toBe(join(dataDir, 'extensions'));
+    expect(prepared.isolated).toBe(false);
     expect(readFileSync(join(dataDir, 'host-enroll.token'), 'utf8')).toBe(
       prepared.env.ZCC_HOST_ENROLL_TOKEN
     );
+  });
+
+  it('isolates to ~/.zcc-dev and port 8781 when env is unset', () => {
+    const home = makeTempDir();
+    const prepared = prepareLocalDevEnv({ PATH: '/usr/bin', HOME: home });
+    const dataDir = join(home, DEFAULT_DEV_DATA_DIR_NAME);
+    expect(prepared.isolated).toBe(true);
+    expect(prepared.target).toBe('isolated');
+    expect(prepared.env.ZCC_SERVER_PORT).toBe(DEFAULT_DEV_SERVER_PORT);
+    expect(prepared.env.ZCC_SERVER_URL).toBe(`http://127.0.0.1:${DEFAULT_DEV_SERVER_PORT}/`);
+    expect(prepared.env.ZCC_DATA_DIR).toBe(dataDir);
+    expect(prepared.env.ZCC_EXTENSIONS_DIR).toBe(join(dataDir, 'extensions'));
+    expect(readFileSync(join(dataDir, 'host-enroll.token'), 'utf8')).toBe(
+      prepared.env.ZCC_HOST_ENROLL_TOKEN
+    );
+    expect(formatDevTargetBanner(prepared)).toContain('pnpm dev:prod');
+  });
+
+  it('shares ~/.zcc and port 8780 when targeting packaged', () => {
+    const home = makeTempDir();
+    mkdirSync(join(home, PACKAGED_DATA_DIR_NAME), { recursive: true });
+    const prepared = prepareLocalDevEnv(
+      { PATH: '/usr/bin', HOME: home },
+      { target: 'packaged' }
+    );
+    const dataDir = join(home, PACKAGED_DATA_DIR_NAME);
+    expect(prepared.isolated).toBe(false);
+    expect(prepared.target).toBe('packaged');
+    expect(prepared.env.ZCC_DATA_DIR).toBe(dataDir);
+    expect(prepared.env.ZCC_SERVER_PORT).toBe(DEFAULT_PACKAGED_SERVER_PORT);
+    expect(prepared.env.ZCC_SERVER_URL).toBe(`http://127.0.0.1:${DEFAULT_PACKAGED_SERVER_PORT}/`);
+    expect(formatDevTargetBanner(prepared)).toContain('pnpm dev for isolated');
+  });
+
+  it('parses packaged target from argv and ZCC_DEV_TARGET', () => {
+    expect(parseDevTarget([], {})).toBe('isolated');
+    expect(parseDevTarget(['--packaged'], {})).toBe('packaged');
+    expect(parseDevTarget(['--', '--prod'], {})).toBe('packaged');
+    expect(parseDevTarget([], { ZCC_DEV_TARGET: 'packaged' })).toBe('packaged');
+    expect(parseDevTarget([], { ZCC_DEV_TARGET: 'isolated' })).toBe('isolated');
+  });
+
+  it('lets an explicit ZCC_DATA_DIR win over the packaged target', () => {
+    const dataDir = join(makeTempDir(), 'custom');
+    mkdirSync(dataDir, { recursive: true });
+    const prepared = prepareLocalDevEnv(
+      { PATH: '/usr/bin', ZCC_DATA_DIR: dataDir },
+      { target: 'packaged' }
+    );
+    expect(prepared.env.ZCC_DATA_DIR).toBe(dataDir);
+    expect(prepared.env.ZCC_SERVER_PORT).toBe(DEFAULT_PACKAGED_SERVER_PORT);
+  });
+
+  it('reuses an existing enroll token in the chosen data dir', () => {
+    const home = makeTempDir();
+    const dataDir = join(home, DEFAULT_DEV_DATA_DIR_NAME);
+    mkdirSync(dataDir, { recursive: true });
+    const token = 'b'.repeat(32);
+    writeFileSync(join(dataDir, 'host-enroll.token'), token, { encoding: 'utf8' });
+    const prepared = prepareLocalDevEnv({ PATH: '/usr/bin', HOME: home });
+    expect(prepared.env.ZCC_HOST_ENROLL_TOKEN).toBe(token);
+  });
+
+  it('honors explicit data dir, port, and extensions dir', () => {
+    const dataDir = join(makeTempDir(), 'shared');
+    mkdirSync(dataDir, { recursive: true });
+    const prepared = prepareLocalDevEnv({
+      ZCC_DATA_DIR: dataDir,
+      ZCC_SERVER_PORT: '8780',
+      ZCC_EXTENSIONS_DIR: '/tmp/exts',
+      PATH: '/usr/bin'
+    });
+    expect(prepared.isolated).toBe(false);
+    expect(prepared.env.ZCC_DATA_DIR).toBe(dataDir);
+    expect(prepared.env.ZCC_SERVER_PORT).toBe('8780');
+    expect(prepared.env.ZCC_SERVER_URL).toBe('http://127.0.0.1:8780/');
+    expect(prepared.env.ZCC_EXTENSIONS_DIR).toBe('/tmp/exts');
+  });
+
+  it('keeps DEFAULT_DEV_SERVER_PORT in lockstep with ports.ts', () => {
+    const ports = readFileSync(join(repoRoot, 'apps/server/src/http/ports.ts'), 'utf8');
+    const hostConfig = readFileSync(join(repoRoot, 'apps/host-daemon/src/host-config.ts'), 'utf8');
+    expect(ports).toContain(`export const DEFAULT_DEV_SERVER_PORT = ${DEFAULT_DEV_SERVER_PORT};`);
+    expect(ports).toContain(`export const DEFAULT_SERVER_PORT = ${DEFAULT_PACKAGED_SERVER_PORT};`);
+    expect(ports).toContain(`export const DEFAULT_DEV_DATA_DIR_NAME = '${DEFAULT_DEV_DATA_DIR_NAME}';`);
+    expect(hostConfig).toContain(`export const ZCC_DEV_DATA_DIR_NAME = '${DEFAULT_DEV_DATA_DIR_NAME}';`);
+    expect(hostConfig).toContain(`export const ZCC_DATA_DIR_NAME = '${PACKAGED_DATA_DIR_NAME}';`);
   });
 
   it('reuses a caller-supplied enroll token', () => {
@@ -121,6 +216,7 @@ describe('dev-local turbo TUI', () => {
       'pnpm --dir ../.. exec node --conditions=source --import tsx apps/host-daemon/src/enroll-entry.ts'
     );
     expect(root.scripts.dev).toBe('node scripts/dev-local.mjs');
+    expect(root.scripts['dev:prod']).toBe('node scripts/dev-local.mjs --packaged');
     expect(turbo.tasks.dev.persistent).toBe(true);
     expect(turbo.tasks.dev.passThroughEnv).toEqual(['*']);
   });

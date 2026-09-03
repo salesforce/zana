@@ -48,6 +48,7 @@ import type {
   FsWriteResult,
   FsMutateResult
 } from '@zana-ai/zcc-domain/product';
+import { electronZccDataDir } from '../../electron-data-dir.js';
 
 export type { LibraryDoc, LibraryManifest, LibraryAddInput } from '@zana-ai/zcc-domain/product';
 
@@ -519,7 +520,9 @@ export class LibraryStore extends EventEmitter {
   }
 
   userDir(): string {
-    return join(this.homeDir ?? app.getPath('home'), '.zcc', 'library');
+    return this.homeDir
+      ? join(this.homeDir, '.zcc', 'library')
+      : join(electronZccDataDir(), 'library');
   }
 
   projectDir(project: Project): string {
@@ -1564,7 +1567,7 @@ export function createMemoryLibraryStore(): ILibraryStore {
     agentRead,
     agentWrite,
     agentRemove,
-    userDir: () => join(app.getPath('home'), '.zcc', 'library')
+    userDir: () => join(electronZccDataDir(), 'library')
   };
 }
 

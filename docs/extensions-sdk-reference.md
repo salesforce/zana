@@ -33,7 +33,9 @@ Slots (also mapped in the in-app Plugin Guide):
 - `projectTab` — per-project tab (`global: false` hides the sidebar entry)
 - `experimental_projectMenuAction` — project row overflow or workspace organize menu
 - `sidebarFooterAction` — host-rendered footer icon
-- `pendingInteraction` / `threadPanelAction` / `experimental_newThreadPanelAction` /
+- `pendingInteraction` / `threadPanelAction` (thread side-panel tabs; optional
+  `scopes` include `"agent-session"` for the CLI-agent inspector) /
+  `experimental_newThreadPanelAction` /
   `experimental_threadList` / `experimental_threadHeaderAction` — thread chrome
 - `fileOpener` / `messageDirective` / `messageAction` / `experimental_timelineRenderer`
 - `experimental_agentCardAction` / `experimental_agentsBoardAction`

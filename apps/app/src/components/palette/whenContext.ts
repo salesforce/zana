@@ -40,8 +40,8 @@ export interface WhenContext {
   activeTabStatus: string;
   /** Active tab launch profile (e.g. 'claude' | 'shell'), or '' when none. */
   activeTabProfile: string;
-  /** Workspace mode of the selected project ('terminals' | 'explorer' | …). */
-  workspaceMode: string;
+  /** Active project view of the selected project ('terminals' | 'explorer' | …). */
+  projectView: string;
   /** OS platform: 'darwin' | 'win32' | 'linux'. */
   platform: string;
   /**
@@ -100,8 +100,9 @@ function isContextKey(tok: string): boolean {
 }
 
 function readKey(ctx: WhenContext, key: string): Primitive {
-  if (Object.prototype.hasOwnProperty.call(ctx, key)) {
-    return (ctx as unknown as Record<string, Primitive>)[key];
+  const resolved = key === 'workspaceMode' ? 'projectView' : key;
+  if (Object.prototype.hasOwnProperty.call(ctx, resolved)) {
+    return (ctx as unknown as Record<string, Primitive>)[resolved];
   }
   throw new Error(`unknown context key: ${key}`);
 }

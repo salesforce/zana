@@ -420,6 +420,7 @@ export interface AgentRuntime {
   listModels(args: ListModelsArgs): Promise<{
     models: AvailableModel[];
     selectedOnlyModels: AvailableModel[];
+    acpMode?: { currentValue?: string; options: Array<{ value: string; name?: string }> };
   }>;
 
   listRunningProviders(): string[];

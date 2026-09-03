@@ -23,8 +23,9 @@
  * dir resolution, `existsSync` guards, atomic writes, skip-on-equal.
  */
 
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
+import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
 import { fileURLToPath } from 'node:url';
 import { existsSync, lstatSync } from 'node:fs';
 import { readFile, readdir, cp, mkdir, rm, rename, writeFile, realpath, stat } from 'node:fs/promises';
@@ -43,7 +44,7 @@ type LogFn = (context: string, err?: unknown) => void;
 
 /** Runtime install root the discovery scanner reads. Honors the test override. */
 function installRoot(): string {
-  return process.env.ZCC_EXTENSIONS_DIR ?? join(homedir(), '.zcc', 'extensions');
+  return process.env.ZCC_EXTENSIONS_DIR ?? join(resolveZccDataDir(), 'extensions');
 }
 
 /**

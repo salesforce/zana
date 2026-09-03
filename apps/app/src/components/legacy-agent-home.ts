@@ -46,6 +46,28 @@ export function familyForThreadProviderId(providerId: string): HarnessFamily | n
   return null;
 }
 
+/**
+ * Keep a still-available family (current, then last-used, then configured default)
+ * so the CLI composer does not flash empty on catalog / persona churn.
+ */
+export function resolveCliAgentFamily(input: {
+  currentFamilyId: string;
+  availableFamilyIds: readonly string[];
+  rememberedFamilyId: string | null;
+  effectiveDefaultFamilyId: string | null;
+}): string {
+  const available = new Set(input.availableFamilyIds);
+  if (available.size === 0) {
+    return input.currentFamilyId || input.rememberedFamilyId || input.effectiveDefaultFamilyId || '';
+  }
+  if (input.currentFamilyId && available.has(input.currentFamilyId)) return input.currentFamilyId;
+  if (input.rememberedFamilyId && available.has(input.rememberedFamilyId)) return input.rememberedFamilyId;
+  if (input.effectiveDefaultFamilyId && available.has(input.effectiveDefaultFamilyId)) {
+    return input.effectiveDefaultFamilyId;
+  }
+  return input.effectiveDefaultFamilyId || '';
+}
+
 export function availableAgentHarnesses<T extends {
   agentDefaultEligible: boolean;
   availability: { enabled: boolean; installed: boolean };

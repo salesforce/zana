@@ -30,7 +30,7 @@ const whenCtx: WhenContext = {
   tabCount: 1,
   activeTabStatus: 'running',
   activeTabProfile: 'claude',
-  workspaceMode: 'terminals',
+  projectView: 'terminals',
   platform: 'darwin',
   panelFocused: false,
   scopedWindow: false
@@ -64,7 +64,7 @@ function baseCtx(over: Partial<PaletteBuildContext> = {}): PaletteBuildContext {
     setNav: noop,
     selectProject: noop,
     selectTab: noop,
-    setWorkspaceMode: noop,
+    setProjectView: noop,
     setSettingsTab: noop,
     setExtensionsTab: noop,
     setOverviewOpen: noop,

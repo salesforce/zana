@@ -27,7 +27,7 @@ export function ResumePicker({ project, onClose }: Props) {
   const load = useData((s) => s.loadClaudeSessions);
   const createTerminal = useData((s) => s.createTerminal);
   const selectTab = useUi((s) => s.selectTab);
-  const setWorkspaceMode = useUi((s) => s.setWorkspaceMode);
+  const setProjectView = useUi((s) => s.setProjectView);
 
   const [query, setQuery] = useState('');
   const [activeIdx, setActiveIdx] = useState(0);
@@ -83,7 +83,7 @@ export function ResumePicker({ project, onClose }: Props) {
     });
     if (session) {
       selectTab(project.id, session.id);
-      setWorkspaceMode(project.id, 'terminals');
+      setProjectView(project.id, 'terminals');
     }
     onClose();
   };
