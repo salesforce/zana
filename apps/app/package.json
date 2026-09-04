@@ -48,7 +48,7 @@
     "@zana-ai/zcc-ui": "workspace:*",
     "highlight.js": "^11.11.1",
     "katex": "^0.18.4",
-    "lucide-react": "^1.31.0",
+    "lucide-react": "^1.35.0",
     "mermaid": "^11.16.1",
     "monaco-editor": "^0.56.0",
     "react": "^19.2.8",
